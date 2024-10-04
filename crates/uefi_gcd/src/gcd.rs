@@ -247,8 +247,8 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
         log::trace!(target: "allocations", "[{}]   Capabilities: {:#x}\n", function!(), capabilities);
 
-        // The MEMORY_RUNTIME attribute should be supported for all memory spaces
-        capabilities |= efi::MEMORY_RUNTIME;
+        // All software capabilities are supported for system memory
+        capabilities |= efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME;
 
         // The MEMORY_MAPPED_IO_PORT_SPACE attribute should be supported for MMIO
         if memory_type == dxe_services::GcdMemoryType::MemoryMappedIo {
@@ -1424,6 +1424,41 @@ impl SpinLockedGcd {
             if let Some(callback) = self.memory_change_callback {
                 callback(MapChangeType::AllocateMemorySpace)
             }
+
+            // if we successfully allocated memory, we want to set the range as NX. For any standard data, we should
+            // always have NX set and no consumer needs to update it. If a code region is going to be allocated
+            // here, we rely on the image loader to update the attributes as appropriate for the code sections. The
+            // same holds true for other required attributes.
+            if let Ok(base_address) = result.as_ref() {
+                // it is safe to call set_memory_space_attributes without calling set_memory_space_capabilities here
+                // because we set efi::MEMORY_XP as a capability on all memory ranges we add to the GCD. A driver could
+                // call set_memory_space_capabilities to remove the XP capability, but that is something that should
+                // be caught and fixed.
+                match self.set_memory_space_attributes(*base_address, len, efi::MEMORY_XP) {
+                    Ok(_) => (),
+                    Err(Error::NotInitialized) => {
+                        // this is expected if mu-paging is not initialized yet. The GCD will still be updated, but
+                        // the page table will not yet. When we initialize mu-paging, the GCD will use the attributes
+                        // that have been updated here to initialize the page table. mu-paging must allocate memory
+                        // to form the page table we are going to use.
+                    }
+                    Err(e) => {
+                        // this is now a real error case, mu-paging is enabled, but we failed to set NX on the
+                        // range. This we want to catch. In a release build, we should still continue, but we'll
+                        // not have NX set on the range.
+                        log::error!(
+                            "Could not set NX for memory address {:#X} for len {:#X} with error {:?}",
+                            *base_address,
+                            len,
+                            e
+                        );
+                        debug_assert!(false);
+                    }
+                }
+            } else {
+                log::error!("Could not extract base address from allocation result, unable to set memory attributes.");
+                debug_assert!(false);
+            }
         }
         result
     }
@@ -1753,7 +1788,7 @@ mod tests {
                     MemoryBlock::Unallocated(md) => {
                         assert_eq!(100, md.base_address);
                         assert_eq!(10, md.length);
-                        assert_eq!(efi::MEMORY_RUNTIME | 123, md.capabilities);
+                        assert_eq!(efi::MEMORY_RUNTIME | efi::MEMORY_ACCESS_MASK | 123, md.capabilities);
                         assert_eq!(0, md.image_handle as usize);
                         assert_eq!(0, md.device_handle as usize);
                     }
