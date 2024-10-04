@@ -17,7 +17,7 @@
 //! use uefi_gcd::gcd::{AllocateType, SpinLockedGcd};
 //! # const MEMORY_BLOCK_SLICE_SIZE:usize = 4096*4096;
 //! # unsafe fn get_memory(size: usize) -> &'static mut [u8] {
-//! #   let addr = alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 8).unwrap());
+//! #   let addr = alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 4096).unwrap());
 //! #   core::slice::from_raw_parts_mut(addr, size)
 //! # }
 //!
@@ -27,7 +27,6 @@
 //!
 //! # let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE) };
 //! # let base_address = mem.as_ptr() as usize;
-//! # let memory_space_size = MEMORY_BLOCK_SLICE_SIZE;
 //! /* base_address is *mut u8 pointing to memory space to add */
 //! /* memory_space_size is the size of the memory space to add */
 //! unsafe {
@@ -38,7 +37,7 @@
 //!   AllocateType::BottomUp(None),               //allocate_type
 //!   dxe_services::GcdMemoryType::SystemMemory,  //memory_type
 //!   0,                                          //alignment
-//!   10,                                         //size
+//!   0x1000,                                     //size
 //!   1 as _,                                     //Image Handle (fake)
 //!   None                                        //Device Handle
 //! ).unwrap();
