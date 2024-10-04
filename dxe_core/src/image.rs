@@ -209,10 +209,18 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
         // each section starts at image_base + virtual_address, per PE/COFF spec.
         let section_base_addr = (private_info.image_info.image_base as u64) + (section.virtual_address as u64);
 
+        let mut capabilities = attributes;
+
         // we need to get the current attributes for this region and add our new attribute
         // if we can't find this range in the GCD, try the next one, but report the failure
         match dxe_services::core_get_memory_space_descriptor(section_base_addr) {
-            Ok(desc) => attributes |= desc.attributes,
+            // in the Ok case, keep the cache attributes, but remove the existing memory attributes
+            // all new memory has efi::MEMORY_XP set, so we need to remove this if this is becoming a code
+            // section
+            Ok(desc) => {
+                attributes |= desc.attributes & !efi::MEMORY_ATTRIBUTE_MASK;
+                capabilities |= desc.capabilities;
+            }
             Err(status) => {
                 log::error!(
                     "Failed to find GCD desc for image section {:#X} with Status {:#X?}",
@@ -227,10 +235,12 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
         // we cannot rely on this to be section aligned, as some compilers rely on the loader to align this
         // while we are still relying on the C CpuDxe for page table mgmt, we expect failures here before CpuDxe is
         // loaded as core_set_memory_space_attributes will attempt to call the Cpu Arch protocol to set the page table
-        // attributes. We also need to ensure the capabilities are set.
+        // attributes. We also need to ensure the capabilities are set. We set the capabilities as the old capabilities
+        // plus our new attribute, as we need to ensure all existing attributes are supported by the new
+        // capabilities.
         let aligned_virtual_size = align_up(section.virtual_size as u64, pe_info.section_alignment as u64);
         if let Err(status) =
-            dxe_services::core_set_memory_space_capabilities(section_base_addr, aligned_virtual_size, attributes)
+            dxe_services::core_set_memory_space_capabilities(section_base_addr, aligned_virtual_size, capabilities)
         {
             // even if we fail to set the capabilities, we should still try to set the attributes, who knows, maybe we
             // will succeed
