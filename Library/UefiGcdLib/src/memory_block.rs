@@ -25,7 +25,6 @@ pub enum MemoryBlock {
     Allocated(dxe_services::MemorySpaceDescriptor),
 }
 
-#[derive(Debug)]
 pub enum StateTransition {
     Add(dxe_services::GcdMemoryType, u64),
     Remove,
@@ -35,6 +34,37 @@ pub enum StateTransition {
     FreePreservingOwnership,
     SetAttributes(u64),
     SetCapabilities(u64),
+}
+
+impl Debug for StateTransition {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            StateTransition::Add(memory_type, capabilities) => f
+                .debug_struct("Add")
+                .field("memory_type", memory_type)
+                .field("capabilities", &format_args!("{:#X}", capabilities))
+                .finish(),
+            StateTransition::Remove => f.debug_struct("Remove").finish(),
+            StateTransition::Allocate(image_handle, device_handle) => f
+                .debug_struct("Allocate")
+                .field("image_handle", image_handle)
+                .field("device_handle", device_handle)
+                .finish(),
+            StateTransition::AllocateRespectingOwnership(image_handle, device_handle) => f
+                .debug_struct("AllocateRespectingOwnership")
+                .field("image_handle", image_handle)
+                .field("device_handle", device_handle)
+                .finish(),
+            StateTransition::Free => f.debug_struct("Free").finish(),
+            StateTransition::FreePreservingOwnership => f.debug_struct("FreePreservingOwnership").finish(),
+            StateTransition::SetAttributes(attributes) => {
+                f.debug_struct("SetAttributes").field("attributes", &format_args!("{:#X}", attributes)).finish()
+            }
+            StateTransition::SetCapabilities(capabilities) => {
+                f.debug_struct("SetCapabilities").field("capabilities", &format_args!("{:#X}", capabilities)).finish()
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
