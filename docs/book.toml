@@ -1,0 +1,14 @@
+[book]
+authors = ["Joey Vagedes"]
+language = "en"
+multilingual = false
+src = "src"
+title = "Developing UEFI with Rust"
+
+[output.html.playpen]
+editable = true
+editor = "ace"
+line-numbers = true
+
+[output.html.fold]
+enable = true

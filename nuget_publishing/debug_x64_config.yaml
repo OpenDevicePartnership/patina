@@ -1,0 +1,8 @@
+author_string: Microsoft Corporation
+copyright_string: Copyright (c) Microsoft Corporation
+description_string: Rust X64 DEBUG DXE Core
+license_url: http://www.microsoft.com/
+name: DXECORE.X64.DEBUG
+project_url: https://microsoft.github.com/mu
+server_url: https://pkgs.dev.azure.com/microsoft/MsUEFI/_packaging/DxeRust/nuget/v3/index.json
+tags_string: ''

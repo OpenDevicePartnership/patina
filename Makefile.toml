@@ -1,0 +1,205 @@
+[config]
+default_to_workspace = false
+
+[env]
+RUSTC_BOOTSTRAP = 1
+ARCH = "X64"
+TARGET_TRIPLE = { source = "${ARCH}", mapping = { "X64" = "x86_64-unknown-uefi", "IA32" = "i686-unknown-uefi", "AARCH64" = "aarch64-unknown-uefi" }, condition = { env_not_set = [ "TARGET_TRIPLE" ] } }
+TARGET_FEATURE = { source = "${ARCH}", mapping = { "X64" = "x64", "IA32" = "x86", "AARCH64" = "aarch64" }, condition = { env_not_set = [ "TARGET_FEATURE" ] } }
+
+CARGO_FEATURES_FLAG = {value = "--features ${FEATURES}", condition = {env_set = ["FEATURES"], env_true = ["FEATURES"]}}
+NO_STD_FLAGS = "--bin dxe_core_${TARGET_FEATURE} --profile ${RUSTC_PROFILE} --target ${TARGET_TRIPLE} --features ${TARGET_FEATURE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
+STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
+TEST_FLAGS = { value = "", condition = { env_not_set = ["TEST_FLAGS"] } }
+COV_FLAGS = { value = "--out html --exclude-files **/tests/* --exclude-files **/benches/*", condition = { env_not_set = ["COV_FLAGS"] } }
+
+[env.development]
+RUSTC_PROFILE = "dev"
+RUSTC_TARGET = "debug"
+
+[env.release]
+RUSTC_PROFILE = "release"
+RUSTC_TARGET = "release"
+
+[tasks.individual-package-targets]
+script_runner = "@duckscript"
+script = '''
+args = get_env CARGO_MAKE_TASK_ARGS
+
+if is_empty ${args}
+  exit
+end
+
+1 = array ""
+2 = split ${args} ,
+3 = array_concat ${1} ${2}
+joined_args = array_join ${3} " -p "
+release ${1}
+release ${2}
+release ${3}
+
+joined_args = trim ${joined_args}
+set_env INDIVIDUAL_PACKAGE_TARGETS ${joined_args}
+release ${joined_args}
+'''
+
+[tasks.build]
+description = """Builds a single rust package with the standard library.
+
+Customizations:
+    -p [development|release]: Builds in debug or release. Default: development
+    -e FEATURES=[feature,...]: Builds with the specified features. Default: none
+
+Example:
+    `cargo make build`
+    `cargo make -p release build`
+    `cargo make -e FEATURES=feature1,feature2 build`
+"""
+alias = "build-std"
+
+[tasks.build-std]
+description = """Builds a single rust package.
+
+Customizations:
+    -p [development|release]: Builds in debug or release. Default: development
+    -e FEATURES=[feature,...]: Builds with the specified features. Default: none
+
+Example:
+    `cargo make build-std`
+    `cargo make -p release build-std`
+    `cargo make -e FEATURES=feature1,feature2 build-std`
+"""
+clear = true
+command = "cargo"
+args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )", "@@split(CARGO_FEATURES_FLAG, ,remove-empty)"]
+dependencies = ["individual-package-targets"]
+
+[tasks.run-std]
+description = """Runs the standard library DXE core.
+
+Example:
+    `cargo make run-std`
+    `cargo make -p release run-std`
+    `cargo make -e FEATURES=feature1,feature2 run-std`
+"""
+clear = true
+command = "cargo"
+args = ["run", "@@split(STD_FLAGS, )", "--bin", "dxe_core_std"]
+
+[tasks.build-arch]
+description = """Builds an architure-specific DXE Core.
+
+Customizations:
+    -p [development|release]: Builds in debug or release. Default: development
+    -e ARCH=[IA32|X64|AARCH64]: Builds with specifed arch. Default: X64
+    -e FEATURES=[feature,...]: Builds with the specified features. Default: none
+
+Example:
+    `cargo make build-arch`
+    `cargo make -p release build-arch dxe_core`
+    `cargo make -e ARCH=X64 build-arch dxe_core`
+    `cargo make -e FEATURES=feature1,feature2 build-arch`
+"""
+clear = true
+command = "cargo"
+args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(NO_STD_FLAGS, )", "@@split(CARGO_FEATURES_FLAG, ,remove-empty)"]
+dependencies = ["individual-package-targets"]
+
+[tasks.check_no_std]
+description = "Checks rust code for no_std build errors with results."
+private = true
+command = "cargo"
+args = ["check", "@@split(NO_STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+
+[tasks.check_std]
+description = "Checks rust code for std build errors with results."
+private = true
+command = "cargo"
+args = ["check", "@@split(STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+
+[tasks.check]
+description = "Checks rust code for errors. Example `cargo make check`"
+clear = true
+run_task = [{ name = ["check_no_std", "check_std"], parallel = true }]
+
+[tasks.test]
+description = "Builds all rust tests in the workspace. Example `cargo make test`"
+clear = true
+command = "cargo"
+args = ["test", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(TEST_FLAGS, )"]
+dependencies = ["individual-package-targets"]
+
+[tasks.coverage]
+description = "Build and run all tests and calculate coverage."
+clear = true
+command = "cargo"
+args = ["tarpaulin", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(COV_FLAGS, )", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target"]
+dependencies = ["individual-package-targets"]
+
+[tasks.coverage-filter]
+description = "Generates the coverage filter to ignore coverage data for other packages."
+private = true
+script_runner = "@duckscript"
+script = '''
+package = get_env PACKAGE
+members =  get_env CARGO_MAKE_CRATE_WORKSPACE_MEMBERS
+
+1 = split ${members} ,
+
+2 = array
+for member in ${1}
+  if not contains ${member} ${package}
+    t = concat "--exclude-files " ${member} /*
+    array_push ${2} ${t}
+    release ${t}
+  end
+end
+
+joined_args = trim ${2}
+joined = array_join ${joined_args} " "
+
+set_env PACKAGE_COVERAGE_FILTER ${joined}
+release ${1}
+release ${2}
+release ${joined_args}
+release ${joined}
+'''
+
+[tasks.coverage-fail-package]
+private = true
+description = """Generates Code coverage for $(PACKAGE) and fails the build if coverage is below 80%."""
+dependencies = ["coverage-filter"]
+command = "cargo"
+args = ["tarpaulin", "-p", "${PACKAGE}", "--fail-under", "80", "--exclude-files", "@@split(PACKAGE_COVERAGE_FILTER, )", "@@split(COV_FLAGS, )", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target"]
+
+[tasks.coverage-fail]
+description = """Runs coverage on one or all packages and fails if coverage is below 80%.
+
+Examples:
+    `cargo make coverage-fail`
+    `cargo make coverage-fail dxe_core`
+"""
+script_runner = "@duckscript"
+script = '''
+1 = get_env CARGO_MAKE_CRATE_WORKSPACE_MEMBERS
+2 = split ${1} ,
+3 = get_env CARGO_MAKE_TASK_ARGS
+
+if not is_empty ${3}
+    set_env PACKAGE ${3}
+    cm_run_task coverage-fail-package
+else
+    for member in ${2}
+        4 = split ${member} /
+        5 = array_pop ${4}
+        set_env PACKAGE ${5}
+        cm_run_task coverage-fail-package
+        release ${4}
+        release ${5}
+    end
+endif
+
+release ${1}
+release ${2}
+release ${3}
+'''

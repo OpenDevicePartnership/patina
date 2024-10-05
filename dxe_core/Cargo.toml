@@ -1,0 +1,61 @@
+[package]
+name = "dxe_core"
+version = "0.1.8"
+edition = "2021"
+
+[lib]
+name = "dxe_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dxe_core_x64"
+path = "bin/x64.rs"
+required-features = ["x64"]
+
+[[bin]]
+name = "dxe_core_std"
+path = "bin/std.rs"
+required-features = ["std"]
+
+[[bin]]
+name = "dxe_core_aarch64"
+path = "bin/aarch64.rs"
+required-features = ["aarch64"]
+
+[dependencies]
+corosensei = { workspace = true }
+crc32fast = { workspace = true }
+lazy_static = { workspace = true }
+log = { workspace = true }
+uefi_core = { workspace = true }
+uefi_cpu_init = { workspace = true }
+uefi_logger = { workspace = true }
+section_extractor = { workspace = true }
+dxe_component_interface = { workspace = true }
+serial_writer = { workspace = true }
+mu_pi = { workspace = true }
+mu_rust_helpers = { workspace = true }
+r-efi = { workspace = true }
+spin = { workspace = true}
+uuid = { workspace = true }
+
+UefiGcdLib = { workspace = true }
+UefiProtocolDbLib = { workspace = true }
+UefiRustAllocatorLib = { workspace = true }
+UefiDevicePathLib = { workspace = true }
+UefiEventLib = { workspace = true }
+UefiDepexLib = { workspace = true}
+uefi_pecoff = { workspace = true }
+TplLock = { workspace = true }
+
+adv_logger = { workspace = true }
+sample_components = { workspace = true }
+
+[features]
+default = []
+std = ["uefi_logger/std", "serial_writer/std"]
+x64 = []
+aarch64 = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }

@@ -1,0 +1,20 @@
+[package]
+name = "UefiEventLib"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "uefi_event_lib"
+path = "src/lib.rs"
+
+[dependencies]
+r-efi = {workspace=true}
+TplLock = {workspace=true}
+
+[dependencies.uuid]
+default-features = false
+version = "1"
+
+[features]
+nightly = []

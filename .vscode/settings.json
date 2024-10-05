@@ -1,0 +1,11 @@
+{
+  "rust-analyzer.check.overrideCommand": [
+    "cargo",
+    "make",
+    "check",
+    "--message-format=json"
+  ],
+  "vscode-nmake-tools.workspaceBuildDirectories": [
+    "."
+  ]
+}

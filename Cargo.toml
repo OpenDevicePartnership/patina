@@ -1,0 +1,59 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "dxe_core",
+]
+
+[workspace.package]
+repository = "https://github.com/pop-project/uefi-dxe-core"
+license = "BSD-2-Clause-Patent"
+edition = "2021"
+include = [
+  "Cargo.toml",
+  "LICENSE*",
+  "README.md"
+]
+
+[workspace.dependencies]
+uefi_cpu_init = {git = "https://github.com/pop-project/uefi-core.git", rev = "1dc5e74bbe76f1573a4386c428d051e4e8f84beb"}
+uefi_core = {git = "https://github.com/pop-project/uefi-core.git", rev = "1dc5e74bbe76f1573a4386c428d051e4e8f84beb"}
+uefi_logger = {git = "https://github.com/pop-project/uefi-core.git", rev = "1dc5e74bbe76f1573a4386c428d051e4e8f84beb"}
+section_extractor = {git = "https://github.com/pop-project/uefi-core.git", rev = "1dc5e74bbe76f1573a4386c428d051e4e8f84beb"}
+serial_writer = {git = "https://github.com/pop-project/uefi-core.git", rev = "1dc5e74bbe76f1573a4386c428d051e4e8f84beb"}
+
+slice_collections = { path = "Library/slice_collections", default-features = false }
+TplLock = { path = "Library/TplLock" }
+UefiDepexLib = { path = "Library/UefiDepexLib" }
+UefiDevicePathLib = { path = "Library/UefiDevicePathLib" }
+UefiEventLib = { path = "Library/UefiEventLib" }
+UefiGcdLib = { path = "Library/UefiGcdLib" }
+uefi_pecoff = { path = "Library/uefi_pecoff" }
+UefiProtocolDbLib = { path = "Library/UefiProtocolDbLib" }
+UefiRustAllocatorLib = { path = "Library/UefiRustAllocatorLib" }
+dxe_component_interface = { path = "Library/dxe_component_interface" }
+
+adv_logger = { path = "adv_logger" }
+sample_components = { path = "sample_components" }
+
+ahash = {version = "0.8", default-features = false, features = ["compile-time-rng"]}
+corosensei = {git = "https://github.com/pop-project/uefi-corosensei.git", rev = "d27241e17a5f3c0703fe9871e6f68cd838c05c6d", default-features = false }
+crc32fast = { version = "1.4", default-features = false }
+goblin = { git="https://github.com/m4b/goblin.git", rev = "617775898fdfd0b843b2e937c80e455cf6f2a637", default-features = false, features = ["pe32", "pe64", "te"] }
+lazy_static = { version = "1.0.0", features = ["spin_no_std"] }
+linked_list_allocator = "0.10.5"
+log = { version = "0.4.22", default-features = false, features = ["release_max_level_warn"]}
+mu_pi = {git = "https://github.com/microsoft/mu_rust_pi.git", tag = "v5.0.0"}
+mu_rust_helpers = { git = "https://github.com/microsoft/mu_rust_helpers.git", tag = "v1.2.0" }
+r-efi = { version = "5.1.0", default-features = false }
+scroll = { version = "0.12", default-features = false, features = ["derive"]}
+spin = "0.5.2"
+uart_16550 = "0.3.1"
+uuid = { version = "1", default-features = false }
+x86_64 = "0.15"
+
+[profile.dev]
+opt-level = 3
+
+[profile.test]
+opt-level = 0

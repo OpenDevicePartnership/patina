@@ -1,0 +1,16 @@
+[package]
+name = "UefiRustAllocatorLib"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "uefi_rust_allocator_lib"
+path = "src/lib.rs"
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+UefiGcdLib = {workspace=true}
+linked_list_allocator = {workspace=true}
+mu_pi = {workspace=true}
+r-efi = {workspace=true}
+TplLock = {workspace=true}

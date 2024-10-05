@@ -1,0 +1,12 @@
+[package]
+name = "TplLock"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "tpl_lock"
+path = "src/lib.rs"
+
+[dependencies]
+r-efi = { workspace = true }
+log = { workspace = true }

@@ -1,0 +1,20 @@
+[package]
+name = "UefiGcdLib"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "uefi_gcd_lib"
+path = "src/lib.rs"
+
+[dependencies]
+mu_pi = {workspace=true}
+mu_rust_helpers = {workspace=true}
+r-efi = {workspace=true}
+TplLock = {workspace=true}
+slice_collections = {workspace=true}
+log = {workspace=true}
+
+[dev-dependencies]
+slice_collections = { workspace = true, default-features = true }
