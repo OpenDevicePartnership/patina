@@ -1,0 +1,13 @@
+[toolchain]
+channel = "1.80.0"
+targets = ["x86_64-unknown-uefi", "aarch64-unknown-uefi"]
+components = ["rust-src"]
+
+# A custom section for CI pipelines to install tools
+[tools]
+cargo-make = "0.37.21"
+cargo-tarpaulin = "0.31.2"
+cargo-release = "0.25.12"
+mdbook = "0.4.40"
+mdbook-mermaid = "0.14.0"
+mdbook-admonish = "1.18.0"

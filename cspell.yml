@@ -1,0 +1,50 @@
+# @file cspell.yml
+#
+# CSpell configuration file
+#
+##
+# Copyright (c) Microsoft Corporation
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+version: "0.2"
+language: en
+dictionaries:
+  - "companies"
+  - "softwareTerms"
+  - "rust"
+ignorePaths:
+  - "**/target/**"
+  - "**/book/**"
+  - "docs/mermaid.min.js"
+minWordLength: 5
+caseSensitive: false
+allowCompoundWords: true
+words:
+  - "aarch"
+  - "ahash"
+  - "brotli"
+  - "corosensei"
+  - "depex"
+  - "docsrs"
+  - "dxecore"
+  - "dxefv"
+  - "edkii"
+  - "efiapi"
+  - "eficall"
+  - "gread"
+  - "guids"
+  - "gwrite"
+  - "longjmp"
+  - "mdbook"
+  - "nestedfv"
+  - "noopt"
+  - "pread"
+  - "pwrite"
+  - "reloc"
+  - "rfind"
+  - "rustc"
+  - "structs"
+  - "uncacheable"
+  - "wakeup"
+  - "zbuild"
+  - "zunstable"

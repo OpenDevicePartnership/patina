@@ -1,0 +1,19 @@
+[package]
+name = "uefi_depex"
+version = "0.1.8"
+edition = "2021"
+readme = "README.md"
+description = "A Depex parsing implementation for the dxe_core."
+license.workspace = true
+repository.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "uefi_depex"
+path = "src/lib.rs"
+
+[dependencies]
+r-efi = {workspace=true}
+uuid = {workspace=true}
+uefi_protocol_db = {workspace=true}
+log = { workspace = true }

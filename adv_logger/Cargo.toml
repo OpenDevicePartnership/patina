@@ -1,0 +1,17 @@
+[package]
+name = "adv_logger"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = { workspace = true }
+uefi_core = { workspace = true }
+uefi_logger = { workspace = true }
+serial_writer = { workspace = true }
+mu_pi = { workspace = true }
+r-efi = { workspace = true }
+spin = { workspace = true }
+uefi_component_interface = { workspace = true }
+mu_rust_helpers = { workspace = true }

@@ -1,0 +1,44 @@
+[config]
+default_to_workspace = false
+
+[env]
+RUSTC_BOOTSTRAP = 1
+ARCH = "X64"
+NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} --target x86_64-unknown-uefi -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
+
+[env.development]
+RUSTC_PROFILE = "dev"
+RUSTC_TARGET = "debug"
+
+[env.release]
+RUSTC_PROFILE = "release"
+RUSTC_TARGET = "release"
+
+[tasks.individual-package-targets]
+private = true
+script_runner = "@duckscript"
+script = '''
+args = get_env CARGO_MAKE_TASK_ARGS
+
+if is_empty ${args}
+  exit
+end
+
+1 = array ""
+2 = split ${args} ,
+3 = array_concat ${1} ${2}
+joined_args = array_join ${3} " -p "
+release ${1}
+release ${2}
+release ${3}
+
+joined_args = trim ${joined_args}
+set_env INDIVIDUAL_PACKAGE_TARGETS ${joined_args}
+release ${joined_args}
+'''
+
+[tasks.build]
+clear = true
+command = "cargo"
+args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(NO_STD_FLAGS, )"]
+dependencies = ["individual-package-targets"]

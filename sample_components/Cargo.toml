@@ -1,0 +1,16 @@
+[package]
+name = "sample_components"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "sample_components"
+path = "src/lib.rs"
+
+[dependencies]
+log = { workspace = true }
+uefi_core = { workspace = true }
+uefi_component_interface = { workspace = true }
+
+[features]
+std = []
