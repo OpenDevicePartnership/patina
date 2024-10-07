@@ -163,6 +163,9 @@ where
     fn is_black(&self) -> bool;
     fn color(&self) -> bool;
     fn parent(&self) -> Option<&Node<D>>;
+    // This trait function nor any of its implementations are used in the codebase, however the
+    // pattern makes sense, and is kept for future possible use. If the implementation is ever
+    // used, the #[allow(dead_code)] should be removed.
     #[allow(dead_code)]
     fn parent_ptr(&self) -> *mut Node<D>;
     fn set_parent(&self, node: Option<&Node<D>>);
