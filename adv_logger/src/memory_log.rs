@@ -9,8 +9,6 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-#![cfg(not(feature = "std"))]
-
 use core::{
     ffi::c_void,
     mem::size_of,

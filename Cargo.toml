@@ -16,11 +16,11 @@ include = [
 ]
 
 [workspace.dependencies]
-uefi_cpu_init = {git = "https://github.com/pop-project/uefi-core.git", rev = "1dc5e74bbe76f1573a4386c428d051e4e8f84beb"}
-uefi_core = {git = "https://github.com/pop-project/uefi-core.git", rev = "1dc5e74bbe76f1573a4386c428d051e4e8f84beb"}
-uefi_logger = {git = "https://github.com/pop-project/uefi-core.git", rev = "1dc5e74bbe76f1573a4386c428d051e4e8f84beb"}
-section_extractor = {git = "https://github.com/pop-project/uefi-core.git", rev = "1dc5e74bbe76f1573a4386c428d051e4e8f84beb"}
-serial_writer = {git = "https://github.com/pop-project/uefi-core.git", rev = "1dc5e74bbe76f1573a4386c428d051e4e8f84beb"}
+uefi_cpu_init = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
+uefi_core = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
+uefi_logger = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
+section_extractor = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
+serial_writer = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
 
 slice_collections = { path = "Library/slice_collections", default-features = false }
 TplLock = { path = "Library/TplLock" }
@@ -43,7 +43,7 @@ goblin = { git="https://github.com/m4b/goblin.git", rev = "617775898fdfd0b843b2e
 lazy_static = { version = "1.0.0", features = ["spin_no_std"] }
 linked_list_allocator = "0.10.5"
 log = { version = "0.4.22", default-features = false, features = ["release_max_level_warn"]}
-mu_pi = {git = "https://github.com/microsoft/mu_rust_pi.git", tag = "v5.0.0"}
+mu_pi = {git = "https://github.com/microsoft/mu_rust_pi.git", tag = "v5.0.1"}
 mu_rust_helpers = { git = "https://github.com/microsoft/mu_rust_helpers.git", tag = "v1.2.0" }
 r-efi = { version = "5.1.0", default-features = false }
 scroll = { version = "0.12", default-features = false, features = ["derive"]}
