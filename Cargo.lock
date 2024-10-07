@@ -567,8 +567,8 @@ checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
 
 [[package]]
 name = "mu_pi"
-version = "5.0.0"
-source = "git+https://github.com/microsoft/mu_rust_pi.git?tag=v5.0.0#30c622f94ed54af7bbe5090cd8cbf42ee30412dd"
+version = "5.0.1"
+source = "git+https://github.com/microsoft/mu_rust_pi.git?tag=v5.0.1#36843815d14bbe92f40bfe3e7b65af74e73bab93"
 dependencies = [
  "indoc",
  "num-traits",
@@ -600,12 +600,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.20.1"
+version = "1.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82881c4be219ab5faaf2ad5e5e5ecdff8c66bd7402ca3160975c93b24961afd1"
-dependencies = [
- "portable-atomic",
-]
+checksum = "1261fe7e33c73b354eab43b1273a57c8f967d0391e80353e51f764ac02cf6775"
 
 [[package]]
 name = "oorandom"
@@ -656,12 +653,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "portable-atomic"
-version = "1.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc9c68a3f6da06753e9335d63e27f6b9754dd1920d941135b7ea8224f141adb2"
-
-[[package]]
 name = "ppv-lite86"
 version = "0.2.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -672,9 +663,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.86"
+version = "1.0.87"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e719e8df665df0d1c8fbfd238015744736151d4445ec0836b8e628aae103b77"
+checksum = "b3e4daa0dcf6feba26f985457cdf104d4b4256fc5a09547140f3631bb076b19a"
 dependencies = [
  "unicode-ident",
 ]
@@ -856,7 +847,7 @@ dependencies = [
 [[package]]
 name = "section_extractor"
 version = "0.2.0"
-source = "git+https://github.com/pop-project/uefi-core.git?rev=1dc5e74bbe76f1573a4386c428d051e4e8f84beb#1dc5e74bbe76f1573a4386c428d051e4e8f84beb"
+source = "git+https://github.com/pop-project/uefi-core.git?rev=891819afcd4bceac694cae1f7339fa09334d9324#891819afcd4bceac694cae1f7339fa09334d9324"
 dependencies = [
  "alloc-no-stdlib",
  "brotli-decompressor",
@@ -903,7 +894,7 @@ dependencies = [
 [[package]]
 name = "serial_writer"
 version = "0.1.0"
-source = "git+https://github.com/pop-project/uefi-core.git?rev=1dc5e74bbe76f1573a4386c428d051e4e8f84beb#1dc5e74bbe76f1573a4386c428d051e4e8f84beb"
+source = "git+https://github.com/pop-project/uefi-core.git?rev=891819afcd4bceac694cae1f7339fa09334d9324#891819afcd4bceac694cae1f7339fa09334d9324"
 dependencies = [
  "uart_16550",
  "uefi_core",
@@ -1012,7 +1003,7 @@ dependencies = [
 [[package]]
 name = "uefi_core"
 version = "0.2.0"
-source = "git+https://github.com/pop-project/uefi-core.git?rev=1dc5e74bbe76f1573a4386c428d051e4e8f84beb#1dc5e74bbe76f1573a4386c428d051e4e8f84beb"
+source = "git+https://github.com/pop-project/uefi-core.git?rev=891819afcd4bceac694cae1f7339fa09334d9324#891819afcd4bceac694cae1f7339fa09334d9324"
 dependencies = [
  "r-efi",
 ]
@@ -1020,7 +1011,7 @@ dependencies = [
 [[package]]
 name = "uefi_cpu_init"
 version = "0.2.0"
-source = "git+https://github.com/pop-project/uefi-core.git?rev=1dc5e74bbe76f1573a4386c428d051e4e8f84beb#1dc5e74bbe76f1573a4386c428d051e4e8f84beb"
+source = "git+https://github.com/pop-project/uefi-core.git?rev=891819afcd4bceac694cae1f7339fa09334d9324#891819afcd4bceac694cae1f7339fa09334d9324"
 dependencies = [
  "lazy_static",
  "log",
@@ -1040,7 +1031,7 @@ dependencies = [
 [[package]]
 name = "uefi_logger"
 version = "0.2.0"
-source = "git+https://github.com/pop-project/uefi-core.git?rev=1dc5e74bbe76f1573a4386c428d051e4e8f84beb#1dc5e74bbe76f1573a4386c428d051e4e8f84beb"
+source = "git+https://github.com/pop-project/uefi-core.git?rev=891819afcd4bceac694cae1f7339fa09334d9324#891819afcd4bceac694cae1f7339fa09334d9324"
 dependencies = [
  "log",
  "uefi_core",

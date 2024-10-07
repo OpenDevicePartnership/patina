@@ -307,16 +307,21 @@ fn install_dxe_core_image(hob_list: &HobList) {
     // record this handle as the new dxe_core handle.
     private_data.dxe_core_image_handle = handle;
 
-    // now get the pe info so we can parse the image(s) and apply memory protections
-    match UefiPeInfo::parse(unsafe {
-        core::slice::from_raw_parts(
-            dxe_core_hob.alloc_descriptor.memory_base_address as *const u8,
-            dxe_core_hob.alloc_descriptor.memory_length as usize,
-        )
-    }) {
-        Ok(pe_info) => apply_image_memory_protections(&pe_info, &private_image_data),
-        Err(err) => {
-            log::error!("Failed to parse PE info for DXE Core: {:?}. Cannot apply DXE Core memory protections", err)
+    let dxe_core_ptr = dxe_core_hob.alloc_descriptor.memory_base_address as *mut c_void;
+    if dxe_core_ptr.is_null() {
+        log::error!("DXE Core ptr is null. Cannot apply DXE Core memory protections");
+    } else {
+        // now get the pe info so we can parse the image(s) and apply memory protections
+        match UefiPeInfo::parse(unsafe {
+            core::slice::from_raw_parts(
+                dxe_core_hob.alloc_descriptor.memory_base_address as *const u8,
+                dxe_core_hob.alloc_descriptor.memory_length as usize,
+            )
+        }) {
+            Ok(pe_info) => apply_image_memory_protections(&pe_info, &private_image_data),
+            Err(err) => {
+                log::error!("Failed to parse PE info for DXE Core: {:?}. Cannot apply DXE Core memory protections", err)
+            }
         }
     }
 

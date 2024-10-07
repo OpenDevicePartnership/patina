@@ -9,7 +9,6 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-#![cfg(not(feature = "std"))]
 use crate::memory_log::{self, AdvLoggerInfo, LogEntry};
 use core::marker::Send;
 use log::Level;

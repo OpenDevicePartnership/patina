@@ -163,6 +163,7 @@ where
     fn is_black(&self) -> bool;
     fn color(&self) -> bool;
     fn parent(&self) -> Option<&Node<D>>;
+    #[allow(dead_code)]
     fn parent_ptr(&self) -> *mut Node<D>;
     fn set_parent(&self, node: Option<&Node<D>>);
     fn left(&self) -> Option<&Node<D>>;
