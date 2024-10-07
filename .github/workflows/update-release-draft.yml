@@ -1,0 +1,36 @@
+# @file update-release-draft.yml
+#
+# Creates and continiously updates a release draft based on the PRs in the repository.
+#
+# It takes advantage of the labels used in the project ot automatically categorize the types of
+# changes in a given release. In addition, the semantic version of the code is constantly
+# maintianed based on typical semantic versioning rules.
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+name: Update Release Draft
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  draft:
+    name: Update Release Draft
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Build a Release Draft
+        uses: release-drafter/release-drafter@v6
+        with:
+          config-name: release-draft-config.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
