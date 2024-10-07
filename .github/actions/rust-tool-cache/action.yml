@@ -33,4 +33,4 @@ runs:
           TOOL_VERSION=$(echo "$line" | awk -F'=' '{gsub(/["'\'']/,"",$2); print $2}')
           cargo install "$TOOL_NAME" --version "$TOOL_VERSION"
         done
-      if: steps.tool-cache.outputs.cache-hit == 'false'
+      if: steps.tool-cache.outputs.cache-hit != 'true'

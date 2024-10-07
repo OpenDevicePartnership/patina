@@ -11,7 +11,7 @@ CARGO_FEATURES_FLAG = {value = "--features ${FEATURES}", condition = {env_set = 
 NO_STD_FLAGS = "--bin dxe_core_${TARGET_FEATURE} --profile ${RUSTC_PROFILE} --target ${TARGET_TRIPLE} --features ${TARGET_FEATURE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
 TEST_FLAGS = { value = "", condition = { env_not_set = ["TEST_FLAGS"] } }
-COV_FLAGS = { value = "--out html --exclude-files **/tests/* --exclude-files **/benches/*", condition = { env_not_set = ["COV_FLAGS"] } }
+COV_FLAGS = { value = "--out html --out xml --exclude-files **/tests/* --exclude-files **/benches/*", condition = { env_not_set = ["COV_FLAGS"] } }
 
 [env.development]
 RUSTC_PROFILE = "dev"
