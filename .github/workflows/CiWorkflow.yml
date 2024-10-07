@@ -1,0 +1,108 @@
+# @file CiWorkflow.yml
+#
+# A reusable CI workflow that runs basic CI tests and Rust CI tests.
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+name: CI
+
+on:
+  workflow_call:
+    secrets:
+      GH_PAT:
+        description: "GitHub Personal Access Token"
+        required: true
+
+jobs:
+  basic_ci:
+    name: Basic Repo CI
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ✅ Checkout Repository ✅
+        uses: actions/checkout@v4
+
+      - name: 🔤 Check Spelling 🔤
+        uses: streetsidesoftware/cspell-action@v6
+        with:
+          treat_flagged_words_as_errors: true
+          strict: true
+          inline: warning
+          incremental_files_only: false
+
+      - name: Markdown Linting
+        uses: avto-dev/markdown-lint@v1.5.0
+        with:
+          config: markdownlint.yml
+          args: "**/*.md"
+  run:
+    name: Rust CI
+
+    needs: [ basic_ci ]
+
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+        
+    steps:
+      - name: ✅ Checkout Repository ✅
+        uses: actions/checkout@v4
+    
+      - name: 🛠️ Download Rust Tools 🛠️
+        uses: pop-project/uefi-dxe-core/.github/actions/rust-tool-cache@main
+      
+      - name: Add Credentials # Remove once repositories are public
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}@github.com".insteadOf https://github.com
+        shell: bash
+
+      - name: Run cargo-fmt
+        run: cargo fmt --all --check
+        env:
+          RUSTC_BOOTSTRAP: 1
+
+      - name: 🧪 Run Tests 🧪
+        run: cargo make coverage
+
+      - name: Upload Coverage Report
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: target/cobertura.xml
+          fail_ci_if_error: false # Expect it to fail while repository is private
+
+      - name: Build documentation
+        run: cargo make doc
+
+      - name: Build std
+        run: cargo make build
+
+      - name: Build X64
+        run: cargo make build-x64
+
+      - name: Build AArch64
+        run: cargo make build-aarch64
+      
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}-ci-artifacts
+          path: |
+            Cargo.lock
+            target/cobertura.xml
+
+  finalize:
+    name: Finalize
+
+    needs: [ run ]
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Finish
+        run: echo "CI Complete"

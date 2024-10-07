@@ -1,0 +1,34 @@
+# @file label-issues.yml
+#
+# This workflow automatically applies labels to GitHub issues and pull requests based on the
+# file paths in a pull request or content in the body of an issue or pull request.
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+name: Apply Issue and PR Labels
+
+on:
+  issues:
+    types:
+      - edited
+      - opened
+  pull_request_target:
+    types:
+      - edited
+      - opened
+      - reopened
+      - synchronize
+  workflow_dispatch:
+
+jobs:
+  apply:
+
+    permissions:
+      issues: write
+      contents: read
+      pull-requests: write
+
+    uses: ./.github/workflows/Labeler.yml

@@ -1,0 +1,23 @@
+# @file ci-workflow.yml
+#
+# A workflow that runs basic CI tests and Rust CI tests, triggered on a pull_request or push to
+# main.
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  ci_workflow:
+    name: Run
+    uses: ./.github/workflows/CiWorkflow.yml
+    secrets: inherit

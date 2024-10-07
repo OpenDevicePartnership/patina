@@ -1,0 +1,11 @@
+# GitHub Issue Configuration File
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+blank_issues_enabled: false
+contact_links:
+  - name: 📃 Documentation
+    url: https://pop-project.github.io/uefi-dxe-core/
+    about: Goals, principles, repo layout, build instructions, and more.

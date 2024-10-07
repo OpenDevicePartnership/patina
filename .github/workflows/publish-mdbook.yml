@@ -1,0 +1,63 @@
+# @file publish-mdbook.yml
+#
+# A Github workflow that compiles an mdbook located at docs/* and publishes it
+# to the repository's githubpages page.
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+name: Publish Documentation
+
+on:
+  # Trigger this workflow manually if necessary
+  workflow_dispatch:
+
+  # Triggers this workflow if a commit is pushed to main in which a file in
+  # docs/** has been updated
+  push:
+    branches:
+      - main
+    paths:
+      - docs/**
+
+jobs:
+  build:
+    name: Build Documentation
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ✅ Checkout Repository ✅
+        uses: actions/checkout@v4
+
+      - name: 🛠️ Download Rust Tools 🛠️
+        uses: pop-project/uefi-dxe-core/.github/actions/rust-tool-cache@main
+
+      - name: 📄 Build Documentation 📄
+        run: mdbook build docs
+
+      - name: Upload Github Pages Site Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          name: github-pages
+          path: docs/book/
+
+  publish:
+    name: Publish Documentation
+
+    needs: [build]
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+      pages: write
+
+    steps:
+      - name: 🚀 Deploy Github Pages Site 🚀
+        uses: actions/deploy-pages@v4
+        with:
+          token: ${{ github.token }}
+          artifact_name: github-pages

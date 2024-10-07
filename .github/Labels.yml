@@ -1,0 +1,178 @@
+# @file Labels.yml
+#
+# Specifies the labels used the in applicable repositories.
+#
+# This file is meant to define the labels used such that label management is consistent, centralized,
+# and tracked in source control.
+#
+# Note that:
+#   1. If a label color or description changes, the same label is updated with the new color or description.
+#   2. If a label name changes, add the old label name to the `aliases` section. That will update the old label
+#      to the new label keeping label usage in previously labeled issues and PRs.
+#   3. All existing labels which are not listed in the manifest will be retained.
+#      - We can specify to delete them in the future if desired.
+#      - Please do not duplicate or let stale labels accumulate in repos. Only repo-specific labels should
+#        be defined outside this file. Any other label should be reviewed and added to this file.
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+# For more information, see:
+# https://github.com/EndBug/label-sync
+# Maintenance: Keep labels organized in ascending alphabetical order - easier to scan, identify duplicates, etc.
+
+- name: complexity:advanced
+  description: Requires substantial background information and effort to accomplish
+  color: 'd35400'
+  aliases: []
+- name: complexity:easy
+  description: Requires minimal background information and effort to accomplish
+  color: '229954'
+  aliases: []
+- name: complexity:good-first-issue
+  description: Good for newcomers
+  color: '7057ff'
+  aliases: []
+- name: complexity:intermediate
+  description: Requires intermediate background information and effort to accomplish
+  color: 'd4ac0d'
+  aliases: []
+
+- name: impact:breaking-change
+  description: Requires integration attention
+  color: 'a54418'
+  aliases: []
+- name: impact:non-functional
+  description: Does not have a functional impact
+  color: 'c2e0c6'
+  aliases: []
+- name: impact:security
+  description: Has a security impact
+  color: '31df8c'
+  aliases: []
+- name: impact:testing
+  description: Affects testing
+  color: 'd4c5f9'
+  aliases: []
+
+- name: language:python
+  description: Pull requests that update Python code
+  color: '2b67c6'
+  aliases: []
+
+- name: semver:major
+  description: Pull requests that should increment the release major version
+  color: '000000'
+  aliases: []
+- name: semver:minor
+  description: Pull requests that should increment the release minor version
+  color: '000000'
+  aliases: []
+- name: semver:patch
+  description: Pull requests that should increment the release patch version
+  color: '000000'
+  aliases: []
+
+- name: state:backlog
+  description: In the backlog
+  color: 'e6e8d3'
+  aliases: []
+- name: state:duplicate
+  description: This issue or pull request already exists
+  color: 'cfd3d7'
+  aliases: []
+- name: state:help-wanted
+  description: Extra attention (collaborator) is needed
+  color: '008672'
+  aliases: []
+- name: state:invalid
+  description: This doesn't seem right
+  color: 'e4e669'
+  aliases: []
+- name: state:needs-maintainer-feedback
+  description: Needs more information from a maintainer to determine next steps
+  color: 'e7a540'
+  aliases: []
+- name: state:needs-owner
+  description: Needs an issue owner to be assigned
+  color: 'f9e79f'
+  aliases: []
+- name: state:needs-submitter-info
+  description: Needs more information from the submitter to determine next steps
+  color: 'fcf3cf'
+  aliases: []
+- name: state:needs-triage
+  description: Needs to triaged to determine next steps
+  color: 'f1c40f'
+  aliases: []
+- name: state:stale
+  description: Has not been updated in a long time
+  color: 'c0da14'
+  aliases: []
+- name: state:under-discussion
+  description: Under discussion
+  color: 'c5def5'
+  aliases: []
+- name: state:wont-fix
+  description: This will not be worked on
+  color: 'ffffff'
+  aliases: []
+
+- name: type:bug
+  description: Something isn't working
+  color: 'd73a4a'
+  aliases: []
+- name: type:dependabot
+  description: Created by dependabot
+  color: 'c57a90'
+  aliases: []
+- name: type:dependencies
+  description: Pull requests that update a dependency file
+  color: '0366d6'
+  aliases: []
+- name: type:design-change
+  description: A new proposal or modification to a feature design
+  color: '5b2c6f'
+  aliases: []
+- name: type:documentation
+  description: Improvements or additions to documentation
+  color: '0075ca'
+  aliases: []
+- name: type:enhancement
+  description: New feature or pull request
+  color: 'a2eeef'
+  aliases: []
+- name: type:feature-request
+  description: A new feature proposal
+  color: 'a9dfbf'
+  aliases: []
+- name: type:file-sync
+  description: Files automatically synced from another repo
+  color: '95d0e6'
+  aliases: []
+- name: type:notes
+  description: Notes from an organized meeting
+  color: 'd9ee5d'
+  aliases: []
+- name: type:submodules
+  description: Pull requests that update submodules
+  color: '000000'
+  aliases: []
+- name: type:question
+  description: Further information is requested
+  color: 'd876e3'
+  aliases: []
+
+- name: urgency:low
+  description: Little to no impact
+  color: '00d26a'
+  aliases: []
+- name: urgency:medium
+  description: Important with a moderate impact
+  color: 'fcd53f'
+  aliases: []
+- name: urgency:high
+  description: Significant with a critical impact
+  color: 'ff6723'
+  aliases: []

@@ -1,0 +1,36 @@
+# @file action.yml
+#
+# An action that loads rust tools and toolchains from cache. If there is a miss, it will install
+# them. the tools are read from the tools section of the rust-toolchain.toml file at the root
+# of the repository.
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+name: "Install Rust Tools"
+description: "This action loads rust tools and toolchains from cache, or installs them."
+
+runs:
+  using: composite
+  steps:
+    - name: Rust Tool Cache
+      id: tool-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.rustup/toolchains/
+        key: ${{ runner.os }}-rust-tools-${{ hashFiles('**/rust-toolchain.toml' )}}
+
+    # Read any tools from rust-toolchain.toml file and installs them
+    - name: Install Rust Tools
+      shell: bash
+      run: |
+        # Extract tools section from rust-toolchain.toml
+        sed -n '/\[tools\]/,/^$/p' rust-toolchain.toml | grep -v '\[tools\]' | while read -r line; do
+          TOOL_NAME=$(echo "$line" | awk -F'=' '{gsub(/ /, "", $1); print $1}')
+          TOOL_VERSION=$(echo "$line" | awk -F'=' '{gsub(/["'\'']/,"",$2); print $2}')
+          cargo install "$TOOL_NAME" --version "$TOOL_VERSION"
+        done
+      if: steps.tool-cache.outputs.cache-hit != 'true'

@@ -1,0 +1,141 @@
+# @file ReleaseWorkflow.yml
+#
+# A reusable CI workflow that releases all crates in a repository.
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+name: Publish
+
+on:
+  workflow_call:
+    secrets:
+      GH_PAT:
+        description: 'The GitHub Personal Access Token to use for authenticating with GitHub'
+        required: true
+      CRATES_IO_TOKEN:
+        description: 'The token to use for authenticating with crates.io'
+        required: true
+
+jobs:
+  run:
+    name: Publish
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: ✅ Checkout Repository ✅
+        uses: actions/checkout@v4
+
+      - name: 🛠️ Download Rust Tools 🛠️
+        uses: pop-project/uefi-dxe-core/.github/actions/rust-tool-cache@main
+      
+      - name: Add Credentials # Remove once repositories are public
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}@github.com".insteadOf https://github.com
+        shell: bash
+      
+      - name: Get Current Draft Release
+        id: draft_release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releases = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+
+            const draftReleaseList = releases.data.filter(release => release.draft);
+
+            if (draftReleaseList.length === 0) {
+              core.setFailed("No draft release found. Exiting with error.");
+            } else if (draftReleaseList.length > 1) {
+              core.setFailed("Multiple draft releases found. Exiting with error.");
+            } else {
+              const draftRelease = draftReleaseList[0];
+
+              let tag = draftRelease.tag_name;
+              if (tag.startsWith('v')) {
+                tag = tag.slice(1);
+              }
+              core.setOutput("id", draftRelease.id);
+              core.setOutput("tag", tag);
+              console.log(`Draft Release ID: ${draftRelease.id}`);
+              console.log(`Draft Release Tag: ${tag}`);
+            }
+        
+      - name: Cargo Release Dry Run
+        run: cargo release ${{ steps.draft_release.outputs.tag }} --workspace
+        env:
+          RUSTC_BOOTSTRAP: 1
+      
+      - name: Login to Crates.io
+        run: cargo login ${{ secrets.CRATES_IO_TOKEN }}
+      
+      - name: Update git credentials
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Cargo Release
+        run: cargo release ${{ steps.draft_release.outputs.tag }} -x --no-tag --no-confirm --workspace
+        env:
+          RUSTC_BOOTSTRAP: 1
+  
+      - name: Wait for Release Draft Updater
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const workflowId = "update-release-draft.yml";
+            const ref = "main";
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            // Try for 10 minutes. It should only take a few seconds
+            let maxAttempts = 40;
+            let attempt = 0;
+            let completed = false
+
+            while (attempt < maxAttempts && !completed) {
+              await new Promise(resolve => setTimeout(resolve, 15000));
+              const runs = await github.rest.actions.listWorkflowRuns({
+                owner,
+                repo,
+                workflow_id: workflowId,
+                branch: ref,
+                event: 'push',
+                status: 'in_progress',
+              });
+
+              if (runs.data.workflow_runs.length === 0) {
+                completed = true;
+              } else {
+                attempt++;
+              }
+            }
+            
+            if (!completed) {
+              core.setFailed("Release Drafter did not complete in time. Please perform the release manually.");
+            }
+
+      - name: Publish Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releaseId = ${{ steps.draft_release.outputs.id }};
+
+            const response = await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId,
+              draft: false,
+            });
+
+            if (response.status !== 200) {
+              core.setFailed(`Failed to publish release. Exiting with error.`);
+            }
