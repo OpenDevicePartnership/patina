@@ -4,7 +4,7 @@ Due to the complex nature of modern system firmware, it is important to design c
 libraries with the necessary abstractions to allow platforms or IHVs the needed customization to
 account for silicon, hardware or even just platform differences. With EDKII, `LibraryClasses` are
 used as that point of abstraction, where the library's header file is the defined interface. With
-rust, `Traits` become that point of abstraction. 
+rust, `Traits` become that point of abstraction.
 
 Depending on the use case, your library or component may re-use an existing, well known, trait, or
 it may chose to create it's own trait. **IMPORTANT:** Unlike EDKII, we do not use traits for code
@@ -50,7 +50,7 @@ that takes a dependency on another trait being implemented for the same type.
 
 In this example, we start with the existing [Log](https://docs.rs/log/latest/log/trait.Log.html)
 abstraction that works with the `log` crate for, as you guessed, logging purposes. We create a
-generic serial logger implementation that implements this trait, but creates an additional 
+generic serial logger implementation that implements this trait, but creates an additional
 abstraction point as to the underlying serial write. We use this abstraction point to create
 multiple implementations that can perform a serial write, including a uart_16550, uart_pl011, and
 a simple stdio writer.

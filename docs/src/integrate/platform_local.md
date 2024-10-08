@@ -4,7 +4,7 @@ This section assumes you are attempting to compile the DXE Core binary through t
 system, that you already have your crate setup as specified in [Workspace Setup](./compile_local.md),
 and that `cargo make build` successfully builds the binary.
 
-## Add a Module Information (INF) File 
+## Add a Module Information (INF) File
 
 The first step will be to add a INF to the workspace, which is used by the build system to provide
 information regarding the module. If you are still in the directory of your crate, you can run the
@@ -14,7 +14,7 @@ following command:
 
 Your workspace should now look like this:
 
-```
+``` txt
 {{#include ../files/local_file_directory.txt}}
 ```
 
@@ -35,7 +35,7 @@ that it *should* be built, but *how* it should be built. This is fairly simple; 
 `[Components]` section, or the `[Components.$(ARCH)]` section depending on your platform; comment
 out the current DxeMain, and add the following line:
 
-```
+``` txt
 # MdeModulePkg/Core/Dxe/DxeMain.inf
 PlatformPkg/PlatformDxeCore/PlatformDxeCore.inf
 ```
@@ -48,7 +48,7 @@ to place the compiled file in the final image.
 Wherever your current platform defines the current DxeMain, comment it out and replace it with the
 pure rust version:
 
-```
+``` txt
 # INF MdeModulePkg/Core/Dxe/DxeMain.inf
 INF PlatformPkg/PlatformDxeCore/PlatformDxeCore.inf
 ```

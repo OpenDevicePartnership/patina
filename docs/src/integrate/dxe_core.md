@@ -102,7 +102,8 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
 }
 ```
 
-**Note:** If you copy + paste this directly, the compiler will not know what `mu_cpu` or `mu_section_extractor` is. You will have to add that to your platform's `Cargo.toml` file.
+**Note:** If you copy + paste this directly, the compiler will not know what `mu_cpu` or
+`mu_section_extractor` is. You will have to add that to your platform's `Cargo.toml` file.
 Additionally, where the `Default::default()` option is, this is where you would provide and
 configurations to the DXE Core, similar to a PCD value.
 
@@ -165,7 +166,7 @@ implementation, This could be different if you create your own.
 
 The next static that we generate is the component that gets executed during runtime, which
 initializes and publishes the advanced logger so that regular EDKII built components also have
-access to the advanced logger. 
+access to the advanced logger.
 
 Next, is we set the global logger to our static logger. That is just a `log` crate thing. Finally,
 we initialize the component, and then add it to the list of components that the `dxe_core` will
@@ -205,4 +206,3 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     loop {}
 }
 ```
- 

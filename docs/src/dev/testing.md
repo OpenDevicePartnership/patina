@@ -7,7 +7,7 @@ with that and come back here. We will stick to what is directly applicable to th
 Testing in rust can be broken up into three core categories: (1) Unit testing, where the developer
 has access to the internal, private state of the module to ensure the internals work as expected.
 (2) Integration Testing, is done outside of the module and tests the code from an external
-interface standpoint. (3) Platform Testing - e.g. writing DXE_DRIVERs that perform tests on a 
+interface standpoint. (3) Platform Testing - e.g. writing DXE_DRIVERs that perform tests on a
 physical or virtual platform. (4) Doc testing, is a testing type that is covered in [Documentation](documenting.md),
 but suffice it to say that code snippets for inline documentation can be compiled and executed.
 

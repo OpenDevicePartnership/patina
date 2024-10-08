@@ -9,7 +9,7 @@ See the cargo book entry on [Integration Testing](https://doc.rust-lang.org/rust
 
 Here is an example file structure for a crate that contains integration tests:
 
-```
+``` txt
 ├── src
 |    └── main.rs
 ├── tests

@@ -11,14 +11,14 @@ Start off by creating a new rust crate, in the following example, we will call t
 
 From the terminal, in the directory you wish to generate a crate, execute the following command:
 
-```
+``` txt
 > cargo new PlatformDxeCore
 > cd PlatformDxeCore
 ```
 
 You should see the following folder structure:
 
-```
+``` txt
 ├── src
 |    └── main.rs
 ├── .gitignore
@@ -32,7 +32,6 @@ user experience by automatically providing the command line arguments necessary 
 UEFI target. From the root of your platform repository, run the following command:
 
 `> touch Makefile.toml`
-
 
 Finally, Add the following contents to the file:
 
@@ -70,7 +69,7 @@ Add the following contents to the file, substituting the version with your expec
 While there are additional files you could add, just as a rustfmt.toml, this is the bare minimum
 workspace you need to build an EFI binary for a singular architecture:
 
-```
+``` txt
 ├── src
 |    └── main.rs
 ├── .gitignore
