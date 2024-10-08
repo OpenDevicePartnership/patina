@@ -56,6 +56,7 @@ multiple components in the same workspace.
 ```
 
 ## Getting Started
+
 The design principle behind components and traits is similar to that of EDKII in which
 core functionality is present in the component (or library) and any usage of library
 functionality is abstracted through a library interface. in EDK2, the library classes system

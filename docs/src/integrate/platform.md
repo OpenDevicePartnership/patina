@@ -1,6 +1,6 @@
 # Updating the Platform
 
-This section will go over how to update your platform repository to be able to add the new pure 
+This section will go over how to update your platform repository to be able to add the new pure
 ust DXE Core into the final flash image such that it is discovered by, and executed by, the PEI
 phase.
 

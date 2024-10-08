@@ -776,7 +776,7 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
         private_info.started = true;
         let entry_point = private_info.entry_point;
 
-        // save a pointer to the yeilder so that exit() can use it.
+        // save a pointer to the yielder so that exit() can use it.
         private_data.image_start_contexts.push(yielder as *const Yielder<_, _>);
 
         // get a copy of the system table pointer to pass to the entry point.
@@ -792,7 +792,7 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
 
         //safety note: any variables with "Drop" routines that need to run
         //need to be explicitly dropped before calling exit(). Since exit()
-        //effectively "longjmps" back to StartImage(), rust automatic
+        //effectively "longjmp"s back to StartImage(), rust automatic
         //drops will not be triggered.
         exit(image_handle, status, 0, core::ptr::null_mut());
         status
@@ -963,7 +963,7 @@ extern "efiapi" fn exit(
 
     // safety note: any variables with "Drop" routines that need to run
     // need to be explicitly dropped before calling suspend(). Since suspend()
-    // effectively "longjmps" back to StartImage(), rust automatic
+    // effectively "longjmp"s back to StartImage(), rust automatic
     // drops will not be triggered.
 
     // transfer control back to start_image by calling the suspend function on

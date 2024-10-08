@@ -24,13 +24,15 @@ Once installed, the toolchain and components need to be installed, substituting 
 for your platform's specified version:
 
 Windows:
-```
+
+``` cmd
 > rustup toolchain install $(VERSION)-x86_64-pc-windows-msvc
 > rustup component add rust-src --toolchain $(VERSION)-x86_64-pc-windows-msvc
 ```
 
 Linux:
-```
+
+``` cmd
 > rustup toolchain install $(VERSION)-x86_64-unknown-linux-gnu
 > rustup component add rust-src --toolchain $(VERSION)-x86_64-unknown-linux-gnu
 ```
@@ -52,7 +54,6 @@ version:
 or if you have `binstall` installed:
 
 `> cargo binstall cargo-make --version $(VERSION)`
-
 
 ### Cargo Tarpaulin
 

@@ -8,8 +8,31 @@ on:
     branches: [ "main" ]
 
 jobs:
+  basic_ci:
+    name: Run Repo CI Tests
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ✅ Checkout Repository ✅
+        uses: actions/checkout@v4
+
+      - name: 🔤 Check Spelling 🔤
+        uses: streetsidesoftware/cspell-action@v6
+        with:
+          treat_flagged_words_as_errors: true
+          strict: true
+          inline: warning
+
+      - name: Markdown Linting
+        uses: avto-dev/markdown-lint@v1.5.0
+        with:
+          config: markdownlint.yml
+          args: "**/*.md"
   run:
-    name: Run Standard Tests
+    name: Run Rust CI Tests
+
+    needs: [ basic_ci ]
 
     runs-on: ${{ matrix.os }}
 
@@ -28,7 +51,7 @@ jobs:
         run: |
           git config --global url."https://${{ secrets.GH_PAT }}@github.com".insteadOf https://github.com
         shell: bash
-      
+
       - name: Run cargo-fmt
         run: cargo fmt --all --check
         env:

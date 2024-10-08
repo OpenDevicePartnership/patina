@@ -9,7 +9,7 @@ Start off by determining where you want to place the crate representing your pla
 DXE core. Every platform is different, so yours may be too, but a common place for Platform
 specific components is inside the platform package:
 
-```
+``` txt
 > cd MyPlatformPkg
 > touch PlatformDxeCore
 > cargo new PlatformDxeCore
@@ -19,7 +19,7 @@ specific components is inside the platform package:
 
 You should see the following folder structure:
 
-```
+``` txt
 ├── PlatformPkg
      └── PlatformDxeCore
           ├── src
@@ -89,6 +89,6 @@ Add the following contents to the file, substituting the version with your expec
 While there are additional files you could add, just as a rustfmt.toml, this is the bare minimum
 workspace you need to build an EFI binary for a singular architecture:
 
-```
+``` txt
 {{#include ../files/local_file_directory.txt}}
 ```

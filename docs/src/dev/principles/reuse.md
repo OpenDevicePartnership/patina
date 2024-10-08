@@ -26,6 +26,6 @@ What (3) means is that `TraitA` in `Crate1` version `1.0.0` will be treated as a
 different trait than `TraitA` in `Crate1` version `1.0.1`. You'll end up seeing compilation errors
 such as the following, when it works previously.
 
-```
+``` txt
 ^^^^^^^ the trait `XXXXX` is not implemented for `YYYYYYY`
 ```

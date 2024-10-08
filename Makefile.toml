@@ -87,11 +87,11 @@ command = "cargo"
 args = ["run", "@@split(STD_FLAGS, )", "--bin", "dxe_core_std"]
 
 [tasks.build-arch]
-description = """Builds an architure-specific DXE Core.
+description = """Builds an architecture-specific DXE Core.
 
 Customizations:
     -p [development|release]: Builds in debug or release. Default: development
-    -e ARCH=[IA32|X64|AARCH64]: Builds with specifed arch. Default: X64
+    -e ARCH=[IA32|X64|AARCH64]: Builds with specified arch. Default: X64
     -e FEATURES=[feature,...]: Builds with the specified features. Default: none
 
 Example:

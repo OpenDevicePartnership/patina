@@ -62,7 +62,12 @@ will operate safely and as expected. A safety section should also be bubbled up 
 
 It is common (but not required) to see pre-condition checks in the function that validates these
 conditions, and panic if they fail. One common example is `slice::from_raw_parts` which will panic
-with the statement: ``unsafe precondition(s) violated: slice::from_raw_parts requires the pointer to be aligned and non-null, and the total size of the slice not to exceed `isize::MAX` ``.
+with the statement:
+
+``` txt
+unsafe precondition(s) violated: slice::from_raw_parts requires the pointer
+to be aligned and non-null, and the total size of the slice not to exceed `isize::MAX`
+```
 
 ``` rust
 /// ## Safety
