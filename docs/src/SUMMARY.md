@@ -3,7 +3,7 @@
 [Introduction](introduction.md)
 [Core Concepts](concepts.md)
 
-## Rust Development for UEFI
+# Rust Development for UEFI
 
 - [Best Practices](dev/principles.md)
   - [Abstractions](dev/principles/abstractions.md)
@@ -17,7 +17,7 @@
 - [Documenting](dev/documenting.md)
   - [Quick Reference](dev/documenting/reference.md)
 
-## Integrating the Rust DXE Core
+# Integrating the Rust DXE Core
 
 - [Workspace Setup](integrate/workspace.md)
   - [Local to the Platform](integrate/compile_local.md)
@@ -27,7 +27,7 @@
   - [Local to the Platform](integrate/platform_local.md)
   - [External to the Platform](integrate/platform_external.md)
 
-## Contributing to the Rust DXE Core
+# Contributing to the Rust DXE Core
 
 - [Theory and Operation](dxe_core/operation.md)
   - [Advanced Logger]()
@@ -41,7 +41,7 @@
   - [Synchronization]()
   - [Testing]()
 
-## Creating a Rust DXE Driver
+# Creating a Rust DXE Driver
 - [Component Interface](driver/interface.md)
 
 -----------
