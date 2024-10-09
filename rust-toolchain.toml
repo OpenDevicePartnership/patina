@@ -8,3 +8,4 @@ components = ["rust-src"]
 cargo-make = "0.37.21"
 cargo-tarpaulin = "0.31.2"
 mdbook = "0.4.40"
+mdbook-mermaid = "0.14.0"
