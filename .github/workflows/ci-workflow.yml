@@ -72,7 +72,7 @@ jobs:
         run: cargo make build
 
       - name: Build X64
-        run: cargo make -e ARCH=X64 build-arch
+        run: cargo make build-x64
 
       - name: Build AArch64
-        run: cargo make -e ARCH=AARCH64 build-arch
+        run: cargo make build-aarch64
