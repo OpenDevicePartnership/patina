@@ -31,7 +31,7 @@ uefi_core = { workspace = true }
 uefi_cpu_init = { workspace = true }
 uefi_logger = { workspace = true }
 section_extractor = { workspace = true }
-dxe_component_interface = { workspace = true }
+uefi_component_interface = { workspace = true }
 serial_writer = { workspace = true }
 mu_pi = { workspace = true }
 mu_rust_helpers = { workspace = true }
@@ -39,14 +39,14 @@ r-efi = { workspace = true }
 spin = { workspace = true}
 uuid = { workspace = true }
 
-UefiGcdLib = { workspace = true }
-UefiProtocolDbLib = { workspace = true }
-UefiRustAllocatorLib = { workspace = true }
-UefiDevicePathLib = { workspace = true }
-UefiEventLib = { workspace = true }
-UefiDepexLib = { workspace = true}
+uefi_gcd = { workspace = true }
+uefi_protocol_db = { workspace = true }
+uefi_allocator = { workspace = true }
+uefi_device_path = { workspace = true }
+uefi_event = { workspace = true }
+uefi_depex = { workspace = true}
 uefi_pecoff = { workspace = true }
-TplLock = { workspace = true }
+uefi_tpl_lock = { workspace = true }
 
 adv_logger = { workspace = true }
 sample_components = { workspace = true }

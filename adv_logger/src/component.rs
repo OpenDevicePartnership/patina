@@ -11,9 +11,9 @@
 //!
 use alloc::boxed::Box;
 use core::{ffi::c_void, ptr};
-use dxe_component_interface::{DxeComponent, DxeComponentInterface};
 use mu_pi::hob::{Hob, PhaseHandoffInformationTable};
 use r_efi::efi;
+use uefi_component_interface::{DxeComponent, DxeComponentInterface};
 use uefi_core::{
     error::{EfiError, Result},
     interface::SerialIO,

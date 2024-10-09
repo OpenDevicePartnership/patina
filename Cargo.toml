@@ -22,16 +22,16 @@ uefi_logger = {git = "https://github.com/pop-project/uefi-core.git", rev = "8918
 section_extractor = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
 serial_writer = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
 
-slice_collections = { path = "Library/slice_collections", default-features = false }
-TplLock = { path = "Library/TplLock" }
-UefiDepexLib = { path = "Library/UefiDepexLib" }
-UefiDevicePathLib = { path = "Library/UefiDevicePathLib" }
-UefiEventLib = { path = "Library/UefiEventLib" }
-UefiGcdLib = { path = "Library/UefiGcdLib" }
+uefi_collections = { path = "Library/uefi_collections", default-features = false }
+uefi_tpl_lock = { path = "Library/uefi_tpl_lock" }
+uefi_depex = { path = "Library/uefi_depex" }
+uefi_device_path = { path = "Library/uefi_device_path" }
+uefi_event = { path = "Library/uefi_event" }
+uefi_gcd = { path = "Library/uefi_gcd" }
 uefi_pecoff = { path = "Library/uefi_pecoff" }
-UefiProtocolDbLib = { path = "Library/UefiProtocolDbLib" }
-UefiRustAllocatorLib = { path = "Library/UefiRustAllocatorLib" }
-dxe_component_interface = { path = "Library/dxe_component_interface" }
+uefi_protocol_db = { path = "Library/uefi_protocol_db" }
+uefi_allocator = { path = "Library/uefi_allocator" }
+uefi_component_interface = { path = "Library/uefi_component_interface" }
 
 adv_logger = { path = "adv_logger" }
 sample_components = { path = "sample_components" }

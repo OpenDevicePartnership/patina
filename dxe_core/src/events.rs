@@ -17,8 +17,8 @@ use alloc::vec;
 use r_efi::efi;
 
 use mu_pi::protocols::{cpu_arch, timer};
-use uefi_event_lib::{SpinLockedEventDb, TimerDelay};
-use uefi_gcd_lib::gcd;
+use uefi_event::{SpinLockedEventDb, TimerDelay};
+use uefi_gcd::gcd;
 
 use crate::protocols::PROTOCOL_DB;
 

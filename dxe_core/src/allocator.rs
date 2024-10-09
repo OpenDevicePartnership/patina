@@ -21,7 +21,7 @@ use mu_pi::{
     hob::{EFiMemoryTypeInformation, HobList, MEMORY_TYPE_INFO_HOB_GUID},
 };
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
-use uefi_rust_allocator_lib::{uefi_allocator::UefiAllocator, AllocationStrategy};
+use uefi_allocator::{uefi_allocator::UefiAllocator, AllocationStrategy};
 
 // Todo: Move to a centralized, permanent location
 const UEFI_PAGE_SIZE: usize = 0x1000;
@@ -36,32 +36,24 @@ const PRIVATE_ALLOCATOR_TRACKING_GUID: efi::Guid =
 // to a different allocator. This allocator does not need to be public since all dynamic allocations will implicitly
 // allocate from it.
 #[cfg_attr(all(not(feature = "std"), not(test)), global_allocator)]
-static EFI_BOOT_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocator::new(
-    &GCD,
-    efi::BOOT_SERVICES_DATA,
-    uefi_protocol_db_lib::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-    None,
-);
+static EFI_BOOT_SERVICES_DATA_ALLOCATOR: UefiAllocator =
+    UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, uefi_protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE, None);
 
 // The following allocators are directly used by the core. These allocators are declared static so that they can easily
 // be used in the core without e.g. the overhead of acquiring a lock to retrieve them from the allocator map that all
 // the other allocators use.
 pub static EFI_LOADER_CODE_ALLOCATOR: UefiAllocator =
-    UefiAllocator::new(&GCD, efi::LOADER_CODE, uefi_protocol_db_lib::EFI_LOADER_CODE_ALLOCATOR_HANDLE, None);
+    UefiAllocator::new(&GCD, efi::LOADER_CODE, uefi_protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE, None);
 
-pub static EFI_BOOT_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
-    &GCD,
-    efi::BOOT_SERVICES_CODE,
-    uefi_protocol_db_lib::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE,
-    None,
-);
+pub static EFI_BOOT_SERVICES_CODE_ALLOCATOR: UefiAllocator =
+    UefiAllocator::new(&GCD, efi::BOOT_SERVICES_CODE, uefi_protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE, None);
 
 // This needs to call MemoryAttributesTable::install on allocation/deallocation, hence having the real callback
 // passed in
 pub static EFI_RUNTIME_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
     efi::RUNTIME_SERVICES_CODE,
-    uefi_protocol_db_lib::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE,
+    uefi_protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE,
     Some(MemoryAttributesTable::install),
 );
 
@@ -70,7 +62,7 @@ pub static EFI_RUNTIME_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::n
 pub static EFI_RUNTIME_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
     efi::RUNTIME_SERVICES_DATA,
-    uefi_protocol_db_lib::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE,
+    uefi_protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE,
     Some(MemoryAttributesTable::install),
 );
 
@@ -152,13 +144,13 @@ impl<'a> AllocatorMap {
     // memory type exists.
     fn handle_for_memory_type(memory_type: efi::MemoryType) -> Result<efi::Handle, efi::Status> {
         match memory_type {
-            efi::RESERVED_MEMORY_TYPE => Ok(uefi_protocol_db_lib::RESERVED_MEMORY_ALLOCATOR_HANDLE),
-            efi::LOADER_CODE => Ok(uefi_protocol_db_lib::EFI_LOADER_CODE_ALLOCATOR_HANDLE),
-            efi::LOADER_DATA => Ok(uefi_protocol_db_lib::EFI_LOADER_DATA_ALLOCATOR_HANDLE),
-            efi::BOOT_SERVICES_CODE => Ok(uefi_protocol_db_lib::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE),
-            efi::BOOT_SERVICES_DATA => Ok(uefi_protocol_db_lib::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE),
-            efi::ACPI_RECLAIM_MEMORY => Ok(uefi_protocol_db_lib::EFI_ACPI_RECLAIM_MEMORY_ALLOCATOR_HANDLE),
-            efi::ACPI_MEMORY_NVS => Ok(uefi_protocol_db_lib::EFI_ACPI_MEMORY_NVS_ALLOCATOR_HANDLE),
+            efi::RESERVED_MEMORY_TYPE => Ok(uefi_protocol_db::RESERVED_MEMORY_ALLOCATOR_HANDLE),
+            efi::LOADER_CODE => Ok(uefi_protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE),
+            efi::LOADER_DATA => Ok(uefi_protocol_db::EFI_LOADER_DATA_ALLOCATOR_HANDLE),
+            efi::BOOT_SERVICES_CODE => Ok(uefi_protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE),
+            efi::BOOT_SERVICES_DATA => Ok(uefi_protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE),
+            efi::ACPI_RECLAIM_MEMORY => Ok(uefi_protocol_db::EFI_ACPI_RECLAIM_MEMORY_ALLOCATOR_HANDLE),
+            efi::ACPI_MEMORY_NVS => Ok(uefi_protocol_db::EFI_ACPI_MEMORY_NVS_ALLOCATOR_HANDLE),
             // Check to see if it is an invalid type. Memory types efi::PERSISTENT_MEMORY and above to 0x6FFFFFFF are illegal.
             efi::PERSISTENT_MEMORY..=0x6FFFFFFF => Err(efi::Status::INVALID_PARAMETER)?,
             // not a well known handle or illegal memory type - check the active allocators and create a handle if it doesn't
@@ -656,11 +648,11 @@ mod tests {
             let allocators = ALLOCATORS.lock();
 
             for (mem_type, handle) in [
-                (efi::LOADER_CODE, uefi_protocol_db_lib::EFI_LOADER_CODE_ALLOCATOR_HANDLE),
-                (efi::BOOT_SERVICES_CODE, uefi_protocol_db_lib::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE),
-                (efi::BOOT_SERVICES_DATA, uefi_protocol_db_lib::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE),
-                (efi::RUNTIME_SERVICES_CODE, uefi_protocol_db_lib::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE),
-                (efi::RUNTIME_SERVICES_DATA, uefi_protocol_db_lib::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE),
+                (efi::LOADER_CODE, uefi_protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE),
+                (efi::BOOT_SERVICES_CODE, uefi_protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE),
+                (efi::BOOT_SERVICES_DATA, uefi_protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE),
+                (efi::RUNTIME_SERVICES_CODE, uefi_protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE),
+                (efi::RUNTIME_SERVICES_DATA, uefi_protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE),
             ] {
                 let allocator = allocators.get_allocator(mem_type).unwrap();
                 assert_eq!(allocator.handle(), handle);
@@ -672,15 +664,15 @@ mod tests {
     fn new_allocators_should_be_created_on_demand() {
         with_locked_state(0x4000000, || {
             for (mem_type, handle) in [
-                (efi::RESERVED_MEMORY_TYPE, uefi_protocol_db_lib::RESERVED_MEMORY_ALLOCATOR_HANDLE),
-                (efi::LOADER_CODE, uefi_protocol_db_lib::EFI_LOADER_CODE_ALLOCATOR_HANDLE),
-                (efi::LOADER_DATA, uefi_protocol_db_lib::EFI_LOADER_DATA_ALLOCATOR_HANDLE),
-                (efi::BOOT_SERVICES_CODE, uefi_protocol_db_lib::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE),
-                (efi::BOOT_SERVICES_DATA, uefi_protocol_db_lib::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE),
-                (efi::RUNTIME_SERVICES_CODE, uefi_protocol_db_lib::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE),
-                (efi::RUNTIME_SERVICES_DATA, uefi_protocol_db_lib::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE),
-                (efi::ACPI_RECLAIM_MEMORY, uefi_protocol_db_lib::EFI_ACPI_RECLAIM_MEMORY_ALLOCATOR_HANDLE),
-                (efi::ACPI_MEMORY_NVS, uefi_protocol_db_lib::EFI_ACPI_MEMORY_NVS_ALLOCATOR_HANDLE),
+                (efi::RESERVED_MEMORY_TYPE, uefi_protocol_db::RESERVED_MEMORY_ALLOCATOR_HANDLE),
+                (efi::LOADER_CODE, uefi_protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE),
+                (efi::LOADER_DATA, uefi_protocol_db::EFI_LOADER_DATA_ALLOCATOR_HANDLE),
+                (efi::BOOT_SERVICES_CODE, uefi_protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE),
+                (efi::BOOT_SERVICES_DATA, uefi_protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE),
+                (efi::RUNTIME_SERVICES_CODE, uefi_protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE),
+                (efi::RUNTIME_SERVICES_DATA, uefi_protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE),
+                (efi::ACPI_RECLAIM_MEMORY, uefi_protocol_db::EFI_ACPI_RECLAIM_MEMORY_ALLOCATOR_HANDLE),
+                (efi::ACPI_MEMORY_NVS, uefi_protocol_db::EFI_ACPI_MEMORY_NVS_ALLOCATOR_HANDLE),
             ] {
                 let ptr = core_allocate_pool(mem_type, 0x1000).unwrap();
                 assert!(!ptr.is_null());
