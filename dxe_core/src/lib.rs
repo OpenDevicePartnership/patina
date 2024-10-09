@@ -36,7 +36,7 @@ pub mod test_support;
 
 use core::{ffi::c_void, str::FromStr};
 
-use dxe_component_interface::DxeComponent;
+use uefi_component_interface::DxeComponent;
 use uefi_core::{
     error::{self, Result},
     interface,
@@ -44,7 +44,7 @@ use uefi_core::{
 
 use mu_pi::{fw_fs, hob::HobList, protocols::bds};
 use r_efi::efi::{self};
-use uefi_gcd_lib::gcd::SpinLockedGcd;
+use uefi_gcd::gcd::SpinLockedGcd;
 
 use alloc::boxed::Box;
 

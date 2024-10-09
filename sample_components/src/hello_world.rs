@@ -8,8 +8,8 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use dxe_component_interface::{DxeComponent, DxeComponentInterface};
 use log::info;
+use uefi_component_interface::{DxeComponent, DxeComponentInterface};
 use uefi_core::error::Result;
 
 pub struct HelloWorldComponent;

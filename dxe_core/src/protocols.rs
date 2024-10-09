@@ -11,8 +11,8 @@ use core::{ffi::c_void, mem::size_of};
 use alloc::{slice, vec, vec::Vec};
 use r_efi::efi;
 use tpl_lock::TplMutex;
-use uefi_device_path_lib::{is_device_path_end, remaining_device_path};
-use uefi_protocol_db_lib::{SpinLockedProtocolDb, DXE_CORE_HANDLE};
+use uefi_device_path::{is_device_path_end, remaining_device_path};
+use uefi_protocol_db::{SpinLockedProtocolDb, DXE_CORE_HANDLE};
 
 use crate::{
     allocator::core_allocate_pool,

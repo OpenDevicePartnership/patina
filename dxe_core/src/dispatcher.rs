@@ -19,8 +19,8 @@ use mu_pi::{
 };
 use r_efi::efi;
 use tpl_lock::TplMutex;
-use uefi_depex_lib::{AssociatedDependency, Depex, Opcode};
-use uefi_protocol_db_lib::DXE_CORE_HANDLE;
+use uefi_depex::{AssociatedDependency, Depex, Opcode};
+use uefi_protocol_db::DXE_CORE_HANDLE;
 
 use crate::{
     events::EVENT_DB,
