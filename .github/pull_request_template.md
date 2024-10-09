@@ -2,7 +2,6 @@
 
 <_Include a description of the change and why this change was made._>
 
-For details on how to complete these options and their meaning refer to [CONTRIBUTING.md](https://github.com/microsoft/mu/blob/HEAD/CONTRIBUTING.md).
 
 - [ ] Impacts functionality?
 - [ ] Impacts security?
