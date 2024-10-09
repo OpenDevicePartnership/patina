@@ -22,16 +22,16 @@ uefi_logger = {git = "https://github.com/pop-project/uefi-core.git", rev = "8918
 section_extractor = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
 serial_writer = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
 
-uefi_collections = { path = "Library/uefi_collections", default-features = false }
-uefi_tpl_lock = { path = "Library/uefi_tpl_lock" }
-uefi_depex = { path = "Library/uefi_depex" }
-uefi_device_path = { path = "Library/uefi_device_path" }
-uefi_event = { path = "Library/uefi_event" }
-uefi_gcd = { path = "Library/uefi_gcd" }
-uefi_pecoff = { path = "Library/uefi_pecoff" }
-uefi_protocol_db = { path = "Library/uefi_protocol_db" }
-uefi_allocator = { path = "Library/uefi_allocator" }
-uefi_component_interface = { path = "Library/uefi_component_interface" }
+uefi_collections = { path = "crates/uefi_collections", default-features = false }
+uefi_tpl_lock = { path = "crates/uefi_tpl_lock" }
+uefi_depex = { path = "crates/uefi_depex" }
+uefi_device_path = { path = "crates/uefi_device_path" }
+uefi_event = { path = "crates/uefi_event" }
+uefi_gcd = { path = "crates/uefi_gcd" }
+uefi_pecoff = { path = "crates/uefi_pecoff" }
+uefi_protocol_db = { path = "crates/uefi_protocol_db" }
+uefi_allocator = { path = "crates/uefi_allocator" }
+uefi_component_interface = { path = "crates/uefi_component_interface" }
 
 adv_logger = { path = "adv_logger" }
 sample_components = { path = "sample_components" }
