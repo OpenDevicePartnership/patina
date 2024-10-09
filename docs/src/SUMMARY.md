@@ -33,7 +33,7 @@
   - [Advanced Logger]()
   - [CPU]()
   - [Debugging]()
-  - [Events]()
+  - [Event, Timer, and Task Priority](dxe_core/events.md)
   - [Handles]()
   - [Protocols]()
   - [Memory Management]()
