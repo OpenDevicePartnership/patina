@@ -7,8 +7,8 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use core::ffi::c_void;
-use dxe_component_interface::DxeComponentInterface;
 use r_efi::efi;
+use uefi_component_interface::DxeComponentInterface;
 
 use crate::protocols::core_install_protocol_interface;
 

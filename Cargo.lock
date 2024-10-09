@@ -3,74 +3,6 @@
 version = 3
 
 [[package]]
-name = "TplLock"
-version = "0.1.0"
-dependencies = [
- "log",
- "r-efi",
-]
-
-[[package]]
-name = "UefiDepexLib"
-version = "0.1.0"
-dependencies = [
- "UefiProtocolDbLib",
- "log",
- "r-efi",
- "uuid",
-]
-
-[[package]]
-name = "UefiDevicePathLib"
-version = "0.1.0"
-dependencies = [
- "r-efi",
-]
-
-[[package]]
-name = "UefiEventLib"
-version = "0.1.0"
-dependencies = [
- "TplLock",
- "r-efi",
- "uuid",
-]
-
-[[package]]
-name = "UefiGcdLib"
-version = "0.1.0"
-dependencies = [
- "TplLock",
- "log",
- "mu_pi",
- "mu_rust_helpers",
- "r-efi",
- "slice_collections",
-]
-
-[[package]]
-name = "UefiProtocolDbLib"
-version = "0.1.0"
-dependencies = [
- "TplLock",
- "ahash",
- "r-efi",
- "spin 0.5.2",
- "uuid",
-]
-
-[[package]]
-name = "UefiRustAllocatorLib"
-version = "0.1.0"
-dependencies = [
- "TplLock",
- "UefiGcdLib",
- "linked_list_allocator",
- "mu_pi",
- "r-efi",
-]
-
-[[package]]
 name = "aarch64-cpu"
 version = "9.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -83,13 +15,13 @@ dependencies = [
 name = "adv_logger"
 version = "0.1.0"
 dependencies = [
- "dxe_component_interface",
  "log",
  "mu_pi",
  "mu_rust_helpers",
  "r-efi",
  "serial_writer",
  "spin 0.5.2",
+ "uefi_component_interface",
  "uefi_core",
  "uefi_logger",
 ]
@@ -370,28 +302,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a81dae078cea95a014a339291cec439d2f232ebe854a9d672b796c6afafa9b7"
 
 [[package]]
-name = "dxe_component_interface"
-version = "0.1.0"
-dependencies = [
- "r-efi",
- "uefi_core",
-]
-
-[[package]]
 name = "dxe_core"
 version = "0.1.8"
 dependencies = [
- "TplLock",
- "UefiDepexLib",
- "UefiDevicePathLib",
- "UefiEventLib",
- "UefiGcdLib",
- "UefiProtocolDbLib",
- "UefiRustAllocatorLib",
  "adv_logger",
  "corosensei",
  "crc32fast",
- "dxe_component_interface",
  "lazy_static",
  "log",
  "mu_pi",
@@ -401,10 +317,18 @@ dependencies = [
  "section_extractor",
  "serial_writer",
  "spin 0.5.2",
+ "uefi_allocator",
+ "uefi_component_interface",
  "uefi_core",
  "uefi_cpu_init",
+ "uefi_depex",
+ "uefi_device_path",
+ "uefi_event",
+ "uefi_gcd",
  "uefi_logger",
  "uefi_pecoff",
+ "uefi_protocol_db",
+ "uefi_tpl_lock",
  "uuid",
 ]
 
@@ -813,8 +737,8 @@ dependencies = [
 name = "sample_components"
 version = "0.1.0"
 dependencies = [
- "dxe_component_interface",
  "log",
+ "uefi_component_interface",
  "uefi_core",
 ]
 
@@ -899,16 +823,6 @@ dependencies = [
  "uart_16550",
  "uefi_core",
  "x86_64",
-]
-
-[[package]]
-name = "slice_collections"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "log",
- "rand",
- "uint",
 ]
 
 [[package]]
@@ -1001,6 +915,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "uefi_allocator"
+version = "0.1.0"
+dependencies = [
+ "linked_list_allocator",
+ "mu_pi",
+ "r-efi",
+ "uefi_gcd",
+ "uefi_tpl_lock",
+]
+
+[[package]]
+name = "uefi_collections"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "log",
+ "rand",
+ "uint",
+]
+
+[[package]]
+name = "uefi_component_interface"
+version = "0.1.0"
+dependencies = [
+ "r-efi",
+ "uefi_core",
+]
+
+[[package]]
 name = "uefi_core"
 version = "0.2.0"
 source = "git+https://github.com/pop-project/uefi-core.git?rev=891819afcd4bceac694cae1f7339fa09334d9324#891819afcd4bceac694cae1f7339fa09334d9324"
@@ -1029,6 +972,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "uefi_depex"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "r-efi",
+ "uefi_protocol_db",
+ "uuid",
+]
+
+[[package]]
+name = "uefi_device_path"
+version = "0.1.0"
+dependencies = [
+ "r-efi",
+]
+
+[[package]]
+name = "uefi_event"
+version = "0.1.0"
+dependencies = [
+ "r-efi",
+ "uefi_tpl_lock",
+ "uuid",
+]
+
+[[package]]
+name = "uefi_gcd"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "mu_pi",
+ "mu_rust_helpers",
+ "r-efi",
+ "uefi_collections",
+ "uefi_tpl_lock",
+]
+
+[[package]]
 name = "uefi_logger"
 version = "0.2.0"
 source = "git+https://github.com/pop-project/uefi-core.git?rev=891819afcd4bceac694cae1f7339fa09334d9324#891819afcd4bceac694cae1f7339fa09334d9324"
@@ -1043,6 +1024,25 @@ version = "0.1.0"
 dependencies = [
  "goblin",
  "scroll",
+]
+
+[[package]]
+name = "uefi_protocol_db"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "r-efi",
+ "spin 0.5.2",
+ "uefi_tpl_lock",
+ "uuid",
+]
+
+[[package]]
+name = "uefi_tpl_lock"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "r-efi",
 ]
 
 [[package]]

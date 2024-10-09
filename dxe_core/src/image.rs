@@ -15,13 +15,13 @@ use core::{
 };
 
 use alloc::{alloc::Global, boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
-use dxe_component_interface::DxeComponent;
 use mu_pi::hob::{Hob, HobList};
 use r_efi::efi;
-use uefi_device_path_lib::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
+use uefi_allocator::uefi_allocator::UefiAllocator;
+use uefi_component_interface::DxeComponent;
+use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
 use uefi_pecoff::{relocation::RelocationBlock, UefiPeInfo};
-use uefi_protocol_db_lib::DXE_CORE_HANDLE;
-use uefi_rust_allocator_lib::uefi_allocator::UefiAllocator;
+use uefi_protocol_db::DXE_CORE_HANDLE;
 
 use crate::{
     allocator::{EFI_BOOT_SERVICES_CODE_ALLOCATOR, EFI_LOADER_CODE_ALLOCATOR, EFI_RUNTIME_SERVICES_CODE_ALLOCATOR},
@@ -1059,7 +1059,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db_lib::DXE_CORE_HANDLE,
+                uefi_protocol_db::DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),
@@ -1089,7 +1089,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db_lib::DXE_CORE_HANDLE,
+                uefi_protocol_db::DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),
@@ -1142,7 +1142,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db_lib::DXE_CORE_HANDLE,
+                uefi_protocol_db::DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),
@@ -1195,7 +1195,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db_lib::DXE_CORE_HANDLE,
+                uefi_protocol_db::DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),
