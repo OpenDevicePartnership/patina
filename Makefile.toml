@@ -8,7 +8,7 @@ TARGET_TRIPLE = { source = "${ARCH}", mapping = { "X64" = "x86_64-unknown-uefi",
 TARGET_FEATURE = { source = "${ARCH}", mapping = { "X64" = "x64", "IA32" = "x86", "AARCH64" = "aarch64" }, condition = { env_not_set = [ "TARGET_FEATURE" ] } }
 
 CARGO_FEATURES_FLAG = {value = "--features ${FEATURES}", condition = {env_set = ["FEATURES"], env_true = ["FEATURES"]}}
-NO_STD_FLAGS = "--bin dxe_core_${TARGET_FEATURE} --profile ${RUSTC_PROFILE} --target ${TARGET_TRIPLE} --features ${TARGET_FEATURE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
+NO_STD_FLAGS = "-Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
 TEST_FLAGS = { value = "", condition = { env_not_set = ["TEST_FLAGS"] } }
 COV_FLAGS = { value = "--out html --out xml --exclude-files **/tests/* --exclude-files **/benches/*", condition = { env_not_set = ["COV_FLAGS"] } }
@@ -86,7 +86,7 @@ clear = true
 command = "cargo"
 args = ["run", "@@split(STD_FLAGS, )", "--bin", "dxe_core_std"]
 
-[tasks.build-arch]
+[tasks.build-bin]
 description = """Builds an architecture-specific DXE Core.
 
 Customizations:
@@ -102,14 +102,13 @@ Example:
 """
 clear = true
 command = "cargo"
-args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(NO_STD_FLAGS, )", "@@split(CARGO_FEATURES_FLAG, ,remove-empty)"]
-dependencies = ["individual-package-targets"]
+args = ["build","--bin", "dxe_core_${TARGET_FEATURE}", "--target", "${TARGET_TRIPLE}", "--features", "${TARGET_FEATURE}", "@@split(NO_STD_FLAGS, )", "@@split(CARGO_FEATURES_FLAG, ,remove-empty)"]
 
 [tasks.check_no_std]
 description = "Checks rust code for no_std build errors with results."
 private = true
 command = "cargo"
-args = ["check", "@@split(NO_STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["check", "--target", "${TARGET_TRIPLE}", "@@split(NO_STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 
 [tasks.check_std]
 description = "Checks rust code for std build errors with results."
@@ -203,3 +202,17 @@ release ${1}
 release ${2}
 release ${3}
 '''
+
+[tasks.build-aarch64]
+description = "Build all crates for AARCH64"
+clear = true
+command = "cargo"
+args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--target", "aarch64-unknown-uefi", "@@split(NO_STD_FLAGS, )", ]
+dependencies = ["individual-package-targets"]
+
+[tasks.build-x64]
+description = "Build all crates for AARCH64"
+clear = true
+command = "cargo"
+args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--target", "x86_64-unknown-uefi", "@@split(NO_STD_FLAGS, )", ]
+dependencies = ["individual-package-targets"]
