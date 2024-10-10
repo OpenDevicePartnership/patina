@@ -7,6 +7,7 @@ title = "Developing UEFI with Rust"
 
 [output.html]
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-css = ["mdbook-admonish.css"]
 
 [output.html.playpen]
 editable = true
@@ -20,3 +21,7 @@ enable = true
 
 [preprocessor.mermaid]
 command = "mdbook-mermaid"
+
+[preprocessor.admonish]
+command = "mdbook-admonish"
+assets_version = "3.0.2" # do not edit: managed by `mdbook-admonish install`
