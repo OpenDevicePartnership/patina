@@ -11,6 +11,7 @@
 - [Testing](dev/testing.md)
   - [Unit Testing](dev/testing/unit.md)
   - [Integration Testing](dev/testing/integration.md)
+  - [On-Platform Testing](dev/testing/platform.md)
   - [Mocking]()
 - [Formatting](dev/formatting.md)
 - [Documenting](dev/documenting.md)

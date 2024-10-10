@@ -120,7 +120,7 @@ dependencies = ["individual-package-targets"]
 description = "Build and run all tests and calculate coverage."
 clear = true
 command = "cargo"
-args = ["tarpaulin", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(COV_FLAGS, )", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target"]
+args = ["tarpaulin", "@@split(COV_FLAGS, )", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target", "-e", "uefi_test_macro"]
 dependencies = ["individual-package-targets"]
 
 [tasks.coverage-filter]
