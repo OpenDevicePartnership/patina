@@ -18,7 +18,7 @@
 //!
 //! SPIN_LOCKED_EVENT_DB.signal_event (result.unwrap());
 //!
-//! assert!(SPIN_LOCKED_EVENT_DB.is_signalled (result.unwrap()));
+//! assert!(SPIN_LOCKED_EVENT_DB.is_signaled (result.unwrap()));
 //!
 //! ```
 //!
@@ -213,7 +213,7 @@ struct Event {
     event_type: EventType,
     event_group: Option<efi::Guid>,
 
-    signalled: bool,
+    signaled: bool,
 
     //Only used for NOTIFY events.
     notify_tpl: efi::Tpl,
@@ -237,7 +237,7 @@ impl fmt::Debug for Event {
             .field("event_id", &self.event_id)
             .field("event_type", &self.event_type)
             .field("event_group", &self.event_group)
-            .field("signalled", &self.signalled)
+            .field("signaled", &self.signaled)
             .field("notify_tpl", &self.notify_tpl)
             .field("notify_function", &notify_func)
             .field("notify_context", &self.notify_context)
@@ -282,7 +282,7 @@ impl Event {
             notify_function,
             notify_context,
             event_group,
-            signalled: false,
+            signaled: false,
             trigger_time: None,
             period: None,
         })
@@ -350,7 +350,7 @@ impl EventDb {
             self.signal_group(target_group);
         } else {
             // if no group, signal the event by itself.
-            current_event.signalled = true;
+            current_event.signaled = true;
             if current_event.event_type.is_notify_signal() {
                 Self::queue_notify_event(&mut self.pending_notifies, current_event, self.notify_tags);
                 self.notify_tags += 1;
@@ -361,7 +361,7 @@ impl EventDb {
 
     fn signal_group(&mut self, group: efi::Guid) {
         for member_event in self.events.values_mut().filter(|e| e.event_group == Some(group)) {
-            member_event.signalled = true;
+            member_event.signaled = true;
             if member_event.event_type.is_notify_signal() {
                 Self::queue_notify_event(&mut self.pending_notifies, member_event, self.notify_tags);
                 self.notify_tags += 1;
@@ -372,14 +372,14 @@ impl EventDb {
     fn clear_signal(&mut self, event: efi::Event) -> Result<(), efi::Status> {
         let id = event as usize;
         let event = self.events.get_mut(&id).ok_or(efi::Status::INVALID_PARAMETER)?;
-        event.signalled = false;
+        event.signaled = false;
         Ok(())
     }
 
-    fn is_signalled(&mut self, event: efi::Event) -> bool {
+    fn is_signaled(&mut self, event: efi::Event) -> bool {
         let id = event as usize;
         if let Some(event) = self.events.get(&id) {
-            event.signalled
+            event.signaled
         } else {
             false
         }
@@ -484,13 +484,13 @@ impl EventDb {
             }
         }
         //if item at front of queue is not higher than desired efi::TPL, then return none
-        //otherwise, pop it off, mark it signalled, and return it.
+        //otherwise, pop it off, mark it un-signaled, and return it.
         if let Some(item) = self.pending_notifies.first() {
             if item.0.notify_tpl <= tpl_level {
                 return None;
             } else {
                 let item = self.pending_notifies.pop_first().unwrap();
-                self.events.get_mut(&(item.0.event as usize)).unwrap().signalled = false;
+                self.events.get_mut(&(item.0.event as usize)).unwrap().signaled = false;
                 return Some(item.0);
             }
         }
@@ -616,7 +616,7 @@ impl SpinLockedEventDb {
         self.lock().close_event(event)
     }
 
-    /// Marks an event as signalled, and queues it for dispatch if it is of type NotifySignalEvent
+    /// Marks an event as signaled, and queues it for dispatch if it is of type NotifySignalEvent
     ///
     /// This function closely matches the semantics of the EFI_BOOT_SERVICES.SignalEvent() API in
     /// UEFI spec 2.10 section 7.1.4. Please refer to the spec for details on the input parameters.
@@ -641,7 +641,7 @@ impl SpinLockedEventDb {
     /// let handle = result.unwrap();
     /// let result = SPIN_LOCKED_EVENT_DB.signal_event(handle);
     /// assert_eq!(result, Ok(()));
-    /// assert!(SPIN_LOCKED_EVENT_DB.is_signalled(handle));
+    /// assert!(SPIN_LOCKED_EVENT_DB.is_signaled(handle));
     /// ```
     ///
     pub fn signal_event(&self, event: efi::Event) -> Result<(), efi::Status> {
@@ -673,7 +673,7 @@ impl SpinLockedEventDb {
     /// );
     /// let handle = result.unwrap();
     /// let result = SPIN_LOCKED_EVENT_DB.signal_group(group1);
-    /// assert!(SPIN_LOCKED_EVENT_DB.is_signalled(handle));
+    /// assert!(SPIN_LOCKED_EVENT_DB.is_signaled(handle));
     /// ```
     ///
     pub fn signal_group(&self, group: efi::Guid) {
@@ -708,7 +708,7 @@ impl SpinLockedEventDb {
         self.lock().get_event_type(event)
     }
 
-    /// Indicates whether the given event is in the signalled state
+    /// Indicates whether the given event is in the signaled state
     ///
     /// ## Errors
     ///
@@ -730,14 +730,14 @@ impl SpinLockedEventDb {
     /// let handle = result.unwrap();
     /// let result = SPIN_LOCKED_EVENT_DB.signal_event(handle);
     /// assert_eq!(result, Ok(()));
-    /// assert!(SPIN_LOCKED_EVENT_DB.is_signalled(handle));
+    /// assert!(SPIN_LOCKED_EVENT_DB.is_signaled(handle));
     /// ```
     ///
-    pub fn is_signalled(&self, event: efi::Event) -> bool {
-        self.lock().is_signalled(event)
+    pub fn is_signaled(&self, event: efi::Event) -> bool {
+        self.lock().is_signaled(event)
     }
 
-    /// Clears the signalled state for the given event.
+    /// Clears the signaled state for the given event.
     ///
     /// ## Errors
     ///
@@ -758,9 +758,9 @@ impl SpinLockedEventDb {
     /// );
     /// let handle = result.unwrap();
     /// SPIN_LOCKED_EVENT_DB.signal_event(handle);
-    /// assert!(SPIN_LOCKED_EVENT_DB.is_signalled(handle));
+    /// assert!(SPIN_LOCKED_EVENT_DB.is_signaled(handle));
     /// SPIN_LOCKED_EVENT_DB.clear_signal(handle);
-    /// assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(handle));
+    /// assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(handle));
     ///
     /// ```
     ///
@@ -768,7 +768,7 @@ impl SpinLockedEventDb {
         self.lock().clear_signal(event)
     }
 
-    /// Atomically reads and clears the signalled state.
+    /// Atomically reads and clears the signaled state.
     ///
     /// ## Errors
     ///
@@ -790,24 +790,24 @@ impl SpinLockedEventDb {
     /// let handle = result.unwrap();
     ///
     /// SPIN_LOCKED_EVENT_DB.signal_event(handle);
-    /// assert!(SPIN_LOCKED_EVENT_DB.is_signalled(handle));
+    /// assert!(SPIN_LOCKED_EVENT_DB.is_signaled(handle));
     ///
-    /// let result = SPIN_LOCKED_EVENT_DB.read_and_clear_signalled(handle);
+    /// let result = SPIN_LOCKED_EVENT_DB.read_and_clear_signaled(handle);
     /// assert_eq!(result, Ok(true));
-    /// assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(handle));
+    /// assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(handle));
     ///
-    /// let result = SPIN_LOCKED_EVENT_DB.read_and_clear_signalled(handle);
+    /// let result = SPIN_LOCKED_EVENT_DB.read_and_clear_signaled(handle);
     /// assert_eq!(result, Ok(false));
     ///
     /// ```
     ///
-    pub fn read_and_clear_signalled(&self, event: efi::Event) -> Result<bool, efi::Status> {
+    pub fn read_and_clear_signaled(&self, event: efi::Event) -> Result<bool, efi::Status> {
         let mut event_db = self.lock();
-        let signalled = event_db.is_signalled(event);
-        if signalled {
+        let signaled = event_db.is_signaled(event);
+        if signaled {
             event_db.clear_signal(event)?;
         }
-        Ok(signalled)
+        Ok(signaled)
     }
 
     /// Queues the notify for the given event.
@@ -934,8 +934,15 @@ impl SpinLockedEventDb {
 
     /// called to advance the system time and process any timer events that fire
     ///
-    /// [`set_timer`](SpinLockedEventDb::set_timer) is used to advanced time; when a timer expires, the corresponding
-    /// event is queued and can be retrieved via [`event_notification_iter`](SpinLockedEventDb::event_notification_iter).
+    /// [`set_timer`](SpinLockedEventDb::set_timer) is used to configure timers with either a one-shot or periodic
+    /// timer.
+    ///
+    /// This routine is called to inform the event database that that a certain amount of time has passed. The event
+    /// database will iterate over all events and determine if any of the timers have expired based on the amount of
+    /// time that has passed per this call. If any timers are expired, the corresponding events will be signaled.
+    ///
+    /// signaled events with notifications are queued and can be retrieved via
+    /// [`event_notification_iter`](SpinLockedEventDb::event_notification_iter).
     ///
     /// ## Examples
     ///
@@ -1149,7 +1156,7 @@ mod tests {
     }
 
     #[test]
-    fn signal_event_should_put_events_in_signalled_state() {
+    fn signal_event_should_put_events_in_signaled_state() {
         static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
         let mut events: Vec<efi::Event> = Vec::new();
         for _ in 0..10 {
@@ -1169,12 +1176,12 @@ mod tests {
         for event in events {
             let result: Result<(), efi::Status> = SPIN_LOCKED_EVENT_DB.signal_event(event);
             assert!(result.is_ok());
-            assert!(SPIN_LOCKED_EVENT_DB.is_signalled(event));
+            assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
         }
     }
 
     #[test]
-    fn signal_event_on_an_event_group_should_put_all_members_in_signalled_state() {
+    fn signal_event_on_an_event_group_should_put_all_members_in_signaled_state() {
         let uuid = Uuid::from_str("aefcf33c-ce02-47b4-89f6-4bacdeda3377").unwrap();
         let group1: efi::Guid = unsafe { core::mem::transmute(*uuid.as_bytes()) };
         let uuid = Uuid::from_str("3a08a8c7-054b-4268-8aed-bc6a3aef999f").unwrap();
@@ -1247,80 +1254,80 @@ mod tests {
         //signal an ungrouped event
         SPIN_LOCKED_EVENT_DB.signal_event(ungrouped_events.pop().unwrap()).unwrap();
 
-        //all other events should remain un-signalled
+        //all other events should remain un-signaled
         for event in group1_events.clone() {
-            assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(event));
+            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
         }
 
         for event in group2_events.clone() {
-            assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(event));
+            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
         }
 
         for event in ungrouped_events.clone() {
-            assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(event));
+            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
         }
 
         //signal an event in a group
         SPIN_LOCKED_EVENT_DB.signal_event(group1_events[0]).unwrap();
 
-        //events in the same group should be signalled.
+        //events in the same group should be signaled.
         for event in group1_events.clone() {
-            assert!(SPIN_LOCKED_EVENT_DB.is_signalled(event));
+            assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
         }
 
-        //events in another group should not be signalled.
+        //events in another group should not be signaled.
         for event in group2_events.clone() {
-            assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(event));
+            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
         }
 
-        //ungrouped events should not be signalled.
+        //ungrouped events should not be signaled.
         for event in ungrouped_events.clone() {
-            assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(event));
+            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
         }
 
         //signal an event in a different group
         SPIN_LOCKED_EVENT_DB.signal_event(group2_events[0]).unwrap();
 
-        //first event group should remain signalled.
+        //first event group should remain signaled.
         for event in group1_events.clone() {
-            assert!(SPIN_LOCKED_EVENT_DB.is_signalled(event));
+            assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
         }
 
-        //second event group should now be signalled.
+        //second event group should now be signaled.
         for event in group2_events.clone() {
-            assert!(SPIN_LOCKED_EVENT_DB.is_signalled(event));
+            assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
         }
 
-        //third event group should not be signalled.
+        //third event group should not be signaled.
         for event in group3_events.clone() {
-            assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(event));
+            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
         }
 
         //signal events in third group using signal_group
         SPIN_LOCKED_EVENT_DB.signal_group(group3);
-        //first event group should remain signalled.
+        //first event group should remain signaled.
         for event in group1_events.clone() {
-            assert!(SPIN_LOCKED_EVENT_DB.is_signalled(event));
+            assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
         }
 
-        //second event group should remain signalled.
+        //second event group should remain signaled.
         for event in group2_events.clone() {
-            assert!(SPIN_LOCKED_EVENT_DB.is_signalled(event));
+            assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
         }
 
-        //third event group should now be signalled.
+        //third event group should now be signaled.
         for event in group3_events.clone() {
-            assert!(SPIN_LOCKED_EVENT_DB.is_signalled(event));
+            assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
         }
 
-        //ungrouped events should not be signalled.
+        //ungrouped events should not be signaled.
         for event in ungrouped_events.clone() {
-            assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(event));
+            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
         }
     }
 
     #[test]
-    fn clear_signal_should_clear_signalled_state() {
+    fn clear_signal_should_clear_signaled_state() {
         static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
         let event = SPIN_LOCKED_EVENT_DB
             .create_event(
@@ -1332,14 +1339,14 @@ mod tests {
             )
             .unwrap();
         SPIN_LOCKED_EVENT_DB.signal_event(event).unwrap();
-        assert!(SPIN_LOCKED_EVENT_DB.is_signalled(event));
+        assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
         let result = SPIN_LOCKED_EVENT_DB.clear_signal(event);
         assert!(result.is_ok());
-        assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(event));
+        assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
     }
 
     #[test]
-    fn is_signalled_should_return_false_for_closed_or_non_existent_event() {
+    fn is_signaled_should_return_false_for_closed_or_non_existent_event() {
         static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
         let event = SPIN_LOCKED_EVENT_DB
             .create_event(
@@ -1351,14 +1358,14 @@ mod tests {
             )
             .unwrap();
         SPIN_LOCKED_EVENT_DB.signal_event(event).unwrap();
-        assert!(SPIN_LOCKED_EVENT_DB.is_signalled(event));
+        assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
         SPIN_LOCKED_EVENT_DB.close_event(event).unwrap();
-        assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(event));
-        assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(0x1234 as *mut c_void));
+        assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
+        assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(0x1234 as *mut c_void));
     }
 
     #[test]
-    fn signalled_events_with_notifies_should_be_put_in_pending_queue_in_tpl_order() {
+    fn signaled_events_with_notifies_should_be_put_in_pending_queue_in_tpl_order() {
         static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
         let callback_evt1 = SPIN_LOCKED_EVENT_DB
             .create_event(
@@ -1435,7 +1442,7 @@ mod tests {
     }
 
     #[test]
-    fn signalled_event_iterator_should_return_next_events_in_tpl_order() {
+    fn signaled_event_iterator_should_return_next_events_in_tpl_order() {
         static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
 
         assert_eq!(
@@ -1512,7 +1519,7 @@ mod tests {
             SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_NOTIFY).zip(vec![high_evt1, high_evt2])
         {
             assert_eq!(event_notification.event, expected_event);
-            assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(expected_event));
+            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
         }
 
         //re-signal the consumed events
@@ -1524,7 +1531,7 @@ mod tests {
             .zip(vec![high_evt1, high_evt2, notify_evt1, notify_evt2])
         {
             assert_eq!(event_notification.event, expected_event);
-            assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(expected_event));
+            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
         }
 
         //re-signal the consumed events
@@ -1538,7 +1545,7 @@ mod tests {
             .zip(vec![high_evt1, high_evt2, notify_evt1, notify_evt2, callback_evt1, callback_evt2])
         {
             assert_eq!(event_notification.event, expected_event);
-            assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(expected_event));
+            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
         }
 
         //re-signal the consumed events
@@ -1559,7 +1566,7 @@ mod tests {
             .zip(vec![high_evt2, notify_evt2, callback_evt2])
         {
             assert_eq!(event_notification.event, expected_event);
-            assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(expected_event));
+            assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
         }
     }
 
@@ -1597,7 +1604,7 @@ mod tests {
     }
 
     #[test]
-    fn read_and_clear_signalled_should_clear_signal() {
+    fn read_and_clear_signaled_should_clear_signal() {
         static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
 
         let callback_evt1 = SPIN_LOCKED_EVENT_DB
@@ -1617,11 +1624,11 @@ mod tests {
             assert_eq!(db.pending_notifies.len(), 1);
         }
 
-        let result = SPIN_LOCKED_EVENT_DB.read_and_clear_signalled(callback_evt1);
+        let result = SPIN_LOCKED_EVENT_DB.read_and_clear_signaled(callback_evt1);
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(result);
-        let result = SPIN_LOCKED_EVENT_DB.read_and_clear_signalled(callback_evt1);
+        let result = SPIN_LOCKED_EVENT_DB.read_and_clear_signaled(callback_evt1);
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(!result);
