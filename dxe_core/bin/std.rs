@@ -36,8 +36,10 @@ fn main() -> uefi_core::error::Result<()> {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
 
     let hob_list = build_hob_list();
+
+    let hello_world_component = HelloWorldComponent::default();
     let mut dxe_core = DxeCore { ..Default::default() };
-    dxe_core.start(hob_list, &[&HelloWorldComponent])
+    dxe_core.start(hob_list, &[&hello_world_component])
 }
 
 const MEM_SIZE: u64 = 0x2000000;

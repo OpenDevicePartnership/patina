@@ -66,11 +66,7 @@ where
     CpuInitializer: interface::CpuInitializer + Default,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
 {
-    pub fn start(
-        &mut self,
-        physical_hob_list: *const c_void,
-        drivers: &[&'static dyn DxeComponent],
-    ) -> error::Result<()> {
+    pub fn start(&mut self, physical_hob_list: *const c_void, drivers: &[&dyn DxeComponent]) -> error::Result<()> {
         self.cpu.initialize();
         let (free_memory_start, free_memory_size) = gcd::init_gcd(physical_hob_list);
 

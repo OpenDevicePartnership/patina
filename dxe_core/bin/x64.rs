@@ -36,15 +36,16 @@ static LOGGER: AdvancedLogger<serial_writer::Uart16550> = AdvancedLogger::new(
 
 type DxeCore = Core<uefi_cpu_init::X64CpuInitializer, section_extractor::CompositeSectionExtractor>;
 
-static ADV_LOGGER: AdvancedLoggerComponent<serial_writer::Uart16550> = AdvancedLoggerComponent::new(&LOGGER);
-
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
-    let _ = ADV_LOGGER.init_advanced_logger(physical_hob_list);
+
+    let hello_world_component = HelloWorldComponent::default();
+    let adv_logger_component = AdvancedLoggerComponent::new(&LOGGER);
+    adv_logger_component.init_advanced_logger(physical_hob_list).unwrap();
 
     let mut dxe_core = DxeCore { ..Default::default() };
-    dxe_core.start(physical_hob_list, &[&HelloWorldComponent, &ADV_LOGGER]).unwrap();
+    dxe_core.start(physical_hob_list, &[&hello_world_component, &adv_logger_component]).unwrap();
     log::info!("Dead Loop Time");
     loop {}
 }
