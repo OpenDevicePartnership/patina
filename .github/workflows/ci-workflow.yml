@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  pull_request_target:
+    branches: [ "main", "personal/jeoyvagedes/pull_request_target" ]
 
 jobs:
   basic_ci:
