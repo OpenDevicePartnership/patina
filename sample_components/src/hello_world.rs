@@ -12,6 +12,7 @@ use dxe_component_interface::{DxeComponent, DxeComponentInterface};
 use log::info;
 use uefi_core::error::Result;
 
+#[derive(Default)]
 pub struct HelloWorldComponent;
 
 impl DxeComponent for HelloWorldComponent {

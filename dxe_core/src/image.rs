@@ -34,7 +34,7 @@ use crate::{
 
 use corosensei::{
     stack::{Stack, StackPointer, MIN_STACK_SIZE, STACK_ALIGNMENT},
-    Coroutine, CoroutineResult, Yielder,
+    Coroutine, CoroutineResult, ScopedCoroutine, Yielder,
 };
 
 pub const EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION: u16 = 10;
@@ -730,14 +730,16 @@ extern "efiapi" fn start_image(
     }
 }
 
-pub fn core_start_local_image(component: &'static dyn DxeComponent) -> Result<(), efi::Status> {
+pub fn core_start_local_image(component: &dyn DxeComponent) -> Result<(), efi::Status> {
     let stack = ImageStack::new(ENTRY_POINT_STACK_SIZE);
 
-    let mut coroutine =
-        Coroutine::with_stack(stack, move |_: &Yielder<&dyn DxeComponent, crate::error::Result<()>>, component| {
+    let mut coroutine = ScopedCoroutine::with_stack(
+        stack,
+        move |_: &Yielder<&dyn DxeComponent, crate::error::Result<()>>, component| {
             component.entry_point(&component_interface::ComponentInterface)?;
             Ok::<(), crate::error::EfiError>(())
-        });
+        },
+    );
 
     let status = match coroutine.resume(component) {
         CoroutineResult::Yield(status) => status,
