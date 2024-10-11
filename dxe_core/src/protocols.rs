@@ -664,10 +664,10 @@ extern "efiapi" fn locate_protocol(
 
     if !registration.is_null() {
         if let Some(handle) = PROTOCOL_DB.next_handle_for_registration(registration) {
-            let iface = PROTOCOL_DB
+            let i_face = PROTOCOL_DB
                 .get_interface_for_handle(handle, unsafe { *protocol })
                 .expect("Protocol should exist on handle if it is returned for registration key.");
-            unsafe { interface.write(iface) };
+            unsafe { interface.write(i_face) };
         } else {
             return efi::Status::NOT_FOUND;
         }
@@ -677,7 +677,7 @@ extern "efiapi" fn locate_protocol(
                 unsafe { interface.write(core::ptr::null_mut()) };
                 return err;
             }
-            Ok(iface) => unsafe { interface.write(iface) },
+            Ok(i_face) => unsafe { interface.write(i_face) },
         }
     }
     efi::Status::SUCCESS
@@ -755,7 +755,7 @@ pub fn init_protocol_support(bs: &mut efi::BootServices) {
     PROTOCOL_DB.init_protocol_db();
 
     //This bit of trickery is needed because r_efi definition of (Un)InstallMultipleProtocolInterfaces
-    //is not variadic, due to rust only supporting variadics for "unsafe extern C" and not "efiapi"
+    //is not variadic, due to rust only supporting variadic for "unsafe extern C" and not "efiapi"
     //until very recently. For x86_64 "efiapi" and "extern C" match, so we can get away with a
     //transmute here. Fixing it for other architectures more generally would require an upstream
     //change in r_efi to pick up. There is also a bug in r_efi definition for

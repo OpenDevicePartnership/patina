@@ -323,7 +323,7 @@ impl Depex {
         }
     }
 
-    /// inidicates that this is a "schedule on request" depex.
+    /// indicates that this is a "schedule on request" depex.
     pub fn is_sor(&self) -> bool {
         self.expression.first() == Some(&Opcode::Sor)
     }

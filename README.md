@@ -66,7 +66,7 @@ The following instructions install Rust.
 1. Construction of a bare-metal "kernel" to dispatch from `DxeIpl`.
    1. Built in a basic build environment for no-std.
    2. Uses a basic output subsystem (likely legacy UART, but maybe VGA if it works in QEMU before GOP starts it).
-   3. Integratable into a UEFI build as a replacement for `DxeMain` with observable debug output.
+   3. Integrateable into a UEFI build as a replacement for `DxeMain` with observable debug output.
    4. No direct dependencies on PEI except PI abstracted structures.
 
 2. Integration of Rust component builds into UEFI build system - i.e. not building in two separate enlistments and
@@ -116,7 +116,7 @@ firmware environment.
 - Host (Standard Library) DXE Core Build: `cargo make build-std`
   - Simpler Alias Command: `cargo make build`
 
-#### Running the Host Exectuable
+#### Running the Host Executable
 
 While the executable can be run directly out of the `/target/<debug/release>` directory, it can easily be run with the
 following command:
