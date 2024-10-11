@@ -21,9 +21,6 @@ jobs:
           repository: ${{ github.event.pull_request.head.repo.full_name }} # The repository of the pull request source branch
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0 # Fetch all history for all branches
-      - run: |
-          echo "The source branch is ${{ github.event.pull_request.head.ref }}"
-          echo "The repository of the source branch is ${{ github.event.pull_request.head.repo.full_name }}"
 
       - name: 🔤 Check Spelling 🔤
         uses: streetsidesoftware/cspell-action@v6
