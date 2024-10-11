@@ -16,6 +16,11 @@ jobs:
     steps:
       - name: ✅ Checkout Repository ✅
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }} # The source branch of the pull request
+          repository: ${{ github.event.pull_request.head.repo.full_name }} # The repository of the pull request source branch
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0 # Fetch all history for all branches
 
       - name: 🔤 Check Spelling 🔤
         uses: streetsidesoftware/cspell-action@v6
