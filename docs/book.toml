@@ -1,5 +1,5 @@
 [book]
-authors = ["Joey Vagedes"]
+authors = ["Uefi Rust Team"]
 language = "en"
 multilingual = false
 src = "src"

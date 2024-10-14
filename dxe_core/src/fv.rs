@@ -212,7 +212,7 @@ extern "efiapi" fn fvb_write(
 
 extern "efiapi" fn fvb_erase_blocks(
     _this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
-    //... TODO: this should be variadic; however, variadics and eficall don't mix well presently.
+    //... TODO: this should be variadic; however, variadic and eficall don't mix well presently.
 ) -> efi::Status {
     efi::Status::UNSUPPORTED
 }
