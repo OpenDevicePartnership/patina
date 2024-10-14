@@ -193,7 +193,8 @@ pub fn core_install_memory_attributes_table() {
         .collect();
 
     // allocate memory for the MAT and publish it
-    let buffer_size = mat_desc_list.len() * size_of::<efi::MemoryDescriptor>() + size_of::<efi::MemoryAttributesTable>();
+    let buffer_size =
+        mat_desc_list.len() * size_of::<efi::MemoryDescriptor>() + size_of::<efi::MemoryAttributesTable>();
     match core_allocate_pool(efi::BOOT_SERVICES_DATA, buffer_size) {
         Err(err) => {
             log::error!("Failed to allocate memory for the MAT! Status {:#X?}", err);
@@ -218,7 +219,11 @@ pub fn core_install_memory_attributes_table() {
 
                 let copy_ptr = core::ptr::from_ref(&mat.entry) as *mut u8;
 
-                core::ptr::copy(mat_descriptors_ptr, copy_ptr, mat_desc_list.len() * size_of::<efi::MemoryDescriptor>());
+                core::ptr::copy(
+                    mat_descriptors_ptr,
+                    copy_ptr,
+                    mat_desc_list.len() * size_of::<efi::MemoryDescriptor>(),
+                );
 
                 match core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, void_ptr.as_mut(), st) {
                     Err(status) => {
