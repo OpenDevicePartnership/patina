@@ -109,8 +109,8 @@ impl<'a> AllocatorMap {
     // if it has been created in a separate context asynchronously.
     //
     // Code calling this should provide a handle obtained from the result of [`handle_for_memory_type`], but should not
-    // make any assumptions that this handle will be the acutal handle associated with the allocator. If the "real"
-    // allcoator handle is required, it can be obtained with [`UefiAllocator::handle`] on the returned allocator.
+    // make any assumptions that this handle will be the actual handle associated with the allocator. If the "real"
+    // allocator handle is required, it can be obtained with [`UefiAllocator::handle`] on the returned allocator.
     fn get_or_create_allocator(
         &'a mut self,
         memory_type: efi::MemoryType,
@@ -378,7 +378,7 @@ pub fn get_memory_map_descriptors() -> Vec<efi::MemoryDescriptor> {
     let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
     GCD.get_memory_descriptors(&mut descriptors).expect("get_memory_descriptors failed.");
 
-    //Note: get_memory_descriptors is should already be ordered, so sort is unecessary.
+    //Note: get_memory_descriptors is should already be ordered, so sort is unnecessary.
     //descriptors.sort_unstable_by(|a, b|a.physical_start.cmp(&b.physical_start));
 
     descriptors
@@ -800,7 +800,7 @@ mod tests {
                 efi::Status::INVALID_PARAMETER
             );
 
-            //test can't allocate unallocatable types
+            //test can't allocate un-allocatable types
             assert_eq!(
                 allocate_pages(
                     efi::ALLOCATE_ANY_PAGES,

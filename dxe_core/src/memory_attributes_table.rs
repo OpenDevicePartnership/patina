@@ -161,16 +161,16 @@ pub fn core_install_memory_attributes_table() {
     }
 
     // get the GCD memory map descriptors and filter out the non-runtime sections
-    let descs = get_memory_map_descriptors();
+    let desc_list = get_memory_map_descriptors();
     let mat_allowed_attrs = efi::MEMORY_RO | efi::MEMORY_XP | efi::MEMORY_RUNTIME;
 
-    if descs.is_empty() {
+    if desc_list.is_empty() {
         log::error!("Failed to install memory attributes table! Could not get memory map descriptors.");
         return;
     }
 
     // this allocates memory to do the collect, but that's okay because it is boot services memory
-    let mat_descs: Vec<efi::MemoryDescriptor> = descs
+    let mat_desc_list: Vec<efi::MemoryDescriptor> = desc_list
         .iter()
         .filter_map(|descriptor| {
             // we only want the EfiRuntimeServicesCode and EfiRuntimeServicesData sections in the MAT
@@ -193,14 +193,15 @@ pub fn core_install_memory_attributes_table() {
         .collect();
 
     // allocate memory for the MAT and publish it
-    let buffer_size = mat_descs.len() * size_of::<efi::MemoryDescriptor>() + size_of::<efi::MemoryAttributesTable>();
+    let buffer_size =
+        mat_desc_list.len() * size_of::<efi::MemoryDescriptor>() + size_of::<efi::MemoryAttributesTable>();
     match core_allocate_pool(efi::BOOT_SERVICES_DATA, buffer_size) {
         Err(err) => {
             log::error!("Failed to allocate memory for the MAT! Status {:#X?}", err);
             return;
         }
         Ok(void_ptr) => {
-            let mat_descriptors_ptr = mat_descs.as_ptr() as *mut u8;
+            let mat_descriptors_ptr = mat_desc_list.as_ptr() as *mut u8;
             let mat_ptr = void_ptr as *mut efi::MemoryAttributesTable;
             if mat_ptr.is_null() {
                 log::error!("Got a null ptr in successful return from allocate_pool. Failed to create MAT.");
@@ -212,13 +213,17 @@ pub fn core_install_memory_attributes_table() {
             unsafe {
                 let mat = &mut *mat_ptr;
                 mat.version = efi::MEMORY_ATTRIBUTES_TABLE_VERSION;
-                mat.number_of_entries = mat_descs.len() as u32;
+                mat.number_of_entries = mat_desc_list.len() as u32;
                 mat.descriptor_size = size_of::<efi::MemoryDescriptor>() as u32;
                 mat.reserved = 0;
 
                 let copy_ptr = core::ptr::from_ref(&mat.entry) as *mut u8;
 
-                core::ptr::copy(mat_descriptors_ptr, copy_ptr, mat_descs.len() * size_of::<efi::MemoryDescriptor>());
+                core::ptr::copy(
+                    mat_descriptors_ptr,
+                    copy_ptr,
+                    mat_desc_list.len() * size_of::<efi::MemoryDescriptor>(),
+                );
 
                 match core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, void_ptr.as_mut(), st) {
                     Err(status) => {

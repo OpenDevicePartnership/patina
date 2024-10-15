@@ -657,13 +657,12 @@ impl Display for FixedSizeBlockAllocator {
             let allocator = unsafe { &mut (*node).allocator };
             writeln!(
                 f,
-                "  PhysRange: {:#x}-{:#x}, Size: {:#x}, Used: {:#x} Free: {:#x} Maint: {:#x}",
+                "  PhysRange: {:#x}-{:#x}, Size: {:#x}, Used: {:#x} Free: {:#x}",
                 align_down_size(allocator.bottom() as usize, 0x1000), //account for AllocatorListNode
                 allocator.top() as usize,
                 align_up_size(allocator.size(), 0x1000), //account for AllocatorListNode
                 allocator.used(),
                 allocator.free(),
-                align_up_size(allocator.size(), 0x100) - allocator.size()
             )?;
         }
         Ok(())

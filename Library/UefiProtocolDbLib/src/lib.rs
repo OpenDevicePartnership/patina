@@ -1968,8 +1968,8 @@ mod tests {
 
         let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
 
-        let returned_iface = SPIN_LOCKED_PROTOCOL_DB.get_interface_for_handle(handle, guid1).unwrap();
-        assert_eq!(interface1, returned_iface);
+        let returned_interface = SPIN_LOCKED_PROTOCOL_DB.get_interface_for_handle(handle, guid1).unwrap();
+        assert_eq!(interface1, returned_interface);
     }
 
     #[test]

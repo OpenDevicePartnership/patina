@@ -1247,7 +1247,7 @@ mod tests {
         //signal an ungrouped event
         SPIN_LOCKED_EVENT_DB.signal_event(ungrouped_events.pop().unwrap()).unwrap();
 
-        //all other events should remain unsignalled
+        //all other events should remain un-signalled
         for event in group1_events.clone() {
             assert!(!SPIN_LOCKED_EVENT_DB.is_signalled(event));
         }
