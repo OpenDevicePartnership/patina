@@ -581,8 +581,7 @@ impl SpinLockedProtocolDb {
     ///
     /// # Safety
     ///
-    /// This call potentially invalidates all allocations made by any allocator on top of this GCD.
-    /// Caller is responsible for ensuring that no such allocations exist.
+    /// This call completely resets the protocol database and is intended mostly for use in test.
     ///
     pub unsafe fn reset(&self) {
         let mut inner = self.inner.lock();
@@ -1129,7 +1128,7 @@ impl SpinLockedProtocolDb {
         self.lock().unregister_protocol_notify_events(events);
     }
 
-    /// Registers the next handle for which a protocol has been installed that matches the registration.
+    /// Returns the next handle for which a protocol has been installed that matches the registration.
     ///
     /// ## Examples
     ///
