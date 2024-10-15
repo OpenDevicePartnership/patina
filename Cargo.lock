@@ -916,7 +916,7 @@ dependencies = [
 
 [[package]]
 name = "uefi_allocator"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "linked_list_allocator",
  "mu_pi",
@@ -927,7 +927,7 @@ dependencies = [
 
 [[package]]
 name = "uefi_collections"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "criterion",
  "log",
@@ -937,7 +937,7 @@ dependencies = [
 
 [[package]]
 name = "uefi_component_interface"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "r-efi",
  "uefi_core",
@@ -973,7 +973,7 @@ dependencies = [
 
 [[package]]
 name = "uefi_depex"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "log",
  "r-efi",
@@ -983,14 +983,14 @@ dependencies = [
 
 [[package]]
 name = "uefi_device_path"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "r-efi",
 ]
 
 [[package]]
 name = "uefi_event"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "r-efi",
  "uefi_tpl_lock",
@@ -999,7 +999,7 @@ dependencies = [
 
 [[package]]
 name = "uefi_gcd"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "log",
  "mu_pi",
@@ -1020,7 +1020,7 @@ dependencies = [
 
 [[package]]
 name = "uefi_pecoff"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "goblin",
  "scroll",
@@ -1028,7 +1028,7 @@ dependencies = [
 
 [[package]]
 name = "uefi_protocol_db"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "ahash",
  "r-efi",
@@ -1039,7 +1039,7 @@ dependencies = [
 
 [[package]]
 name = "uefi_tpl_lock"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "log",
  "r-efi",
