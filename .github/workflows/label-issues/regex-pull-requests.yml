@@ -10,7 +10,7 @@
 
 # Maintenance: Keep labels organized in ascending alphabetical order - easier to scan, identify duplicates, etc.
 
-impact:breaking-change:
+  impact:breaking-change:
     - '\s*-\s*\[\s*[x|X]\s*\] Breaking change\?'
   
   impact:non-functional:
