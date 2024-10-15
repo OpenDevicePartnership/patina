@@ -2,10 +2,18 @@
 name = "dxe_core"
 version = "0.1.8"
 edition = "2021"
+readme = "../README.md"
+description = "A pure rust implementation of the UEFI DXE Core."
+license.workspace = true
+repository.workspace = true
 
 [lib]
 name = "dxe_core"
 path = "src/lib.rs"
+
+# Metadata to tell docs.rs how to build the documentation when uploading
+[package.metadata.docs.rs]
+features = ["doc"]
 
 [[bin]]
 name = "dxe_core_x64"
