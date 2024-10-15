@@ -15,6 +15,7 @@ dictionaries:
 ignorePaths:
   - "**/target/**"
   - "**/book/**"
+  - "docs/mermaid.min.js"
 minWordLength: 5
 caseSensitive: false
 allowCompoundWords: true
