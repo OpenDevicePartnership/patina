@@ -56,6 +56,7 @@ default = []
 std = ["uefi_logger/std", "serial_writer/std"]
 x64 = []
 aarch64 = []
+doc = ["uefi_cpu_init/doc"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }
