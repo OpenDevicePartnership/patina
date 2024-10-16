@@ -154,9 +154,9 @@ pub extern "efiapi" fn check_event(event: efi::Event) -> efi::Status {
         return efi::Status::INVALID_PARAMETER;
     }
 
-    match EVENT_DB.read_and_clear_signalled(event) {
-        Ok(signalled) => {
-            if signalled {
+    match EVENT_DB.read_and_clear_signaled(event) {
+        Ok(signaled) => {
+            if signaled {
                 return efi::Status::SUCCESS;
             }
         }
@@ -172,9 +172,9 @@ pub extern "efiapi" fn check_event(event: efi::Event) -> efi::Status {
     let old_tpl = raise_tpl(efi::TPL_HIGH_LEVEL);
     restore_tpl(old_tpl);
 
-    match EVENT_DB.read_and_clear_signalled(event) {
-        Ok(signalled) => {
-            if signalled {
+    match EVENT_DB.read_and_clear_signaled(event) {
+        Ok(signaled) => {
+            if signaled {
                 return efi::Status::SUCCESS;
             }
         }
