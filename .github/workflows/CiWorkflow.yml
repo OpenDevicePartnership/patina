@@ -87,3 +87,11 @@ jobs:
 
       - name: Build AArch64
         run: cargo make build-aarch64
+      
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}-ci-artifacts
+          path: |
+            Cargo.lock
+            target/cobertura.xml
