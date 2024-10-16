@@ -1367,7 +1367,6 @@ impl SpinLockedGcd {
     }
 
     /// Initializes the underlying memory GCD and I/O GCD with the given address bits.
-    /// Initializes the underlying memory GCD and I/O GCD with the given address bits.
     pub fn init(&self, memory_address_bits: u32, io_address_bits: u32) {
         self.memory.lock().init(memory_address_bits);
         self.io.lock().init(io_address_bits);
@@ -1376,11 +1375,6 @@ impl SpinLockedGcd {
     /// This service adds reserved memory, system memory, or memory-mapped I/O resources to the global coherency domain of the processor.
     ///
     /// # Safety
-    /// Since the first call with enough system memory will cause the creation of an array at `base_address` + [MEMORY_BLOCK_SLICE_SIZE].
-    /// The memory from `base_address` to `base_address+len` must be inside the valid address range of the program and not in use.
-    ///
-    /// # Documentation
-    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.1
     /// Since the first call with enough system memory will cause the creation of an array at `base_address` + [MEMORY_BLOCK_SLICE_SIZE].
     /// The memory from `base_address` to `base_address+len` must be inside the valid address range of the program and not in use.
     ///
