@@ -1366,15 +1366,26 @@ impl SpinLockedGcd {
         io.io_blocks = None;
     }
 
-    /// Acquires lock and delegates to [`GCD::init`] and [`IoGCD::init`]
+    /// Initializes the underlying memory GCD and I/O GCD with the given address bits.
+    /// Initializes the underlying memory GCD and I/O GCD with the given address bits.
     pub fn init(&self, memory_address_bits: u32, io_address_bits: u32) {
         self.memory.lock().init(memory_address_bits);
         self.io.lock().init(io_address_bits);
     }
 
-    /// Acquires lock and delegates to [`GCD::add_memory_space`]
+    /// This service adds reserved memory, system memory, or memory-mapped I/O resources to the global coherency domain of the processor.
+    ///
     /// # Safety
-    /// See [`GCD::add_memory_space`]
+    /// Since the first call with enough system memory will cause the creation of an array at `base_address` + [MEMORY_BLOCK_SLICE_SIZE].
+    /// The memory from `base_address` to `base_address+len` must be inside the valid address range of the program and not in use.
+    ///
+    /// # Documentation
+    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.1
+    /// Since the first call with enough system memory will cause the creation of an array at `base_address` + [MEMORY_BLOCK_SLICE_SIZE].
+    /// The memory from `base_address` to `base_address+len` must be inside the valid address range of the program and not in use.
+    ///
+    /// # Documentation
+    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.1
     pub unsafe fn add_memory_space(
         &self,
         memory_type: dxe_services::GcdMemoryType,
@@ -1391,7 +1402,10 @@ impl SpinLockedGcd {
         result
     }
 
-    /// Acquires lock and delegates to [`GCD::remove_memory_space`]
+    /// This service removes reserved memory, system memory, or memory-mapped I/O resources from the global coherency domain of the processor.
+    ///
+    /// # Documentation
+    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.4
     pub fn remove_memory_space(&self, base_address: usize, len: usize) -> Result<(), Error> {
         let result = self.memory.lock().remove_memory_space(base_address, len);
         if result.is_ok() {
@@ -1402,7 +1416,10 @@ impl SpinLockedGcd {
         result
     }
 
-    /// Acquires lock and delegates to [`GCD::allocate_memory_space`]
+    /// This service allocates nonexistent memory, reserved memory, system memory, or memory-mapped I/O resources from the global coherency domain of the processor.
+    ///
+    /// # Documentation
+    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.2
     pub fn allocate_memory_space(
         &self,
         allocate_type: AllocateType,
@@ -1463,7 +1480,11 @@ impl SpinLockedGcd {
         result
     }
 
-    /// Acquires lock and delegates to [`GCD::free_memory_space`]
+    /// This service frees nonexistent memory, reserved memory, system memory, or memory-mapped I/O resources from the
+    /// global coherency domain of the processor.
+    ///
+    /// # Documentation
+    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.3
     pub fn free_memory_space(&self, base_address: usize, len: usize) -> Result<(), Error> {
         let result = self.memory.lock().free_memory_space(base_address, len);
         if result.is_ok() {
@@ -1474,7 +1495,15 @@ impl SpinLockedGcd {
         result
     }
 
-    /// Acquires lock and delegates to [`GCD::free_memory_space_preserving_ownership`]
+    /// This service frees nonexistent memory, reserved memory, system memory, or memory-mapped I/O resources from the
+    /// global coherency domain of the processor.
+    ///
+    /// Ownership of the memory as indicated by the image_handle associated with the block is retained, which means that
+    /// it cannot be re-allocated except by the original owner or by requests targeting a specific address within the
+    /// block (i.e. [`Self::allocate_memory_space`] with [`AllocateType::Address`]).
+    ///
+    /// # Documentation
+    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.3
     pub fn free_memory_space_preserving_ownership(&self, base_address: usize, len: usize) -> Result<(), Error> {
         let result = self.memory.lock().free_memory_space_preserving_ownership(base_address, len);
         if result.is_ok() {
@@ -1485,7 +1514,10 @@ impl SpinLockedGcd {
         result
     }
 
-    /// Acquires lock and delegates to [`GCD::set_memory_space_attributes`]
+    /// This service sets attributes on the given memory space.
+    ///
+    /// # Documentation
+    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.6
     pub fn set_memory_space_attributes(&self, base_address: usize, len: usize, attributes: u64) -> Result<(), Error> {
         let result = self.memory.lock().set_memory_space_attributes(base_address, len, attributes);
         if result.is_ok() {
@@ -1496,7 +1528,10 @@ impl SpinLockedGcd {
         result
     }
 
-    /// Acquires lock and delegates to [`GCD::set_memory_space_capabilities`]
+    /// This service sets capabilities on the given memory space.
+    ///
+    /// # Documentation
+    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.6
     pub fn set_memory_space_capabilities(
         &self,
         base_address: usize,
@@ -1512,12 +1547,12 @@ impl SpinLockedGcd {
         result
     }
 
-    /// Acquires lock and delegates to [`GCD::get_memory_descriptors`]
+    /// returns a copy of the current set of memory blocks descriptors in the GCD.
     pub fn get_memory_descriptors(&self, buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>) -> Result<(), Error> {
         self.memory.lock().get_memory_descriptors(buffer)
     }
 
-    /// Acquires lock and delegates to [`GCD::memory_descriptor_count`]
+    /// returns the current count of blocks in the list.
     pub fn memory_descriptor_count(&self) -> usize {
         self.memory.lock().memory_descriptor_count()
     }

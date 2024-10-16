@@ -12,7 +12,7 @@ extern crate alloc;
 use alloc::{format, string::String, vec::Vec};
 use scroll::{Pread, Pwrite, LE};
 
-mod error;
+pub mod error;
 pub mod relocation;
 mod resource_directory;
 
@@ -61,11 +61,11 @@ pub struct UefiPeInfo {
     pub image_base_header_field_offset: usize,
     /// RVA offset of the entry point.
     pub entry_point_offset: usize,
-    /// The subsystem type (IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER [0xB], etc.).
+    /// The subsystem type (IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER \[0xB\], etc.).
     pub image_type: u16,
     /// The total length of the image.
     pub size_of_image: u32,
-    /// The size of an individual section in a power of 2 (4K [0x1000], etc.).
+    /// The size of an individual section in a power of 2 (4K \[0x1000\], etc.).
     pub section_alignment: u32,
     /// The total length of the image header.
     pub size_of_headers: usize,
@@ -184,13 +184,13 @@ impl UefiPeInfo {
 ///
 /// ## Errors
 ///
-/// Returns [`ParseError`](error::Error::ParseError) if parsing a image containing a TE header
+/// Returns [`Parse`](error::Error::Parse) error if parsing a image containing a TE header
 /// failed.
 ///
-/// Returns [`GoblinError`](error::Error::GoblinError) if parsing a image containing a PE32 header
+/// Returns [`Goblin`](error::Error::Goblin) error if parsing a image containing a PE32 header
 /// failed. Contains the exact parsing [`Error`](goblin::error::Error).
 ///
-/// Returns [`BufferTooShort`](error::Error::BufferTooShort) if either of the buffers provided are
+/// Returns [`BufferTooShort`](error::Error::BufferTooShort) error if either of the buffers provided are
 /// not large enough to contain the image as specified by the image header.
 ///
 /// ## Panics
@@ -250,13 +250,13 @@ pub fn load_image(pe_info: &UefiPeInfo, image: &[u8], loaded_image: &mut [u8]) -
 ///
 /// ## Errors
 ///
-/// Returns [`ParseError`](error::Error::ParseError) if parsing a image containing a TE header
+/// Returns [`Parse`](error::Error::Parse) error if parsing a image containing a TE header
 /// failed.
 ///
-/// Returns [`GoblinError`](error::Error::GoblinError) if parsing a image containing a PE32 header
+/// Returns [`Goblin`](error::Error::Goblin) error if parsing a image containing a PE32 header
 /// failed. Contains the exact parsing [`Error`](goblin::error::Error).
 ///
-/// Returns [`BufferTooShort`](error::Error::BufferTooShort) if either of the buffers provided are
+/// Returns [`BufferTooShort`](error::Error::BufferTooShort) error if either of the buffers provided are
 /// not large enough to contain the image as specified by the image header.
 ///
 /// ## Examples
@@ -351,10 +351,10 @@ pub fn relocate_image(
 ///
 /// ## Errors
 ///
-/// Returns [`ParseError`](error::Error::ParseError) if parsing a image containing a TE header
+/// Returns [`Parse`](crate::error::Error::Parse) error if parsing a image containing a TE header
 /// failed.
 ///
-/// Returns [`GoblinError`](error::Error::GoblinError) if parsing a image containing a PE32 header
+/// Returns [`Goblin`](error::Error::Goblin) error if parsing a image containing a PE32 header
 /// failed. Contains the exact parsing [`Error`](goblin::error::Error).
 ///
 /// ## Examples

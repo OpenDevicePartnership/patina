@@ -707,8 +707,8 @@ impl SpinLockedProtocolDb {
     ///
     /// ## Errors
     ///
-    /// Returns [`r_efi:efi::Status::INVALID_PARAMETER`] if incorrect parameters are given.
-    /// Returns [`r_efi:efi::Status::NOT_FOUND`] if no matching handles are found.
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
+    /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if no matching handles are found.
     ///
     /// ## Examples
     ///
@@ -744,8 +744,8 @@ impl SpinLockedProtocolDb {
     ///
     /// ## Errors
     ///
-    /// Returns [`r_efi:efi::Status::INVALID_PARAMETER`] if incorrect parameters are given.
-    /// Returns [`r_efi:efi::Status::NOT_FOUND`] if no matching interfaces are found.
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
+    /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if no matching interfaces are found.
     ///
     /// ## Examples
     ///
@@ -778,8 +778,8 @@ impl SpinLockedProtocolDb {
     ///
     /// ## Errors
     ///
-    /// Returns [`r_efi:efi::Status::INVALID_PARAMETER`] if incorrect parameters are given.
-    /// Returns [`r_efi:efi::Status::NOT_FOUND`] if no matching interfaces are found on the given handle.
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
+    /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if no matching interfaces are found on the given handle.
     ///
     /// ## Examples
     ///
@@ -847,13 +847,14 @@ impl SpinLockedProtocolDb {
     ///
     /// # Errors
     ///
-    /// Returns [`r_efi:efi::Status::INVALID_PARAMETER`] if incorrect parameters are given.
-    /// Returns [`r_efi:efi::Status::NOT_FOUND`] if no matching interfaces are found.
-    /// Returns [`r_efi:efi::Status::ALREADY_STARTED`] if attributes is BY_DRIVER and there is an existing usage by the
-    ///   agent handle.
-    /// Returns [`r_efi:efi::Status::ACCESS_DENIED`] if attributes is efi::OPEN_PROTOCOL_BY_DRIVER | efi::OPEN_PROTOCOL_EXCLUSIVE |
-    ///   BY_DRIVER_EXCLUSIVE and there is an existing usage that conflicts with those attributes.
-    /// Returns [`efi::Status::UNSUPPORTED`] if the handle does not support the specified protocol.
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
+    /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if no matching interfaces are found.
+    /// Returns [`ALREADY_STARTED`](r_efi::efi::Status::ALREADY_STARTED) if attributes is BY_DRIVER and there is an
+    ///     existing usage by the agent handle.
+    /// Returns [`ACCESS_DENIED`](r_efi::efi::Status::ACCESS_DENIED) if attributes is efi::OPEN_PROTOCOL_BY_DRIVER |
+    ///     efi::OPEN_PROTOCOL_EXCLUSIVE | BY_DRIVER_EXCLUSIVE and there is an existing usage that conflicts with those
+    ///     attributes.
+    /// Returns [`UNSUPPORTED`](r_efi::efi::Status::UNSUPPORTED) if the handle does not support the specified protocol.
     ///
     /// ## Examples
     ///
@@ -894,9 +895,9 @@ impl SpinLockedProtocolDb {
     ///
     /// # Errors
     ///
-    /// Returns [`r_efi:efi::Status::INVALID_PARAMETER`] if incorrect parameters are given.
-    /// Returns [`r_efi:efi::Status::NOT_FOUND`] if the specified handle does not support the specified protocol.
-    /// Returns [`r_efi:efi::Status::NOT_FOUND`] if the protocol interface specified by handle and protocol are not
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
+    /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if the specified handle does not support the specified protocol.
+    /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if the protocol interface specified by handle and protocol are not
     ///   opened by the specified agent and controller handle.
     ///
     /// ## Examples
@@ -939,8 +940,8 @@ impl SpinLockedProtocolDb {
     ///
     /// # Errors
     ///
-    /// Returns [`r_efi:efi::Status::INVALID_PARAMETER`] if incorrect parameters are given.
-    /// Returns [`r_efi:efi::Status::NOT_FOUND`] if the specified handle does not support the specified protocol.
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
+    /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if the specified handle does not support the specified protocol.
     ///
     /// ## Examples
     ///
@@ -979,8 +980,8 @@ impl SpinLockedProtocolDb {
     ///
     /// # Errors
     ///
-    /// Returns [`r_efi:efi::Status::INVALID_PARAMETER`] if incorrect parameters are given.
-    /// Returns [`r_efi:efi::Status::NOT_FOUND`] if the specified handle does not support the specified protocol.
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
+    /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if the specified handle does not support the specified protocol.
     ///
     /// ## Examples
     ///
@@ -1057,11 +1058,11 @@ impl SpinLockedProtocolDb {
     ///
     /// This function generally matches the behavior of EFI_BOOT_SERVICES.RegisterProtocolNotify() API in the UEFI spec
     /// 2.10 section 7.3.5. Refer to the UEFI spec description for details on input parameters. This implementation does
-    /// not actually fire the event; instead, a list notifications is returned by [`install_protocol_interface`] so that
-    /// the caller can fire the events.
+    /// not actually fire the event; instead, a list notifications is returned by [install_protocol_interface](SpinLockedProtocolDb::install_protocol_interface)
+    /// so that the caller can fire the events.
     ///
-    /// Returns a registration token that can be used with [`next_handle_for_registration`] to iterate over handles
-    /// that have fresh installations of the specified protocol.
+    /// Returns a registration token that can be used with [next_handle_for_registration](SpinLockedProtocolDb::next_handle_for_registration)
+    /// to iterate over handles that have fresh installations of the specified protocol.
     ///
     /// ## Examples
     ///
