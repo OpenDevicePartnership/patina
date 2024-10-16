@@ -25,7 +25,8 @@ jobs:
   apply:
 
     permissions:
+      issues: write
       contents: read
       pull-requests: write
 
-    uses: microsoft/mu_devops/.github/workflows/Labeler.yml@v12.0.2
+    uses: ./.github/workflows/Labeler.yml

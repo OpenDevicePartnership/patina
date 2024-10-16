@@ -33,6 +33,7 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
+      issues: write
       contents: read
       pull-requests: write
 
@@ -46,7 +47,7 @@ jobs:
         if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
 
       - name: Apply Labels Based on PR Messages
-        uses: github/issue-labeler@v3.1
+        uses: github/issue-labeler@v3.4
         with:
           configuration-path: .github/workflows/label-issues/regex-pull-requests.yml
           enable-versioned-regex: 0
