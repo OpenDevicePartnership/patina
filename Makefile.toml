@@ -216,3 +216,9 @@ clear = true
 command = "cargo"
 args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--target", "x86_64-unknown-uefi", "@@split(NO_STD_FLAGS, )", ]
 dependencies = ["individual-package-targets"]
+
+[tasks.doc]
+env = { RUSTDOCFLAGS = "-D warnings"}
+description = "Builds all rust documentation in the workspace. Example `cargo make doc`"
+command = "cargo"
+args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc"]
