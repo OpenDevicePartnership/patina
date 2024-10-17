@@ -16,10 +16,8 @@ use mu_pi::{
     BootMode,
 };
 use r_efi::efi;
-use sample_components::HelloWorldComponent;
+use sample_components::HelloComponent;
 use std::ffi::c_void;
-
-type DxeCore = Core<uefi_cpu_init::NullCpuInitializer, section_extractor::CompositeSectionExtractor>;
 
 static LOGGER: uefi_logger::SerialLogger<serial_writer::Terminal> = uefi_logger::SerialLogger::new(
     uefi_logger::Format::Standard,
@@ -36,8 +34,18 @@ fn main() -> uefi_core::error::Result<()> {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
 
     let hob_list = build_hob_list();
-    let mut dxe_core = DxeCore { ..Default::default() };
-    dxe_core.start(hob_list, &[&HelloWorldComponent])
+    Core::default()
+        .with_cpu_initializer(uefi_cpu_init::NullCpuInitializer::default())
+        .with_section_extractor(section_extractor::CompositeSectionExtractor::default())
+        // Add any config knob functions for pre-gcd-init Core
+        // .with_some_config(true)
+        .initialize(hob_list) // We can make allocations now!
+        // Add any config knob functions for post-gcd-init Core
+        // .with_some_config(true)
+        .with_driver(Box::new(HelloComponent::default()))
+        .with_driver(Box::new(HelloComponent::default().with_name("Dxe Core")))
+        .with_driver(Box::new(HelloComponent::default().with_name("World")))
+        .start()
 }
 
 const MEM_SIZE: u64 = 0x2000000;

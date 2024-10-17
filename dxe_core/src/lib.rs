@@ -36,29 +36,29 @@ pub mod test_support;
 
 use core::{ffi::c_void, str::FromStr};
 
+use alloc::{boxed::Box, vec::Vec};
+use mu_pi::{fw_fs, hob::HobList, protocols::bds};
+use r_efi::efi::{self};
 use uefi_component_interface::DxeComponent;
 use uefi_core::{
     error::{self, Result},
     interface,
 };
-
-use mu_pi::{fw_fs, hob::HobList, protocols::bds};
-use r_efi::efi::{self};
 use uefi_gcd::gcd::SpinLockedGcd;
-
-use alloc::boxed::Box;
 
 pub static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
 
 pub type ComponentEntryPoint = fn() -> Result<()>;
+
+/// The DxeCore object responsible for dispatching all drivers, both local and those found in firmware volumes.
 #[derive(Default)]
 pub struct Core<CpuInitializer, SectionExtractor>
 where
     CpuInitializer: interface::CpuInitializer + Default,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
 {
-    pub cpu: CpuInitializer,
-    pub se: SectionExtractor,
+    cpu: CpuInitializer,
+    se: SectionExtractor,
 }
 
 impl<CpuInitializer, SectionExtractor> Core<CpuInitializer, SectionExtractor>
@@ -66,11 +66,20 @@ where
     CpuInitializer: interface::CpuInitializer + Default,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
 {
-    pub fn start(
-        &mut self,
-        physical_hob_list: *const c_void,
-        drivers: &[&'static dyn DxeComponent],
-    ) -> error::Result<()> {
+    /// Registers the CPU initializer with it's own configuration.
+    pub fn with_cpu_initializer(mut self, cpu: CpuInitializer) -> Self {
+        self.cpu = cpu;
+        self
+    }
+
+    /// Registers the section extractor with it's own configuration.
+    pub fn with_section_extractor(mut self, se: SectionExtractor) -> Self {
+        self.se = se;
+        self
+    }
+
+    /// Initializes the core with the given configuration, including GCD initialization, enabling allocations.
+    pub fn initialize(mut self, physical_hob_list: *const c_void) -> CorePostInit {
         self.cpu.initialize();
         let (free_memory_start, free_memory_size) = gcd::init_gcd(physical_hob_list);
 
@@ -133,9 +142,37 @@ where
 
         memory_attributes_table::init_memory_attributes_table_support();
 
+        return CorePostInit::new(/* Potentially transfer configuration data here. */);
+    }
+}
+
+/// Struct representing the core after basic initialization has been completed.
+///
+/// This struct can only be created by the [Core::initialize] function, and is used to dispatch all drivers. It ensures
+/// that the GCD has been initialized and that allocations are now available.
+pub struct CorePostInit {
+    drivers: Vec<Box<dyn DxeComponent>>,
+}
+
+impl CorePostInit {
+    fn new() -> Self {
+        Self { drivers: Vec::new() }
+    }
+
+    /// Registers a driver to be dispatched by the core.
+    pub fn with_driver(mut self, driver: Box<dyn DxeComponent>) -> Self {
+        self.drivers.push(driver);
+        self
+    }
+
+    /// Starts the core, dispatching all drivers.
+    pub fn start(self) -> Result<()> {
         log::info!("Dispatching Local Drivers");
-        for driver in drivers {
-            image::core_start_local_image(*driver).unwrap();
+        for driver in self.drivers {
+            // This leaks the driver, making it static for the lifetime of the program.
+            // Since the number of drivers is fixed and this function can only be called once (due to
+            // `self` instead of `&self`), we don't have to worry about leaking memory.
+            image::core_start_local_image(Box::leak(driver)).unwrap();
         }
 
         dispatcher::core_dispatcher().expect("initial dispatch failed.");
