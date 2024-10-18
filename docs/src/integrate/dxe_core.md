@@ -14,11 +14,13 @@ version of the dxe_core you wish to use.
 dxe_core = "$(VERSION)"
 ```
 
-**NOTE**: While we are still closed-source, you will need to add the following instead:
+````admonish note
+While we are still closed-source, you will need to add the following instead:
 
 ``` toml
 dxe_core = { git = "https://dev.azure.com/microsoft/MsUEFI/_git/DxeRust", branch = "main" }
 ```
+````
 
 ## main.rs Boilerplate
 
@@ -72,40 +74,44 @@ points of abstraction, `SectionExtractor` and `CpuInitializer`.
 extraction methods it supports. As an example, a platform may only compress it's sections with
 brotli, so it only needs to support brotli extractions. A platform may create their own extractor,
 it only needs implement the [SectionExtractor](https://github.com/microsoft/mu_rust_pi/blob/c8dd7f990d87746cfae9a5e821ad69501c46f346/src/fw_fs.rs#L77)
-trait. However multiple implementations are provided via [mu_section_extractor](https://dev.azure.com/microsoft/MsUEFI/_git/mu-rs?path=/mu_section_extractor),
+trait. However multiple implementations are provided via [section_extractor](https://github.com/pop-project/uefi-core/tree/main/section_extractor),
 such as brotli, crc32, uefi_decompress, etc.
 
 `CpuInitializer` is an abstraction point for architecture specific initialization steps.
-Implementations are provided via [mu_cpu](https://dev.azure.com/microsoft/MsUEFI/_git/mu-rs?path=/mu_cpu),
-however if necessary, a platform can create their own implementation via the [CpuInitializer](https://dev.azure.com/microsoft/MsUEFI/_git/mu-rs?path=/mu_core/src/interface.rs)
+Implementations are provided via [uefi_cpu_init](https://github.com/pop-project/uefi-core/tree/main/uefi_cpu_init),
+however if necessary, a platform can create their own implementation via the [CpuInitializer](https://github.com/pop-project/uefi-core/blob/main/uefi_core/src/interface.rs)
 trait.
 
-**Note:** If there are any new traits added, please submit a PR to update this documentation.
+```admonish note
+If there are any new traits added, please submit a PR to update this documentation.
+```
 
 With all of that said, you can add the following code to `main.rs`, replacing the implementations
 in this example with your platform specific implementations:
 
 ```rust
 use dxe_core::Core;
-
-type DxeCore = component!(
-    Core<CpuInitializer, SectionExtractor>;
-    CpuInitializer=mu_cpu::X64CpuInitializer;
-    SectionExtractor=mu_section_extractor::BrotliSectionExtractor;
-)
+use uefi_cpu::X64CpuInitializer;
+use section_extractor::BrotliSectionExtractor;
 
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
-    let mut dxe_core = DxeCore { Default::default() };
-    dxe_core.start(physical_hob_list, &[]);
+    Core::default()
+        .with_section_extractor(BrotliSectionExtractor::default())
+        .with_cpu_initializer(X64CpuInitializer::default())
+        .initialize()
+        .start(physical_hob_list)
+        .unwrap()
     loop {}
 }
 ```
 
-**Note:** If you copy + paste this directly, the compiler will not know what `mu_cpu` or
-`mu_section_extractor` is. You will have to add that to your platform's `Cargo.toml` file.
+``` admonish note
+If you copy + paste this directly, the compiler will not know what `uefi_cpu` or
+`section_extractor` is. You will have to add that to your platform's `Cargo.toml` file.
 Additionally, where the `Default::default()` option is, this is where you would provide and
 configurations to the DXE Core, similar to a PCD value.
+```
 
 At this point, you could skip the rest of this section and move on to compiling it into the
 platform firmware, and it would run! However you would not get any logs! so lets set up a logger.
@@ -127,34 +133,36 @@ First, add `adv_logger to your Cargo.toml file in the crate:
 adv_logger = "$(VERSION)
 ```
 
-**NOTE**: While we are still closed-source, you will need to add the following instead:
-
-``` toml
-adv_logger = { git = "https://dev.azure.com/microsoft/MsUEFI/_git/adv_logger", branch = "main" }
-```
-
 Next, update main.rs with the following:
 
 ``` rust
-static LOGGER: AdvancedLogger<mu_serial::Uart16550> = AdvancedLogger::new(
-    mu_log::Format::Standard,
+static LOGGER: AdvancedLogger<serial_writer::Uart16550> = AdvancedLogger::new(
+    uefi_logger::Format::Standard,
     &[
         ("goblin", log::LevelFilter::Off),
         ("uefi_depex_lib", log::LevelFilter::Off),
         ("gcd_measure", log::LevelFilter::Off),
     ],
     log::LevelFilter::Trace,
-    mu_serial::Uart16550::new(mu_serial::Interface::Io(0x402)),
+    serial_writer::Uart16550::new(serial_writer::Interface::Io(0x402)),
 );
 
-static ADV_LOGGER_COMP: AdvancedLoggerComponent<mu_serial::Uart16550> = AdvancedLoggerComponent::new(&LOGGER); 
+static ADV_LOGGER_COMP: AdvancedLoggerComponent<serial_writer::Uart16550> = AdvancedLoggerComponent::new(&LOGGER); 
 
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
-    let _ = ADV_LOGGER.init_advanced_logger(physical_hob_list);
-    // ...
-    dxe_core.start(physical_hob_list, &[&ADV_LOGGER]).unwrap();
+    let adv_logger = AdvancedLoggerComponent::<serial_writer::Uart16550>::new(&LOGGER);
+    adv_logger.init_advanced_logger(physical_hob_list);
+    
+    Core::default()
+        .with_section_extractor(BrotliSectionExtractor::default())
+        .with_cpu_initializer(X64CpuInitializer::default())
+        .initialize()
+        .with_driver(Box::new(adv_logger_component))
+        .start(physical_hob_list)
+        .unwrap()
+    loop {}
 }
 ```
 
@@ -175,34 +183,46 @@ execute.
 ## Final main.rs
 
 ``` rust
+#![no_std]
+#![no_main]
+extern crate alloc;
+
+use adv_logger::{component::AdvancedLoggerComponent, logger::AdvancedLogger};
+use core::{ffi::c_void, panic::PanicInfo};
 use dxe_core::Core;
 
-type DxeCore = component!(
-    Core<CpuInitializer, SectionExtractor>;
-    CpuInitializer=mu_cpu::X64CpuInitializer;
-    SectionExtractor=mu_section_extractor::BrotliSectionExtractor;
-)
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    log::error!("{}", info);
+    loop {}
+}
 
-static LOGGER: AdvancedLogger<mu_serial::Uart16550> = AdvancedLogger::new(
-    mu_log::Format::Standard,
+static LOGGER: AdvancedLogger<serial_writer::Uart16550> = AdvancedLogger::new(
+    uefi_logger::Format::Standard,
     &[
         ("goblin", log::LevelFilter::Off),
         ("uefi_depex_lib", log::LevelFilter::Off),
         ("gcd_measure", log::LevelFilter::Off),
     ],
     log::LevelFilter::Trace,
-    mu_serial::Uart16550::new(mu_serial::Interface::Io(0x402)),
+    serial_writer::Uart16550::new(serial_writer::Interface::Io(0x402)),
 );
-
-static ADV_LOGGER_COMP: AdvancedLoggerComponent<mu_serial::Uart16550> = AdvancedLoggerComponent::new(&LOGGER);
 
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
-    let _ = ADV_LOGGER.init_advanced_logger(physical_hob_list);
-    
-    let mut dxe_core = DxeCore { Default::default() };
-    dxe_core.start(physical_hob_list, &[&ADV_LOGGER]);
+    let adv_logger_component = AdvancedLoggerComponent::<serial_writer::Uart16550>::new(&LOGGER);
+    adv_logger_component.init_advanced_logger(physical_hob_list).unwrap();
+
+    Core::default()
+        .with_cpu_initializer(uefi_cpu_init::X64CpuInitializer::default())
+        .with_section_extractor(section_extractor::CompositeSectionExtractor::default())
+        .initialize(physical_hob_list)
+        .with_driver(Box::new(adv_logger_component))
+        .start()
+        .unwrap();
+
+    log::info!("Dead Loop Time");
     loop {}
 }
 ```
