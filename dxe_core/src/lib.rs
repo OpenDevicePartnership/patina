@@ -181,6 +181,9 @@ where
         drop(st);
         tpl_lock::init_boot_services(bs);
 
+        // Now that boot services is pretty much ready, invoke phase 2 of cpu services.
+        self.cpu.post_init(bs);
+
         memory_attributes_table::init_memory_attributes_table_support();
 
         CorePostInit::new(/* Potentially transfer configuration data here. */)
