@@ -95,3 +95,14 @@ jobs:
           path: |
             Cargo.lock
             target/cobertura.xml
+
+  finalize:
+    name: Finalize
+
+    needs: [ run ]
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Finish
+        run: echo "CI Complete"
