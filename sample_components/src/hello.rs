@@ -12,12 +12,22 @@ use log::info;
 use uefi_component_interface::{DxeComponent, DxeComponentInterface};
 use uefi_core::error::Result;
 
-pub struct HelloWorldComponent;
+#[derive(Default)]
+pub struct HelloComponent {
+    name: &'static str,
+}
 
-impl DxeComponent for HelloWorldComponent {
+impl HelloComponent {
+    pub fn with_name(mut self, name: &'static str) -> Self {
+        self.name = name;
+        self
+    }
+}
+
+impl DxeComponent for HelloComponent {
     fn entry_point(&self, _interface: &dyn DxeComponentInterface) -> Result<()> {
         // Main component functionality
-        info!("Hello, World!");
+        info!("Hello, {}!", self.name);
 
         // Return value
         Ok(())

@@ -1,5 +1,32 @@
 //! DXE Core
 //!
+//! A pure rust implementation of the UEFI DXE Core. Please review the getting started documentation at
+//! <https://pop-project.github.io/uefi-dxe-core/> for more information.
+//!
+//! ## Examples
+//!
+//! ``` rust,ignore
+//! #[no_std]
+//! #[no_main]
+//! #[panic_handler]
+//! fn panic(info: &PanicInfo) -> ! {
+//!    log::error!("{}", info);
+//!    loop {}
+//! }
+//! #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
+//! pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
+//!
+//!     dxe_core::Core::default()
+//!         .with_cpu_initializer(CpuInit::default())
+//!         .with_section_extractor(SectionExtract::default())
+//!         .initialize(physical_hob_list)
+//!         .with_driver(Box::new(Driver::default()))
+//!         .start()
+//!         .unwrap();
+//!     loop {}
+//! }
+//! ```
+//!
 //! ## License
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
@@ -36,29 +63,43 @@ pub mod test_support;
 
 use core::{ffi::c_void, str::FromStr};
 
+use alloc::{boxed::Box, vec::Vec};
+use mu_pi::{fw_fs, hob::HobList, protocols::bds};
+use r_efi::efi::{self};
 use uefi_component_interface::DxeComponent;
 use uefi_core::{
     error::{self, Result},
     interface,
 };
-
-use mu_pi::{fw_fs, hob::HobList, protocols::bds};
-use r_efi::efi::{self};
 use uefi_gcd::gcd::SpinLockedGcd;
 
-use alloc::boxed::Box;
+pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
 
-pub static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
-
-pub type ComponentEntryPoint = fn() -> Result<()>;
+/// The initialize phase DxeCore, responsible for setting up the environment with the given configuration.
+///
+/// This struct is the entry point for the DXE Core, which is a two phase system. This struct is responsible for
+/// initializing the system and applying any configuration from the `with_*` function calls. During this phase, no
+/// allocations are available. Allocations are only available once [initialize](Core::initialize) is called.
+///
+/// The return type from [initialize](Core::initialize) is a [CorePostInit] object, which signals the completion of
+/// the first phase of the DXE Core and that allocations are available. See [CorePostInit] for more information.
+///
+/// ## Examples
+///
+/// ``` rust,ignore
+/// dxe_core::Core::default()
+///     .with_cpu_initializer(CpuInit::default())
+///     .with_section_extractor(SectionExtract::default())
+///     .initialize(physical_hob_list);
+/// ```
 #[derive(Default)]
 pub struct Core<CpuInitializer, SectionExtractor>
 where
     CpuInitializer: interface::CpuInitializer + Default,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
 {
-    pub cpu: CpuInitializer,
-    pub se: SectionExtractor,
+    cpu_initializer: CpuInitializer,
+    section_extractor: SectionExtractor,
 }
 
 impl<CpuInitializer, SectionExtractor> Core<CpuInitializer, SectionExtractor>
@@ -66,12 +107,21 @@ where
     CpuInitializer: interface::CpuInitializer + Default,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
 {
-    pub fn start(
-        &mut self,
-        physical_hob_list: *const c_void,
-        drivers: &[&'static dyn DxeComponent],
-    ) -> error::Result<()> {
-        self.cpu.initialize();
+    /// Registers the CPU initializer with it's own configuration.
+    pub fn with_cpu_initializer(mut self, cpu_initializer: CpuInitializer) -> Self {
+        self.cpu_initializer = cpu_initializer;
+        self
+    }
+
+    /// Registers the section extractor with it's own configuration.
+    pub fn with_section_extractor(mut self, section_extractor: SectionExtractor) -> Self {
+        self.section_extractor = section_extractor;
+        self
+    }
+
+    /// Initializes the core with the given configuration, including GCD initialization, enabling allocations.
+    pub fn initialize(mut self, physical_hob_list: *const c_void) -> CorePostInit {
+        self.cpu_initializer.initialize();
         let (free_memory_start, free_memory_size) = gcd::init_gcd(physical_hob_list);
 
         log::trace!("Free memory start: {:#x}", free_memory_start);
@@ -108,8 +158,8 @@ where
             misc_boot_services::init_misc_boot_services_support(st.boot_services());
             runtime::init_runtime_support(st.runtime_services());
             image::init_image_support(&hob_list, st);
-            dispatcher::init_dispatcher(Box::from(self.se));
-            fv::init_fv_support(&hob_list, Box::from(self.se));
+            dispatcher::init_dispatcher(Box::from(self.section_extractor));
+            fv::init_fv_support(&hob_list, Box::from(self.section_extractor));
             dxe_services::init_dxe_services(st);
             driver_services::init_driver_services(st.boot_services());
             // re-checksum the system tables after above initialization.
@@ -133,9 +183,52 @@ where
 
         memory_attributes_table::init_memory_attributes_table_support();
 
+        return CorePostInit::new(/* Potentially transfer configuration data here. */);
+    }
+}
+
+/// The execute phase of the DxeCore, responsible for dispatching all drivers.
+///
+/// This phase is responsible for dispatching all drivers that have been registered with the core or discovered by the
+/// core. This structure cannot be generated directly, but is returned from [Core::initialize]. This phase allows for
+/// additional configuration that may require allocations, as allocations are now available. Once all configuration has
+/// been completed via the provided `with_*` functions, [start](CorePostInit::start) should be called to begin driver
+/// dispatch and handoff to bds.
+///
+/// ## Examples
+///
+/// ``` rust,ignore
+/// dxe_core::Core::default()
+///     .with_cpu_initializer(CpuInit::default())
+///     .with_section_extractor(SectionExtract::default())
+///     .initialize(physical_hob_list)
+///     .with_driver(Box::new(Driver::default()))
+///     .start()
+///     .unwrap();
+/// ```
+pub struct CorePostInit {
+    drivers: Vec<Box<dyn DxeComponent>>,
+}
+
+impl CorePostInit {
+    fn new() -> Self {
+        Self { drivers: Vec::new() }
+    }
+
+    /// Registers a driver to be dispatched by the core.
+    pub fn with_driver(mut self, driver: Box<dyn DxeComponent>) -> Self {
+        self.drivers.push(driver);
+        self
+    }
+
+    /// Starts the core, dispatching all drivers.
+    pub fn start(self) -> Result<()> {
         log::info!("Dispatching Local Drivers");
-        for driver in drivers {
-            image::core_start_local_image(*driver).unwrap();
+        for driver in self.drivers {
+            // This leaks the driver, making it static for the lifetime of the program.
+            // Since the number of drivers is fixed and this function can only be called once (due to
+            // `self` instead of `&self`), we don't have to worry about leaking memory.
+            image::core_start_local_image(Box::leak(driver)).unwrap();
         }
 
         dispatcher::core_dispatcher().expect("initial dispatch failed.");

@@ -9,6 +9,6 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 #![cfg_attr(not(feature = "std"), no_std)]
-mod hello_world;
+mod hello;
 
-pub use hello_world::HelloWorldComponent;
+pub use hello::HelloComponent;
