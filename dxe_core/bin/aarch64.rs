@@ -35,6 +35,10 @@ static LOGGER: AdvancedLogger<serial_writer::UartPl011> = AdvancedLogger::new(
     serial_writer::UartPl011::new(0x6000_0000),
 );
 
+type DxeCore = Core<uefi_cpu_init::AArch64CpuInitializer, section_extractor::CompositeSectionExtractor>;
+
+static ADV_LOGGER: AdvancedLoggerComponent<serial_writer::UartPl011> = AdvancedLoggerComponent::new(&LOGGER);
+
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
