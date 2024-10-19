@@ -8,6 +8,7 @@
 //!
 use core::{
     ffi::c_void,
+    fmt::Debug,
     mem,
     slice::{self, from_raw_parts_mut},
 };
@@ -73,6 +74,125 @@ static STATIC_ALLOCATORS: &[&UefiAllocator] = &[
     &EFI_RUNTIME_SERVICES_CODE_ALLOCATOR,
     &EFI_RUNTIME_SERVICES_DATA_ALLOCATOR,
 ];
+
+fn memory_attributes_to_str(f: &mut core::fmt::Formatter<'_>, attributes: u64) -> core::fmt::Result {
+    let mut attrs = Vec::new();
+    let mut string_len = 0;
+
+    if attributes & efi::MEMORY_UC != 0 {
+        attrs.push("UC");
+        string_len += 2;
+    }
+    if attributes & efi::MEMORY_WC != 0 {
+        attrs.push("WC");
+        string_len += 2;
+    }
+    if attributes & efi::MEMORY_WT != 0 {
+        attrs.push("WT");
+        string_len += 2;
+    }
+    if attributes & efi::MEMORY_WB != 0 {
+        attrs.push("WB");
+        string_len += 2;
+    }
+    if attributes & efi::MEMORY_UCE != 0 {
+        attrs.push("UCE");
+        string_len += 3;
+    }
+    if attributes & efi::MEMORY_WP != 0 {
+        attrs.push("WP");
+        string_len += 2;
+    }
+    if attributes & efi::MEMORY_RP != 0 {
+        attrs.push("RP");
+        string_len += 2;
+    }
+    if attributes & efi::MEMORY_XP != 0 {
+        attrs.push("XP");
+        string_len += 2;
+    }
+    if attributes & efi::MEMORY_NV != 0 {
+        attrs.push("NV");
+        string_len += 2;
+    }
+    if attributes & efi::MEMORY_MORE_RELIABLE != 0 {
+        attrs.push("MR");
+        string_len += 2;
+    }
+    if attributes & efi::MEMORY_RO != 0 {
+        attrs.push("RO");
+        string_len += 2;
+    }
+    if attributes & efi::MEMORY_SP != 0 {
+        attrs.push("SP");
+        string_len += 2;
+    }
+    if attributes & efi::MEMORY_CPU_CRYPTO != 0 {
+        attrs.push("CC");
+        string_len += 2;
+    }
+    if attributes & efi::MEMORY_RUNTIME != 0 {
+        attrs.push("RT");
+        string_len += 2;
+    }
+
+    if string_len + attrs.len() > 20 || attrs.is_empty() {
+        write!(f, "{:<#20X}", attributes)?;
+        return Ok(());
+    }
+
+    write!(f, "{:<20}", attrs.join("|"))
+}
+
+fn memory_type_to_str(f: &mut core::fmt::Formatter<'_>, memory_type: efi::MemoryType) -> core::fmt::Result {
+    let string = match memory_type {
+        efi::RESERVED_MEMORY_TYPE => "Reserved Memory",
+        efi::LOADER_CODE => "Loader Code",
+        efi::LOADER_DATA => "Loader Data",
+        efi::BOOT_SERVICES_CODE => "BootServicesCode",
+        efi::BOOT_SERVICES_DATA => "BootServicesData",
+        efi::RUNTIME_SERVICES_CODE => "RuntimeServicesCode",
+        efi::RUNTIME_SERVICES_DATA => "RuntimeServicesData",
+        efi::CONVENTIONAL_MEMORY => "Conventional Memory",
+        efi::UNUSABLE_MEMORY => "Unusable Memory",
+        efi::ACPI_RECLAIM_MEMORY => "ACPI Reclaim Memory",
+        efi::ACPI_MEMORY_NVS => "ACPI Memory NVS",
+        efi::MEMORY_MAPPED_IO => "Memory Mapped IO",
+        efi::MEMORY_MAPPED_IO_PORT_SPACE => "Memory Mapped IO Port Space",
+        efi::PAL_CODE => "PAL Code",
+        efi::PERSISTENT_MEMORY => "Persistent Memory",
+        _ => "Unknown Memory Type",
+    };
+
+    write!(f, "{:<25}", string)
+}
+
+pub struct MemoryDescriptorSlice<'a>(pub &'a [efi::MemoryDescriptor]);
+
+pub struct MemoryDescriptorRef<'a>(&'a efi::MemoryDescriptor);
+
+impl<'a> Debug for MemoryDescriptorRef<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        memory_type_to_str(f, self.0.r#type)?;
+        write!(f, "{:<#20X} {:<#15X} {:<#16X}", self.0.physical_start, self.0.virtual_start, self.0.number_of_pages)?;
+        memory_attributes_to_str(f, self.0.attribute)?;
+        Ok(())
+    }
+}
+
+impl<'a> Debug for MemoryDescriptorSlice<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        writeln!(
+            f,
+            "{:<24} {:<20} {:<15} {:<15} {:<20}",
+            "Type", "Physical Start", "Virtual Start", "Number of Pages", "Attributes"
+        )?;
+        for descriptor in self.0 {
+            writeln!(f, "{:?}", MemoryDescriptorRef(descriptor))?;
+        }
+        Ok(())
+    }
+}
 
 // The following structure is used to track additional allocators that are created in response to allocation requests
 // that are not satisfied by the static allocators.
@@ -494,6 +614,8 @@ extern "efiapi" fn get_memory_map(
             map_key.write(crc32fast::hash(memory_map_as_bytes) as usize);
         }
     }
+
+    log::debug!(target: "efi_memory_map", "EFI_MEMORY_MAP: \n{:?}", MemoryDescriptorSlice(&efi_descriptors));
 
     efi::Status::SUCCESS
 }

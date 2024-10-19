@@ -18,7 +18,7 @@ use core::{
 };
 
 use crate::{
-    allocator::{core_allocate_pool, core_free_pool, get_memory_map_descriptors},
+    allocator::{core_allocate_pool, core_free_pool, get_memory_map_descriptors, MemoryDescriptorSlice},
     events::EVENT_DB,
     misc_boot_services::core_install_configuration_table,
     systemtables,
@@ -72,18 +72,7 @@ impl Debug for MemoryAttributesTable {
         writeln!(f, "  reserved: {:#X}", mat.reserved)?;
         writeln!(f, "  entries: [")?;
 
-        writeln!(
-            f,
-            "    {:<6} {:<20} {:<20} {:<20} {:<20}",
-            "Type", "Physical Start", "Virtual Start", "Number of Pages", "Attributes"
-        )?;
-        for entry in entries {
-            writeln!(
-                f,
-                "    {:<#6X?} {:<#20X} {:<#20X} {:<#20X} {:<#20X?}",
-                entry.r#type, entry.physical_start, entry.virtual_start, entry.number_of_pages, entry.attribute
-            )?;
-        }
+        writeln!(f, "{:?}", MemoryDescriptorSlice(entries))?;
 
         writeln!(f, "  ]")?;
         writeln!(f, "}}")
