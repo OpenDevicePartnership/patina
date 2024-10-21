@@ -76,13 +76,13 @@ should download `cargo-make` and `cargo-tarpaulin`, however it is suggested that
 ### Building uefi-dxe-core Crates
 
 The following commands build all crates with one of our three supported targets: `x86_64-unknown-uefi`,
-`i686-unknown-uefi`, and your host system target triple. The default compilation mode is `development`, but you can
+`aarch64-unknown-uefi`, and your host system target triple. The default compilation mode is `development`, but you can
 easily switch modes with the `-p` flag.
 
-- Development Compilation (i686-unknown-uefi): `cargo make build-aarch64`
+- Development Compilation (aarch64-unknown-uefi): `cargo make build-aarch64`
 - Development Compilation (x86_64-unknown-uefi): `cargo make build-x64`
 - Development Compilation (host system): `cargo make build`
-- Release Compilation (i686-unknown-uefi): `cargo make -p release build-aarch64`
+- Release Compilation (aarch64-unknown-uefi): `cargo make -p release build-aarch64`
 - Release Compilation (x86_64-unknown-uefi): `cargo make -p release build-x64`
 - Release Compilation (host system): `cargo make -p release build`
 
