@@ -1,6 +1,6 @@
 [package]
 name = "uefi_event"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 readme = "README.md"
 description = "An Event services implementation for the dxe_core."

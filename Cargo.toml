@@ -22,16 +22,16 @@ section_extractor = {git = "https://github.com/pop-project/uefi-core.git", rev =
 serial_writer = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
 corosensei = {git = "https://github.com/pop-project/uefi-corosensei.git", rev = "d27241e17a5f3c0703fe9871e6f68cd838c05c6d", default-features = false }
 
-uefi_collections = { path = "crates/uefi_collections", version = "0.1.8", default-features = false }
-uefi_tpl_lock = { path = "crates/uefi_tpl_lock", version = "0.1.8" }
-uefi_depex = { path = "crates/uefi_depex", version = "0.1.8" }
-uefi_device_path = { path = "crates/uefi_device_path", version = "0.1.8" }
-uefi_event = { path = "crates/uefi_event", version = "0.1.8" }
-uefi_gcd = { path = "crates/uefi_gcd", version = "0.1.8" }
-uefi_pecoff = { path = "crates/uefi_pecoff", version = "0.1.8" }
-uefi_protocol_db = { path = "crates/uefi_protocol_db", version = "0.1.8" }
-uefi_allocator = { path = "crates/uefi_allocator", version = "0.1.8" }
-uefi_component_interface = { path = "crates/uefi_component_interface", version = "0.1.8" }
+uefi_collections = { path = "crates/uefi_collections", version = "0.1.9", default-features = false }
+uefi_tpl_lock = { path = "crates/uefi_tpl_lock", version = "0.1.9" }
+uefi_depex = { path = "crates/uefi_depex", version = "0.1.9" }
+uefi_device_path = { path = "crates/uefi_device_path", version = "0.1.9" }
+uefi_event = { path = "crates/uefi_event", version = "0.1.9" }
+uefi_gcd = { path = "crates/uefi_gcd", version = "0.1.9" }
+uefi_pecoff = { path = "crates/uefi_pecoff", version = "0.1.9" }
+uefi_protocol_db = { path = "crates/uefi_protocol_db", version = "0.1.9" }
+uefi_allocator = { path = "crates/uefi_allocator", version = "0.1.9" }
+uefi_component_interface = { path = "crates/uefi_component_interface", version = "0.1.9" }
 
 adv_logger = { path = "adv_logger" }
 sample_components = { path = "sample_components" }

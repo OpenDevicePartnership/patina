@@ -1,6 +1,6 @@
 [package]
 name = "uefi_device_path"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 readme = "README.md"
 description = "A Device Path parsing implementation for the dxe_core."

@@ -1,6 +1,6 @@
 [package]
 name = "uefi_tpl_lock"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 readme = "README.md"
 description = "A Mutex implementation that has context of the current Task Priority Level to prevent deadlocking."
