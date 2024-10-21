@@ -35,7 +35,7 @@ static LOGGER: AdvancedLogger<serial_writer::UartPl011> = AdvancedLogger::new(
     serial_writer::UartPl011::new(0x6000_0000),
 );
 
-type DxeCore = Core<uefi_cpu_init::AArch64CpuInitializer, section_extractor::CompositeSectionExtractor>;
+type DxeCore = Core<uefi_cpu::AArch64CpuInitializer, section_extractor::CompositeSectionExtractor>;
 
 static ADV_LOGGER: AdvancedLoggerComponent<serial_writer::UartPl011> = AdvancedLoggerComponent::new(&LOGGER);
 
@@ -46,7 +46,7 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     adv_logger_component.init_advanced_logger(physical_hob_list).unwrap();
 
     Core::default()
-        .with_cpu_initializer(uefi_cpu_init::NullCpuInitializer::default())
+        .with_cpu_initializer(uefi_cpu::NullCpuInitializer::default())
         .with_section_extractor(section_extractor::CompositeSectionExtractor::default())
         // Add any config knob functions for pre-gcd-init Core
         // .with_some_config(true)

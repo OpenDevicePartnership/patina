@@ -35,7 +35,7 @@ fn main() -> uefi_core::error::Result<()> {
 
     let hob_list = build_hob_list();
     Core::default()
-        .with_cpu_initializer(uefi_cpu_init::NullCpuInitializer::default())
+        .with_cpu_initializer(uefi_cpu::NullCpuInitializer::default())
         .with_section_extractor(section_extractor::CompositeSectionExtractor::default())
         // Add any config knob functions for pre-gcd-init Core
         // .with_some_config(true)

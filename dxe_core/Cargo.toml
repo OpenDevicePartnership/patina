@@ -36,7 +36,7 @@ crc32fast = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
 uefi_core = { workspace = true }
-uefi_cpu_init = { workspace = true }
+uefi_cpu = { workspace = true }
 uefi_logger = { workspace = true }
 section_extractor = { workspace = true }
 uefi_component_interface = { workspace = true }
@@ -64,7 +64,7 @@ default = []
 std = ["uefi_logger/std", "serial_writer/std"]
 x64 = []
 aarch64 = []
-doc = ["uefi_cpu_init/doc"]
+doc = ["uefi_cpu/doc"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }
