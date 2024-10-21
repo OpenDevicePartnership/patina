@@ -20,21 +20,26 @@ The rust installer provides multiple tools including `rustc` (the compiler), `ru
 These tools are all downloaded when running the installer here: [Getting Started - Rust Programming Language (rust-lang.org)](https://www.rust-lang.org/learn/get-started).
 This may require a restart of your command line terminal.
 
-Once installed, the toolchain and components need to be installed, substituting `$(VERSION)`
-for your platform's specified version:
+The specific toolchains and components that are required to be installed can be found in the `rust-toolchain.toml`
+file and will automatically be installed by `cargo` upon your first `cargo` command. The file will look something like
+this:
 
-Windows:
-
-``` cmd
-> rustup toolchain install $(VERSION)-x86_64-pc-windows-msvc
-> rustup component add rust-src --toolchain $(VERSION)-x86_64-pc-windows-msvc
+``` toml
+[toolchain]
+version = "1.80.0"
+targets = ["x86_64-unknown-uefi", "aarch64-unknown-uefi"]
+components = ["rust-src"]
 ```
 
-Linux:
+There are additional cargo plugins (installabales) that will need to be installed depending on what you are doing. You
+can find a list of all tools in the same file under the `[tools]` section. At a minimum, you will need `cargo-make` for
+compilation and `cargo-tarpaulin` for code coverage. At a minimum, you should install these tools at the version
+specified via `cargo install --force $(tool_name) --version $(version)`, but it would be best to install all of them.
 
-``` cmd
-> rustup toolchain install $(VERSION)-x86_64-unknown-linux-gnu
-> rustup component add rust-src --toolchain $(VERSION)-x86_64-unknown-linux-gnu
+``` admonish note
+`cargo install` will download and compile these tools locally. If you first install `cargo-binstall` with
+`cargo install cargo-binstall` you can change the command from `install` to `binstall` which will simply download the
+pre-compiled binary and will be much faster.
 ```
 
 ### Cargo Make
@@ -46,15 +51,6 @@ as the drop in replacement for cargo commands. What this means, is that instead 
 `cargo build`, you would now run `cargo make build`. Many other commands exist, and will exist on a
 per-repository basis.
 
-To install, run the following command, substituting `$(VERSION)` for your platform's specified
-version:
-
-`> cargo install cargo-make --version $(VERSION)`
-
-or if you have `binstall` installed:
-
-`> cargo binstall cargo-make --version $(VERSION)`
-
 ### Cargo Tarpaulin
 
 [cargo-tarpaulin](https://github.com/xd009642/tarpaulin) is our tool for generating code coverage
@@ -62,12 +58,3 @@ results. Our requirement is that any crate being developed must have at least 80
 so developers will want to use `tarpaulin` to calculate code coverage. In an existing repository,
 a developer will use `cargo make coverage` to generate coverage results, and a line-coverage html
 report.
-
-To install, run the following command, substituting `$(VERSION)` for your platform's specified
-version:
-
-`> cargo install cargo-tarpaulin --version $(VERSION)`
-
-or if you have `binstall` installed:
-
-`> cargo binstall cargo-tarpaulin --version $(VERSION)`

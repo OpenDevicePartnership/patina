@@ -6,9 +6,13 @@ account for silicon, hardware or even just platform differences. With EDKII, `Li
 used as that point of abstraction, where the library's header file is the defined interface. With
 rust, `Traits` become that point of abstraction.
 
-Depending on the use case, your library or component may re-use an existing, well known, trait, or
-it may chose to create it's own trait. **IMPORTANT:** Unlike EDKII, we do not use traits for code
-reuse. Instead, use rust crates as explained in the [Code Reuse](./reuse.md) section.
+Depending on the use case, your library or component may re-use an existing, well-known trait, or
+it may choose to create its own trait.
+
+```admonish important
+Unlike EDKII, we do not use traits for code reuse. Instead, use rust crates as explained in the
+[Code Reuse](./reuse.md) section.
+```
 
 Traits are well documented, so feel free to read up on them before continuing. here are some links:
 

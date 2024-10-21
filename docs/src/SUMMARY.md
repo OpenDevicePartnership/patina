@@ -4,7 +4,6 @@
 [Core Concepts](concepts.md)
 
 # Rust Development for UEFI
-
 - [Best Practices](dev/principles.md)
   - [Abstractions](dev/principles/abstractions.md)
   - [Code Reuse](dev/principles/reuse.md)
@@ -16,6 +15,7 @@
 - [Formatting](dev/formatting.md)
 - [Documenting](dev/documenting.md)
   - [Quick Reference](dev/documenting/reference.md)
+- [Other Resources](dev/other.md)
 
 # Integrating the Rust DXE Core
 

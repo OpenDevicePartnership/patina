@@ -15,10 +15,10 @@ dxe_core = "$(VERSION)"
 ```
 
 ````admonish note
-While we are still closed-source, you will need to add the following instead:
+If you want the latest and greatest, you can use the `main` branch from our github repository:
 
 ``` toml
-dxe_core = { git = "https://dev.azure.com/microsoft/MsUEFI/_git/DxeRust", branch = "main" }
+dxe_core = { git = "https://github.com/pop-project/uefi-dxe-core", branch = "main" }
 ```
 ````
 

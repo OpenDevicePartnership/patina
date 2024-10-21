@@ -29,6 +29,12 @@ for code reuse. To learn how to effectively use Traits and Crates to represent E
 LibraryClasses, Please review the [Abstractions](dev/abstractions.md) and [Code reuse](dev/reuse.md)
 sections of the Best Practices Chapter.
 
+``` admonish important
+`Traits` are used to create abstractions / interfaces. No Component, Library, or the DXE Core itself should care about,
+or take dependence on, implementation details of a specific trait. It is designed such that swapping trait
+implementations is as simple as passing the implementation to the struct initializer.
+```
+
 ### Platform Configuration Database
 
 In EDKII, all components are compiled separately per the Platform Description File, which makes it

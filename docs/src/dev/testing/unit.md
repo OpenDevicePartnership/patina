@@ -1,6 +1,6 @@
 # Unit Testing
 
-As mentioned in the [Testing](../testing.md), unit tests are written in the exact file that you
+As mentioned in [Testing](../testing.md), unit tests are written in the exact file that you
 are working in. Tests are written in a conditionally compiled sub-module and any tests should be
 tagged with `#[test]`.
 

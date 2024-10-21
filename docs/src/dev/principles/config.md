@@ -16,23 +16,14 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     let config1: bool = true;
     let config2: u64 = 0x10000;
 
-    let driver1: Driver1 = Driver1 {
-        config: config1,
-        ..Default::default(),
-    }
+    let driver1 = Driver1::default()
+        .with_config(config1);
 
-    let driver2: Driver2 = Driver2 {
-        config: config2,
-        ..Default::default(),
-    }
-    
-    let dxe_core: DxeCore = DxeCore {
-        config1,
-        config2,
-        ..Default::default(),
-    }
+    let driver2 = Driver2::default()
+        .with_config(config2);
 
-    dxe_core.start(physical_hob_list, &[&driver1, &driver2]).unwrap();
-    loop {}
+    let dxe_core = Core::default()
+        .with_config1(config1)
+        .with_config2(config2)
 }
 ```
