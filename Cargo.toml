@@ -38,7 +38,7 @@ sample_components = { path = "sample_components" }
 
 ahash = {version = "^0.8", default-features = false, features = ["compile-time-rng"]}
 crc32fast = { version = "^1", default-features = false }
-goblin = { git="https://github.com/m4b/goblin.git", rev = "617775898fdfd0b843b2e937c80e455cf6f2a637", default-features = false, features = ["pe32", "pe64", "te"] }
+goblin = { version = "^0.9", default-features = false, features = ["pe32", "pe64", "te"] }
 lazy_static = { version = "^1", features = ["spin_no_std"] }
 linked_list_allocator = "^0.10"
 log = { version = "^0.4", default-features = false, features = ["release_max_level_warn"]}
@@ -47,9 +47,7 @@ mu_rust_helpers = { git = "https://github.com/microsoft/mu_rust_helpers.git", ta
 r-efi = { version = "^5", default-features = false }
 scroll = { version = "^0.12", default-features = false, features = ["derive"]}
 spin = "^0.5"
-uart_16550 = "^0.3"
 uuid = { version = "^1", default-features = false }
-x86_64 = "^0.15"
 
 [profile.dev]
 opt-level = 3
