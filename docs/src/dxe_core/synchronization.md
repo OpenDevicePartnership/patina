@@ -1,9 +1,9 @@
 # Synchronization
 
 UEFI does not support true multi-threaded operation; in general, all interaction
- with the Rust DXE Core is expected to take place on a single processor thread.
- UEFI does permit that single thread to have multiple "tasks" executing
- simultaneously at different "Task Priority Levels[^events_and_tpl]."
+with the Rust DXE Core is expected to take place on a single processor thread.
+UEFI does permit that single thread to have multiple "tasks" executing
+simultaneously at different "Task Priority Levels[^events_and_tpl]."
 
 Routines executing at a higher TPL may interrupt routines executing at a lower
 TPL. Both routines may access Rust DXE Core Services, so global state in the
