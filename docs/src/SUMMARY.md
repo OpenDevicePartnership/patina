@@ -39,7 +39,7 @@
   - [Memory Management]()
   - [Image Loading and Dispatcher](dxe_core/image_and_dispatcher.md)
   - [Performance Analysis]()
-  - [Synchronization]()
+  - [Synchronization](dxe_core/synchronization.md)
   - [Testing]()
 
 # Creating a Rust DXE Driver
