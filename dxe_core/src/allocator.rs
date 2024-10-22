@@ -15,6 +15,7 @@ use core::{
 
 extern crate alloc;
 use alloc::{collections::BTreeMap, vec::Vec};
+use mu_rust_helpers::function;
 
 use crate::{memory_attributes_table::MemoryAttributesTable, protocols::PROTOCOL_DB, GCD};
 use mu_pi::{
@@ -493,14 +494,21 @@ fn merge_blocks(
     previous_blocks
 }
 
-pub fn get_memory_map_descriptors() -> Vec<efi::MemoryDescriptor> {
+pub(crate) fn get_memory_map_descriptors() -> Result<Vec<efi::MemoryDescriptor>, efi::Status> {
     let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
+
+    // the fold operation would allocate boot services data, which we cannot do because we cannot change the memory map
+    // after getting the descriptors from the GCD. We would now be invalid if we ended up overflowing a pool and getting
+    // more memory from the GCD. Therefore, we need to pre-allocate memory before we get the GCD descriptors
+    // to ensure we don't overflow the boot services data pool. Let's make sure we have a few extra descriptors
+    let merged_descriptors: Vec<efi::MemoryDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
+
     GCD.get_memory_descriptors(&mut descriptors).expect("get_memory_descriptors failed.");
 
     //Note: get_memory_descriptors is should already be ordered, so sort is unnecessary.
     //descriptors.sort_unstable_by(|a, b|a.physical_start.cmp(&b.physical_start));
 
-    descriptors
+    Ok(descriptors
         .iter()
         .filter_map(|descriptor| {
             let memory_type = ALLOCATORS.lock().memory_type_for_handle(descriptor.image_handle).or({
@@ -553,7 +561,7 @@ pub fn get_memory_map_descriptors() -> Vec<efi::MemoryDescriptor> {
                 },
             })
         })
-        .fold(Vec::new(), merge_blocks)
+        .fold(merged_descriptors, merge_blocks))
 }
 
 extern "efiapi" fn get_memory_map(
@@ -577,7 +585,10 @@ extern "efiapi" fn get_memory_map(
 
     let map_size = unsafe { *memory_map_size };
 
-    let mut efi_descriptors = get_memory_map_descriptors();
+    let mut efi_descriptors = match get_memory_map_descriptors() {
+        Ok(descriptors) => descriptors,
+        Err(status) => return status,
+    };
 
     assert_ne!(efi_descriptors.len(), 0);
 
@@ -621,7 +632,11 @@ extern "efiapi" fn get_memory_map(
 }
 
 pub fn terminate_memory_map(map_key: usize) -> efi::Status {
-    let mut mm_desc = get_memory_map_descriptors();
+    let mut mm_desc = match get_memory_map_descriptors() {
+        Ok(descriptors) => descriptors,
+        Err(status) => return status,
+    };
+
     for descriptor in mm_desc.iter_mut() {
         descriptor.attribute &= !efi::MEMORY_ACCESS_MASK;
     }
@@ -634,6 +649,48 @@ pub fn terminate_memory_map(map_key: usize) -> efi::Status {
     } else {
         efi::Status::INVALID_PARAMETER
     }
+}
+
+// This is temporarily dead code, but will be used by mu-paging. This API just needs to be in place before we
+// can move in the mu-paging crate.
+#[allow(dead_code)]
+pub(crate) fn ensure_capacity(memory_type: efi::MemoryType, size: usize, align: usize) -> Result<(), efi::Status> {
+    // get a handle, in case we have to create a new allocator
+    let handle = match AllocatorMap::handle_for_memory_type(memory_type) {
+        Ok(handle) => handle,
+        Err(err) => {
+            log::error!("[{}] failed to get a handle for memory type {:#x?}: {:#x?}", function!(), memory_type, err);
+            return Err(err);
+        }
+    };
+
+    // find the associated allocator and call the ensure_capacity method
+    match ALLOCATORS.lock().get_or_create_allocator(memory_type, handle) {
+        Ok(allocator) => {
+            if let Err(err) = allocator.ensure_capacity(size, align) {
+                log::error!(
+                    "[{}] failed to ensure {:#x?} bytes with alignment {:#x?} in memory_type {:#x?} with status {:#x?}",
+                    function!(),
+                    size,
+                    align,
+                    memory_type,
+                    err
+                );
+                return Err(err);
+            }
+        }
+        Err(err) => {
+            log::error!(
+                "[{}] failed to get an allocator for memory type {:#x?} with status {:#x?}",
+                function!(),
+                memory_type,
+                err
+            );
+            return Err(err);
+        }
+    }
+
+    Ok(())
 }
 
 /// Initializes memory support
