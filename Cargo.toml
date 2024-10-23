@@ -15,11 +15,11 @@ edition = "2021"
 rust-version = "1.80.0"
 
 [workspace.dependencies]
-uefi_cpu_init = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
-uefi_core = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
-uefi_logger = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
-section_extractor = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
-serial_writer = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
+uefi_core = { path="../mu-rs/uefi_core" }
+uefi_logger = { path="../mu-rs/uefi_logger" }
+cpu_interrupts = { path="../mu-rs/cpu_interrupts" }
+section_extractor = { path="../mu-rs/section_extractor" }
+serial_writer = { path="../mu-rs/serial_writer" }
 corosensei = {git = "https://github.com/pop-project/uefi-corosensei.git", rev = "d27241e17a5f3c0703fe9871e6f68cd838c05c6d", default-features = false }
 
 uefi_collections = { path = "crates/uefi_collections", version = "0.1.9", default-features = false }
@@ -32,6 +32,7 @@ uefi_pecoff = { path = "crates/uefi_pecoff", version = "0.1.9" }
 uefi_protocol_db = { path = "crates/uefi_protocol_db", version = "0.1.9" }
 uefi_allocator = { path = "crates/uefi_allocator", version = "0.1.9" }
 uefi_component_interface = { path = "crates/uefi_component_interface", version = "0.1.9" }
+uefi_cpu = { path = "crates/uefi_cpu" }
 
 adv_logger = { path = "adv_logger" }
 sample_components = { path = "sample_components" }

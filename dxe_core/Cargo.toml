@@ -44,7 +44,7 @@ uefi_tpl_lock = { workspace = true }
 
 [dev-dependencies]
 sample_components = { workspace = true }
-uefi_cpu_init = { workspace = true }
+uefi_cpu = { workspace = true }
 uefi_logger = { workspace = true }
 serial_writer = { workspace = true }
 section_extractor = { workspace = true }
@@ -52,7 +52,7 @@ section_extractor = { workspace = true }
 [features]
 default = []
 std = ["uefi_logger/std", "serial_writer/std"]
-doc = ["uefi_cpu_init/doc"]
+doc = ["uefi_cpu/doc"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }

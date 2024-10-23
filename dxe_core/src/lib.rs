@@ -67,10 +67,7 @@ use alloc::{boxed::Box, vec::Vec};
 use mu_pi::{fw_fs, hob::HobList, protocols::bds};
 use r_efi::efi::{self};
 use uefi_component_interface::DxeComponent;
-use uefi_core::{
-    error::{self, Result},
-    interface,
-};
+use uefi_core::error::{self, Result};
 use uefi_gcd::gcd::SpinLockedGcd;
 
 pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
@@ -95,7 +92,7 @@ pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_c
 #[derive(Default)]
 pub struct Core<CpuInitializer, SectionExtractor>
 where
-    CpuInitializer: interface::CpuInitializer + Default,
+    CpuInitializer: uefi_cpu::CpuInitializer + Default,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
 {
     cpu_initializer: CpuInitializer,
@@ -104,7 +101,7 @@ where
 
 impl<CpuInitializer, SectionExtractor> Core<CpuInitializer, SectionExtractor>
 where
-    CpuInitializer: interface::CpuInitializer + Default,
+    CpuInitializer: uefi_cpu::CpuInitializer + Default,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
 {
     /// Registers the CPU initializer with it's own configuration.
@@ -182,7 +179,7 @@ where
         tpl_lock::init_boot_services(bs);
 
         // Now that boot services is pretty much ready, invoke phase 2 of cpu services.
-        self.cpu.post_init(bs);
+        self.cpu_initializer.post_init(bs);
 
         memory_attributes_table::init_memory_attributes_table_support();
 
