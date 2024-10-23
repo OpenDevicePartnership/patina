@@ -733,7 +733,7 @@ mod tests {
         assert_eq!(uuid, uuid::Uuid::from_str("0379be4e-d706-437d-b037-edb82fb772a4").unwrap());
 
         let guid = guid_from_uuid(&uuid);
-        assert_eq!(guid..unwrap().as_bytes(), device_path_protocol_guid_bytes);
+        assert_eq!(guid.unwrap().as_bytes(), device_path_protocol_guid_bytes);
     }
 
     #[test]
