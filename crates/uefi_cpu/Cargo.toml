@@ -16,7 +16,7 @@ lazy_static = { workspace = true }
 log = { workspace = true }
 uefi_core = { workspace = true }
 x86_64 = { workspace = true, optional = true }
-cpu_interrupts = { workspace = true }
+uefi_interrupt = { workspace = true }
 
 [target.'cfg(all(target_os="uefi", target_arch="x86_64"))'.dependencies]
 x86_64 = { workspace = true }

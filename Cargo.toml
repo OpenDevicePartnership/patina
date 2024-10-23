@@ -17,7 +17,7 @@ rust-version = "1.80.0"
 [workspace.dependencies]
 uefi_core = { path="../mu-rs/uefi_core" }
 uefi_logger = { path="../mu-rs/uefi_logger" }
-cpu_interrupts = { path="../mu-rs/cpu_interrupts" }
+uefi_interrupt = { path="../mu-rs/uefi_interrupt" }
 section_extractor = { path="../mu-rs/section_extractor" }
 serial_writer = { path="../mu-rs/serial_writer" }
 corosensei = {git = "https://github.com/pop-project/uefi-corosensei.git", rev = "d27241e17a5f3c0703fe9871e6f68cd838c05c6d", default-features = false }
@@ -47,7 +47,7 @@ mu_pi = {git = "https://github.com/microsoft/mu_rust_pi.git", tag = "v5.0.1"}
 mu_rust_helpers = { git = "https://github.com/microsoft/mu_rust_helpers.git", tag = "v1.2.0" }
 r-efi = { version = "^5", default-features = false }
 scroll = { version = "^0.12", default-features = false, features = ["derive"]}
-spin = "^0.5"
+spin = "^0.9"
 uuid = { version = "^1", default-features = false }
 
 [profile.dev]

@@ -7,5 +7,9 @@
   ],
   "vscode-nmake-tools.workspaceBuildDirectories": [
     "."
-  ]
+  ],
+  "rust-analyzer.cargo.target": "aarch64-unknown-uefi",
+  "rust-analyzer.check.allTargets": false,
+  "rust.target": "aarch64-unknown-uefi",
+  "rust.all_targets": false
 }

@@ -20,7 +20,7 @@ dependencies = [
  "mu_rust_helpers",
  "r-efi",
  "serial_writer",
- "spin 0.5.2",
+ "spin",
  "uefi_component_interface",
  "uefi_core",
  "uefi_logger",
@@ -65,6 +65,15 @@ name = "anstyle"
 version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1bec1de6f59aedf83baf9ff929c98f2ad654b97c9510f4e70cf6f661d49fd5b1"
+
+[[package]]
+name = "arm-gic"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84eab3ef073fa1f664c9173e44f2437ce413e41d0ae8f17edd632a1bbcc89c4d"
+dependencies = [
+ "bitflags 2.6.0",
+]
 
 [[package]]
 name = "autocfg"
@@ -316,11 +325,11 @@ dependencies = [
  "sample_components",
  "section_extractor",
  "serial_writer",
- "spin 0.5.2",
+ "spin",
  "uefi_allocator",
  "uefi_component_interface",
  "uefi_core",
- "uefi_cpu_init",
+ "uefi_cpu",
  "uefi_depex",
  "uefi_device_path",
  "uefi_event",
@@ -449,7 +458,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 dependencies = [
- "spin 0.9.8",
+ "spin",
 ]
 
 [[package]]
@@ -771,7 +780,6 @@ dependencies = [
 [[package]]
 name = "section_extractor"
 version = "0.2.0"
-source = "git+https://github.com/pop-project/uefi-core.git?rev=891819afcd4bceac694cae1f7339fa09334d9324#891819afcd4bceac694cae1f7339fa09334d9324"
 dependencies = [
  "alloc-no-stdlib",
  "brotli-decompressor",
@@ -817,25 +825,21 @@ dependencies = [
 
 [[package]]
 name = "serial_writer"
-version = "0.1.0"
-source = "git+https://github.com/pop-project/uefi-core.git?rev=891819afcd4bceac694cae1f7339fa09334d9324#891819afcd4bceac694cae1f7339fa09334d9324"
+version = "0.2.0"
 dependencies = [
  "uart_16550",
  "uefi_core",
- "x86_64",
+ "x86_64 0.14.12",
 ]
-
-[[package]]
-name = "spin"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
 name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+dependencies = [
+ "lock_api",
+]
 
 [[package]]
 name = "spinning_top"
@@ -946,20 +950,21 @@ dependencies = [
 [[package]]
 name = "uefi_core"
 version = "0.2.0"
-source = "git+https://github.com/pop-project/uefi-core.git?rev=891819afcd4bceac694cae1f7339fa09334d9324#891819afcd4bceac694cae1f7339fa09334d9324"
 dependencies = [
  "r-efi",
 ]
 
 [[package]]
-name = "uefi_cpu_init"
+name = "uefi_cpu"
 version = "0.2.0"
-source = "git+https://github.com/pop-project/uefi-core.git?rev=891819afcd4bceac694cae1f7339fa09334d9324#891819afcd4bceac694cae1f7339fa09334d9324"
 dependencies = [
+ "alloc-no-stdlib",
  "lazy_static",
  "log",
+ "r-efi",
  "uefi_core",
- "x86_64",
+ "uefi_interrupt",
+ "x86_64 0.15.1",
 ]
 
 [[package]]
@@ -1010,9 +1015,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "uefi_interrupt"
+version = "0.1.0"
+dependencies = [
+ "arm-gic",
+ "lazy_static",
+ "log",
+ "r-efi",
+ "spin",
+ "uefi_core",
+ "x86_64 0.14.12",
+]
+
+[[package]]
 name = "uefi_logger"
 version = "0.2.0"
-source = "git+https://github.com/pop-project/uefi-core.git?rev=891819afcd4bceac694cae1f7339fa09334d9324#891819afcd4bceac694cae1f7339fa09334d9324"
 dependencies = [
  "log",
  "uefi_core",
@@ -1032,7 +1049,7 @@ version = "0.1.8"
 dependencies = [
  "ahash",
  "r-efi",
- "spin 0.5.2",
+ "spin",
  "uefi_tpl_lock",
  "uuid",
 ]
@@ -1278,6 +1295,18 @@ name = "x86_64"
 version = "0.14.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96cb6fd45bfeab6a5055c5bffdb08768bd0c069f1d946debe585bbb380a7c062"
+dependencies = [
+ "bit_field",
+ "bitflags 2.6.0",
+ "rustversion",
+ "volatile",
+]
+
+[[package]]
+name = "x86_64"
+version = "0.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4bc79523af8abf92fb1a970c3e086c5a343f6bcc1a0eb890f575cbb3b45743df"
 dependencies = [
  "bit_field",
  "bitflags 2.6.0",

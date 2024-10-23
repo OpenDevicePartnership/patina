@@ -1,14 +1,16 @@
 extern crate alloc;
 
-use uefi_core::system_context::EfiSystemContext;
-use alloc::rc::Rc;
-use alloc::vec::Vec;
-use core::cell::RefCell;
 use core::ffi::c_void;
-use core::ptr::addr_of_mut;
 use r_efi::efi;
-use cpu_interrupts::aarch64::gic::GicWrapper;
-use cpu_interrupts::aarch64::interrupts::{Aarch64InterruptInitializer, HardwareInterruptHandler, HardwareInterrupt2TriggerType};
+use uefi_interrupt::{Aarch64InterruptInitializer, HardwareInterruptHandler};
+
+#[repr(C)]
+pub enum HardwareInterrupt2TriggerType {
+    HardwareInterrupt2TriggerTypeLevelLow = 0,
+    HardwareInterrupt2TriggerTypeLevelHigh = 1,
+    HardwareInterrupt2TriggerTypeEdgeFalling = 2,
+    HardwareInterrupt2TriggerTypeEdgeRising = 3,
+}
 
 // { 0x2890B3EA, 0x053D, 0x1643, { 0xAD, 0x0C, 0xD6, 0x48, 0x08, 0xDA, 0x3F, 0xF1 } }
 pub const EFI_HARDWARE_INTERRUPT_PROTOCOL_GUID: efi::Guid =
@@ -231,7 +233,20 @@ pub extern "efiapi" fn get_trigger_type_v2(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    unsafe { &mut *this }.aarch64_interrupt.get_trigger_type(interrupt_source, trigger_type)
+    let level = unsafe { &mut *this }.aarch64_interrupt.get_trigger_type(interrupt_source);
+
+    // I know this looks odd, but this is how ArmGicV3 in EDK2 does it...
+    let t_type = if level {
+        HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeEdgeRising
+    } else {
+        HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeLevelHigh
+    };
+
+    unsafe {
+        *trigger_type = t_type;
+    }
+
+    efi::Status::SUCCESS
 }
 
 pub extern "efiapi" fn set_trigger_type_v2(
@@ -244,5 +259,14 @@ pub extern "efiapi" fn set_trigger_type_v2(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    unsafe { &mut *this }.aarch64_interrupt.set_trigger_type(interrupt_source, trigger_type)
+    let level = match trigger_type {
+        HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeLevelLow => true,
+        HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeLevelHigh => true,
+        HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeEdgeFalling => false,
+        HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeEdgeRising => false,
+    };
+
+    unsafe { &mut *this }.aarch64_interrupt.set_trigger_type(interrupt_source, level);
+
+    efi::Status::SUCCESS
 }

@@ -6,33 +6,34 @@ use alloc::boxed::Box;
 use alloc::rc::Rc;
 use crate::CpuInitializer;
 
-use cpu_interrupts::aarch64::gic;
-use cpu_interrupts::aarch64::exception;
-use cpu_interrupts::aarch64::interrupts::Aarch64InterruptInitializer;
+use uefi_interrupt::{InterruptManager, InterruptManagerAarch64};
+use uefi_interrupt::Aarch64InterruptInitializer;
 use crate::aarch64::hw_interrupt::{EfiHardwareInterruptProtocol, EfiHardwareInterruptV2Protocol};
 
 pub struct AArch64CpuInitializer {
-    gic_wrapper: Option<gic::GicWrapper>,
+    interrupt_manager: Option<InterruptManagerAarch64>,
 }
 impl Default for AArch64CpuInitializer {
     fn default() -> Self {
         AArch64CpuInitializer {
-            gic_wrapper: None,
+            interrupt_manager: None,
         }
     }
 }
 impl CpuInitializer for AArch64CpuInitializer {
     fn initialize(&mut self) {
         // Initialize the GIC, so that we are ready to get exception handlers up and running
-        self.gic_wrapper = gic::gic_initialize();
+        let mut interrupt_manager = InterruptManagerAarch64::new();
 
         // Initialize the exception handlers
-        exception::init_exception_vectors();
+        interrupt_manager.initialize();
+
+        self.interrupt_manager = Some(interrupt_manager);
     }
 
     // need to intake a boot service from r_efi::efi::BootServices
     fn post_init(&mut self, boot_services: *mut r_efi::efi::BootServices) {
-        let mut gic_wrapper = Rc::new(RefCell::new(self.gic_wrapper.take().unwrap()));
+        let mut gic_wrapper = Rc::new(RefCell::new(self.interrupt_manager.take().unwrap().gic_wrapper.unwrap()));
         let mut handlers = Rc::new(RefCell::new(vec![None; gic_wrapper.borrow().max_int as usize]));
         let mut aarch64_int = Aarch64InterruptInitializer::new(gic_wrapper.clone(), handlers.clone());
 

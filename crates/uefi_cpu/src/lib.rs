@@ -11,9 +11,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![feature(abi_x86_interrupt)]
 
-#[macro_use]
-extern crate alloc;
-
 pub trait CpuInitializer {
     fn initialize(&mut self);
     // return a list of protocol instance - GUID pairs that the CPU supports
@@ -26,6 +23,9 @@ uefi_core::if_x64! {
 }
 
 uefi_core::if_aarch64! {
+    #[macro_use]
+    extern crate alloc;
+
     mod aarch64;
     pub use aarch64::cpu::AArch64CpuInitializer as AArch64CpuInitializer;
 }
