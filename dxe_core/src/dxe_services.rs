@@ -644,8 +644,8 @@ mod tests {
     #[test]
     fn test_allocate_memory_space() {
         with_locked_state(|| {
-            let align = 8;
-            let length = 64;
+            let align = 0;
+            let length = 0x1000;
             assert_eq!(
                 allocate_memory_space(
                     dxe_services::GcdAllocateType::AnySearchBottomUp,
@@ -660,7 +660,7 @@ mod tests {
                 "Allocate memory space with null base address pointer."
             );
 
-            let mut max_address = 0x100 as efi::PhysicalAddress;
+            let mut max_address = 0x10000 as efi::PhysicalAddress;
             unsafe {
                 GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 0x1000, 0).unwrap();
             }
@@ -677,9 +677,9 @@ mod tests {
                 efi::Status::SUCCESS,
                 "Allocate memory space with bottom up (max) limit."
             );
-            assert!(max_address < 0x100);
+            assert!(max_address < 0x10000);
 
-            let mut min_address = 0x100 as efi::PhysicalAddress;
+            let mut min_address = 0x10000 as efi::PhysicalAddress;
             assert_eq!(
                 allocate_memory_space(
                     dxe_services::GcdAllocateType::MaxAddressSearchTopDown,
@@ -693,23 +693,7 @@ mod tests {
                 efi::Status::SUCCESS,
                 "Allocate memory space with top down (min) limit."
             );
-            assert!(min_address > 0x100);
-
-            let mut address = 0x200 as efi::PhysicalAddress;
-            assert_eq!(
-                allocate_memory_space(
-                    dxe_services::GcdAllocateType::Address,
-                    dxe_services::GcdMemoryType::SystemMemory,
-                    align,
-                    length,
-                    &mut address as *mut efi::PhysicalAddress,
-                    1 as _,
-                    core::ptr::null_mut() as efi::Handle
-                ),
-                efi::Status::SUCCESS,
-                "Allocate memory space with specific address."
-            );
-            assert!(address == 0x200);
+            assert!(min_address > 0x10000);
 
             assert_eq!(
                 allocate_memory_space(

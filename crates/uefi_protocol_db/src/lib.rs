@@ -552,11 +552,6 @@ impl ProtocolDb {
         child_handles.dedup(); //remove any duplicate handles
         child_handles
     }
-
-    // TODO_sherry: this is a test fn
-    pub fn get_notifications(&self) -> usize {
-        self.lock().notifications.len()
-    }
 }
 
 /// Spin-Locked protocol database instance.
