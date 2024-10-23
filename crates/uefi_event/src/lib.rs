@@ -165,7 +165,7 @@ impl fmt::Debug for EventNotification {
         f.debug_struct("EventNotification")
             .field("event", &self.event)
             .field("notify_tpl", &self.notify_tpl)
-            .field("notify_function", &(self.notify_function as usize))
+            .field("notify_function", &self.notify_function.map(|f| f as usize))
             .field("notify_context", &self.notify_context)
             .finish()
     }
