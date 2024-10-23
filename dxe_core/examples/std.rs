@@ -31,7 +31,9 @@ static LOGGER: uefi_logger::SerialLogger<serial_writer::Terminal> = uefi_logger:
 );
 
 fn main() -> uefi_core::error::Result<()> {
-    log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
+    if let Err(_) = log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)) {
+        log::warn!("Global logger has already been set.");
+    }
 
     let hob_list = build_hob_list();
     Core::default()
@@ -52,7 +54,10 @@ fn main() -> uefi_core::error::Result<()> {
 const MEM_SIZE: u64 = 0x2000000;
 
 unsafe fn get_memory(size: usize) -> &'static mut [u8] {
-    let addr = alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 0x1000).unwrap());
+    let addr = alloc::alloc::alloc(
+        alloc::alloc::Layout::from_size_align(size, 0x1000)
+            .unwrap_or_else(|_| panic!("Failed to allocate {:#x} bytes for hob list.", size)),
+    );
     core::slice::from_raw_parts_mut(addr, size)
 }
 

@@ -302,7 +302,13 @@ impl UefiAllocator {
         }
         //zero after check so it doesn't get reused.
         (*allocation_info).signature = 0;
-        self.allocator.deallocate(NonNull::new(allocation_info as *mut u8).unwrap(), (*allocation_info).layout);
+        self.allocator.deallocate(
+            match NonNull::new(allocation_info as *mut u8) {
+                Some(non_null_ptr) => non_null_ptr,
+                None => return efi::Status::INVALID_PARAMETER,
+            },
+            (*allocation_info).layout,
+        );
         efi::Status::SUCCESS
     }
 

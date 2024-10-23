@@ -15,6 +15,7 @@ path = "src/lib.rs"
 [dependencies]
 r-efi = {workspace=true}
 uefi_tpl_lock = {workspace=true}
+log = { workspace = true }
 
 [dependencies.uuid]
 default-features = false

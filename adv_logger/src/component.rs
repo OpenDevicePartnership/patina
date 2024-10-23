@@ -86,9 +86,16 @@ where
     /// allocations.
     ///
     pub fn init_advanced_logger(&self, physical_hob_list: *const c_void) -> Result<()> {
-        let hob_list = Hob::Handoff(unsafe {
-            (physical_hob_list as *const PhaseHandoffInformationTable).as_ref::<'static>().unwrap()
-        });
+        let hob_list;
+        debug_assert!(!physical_hob_list.is_null(), "Could not initialize adv logger due to null hob list.");
+        if let Some(physical_hob_list_info) =
+            unsafe { (physical_hob_list as *const PhaseHandoffInformationTable).as_ref::<'static>() }
+        {
+            hob_list = Hob::Handoff(physical_hob_list_info);
+        } else {
+            log::error!("Could not initialize adv logger due to null hob list.");
+            return Err(EfiError::InvalidParameter);
+        }
 
         for hob in &hob_list {
             if let Hob::GuidHob(guid_hob, data) = hob {
@@ -135,12 +142,14 @@ where
     /// Installs the Advanced Logger Protocol for use by non-local components.
     ///
     fn entry_point(&self, dxe_interface: &dyn DxeComponentInterface) -> Result<()> {
-        if self.adv_logger.get_log_info().is_none() {
-            log::error!("Advanced logger not initialized before component entry point!");
-            return Err(EfiError::NotStarted);
-        }
+        let log_info = match self.adv_logger.get_log_info() {
+            Some(log_info) => log_info,
+            None => {
+                log::error!("Advanced logger not initialized before component entry point!");
+                return Err(EfiError::NotStarted);
+            }
+        };
 
-        let log_info = self.adv_logger.get_log_info().unwrap();
         let address = log_info as *const AdvLoggerInfo as efi::PhysicalAddress;
         let protocol = AdvancedLoggerProtocol::new(Self::adv_log_write, address, self.adv_logger);
 

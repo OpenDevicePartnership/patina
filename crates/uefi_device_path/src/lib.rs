@@ -56,12 +56,14 @@ use r_efi::efi;
 ///   0x00, //length[1]
 /// ];
 /// let device_path_ptr = device_path_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
-/// let (nodes, length) = device_path_node_count(device_path_ptr);
+/// let (nodes, length) = device_path_node_count(device_path_ptr).unwrap();
 /// assert_eq!(nodes, 4);
 /// assert_eq!(length, device_path_bytes.len());
 /// ```
 ///
-pub fn device_path_node_count(device_path: *const efi::protocols::device_path::Protocol) -> (usize, usize) {
+pub fn device_path_node_count(
+    device_path: *const efi::protocols::device_path::Protocol,
+) -> Result<(usize, usize), efi::Status> {
     let mut node_count = 0;
     let mut dev_path_size: usize = 0;
     let mut current_node_ptr = device_path;
@@ -74,19 +76,26 @@ pub fn device_path_node_count(device_path: *const efi::protocols::device_path::P
         if current_node.r#type == efi::protocols::device_path::TYPE_END {
             break;
         }
-        current_node_ptr = unsafe { current_node_ptr.byte_offset(current_length.try_into().unwrap()) };
+
+        if let Ok(offset) = current_length.try_into() {
+            current_node_ptr = unsafe { current_node_ptr.byte_offset(offset) };
+        } else {
+            return Err(efi::Status::INVALID_PARAMETER);
+        }
     }
-    (node_count, dev_path_size)
+    Ok((node_count, dev_path_size))
 }
 
 /// Copies the device path from the given pointer into a Boxed [u8] slice.
-pub fn copy_device_path_to_boxed_slice(device_path: *const efi::protocols::device_path::Protocol) -> Box<[u8]> {
-    let (_, byte_count) = device_path_node_count(device_path);
+pub fn copy_device_path_to_boxed_slice(
+    device_path: *const efi::protocols::device_path::Protocol,
+) -> Result<Box<[u8]>, efi::Status> {
+    let (_, byte_count) = device_path_node_count(device_path)?;
     let mut dest_path = vec![0u8; byte_count];
     unsafe {
         dest_path.copy_from_slice(from_raw_parts(device_path as *const u8, byte_count));
     }
-    dest_path.into_boxed_slice()
+    Ok(dest_path.into_boxed_slice())
 }
 
 /// Computes the remaining device path and the number of nodes in common for two device paths.
@@ -171,7 +180,7 @@ pub fn copy_device_path_to_boxed_slice(device_path: *const efi::protocols::devic
 /// assert!(result.is_some());
 /// let result = result.unwrap();
 /// // the remaining device path of b after going past the prefix in a should start at the size of a in bytes minus the size of the end node.
-/// let a_path_length = device_path_node_count(device_path_a);
+/// let a_path_length = device_path_node_count(device_path_a).unwrap();
 /// let offset = a_path_length.1 - size_of::<efi::protocols::device_path::End>();
 /// let offset = offset.try_into().unwrap();
 /// let expected_ptr =
@@ -182,7 +191,7 @@ pub fn copy_device_path_to_boxed_slice(device_path: *const efi::protocols::devic
 /// let result = remaining_device_path(device_path_b, device_path_b);
 /// assert!(result.is_some());
 /// let result = result.unwrap();
-/// let b_path_length = device_path_node_count(device_path_b);
+/// let b_path_length = device_path_node_count(device_path_b).unwrap();
 /// let offset = b_path_length.1 - size_of::<efi::protocols::device_path::End>();
 /// let offset = offset.try_into().unwrap();
 /// let expected_ptr =
@@ -225,18 +234,22 @@ pub fn remaining_device_path(
             return None;
         }
 
-        a_ptr = unsafe { a_ptr.byte_offset(a_length.try_into().unwrap()) };
-        b_ptr = unsafe { b_ptr.byte_offset(b_length.try_into().unwrap()) };
+        let a_offset: isize = a_length.try_into().ok()?;
+        let b_offset: isize = b_length.try_into().ok()?;
+        a_ptr = unsafe { a_ptr.byte_offset(a_offset) };
+        b_ptr = unsafe { b_ptr.byte_offset(b_offset) };
     }
 }
 
 /// Determines whether the given device path points to an end-of-device-path node.
 pub fn is_device_path_end(device_path: *const efi::protocols::device_path::Protocol) -> bool {
     let node_ptr = device_path;
-    let device_path_node = *(unsafe { node_ptr.as_ref().unwrap() });
-
-    device_path_node.r#type == efi::protocols::device_path::TYPE_END
-        && device_path_node.sub_type == efi::protocols::device_path::End::SUBTYPE_ENTIRE
+    if let Some(device_path_node) = unsafe { node_ptr.as_ref() } {
+        device_path_node.r#type == efi::protocols::device_path::TYPE_END
+            && device_path_node.sub_type == efi::protocols::device_path::End::SUBTYPE_ENTIRE
+    } else {
+        true
+    }
 }
 
 /// Device Path Node
@@ -259,13 +272,13 @@ impl DevicePathNode {
     /// Create a DevicePathNode from raw pointer.
     /// ## Safety
     /// Caller must ensure that the raw pointer points to a valid device path node structure.
-    pub unsafe fn new(node: *const efi::protocols::device_path::Protocol) -> Self {
+    pub unsafe fn new(node: *const efi::protocols::device_path::Protocol) -> Option<Self> {
         let header = core::ptr::read_unaligned(node);
         let node_len = u16::from_le_bytes(header.length);
-        let data_len = node_len.checked_sub(size_of_val(&header).try_into().unwrap()).unwrap();
-        let data_ptr = node.byte_offset(size_of_val(&header).try_into().unwrap()) as *const u8;
+        let data_len = node_len.checked_sub(size_of_val(&header).try_into().ok()?)?;
+        let data_ptr = node.byte_offset(size_of_val(&header).try_into().ok()?) as *const u8;
         let data = from_raw_parts(data_ptr, data_len.into()).to_vec();
-        Self { header, data }
+        Some(Self { header, data })
     }
 
     fn len(&self) -> u16 {
@@ -298,11 +311,11 @@ impl Iterator for DevicePathWalker {
     fn next(&mut self) -> Option<Self::Item> {
         match self.next_node {
             Some(node) => {
-                let current = unsafe { DevicePathNode::new(node) };
+                let current = unsafe { DevicePathNode::new(node)? };
                 if is_device_path_end(node) {
                     self.next_node = None;
                 } else {
-                    self.next_node = Some(unsafe { node.byte_offset(current.len().try_into().unwrap()) });
+                    self.next_node = Some(unsafe { node.byte_offset(current.len().try_into().ok()?) });
                 }
                 Some(current)
             }
@@ -347,7 +360,7 @@ mod tests {
             0x00, //length[1]
         ];
         let device_path_ptr = device_path_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
-        let (nodes, length) = device_path_node_count(device_path_ptr);
+        let (nodes, length) = device_path_node_count(device_path_ptr).unwrap();
         assert_eq!(nodes, 4);
         assert_eq!(length, device_path_bytes.len());
     }
@@ -418,7 +431,7 @@ mod tests {
         assert!(result.is_some());
         let result = result.unwrap();
         // the remaining device path of b after going past the prefix in a should start at the size of a in bytes minus the size of the end node.
-        let a_path_length = device_path_node_count(device_path_a);
+        let a_path_length = device_path_node_count(device_path_a).unwrap();
         let offset = a_path_length.1 - size_of::<efi::protocols::device_path::End>();
         let offset = offset.try_into().unwrap();
         let expected_ptr =
@@ -429,7 +442,7 @@ mod tests {
         let result = remaining_device_path(device_path_b, device_path_b);
         assert!(result.is_some());
         let result = result.unwrap();
-        let b_path_length = device_path_node_count(device_path_b);
+        let b_path_length = device_path_node_count(device_path_b).unwrap();
         let offset = b_path_length.1 - size_of::<efi::protocols::device_path::End>();
         let offset = offset.try_into().unwrap();
         let expected_ptr =
@@ -570,6 +583,6 @@ mod tests {
         let device_path_ptr = device_path_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
         let boxed_device_path = copy_device_path_to_boxed_slice(device_path_ptr);
 
-        assert_eq!(boxed_device_path.to_vec(), device_path_bytes.to_vec());
+        assert_eq!(boxed_device_path.unwrap().to_vec(), device_path_bytes.to_vec());
     }
 }

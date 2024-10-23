@@ -90,11 +90,12 @@ impl Drop for ImageStack {
 unsafe impl Stack for ImageStack {
     fn base(&self) -> StackPointer {
         //stack grows downward, so "base" is the highest address, i.e. the ptr + size.
-        self.limit().checked_add(self.len).unwrap()
+        self.limit().checked_add(self.len).expect("Stack base address overflow.")
     }
     fn limit(&self) -> StackPointer {
         //stack grows downward, so "limit" is the lowest address, i.e. the box ptr.
-        StackPointer::new(self.stack as *const u8 as usize).unwrap()
+        StackPointer::new(self.stack as *const u8 as usize)
+            .expect("Stack pointer address was zero, but it should always be nonzero.")
     }
 }
 
@@ -607,7 +608,17 @@ fn get_file_buffer_from_sfs(file_path: *mut efi::protocols::device_path::Protoco
             _ => Err(efi::Status::UNSUPPORTED)?,
         }
         //For MEDIA_FILE_PATH_DP, file name is in the node data, but it needs to be converted to Vec<u16> for call to open.
-        let filename: Vec<u16> = node.data.chunks_exact(2).map(|x| u16::from_le_bytes(x.try_into().unwrap())).collect();
+        let filename: Vec<u16> = node
+            .data
+            .chunks_exact(2)
+            .map(|x: &[u8]| {
+                if let Ok(x_bytes) = x.try_into() {
+                    Ok(u16::from_le_bytes(x_bytes))
+                } else {
+                    Err(efi::Status::INVALID_PARAMETER)
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         file = file.open(filename, efi::protocols::file::MODE_READ, 0)?;
     }
@@ -731,7 +742,7 @@ pub fn core_load_image(
         }
 
         // extract file path here and set in image_info
-        let (_, device_path_size) = device_path_node_count(device_path);
+        let (_, device_path_size) = device_path_node_count(device_path)?;
         let file_path_size: usize =
             device_path_size.saturating_sub(core::mem::size_of::<efi::protocols::device_path::Protocol>());
         let file_path = unsafe { (device_path as *const u8).add(file_path_size) };
@@ -762,7 +773,7 @@ pub fn core_load_image(
         core::ptr::null_mut()
     } else {
         // make copy and convert to raw pointer to avoid drop at end of function.
-        Box::into_raw(copy_device_path_to_boxed_slice(device_path)) as *mut u8
+        Box::into_raw(copy_device_path_to_boxed_slice(device_path)?) as *mut u8
     };
 
     core_install_protocol_interface(
@@ -917,29 +928,33 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
         let mut private_data = PRIVATE_IMAGE_DATA.lock();
 
         // mark the image as started and grab a copy of the private info.
-        let private_info = private_data.private_image_data.get_mut(&image_handle).unwrap();
-        private_info.started = true;
-        let entry_point = private_info.entry_point;
+        let status;
+        if let Some(private_info) = private_data.private_image_data.get_mut(&image_handle) {
+            private_info.started = true;
+            let entry_point = private_info.entry_point;
 
-        // save a pointer to the yielder so that exit() can use it.
-        private_data.image_start_contexts.push(yielder as *const Yielder<_, _>);
+            // save a pointer to the yielder so that exit() can use it.
+            private_data.image_start_contexts.push(yielder as *const Yielder<_, _>);
 
-        // get a copy of the system table pointer to pass to the entry point.
-        let system_table = private_data.system_table;
-        // drop our reference to the private data (i.e. release the lock).
-        drop(private_data);
+            // get a copy of the system table pointer to pass to the entry point.
+            let system_table = private_data.system_table;
+            // drop our reference to the private data (i.e. release the lock).
+            drop(private_data);
 
-        // invoke the entry point. Code on the other side of this pointer is
-        // FFI, which is inherently unsafe, but it's not  "technically" unsafe
-        // from a rust standpoint since r_efi doesn't define the ImageEntryPoint
-        // pointer type as "pointer to unsafe function"
-        let status = entry_point(image_handle, system_table);
+            // invoke the entry point. Code on the other side of this pointer is
+            // FFI, which is inherently unsafe, but it's not  "technically" unsafe
+            // from a rust standpoint since r_efi doesn't define the ImageEntryPoint
+            // pointer type as "pointer to unsafe function"
+            status = entry_point(image_handle, system_table);
 
-        //safety note: any variables with "Drop" routines that need to run
-        //need to be explicitly dropped before calling exit(). Since exit()
-        //effectively "longjmp"s back to StartImage(), rust automatic
-        //drops will not be triggered.
-        exit(image_handle, status, 0, core::ptr::null_mut());
+            //safety note: any variables with "Drop" routines that need to run
+            //need to be explicitly dropped before calling exit(). Since exit()
+            //effectively "longjmp"s back to StartImage(), rust automatic
+            //drops will not be triggered.
+            exit(image_handle, status, 0, core::ptr::null_mut());
+        } else {
+            status = efi::Status::NOT_FOUND;
+        }
         status
     });
 
@@ -1099,27 +1114,29 @@ extern "efiapi" fn exit(
     // save the exit data, if present, into the private_image_data for this
     // image for start_image to retrieve and return.
     if (exit_data_size != 0) && !exit_data.is_null() {
-        let image_data = private_data.private_image_data.get_mut(&image_handle).unwrap();
-        image_data.exit_data = Some((exit_data_size, exit_data));
+        if let Some(image_data) = private_data.private_image_data.get_mut(&image_handle) {
+            image_data.exit_data = Some((exit_data_size, exit_data));
+        }
     }
 
     // retrieve the yielder that was saved in the start_image entry point
     // coroutine wrapper.
     // safety note: this assumes that the top of the image_start_contexts stack
     // is the currently running image.
-    let yielder = private_data.image_start_contexts.pop().unwrap();
-    let yielder = unsafe { &*yielder };
-    drop(private_data);
+    if let Some(yielder) = private_data.image_start_contexts.pop() {
+        let yielder = unsafe { &*yielder };
+        drop(private_data);
 
-    // safety note: any variables with "Drop" routines that need to run
-    // need to be explicitly dropped before calling suspend(). Since suspend()
-    // effectively "longjmp"s back to StartImage(), rust automatic
-    // drops will not be triggered.
+        // safety note: any variables with "Drop" routines that need to run
+        // need to be explicitly dropped before calling suspend(). Since suspend()
+        // effectively "longjmp"s back to StartImage(), rust automatic
+        // drops will not be triggered.
 
-    // transfer control back to start_image by calling the suspend function on
-    // yielder. This will switch stacks back to the start_image that invoked
-    // the entry point coroutine.
-    yielder.suspend(status);
+        // transfer control back to start_image by calling the suspend function on
+        // yielder. This will switch stacks back to the start_image that invoked
+        // the entry point coroutine.
+        yielder.suspend(status);
+    }
 
     //should never reach here, but rust doesn't know that.
     efi::Status::ACCESS_DENIED

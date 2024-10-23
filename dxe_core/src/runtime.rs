@@ -88,81 +88,98 @@ pub extern "efiapi" fn set_virtual_address_map(
     // Convert runtime services pointers
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().get_time) as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().get_time
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().set_time) as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().set_time
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().get_wakeup_time)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().get_wakeup_time
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().set_wakeup_time)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().set_wakeup_time
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().reset_system)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().reset_system
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().get_next_high_mono_count)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().get_next_high_mono_count
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().get_variable)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().get_variable
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().set_variable)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().set_variable
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().get_next_variable_name)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().get_next_variable_name
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().query_variable_info)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().query_variable_info
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().update_capsule)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().update_capsule
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().query_capsule_capabilities)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().query_capsule_capabilities
+        ) as *mut *mut c_void,
     );
-    SYSTEM_TABLE.lock().as_mut().unwrap().checksum_runtime_services();
+    SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").checksum_runtime_services();
 
     // Convert system table runtime fields
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().system_table().firmware_vendor)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").system_table().firmware_vendor
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().system_table().configuration_table)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").system_table().configuration_table
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().system_table().runtime_services)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").system_table().runtime_services
+        ) as *mut *mut c_void,
     );
-    SYSTEM_TABLE.lock().as_mut().unwrap().checksum();
+    SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").checksum();
 
     {
         let mut runtime_data = RUNTIME_DATA.lock();

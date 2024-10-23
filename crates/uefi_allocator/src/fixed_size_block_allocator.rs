@@ -326,7 +326,10 @@ impl FixedSizeBlockAllocator {
                         let block_size = BLOCK_SIZES[index];
                         // only works if all block sizes are a power of 2
                         let block_align = block_size;
-                        let layout = Layout::from_size_align(block_size, block_align).unwrap();
+                        let layout = match Layout::from_size_align(block_size, block_align) {
+                            Ok(layout) => layout,
+                            Err(_) => return core::ptr::null_mut(),
+                        };
                         self.fallback_alloc(layout)
                     }
                 }
@@ -392,11 +395,12 @@ impl FixedSizeBlockAllocator {
     // deallocates back to the linked-list backing allocator if the size of
     // layout being freed is too big to be tracked as a fixed-size free block.
     fn fallback_dealloc(&mut self, ptr: *mut u8, layout: Layout) {
-        let ptr = NonNull::new(ptr).unwrap();
-        for node in AllocatorIterator::new(self.allocators) {
-            let allocator = unsafe { &mut (*node).allocator };
-            if (allocator.bottom() <= ptr.as_ptr()) && (ptr.as_ptr() < allocator.top()) {
-                unsafe { allocator.deallocate(ptr, layout) };
+        if let Some(ptr) = NonNull::new(ptr) {
+            for node in AllocatorIterator::new(self.allocators) {
+                let allocator = unsafe { &mut (*node).allocator };
+                if (allocator.bottom() <= ptr.as_ptr()) && (ptr.as_ptr() < allocator.top()) {
+                    unsafe { allocator.deallocate(ptr, layout) };
+                }
             }
         }
     }

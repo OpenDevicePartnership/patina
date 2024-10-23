@@ -97,7 +97,7 @@ impl<'a> SimpleFile<'a> {
         let file_size_as_bytes =
             file_info_buffer.chunks_exact(size_of::<u64>()).nth(1).ok_or(efi::Status::NOT_FOUND)?;
 
-        Ok(u64::from_le_bytes(file_size_as_bytes.try_into().unwrap()))
+        Ok(u64::from_le_bytes(file_size_as_bytes.try_into().or(Err(efi::Status::INVALID_PARAMETER))?))
     }
 
     /// Returns the file attributes
@@ -109,7 +109,7 @@ impl<'a> SimpleFile<'a> {
         //for byte buffer -> efi::protocols::file::Info
         let file_attribute = file_info_buffer.chunks_exact(size_of::<u64>()).nth(9).ok_or(efi::Status::NOT_FOUND)?;
 
-        Ok(u64::from_le_bytes(file_attribute.try_into().unwrap()))
+        Ok(u64::from_le_bytes(file_attribute.try_into().or(Err(efi::Status::INVALID_PARAMETER))?))
     }
 
     /// Reads the entire file into a byte vector and returns it

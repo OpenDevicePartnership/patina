@@ -176,14 +176,15 @@ where
             st.checksum_all();
 
             // Install HobList configuration table
-            let hob_list_guid = uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").unwrap();
+            let hob_list_guid =
+                uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").expect("Invalid UUID format.");
             let hob_list_guid: efi::Guid = unsafe { *(hob_list_guid.to_bytes_le().as_ptr() as *const efi::Guid) };
             misc_boot_services::core_install_configuration_table(
                 hob_list_guid,
                 unsafe { (physical_hob_list as *mut c_void).as_mut() },
                 st,
             )
-            .unwrap();
+            .expect("Unable to create configuration table due to invalid table entry.");
         }
 
         let mut st = systemtables::SYSTEM_TABLE.lock();
@@ -238,7 +239,10 @@ impl CorePostInit {
             // This leaks the driver, making it static for the lifetime of the program.
             // Since the number of drivers is fixed and this function can only be called once (due to
             // `self` instead of `&self`), we don't have to worry about leaking memory.
-            image::core_start_local_image(Box::leak(driver)).unwrap();
+            if let Err(driver_err) = image::core_start_local_image(Box::leak(driver)) {
+                debug_assert!(false, "Driver failed with status {:?}", driver_err);
+                log::error!("Driver failed with status {:?}", driver_err);
+            }
         }
 
         dispatcher::core_dispatcher().expect("initial dispatch failed.");

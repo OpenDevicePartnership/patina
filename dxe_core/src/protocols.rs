@@ -330,7 +330,10 @@ extern "efiapi" fn open_protocol(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let protocol = *(unsafe { protocol.as_ref().unwrap() });
+    let protocol = match unsafe { protocol.as_ref() } {
+        Some(protocol) => *protocol,
+        None => return efi::Status::INVALID_PARAMETER,
+    };
 
     if interface.is_null() && attributes != efi::OPEN_PROTOCOL_TEST_PROTOCOL {
         return efi::Status::INVALID_PARAMETER;

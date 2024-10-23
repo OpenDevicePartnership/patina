@@ -481,7 +481,9 @@ extern "efiapi" fn cpu_arch_available(event: efi::Event, _context: *mut c_void) 
     match PROTOCOL_DB.locate_protocol(cpu_arch::PROTOCOL_GUID) {
         Ok(cpu_arch_ptr) => {
             CPU_ARCH_PTR.store(cpu_arch_ptr as *mut cpu_arch::Protocol, Ordering::SeqCst);
-            EVENT_DB.close_event(event).unwrap();
+            if let Err(status_err) = EVENT_DB.close_event(event) {
+                log::warn!("Could not close event for cpu_arch_available due to error {:?}", status_err);
+            }
         }
         Err(err) => panic!("Unable to locate timer arch: {:?}", err),
     }

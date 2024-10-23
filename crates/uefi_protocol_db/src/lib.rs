@@ -91,7 +91,10 @@ impl OpenProtocolInformation {
         const BY_DRIVER_EXCLUSIVE: u32 = efi::OPEN_PROTOCOL_BY_DRIVER | efi::OPEN_PROTOCOL_EXCLUSIVE;
         match attributes {
             efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER => {
-                if agent_handle.is_none() || controller_handle.is_none() || handle == controller_handle.unwrap() {
+                if agent_handle.is_none()
+                    || controller_handle.is_none()
+                    || handle == controller_handle.ok_or(efi::Status::INVALID_PARAMETER)?
+                {
                     return Err(efi::Status::INVALID_PARAMETER);
                 }
             }
@@ -223,9 +226,9 @@ impl ProtocolDb {
                 (handle, key)
             }
         };
-        debug_assert!(self.handles.contains_key(&key)); //above logic should guarantee a valid key. Is debug assert to avoid perf cost of contains() in release.
 
-        let handle_instance = self.handles.get_mut(&key).unwrap();
+        debug_assert!(self.handles.contains_key(&key));
+        let handle_instance = self.handles.get_mut(&key).ok_or(efi::Status::UNSUPPORTED)?;
 
         if handle_instance.contains_key(&OrdGuid(protocol)) {
             return Err(efi::Status::INVALID_PARAMETER);

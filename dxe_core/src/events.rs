@@ -264,7 +264,9 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
             //then other Rust modules executing under DXE Rust would need to mark all event
             //callbacks as "unsafe", and the r_efi definition for EventNotify would need to
             //change.
-            (event.notify_function)(event.event, notify_context);
+            if let Some(notify_function) = event.notify_function {
+                (notify_function)(event.event, notify_context);
+            }
         }
     }
 
@@ -302,7 +304,9 @@ extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_
             let timer_arch_ptr = timer_arch_ptr as *mut timer::Protocol;
             let timer_arch = unsafe { &*(timer_arch_ptr) };
             (timer_arch.register_handler)(timer_arch_ptr, timer_tick);
-            EVENT_DB.close_event(event).unwrap();
+            if let Err(status_err) = EVENT_DB.close_event(event) {
+                log::warn!("Could not close event for timer_available_callback due to error {:?}", status_err);
+            }
         }
         Err(err) => panic!("Unable to locate timer arch: {:?}", err),
     }
@@ -312,7 +316,9 @@ extern "efiapi" fn cpu_arch_available(event: efi::Event, _context: *mut c_void) 
     match PROTOCOL_DB.locate_protocol(cpu_arch::PROTOCOL_GUID) {
         Ok(cpu_arch_ptr) => {
             CPU_ARCH_PTR.store(cpu_arch_ptr as *mut cpu_arch::Protocol, Ordering::SeqCst);
-            EVENT_DB.close_event(event).unwrap();
+            if let Err(status_err) = EVENT_DB.close_event(event) {
+                log::warn!("Could not close event for cpu_arch_available due to error {:?}", status_err);
+            }
         }
         Err(err) => panic!("Unable to cpu arch: {:?}", err),
     }

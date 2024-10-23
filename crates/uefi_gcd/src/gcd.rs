@@ -827,8 +827,11 @@ impl IoGCD {
     fn init_io_blocks(&mut self) -> Result<(), Error> {
         ensure!(self.maximum_address != 0, Error::NotInitialized);
 
-        let mut io_blocks =
-            Rbt::new(unsafe { Box::into_raw(vec![0_u8; IO_BLOCK_SLICE_SIZE].into_boxed_slice()).as_mut().unwrap() });
+        let mut io_blocks = Rbt::new(unsafe {
+            Box::into_raw(vec![0_u8; IO_BLOCK_SLICE_SIZE].into_boxed_slice())
+                .as_mut()
+                .expect("RBT given null pointer in initialization.")
+        });
 
         io_blocks
             .add(IoBlock::Unallocated(dxe_services::IoSpaceDescriptor {
