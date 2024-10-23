@@ -162,19 +162,12 @@ pub struct EventNotification {
 impl fmt::Debug for EventNotification {
     #[cfg_attr(feature = "nightly", feature(no_coverage))]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(notify_function) = self.notify_function {
-            write!(
-                f,
-                "EventNotification {{ event: {:?}, notify_tpl: {:?}, notify_function: {:?}, notify_context: {:?} }}",
-                self.event, self.notify_tpl, notify_function, self.notify_context
-            )
-        } else {
-            write!(
-                f,
-                "EventNotification {{ event: {:?}, notify_tpl: {:?}, notify_function: {:?}, notify_context: {:?} }}",
-                self.event, self.notify_tpl, "null", self.notify_context
-            )
-        }
+        f.debug_struct("EventNotification")
+            .field("event", &self.event)
+            .field("notify_tpl", &self.notify_tpl)
+            .field("notify_function", &(self.notify_function as usize))
+            .field("notify_context", &self.notify_context)
+            .finish()
     }
 }
 
@@ -464,14 +457,13 @@ impl EventDb {
     fn timer_tick(&mut self, current_time: u64) {
         let events: Vec<usize> = self.events.keys().cloned().collect();
         for event in events {
-            let current_event;
-            if let Some(current) = self.events.get_mut(&event) {
-                current_event = current;
+            let current_event = if let Some(current) = self.events.get_mut(&event) {
+                current
             } else {
                 debug_assert!(false, "Event {:?} not found.", event);
                 log::error!("Event {:?} not found.", event);
                 continue;
-            }
+            };
             if current_event.event_type.is_timer() {
                 if let Some(trigger_time) = current_event.trigger_time {
                     if trigger_time <= current_time {

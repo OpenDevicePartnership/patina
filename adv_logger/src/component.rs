@@ -86,17 +86,13 @@ where
     /// allocations.
     ///
     pub fn init_advanced_logger(&self, physical_hob_list: *const c_void) -> Result<()> {
-        let hob_list;
         debug_assert!(!physical_hob_list.is_null(), "Could not initialize adv logger due to null hob list.");
-        if let Some(physical_hob_list_info) =
-            unsafe { (physical_hob_list as *const PhaseHandoffInformationTable).as_ref::<'static>() }
-        {
-            hob_list = Hob::Handoff(physical_hob_list_info);
-        } else {
-            log::error!("Could not initialize adv logger due to null hob list.");
-            return Err(EfiError::InvalidParameter);
-        }
-
+        let hob_list_info =
+            unsafe { (physical_hob_list as *const PhaseHandoffInformationTable).as_ref() }.ok_or_else(|| {
+                log::error!("Could not initialize adv logger due to null hob list.");
+                EfiError::InvalidParameter
+            })?;
+        let hob_list = Hob::Handoff(hob_list_info);
         for hob in &hob_list {
             if let Hob::GuidHob(guid_hob, data) = hob {
                 if guid_hob.name == memory_log::ADV_LOGGER_HOB_GUID {

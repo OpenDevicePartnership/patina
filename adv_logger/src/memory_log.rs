@@ -257,7 +257,7 @@ impl AdvLoggerMessageEntry {
     pub unsafe fn init_from_memory(address: *const c_void, length: u32, log_entry: LogEntry) -> Option<&'static Self> {
         debug_assert!(
             size_of::<Self>() + log_entry.data.len() <= length as usize,
-            "Advanced logger entry initialized in insufficient buffer!"
+            "Advanced logger entry initialized in an insufficiently sized buffer!"
         );
 
         if size_of::<Self>() + log_entry.data.len() > length as usize {
@@ -323,12 +323,10 @@ impl<'a> Iterator for AdvLogIterator<'a> {
         } else {
             let entry = unsafe { (self.log_info as *const AdvLoggerInfo).byte_add(self.offset) }
                 as *const AdvLoggerMessageEntry;
-            if let Some(entry) = unsafe { entry.as_ref() } {
+            unsafe { entry.as_ref() }.map(|entry| {
                 self.offset += entry.aligned_len();
-                Some(entry)
-            } else {
-                None
-            }
+                entry
+            })
         }
     }
 }

@@ -302,13 +302,11 @@ impl UefiAllocator {
         }
         //zero after check so it doesn't get reused.
         (*allocation_info).signature = 0;
-        self.allocator.deallocate(
-            match NonNull::new(allocation_info as *mut u8) {
-                Some(non_null_ptr) => non_null_ptr,
-                None => return efi::Status::INVALID_PARAMETER,
-            },
-            (*allocation_info).layout,
-        );
+        if let Some(non_null_ptr) = NonNull::new(allocation_info as *mut u8) {
+            self.allocator.deallocate(non_null_ptr, (*allocation_info).layout);
+        } else {
+            return efi::Status::INVALID_PARAMETER;
+        }
         efi::Status::SUCCESS
     }
 

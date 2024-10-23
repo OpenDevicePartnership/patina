@@ -77,11 +77,8 @@ pub fn device_path_node_count(
             break;
         }
 
-        if let Ok(offset) = current_length.try_into() {
-            current_node_ptr = unsafe { current_node_ptr.byte_offset(offset) };
-        } else {
-            return Err(efi::Status::INVALID_PARAMETER);
-        }
+        let offset = current_length.try_into().map_err(|_| efi::Status::INVALID_PARAMETER)?;
+        current_node_ptr = unsafe { current_node_ptr.byte_offset(offset) };
     }
     Ok((node_count, dev_path_size))
 }

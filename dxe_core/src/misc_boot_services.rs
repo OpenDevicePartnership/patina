@@ -302,7 +302,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     SYSTEM_TABLE
         .lock()
         .as_mut()
-        .expect("ST pointer is null, but it must exist and be valid.")
+        .expect("The System Table pointer is null. This is invalid.")
         .clear_boot_time_services();
 
     match PROTOCOL_DB.locate_protocol(protocols::runtime::PROTOCOL_GUID) {
