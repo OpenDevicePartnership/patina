@@ -66,3 +66,8 @@ pub fn with_global_lock<F: Fn()>(f: F) {
     let _guard = GLOBAL_STATE_TEST_LOCK.lock().unwrap();
     f();
 }
+
+pub unsafe fn get_memory(size: usize) -> &'static mut [u8] {
+    let addr = alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 8).unwrap());
+    core::slice::from_raw_parts_mut(addr, size)
+}

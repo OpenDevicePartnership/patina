@@ -366,3 +366,188 @@ pub fn init_events_support(bs: &mut efi::BootServices) {
     //Indicate eventing is initialized
     EVENT_DB_INITIALIZED.store(true, Ordering::SeqCst);
 }
+
+#[cfg(test)]
+mod tests {
+    use core::mem;
+
+    use crate::test_support::{self, get_memory};
+
+    use super::*;
+
+    extern "efiapi" fn test_notify_function(_: efi::Event, _: *mut core::ffi::c_void) {}
+
+    fn with_locked_state<F: Fn()>(f: F) {
+        test_support::with_global_lock(|| {
+            EVENT_DB.reset();
+            CURRENT_TPL.store(efi::TPL_APPLICATION, Ordering::SeqCst);
+            EVENT_DB_INITIALIZED.store(false, Ordering::SeqCst);
+            f();
+        });
+    }
+
+    #[test]
+    fn test_create_event() {
+        with_locked_state(|| {
+            let mut null_event: efi::Event = core::ptr::null_mut();
+            assert_eq!(
+                create_event(
+                    efi::EVT_NOTIFY_SIGNAL,
+                    efi::TPL_APPLICATION,
+                    None,
+                    core::ptr::null_mut(),
+                    &mut null_event
+                ),
+                efi::Status::INVALID_PARAMETER
+            );
+
+            let mut event = unsafe { get_memory(mem::size_of::<efi::Event>()) } as *mut _ as efi::Event;
+            assert_eq!(
+                create_event(
+                    efi::EVT_SIGNAL_EXIT_BOOT_SERVICES,
+                    efi::TPL_APPLICATION + 2,
+                    Some(test_notify_function),
+                    core::ptr::null_mut(),
+                    &mut event
+                ),
+                efi::Status::SUCCESS
+            );
+
+            let mut event = unsafe { get_memory(mem::size_of::<efi::Event>()) } as *mut _ as efi::Event;
+            assert_eq!(
+                create_event(
+                    efi::EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
+                    efi::TPL_APPLICATION + 2,
+                    Some(test_notify_function),
+                    core::ptr::null_mut(),
+                    &mut event
+                ),
+                efi::Status::SUCCESS
+            );
+        });
+    }
+
+    #[test]
+    fn test_create_event_ex() {
+        with_locked_state(|| {
+            let mut null_event: efi::Event = core::ptr::null_mut();
+            assert_eq!(
+                create_event_ex(
+                    efi::EVT_NOTIFY_SIGNAL,
+                    efi::TPL_APPLICATION,
+                    None,
+                    core::ptr::null_mut(),
+                    core::ptr::null(),
+                    &mut null_event,
+                ),
+                efi::Status::INVALID_PARAMETER,
+                "Null event is invalid"
+            );
+
+            let status = create_event_ex(
+                efi::EVT_SIGNAL_EXIT_BOOT_SERVICES,
+                efi::TPL_APPLICATION,
+                None,
+                core::ptr::null_mut(),
+                core::ptr::null(),
+                1 as _,
+            );
+            assert_eq!(status, efi::Status::INVALID_PARAMETER, "Test invalid event type");
+
+            let mut event = unsafe { get_memory(mem::size_of::<efi::Event>()) } as *mut _ as efi::Event;
+            assert_eq!(
+                create_event(
+                    efi::EVT_NOTIFY_SIGNAL,
+                    efi::TPL_APPLICATION + 2,
+                    Some(test_notify_function),
+                    core::ptr::null_mut(),
+                    &mut event
+                ),
+                efi::Status::SUCCESS
+            );
+        });
+    }
+
+    #[test]
+    fn test_signal_event() {
+        with_locked_state(|| {
+            let mut event = unsafe { get_memory(mem::size_of::<efi::Event>()) } as *mut _ as efi::Event;
+            create_event(
+                efi::EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
+                efi::TPL_APPLICATION + 2,
+                Some(test_notify_function),
+                core::ptr::null_mut(),
+                &mut event,
+            );
+            let tpl_before_signal = CURRENT_TPL.load(Ordering::SeqCst);
+            assert_eq!(signal_event(event), efi::Status::SUCCESS);
+            assert_eq!(CURRENT_TPL.load(Ordering::SeqCst), tpl_before_signal);
+        });
+    }
+
+    #[test]
+    fn test_wait_for_event_bad_tpl() {
+        with_locked_state(|| {
+            assert_eq!(wait_for_event(0, core::ptr::null_mut(), core::ptr::null_mut()), efi::Status::INVALID_PARAMETER);
+            CURRENT_TPL.store(efi::TPL_HIGH_LEVEL, Ordering::SeqCst);
+            assert_eq!(wait_for_event(1, 1 as _, 1 as _), efi::Status::UNSUPPORTED);
+        });
+    }
+
+    #[test]
+    fn test_raise_tpl() {
+        with_locked_state(|| {
+            CURRENT_TPL.store(efi::TPL_APPLICATION, Ordering::SeqCst);
+            assert_eq!(raise_tpl(efi::TPL_CALLBACK), efi::TPL_APPLICATION);
+        });
+    }
+
+    #[test]
+    fn test_check_event() {
+        with_locked_state(|| {
+            let mut notify_event = unsafe { get_memory(mem::size_of::<efi::Event>()) } as *mut _ as efi::Event;
+            create_event(
+                efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_APPLICATION + 2,
+                Some(test_notify_function),
+                core::ptr::null_mut(),
+                &mut notify_event,
+            );
+            assert_eq!(check_event(notify_event), efi::Status::INVALID_PARAMETER);
+            let mut event = unsafe { get_memory(mem::size_of::<efi::Event>()) } as *mut _ as efi::Event;
+            create_event(
+                efi::EVT_NOTIFY_WAIT,
+                efi::TPL_APPLICATION + 2,
+                Some(test_notify_function),
+                core::ptr::null_mut(),
+                &mut event,
+            );
+            assert_eq!(check_event(event), efi::Status::NOT_READY);
+            signal_event(event);
+            assert_eq!(check_event(event), efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn test_set_timer() {
+        let mut event = unsafe { get_memory(mem::size_of::<efi::Event>()) } as *mut _ as efi::Event;
+        create_event(
+            efi::EVT_TIMER,
+            efi::TPL_APPLICATION + 2,
+            Some(test_notify_function),
+            core::ptr::null_mut(),
+            &mut event,
+        );
+        assert_eq!(set_timer(event, efi::TIMER_CANCEL, 1000), efi::Status::SUCCESS);
+        assert_eq!(set_timer(event, efi::TIMER_RELATIVE, 1000), efi::Status::SUCCESS);
+        assert_eq!(set_timer(event, efi::TIMER_PERIODIC, 1000), efi::Status::SUCCESS);
+    }
+
+    #[test]
+    fn test_init_events_support() {
+        let fake_boot_services =
+            unsafe { get_memory(mem::size_of::<efi::BootServices>()) } as *mut _ as *mut efi::BootServices;
+        init_events_support(unsafe { &mut *fake_boot_services });
+        assert!(EVENT_DB_INITIALIZED.load(Ordering::SeqCst));
+    }
+}

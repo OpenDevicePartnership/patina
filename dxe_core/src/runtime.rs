@@ -36,6 +36,14 @@ impl RuntimeData {
             virtual_map_index: 0,
         }
     }
+
+    #[cfg(test)]
+    fn reset(&mut self) {
+        self.runtime_arch_ptr = ptr::null_mut();
+        self.virtual_map = ptr::null_mut();
+        self.virtual_map_desc_size = 0;
+        self.virtual_map_index = 0;
+    }
 }
 
 unsafe impl Sync for RuntimeData {}
@@ -249,15 +257,18 @@ pub fn init_runtime_support(rt: &mut efi::RuntimeServices) {
 #[cfg(test)]
 mod tests {
     use super::{convert_pointer, init_runtime_support, set_virtual_address_map, RUNTIME_DATA};
-    use crate::test_support;
+    use crate::{systemtables::init_system_table, test_support};
     use core::{ffi::c_void, mem};
     use r_efi::efi;
+    use std::sync::atomic::{self};
 
     fn with_locked_state<F: Fn()>(f: F) {
         test_support::with_global_lock(|| {
             unsafe {
                 test_support::init_test_gcd(Some(0x100000));
                 test_support::init_test_protocol_db();
+                init_system_table();
+                RUNTIME_DATA.lock().reset();
             }
             f();
         });
@@ -338,7 +349,117 @@ mod tests {
                     efi::Status::SUCCESS
                 );
                 assert_eq!(*(address_ptr as *mut usize), 0);
+
+                let null_ptr = core::ptr::null_mut();
+                assert_eq!(convert_pointer(0, null_ptr as *mut *mut c_void), efi::Status::INVALID_PARAMETER);
             }
+        });
+    }
+
+    #[test]
+    fn test_arch_support() {
+        with_locked_state(|| {
+            let mut rt = fake_runtime_services();
+            init_runtime_support(&mut rt);
+            unsafe {
+                (*RUNTIME_DATA.lock().runtime_arch_ptr).at_runtime.store(false, atomic::Ordering::Relaxed);
+            }
+            let memory_descriptor = core::ptr::null_mut();
+            let result_status = set_virtual_address_map(0, 0, 0, memory_descriptor);
+            assert_eq!(result_status, efi::Status::UNSUPPORTED);
+        });
+    }
+
+    #[test]
+    fn test_virtual_mode_support() {
+        with_locked_state(|| {
+            let mut rt = fake_runtime_services();
+            init_runtime_support(&mut rt);
+            unsafe {
+                (*RUNTIME_DATA.lock().runtime_arch_ptr).at_runtime.store(true, atomic::Ordering::SeqCst);
+            }
+            unsafe {
+                (*RUNTIME_DATA.lock().runtime_arch_ptr).virtual_mode.store(true, atomic::Ordering::SeqCst);
+            }
+            let memory_descriptor = core::ptr::null_mut();
+            let result_status = set_virtual_address_map(0, 0, efi::MEMORY_DESCRIPTOR_VERSION, memory_descriptor);
+            assert_eq!(result_status, efi::Status::UNSUPPORTED);
+        });
+    }
+
+    #[test]
+    fn test_descriptor_version() {
+        with_locked_state(|| {
+            let mut rt = fake_runtime_services();
+            init_runtime_support(&mut rt);
+            unsafe {
+                (*RUNTIME_DATA.lock().runtime_arch_ptr).at_runtime.store(true, atomic::Ordering::SeqCst);
+            }
+            unsafe {
+                (*RUNTIME_DATA.lock().runtime_arch_ptr).virtual_mode.store(false, atomic::Ordering::SeqCst);
+            }
+            let memory_descriptor = core::ptr::null_mut();
+            let result_status = set_virtual_address_map(
+                0,
+                mem::size_of::<efi::MemoryDescriptor>(),
+                efi::MEMORY_DESCRIPTOR_VERSION + 100,
+                memory_descriptor,
+            );
+            assert_eq!(result_status, efi::Status::UNSUPPORTED);
+        });
+    }
+
+    #[test]
+    fn test_descriptor_size() {
+        with_locked_state(|| {
+            let mut rt = fake_runtime_services();
+            init_runtime_support(&mut rt);
+            unsafe {
+                (*RUNTIME_DATA.lock().runtime_arch_ptr).at_runtime.store(true, atomic::Ordering::SeqCst);
+            }
+            unsafe {
+                (*RUNTIME_DATA.lock().runtime_arch_ptr).virtual_mode.store(false, atomic::Ordering::SeqCst);
+            }
+            let memory_descriptor = core::ptr::null_mut();
+            let result_status = set_virtual_address_map(
+                0,
+                mem::size_of::<efi::MemoryDescriptor>() - 1,
+                efi::MEMORY_DESCRIPTOR_VERSION,
+                memory_descriptor,
+            );
+            assert_eq!(result_status, efi::Status::UNSUPPORTED);
+        });
+    }
+
+    #[test]
+    fn test_set_virtual_map() {
+        with_locked_state(|| {
+            let mut rt = fake_runtime_services();
+            init_runtime_support(&mut rt);
+
+            unsafe {
+                (*RUNTIME_DATA.lock().runtime_arch_ptr).at_runtime.store(true, atomic::Ordering::SeqCst);
+            }
+            unsafe {
+                (*RUNTIME_DATA.lock().runtime_arch_ptr).virtual_mode.store(false, atomic::Ordering::SeqCst);
+            }
+
+            let mut desc = efi::MemoryDescriptor {
+                r#type: efi::RUNTIME_SERVICES_DATA,
+                physical_start: 0x1000,
+                virtual_start: 0x2000,
+                number_of_pages: 1,
+                attribute: efi::MEMORY_RUNTIME | efi::MEMORY_WB,
+            };
+
+            let result_status = set_virtual_address_map(
+                1,
+                mem::size_of::<efi::MemoryDescriptor>(),
+                efi::MEMORY_DESCRIPTOR_VERSION,
+                &mut desc,
+            );
+
+            assert_eq!(result_status, efi::Status::SUCCESS);
         });
     }
 }

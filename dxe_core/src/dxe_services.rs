@@ -545,7 +545,26 @@ pub fn init_dxe_services(system_table: &mut EfiSystemTable) {
 // This routine filters memory space attributes to those accepted by the CPU architectural protocol.
 #[cfg(test)]
 mod tests {
+
+    use dxe_services::{IoSpaceDescriptor, MemorySpaceDescriptor};
+    use gcd::MEMORY_BLOCK_SLICE_SIZE;
+
     use super::*;
+    use crate::{
+        systemtables::init_system_table,
+        test_support::{self, get_memory, init_test_gcd},
+    };
+
+    fn with_locked_state<F: Fn()>(f: F) {
+        test_support::with_global_lock(|| {
+            unsafe {
+                init_test_gcd(None);
+                init_system_table();
+                test_support::init_test_protocol_db();
+            }
+            f();
+        });
+    }
 
     #[test]
     fn test_convert_to_cpu_arch_attributes() {
@@ -601,5 +620,345 @@ mod tests {
 
         let attributes = 0;
         assert_eq!(convert_to_cpu_arch_attributes(attributes), 0, "No attributes should be set");
+    }
+
+    #[test]
+    fn test_add_memory_space() {
+        with_locked_state(|| {
+            let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE) };
+            let address = mem.as_ptr() as efi::PhysicalAddress;
+            GCD.init(48, 16);
+
+            assert_eq!(
+                add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE as u64, 0),
+                efi::Status::SUCCESS
+            );
+
+            assert_eq!(
+                add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, 0, 0),
+                efi::Status::INVALID_PARAMETER
+            );
+        });
+    }
+
+    #[test]
+    fn test_allocate_memory_space() {
+        with_locked_state(|| {
+            let align = 8;
+            let length = 64;
+            assert_eq!(
+                allocate_memory_space(
+                    dxe_services::GcdAllocateType::AnySearchBottomUp,
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    align,
+                    length,
+                    core::ptr::null_mut() as *mut efi::PhysicalAddress,
+                    core::ptr::null_mut() as efi::Handle,
+                    core::ptr::null_mut() as efi::Handle
+                ),
+                efi::Status::INVALID_PARAMETER,
+                "Allocate memory space with null base address pointer."
+            );
+
+            let mut max_address = 0x100 as efi::PhysicalAddress;
+            unsafe {
+                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 0x1000, 0).unwrap();
+            }
+            assert_eq!(
+                allocate_memory_space(
+                    dxe_services::GcdAllocateType::MaxAddressSearchBottomUp,
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    align,
+                    length,
+                    &mut max_address as *mut efi::PhysicalAddress,
+                    1 as _,
+                    core::ptr::null_mut() as efi::Handle
+                ),
+                efi::Status::SUCCESS,
+                "Allocate memory space with bottom up (max) limit."
+            );
+            assert!(max_address < 0x100);
+
+            let mut min_address = 0x100 as efi::PhysicalAddress;
+            assert_eq!(
+                allocate_memory_space(
+                    dxe_services::GcdAllocateType::MaxAddressSearchTopDown,
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    align,
+                    length,
+                    &mut min_address as *mut efi::PhysicalAddress,
+                    1 as _,
+                    core::ptr::null_mut() as efi::Handle
+                ),
+                efi::Status::SUCCESS,
+                "Allocate memory space with top down (min) limit."
+            );
+            assert!(min_address > 0x100);
+
+            let mut address = 0x200 as efi::PhysicalAddress;
+            assert_eq!(
+                allocate_memory_space(
+                    dxe_services::GcdAllocateType::Address,
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    align,
+                    length,
+                    &mut address as *mut efi::PhysicalAddress,
+                    1 as _,
+                    core::ptr::null_mut() as efi::Handle
+                ),
+                efi::Status::SUCCESS,
+                "Allocate memory space with specific address."
+            );
+            assert!(address == 0x200);
+
+            assert_eq!(
+                allocate_memory_space(
+                    dxe_services::GcdAllocateType::MaxAllocateType,
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    align,
+                    length,
+                    &mut max_address as *mut efi::PhysicalAddress,
+                    1 as _,
+                    core::ptr::null_mut() as efi::Handle
+                ),
+                efi::Status::INVALID_PARAMETER,
+                "Allocate memory space invalid allocate type."
+            );
+        });
+    }
+
+    #[test]
+    fn test_get_memory_space_descriptor() {
+        with_locked_state(|| {
+            assert_eq!(
+                get_memory_space_descriptor(
+                    0x1000 as efi::PhysicalAddress,
+                    core::ptr::null_mut() as *mut dxe_services::MemorySpaceDescriptor,
+                ),
+                efi::Status::INVALID_PARAMETER
+            );
+        });
+    }
+
+    #[test]
+    fn test_get_memory_space_map() {
+        with_locked_state(|| {
+            assert_eq!(
+                get_memory_space_map(core::ptr::null_mut() as *mut usize, 1 as _),
+                efi::Status::INVALID_PARAMETER
+            );
+
+            let mut number_of_descriptors: usize = 0;
+            assert_eq!(
+                get_memory_space_map(
+                    &mut number_of_descriptors as *mut usize,
+                    core::ptr::null_mut() as *mut *mut dxe_services::MemorySpaceDescriptor
+                ),
+                efi::Status::INVALID_PARAMETER
+            );
+
+            let mut msd = MemorySpaceDescriptor::default();
+            let mut msd_list: [*mut MemorySpaceDescriptor; 1] = [&mut msd];
+            assert_eq!(
+                get_memory_space_map(&mut number_of_descriptors as *mut usize, msd_list.as_mut_ptr()),
+                efi::Status::SUCCESS
+            );
+            assert!(number_of_descriptors > 0);
+        });
+    }
+
+    #[test]
+    fn test_allocate_io_space() {
+        with_locked_state(|| {
+            let align = 8;
+            let length: u64 = 0x100;
+
+            assert_eq!(
+                allocate_io_space(
+                    dxe_services::GcdAllocateType::AnySearchBottomUp,
+                    dxe_services::GcdIoType::Io,
+                    align,
+                    length,
+                    core::ptr::null_mut() as *mut efi::PhysicalAddress,
+                    1 as _,
+                    1 as _,
+                ),
+                efi::Status::INVALID_PARAMETER,
+                "Allocate io space with null base pointer."
+            );
+
+            assert_eq!(
+                allocate_io_space(
+                    dxe_services::GcdAllocateType::MaxAllocateType,
+                    dxe_services::GcdIoType::Io,
+                    align,
+                    length,
+                    core::ptr::null_mut() as *mut efi::PhysicalAddress,
+                    1 as _,
+                    1 as _,
+                ),
+                efi::Status::INVALID_PARAMETER,
+                "Allocate io space with invalid allocate type."
+            );
+
+            GCD.add_io_space(dxe_services::GcdIoType::Io, 0, 0x10000).unwrap();
+
+            let mut max_address = 0x1000 as efi::PhysicalAddress;
+            assert_eq!(
+                allocate_io_space(
+                    dxe_services::GcdAllocateType::MaxAddressSearchBottomUp,
+                    dxe_services::GcdIoType::Io,
+                    align,
+                    length,
+                    &mut max_address as *mut efi::PhysicalAddress,
+                    1 as _,
+                    core::ptr::null_mut() as efi::Handle
+                ),
+                efi::Status::SUCCESS,
+                "Allocate memory space with bottom up (max) limit."
+            );
+            assert!(max_address < 0x1000);
+
+            let mut min_address = 0x1000 as efi::PhysicalAddress;
+            assert_eq!(
+                allocate_io_space(
+                    dxe_services::GcdAllocateType::MaxAddressSearchTopDown,
+                    dxe_services::GcdIoType::Io,
+                    align,
+                    length,
+                    &mut min_address as *mut efi::PhysicalAddress,
+                    1 as _,
+                    core::ptr::null_mut() as efi::Handle
+                ),
+                efi::Status::SUCCESS,
+                "Allocate memory space with top down (min) limit."
+            );
+            assert!(min_address > 0x1000);
+
+            let mut address = 0x1000 as efi::PhysicalAddress;
+            assert_eq!(
+                allocate_io_space(
+                    dxe_services::GcdAllocateType::Address,
+                    dxe_services::GcdIoType::Io,
+                    align,
+                    length,
+                    &mut address as *mut efi::PhysicalAddress,
+                    1 as _,
+                    core::ptr::null_mut() as efi::Handle
+                ),
+                efi::Status::SUCCESS,
+                "Allocate memory space with specific address."
+            );
+            assert!(address == 0x1000);
+        });
+    }
+
+    #[test]
+    fn test_get_io_space_map() {
+        with_locked_state(|| {
+            assert_eq!(get_io_space_map(core::ptr::null_mut() as *mut usize, 1 as _), efi::Status::INVALID_PARAMETER);
+
+            let mut number_of_descriptors: usize = 0;
+            assert_eq!(
+                get_io_space_map(
+                    &mut number_of_descriptors as *mut usize,
+                    core::ptr::null_mut() as *mut *mut dxe_services::IoSpaceDescriptor
+                ),
+                efi::Status::INVALID_PARAMETER
+            );
+
+            let mut iosd = IoSpaceDescriptor::default();
+            let mut iosd_list: [*mut IoSpaceDescriptor; 1] = [&mut iosd];
+            assert_eq!(
+                get_io_space_map(&mut number_of_descriptors as *mut usize, iosd_list.as_mut_ptr()),
+                efi::Status::SUCCESS
+            );
+            assert!(number_of_descriptors > 0);
+        });
+    }
+
+    #[test]
+    fn test_schedule() {
+        let file_name = core::ptr::null_mut() as *const efi::Guid;
+        assert_eq!(schedule(1 as _, file_name), efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_process_firmware_volume() {
+        let size = 64;
+        assert_eq!(process_firmware_volume(core::ptr::null(), size, 1 as _), efi::Status::INVALID_PARAMETER);
+        assert_eq!(process_firmware_volume(1 as _, size, core::ptr::null_mut()), efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_free_memory_space() {
+        with_locked_state(|| {
+            let mut address: u64 = 1000;
+            allocate_memory_space(
+                dxe_services::GcdAllocateType::Address,
+                dxe_services::GcdMemoryType::SystemMemory,
+                0,
+                100,
+                &mut address as *mut efi::PhysicalAddress,
+                1 as _,
+                1 as _,
+            );
+            assert_eq!(free_memory_space(1050, 100), efi::Status::NOT_FOUND);
+        });
+    }
+
+    #[test]
+    fn test_remove_meomry_space() {
+        with_locked_state(|| {
+            add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000000000000, 10, 0);
+            assert_eq!(remove_memory_space(0x1000000000000, 10), efi::Status::UNSUPPORTED);
+        });
+    }
+
+    #[test]
+    fn test_add_io_space() {
+        with_locked_state(|| {
+            assert_eq!(add_io_space(dxe_services::GcdIoType::Io, 0, 10), efi::Status::SUCCESS);
+            assert_eq!(add_io_space(dxe_services::GcdIoType::Io, 0, 10), efi::Status::ACCESS_DENIED);
+        });
+    }
+
+    #[test]
+    fn test_free_io_space() {
+        with_locked_state(|| {
+            add_io_space(dxe_services::GcdIoType::Io, 0, 10);
+            let mut address: u64 = 0;
+            allocate_io_space(
+                dxe_services::GcdAllocateType::Address,
+                dxe_services::GcdIoType::Io,
+                0,
+                10,
+                &mut address as *mut efi::PhysicalAddress,
+                1 as _,
+                1 as _,
+            );
+            assert_eq!(free_io_space(0, 0), efi::Status::INVALID_PARAMETER);
+            assert_eq!(free_io_space(0, 10), efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn test_remove_io_space() {
+        with_locked_state(|| {
+            add_io_space(dxe_services::GcdIoType::Io, 0, 10);
+            let mut address: u64 = 0;
+            allocate_io_space(
+                dxe_services::GcdAllocateType::Address,
+                dxe_services::GcdIoType::Io,
+                0,
+                10,
+                &mut address as *mut efi::PhysicalAddress,
+                1 as _,
+                1 as _,
+            );
+            assert_eq!(remove_io_space(0, 10), efi::Status::ACCESS_DENIED);
+            free_io_space(0, 10);
+            assert_eq!(remove_io_space(0, 10), efi::Status::SUCCESS);
+        });
     }
 }

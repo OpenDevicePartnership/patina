@@ -554,6 +554,16 @@ impl SpinLockedEventDb {
         self.inner.lock()
     }
 
+    // TODO_sherry: this should be cfg test but for some reason it can't find it?
+    pub fn reset(&self) {
+        self.inner.lock().events.clear();
+    }
+
+    // TODO_sherry: this should be cfg test
+    pub fn events_len(&self) -> usize {
+        self.inner.lock().events.len()
+    }
+
     /// Creates a new event in the event database
     ///
     /// This function closely matches the semantics of the EFI_BOOT_SERVICES.CreateEventEx() API in
