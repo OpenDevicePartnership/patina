@@ -1,0 +1,38 @@
+# This workflow syncs GitHub labels to the integrating repository.
+#
+# The labels are declaratively defined in .github/Labels.yml.
+#
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+# For more information, see:
+# https://github.com/EndBug/label-sync
+
+name: Label Sync Workflow
+
+on:
+  workflow_call:
+    secrets:
+      GH_PAT:
+        description: "GitHub Personal Access Token"
+        required: true
+
+jobs:
+  sync:
+    name: Sync
+    runs-on: ubuntu-latest
+
+    permissions:
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/Labels.yml
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Sync Labels
+        uses: EndBug/label-sync@v2
+        with:
+          config-file: .github/Labels.yml
+          delete-other-labels: false
