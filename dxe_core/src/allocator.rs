@@ -1261,4 +1261,41 @@ mod tests {
             assert_eq!(terminate_memory_map(map_key + 1), efi::Status::INVALID_PARAMETER);
         });
     }
+
+    #[test]
+    fn test_memorydesriptorref_debug() {
+        let descriptor = efi::MemoryDescriptor {
+            r#type: 0x00000003,
+            physical_start: 0x10000000,
+            virtual_start: 0x20000000,
+            number_of_pages: 0x10000,
+            attribute: 0x0000000000000008,
+        };
+        let ref_str = format!("{:?}", MemoryDescriptorRef(&descriptor));
+        assert!(ref_str.contains("BootServicesCode"));
+        assert!(ref_str.contains("WB"));
+        assert!(!ref_str.contains("|")); // only one attribute so join should not add any `|`
+
+        let descriptor = efi::MemoryDescriptor {
+            r#type: 0x00000000,
+            physical_start: 0x10000000,
+            virtual_start: 0x20000000,
+            number_of_pages: 0x10000,
+            attribute: 0x800000000000001Eu64,
+        };
+        let ref_str = format!("{:?}", MemoryDescriptorRef(&descriptor));
+        assert!(ref_str.contains("Reserved Memory"));
+        assert!(ref_str.contains("WC|WT|WB|UCE|RT"));
+
+        let descriptor = efi::MemoryDescriptor {
+            r#type: 0xFFFFFFFF,
+            physical_start: 0x10000000,
+            virtual_start: 0x20000000,
+            number_of_pages: 0x10000,
+            attribute: 0x00000000000EE010u64,
+        };
+        let ref_str = format!("{:?}", MemoryDescriptorRef(&descriptor));
+        assert!(ref_str.contains("Unknown Memory Type"));
+        assert!(ref_str.contains("0xEE010"));
+    }
 }
