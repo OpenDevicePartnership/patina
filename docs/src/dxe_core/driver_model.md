@@ -87,7 +87,7 @@ managing the controller.
 
 ### Shutting Down a Driver
 
-If a driver is bus driver, the [Protocol Database](protocol_database.md#querying-protocol-usages-information) is queried
+If a driver is a bus driver, the [Protocol Database](protocol_database.md#querying-protocol-usages-information) is queried
 to determine the set of child controllers for the current `handle`. A "child controller" is defined as the
 `controller_handles` for any usages of this `handle` where the `agent_handle` is the driver being stopped and the usage
 has an attribute of `BY_CHILD_CONTROLLER`. If the optional `child_handle` is specified to `core_disconnect_controller`,
