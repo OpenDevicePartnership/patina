@@ -15,11 +15,12 @@ edition = "2021"
 rust-version = "1.80.0"
 
 [workspace.dependencies]
-uefi_cpu_init = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
-uefi_core = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
-uefi_logger = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
-section_extractor = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
-serial_writer = {git = "https://github.com/pop-project/uefi-core.git", rev = "891819afcd4bceac694cae1f7339fa09334d9324"}
+uefi_cpu_init = {git = "https://github.com/pop-project/uefi-core.git", rev = "6caab58b605aedb252f21ffe52c8e8524e89a58e"}
+uefi_core = {git = "https://github.com/pop-project/uefi-core.git", rev = "6caab58b605aedb252f21ffe52c8e8524e89a58e"}
+uefi_interrupt = {git = "https://github.com/pop-project/uefi-core.git", rev = "6caab58b605aedb252f21ffe52c8e8524e89a58e"}
+uefi_logger = {git = "https://github.com/pop-project/uefi-core.git", rev = "6caab58b605aedb252f21ffe52c8e8524e89a58e"}
+section_extractor = {git = "https://github.com/pop-project/uefi-core.git", rev = "6caab58b605aedb252f21ffe52c8e8524e89a58e"}
+serial_writer = {git = "https://github.com/pop-project/uefi-core.git", rev = "6caab58b605aedb252f21ffe52c8e8524e89a58e"}
 corosensei = {git = "https://github.com/pop-project/uefi-corosensei.git", rev = "d27241e17a5f3c0703fe9871e6f68cd838c05c6d", default-features = false }
 
 uefi_collections = { path = "crates/uefi_collections", version = "0.1.9", default-features = false }
