@@ -104,6 +104,18 @@ where
     interrupt_manager: InterruptManager,
 }
 
+uefi_core::if_x64! {
+    /// Type for a pre-selected X64 core.
+    pub type X64Core<SectionExtractor> =
+        Core<uefi_cpu_init::X64CpuInitializer, SectionExtractor, uefi_interrupt::InterruptManagerX64>;
+}
+
+uefi_core::if_aarch64! {
+    /// Type for a pre-selected X64 core.
+    pub type Aarch64Core<SectionExtractor> =
+        Core<uefi_cpu_init::NullCpuInitializer, SectionExtractor, uefi_interrupt::InterruptManagerAarch64>;
+}
+
 impl<CpuInitializer, SectionExtractor, InterruptManager> Core<CpuInitializer, SectionExtractor, InterruptManager>
 where
     CpuInitializer: interface::CpuInitializer + Default,
