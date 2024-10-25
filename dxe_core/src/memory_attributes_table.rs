@@ -150,7 +150,13 @@ pub fn core_install_memory_attributes_table() {
     }
 
     // get the GCD memory map descriptors and filter out the non-runtime sections
-    let desc_list = get_memory_map_descriptors();
+    let desc_list = match get_memory_map_descriptors() {
+        Ok(descriptors) => descriptors,
+        Err(_) => {
+            log::error!("Failed to get memory map descriptors.");
+            return;
+        }
+    };
     let mat_allowed_attrs = efi::MEMORY_RO | efi::MEMORY_XP | efi::MEMORY_RUNTIME;
 
     if desc_list.is_empty() {
