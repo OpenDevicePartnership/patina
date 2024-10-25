@@ -93,23 +93,32 @@ pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_c
 ///     .initialize(physical_hob_list);
 /// ```
 #[derive(Default)]
-pub struct Core<CpuInitializer, SectionExtractor>
+pub struct Core<CpuInitializer, SectionExtractor, InterruptManager>
 where
     CpuInitializer: interface::CpuInitializer + Default,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
+    InterruptManager: uefi_interrupt::InterruptManager + Default + Copy + 'static,
 {
     cpu_initializer: CpuInitializer,
     section_extractor: SectionExtractor,
+    interrupt_manager: InterruptManager,
 }
 
-impl<CpuInitializer, SectionExtractor> Core<CpuInitializer, SectionExtractor>
+impl<CpuInitializer, SectionExtractor, InterruptManager> Core<CpuInitializer, SectionExtractor, InterruptManager>
 where
     CpuInitializer: interface::CpuInitializer + Default,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
+    InterruptManager: uefi_interrupt::InterruptManager + Default + Copy + 'static,
 {
     /// Registers the CPU initializer with it's own configuration.
     pub fn with_cpu_initializer(mut self, cpu_initializer: CpuInitializer) -> Self {
         self.cpu_initializer = cpu_initializer;
+        self
+    }
+
+    /// Registers the Interrupt Manager with it's own configuration.
+    pub fn with_interrupt_manager(mut self, interrupt_manager: InterruptManager) -> Self {
+        self.interrupt_manager = interrupt_manager;
         self
     }
 
@@ -122,6 +131,7 @@ where
     /// Initializes the core with the given configuration, including GCD initialization, enabling allocations.
     pub fn initialize(mut self, physical_hob_list: *const c_void) -> CorePostInit {
         self.cpu_initializer.initialize();
+        self.interrupt_manager.initialize().expect("Failed to initialize interrupt manager!");
         let (free_memory_start, free_memory_size) = gcd::init_gcd(physical_hob_list);
 
         log::trace!("Free memory start: {:#x}", free_memory_start);

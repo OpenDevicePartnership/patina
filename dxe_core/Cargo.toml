@@ -34,6 +34,7 @@ uuid = { workspace = true }
 uefi_core = { workspace = true }
 uefi_component_interface = { workspace = true }
 uefi_gcd = { workspace = true }
+uefi_interrupt = { workspace = true }
 uefi_protocol_db = { workspace = true }
 uefi_allocator = { workspace = true }
 uefi_device_path = { workspace = true }
