@@ -33,7 +33,6 @@ uuid = { workspace = true }
 
 uefi_core = { workspace = true }
 uefi_component_interface = { workspace = true }
-uefi_cpu_init = { workspace = true }
 uefi_gcd = { workspace = true }
 uefi_interrupt = { workspace = true }
 uefi_protocol_db = { workspace = true }
