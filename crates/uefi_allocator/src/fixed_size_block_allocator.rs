@@ -158,6 +158,7 @@ impl FixedSizeBlockAllocator {
     /// If the size or alignment are invalid, it will return Err(FixedSizeBlockAllocatorError::InvalidParameter).
     /// This function is useful for pre-allocating memory before it is needed for memory sensitive operations, such
     /// as creating the EFI_MEMORY_MAP or allocating page table memory before changing attributes.
+    ///
     pub fn ensure_capacity(&mut self, size: usize, align: usize) -> Result<(), FixedSizeBlockAllocatorError> {
         let mut alignment = align;
 
@@ -180,24 +181,14 @@ impl FixedSizeBlockAllocator {
         let layout =
             Layout::from_size_align(size, alignment).map_err(|_| FixedSizeBlockAllocatorError::InvalidParameter)?;
 
-        for node in AllocatorIterator::new(self.allocators) {
-            let allocator = unsafe { &mut (*node).allocator };
-            match allocator.allocate_first_fit(layout) {
-                Ok(ptr) => {
-                    // we have found enough free space in this heap, deallocate it and return
-                    unsafe { allocator.deallocate(ptr, layout) };
-                    return Ok(());
-                }
-                Err(_) => {
-                    // try next
-                    continue;
-                }
-            }
+        // if we can allocate and deallocate a block of the given size and alignment, then we have enough capacity
+        // If the pool is not large enough, alloc will call expand, which will allocate more memory from the GCD and
+        // dealloc will leave the extra memory as owned by this allocator
+        let ptr = self.alloc(layout);
+        if ptr.is_null() {
+            return Err(FixedSizeBlockAllocatorError::OutOfMemory);
         }
-
-        // if we hit here, we haven't found a large enough free region, so we need to expand this allocator's
-        // free mem
-        self.expand(layout)?;
+        unsafe { self.dealloc(ptr, layout) };
 
         Ok(())
     }
