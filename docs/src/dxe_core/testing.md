@@ -21,7 +21,7 @@ or the static data being in an unexpected state for the test.
 To help with this issue in the dxe_core crate, a [test_support](https://github.com/pop-project/uefi-dxe-core/blob/main/dxe_core/src/test_support.rs)
 module was added to make writing tests more convenient. The most important functionality in the module is the
 `with_global_lock` function which takes your test closure / function as a parameter. This function locks a private
-global mutex, ensuring you have exclusive access to all statics within the dxe_core. 
+global mutex, ensuring you have exclusive access to all statics within the dxe_core.
 
 ``` admonish warning
 It is the responsibility of the test writer to reset the global state to meet their expectations. It is **not** the
@@ -46,6 +46,7 @@ fn test_that_uses_gcd() {
 ```
 
 ### Example 2
+
 ```rust
 use crate::test_support::{with_global_lock, init_test_gcd};
 
