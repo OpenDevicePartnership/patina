@@ -1,0 +1,34 @@
+[package]
+name = "uefi_cpu_init"
+version = "0.1.9"
+edition = "2021"
+readme = "README.md"
+description = "CPU Initializer trait implementations for the pure rust DXE core."
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.docs.rs]
+features = ["doc", "std"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "uefi_cpu_init"
+path = "src/lib.rs"
+
+[dependencies]
+lazy_static = { workspace = true }
+log = { workspace = true }
+uefi_core = { workspace = true }
+spin = { workspace = true, features = ["rwlock"] }
+x86_64 = { workspace = true, optional = true }
+
+[target.'cfg(all(target_os="uefi", target_arch="x86_64"))'.dependencies]
+x86_64 = { workspace = true }
+
+[dev-dependencies]
+x86_64 = { workspace = true }
+
+[features]
+default = []
+std = []
+doc = ["x86_64"]
