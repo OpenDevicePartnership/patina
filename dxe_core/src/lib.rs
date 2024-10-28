@@ -70,10 +70,19 @@ use uefi_component_interface::DxeComponent;
 use uefi_core::{
     error::{self, Result},
     interface,
+    if_x64, if_aarch64,
 };
 use uefi_gcd::gcd::SpinLockedGcd;
 
 pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
+
+if_x64!{
+    pub type X64Core<SectionExtractor> = Core<uefi_cpu_init::X64CpuInitializer, SectionExtractor, uefi_interrupt::InterruptManagerX64>;
+}
+
+if_aarch64! {
+    pub type Aarch64Core<SectionExtractor> = Core<uefi_cpu_init::NullCpuInitializer, SectionExtractor, uefi_interrupt::InterruptManagerAarch64>;
+}
 
 /// The initialize phase DxeCore, responsible for setting up the environment with the given configuration.
 ///
