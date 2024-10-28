@@ -15,4 +15,26 @@ these different types of mocking.
 
 ## uefi-dxe-core Examples
 
-### 
+### Mocking an external trait
+
+The below example can be found in `uefi_test/src/lib.rs` and is mocking the `DxeComponentInterface` from the
+`uefi_component_interface crate.
+
+``` rust
+#[cfg(test)]
+mod tests {
+  mockall::mock! {
+    ComponentInterface {}
+      impl DxeComponentInterface for ComponentInterface {
+        fn install_protocol_interface(&self, handle: Option<efi::Handle>, protocol: efi::Guid, interface: *mut c_void) -> Result<efi::Handle, efi::Status>;
+    }
+  }
+
+  #[test]
+  fn test_example() {
+    let mut interface = MockComponentInterface::new();
+    interface.expect_install_protocol_interface().return_once(move |_,_,_| Ok(core::ptr::null_mut()));
+    let _ = component.entry_point(&interface);
+  }
+}
+```
