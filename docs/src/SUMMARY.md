@@ -42,7 +42,7 @@
   - [Dispatcher](dxe_core/dispatcher.md)
   - [Performance Analysis]()
   - [Synchronization](dxe_core/synchronization.md)
-  - [Testing]()
+  - [Testing](dxe_core/testing.md)
 
 # Creating a Rust DXE Driver
 - [Component Interface](driver/interface.md)
