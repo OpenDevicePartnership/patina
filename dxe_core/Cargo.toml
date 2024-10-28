@@ -28,7 +28,7 @@ log = { workspace = true }
 mu_pi = { workspace = true }
 mu_rust_helpers = { workspace = true }
 r-efi = { workspace = true }
-spin = { workspace = true}
+spin = { workspace = true }
 uuid = { workspace = true }
 
 uefi_sdk = { workspace = true }
@@ -41,13 +41,14 @@ uefi_allocator = { workspace = true }
 uefi_debugger = { workspace = true }
 uefi_device_path = { workspace = true }
 uefi_event = { workspace = true }
-uefi_depex = { workspace = true}
+uefi_depex = { workspace = true }
 uefi_pecoff = { workspace = true }
 uefi_tpl_lock = { workspace = true }
 
 [dev-dependencies]
 sample_components = { workspace = true }
 section_extractor = { workspace = true }
+mockall = { workspace = true }
 
 [features]
 default = []

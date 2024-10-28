@@ -68,7 +68,7 @@ Now that we are to the point where you can compile a binary that the `PEI` phase
 execute, lets actually add the DXE Core logic. In this section, you will also need to make some
 decisions on trait implementations, which are used as abstraction points for the platform to add
 architecture or platform specific logic. At the point of writing this example, `DxeCore` has two
-points of abstraction, `SectionExtractor` and `CpuInitializer`.
+points of abstraction, `SectionExtractor` and `EfiCpuInit`.
 
 `SectionExtractor` is an abstraction point that allows a platform specify the specific section
 extraction methods it supports. As an example, a platform may only compress it's sections with
@@ -77,9 +77,9 @@ it only needs implement the [SectionExtractor](https://github.com/microsoft/mu_r
 trait. However multiple implementations are provided via [section_extractor](https://github.com/pop-project/uefi-core/tree/main/section_extractor),
 such as brotli, crc32, uefi_decompress, etc.
 
-`CpuInitializer` is an abstraction point for architecture specific initialization steps.
+`EfiCpuInit` is an abstraction point for architecture specific initialization steps.
 Implementations are provided via [uefi_cpu_init](https://github.com/pop-project/uefi-core/tree/main/uefi_cpu_init),
-however if necessary, a platform can create their own implementation via the [CpuInitializer](https://github.com/pop-project/uefi-core/blob/main/uefi_core/src/interface.rs)
+however if necessary, a platform can create their own implementation via the [EfiCpuInit](https://github.com/pop-project/uefi-core/blob/main/uefi_core/src/interface.rs)
 trait.
 
 ```admonish note
@@ -91,14 +91,14 @@ in this example with your platform specific implementations:
 
 ```rust
 use dxe_core::Core;
-use uefi_cpu::X64CpuInitializer;
+use uefi_cpu::X64EfiCpuInit;
 use section_extractor::BrotliSectionExtractor;
 
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     Core::default()
         .with_section_extractor(BrotliSectionExtractor::default())
-        .with_cpu_initializer(X64CpuInitializer::default())
+        .with_cpu_init(X64EfiCpuInit::default())
         .initialize()
         .start(physical_hob_list)
         .unwrap()
@@ -157,7 +157,7 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
 
     Core::default()
         .with_section_extractor(BrotliSectionExtractor::default())
-        .with_cpu_initializer(X64CpuInitializer::default())
+        .with_cpu_init(X64EfiCpuInit::default())
         .initialize()
         .with_driver(Box::new(adv_logger_component))
         .start(physical_hob_list)
@@ -215,7 +215,7 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     adv_logger_component.init_advanced_logger(physical_hob_list).unwrap();
 
     Core::default()
-        .with_cpu_initializer(uefi_cpu_init::X64CpuInitializer::default())
+        .with_cpu_init(uefi_cpu_init::X64EfiCpuInit::default())
         .with_section_extractor(section_extractor::CompositeSectionExtractor::default())
         .initialize(physical_hob_list)
         .with_driver(Box::new(adv_logger_component))
