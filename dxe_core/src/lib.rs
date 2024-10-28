@@ -74,14 +74,13 @@ use r_efi::efi::{self};
 use uefi_component_interface::DxeComponent;
 use uefi_core::{
     error::{self, Result},
-    interface,
-    if_x64, if_aarch64,
+    if_aarch64, if_x64, interface,
 };
 use uefi_gcd::gcd::SpinLockedGcd;
 
 pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
 
-if_x64!{
+if_x64! {
     /// [`Core`] type alias for x86_64 architecture with cpu architecture specific trait implementations pre-selected.
     pub type X64Core<SectionExtractor> = Core<uefi_cpu_init::X64CpuInitializer, SectionExtractor, uefi_interrupt::InterruptManagerX64>;
 }
