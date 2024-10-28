@@ -5,26 +5,31 @@
 //!
 //! ## Examples
 //!
-//! ``` rust,ignore
-//! #[no_std]
-//! #[no_main]
-//! #[panic_handler]
-//! fn panic(info: &PanicInfo) -> ! {
-//!    log::error!("{}", info);
-//!    loop {}
-//! }
-//! #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
-//! pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
-//!
-//!     dxe_core::Core::default()
-//!         .with_cpu_initializer(CpuInit::default())
-//!         .with_section_extractor(SectionExtract::default())
-//!         .initialize(physical_hob_list)
-//!         .with_driver(Box::new(Driver::default()))
-//!         .start()
-//!         .unwrap();
-//!     loop {}
-//! }
+//! ``` rust
+//! # struct Driver;
+//! # impl uefi_component_interface::DxeComponent for Driver {
+//! #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_core::error::Result<()> { todo!() }
+//! # }
+//! # struct CpuInitExample;
+//! # impl uefi_core::interface::CpuInitializer for CpuInitExample {
+//! #     fn initialize(&self) { todo!() }
+//! # }
+//! # struct SectionExtractExample;
+//! # impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
+//! #     fn extract_section(&self, _: *const c_void, _: usize) -> Result<&[u8], &'static str> { todo!() }
+//! # }
+//! # struct InterruptManagerExample;
+//! # impl uefi_interrupt::InterruptManager for InterruptManagerExample {
+//! #     fn initialize(&self) -> Result<(), &'static str> { todo!() }
+//! # }
+//! dxe_core::Core::default()
+//!   .with_cpu_initializer(CpuInitExample::default())
+//!   .with_interrupt_manager(InterruptManagerExample::default())
+//!   .with_section_extractor(SectionExtractExample::default())
+//!   .initialize(physical_hob_list)
+//!   .with_driver(Box::new(Driver::default()))
+//!   .start()
+//!   .unwrap();
 //! ```
 //!
 //! ## License
@@ -77,10 +82,12 @@ use uefi_gcd::gcd::SpinLockedGcd;
 pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
 
 if_x64!{
+    /// [`Core`] type alias for x86_64 architecture with cpu architecture specific trait implementations pre-selected.
     pub type X64Core<SectionExtractor> = Core<uefi_cpu_init::X64CpuInitializer, SectionExtractor, uefi_interrupt::InterruptManagerX64>;
 }
 
 if_aarch64! {
+    /// [`Core`] type alias for aarch64 architecture with cpu architecture specific trait implementations pre-selected.
     pub type Aarch64Core<SectionExtractor> = Core<uefi_cpu_init::NullCpuInitializer, SectionExtractor, uefi_interrupt::InterruptManagerAarch64>;
 }
 
@@ -95,11 +102,31 @@ if_aarch64! {
 ///
 /// ## Examples
 ///
-/// ``` rust,ignore
+/// ``` rust
+/// # struct Driver;
+/// # impl uefi_component_interface::DxeComponent for Driver {
+/// #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_core::error::Result<()> { todo!() }
+/// # }
+/// # struct CpuInitExample;
+/// # impl uefi_core::interface::CpuInitializer for CpuInitExample {
+/// #     fn initialize(&self) { todo!() }
+/// # }
+/// # struct SectionExtractExample;
+/// # impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
+/// #     fn extract_section(&self, _: *const c_void, _: usize) -> Result<&[u8], &'static str> { todo!() }
+/// # }
+/// # struct InterruptManagerExample;
+/// # impl uefi_interrupt::InterruptManager for InterruptManagerExample {
+/// #     fn initialize(&self) -> Result<(), &'static str> { todo!() }
+/// # }
 /// dxe_core::Core::default()
-///     .with_cpu_initializer(CpuInit::default())
-///     .with_section_extractor(SectionExtract::default())
-///     .initialize(physical_hob_list);
+///   .with_cpu_initializer(CpuInitExample::default())
+///   .with_interrupt_manager(InterruptManagerExample::default())
+///   .with_section_extractor(SectionExtractExample::default())
+///   .initialize(physical_hob_list)
+///   .with_driver(Box::new(Driver::default()))
+///   .start()
+///   .unwrap();
 /// ```
 #[derive(Default)]
 pub struct Core<CpuInitializer, SectionExtractor, InterruptManager>
