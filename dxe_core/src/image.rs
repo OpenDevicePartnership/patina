@@ -59,28 +59,50 @@ extern "efiapi" fn unimplemented_entry_point(
 struct ImageStack {
     stack: *const [u8],
     len: usize,
+    allocated_pages: usize,
 }
 
 impl ImageStack {
     fn new(size: usize) -> Result<Self, efi::Status> {
         let mut stack: efi::PhysicalAddress = 0;
         let len = align_up(size.max(MIN_STACK_SIZE) as u64, STACK_ALIGNMENT as u64) as usize;
-        core_allocate_pages(efi::ALLOCATE_ANY_PAGES, efi::BOOT_SERVICES_DATA, uefi_size_to_pages!(len), &mut stack)?;
-        Ok(ImageStack { stack: core::ptr::slice_from_raw_parts_mut(stack as *mut u8, len), len })
+        // allocate an extra page for the stack guard page.
+        let allocated_pages = uefi_size_to_pages!(len) + 1;
+
+        // allocate the stack, newly allocated memory will have efi::MEMORY_XP already set, so we don't need to set it
+        // here
+        core_allocate_pages(efi::ALLOCATE_ANY_PAGES, efi::BOOT_SERVICES_DATA, allocated_pages, &mut stack)?;
+
+        // attempt to set the memory space attributes for the stack guard page.
+        // if we fail, we should still try to continue to boot
+        // the stack grows downwards, so stack here is the guard page
+        if let Err(err) = dxe_services::core_set_memory_space_attributes(stack, UEFI_PAGE_SIZE as u64, efi::MEMORY_RP) {
+            log::error!("Failed to set memory space attributes for stack guard page: {:#x?}", err);
+            debug_assert!(false);
+        }
+
+        // we have the guard page at the bottom, so we need to add a page to the stack pointer for the limit
+        Ok(ImageStack {
+            stack: core::ptr::slice_from_raw_parts_mut((stack + (UEFI_PAGE_SIZE as u64)) as *mut u8, len),
+            len,
+            allocated_pages,
+        })
     }
 }
 
 impl Drop for ImageStack {
     fn drop(&mut self) {
         if !self.stack.is_null() {
-            let stack_addr = self.stack as *const u64 as efi::PhysicalAddress;
-            let num_pages = uefi_size_to_pages!(self.len);
-            if let Err(status) = core_free_pages(stack_addr, num_pages) {
+            // we added a guard page, so we need to subtract a page from the stack pointer to free everything
+            let stack_addr = self.stack as *const u64 as efi::PhysicalAddress - UEFI_PAGE_SIZE as u64;
+
+            // we don't need to unset the guard page here, the free page code handles that
+            if let Err(status) = core_free_pages(stack_addr, self.allocated_pages) {
                 log::error!(
                     "core_free_pages returned error {:#x?} for image stack at {:#x} for num_pages {:#x}",
                     status,
                     stack_addr,
-                    num_pages
+                    self.allocated_pages
                 );
             }
         }
@@ -93,7 +115,7 @@ unsafe impl Stack for ImageStack {
         self.limit().checked_add(self.len).expect("Stack base address overflow.")
     }
     fn limit(&self) -> StackPointer {
-        //stack grows downward, so "limit" is the lowest address, i.e. the box ptr.
+        //stack grows downward, so "limit" is the lowest address, i.e. the ptr.
         StackPointer::new(self.stack as *const u8 as usize)
             .expect("Stack pointer address was zero, but it should always be nonzero.")
     }
