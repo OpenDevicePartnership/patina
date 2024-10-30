@@ -779,6 +779,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::fn_address_comparisons)]
     fn init_memory_support_should_populate_boot_services_ptrs() {
         let boot_services = core::mem::MaybeUninit::zeroed();
         let mut boot_services: efi::BootServices = unsafe { boot_services.assume_init() };

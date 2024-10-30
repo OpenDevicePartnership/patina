@@ -766,11 +766,13 @@ pub fn init_protocol_support(bs: &mut efi::BootServices) {
     //r_efi has it as *mut handle.
     bs.install_multiple_protocol_interfaces = unsafe {
         let ptr = install_multiple_protocol_interfaces as *const ();
-        core::mem::transmute(ptr)
+        core::mem::transmute::<*const (), extern "efiapi" fn(*mut *mut c_void, *mut c_void, *mut c_void) -> efi::Status>(
+            ptr,
+        )
     };
     bs.uninstall_multiple_protocol_interfaces = unsafe {
         let ptr = uninstall_multiple_protocol_interfaces as *const ();
-        core::mem::transmute(ptr)
+        core::mem::transmute::<*const (), extern "efiapi" fn(*mut c_void, *mut c_void, *mut c_void) -> efi::Status>(ptr)
     };
 
     bs.install_protocol_interface = install_protocol_interface;

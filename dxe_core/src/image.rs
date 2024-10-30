@@ -434,7 +434,11 @@ fn install_dxe_core_image(hob_list: &HobList) {
     // pointer type and save it in the private_image_data structure for the core.
     // Safety: dxe_core_hob.entry_point must be the correct and actual entry
     // point for the core.
-    let entry_point = unsafe { transmute(dxe_core_hob.entry_point) };
+    let entry_point = unsafe {
+        transmute::<u64, extern "efiapi" fn(*mut c_void, *mut r_efi::system::SystemTable) -> r_efi::base::Status>(
+            dxe_core_hob.entry_point,
+        )
+    };
 
     // create the loaded_image structure for the core and populate it with data
     // from the hob.
@@ -557,7 +561,11 @@ fn core_load_pe_image(
         .map_err(|_| efi::Status::LOAD_ERROR)?;
 
     // update the entry point. Transmute is required here to cast the raw function address to the ImageEntryPoint function pointer type.
-    private_info.entry_point = unsafe { transmute(loaded_image_addr + pe_info.entry_point_offset) };
+    private_info.entry_point = unsafe {
+        transmute::<usize, extern "efiapi" fn(*mut c_void, *mut r_efi::system::SystemTable) -> efi::Status>(
+            loaded_image_addr + pe_info.entry_point_offset,
+        )
+    };
 
     let result = uefi_pecoff::load_resource_section(&pe_info, image)
         .inspect_err(|err| log::error!("core_load_pe_image_failed: load_resource_section returned status: {:#x?}", err))
@@ -1379,7 +1387,7 @@ mod tests {
             assert!(ENTRY_POINT_RAN.load(core::sync::atomic::Ordering::Relaxed));
 
             let private_data = PRIVATE_IMAGE_DATA.lock();
-            assert!(private_data.private_image_data.get(&image_handle).is_none());
+            assert!(!private_data.private_image_data.contains_key(&image_handle));
             drop(private_data);
         });
     }
@@ -1407,7 +1415,7 @@ mod tests {
             assert_eq!(status, efi::Status::SUCCESS);
 
             let private_data = PRIVATE_IMAGE_DATA.lock();
-            assert!(private_data.private_image_data.get(&image_handle).is_none());
+            assert!(!private_data.private_image_data.contains_key(&image_handle));
         });
     }
 
@@ -1526,6 +1534,7 @@ mod tests {
 
     fn get_file_protocol_mock() -> *mut efi::protocols::file::Protocol {
         // mock file interface
+        #[allow(clippy::missing_transmute_annotations)]
         let file = efi::protocols::file::Protocol {
             revision: efi::protocols::file::LATEST_REVISION,
             open: file_open,

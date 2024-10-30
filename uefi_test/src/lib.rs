@@ -260,6 +260,7 @@ mod tests {
     }
 
     // A test function where we mock DxeComponentInterface to return what we want for the test.
+    #[allow(unused)]
     fn test_function(interface: &dyn DxeComponentInterface) -> crate::Result {
         match interface.install_protocol_interface(
             None,
@@ -274,9 +275,9 @@ mod tests {
     #[test]
     fn verify_default_values() {
         let component = TestRunnerComponent::default();
-        std::assert_eq!(component.filters.len(), 0);
-        std::assert_eq!(component.debug_mode, false);
-        std::assert_eq!(component.fail_fast, false);
+        assert_eq!(component.filters.len(), 0);
+        assert!(!component.debug_mode);
+        assert!(!component.fail_fast);
     }
 
     #[test]
@@ -284,12 +285,13 @@ mod tests {
         let component =
             TestRunnerComponent::default().with_filter("aarch64").with_filter("test").debug_mode(true).fail_fast(true);
 
-        std::assert_eq!(component.filters.len(), 2);
-        std::assert_eq!(component.debug_mode, true);
-        std::assert_eq!(component.fail_fast, true);
+        assert_eq!(component.filters.len(), 2);
+        assert!(component.debug_mode);
+        assert!(component.fail_fast);
     }
 
-    #[linkme::distributed_slice(super::__private_api::TEST_CASES)]
+    #[cfg_attr(not(feature = "off"), linkme::distributed_slice(super::__private_api::TEST_CASES))]
+    #[allow(unused)]
     static TEST_CASE1: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test",
         skip: false,
@@ -298,7 +300,8 @@ mod tests {
         func: test_function,
     };
 
-    #[linkme::distributed_slice(super::__private_api::TEST_CASES)]
+    #[cfg_attr(not(feature = "off"), linkme::distributed_slice(super::__private_api::TEST_CASES))]
+    #[allow(unused)]
     static TEST_CASE2: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test",
         skip: true,
@@ -309,7 +312,7 @@ mod tests {
 
     #[test]
     fn test_we_run_without_panicking() {
-        std::assert_eq!(2, super::__private_api::test_cases().len());
+        assert_eq!(2, super::__private_api::test_cases().len());
         let component = TestRunnerComponent::default().fail_fast(true);
 
         let mut interface = MockComponentInterface::new();

@@ -1958,6 +1958,7 @@ mod tests {
         let open_protocol_info_list = SPIN_LOCKED_PROTOCOL_DB.get_open_protocol_information(handle).unwrap();
         assert_eq!(attributes_list.len(), test_info.len());
         assert_eq!(open_protocol_info_list.len(), 1);
+        #[allow(clippy::needless_range_loop)]
         for idx in 0..attributes_list.len() {
             assert_eq!(guid1, open_protocol_info_list[0].0);
             assert_eq!(test_info[idx].0, open_protocol_info_list[0].1[idx].agent_handle);
@@ -2081,12 +2082,12 @@ mod tests {
         assert_eq!(notify_list.len(), 2);
         assert_eq!(notify_list[0].event, event);
         assert_eq!(notify_list[0].fresh_handles.len(), 1);
-        assert!(notify_list[0].fresh_handles.get(&result.0).is_some());
+        assert!(notify_list[0].fresh_handles.contains(&result.0));
         assert_eq!(notify_list[0].registration, reg1);
 
         assert_eq!(notify_list[1].event, event2);
         assert_eq!(notify_list[1].fresh_handles.len(), 1);
-        assert!(notify_list[1].fresh_handles.get(&result.0).is_some());
+        assert!(notify_list[1].fresh_handles.contains(&result.0));
         assert_eq!(notify_list[1].registration, reg2);
     }
 

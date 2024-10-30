@@ -1701,7 +1701,7 @@ mod tests {
         );
 
         assert!(is_gcd_memory_slice_valid(&gcd));
-        assert_eq!(snapshot, copy_memory_block(&mut gcd));
+        assert_eq!(snapshot, copy_memory_block(&gcd));
     }
 
     #[test]
@@ -1822,7 +1822,7 @@ mod tests {
                 assert_eq!(20, mb.as_ref().length);
                 assert_eq!(block_count, gcd.memory_descriptor_count());
             }
-            Err(e) => assert!(false, "{e:?}"),
+            Err(e) => panic!("{e:?}"),
         }
 
         // Test merging when added before
@@ -1833,7 +1833,7 @@ mod tests {
                 assert_eq!(30, mb.as_ref().length);
                 assert_eq!(block_count, gcd.memory_descriptor_count());
             }
-            Err(e) => assert!(false, "{e:?}"),
+            Err(e) => panic!("{e:?}"),
         }
 
         assert!(
@@ -1864,10 +1864,10 @@ mod tests {
                         assert_eq!(0, md.image_handle as usize);
                         assert_eq!(0, md.device_handle as usize);
                     }
-                    MemoryBlock::Allocated(_) => assert!(false, "Add should keep the block unallocated"),
+                    MemoryBlock::Allocated(_) => panic!("Add should keep the block unallocated"),
                 }
             }
-            Err(e) => assert!(false, "{e:?}"),
+            Err(e) => panic!("{e:?}"),
         }
     }
 
@@ -2049,10 +2049,10 @@ mod tests {
                         assert_eq!(0, md.image_handle as usize);
                         assert_eq!(0, md.device_handle as usize);
                     }
-                    MemoryBlock::Allocated(_) => assert!(false, "remove should keep the block unallocated"),
+                    MemoryBlock::Allocated(_) => panic!("remove should keep the block unallocated"),
                 }
             }
-            Err(e) => assert!(false, "{e:?}"),
+            Err(e) => panic!("{e:?}"),
         }
     }
 

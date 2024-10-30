@@ -1181,7 +1181,7 @@ mod tests {
 
         let layout = Layout::from_size_align(0x8, 0x8).unwrap();
         let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
-        let allocation_ptr = allocation.as_ptr() as *mut u8;
+        let allocation_ptr = allocation.as_ptr();
 
         unsafe { fsb.deallocate(allocation, layout) };
         let free_block_ptr =
@@ -1190,7 +1190,7 @@ mod tests {
 
         let layout = Layout::from_size_align(0x20, 0x20).unwrap();
         let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
-        let allocation_ptr = allocation.as_ptr() as *mut u8;
+        let allocation_ptr = allocation.as_ptr();
 
         unsafe { fsb.deallocate(allocation, layout) };
         let free_block_ptr =

@@ -79,6 +79,11 @@ jobs:
         run: cargo fmt --all --check
         env:
           RUSTC_BOOTSTRAP: 1
+      
+      - name: Run cargo-clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        env:
+          RUSTC_BOOTSTRAP: 1
 
       - name: 🧪 Run Tests 🧪
         run: cargo make coverage

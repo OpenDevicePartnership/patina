@@ -30,7 +30,6 @@
 //!
 #![no_std]
 #![warn(missing_docs)]
-#![cfg_attr(feature = "nightly", feature(no_coverage))]
 
 extern crate alloc;
 
@@ -160,7 +159,6 @@ pub struct EventNotification {
 }
 
 impl fmt::Debug for EventNotification {
-    #[cfg_attr(feature = "nightly", feature(no_coverage))]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EventNotification")
             .field("event", &self.event)
@@ -226,7 +224,6 @@ struct Event {
 }
 
 impl fmt::Debug for Event {
-    #[cfg_attr(feature = "nightly", feature(no_coverage))]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut notify_func = 0;
         if self.notify_function.is_some() {
@@ -1102,7 +1099,7 @@ mod tests {
         assert!(result.is_ok());
         let event = result.unwrap();
         let index = event as usize;
-        assert!(&index < &SPIN_LOCKED_EVENT_DB.lock().next_event_id);
+        assert!(index < SPIN_LOCKED_EVENT_DB.lock().next_event_id);
         let events = &SPIN_LOCKED_EVENT_DB.lock().events;
         assert_eq!(events.get(&index).unwrap().event_type, EventType::TimerNotifyEvent);
         assert_eq!(events.get(&index).unwrap().event_type as u32, efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL);

@@ -31,13 +31,13 @@ static LOGGER: uefi_logger::SerialLogger<serial_writer::Terminal> = uefi_logger:
 );
 
 fn main() -> uefi_core::error::Result<()> {
-    if let Err(_) = log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)) {
+    if log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).is_err() {
         log::warn!("Global logger has already been set.");
     }
 
     let hob_list = build_hob_list();
     Core::default()
-        .with_cpu_initializer(uefi_cpu_init::NullCpuInitializer::default())
+        .with_cpu_initializer(uefi_cpu_init::NullCpuInitializer)
         .with_interrupt_manager(uefi_interrupt::InterruptManagerNull::default())
         .with_section_extractor(section_extractor::CompositeSectionExtractor::default())
         // Add any config knob functions for pre-gcd-init Core

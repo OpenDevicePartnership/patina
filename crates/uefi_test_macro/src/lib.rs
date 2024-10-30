@@ -18,9 +18,9 @@ use syn::Attribute;
 use syn::ItemFn;
 use syn::Meta;
 
-const KEY_SHOULD_FAIL: &'static str = "should_fail";
-const KEY_FAIL_MSG: &'static str = "fail_msg";
-const KEY_SKIP: &'static str = "skip";
+const KEY_SHOULD_FAIL: &str = "should_fail";
+const KEY_FAIL_MSG: &str = "fail_msg";
+const KEY_SKIP: &str = "skip";
 
 #[proc_macro_attribute]
 pub fn uefi_test(_: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -63,7 +63,7 @@ fn process_attributes(item: &mut ItemFn) -> HashMap<&'static str, proc_macro2::T
             map.insert(KEY_SKIP, skip);
             return false;
         }
-        return true;
+        true
     });
 
     map
