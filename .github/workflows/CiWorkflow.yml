@@ -10,6 +10,12 @@ name: CI
 
 on:
   workflow_call:
+    inputs:
+      mdbook-path:
+        description: "Path to the mdbook to build"
+        required: false
+        default: ""
+        type: string
     secrets:
       GH_PAT:
         description: "GitHub Personal Access Token"
@@ -38,6 +44,14 @@ jobs:
         with:
           config: markdownlint.yml
           args: "**/*.md"
+
+      - name: 🛠️ Download Rust Tools 🛠️
+        uses: pop-project/uefi-dxe-core/.github/actions/rust-tool-cache@main
+      
+      - name: 📖 Build Book 📖
+        run: mdbook build ${{ inputs.mdbook-path }}
+        if: ${{ inputs.mdbook-path != '' }}
+
   run:
     name: Rust CI
 

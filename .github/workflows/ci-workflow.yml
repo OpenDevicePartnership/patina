@@ -20,4 +20,6 @@ jobs:
   ci_workflow:
     name: Run
     uses: ./.github/workflows/CiWorkflow.yml
+    with:
+      mdbook-path: "docs"
     secrets: inherit
