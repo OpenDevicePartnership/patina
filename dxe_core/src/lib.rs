@@ -5,23 +5,28 @@
 //!
 //! ## Examples
 //!
-//! ``` rust
+//! ``` rust,no_run
+//! # #[derive(Default, Clone, Copy)]
 //! # struct Driver;
 //! # impl uefi_component_interface::DxeComponent for Driver {
-//! #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_core::error::Result<()> { todo!() }
+//! #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_core::error::Result<()> { Ok(()) }
 //! # }
+//! # #[derive(Default, Clone, Copy)]
 //! # struct CpuInitExample;
 //! # impl uefi_core::interface::CpuInitializer for CpuInitExample {
-//! #     fn initialize(&self) { todo!() }
+//! #     fn initialize(&mut self) { }
 //! # }
+//! # #[derive(Default, Clone, Copy)]
 //! # struct SectionExtractExample;
 //! # impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
-//! #     fn extract_section(&self, _: *const c_void, _: usize) -> Result<&[u8], &'static str> { todo!() }
+//! #     fn extract(&self, _: &mu_pi::fw_fs::Section) -> Result<Box<[u8]>, r_efi::base::Status> { Ok(Box::new([0])) }
 //! # }
+//! # #[derive(Default, Clone, Copy)]
 //! # struct InterruptManagerExample;
 //! # impl uefi_interrupt::InterruptManager for InterruptManagerExample {
-//! #     fn initialize(&self) -> Result<(), &'static str> { todo!() }
+//! #     fn initialize(&mut self) -> uefi_core::error::Result<()> { Ok(()) }
 //! # }
+//! # let physical_hob_list = core::ptr::null();
 //! dxe_core::Core::default()
 //!   .with_cpu_initializer(CpuInitExample::default())
 //!   .with_interrupt_manager(InterruptManagerExample::default())
@@ -101,23 +106,28 @@ if_aarch64! {
 ///
 /// ## Examples
 ///
-/// ``` rust
+/// ``` rust,no_run
+/// # #[derive(Default, Clone, Copy)]
 /// # struct Driver;
 /// # impl uefi_component_interface::DxeComponent for Driver {
-/// #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_core::error::Result<()> { todo!() }
+/// #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_core::error::Result<()> { Ok(()) }
 /// # }
+/// # #[derive(Default, Clone, Copy)]
 /// # struct CpuInitExample;
 /// # impl uefi_core::interface::CpuInitializer for CpuInitExample {
-/// #     fn initialize(&self) { todo!() }
+/// #     fn initialize(&mut self) { }
 /// # }
+/// # #[derive(Default, Clone, Copy)]
 /// # struct SectionExtractExample;
 /// # impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
-/// #     fn extract_section(&self, _: *const c_void, _: usize) -> Result<&[u8], &'static str> { todo!() }
+/// #     fn extract(&self, _: &mu_pi::fw_fs::Section) -> Result<Box<[u8]>, r_efi::base::Status> { Ok(Box::new([0])) }
 /// # }
+/// # #[derive(Default, Clone, Copy)]
 /// # struct InterruptManagerExample;
 /// # impl uefi_interrupt::InterruptManager for InterruptManagerExample {
-/// #     fn initialize(&self) -> Result<(), &'static str> { todo!() }
+/// #     fn initialize(&mut self) -> uefi_core::error::Result<()> { Ok(()) }
 /// # }
+/// # let physical_hob_list = core::ptr::null();
 /// dxe_core::Core::default()
 ///   .with_cpu_initializer(CpuInitExample::default())
 ///   .with_interrupt_manager(InterruptManagerExample::default())
@@ -240,18 +250,6 @@ where
 /// additional configuration that may require allocations, as allocations are now available. Once all configuration has
 /// been completed via the provided `with_*` functions, [start](CorePostInit::start) should be called to begin driver
 /// dispatch and handoff to bds.
-///
-/// ## Examples
-///
-/// ``` rust,ignore
-/// dxe_core::Core::default()
-///     .with_cpu_initializer(CpuInit::default())
-///     .with_section_extractor(SectionExtract::default())
-///     .initialize(physical_hob_list)
-///     .with_driver(Box::new(Driver::default()))
-///     .start()
-///     .unwrap();
-/// ```
 pub struct CorePostInit {
     drivers: Vec<Box<dyn DxeComponent>>,
 }

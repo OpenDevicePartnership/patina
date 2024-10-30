@@ -37,7 +37,7 @@ const PRIVATE_ALLOCATOR_TRACKING_GUID: efi::Guid =
 // This means that any rust heap allocations (e.g. Box::new()) will come from this allocator unless explicitly directed
 // to a different allocator. This allocator does not need to be public since all dynamic allocations will implicitly
 // allocate from it.
-#[cfg_attr(all(not(feature = "std"), not(test)), global_allocator)]
+#[cfg_attr(target_os = "uefi", global_allocator)]
 static EFI_BOOT_SERVICES_DATA_ALLOCATOR: UefiAllocator =
     UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, uefi_protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE, None);
 
@@ -307,7 +307,7 @@ impl<'a> AllocatorMap {
     }
 }
 
-#[cfg(all(not(feature = "std"), not(test)))]
+#[cfg(target_os = "uefi")]
 #[alloc_error_handler]
 fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
     panic!("allocation error: {:?}", layout)

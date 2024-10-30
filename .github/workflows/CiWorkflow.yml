@@ -69,15 +69,20 @@ jobs:
       - name: 🧪 Run Tests 🧪
         run: cargo make coverage
 
+      - name: Test Documentation
+        run: cargo test --doc
+        env:
+          RUSTC_BOOTSTRAP: 1
+
+      - name: Build documentation
+        run: cargo make doc
+
       - name: Upload Coverage Report
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: target/cobertura.xml
           fail_ci_if_error: false # Expect it to fail while repository is private
-
-      - name: Build documentation
-        run: cargo make doc
 
       - name: Build std
         run: cargo make build
