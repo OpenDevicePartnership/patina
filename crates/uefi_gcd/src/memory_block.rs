@@ -25,6 +25,13 @@ pub enum MemoryBlock {
     Allocated(dxe_services::MemorySpaceDescriptor),
 }
 
+#[derive(Debug)]
+pub enum TransitionOp {
+    Configure,
+    Set,
+    Clear
+}
+
 pub enum StateTransition {
     Add(dxe_services::GcdMemoryType, u64),
     Remove,
@@ -32,8 +39,8 @@ pub enum StateTransition {
     AllocateRespectingOwnership(efi::Handle, Option<efi::Handle>),
     Free,
     FreePreservingOwnership,
-    SetAttributes(u64),
-    SetCapabilities(u64),
+    ConfigureAttributes(u64, TransitionOp),
+    ConfigureCapabilities(u64, TransitionOp),
 }
 
 impl Debug for StateTransition {
@@ -57,12 +64,16 @@ impl Debug for StateTransition {
                 .finish(),
             StateTransition::Free => f.debug_struct("Free").finish(),
             StateTransition::FreePreservingOwnership => f.debug_struct("FreePreservingOwnership").finish(),
-            StateTransition::SetAttributes(attributes) => {
-                f.debug_struct("SetAttributes").field("attributes", &format_args!("{:#X}", attributes)).finish()
-            }
-            StateTransition::SetCapabilities(capabilities) => {
-                f.debug_struct("SetCapabilities").field("capabilities", &format_args!("{:#X}", capabilities)).finish()
-            }
+            StateTransition::ConfigureAttributes(attributes, op) => f
+                .debug_struct("ConfigureAttributes")
+                .field("attributes", &format_args!("{:#X}", attributes))
+                .field("op", &format_args!("{:?}", op))
+                .finish(),
+            StateTransition::ConfigureCapabilities(attributes, op) => f
+                .debug_struct("ConfigureCapabilities")
+                .field("attributes", &format_args!("{:#X}", attributes))
+                .field("op", &format_args!("{:?}", op))
+                .finish(),
         }
     }
 }
@@ -195,8 +206,8 @@ impl MemoryBlock {
             }
             StateTransition::Free => self.free_transition(false),
             StateTransition::FreePreservingOwnership => self.free_transition(true),
-            StateTransition::SetAttributes(attributes) => self.attribute_transition(attributes),
-            StateTransition::SetCapabilities(capabilities) => self.capabilities_transition(capabilities),
+            StateTransition::ConfigureAttributes(attributes, op) => self.attribute_transition(attributes, op),
+            StateTransition::ConfigureCapabilities(capabilities, op) => self.capabilities_transition(capabilities, op),
         }
     }
 
@@ -267,7 +278,7 @@ impl MemoryBlock {
         }
     }
 
-    pub fn attribute_transition(&mut self, attributes: u64) -> Result<(), Error> {
+    pub fn attribute_transition(&mut self, attributes: u64, op: TransitionOp) -> Result<(), Error> {
         match self {
             Self::Allocated(md) | Self::Unallocated(md)
                 if md.memory_type != dxe_services::GcdMemoryType::NonExistent =>
@@ -275,7 +286,11 @@ impl MemoryBlock {
                 if (md.capabilities | attributes) != md.capabilities {
                     Err(Error::InvalidStateTransition)
                 } else {
-                    md.attributes = attributes;
+                    match op {
+                        TransitionOp::Configure => md.attributes = attributes,
+                        TransitionOp::Set => md.attributes |= attributes,
+                        TransitionOp::Clear => md.attributes &= !attributes,
+                    }
                     Ok(())
                 }
             }
@@ -283,7 +298,7 @@ impl MemoryBlock {
         }
     }
 
-    pub fn capabilities_transition(&mut self, capabilities: u64) -> Result<(), Error> {
+    pub fn capabilities_transition(&mut self, capabilities: u64, op: TransitionOp) -> Result<(), Error> {
         match self {
             Self::Allocated(md) | Self::Unallocated(md)
                 if md.memory_type != dxe_services::GcdMemoryType::NonExistent =>
@@ -291,7 +306,11 @@ impl MemoryBlock {
                 if (capabilities | md.attributes) != capabilities {
                     Err(Error::InvalidStateTransition)
                 } else {
-                    md.capabilities = capabilities;
+                    match op {
+                        TransitionOp::Configure => md.capabilities = capabilities,
+                        TransitionOp::Set => md.capabilities |= capabilities,
+                        TransitionOp::Clear => md.capabilities &= !capabilities,
+                    }
                     Ok(())
                 }
             }
@@ -387,23 +406,23 @@ mod memory_block_tests {
         b5.as_mut().memory_type = GcdMemoryType::MemoryMappedIo;
 
         // Attributes before capabilities should fail
-        assert!(b5.state_transition(StateTransition::SetAttributes(0b1111)).is_err());
+        assert!(b5.state_transition(StateTransition::ConfigureAttributes(0b1111, TransitionOp::Configure)).is_err());
 
-        b5.state_transition(StateTransition::SetCapabilities(0b1111)).unwrap();
+        b5.state_transition(StateTransition::ConfigureCapabilities(0b1111, TransitionOp::Configure)).unwrap();
         assert_eq!(b5.as_ref().capabilities, 0b1111);
 
         // test attribute transition
         b5.as_mut().memory_type = GcdMemoryType::MemoryMappedIo;
 
-        b5.state_transition(StateTransition::SetAttributes(0b1111)).unwrap();
+        b5.state_transition(StateTransition::ConfigureAttributes(0b1111, TransitionOp::Configure)).unwrap();
         assert_eq!(b5.as_ref().attributes, 0b1111);
 
         // Reducing capabilities when attributes are more should fail
-        assert!(b5.state_transition(StateTransition::SetCapabilities(0b1011)).is_err());
+        assert!(b5.state_transition(StateTransition::ConfigureCapabilities(0b1011, TransitionOp::Configure)).is_err());
 
         // Memory type must not be NonExistent to set the attributes or capabilities
         let mut b7 = block;
-        assert!(b7.state_transition(StateTransition::SetAttributes(0b1111)).is_err());
-        assert!(b7.state_transition(StateTransition::SetCapabilities(0b1111)).is_err());
+        assert!(b7.state_transition(StateTransition::ConfigureAttributes(0b1111, TransitionOp::Configure)).is_err());
+        assert!(b7.state_transition(StateTransition::ConfigureCapabilities(0b1111, TransitionOp::Configure)).is_err());
     }
 }

@@ -14,7 +14,7 @@ use mu_rust_helpers::function;
 use r_efi::efi;
 use uefi_collections::{node_size, Error as SliceError, Rbt, SliceKey};
 
-use crate::{ensure, error};
+use crate::{ensure, error, memory_block::TransitionOp};
 
 use super::{
     io_block::{self, Error as IoBlockError, IoBlock, IoBlockSplit, StateTransition as IoStateTransition},
@@ -568,11 +568,11 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Memory State Transition: {:?}\n", function!(), transition);
 
-        // This is temporary until mu-paging is enabled. Free memory in the current scheme has 0 attrs set, so when
-        // we free pages, we need to reset the attrs to 0 so that the pages can be merged with other free pages
-        // When mu-paging is brought in, unallocated memory will be unmapped, so this logic will look different
-        // Don't check the error here, we still want to free the memory if possible
-        let _ = self.set_memory_space_attributes(base_address, len, 0);
+        // This is temporary until mu-paging is enabled. Free memory in the current scheme has no protection attrs set,
+        // so when we free pages, we need to reset the protoection attrs to 0 so that the pages can be merged with other
+        // free pages. When mu-paging is brought in, unallocated memory will be unmapped, so this logic will look
+        // different Don't check the error here, we still want to free the memory if possible
+        let _ = self.remove_memory_space_attributes(base_address, len, efi::MEMORY_ACCESS_MASK);
 
         let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
 
@@ -616,7 +616,85 @@ impl GCD {
             idx,
             base_address,
             len,
-            MemoryStateTransition::SetAttributes(attributes),
+            MemoryStateTransition::ConfigureAttributes(attributes, TransitionOp::Configure),
+        ) {
+            Ok(_) => Ok(()),
+            Err(InternalError::MemoryBlock(_)) => error!(Error::Unsupported),
+            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+            Err(e) => panic!("{e:?}"),
+        }
+    }
+
+    /// This service sets attributes on the given memory space such that the new attributes are the logical OR of
+    /// the existing attributes for the range and the newly specified attributes.
+    ///
+    /// # Documentation
+    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.6
+    pub fn add_memory_space_attributes(
+        &mut self,
+        base_address: usize,
+        len: usize,
+        attributes: u64,
+    ) -> Result<(), Error> {
+        ensure!(self.maximum_address != 0, Error::NotInitialized);
+        ensure!(len > 0, Error::InvalidParameter);
+        ensure!(base_address + len <= self.maximum_address, Error::Unsupported);
+        ensure!((base_address & UEFI_PAGE_MASK) == 0 && (len & UEFI_PAGE_MASK) == 0, Error::InvalidParameter);
+
+        log::trace!(target: "allocations", "[{}] Setting memory space attributes for {:#x}", function!(), base_address);
+        log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
+        log::trace!(target: "allocations", "[{}]   Attributes: {:#x}\n", function!(), attributes);
+
+        let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
+
+        log::trace!(target: "gcd_measure", "search");
+        let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(Error::NotFound)?;
+
+        match Self::split_state_transition_at_idx(
+            memory_blocks,
+            idx,
+            base_address,
+            len,
+            MemoryStateTransition::ConfigureAttributes(attributes, TransitionOp::Set),
+        ) {
+            Ok(_) => Ok(()),
+            Err(InternalError::MemoryBlock(_)) => error!(Error::Unsupported),
+            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+            Err(e) => panic!("{e:?}"),
+        }
+    }
+
+    /// This service sets attributes on the given memory space such that the new attributes are the logical OR of
+    /// the existing attributes for the range and the newly specified attributes.
+    ///
+    /// # Documentation
+    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.6
+    pub fn remove_memory_space_attributes(
+        &mut self,
+        base_address: usize,
+        len: usize,
+        attributes: u64,
+    ) -> Result<(), Error> {
+        ensure!(self.maximum_address != 0, Error::NotInitialized);
+        ensure!(len > 0, Error::InvalidParameter);
+        ensure!(base_address + len <= self.maximum_address, Error::Unsupported);
+        ensure!((base_address & UEFI_PAGE_MASK) == 0 && (len & UEFI_PAGE_MASK) == 0, Error::InvalidParameter);
+
+        log::trace!(target: "allocations", "[{}] Setting memory space attributes for {:#x}", function!(), base_address);
+        log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
+        log::trace!(target: "allocations", "[{}]   Attributes: {:#x}\n", function!(), attributes);
+
+        let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
+
+        log::trace!(target: "gcd_measure", "search");
+        let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(Error::NotFound)?;
+
+        match Self::split_state_transition_at_idx(
+            memory_blocks,
+            idx,
+            base_address,
+            len,
+            MemoryStateTransition::ConfigureAttributes(attributes, TransitionOp::Clear),
         ) {
             Ok(_) => Ok(()),
             Err(InternalError::MemoryBlock(_)) => error!(Error::Unsupported),
@@ -654,7 +732,7 @@ impl GCD {
             idx,
             base_address,
             len,
-            MemoryStateTransition::SetCapabilities(capabilities),
+            MemoryStateTransition::ConfigureCapabilities(capabilities, TransitionOp::Configure),
         ) {
             Ok(_) => Ok(()),
             Err(InternalError::MemoryBlock(_)) => error!(Error::Unsupported),
@@ -1450,11 +1528,11 @@ impl SpinLockedGcd {
             // here, we rely on the image loader to update the attributes as appropriate for the code sections. The
             // same holds true for other required attributes.
             if let Ok(base_address) = result.as_ref() {
-                // it is safe to call set_memory_space_attributes without calling set_memory_space_capabilities here
+                // it is safe to call add_memory_space_attributes without calling set_memory_space_capabilities here
                 // because we set efi::MEMORY_XP as a capability on all memory ranges we add to the GCD. A driver could
                 // call set_memory_space_capabilities to remove the XP capability, but that is something that should
                 // be caught and fixed.
-                match self.set_memory_space_attributes(*base_address, len, efi::MEMORY_XP) {
+                match self.add_memory_space_attributes(*base_address, len, efi::MEMORY_XP) {
                     Ok(_) => (),
                     Err(Error::NotInitialized) => {
                         // this is expected if mu-paging is not initialized yet. The GCD will still be updated, but
@@ -1523,6 +1601,36 @@ impl SpinLockedGcd {
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.6
     pub fn set_memory_space_attributes(&self, base_address: usize, len: usize, attributes: u64) -> Result<(), Error> {
         let result = self.memory.lock().set_memory_space_attributes(base_address, len, attributes);
+        if result.is_ok() {
+            if let Some(callback) = self.memory_change_callback {
+                callback(MapChangeType::SetMemoryAttributes)
+            }
+        }
+        result
+    }
+
+    /// This service sets attributes on the given memory space to the logical OR of the current attributes with the
+    /// specified attributes.
+    ///
+    /// # Documentation
+    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.6
+    pub fn add_memory_space_attributes(&self, base_address: usize, len: usize, attributes: u64) -> Result<(), Error> {
+        let result = self.memory.lock().add_memory_space_attributes(base_address, len, attributes);
+        if result.is_ok() {
+            if let Some(callback) = self.memory_change_callback {
+                callback(MapChangeType::SetMemoryAttributes)
+            }
+        }
+        result
+    }
+
+    /// This service sets attributes on the given memory space to the logical OR of the current attributes with the
+    /// specified attributes.
+    ///
+    /// # Documentation
+    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.6
+    pub fn remove_memory_space_attributes(&self, base_address: usize, len: usize, attributes: u64) -> Result<(), Error> {
+        let result = self.memory.lock().remove_memory_space_attributes(base_address, len, attributes);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
                 callback(MapChangeType::SetMemoryAttributes)
