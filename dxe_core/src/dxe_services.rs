@@ -142,27 +142,7 @@ extern "efiapi" fn get_memory_space_descriptor(
 pub fn core_get_memory_space_descriptor(
     base_address: efi::PhysicalAddress,
 ) -> Result<dxe_services::MemorySpaceDescriptor, efi::Status> {
-    //Note: this would be more efficient if it was done in the GCD; rather than retrieving all the descriptors and
-    //searching them here. It is done this way for simplicity - it can be optimized if it proves too slow.
-
-    //allocate an empty vector with enough space for all the descriptors with some padding (in the event)
-    //that extra descriptors come into being after creation but before usage.
-    let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
-        Vec::with_capacity(GCD.memory_descriptor_count() + 10);
-    let result = GCD.get_memory_descriptors(&mut descriptors);
-
-    if let Err(err) = result {
-        return Err(result_to_efi_status(err));
-    }
-
-    let target_descriptor =
-        descriptors.iter().find(|x| (x.base_address <= base_address) && (base_address < (x.base_address + x.length)));
-
-    if let Some(descriptor) = target_descriptor {
-        Ok(*descriptor)
-    } else {
-        Err(efi::Status::NOT_FOUND)
-    }
+    GCD.get_memory_descriptor_for_address(base_address).map_err(result_to_efi_status)
 }
 
 extern "efiapi" fn set_memory_space_attributes(

@@ -76,7 +76,13 @@ impl ImageStack {
         // attempt to set the memory space attributes for the stack guard page.
         // if we fail, we should still try to continue to boot
         // the stack grows downwards, so stack here is the guard page
-        if let Err(err) = dxe_services::core_set_memory_space_attributes(stack, UEFI_PAGE_SIZE as u64, efi::MEMORY_RP) {
+        let attributes = match dxe_services::core_get_memory_space_descriptor(stack) {
+            Ok(descriptor) => descriptor.attributes,
+            Err(_) => 0,
+        };
+        if let Err(err) =
+            dxe_services::core_set_memory_space_attributes(stack, UEFI_PAGE_SIZE as u64, attributes | efi::MEMORY_RP)
+        {
             log::error!("Failed to set memory space attributes for stack guard page: {:#x?}", err);
             debug_assert!(false);
         }
