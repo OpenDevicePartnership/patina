@@ -9,15 +9,16 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 use core::{ffi::c_void, ptr};
 use mu_pi::hob::{Hob, PhaseHandoffInformationTable};
-use r_efi::efi;
+use r_efi::efi::{self, Guid};
 use uefi_component_interface::{DxeComponent, DxeComponentInterface};
 use uefi_core::{
     error::{EfiError, Result},
     interface::SerialIO,
 };
+use uefi_depex::{Depex, Opcode};
 
 use crate::{logger::AdvancedLogger, memory_log, memory_log::AdvLoggerInfo};
 
@@ -163,6 +164,11 @@ where
                 Ok(())
             }
         }
+    }
+
+    /// GUID for the Advanced Logger Component.
+    fn guid(&self) -> efi::Guid {
+        efi::Guid::from_bytes(&uuid::uuid!("4297bd81-1d1d-49aa-b138-7b54e5807264").to_bytes_le())
     }
 }
 

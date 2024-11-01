@@ -11,6 +11,8 @@ path = "src/lib.rs"
 log = { workspace = true }
 uefi_core = { workspace = true }
 uefi_component_interface = { workspace = true }
+uuid = { workspace = true }
+r-efi = { workspace = true }
 
 [features]
 std = []

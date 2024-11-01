@@ -9,6 +9,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use log::info;
+use r_efi::efi;
 use uefi_component_interface::{DxeComponent, DxeComponentInterface};
 use uefi_core::error::Result;
 
@@ -31,5 +32,9 @@ impl DxeComponent for HelloComponent {
 
         // Return value
         Ok(())
+    }
+
+    fn guid(&self) -> efi::Guid {
+        efi::Guid::from_bytes(&uuid::uuid!("582acbb5-7d72-4753-8efe-3d605fb3d9ae").to_bytes_le())
     }
 }

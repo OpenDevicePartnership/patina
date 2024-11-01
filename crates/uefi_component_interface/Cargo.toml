@@ -12,3 +12,4 @@ repository.workspace = true
 [dependencies]
 r-efi = { workspace = true }
 uefi_core = { workspace = true }
+uefi_depex = { workspace = true }

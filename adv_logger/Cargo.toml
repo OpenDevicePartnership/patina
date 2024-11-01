@@ -15,3 +15,5 @@ r-efi = { workspace = true }
 spin = { workspace = true }
 uefi_component_interface = { workspace = true }
 mu_rust_helpers = { workspace = true }
+uuid = { workspace = true }
+uefi_depex = { workspace = true }

@@ -250,34 +250,34 @@ where
 /// additional configuration that may require allocations, as allocations are now available. Once all configuration has
 /// been completed via the provided `with_*` functions, [start](CorePostInit::start) should be called to begin driver
 /// dispatch and handoff to bds.
-pub struct CorePostInit {
-    drivers: Vec<Box<dyn DxeComponent>>,
-}
+///
+/// ## Examples
+///
+/// ``` rust,ignore
+/// dxe_core::Core::default()
+///     .with_cpu_initializer(CpuInit::default())
+///     .with_section_extractor(SectionExtract::default())
+///     .initialize(physical_hob_list)
+///     .with_driver(Box::new(Driver::default()))
+///     .start()
+///     .unwrap();
+/// ```
+pub struct CorePostInit {}
 
 impl CorePostInit {
     fn new() -> Self {
-        Self { drivers: Vec::new() }
+        Self {}
     }
 
     /// Registers a driver to be dispatched by the core.
-    pub fn with_driver(mut self, driver: Box<dyn DxeComponent>) -> Self {
-        self.drivers.push(driver);
+    pub fn with_driver(self, driver: Box<dyn DxeComponent>) -> Self {
+        dispatcher::register_local_driver(Box::leak(driver));
         self
     }
 
     /// Starts the core, dispatching all drivers.
     pub fn start(self) -> Result<()> {
-        log::info!("Dispatching Local Drivers");
-        for driver in self.drivers {
-            // This leaks the driver, making it static for the lifetime of the program.
-            // Since the number of drivers is fixed and this function can only be called once (due to
-            // `self` instead of `&self`), we don't have to worry about leaking memory.
-            if let Err(driver_err) = image::core_start_local_image(Box::leak(driver)) {
-                debug_assert!(false, "Driver failed with status {:?}", driver_err);
-                log::error!("Driver failed with status {:?}", driver_err);
-            }
-        }
-
+        //dispatcher::register_local_drivers(&self.drivers);
         dispatcher::core_dispatcher().expect("initial dispatch failed.");
 
         core_display_missing_arch_protocols();

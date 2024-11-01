@@ -19,14 +19,14 @@ use mu_pi::{
 };
 use r_efi::efi;
 use tpl_lock::TplMutex;
+use uefi_component_interface::DxeComponent;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
 use uefi_protocol_db::DXE_CORE_HANDLE;
-use uefi_component_interface::DxeComponent;
 
 use crate::{
     events::EVENT_DB,
     fv::core_install_firmware_volume,
-    image::{core_load_image, core_start_image},
+    image::{core_load_image, core_start_image, core_start_local_image},
     protocols::PROTOCOL_DB,
 };
 
@@ -60,7 +60,8 @@ const ALL_ARCH_DEPEX: &[Opcode] = &[
 
 enum PendingDriver {
     Local {
-        driver: Box<dyn DxeComponent>,
+        driver: &'static dyn DxeComponent,
+        depex: Option<Depex>,
     },
     Fv {
         firmware_volume_handle: efi::Handle,
@@ -74,31 +75,35 @@ enum PendingDriver {
 impl PendingDriver {
     fn depex_mut(&mut self) -> Option<&mut Depex> {
         match self {
-            Self::Local { .. } => todo!(),
+            Self::Local { ref mut depex, .. } => depex.as_mut(),
             Self::Fv { ref mut depex, .. } => depex.as_mut(),
         }
     }
 
     fn depex(&self) -> Option<&Depex> {
         match self {
-            Self::Local { .. } => todo!(),
+            Self::Local { depex, .. } => depex.as_ref(),
             Self::Fv { depex, .. } => depex.as_ref(),
         }
     }
 
     fn file_name(&self) -> efi::Guid {
         match self {
-            Self::Local { .. } => todo!(),
+            Self::Local { driver, .. } => driver.guid(),
             Self::Fv { file_name, .. } => *file_name,
         }
     }
 
     fn dispatch(&self) -> bool {
-        log::info!("Loading file: {:?}", self.file_name());
+        log::info!("Loading file: {:?}", uuid::Uuid::from_bytes_le(*self.file_name().as_bytes()));
         match self {
-            Self::Local { .. } => todo!(),
+            Self::Local { driver, .. } => {
+                let _status = core_start_local_image(*driver);
+                true
+            }
             Self::Fv { device_path, pe32, .. } => {
-                let image_load_result = core_load_image(false, DXE_CORE_HANDLE, *device_path, Some(pe32.section_data()));
+                let image_load_result =
+                    core_load_image(false, DXE_CORE_HANDLE, *device_path, Some(pe32.section_data()));
                 if let Ok(image_handle) = image_load_result {
                     let _status = core_start_image(image_handle);
                     true
@@ -192,6 +197,7 @@ fn dispatch() -> Result<bool, efi::Status> {
                 Some(ref mut depex) => depex.eval(&PROTOCOL_DB),
                 None => dispatcher.arch_protocols_available,
             };
+            log::info!("Depex Satisfied? {:}", depex_satisfied);
 
             if depex_satisfied {
                 scheduled_driver_candidates.push(candidate)
@@ -222,8 +228,7 @@ fn dispatch() -> Result<bool, efi::Status> {
             .collect();
     }
     log::info!("Depex evaluation complete, scheduled {:} drivers", scheduled.len());
-    
-    let mut dispatch_attempted = scheduled.iter().map(|driver| driver.dispatch()).any(|dispatched| dispatched);
+    let mut dispatch_attempted = scheduled.iter().filter(|driver| driver.dispatch()).count() > 0;
     log::info!("Dispatched drivers? {:}", dispatch_attempted);
     {
         let mut dispatcher = DISPATCHER_CONTEXT.lock();
@@ -438,6 +443,10 @@ pub fn init_dispatcher(extractor: Box<dyn SectionExtractor>) {
         .expect("Failed to register protocol notify on fv protocol.");
 
     DISPATCHER_CONTEXT.lock().section_extractor = Some(extractor);
+}
+
+pub fn register_local_driver(driver: &'static dyn DxeComponent) {
+    DISPATCHER_CONTEXT.lock().pending_drivers.push(PendingDriver::Local { depex: driver.depex(), driver });
 }
 
 pub fn display_discovered_not_dispatched() {
