@@ -116,14 +116,6 @@ impl PendingDriver {
     }
 }
 
-// struct PendingDriver {
-//     firmware_volume_handle: efi::Handle,
-//     device_path: *mut efi::protocols::device_path::Protocol,
-//     file_name: efi::Guid,
-//     depex: Option<Depex>,
-//     pe32: Section,
-// }
-
 struct PendingFirmwareVolumeImage {
     parent_fv_handle: efi::Handle,
     file_name: efi::Guid,

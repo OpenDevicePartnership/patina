@@ -73,7 +73,7 @@ pub mod test_support;
 
 use core::{ffi::c_void, str::FromStr};
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::boxed::Box;
 use mu_pi::{fw_fs, hob::HobList, protocols::bds};
 use r_efi::efi::{self};
 use uefi_component_interface::DxeComponent;
