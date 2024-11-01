@@ -70,7 +70,7 @@ struct PendingFirmwareVolumeImage {
     parent_fv_handle: efi::Handle,
     file_name: efi::Guid,
     depex: Option<Depex>,
-    section: Section,
+    fv_sections: Vec<Section>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -193,13 +193,15 @@ fn dispatch() -> Result<bool, efi::Status> {
             };
 
             if depex_satisfied {
-                let volume_address: u64 = candidate.section.section_data().as_ptr() as u64;
+                for section in candidate.fv_sections {
+                    let volume_address: u64 = section.section_data().as_ptr() as u64;
 
-                if core_install_firmware_volume(volume_address, Some(candidate.parent_fv_handle)).is_ok() {
-                    dispatch_attempted = true;
-                    dispatcher.loaded_firmware_volume_sections.push(candidate.section);
-                } else {
-                    log::warn!("couldn't install firmware volume image {:?}", guid_fmt!(candidate.file_name));
+                    if core_install_firmware_volume(volume_address, Some(candidate.parent_fv_handle)).is_ok() {
+                        dispatch_attempted = true;
+                        dispatcher.loaded_firmware_volume_sections.push(section);
+                    } else {
+                        log::warn!("couldn't install firmware volume image {:?}", guid_fmt!(candidate.file_name));
+                    }
                 }
             } else {
                 dispatcher.pending_firmware_volume_images.push(candidate)
@@ -325,14 +327,17 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
                         })
                         .map(Depex::from);
 
-                    if let Some(fv_image_section) =
-                        sections.into_iter().find(|s| s.section_type() == Some(FfsSectionType::FirmwareVolumeImage))
-                    {
+                    let fv_sections = sections
+                        .into_iter()
+                        .filter(|s| s.section_type() == Some(FfsSectionType::FirmwareVolumeImage))
+                        .collect::<Vec<_>>();
+
+                    if !fv_sections.is_empty() {
                         dispatcher.pending_firmware_volume_images.push(PendingFirmwareVolumeImage {
                             parent_fv_handle: handle,
                             file_name,
                             depex,
-                            section: fv_image_section,
+                            fv_sections,
                         });
                     } else {
                         log::warn!(
