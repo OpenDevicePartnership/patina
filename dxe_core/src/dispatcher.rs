@@ -21,6 +21,7 @@ use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
 use uefi_protocol_db::DXE_CORE_HANDLE;
+use uefi_component_interface::DxeComponent;
 
 use crate::{
     events::EVENT_DB,
@@ -57,13 +58,66 @@ const ALL_ARCH_DEPEX: &[Opcode] = &[
     Opcode::End,
 ];
 
-struct PendingDriver {
-    firmware_volume_handle: efi::Handle,
-    device_path: *mut efi::protocols::device_path::Protocol,
-    file_name: efi::Guid,
-    depex: Option<Depex>,
-    pe32: Section,
+enum PendingDriver {
+    Local {
+        driver: Box<dyn DxeComponent>,
+    },
+    Fv {
+        firmware_volume_handle: efi::Handle,
+        device_path: *mut efi::protocols::device_path::Protocol,
+        file_name: efi::Guid,
+        depex: Option<Depex>,
+        pe32: Section,
+    },
 }
+
+impl PendingDriver {
+    fn depex_mut(&mut self) -> Option<&mut Depex> {
+        match self {
+            Self::Local { .. } => todo!(),
+            Self::Fv { ref mut depex, .. } => depex.as_mut(),
+        }
+    }
+
+    fn depex(&self) -> Option<&Depex> {
+        match self {
+            Self::Local { .. } => todo!(),
+            Self::Fv { depex, .. } => depex.as_ref(),
+        }
+    }
+
+    fn file_name(&self) -> efi::Guid {
+        match self {
+            Self::Local { .. } => todo!(),
+            Self::Fv { file_name, .. } => *file_name,
+        }
+    }
+
+    fn dispatch(&self) -> bool {
+        log::info!("Loading file: {:?}", self.file_name());
+        match self {
+            Self::Local { .. } => todo!(),
+            Self::Fv { device_path, pe32, .. } => {
+                let image_load_result = core_load_image(false, DXE_CORE_HANDLE, *device_path, Some(pe32.section_data()));
+                if let Ok(image_handle) = image_load_result {
+                    let _status = core_start_image(image_handle);
+                    true
+                } else {
+                    log::error!("Failed to load: load_image returned {:#x?}", image_load_result);
+                    false
+                }
+            }
+        }
+    }
+}
+
+// struct PendingDriver {
+//     firmware_volume_handle: efi::Handle,
+//     device_path: *mut efi::protocols::device_path::Protocol,
+//     file_name: efi::Guid,
+//     depex: Option<Depex>,
+//     pe32: Section,
+// }
 
 struct PendingFirmwareVolumeImage {
     parent_fv_handle: efi::Handle,
@@ -132,9 +186,9 @@ fn dispatch() -> Result<bool, efi::Status> {
         for mut candidate in driver_candidates {
             log::info!(
                 "Evaluting depex for candidate: {:?}",
-                uuid::Uuid::from_bytes_le(*candidate.file_name.as_bytes())
+                uuid::Uuid::from_bytes_le(*candidate.file_name().as_bytes())
             );
-            let depex_satisfied = match candidate.depex {
+            let depex_satisfied = match candidate.depex_mut() {
                 Some(ref mut depex) => depex.eval(&PROTOCOL_DB),
                 None => dispatcher.arch_protocols_available,
             };
@@ -142,7 +196,7 @@ fn dispatch() -> Result<bool, efi::Status> {
             if depex_satisfied {
                 scheduled_driver_candidates.push(candidate)
             } else {
-                match candidate.depex.as_ref().map(|x| x.is_associated()) {
+                match candidate.depex().map(|x| x.is_associated()) {
                     Some(Some(AssociatedDependency::Before(guid))) => {
                         dispatcher.associated_before.entry(OrdGuid(guid)).or_default().push(candidate)
                     }
@@ -158,7 +212,7 @@ fn dispatch() -> Result<bool, efi::Status> {
         scheduled = scheduled_driver_candidates
             .into_iter()
             .flat_map(|scheduled_driver| {
-                let filename = OrdGuid(scheduled_driver.file_name);
+                let filename = OrdGuid(scheduled_driver.file_name());
                 let mut list = dispatcher.associated_before.remove(&filename).unwrap_or_default();
                 let mut after_list = dispatcher.associated_after.remove(&filename).unwrap_or_default();
                 list.push(scheduled_driver);
@@ -168,22 +222,9 @@ fn dispatch() -> Result<bool, efi::Status> {
             .collect();
     }
     log::info!("Depex evaluation complete, scheduled {:} drivers", scheduled.len());
-
-    let mut dispatch_attempted = false;
-    for driver in scheduled {
-        log::info!("Loading file: {:?}", uuid::Uuid::from_bytes_le(*driver.file_name.as_bytes()));
-        let image_load_result =
-            core_load_image(false, DXE_CORE_HANDLE, driver.device_path, Some(driver.pe32.section_data()));
-        if let Ok(image_handle) = image_load_result {
-            dispatch_attempted = true;
-            // Note: ignore error result of core_start_image here - an image returning an error code is expected in some
-            // cases, and a debug output for that is already implemented in core_start_image.
-            let _status = core_start_image(image_handle);
-        } else {
-            log::error!("Failed to load: load_image returned {:#x?}", image_load_result);
-        }
-    }
-
+    
+    let mut dispatch_attempted = scheduled.iter().map(|driver| driver.dispatch()).any(|dispatched| dispatched);
+    log::info!("Dispatched drivers? {:}", dispatch_attempted);
     {
         let mut dispatcher = DISPATCHER_CONTEXT.lock();
         let fv_image_candidates: Vec<_> = dispatcher.pending_firmware_volume_images.drain(..).collect();
@@ -291,7 +332,7 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
                     if let Some(pe32_section) =
                         sections.into_iter().find(|x| x.section_type() == Some(FfsSectionType::Pe32))
                     {
-                        dispatcher.pending_drivers.push(PendingDriver {
+                        dispatcher.pending_drivers.push(PendingDriver::Fv {
                             file_name,
                             firmware_volume_handle: handle,
                             pe32: pe32_section,
@@ -355,11 +396,13 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
 pub fn core_schedule(handle: efi::Handle, file: &efi::Guid) -> Result<(), efi::Status> {
     let mut dispatcher = DISPATCHER_CONTEXT.lock();
     for driver in dispatcher.pending_drivers.iter_mut() {
-        if driver.firmware_volume_handle == handle && OrdGuid(driver.file_name) == OrdGuid(*file) {
-            if let Some(depex) = &mut driver.depex {
-                if depex.is_sor() {
-                    depex.schedule();
-                    return Ok(());
+        if let PendingDriver::Fv { firmware_volume_handle, file_name, depex, .. } = driver {
+            if *firmware_volume_handle == handle && OrdGuid(*file_name) == OrdGuid(*file) {
+                if let Some(depex) = depex {
+                    if depex.is_sor() {
+                        depex.schedule();
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -399,7 +442,7 @@ pub fn init_dispatcher(extractor: Box<dyn SectionExtractor>) {
 
 pub fn display_discovered_not_dispatched() {
     for driver in &DISPATCHER_CONTEXT.lock().pending_drivers {
-        let file_name = uuid::Uuid::from_bytes_le(*driver.file_name.as_bytes());
+        let file_name = uuid::Uuid::from_bytes_le(*driver.file_name().as_bytes());
         log::warn!("Driver {:?} found but not dispatched.", file_name);
     }
 }
