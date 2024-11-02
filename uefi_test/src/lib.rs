@@ -244,8 +244,8 @@ impl DxeComponent for TestRunnerComponent {
     }
 
     /// GUID for the Test Runner Component.
-    fn guid(&self) -> efi::Guid {
-        efi::Guid::from_bytes(&uuid::uuid!("5c881741-3517-4182-aa09-c4e03b2b5bcd").to_bytes_le())
+    fn guid(&self) -> r_efi::efi::Guid {
+        r_efi::efi::Guid::from_bytes(&uuid::uuid!("5c881741-3517-4182-aa09-c4e03b2b5bcd").to_bytes_le())
     }
 }
 
