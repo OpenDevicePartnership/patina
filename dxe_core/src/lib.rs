@@ -10,6 +10,7 @@
 //! # struct Driver;
 //! # impl uefi_component_interface::DxeComponent for Driver {
 //! #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_core::error::Result<()> { Ok(()) }
+//! #     fn guid(&self) -> r_efi::efi::Guid { r_efi::efi::Guid::from_bytes(&[0u8; 16]) }
 //! # }
 //! # #[derive(Default, Clone, Copy)]
 //! # struct CpuInitExample;
@@ -111,6 +112,7 @@ if_aarch64! {
 /// # struct Driver;
 /// # impl uefi_component_interface::DxeComponent for Driver {
 /// #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_core::error::Result<()> { Ok(()) }
+/// #     fn guid(&self) -> r_efi::efi::Guid { r_efi::efi::Guid::from_bytes(&[0u8; 16]) }
 /// # }
 /// # #[derive(Default, Clone, Copy)]
 /// # struct CpuInitExample;
