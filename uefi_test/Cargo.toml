@@ -21,6 +21,7 @@ uefi_component_interface = { workspace = true }
 uefi_core = { workspace = true }
 uefi_test_macro = { workspace = true }
 linkme = { workspace = true}
+uuid = { workspace = true }
 
 [dev-dependencies]
 r-efi = { workspace = true }
