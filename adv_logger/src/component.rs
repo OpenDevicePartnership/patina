@@ -9,16 +9,15 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use alloc::{boxed::Box, vec::Vec};
+use alloc::boxed::Box;
 use core::{ffi::c_void, ptr};
 use mu_pi::hob::{Hob, PhaseHandoffInformationTable};
-use r_efi::efi::{self, Guid};
+use r_efi::efi;
 use uefi_component_interface::{DxeComponent, DxeComponentInterface};
 use uefi_core::{
     error::{EfiError, Result},
     interface::SerialIO,
 };
-use uefi_depex::{Depex, Opcode};
 
 use crate::{logger::AdvancedLogger, memory_log, memory_log::AdvLoggerInfo};
 
