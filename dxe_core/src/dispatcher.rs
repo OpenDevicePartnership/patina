@@ -75,15 +75,13 @@ enum PendingDriver {
 impl PendingDriver {
     fn depex_mut(&mut self) -> Option<&mut Depex> {
         match self {
-            Self::Local { ref mut depex, .. } => depex.as_mut(),
-            Self::Fv { ref mut depex, .. } => depex.as_mut(),
+            Self::Local { depex, ..} | Self::Fv { depex, .. } => depex.as_mut(),
         }
     }
 
     fn depex(&self) -> Option<&Depex> {
         match self {
-            Self::Local { depex, .. } => depex.as_ref(),
-            Self::Fv { depex, .. } => depex.as_ref(),
+            Self::Local { depex, .. } | Self::Fv { depex, .. } => depex.as_ref(),
         }
     }
 
