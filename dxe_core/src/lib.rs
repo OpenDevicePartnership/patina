@@ -279,7 +279,6 @@ impl CorePostInit {
 
     /// Starts the core, dispatching all drivers.
     pub fn start(self) -> Result<()> {
-        //dispatcher::register_local_drivers(&self.drivers);
         dispatcher::core_dispatcher().expect("initial dispatch failed.");
 
         core_display_missing_arch_protocols();
