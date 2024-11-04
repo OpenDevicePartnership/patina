@@ -117,7 +117,7 @@ fn generate_expanded_test_case(
         #[uefi_test::linkme::distributed_slice(uefi_test::__private_api::TEST_CASES)]
         #[linkme(crate = uefi_test::linkme)]
         #[allow(non_upper_case_globals)]
-        static #struct_name: uefi_test::__private_api::TestCase = 
+        static #struct_name: uefi_test::__private_api::TestCase =
         uefi_test::__private_api::TestCase {
             name: concat!(module_path!(), "::", stringify!(#fn_name)),
             skip: #skip,
@@ -190,7 +190,7 @@ mod tests {
             #[uefi_test::linkme::distributed_slice(uefi_test::__private_api::TEST_CASES)]
             #[linkme(crate = uefi_test::linkme)]
             #[allow(non_upper_case_globals)]
-            static __my_test_case_TestCase: uefi_test::__private_api::TestCase = 
+            static __my_test_case_TestCase: uefi_test::__private_api::TestCase =
             uefi_test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
                 skip: true,
