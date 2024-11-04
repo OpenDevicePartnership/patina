@@ -187,7 +187,6 @@ fn dispatch() -> Result<bool, efi::Status> {
                 Some(ref mut depex) => depex.eval(&PROTOCOL_DB),
                 None => dispatcher.arch_protocols_available,
             };
-            log::info!("Depex Satisfied? {:}", depex_satisfied);
 
             if depex_satisfied {
                 scheduled_driver_candidates.push(candidate)
@@ -219,7 +218,6 @@ fn dispatch() -> Result<bool, efi::Status> {
     }
     log::info!("Depex evaluation complete, scheduled {:} drivers", scheduled.len());
     let mut dispatch_attempted = scheduled.iter().filter(|driver| driver.dispatch()).count() > 0;
-    log::info!("Dispatched drivers? {:}", dispatch_attempted);
     {
         let mut dispatcher = DISPATCHER_CONTEXT.lock();
         let fv_image_candidates: Vec<_> = dispatcher.pending_firmware_volume_images.drain(..).collect();
