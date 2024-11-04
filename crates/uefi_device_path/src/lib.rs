@@ -87,12 +87,16 @@ pub fn device_path_node_count(
 pub fn copy_device_path_to_boxed_slice(
     device_path: *const efi::protocols::device_path::Protocol,
 ) -> Result<Box<[u8]>, efi::Status> {
+    let dp_slice = device_path_as_slice(device_path)?;
+    Ok(dp_slice.to_vec().into_boxed_slice())
+}
+
+/// Returns the device_path as a byte slice.
+pub fn device_path_as_slice(
+    device_path: *const efi::protocols::device_path::Protocol,
+) -> Result<&'static [u8], efi::Status> {
     let (_, byte_count) = device_path_node_count(device_path)?;
-    let mut dest_path = vec![0u8; byte_count];
-    unsafe {
-        dest_path.copy_from_slice(from_raw_parts(device_path as *const u8, byte_count));
-    }
-    Ok(dest_path.into_boxed_slice())
+    unsafe { Ok(from_raw_parts(device_path as *const u8, byte_count)) }
 }
 
 /// Computes the remaining device path and the number of nodes in common for two device paths.
@@ -247,6 +251,20 @@ pub fn is_device_path_end(device_path: *const efi::protocols::device_path::Proto
     } else {
         true
     }
+}
+
+/// Produces a new byte vector that is the concatenation of `a` and `b`
+pub fn concat_device_path_to_boxed_slice(
+    a: *const efi::protocols::device_path::Protocol,
+    b: *const efi::protocols::device_path::Protocol,
+) -> Result<Box<[u8]>, efi::Status> {
+    let a_slice = device_path_as_slice(a)?;
+    let b_slice = device_path_as_slice(b)?;
+    let end_path_size = core::mem::size_of::<efi::protocols::device_path::End>();
+    let mut out_bytes = vec![0u8; a_slice.len() + b_slice.len() - end_path_size];
+    out_bytes[..a_slice.len()].copy_from_slice(a_slice);
+    out_bytes[a_slice.len() - end_path_size..].copy_from_slice(b_slice);
+    Ok(out_bytes.into_boxed_slice())
 }
 
 /// Device Path Node
