@@ -1,6 +1,6 @@
 # Error Handling
 Due to the difficulty of recovering from panics in firmware, it is almost always preferrable to return and propagate up an error than to panic. In order of most to least safe, code should:
-1. Propogate errors using `Result` or `Option` whenever possible. 
+1. Propagate errors using `Result` or `Option` whenever possible. 
 2. For panics guarded by existing code (for example, a `is_null` check before a `.as_ref()` call), provide a detailed message on how the existing code should prevent panics. Use `expect`, `log`, or `debug_assert` for such cases. 
 3. For genuinely unrecoverable errors, ensure a detailed error message is provided, usually through `expect`. Code should avoid `unwrap` except in test scenarios.
 
