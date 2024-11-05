@@ -64,6 +64,8 @@ struct PendingDriver {
     file_name: efi::Guid,
     depex: Option<Depex>,
     pe32: Section,
+    image_handle: Option<efi::Handle>,
+    security_status: efi::Status,
 }
 
 struct PendingFirmwareVolumeImage {
@@ -198,17 +200,42 @@ fn dispatch() -> Result<bool, efi::Status> {
     log::info!("Depex evaluation complete, scheduled {:} drivers", scheduled.len());
 
     let mut dispatch_attempted = false;
-    for driver in scheduled {
-        log::info!("Loading file: {:?}", guid_fmt!(driver.file_name));
-        let image_load_result =
-            core_load_image(false, DXE_CORE_HANDLE, driver.device_path, Some(driver.pe32.section_data()));
-        if let Ok(image_handle) = image_load_result {
-            dispatch_attempted = true;
-            // Note: ignore error result of core_start_image here - an image returning an error code is expected in some
-            // cases, and a debug output for that is already implemented in core_start_image.
-            let _status = core_start_image(image_handle);
-        } else {
-            log::error!("Failed to load: load_image returned {:#x?}", image_load_result);
+    for mut driver in scheduled {
+        if driver.image_handle.is_none() {
+            log::info!("Loading file: {:?}", guid_fmt!(driver.file_name));
+            match core_load_image(false, DXE_CORE_HANDLE, driver.device_path, Some(driver.pe32.section_data())) {
+                Ok((image_handle, security_status)) => {
+                    driver.image_handle = Some(image_handle);
+                    driver.security_status = security_status;
+                }
+                Err(err) => log::error!("Failed to load: load_image returned {:x?}", err),
+            }
+        }
+
+        if let Some(image_handle) = driver.image_handle {
+            match driver.security_status {
+                efi::Status::SUCCESS => {
+                    dispatch_attempted = true;
+                    // Note: ignore error result of core_start_image here - an image returning an error code is expected in some
+                    // cases, and a debug output for that is already implemented in core_start_image.
+                    let _status = core_start_image(image_handle);
+                }
+                efi::Status::SECURITY_VIOLATION => {
+                    log::info!(
+                        "Deferring driver: {:?} due to security status: {:x?}",
+                        guid_fmt!(driver.file_name),
+                        efi::Status::SECURITY_VIOLATION
+                    );
+                    DISPATCHER_CONTEXT.lock().pending_drivers.push(driver);
+                }
+                unexpected_status => {
+                    log::info!(
+                        "Dropping driver: {:?} due to security status: {:x?}",
+                        guid_fmt!(driver.file_name),
+                        unexpected_status
+                    );
+                }
+            }
         }
     }
 
@@ -324,6 +351,8 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
                             pe32: pe32_section,
                             device_path: fv_device_path,
                             depex,
+                            image_handle: None,
+                            security_status: efi::Status::NOT_READY,
                         });
                     } else {
                         log::warn!(
