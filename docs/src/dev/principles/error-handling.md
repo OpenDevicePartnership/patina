@@ -6,6 +6,7 @@ Due to the difficulty of recovering from panics in firmware, it is almost always
 3. For genuinely unrecoverable errors, ensure a detailed error message is provided, usually through `expect`. Code should avoid `unwrap` except in test scenarios.
 
 ## Example
+
 Consider the following example involving the `adv_logger`. Since the logger is not necessarily required to boot drivers / continue normal execution, we can attempt to continue even if it is not properly initialized.
 
 This code which `unwrap`s on logger initialization panics unnecessarily:
