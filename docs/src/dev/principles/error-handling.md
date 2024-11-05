@@ -3,7 +3,9 @@
 ## Avoiding Panics
 
 Due to the difficulty of recovering from panics in firmware,
-it is almost always preferrable to return and propagate up an error than to panic.
+it is almost always preferrable to return and propagate an error up the call stack
+than to panic.
+
 In order of most to least safe, code should:
 
 1. Propagate errors using `Result` or `Option` whenever possible.
