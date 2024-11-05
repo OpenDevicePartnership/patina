@@ -102,7 +102,22 @@ impl Drop for ImageStack {
             // we added a guard page, so we need to subtract a page from the stack pointer to free everything
             let stack_addr = self.stack as *const u64 as efi::PhysicalAddress - UEFI_PAGE_SIZE as u64;
 
-            // we don't need to unset the guard page here, the free page code handles that
+            // we need to set the guard page back to XP so that the pages can be coalesced before we free them
+            // preserve the caching attributes
+            let mut attributes = match dxe_services::core_get_memory_space_descriptor(stack_addr) {
+                Ok(descriptor) => descriptor.attributes & !efi::MEMORY_ATTRIBUTE_MASK,
+                Err(_) => 0,
+            };
+
+            attributes |= efi::MEMORY_XP;
+            if let Err(err) =
+                dxe_services::core_set_memory_space_attributes(stack_addr, UEFI_PAGE_SIZE as u64, attributes)
+            {
+                log::error!("Failed to set memory space attributes for stack guard page: {:#x?}", err);
+                debug_assert!(false);
+                // if we failed, let's still try to free
+            }
+
             if let Err(status) = core_free_pages(stack_addr, self.allocated_pages) {
                 log::error!(
                     "core_free_pages returned error {:#x?} for image stack at {:#x} for num_pages {:#x}",
