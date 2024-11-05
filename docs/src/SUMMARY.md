@@ -8,6 +8,7 @@
   - [Abstractions](dev/principles/abstractions.md)
   - [Code Reuse](dev/principles/reuse.md)
   - [Configuration in Code](dev/principles/config.md)
+  - [Error Handling](dev/principles/error-handling.md)
 - [Testing](dev/testing.md)
   - [Unit Testing](dev/testing/unit.md)
   - [Integration Testing](dev/testing/integration.md)
