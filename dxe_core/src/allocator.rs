@@ -17,7 +17,11 @@ extern crate alloc;
 use alloc::{collections::BTreeMap, vec::Vec};
 use mu_rust_helpers::function;
 
-use crate::{memory_attributes_table::MemoryAttributesTable, protocols::PROTOCOL_DB, GCD};
+#[cfg(test)]
+use crate::MockSpinLockedGcd as SpinLockedGcd;
+
+use crate::GCD;
+use crate::{memory_attributes_table::MemoryAttributesTable, protocols::PROTOCOL_DB};
 use mu_pi::{
     dxe_services::{GcdMemoryType, MemorySpaceDescriptor},
     hob::{EFiMemoryTypeInformation, HobList, MEMORY_TYPE_INFO_HOB_GUID},
@@ -764,6 +768,8 @@ mod tests {
     use crate::test_support;
 
     use super::*;
+    // use crate::GCD;
+    // use mockall_double::double;
     use mu_pi::hob::{header, GuidHob, Hob, GUID_EXTENSION};
     use r_efi::efi;
 
@@ -963,6 +969,14 @@ mod tests {
             //assert_eq!(free_pool(buffer_ptr), efi::Status::INVALID_PARAMETER);
             //assert_eq!(free_pool(((buffer_ptr as usize) + 10) as *mut c_void), efi::Status::INVALID_PARAMETER);
         });
+    }
+
+    #[test]
+    fn free_pool_should_free_pool_with_mocked_gcd() {
+        // Mock GCD to simulate failure
+        GCD.expect_free_memory_space().returning(|_, _| Err(uefi_gcd::gcd::Error::InvalidParameter));
+
+        assert_eq!(free_pages(0 as u64, 1), efi::Status::INVALID_PARAMETER);
     }
 
     #[test]

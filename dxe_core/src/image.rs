@@ -1209,6 +1209,8 @@ mod tests {
     use r_efi::efi;
     use std::{fs::File, io::Read};
 
+    // use mockall::{mock, predicate::*};
+
     fn with_locked_state<F: Fn()>(f: F) {
         test_support::with_global_lock(|| unsafe {
             test_support::init_test_gcd(None);
@@ -1719,4 +1721,29 @@ mod tests {
             assert_eq!(get_buffer_by_file_path(true, device_path_ptr), Ok(image));
         });
     }
+
+    // #[test]
+    // fn apply_image_memory_protections_should_apply_protections() {
+    //     mock! {
+    //         pub DxeServices {}
+    //         impl DxeServices {
+    //             pub fn core_get_memory_space_descriptor(address: u64) -> Result<efi::MemoryDescriptor, efi::Status>;
+    //             pub fn core_set_memory_space_capabilities(address: u64, size: u64, capabilities: u64) -> Result<(), efi::Status>;
+    //         }
+    //     }
+
+    //     let mut mock = MockDxeServices::new();
+    //     mock.expect_core_get_memory_space_descriptor()
+    //         .returning(|_| Ok(efi::MemoryDescriptor { ..Default::default() }));
+    //     mock.expect_core_set_memory_space_capabilities().returning(|_, _, _| Ok(()));
+
+    //     let pe_info =
+    //         UefiPeInfo { sections: vec![/* fill with test data */], section_alignment: 0x1000, ..Default::default() };
+    //     let private_info = PrivateImageData {
+    //         image_info: ImageInfo { image_base: 0x1000 as *mut _, ..Default::default() },
+    //         ..Default::default()
+    //     };
+
+    //     apply_image_memory_protections(&pe_info, &private_info);
+    // }
 }

@@ -19,6 +19,8 @@ r-efi = {workspace=true}
 uefi_tpl_lock = {workspace=true}
 uefi_collections = {workspace=true}
 log = {workspace=true}
+mockall_double = "0.3.1"
+mockall = {workspace=true}
 
 [dev-dependencies]
 uefi_collections = { workspace = true, default-features = true }

@@ -161,6 +161,9 @@ pub fn get_capabilities(gcd_mem_type: dxe_services::GcdMemoryType, attributes: u
     capabilities
 }
 
+#[cfg(test)]
+use mockall::automock;
+
 #[derive(Debug)]
 #[allow(clippy::upper_case_acronyms)]
 //The Global Coherency Domain (GCD) Services are used to manage the memory resources visible to the boot processor.
@@ -1353,6 +1356,14 @@ pub enum MapChangeType {
 
 /// GCD map change callback function type.
 pub type MapChangeCallback = fn(MapChangeType);
+
+// #[derive(Debug)]
+// #[cfg(test)]
+// pub struct MockSpinLockedGcd {
+//     memory: tpl_lock::TplMutex<GCD>,
+//     io: tpl_lock::TplMutex<IoGCD>,
+//     memory_change_callback: Option<MapChangeCallback>,
+// }
 
 /// Implements a spin locked GCD  suitable for use as a static global.
 #[derive(Debug)]

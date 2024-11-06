@@ -9,7 +9,85 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use r_efi::efi;
+
+#[cfg(not(test))]
 use uefi_gcd::gcd::SpinLockedGcd;
+
+#[cfg(test)]
+use uefi_gcd::gcd::Error;
+
+#[cfg(test)]
+use uefi_gcd::gcd::MapChangeCallback;
+
+#[cfg(test)]
+use mu_pi::dxe_services::GcdMemoryType;
+
+#[cfg(test)]
+use uefi_gcd::gcd::AllocateType;
+
+#[cfg(test)]
+mockall::mock! {
+    #[derive(Debug)]
+    pub SpinLockedGcd {
+        pub fn new(memory_change_callback: Option<MapChangeCallback>) -> Self;
+        pub unsafe fn reset(&self);
+        pub fn init(&self, memory_address_bits: u32, io_address_bits: u32);
+        pub unsafe fn add_memory_space(
+            &self,
+            memory_type: GcdMemoryType,
+            base_address: usize,
+            len: usize,
+            capabilities: u64,
+        ) -> core::result::Result<usize, uefi_gcd::gcd::Error>;
+        pub fn remove_memory_space(&self, base_address: usize, len: usize) -> core::result::Result<(), uefi_gcd::gcd::Error>;
+        pub fn allocate_memory_space(
+            &self,
+            allocate_type: AllocateType,
+            memory_type: GcdMemoryType,
+            alignment: usize,
+            len: usize,
+            image_handle: efi::Handle,
+            device_handle: Option<efi::Handle>,
+        ) -> core::result::Result<usize, uefi_gcd::gcd::Error>;
+        pub fn free_memory_space(&self, base_address: usize, len: usize) -> core::result::Result<(), uefi_gcd::gcd::Error>;
+        pub fn free_memory_space_preserving_ownership(&self, base_address: usize, len: usize) -> core::result::Result<(), uefi_gcd::gcd::Error>;
+        pub fn set_memory_space_attributes(&self, base_address: usize, len: usize, attributes: u64) -> core::result::Result<(), uefi_gcd::gcd::Error>;
+        pub fn set_memory_space_capabilities(
+            &self,
+            base_address: usize,
+            len: usize,
+            capabilities: u64,
+        ) -> core::result::Result<(), uefi_gcd::gcd::Error>;
+        pub fn get_memory_descriptors(&self, buffer: &mut Vec<mu_pi::dxe_services::MemorySpaceDescriptor>) -> core::result::Result<(), Error>;
+    pub fn get_memory_descriptor_for_address(
+        &self,
+        address: efi::PhysicalAddress,
+    ) -> core::result::Result<mu_pi::dxe_services::MemorySpaceDescriptor, Error>;
+    pub fn memory_descriptor_count(&self) -> usize;
+    pub fn add_io_space(
+        &self,
+        io_type: mu_pi::dxe_services::GcdIoType,
+        base_address: usize,
+        len: usize,
+    ) -> core::result::Result<usize, Error>;
+    pub fn remove_io_space(&self, base_address: usize, len: usize) -> core::result::Result<(), Error>;
+    pub fn allocate_io_space(
+        &self,
+        allocate_type: AllocateType,
+        io_type: mu_pi::dxe_services::GcdIoType,
+        alignment: usize,
+        len: usize,
+        image_handle: efi::Handle,
+        device_handle: Option<efi::Handle>,
+    ) -> core::result::Result<usize, Error>;
+    pub fn free_io_space(&self, base_address: usize, len: usize) -> core::result::Result<(), Error>;
+    pub fn get_io_descriptors(&self, buffer: &mut Vec<mu_pi::dxe_services::IoSpaceDescriptor>) -> core::result::Result<(), Error>;
+        pub fn io_descriptor_count(&self) -> usize;
+}
+}
+
+#[cfg(test)]
+use MockSpinLockedGcd as SpinLockedGcd;
 
 use crate::{fixed_size_block_allocator::SpinLockedFixedSizeBlockAllocator, AllocationStrategy};
 use core::{

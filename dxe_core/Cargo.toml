@@ -44,11 +44,15 @@ uefi_depex = { workspace = true}
 uefi_pecoff = { workspace = true }
 uefi_tpl_lock = { workspace = true }
 
+mockall_double = "0.3.1"
+mockall = {workspace = true}
+
 [dev-dependencies]
 sample_components = { workspace = true }
 uefi_logger = { workspace = true }
 serial_writer = { workspace = true }
 section_extractor = { workspace = true }
+
 
 [features]
 default = []
