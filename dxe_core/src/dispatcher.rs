@@ -17,6 +17,7 @@ use mu_pi::{
     fw_fs::{FfsFileRawType, FfsSectionType, FirmwareVolume, Section, SectionExtractor},
     protocols::firmware_volume_block,
 };
+use mu_rust_helpers::guid::guid_fmt;
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
@@ -130,10 +131,7 @@ fn dispatch() -> Result<bool, efi::Status> {
         let driver_candidates: Vec<_> = dispatcher.pending_drivers.drain(..).collect();
         let mut scheduled_driver_candidates = Vec::new();
         for mut candidate in driver_candidates {
-            log::info!(
-                "Evaluting depex for candidate: {:?}",
-                uuid::Uuid::from_bytes_le(*candidate.file_name.as_bytes())
-            );
+            log::info!("Evaluting depex for candidate: {:?}", guid_fmt!(candidate.file_name));
             let depex_satisfied = match candidate.depex {
                 Some(ref mut depex) => depex.eval(&PROTOCOL_DB),
                 None => dispatcher.arch_protocols_available,
@@ -171,7 +169,7 @@ fn dispatch() -> Result<bool, efi::Status> {
 
     let mut dispatch_attempted = false;
     for driver in scheduled {
-        log::info!("Loading file: {:?}", uuid::Uuid::from_bytes_le(*driver.file_name.as_bytes()));
+        log::info!("Loading file: {:?}", guid_fmt!(driver.file_name));
         let image_load_result =
             core_load_image(false, DXE_CORE_HANDLE, driver.device_path, Some(driver.pe32.section_data()));
         if let Ok(image_handle) = image_load_result {
@@ -201,10 +199,7 @@ fn dispatch() -> Result<bool, efi::Status> {
                     dispatch_attempted = true;
                     dispatcher.loaded_firmware_volume_sections.push(candidate.section);
                 } else {
-                    log::warn!(
-                        "couldn't install firmware volume image {:?}",
-                        uuid::Uuid::from_bytes_le(*candidate.file_name.as_bytes())
-                    );
+                    log::warn!("couldn't install firmware volume image {:?}", guid_fmt!(candidate.file_name));
                 }
             } else {
                 dispatcher.pending_firmware_volume_images.push(candidate)
@@ -399,8 +394,7 @@ pub fn init_dispatcher(extractor: Box<dyn SectionExtractor>) {
 
 pub fn display_discovered_not_dispatched() {
     for driver in &DISPATCHER_CONTEXT.lock().pending_drivers {
-        let file_name = uuid::Uuid::from_bytes_le(*driver.file_name.as_bytes());
-        log::warn!("Driver {:?} found but not dispatched.", file_name);
+        log::warn!("Driver {:?} found but not dispatched.", guid_fmt!(driver.file_name));
     }
 }
 

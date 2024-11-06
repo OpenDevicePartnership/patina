@@ -9,6 +9,7 @@
 use core::{ffi::c_void, mem::size_of};
 
 use alloc::{slice, vec, vec::Vec};
+use mu_rust_helpers::guid::guid_fmt;
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_device_path::{is_device_path_end, remaining_device_path};
@@ -27,7 +28,7 @@ pub fn core_install_protocol_interface(
     protocol: efi::Guid,
     interface: *mut c_void,
 ) -> Result<efi::Handle, efi::Status> {
-    log::info!("InstallProtocolInterface: {:?} @ {:#x?}", uuid::Uuid::from_bytes_le(*protocol.as_bytes()), interface);
+    log::info!("InstallProtocolInterface: {:?} @ {:#x?}", guid_fmt!(protocol), interface);
     let (handle, notifies) = PROTOCOL_DB.install_protocol_interface(handle, protocol, interface)?;
 
     let mut closed_events = Vec::new();
