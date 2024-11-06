@@ -426,6 +426,17 @@ pub fn core_schedule(handle: efi::Handle, file: &efi::Guid) -> Result<(), efi::S
     Err(efi::Status::NOT_FOUND)
 }
 
+pub fn core_trust(handle: efi::Handle, file: &efi::Guid) -> Result<(), efi::Status> {
+    let mut dispatcher = DISPATCHER_CONTEXT.lock();
+    for driver in dispatcher.pending_drivers.iter_mut() {
+        if driver.firmware_volume_handle == handle && OrdGuid(driver.file_name) == OrdGuid(*file) {
+            driver.security_status = efi::Status::SUCCESS;
+            return Ok(());
+        }
+    }
+    Err(efi::Status::NOT_FOUND)
+}
+
 pub fn core_dispatcher() -> Result<(), efi::Status> {
     if DISPATCHER_CONTEXT.lock().executing {
         return Err(efi::Status::ALREADY_STARTED);

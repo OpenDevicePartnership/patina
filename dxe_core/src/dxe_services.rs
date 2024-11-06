@@ -20,7 +20,7 @@ use r_efi::efi;
 
 use crate::{
     allocator::{core_allocate_pool, EFI_RUNTIME_SERVICES_DATA_ALLOCATOR},
-    dispatcher::{core_dispatcher, core_schedule},
+    dispatcher::{core_dispatcher, core_schedule, core_trust},
     events::EVENT_DB,
     fv::core_install_firmware_volume,
     misc_boot_services,
@@ -373,9 +373,15 @@ extern "efiapi" fn schedule(firmware_volume_handle: efi::Handle, file_name: *con
     }
 }
 
-extern "efiapi" fn trust(_firmware_volume_handle: efi::Handle, _file_name: *const efi::Guid) -> efi::Status {
-    todo!();
-    //Status::UNSUPPORTED
+extern "efiapi" fn trust(firmware_volume_handle: efi::Handle, file_name: *const efi::Guid) -> efi::Status {
+    let Some(file_name) = (unsafe { file_name.as_ref() }) else {
+        return efi::Status::INVALID_PARAMETER;
+    };
+
+    match core_trust(firmware_volume_handle, file_name) {
+        Err(status) => status,
+        Ok(_) => efi::Status::SUCCESS,
+    }
 }
 
 extern "efiapi" fn process_firmware_volume(
