@@ -67,6 +67,10 @@ pub fn device_path_node_count(
     let mut node_count = 0;
     let mut dev_path_size: usize = 0;
     let mut current_node_ptr = device_path;
+    if current_node_ptr.is_null() {
+        debug_assert!(!current_node_ptr.is_null());
+        return Err(efi::Status::INVALID_PARAMETER);
+    }
     loop {
         let current_node = unsafe { *current_node_ptr };
         let current_length: usize = u16::from_le_bytes(current_node.length).into();
