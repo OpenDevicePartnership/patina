@@ -1,6 +1,6 @@
 [package]
 name = "uefi_gcd"
-version = "1.0.1"
+version = "2.0.0"
 edition = "2021"
 readme = "README.md"
 description = "A Global Coherency Domain (GCD) implementation for the dxe_core."
