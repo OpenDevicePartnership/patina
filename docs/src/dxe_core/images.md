@@ -12,6 +12,15 @@ where to load the image from, or a `image` source buffer. This routine also take
 loading the image (for example, UEFI Shell), as well as a 'boot_policy' flag that has meaning when `device_path` is used
 to source the image (see [Loading an Image from a Device Path](images.md#sourcing-an-image-from-a-device-path), below).
 
+### Image Security
+
+As part of the loading process, the security of the image is checked using the [Security Architectural Protocols](https://uefi.org/specs/PI/1.8A/V2_DXE_Architectural_Protocols.html#security-architectural-protocols).
+The security status of the image is returned from `core_load_image`. Platforms use the Security Architectural Protocol
+hooks to allow different security elements to be added per platform-specific requirements. Examples of such elements
+implemented through the Security Architectural Protocols include measurement into the TPM per
+[TCG EFI Protocol Specification](https://trustedcomputinggroup.org/resource/tcg-efi-protocol-specification/) and
+[UEFI Secure Boot](https://uefi.org/specs/UEFI/2.10_A/32_Secure_Boot_and_Driver_Signing.html).
+
 ### Sourcing an Image from a Device Path
 
 If the `image` parameter is provided to this function, then it contains a byte buffer containing the image data.

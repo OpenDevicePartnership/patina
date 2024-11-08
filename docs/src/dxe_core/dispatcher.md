@@ -5,12 +5,6 @@ dependencies. The Rust DXE Core dispatcher generally aligns with the requirement
 Initialization Spec for the [DXE Dispatcher](https://uefi.org/specs/PI/1.8A/V2_DXE_Dispatcher.html), with the exception
 of APRIORI file support.
 
-```admonish bug title="Security WIP"
-The security implementation for the dispatcher and Firmware Volume processing in the Rust DXE Core is under active
-development and is not yet fully defined. This documentation will be updated with details on the security properties of
-the core once that development completes.
-```
-
 ## Dispatcher Initialization
 
 The dispatcher relies on the Rust DXE Core [Event](events.md) and [Protocol](protocol_database.md) services in order to
@@ -58,10 +52,15 @@ Each time the dispatcher is invoked, it performs the following in a loop until n
 1. Evaluates the DEPEX expressions for all "pending" drivers. If the DEPEX expression associated with a driver evaluates
 to `TRUE`, that driver is added to the "scheduled" queue. See the [Depex Processing](dispatcher.md#depex-processing)
 section below for details on DEPEX processing. This is the green box in the diagram below.
-2. Each driver in the "scheduled" queue from the prior step is loaded via
-[`core_load_image`](images.md#loading-an-image), and then its entry point is invoked via
-[`core_start_image`](images.md#executing-an-image). This is the purple box in the diagram below.
-3. If any of the drivers produced new Firmware Volume instances then the DEPEX expressions associated with Firmware
+2. Each driver in the "scheduled" queue from the prior step is loaded via [`core_load_image`](images.md#loading-an-image).
+3. `core_load_image` returns a security status for the image in addition to loading it. If the security status is
+`efi::status::SUCCESS`, then the image will be started. If it is `efi::status::SECURITY_VIOLATION`, that indicates that
+the image does not pass authentication at the present time, but may be authorized by the `Trust()` API of DXE Services.
+if the security status is some other error status, then the dispatcher will drop that driver from the queue and it will
+not be processed further.
+4. If the driver passes the security checks, then its entry point is invoked via [`core_start_image`](images.md#executing-an-image).
+This is the purple box in the diagram below.
+5. If any of the drivers produced new Firmware Volume instances then the DEPEX expressions associated with Firmware
 Volume instances (if any) are evaluated. If the DEPEX expression associated with the firmware volume evaluates to true
 (or if the Firmware Volume had no associated DEPEX expression), then all the drivers in the firmware volume are added to
 the "pending" driver queue to be evaluated in the next pass through the loop. See the
@@ -192,7 +191,9 @@ the new firmware volume. Each new firmware volume is processed as follows:
 1. The physical base address of the firmware volume in memory is retrieved from the
 `EFI_FIRMWARE_VOLUME_BLOCK2_PROTOCOL` instance and used to instantiate a [`FirmwareVolume`](tbd) which allows traversal
 of the files within the firmware volume.
-2. Using the `FirmwareVolume` instance, each file in the firmware volume is inspected.
+2. The new firmware volume is authenticated using the [Security Architectural Protocol](https://uefi.org/specs/PI/1.8A/V2_DXE_Architectural_Protocols.html#security-architectural-protocols).
+   If the authentication fails, the the firmware volume is ignored and not processed by the dispatcher.
+3. Using the `FirmwareVolume` instance, each file in the firmware volume is inspected.
     - If it has an FFS filetype of "DRIVER", then its sections are inspected to see if there is a PE32 section. If the
     file contains a PE32 section, then it is added to the pending driver queue in the dispatcher, along with a DEPEX
     section if present.
