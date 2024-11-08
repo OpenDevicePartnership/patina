@@ -243,10 +243,16 @@ pub fn init_runtime_support(rt: &mut efi::RuntimeServices) {
     match core_allocate_pool(efi::RUNTIME_SERVICES_DATA, mem::size_of::<runtime::Protocol>()) {
         Err(err) => panic!("Failed to allocate the Runtime Architecture Protocol: {:?}", err),
         Ok(allocation) => unsafe {
-            (allocation as *mut runtime::Protocol).write(runtime::Protocol {
-                // The Rust usage of the protocol won't actually use image_head or event_head
-                image_head: list_entry::Entry { forward_link: ptr::null_mut(), back_link: ptr::null_mut() },
-                event_head: list_entry::Entry { forward_link: ptr::null_mut(), back_link: ptr::null_mut() },
+            let allocation_ptr = allocation as *mut runtime::Protocol;
+
+            let image_head_ptr = ptr::addr_of_mut!(allocation_ptr.as_mut().unwrap().image_head);
+            let event_head_ptr = ptr::addr_of_mut!(allocation_ptr.as_mut().unwrap().event_head);
+
+            allocation_ptr.write(runtime::Protocol {
+                // The Rust usage of the protocol won't actually use image_head or event_head,
+                // so pass empty linked lists (just heads that point to themselves).
+                image_head: list_entry::Entry { forward_link: image_head_ptr, back_link: image_head_ptr },
+                event_head: list_entry::Entry { forward_link: event_head_ptr, back_link: event_head_ptr },
                 memory_descriptor_size: mem::size_of::<efi::MemoryDescriptor>(), // Should be 16-byte aligned
                 memory_descriptor_version: efi::MEMORY_DESCRIPTOR_VERSION,
                 memory_map_size: 0,
@@ -255,7 +261,7 @@ pub fn init_runtime_support(rt: &mut efi::RuntimeServices) {
                 virtual_mode: AtomicBool::new(false),
                 at_runtime: AtomicBool::new(false),
             });
-            RUNTIME_DATA.lock().runtime_arch_ptr = allocation as *mut runtime::Protocol;
+            RUNTIME_DATA.lock().runtime_arch_ptr = allocation_ptr;
             // Install the protocol on a new handle
             core_install_protocol_interface(None, runtime::PROTOCOL_GUID, allocation)
                 .expect("Failed to install the Runtime Architecture protocol");
