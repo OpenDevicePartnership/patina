@@ -23,7 +23,7 @@ use crate::{
     dispatcher::{core_dispatcher, core_schedule},
     events::EVENT_DB,
     fv::core_install_firmware_volume,
-    misc_boot_services,
+    misc_boot_services::{self, EXIT_BOOT_SERVICES_STARTED},
     protocols::PROTOCOL_DB,
     systemtables::EfiSystemTable,
     GCD,
@@ -65,6 +65,9 @@ extern "efiapi" fn allocate_memory_space(
     image_handle: efi::Handle,
     device_handle: efi::Handle,
 ) -> efi::Status {
+    if EXIT_BOOT_SERVICES_STARTED.load(Ordering::Relaxed) {
+        return efi::Status::ACCESS_DENIED;
+    }
     if base_address.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
@@ -106,6 +109,10 @@ extern "efiapi" fn allocate_memory_space(
 }
 
 extern "efiapi" fn free_memory_space(base_address: efi::PhysicalAddress, length: u64) -> efi::Status {
+    if EXIT_BOOT_SERVICES_STARTED.load(Ordering::Relaxed) {
+        return efi::Status::ACCESS_DENIED;
+    }
+
     let result = GCD.free_memory_space(base_address as usize, length as usize);
 
     match result {

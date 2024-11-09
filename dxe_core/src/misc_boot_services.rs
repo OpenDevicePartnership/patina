@@ -17,7 +17,7 @@ use mu_pi::status_code;
 use r_efi::efi;
 
 use crate::{
-    allocator::{terminate_memory_map, EFI_RUNTIME_SERVICES_DATA_ALLOCATOR},
+    allocator::{freeze_memory_map, terminate_memory_map, EFI_RUNTIME_SERVICES_DATA_ALLOCATOR},
     events::EVENT_DB,
     protocols::PROTOCOL_DB,
     systemtables::{EfiSystemTable, SYSTEM_TABLE},
@@ -26,6 +26,8 @@ use crate::{
 static METRONOME_ARCH_PTR: AtomicPtr<protocols::metronome::Protocol> = AtomicPtr::new(core::ptr::null_mut());
 static WATCHDOG_ARCH_PTR: AtomicPtr<protocols::watchdog::Protocol> = AtomicPtr::new(core::ptr::null_mut());
 static PRE_EXIT_BOOT_SERVICES_SIGNAL: AtomicBool = AtomicBool::new(false);
+// todo_sherry: this is a POC. oxygenate + hydrate
+pub static EXIT_BOOT_SERVICES_STARTED: AtomicBool = AtomicBool::new(false);
 
 // TODO [BEGIN]: LOCAL (TEMP) GUID DEFINITIONS (MOVE LATER)
 
@@ -242,7 +244,21 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
     }
 }
 
+// todo_sherry: we need to stop changing memory map at the beginning of this function
+// exit notification -> set global value -> check in alloc memory space/free memory space
+// 	- trait/function pointer would be s Rustier way of doing it vs. global (global is likely easier)
+// 	- Box creation should also be disallowed
+// - pool allocator is okay. clarify: pool allocator is before the GCD ?
+// - highest possible tpl (?) this may be avoidable. clarify how
+// - how does alloc/free get called during exit_boot_services?
+// - things that hve a registered callback with PRE_EXIT_BOOT_SERVICES_SIGNAL, EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES, EVENT_GROUP_EXIT_BOOT_SERVICES (not sure exactly which of these)
+//   may call alloc/free/box. maybe indirectly. (???) how do i find these callbacks?
+// - we must PREVENT alloc and SILENTLY FAIL/DO NOTHING on free
+// according to some random guy on osdev.org
+// The memory map must be unchanged from the last time you retrieve the memory map and the time you call the ExitBootServices call. This means, no allocate and/or freeing of memory between the two.
 pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) -> efi::Status {
+    freeze_memory_map();
+
     // Pre-exit boot services is only signaled once
     if !PRE_EXIT_BOOT_SERVICES_SIGNAL.load(Ordering::SeqCst) {
         EVENT_DB.signal_group(PRE_EBS_GUID);

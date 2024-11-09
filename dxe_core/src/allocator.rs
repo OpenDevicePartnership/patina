@@ -11,13 +11,17 @@ use core::{
     fmt::Debug,
     mem,
     slice::{self, from_raw_parts_mut},
+    sync::atomic::Ordering,
 };
 
 extern crate alloc;
 use alloc::{collections::BTreeMap, vec::Vec};
 use mu_rust_helpers::function;
 
-use crate::{memory_attributes_table::MemoryAttributesTable, protocols::PROTOCOL_DB, GCD};
+use crate::{
+    memory_attributes_table::MemoryAttributesTable, misc_boot_services::EXIT_BOOT_SERVICES_STARTED,
+    protocols::PROTOCOL_DB, GCD,
+};
 use mu_pi::{
     dxe_services::{GcdMemoryType, MemorySpaceDescriptor},
     hob::{EFiMemoryTypeInformation, HobList, MEMORY_TYPE_INFO_HOB_GUID},
@@ -629,6 +633,11 @@ extern "efiapi" fn get_memory_map(
     log::debug!(target: "efi_memory_map", "EFI_MEMORY_MAP: \n{:?}", MemoryDescriptorSlice(&efi_descriptors));
 
     efi::Status::SUCCESS
+}
+
+pub fn freeze_memory_map() {
+    // todo_sherry: this function should ensure that free/alloc are not called after this point
+    EXIT_BOOT_SERVICES_STARTED.store(true, Ordering::Relaxed);
 }
 
 pub fn terminate_memory_map(map_key: usize) -> efi::Status {

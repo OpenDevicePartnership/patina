@@ -67,6 +67,23 @@ struct GcdAttributeConversionEntry {
     memory: bool,
 }
 
+/* todo_sherry
+fake code for gcd post exit boot services call (when memory map is frozen)
+trait GcdBehavior {
+    normal gcd functions
+}
+
+   impl GcdBehavior for DeadGcd {
+       same functions as gcd but they are no-ops
+
+       start_exit_boot_services() -> changes GCD state to disallow functions from alloc/free
+       get_gcd() -> GcdBehavior
+   }
+*/
+// funnily enough, this causes the same issues as mocking
+// i don't know if i like this
+// also i don't like static mut
+
 const ATTRIBUTE_CONVERSION_TABLE: [GcdAttributeConversionEntry; 15] = [
     GcdAttributeConversionEntry {
         attribute: hob::EFI_RESOURCE_ATTRIBUTE_UNCACHEABLE,
