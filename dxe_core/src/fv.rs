@@ -328,7 +328,7 @@ extern "efiapi" fn fv_read_file(
         found_type.write(file.file_type_raw());
         file_attributes.write(file.fv_attributes());
         //TODO: Authentication status is not yet supported.
-        buffer_size.write(file.data().len());
+        buffer_size.write(file.content().len());
     }
 
     if buffer.is_null() {
@@ -340,7 +340,7 @@ extern "efiapi" fn fv_read_file(
 
     if local_buffer_size > 0 {
         //caller indicates they have allocated a buffer to receive the file data.
-        if local_buffer_size < file.data().len() {
+        if local_buffer_size < file.content().len() {
             return efi::Status::BUFFER_TOO_SMALL;
         }
         if local_buffer_ptr.is_null() {
@@ -351,7 +351,7 @@ extern "efiapi" fn fv_read_file(
         //routine should allocate a buffer of appropriate size. Since the caller
         //is expected to free this buffer via free_pool, we need to manually
         //allocate it via allocate_pool.
-        match core_allocate_pool(efi::BOOT_SERVICES_DATA, file.data().len()) {
+        match core_allocate_pool(efi::BOOT_SERVICES_DATA, file.content().len()) {
             Err(err) => return err,
             Ok(allocation) => unsafe {
                 local_buffer_ptr = allocation;
@@ -361,8 +361,8 @@ extern "efiapi" fn fv_read_file(
     }
 
     //convert pointer+size into a slice and copy the file data.
-    let out_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, file.data().len()) };
-    out_buffer.copy_from_slice(file.data());
+    let out_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, file.content().len()) };
+    out_buffer.copy_from_slice(file.content());
 
     efi::Status::SUCCESS
 }
