@@ -1050,7 +1050,7 @@ impl ProtocolDb {
     ///   assert!(child_list.contains(&child));
     /// }
     /// ```
-    fn get_child_handles(&mut self, parent_handle: efi::Handle) -> Vec<efi::Handle> {
+    pub fn get_child_handles(&mut self, parent_handle: efi::Handle) -> Vec<efi::Handle> {
         if self.validate_handle(parent_handle).is_err() {
             return Vec::new();
         }

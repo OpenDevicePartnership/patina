@@ -14,13 +14,13 @@ use r_efi::efi;
 use uefi_component_interface::DxeComponent;
 use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
 use uefi_pecoff::{relocation::RelocationBlock, UefiPeInfo};
-use uefi_protocol_db::DXE_CORE_HANDLE;
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
     component_interface, dxe_services,
+    boot_services::BootServices,
     filesystems::SimpleFile,
-    protocols::{core_install_protocol_interface, core_locate_device_path, PROTOCOL_DB},
+    protocol_db::DXE_CORE_HANDLE,
     runtime,
     systemtables::EfiSystemTable,
 };
@@ -479,7 +479,7 @@ fn install_dxe_core_image(hob_list: &HobList) {
     private_image_data.image_info_ptr = image_info_ptr;
 
     // install the loaded_image protocol on a new handle.
-    let handle = match core_install_protocol_interface(
+    let handle = match BootServices::core_install_protocol_interface(
         Some(DXE_CORE_HANDLE),
         efi::protocols::loaded_image::PROTOCOL_GUID,
         image_info_ptr,
@@ -647,7 +647,7 @@ fn get_buffer_by_file_path(
 
 fn get_file_buffer_from_sfs(file_path: *mut efi::protocols::device_path::Protocol) -> Result<Vec<u8>, efi::Status> {
     let (remaining_file_path, handle) =
-        core_locate_device_path(efi::protocols::simple_file_system::PROTOCOL_GUID, file_path)?;
+        BootServices::core_locate_device_path(efi::protocols::simple_file_system::PROTOCOL_GUID, file_path)?;
 
     let mut file = SimpleFile::open_volume(handle)?;
 
@@ -693,9 +693,9 @@ fn get_file_buffer_from_load_protocol(
         Err(efi::Status::INVALID_PARAMETER)?;
     }
 
-    let (remaining_file_path, handle) = core_locate_device_path(protocol, file_path)?;
+    let (remaining_file_path, handle) = BootServices::core_locate_device_path(protocol, file_path)?;
 
-    let load_file = PROTOCOL_DB.get_interface_for_handle(handle, protocol)?;
+    let load_file = BootServices::with_protocol_db(|db| db.get_interface_for_handle(handle, protocol))?;
     let load_file =
         unsafe { (load_file as *mut efi::protocols::load_file::Protocol).as_mut().ok_or(efi::Status::UNSUPPORTED)? };
 
@@ -766,14 +766,16 @@ pub fn core_load_image(
         return Err(efi::Status::INVALID_PARAMETER);
     }
 
-    PROTOCOL_DB
+    BootServices::with_protocol_db(|db| db
         .validate_handle(parent_image_handle)
-        .inspect_err(|err| log::error!("failed to load image: invalid handle: {:#x?}", err))?;
+        .inspect_err(|err| log::error!("failed to load image: invalid handle: {:#x?}", err))
+    )?;
 
-    PROTOCOL_DB
+    BootServices::with_protocol_db(|db| db
         .get_interface_for_handle(parent_image_handle, efi::protocols::loaded_image::PROTOCOL_GUID)
         .inspect_err(|err| log::error!("failed to load image: failed to get loaded image interface: {:#x?}", err))
-        .map_err(|_| efi::Status::INVALID_PARAMETER)?;
+        .map_err(|_| efi::Status::INVALID_PARAMETER)
+    )?;
 
     let image_to_load = match image {
         Some(image) => image.to_vec(),
@@ -788,7 +790,7 @@ pub fn core_load_image(
     image_info.parent_handle = parent_image_handle;
 
     if !device_path.is_null() {
-        if let Ok((_, handle)) = core_locate_device_path(efi::protocols::device_path::PROTOCOL_GUID, device_path) {
+        if let Ok((_, handle)) = BootServices::core_locate_device_path(efi::protocols::device_path::PROTOCOL_GUID, device_path) {
             image_info.device_handle = handle;
         }
 
@@ -815,7 +817,7 @@ pub fn core_load_image(
 
     // install the loaded_image protocol for this freshly loaded image on a new
     // handle.
-    let handle = core_install_protocol_interface(None, efi::protocols::loaded_image::PROTOCOL_GUID, image_info_ptr)
+    let handle = BootServices::core_install_protocol_interface(None, efi::protocols::loaded_image::PROTOCOL_GUID, image_info_ptr)
         .inspect_err(|err| log::error!("failed to load image: install loaded image protocol failed: {:#x?}", err))?;
 
     // install the loaded_image device path protocol for the new image. If input device path is not null, then make a
@@ -827,7 +829,7 @@ pub fn core_load_image(
         Box::into_raw(copy_device_path_to_boxed_slice(device_path)?) as *mut u8
     };
 
-    core_install_protocol_interface(
+    BootServices::core_install_protocol_interface(
         Some(handle),
         efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
         loaded_image_device_path as *mut c_void,
@@ -835,7 +837,7 @@ pub fn core_load_image(
     .inspect_err(|err| log::error!("failed to load image: install device path failed: {:#x?}", err))?;
 
     if let Some(res_section) = private_info.hii_resource_section {
-        core_install_protocol_interface(
+        BootServices::core_install_protocol_interface(
             Some(handle),
             efi::protocols::hii_package_list::PROTOCOL_GUID,
             res_section as *mut c_void,
@@ -960,7 +962,7 @@ pub fn core_start_local_image(component: &'static dyn DxeComponent) -> Result<()
 }
 
 pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
-    PROTOCOL_DB.validate_handle(image_handle)?;
+    BootServices::with_protocol_db(|db| db.validate_handle(image_handle))?;
 
     if let Some(private_data) = PRIVATE_IMAGE_DATA.lock().private_image_data.get_mut(&image_handle) {
         if private_data.started {
@@ -1044,7 +1046,7 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
 }
 
 pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Result<(), efi::Status> {
-    PROTOCOL_DB.validate_handle(image_handle)?;
+    BootServices::with_protocol_db(|db| db.validate_handle(image_handle))?;
     let private_data = PRIVATE_IMAGE_DATA.lock();
     let private_image_data =
         private_data.private_image_data.get(&image_handle).ok_or(efi::Status::INVALID_PARAMETER)?;
@@ -1072,27 +1074,27 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
             Err(efi::Status::UNSUPPORTED)?;
         }
     }
-    let handles = PROTOCOL_DB.locate_handles(None).unwrap_or_default();
+    let handles = BootServices::with_protocol_db(|db|db.locate_handles(None).unwrap_or_default());
 
     // close any protocols opened by this image.
     for handle in handles {
-        let protocols = match PROTOCOL_DB.get_protocols_on_handle(handle) {
+        let protocols = match BootServices::with_protocol_db(|db|db.get_protocols_on_handle(handle)) {
             Err(_) => continue,
             Ok(protocols) => protocols,
         };
         for protocol in protocols {
-            let open_infos = match PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, protocol) {
+            let open_infos = match BootServices::with_protocol_db(|db|db.get_open_protocol_information_by_protocol(handle, protocol)) {
                 Err(_) => continue,
                 Ok(open_infos) => open_infos,
             };
             for open_info in open_infos {
                 if Some(image_handle) == open_info.agent_handle {
-                    let _result = PROTOCOL_DB.remove_protocol_usage(
+                    let _result = BootServices::with_protocol_db(|db|db.remove_protocol_usage(
                         handle,
                         protocol,
                         open_info.agent_handle,
                         open_info.controller_handle,
-                    );
+                    ));
                 }
             }
         }
@@ -1103,17 +1105,17 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
     // and the image_info box along with it.
     let private_image_data = PRIVATE_IMAGE_DATA.lock().private_image_data.remove(&image_handle).unwrap();
     // remove the image and device path protocols from the image handle.
-    let _ = PROTOCOL_DB.uninstall_protocol_interface(
+    let _ = BootServices::with_protocol_db(|db|db.uninstall_protocol_interface(
         image_handle,
         efi::protocols::loaded_image::PROTOCOL_GUID,
         private_image_data.image_info_ptr,
-    );
+    ));
 
-    let _ = PROTOCOL_DB.uninstall_protocol_interface(
+    let _ = BootServices::with_protocol_db(|db|db.uninstall_protocol_interface(
         image_handle,
         efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
         private_image_data.image_device_path_ptr,
-    );
+    ));
 
     // we have to remove the memory protections from the image sections before freeing the image buffer, because
     // core_free_pages expects the memory being freed to be in a single continuous memory descriptor, which is not

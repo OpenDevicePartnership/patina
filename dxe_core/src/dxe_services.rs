@@ -21,10 +21,8 @@ use r_efi::efi;
 use crate::{
     allocator::{core_allocate_pool, EFI_RUNTIME_SERVICES_DATA_ALLOCATOR},
     dispatcher::{core_dispatcher, core_schedule},
-    events::EVENT_DB,
+    boot_services::BootServices,
     fv::core_install_firmware_volume,
-    misc_boot_services,
-    protocols::PROTOCOL_DB,
     systemtables::EfiSystemTable,
     GCD,
 };
@@ -458,10 +456,10 @@ fn cpu_set_memory_space_attributes(
 //This call back is invoked when the CPU Architectural protocol is installed. It updates the global atomic CPU_ARCH_PTR
 //to point to the CPU architectural protocol interface.
 extern "efiapi" fn cpu_arch_available(event: efi::Event, _context: *mut c_void) {
-    match PROTOCOL_DB.locate_protocol(cpu_arch::PROTOCOL_GUID) {
+    match BootServices::with_protocol_db(|db| db.locate_protocol(cpu_arch::PROTOCOL_GUID)) {
         Ok(cpu_arch_ptr) => {
             CPU_ARCH_PTR.store(cpu_arch_ptr as *mut cpu_arch::Protocol, Ordering::SeqCst);
-            if let Err(status_err) = EVENT_DB.close_event(event) {
+            if let Err(status_err) = BootServices::with_event_db(|db| db.close_event(event)) {
                 log::warn!("Could not close event for cpu_arch_available due to error {:?}", status_err);
             }
         }
@@ -508,20 +506,16 @@ pub fn init_dxe_services(system_table: &mut EfiSystemTable) {
 
     let dxe_system_table = Box::new_in(dxe_system_table, &EFI_RUNTIME_SERVICES_DATA_ALLOCATOR);
 
-    let _ = misc_boot_services::core_install_configuration_table(
+    let _ = BootServices::core_install_configuration_table(
         dxe_services::DXE_SERVICES_TABLE_GUID,
         unsafe { (Box::into_raw(dxe_system_table) as *mut c_void).as_mut() },
         system_table,
     );
 
     //set up call back for cpu arch protocol installation.
-    let event = EVENT_DB
-        .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(cpu_arch_available), None, None)
-        .expect("Failed to create timer available callback.");
+    let event = BootServices::with_event_db(|db| db.create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(cpu_arch_available), None, None).expect("Failed to create timer available callback."));
 
-    PROTOCOL_DB
-        .register_protocol_notify(cpu_arch::PROTOCOL_GUID, event)
-        .expect("Failed to register protocol notify on timer arch callback.");
+    BootServices::with_protocol_db(|db| db.register_protocol_notify(cpu_arch::PROTOCOL_GUID, event).expect("Failed to register protocol notify on timer arch callback."));
 }
 
 // This routine filters memory space attributes to those accepted by the CPU architectural protocol.

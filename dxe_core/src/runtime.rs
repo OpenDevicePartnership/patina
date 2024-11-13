@@ -16,8 +16,9 @@ use r_efi::efi;
 use spin::Mutex;
 
 use crate::{
-    allocator::core_allocate_pool, events::EVENT_DB, image::core_relocate_runtime_images,
-    protocols::core_install_protocol_interface, systemtables::SYSTEM_TABLE,
+    boot_services::BootServices,
+    allocator::core_allocate_pool, image::core_relocate_runtime_images,
+    systemtables::SYSTEM_TABLE,
 };
 
 struct RuntimeData {
@@ -80,7 +81,7 @@ pub extern "efiapi" fn set_virtual_address_map(
     // TODO: Add status code reporting (need to check runtime eligibility)
 
     // Signal EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE events (externally registered events)
-    EVENT_DB.signal_group(efi::EVENT_GROUP_VIRTUAL_ADDRESS_CHANGE);
+    BootServices::with_event_db(|db| db.signal_group(efi::EVENT_GROUP_VIRTUAL_ADDRESS_CHANGE));
 
     // Convert runtime images
     core_relocate_runtime_images();
@@ -263,7 +264,7 @@ pub fn init_runtime_support(rt: &mut efi::RuntimeServices) {
             });
             RUNTIME_DATA.lock().runtime_arch_ptr = allocation_ptr;
             // Install the protocol on a new handle
-            core_install_protocol_interface(None, runtime::PROTOCOL_GUID, allocation)
+            BootServices::core_install_protocol_interface(None, runtime::PROTOCOL_GUID, allocation)
                 .expect("Failed to install the Runtime Architecture protocol");
         },
     }

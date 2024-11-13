@@ -52,18 +52,17 @@
 extern crate alloc;
 
 mod allocator;
+mod boot_services;
 mod component_interface;
 mod dispatcher;
-mod driver_services;
 mod dxe_services;
-mod events;
+mod event_db;
 mod filesystems;
 mod fv;
 mod gcd;
 mod image;
 mod memory_attributes_table;
-mod misc_boot_services;
-mod protocols;
+mod protocol_db;
 mod runtime;
 mod systemtables;
 
@@ -75,6 +74,7 @@ use core::{ffi::c_void, str::FromStr};
 
 use alloc::{boxed::Box, vec::Vec};
 use mu_pi::{fw_fs, hob::HobList, protocols::bds};
+use boot_services::BootServices;
 use r_efi::efi::{self};
 use uefi_component_interface::DxeComponent;
 use uefi_core::{
@@ -83,7 +83,7 @@ use uefi_core::{
 };
 use uefi_gcd::gcd::SpinLockedGcd;
 
-pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
+pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(BootServices::gcd_map_change));
 
 if_x64! {
     /// [`Core`] type alias for x86_64 architecture with cpu architecture specific trait implementations pre-selected.
@@ -208,15 +208,16 @@ where
             let st = st.as_mut().expect("System Table not initialized!");
 
             allocator::init_memory_support(st.boot_services(), &hob_list);
-            events::init_events_support(st.boot_services());
-            protocols::init_protocol_support(st.boot_services());
-            misc_boot_services::init_misc_boot_services_support(st.boot_services());
+            BootServices::register_services(st.boot_services());
+            //events::init_events_support(st.boot_services());
+            //protocols::init_protocol_support(st.boot_services());
+            //misc_boot_services::init_misc_boot_services_support(st.boot_services());
             runtime::init_runtime_support(st.runtime_services());
             image::init_image_support(&hob_list, st);
             dispatcher::init_dispatcher(Box::from(self.section_extractor));
             fv::init_fv_support(&hob_list, Box::from(self.section_extractor));
             dxe_services::init_dxe_services(st);
-            driver_services::init_driver_services(st.boot_services());
+            //driver_services::init_driver_services(st.boot_services());
             // re-checksum the system tables after above initialization.
             st.checksum_all();
 
@@ -224,7 +225,7 @@ where
             let hob_list_guid =
                 uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").expect("Invalid UUID format.");
             let hob_list_guid: efi::Guid = unsafe { *(hob_list_guid.to_bytes_le().as_ptr() as *const efi::Guid) };
-            misc_boot_services::core_install_configuration_table(
+            BootServices::core_install_configuration_table(
                 hob_list_guid,
                 unsafe { (physical_hob_list as *mut c_void).as_mut() },
                 st,
@@ -310,14 +311,14 @@ const ARCH_PROTOCOLS: &[(uuid::Uuid, &str)] = &[
 fn core_display_missing_arch_protocols() {
     for (uuid, name) in ARCH_PROTOCOLS {
         let guid: efi::Guid = unsafe { core::mem::transmute(uuid.to_bytes_le()) };
-        if protocols::PROTOCOL_DB.locate_protocol(guid).is_err() {
+        if BootServices::with_protocol_db(|db| db.locate_protocol(guid).is_err()) {
             log::warn!("Missing architectural protocol: {:?}, {:?}", uuid, name);
         }
     }
 }
 
 fn call_bds() {
-    if let Ok(protocol) = protocols::PROTOCOL_DB.locate_protocol(bds::PROTOCOL_GUID) {
+    if let Ok(protocol) = BootServices::with_protocol_db(|db| db.locate_protocol(bds::PROTOCOL_GUID)) {
         let bds = protocol as *mut bds::Protocol;
         unsafe {
             ((*bds).entry)(bds);

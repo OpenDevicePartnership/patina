@@ -28,7 +28,6 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-#![no_std]
 #![warn(missing_docs)]
 
 extern crate alloc;
@@ -298,7 +297,7 @@ pub struct EventDb {
 }
 
 impl EventDb {
-    const fn new() -> Self {
+    pub const fn new() -> Self {
         EventDb { events: BTreeMap::new(), next_event_id: 1, pending_notifies: BTreeSet::new(), notify_tags: 0 }
     }
 

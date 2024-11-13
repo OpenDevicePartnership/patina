@@ -20,7 +20,7 @@ use mu_pi::{
 
 use r_efi::efi;
 
-use crate::{allocator::core_allocate_pool, protocols::core_install_protocol_interface};
+use crate::{allocator::core_allocate_pool, boot_services::BootServices};
 
 struct PrivateFvbData {
     _interface: Box<mu_pi::protocols::firmware_volume_block::Protocol>,
@@ -244,7 +244,7 @@ fn install_fvb_protocol(
     PRIVATE_FV_DATA.lock().fv_information.insert(fvb_ptr, PrivateDataItem::FvbData(private_data));
 
     // install the protocol and return status
-    core_install_protocol_interface(handle, mu_pi::protocols::firmware_volume_block::PROTOCOL_GUID, fvb_ptr)
+    BootServices::core_install_protocol_interface(handle, mu_pi::protocols::firmware_volume_block::PROTOCOL_GUID, fvb_ptr)
 }
 
 // Firmware Volume protocol functions
@@ -591,7 +591,7 @@ fn install_fv_protocol(
     PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr, PrivateDataItem::FvData(private_data));
 
     // install the protocol and return status
-    core_install_protocol_interface(handle, mu_pi::protocols::firmware_volume::PROTOCOL_GUID, fv_ptr)
+    BootServices::core_install_protocol_interface(handle, mu_pi::protocols::firmware_volume::PROTOCOL_GUID, fv_ptr)
 }
 
 //Firmware Volume device path structures and functions
@@ -690,7 +690,7 @@ fn install_fv_device_path_protocol(handle: Option<efi::Handle>, base_address: u6
     };
 
     // install the protocol and return status
-    core_install_protocol_interface(handle, efi::protocols::device_path::PROTOCOL_GUID, device_path_ptr)
+    BootServices::core_install_protocol_interface(handle, efi::protocols::device_path::PROTOCOL_GUID, device_path_ptr)
 }
 
 pub fn core_install_firmware_volume(

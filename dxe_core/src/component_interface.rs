@@ -10,8 +10,6 @@ use core::ffi::c_void;
 use r_efi::efi;
 use uefi_component_interface::DxeComponentInterface;
 
-use crate::protocols::core_install_protocol_interface;
-
 pub struct ComponentInterface;
 
 impl DxeComponentInterface for ComponentInterface {
@@ -21,6 +19,6 @@ impl DxeComponentInterface for ComponentInterface {
         protocol: efi::Guid,
         interface: *mut c_void,
     ) -> Result<efi::Handle, efi::Status> {
-        core_install_protocol_interface(handle, protocol, interface)
+        crate::boot_services::BootServices::core_install_protocol_interface(handle, protocol, interface)
     }
 }
