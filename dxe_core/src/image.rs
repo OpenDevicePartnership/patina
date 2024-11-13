@@ -635,7 +635,7 @@ fn get_buffer_by_file_path(
         return Ok((buffer, false, 0));
     }
 
-    if boot_policy {
+    if !boot_policy {
         if let Ok(buffer) =
             get_file_buffer_from_load_protocol(efi::protocols::load_file2::PROTOCOL_GUID, false, file_path)
         {
