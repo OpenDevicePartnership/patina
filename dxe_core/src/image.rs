@@ -1104,7 +1104,7 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
         CoroutineResult::Return(status) => status,
     };
 
-    log::info!("start_image entrypoint exit with status: {:#x?}", status);
+    log::info!("start_image entrypoint exit with status: {:x?}", status);
 
     // because we used exit() to return from the coroutine (as opposed to
     // returning naturally from it), the coroutine is marked as suspended rather
