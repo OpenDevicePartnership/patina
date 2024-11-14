@@ -18,9 +18,9 @@ use uefi_protocol_db::DXE_CORE_HANDLE;
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
+    boot_services::{with_protocol_db, BootServices},
     component_interface, dxe_services,
     filesystems::SimpleFile,
-    protocols::{core_install_protocol_interface, core_locate_device_path, PROTOCOL_DB},
     runtime,
     systemtables::EfiSystemTable,
 };
@@ -479,7 +479,7 @@ fn install_dxe_core_image(hob_list: &HobList) {
     private_image_data.image_info_ptr = image_info_ptr;
 
     // install the loaded_image protocol on a new handle.
-    let handle = match core_install_protocol_interface(
+    let handle = match BootServices::core_install_protocol_interface(
         Some(DXE_CORE_HANDLE),
         efi::protocols::loaded_image::PROTOCOL_GUID,
         image_info_ptr,
@@ -654,7 +654,7 @@ fn get_buffer_by_file_path(
 
 fn get_file_buffer_from_sfs(file_path: *mut efi::protocols::device_path::Protocol) -> Result<Vec<u8>, efi::Status> {
     let (remaining_file_path, handle) =
-        core_locate_device_path(efi::protocols::simple_file_system::PROTOCOL_GUID, file_path)?;
+        BootServices::core_locate_device_path(efi::protocols::simple_file_system::PROTOCOL_GUID, file_path)?;
 
     let mut file = SimpleFile::open_volume(handle)?;
 
@@ -700,9 +700,9 @@ fn get_file_buffer_from_load_protocol(
         Err(efi::Status::INVALID_PARAMETER)?;
     }
 
-    let (remaining_file_path, handle) = core_locate_device_path(protocol, file_path)?;
+    let (remaining_file_path, handle) = BootServices::core_locate_device_path(protocol, file_path)?;
 
-    let load_file = PROTOCOL_DB.get_interface_for_handle(handle, protocol)?;
+    let load_file = with_protocol_db(|db| db.get_interface_for_handle(handle, protocol))?;
     let load_file =
         unsafe { (load_file as *mut efi::protocols::load_file::Protocol).as_mut().ok_or(efi::Status::UNSUPPORTED)? };
 
@@ -764,7 +764,7 @@ fn authenticate_image(
     authentication_status: u32,
 ) -> Result<(), efi::Status> {
     let security2_protocol = unsafe {
-        match PROTOCOL_DB.locate_protocol(mu_pi::protocols::security2::PROTOCOL_GUID) {
+        match with_protocol_db(|db| db.locate_protocol(mu_pi::protocols::security2::PROTOCOL_GUID)) {
             Ok(protocol) => (protocol as *mut mu_pi::protocols::security2::Protocol).as_ref(),
             //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
             //Firmware Volume.
@@ -773,7 +773,7 @@ fn authenticate_image(
     };
 
     let security_protocol = unsafe {
-        match PROTOCOL_DB.locate_protocol(mu_pi::protocols::security::PROTOCOL_GUID) {
+        match with_protocol_db(|db| db.locate_protocol(mu_pi::protocols::security::PROTOCOL_GUID)) {
             Ok(protocol) => (protocol as *mut mu_pi::protocols::security::Protocol).as_ref(),
             //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
             //Firmware Volume.
@@ -830,14 +830,16 @@ pub fn core_load_image(
         return Err(efi::Status::INVALID_PARAMETER);
     }
 
-    PROTOCOL_DB
-        .validate_handle(parent_image_handle)
-        .inspect_err(|err| log::error!("failed to load image: invalid handle: {:#x?}", err))?;
+    with_protocol_db(|db| {
+        db.validate_handle(parent_image_handle)
+            .inspect_err(|err| log::error!("failed to load image: invalid handle: {:#x?}", err))
+    })?;
 
-    PROTOCOL_DB
-        .get_interface_for_handle(parent_image_handle, efi::protocols::loaded_image::PROTOCOL_GUID)
-        .inspect_err(|err| log::error!("failed to load image: failed to get loaded image interface: {:#x?}", err))
-        .map_err(|_| efi::Status::INVALID_PARAMETER)?;
+    with_protocol_db(|db| {
+        db.get_interface_for_handle(parent_image_handle, efi::protocols::loaded_image::PROTOCOL_GUID)
+            .inspect_err(|err| log::error!("failed to load image: failed to get loaded image interface: {:#x?}", err))
+            .map_err(|_| efi::Status::INVALID_PARAMETER)
+    })?;
 
     let (image_to_load, from_fv, authentication_status) = match image {
         Some(image) => (image.to_vec(), false, 0),
@@ -858,7 +860,9 @@ pub fn core_load_image(
     image_info.parent_handle = parent_image_handle;
 
     if !device_path.is_null() {
-        if let Ok((_, handle)) = core_locate_device_path(efi::protocols::device_path::PROTOCOL_GUID, device_path) {
+        if let Ok((_, handle)) =
+            BootServices::core_locate_device_path(efi::protocols::device_path::PROTOCOL_GUID, device_path)
+        {
             image_info.device_handle = handle;
         }
 
@@ -885,8 +889,12 @@ pub fn core_load_image(
 
     // install the loaded_image protocol for this freshly loaded image on a new
     // handle.
-    let handle = core_install_protocol_interface(None, efi::protocols::loaded_image::PROTOCOL_GUID, image_info_ptr)
-        .inspect_err(|err| log::error!("failed to load image: install loaded image protocol failed: {:#x?}", err))?;
+    let handle = BootServices::core_install_protocol_interface(
+        None,
+        efi::protocols::loaded_image::PROTOCOL_GUID,
+        image_info_ptr,
+    )
+    .inspect_err(|err| log::error!("failed to load image: install loaded image protocol failed: {:#x?}", err))?;
 
     // install the loaded_image device path protocol for the new image. If input device path is not null, then make a
     // permanent copy on the heap.
@@ -897,7 +905,7 @@ pub fn core_load_image(
         Box::into_raw(copy_device_path_to_boxed_slice(device_path)?) as *mut u8
     };
 
-    core_install_protocol_interface(
+    BootServices::core_install_protocol_interface(
         Some(handle),
         efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
         loaded_image_device_path as *mut c_void,
@@ -905,7 +913,7 @@ pub fn core_load_image(
     .inspect_err(|err| log::error!("failed to load image: install device path failed: {:#x?}", err))?;
 
     if let Some(res_section) = private_info.hii_resource_section {
-        core_install_protocol_interface(
+        BootServices::core_install_protocol_interface(
             Some(handle),
             efi::protocols::hii_package_list::PROTOCOL_GUID,
             res_section as *mut c_void,
@@ -1031,7 +1039,7 @@ pub fn core_start_local_image(component: &'static dyn DxeComponent) -> Result<()
 }
 
 pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
-    PROTOCOL_DB.validate_handle(image_handle)?;
+    with_protocol_db(|db| db.validate_handle(image_handle))?;
 
     if let Some(private_data) = PRIVATE_IMAGE_DATA.lock().private_image_data.get_mut(&image_handle) {
         if private_data.started {
@@ -1115,7 +1123,7 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
 }
 
 pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Result<(), efi::Status> {
-    PROTOCOL_DB.validate_handle(image_handle)?;
+    with_protocol_db(|db| db.validate_handle(image_handle))?;
     let private_data = PRIVATE_IMAGE_DATA.lock();
     let private_image_data =
         private_data.private_image_data.get(&image_handle).ok_or(efi::Status::INVALID_PARAMETER)?;
@@ -1143,27 +1151,25 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
             Err(efi::Status::UNSUPPORTED)?;
         }
     }
-    let handles = PROTOCOL_DB.locate_handles(None).unwrap_or_default();
+    let handles = with_protocol_db(|db| db.locate_handles(None).unwrap_or_default());
 
     // close any protocols opened by this image.
     for handle in handles {
-        let protocols = match PROTOCOL_DB.get_protocols_on_handle(handle) {
+        let protocols = match with_protocol_db(|db| db.get_protocols_on_handle(handle)) {
             Err(_) => continue,
             Ok(protocols) => protocols,
         };
         for protocol in protocols {
-            let open_infos = match PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, protocol) {
+            let open_infos = match with_protocol_db(|db| db.get_open_protocol_information_by_protocol(handle, protocol))
+            {
                 Err(_) => continue,
                 Ok(open_infos) => open_infos,
             };
             for open_info in open_infos {
                 if Some(image_handle) == open_info.agent_handle {
-                    let _result = PROTOCOL_DB.remove_protocol_usage(
-                        handle,
-                        protocol,
-                        open_info.agent_handle,
-                        open_info.controller_handle,
-                    );
+                    let _result = with_protocol_db(|db| {
+                        db.remove_protocol_usage(handle, protocol, open_info.agent_handle, open_info.controller_handle)
+                    });
                 }
             }
         }
@@ -1174,17 +1180,21 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
     // and the image_info box along with it.
     let private_image_data = PRIVATE_IMAGE_DATA.lock().private_image_data.remove(&image_handle).unwrap();
     // remove the image and device path protocols from the image handle.
-    let _ = PROTOCOL_DB.uninstall_protocol_interface(
-        image_handle,
-        efi::protocols::loaded_image::PROTOCOL_GUID,
-        private_image_data.image_info_ptr,
-    );
+    let _ = with_protocol_db(|db| {
+        db.uninstall_protocol_interface(
+            image_handle,
+            efi::protocols::loaded_image::PROTOCOL_GUID,
+            private_image_data.image_info_ptr,
+        )
+    });
 
-    let _ = PROTOCOL_DB.uninstall_protocol_interface(
-        image_handle,
-        efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
-        private_image_data.image_device_path_ptr,
-    );
+    let _ = with_protocol_db(|db| {
+        db.uninstall_protocol_interface(
+            image_handle,
+            efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
+            private_image_data.image_device_path_ptr,
+        )
+    });
 
     // we have to remove the memory protections from the image sections before freeing the image buffer, because
     // core_free_pages expects the memory being freed to be in a single continuous memory descriptor, which is not
@@ -1286,8 +1296,8 @@ mod tests {
     extern crate std;
     use super::{empty_image_info, get_buffer_by_file_path, load_image};
     use crate::{
+        boot_services::{with_protocol_db, BootServices},
         image::{exit, start_image, unload_image, PRIVATE_IMAGE_DATA},
-        protocols::{core_install_protocol_interface, PROTOCOL_DB},
         systemtables::{init_system_table, SYSTEM_TABLE},
         test_collateral, test_support,
     };
@@ -1325,7 +1335,7 @@ mod tests {
         let image_info_ptr = image_info_ptr as *mut c_void;
 
         // install the loaded_image protocol on a new handle.
-        let _ = match core_install_protocol_interface(
+        let _ = match BootServices::core_install_protocol_interface(
             Some(uefi_protocol_db::DXE_CORE_HANDLE),
             efi::protocols::loaded_image::PROTOCOL_GUID,
             image_info_ptr,
@@ -1397,13 +1407,14 @@ mod tests {
             let security_protocol =
                 mu_pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
 
-            PROTOCOL_DB
-                .install_protocol_interface(
+            with_protocol_db(|db| {
+                db.install_protocol_interface(
                     None,
                     mu_pi::protocols::security::PROTOCOL_GUID,
                     &security_protocol as *const _ as *mut _,
                 )
-                .unwrap();
+                .unwrap()
+            });
 
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
@@ -1452,13 +1463,14 @@ mod tests {
             let security_protocol =
                 mu_pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
 
-            PROTOCOL_DB
-                .install_protocol_interface(
+            with_protocol_db(|db| {
+                db.install_protocol_interface(
                     None,
                     mu_pi::protocols::security::PROTOCOL_GUID,
                     &security_protocol as *const _ as *mut _,
                 )
-                .unwrap();
+                .unwrap()
+            });
 
             // Mock Security2 Arch protocol
             static SECURITY2_CALL_EXECUTED: AtomicBool = AtomicBool::new(false);
@@ -1481,13 +1493,14 @@ mod tests {
             let security2_protocol =
                 mu_pi::protocols::security2::Protocol { file_authentication: mock_file_authentication };
 
-            PROTOCOL_DB
-                .install_protocol_interface(
+            with_protocol_db(|db| {
+                db.install_protocol_interface(
                     None,
                     mu_pi::protocols::security2::PROTOCOL_GUID,
                     &security2_protocol as *const _ as *mut _,
                 )
-                .unwrap();
+                .unwrap()
+            });
 
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
@@ -1856,7 +1869,7 @@ mod tests {
 
             //Note: deliberate leak for simplicity.
             let protocol_ptr = Box::into_raw(Box::new(protocol));
-            let handle = core_install_protocol_interface(
+            let handle = BootServices::core_install_protocol_interface(
                 None,
                 efi::protocols::simple_file_system::PROTOCOL_GUID,
                 protocol_ptr as *mut c_void,
@@ -1867,7 +1880,7 @@ mod tests {
             let root_device_path_ptr = Box::into_raw(Box::new(ROOT_DEVICE_PATH_BYTES)) as *mut u8
                 as *mut efi::protocols::device_path::Protocol;
 
-            core_install_protocol_interface(
+            BootServices::core_install_protocol_interface(
                 Some(handle),
                 efi::protocols::device_path::PROTOCOL_GUID,
                 root_device_path_ptr as *mut c_void,
@@ -1917,7 +1930,7 @@ mod tests {
             let protocol = efi::protocols::load_file::Protocol { load_file };
             //Note: deliberate leak for simplicity.
             let protocol_ptr = Box::into_raw(Box::new(protocol));
-            let handle = core_install_protocol_interface(
+            let handle = BootServices::core_install_protocol_interface(
                 None,
                 efi::protocols::load_file::PROTOCOL_GUID,
                 protocol_ptr as *mut c_void,
@@ -1928,7 +1941,7 @@ mod tests {
             let root_device_path_ptr = Box::into_raw(Box::new(ROOT_DEVICE_PATH_BYTES)) as *mut u8
                 as *mut efi::protocols::device_path::Protocol;
 
-            core_install_protocol_interface(
+            BootServices::core_install_protocol_interface(
                 Some(handle),
                 efi::protocols::device_path::PROTOCOL_GUID,
                 root_device_path_ptr as *mut c_void,

@@ -12,13 +12,14 @@ use uefi_device_path::{concat_device_path_to_boxed_slice, copy_device_path_to_bo
 
 use r_efi::efi;
 
-use crate::protocols::PROTOCOL_DB;
+use crate::boot_services::with_protocol_db;
 
 fn get_bindings_for_handles(handles: Vec<efi::Handle>) -> Vec<*mut efi::protocols::driver_binding::Protocol> {
     handles
         .iter()
         .filter_map(|x| {
-            match PROTOCOL_DB.get_interface_for_handle(*x, efi::protocols::driver_binding::PROTOCOL_GUID) {
+            match with_protocol_db(|db| db.get_interface_for_handle(*x, efi::protocols::driver_binding::PROTOCOL_GUID))
+            {
                 Ok(interface) => Some(interface as *mut efi::protocols::driver_binding::Protocol),
                 Err(_) => None, //ignore handles without driver bindings
             }
@@ -29,9 +30,9 @@ fn get_bindings_for_handles(handles: Vec<efi::Handle>) -> Vec<*mut efi::protocol
 fn get_platform_driver_override_bindings(
     controller_handle: efi::Handle,
 ) -> Vec<*mut efi::protocols::driver_binding::Protocol> {
-    let driver_override_protocol = match PROTOCOL_DB
-        .locate_protocol(efi::protocols::platform_driver_override::PROTOCOL_GUID)
-    {
+    let driver_override_protocol = match with_protocol_db(|db| {
+        db.locate_protocol(efi::protocols::platform_driver_override::PROTOCOL_GUID)
+    }) {
         Err(_) => return Vec::new(),
         Ok(protocol) => unsafe {
             (protocol as *mut efi::protocols::platform_driver_override::Protocol).as_mut().expect("bad protocol ptr")
@@ -56,16 +57,19 @@ fn get_platform_driver_override_bindings(
 }
 
 fn get_family_override_bindings() -> Vec<*mut efi::protocols::driver_binding::Protocol> {
-    let driver_binding_handles = match PROTOCOL_DB.locate_handles(Some(efi::protocols::driver_binding::PROTOCOL_GUID)) {
-        Err(_) => return Vec::new(),
-        Ok(handles) => handles,
-    };
+    let driver_binding_handles =
+        match with_protocol_db(|db| db.locate_handles(Some(efi::protocols::driver_binding::PROTOCOL_GUID))) {
+            Err(_) => return Vec::new(),
+            Ok(handles) => handles,
+        };
 
     let mut driver_override_map: BTreeMap<u32, efi::Handle> = BTreeMap::new();
 
     // insert all the handles that have DRIVER_FAMILY_OVERRIDE_PROTOCOL on them into a sorted map
     for handle in driver_binding_handles {
-        match PROTOCOL_DB.get_interface_for_handle(handle, efi::protocols::driver_family_override::PROTOCOL_GUID) {
+        match with_protocol_db(|db| {
+            db.get_interface_for_handle(handle, efi::protocols::driver_family_override::PROTOCOL_GUID)
+        }) {
             Ok(protocol) => {
                 let driver_override_protocol = unsafe {
                     (protocol as *mut efi::protocols::driver_family_override::Protocol)
@@ -86,9 +90,9 @@ fn get_family_override_bindings() -> Vec<*mut efi::protocols::driver_binding::Pr
 fn get_bus_specific_override_bindings(
     controller_handle: efi::Handle,
 ) -> Vec<*mut efi::protocols::driver_binding::Protocol> {
-    let bus_specific_override_protocol = match PROTOCOL_DB
-        .get_interface_for_handle(controller_handle, efi::protocols::bus_specific_driver_override::PROTOCOL_GUID)
-    {
+    let bus_specific_override_protocol = match with_protocol_db(|db| {
+        db.get_interface_for_handle(controller_handle, efi::protocols::bus_specific_driver_override::PROTOCOL_GUID)
+    }) {
         Err(_) => return Vec::new(),
         Ok(protocol) => unsafe {
             (protocol as *mut efi::protocols::bus_specific_driver_override::Protocol)
@@ -114,11 +118,12 @@ fn get_bus_specific_override_bindings(
 }
 
 fn get_all_driver_bindings() -> Vec<*mut efi::protocols::driver_binding::Protocol> {
-    let mut driver_bindings = match PROTOCOL_DB.locate_handles(Some(efi::protocols::driver_binding::PROTOCOL_GUID)) {
-        Err(_) => return Vec::new(),
-        Ok(handles) if handles.is_empty() => return Vec::new(),
-        Ok(handles) => get_bindings_for_handles(handles),
-    };
+    let mut driver_bindings =
+        match with_protocol_db(|db| db.locate_handles(Some(efi::protocols::driver_binding::PROTOCOL_GUID))) {
+            Err(_) => return Vec::new(),
+            Ok(handles) if handles.is_empty() => return Vec::new(),
+            Ok(handles) => get_bindings_for_handles(handles),
+        };
 
     driver_bindings.sort_unstable_by(|a, b| unsafe { (*(*b)).version.cmp(&(*(*a)).version) });
 
@@ -131,11 +136,12 @@ fn authenticate_connect(
     remaining_device_path: Option<*mut efi::protocols::device_path::Protocol>,
     recursive: bool,
 ) -> Result<(), efi::Status> {
-    if let Ok(device_path) =
-        PROTOCOL_DB.get_interface_for_handle(controller_handle, efi::protocols::device_path::PROTOCOL_GUID)
-    {
+    if let Ok(device_path) = with_protocol_db(|db| {
+        db.get_interface_for_handle(controller_handle, efi::protocols::device_path::PROTOCOL_GUID)
+    }) {
         let device_path = device_path as *mut efi::protocols::device_path::Protocol;
-        if let Ok(security2_ptr) = PROTOCOL_DB.locate_protocol(mu_pi::protocols::security2::PROTOCOL_GUID) {
+        if let Ok(security2_ptr) = with_protocol_db(|db| db.locate_protocol(mu_pi::protocols::security2::PROTOCOL_GUID))
+        {
             let file_path = {
                 if !recursive {
                     if let Some(remaining_path) = remaining_device_path {
@@ -179,7 +185,7 @@ fn core_connect_single_controller(
     driver_handles: Vec<efi::Handle>,
     remaining_device_path: Option<*mut efi::protocols::device_path::Protocol>,
 ) -> Result<(), efi::Status> {
-    PROTOCOL_DB.validate_handle(controller_handle)?;
+    with_protocol_db(|db| db.validate_handle(controller_handle))?;
 
     //The following sources for driver instances are considered per UEFI Spec 2.10 section 7.3.12:
     //1. Context Override
@@ -277,7 +283,7 @@ pub unsafe fn core_connect_controller(
     let return_status = core_connect_single_controller(handle, driver_handles, remaining_device_path);
 
     if recursive {
-        for child in PROTOCOL_DB.get_child_handles(handle) {
+        for child in with_protocol_db(|db| db.get_child_handles(handle)) {
             //ignore the return value to match behavior of edk2 reference.
             _ = core_connect_controller(child, Vec::new(), None, true);
         }
@@ -344,19 +350,19 @@ pub unsafe fn core_disconnect_controller(
     driver_image_handle: Option<efi::Handle>,
     child_handle: Option<efi::Handle>,
 ) -> Result<(), efi::Status> {
-    PROTOCOL_DB.validate_handle(controller_handle)?;
+    with_protocol_db(|db| db.validate_handle(controller_handle))?;
 
     if let Some(handle) = driver_image_handle {
-        PROTOCOL_DB.validate_handle(handle)?;
+        with_protocol_db(|db| db.validate_handle(handle))?;
     }
 
     if let Some(handle) = child_handle {
-        PROTOCOL_DB.validate_handle(handle)?;
+        with_protocol_db(|db| db.validate_handle(handle))?;
     }
 
     // determine which driver_handles should be stopped.
     let mut drivers_managing_controller = {
-        match PROTOCOL_DB.get_open_protocol_information(controller_handle) {
+        match with_protocol_db(|db| db.get_open_protocol_information(controller_handle)) {
             Ok(info) => info
                 .iter()
                 .flat_map(|(_guid, open_info)| {
@@ -385,7 +391,8 @@ pub unsafe fn core_disconnect_controller(
     let no_drivers = drivers_managing_controller.is_empty();
     for driver_handle in drivers_managing_controller {
         //determine which child handles should be stopped.
-        let mut child_handles: Vec<_> = match PROTOCOL_DB.get_open_protocol_information(controller_handle) {
+        let mut child_handles: Vec<_> = match with_protocol_db(|db| db.get_open_protocol_information(controller_handle))
+        {
             Ok(info) => info
                 .iter()
                 .flat_map(|(_guid, open_info)| {
@@ -423,9 +430,10 @@ pub unsafe fn core_disconnect_controller(
         //the same reason). This matches the reference C implementation. As an enhancement, the core could track driver
         //bindings that are actively managing controllers and return an ACCESS_DENIED status if something attempts to
         //uninstall a binding that is in use.
-        let driver_binding_interface = PROTOCOL_DB
-            .get_interface_for_handle(driver_handle, efi::protocols::driver_binding::PROTOCOL_GUID)
-            .or(Err(efi::Status::INVALID_PARAMETER))?;
+        let driver_binding_interface = with_protocol_db(|db| {
+            db.get_interface_for_handle(driver_handle, efi::protocols::driver_binding::PROTOCOL_GUID)
+                .or(Err(efi::Status::INVALID_PARAMETER))
+        })?;
         let driver_binding_interface = driver_binding_interface as *mut efi::protocols::driver_binding::Protocol;
         let driver_binding = unsafe { &mut *(driver_binding_interface) };
 

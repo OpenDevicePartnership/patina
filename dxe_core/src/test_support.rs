@@ -8,7 +8,7 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use crate::{protocols::PROTOCOL_DB, GCD};
+use crate::{boot_services::with_protocol_db, GCD};
 use mu_pi::dxe_services::GcdMemoryType;
 use r_efi::efi;
 
@@ -57,8 +57,10 @@ pub(crate) unsafe fn init_test_gcd(size: Option<usize>) {
 
 /// Reset and re-initialize the protocol database to default empty state.
 pub(crate) unsafe fn init_test_protocol_db() {
-    PROTOCOL_DB.reset();
-    PROTOCOL_DB.init_protocol_db();
+    with_protocol_db(|db| {
+        db.reset();
+        db.init_protocol_db();
+    })
 }
 
 /// All tests should run from inside this.

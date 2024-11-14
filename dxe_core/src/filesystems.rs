@@ -10,7 +10,7 @@ use alloc::{vec, vec::Vec};
 use core::{ffi::c_void, mem::size_of};
 use r_efi::efi;
 
-use crate::protocols::PROTOCOL_DB;
+use crate::boot_services::with_protocol_db;
 
 /// Provides a wrapper for interacting with SimpleFileSystem
 pub struct SimpleFile<'a> {
@@ -40,8 +40,9 @@ impl<'a> SimpleFile<'a> {
     /// Opens the root of a Simple File System and returns a SimpleFile object for it.
     pub fn open_volume(handle: efi::Handle) -> Result<Self, efi::Status> {
         let sfs = unsafe {
-            let sfs_protocol_ptr =
-                PROTOCOL_DB.get_interface_for_handle(handle, efi::protocols::simple_file_system::PROTOCOL_GUID)?;
+            let sfs_protocol_ptr = with_protocol_db(|db| {
+                db.get_interface_for_handle(handle, efi::protocols::simple_file_system::PROTOCOL_GUID)
+            })?;
             (sfs_protocol_ptr as *mut efi::protocols::simple_file_system::Protocol)
                 .as_mut()
                 .ok_or(efi::Status::NOT_FOUND)?

@@ -18,8 +18,8 @@ use r_efi::efi;
 
 use crate::{
     allocator::{terminate_memory_map, EFI_RUNTIME_SERVICES_DATA_ALLOCATOR},
+    boot_services::with_protocol_db,
     events::EVENT_DB,
-    protocols::PROTOCOL_DB,
     systemtables::{EfiSystemTable, SYSTEM_TABLE},
 };
 
@@ -217,7 +217,7 @@ extern "efiapi" fn set_watchdog_timer(
 // This callback is invoked when the Metronome Architectural protocol is installed. It initializes the
 // METRONOME_ARCH_PTR to point to the Metronome Architectural protocol interface.
 extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_void) {
-    match PROTOCOL_DB.locate_protocol(protocols::metronome::PROTOCOL_GUID) {
+    match with_protocol_db(|db| db.locate_protocol(protocols::metronome::PROTOCOL_GUID)) {
         Ok(metronome_arch_ptr) => {
             METRONOME_ARCH_PTR.store(metronome_arch_ptr as *mut protocols::metronome::Protocol, Ordering::SeqCst);
             if let Err(status_err) = EVENT_DB.close_event(event) {
@@ -231,7 +231,7 @@ extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_
 // This callback is invoked when the Watchdog Timer Architectural protocol is installed. It initializes the
 // WATCHDOG_ARCH_PTR to point to the Watchdog Timer Architectural protocol interface.
 extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_void) {
-    match PROTOCOL_DB.locate_protocol(protocols::watchdog::PROTOCOL_GUID) {
+    match with_protocol_db(|db| db.locate_protocol(protocols::watchdog::PROTOCOL_GUID)) {
         Ok(watchdog_arch_ptr) => {
             WATCHDOG_ARCH_PTR.store(watchdog_arch_ptr as *mut protocols::watchdog::Protocol, Ordering::SeqCst);
             if let Err(status_err) = EVENT_DB.close_event(event) {
@@ -253,7 +253,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     EVENT_DB.signal_group(efi::EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES);
 
     // Disable the timer
-    match PROTOCOL_DB.locate_protocol(protocols::timer::PROTOCOL_GUID) {
+    match with_protocol_db(|db| db.locate_protocol(protocols::timer::PROTOCOL_GUID)) {
         Ok(timer_arch_ptr) => {
             let timer_arch_ptr = timer_arch_ptr as *mut protocols::timer::Protocol;
             let timer_arch = unsafe { &*(timer_arch_ptr) };
@@ -273,7 +273,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     EVENT_DB.signal_group(efi::EVENT_GROUP_EXIT_BOOT_SERVICES);
 
     // Initialize StatusCode and send EFI_SW_BS_PC_EXIT_BOOT_SERVICES
-    match PROTOCOL_DB.locate_protocol(protocols::status_code::PROTOCOL_GUID) {
+    match with_protocol_db(|db| db.locate_protocol(protocols::status_code::PROTOCOL_GUID)) {
         Ok(status_code_ptr) => {
             let status_code_ptr = status_code_ptr as *mut protocols::status_code::Protocol;
             let status_code_protocol = unsafe { &*(status_code_ptr) };
@@ -289,7 +289,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     };
 
     // Disable CPU interrupts
-    match PROTOCOL_DB.locate_protocol(protocols::cpu_arch::PROTOCOL_GUID) {
+    match with_protocol_db(|db| db.locate_protocol(protocols::cpu_arch::PROTOCOL_GUID)) {
         Ok(cpu_arch_ptr) => {
             let cpu_arch_ptr = cpu_arch_ptr as *mut protocols::cpu_arch::Protocol;
             let cpu_arch_protocol = unsafe { &*(cpu_arch_ptr) };
@@ -305,7 +305,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
         .expect("The System Table pointer is null. This is invalid.")
         .clear_boot_time_services();
 
-    match PROTOCOL_DB.locate_protocol(protocols::runtime::PROTOCOL_GUID) {
+    match with_protocol_db(|db| db.locate_protocol(protocols::runtime::PROTOCOL_GUID)) {
         Ok(rt_arch_ptr) => {
             let rt_arch_ptr = rt_arch_ptr as *mut protocols::runtime::Protocol;
             let rt_arch_protocol = unsafe { &mut *(rt_arch_ptr) };
@@ -329,16 +329,18 @@ pub fn init_misc_boot_services_support(bs: &mut efi::BootServices) {
         .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(metronome_arch_available), None, None)
         .expect("Failed to create metronome available callback.");
 
-    PROTOCOL_DB
-        .register_protocol_notify(protocols::metronome::PROTOCOL_GUID, event)
-        .expect("Failed to register protocol notify on metronome available.");
+    with_protocol_db(|db| {
+        db.register_protocol_notify(protocols::metronome::PROTOCOL_GUID, event)
+            .expect("Failed to register protocol notify on metronome available.")
+    });
 
     //set up call back for watchdog arch protocol installation.
     let event = EVENT_DB
         .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(watchdog_arch_available), None, None)
         .expect("Failed to create watchdog available callback.");
 
-    PROTOCOL_DB
-        .register_protocol_notify(protocols::watchdog::PROTOCOL_GUID, event)
-        .expect("Failed to register protocol notify on metronome available.");
+    with_protocol_db(|db| {
+        db.register_protocol_notify(protocols::watchdog::PROTOCOL_GUID, event)
+            .expect("Failed to register protocol notify on metronome available.")
+    });
 }

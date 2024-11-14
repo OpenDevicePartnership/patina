@@ -52,6 +52,7 @@
 extern crate alloc;
 
 mod allocator;
+mod boot_services;
 mod component_interface;
 mod dispatcher;
 mod driver_services;
@@ -63,7 +64,6 @@ mod gcd;
 mod image;
 mod memory_attributes_table;
 mod misc_boot_services;
-mod protocols;
 mod runtime;
 mod systemtables;
 
@@ -209,7 +209,7 @@ where
 
             allocator::init_memory_support(st.boot_services(), &hob_list);
             events::init_events_support(st.boot_services());
-            protocols::init_protocol_support(st.boot_services());
+            boot_services::BootServices::register_services(st.boot_services());
             misc_boot_services::init_misc_boot_services_support(st.boot_services());
             runtime::init_runtime_support(st.runtime_services());
             image::init_image_support(&hob_list, st);
@@ -310,14 +310,14 @@ const ARCH_PROTOCOLS: &[(uuid::Uuid, &str)] = &[
 fn core_display_missing_arch_protocols() {
     for (uuid, name) in ARCH_PROTOCOLS {
         let guid: efi::Guid = unsafe { core::mem::transmute(uuid.to_bytes_le()) };
-        if protocols::PROTOCOL_DB.locate_protocol(guid).is_err() {
+        if boot_services::with_protocol_db(|db| db.locate_protocol(guid).is_err()) {
             log::warn!("Missing architectural protocol: {:?}, {:?}", uuid, name);
         }
     }
 }
 
 fn call_bds() {
-    if let Ok(protocol) = protocols::PROTOCOL_DB.locate_protocol(bds::PROTOCOL_GUID) {
+    if let Ok(protocol) = boot_services::with_protocol_db(|db| db.locate_protocol(bds::PROTOCOL_GUID)) {
         let bds = protocol as *mut bds::Protocol;
         unsafe {
             ((*bds).entry)(bds);

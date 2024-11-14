@@ -20,7 +20,7 @@ use mu_pi::protocols::{cpu_arch, timer};
 use uefi_event::{SpinLockedEventDb, TimerDelay};
 use uefi_gcd::gcd;
 
-use crate::protocols::PROTOCOL_DB;
+use crate::boot_services::with_protocol_db;
 
 pub static EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
 
@@ -299,7 +299,7 @@ fn set_interrupt_state(enable: bool) {
 }
 
 extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_void) {
-    match PROTOCOL_DB.locate_protocol(timer::PROTOCOL_GUID) {
+    match with_protocol_db(|db| db.locate_protocol(timer::PROTOCOL_GUID)) {
         Ok(timer_arch_ptr) => {
             let timer_arch_ptr = timer_arch_ptr as *mut timer::Protocol;
             let timer_arch = unsafe { &*(timer_arch_ptr) };
@@ -313,7 +313,7 @@ extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_
 }
 
 extern "efiapi" fn cpu_arch_available(event: efi::Event, _context: *mut c_void) {
-    match PROTOCOL_DB.locate_protocol(cpu_arch::PROTOCOL_GUID) {
+    match with_protocol_db(|db| db.locate_protocol(cpu_arch::PROTOCOL_GUID)) {
         Ok(cpu_arch_ptr) => {
             CPU_ARCH_PTR.store(cpu_arch_ptr as *mut cpu_arch::Protocol, Ordering::SeqCst);
             if let Err(status_err) = EVENT_DB.close_event(event) {
@@ -356,18 +356,20 @@ pub fn init_events_support(bs: &mut efi::BootServices) {
         .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(cpu_arch_available), None, None)
         .expect("Failed to create timer available callback.");
 
-    PROTOCOL_DB
-        .register_protocol_notify(cpu_arch::PROTOCOL_GUID, event)
-        .expect("Failed to register protocol notify on timer arch callback.");
+    with_protocol_db(|db| {
+        db.register_protocol_notify(cpu_arch::PROTOCOL_GUID, event)
+            .expect("Failed to register protocol notify on timer arch callback.")
+    });
 
     //set up call back for timer arch protocol installation.
     let event = EVENT_DB
         .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(timer_available_callback), None, None)
         .expect("Failed to create timer available callback.");
 
-    PROTOCOL_DB
-        .register_protocol_notify(timer::PROTOCOL_GUID, event)
-        .expect("Failed to register protocol notify on timer arch callback.");
+    with_protocol_db(|db| {
+        db.register_protocol_notify(timer::PROTOCOL_GUID, event)
+            .expect("Failed to register protocol notify on timer arch callback.")
+    });
 
     //Indicate eventing is initialized
     EVENT_DB_INITIALIZED.store(true, Ordering::SeqCst);

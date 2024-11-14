@@ -17,7 +17,7 @@ extern crate alloc;
 use alloc::{collections::BTreeMap, vec::Vec};
 use mu_rust_helpers::function;
 
-use crate::{memory_attributes_table::MemoryAttributesTable, protocols::PROTOCOL_DB, GCD};
+use crate::{boot_services::with_protocol_db, memory_attributes_table::MemoryAttributesTable, GCD};
 use mu_pi::{
     dxe_services::{GcdMemoryType, MemorySpaceDescriptor},
     hob::{EFiMemoryTypeInformation, HobList, MEMORY_TYPE_INFO_HOB_GUID},
@@ -286,11 +286,9 @@ impl<'a> AllocatorMap {
                 }) {
                     return Ok(handle);
                 }
-                let (handle, _) = PROTOCOL_DB.install_protocol_interface(
-                    None,
-                    PRIVATE_ALLOCATOR_TRACKING_GUID,
-                    core::ptr::null_mut(),
-                )?;
+                let (handle, _) = with_protocol_db(|db| {
+                    db.install_protocol_interface(None, PRIVATE_ALLOCATOR_TRACKING_GUID, core::ptr::null_mut())
+                })?;
                 Ok(handle)
             }
         }

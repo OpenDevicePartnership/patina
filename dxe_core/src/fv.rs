@@ -23,7 +23,7 @@ use uefi_device_path::concat_device_path_to_boxed_slice;
 
 use crate::{
     allocator::core_allocate_pool,
-    protocols::{core_install_protocol_interface, PROTOCOL_DB},
+    boot_services::{with_protocol_db, BootServices},
 };
 
 struct PrivateFvbData {
@@ -248,7 +248,11 @@ fn install_fvb_protocol(
     PRIVATE_FV_DATA.lock().fv_information.insert(fvb_ptr, PrivateDataItem::FvbData(private_data));
 
     // install the protocol and return status
-    core_install_protocol_interface(handle, mu_pi::protocols::firmware_volume_block::PROTOCOL_GUID, fvb_ptr)
+    BootServices::core_install_protocol_interface(
+        handle,
+        mu_pi::protocols::firmware_volume_block::PROTOCOL_GUID,
+        fvb_ptr,
+    )
 }
 
 // Firmware Volume protocol functions
@@ -595,7 +599,7 @@ fn install_fv_protocol(
     PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr, PrivateDataItem::FvData(private_data));
 
     // install the protocol and return status
-    core_install_protocol_interface(handle, mu_pi::protocols::firmware_volume::PROTOCOL_GUID, fv_ptr)
+    BootServices::core_install_protocol_interface(handle, mu_pi::protocols::firmware_volume::PROTOCOL_GUID, fv_ptr)
 }
 
 //Firmware Volume device path structures and functions
@@ -703,7 +707,7 @@ fn install_fv_device_path_protocol(handle: Option<efi::Handle>, base_address: u6
     };
 
     // install the protocol and return status
-    core_install_protocol_interface(handle, efi::protocols::device_path::PROTOCOL_GUID, device_path_ptr)
+    BootServices::core_install_protocol_interface(handle, efi::protocols::device_path::PROTOCOL_GUID, device_path_ptr)
 }
 
 pub fn core_install_firmware_volume(
@@ -718,7 +722,8 @@ pub fn core_install_firmware_volume(
 
 /// Returns a device path for the file specified by the given fv_handle and filename GUID.
 pub fn device_path_bytes_for_fv_file(fv_handle: efi::Handle, file_name: efi::Guid) -> Result<Box<[u8]>, efi::Status> {
-    let fv_device_path = PROTOCOL_DB.get_interface_for_handle(fv_handle, efi::protocols::device_path::PROTOCOL_GUID)?;
+    let fv_device_path =
+        with_protocol_db(|db| db.get_interface_for_handle(fv_handle, efi::protocols::device_path::PROTOCOL_GUID))?;
     let file_node = &FvPiWgDevicePath::new_file(file_name);
     concat_device_path_to_boxed_slice(
         fv_device_path as *mut _ as *const efi::protocols::device_path::Protocol,
