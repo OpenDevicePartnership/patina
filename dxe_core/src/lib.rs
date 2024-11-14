@@ -132,6 +132,8 @@ where
     pub fn initialize(mut self, physical_hob_list: *const c_void) -> CorePostInit {
         self.cpu_initializer.initialize();
         self.interrupt_manager.initialize().expect("Failed to initialize interrupt manager!");
+        uefi_debugger::initialize(&mut self.interrupt_manager);
+
         let (free_memory_start, free_memory_size) = gcd::init_gcd(physical_hob_list);
 
         log::trace!("Free memory start: {:#x}", free_memory_start);

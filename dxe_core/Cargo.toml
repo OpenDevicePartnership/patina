@@ -37,6 +37,7 @@ uefi_gcd = { workspace = true }
 uefi_interrupt = { workspace = true }
 uefi_protocol_db = { workspace = true }
 uefi_allocator = { workspace = true }
+uefi_debugger = { workspace = true }
 uefi_device_path = { workspace = true }
 uefi_event = { workspace = true }
 uefi_depex = { workspace = true}
