@@ -508,18 +508,18 @@ impl EventDb {
     }
 }
 
-struct EventNotificationIterator {
-    event_db: &'static SpinLockedEventDb,
+struct EventNotificationIterator<'a> {
+    event_db: &'a SpinLockedEventDb,
     tpl_level: efi::Tpl,
 }
 
-impl EventNotificationIterator {
-    fn new(event_db: &'static SpinLockedEventDb, tpl_level: efi::Tpl) -> Self {
+impl<'a> EventNotificationIterator<'a> {
+    fn new(event_db: &'a SpinLockedEventDb, tpl_level: efi::Tpl) -> Self {
         EventNotificationIterator { event_db, tpl_level }
     }
 }
 
-impl Iterator for EventNotificationIterator {
+impl<'a> Iterator for EventNotificationIterator<'a> {
     type Item = EventNotification;
     fn next(&mut self) -> Option<EventNotification> {
         self.event_db.lock().consume_next_event_notify(self.tpl_level)
@@ -1027,7 +1027,7 @@ impl SpinLockedEventDb {
     /// );
     /// ```
     ///
-    pub fn event_notification_iter(&'static self, tpl_level: efi::Tpl) -> impl Iterator<Item = EventNotification> {
+    pub fn event_notification_iter<'a>(&'a self, tpl_level: efi::Tpl) -> impl Iterator<Item = EventNotification> + 'a {
         EventNotificationIterator::new(self, tpl_level)
     }
 

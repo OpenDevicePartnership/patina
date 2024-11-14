@@ -9,23 +9,24 @@
 use core::{ffi::c_void, mem::size_of};
 
 use alloc::{slice, vec, vec::Vec};
-use mu_rust_helpers::guid::guid_fmt;
+use mu_rust_helpers::{boot_services::event, guid::guid_fmt};
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_device_path::{is_device_path_end, remaining_device_path};
 use uefi_protocol_db::DXE_CORE_HANDLE;
 
-use super::ProtocolDb;
+use super::{EventDb, EventState, ProtocolDb};
 
 use crate::{
     allocator::core_allocate_pool,
     driver_services::{core_connect_controller, core_disconnect_controller},
-    events::{signal_event, EVENT_DB},
 };
 
 #[inline(always)]
 pub fn core_install_protocol_interface(
     protocol_db: &ProtocolDb,
+    event_db: &EventDb,
+    event_state: &EventState,
     handle: Option<efi::Handle>,
     protocol: efi::Guid,
     interface: *mut c_void,
@@ -36,7 +37,7 @@ pub fn core_install_protocol_interface(
     let mut closed_events = Vec::new();
 
     for notify in notifies {
-        if signal_event(notify.event) == efi::Status::INVALID_PARAMETER {
+        if super::events::signal_event(event_db, event_state, notify.event) == efi::Status::INVALID_PARAMETER {
             //means event doesn't exist (probably closed).
             closed_events.push(notify.event); // Other error cases not actionable.
         }
@@ -50,6 +51,8 @@ pub fn core_install_protocol_interface(
 #[inline(always)]
 pub fn install_protocol_interface(
     protocol_db: &ProtocolDb,
+    event_db: &EventDb,
+    event_state: &EventState,
     handle: *mut efi::Handle,
     protocol: *mut efi::Guid,
     interface_type: efi::InterfaceType,
@@ -64,8 +67,14 @@ pub fn install_protocol_interface(
 
     let caller_handle = if caller_handle.is_null() { None } else { Some(caller_handle) };
 
-    let installed_handle = match core_install_protocol_interface(protocol_db, caller_handle, caller_protocol, interface)
-    {
+    let installed_handle = match core_install_protocol_interface(
+        protocol_db,
+        event_db,
+        event_state,
+        caller_handle,
+        caller_protocol,
+        interface,
+    ) {
         Err(err) => return err,
         Ok(handle) => handle,
     };
@@ -186,6 +195,8 @@ fn uninstall_dummy_interface(protocol_db: &ProtocolDb, handle: efi::Handle) -> R
 
 pub fn reinstall_protocol_interface(
     protocol_db: &ProtocolDb,
+    event_db: &EventDb,
+    event_state: &EventState,
     handle: efi::Handle,
     protocol: *mut efi::Guid,
     old_interface: *mut c_void,
@@ -217,7 +228,9 @@ pub fn reinstall_protocol_interface(
     let protocol = *(unsafe { protocol.as_mut().expect("previously null-checked pointer is null") });
 
     // Call install to install the new interface and trigger any notifies
-    if let Err(err) = core_install_protocol_interface(protocol_db, Some(handle), protocol, new_interface) {
+    if let Err(err) =
+        core_install_protocol_interface(protocol_db, event_db, event_state, Some(handle), protocol, new_interface)
+    {
         let result = uninstall_dummy_interface(protocol_db, handle);
         debug_assert!(result.is_ok());
         return err;
@@ -238,11 +251,12 @@ pub fn reinstall_protocol_interface(
 
 pub fn register_protocol_notify(
     protocol_db: &ProtocolDb,
+    event_db: &EventDb,
     protocol: *mut efi::Guid,
     event: efi::Event,
     registration: *mut *mut c_void,
 ) -> efi::Status {
-    if protocol.is_null() || registration.is_null() || !EVENT_DB.is_valid(event) {
+    if protocol.is_null() || registration.is_null() || !event_db.is_valid(event) {
         return efi::Status::INVALID_PARAMETER;
     }
 
@@ -481,6 +495,8 @@ pub fn open_protocol_information(
 // TODO JAVAGEDES: Split this into testable parts
 pub unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::Handle, mut args: ...) -> efi::Status {
     let protocol_db = &super::PRIVATE_DATA.protocol_db;
+    let event_db = &super::PRIVATE_DATA.event_db;
+    let event_state = &super::PRIVATE_DATA.event_state;
     // The UEFI spec does not indicate whether the protocols installed here are atomic with respect to notify  - i.e.
     // whether any registered notifies should be invoked between the installation of the multiple protocols, or only
     // after all protocols are installed. Despite the spec ambiguity, the reference EDK2 C implementation does raise to
@@ -519,7 +535,15 @@ pub unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::
 
     let mut interfaces_to_uninstall_on_error = Vec::new();
     for (protocol, interface) in interfaces_to_install {
-        match install_protocol_interface(protocol_db, handle, protocol, efi::NATIVE_INTERFACE, interface) {
+        match install_protocol_interface(
+            protocol_db,
+            event_db,
+            event_state,
+            handle,
+            protocol,
+            efi::NATIVE_INTERFACE,
+            interface,
+        ) {
             efi::Status::SUCCESS => interfaces_to_uninstall_on_error.push((protocol, interface)),
             err => {
                 //on error, attempt to uninstall all the previously installed interfaces. best-effort, errors are ignored.
@@ -537,6 +561,8 @@ pub unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::
 // TODO JAVAGEDES: Split this into testable parts
 pub unsafe extern "C" fn uninstall_multiple_protocol_interfaces(handle: efi::Handle, mut args: ...) -> efi::Status {
     let protocol_db = &super::PRIVATE_DATA.protocol_db;
+    let event_db: &EventDb = &super::PRIVATE_DATA.event_db;
+    let event_state: &EventState = &super::PRIVATE_DATA.event_state;
     // See note in install_multiple_protocol_interfaces.
     let tpl_mutex = TplMutex::new(efi::TPL_NOTIFY, (), "atomic_protocol_uninstall");
     let _tpl_guard = tpl_mutex.lock();
@@ -563,7 +589,14 @@ pub unsafe extern "C" fn uninstall_multiple_protocol_interfaces(handle: efi::Han
                 //on error, attempt to re-install all the previously uninstall interfaces. best-effort, errors are ignored.
                 for (protocol, interface) in interfaces_to_reinstall_on_error {
                     let protocol = *(unsafe { protocol.as_mut().expect("previously null-checked pointer is null.") });
-                    let _ = core_install_protocol_interface(protocol_db, Some(handle), protocol, interface);
+                    let _ = core_install_protocol_interface(
+                        protocol_db,
+                        event_db,
+                        event_state,
+                        Some(handle),
+                        protocol,
+                        interface,
+                    );
                 }
                 return efi::Status::INVALID_PARAMETER;
             }

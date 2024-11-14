@@ -57,7 +57,6 @@ mod component_interface;
 mod dispatcher;
 mod driver_services;
 mod dxe_services;
-mod events;
 mod filesystems;
 mod fv;
 mod gcd;
@@ -74,6 +73,7 @@ pub mod test_support;
 use core::{ffi::c_void, str::FromStr};
 
 use alloc::{boxed::Box, vec::Vec};
+use boot_services::BootServices;
 use mu_pi::{fw_fs, hob::HobList, protocols::bds};
 use r_efi::efi::{self};
 use uefi_component_interface::DxeComponent;
@@ -83,7 +83,7 @@ use uefi_core::{
 };
 use uefi_gcd::gcd::SpinLockedGcd;
 
-pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
+pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(BootServices::gcd_map_change));
 
 if_x64! {
     /// [`Core`] type alias for x86_64 architecture with cpu architecture specific trait implementations pre-selected.
@@ -208,7 +208,6 @@ where
             let st = st.as_mut().expect("System Table not initialized!");
 
             allocator::init_memory_support(st.boot_services(), &hob_list);
-            events::init_events_support(st.boot_services());
             boot_services::BootServices::register_services(st.boot_services());
             misc_boot_services::init_misc_boot_services_support(st.boot_services());
             runtime::init_runtime_support(st.runtime_services());

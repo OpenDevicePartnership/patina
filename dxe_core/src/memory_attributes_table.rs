@@ -19,7 +19,7 @@ use core::{
 
 use crate::{
     allocator::{core_allocate_pool, core_free_pool, get_memory_map_descriptors, MemoryDescriptorSlice},
-    events::EVENT_DB,
+    boot_services::with_event_db,
     misc_boot_services::core_install_configuration_table,
     systemtables,
 };
@@ -82,13 +82,15 @@ impl Debug for MemoryAttributesTable {
 // this function is intended to be called by dxe_main to set up the event to create the MAT for the first time
 // on Ready to Boot.
 pub fn init_memory_attributes_table_support() {
-    if let Err(status) = EVENT_DB.create_event(
-        efi::EVT_NOTIFY_SIGNAL,
-        efi::TPL_CALLBACK,
-        Some(core_install_memory_attributes_table_event_wrapper),
-        None,
-        Some(efi::EVENT_GROUP_READY_TO_BOOT),
-    ) {
+    if let Err(status) = with_event_db(|db| {
+        db.create_event(
+            efi::EVT_NOTIFY_SIGNAL,
+            efi::TPL_CALLBACK,
+            Some(core_install_memory_attributes_table_event_wrapper),
+            None,
+            Some(efi::EVENT_GROUP_READY_TO_BOOT),
+        )
+    }) {
         log::error!("Failed to register an event at Ready to Boot to create the MAT! Status {:#X?}", status);
     }
 }
@@ -101,7 +103,7 @@ extern "efiapi" fn core_install_memory_attributes_table_event_wrapper(event: efi
     // and the install callback will be invoked on the next runtime memory allocation
     POST_RTB.store(true, Ordering::Relaxed);
 
-    if let Err(status) = EVENT_DB.close_event(event) {
+    if let Err(status) = with_event_db(|db| db.close_event(event)) {
         log::error!("Failed to close MAT ready to boot event with status {:#X?}. This should be okay.", status);
     }
 }

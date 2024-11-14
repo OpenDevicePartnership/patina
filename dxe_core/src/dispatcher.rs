@@ -24,8 +24,7 @@ use uefi_depex::{AssociatedDependency, Depex, Opcode};
 use uefi_protocol_db::DXE_CORE_HANDLE;
 
 use crate::{
-    boot_services::with_protocol_db,
-    events::EVENT_DB,
+    boot_services::{with_event_db, with_protocol_db},
     fv::{core_install_firmware_volume, device_path_bytes_for_fv_file},
     image::{core_load_image, core_start_image},
 };
@@ -458,9 +457,10 @@ pub fn core_dispatcher() -> Result<(), efi::Status> {
 
 pub fn init_dispatcher(extractor: Box<dyn SectionExtractor>) {
     //set up call back for FV protocol installation.
-    let event = EVENT_DB
-        .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(core_fw_vol_event_protocol_notify), None, None)
-        .expect("Failed to create fv protocol installation callback.");
+    let event = with_event_db(|db| {
+        db.create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(core_fw_vol_event_protocol_notify), None, None)
+            .expect("Failed to create fv protocol installation callback.")
+    });
 
     with_protocol_db(|db| {
         db.register_protocol_notify(firmware_volume_block::PROTOCOL_GUID, event)

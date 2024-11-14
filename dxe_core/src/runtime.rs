@@ -16,7 +16,9 @@ use r_efi::efi;
 use spin::Mutex;
 
 use crate::{
-    allocator::core_allocate_pool, boot_services::BootServices, events::EVENT_DB, image::core_relocate_runtime_images,
+    allocator::core_allocate_pool,
+    boot_services::{with_event_db, BootServices},
+    image::core_relocate_runtime_images,
     systemtables::SYSTEM_TABLE,
 };
 
@@ -80,7 +82,7 @@ pub extern "efiapi" fn set_virtual_address_map(
     // TODO: Add status code reporting (need to check runtime eligibility)
 
     // Signal EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE events (externally registered events)
-    EVENT_DB.signal_group(efi::EVENT_GROUP_VIRTUAL_ADDRESS_CHANGE);
+    with_event_db(|db| db.signal_group(efi::EVENT_GROUP_VIRTUAL_ADDRESS_CHANGE));
 
     // Convert runtime images
     core_relocate_runtime_images();

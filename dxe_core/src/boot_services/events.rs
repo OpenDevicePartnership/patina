@@ -12,24 +12,44 @@ use core::{
     sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicUsize, Ordering},
 };
 
+use super::{EventDb, ProtocolDb};
+
 use alloc::vec;
 
 use r_efi::efi;
 
 use mu_pi::protocols::{cpu_arch, timer};
-use uefi_event::{SpinLockedEventDb, TimerDelay};
+use uefi_event::TimerDelay;
 use uefi_gcd::gcd;
 
-use crate::boot_services::with_protocol_db;
+// TODO JAVAGEDES: Make the structure Spin locked instead of the individual fields.
+pub struct EventState {
+    current_tpl: AtomicUsize,
+    system_time: AtomicU64,
+    cpu_arch_ptr: AtomicPtr<cpu_arch::Protocol>,
+    event_notifies_in_progress: AtomicBool,
+    event_db_initialized: AtomicBool,
+}
 
-pub static EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
+impl EventState {
+    pub const fn new() -> Self {
+        Self {
+            current_tpl: AtomicUsize::new(efi::TPL_APPLICATION),
+            system_time: AtomicU64::new(0),
+            cpu_arch_ptr: AtomicPtr::new(core::ptr::null_mut()),
+            event_notifies_in_progress: AtomicBool::new(false),
+            event_db_initialized: AtomicBool::new(false),
+        }
+    }
 
-static CURRENT_TPL: AtomicUsize = AtomicUsize::new(efi::TPL_APPLICATION);
-static SYSTEM_TIME: AtomicU64 = AtomicU64::new(0);
-static CPU_ARCH_PTR: AtomicPtr<cpu_arch::Protocol> = AtomicPtr::new(core::ptr::null_mut());
-static EVENT_NOTIFIES_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+    pub fn set_initialized(&self) {
+        self.event_db_initialized.store(true, Ordering::SeqCst);
+    }
+}
 
-extern "efiapi" fn create_event(
+#[inline(always)]
+pub fn create_event(
+    event_db: &EventDb,
     event_type: u32,
     notify_tpl: efi::Tpl,
     notify_function: Option<efi::EventNotify>,
@@ -50,7 +70,7 @@ extern "efiapi" fn create_event(
         other => (other, None),
     };
 
-    match EVENT_DB.create_event(event_type, notify_tpl, notify_function, notify_context, event_group) {
+    match event_db.create_event(event_type, notify_tpl, notify_function, notify_context, event_group) {
         Ok(new_event) => {
             unsafe { *event = new_event };
             efi::Status::SUCCESS
@@ -59,7 +79,9 @@ extern "efiapi" fn create_event(
     }
 }
 
-extern "efiapi" fn create_event_ex(
+#[inline(always)]
+pub fn create_event_ex(
+    event_db: &EventDb,
     event_type: u32,
     notify_tpl: efi::Tpl,
     notify_function: Option<efi::EventNotify>,
@@ -82,7 +104,7 @@ extern "efiapi" fn create_event_ex(
 
     let event_group = if !event_group.is_null() { Some(unsafe { *event_group }) } else { None };
 
-    match EVENT_DB.create_event(event_type, notify_tpl, notify_function, notify_context, event_group) {
+    match event_db.create_event(event_type, notify_tpl, notify_function, notify_context, event_group) {
         Ok(new_event) => {
             unsafe { *event = new_event };
             efi::Status::SUCCESS
@@ -91,15 +113,17 @@ extern "efiapi" fn create_event_ex(
     }
 }
 
-pub extern "efiapi" fn close_event(event: efi::Event) -> efi::Status {
-    match EVENT_DB.close_event(event) {
+#[inline(always)]
+pub fn close_event(event_db: &EventDb, event: efi::Event) -> efi::Status {
+    match event_db.close_event(event) {
         Ok(()) => efi::Status::SUCCESS,
         Err(err) => err,
     }
 }
 
-pub extern "efiapi" fn signal_event(event: efi::Event) -> efi::Status {
-    let status = match EVENT_DB.signal_event(event) {
+#[inline(always)]
+pub fn signal_event(event_db: &EventDb, event_state: &EventState, event: efi::Event) -> efi::Status {
+    let status = match event_db.signal_event(event) {
         Ok(()) => efi::Status::SUCCESS,
         Err(err) => err,
     };
@@ -108,13 +132,16 @@ pub extern "efiapi" fn signal_event(event: efi::Event) -> efi::Status {
     //pending events as a side effect of the locking implementation calling raise/restore
     //TPL. The spec doesn't require this; but it's likely that code out there depends
     //on it. So emulate that here with an artificial raise/restore.
-    let old_tpl = raise_tpl(efi::TPL_HIGH_LEVEL);
-    restore_tpl(old_tpl);
+    let old_tpl = raise_tpl(event_state, efi::TPL_HIGH_LEVEL);
+    restore_tpl(event_db, event_state, old_tpl);
 
     status
 }
 
-extern "efiapi" fn wait_for_event(
+#[inline(always)]
+pub fn wait_for_event(
+    event_db: &EventDb,
+    event_state: &EventState,
     number_of_events: usize,
     event_array: *mut efi::Event,
     out_index: *mut usize,
@@ -123,7 +150,7 @@ extern "efiapi" fn wait_for_event(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    if CURRENT_TPL.load(Ordering::SeqCst) != efi::TPL_APPLICATION {
+    if event_state.current_tpl.load(Ordering::SeqCst) != efi::TPL_APPLICATION {
         return efi::Status::UNSUPPORTED;
     }
 
@@ -133,7 +160,7 @@ extern "efiapi" fn wait_for_event(
     //spin on the list
     loop {
         for (index, event) in event_list.iter().enumerate() {
-            match check_event(*event) {
+            match check_event(event_db, event_state, *event) {
                 efi::Status::NOT_READY => (),
                 status => {
                     unsafe { *out_index = index };
@@ -144,8 +171,9 @@ extern "efiapi" fn wait_for_event(
     }
 }
 
-pub extern "efiapi" fn check_event(event: efi::Event) -> efi::Status {
-    let event_type = match EVENT_DB.get_event_type(event) {
+#[inline(always)]
+pub fn check_event(event_db: &EventDb, event_state: &EventState, event: efi::Event) -> efi::Status {
+    let event_type = match event_db.get_event_type(event) {
         Ok(event_type) => event_type,
         Err(err) => return err,
     };
@@ -154,7 +182,7 @@ pub extern "efiapi" fn check_event(event: efi::Event) -> efi::Status {
         return efi::Status::INVALID_PARAMETER;
     }
 
-    match EVENT_DB.read_and_clear_signaled(event) {
+    match event_db.read_and_clear_signaled(event) {
         Ok(signaled) => {
             if signaled {
                 return efi::Status::SUCCESS;
@@ -163,16 +191,16 @@ pub extern "efiapi" fn check_event(event: efi::Event) -> efi::Status {
         Err(err) => return err,
     }
 
-    match EVENT_DB.queue_event_notify(event) {
+    match event_db.queue_event_notify(event) {
         Ok(()) => (),
         Err(err) => return err,
     }
 
     // raise/restore TPL to allow notifies to occur at the appropriate level.
-    let old_tpl = raise_tpl(efi::TPL_HIGH_LEVEL);
-    restore_tpl(old_tpl);
+    let old_tpl = raise_tpl(event_state, efi::TPL_HIGH_LEVEL);
+    restore_tpl(event_db, event_state, old_tpl);
 
-    match EVENT_DB.read_and_clear_signaled(event) {
+    match event_db.read_and_clear_signaled(event) {
         Ok(signaled) => {
             if signaled {
                 return efi::Status::SUCCESS;
@@ -184,7 +212,14 @@ pub extern "efiapi" fn check_event(event: efi::Event) -> efi::Status {
     efi::Status::NOT_READY
 }
 
-pub extern "efiapi" fn set_timer(event: efi::Event, timer_type: efi::TimerDelay, trigger_time: u64) -> efi::Status {
+#[inline(always)]
+pub fn set_timer(
+    event_db: &EventDb,
+    event_state: &EventState,
+    event: efi::Event,
+    timer_type: efi::TimerDelay,
+    trigger_time: u64,
+) -> efi::Status {
     let timer_type = match TimerDelay::try_from(timer_type) {
         Err(err) => return err,
         Ok(timer_type) => timer_type,
@@ -192,20 +227,23 @@ pub extern "efiapi" fn set_timer(event: efi::Event, timer_type: efi::TimerDelay,
 
     let (trigger_time, period) = match timer_type {
         TimerDelay::TimerCancel => (None, None),
-        TimerDelay::TimerRelative => (Some(SYSTEM_TIME.load(Ordering::SeqCst) + trigger_time), None),
-        TimerDelay::TimerPeriodic => (Some(SYSTEM_TIME.load(Ordering::SeqCst) + trigger_time), Some(trigger_time)),
+        TimerDelay::TimerRelative => (Some(event_state.system_time.load(Ordering::SeqCst) + trigger_time), None),
+        TimerDelay::TimerPeriodic => {
+            (Some(event_state.system_time.load(Ordering::SeqCst) + trigger_time), Some(trigger_time))
+        }
     };
 
-    match EVENT_DB.set_timer(event, timer_type, trigger_time, period) {
+    match event_db.set_timer(event, timer_type, trigger_time, period) {
         Ok(()) => efi::Status::SUCCESS,
         Err(err) => err,
     }
 }
 
-pub extern "efiapi" fn raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {
+#[inline(always)]
+pub fn raise_tpl(event_state: &EventState, new_tpl: efi::Tpl) -> efi::Tpl {
     assert!(new_tpl <= efi::TPL_HIGH_LEVEL, "Invalid attempt to raise TPL above TPL_HIGH_LEVEL");
 
-    let prev_tpl = CURRENT_TPL.fetch_max(new_tpl, Ordering::SeqCst);
+    let prev_tpl = event_state.current_tpl.fetch_max(new_tpl, Ordering::SeqCst);
 
     assert!(
         new_tpl >= prev_tpl,
@@ -215,13 +253,14 @@ pub extern "efiapi" fn raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {
     );
 
     if (new_tpl == efi::TPL_HIGH_LEVEL) && (prev_tpl < efi::TPL_HIGH_LEVEL) {
-        set_interrupt_state(false);
+        set_interrupt_state(event_state, false);
     }
     prev_tpl
 }
 
-pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
-    let prev_tpl = CURRENT_TPL.fetch_min(new_tpl, Ordering::SeqCst);
+#[inline(always)]
+pub fn restore_tpl(event_db: &EventDb, event_state: &EventState, new_tpl: efi::Tpl) {
+    let prev_tpl = event_state.current_tpl.fetch_min(new_tpl, Ordering::SeqCst);
 
     assert!(
         new_tpl <= prev_tpl,
@@ -236,23 +275,27 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
         // To avoid infinite recursion, this logic uses EVENT_NOTIFIES_IN_PROGRESS to ensure that only one instance of
         // restore_tpl is accessing the locked EVENT_DB. restore_tpl calls that occur while the event notification iter is
         // in use will get back an empty vector of event notifications and will simply restore the TPL and exit.
-        let events =
-            match EVENT_NOTIFIES_IN_PROGRESS.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed) {
-                Ok(_) => {
-                    let events = EVENT_DB.event_notification_iter(new_tpl).collect();
-                    EVENT_NOTIFIES_IN_PROGRESS.store(false, Ordering::Release);
-                    events
-                }
-                Err(_) => vec![],
-            };
+        let events = match event_state.event_notifies_in_progress.compare_exchange(
+            false,
+            true,
+            Ordering::Acquire,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => {
+                let events = event_db.event_notification_iter(new_tpl).collect();
+                event_state.event_notifies_in_progress.store(false, Ordering::Release);
+                events
+            }
+            Err(_) => vec![],
+        };
 
         for event in events {
             if event.notify_tpl < efi::TPL_HIGH_LEVEL {
-                set_interrupt_state(true);
+                set_interrupt_state(event_state, true);
             } else {
-                set_interrupt_state(false);
+                set_interrupt_state(event_state, false);
             }
-            CURRENT_TPL.store(event.notify_tpl, Ordering::SeqCst);
+            event_state.current_tpl.store(event.notify_tpl, Ordering::SeqCst);
             let notify_context = match event.notify_context {
                 Some(context) => context,
                 None => core::ptr::null_mut(),
@@ -271,21 +314,22 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
     }
 
     if new_tpl < efi::TPL_HIGH_LEVEL {
-        set_interrupt_state(true);
+        set_interrupt_state(event_state, true);
     }
-    CURRENT_TPL.store(new_tpl, Ordering::SeqCst);
+    event_state.current_tpl.store(new_tpl, Ordering::SeqCst);
 }
 
-extern "efiapi" fn timer_tick(time: u64) {
-    let old_tpl = raise_tpl(efi::TPL_HIGH_LEVEL);
-    SYSTEM_TIME.fetch_add(time, Ordering::SeqCst);
-    let current_time = SYSTEM_TIME.load(Ordering::SeqCst);
-    EVENT_DB.timer_tick(current_time);
-    restore_tpl(old_tpl); //implicitly dispatches timer notifies if any.
+#[inline(always)]
+pub fn timer_tick(event_db: &EventDb, event_state: &EventState, time: u64) {
+    let old_tpl = raise_tpl(event_state, efi::TPL_HIGH_LEVEL);
+    event_state.system_time.fetch_add(time, Ordering::SeqCst);
+    let current_time = event_state.system_time.load(Ordering::SeqCst);
+    event_db.timer_tick(current_time);
+    restore_tpl(event_db, event_state, old_tpl); //implicitly dispatches timer notifies if any.
 }
 
-fn set_interrupt_state(enable: bool) {
-    let cpu_arch_ptr = CPU_ARCH_PTR.load(Ordering::SeqCst);
+fn set_interrupt_state(event_state: &EventState, enable: bool) {
+    let cpu_arch_ptr = event_state.cpu_arch_ptr.load(Ordering::SeqCst);
     if let Some(cpu_arch) = unsafe { cpu_arch_ptr.as_mut() } {
         match enable {
             true => {
@@ -298,13 +342,18 @@ fn set_interrupt_state(enable: bool) {
     }
 }
 
-extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_void) {
-    match with_protocol_db(|db| db.locate_protocol(timer::PROTOCOL_GUID)) {
+pub fn timer_available_callback(
+    protocol_db: &ProtocolDb,
+    event_db: &EventDb,
+    event: efi::Event,
+    _context: *mut c_void,
+) {
+    match protocol_db.locate_protocol(timer::PROTOCOL_GUID) {
         Ok(timer_arch_ptr) => {
             let timer_arch_ptr = timer_arch_ptr as *mut timer::Protocol;
             let timer_arch = unsafe { &*(timer_arch_ptr) };
-            (timer_arch.register_handler)(timer_arch_ptr, timer_tick);
-            if let Err(status_err) = EVENT_DB.close_event(event) {
+            (timer_arch.register_handler)(timer_arch_ptr, super::BootServices::timer_tick);
+            if let Err(status_err) = event_db.close_event(event) {
                 log::warn!("Could not close event for timer_available_callback due to error {:?}", status_err);
             }
         }
@@ -312,11 +361,17 @@ extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_
     }
 }
 
-extern "efiapi" fn cpu_arch_available(event: efi::Event, _context: *mut c_void) {
-    match with_protocol_db(|db| db.locate_protocol(cpu_arch::PROTOCOL_GUID)) {
+pub fn cpu_arch_available(
+    protocol_db: &ProtocolDb,
+    event_db: &EventDb,
+    event_state: &EventState,
+    event: efi::Event,
+    _context: *mut c_void,
+) {
+    match protocol_db.locate_protocol(cpu_arch::PROTOCOL_GUID) {
         Ok(cpu_arch_ptr) => {
-            CPU_ARCH_PTR.store(cpu_arch_ptr as *mut cpu_arch::Protocol, Ordering::SeqCst);
-            if let Err(status_err) = EVENT_DB.close_event(event) {
+            event_state.cpu_arch_ptr.store(cpu_arch_ptr as *mut cpu_arch::Protocol, Ordering::SeqCst);
+            if let Err(status_err) = event_db.close_event(event) {
                 log::warn!("Could not close event for cpu_arch_available due to error {:?}", status_err);
             }
         }
@@ -324,53 +379,15 @@ extern "efiapi" fn cpu_arch_available(event: efi::Event, _context: *mut c_void) 
     }
 }
 
-// indicates that eventing subsystem is fully initialized.
-static EVENT_DB_INITIALIZED: AtomicBool = AtomicBool::new(false);
-
 /// This callback is invoked whenever the GCD changes, and will signal the required UEFI event group.
-pub fn gcd_map_change(map_change_type: gcd::MapChangeType) {
-    if EVENT_DB_INITIALIZED.load(Ordering::SeqCst) {
+pub fn gcd_map_change(event_db: &EventDb, event_state: &EventState, map_change_type: gcd::MapChangeType) {
+    if event_state.event_db_initialized.load(Ordering::SeqCst) {
         match map_change_type {
             gcd::MapChangeType::AddMemorySpace
             | gcd::MapChangeType::AllocateMemorySpace
             | gcd::MapChangeType::FreeMemorySpace
-            | gcd::MapChangeType::RemoveMemorySpace => EVENT_DB.signal_group(efi::EVENT_GROUP_MEMORY_MAP_CHANGE),
+            | gcd::MapChangeType::RemoveMemorySpace => event_db.signal_group(efi::EVENT_GROUP_MEMORY_MAP_CHANGE),
             gcd::MapChangeType::SetMemoryAttributes | gcd::MapChangeType::SetMemoryCapabilities => (),
         }
     }
-}
-
-pub fn init_events_support(bs: &mut efi::BootServices) {
-    bs.create_event = create_event;
-    bs.create_event_ex = create_event_ex;
-    bs.close_event = close_event;
-    bs.signal_event = signal_event;
-    bs.wait_for_event = wait_for_event;
-    bs.check_event = check_event;
-    bs.set_timer = set_timer;
-    bs.raise_tpl = raise_tpl;
-    bs.restore_tpl = restore_tpl;
-
-    //set up call back for cpu arch protocol installation.
-    let event = EVENT_DB
-        .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(cpu_arch_available), None, None)
-        .expect("Failed to create timer available callback.");
-
-    with_protocol_db(|db| {
-        db.register_protocol_notify(cpu_arch::PROTOCOL_GUID, event)
-            .expect("Failed to register protocol notify on timer arch callback.")
-    });
-
-    //set up call back for timer arch protocol installation.
-    let event = EVENT_DB
-        .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(timer_available_callback), None, None)
-        .expect("Failed to create timer available callback.");
-
-    with_protocol_db(|db| {
-        db.register_protocol_notify(timer::PROTOCOL_GUID, event)
-            .expect("Failed to register protocol notify on timer arch callback.")
-    });
-
-    //Indicate eventing is initialized
-    EVENT_DB_INITIALIZED.store(true, Ordering::SeqCst);
 }

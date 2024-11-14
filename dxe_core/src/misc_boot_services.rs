@@ -18,8 +18,7 @@ use r_efi::efi;
 
 use crate::{
     allocator::{terminate_memory_map, EFI_RUNTIME_SERVICES_DATA_ALLOCATOR},
-    boot_services::with_protocol_db,
-    events::EVENT_DB,
+    boot_services::{with_event_db, with_protocol_db},
     systemtables::{EfiSystemTable, SYSTEM_TABLE},
 };
 
@@ -137,7 +136,7 @@ pub fn core_install_configuration_table(
     efi_system_table.checksum();
 
     //signal the table guid as an event group
-    EVENT_DB.signal_group(vendor_guid);
+    with_event_db(|db| db.signal_group(vendor_guid));
 
     Ok(())
 }
@@ -220,7 +219,7 @@ extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_
     match with_protocol_db(|db| db.locate_protocol(protocols::metronome::PROTOCOL_GUID)) {
         Ok(metronome_arch_ptr) => {
             METRONOME_ARCH_PTR.store(metronome_arch_ptr as *mut protocols::metronome::Protocol, Ordering::SeqCst);
-            if let Err(status_err) = EVENT_DB.close_event(event) {
+            if let Err(status_err) = with_event_db(|db| db.close_event(event)) {
                 log::warn!("Could not close event for metronome_arch_available due to error {:?}", status_err);
             }
         }
@@ -234,7 +233,7 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
     match with_protocol_db(|db| db.locate_protocol(protocols::watchdog::PROTOCOL_GUID)) {
         Ok(watchdog_arch_ptr) => {
             WATCHDOG_ARCH_PTR.store(watchdog_arch_ptr as *mut protocols::watchdog::Protocol, Ordering::SeqCst);
-            if let Err(status_err) = EVENT_DB.close_event(event) {
+            if let Err(status_err) = with_event_db(|db| db.close_event(event)) {
                 log::warn!("Could not close event for watchdog_arch_available due to error {:?}", status_err);
             }
         }
@@ -245,12 +244,12 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
 pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) -> efi::Status {
     // Pre-exit boot services is only signaled once
     if !PRE_EXIT_BOOT_SERVICES_SIGNAL.load(Ordering::SeqCst) {
-        EVENT_DB.signal_group(PRE_EBS_GUID);
+        with_event_db(|db| db.signal_group(PRE_EBS_GUID));
         PRE_EXIT_BOOT_SERVICES_SIGNAL.store(true, Ordering::SeqCst);
     }
 
     // Signal the event group before exit boot services
-    EVENT_DB.signal_group(efi::EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES);
+    with_event_db(|db| db.signal_group(efi::EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES));
 
     // Disable the timer
     match with_protocol_db(|db| db.locate_protocol(protocols::timer::PROTOCOL_GUID)) {
@@ -265,12 +264,12 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     // Terminate the memory map
     let status = terminate_memory_map(map_key);
     if status.is_error() {
-        EVENT_DB.signal_group(EBS_FAILED_GUID);
+        with_event_db(|db| db.signal_group(EBS_FAILED_GUID));
         return status;
     }
 
     // Signal Exit Boot Services
-    EVENT_DB.signal_group(efi::EVENT_GROUP_EXIT_BOOT_SERVICES);
+    with_event_db(|db| db.signal_group(efi::EVENT_GROUP_EXIT_BOOT_SERVICES));
 
     // Initialize StatusCode and send EFI_SW_BS_PC_EXIT_BOOT_SERVICES
     match with_protocol_db(|db| db.locate_protocol(protocols::status_code::PROTOCOL_GUID)) {
@@ -325,9 +324,10 @@ pub fn init_misc_boot_services_support(bs: &mut efi::BootServices) {
     bs.set_watchdog_timer = set_watchdog_timer;
 
     //set up call back for metronome arch protocol installation.
-    let event = EVENT_DB
-        .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(metronome_arch_available), None, None)
-        .expect("Failed to create metronome available callback.");
+    let event = with_event_db(|db| {
+        db.create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(metronome_arch_available), None, None)
+            .expect("Failed to create metronome available callback.")
+    });
 
     with_protocol_db(|db| {
         db.register_protocol_notify(protocols::metronome::PROTOCOL_GUID, event)
@@ -335,9 +335,10 @@ pub fn init_misc_boot_services_support(bs: &mut efi::BootServices) {
     });
 
     //set up call back for watchdog arch protocol installation.
-    let event = EVENT_DB
-        .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(watchdog_arch_available), None, None)
-        .expect("Failed to create watchdog available callback.");
+    let event = with_event_db(|db| {
+        db.create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(watchdog_arch_available), None, None)
+            .expect("Failed to create watchdog available callback.")
+    });
 
     with_protocol_db(|db| {
         db.register_protocol_notify(protocols::watchdog::PROTOCOL_GUID, event)
