@@ -10,7 +10,7 @@ use alloc::{vec, vec::Vec};
 use core::{ffi::c_void, mem::size_of};
 use r_efi::efi;
 
-use crate::boot_services::BootServices;
+use crate::boot_services::{BootServices, with_protocol_db};
 
 /// Provides a wrapper for interacting with SimpleFileSystem
 pub struct SimpleFile<'a> {
@@ -41,13 +41,13 @@ impl<'a> SimpleFile<'a> {
     pub fn open_volume(handle: efi::Handle) -> Result<Self, efi::Status> {
         let sfs = unsafe {
             let sfs_protocol_ptr =
-                BootServices::with_protocol_db(|db| db.get_interface_for_handle(handle, efi::protocols::simple_file_system::PROTOCOL_GUID))?;
+                with_protocol_db!(|db| db.get_interface_for_handle(handle, efi::protocols::simple_file_system::PROTOCOL_GUID))?;
             (sfs_protocol_ptr as *mut efi::protocols::simple_file_system::Protocol)
                 .as_mut()
                 .ok_or(efi::Status::NOT_FOUND)?
         };
 
-        let mut file_system_ptr = core::ptr::null_mut();
+        let mut file_system_ptr: *mut efi::protocols::file::Protocol = core::ptr::null_mut();
         let status = (sfs.open_volume)(sfs, core::ptr::addr_of_mut!(file_system_ptr));
         if status != efi::Status::SUCCESS {
             Err(status)?;

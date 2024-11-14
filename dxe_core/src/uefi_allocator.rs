@@ -113,14 +113,7 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-
-#![no_std]
-#![feature(const_mut_refs)]
-#![feature(allocator_api)]
-#![feature(slice_ptr_get)]
-#![feature(const_trait_impl)]
-
 pub mod fixed_size_block_allocator;
 pub mod uefi_allocator;
 
-pub use uefi_gcd::gcd::AllocateType as AllocationStrategy;
+pub use crate::uefi_gcd::gcd::AllocateType as AllocationStrategy;

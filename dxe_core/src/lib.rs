@@ -48,6 +48,10 @@
 #![feature(c_variadic)]
 #![feature(allocator_api)]
 #![feature(new_uninit)]
+#![feature(const_mut_refs)]
+#![feature(slice_ptr_get)]
+#![feature(const_trait_impl)]
+#![feature(decl_macro)]
 
 extern crate alloc;
 
@@ -65,6 +69,8 @@ mod memory_attributes_table;
 mod protocol_db;
 mod runtime;
 mod systemtables;
+mod uefi_allocator;
+mod uefi_gcd;
 
 #[cfg(test)]
 #[macro_use]
@@ -74,16 +80,13 @@ use core::{ffi::c_void, str::FromStr};
 
 use alloc::{boxed::Box, vec::Vec};
 use mu_pi::{fw_fs, hob::HobList, protocols::bds};
-use boot_services::BootServices;
+use boot_services::{BootServices, with_protocol_db};
 use r_efi::efi::{self};
 use uefi_component_interface::DxeComponent;
 use uefi_core::{
     error::{self, Result},
     if_aarch64, if_x64, interface,
 };
-use uefi_gcd::gcd::SpinLockedGcd;
-
-pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(BootServices::gcd_map_change));
 
 if_x64! {
     /// [`Core`] type alias for x86_64 architecture with cpu architecture specific trait implementations pre-selected.
@@ -193,12 +196,12 @@ where
         gcd::add_hob_resource_descriptors_to_gcd(&hob_list, free_memory_start, free_memory_size);
 
         log::trace!("GCD - After adding resource descriptor HOBs.");
-        log::trace!("{:#x?}", GCD);
+        BootServices::with_gcd(|gcd| log::trace!("{:#x?}", gcd));
 
         gcd::add_hob_allocations_to_gcd(&hob_list);
 
         log::info!("GCD - After adding memory allocation HOBs.");
-        log::info!("{:#x?}", GCD);
+        BootServices::with_gcd(|gcd| log::trace!("{:#x?}", gcd));
 
         // Instantiate system table.
         systemtables::init_system_table();
@@ -213,7 +216,7 @@ where
             //protocols::init_protocol_support(st.boot_services());
             //misc_boot_services::init_misc_boot_services_support(st.boot_services());
             runtime::init_runtime_support(st.runtime_services());
-            image::init_image_support(&hob_list, st);
+            //image::init_image_support(&hob_list, st);
             dispatcher::init_dispatcher(Box::from(self.section_extractor));
             fv::init_fv_support(&hob_list, Box::from(self.section_extractor));
             dxe_services::init_dxe_services(st);
@@ -311,14 +314,14 @@ const ARCH_PROTOCOLS: &[(uuid::Uuid, &str)] = &[
 fn core_display_missing_arch_protocols() {
     for (uuid, name) in ARCH_PROTOCOLS {
         let guid: efi::Guid = unsafe { core::mem::transmute(uuid.to_bytes_le()) };
-        if BootServices::with_protocol_db(|db| db.locate_protocol(guid).is_err()) {
+        if with_protocol_db!(|db| db.locate_protocol(guid).is_err()) {
             log::warn!("Missing architectural protocol: {:?}, {:?}", uuid, name);
         }
     }
 }
 
 fn call_bds() {
-    if let Ok(protocol) = BootServices::with_protocol_db(|db| db.locate_protocol(bds::PROTOCOL_GUID)) {
+    if let Ok(protocol) = with_protocol_db!(|db| db.locate_protocol(bds::PROTOCOL_GUID)) {
         let bds = protocol as *mut bds::Protocol;
         unsafe {
             ((*bds).entry)(bds);

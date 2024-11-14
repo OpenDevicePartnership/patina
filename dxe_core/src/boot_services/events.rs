@@ -5,7 +5,7 @@ use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 use crate::{event_db::{TimerDelay, EventDb}, protocol_db::ProtocolDb};
 use mu_pi::protocols::{cpu_arch, timer};
-use uefi_gcd::gcd;
+use crate::uefi_gcd::gcd;
 use super::SystemState;
 
 #[inline(always)]

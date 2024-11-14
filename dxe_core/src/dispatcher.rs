@@ -17,16 +17,15 @@ use mu_pi::{
     fw_fs::{FfsFileRawType, FfsSectionType, FirmwareVolume, Section, SectionExtractor},
     protocols::firmware_volume_block,
 };
-use mu_rust_helpers::guid::guid_fmt;
+use mu_rust_helpers::{function, guid::guid_fmt};
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
 
 use crate::{
-    boot_services::BootServices,
+    boot_services::{BootServices, with_protocol_db, with_event_db},
     protocol_db::DXE_CORE_HANDLE,
     fv::core_install_firmware_volume,
-    image::{core_load_image, core_start_image},
 };
 
 // Default Dependency expression per PI spec v1.2 Vol 2 section 10.9.
@@ -125,7 +124,7 @@ fn dispatch() -> Result<bool, efi::Status> {
     {
         let mut dispatcher = DISPATCHER_CONTEXT.lock();
         if !dispatcher.arch_protocols_available {
-            dispatcher.arch_protocols_available = BootServices::with_protocol_db(|protocol_db| {
+            dispatcher.arch_protocols_available = with_protocol_db!(|protocol_db| {
                 Depex::from(ALL_ARCH_DEPEX).eval(&protocol_db.registered_protocols())
             });
         }
@@ -134,7 +133,7 @@ fn dispatch() -> Result<bool, efi::Status> {
         for mut candidate in driver_candidates {
             log::info!("Evaluting depex for candidate: {:?}", guid_fmt!(candidate.file_name));
             let depex_satisfied = match candidate.depex {
-                Some(ref mut depex) => BootServices::with_protocol_db(|protocol_db| depex.eval(&protocol_db.registered_protocols())),
+                Some(ref mut depex) => with_protocol_db!(|protocol_db| depex.eval(&protocol_db.registered_protocols())),
                 None => dispatcher.arch_protocols_available,
             };
 
@@ -172,12 +171,12 @@ fn dispatch() -> Result<bool, efi::Status> {
     for driver in scheduled {
         log::info!("Loading file: {:?}", guid_fmt!(driver.file_name));
         let image_load_result =
-            core_load_image(false, DXE_CORE_HANDLE, driver.device_path, Some(driver.pe32.section_data()));
+            BootServices::core_load_image(false, DXE_CORE_HANDLE, driver.device_path, Some(driver.pe32.section_data()));
         if let Ok(image_handle) = image_load_result {
             dispatch_attempted = true;
             // Note: ignore error result of core_start_image here - an image returning an error code is expected in some
             // cases, and a debug output for that is already implemented in core_start_image.
-            let _status = core_start_image(image_handle);
+            let _status = BootServices::core_start_image(image_handle);
         } else {
             log::error!("Failed to load: load_image returned {:#x?}", image_load_result);
         }
@@ -189,7 +188,7 @@ fn dispatch() -> Result<bool, efi::Status> {
 
         for mut candidate in fv_image_candidates {
             let depex_satisfied = match candidate.depex {
-                Some(ref mut depex) => BootServices::with_protocol_db(|protocol_db| depex.eval(&protocol_db.registered_protocols())),
+                Some(ref mut depex) => with_protocol_db!(|protocol_db| depex.eval(&protocol_db.registered_protocols())),
                 None => true,
             };
 
@@ -216,7 +215,7 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
     for handle in new_handles {
         if dispatcher.processed_fvs.insert(handle) {
             //process freshly discovered FV
-            let fvb_ptr = match BootServices::with_protocol_db(|protocol_db| protocol_db.get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID)) {
+            let fvb_ptr = match with_protocol_db!(|protocol_db| protocol_db.get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID)) {
                 Err(_) => {
                     panic!("get_interface_for_handle failed to return an interface on a handle where it should have existed")
                 }
@@ -241,7 +240,7 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
             }
 
             let fv_device_path =
-                BootServices::with_protocol_db(|protocol_db| protocol_db.get_interface_for_handle(handle, efi::protocols::device_path::PROTOCOL_GUID));
+                with_protocol_db!(|protocol_db| protocol_db.get_interface_for_handle(handle, efi::protocols::device_path::PROTOCOL_GUID));
             let fv_device_path =
                 fv_device_path.unwrap_or(core::ptr::null_mut()) as *mut efi::protocols::device_path::Protocol;
 
@@ -382,12 +381,13 @@ pub fn core_dispatcher() -> Result<(), efi::Status> {
 
 pub fn init_dispatcher(extractor: Box<dyn SectionExtractor>) {
     //set up call back for FV protocol installation.
-    let event = BootServices::with_event_db(|db| {
+    let event = with_event_db!(|db| {
         db.create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(core_fw_vol_event_protocol_notify), None, None)
             .expect("Failed to create fv protocol installation callback.")
     });
 
-    BootServices::with_protocol_db(|protocol_db| {
+    log::trace!(target: "TplMutexLockTrace", "TplMutex Lock: ProtocolLock: {}", function!());
+    with_protocol_db!(|protocol_db| {
         protocol_db
             .register_protocol_notify(firmware_volume_block::PROTOCOL_GUID, event)
             .expect("Failed to register protocol notify on fv protocol.");
@@ -404,7 +404,7 @@ pub fn display_discovered_not_dispatched() {
 
 extern "efiapi" fn core_fw_vol_event_protocol_notify(_event: efi::Event, _context: *mut c_void) {
     //Note: runs at TPL_CALLBACK
-    match BootServices::with_protocol_db(|protocol_db| protocol_db.locate_handles(Some(firmware_volume_block::PROTOCOL_GUID))) {
+    match with_protocol_db!(|protocol_db| protocol_db.locate_handles(Some(firmware_volume_block::PROTOCOL_GUID))) {
         Ok(fv_handles) => add_fv_handles(fv_handles).expect("Error adding FV handles"),
         Err(_) => panic!("could not locate handles in protocol call back"),
     };

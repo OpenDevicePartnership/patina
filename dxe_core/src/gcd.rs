@@ -13,9 +13,9 @@ use mu_pi::{
 };
 use mu_rust_helpers::function;
 use r_efi::efi;
-use uefi_gcd::gcd;
+use crate::uefi_gcd::gcd;
 
-use crate::{dxe_services::core_get_memory_space_descriptor, protocol_db, GCD};
+use crate::{dxe_services::core_get_memory_space_descriptor, protocol_db, boot_services::BootServices};
 
 // Align address downwards.
 //
@@ -69,7 +69,7 @@ pub fn init_gcd(physical_hob_list: *const c_void) -> (u64, u64) {
                 memory_end = handoff.memory_top;
             }
             Hob::Cpu(cpu) => {
-                GCD.init(cpu.size_of_memory_space as u32, cpu.size_of_io_space as u32);
+                BootServices::with_gcd(|gcd| gcd.init(cpu.size_of_memory_space as u32, cpu.size_of_io_space as u32));
             }
             _ => (),
         }
@@ -86,7 +86,7 @@ pub fn init_gcd(physical_hob_list: *const c_void) -> (u64, u64) {
 
     // initialize the GCD with an initial memory space. Note: this will fail if GCD.init() above didn't happen.
     unsafe {
-        GCD.add_memory_space(
+        BootServices::with_gcd(|gcd| gcd.add_memory_space(
             GcdMemoryType::SystemMemory,
             free_memory_start as usize,
             free_memory_size as usize,
@@ -98,10 +98,10 @@ pub fn init_gcd(physical_hob_list: *const c_void) -> (u64, u64) {
                 | efi::MEMORY_RP
                 | efi::MEMORY_XP
                 | efi::MEMORY_RO,
-        )
+        ))
         .expect("Failed to add initial region to GCD.");
         // Mark the first page of memory as non-existent
-        GCD.add_memory_space(GcdMemoryType::Reserved, 0, 0x1000, 0)
+        BootServices::with_gcd(|gcd| gcd.add_memory_space(GcdMemoryType::Reserved, 0, 0x1000, 0))
             .expect("Failed to mark the first page as non-existent in the GCD.");
     };
     (free_memory_start, free_memory_size)
@@ -168,11 +168,11 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList, free_memory_start
                         res_desc.physical_start..res_desc.resource_length,
                         GcdIoType::Io
                     );
-                    GCD.add_io_space(
+                    BootServices::with_gcd(|gcd| gcd.add_io_space(
                         GcdIoType::Io,
                         res_desc.physical_start as usize,
                         res_desc.resource_length as usize,
-                    )
+                    ))
                     .expect("Failed to add IO space to GCD");
                 }
                 hob::EFI_RESOURCE_IO_RESERVED => {
@@ -181,11 +181,11 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList, free_memory_start
                         res_desc.physical_start..res_desc.resource_length,
                         GcdIoType::Reserved
                     );
-                    GCD.add_io_space(
+                    BootServices::with_gcd(|gcd| gcd.add_io_space(
                         GcdIoType::Reserved,
                         res_desc.physical_start as usize,
                         res_desc.resource_length as usize,
-                    )
+                    ))
                     .expect("Failed to add IO space to GCD");
                 }
                 _ => {
@@ -212,12 +212,12 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList, free_memory_start
                     resource_attributes
                 );
                 unsafe {
-                    GCD.add_memory_space(
+                    BootServices::with_gcd(|gcd| gcd.add_memory_space(
                         gcd_mem_type,
                         split_range.start as usize,
                         split_range.end.saturating_sub(split_range.start) as usize,
                         gcd::get_capabilities(gcd_mem_type, resource_attributes as u64),
-                    )
+                    ))
                     .expect("Failed to add memory space to GCD");
                 }
             }
@@ -250,14 +250,14 @@ pub fn add_hob_allocations_to_gcd(hob_list: &HobList) {
                         efi::ACPI_MEMORY_NVS => protocol_db::EFI_ACPI_MEMORY_NVS_ALLOCATOR_HANDLE,
                         _ => protocol_db::DXE_CORE_HANDLE,
                     };
-                    if let Err(e) = GCD.allocate_memory_space(
+                    if let Err(e) = BootServices::with_gcd(|gcd| gcd.allocate_memory_space(
                         gcd::AllocateType::Address(desc.memory_base_address as usize),
                         descriptor.memory_type,
                         0,
                         desc.memory_length as usize,
                         allocator_handle,
                         None,
-                    ) {
+                    )) {
                         log::error!(
                             "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:?}",
                             desc.memory_base_address,
@@ -286,14 +286,14 @@ pub fn add_hob_allocations_to_gcd(hob_list: &HobList) {
             }) => {
                 log::trace!("[{}] Processing Firmware Volume HOB:\n{:#x?}\n\n", function!(), hob);
 
-                let result = GCD.allocate_memory_space(
+                let result = BootServices::with_gcd(|gcd| gcd.allocate_memory_space(
                     gcd::AllocateType::Address(*base_address as usize),
                     dxe_services::GcdMemoryType::MemoryMappedIo,
                     0,
                     *length as usize,
                     protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
                     None,
-                );
+                ));
                 if result.is_err() {
                     log::warn!(
                         "Memory space is not yet available for the FV at {:#x?} of length {:#x?}.",

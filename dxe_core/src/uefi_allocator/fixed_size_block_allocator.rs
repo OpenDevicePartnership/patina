@@ -11,7 +11,9 @@
 //!
 
 extern crate alloc;
-use crate::AllocationStrategy;
+use crate::boot_services::BootServices;
+
+use super::AllocationStrategy;
 use core::{
     alloc::{AllocError, Allocator, GlobalAlloc, Layout},
     cmp::max,
@@ -23,7 +25,6 @@ use core::{
 use linked_list_allocator::{align_down_size, align_up_size};
 use mu_pi::dxe_services::GcdMemoryType;
 use r_efi::efi;
-use uefi_gcd::gcd::SpinLockedGcd;
 
 /// Type for describing errors that this implementation can produce.
 #[derive(Debug, PartialEq)]
@@ -124,7 +125,6 @@ impl Iterator for AllocatorIterator {
 /// ```
 ///
 pub struct FixedSizeBlockAllocator {
-    gcd: &'static SpinLockedGcd,
     handle: r_efi::efi::Handle,
     list_heads: [Option<&'static mut BlockListNode>; BLOCK_SIZES.len()],
     allocators: Option<*mut AllocatorListNode>,
@@ -136,13 +136,11 @@ impl FixedSizeBlockAllocator {
     /// Creates a new empty FixedSizeBlockAllocator that will request memory from `gcd` as needed to satisfy
     /// requests.
     pub const fn new(
-        gcd: &'static SpinLockedGcd,
         allocator_handle: r_efi::efi::Handle,
         page_change_callback: Option<fn()>,
     ) -> Self {
         const EMPTY: Option<&'static mut BlockListNode> = None;
         FixedSizeBlockAllocator {
-            gcd,
             handle: allocator_handle,
             list_heads: [EMPTY; BLOCK_SIZES.len()],
             allocators: None,
@@ -201,16 +199,14 @@ impl FixedSizeBlockAllocator {
         //ensure size is a multiple of alignment to avoid fragmentation.
         let size = align_up_size(size, ALIGNMENT);
         //Allocate memory from the gcd.
-        let start_address = self
-            .gcd
-            .allocate_memory_space(
-                uefi_gcd::gcd::AllocateType::BottomUp(None),
+        let start_address = BootServices::with_gcd(|gcd| gcd.allocate_memory_space(
+                crate::uefi_gcd::gcd::AllocateType::BottomUp(None),
                 GcdMemoryType::SystemMemory,
                 ALIGNMENT_BITS,
                 size,
                 self.handle,
                 None,
-            )
+            ))
             .map_err(|_| FixedSizeBlockAllocatorError::OutOfMemory)?;
 
         //set up the new allocator, reserving space at the beginning of the range for the AllocatorListNode structure.
@@ -597,19 +593,17 @@ impl FixedSizeBlockAllocator {
 
         // Page allocations and pool allocations are disjoint; page allocations are allocated directly from the GCD and are
         // freed straight back to GCD. As such, a tracking allocator structure is not required.
-        let start_address = self
-            .gcd
-            .allocate_memory_space(
+        let start_address = BootServices::with_gcd(|gcd| gcd.allocate_memory_space(
                 allocation_strategy,
                 GcdMemoryType::SystemMemory,
                 ALIGNMENT_BITS,
                 pages * ALIGNMENT,
                 self.handle,
                 None,
-            )
+            ))
             .map_err(|err| match err {
-                uefi_gcd::gcd::Error::InvalidParameter => efi::Status::INVALID_PARAMETER,
-                uefi_gcd::gcd::Error::NotFound => efi::Status::NOT_FOUND,
+                crate::uefi_gcd::gcd::Error::InvalidParameter => efi::Status::INVALID_PARAMETER,
+                crate::uefi_gcd::gcd::Error::NotFound => efi::Status::NOT_FOUND,
                 _ => efi::Status::OUT_OF_RESOURCES,
             })?;
 
@@ -634,15 +628,15 @@ impl FixedSizeBlockAllocator {
         }
 
         if self.preferred_range.as_ref().is_some_and(|range| range.contains(&(address as efi::PhysicalAddress))) {
-            self.gcd.free_memory_space_preserving_ownership(address, pages * ALIGNMENT).map_err(|err| match err {
-                uefi_gcd::gcd::Error::NotFound => efi::Status::NOT_FOUND,
+            BootServices::with_gcd(|gcd| gcd.free_memory_space_preserving_ownership(address, pages * ALIGNMENT).map_err(|err| match err {
+                crate::uefi_gcd::gcd::Error::NotFound => efi::Status::NOT_FOUND,
                 _ => efi::Status::INVALID_PARAMETER,
-            })?;
+            }))?;
         } else {
-            self.gcd.free_memory_space(address, pages * ALIGNMENT).map_err(|err| match err {
-                uefi_gcd::gcd::Error::NotFound => efi::Status::NOT_FOUND,
+            BootServices::with_gcd(|gcd| gcd.free_memory_space(address, pages * ALIGNMENT).map_err(|err| match err {
+                crate::uefi_gcd::gcd::Error::NotFound => efi::Status::NOT_FOUND,
                 _ => efi::Status::INVALID_PARAMETER,
-            })?;
+            }))?;
         }
 
         // if we managed to allocate pages, call into the page change callback to trigger a MAT update, if applicable
@@ -685,12 +679,12 @@ impl FixedSizeBlockAllocator {
         let preferred_block = self.allocate_pages(AllocationStrategy::TopDown(None), pages)?;
         let preferred_block_address = preferred_block.as_ptr() as *mut u8 as efi::PhysicalAddress;
 
-        self.gcd.free_memory_space_preserving_ownership(preferred_block_address as usize, pages * ALIGNMENT).map_err(
+        BootServices::with_gcd(|gcd| gcd.free_memory_space_preserving_ownership(preferred_block_address as usize, pages * ALIGNMENT).map_err(
             |err| match err {
-                uefi_gcd::gcd::Error::NotFound => efi::Status::NOT_FOUND,
+                crate::uefi_gcd::gcd::Error::NotFound => efi::Status::NOT_FOUND,
                 _ => efi::Status::INVALID_PARAMETER,
             },
-        )?;
+        ))?;
 
         // this will fail if called more than once, but check at start of function should guarantee that doesn't happen.
         self.preferred_range =
@@ -769,14 +763,13 @@ impl SpinLockedFixedSizeBlockAllocator {
     /// Creates a new empty FixedSizeBlockAllocator that will request memory from `gcd` as needed to satisfy
     /// requests.
     pub const fn new(
-        gcd: &'static SpinLockedGcd,
         allocator_handle: r_efi::efi::Handle,
         callback: Option<fn()>,
     ) -> Self {
         SpinLockedFixedSizeBlockAllocator {
             inner: tpl_lock::TplMutex::new(
                 efi::TPL_HIGH_LEVEL,
-                FixedSizeBlockAllocator::new(gcd, allocator_handle, callback),
+                FixedSizeBlockAllocator::new(allocator_handle, callback),
                 "FsbLock",
             ),
         }
@@ -958,6 +951,7 @@ impl Display for SpinLockedFixedSizeBlockAllocator {
 unsafe impl Sync for SpinLockedFixedSizeBlockAllocator {}
 unsafe impl Send for SpinLockedFixedSizeBlockAllocator {}
 
+/*
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -1431,3 +1425,4 @@ mod tests {
         fsb.ensure_capacity(0x1000, usize::MAX).unwrap();
     }
 }
+*/

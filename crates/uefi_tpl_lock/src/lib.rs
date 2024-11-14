@@ -154,6 +154,7 @@ impl<'a, T: ?Sized> DerefMut for TplGuard<'a, T> {
 
 impl<'a, T: ?Sized> Drop for TplGuard<'a, T> {
     fn drop(&mut self) {
+        log::trace!(target: "TplMutexLockTrace", "TplMutex Drop: {:?}", self.name);
         self.lock.store(false, Ordering::Release);
         if let Some(tpl) = self.release_tpl {
             let bs = boot_services()

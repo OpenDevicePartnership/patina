@@ -47,10 +47,6 @@
 //!
 //!```
 //!
-
-#![no_std]
-#![feature(get_many_mut)]
-#![feature(is_sorted)]
 extern crate alloc;
 
 pub mod gcd;

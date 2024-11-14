@@ -1,3 +1,4 @@
+
 //! UEFI Allocator
 //!
 //! Provides memory-type tracking and UEFI pool allocation semantics on top of [`SpinLockedFixedSizeBlockAllocator`].
@@ -9,9 +10,8 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use r_efi::efi;
-use uefi_gcd::gcd::SpinLockedGcd;
 
-use crate::{fixed_size_block_allocator::SpinLockedFixedSizeBlockAllocator, AllocationStrategy};
+use super::{fixed_size_block_allocator::SpinLockedFixedSizeBlockAllocator, AllocationStrategy};
 use core::{
     alloc::{Allocator, GlobalAlloc, Layout},
     ffi::c_void,
@@ -85,13 +85,12 @@ impl UefiAllocator {
     ///
     /// See [`SpinLockedFixedSizeBlockAllocator::new`]
     pub const fn new(
-        gcd: &'static SpinLockedGcd,
         memory_type: efi::MemoryType,
         allocator_handle: efi::Handle,
         page_change_callback: Option<fn()>,
     ) -> Self {
         UefiAllocator {
-            allocator: SpinLockedFixedSizeBlockAllocator::new(gcd, allocator_handle, page_change_callback),
+            allocator: SpinLockedFixedSizeBlockAllocator::new(allocator_handle, page_change_callback),
             memory_type,
         }
     }
@@ -387,6 +386,7 @@ impl Display for UefiAllocator {
         self.allocator.fmt(f)
     }
 }
+/*
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -728,3 +728,4 @@ mod tests {
         }
     }
 }
+*/

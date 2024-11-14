@@ -17,13 +17,13 @@ extern crate alloc;
 use alloc::{collections::BTreeMap, vec::Vec};
 use mu_rust_helpers::function;
 
-use crate::{boot_services::BootServices, protocol_db, memory_attributes_table::MemoryAttributesTable, GCD};
+use crate::{boot_services::{with_protocol_db, BootServices}, protocol_db, memory_attributes_table::MemoryAttributesTable};
 use mu_pi::{
     dxe_services::{GcdMemoryType, MemorySpaceDescriptor},
     hob::{EFiMemoryTypeInformation, HobList, MEMORY_TYPE_INFO_HOB_GUID},
 };
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
-use uefi_allocator::{uefi_allocator::UefiAllocator, AllocationStrategy};
+use crate::uefi_allocator::{uefi_allocator::UefiAllocator, AllocationStrategy};
 
 // Todo: Move to a centralized, permanent location
 const UEFI_PAGE_SIZE: usize = 0x1000;
@@ -39,21 +39,20 @@ const PRIVATE_ALLOCATOR_TRACKING_GUID: efi::Guid =
 // allocate from it.
 #[cfg_attr(target_os = "uefi", global_allocator)]
 static EFI_BOOT_SERVICES_DATA_ALLOCATOR: UefiAllocator =
-    UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE, None);
+    UefiAllocator::new(efi::BOOT_SERVICES_DATA, protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE, None);
 
 // The following allocators are directly used by the core. These allocators are declared static so that they can easily
 // be used in the core without e.g. the overhead of acquiring a lock to retrieve them from the allocator map that all
 // the other allocators use.
 pub static EFI_LOADER_CODE_ALLOCATOR: UefiAllocator =
-    UefiAllocator::new(&GCD, efi::LOADER_CODE, protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE, None);
+    UefiAllocator::new(efi::LOADER_CODE, protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE, None);
 
 pub static EFI_BOOT_SERVICES_CODE_ALLOCATOR: UefiAllocator =
-    UefiAllocator::new(&GCD, efi::BOOT_SERVICES_CODE, protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE, None);
+    UefiAllocator::new(efi::BOOT_SERVICES_CODE, protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE, None);
 
 // This needs to call MemoryAttributesTable::install on allocation/deallocation, hence having the real callback
 // passed in
 pub static EFI_RUNTIME_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
-    &GCD,
     efi::RUNTIME_SERVICES_CODE,
     protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE,
     Some(MemoryAttributesTable::install),
@@ -62,7 +61,6 @@ pub static EFI_RUNTIME_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::n
 // This needs to call MemoryAttributesTable::install on allocation/deallocation, hence having the real callback
 // passed in
 pub static EFI_RUNTIME_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocator::new(
-    &GCD,
     efi::RUNTIME_SERVICES_DATA,
     protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE,
     Some(MemoryAttributesTable::install),
@@ -245,7 +243,7 @@ impl<'a> AllocatorMap {
         // the lock ensures exclusive access to the map, but an allocator may have been created already; so only create
         // the allocator if it doesn't yet exist for this memory type. MAT callbacks are only needed for Runtime
         // Services Code and Data, which are static allocators, so we can always do None here
-        self.map.entry(memory_type).or_insert_with(|| UefiAllocator::new(&GCD, memory_type, handle, None))
+        self.map.entry(memory_type).or_insert_with(|| UefiAllocator::new(memory_type, handle, None))
     }
 
     // retrieves an allocator if it exists
@@ -286,7 +284,7 @@ impl<'a> AllocatorMap {
                 }) {
                     return Ok(handle);
                 }
-                let (handle, _) = BootServices::with_protocol_db(|protocol_db| {
+                let (handle, _) = with_protocol_db!(|protocol_db| {
                     protocol_db.install_protocol_interface(
                         None,
                         PRIVATE_ALLOCATOR_TRACKING_GUID,
@@ -497,15 +495,15 @@ fn merge_blocks(
 }
 
 pub(crate) fn get_memory_map_descriptors() -> Result<Vec<efi::MemoryDescriptor>, efi::Status> {
-    let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
+    let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(BootServices::with_gcd(|gcd| gcd.memory_descriptor_count() + 10));
 
     // the fold operation would allocate boot services data, which we cannot do because we cannot change the memory map
     // after getting the descriptors from the GCD. We would now be invalid if we ended up overflowing a pool and getting
     // more memory from the GCD. Therefore, we need to pre-allocate memory before we get the GCD descriptors
     // to ensure we don't overflow the boot services data pool. Let's make sure we have a few extra descriptors
-    let merged_descriptors: Vec<efi::MemoryDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
+    let merged_descriptors: Vec<efi::MemoryDescriptor> = Vec::with_capacity(BootServices::with_gcd(|gcd| gcd.memory_descriptor_count() + 10));
 
-    GCD.get_memory_descriptors(&mut descriptors).expect("get_memory_descriptors failed.");
+    BootServices::with_gcd(|gcd| gcd.get_memory_descriptors(&mut descriptors)).expect("get_memory_descriptors failed.");
 
     //Note: get_memory_descriptors is should already be ordered, so sort is unnecessary.
     //descriptors.sort_unstable_by(|a, b|a.physical_start.cmp(&b.physical_start));

@@ -164,12 +164,12 @@ pub fn get_capabilities(gcd_mem_type: dxe_services::GcdMemoryType, attributes: u
 #[derive(Debug)]
 #[allow(clippy::upper_case_acronyms)]
 //The Global Coherency Domain (GCD) Services are used to manage the memory resources visible to the boot processor.
-struct GCD {
+struct MemoryGcd {
     maximum_address: usize,
     memory_blocks: Option<Rbt<'static, MemoryBlock>>,
 }
 
-impl GCD {
+impl MemoryGcd {
     // Create an instance of the Global Coherency Domain (GCD) for testing.
     #[cfg(test)]
     pub(crate) const fn new(processor_address_bits: u32) -> Self {
@@ -673,7 +673,7 @@ impl GCD {
     /// Caller is required to initialize a vector of sufficient capacity to hold the descriptors
     /// and provide a mutable reference to it.
     pub fn get_memory_descriptors(
-        &mut self,
+        &self,
         buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>,
     ) -> Result<(), Error> {
         ensure!(self.maximum_address != 0, Error::NotInitialized);
@@ -682,7 +682,7 @@ impl GCD {
 
         log::trace!(target: "allocations", "[{}] Enter\n", function!(), );
 
-        if let Some(blocks) = &mut self.memory_blocks {
+        if let Some(blocks) = &self.memory_blocks {
             let mut current = blocks.first_idx();
             while let Some(idx) = current {
                 let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
@@ -701,12 +701,12 @@ impl GCD {
 
     /// This service returns the descriptor for the given physical address.
     pub fn get_memory_descriptor_for_address(
-        &mut self,
+        &self,
         address: efi::PhysicalAddress,
     ) -> Result<dxe_services::MemorySpaceDescriptor, Error> {
         ensure!(self.maximum_address != 0, Error::NotInitialized);
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
+        let memory_blocks = self.memory_blocks.as_ref().ok_or(Error::NotFound)?;
 
         log::trace!(target: "gcd_measure", "search");
         let idx = memory_blocks.get_closest_idx(&(address)).ok_or(Error::NotFound)?;
@@ -1356,51 +1356,28 @@ pub type MapChangeCallback = fn(MapChangeType);
 
 /// Implements a spin locked GCD  suitable for use as a static global.
 #[derive(Debug)]
-pub struct SpinLockedGcd {
-    memory: tpl_lock::TplMutex<GCD>,
-    io: tpl_lock::TplMutex<IoGCD>,
+pub struct Gcd {
+    memory: MemoryGcd,
+    io: IoGCD,
     memory_change_callback: Option<MapChangeCallback>,
 }
 
-impl SpinLockedGcd {
+impl Gcd {
     /// Creates a new uninitialized GCD. [`Self::init`] must be invoked before any other functions or they will return
     /// [`Error::NotInitialized`]. An optional callback can be provided which will be invoked whenever an operation
     /// changes the GCD map.
     pub const fn new(memory_change_callback: Option<MapChangeCallback>) -> Self {
         Self {
-            memory: tpl_lock::TplMutex::new(
-                efi::TPL_HIGH_LEVEL,
-                GCD { maximum_address: 0, memory_blocks: None },
-                "GcdMemLock",
-            ),
-            io: tpl_lock::TplMutex::new(
-                efi::TPL_HIGH_LEVEL,
-                IoGCD { maximum_address: 0, io_blocks: None },
-                "GcdIoLock",
-            ),
+            memory: MemoryGcd { maximum_address: 0, memory_blocks: None },
+            io: IoGCD { maximum_address: 0, io_blocks: None },
             memory_change_callback,
         }
     }
 
-    /// Resets the GCD to default state. Intended for test scenarios.
-    ///
-    /// # Safety
-    ///
-    /// This call potentially invalidates all allocations made by any allocator on top of this GCD.
-    /// Caller is responsible for ensuring that no such allocations exist.
-    ///
-    pub unsafe fn reset(&self) {
-        let (mut mem, mut io) = (self.memory.lock(), self.io.lock());
-        mem.maximum_address = 0;
-        mem.memory_blocks = None;
-        io.maximum_address = 0;
-        io.io_blocks = None;
-    }
-
     /// Initializes the underlying memory GCD and I/O GCD with the given address bits.
-    pub fn init(&self, memory_address_bits: u32, io_address_bits: u32) {
-        self.memory.lock().init(memory_address_bits);
-        self.io.lock().init(io_address_bits);
+    pub fn init(&mut self, memory_address_bits: u32, io_address_bits: u32) {
+        self.memory.init(memory_address_bits);
+        self.io.init(io_address_bits);
     }
 
     /// This service adds reserved memory, system memory, or memory-mapped I/O resources to the global coherency domain of the processor.
@@ -1412,13 +1389,13 @@ impl SpinLockedGcd {
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.1
     pub unsafe fn add_memory_space(
-        &self,
+        &mut self,
         memory_type: dxe_services::GcdMemoryType,
         base_address: usize,
         len: usize,
         capabilities: u64,
     ) -> Result<usize, Error> {
-        let result = self.memory.lock().add_memory_space(memory_type, base_address, len, capabilities);
+        let result = self.memory.add_memory_space(memory_type, base_address, len, capabilities);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
                 callback(MapChangeType::AddMemorySpace)
@@ -1431,8 +1408,8 @@ impl SpinLockedGcd {
     ///
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.4
-    pub fn remove_memory_space(&self, base_address: usize, len: usize) -> Result<(), Error> {
-        let result = self.memory.lock().remove_memory_space(base_address, len);
+    pub fn remove_memory_space(&mut self, base_address: usize, len: usize) -> Result<(), Error> {
+        let result = self.memory.remove_memory_space(base_address, len);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
                 callback(MapChangeType::RemoveMemorySpace)
@@ -1446,7 +1423,7 @@ impl SpinLockedGcd {
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.2
     pub fn allocate_memory_space(
-        &self,
+        &mut self,
         allocate_type: AllocateType,
         memory_type: dxe_services::GcdMemoryType,
         alignment: usize,
@@ -1454,7 +1431,7 @@ impl SpinLockedGcd {
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
     ) -> Result<usize, Error> {
-        let result = self.memory.lock().allocate_memory_space(
+        let result = self.memory.allocate_memory_space(
             allocate_type,
             memory_type,
             alignment,
@@ -1514,8 +1491,8 @@ impl SpinLockedGcd {
     ///
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.3
-    pub fn free_memory_space(&self, base_address: usize, len: usize) -> Result<(), Error> {
-        let result = self.memory.lock().free_memory_space(base_address, len);
+    pub fn free_memory_space(&mut self, base_address: usize, len: usize) -> Result<(), Error> {
+        let result = self.memory.free_memory_space(base_address, len);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
                 callback(MapChangeType::FreeMemorySpace)
@@ -1533,8 +1510,8 @@ impl SpinLockedGcd {
     ///
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.3
-    pub fn free_memory_space_preserving_ownership(&self, base_address: usize, len: usize) -> Result<(), Error> {
-        let result = self.memory.lock().free_memory_space_preserving_ownership(base_address, len);
+    pub fn free_memory_space_preserving_ownership(&mut self, base_address: usize, len: usize) -> Result<(), Error> {
+        let result = self.memory.free_memory_space_preserving_ownership(base_address, len);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
                 callback(MapChangeType::FreeMemorySpace)
@@ -1547,8 +1524,8 @@ impl SpinLockedGcd {
     ///
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.6
-    pub fn set_memory_space_attributes(&self, base_address: usize, len: usize, attributes: u64) -> Result<(), Error> {
-        let result = self.memory.lock().set_memory_space_attributes(base_address, len, attributes);
+    pub fn set_memory_space_attributes(&mut self, base_address: usize, len: usize, attributes: u64) -> Result<(), Error> {
+        let result = self.memory.set_memory_space_attributes(base_address, len, attributes);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
                 callback(MapChangeType::SetMemoryAttributes)
@@ -1562,12 +1539,12 @@ impl SpinLockedGcd {
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.6
     pub fn set_memory_space_capabilities(
-        &self,
+        &mut self,
         base_address: usize,
         len: usize,
         capabilities: u64,
     ) -> Result<(), Error> {
-        let result = self.memory.lock().set_memory_space_capabilities(base_address, len, capabilities);
+        let result = self.memory.set_memory_space_capabilities(base_address, len, capabilities);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
                 callback(MapChangeType::SetMemoryCapabilities)
@@ -1578,7 +1555,7 @@ impl SpinLockedGcd {
 
     /// returns a copy of the current set of memory blocks descriptors in the GCD.
     pub fn get_memory_descriptors(&self, buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>) -> Result<(), Error> {
-        self.memory.lock().get_memory_descriptors(buffer)
+        self.memory.get_memory_descriptors(buffer)
     }
 
     // returns the descriptor for the given physical address.
@@ -1586,32 +1563,32 @@ impl SpinLockedGcd {
         &self,
         address: efi::PhysicalAddress,
     ) -> Result<dxe_services::MemorySpaceDescriptor, Error> {
-        self.memory.lock().get_memory_descriptor_for_address(address)
+        self.memory.get_memory_descriptor_for_address(address)
     }
 
     /// returns the current count of blocks in the list.
     pub fn memory_descriptor_count(&self) -> usize {
-        self.memory.lock().memory_descriptor_count()
+        self.memory.memory_descriptor_count()
     }
 
     /// Acquires lock and delegates to [`IoGCD::add_io_space`]
     pub fn add_io_space(
-        &self,
+        &mut self,
         io_type: dxe_services::GcdIoType,
         base_address: usize,
         len: usize,
     ) -> Result<usize, Error> {
-        self.io.lock().add_io_space(io_type, base_address, len)
+        self.io.add_io_space(io_type, base_address, len)
     }
 
     /// Acquires lock and delegates to [`IoGCD::remove_io_space`]
-    pub fn remove_io_space(&self, base_address: usize, len: usize) -> Result<(), Error> {
-        self.io.lock().remove_io_space(base_address, len)
+    pub fn remove_io_space(&mut self, base_address: usize, len: usize) -> Result<(), Error> {
+        self.io.remove_io_space(base_address, len)
     }
 
     /// Acquires lock and delegates to [`IoGCD::allocate_io_space`]
     pub fn allocate_io_space(
-        &self,
+        &mut self,
         allocate_type: AllocateType,
         io_type: dxe_services::GcdIoType,
         alignment: usize,
@@ -1619,27 +1596,27 @@ impl SpinLockedGcd {
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
     ) -> Result<usize, Error> {
-        self.io.lock().allocate_io_space(allocate_type, io_type, alignment, len, image_handle, device_handle)
+        self.io.allocate_io_space(allocate_type, io_type, alignment, len, image_handle, device_handle)
     }
 
     /// Acquires lock and delegates to [`IoGCD::free_io_space]
-    pub fn free_io_space(&self, base_address: usize, len: usize) -> Result<(), Error> {
-        self.io.lock().free_io_space(base_address, len)
+    pub fn free_io_space(&mut self, base_address: usize, len: usize) -> Result<(), Error> {
+        self.io.free_io_space(base_address, len)
     }
 
     /// Acquires lock and delegates to [`IoGCD::get_io_descriptors`]
-    pub fn get_io_descriptors(&self, buffer: &mut Vec<dxe_services::IoSpaceDescriptor>) -> Result<(), Error> {
-        self.io.lock().get_io_descriptors(buffer)
+    pub fn get_io_descriptors(&mut self, buffer: &mut Vec<dxe_services::IoSpaceDescriptor>) -> Result<(), Error> {
+        self.io.get_io_descriptors(buffer)
     }
 
     /// Acquires lock and delegates to [`IoGCD::io_descriptor_count`]
     pub fn io_descriptor_count(&self) -> usize {
-        self.io.lock().io_descriptor_count()
+        self.io.io_descriptor_count()
     }
 }
 
-unsafe impl Sync for SpinLockedGcd {}
-unsafe impl Send for SpinLockedGcd {}
+unsafe impl Sync for Gcd {}
+unsafe impl Send for Gcd {}
 
 #[cfg(test)]
 mod tests {

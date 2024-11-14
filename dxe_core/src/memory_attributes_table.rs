@@ -8,6 +8,7 @@
 //!
 extern crate alloc;
 use alloc::vec::Vec;
+use mu_rust_helpers::function;
 
 use core::{
     ffi::c_void,
@@ -18,7 +19,7 @@ use core::{
 };
 
 use crate::{
-    boot_services::BootServices,
+    boot_services::{with_event_db, BootServices},
     allocator::{core_allocate_pool, core_free_pool, get_memory_map_descriptors, MemoryDescriptorSlice},
     systemtables,
 };
@@ -81,7 +82,8 @@ impl Debug for MemoryAttributesTable {
 // this function is intended to be called by dxe_main to set up the event to create the MAT for the first time
 // on Ready to Boot.
 pub fn init_memory_attributes_table_support() {
-    if let Err(status) = BootServices::with_event_db(|db| db.create_event(
+    log::trace!(target: "TplMutexLockTrace", "TplMutex Lock: EventLock: {}", function!());
+    if let Err(status) = with_event_db!(|db| db.create_event(
         efi::EVT_NOTIFY_SIGNAL,
         efi::TPL_CALLBACK,
         Some(core_install_memory_attributes_table_event_wrapper),
@@ -100,7 +102,8 @@ extern "efiapi" fn core_install_memory_attributes_table_event_wrapper(event: efi
     // and the install callback will be invoked on the next runtime memory allocation
     POST_RTB.store(true, Ordering::Relaxed);
 
-    if let Err(status) = BootServices::with_event_db(|db|db.close_event(event)) {
+    log::trace!(target: "TplMutexLockTrace", "TplMutex Lock: EventLock: {}", function!());
+    if let Err(status) = with_event_db!(|db|db.close_event(event)) {
         log::error!("Failed to close MAT ready to boot event with status {:#X?}. This should be okay.", status);
     }
 }
