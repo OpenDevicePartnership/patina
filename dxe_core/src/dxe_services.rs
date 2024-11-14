@@ -20,10 +20,9 @@ use r_efi::efi;
 
 use crate::{
     allocator::{core_allocate_pool, EFI_RUNTIME_SERVICES_DATA_ALLOCATOR},
-    boot_services::{with_event_db, with_protocol_db},
+    boot_services::{with_event_db, with_protocol_db, BootServices},
     dispatcher::{core_dispatcher, core_schedule, core_trust},
     fv::core_install_firmware_volume,
-    misc_boot_services,
     systemtables::EfiSystemTable,
     GCD,
 };
@@ -513,7 +512,7 @@ pub fn init_dxe_services(system_table: &mut EfiSystemTable) {
 
     let dxe_system_table = Box::new_in(dxe_system_table, &EFI_RUNTIME_SERVICES_DATA_ALLOCATOR);
 
-    let _ = misc_boot_services::core_install_configuration_table(
+    let _ = BootServices::core_install_configuration_table(
         dxe_services::DXE_SERVICES_TABLE_GUID,
         unsafe { (Box::into_raw(dxe_system_table) as *mut c_void).as_mut() },
         system_table,

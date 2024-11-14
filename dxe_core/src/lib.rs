@@ -63,7 +63,6 @@ mod fv;
 mod gcd;
 mod image;
 mod memory_attributes_table;
-mod misc_boot_services;
 mod protocol_db;
 mod runtime;
 mod systemtables;
@@ -211,7 +210,6 @@ where
 
             allocator::init_memory_support(st.boot_services(), &hob_list);
             boot_services::BootServices::register_services(st.boot_services());
-            misc_boot_services::init_misc_boot_services_support(st.boot_services());
             runtime::init_runtime_support(st.runtime_services());
             image::init_image_support(&hob_list, st);
             dispatcher::init_dispatcher(Box::from(self.section_extractor));
@@ -225,7 +223,7 @@ where
             let hob_list_guid =
                 uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").expect("Invalid UUID format.");
             let hob_list_guid: efi::Guid = unsafe { *(hob_list_guid.to_bytes_le().as_ptr() as *const efi::Guid) };
-            misc_boot_services::core_install_configuration_table(
+            boot_services::BootServices::core_install_configuration_table(
                 hob_list_guid,
                 unsafe { (physical_hob_list as *mut c_void).as_mut() },
                 st,

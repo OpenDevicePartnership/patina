@@ -19,8 +19,7 @@ use core::{
 
 use crate::{
     allocator::{core_allocate_pool, core_free_pool, get_memory_map_descriptors, MemoryDescriptorSlice},
-    boot_services::with_event_db,
-    misc_boot_services::core_install_configuration_table,
+    boot_services::{with_event_db, BootServices},
     systemtables,
 };
 use r_efi::efi;
@@ -132,9 +131,11 @@ pub fn core_install_memory_attributes_table() {
 
                     // it is unsafe to get a mutable reference to the MAT here, but we know that we have a valid ptr
                     unsafe {
-                        if let Err(status) =
-                            core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, empty_ptr.as_mut(), st)
-                        {
+                        if let Err(status) = BootServices::core_install_configuration_table(
+                            efi::MEMORY_ATTRIBUTES_TABLE_GUID,
+                            empty_ptr.as_mut(),
+                            st,
+                        ) {
                             log::error!(
                                 "Failed to create a null MAT table with status {:#X?}, cannot create MAT",
                                 status
@@ -227,7 +228,11 @@ pub fn core_install_memory_attributes_table() {
                     mat_desc_list.len() * size_of::<efi::MemoryDescriptor>(),
                 );
 
-                match core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, void_ptr.as_mut(), st) {
+                match BootServices::core_install_configuration_table(
+                    efi::MEMORY_ATTRIBUTES_TABLE_GUID,
+                    void_ptr.as_mut(),
+                    st,
+                ) {
                     Err(status) => {
                         log::error!("Failed to install MAT table! Status {:#X?}", status);
                         if let Err(err) = core_free_pool(void_ptr) {

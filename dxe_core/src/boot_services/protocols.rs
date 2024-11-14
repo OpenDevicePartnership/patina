@@ -14,7 +14,7 @@ use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_device_path::{is_device_path_end, remaining_device_path};
 
-use super::{EventDb, EventState, ProtocolDb};
+use super::{EventDb, EventState, ProtocolCache, ProtocolDb};
 
 use crate::{
     allocator::core_allocate_pool,
@@ -27,6 +27,7 @@ pub fn core_install_protocol_interface(
     protocol_db: &ProtocolDb,
     event_db: &EventDb,
     event_state: &EventState,
+    protocol_cache: &ProtocolCache,
     handle: Option<efi::Handle>,
     protocol: efi::Guid,
     interface: *mut c_void,
@@ -37,7 +38,9 @@ pub fn core_install_protocol_interface(
     let mut closed_events = Vec::new();
 
     for notify in notifies {
-        if super::events::signal_event(event_db, event_state, notify.event) == efi::Status::INVALID_PARAMETER {
+        if super::events::signal_event(event_db, event_state, protocol_cache, notify.event)
+            == efi::Status::INVALID_PARAMETER
+        {
             //means event doesn't exist (probably closed).
             closed_events.push(notify.event); // Other error cases not actionable.
         }
@@ -53,6 +56,7 @@ pub fn install_protocol_interface(
     protocol_db: &ProtocolDb,
     event_db: &EventDb,
     event_state: &EventState,
+    protocol_cache: &ProtocolCache,
     handle: *mut efi::Handle,
     protocol: *mut efi::Guid,
     interface_type: efi::InterfaceType,
@@ -71,6 +75,7 @@ pub fn install_protocol_interface(
         protocol_db,
         event_db,
         event_state,
+        protocol_cache,
         caller_handle,
         caller_protocol,
         interface,
@@ -197,6 +202,7 @@ pub fn reinstall_protocol_interface(
     protocol_db: &ProtocolDb,
     event_db: &EventDb,
     event_state: &EventState,
+    protocol_cache: &ProtocolCache,
     handle: efi::Handle,
     protocol: *mut efi::Guid,
     old_interface: *mut c_void,
@@ -228,9 +234,15 @@ pub fn reinstall_protocol_interface(
     let protocol = *(unsafe { protocol.as_mut().expect("previously null-checked pointer is null") });
 
     // Call install to install the new interface and trigger any notifies
-    if let Err(err) =
-        core_install_protocol_interface(protocol_db, event_db, event_state, Some(handle), protocol, new_interface)
-    {
+    if let Err(err) = core_install_protocol_interface(
+        protocol_db,
+        event_db,
+        event_state,
+        protocol_cache,
+        Some(handle),
+        protocol,
+        new_interface,
+    ) {
         let result = uninstall_dummy_interface(protocol_db, handle);
         debug_assert!(result.is_ok());
         return err;
@@ -497,6 +509,7 @@ pub unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::
     let protocol_db = &super::PRIVATE_DATA.protocol_db;
     let event_db = &super::PRIVATE_DATA.event_db;
     let event_state = &super::PRIVATE_DATA.event_state;
+    let protocol_cache = &super::PRIVATE_DATA.protocol_cache;
     // The UEFI spec does not indicate whether the protocols installed here are atomic with respect to notify  - i.e.
     // whether any registered notifies should be invoked between the installation of the multiple protocols, or only
     // after all protocols are installed. Despite the spec ambiguity, the reference EDK2 C implementation does raise to
@@ -539,6 +552,7 @@ pub unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::
             protocol_db,
             event_db,
             event_state,
+            protocol_cache,
             handle,
             protocol,
             efi::NATIVE_INTERFACE,
@@ -563,6 +577,7 @@ pub unsafe extern "C" fn uninstall_multiple_protocol_interfaces(handle: efi::Han
     let protocol_db = &super::PRIVATE_DATA.protocol_db;
     let event_db: &EventDb = &super::PRIVATE_DATA.event_db;
     let event_state: &EventState = &super::PRIVATE_DATA.event_state;
+    let protocol_cache: &ProtocolCache = &super::PRIVATE_DATA.protocol_cache;
     // See note in install_multiple_protocol_interfaces.
     let tpl_mutex = TplMutex::new(efi::TPL_NOTIFY, (), "atomic_protocol_uninstall");
     let _tpl_guard = tpl_mutex.lock();
@@ -593,6 +608,7 @@ pub unsafe extern "C" fn uninstall_multiple_protocol_interfaces(handle: efi::Han
                         protocol_db,
                         event_db,
                         event_state,
+                        protocol_cache,
                         Some(handle),
                         protocol,
                         interface,

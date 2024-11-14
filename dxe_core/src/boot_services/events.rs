@@ -8,7 +8,7 @@
 //!
 use core::{
     ffi::c_void,
-    sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 
 use super::{EventDb, ProtocolDb};
@@ -17,15 +17,14 @@ use alloc::vec;
 
 use r_efi::efi;
 
-use mu_pi::protocols::{cpu_arch, timer};
 use crate::event_db::TimerDelay;
+use mu_pi::protocols::{cpu_arch, timer};
 use uefi_gcd::gcd;
 
 // TODO JAVAGEDES: Make the structure Spin locked instead of the individual fields.
 pub struct EventState {
     current_tpl: AtomicUsize,
     system_time: AtomicU64,
-    cpu_arch_ptr: AtomicPtr<cpu_arch::Protocol>,
     event_notifies_in_progress: AtomicBool,
     event_db_initialized: AtomicBool,
 }
@@ -35,7 +34,6 @@ impl EventState {
         Self {
             current_tpl: AtomicUsize::new(efi::TPL_APPLICATION),
             system_time: AtomicU64::new(0),
-            cpu_arch_ptr: AtomicPtr::new(core::ptr::null_mut()),
             event_notifies_in_progress: AtomicBool::new(false),
             event_db_initialized: AtomicBool::new(false),
         }
@@ -121,7 +119,12 @@ pub fn close_event(event_db: &EventDb, event: efi::Event) -> efi::Status {
 }
 
 #[inline(always)]
-pub fn signal_event(event_db: &EventDb, event_state: &EventState, event: efi::Event) -> efi::Status {
+pub fn signal_event(
+    event_db: &EventDb,
+    event_state: &EventState,
+    protocol_cache: &super::ProtocolCache,
+    event: efi::Event,
+) -> efi::Status {
     let status = match event_db.signal_event(event) {
         Ok(()) => efi::Status::SUCCESS,
         Err(err) => err,
@@ -131,8 +134,8 @@ pub fn signal_event(event_db: &EventDb, event_state: &EventState, event: efi::Ev
     //pending events as a side effect of the locking implementation calling raise/restore
     //TPL. The spec doesn't require this; but it's likely that code out there depends
     //on it. So emulate that here with an artificial raise/restore.
-    let old_tpl = raise_tpl(event_state, efi::TPL_HIGH_LEVEL);
-    restore_tpl(event_db, event_state, old_tpl);
+    let old_tpl = raise_tpl(event_state, protocol_cache, efi::TPL_HIGH_LEVEL);
+    restore_tpl(event_db, event_state, protocol_cache, old_tpl);
 
     status
 }
@@ -141,6 +144,7 @@ pub fn signal_event(event_db: &EventDb, event_state: &EventState, event: efi::Ev
 pub fn wait_for_event(
     event_db: &EventDb,
     event_state: &EventState,
+    protocol_cache: &super::ProtocolCache,
     number_of_events: usize,
     event_array: *mut efi::Event,
     out_index: *mut usize,
@@ -159,7 +163,7 @@ pub fn wait_for_event(
     //spin on the list
     loop {
         for (index, event) in event_list.iter().enumerate() {
-            match check_event(event_db, event_state, *event) {
+            match check_event(event_db, event_state, protocol_cache, *event) {
                 efi::Status::NOT_READY => (),
                 status => {
                     unsafe { *out_index = index };
@@ -171,7 +175,12 @@ pub fn wait_for_event(
 }
 
 #[inline(always)]
-pub fn check_event(event_db: &EventDb, event_state: &EventState, event: efi::Event) -> efi::Status {
+pub fn check_event(
+    event_db: &EventDb,
+    event_state: &EventState,
+    protocol_cache: &super::ProtocolCache,
+    event: efi::Event,
+) -> efi::Status {
     let event_type = match event_db.get_event_type(event) {
         Ok(event_type) => event_type,
         Err(err) => return err,
@@ -196,8 +205,8 @@ pub fn check_event(event_db: &EventDb, event_state: &EventState, event: efi::Eve
     }
 
     // raise/restore TPL to allow notifies to occur at the appropriate level.
-    let old_tpl = raise_tpl(event_state, efi::TPL_HIGH_LEVEL);
-    restore_tpl(event_db, event_state, old_tpl);
+    let old_tpl = raise_tpl(event_state, protocol_cache, efi::TPL_HIGH_LEVEL);
+    restore_tpl(event_db, event_state, protocol_cache, old_tpl);
 
     match event_db.read_and_clear_signaled(event) {
         Ok(signaled) => {
@@ -239,7 +248,7 @@ pub fn set_timer(
 }
 
 #[inline(always)]
-pub fn raise_tpl(event_state: &EventState, new_tpl: efi::Tpl) -> efi::Tpl {
+pub fn raise_tpl(event_state: &EventState, protocol_cache: &super::ProtocolCache, new_tpl: efi::Tpl) -> efi::Tpl {
     assert!(new_tpl <= efi::TPL_HIGH_LEVEL, "Invalid attempt to raise TPL above TPL_HIGH_LEVEL");
 
     let prev_tpl = event_state.current_tpl.fetch_max(new_tpl, Ordering::SeqCst);
@@ -252,13 +261,18 @@ pub fn raise_tpl(event_state: &EventState, new_tpl: efi::Tpl) -> efi::Tpl {
     );
 
     if (new_tpl == efi::TPL_HIGH_LEVEL) && (prev_tpl < efi::TPL_HIGH_LEVEL) {
-        set_interrupt_state(event_state, false);
+        set_interrupt_state(protocol_cache, false);
     }
     prev_tpl
 }
 
 #[inline(always)]
-pub fn restore_tpl(event_db: &EventDb, event_state: &EventState, new_tpl: efi::Tpl) {
+pub fn restore_tpl(
+    event_db: &EventDb,
+    event_state: &EventState,
+    protocol_cache: &super::ProtocolCache,
+    new_tpl: efi::Tpl,
+) {
     let prev_tpl = event_state.current_tpl.fetch_min(new_tpl, Ordering::SeqCst);
 
     assert!(
@@ -290,9 +304,9 @@ pub fn restore_tpl(event_db: &EventDb, event_state: &EventState, new_tpl: efi::T
 
         for event in events {
             if event.notify_tpl < efi::TPL_HIGH_LEVEL {
-                set_interrupt_state(event_state, true);
+                set_interrupt_state(protocol_cache, true);
             } else {
-                set_interrupt_state(event_state, false);
+                set_interrupt_state(protocol_cache, false);
             }
             event_state.current_tpl.store(event.notify_tpl, Ordering::SeqCst);
             let notify_context = match event.notify_context {
@@ -313,22 +327,22 @@ pub fn restore_tpl(event_db: &EventDb, event_state: &EventState, new_tpl: efi::T
     }
 
     if new_tpl < efi::TPL_HIGH_LEVEL {
-        set_interrupt_state(event_state, true);
+        set_interrupt_state(protocol_cache, true);
     }
     event_state.current_tpl.store(new_tpl, Ordering::SeqCst);
 }
 
 #[inline(always)]
-pub fn timer_tick(event_db: &EventDb, event_state: &EventState, time: u64) {
-    let old_tpl = raise_tpl(event_state, efi::TPL_HIGH_LEVEL);
+pub fn timer_tick(event_db: &EventDb, event_state: &EventState, protocol_cache: &super::ProtocolCache, time: u64) {
+    let old_tpl = raise_tpl(event_state, protocol_cache, efi::TPL_HIGH_LEVEL);
     event_state.system_time.fetch_add(time, Ordering::SeqCst);
     let current_time = event_state.system_time.load(Ordering::SeqCst);
     event_db.timer_tick(current_time);
-    restore_tpl(event_db, event_state, old_tpl); //implicitly dispatches timer notifies if any.
+    restore_tpl(event_db, event_state, protocol_cache, old_tpl); //implicitly dispatches timer notifies if any.
 }
 
-fn set_interrupt_state(event_state: &EventState, enable: bool) {
-    let cpu_arch_ptr = event_state.cpu_arch_ptr.load(Ordering::SeqCst);
+fn set_interrupt_state(protocol_cache: &super::ProtocolCache, enable: bool) {
+    let cpu_arch_ptr = protocol_cache.cpu_arch.load(Ordering::SeqCst);
     if let Some(cpu_arch) = unsafe { cpu_arch_ptr.as_mut() } {
         match enable {
             true => {
@@ -363,13 +377,13 @@ pub fn timer_available_callback(
 pub fn cpu_arch_available(
     protocol_db: &ProtocolDb,
     event_db: &EventDb,
-    event_state: &EventState,
+    protocol_cache: &super::ProtocolCache,
     event: efi::Event,
     _context: *mut c_void,
 ) {
     match protocol_db.locate_protocol(cpu_arch::PROTOCOL_GUID) {
         Ok(cpu_arch_ptr) => {
-            event_state.cpu_arch_ptr.store(cpu_arch_ptr as *mut cpu_arch::Protocol, Ordering::SeqCst);
+            protocol_cache.cpu_arch.store(cpu_arch_ptr as *mut cpu_arch::Protocol, Ordering::SeqCst);
             if let Err(status_err) = event_db.close_event(event) {
                 log::warn!("Could not close event for cpu_arch_available due to error {:?}", status_err);
             }

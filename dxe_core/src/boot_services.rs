@@ -1,15 +1,35 @@
 use crate::{
-    event_db::SpinLockedEventDb as EventDb,
-    protocol_db::SpinLockedProtocolDb as ProtocolDb,
+    event_db::SpinLockedEventDb as EventDb, protocol_db::SpinLockedProtocolDb as ProtocolDb,
+    systemtables::EfiSystemTable,
 };
-use core::ffi::c_void;
-use mu_pi::protocols::{cpu_arch, timer};
+use core::{
+    ffi::c_void,
+    sync::atomic::{AtomicBool, AtomicPtr},
+};
+use mu_pi::protocols::{cpu_arch, metronome, timer, watchdog};
 use r_efi::efi;
 
 mod events;
+mod misc;
 mod protocols;
 
 use events::EventState;
+
+struct ProtocolCache {
+    cpu_arch: AtomicPtr<cpu_arch::Protocol>,
+    metronome: AtomicPtr<metronome::Protocol>,
+    watchdog: AtomicPtr<watchdog::Protocol>,
+}
+
+impl ProtocolCache {
+    pub const fn new() -> Self {
+        Self {
+            cpu_arch: AtomicPtr::new(core::ptr::null_mut()),
+            metronome: AtomicPtr::new(core::ptr::null_mut()),
+            watchdog: AtomicPtr::new(core::ptr::null_mut()),
+        }
+    }
+}
 
 static PRIVATE_DATA: PrivateData = PrivateData::new();
 
@@ -17,11 +37,19 @@ struct PrivateData {
     protocol_db: ProtocolDb,
     event_db: EventDb,
     event_state: EventState,
+    protocol_cache: ProtocolCache,
+    pre_exit_boot_services_signal: AtomicBool,
 }
 
 impl PrivateData {
     pub const fn new() -> Self {
-        Self { protocol_db: ProtocolDb::new(), event_db: EventDb::new(), event_state: EventState::new() }
+        Self {
+            protocol_db: ProtocolDb::new(),
+            event_db: EventDb::new(),
+            event_state: EventState::new(),
+            protocol_cache: ProtocolCache::new(),
+            pre_exit_boot_services_signal: AtomicBool::new(false),
+        }
     }
 }
 
@@ -54,6 +82,7 @@ impl BootServices {
             &PRIVATE_DATA.protocol_db,
             &PRIVATE_DATA.event_db,
             &PRIVATE_DATA.event_state,
+            &PRIVATE_DATA.protocol_cache,
             handle,
             protocol,
             interface,
@@ -68,6 +97,14 @@ impl BootServices {
         protocols::core_locate_device_path(&PRIVATE_DATA.protocol_db, protocol, device_path)
     }
 
+    pub fn core_install_configuration_table(
+        vendor_guid: efi::Guid,
+        vendor_table: Option<&mut c_void>,
+        efi_system_table: &mut EfiSystemTable,
+    ) -> Result<(), efi::Status> {
+        misc::core_install_configuration_table(&PRIVATE_DATA.event_db, vendor_guid, vendor_table, efi_system_table)
+    }
+
     #[cfg(not(tarpaulin_include))]
     pub fn gcd_map_change(map_change_type: uefi_gcd::gcd::MapChangeType) {
         events::gcd_map_change(&PRIVATE_DATA.event_db, &PRIVATE_DATA.event_state, map_change_type);
@@ -79,6 +116,7 @@ impl BootServices {
     pub fn register_services(bs: &mut efi::BootServices) {
         Self::register_protocol_services(bs);
         Self::register_event_services(bs);
+        Self::register_misc_services(bs);
     }
 
     fn register_protocol_services(bs: &mut efi::BootServices) {
@@ -156,6 +194,36 @@ impl BootServices {
         with_event_state(|state| state.set_initialized());
     }
 
+    fn register_misc_services(bs: &mut efi::BootServices) {
+        bs.calculate_crc32 = Self::calculate_crc32;
+        bs.install_configuration_table = Self::install_configuration_table;
+        bs.stall = Self::stall;
+        bs.exit_boot_services = Self::exit_boot_services;
+        bs.set_watchdog_timer = Self::set_watchdog_timer;
+
+        //set up call back for metronome arch protocol installation.
+        let event = with_event_db(|db| {
+            db.create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(Self::metronome_arch_available), None, None)
+                .expect("Failed to create metronome available callback.")
+        });
+
+        with_protocol_db(|db| {
+            db.register_protocol_notify(metronome::PROTOCOL_GUID, event)
+                .expect("Failed to register protocol notify on metronome available.")
+        });
+
+        //set up call back for watchdog arch protocol installation.
+        let event = with_event_db(|db| {
+            db.create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(Self::watchdog_arch_available), None, None)
+                .expect("Failed to create watchdog available callback.")
+        });
+
+        with_protocol_db(|db| {
+            db.register_protocol_notify(watchdog::PROTOCOL_GUID, event)
+                .expect("Failed to register protocol notify on metronome available.")
+        });
+    }
+
     #[cfg(not(tarpaulin_include))]
     extern "efiapi" fn install_protocol_interface(
         handle: *mut efi::Handle,
@@ -167,6 +235,7 @@ impl BootServices {
             &PRIVATE_DATA.protocol_db,
             &PRIVATE_DATA.event_db,
             &PRIVATE_DATA.event_state,
+            &PRIVATE_DATA.protocol_cache,
             handle,
             protocol,
             interface_type,
@@ -194,6 +263,7 @@ impl BootServices {
             &PRIVATE_DATA.protocol_db,
             &PRIVATE_DATA.event_db,
             &PRIVATE_DATA.event_state,
+            &PRIVATE_DATA.protocol_cache,
             handle,
             protocol,
             old_interface,
@@ -366,7 +436,7 @@ impl BootServices {
 
     #[cfg(not(tarpaulin_include))]
     pub extern "efiapi" fn signal_event(event: efi::Event) -> efi::Status {
-        events::signal_event(&PRIVATE_DATA.event_db, &PRIVATE_DATA.event_state, event)
+        events::signal_event(&PRIVATE_DATA.event_db, &PRIVATE_DATA.event_state, &PRIVATE_DATA.protocol_cache, event)
     }
 
     #[cfg(not(tarpaulin_include))]
@@ -378,6 +448,7 @@ impl BootServices {
         events::wait_for_event(
             &PRIVATE_DATA.event_db,
             &PRIVATE_DATA.event_state,
+            &PRIVATE_DATA.protocol_cache,
             number_of_events,
             event_array,
             out_index,
@@ -386,7 +457,7 @@ impl BootServices {
 
     #[cfg(not(tarpaulin_include))]
     pub extern "efiapi" fn check_event(event: efi::Event) -> efi::Status {
-        events::check_event(&PRIVATE_DATA.event_db, &PRIVATE_DATA.event_state, event)
+        events::check_event(&PRIVATE_DATA.event_db, &PRIVATE_DATA.event_state, &PRIVATE_DATA.protocol_cache, event)
     }
 
     #[cfg(not(tarpaulin_include))]
@@ -396,17 +467,17 @@ impl BootServices {
 
     #[cfg(not(tarpaulin_include))]
     pub extern "efiapi" fn raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {
-        events::raise_tpl(&PRIVATE_DATA.event_state, new_tpl)
+        events::raise_tpl(&PRIVATE_DATA.event_state, &PRIVATE_DATA.protocol_cache, new_tpl)
     }
 
     #[cfg(not(tarpaulin_include))]
     pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
-        events::restore_tpl(&PRIVATE_DATA.event_db, &PRIVATE_DATA.event_state, new_tpl)
+        events::restore_tpl(&PRIVATE_DATA.event_db, &PRIVATE_DATA.event_state, &PRIVATE_DATA.protocol_cache, new_tpl)
     }
 
     #[cfg(not(tarpaulin_include))]
     pub extern "efiapi" fn timer_tick(time: u64) {
-        events::timer_tick(&PRIVATE_DATA.event_db, &PRIVATE_DATA.event_state, time)
+        events::timer_tick(&PRIVATE_DATA.event_db, &PRIVATE_DATA.event_state, &PRIVATE_DATA.protocol_cache, time)
     }
 
     #[cfg(not(tarpaulin_include))]
@@ -419,9 +490,66 @@ impl BootServices {
         events::cpu_arch_available(
             &PRIVATE_DATA.protocol_db,
             &PRIVATE_DATA.event_db,
-            &PRIVATE_DATA.event_state,
+            &PRIVATE_DATA.protocol_cache,
             event,
             context,
+        )
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, crc_32: *mut u32) -> efi::Status {
+        misc::calculate_crc32(data, data_size, crc_32)
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    extern "efiapi" fn install_configuration_table(table_guid: *mut efi::Guid, table: *mut c_void) -> efi::Status {
+        misc::install_configuration_table(&PRIVATE_DATA.event_db, table_guid, table)
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    extern "efiapi" fn stall(microseconds: usize) -> efi::Status {
+        misc::stall(&PRIVATE_DATA.protocol_cache, microseconds)
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    extern "efiapi" fn set_watchdog_timer(
+        timeout: usize,
+        watchdog_code: u64,
+        data_size: usize,
+        data: *mut efi::Char16,
+    ) -> efi::Status {
+        misc::set_watchdog_timer(&PRIVATE_DATA.protocol_cache, timeout, watchdog_code, data_size, data)
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    extern "efiapi" fn metronome_arch_available(event: efi::Event, context: *mut c_void) {
+        misc::metronome_arch_available(
+            &PRIVATE_DATA.protocol_db,
+            &PRIVATE_DATA.event_db,
+            &PRIVATE_DATA.protocol_cache,
+            event,
+            context,
+        )
+    }
+
+    #[cfg(not(tarpaulin_include))]
+    extern "efiapi" fn watchdog_arch_available(event: efi::Event, context: *mut c_void) {
+        misc::watchdog_arch_available(
+            &PRIVATE_DATA.protocol_db,
+            &PRIVATE_DATA.event_db,
+            &PRIVATE_DATA.protocol_cache,
+            event,
+            context,
+        )
+    }
+
+    pub extern "efiapi" fn exit_boot_services(handle: efi::Handle, map_key: usize) -> efi::Status {
+        misc::exit_boot_services(
+            &PRIVATE_DATA.protocol_db,
+            &PRIVATE_DATA.event_db,
+            &PRIVATE_DATA.pre_exit_boot_services_signal,
+            handle,
+            map_key,
         )
     }
 }

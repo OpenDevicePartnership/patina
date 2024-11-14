@@ -18,13 +18,8 @@ use r_efi::efi;
 
 use crate::{
     allocator::{terminate_memory_map, EFI_RUNTIME_SERVICES_DATA_ALLOCATOR},
-    boot_services::{with_event_db, with_protocol_db},
     systemtables::{EfiSystemTable, SYSTEM_TABLE},
 };
-
-static METRONOME_ARCH_PTR: AtomicPtr<protocols::metronome::Protocol> = AtomicPtr::new(core::ptr::null_mut());
-static WATCHDOG_ARCH_PTR: AtomicPtr<protocols::watchdog::Protocol> = AtomicPtr::new(core::ptr::null_mut());
-static PRE_EXIT_BOOT_SERVICES_SIGNAL: AtomicBool = AtomicBool::new(false);
 
 // TODO [BEGIN]: LOCAL (TEMP) GUID DEFINITIONS (MOVE LATER)
 
@@ -45,7 +40,8 @@ pub const DXE_CORE_GUID: efi::Guid =
 
 // TODO [END]: LOCAL (TEMP) GUID DEFINITIONS (MOVE LATER)
 
-extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, crc_32: *mut u32) -> efi::Status {
+#[inline(always)]
+pub fn calculate_crc32(data: *mut c_void, data_size: usize, crc_32: *mut u32) -> efi::Status {
     if data.is_null() || data_size == 0 || crc_32.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
@@ -58,7 +54,10 @@ extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, crc_32: 
     efi::Status::SUCCESS
 }
 
+// TODO JAVAGEDES: See if you can remove the need to pass an efi_system_table here.
+#[inline(always)]
 pub fn core_install_configuration_table(
+    event_db: &super::EventDb,
     vendor_guid: efi::Guid,
     vendor_table: Option<&mut c_void>,
     efi_system_table: &mut EfiSystemTable,
@@ -136,12 +135,17 @@ pub fn core_install_configuration_table(
     efi_system_table.checksum();
 
     //signal the table guid as an event group
-    with_event_db(|db| db.signal_group(vendor_guid));
+    event_db.signal_group(vendor_guid);
 
     Ok(())
 }
 
-extern "efiapi" fn install_configuration_table(table_guid: *mut efi::Guid, table: *mut c_void) -> efi::Status {
+#[inline(always)]
+pub fn install_configuration_table(
+    event_db: &super::EventDb,
+    table_guid: *mut efi::Guid,
+    table: *mut c_void,
+) -> efi::Status {
     if table_guid.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
@@ -152,7 +156,7 @@ extern "efiapi" fn install_configuration_table(table_guid: *mut efi::Guid, table
     let mut st_guard = SYSTEM_TABLE.lock();
     let st = st_guard.as_mut().expect("System table support not initialized");
 
-    match core_install_configuration_table(table_guid, table, st) {
+    match core_install_configuration_table(event_db, table_guid, table, st) {
         Err(err) => err,
         Ok(()) => efi::Status::SUCCESS,
     }
@@ -160,8 +164,9 @@ extern "efiapi" fn install_configuration_table(table_guid: *mut efi::Guid, table
 
 // Induces a fine-grained stall. Stalls execution on the processor for at least the requested number of microseconds.
 // Execution of the processor is not yielded for the duration of the stall.
-extern "efiapi" fn stall(microseconds: usize) -> efi::Status {
-    let metronome_ptr = METRONOME_ARCH_PTR.load(Ordering::SeqCst);
+#[inline(always)]
+pub fn stall(protocol_cache: &super::ProtocolCache, microseconds: usize) -> efi::Status {
+    let metronome_ptr = protocol_cache.metronome.load(Ordering::SeqCst);
     if let Some(metronome) = unsafe { metronome_ptr.as_mut() } {
         let ticks_100ns: u128 = (microseconds as u128) * 10;
         let mut ticks = ticks_100ns / metronome.tick_period as u128;
@@ -193,14 +198,15 @@ extern "efiapi" fn stall(microseconds: usize) -> efi::Status {
 //
 // The watchdog timer is only used during boot services. On successful completion of
 // EFI_BOOT_SERVICES.ExitBootServices() the watchdog timer is disabled.
-extern "efiapi" fn set_watchdog_timer(
+pub fn set_watchdog_timer(
+    protocol_cache: &super::ProtocolCache,
     timeout: usize,
     _watchdog_code: u64,
     _data_size: usize,
     _data: *mut efi::Char16,
 ) -> efi::Status {
     const WATCHDOG_TIMER_CALIBRATE_PER_SECOND: u64 = 10000000;
-    let watchdog_ptr = WATCHDOG_ARCH_PTR.load(Ordering::SeqCst);
+    let watchdog_ptr = protocol_cache.watchdog.load(Ordering::SeqCst);
     if let Some(watchdog) = unsafe { watchdog_ptr.as_mut() } {
         let timeout = (timeout as u64).saturating_mul(WATCHDOG_TIMER_CALIBRATE_PER_SECOND);
         let status = (watchdog.set_timer_period)(watchdog_ptr, timeout);
@@ -215,11 +221,17 @@ extern "efiapi" fn set_watchdog_timer(
 
 // This callback is invoked when the Metronome Architectural protocol is installed. It initializes the
 // METRONOME_ARCH_PTR to point to the Metronome Architectural protocol interface.
-extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_void) {
-    match with_protocol_db(|db| db.locate_protocol(protocols::metronome::PROTOCOL_GUID)) {
+pub fn metronome_arch_available(
+    protocol_db: &super::ProtocolDb,
+    event_db: &super::EventDb,
+    protocol_cache: &super::ProtocolCache,
+    event: efi::Event,
+    _context: *mut c_void,
+) {
+    match protocol_db.locate_protocol(protocols::metronome::PROTOCOL_GUID) {
         Ok(metronome_arch_ptr) => {
-            METRONOME_ARCH_PTR.store(metronome_arch_ptr as *mut protocols::metronome::Protocol, Ordering::SeqCst);
-            if let Err(status_err) = with_event_db(|db| db.close_event(event)) {
+            protocol_cache.metronome.store(metronome_arch_ptr as *mut protocols::metronome::Protocol, Ordering::SeqCst);
+            if let Err(status_err) = event_db.close_event(event) {
                 log::warn!("Could not close event for metronome_arch_available due to error {:?}", status_err);
             }
         }
@@ -229,11 +241,17 @@ extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_
 
 // This callback is invoked when the Watchdog Timer Architectural protocol is installed. It initializes the
 // WATCHDOG_ARCH_PTR to point to the Watchdog Timer Architectural protocol interface.
-extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_void) {
-    match with_protocol_db(|db| db.locate_protocol(protocols::watchdog::PROTOCOL_GUID)) {
+pub fn watchdog_arch_available(
+    protocol_db: &super::ProtocolDb,
+    event_db: &super::EventDb,
+    protocol_cache: &super::ProtocolCache,
+    event: efi::Event,
+    _context: *mut c_void,
+) {
+    match protocol_db.locate_protocol(protocols::watchdog::PROTOCOL_GUID) {
         Ok(watchdog_arch_ptr) => {
-            WATCHDOG_ARCH_PTR.store(watchdog_arch_ptr as *mut protocols::watchdog::Protocol, Ordering::SeqCst);
-            if let Err(status_err) = with_event_db(|db| db.close_event(event)) {
+            protocol_cache.watchdog.store(watchdog_arch_ptr as *mut protocols::watchdog::Protocol, Ordering::SeqCst);
+            if let Err(status_err) = event_db.close_event(event) {
                 log::warn!("Could not close event for watchdog_arch_available due to error {:?}", status_err);
             }
         }
@@ -241,18 +259,24 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
     }
 }
 
-pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) -> efi::Status {
+pub fn exit_boot_services(
+    protocol_db: &super::ProtocolDb,
+    event_db: &super::EventDb,
+    pre_exit_boot_services_signal: &AtomicBool,
+    _handle: efi::Handle,
+    map_key: usize,
+) -> efi::Status {
     // Pre-exit boot services is only signaled once
-    if !PRE_EXIT_BOOT_SERVICES_SIGNAL.load(Ordering::SeqCst) {
-        with_event_db(|db| db.signal_group(PRE_EBS_GUID));
-        PRE_EXIT_BOOT_SERVICES_SIGNAL.store(true, Ordering::SeqCst);
+    if !pre_exit_boot_services_signal.load(Ordering::SeqCst) {
+        event_db.signal_group(PRE_EBS_GUID);
+        pre_exit_boot_services_signal.store(true, Ordering::SeqCst);
     }
 
     // Signal the event group before exit boot services
-    with_event_db(|db| db.signal_group(efi::EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES));
+    event_db.signal_group(efi::EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES);
 
     // Disable the timer
-    match with_protocol_db(|db| db.locate_protocol(protocols::timer::PROTOCOL_GUID)) {
+    match protocol_db.locate_protocol(protocols::timer::PROTOCOL_GUID) {
         Ok(timer_arch_ptr) => {
             let timer_arch_ptr = timer_arch_ptr as *mut protocols::timer::Protocol;
             let timer_arch = unsafe { &*(timer_arch_ptr) };
@@ -264,15 +288,15 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     // Terminate the memory map
     let status = terminate_memory_map(map_key);
     if status.is_error() {
-        with_event_db(|db| db.signal_group(EBS_FAILED_GUID));
+        event_db.signal_group(EBS_FAILED_GUID);
         return status;
     }
 
     // Signal Exit Boot Services
-    with_event_db(|db| db.signal_group(efi::EVENT_GROUP_EXIT_BOOT_SERVICES));
+    event_db.signal_group(efi::EVENT_GROUP_EXIT_BOOT_SERVICES);
 
     // Initialize StatusCode and send EFI_SW_BS_PC_EXIT_BOOT_SERVICES
-    match with_protocol_db(|db| db.locate_protocol(protocols::status_code::PROTOCOL_GUID)) {
+    match protocol_db.locate_protocol(protocols::status_code::PROTOCOL_GUID) {
         Ok(status_code_ptr) => {
             let status_code_ptr = status_code_ptr as *mut protocols::status_code::Protocol;
             let status_code_protocol = unsafe { &*(status_code_ptr) };
@@ -288,7 +312,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     };
 
     // Disable CPU interrupts
-    match with_protocol_db(|db| db.locate_protocol(protocols::cpu_arch::PROTOCOL_GUID)) {
+    match protocol_db.locate_protocol(protocols::cpu_arch::PROTOCOL_GUID) {
         Ok(cpu_arch_ptr) => {
             let cpu_arch_ptr = cpu_arch_ptr as *mut protocols::cpu_arch::Protocol;
             let cpu_arch_protocol = unsafe { &*(cpu_arch_ptr) };
@@ -304,7 +328,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
         .expect("The System Table pointer is null. This is invalid.")
         .clear_boot_time_services();
 
-    match with_protocol_db(|db| db.locate_protocol(protocols::runtime::PROTOCOL_GUID)) {
+    match protocol_db.locate_protocol(protocols::runtime::PROTOCOL_GUID) {
         Ok(rt_arch_ptr) => {
             let rt_arch_ptr = rt_arch_ptr as *mut protocols::runtime::Protocol;
             let rt_arch_protocol = unsafe { &mut *(rt_arch_ptr) };
@@ -314,34 +338,4 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     };
 
     efi::Status::SUCCESS
-}
-
-pub fn init_misc_boot_services_support(bs: &mut efi::BootServices) {
-    bs.calculate_crc32 = calculate_crc32;
-    bs.exit_boot_services = exit_boot_services;
-    bs.install_configuration_table = install_configuration_table;
-    bs.stall = stall;
-    bs.set_watchdog_timer = set_watchdog_timer;
-
-    //set up call back for metronome arch protocol installation.
-    let event = with_event_db(|db| {
-        db.create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(metronome_arch_available), None, None)
-            .expect("Failed to create metronome available callback.")
-    });
-
-    with_protocol_db(|db| {
-        db.register_protocol_notify(protocols::metronome::PROTOCOL_GUID, event)
-            .expect("Failed to register protocol notify on metronome available.")
-    });
-
-    //set up call back for watchdog arch protocol installation.
-    let event = with_event_db(|db| {
-        db.create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(watchdog_arch_available), None, None)
-            .expect("Failed to create watchdog available callback.")
-    });
-
-    with_protocol_db(|db| {
-        db.register_protocol_notify(protocols::watchdog::PROTOCOL_GUID, event)
-            .expect("Failed to register protocol notify on metronome available.")
-    });
 }
