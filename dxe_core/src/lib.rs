@@ -57,6 +57,7 @@ mod component_interface;
 mod dispatcher;
 mod driver_services;
 mod dxe_services;
+mod event_db;
 mod filesystems;
 mod fv;
 mod gcd;

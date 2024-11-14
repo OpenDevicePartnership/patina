@@ -7,7 +7,6 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use core::{
-    convert::TryFrom,
     ffi::c_void,
     sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicUsize, Ordering},
 };
@@ -19,7 +18,7 @@ use alloc::vec;
 use r_efi::efi;
 
 use mu_pi::protocols::{cpu_arch, timer};
-use uefi_event::TimerDelay;
+use crate::event_db::TimerDelay;
 use uefi_gcd::gcd;
 
 // TODO JAVAGEDES: Make the structure Spin locked instead of the individual fields.
