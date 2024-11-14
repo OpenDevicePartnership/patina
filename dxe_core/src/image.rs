@@ -14,13 +14,13 @@ use r_efi::efi;
 use uefi_component_interface::DxeComponent;
 use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
 use uefi_pecoff::{relocation::RelocationBlock, UefiPeInfo};
-use uefi_protocol_db::DXE_CORE_HANDLE;
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
     boot_services::{with_protocol_db, BootServices},
     component_interface, dxe_services,
     filesystems::SimpleFile,
+    protocol_db::DXE_CORE_HANDLE,
     runtime,
     systemtables::EfiSystemTable,
 };
@@ -1294,7 +1294,7 @@ pub fn init_image_support(hob_list: &HobList, system_table: &mut EfiSystemTable)
 #[cfg(test)]
 mod tests {
     extern crate std;
-    use super::{empty_image_info, get_buffer_by_file_path, load_image};
+    use super::{empty_image_info, get_buffer_by_file_path, load_image, DXE_CORE_HANDLE};
     use crate::{
         boot_services::{with_protocol_db, BootServices},
         image::{exit, start_image, unload_image, PRIVATE_IMAGE_DATA},
@@ -1336,7 +1336,7 @@ mod tests {
 
         // install the loaded_image protocol on a new handle.
         let _ = match BootServices::core_install_protocol_interface(
-            Some(uefi_protocol_db::DXE_CORE_HANDLE),
+            Some(DXE_CORE_HANDLE),
             efi::protocols::loaded_image::PROTOCOL_GUID,
             image_info_ptr,
         ) {
@@ -1362,7 +1362,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db::DXE_CORE_HANDLE,
+                DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),
@@ -1419,7 +1419,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db::DXE_CORE_HANDLE,
+                DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),
@@ -1505,7 +1505,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db::DXE_CORE_HANDLE,
+                DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),
@@ -1538,7 +1538,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db::DXE_CORE_HANDLE,
+                DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),
@@ -1591,7 +1591,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db::DXE_CORE_HANDLE,
+                DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),
@@ -1644,7 +1644,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db::DXE_CORE_HANDLE,
+                DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),

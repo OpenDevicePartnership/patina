@@ -9,17 +9,17 @@
 use core::{ffi::c_void, mem::size_of};
 
 use alloc::{slice, vec, vec::Vec};
-use mu_rust_helpers::{boot_services::event, guid::guid_fmt};
+use mu_rust_helpers::guid::guid_fmt;
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_device_path::{is_device_path_end, remaining_device_path};
-use uefi_protocol_db::DXE_CORE_HANDLE;
 
 use super::{EventDb, EventState, ProtocolDb};
 
 use crate::{
     allocator::core_allocate_pool,
     driver_services::{core_connect_controller, core_disconnect_controller},
+    protocol_db::DXE_CORE_HANDLE,
 };
 
 #[inline(always)]

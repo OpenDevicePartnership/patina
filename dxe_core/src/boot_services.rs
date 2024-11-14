@@ -1,8 +1,8 @@
+use crate::protocol_db::SpinLockedProtocolDb as ProtocolDb;
 use core::ffi::c_void;
 use mu_pi::protocols::{cpu_arch, timer};
 use r_efi::efi;
 use uefi_event::SpinLockedEventDb as EventDb;
-use uefi_protocol_db::SpinLockedProtocolDb as ProtocolDb;
 
 mod events;
 mod protocols;

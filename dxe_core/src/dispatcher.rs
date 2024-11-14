@@ -21,12 +21,12 @@ use mu_rust_helpers::guid::guid_fmt;
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
-use uefi_protocol_db::DXE_CORE_HANDLE;
 
 use crate::{
     boot_services::{with_event_db, with_protocol_db},
     fv::{core_install_firmware_volume, device_path_bytes_for_fv_file},
     image::{core_load_image, core_start_image},
+    protocol_db::DXE_CORE_HANDLE,
 };
 
 // Default Dependency expression per PI spec v1.2 Vol 2 section 10.9.
@@ -154,17 +154,18 @@ static DISPATCHER_CONTEXT: TplMutex<DispatcherContext> =
 
 fn dispatch() -> Result<bool, efi::Status> {
     let scheduled: Vec<PendingDriver>;
+    let registered_protocols = with_protocol_db(|db| db.registered_protocols());
     {
         let mut dispatcher = DISPATCHER_CONTEXT.lock();
         if !dispatcher.arch_protocols_available {
-            dispatcher.arch_protocols_available = with_protocol_db(|db| Depex::from(ALL_ARCH_DEPEX).eval(db));
+            dispatcher.arch_protocols_available = Depex::from(ALL_ARCH_DEPEX).eval(&registered_protocols);
         }
         let driver_candidates: Vec<_> = dispatcher.pending_drivers.drain(..).collect();
         let mut scheduled_driver_candidates = Vec::new();
         for mut candidate in driver_candidates {
             log::info!("Evaluting depex for candidate: {:?}", guid_fmt!(candidate.file_name));
             let depex_satisfied = match candidate.depex {
-                Some(ref mut depex) => with_protocol_db(|db| depex.eval(db)),
+                Some(ref mut depex) => depex.eval(&registered_protocols),
                 None => dispatcher.arch_protocols_available,
             };
 
@@ -244,7 +245,7 @@ fn dispatch() -> Result<bool, efi::Status> {
 
         for mut candidate in fv_image_candidates {
             let depex_satisfied = match candidate.depex {
-                Some(ref mut depex) => with_protocol_db(|db| depex.eval(db)),
+                Some(ref mut depex) => depex.eval(&registered_protocols),
                 None => true,
             };
 

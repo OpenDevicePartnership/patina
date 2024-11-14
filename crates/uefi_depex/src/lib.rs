@@ -4,8 +4,11 @@
 //!
 //! ## Examples and Usage
 //!
-//! static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-//!
+//! ```rust
+//! # use uuid::Uuid;
+//! # use r_efi::efi;
+//! # use uefi_depex::Depex;
+//! # use std::str::FromStr;
 //! let efi_var_arch_prot_uuid = Uuid::from_str("1e5668e2-8481-11d4-bcf1-0080c73c8881").unwrap();
 //! let efi_var_arch_prot_guid: efi::Guid = unsafe { core::mem::transmute(*efi_var_arch_prot_uuid.as_bytes()) };
 //! let efi_var_write_arch_prot_uuid = Uuid::from_str("6441f818-6362-eb44-5700-7dba31dd2453").unwrap();
@@ -19,13 +22,14 @@
 //! let efi_device_path_utilities_prot_uuid = Uuid::from_str("0379be4e-d706-437d-b037-edb82fb772a4").unwrap();
 //! let efi_device_path_utilities_prot_guid: efi::Guid = unsafe { core::mem::transmute(*efi_device_path_utilities_prot_uuid.as_bytes()) };
 //!
-//! let interface: *mut c_void = 0x1234 as *mut c_void;
-//! SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_var_arch_prot_guid, interface).unwrap();
-//! SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_var_write_arch_prot_guid, interface).unwrap();
-//! SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_tcg_prot_guid, interface).unwrap();
-//! SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_tree_prot_guid, interface).unwrap();
-//! SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_pcd_prot_guid, interface).unwrap();
-//! SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_device_path_utilities_prot_guid, interface).unwrap();
+//! let protocols = vec![
+//!    efi_var_arch_prot_guid,
+//!    efi_var_write_arch_prot_guid,
+//!    efi_tcg_prot_guid,
+//!    efi_tree_prot_guid,
+//!    efi_pcd_prot_guid,
+//!    efi_device_path_utilities_prot_guid,
+//! ];
 //!
 //! println!("Testing DEPEX for TcgMor DXE driver...\n");
 //!
@@ -37,16 +41,11 @@
 //!                           0x4A, 0x26, 0xF0, 0x3E, 0xF2, 0xE0, 0xDE, 0xC5, 0x12, 0x34, 0x2F, 0x34, 0x02, 0x4E, 0xBE, 0x79,
 //!                           0x03, 0x06, 0xD7, 0x7D, 0x43, 0xB0, 0x37, 0xED, 0xB8, 0x2F, 0xB7, 0x72, 0xA4, 0x03, 0x03, 0x08
 //!                           ];
-//! let mut depex = Depex::new(expression.to_vec());
+//! let mut depex = uefi_depex::Depex::from(expression.to_vec());
 //! println!("DEPEX debug dump:\n\n{:?}\n", depex);
 //!
-//! println!("DEPEX opcode dump:\n");
-//! for opcode in &mut depex {
-//!   println!("opcode is {:?}", opcode);
-//! }
-//! println!();
-//!
-//! println!("DEPEX evaluation is : {}\n", depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+//! println!("DEPEX evaluation is : {}", depex.eval(protocols.as_slice()));
+//! ```
 //!
 //! ## License
 //!
@@ -61,7 +60,6 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::mem;
 use r_efi::efi;
-use uefi_protocol_db::SpinLockedProtocolDb;
 use uuid::Uuid;
 
 /// The size of a GUID in bytes
@@ -188,7 +186,7 @@ impl From<&[Opcode]> for Depex {
 
 impl Depex {
     /// Evaluates a DEPEX expression.
-    pub fn eval(&mut self, protocol_db: &SpinLockedProtocolDb) -> bool {
+    pub fn eval(&mut self, protocols: &[efi::Guid]) -> bool {
         let mut stack = Vec::with_capacity(DEPEX_STACK_SIZE_INCREMENT);
         log::info!("Depex:");
         for (index, opcode) in self.expression.iter_mut().enumerate() {
@@ -232,7 +230,7 @@ impl Depex {
                         stack.push(true)
                     } else {
                         if let Some(guid) = guid_from_uuid(guid) {
-                            if protocol_db.locate_protocol(guid).is_ok() {
+                            if protocols.contains(&guid) {
                                 *present = true;
                                 stack.push(true);
                                 continue;
@@ -368,10 +366,8 @@ impl Iterator for DepexParser {
 mod tests {
     extern crate std;
     use alloc::vec;
-    use core::{ffi::c_void, str::FromStr};
+    use core::str::FromStr;
     use r_efi::efi;
-    use std::println;
-    use uefi_protocol_db::SpinLockedProtocolDb;
     use uuid::Uuid;
 
     use super::*;
@@ -402,38 +398,30 @@ mod tests {
 
     #[test]
     fn true_should_eval_true() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         let mut depex = Depex::from(vec![0x06, 0x08]);
-        assert!(depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(depex.eval(&[]));
     }
 
     #[test]
     fn false_should_eval_false() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         let mut depex = Depex::from(vec![0x07, 0x08]);
-        assert!(!depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(!depex.eval(&[]));
     }
 
     #[test]
     fn before_should_eval_false() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         let mut depex = Depex::from(vec![
             0x00, 0xFA, 0xBD, 0xB6, 0x76, 0xCD, 0x2A, 0x62, 0x44, 0x9E, 0x3F, 0xCB, 0x58, 0xC9, 0x69, 0xD9, 0x37, 0x08,
         ]);
-        assert!(!depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(!depex.eval(&[]));
     }
 
     #[test]
     fn after_should_eval_false() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         let mut depex = Depex::from(vec![
             0x01, 0xFA, 0xBD, 0xB6, 0x76, 0xCD, 0x2A, 0x62, 0x44, 0x9E, 0x3F, 0xCB, 0x58, 0xC9, 0x69, 0xD9, 0x37, 0x08,
         ]);
-        assert!(!depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(!depex.eval(&[]));
     }
 
     #[test]
@@ -466,73 +454,57 @@ mod tests {
 
     #[test]
     fn sor_first_opcode_should_eval_false() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         // Treated as a no-op, with no other operands, false should be returned
         let mut depex = Depex::from(vec![0x09, 0x08]);
-        assert!(!depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(!depex.eval(&[]));
     }
 
     #[test]
     fn sor_first_opcode_followed_by_true_should_eval_false() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         let mut depex = Depex::from(vec![0x09, 0x06, 0x08]);
-        assert!(!depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(!depex.eval(&[]));
     }
 
     #[test]
     fn sor_first_opcode_followed_by_true_should_eval_true_after_schedule() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         let mut depex = Depex::from(vec![0x09, 0x06, 0x08]);
-        assert!(!depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(!depex.eval(&[]));
 
         depex.schedule();
-        assert!(depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(depex.eval(&[]));
     }
 
     #[test]
     #[should_panic(expected = "Invalid SOR not at start of depex")]
     fn sor_not_first_opcode_should_eval_false() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         let mut depex = Depex::from(vec![0x06, 0x09, 0x08]);
-        assert!(!depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(!depex.eval(&[]));
     }
 
     #[test]
     #[should_panic(expected = "Exiting early due to an unknown opcode.")]
     fn replacetrue_should_eval_false() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         let mut depex = Depex::from(vec![0xFF, 0x08]);
-        assert!(!depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(!depex.eval(&[]));
     }
 
     #[test]
     #[should_panic(expected = "Exiting early due to an unknown opcode.")]
     fn unknown_opcode_should_return_false() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         let mut depex = Depex::from(vec![0xE0, 0x08]);
-        assert!(!depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(!depex.eval(&[]));
     }
 
     #[test]
     fn not_true_should_eval_false() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         let mut depex = Depex::from(vec![0x07, 0x06, 0x08]);
-        assert!(depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(depex.eval(&[]));
     }
 
     #[test]
     fn not_false_should_eval_true() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         let mut depex = Depex::from(vec![0x07, 0x05, 0x08]);
-        assert!(depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(depex.eval(&[]));
     }
 
     #[test]
@@ -556,8 +528,6 @@ mod tests {
     ///   AND
     ///   END
     fn all_protocols_installed_and_should_eval_true() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         let efi_pcd_prot_uuid = Uuid::from_str("13a3f0f6-264a-3ef0-f2e0-dec512342f34").unwrap();
         let efi_pcd_prot_guid: efi::Guid = guid_from_uuid(&efi_pcd_prot_uuid).unwrap();
         let efi_device_path_utilities_prot_uuid = Uuid::from_str("0379be4e-d706-437d-b037-edb82fb772a4").unwrap();
@@ -576,19 +546,16 @@ mod tests {
         let efi_var_arch_prot_uuid = Uuid::from_str("1e5668e2-8481-11d4-bcf1-0080c73c8881").unwrap();
         let efi_var_arch_prot_guid: efi::Guid = guid_from_uuid(&efi_var_arch_prot_uuid).unwrap();
 
-        let interface: *mut c_void = 0x1234 as *mut c_void;
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_pcd_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB
-            .install_protocol_interface(None, efi_device_path_utilities_prot_guid, interface)
-            .unwrap();
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_hii_string_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_hii_db_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_hii_config_routing_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_reset_arch_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_var_write_arch_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_var_arch_prot_guid, interface).unwrap();
-
-        println!("Testing DEPEX for BdsDxe DXE driver...\n");
+        let protocols = vec![
+            efi_pcd_prot_guid,
+            efi_device_path_utilities_prot_guid,
+            efi_hii_string_prot_guid,
+            efi_hii_db_prot_guid,
+            efi_hii_config_routing_prot_guid,
+            efi_reset_arch_prot_guid,
+            efi_var_write_arch_prot_guid,
+            efi_var_arch_prot_guid,
+        ];
 
         let expression: &[u8] = &[
             0x02, 0xF6, 0xF0, 0xA3, 0x13, 0x4A, 0x26, 0xF0, 0x3E, 0xF2, 0xE0, 0xDE, 0xC5, 0x12, 0x34, 0x2F, 0x34, 0x02,
@@ -602,7 +569,7 @@ mod tests {
         ];
         let mut depex = Depex::from(expression.to_vec());
 
-        assert!(depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(depex.eval(protocols.as_slice()));
     }
 
     #[test]
@@ -622,8 +589,6 @@ mod tests {
     ///   AND
     ///   END
     fn all_protocols_installed_or_and_should_eval_true() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         let efi_var_arch_prot_uuid = Uuid::from_str("1e5668e2-8481-11d4-bcf1-0080c73c8881").unwrap();
         let efi_var_arch_prot_guid: efi::Guid = guid_from_uuid(&efi_var_arch_prot_uuid).unwrap();
         let efi_var_write_arch_prot_uuid = Uuid::from_str("6441f818-6362-eb44-5700-7dba31dd2453").unwrap();
@@ -638,17 +603,14 @@ mod tests {
         let efi_device_path_utilities_prot_guid: efi::Guid =
             guid_from_uuid(&efi_device_path_utilities_prot_uuid).unwrap();
 
-        let interface: *mut c_void = 0x1234 as *mut c_void;
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_var_arch_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_var_write_arch_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_tcg_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_tree_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_pcd_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB
-            .install_protocol_interface(None, efi_device_path_utilities_prot_guid, interface)
-            .unwrap();
-
-        println!("Testing DEPEX for TcgMor DXE driver...\n");
+        let protocols = vec![
+            efi_var_arch_prot_guid,
+            efi_var_write_arch_prot_guid,
+            efi_tcg_prot_guid,
+            efi_tree_prot_guid,
+            efi_pcd_prot_guid,
+            efi_device_path_utilities_prot_guid,
+        ];
 
         let expression: &[u8] = &[
             0x02, 0xE2, 0x68, 0x56, 0x1E, 0x81, 0x84, 0xD4, 0x11, 0xBC, 0xF1, 0x00, 0x80, 0xC7, 0x3C, 0x88, 0x81, 0x02,
@@ -660,7 +622,7 @@ mod tests {
         ];
         let mut depex = Depex::from(expression.to_vec());
 
-        assert!(depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(depex.eval(protocols.as_slice()));
     }
 
     #[test]
@@ -678,8 +640,6 @@ mod tests {
     ///   AND
     ///   END
     fn opcode_list_to_depex_should_work() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         let efi_var_arch_prot_uuid = Uuid::from_str("1e5668e2-8481-11d4-bcf1-0080c73c8881").unwrap();
         let efi_var_arch_prot_guid: efi::Guid = guid_from_uuid(&efi_var_arch_prot_uuid).unwrap();
         let efi_var_write_arch_prot_uuid = Uuid::from_str("6441f818-6362-eb44-5700-7dba31dd2453").unwrap();
@@ -694,15 +654,14 @@ mod tests {
         let efi_device_path_utilities_prot_guid: efi::Guid =
             guid_from_uuid(&efi_device_path_utilities_prot_uuid).unwrap();
 
-        let interface: *mut c_void = 0x1234 as *mut c_void;
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_var_arch_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_var_write_arch_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_tcg_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_tree_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, efi_pcd_prot_guid, interface).unwrap();
-        SPIN_LOCKED_PROTOCOL_DB
-            .install_protocol_interface(None, efi_device_path_utilities_prot_guid, interface)
-            .unwrap();
+        let protocols = vec![
+            efi_var_arch_prot_guid,
+            efi_var_write_arch_prot_guid,
+            efi_tcg_prot_guid,
+            efi_tree_prot_guid,
+            efi_pcd_prot_guid,
+            efi_device_path_utilities_prot_guid,
+        ];
 
         let expression: &[Opcode] = &[
             Opcode::Push(efi_var_arch_prot_uuid, true),
@@ -721,7 +680,7 @@ mod tests {
 
         let mut depex = Depex::from(expression);
 
-        assert!(depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(depex.eval(protocols.as_slice()));
     }
 
     #[test]
@@ -738,12 +697,10 @@ mod tests {
 
     #[test]
     fn guid_not_in_protocol_db_should_eval_false() {
-        static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-
         let mut depex = Depex::from(vec![
             0x02, 0xF6, 0xF0, 0xA3, 0x13, 0x4A, 0x26, 0xF0, 0x3E, 0xF2, 0xE0, 0xDE, 0xC5, 0x12, 0x34, 0x2F, 0x34, 0x08,
         ]);
-        assert!(!depex.eval(&SPIN_LOCKED_PROTOCOL_DB));
+        assert!(!depex.eval(&[]));
     }
 
     #[test]
@@ -751,7 +708,7 @@ mod tests {
     fn opcode_before_should_panic_when_not_at_start_of_depex() {
         let opcodes = [Opcode::And, Opcode::Before(Uuid::from_str("76b6bdfa-2acd-4462-9e3f-cb58c969d937").unwrap())];
         let mut depex = Depex::from(opcodes.as_slice());
-        depex.eval(&SpinLockedProtocolDb::new());
+        depex.eval(&[]);
     }
 
     #[test]
@@ -759,7 +716,7 @@ mod tests {
     fn opcode_after_should_panic_when_not_at_start_of_depex() {
         let opcodes = [Opcode::And, Opcode::After(Uuid::from_str("76b6bdfa-2acd-4462-9e3f-cb58c969d937").unwrap())];
         let mut depex = Depex::from(opcodes.as_slice());
-        depex.eval(&SpinLockedProtocolDb::new());
+        depex.eval(&[]);
     }
 
     #[test]
@@ -767,7 +724,7 @@ mod tests {
     fn opcode_before_should_panic_when_final_opcode_is_not_end() {
         let opcodes = [Opcode::Before(Uuid::from_str("76b6bdfa-2acd-4462-9e3f-cb58c969d937").unwrap()), Opcode::And];
         let mut depex = Depex::from(opcodes.as_slice());
-        depex.eval(&SpinLockedProtocolDb::new());
+        depex.eval(&[]);
     }
 
     #[test]
@@ -775,7 +732,7 @@ mod tests {
     fn opcode_after_should_panic_when_final_opcode_is_not_end() {
         let opcodes = [Opcode::After(Uuid::from_str("76b6bdfa-2acd-4462-9e3f-cb58c969d937").unwrap()), Opcode::And];
         let mut depex = Depex::from(opcodes.as_slice());
-        depex.eval(&SpinLockedProtocolDb::new());
+        depex.eval(&[]);
     }
 
     #[test]
@@ -784,7 +741,7 @@ mod tests {
         let opcodes =
             [Opcode::Before(Uuid::from_str("76b6bdfa-2acd-4462-9e3f-cb58c969d937").unwrap()), Opcode::And, Opcode::End];
         let mut depex = Depex::from(opcodes.as_slice());
-        depex.eval(&SpinLockedProtocolDb::new());
+        depex.eval(&[]);
     }
 
     #[test]
@@ -793,7 +750,7 @@ mod tests {
         let opcodes =
             [Opcode::After(Uuid::from_str("76b6bdfa-2acd-4462-9e3f-cb58c969d937").unwrap()), Opcode::And, Opcode::End];
         let mut depex = Depex::from(opcodes.as_slice());
-        depex.eval(&SpinLockedProtocolDb::new());
+        depex.eval(&[]);
     }
 
     #[test]
@@ -801,6 +758,6 @@ mod tests {
     fn malformed_opcode_should_panic_with_well_defined_message() {
         let opcodes = [Opcode::Malformed { opcode: 0x00, len: 0 }];
         let mut depex = Depex::from(opcodes.as_slice());
-        depex.eval(&SpinLockedProtocolDb::new());
+        depex.eval(&[]);
     }
 }
