@@ -1,6 +1,6 @@
 [package]
 name = "uefi_allocator"
-version = "2.0.0"
+version = "2.0.2"
 edition = "2021"
 readme = "README.md"
 description = "Allocation services for the dxe_core and registered components."
