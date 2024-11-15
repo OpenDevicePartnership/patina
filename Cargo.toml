@@ -16,12 +16,12 @@ edition = "2021"
 rust-version = "1.80.0"
 
 [workspace.dependencies]
-uefi_cpu_init = {git = "https://github.com/pop-project/uefi-core.git", rev = "v1.0.1"}
-uefi_core = {git = "https://github.com/pop-project/uefi-core.git", rev = "v1.0.1"}
-uefi_interrupt = {git = "https://github.com/pop-project/uefi-core.git", rev = "v1.0.1"}
-uefi_logger = {git = "https://github.com/pop-project/uefi-core.git", rev = "v1.0.1"}
-section_extractor = {git = "https://github.com/pop-project/uefi-core.git", rev = "v1.0.1"}
-serial_writer = {git = "https://github.com/pop-project/uefi-core.git", rev = "v1.0.1"}
+uefi_cpu_init = {git = "https://github.com/pop-project/uefi-core.git", rev = "v2.0.0"}
+uefi_core = {git = "https://github.com/pop-project/uefi-core.git", rev = "v2.0.0"}
+uefi_interrupt = {git = "https://github.com/pop-project/uefi-core.git", rev = "v2.0.0"}
+uefi_logger = {git = "https://github.com/pop-project/uefi-core.git", rev = "v2.0.0"}
+section_extractor = {git = "https://github.com/pop-project/uefi-core.git", rev = "v2.0.0"}
+serial_writer = {git = "https://github.com/pop-project/uefi-core.git", rev = "v2.0.0"}
 corosensei = {git = "https://github.com/pop-project/uefi-corosensei.git", rev = "d27241e17a5f3c0703fe9871e6f68cd838c05c6d", default-features = false }
 
 uefi_test_macro = { path = "crates/uefi_test_macro", version = "2.0.0" }
