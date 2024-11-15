@@ -21,6 +21,7 @@ use crate::{
     events::EVENT_DB,
     protocols::PROTOCOL_DB,
     systemtables::{EfiSystemTable, SYSTEM_TABLE},
+    GCD,
 };
 
 static METRONOME_ARCH_PTR: AtomicPtr<protocols::metronome::Protocol> = AtomicPtr::new(core::ptr::null_mut());
@@ -243,6 +244,7 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
 }
 
 pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) -> efi::Status {
+    GCD.signal_ebs_start();
     // Pre-exit boot services is only signaled once
     if !PRE_EXIT_BOOT_SERVICES_SIGNAL.load(Ordering::SeqCst) {
         EVENT_DB.signal_group(PRE_EBS_GUID);

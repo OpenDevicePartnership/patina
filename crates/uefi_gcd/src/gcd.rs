@@ -167,6 +167,73 @@ pub fn get_capabilities(gcd_mem_type: dxe_services::GcdMemoryType, attributes: u
 struct GCD {
     maximum_address: usize,
     memory_blocks: Option<Rbt<'static, MemoryBlock>>,
+    allocate_memory_space_fn: fn(
+        gcd: &mut GCD,
+        allocate_type: AllocateType,
+        memory_type: dxe_services::GcdMemoryType,
+        alignment: usize,
+        len: usize,
+        image_handle: efi::Handle,
+        device_handle: Option<efi::Handle>,
+    ) -> Result<usize, Error>,
+}
+
+/// This service allocates nonexistent memory, reserved memory, system memory, or memory-mapped I/O resources from the global coherency domain of the processor.
+///
+/// # Documentation
+/// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.2
+pub fn allocate_memory_space_before_ebs(
+    gcd: &mut GCD,
+    allocate_type: AllocateType,
+    memory_type: dxe_services::GcdMemoryType,
+    alignment: usize,
+    len: usize,
+    image_handle: efi::Handle,
+    device_handle: Option<efi::Handle>,
+) -> Result<usize, Error> {
+    ensure!(gcd.maximum_address != 0, Error::NotInitialized);
+    ensure!(
+        len > 0 && image_handle > ptr::null_mut() && memory_type != dxe_services::GcdMemoryType::Unaccepted,
+        Error::InvalidParameter
+    );
+
+    log::trace!(target: "allocations", "[{}] Allocating memory space: {:x?}", function!(), allocate_type);
+    log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
+    log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
+    log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
+    log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
+    log::trace!(target: "allocations", "[{}]   Device Handle: {:#x}\n", function!(), alignment);
+
+    match allocate_type {
+        AllocateType::BottomUp(max_address) => gcd.allocate_bottom_up(
+            memory_type,
+            alignment,
+            len,
+            image_handle,
+            device_handle,
+            max_address.unwrap_or(usize::MAX),
+        ),
+        AllocateType::TopDown(min_address) => {
+            gcd.allocate_top_down(memory_type, alignment, len, image_handle, device_handle, min_address.unwrap_or(0))
+        }
+        AllocateType::Address(address) => {
+            ensure!(address + len <= gcd.maximum_address, Error::NotFound);
+            gcd.allocate_address(memory_type, alignment, len, image_handle, device_handle, address)
+        }
+    }
+}
+
+pub fn allocate_memory_space_after_ebs(
+    _gcd: &mut GCD,
+    _allocate_type: AllocateType,
+    _memory_type: dxe_services::GcdMemoryType,
+    _alignment: usize,
+    _len: usize,
+    _image_handle: efi::Handle,
+    _device_handle: Option<efi::Handle>,
+) -> Result<usize, Error> {
+    log::warn!("GCD not allowed to allocate after EBS has started!");
+    return Err(Error::AccessDenied);
 }
 
 impl GCD {
@@ -174,7 +241,15 @@ impl GCD {
     #[cfg(test)]
     pub(crate) const fn new(processor_address_bits: u32) -> Self {
         assert!(processor_address_bits > 0);
-        Self { memory_blocks: None, maximum_address: 1 << processor_address_bits }
+        Self {
+            memory_blocks: None,
+            maximum_address: 1 << processor_address_bits,
+            allocate_memory_space_fn: allocate_memory_space_before_ebs,
+        }
+    }
+
+    pub fn signal_ebs_start(&mut self) {
+        self.allocate_memory_space_fn = allocate_memory_space_after_ebs;
     }
 
     pub fn init(&mut self, processor_address_bits: u32) {
@@ -213,7 +288,8 @@ impl GCD {
 
         self.add_memory_space(memory_type, base_address, len, capabilities)?;
 
-        self.allocate_memory_space(
+        (self.allocate_memory_space_fn)(
+            self,
             AllocateType::Address(base_address),
             dxe_services::GcdMemoryType::SystemMemory,
             0,
@@ -309,56 +385,6 @@ impl GCD {
             },
             Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
             Err(e) => panic!("{e:?}"),
-        }
-    }
-
-    /// This service allocates nonexistent memory, reserved memory, system memory, or memory-mapped I/O resources from the global coherency domain of the processor.
-    ///
-    /// # Documentation
-    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.2
-    pub fn allocate_memory_space(
-        &mut self,
-        allocate_type: AllocateType,
-        memory_type: dxe_services::GcdMemoryType,
-        alignment: usize,
-        len: usize,
-        image_handle: efi::Handle,
-        device_handle: Option<efi::Handle>,
-    ) -> Result<usize, Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
-        ensure!(
-            len > 0 && image_handle > ptr::null_mut() && memory_type != dxe_services::GcdMemoryType::Unaccepted,
-            Error::InvalidParameter
-        );
-
-        log::trace!(target: "allocations", "[{}] Allocating memory space: {:x?}", function!(), allocate_type);
-        log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
-        log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
-        log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
-        log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x}\n", function!(), alignment);
-
-        match allocate_type {
-            AllocateType::BottomUp(max_address) => self.allocate_bottom_up(
-                memory_type,
-                alignment,
-                len,
-                image_handle,
-                device_handle,
-                max_address.unwrap_or(usize::MAX),
-            ),
-            AllocateType::TopDown(min_address) => self.allocate_top_down(
-                memory_type,
-                alignment,
-                len,
-                image_handle,
-                device_handle,
-                min_address.unwrap_or(0),
-            ),
-            AllocateType::Address(address) => {
-                ensure!(address + len <= self.maximum_address, Error::NotFound);
-                self.allocate_address(memory_type, alignment, len, image_handle, device_handle, address)
-            }
         }
     }
 
@@ -1370,7 +1396,11 @@ impl SpinLockedGcd {
         Self {
             memory: tpl_lock::TplMutex::new(
                 efi::TPL_HIGH_LEVEL,
-                GCD { maximum_address: 0, memory_blocks: None },
+                GCD {
+                    maximum_address: 0,
+                    memory_blocks: None,
+                    allocate_memory_space_fn: allocate_memory_space_before_ebs,
+                },
                 "GcdMemLock",
             ),
             io: tpl_lock::TplMutex::new(
@@ -1380,6 +1410,10 @@ impl SpinLockedGcd {
             ),
             memory_change_callback,
         }
+    }
+
+    pub fn signal_ebs_start(&self) {
+        self.memory.lock().signal_ebs_start();
     }
 
     /// Resets the GCD to default state. Intended for test scenarios.
@@ -1454,7 +1488,9 @@ impl SpinLockedGcd {
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
     ) -> Result<usize, Error> {
-        let result = self.memory.lock().allocate_memory_space(
+        let mut gcd = self.memory.lock();
+        let result = (gcd.allocate_memory_space_fn)(
+            &mut gcd,
             allocate_type,
             memory_type,
             alignment,
@@ -2587,7 +2623,8 @@ mod tests {
 
     #[test]
     fn test_set_memory_space_attributes_with_invalid_parameters() {
-        let mut gcd = GCD { memory_blocks: None, maximum_address: 0 };
+        let mut gcd =
+            GCD { memory_blocks: None, maximum_address: 0, allocate_memory_space_fn: allocate_memory_space_before_ebs };
         assert_eq!(Err(Error::NotInitialized), gcd.set_memory_space_attributes(0, 0x50000, 0b1111));
 
         let (mut gcd, _) = create_gcd();
