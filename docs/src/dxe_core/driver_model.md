@@ -28,6 +28,10 @@ containing preferred drivers for the controller, as well as `remaining_device_pa
 control how the tree of controllers underneath this handle (if any) is expanded. This function directly implements the
 semantics of [`EFI_BOOT_SERVICES.ConnectController`](https://uefi.org/specs/UEFI/2.10_A/07_Services_Boot_Services.html#efi-boot-services-connectcontroller).
 
+Prior to executing the logic to connect a controller, the device path on the controller handle to be connected is passed
+to the [Security Architectural Protocol](https://uefi.org/specs/PI/1.8A/V2_DXE_Architectural_Protocols.html#security-architectural-protocols)
+to check and enforce any Platform security policy around connection of the device.
+
 ### Determining the Priority Order of Drivers
 
 A firmware implementation may have multiple drivers that are capable of managing a given controller. In many cases, a

@@ -5,26 +5,36 @@
 //!
 //! ## Examples
 //!
-//! ``` rust,ignore
-//! #[no_std]
-//! #[no_main]
-//! #[panic_handler]
-//! fn panic(info: &PanicInfo) -> ! {
-//!    log::error!("{}", info);
-//!    loop {}
-//! }
-//! #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
-//! pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
-//!
-//!     dxe_core::Core::default()
-//!         .with_cpu_initializer(CpuInit::default())
-//!         .with_section_extractor(SectionExtract::default())
-//!         .initialize(physical_hob_list)
-//!         .with_driver(Box::new(Driver::default()))
-//!         .start()
-//!         .unwrap();
-//!     loop {}
-//! }
+//! ``` rust,no_run
+//! # #[derive(Default, Clone, Copy)]
+//! # struct Driver;
+//! # impl uefi_component_interface::DxeComponent for Driver {
+//! #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_core::error::Result<()> { Ok(()) }
+//! # }
+//! # #[derive(Default, Clone, Copy)]
+//! # struct CpuInitExample;
+//! # impl uefi_core::interface::CpuInitializer for CpuInitExample {
+//! #     fn initialize(&mut self) { }
+//! # }
+//! # #[derive(Default, Clone, Copy)]
+//! # struct SectionExtractExample;
+//! # impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
+//! #     fn extract(&self, _: &mu_pi::fw_fs::Section) -> Result<Box<[u8]>, r_efi::base::Status> { Ok(Box::new([0])) }
+//! # }
+//! # #[derive(Default, Clone, Copy)]
+//! # struct InterruptManagerExample;
+//! # impl uefi_interrupt::InterruptManager for InterruptManagerExample {
+//! #     fn initialize(&mut self) -> uefi_core::error::Result<()> { Ok(()) }
+//! # }
+//! # let physical_hob_list = core::ptr::null();
+//! dxe_core::Core::default()
+//!   .with_cpu_initializer(CpuInitExample::default())
+//!   .with_interrupt_manager(InterruptManagerExample::default())
+//!   .with_section_extractor(SectionExtractExample::default())
+//!   .initialize(physical_hob_list)
+//!   .with_driver(Box::new(Driver::default()))
+//!   .start()
+//!   .unwrap();
 //! ```
 //!
 //! ## License
@@ -69,11 +79,21 @@ use r_efi::efi::{self};
 use uefi_component_interface::DxeComponent;
 use uefi_core::{
     error::{self, Result},
-    interface,
+    if_aarch64, if_x64, interface,
 };
 use uefi_gcd::gcd::SpinLockedGcd;
 
 pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
+
+if_x64! {
+    /// [`Core`] type alias for x86_64 architecture with cpu architecture specific trait implementations pre-selected.
+    pub type X64Core<SectionExtractor> = Core<uefi_cpu_init::X64CpuInitializer, SectionExtractor, uefi_interrupt::InterruptManagerX64>;
+}
+
+if_aarch64! {
+    /// [`Core`] type alias for aarch64 architecture with cpu architecture specific trait implementations pre-selected.
+    pub type Aarch64Core<SectionExtractor> = Core<uefi_cpu_init::NullCpuInitializer, SectionExtractor, uefi_interrupt::InterruptManagerAarch64>;
+}
 
 /// The initialize phase DxeCore, responsible for setting up the environment with the given configuration.
 ///
@@ -86,11 +106,36 @@ pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_c
 ///
 /// ## Examples
 ///
-/// ``` rust,ignore
+/// ``` rust,no_run
+/// # #[derive(Default, Clone, Copy)]
+/// # struct Driver;
+/// # impl uefi_component_interface::DxeComponent for Driver {
+/// #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_core::error::Result<()> { Ok(()) }
+/// # }
+/// # #[derive(Default, Clone, Copy)]
+/// # struct CpuInitExample;
+/// # impl uefi_core::interface::CpuInitializer for CpuInitExample {
+/// #     fn initialize(&mut self) { }
+/// # }
+/// # #[derive(Default, Clone, Copy)]
+/// # struct SectionExtractExample;
+/// # impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
+/// #     fn extract(&self, _: &mu_pi::fw_fs::Section) -> Result<Box<[u8]>, r_efi::base::Status> { Ok(Box::new([0])) }
+/// # }
+/// # #[derive(Default, Clone, Copy)]
+/// # struct InterruptManagerExample;
+/// # impl uefi_interrupt::InterruptManager for InterruptManagerExample {
+/// #     fn initialize(&mut self) -> uefi_core::error::Result<()> { Ok(()) }
+/// # }
+/// # let physical_hob_list = core::ptr::null();
 /// dxe_core::Core::default()
-///     .with_cpu_initializer(CpuInit::default())
-///     .with_section_extractor(SectionExtract::default())
-///     .initialize(physical_hob_list);
+///   .with_cpu_initializer(CpuInitExample::default())
+///   .with_interrupt_manager(InterruptManagerExample::default())
+///   .with_section_extractor(SectionExtractExample::default())
+///   .initialize(physical_hob_list)
+///   .with_driver(Box::new(Driver::default()))
+///   .start()
+///   .unwrap();
 /// ```
 #[derive(Default)]
 pub struct Core<CpuInitializer, SectionExtractor, InterruptManager>
@@ -178,14 +223,15 @@ where
             st.checksum_all();
 
             // Install HobList configuration table
-            let hob_list_guid = uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").unwrap();
+            let hob_list_guid =
+                uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").expect("Invalid UUID format.");
             let hob_list_guid: efi::Guid = unsafe { *(hob_list_guid.to_bytes_le().as_ptr() as *const efi::Guid) };
             misc_boot_services::core_install_configuration_table(
                 hob_list_guid,
                 unsafe { (physical_hob_list as *mut c_void).as_mut() },
                 st,
             )
-            .unwrap();
+            .expect("Unable to create configuration table due to invalid table entry.");
         }
 
         let mut st = systemtables::SYSTEM_TABLE.lock();
@@ -206,18 +252,6 @@ where
 /// additional configuration that may require allocations, as allocations are now available. Once all configuration has
 /// been completed via the provided `with_*` functions, [start](CorePostInit::start) should be called to begin driver
 /// dispatch and handoff to bds.
-///
-/// ## Examples
-///
-/// ``` rust,ignore
-/// dxe_core::Core::default()
-///     .with_cpu_initializer(CpuInit::default())
-///     .with_section_extractor(SectionExtract::default())
-///     .initialize(physical_hob_list)
-///     .with_driver(Box::new(Driver::default()))
-///     .start()
-///     .unwrap();
-/// ```
 pub struct CorePostInit {
     drivers: Vec<Box<dyn DxeComponent>>,
 }
@@ -240,7 +274,10 @@ impl CorePostInit {
             // This leaks the driver, making it static for the lifetime of the program.
             // Since the number of drivers is fixed and this function can only be called once (due to
             // `self` instead of `&self`), we don't have to worry about leaking memory.
-            image::core_start_local_image(Box::leak(driver)).unwrap();
+            if let Err(driver_err) = image::core_start_local_image(Box::leak(driver)) {
+                debug_assert!(false, "Driver failed with status {:?}", driver_err);
+                log::error!("Driver failed with status {:?}", driver_err);
+            }
         }
 
         dispatcher::core_dispatcher().expect("initial dispatch failed.");

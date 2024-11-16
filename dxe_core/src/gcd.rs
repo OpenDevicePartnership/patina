@@ -56,7 +56,9 @@ pub fn init_gcd(physical_hob_list: *const c_void) -> (u64, u64) {
     let mut memory_end: u64 = 0;
 
     let hob_list = Hob::Handoff(unsafe {
-        (physical_hob_list as *const PhaseHandoffInformationTable).as_ref::<'static>().unwrap()
+        (physical_hob_list as *const PhaseHandoffInformationTable)
+            .as_ref::<'static>()
+            .expect("Physical hob list pointer is null, but it must exist and be valid.")
     });
     for hob in &hob_list {
         match hob {

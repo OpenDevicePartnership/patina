@@ -1,6 +1,6 @@
 [package]
 name = "dxe_core"
-version = "0.1.9"
+version = "2.0.2"
 edition = "2021"
 readme = "../README.md"
 description = "A pure rust implementation of the UEFI DXE Core."
@@ -33,6 +33,7 @@ uuid = { workspace = true }
 
 uefi_core = { workspace = true }
 uefi_component_interface = { workspace = true }
+uefi_cpu_init = { workspace = true }
 uefi_gcd = { workspace = true }
 uefi_interrupt = { workspace = true }
 uefi_protocol_db = { workspace = true }
@@ -46,7 +47,6 @@ uefi_tpl_lock = { workspace = true }
 
 [dev-dependencies]
 sample_components = { workspace = true }
-uefi_cpu_init = { workspace = true }
 uefi_logger = { workspace = true }
 serial_writer = { workspace = true }
 section_extractor = { workspace = true }

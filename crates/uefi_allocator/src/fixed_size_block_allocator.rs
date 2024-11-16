@@ -158,6 +158,7 @@ impl FixedSizeBlockAllocator {
     /// If the size or alignment are invalid, it will return Err(FixedSizeBlockAllocatorError::InvalidParameter).
     /// This function is useful for pre-allocating memory before it is needed for memory sensitive operations, such
     /// as creating the EFI_MEMORY_MAP or allocating page table memory before changing attributes.
+    ///
     pub fn ensure_capacity(&mut self, size: usize, align: usize) -> Result<(), FixedSizeBlockAllocatorError> {
         let mut alignment = align;
 
@@ -180,24 +181,14 @@ impl FixedSizeBlockAllocator {
         let layout =
             Layout::from_size_align(size, alignment).map_err(|_| FixedSizeBlockAllocatorError::InvalidParameter)?;
 
-        for node in AllocatorIterator::new(self.allocators) {
-            let allocator = unsafe { &mut (*node).allocator };
-            match allocator.allocate_first_fit(layout) {
-                Ok(ptr) => {
-                    // we have found enough free space in this heap, deallocate it and return
-                    unsafe { allocator.deallocate(ptr, layout) };
-                    return Ok(());
-                }
-                Err(_) => {
-                    // try next
-                    continue;
-                }
-            }
+        // if we can allocate and deallocate a block of the given size and alignment, then we have enough capacity
+        // If the pool is not large enough, alloc will call expand, which will allocate more memory from the GCD and
+        // dealloc will leave the extra memory as owned by this allocator
+        let ptr = self.alloc(layout);
+        if ptr.is_null() {
+            return Err(FixedSizeBlockAllocatorError::OutOfMemory);
         }
-
-        // if we hit here, we haven't found a large enough free region, so we need to expand this allocator's
-        // free mem
-        self.expand(layout)?;
+        unsafe { self.dealloc(ptr, layout) };
 
         Ok(())
     }
@@ -326,7 +317,10 @@ impl FixedSizeBlockAllocator {
                         let block_size = BLOCK_SIZES[index];
                         // only works if all block sizes are a power of 2
                         let block_align = block_size;
-                        let layout = Layout::from_size_align(block_size, block_align).unwrap();
+                        let layout = match Layout::from_size_align(block_size, block_align) {
+                            Ok(layout) => layout,
+                            Err(_) => return core::ptr::null_mut(),
+                        };
                         self.fallback_alloc(layout)
                     }
                 }
@@ -392,11 +386,12 @@ impl FixedSizeBlockAllocator {
     // deallocates back to the linked-list backing allocator if the size of
     // layout being freed is too big to be tracked as a fixed-size free block.
     fn fallback_dealloc(&mut self, ptr: *mut u8, layout: Layout) {
-        let ptr = NonNull::new(ptr).unwrap();
-        for node in AllocatorIterator::new(self.allocators) {
-            let allocator = unsafe { &mut (*node).allocator };
-            if (allocator.bottom() <= ptr.as_ptr()) && (ptr.as_ptr() < allocator.top()) {
-                unsafe { allocator.deallocate(ptr, layout) };
+        if let Some(ptr) = NonNull::new(ptr) {
+            for node in AllocatorIterator::new(self.allocators) {
+                let allocator = unsafe { &mut (*node).allocator };
+                if (allocator.bottom() <= ptr.as_ptr()) && (ptr.as_ptr() < allocator.top()) {
+                    unsafe { allocator.deallocate(ptr, layout) };
+                }
             }
         }
     }
@@ -1186,7 +1181,7 @@ mod tests {
 
         let layout = Layout::from_size_align(0x8, 0x8).unwrap();
         let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
-        let allocation_ptr = allocation.as_ptr() as *mut u8;
+        let allocation_ptr = allocation.as_ptr();
 
         unsafe { fsb.deallocate(allocation, layout) };
         let free_block_ptr =
@@ -1195,7 +1190,7 @@ mod tests {
 
         let layout = Layout::from_size_align(0x20, 0x20).unwrap();
         let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
-        let allocation_ptr = allocation.as_ptr() as *mut u8;
+        let allocation_ptr = allocation.as_ptr();
 
         unsafe { fsb.deallocate(allocation, layout) };
         let free_block_ptr =

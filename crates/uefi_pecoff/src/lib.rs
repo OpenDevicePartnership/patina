@@ -9,7 +9,11 @@
 #![no_std]
 extern crate alloc;
 
-use alloc::{format, string::String, vec::Vec};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 use scroll::{Pread, Pwrite, LE};
 
 pub mod error;
@@ -108,15 +112,18 @@ impl UefiPeInfo {
 
         // TE headers don't have a size of image filed like PE32 headers
         // so it needs to be calculated.
-        let last_section = pe.sections.last().unwrap();
-        pe.size_of_image = last_section.virtual_address + last_section.virtual_size;
+        if let Some(last_section) = pe.sections.last() {
+            pe.size_of_image = last_section.virtual_address + last_section.virtual_size;
 
-        // Parse the filename from the debug data if it exists.
-        if let Some(codeview_data) = &parsed_te.debug_data.codeview_pdb70_debug_info {
-            pe.filename = UefiPeInfo::read_filename(codeview_data.filename)?;
-        };
+            // Parse the filename from the debug data if it exists.
+            if let Some(codeview_data) = &parsed_te.debug_data.codeview_pdb70_debug_info {
+                pe.filename = UefiPeInfo::read_filename(codeview_data.filename)?;
+            };
 
-        Ok(pe)
+            Ok(pe)
+        } else {
+            Err(error::Error::Goblin(goblin::error::Error::Malformed("No sections found in PE.".to_string())))
+        }
     }
 
     /// Parses a PE image with a PE32 header, gathering the necessary data for operating on the image in a UEFI environment.

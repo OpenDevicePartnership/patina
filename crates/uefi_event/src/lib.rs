@@ -30,7 +30,6 @@
 //!
 #![no_std]
 #![warn(missing_docs)]
-#![cfg_attr(feature = "nightly", feature(no_coverage))]
 
 extern crate alloc;
 
@@ -154,18 +153,17 @@ pub struct EventNotification {
     /// efi::TPL that notification should run at
     pub notify_tpl: efi::Tpl,
     /// notification function
-    pub notify_function: efi::EventNotify,
+    pub notify_function: Option<efi::EventNotify>,
     /// context passed to the notification function
     pub notify_context: Option<*mut c_void>,
 }
 
 impl fmt::Debug for EventNotification {
-    #[cfg_attr(feature = "nightly", feature(no_coverage))]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EventNotification")
             .field("event", &self.event)
             .field("notify_tpl", &self.notify_tpl)
-            .field("notify_function", &(self.notify_function as usize))
+            .field("notify_function", &self.notify_function.map(|f| f as usize))
             .field("notify_context", &self.notify_context)
             .finish()
     }
@@ -226,7 +224,6 @@ struct Event {
 }
 
 impl fmt::Debug for Event {
-    #[cfg_attr(feature = "nightly", feature(no_coverage))]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut notify_func = 0;
         if self.notify_function.is_some() {
@@ -333,7 +330,7 @@ impl EventDb {
                 EventNotification {
                     event: event.event_id as efi::Event,
                     notify_tpl: event.notify_tpl,
-                    notify_function: event.notify_function.unwrap(),
+                    notify_function: event.notify_function,
                     notify_context: event.notify_context,
                 },
                 tag,
@@ -409,7 +406,7 @@ impl EventDb {
             Ok(EventNotification {
                 event,
                 notify_tpl: found_event.notify_tpl,
-                notify_function: found_event.notify_function.expect("Notify event without notify function is illegal."),
+                notify_function: found_event.notify_function,
                 notify_context: found_event.notify_context,
             })
         } else {
@@ -457,7 +454,13 @@ impl EventDb {
     fn timer_tick(&mut self, current_time: u64) {
         let events: Vec<usize> = self.events.keys().cloned().collect();
         for event in events {
-            let current_event = self.events.get_mut(&event).unwrap();
+            let current_event = if let Some(current) = self.events.get_mut(&event) {
+                current
+            } else {
+                debug_assert!(false, "Event {:?} not found.", event);
+                log::error!("Event {:?} not found.", event);
+                continue;
+            };
             if current_event.event_type.is_timer() {
                 if let Some(trigger_time) = current_event.trigger_time {
                     if trigger_time <= current_time {
@@ -467,7 +470,9 @@ impl EventDb {
                             //no period means it's a one-shot event; another call to set_timer is required to "re-arm"
                             current_event.trigger_time = None;
                         }
-                        self.signal_event(event as *mut c_void).unwrap();
+                        if let Err(e) = self.signal_event(event as *mut c_void) {
+                            log::error!("Error {:?} signaling event {:?}.", e, event);
+                        }
                     }
                 }
             }
@@ -488,10 +493,11 @@ impl EventDb {
         if let Some(item) = self.pending_notifies.first() {
             if item.0.notify_tpl <= tpl_level {
                 return None;
-            } else {
-                let item = self.pending_notifies.pop_first().unwrap();
-                self.events.get_mut(&(item.0.event as usize)).unwrap().signaled = false;
+            } else if let Some(item) = self.pending_notifies.pop_first() {
+                self.events.get_mut(&(item.0.event as usize))?.signaled = false;
                 return Some(item.0);
+            } else {
+                log::error!("Pending_notifies was empty, but it should have at least one item.");
             }
         }
         None
@@ -882,7 +888,7 @@ impl SpinLockedEventDb {
     ///
     /// let notification_data = SPIN_LOCKED_EVENT_DB.get_notification_data(handle).unwrap();
     /// assert_eq!(notification_data.notify_tpl, efi::TPL_CALLBACK);
-    /// assert_eq!(notification_data.notify_function as usize, notify_function as usize);
+    /// assert_eq!(notification_data.notify_function.unwrap() as usize, notify_function as usize);
     /// assert_eq!(notification_data.notify_context, Some(notify_context));
     ///
     /// ```
@@ -1093,7 +1099,7 @@ mod tests {
         assert!(result.is_ok());
         let event = result.unwrap();
         let index = event as usize;
-        assert!(&index < &SPIN_LOCKED_EVENT_DB.lock().next_event_id);
+        assert!(index < SPIN_LOCKED_EVENT_DB.lock().next_event_id);
         let events = &SPIN_LOCKED_EVENT_DB.lock().events;
         assert_eq!(events.get(&index).unwrap().event_type, EventType::TimerNotifyEvent);
         assert_eq!(events.get(&index).unwrap().event_type as u32, efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL);
@@ -1751,7 +1757,7 @@ mod tests {
         assert!(notification_data.is_ok());
         let event_notification = notification_data.unwrap();
         assert_eq!(event_notification.notify_tpl, efi::TPL_NOTIFY);
-        assert_eq!(event_notification.notify_function as usize, test_notify_function as usize);
+        assert_eq!(event_notification.notify_function.unwrap() as usize, test_notify_function as usize);
         assert_eq!(event_notification.notify_context.unwrap(), test_context);
 
         let event = SPIN_LOCKED_EVENT_DB
@@ -1768,7 +1774,7 @@ mod tests {
         assert!(notification_data.is_ok());
         let event_notification = notification_data.unwrap();
         assert_eq!(event_notification.notify_tpl, efi::TPL_NOTIFY);
-        assert_eq!(event_notification.notify_function as usize, test_notify_function as usize);
+        assert_eq!(event_notification.notify_function.unwrap() as usize, test_notify_function as usize);
         assert!(event_notification.notify_context.is_none());
 
         let event = SPIN_LOCKED_EVENT_DB.create_event(efi::EVT_TIMER, efi::TPL_NOTIFY, None, None, None).unwrap();

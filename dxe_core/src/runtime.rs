@@ -88,81 +88,98 @@ pub extern "efiapi" fn set_virtual_address_map(
     // Convert runtime services pointers
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().get_time) as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().get_time
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().set_time) as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().set_time
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().get_wakeup_time)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().get_wakeup_time
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().set_wakeup_time)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().set_wakeup_time
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().reset_system)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().reset_system
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().get_next_high_mono_count)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().get_next_high_mono_count
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().get_variable)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().get_variable
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().set_variable)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().set_variable
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().get_next_variable_name)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().get_next_variable_name
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().query_variable_info)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().query_variable_info
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().update_capsule)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().update_capsule
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().runtime_services().query_capsule_capabilities)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").runtime_services().query_capsule_capabilities
+        ) as *mut *mut c_void,
     );
-    SYSTEM_TABLE.lock().as_mut().unwrap().checksum_runtime_services();
+    SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").checksum_runtime_services();
 
     // Convert system table runtime fields
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().system_table().firmware_vendor)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").system_table().firmware_vendor
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().system_table().configuration_table)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").system_table().configuration_table
+        ) as *mut *mut c_void,
     );
     convert_pointer(
         0,
-        core::ptr::addr_of_mut!(SYSTEM_TABLE.lock().as_mut().unwrap().system_table().runtime_services)
-            as *mut *mut c_void,
+        core::ptr::addr_of_mut!(
+            SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").system_table().runtime_services
+        ) as *mut *mut c_void,
     );
-    SYSTEM_TABLE.lock().as_mut().unwrap().checksum();
+    SYSTEM_TABLE.lock().as_mut().expect("Invalid system table.").checksum();
 
     {
         let mut runtime_data = RUNTIME_DATA.lock();
@@ -226,10 +243,16 @@ pub fn init_runtime_support(rt: &mut efi::RuntimeServices) {
     match core_allocate_pool(efi::RUNTIME_SERVICES_DATA, mem::size_of::<runtime::Protocol>()) {
         Err(err) => panic!("Failed to allocate the Runtime Architecture Protocol: {:?}", err),
         Ok(allocation) => unsafe {
-            (allocation as *mut runtime::Protocol).write(runtime::Protocol {
-                // The Rust usage of the protocol won't actually use image_head or event_head
-                image_head: list_entry::Entry { forward_link: ptr::null_mut(), back_link: ptr::null_mut() },
-                event_head: list_entry::Entry { forward_link: ptr::null_mut(), back_link: ptr::null_mut() },
+            let allocation_ptr = allocation as *mut runtime::Protocol;
+
+            let image_head_ptr = ptr::addr_of_mut!(allocation_ptr.as_mut().unwrap().image_head);
+            let event_head_ptr = ptr::addr_of_mut!(allocation_ptr.as_mut().unwrap().event_head);
+
+            allocation_ptr.write(runtime::Protocol {
+                // The Rust usage of the protocol won't actually use image_head or event_head,
+                // so pass empty linked lists (just heads that point to themselves).
+                image_head: list_entry::Entry { forward_link: image_head_ptr, back_link: image_head_ptr },
+                event_head: list_entry::Entry { forward_link: event_head_ptr, back_link: event_head_ptr },
                 memory_descriptor_size: mem::size_of::<efi::MemoryDescriptor>(), // Should be 16-byte aligned
                 memory_descriptor_version: efi::MEMORY_DESCRIPTOR_VERSION,
                 memory_map_size: 0,
@@ -238,7 +261,7 @@ pub fn init_runtime_support(rt: &mut efi::RuntimeServices) {
                 virtual_mode: AtomicBool::new(false),
                 at_runtime: AtomicBool::new(false),
             });
-            RUNTIME_DATA.lock().runtime_arch_ptr = allocation as *mut runtime::Protocol;
+            RUNTIME_DATA.lock().runtime_arch_ptr = allocation_ptr;
             // Install the protocol on a new handle
             core_install_protocol_interface(None, runtime::PROTOCOL_GUID, allocation)
                 .expect("Failed to install the Runtime Architecture protocol");

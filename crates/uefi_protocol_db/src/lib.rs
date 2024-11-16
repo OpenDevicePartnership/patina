@@ -91,7 +91,10 @@ impl OpenProtocolInformation {
         const BY_DRIVER_EXCLUSIVE: u32 = efi::OPEN_PROTOCOL_BY_DRIVER | efi::OPEN_PROTOCOL_EXCLUSIVE;
         match attributes {
             efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER => {
-                if agent_handle.is_none() || controller_handle.is_none() || handle == controller_handle.unwrap() {
+                if agent_handle.is_none()
+                    || controller_handle.is_none()
+                    || handle == controller_handle.ok_or(efi::Status::INVALID_PARAMETER)?
+                {
                     return Err(efi::Status::INVALID_PARAMETER);
                 }
             }
@@ -223,9 +226,9 @@ impl ProtocolDb {
                 (handle, key)
             }
         };
-        debug_assert!(self.handles.contains_key(&key)); //above logic should guarantee a valid key. Is debug assert to avoid perf cost of contains() in release.
 
-        let handle_instance = self.handles.get_mut(&key).unwrap();
+        debug_assert!(self.handles.contains_key(&key));
+        let handle_instance = self.handles.get_mut(&key).ok_or(efi::Status::UNSUPPORTED)?;
 
         if handle_instance.contains_key(&OrdGuid(protocol)) {
             return Err(efi::Status::INVALID_PARAMETER);
@@ -1955,6 +1958,7 @@ mod tests {
         let open_protocol_info_list = SPIN_LOCKED_PROTOCOL_DB.get_open_protocol_information(handle).unwrap();
         assert_eq!(attributes_list.len(), test_info.len());
         assert_eq!(open_protocol_info_list.len(), 1);
+        #[allow(clippy::needless_range_loop)]
         for idx in 0..attributes_list.len() {
             assert_eq!(guid1, open_protocol_info_list[0].0);
             assert_eq!(test_info[idx].0, open_protocol_info_list[0].1[idx].agent_handle);
@@ -2078,12 +2082,12 @@ mod tests {
         assert_eq!(notify_list.len(), 2);
         assert_eq!(notify_list[0].event, event);
         assert_eq!(notify_list[0].fresh_handles.len(), 1);
-        assert!(notify_list[0].fresh_handles.get(&result.0).is_some());
+        assert!(notify_list[0].fresh_handles.contains(&result.0));
         assert_eq!(notify_list[0].registration, reg1);
 
         assert_eq!(notify_list[1].event, event2);
         assert_eq!(notify_list[1].fresh_handles.len(), 1);
-        assert!(notify_list[1].fresh_handles.get(&result.0).is_some());
+        assert!(notify_list[1].fresh_handles.contains(&result.0));
         assert_eq!(notify_list[1].registration, reg2);
     }
 

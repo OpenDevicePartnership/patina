@@ -10,6 +10,12 @@ name: CI
 
 on:
   workflow_call:
+    inputs:
+      mdbook-path:
+        description: "Path to the mdbook to build"
+        required: false
+        default: ""
+        type: string
     secrets:
       GH_PAT:
         description: "GitHub Personal Access Token"
@@ -38,6 +44,14 @@ jobs:
         with:
           config: markdownlint.yml
           args: "**/*.md"
+
+      - name: 🛠️ Download Rust Tools 🛠️
+        uses: pop-project/uefi-dxe-core/.github/actions/rust-tool-cache@main
+      
+      - name: 📖 Build Book 📖
+        run: mdbook build ${{ inputs.mdbook-path }}
+        if: ${{ inputs.mdbook-path != '' }}
+
   run:
     name: Rust CI
 
@@ -65,9 +79,22 @@ jobs:
         run: cargo fmt --all --check
         env:
           RUSTC_BOOTSTRAP: 1
+      
+      - name: Run cargo-clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        env:
+          RUSTC_BOOTSTRAP: 1
 
       - name: 🧪 Run Tests 🧪
         run: cargo make coverage
+
+      - name: Test Documentation
+        run: cargo test --doc
+        env:
+          RUSTC_BOOTSTRAP: 1
+
+      - name: Build documentation
+        run: cargo make doc
 
       - name: Upload Coverage Report
         uses: codecov/codecov-action@v4
@@ -75,9 +102,6 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: target/cobertura.xml
           fail_ci_if_error: false # Expect it to fail while repository is private
-
-      - name: Build documentation
-        run: cargo make doc
 
       - name: Build std
         run: cargo make build

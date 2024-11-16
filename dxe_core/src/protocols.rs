@@ -9,6 +9,7 @@
 use core::{ffi::c_void, mem::size_of};
 
 use alloc::{slice, vec, vec::Vec};
+use mu_rust_helpers::guid::guid_fmt;
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_device_path::{is_device_path_end, remaining_device_path};
@@ -27,7 +28,7 @@ pub fn core_install_protocol_interface(
     protocol: efi::Guid,
     interface: *mut c_void,
 ) -> Result<efi::Handle, efi::Status> {
-    log::info!("InstallProtocolInterface: {:?} @ {:#x?}", uuid::Uuid::from_bytes_le(*protocol.as_bytes()), interface);
+    log::info!("InstallProtocolInterface: {:?} @ {:#x?}", guid_fmt!(protocol), interface);
     let (handle, notifies) = PROTOCOL_DB.install_protocol_interface(handle, protocol, interface)?;
 
     let mut closed_events = Vec::new();
@@ -330,7 +331,10 @@ extern "efiapi" fn open_protocol(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let protocol = *(unsafe { protocol.as_ref().unwrap() });
+    let protocol = match unsafe { protocol.as_ref() } {
+        Some(protocol) => *protocol,
+        None => return efi::Status::INVALID_PARAMETER,
+    };
 
     if interface.is_null() && attributes != efi::OPEN_PROTOCOL_TEST_PROTOCOL {
         return efi::Status::INVALID_PARAMETER;
@@ -763,11 +767,13 @@ pub fn init_protocol_support(bs: &mut efi::BootServices) {
     //r_efi has it as *mut handle.
     bs.install_multiple_protocol_interfaces = unsafe {
         let ptr = install_multiple_protocol_interfaces as *const ();
-        core::mem::transmute(ptr)
+        core::mem::transmute::<*const (), extern "efiapi" fn(*mut *mut c_void, *mut c_void, *mut c_void) -> efi::Status>(
+            ptr,
+        )
     };
     bs.uninstall_multiple_protocol_interfaces = unsafe {
         let ptr = uninstall_multiple_protocol_interfaces as *const ();
-        core::mem::transmute(ptr)
+        core::mem::transmute::<*const (), extern "efiapi" fn(*mut c_void, *mut c_void, *mut c_void) -> efi::Status>(ptr)
     };
 
     bs.install_protocol_interface = install_protocol_interface;

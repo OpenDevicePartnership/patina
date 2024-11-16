@@ -220,7 +220,9 @@ extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_
     match PROTOCOL_DB.locate_protocol(protocols::metronome::PROTOCOL_GUID) {
         Ok(metronome_arch_ptr) => {
             METRONOME_ARCH_PTR.store(metronome_arch_ptr as *mut protocols::metronome::Protocol, Ordering::SeqCst);
-            EVENT_DB.close_event(event).unwrap();
+            if let Err(status_err) = EVENT_DB.close_event(event) {
+                log::warn!("Could not close event for metronome_arch_available due to error {:?}", status_err);
+            }
         }
         Err(err) => panic!("Unable to retrieve metronome arch: {:?}", err),
     }
@@ -232,7 +234,9 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
     match PROTOCOL_DB.locate_protocol(protocols::watchdog::PROTOCOL_GUID) {
         Ok(watchdog_arch_ptr) => {
             WATCHDOG_ARCH_PTR.store(watchdog_arch_ptr as *mut protocols::watchdog::Protocol, Ordering::SeqCst);
-            EVENT_DB.close_event(event).unwrap();
+            if let Err(status_err) = EVENT_DB.close_event(event) {
+                log::warn!("Could not close event for watchdog_arch_available due to error {:?}", status_err);
+            }
         }
         Err(err) => panic!("Unable to retrieve watchdog arch: {:?}", err),
     }
@@ -295,7 +299,11 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     };
 
     // Clear non-runtime services from the EFI System Table
-    SYSTEM_TABLE.lock().as_mut().unwrap().clear_boot_time_services();
+    SYSTEM_TABLE
+        .lock()
+        .as_mut()
+        .expect("The System Table pointer is null. This is invalid.")
+        .clear_boot_time_services();
 
     match PROTOCOL_DB.locate_protocol(protocols::runtime::PROTOCOL_GUID) {
         Ok(rt_arch_ptr) => {

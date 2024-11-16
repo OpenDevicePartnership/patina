@@ -17,6 +17,7 @@ use mu_pi::{
     fw_fs::{FfsFileRawType, FfsSectionType, FirmwareVolume, Section, SectionExtractor},
     protocols::firmware_volume_block,
 };
+use mu_rust_helpers::guid::guid_fmt;
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
@@ -24,7 +25,7 @@ use uefi_protocol_db::DXE_CORE_HANDLE;
 
 use crate::{
     events::EVENT_DB,
-    fv::core_install_firmware_volume,
+    fv::{core_install_firmware_volume, device_path_bytes_for_fv_file},
     image::{core_load_image, core_start_image},
     protocols::PROTOCOL_DB,
 };
@@ -63,13 +64,45 @@ struct PendingDriver {
     file_name: efi::Guid,
     depex: Option<Depex>,
     pe32: Section,
+    image_handle: Option<efi::Handle>,
+    security_status: efi::Status,
 }
 
 struct PendingFirmwareVolumeImage {
     parent_fv_handle: efi::Handle,
     file_name: efi::Guid,
     depex: Option<Depex>,
-    section: Section,
+    fv_sections: Vec<Section>,
+}
+
+impl PendingFirmwareVolumeImage {
+    // authenticate the pending firmware volume via the Security Architectural Protocol
+    fn evaluate_auth(&self) -> Result<(), efi::Status> {
+        let security_protocol = unsafe {
+            match PROTOCOL_DB.locate_protocol(mu_pi::protocols::security::PROTOCOL_GUID) {
+                Ok(protocol) => (protocol as *mut mu_pi::protocols::security::Protocol)
+                    .as_ref()
+                    .expect("Security Protocol should not be null"),
+                //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
+                //Firmware Volume.
+                Err(_) => return Ok(()),
+            }
+        };
+        let file_path = device_path_bytes_for_fv_file(self.parent_fv_handle, self.file_name)?;
+
+        //Important Note: the present section extraction implementation does not support section extraction-based
+        //authentication status, so it is hard-coded to zero here. The primary security handlers for the main usage
+        //scenarios (TPM measurement and UEFI Secure Boot) do not use it.
+        let status = (security_protocol.file_authentication_state)(
+            security_protocol as *const _ as *mut mu_pi::protocols::security::Protocol,
+            0,
+            file_path.as_ptr() as *const _ as *mut efi::protocols::device_path::Protocol,
+        );
+        if status != efi::Status::SUCCESS {
+            return Err(status);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -130,10 +163,7 @@ fn dispatch() -> Result<bool, efi::Status> {
         let driver_candidates: Vec<_> = dispatcher.pending_drivers.drain(..).collect();
         let mut scheduled_driver_candidates = Vec::new();
         for mut candidate in driver_candidates {
-            log::info!(
-                "Evaluting depex for candidate: {:?}",
-                uuid::Uuid::from_bytes_le(*candidate.file_name.as_bytes())
-            );
+            log::info!("Evaluting depex for candidate: {:?}", guid_fmt!(candidate.file_name));
             let depex_satisfied = match candidate.depex {
                 Some(ref mut depex) => depex.eval(&PROTOCOL_DB),
                 None => dispatcher.arch_protocols_available,
@@ -170,17 +200,42 @@ fn dispatch() -> Result<bool, efi::Status> {
     log::info!("Depex evaluation complete, scheduled {:} drivers", scheduled.len());
 
     let mut dispatch_attempted = false;
-    for driver in scheduled {
-        log::info!("Loading file: {:?}", uuid::Uuid::from_bytes_le(*driver.file_name.as_bytes()));
-        let image_load_result =
-            core_load_image(false, DXE_CORE_HANDLE, driver.device_path, Some(driver.pe32.section_data()));
-        if let Ok(image_handle) = image_load_result {
-            dispatch_attempted = true;
-            // Note: ignore error result of core_start_image here - an image returning an error code is expected in some
-            // cases, and a debug output for that is already implemented in core_start_image.
-            let _status = core_start_image(image_handle);
-        } else {
-            log::error!("Failed to load: load_image returned {:#x?}", image_load_result);
+    for mut driver in scheduled {
+        if driver.image_handle.is_none() {
+            log::info!("Loading file: {:?}", guid_fmt!(driver.file_name));
+            match core_load_image(false, DXE_CORE_HANDLE, driver.device_path, Some(driver.pe32.section_data())) {
+                Ok((image_handle, security_status)) => {
+                    driver.image_handle = Some(image_handle);
+                    driver.security_status = security_status;
+                }
+                Err(err) => log::error!("Failed to load: load_image returned {:x?}", err),
+            }
+        }
+
+        if let Some(image_handle) = driver.image_handle {
+            match driver.security_status {
+                efi::Status::SUCCESS => {
+                    dispatch_attempted = true;
+                    // Note: ignore error result of core_start_image here - an image returning an error code is expected in some
+                    // cases, and a debug output for that is already implemented in core_start_image.
+                    let _status = core_start_image(image_handle);
+                }
+                efi::Status::SECURITY_VIOLATION => {
+                    log::info!(
+                        "Deferring driver: {:?} due to security status: {:x?}",
+                        guid_fmt!(driver.file_name),
+                        efi::Status::SECURITY_VIOLATION
+                    );
+                    DISPATCHER_CONTEXT.lock().pending_drivers.push(driver);
+                }
+                unexpected_status => {
+                    log::info!(
+                        "Dropping driver: {:?} due to security status: {:x?}",
+                        guid_fmt!(driver.file_name),
+                        unexpected_status
+                    );
+                }
+            }
         }
     }
 
@@ -194,17 +249,16 @@ fn dispatch() -> Result<bool, efi::Status> {
                 None => true,
             };
 
-            if depex_satisfied {
-                let volume_address: u64 = candidate.section.section_data().as_ptr() as u64;
+            if depex_satisfied && candidate.evaluate_auth().is_ok() {
+                for section in candidate.fv_sections {
+                    let volume_address: u64 = section.section_data().as_ptr() as u64;
 
-                if core_install_firmware_volume(volume_address, Some(candidate.parent_fv_handle)).is_ok() {
-                    dispatch_attempted = true;
-                    dispatcher.loaded_firmware_volume_sections.push(candidate.section);
-                } else {
-                    log::warn!(
-                        "couldn't install firmware volume image {:?}",
-                        uuid::Uuid::from_bytes_le(*candidate.file_name.as_bytes())
-                    );
+                    if core_install_firmware_volume(volume_address, Some(candidate.parent_fv_handle)).is_ok() {
+                        dispatch_attempted = true;
+                        dispatcher.loaded_firmware_volume_sections.push(section);
+                    } else {
+                        log::warn!("couldn't install firmware volume image {:?}", guid_fmt!(candidate.file_name));
+                    }
                 }
             } else {
                 dispatcher.pending_firmware_volume_images.push(candidate)
@@ -297,6 +351,8 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
                             pe32: pe32_section,
                             device_path: fv_device_path,
                             depex,
+                            image_handle: None,
+                            security_status: efi::Status::NOT_READY,
                         });
                     } else {
                         log::warn!(
@@ -330,14 +386,17 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
                         })
                         .map(Depex::from);
 
-                    if let Some(fv_image_section) =
-                        sections.into_iter().find(|s| s.section_type() == Some(FfsSectionType::FirmwareVolumeImage))
-                    {
+                    let fv_sections = sections
+                        .into_iter()
+                        .filter(|s| s.section_type() == Some(FfsSectionType::FirmwareVolumeImage))
+                        .collect::<Vec<_>>();
+
+                    if !fv_sections.is_empty() {
                         dispatcher.pending_firmware_volume_images.push(PendingFirmwareVolumeImage {
                             parent_fv_handle: handle,
                             file_name,
                             depex,
-                            section: fv_image_section,
+                            fv_sections,
                         });
                     } else {
                         log::warn!(
@@ -362,6 +421,17 @@ pub fn core_schedule(handle: efi::Handle, file: &efi::Guid) -> Result<(), efi::S
                     return Ok(());
                 }
             }
+        }
+    }
+    Err(efi::Status::NOT_FOUND)
+}
+
+pub fn core_trust(handle: efi::Handle, file: &efi::Guid) -> Result<(), efi::Status> {
+    let mut dispatcher = DISPATCHER_CONTEXT.lock();
+    for driver in dispatcher.pending_drivers.iter_mut() {
+        if driver.firmware_volume_handle == handle && OrdGuid(driver.file_name) == OrdGuid(*file) {
+            driver.security_status = efi::Status::SUCCESS;
+            return Ok(());
         }
     }
     Err(efi::Status::NOT_FOUND)
@@ -399,8 +469,7 @@ pub fn init_dispatcher(extractor: Box<dyn SectionExtractor>) {
 
 pub fn display_discovered_not_dispatched() {
     for driver in &DISPATCHER_CONTEXT.lock().pending_drivers {
-        let file_name = uuid::Uuid::from_bytes_le(*driver.file_name.as_bytes());
-        log::warn!("Driver {:?} found but not dispatched.", file_name);
+        log::warn!("Driver {:?} found but not dispatched.", guid_fmt!(driver.file_name));
     }
 }
 
@@ -414,7 +483,11 @@ extern "efiapi" fn core_fw_vol_event_protocol_notify(_event: efi::Event, _contex
 
 #[cfg(test)]
 mod tests {
+    use core::sync::atomic::AtomicBool;
     use std::{fs::File, io::Read, vec};
+
+    use uefi_device_path::DevicePathWalker;
+    use uuid::uuid;
 
     use super::*;
     use crate::test_collateral;
@@ -695,6 +768,69 @@ mod tests {
                 &efi::Guid::from_bytes(uuid::Uuid::from_u128(0x1fa1f39e_feff_4aae_bd7b_38a070a3b609).as_bytes()),
             );
             assert_eq!(result, Err(efi::Status::NOT_FOUND));
+        })
+    }
+
+    #[test]
+    fn test_fv_authentication() {
+        let mut file = File::open(test_collateral!("NESTEDFV.Fv")).unwrap();
+        let mut fv: Vec<u8> = Vec::new();
+        file.read_to_end(&mut fv).expect("failed to read test file");
+
+        with_locked_state(|| {
+            static SECURITY_CALL_EXECUTED: AtomicBool = AtomicBool::new(false);
+            extern "efiapi" fn mock_file_authentication_state(
+                this: *mut mu_pi::protocols::security::Protocol,
+                authentication_status: u32,
+                file: *mut efi::protocols::device_path::Protocol,
+            ) -> efi::Status {
+                assert!(!this.is_null());
+                assert_eq!(authentication_status, 0);
+
+                unsafe {
+                    let mut node_walker = DevicePathWalker::new(file);
+                    //outer FV of NESTEDFV.Fv does not have an extended header so expect MMAP device path.
+                    let fv_node = node_walker.next().unwrap();
+                    assert_eq!(fv_node.header.r#type, efi::protocols::device_path::TYPE_HARDWARE);
+                    assert_eq!(fv_node.header.sub_type, efi::protocols::device_path::Hardware::SUBTYPE_MMAP);
+
+                    //Internal nested FV file name is 2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75
+                    let file_node = node_walker.next().unwrap();
+                    assert_eq!(file_node.header.r#type, efi::protocols::device_path::TYPE_MEDIA);
+                    assert_eq!(
+                        file_node.header.sub_type,
+                        efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE
+                    );
+                    assert_eq!(file_node.data, uuid!("2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75").to_bytes_le());
+
+                    //device path end node
+                    let end_node = node_walker.next().unwrap();
+                    assert_eq!(end_node.header.r#type, efi::protocols::device_path::TYPE_END);
+                    assert_eq!(end_node.header.sub_type, efi::protocols::device_path::End::SUBTYPE_ENTIRE);
+                }
+
+                SECURITY_CALL_EXECUTED.store(true, core::sync::atomic::Ordering::SeqCst);
+
+                efi::Status::SUCCESS
+            }
+
+            let security_protocol =
+                mu_pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
+
+            PROTOCOL_DB
+                .install_protocol_interface(
+                    None,
+                    mu_pi::protocols::security::PROTOCOL_GUID,
+                    &security_protocol as *const _ as *mut _,
+                )
+                .unwrap();
+
+            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+
+            add_fv_handles(vec![handle]).expect("Failed to add FV handle");
+            core_dispatcher().unwrap();
+
+            assert!(SECURITY_CALL_EXECUTED.load(core::sync::atomic::Ordering::SeqCst));
         })
     }
 }

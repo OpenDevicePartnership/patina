@@ -8,6 +8,7 @@
 //!
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::{ptr::NonNull, slice::from_raw_parts_mut};
+use uefi_device_path::{concat_device_path_to_boxed_slice, copy_device_path_to_boxed_slice};
 
 use r_efi::efi;
 
@@ -124,6 +125,55 @@ fn get_all_driver_bindings() -> Vec<*mut efi::protocols::driver_binding::Protoco
     driver_bindings
 }
 
+// authenticate a connect call through the security2 arch protocol
+fn authenticate_connect(
+    controller_handle: efi::Handle,
+    remaining_device_path: Option<*mut efi::protocols::device_path::Protocol>,
+    recursive: bool,
+) -> Result<(), efi::Status> {
+    if let Ok(device_path) =
+        PROTOCOL_DB.get_interface_for_handle(controller_handle, efi::protocols::device_path::PROTOCOL_GUID)
+    {
+        let device_path = device_path as *mut efi::protocols::device_path::Protocol;
+        if let Ok(security2_ptr) = PROTOCOL_DB.locate_protocol(mu_pi::protocols::security2::PROTOCOL_GUID) {
+            let file_path = {
+                if !recursive {
+                    if let Some(remaining_path) = remaining_device_path {
+                        concat_device_path_to_boxed_slice(device_path, remaining_path)
+                    } else {
+                        copy_device_path_to_boxed_slice(device_path)
+                    }
+                } else {
+                    copy_device_path_to_boxed_slice(device_path)
+                }
+            };
+
+            if let Ok(mut file_path) = file_path {
+                let security2 = unsafe {
+                    (security2_ptr as *mut mu_pi::protocols::security2::Protocol)
+                        .as_ref()
+                        .expect("security2 should not be null")
+                };
+                let security_status = (security2.file_authentication)(
+                    security2_ptr as *mut _,
+                    file_path.as_mut_ptr() as *mut _,
+                    core::ptr::null_mut(),
+                    0,
+                    false,
+                );
+                if security_status != efi::Status::SUCCESS {
+                    return Err(security_status);
+                }
+            }
+        }
+    }
+    //if there is no device path on the controller handle,
+    //or if there is no security2 protocol instance,
+    //or any of the device paths are malformed,
+    //then above will fall through to here, and no authentication is performed.
+    Ok(())
+}
+
 fn core_connect_single_controller(
     controller_handle: efi::Handle,
     driver_handles: Vec<efi::Handle>,
@@ -222,7 +272,7 @@ pub unsafe fn core_connect_controller(
     remaining_device_path: Option<*mut efi::protocols::device_path::Protocol>,
     recursive: bool,
 ) -> Result<(), efi::Status> {
-    //TODO: security support: check whether the user has permissions to start UEFI device drivers.
+    authenticate_connect(handle, remaining_device_path, recursive)?;
 
     let return_status = core_connect_single_controller(handle, driver_handles, remaining_device_path);
 

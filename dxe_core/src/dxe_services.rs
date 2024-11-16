@@ -20,7 +20,7 @@ use r_efi::efi;
 
 use crate::{
     allocator::{core_allocate_pool, EFI_RUNTIME_SERVICES_DATA_ALLOCATOR},
-    dispatcher::{core_dispatcher, core_schedule},
+    dispatcher::{core_dispatcher, core_schedule, core_trust},
     events::EVENT_DB,
     fv::core_install_firmware_volume,
     misc_boot_services,
@@ -142,27 +142,7 @@ extern "efiapi" fn get_memory_space_descriptor(
 pub fn core_get_memory_space_descriptor(
     base_address: efi::PhysicalAddress,
 ) -> Result<dxe_services::MemorySpaceDescriptor, efi::Status> {
-    //Note: this would be more efficient if it was done in the GCD; rather than retrieving all the descriptors and
-    //searching them here. It is done this way for simplicity - it can be optimized if it proves too slow.
-
-    //allocate an empty vector with enough space for all the descriptors with some padding (in the event)
-    //that extra descriptors come into being after creation but before usage.
-    let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
-        Vec::with_capacity(GCD.memory_descriptor_count() + 10);
-    let result = GCD.get_memory_descriptors(&mut descriptors);
-
-    if let Err(err) = result {
-        return Err(result_to_efi_status(err));
-    }
-
-    let target_descriptor =
-        descriptors.iter().find(|x| (x.base_address <= base_address) && (base_address < (x.base_address + x.length)));
-
-    if let Some(descriptor) = target_descriptor {
-        Ok(*descriptor)
-    } else {
-        Err(efi::Status::NOT_FOUND)
-    }
+    GCD.get_memory_descriptor_for_address(base_address).map_err(result_to_efi_status)
 }
 
 extern "efiapi" fn set_memory_space_attributes(
@@ -393,9 +373,15 @@ extern "efiapi" fn schedule(firmware_volume_handle: efi::Handle, file_name: *con
     }
 }
 
-extern "efiapi" fn trust(_firmware_volume_handle: efi::Handle, _file_name: *const efi::Guid) -> efi::Status {
-    todo!();
-    //Status::UNSUPPORTED
+extern "efiapi" fn trust(firmware_volume_handle: efi::Handle, file_name: *const efi::Guid) -> efi::Status {
+    let Some(file_name) = (unsafe { file_name.as_ref() }) else {
+        return efi::Status::INVALID_PARAMETER;
+    };
+
+    match core_trust(firmware_volume_handle, file_name) {
+        Err(status) => status,
+        Ok(_) => efi::Status::SUCCESS,
+    }
 }
 
 extern "efiapi" fn process_firmware_volume(
@@ -481,7 +467,9 @@ extern "efiapi" fn cpu_arch_available(event: efi::Event, _context: *mut c_void) 
     match PROTOCOL_DB.locate_protocol(cpu_arch::PROTOCOL_GUID) {
         Ok(cpu_arch_ptr) => {
             CPU_ARCH_PTR.store(cpu_arch_ptr as *mut cpu_arch::Protocol, Ordering::SeqCst);
-            EVENT_DB.close_event(event).unwrap();
+            if let Err(status_err) = EVENT_DB.close_event(event) {
+                log::warn!("Could not close event for cpu_arch_available due to error {:?}", status_err);
+            }
         }
         Err(err) => panic!("Unable to locate timer arch: {:?}", err),
     }

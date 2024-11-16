@@ -34,7 +34,7 @@ const TEST_GCD_MEM_SIZE: usize = 0x1000000;
 /// to support interactions with other core subsystem (e.g. allocators).
 /// Note: for simplicity, this implementation intentionally leaks the memory allocated for the GCD. Expectation is
 /// that this should be called few enough times in testing so that this leak does not cause problems.
-pub unsafe fn init_test_gcd(size: Option<usize>) {
+pub(crate) unsafe fn init_test_gcd(size: Option<usize>) {
     let addr =
         alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size.unwrap_or(TEST_GCD_MEM_SIZE), 0x1000).unwrap());
     GCD.reset();
@@ -56,13 +56,13 @@ pub unsafe fn init_test_gcd(size: Option<usize>) {
 }
 
 /// Reset and re-initialize the protocol database to default empty state.
-pub unsafe fn init_test_protocol_db() {
+pub(crate) unsafe fn init_test_protocol_db() {
     PROTOCOL_DB.reset();
     PROTOCOL_DB.init_protocol_db();
 }
 
 /// All tests should run from inside this.
-pub fn with_global_lock<F: Fn()>(f: F) {
+pub(crate) fn with_global_lock<F: Fn()>(f: F) {
     let _guard = GLOBAL_STATE_TEST_LOCK.lock().unwrap();
     f();
 }

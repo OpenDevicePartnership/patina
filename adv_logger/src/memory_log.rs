@@ -130,10 +130,14 @@ impl AdvLoggerInfo {
         }
     }
 
-    pub unsafe fn initialize_memory_log(address: efi::PhysicalAddress, length: u32) -> &'static Self {
+    pub unsafe fn initialize_memory_log(address: efi::PhysicalAddress, length: u32) -> Option<&'static Self> {
         let log_info = address as *mut Self;
-        ptr::write(log_info, AdvLoggerInfo::new(length, false, 0, 0, efi::Time::default(), 0));
-        log_info.as_ref().unwrap()
+        if log_info.is_null() {
+            None
+        } else {
+            ptr::write(log_info, AdvLoggerInfo::new(length, false, 0, 0, efi::Time::default(), 0));
+            log_info.as_ref()
+        }
     }
 
     pub fn add_log_entry(&self, log_entry: LogEntry) -> Option<&AdvLoggerMessageEntry> {
@@ -176,8 +180,7 @@ impl AdvLoggerInfo {
 
         // Convert the newly allocated to usable data.
         let address = unsafe { (self as *const AdvLoggerInfo).byte_offset(current_offset as isize) };
-        let entry = unsafe { AdvLoggerMessageEntry::init_from_memory(address as *mut c_void, message_size, log_entry) };
-        Some(entry)
+        unsafe { AdvLoggerMessageEntry::init_from_memory(address as *mut c_void, message_size, log_entry) }
     }
 
     pub fn hardware_write_enabled(&self, level: u32) -> bool {
@@ -251,9 +254,14 @@ impl AdvLoggerMessageEntry {
     /// the provided length. The caller is responsible for ensuring this memory
     /// range is valid.
     ///
-    pub unsafe fn init_from_memory(address: *const c_void, length: u32, log_entry: LogEntry) -> &'static Self {
+    pub unsafe fn init_from_memory(address: *const c_void, length: u32, log_entry: LogEntry) -> Option<&'static Self> {
+        debug_assert!(
+            size_of::<Self>() + log_entry.data.len() <= length as usize,
+            "Advanced logger entry initialized in an insufficiently sized buffer!"
+        );
+
         if size_of::<Self>() + log_entry.data.len() > length as usize {
-            panic!("Advanced logger entry initialized in insufficient buffer!");
+            return None;
         }
 
         // Write the header.
@@ -267,7 +275,7 @@ impl AdvLoggerMessageEntry {
         let message = adv_entry.offset(1) as *mut u8;
         ptr::copy(log_entry.data.as_ptr(), message, log_entry.data.len());
 
-        adv_entry.as_ref().unwrap()
+        adv_entry.as_ref()
     }
 
     /// Returns the data array of the message entry.
@@ -315,9 +323,10 @@ impl<'a> Iterator for AdvLogIterator<'a> {
         } else {
             let entry = unsafe { (self.log_info as *const AdvLoggerInfo).byte_add(self.offset) }
                 as *const AdvLoggerMessageEntry;
-            let entry = unsafe { entry.as_ref().unwrap() };
-            self.offset += entry.aligned_len();
-            Some(entry)
+            unsafe { entry.as_ref() }.map(|entry| {
+                self.offset += entry.aligned_len();
+                entry
+            })
         }
     }
 }
@@ -344,9 +353,9 @@ mod tests {
         loop {
             let data = entries.to_be_bytes();
             let entry = LogEntry { level: 0, phase: 0, timestamp: 0, data: &data };
-            let log_entry = log.add_log_entry(entry);
+            let log_entry = log.unwrap().add_log_entry(entry);
             if log_entry.is_none() {
-                assert!(log.discarded_size > 0);
+                assert!(log.unwrap().discarded_size > 0);
                 assert!(entries > 0);
                 break;
             }
@@ -356,7 +365,7 @@ mod tests {
         }
 
         // check the contents.
-        let mut iter = log.iter();
+        let mut iter = log.unwrap().iter();
         for entry_num in 0..entries {
             let data = entry_num.to_be_bytes();
             let log_entry = iter.next().unwrap();
@@ -379,7 +388,7 @@ mod tests {
         for val in 0..50 {
             let data = (val as u32).to_be_bytes();
             let entry = LogEntry { level: 0, phase: 0, timestamp: 0, data: &data };
-            let log_entry = log.add_log_entry(entry).unwrap();
+            let log_entry = log.unwrap().add_log_entry(entry).unwrap();
             assert_eq!(log_entry.get_message(), data);
         }
 

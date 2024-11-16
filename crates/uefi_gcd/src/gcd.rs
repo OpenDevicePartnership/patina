@@ -572,7 +572,12 @@ impl GCD {
         // we free pages, we need to reset the attrs to 0 so that the pages can be merged with other free pages
         // When mu-paging is brought in, unallocated memory will be unmapped, so this logic will look different
         // Don't check the error here, we still want to free the memory if possible
-        let _ = self.set_memory_space_attributes(base_address, len, 0);
+        let attributes = match self.get_memory_descriptor_for_address(base_address as efi::PhysicalAddress) {
+            Ok(descriptor) => descriptor.attributes & !efi::MEMORY_ACCESS_MASK,
+            Err(_) => 0,
+        };
+
+        let _ = self.set_memory_space_attributes(base_address, len, attributes);
 
         let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
 
@@ -691,6 +696,23 @@ impl GCD {
             Ok(())
         } else {
             Err(Error::NotFound)
+        }
+    }
+
+    /// This service returns the descriptor for the given physical address.
+    pub fn get_memory_descriptor_for_address(
+        &mut self,
+        address: efi::PhysicalAddress,
+    ) -> Result<dxe_services::MemorySpaceDescriptor, Error> {
+        ensure!(self.maximum_address != 0, Error::NotInitialized);
+
+        let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
+
+        log::trace!(target: "gcd_measure", "search");
+        let idx = memory_blocks.get_closest_idx(&(address)).ok_or(Error::NotFound)?;
+        let mb = memory_blocks.get_with_idx(idx).expect("idx is valid from get_closest_idx");
+        match mb {
+            MemoryBlock::Allocated(descriptor) | MemoryBlock::Unallocated(descriptor) => Ok(*descriptor),
         }
     }
 
@@ -827,8 +849,11 @@ impl IoGCD {
     fn init_io_blocks(&mut self) -> Result<(), Error> {
         ensure!(self.maximum_address != 0, Error::NotInitialized);
 
-        let mut io_blocks =
-            Rbt::new(unsafe { Box::into_raw(vec![0_u8; IO_BLOCK_SLICE_SIZE].into_boxed_slice()).as_mut().unwrap() });
+        let mut io_blocks = Rbt::new(unsafe {
+            Box::into_raw(vec![0_u8; IO_BLOCK_SLICE_SIZE].into_boxed_slice())
+                .as_mut()
+                .expect("RBT given null pointer in initialization.")
+        });
 
         io_blocks
             .add(IoBlock::Unallocated(dxe_services::IoSpaceDescriptor {
@@ -1447,11 +1472,15 @@ impl SpinLockedGcd {
             // here, we rely on the image loader to update the attributes as appropriate for the code sections. The
             // same holds true for other required attributes.
             if let Ok(base_address) = result.as_ref() {
+                let attributes = match self.get_memory_descriptor_for_address(*base_address as efi::PhysicalAddress) {
+                    Ok(descriptor) => descriptor.attributes,
+                    Err(_) => 0,
+                };
                 // it is safe to call set_memory_space_attributes without calling set_memory_space_capabilities here
                 // because we set efi::MEMORY_XP as a capability on all memory ranges we add to the GCD. A driver could
                 // call set_memory_space_capabilities to remove the XP capability, but that is something that should
                 // be caught and fixed.
-                match self.set_memory_space_attributes(*base_address, len, efi::MEMORY_XP) {
+                match self.set_memory_space_attributes(*base_address, len, attributes | efi::MEMORY_XP) {
                     Ok(_) => (),
                     Err(Error::NotInitialized) => {
                         // this is expected if mu-paging is not initialized yet. The GCD will still be updated, but
@@ -1550,6 +1579,14 @@ impl SpinLockedGcd {
     /// returns a copy of the current set of memory blocks descriptors in the GCD.
     pub fn get_memory_descriptors(&self, buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>) -> Result<(), Error> {
         self.memory.lock().get_memory_descriptors(buffer)
+    }
+
+    // returns the descriptor for the given physical address.
+    pub fn get_memory_descriptor_for_address(
+        &self,
+        address: efi::PhysicalAddress,
+    ) -> Result<dxe_services::MemorySpaceDescriptor, Error> {
+        self.memory.lock().get_memory_descriptor_for_address(address)
     }
 
     /// returns the current count of blocks in the list.
@@ -1664,7 +1701,7 @@ mod tests {
         );
 
         assert!(is_gcd_memory_slice_valid(&gcd));
-        assert_eq!(snapshot, copy_memory_block(&mut gcd));
+        assert_eq!(snapshot, copy_memory_block(&gcd));
     }
 
     #[test]
@@ -1785,7 +1822,7 @@ mod tests {
                 assert_eq!(20, mb.as_ref().length);
                 assert_eq!(block_count, gcd.memory_descriptor_count());
             }
-            Err(e) => assert!(false, "{e:?}"),
+            Err(e) => panic!("{e:?}"),
         }
 
         // Test merging when added before
@@ -1796,7 +1833,7 @@ mod tests {
                 assert_eq!(30, mb.as_ref().length);
                 assert_eq!(block_count, gcd.memory_descriptor_count());
             }
-            Err(e) => assert!(false, "{e:?}"),
+            Err(e) => panic!("{e:?}"),
         }
 
         assert!(
@@ -1827,10 +1864,10 @@ mod tests {
                         assert_eq!(0, md.image_handle as usize);
                         assert_eq!(0, md.device_handle as usize);
                     }
-                    MemoryBlock::Allocated(_) => assert!(false, "Add should keep the block unallocated"),
+                    MemoryBlock::Allocated(_) => panic!("Add should keep the block unallocated"),
                 }
             }
-            Err(e) => assert!(false, "{e:?}"),
+            Err(e) => panic!("{e:?}"),
         }
     }
 
@@ -2012,10 +2049,10 @@ mod tests {
                         assert_eq!(0, md.image_handle as usize);
                         assert_eq!(0, md.device_handle as usize);
                     }
-                    MemoryBlock::Allocated(_) => assert!(false, "remove should keep the block unallocated"),
+                    MemoryBlock::Allocated(_) => panic!("remove should keep the block unallocated"),
                 }
             }
-            Err(e) => assert!(false, "{e:?}"),
+            Err(e) => panic!("{e:?}"),
         }
     }
 

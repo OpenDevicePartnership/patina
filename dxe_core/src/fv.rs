@@ -19,8 +19,12 @@ use mu_pi::{
 };
 
 use r_efi::efi;
+use uefi_device_path::concat_device_path_to_boxed_slice;
 
-use crate::{allocator::core_allocate_pool, protocols::core_install_protocol_interface};
+use crate::{
+    allocator::core_allocate_pool,
+    protocols::{core_install_protocol_interface, PROTOCOL_DB},
+};
 
 struct PrivateFvbData {
     _interface: Box<mu_pi::protocols::firmware_volume_block::Protocol>,
@@ -328,7 +332,7 @@ extern "efiapi" fn fv_read_file(
         found_type.write(file.file_type_raw());
         file_attributes.write(file.fv_attributes());
         //TODO: Authentication status is not yet supported.
-        buffer_size.write(file.data().len());
+        buffer_size.write(file.content().len());
     }
 
     if buffer.is_null() {
@@ -340,7 +344,7 @@ extern "efiapi" fn fv_read_file(
 
     if local_buffer_size > 0 {
         //caller indicates they have allocated a buffer to receive the file data.
-        if local_buffer_size < file.data().len() {
+        if local_buffer_size < file.content().len() {
             return efi::Status::BUFFER_TOO_SMALL;
         }
         if local_buffer_ptr.is_null() {
@@ -351,7 +355,7 @@ extern "efiapi" fn fv_read_file(
         //routine should allocate a buffer of appropriate size. Since the caller
         //is expected to free this buffer via free_pool, we need to manually
         //allocate it via allocate_pool.
-        match core_allocate_pool(efi::BOOT_SERVICES_DATA, file.data().len()) {
+        match core_allocate_pool(efi::BOOT_SERVICES_DATA, file.content().len()) {
             Err(err) => return err,
             Ok(allocation) => unsafe {
                 local_buffer_ptr = allocation;
@@ -361,8 +365,8 @@ extern "efiapi" fn fv_read_file(
     }
 
     //convert pointer+size into a slice and copy the file data.
-    let out_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, file.data().len()) };
-    out_buffer.copy_from_slice(file.data());
+    let out_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, file.content().len()) };
+    out_buffer.copy_from_slice(file.content());
 
     efi::Status::SUCCESS
 }
@@ -612,7 +616,7 @@ struct FvMemMapDevicePath {
 #[repr(C)]
 struct MediaFwVolDevicePath {
     header: efi::protocols::device_path::Protocol,
-    fv_name: efi::Guid,
+    name: efi::Guid,
 }
 
 #[repr(C)]
@@ -622,18 +626,27 @@ struct FvPiWgDevicePath {
 }
 
 impl FvPiWgDevicePath {
-    fn new(fv_name: efi::Guid) -> Self {
+    // instantiate a new FvPiWgDevicePath for a Firmware Volume
+    fn new_fv(fv_name: efi::Guid) -> Self {
+        Self::new_worker(fv_name, efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_VOLUME)
+    }
+    // instantiate a new FvPiWgDevicePath for a Firmware File
+    fn new_file(file_name: efi::Guid) -> Self {
+        Self::new_worker(file_name, efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE)
+    }
+    // instantiate a new FvPiWgDevicePath with the given sub-type
+    fn new_worker(name: efi::Guid, sub_type: u8) -> Self {
         FvPiWgDevicePath {
             fv_dev_path: MediaFwVolDevicePath {
                 header: efi::protocols::device_path::Protocol {
                     r#type: efi::protocols::device_path::TYPE_MEDIA,
-                    sub_type: efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_VOLUME,
+                    sub_type,
                     length: [
                         (mem::size_of::<MediaFwVolDevicePath>() & 0xff) as u8,
                         ((mem::size_of::<MediaFwVolDevicePath>() >> 8) & 0xff) as u8,
                     ],
                 },
-                fv_name,
+                name,
             },
             end_dev_path: efi::protocols::device_path::End {
                 header: efi::protocols::device_path::Protocol {
@@ -655,7 +668,7 @@ fn install_fv_device_path_protocol(handle: Option<efi::Handle>, base_address: u6
     let device_path_ptr = match fv.fv_name() {
         Some(fv_name) => {
             //Construct FvPiWgDevicePath
-            let device_path = FvPiWgDevicePath::new(fv_name);
+            let device_path = FvPiWgDevicePath::new_fv(fv_name);
             Box::into_raw(Box::new(device_path)) as *mut c_void
         }
         None => {
@@ -701,6 +714,16 @@ pub fn core_install_firmware_volume(
     install_fvb_protocol(Some(handle), parent_handle, base_address)?;
     install_fv_protocol(Some(handle), parent_handle, base_address)?;
     Ok(handle)
+}
+
+/// Returns a device path for the file specified by the given fv_handle and filename GUID.
+pub fn device_path_bytes_for_fv_file(fv_handle: efi::Handle, file_name: efi::Guid) -> Result<Box<[u8]>, efi::Status> {
+    let fv_device_path = PROTOCOL_DB.get_interface_for_handle(fv_handle, efi::protocols::device_path::PROTOCOL_GUID)?;
+    let file_node = &FvPiWgDevicePath::new_file(file_name);
+    concat_device_path_to_boxed_slice(
+        fv_device_path as *mut _ as *const efi::protocols::device_path::Protocol,
+        file_node as *const _ as *const efi::protocols::device_path::Protocol,
+    )
 }
 
 fn initialize_hob_fvs(hob_list: &hob::HobList) -> Result<(), efi::Status> {

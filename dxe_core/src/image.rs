@@ -59,28 +59,71 @@ extern "efiapi" fn unimplemented_entry_point(
 struct ImageStack {
     stack: *const [u8],
     len: usize,
+    allocated_pages: usize,
 }
 
 impl ImageStack {
     fn new(size: usize) -> Result<Self, efi::Status> {
         let mut stack: efi::PhysicalAddress = 0;
         let len = align_up(size.max(MIN_STACK_SIZE) as u64, STACK_ALIGNMENT as u64) as usize;
-        core_allocate_pages(efi::ALLOCATE_ANY_PAGES, efi::BOOT_SERVICES_DATA, uefi_size_to_pages!(len), &mut stack)?;
-        Ok(ImageStack { stack: core::ptr::slice_from_raw_parts_mut(stack as *mut u8, len), len })
+        // allocate an extra page for the stack guard page.
+        let allocated_pages = uefi_size_to_pages!(len) + 1;
+
+        // allocate the stack, newly allocated memory will have efi::MEMORY_XP already set, so we don't need to set it
+        // here
+        core_allocate_pages(efi::ALLOCATE_ANY_PAGES, efi::BOOT_SERVICES_DATA, allocated_pages, &mut stack)?;
+
+        // attempt to set the memory space attributes for the stack guard page.
+        // if we fail, we should still try to continue to boot
+        // the stack grows downwards, so stack here is the guard page
+        let attributes = match dxe_services::core_get_memory_space_descriptor(stack) {
+            Ok(descriptor) => descriptor.attributes,
+            Err(_) => 0,
+        };
+        if let Err(err) =
+            dxe_services::core_set_memory_space_attributes(stack, UEFI_PAGE_SIZE as u64, attributes | efi::MEMORY_RP)
+        {
+            log::error!("Failed to set memory space attributes for stack guard page: {:#x?}", err);
+            debug_assert!(false);
+        }
+
+        // we have the guard page at the bottom, so we need to add a page to the stack pointer for the limit
+        Ok(ImageStack {
+            stack: core::ptr::slice_from_raw_parts_mut((stack + (UEFI_PAGE_SIZE as u64)) as *mut u8, len),
+            len,
+            allocated_pages,
+        })
     }
 }
 
 impl Drop for ImageStack {
     fn drop(&mut self) {
         if !self.stack.is_null() {
-            let stack_addr = self.stack as *const u64 as efi::PhysicalAddress;
-            let num_pages = uefi_size_to_pages!(self.len);
-            if let Err(status) = core_free_pages(stack_addr, num_pages) {
+            // we added a guard page, so we need to subtract a page from the stack pointer to free everything
+            let stack_addr = self.stack as *const u64 as efi::PhysicalAddress - UEFI_PAGE_SIZE as u64;
+
+            // we need to set the guard page back to XP so that the pages can be coalesced before we free them
+            // preserve the caching attributes
+            let mut attributes = match dxe_services::core_get_memory_space_descriptor(stack_addr) {
+                Ok(descriptor) => descriptor.attributes & !efi::MEMORY_ATTRIBUTE_MASK,
+                Err(_) => 0,
+            };
+
+            attributes |= efi::MEMORY_XP;
+            if let Err(err) =
+                dxe_services::core_set_memory_space_attributes(stack_addr, UEFI_PAGE_SIZE as u64, attributes)
+            {
+                log::error!("Failed to set memory space attributes for stack guard page: {:#x?}", err);
+                debug_assert!(false);
+                // if we failed, let's still try to free
+            }
+
+            if let Err(status) = core_free_pages(stack_addr, self.allocated_pages) {
                 log::error!(
                     "core_free_pages returned error {:#x?} for image stack at {:#x} for num_pages {:#x}",
                     status,
                     stack_addr,
-                    num_pages
+                    self.allocated_pages
                 );
             }
         }
@@ -90,11 +133,12 @@ impl Drop for ImageStack {
 unsafe impl Stack for ImageStack {
     fn base(&self) -> StackPointer {
         //stack grows downward, so "base" is the highest address, i.e. the ptr + size.
-        self.limit().checked_add(self.len).unwrap()
+        self.limit().checked_add(self.len).expect("Stack base address overflow.")
     }
     fn limit(&self) -> StackPointer {
-        //stack grows downward, so "limit" is the lowest address, i.e. the box ptr.
-        StackPointer::new(self.stack as *const u8 as usize).unwrap()
+        //stack grows downward, so "limit" is the lowest address, i.e. the ptr.
+        StackPointer::new(self.stack as *const u8 as usize)
+            .expect("Stack pointer address was zero, but it should always be nonzero.")
     }
 }
 
@@ -405,7 +449,11 @@ fn install_dxe_core_image(hob_list: &HobList) {
     // pointer type and save it in the private_image_data structure for the core.
     // Safety: dxe_core_hob.entry_point must be the correct and actual entry
     // point for the core.
-    let entry_point = unsafe { transmute(dxe_core_hob.entry_point) };
+    let entry_point = unsafe {
+        transmute::<u64, extern "efiapi" fn(*mut c_void, *mut r_efi::system::SystemTable) -> r_efi::base::Status>(
+            dxe_core_hob.entry_point,
+        )
+    };
 
     // create the loaded_image structure for the core and populate it with data
     // from the hob.
@@ -528,7 +576,11 @@ fn core_load_pe_image(
         .map_err(|_| efi::Status::LOAD_ERROR)?;
 
     // update the entry point. Transmute is required here to cast the raw function address to the ImageEntryPoint function pointer type.
-    private_info.entry_point = unsafe { transmute(loaded_image_addr + pe_info.entry_point_offset) };
+    private_info.entry_point = unsafe {
+        transmute::<usize, extern "efiapi" fn(*mut c_void, *mut r_efi::system::SystemTable) -> efi::Status>(
+            loaded_image_addr + pe_info.entry_point_offset,
+        )
+    };
 
     let result = uefi_pecoff::load_resource_section(&pe_info, image)
         .inspect_err(|err| log::error!("core_load_pe_image_failed: load_resource_section returned status: {:#x?}", err))
@@ -565,29 +617,36 @@ fn core_load_pe_image(
     Ok(private_info)
 }
 
+// Reads an image buffer using simple file system or load file protocols.
+// Return value is (image_buffer, from_fv, authentication_status).
+// Note: presently none of the supported methods return `from_fv` or `authentication_status`.
 fn get_buffer_by_file_path(
     boot_policy: bool,
     file_path: *mut efi::protocols::device_path::Protocol,
-) -> Result<Vec<u8>, efi::Status> {
+) -> Result<(Vec<u8>, bool, u32), efi::Status> {
     if file_path.is_null() {
         Err(efi::Status::INVALID_PARAMETER)?;
     }
+
+    //TODO: EDK2 core has support for loading an image from an FV device path which is not presently supported here.
+    //this is the only case that Ok((buffer, true, authentication_status)) would be returned.
+
     if let Ok(buffer) = get_file_buffer_from_sfs(file_path) {
-        return Ok(buffer);
+        return Ok((buffer, false, 0));
     }
 
-    if boot_policy {
+    if !boot_policy {
         if let Ok(buffer) =
             get_file_buffer_from_load_protocol(efi::protocols::load_file2::PROTOCOL_GUID, false, file_path)
         {
-            return Ok(buffer);
+            return Ok((buffer, false, 0));
         }
     }
 
     if let Ok(buffer) =
         get_file_buffer_from_load_protocol(efi::protocols::load_file::PROTOCOL_GUID, boot_policy, file_path)
     {
-        return Ok(buffer);
+        return Ok((buffer, false, 0));
     }
 
     Err(efi::Status::NOT_FOUND)
@@ -607,7 +666,17 @@ fn get_file_buffer_from_sfs(file_path: *mut efi::protocols::device_path::Protoco
             _ => Err(efi::Status::UNSUPPORTED)?,
         }
         //For MEDIA_FILE_PATH_DP, file name is in the node data, but it needs to be converted to Vec<u16> for call to open.
-        let filename: Vec<u16> = node.data.chunks_exact(2).map(|x| u16::from_le_bytes(x.try_into().unwrap())).collect();
+        let filename: Vec<u16> = node
+            .data
+            .chunks_exact(2)
+            .map(|x: &[u8]| {
+                if let Ok(x_bytes) = x.try_into() {
+                    Ok(u16::from_le_bytes(x_bytes))
+                } else {
+                    Err(efi::Status::INVALID_PARAMETER)
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         file = file.open(filename, efi::protocols::file::MODE_READ, 0)?;
     }
@@ -686,6 +755,63 @@ pub fn core_relocate_runtime_images() {
     }
 }
 
+// authenticate the given image against the Security and Security2 Architectural Protocols
+fn authenticate_image(
+    device_path: *mut efi::protocols::device_path::Protocol,
+    image: &[u8],
+    boot_policy: bool,
+    from_fv: bool,
+    authentication_status: u32,
+) -> Result<(), efi::Status> {
+    let security2_protocol = unsafe {
+        match PROTOCOL_DB.locate_protocol(mu_pi::protocols::security2::PROTOCOL_GUID) {
+            Ok(protocol) => (protocol as *mut mu_pi::protocols::security2::Protocol).as_ref(),
+            //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
+            //Firmware Volume.
+            Err(_) => None,
+        }
+    };
+
+    let security_protocol = unsafe {
+        match PROTOCOL_DB.locate_protocol(mu_pi::protocols::security::PROTOCOL_GUID) {
+            Ok(protocol) => (protocol as *mut mu_pi::protocols::security::Protocol).as_ref(),
+            //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
+            //Firmware Volume.
+            Err(_) => None,
+        }
+    };
+
+    let mut security_status = efi::Status::SUCCESS;
+    if let Some(security2) = security2_protocol {
+        security_status = (security2.file_authentication)(
+            security2 as *const _ as *mut mu_pi::protocols::security2::Protocol,
+            device_path,
+            image.as_ptr() as *const _ as *mut c_void,
+            image.len(),
+            boot_policy,
+        );
+        if security_status == efi::Status::SUCCESS && from_fv {
+            let security = security_protocol.expect("Security Arch must be installed if Security2 Arch is installed");
+            security_status = (security.file_authentication_state)(
+                security as *const _ as *mut mu_pi::protocols::security::Protocol,
+                authentication_status,
+                device_path,
+            );
+        }
+    } else if let Some(security) = security_protocol {
+        security_status = (security.file_authentication_state)(
+            security as *const _ as *mut mu_pi::protocols::security::Protocol,
+            authentication_status,
+            device_path,
+        );
+    }
+
+    if security_status != efi::Status::SUCCESS {
+        return Err(security_status);
+    }
+    Ok(())
+}
+
 /// Loads the image specified by the device path (not yet supported) or slice.
 /// * parent_image_handle - the handle of the image that is loading this one.
 /// * device_path - optional device path describing where to load the image from.
@@ -698,7 +824,7 @@ pub fn core_load_image(
     parent_image_handle: efi::Handle,
     device_path: *mut efi::protocols::device_path::Protocol,
     image: Option<&[u8]>,
-) -> Result<efi::Handle, efi::Status> {
+) -> Result<(efi::Handle, efi::Status), efi::Status> {
     if image.is_none() && device_path.is_null() {
         log::error!("failed to load image: image is none or device path is null.");
         return Err(efi::Status::INVALID_PARAMETER);
@@ -713,12 +839,18 @@ pub fn core_load_image(
         .inspect_err(|err| log::error!("failed to load image: failed to get loaded image interface: {:#x?}", err))
         .map_err(|_| efi::Status::INVALID_PARAMETER)?;
 
-    let image_to_load = match image {
-        Some(image) => image.to_vec(),
+    let (image_to_load, from_fv, authentication_status) = match image {
+        Some(image) => (image.to_vec(), false, 0),
         None => get_buffer_by_file_path(boot_policy, device_path)?,
     };
 
-    //TODO: image authentication not implemented yet.
+    // authenticate the image
+    let security_status =
+        match authenticate_image(device_path, &image_to_load, boot_policy, from_fv, authentication_status) {
+            Ok(_) => efi::Status::SUCCESS,
+            Err(efi::Status::SECURITY_VIOLATION) => efi::Status::SECURITY_VIOLATION,
+            Err(err) => return Err(err),
+        };
 
     // load the image.
     let mut image_info = empty_image_info();
@@ -731,7 +863,7 @@ pub fn core_load_image(
         }
 
         // extract file path here and set in image_info
-        let (_, device_path_size) = device_path_node_count(device_path);
+        let (_, device_path_size) = device_path_node_count(device_path)?;
         let file_path_size: usize =
             device_path_size.saturating_sub(core::mem::size_of::<efi::protocols::device_path::Protocol>());
         let file_path = unsafe { (device_path as *const u8).add(file_path_size) };
@@ -769,7 +901,7 @@ pub fn core_load_image(
         core::ptr::null_mut()
     } else {
         // make copy and convert to raw pointer to avoid drop at end of function.
-        Box::into_raw(copy_device_path_to_boxed_slice(device_path)) as *mut u8
+        Box::into_raw(copy_device_path_to_boxed_slice(device_path)?) as *mut u8
     };
 
     core_install_protocol_interface(
@@ -796,7 +928,7 @@ pub fn core_load_image(
     PRIVATE_IMAGE_DATA.lock().private_image_data.insert(handle, private_info);
 
     // return the new handle.
-    Ok(handle)
+    Ok((handle, security_status))
 }
 
 // Loads the image specified by the device_path (not yet supported) or
@@ -835,11 +967,12 @@ extern "efiapi" fn load_image(
     };
 
     match core_load_image(boot_policy.into(), parent_image_handle, device_path, image) {
-        Err(err) => return err,
-        Ok(handle) => unsafe { image_handle.write(handle) },
+        Err(err) => err,
+        Ok((handle, security_status)) => unsafe {
+            image_handle.write(handle);
+            security_status
+        },
     }
-
-    efi::Status::SUCCESS
 }
 
 // Transfers control to the entry point of an image that was loaded by
@@ -924,29 +1057,33 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
         let mut private_data = PRIVATE_IMAGE_DATA.lock();
 
         // mark the image as started and grab a copy of the private info.
-        let private_info = private_data.private_image_data.get_mut(&image_handle).unwrap();
-        private_info.started = true;
-        let entry_point = private_info.entry_point;
+        let status;
+        if let Some(private_info) = private_data.private_image_data.get_mut(&image_handle) {
+            private_info.started = true;
+            let entry_point = private_info.entry_point;
 
-        // save a pointer to the yielder so that exit() can use it.
-        private_data.image_start_contexts.push(yielder as *const Yielder<_, _>);
+            // save a pointer to the yielder so that exit() can use it.
+            private_data.image_start_contexts.push(yielder as *const Yielder<_, _>);
 
-        // get a copy of the system table pointer to pass to the entry point.
-        let system_table = private_data.system_table;
-        // drop our reference to the private data (i.e. release the lock).
-        drop(private_data);
+            // get a copy of the system table pointer to pass to the entry point.
+            let system_table = private_data.system_table;
+            // drop our reference to the private data (i.e. release the lock).
+            drop(private_data);
 
-        // invoke the entry point. Code on the other side of this pointer is
-        // FFI, which is inherently unsafe, but it's not  "technically" unsafe
-        // from a rust standpoint since r_efi doesn't define the ImageEntryPoint
-        // pointer type as "pointer to unsafe function"
-        let status = entry_point(image_handle, system_table);
+            // invoke the entry point. Code on the other side of this pointer is
+            // FFI, which is inherently unsafe, but it's not  "technically" unsafe
+            // from a rust standpoint since r_efi doesn't define the ImageEntryPoint
+            // pointer type as "pointer to unsafe function"
+            status = entry_point(image_handle, system_table);
 
-        //safety note: any variables with "Drop" routines that need to run
-        //need to be explicitly dropped before calling exit(). Since exit()
-        //effectively "longjmp"s back to StartImage(), rust automatic
-        //drops will not be triggered.
-        exit(image_handle, status, 0, core::ptr::null_mut());
+            //safety note: any variables with "Drop" routines that need to run
+            //need to be explicitly dropped before calling exit(). Since exit()
+            //effectively "longjmp"s back to StartImage(), rust automatic
+            //drops will not be triggered.
+            exit(image_handle, status, 0, core::ptr::null_mut());
+        } else {
+            status = efi::Status::NOT_FOUND;
+        }
         status
     });
 
@@ -1106,27 +1243,29 @@ extern "efiapi" fn exit(
     // save the exit data, if present, into the private_image_data for this
     // image for start_image to retrieve and return.
     if (exit_data_size != 0) && !exit_data.is_null() {
-        let image_data = private_data.private_image_data.get_mut(&image_handle).unwrap();
-        image_data.exit_data = Some((exit_data_size, exit_data));
+        if let Some(image_data) = private_data.private_image_data.get_mut(&image_handle) {
+            image_data.exit_data = Some((exit_data_size, exit_data));
+        }
     }
 
     // retrieve the yielder that was saved in the start_image entry point
     // coroutine wrapper.
     // safety note: this assumes that the top of the image_start_contexts stack
     // is the currently running image.
-    let yielder = private_data.image_start_contexts.pop().unwrap();
-    let yielder = unsafe { &*yielder };
-    drop(private_data);
+    if let Some(yielder) = private_data.image_start_contexts.pop() {
+        let yielder = unsafe { &*yielder };
+        drop(private_data);
 
-    // safety note: any variables with "Drop" routines that need to run
-    // need to be explicitly dropped before calling suspend(). Since suspend()
-    // effectively "longjmp"s back to StartImage(), rust automatic
-    // drops will not be triggered.
+        // safety note: any variables with "Drop" routines that need to run
+        // need to be explicitly dropped before calling suspend(). Since suspend()
+        // effectively "longjmp"s back to StartImage(), rust automatic
+        // drops will not be triggered.
 
-    // transfer control back to start_image by calling the suspend function on
-    // yielder. This will switch stacks back to the start_image that invoked
-    // the entry point coroutine.
-    yielder.suspend(status);
+        // transfer control back to start_image by calling the suspend function on
+        // yielder. This will switch stacks back to the start_image that invoked
+        // the entry point coroutine.
+        yielder.suspend(status);
+    }
 
     //should never reach here, but rust doesn't know that.
     efi::Status::ACCESS_DENIED
@@ -1155,7 +1294,7 @@ mod tests {
     use super::{empty_image_info, get_buffer_by_file_path, load_image};
     use crate::{
         image::{exit, start_image, unload_image, PRIVATE_IMAGE_DATA},
-        protocols::core_install_protocol_interface,
+        protocols::{core_install_protocol_interface, PROTOCOL_DB},
         systemtables::{init_system_table, SYSTEM_TABLE},
         test_collateral, test_support,
     };
@@ -1227,6 +1366,148 @@ mod tests {
                 core::ptr::addr_of_mut!(image_handle),
             );
             assert_eq!(status, efi::Status::SUCCESS);
+
+            let private_data = PRIVATE_IMAGE_DATA.lock();
+            let image_data = private_data.private_image_data.get(&image_handle).unwrap();
+            let image_buf_len = unsafe { (*image_data.image_buffer).len() as usize };
+            assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
+            assert_eq!(image_data.image_info.image_data_type, efi::BOOT_SERVICES_DATA);
+            assert_eq!(image_data.image_info.image_code_type, efi::BOOT_SERVICES_CODE);
+            assert_ne!(image_data.entry_point as usize, 0);
+            assert!(!image_data.relocation_data.is_empty());
+            assert!(image_data.hii_resource_section.is_some());
+        });
+    }
+
+    #[test]
+    fn load_image_should_authenticate_the_image_with_security_arch() {
+        with_locked_state(|| {
+            let mut test_file =
+                File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            // Mock Security Arch protocol
+            static SECURITY_CALL_EXECUTED: AtomicBool = AtomicBool::new(false);
+            extern "efiapi" fn mock_file_authentication_state(
+                this: *mut mu_pi::protocols::security::Protocol,
+                authentication_status: u32,
+                file: *mut efi::protocols::device_path::Protocol,
+            ) -> efi::Status {
+                assert!(!this.is_null());
+                assert_eq!(authentication_status, 0);
+                assert!(file.is_null()); //null device path passed to core_load_image, below.
+                SECURITY_CALL_EXECUTED.store(true, core::sync::atomic::Ordering::SeqCst);
+                efi::Status::SUCCESS
+            }
+
+            let security_protocol =
+                mu_pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
+
+            PROTOCOL_DB
+                .install_protocol_interface(
+                    None,
+                    mu_pi::protocols::security::PROTOCOL_GUID,
+                    &security_protocol as *const _ as *mut _,
+                )
+                .unwrap();
+
+            let mut image_handle: efi::Handle = core::ptr::null_mut();
+            let status = load_image(
+                false.into(),
+                uefi_protocol_db::DXE_CORE_HANDLE,
+                core::ptr::null_mut(),
+                image.as_mut_ptr() as *mut c_void,
+                image.len(),
+                core::ptr::addr_of_mut!(image_handle),
+            );
+            assert_eq!(status, efi::Status::SUCCESS);
+
+            assert!(SECURITY_CALL_EXECUTED.load(core::sync::atomic::Ordering::SeqCst));
+
+            let private_data = PRIVATE_IMAGE_DATA.lock();
+            let image_data = private_data.private_image_data.get(&image_handle).unwrap();
+            let image_buf_len = unsafe { (*image_data.image_buffer).len() as usize };
+            assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
+            assert_eq!(image_data.image_info.image_data_type, efi::BOOT_SERVICES_DATA);
+            assert_eq!(image_data.image_info.image_code_type, efi::BOOT_SERVICES_CODE);
+            assert_ne!(image_data.entry_point as usize, 0);
+            assert!(!image_data.relocation_data.is_empty());
+            assert!(image_data.hii_resource_section.is_some());
+        });
+    }
+
+    #[test]
+    fn load_image_should_authenticate_the_image_with_security2_arch() {
+        with_locked_state(|| {
+            let mut test_file =
+                File::open(test_collateral!("test_image_msvc_hii.pe32")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            // Mock Security Arch protocol
+            extern "efiapi" fn mock_file_authentication_state(
+                _this: *mut mu_pi::protocols::security::Protocol,
+                _authentication_status: u32,
+                _file: *mut efi::protocols::device_path::Protocol,
+            ) -> efi::Status {
+                // should not be called, since `from_fv` is not presently true in our implementation for any
+                // source of FV, which means only Security2 should be used.
+                unreachable!()
+            }
+
+            let security_protocol =
+                mu_pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
+
+            PROTOCOL_DB
+                .install_protocol_interface(
+                    None,
+                    mu_pi::protocols::security::PROTOCOL_GUID,
+                    &security_protocol as *const _ as *mut _,
+                )
+                .unwrap();
+
+            // Mock Security2 Arch protocol
+            static SECURITY2_CALL_EXECUTED: AtomicBool = AtomicBool::new(false);
+            extern "efiapi" fn mock_file_authentication(
+                this: *mut mu_pi::protocols::security2::Protocol,
+                file: *mut efi::protocols::device_path::Protocol,
+                file_buffer: *mut c_void,
+                file_size: usize,
+                boot_policy: bool,
+            ) -> efi::Status {
+                assert!(!this.is_null());
+                assert!(file.is_null()); //null device path passed to core_load_image, below.
+                assert!(!file_buffer.is_null());
+                assert!(file_size > 0);
+                assert!(!boot_policy);
+                SECURITY2_CALL_EXECUTED.store(true, core::sync::atomic::Ordering::SeqCst);
+                efi::Status::SUCCESS
+            }
+
+            let security2_protocol =
+                mu_pi::protocols::security2::Protocol { file_authentication: mock_file_authentication };
+
+            PROTOCOL_DB
+                .install_protocol_interface(
+                    None,
+                    mu_pi::protocols::security2::PROTOCOL_GUID,
+                    &security2_protocol as *const _ as *mut _,
+                )
+                .unwrap();
+
+            let mut image_handle: efi::Handle = core::ptr::null_mut();
+            let status = load_image(
+                false.into(),
+                uefi_protocol_db::DXE_CORE_HANDLE,
+                core::ptr::null_mut(),
+                image.as_mut_ptr() as *mut c_void,
+                image.len(),
+                core::ptr::addr_of_mut!(image_handle),
+            );
+            assert_eq!(status, efi::Status::SUCCESS);
+
+            assert!(SECURITY2_CALL_EXECUTED.load(core::sync::atomic::Ordering::SeqCst));
 
             let private_data = PRIVATE_IMAGE_DATA.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
@@ -1341,7 +1622,7 @@ mod tests {
             assert!(ENTRY_POINT_RAN.load(core::sync::atomic::Ordering::Relaxed));
 
             let private_data = PRIVATE_IMAGE_DATA.lock();
-            assert!(private_data.private_image_data.get(&image_handle).is_none());
+            assert!(!private_data.private_image_data.contains_key(&image_handle));
             drop(private_data);
         });
     }
@@ -1369,7 +1650,7 @@ mod tests {
             assert_eq!(status, efi::Status::SUCCESS);
 
             let private_data = PRIVATE_IMAGE_DATA.lock();
-            assert!(private_data.private_image_data.get(&image_handle).is_none());
+            assert!(!private_data.private_image_data.contains_key(&image_handle));
         });
     }
 
@@ -1488,6 +1769,7 @@ mod tests {
 
     fn get_file_protocol_mock() -> *mut efi::protocols::file::Protocol {
         // mock file interface
+        #[allow(clippy::missing_transmute_annotations)]
         let file = efi::protocols::file::Protocol {
             revision: efi::protocols::file::LATEST_REVISION,
             open: file_open,
@@ -1608,7 +1890,7 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            assert_eq!(get_buffer_by_file_path(true, device_path_ptr), Ok(image));
+            assert_eq!(get_buffer_by_file_path(true, device_path_ptr), Ok((image, false, 0)));
         });
     }
 
@@ -1669,7 +1951,7 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            assert_eq!(get_buffer_by_file_path(true, device_path_ptr), Ok(image));
+            assert_eq!(get_buffer_by_file_path(true, device_path_ptr), Ok((image, false, 0)));
         });
     }
 }
