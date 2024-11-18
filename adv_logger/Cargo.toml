@@ -7,9 +7,7 @@ edition = "2021"
 
 [dependencies]
 log = { workspace = true }
-uefi_core = { workspace = true }
-uefi_logger = { workspace = true }
-serial_writer = { workspace = true }
+uefi_sdk = { workspace = true }
 mu_pi = { workspace = true }
 r-efi = { workspace = true }
 spin = { workspace = true }

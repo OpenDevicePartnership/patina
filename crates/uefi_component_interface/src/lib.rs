@@ -10,7 +10,7 @@
 
 use core::{ffi::c_void, option::Option, result::Result};
 use r_efi::efi;
-use uefi_core::error;
+use uefi_sdk::error;
 
 /// A trait wrapper for the DXE component interfaces. This is an initial implementation
 /// and will be replaced by a more robust component interface in the future.

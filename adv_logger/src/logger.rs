@@ -14,8 +14,8 @@ use core::marker::Send;
 use log::Level;
 use r_efi::efi;
 use spin::Once;
-use uefi_core::interface::SerialIO;
-use uefi_logger::Format;
+use uefi_sdk::log::Format;
+use uefi_sdk::serial::SerialIO;
 
 /// The logger for memory/hardware port logging.
 pub struct AdvancedLogger<'a, S>

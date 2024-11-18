@@ -136,25 +136,25 @@ adv_logger = "$(VERSION)
 Next, update main.rs with the following:
 
 ``` rust
-static LOGGER: AdvancedLogger<serial_writer::Uart16550> = AdvancedLogger::new(
-    uefi_logger::Format::Standard,
+static LOGGER: AdvancedLogger<uefi_sdk::serial::Uart16550> = AdvancedLogger::new(
+    uefi_sdk::log::Format::Standard,
     &[
         ("goblin", log::LevelFilter::Off),
         ("uefi_depex_lib", log::LevelFilter::Off),
         ("gcd_measure", log::LevelFilter::Off),
     ],
     log::LevelFilter::Trace,
-    serial_writer::Uart16550::new(serial_writer::Interface::Io(0x402)),
+    uefi_sdk::serial::Uart16550::new(uefi_sdk::serial::Interface::Io(0x402)),
 );
 
-static ADV_LOGGER_COMP: AdvancedLoggerComponent<serial_writer::Uart16550> = AdvancedLoggerComponent::new(&LOGGER); 
+static ADV_LOGGER_COMP: AdvancedLoggerComponent<uefi_sdk::serial::Uart16550> = AdvancedLoggerComponent::new(&LOGGER);
 
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
-    let adv_logger = AdvancedLoggerComponent::<serial_writer::Uart16550>::new(&LOGGER);
+    let adv_logger = AdvancedLoggerComponent::<uefi_sdk::serial::Uart16550>::new(&LOGGER);
     adv_logger.init_advanced_logger(physical_hob_list);
-    
+
     Core::default()
         .with_section_extractor(BrotliSectionExtractor::default())
         .with_cpu_initializer(X64CpuInitializer::default())
@@ -197,21 +197,21 @@ fn panic(info: &PanicInfo) -> ! {
     loop {}
 }
 
-static LOGGER: AdvancedLogger<serial_writer::Uart16550> = AdvancedLogger::new(
-    uefi_logger::Format::Standard,
+static LOGGER: AdvancedLogger<uefi_sdk::serial::Uart16550> = AdvancedLogger::new(
+    uefi_sdk::log::Format::Standard,
     &[
         ("goblin", log::LevelFilter::Off),
         ("uefi_depex_lib", log::LevelFilter::Off),
         ("gcd_measure", log::LevelFilter::Off),
     ],
     log::LevelFilter::Trace,
-    serial_writer::Uart16550::new(serial_writer::Interface::Io(0x402)),
+    uefi_sdk::serial::Uart16550::new(uefi_sdk::serial::Interface::Io(0x402)),
 );
 
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
-    let adv_logger_component = AdvancedLoggerComponent::<serial_writer::Uart16550>::new(&LOGGER);
+    let adv_logger_component = AdvancedLoggerComponent::<uefi_sdk::serial::Uart16550>::new(&LOGGER);
     adv_logger_component.init_advanced_logger(physical_hob_list).unwrap();
 
     Core::default()

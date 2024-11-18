@@ -10,7 +10,7 @@
 //!
 use log::info;
 use uefi_component_interface::{DxeComponent, DxeComponentInterface};
-use uefi_core::error::Result;
+use uefi_sdk::error::Result;
 
 #[derive(Default)]
 pub struct HelloComponent {

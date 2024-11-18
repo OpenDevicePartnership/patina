@@ -18,7 +18,7 @@ path = "src/lib.rs"
 [dependencies]
 log = { workspace = true }
 uefi_component_interface = { workspace = true }
-uefi_core = { workspace = true }
+uefi_sdk = { workspace = true }
 uefi_test_macro = { workspace = true }
 linkme = { workspace = true}
 

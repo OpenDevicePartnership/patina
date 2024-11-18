@@ -19,18 +19,18 @@ use r_efi::efi;
 use sample_components::HelloComponent;
 use std::ffi::c_void;
 
-static LOGGER: uefi_logger::SerialLogger<serial_writer::Terminal> = uefi_logger::SerialLogger::new(
-    uefi_logger::Format::Standard,
+static LOGGER: uefi_sdk::log::SerialLogger<uefi_sdk::serial::Terminal> = uefi_sdk::log::SerialLogger::new(
+    uefi_sdk::log::Format::Standard,
     &[
         ("goblin", log::LevelFilter::Off),
         ("uefi_depex_lib", log::LevelFilter::Off),
         ("gcd_measure", log::LevelFilter::Off),
     ],
     log::LevelFilter::Trace,
-    serial_writer::Terminal {},
+    uefi_sdk::serial::Terminal {},
 );
 
-fn main() -> uefi_core::error::Result<()> {
+fn main() -> uefi_sdk::error::Result<()> {
     if log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).is_err() {
         log::warn!("Global logger has already been set.");
     }
