@@ -184,7 +184,7 @@ struct GCD {
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.2
-pub fn allocate_memory_space_before_ebs(
+fn allocate_memory_space_before_ebs(
     gcd: &mut GCD,
     allocate_type: AllocateType,
     memory_type: dxe_services::GcdMemoryType,
@@ -225,7 +225,7 @@ pub fn allocate_memory_space_before_ebs(
     }
 }
 
-pub fn allocate_memory_space_after_ebs(
+fn allocate_memory_space_after_ebs(
     _gcd: &mut GCD,
     _allocate_type: AllocateType,
     _memory_type: dxe_services::GcdMemoryType,
@@ -238,7 +238,7 @@ pub fn allocate_memory_space_after_ebs(
     return Err(Error::AccessDenied);
 }
 
-pub fn free_memory_space_worker_before_ebs(
+fn free_memory_space_worker_before_ebs(
     gcd: &mut GCD,
     base_address: usize,
     len: usize,
@@ -276,7 +276,7 @@ pub fn free_memory_space_worker_before_ebs(
     }
 }
 
-pub fn free_memory_space_worker_after_ebs(
+fn free_memory_space_worker_after_ebs(
     _gcd: &mut GCD,
     _base_address: usize,
     _len: usize,
