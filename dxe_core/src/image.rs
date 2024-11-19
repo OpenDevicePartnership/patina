@@ -13,12 +13,12 @@ use mu_pi::hob::{Hob, HobList};
 use r_efi::efi;
 use uefi_component_interface::DxeComponent;
 use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
-use uefi_pecoff::{relocation::RelocationBlock, UefiPeInfo};
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
     component_interface, dxe_services,
     filesystems::SimpleFile,
+    pecoff::{self, relocation::RelocationBlock, UefiPeInfo},
     protocol_db,
     protocols::{core_install_protocol_interface, core_locate_device_path, PROTOCOL_DB},
     runtime,
@@ -329,7 +329,7 @@ fn empty_image_info() -> efi::protocols::loaded_image::Protocol {
 fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateImageData) {
     for section in &pe_info.sections {
         let mut attributes = efi::MEMORY_XP;
-        if section.characteristics & uefi_pecoff::IMAGE_SCN_CNT_CODE == uefi_pecoff::IMAGE_SCN_CNT_CODE {
+        if section.characteristics & pecoff::IMAGE_SCN_CNT_CODE == pecoff::IMAGE_SCN_CNT_CODE {
             attributes = efi::MEMORY_RO;
         }
 
@@ -532,7 +532,7 @@ fn core_load_pe_image(
     mut image_info: efi::protocols::loaded_image::Protocol,
 ) -> Result<PrivateImageData, efi::Status> {
     // parse and validate the header and retrieve the image data from it.
-    let pe_info = uefi_pecoff::UefiPeInfo::parse(image)
+    let pe_info = pecoff::UefiPeInfo::parse(image)
         .inspect_err(|err| log::error!("core_load_pe_image failed: UefiPeInfo::parse returned {:#x?}", err))
         .map_err(|_| efi::Status::UNSUPPORTED)?;
 
@@ -566,13 +566,13 @@ fn core_load_pe_image(
     let loaded_image = unsafe { &mut *private_info.image_buffer };
 
     //load the image into the new loaded image buffer
-    uefi_pecoff::load_image(&pe_info, image, loaded_image)
+    pecoff::load_image(&pe_info, image, loaded_image)
         .inspect_err(|err| log::error!("core_load_pe_image_failed: load_image returned status: {:#x?}", err))
         .map_err(|_| efi::Status::LOAD_ERROR)?;
 
     //relocate the image to the address at which it was loaded.
     let loaded_image_addr = private_info.image_info.image_base as usize;
-    private_info.relocation_data = uefi_pecoff::relocate_image(&pe_info, loaded_image_addr, loaded_image, &Vec::new())
+    private_info.relocation_data = pecoff::relocate_image(&pe_info, loaded_image_addr, loaded_image, &Vec::new())
         .inspect_err(|err| log::error!("core_load_pe_image_failed: relocate_image returned status: {:#x?}", err))
         .map_err(|_| efi::Status::LOAD_ERROR)?;
 
@@ -583,7 +583,7 @@ fn core_load_pe_image(
         )
     };
 
-    let result = uefi_pecoff::load_resource_section(&pe_info, image)
+    let result = pecoff::load_resource_section(&pe_info, image)
         .inspect_err(|err| log::error!("core_load_pe_image_failed: load_resource_section returned status: {:#x?}", err))
         .map_err(|_| efi::Status::LOAD_ERROR)?;
 
@@ -746,12 +746,8 @@ pub fn core_relocate_runtime_images() {
             let mut loaded_image_virt_addr = loaded_image_addr;
 
             let _ = runtime::convert_pointer(0, core::ptr::addr_of_mut!(loaded_image_virt_addr) as *mut *mut c_void);
-            let _ = uefi_pecoff::relocate_image(
-                &image.pe_info,
-                loaded_image_virt_addr,
-                loaded_image,
-                &image.relocation_data,
-            );
+            let _ =
+                pecoff::relocate_image(&image.pe_info, loaded_image_virt_addr, loaded_image, &image.relocation_data);
         }
     }
 }

@@ -28,7 +28,6 @@ uefi_test = { path = "uefi_test", version = "2.0.2" }
 uefi_collections = { path = "crates/uefi_collections", version = "2.0.2", default-features = false }
 uefi_depex = { path = "crates/uefi_depex", version = "2.0.2" }
 uefi_device_path = { path = "crates/uefi_device_path", version = "2.0.2" }
-uefi_pecoff = { path = "crates/uefi_pecoff", version = "2.0.2" }
 uefi_component_interface = { path = "crates/uefi_component_interface", version = "2.0.2" }
 
 adv_logger = { path = "adv_logger" }

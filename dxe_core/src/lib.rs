@@ -80,6 +80,7 @@ mod gcd;
 mod image;
 mod memory_attributes_table;
 mod misc_boot_services;
+mod pecoff;
 mod protocol_db;
 mod protocols;
 mod runtime;
