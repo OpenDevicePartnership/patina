@@ -349,8 +349,7 @@ impl GCD {
 
         self.add_memory_space(memory_type, base_address, len, capabilities)?;
 
-        (self.allocate_memory_space_fn)(
-            self,
+        self.allocate_memory_space(
             AllocateType::Address(base_address),
             dxe_services::GcdMemoryType::SystemMemory,
             0,
