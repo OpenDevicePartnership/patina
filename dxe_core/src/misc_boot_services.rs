@@ -244,6 +244,7 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
 }
 
 pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) -> efi::Status {
+    log::info!("EBS initiated.");
     GCD.signal_ebs_start();
     // Pre-exit boot services is only signaled once
     if !PRE_EXIT_BOOT_SERVICES_SIGNAL.load(Ordering::SeqCst) {
