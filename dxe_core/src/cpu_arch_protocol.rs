@@ -14,7 +14,7 @@ use mu_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandler, Pr
 pub struct EfiCpuArchProtocolImpl<'a> {
     protocol: Protocol,
 
-    // Private fields
+    // Crate accessible fields
     pub(crate) cpu_init: &'a mut dyn EfiCpuInit,
     pub(crate) interrupt_manager: &'a mut dyn InterruptManager,
 }
@@ -22,7 +22,7 @@ pub struct EfiCpuArchProtocolImpl<'a> {
 // Helper function to convert a raw mutable pointer to a mutable reference.
 fn get_impl_ref<'a>(this: *const Protocol) -> &'a EfiCpuArchProtocolImpl<'a> {
     if this.is_null() {
-        panic!("Null pointer passed to get_as_ref()");
+        panic!("Null pointer passed to get_impl_ref()");
     }
 
     unsafe { &*(this as *const EfiCpuArchProtocolImpl<'a>) }
@@ -30,7 +30,7 @@ fn get_impl_ref<'a>(this: *const Protocol) -> &'a EfiCpuArchProtocolImpl<'a> {
 
 fn get_impl_ref_mut<'a>(this: *mut Protocol) -> &'a mut EfiCpuArchProtocolImpl<'a> {
     if this.is_null() {
-        panic!("Null pointer passed to get_as_ref()");
+        panic!("Null pointer passed to get_impl_ref_mut()");
     }
 
     unsafe { &mut *(this as *mut EfiCpuArchProtocolImpl<'a>) }
@@ -337,6 +337,8 @@ mod tests {
         assert_eq!(timer_value, 0);
         assert_eq!(timer_period, 0);
     }
+
+    // TODO: Following tests will be enabled once the GCD integration is done.
     // #[test]
     // fn test_set_memory_attributes() {
     //     let mut cpu_init = MockMockEfiCpuPaging::new();
