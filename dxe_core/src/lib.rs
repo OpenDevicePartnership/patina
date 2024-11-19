@@ -59,6 +59,8 @@
 #![feature(c_variadic)]
 #![feature(allocator_api)]
 #![feature(new_uninit)]
+#![feature(const_mut_refs)]
+#![feature(slice_ptr_get)]
 
 extern crate alloc;
 

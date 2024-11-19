@@ -11,7 +11,7 @@
 //!
 
 extern crate alloc;
-use crate::AllocationStrategy;
+use super::AllocationStrategy;
 use core::{
     alloc::{AllocError, Allocator, GlobalAlloc, Layout},
     cmp::max,
@@ -86,43 +86,6 @@ impl Iterator for AllocatorIterator {
 /// implementation when an appropriate sized free block is not available. If more memory is required than can be
 /// satisfied by either the block list or the linked-list, more memory is requested from the GCD supplied at
 /// instantiation and a new backing linked-list is created.
-///
-/// ## Example
-/// ```
-/// # use core::alloc::Layout;
-/// # use std::alloc::System;
-/// # use std::alloc::GlobalAlloc;
-/// # use mu_pi::dxe_services::GcdMemoryType;
-///
-/// use uefi_gcd::gcd::SpinLockedGcd;
-/// use uefi_allocator::fixed_size_block_allocator::FixedSizeBlockAllocator;
-/// # fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
-/// #   let layout = Layout::from_size_align(size, 0x1000).unwrap();
-/// #   let base = unsafe { System.alloc(layout) as u64 };
-/// #   unsafe {
-/// #     gcd.add_memory_space(
-/// #       GcdMemoryType::SystemMemory,
-/// #       base as usize,
-/// #       size,
-/// #       0).unwrap();
-/// #   }
-/// #   base
-/// # }
-///
-/// static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-/// GCD.init(48,16); //hard-coded processor address size.
-///
-/// //initialize the gcd for this example with some memory from the System allocator.
-/// let base = init_gcd(&GCD, 0x400000);
-///
-/// let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
-///
-/// let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-/// let allocation = fsb.allocate(layout).unwrap().as_ptr() as *mut u8;
-///
-/// assert_ne!(allocation, core::ptr::null_mut());
-/// ```
-///
 pub struct FixedSizeBlockAllocator {
     gcd: &'static SpinLockedGcd,
     handle: r_efi::efi::Handle,
@@ -267,43 +230,6 @@ impl FixedSizeBlockAllocator {
     /// ## Errors
     ///
     /// Returns [`core::ptr::null_mut()`] on failure to allocate.
-    ///
-    /// ## Example
-    /// ```
-    /// # use core::alloc::Layout;
-    /// # use std::alloc::System;
-    /// # use std::alloc::GlobalAlloc;
-    /// # use mu_pi::dxe_services::GcdMemoryType;
-    ///
-    /// use uefi_gcd::gcd::SpinLockedGcd;
-    /// use uefi_allocator::fixed_size_block_allocator::FixedSizeBlockAllocator;
-    /// # fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
-    /// #   let layout = Layout::from_size_align(size, 0x1000).unwrap();
-    /// #   let base = unsafe { System.alloc(layout) as u64 };
-    /// #   unsafe {
-    /// #     gcd.add_memory_space(
-    /// #       GcdMemoryType::SystemMemory,
-    /// #       base as usize,
-    /// #       size,
-    /// #       0).unwrap();
-    /// #   }
-    /// #   base
-    /// # }
-    ///
-    /// static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-    /// GCD.init(48,16); //hard-coded processor address size.
-    ///
-    /// //initialize the gcd allocator for this example with some memory from the System allocator.
-    /// let base = init_gcd(&GCD, 0x400000);
-    ///
-    /// let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
-    ///
-    /// let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-    /// let allocation = fsb.alloc(layout);
-    ///
-    /// assert_ne!(allocation, core::ptr::null_mut());
-    /// ```
-    ///
     pub fn alloc(&mut self, layout: Layout) -> *mut u8 {
         match list_index(&layout) {
             Some(index) => {
@@ -340,42 +266,6 @@ impl FixedSizeBlockAllocator {
     /// ## Errors
     ///
     /// returns AllocError on failure to allocate.
-    ///
-    /// ## Example
-    /// ```
-    /// # use core::alloc::Layout;
-    /// # use std::alloc::System;
-    /// # use std::alloc::GlobalAlloc;
-    /// # use mu_pi::dxe_services::GcdMemoryType;
-    ///
-    /// use uefi_gcd::gcd::SpinLockedGcd;
-    /// use uefi_allocator::fixed_size_block_allocator::FixedSizeBlockAllocator;
-    /// # fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
-    /// #   let layout = Layout::from_size_align(size, 0x1000).unwrap();
-    /// #   let base = unsafe { System.alloc(layout) as u64 };
-    /// #   unsafe {
-    /// #     gcd.add_memory_space(
-    /// #       GcdMemoryType::SystemMemory,
-    /// #       base as usize,
-    /// #       size,
-    /// #       0).unwrap();
-    /// #   }
-    /// #   base
-    /// # }
-    ///
-    /// static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-    /// GCD.init(48,16); //hard-coded processor address size.
-    ///
-    /// //initialize the gcd for this example with some memory from the System allocator.
-    /// let base = init_gcd(&GCD, 0x400000);
-    ///
-    /// let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
-    ///
-    /// let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-    /// let allocation = fsb.allocate(layout).unwrap().as_ptr() as *mut u8;
-    ///
-    /// assert_ne!(allocation, core::ptr::null_mut());
-    /// ```
     pub fn allocate(&mut self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let allocation = self.alloc(layout);
         let allocation = slice_from_raw_parts_mut(allocation, layout.size());
@@ -404,44 +294,6 @@ impl FixedSizeBlockAllocator {
     /// ## Safety
     ///
     /// Caller must ensure that `ptr` was created by a call to [`Self::alloc`] with the same `layout`.
-    ///
-    /// ## Example
-    /// ```
-    /// # use core::alloc::Layout;
-    /// # use std::alloc::System;
-    /// # use std::alloc::GlobalAlloc;
-    /// # use mu_pi::dxe_services::GcdMemoryType;
-    ///
-    /// use uefi_gcd::gcd::SpinLockedGcd;
-    /// use uefi_allocator::fixed_size_block_allocator::FixedSizeBlockAllocator;
-    /// # fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
-    /// #   let layout = Layout::from_size_align(size, 0x1000).unwrap();
-    /// #   let base = unsafe { System.alloc(layout) as u64 };
-    /// #   unsafe {
-    /// #     gcd.add_memory_space(
-    /// #       GcdMemoryType::SystemMemory,
-    /// #       base as usize,
-    /// #       size,
-    /// #       0).unwrap();
-    /// #   }
-    /// #   base
-    /// # }
-    ///
-    /// static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-    /// GCD.init(48,16); //hard-coded processor address size.
-    ///
-    /// //initialize the gcd for this example with some memory from the System allocator.
-    /// let base = init_gcd(&GCD, 0x400000);
-    ///
-    /// let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
-    ///
-    /// let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-    /// let allocation = fsb.alloc(layout);
-    ///
-    /// unsafe {
-    ///   fsb.dealloc(allocation, layout);
-    /// }
-    /// ```
     pub unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
         match list_index(&layout) {
             Some(index) => {
@@ -469,46 +321,6 @@ impl FixedSizeBlockAllocator {
     /// ## Safety
     ///
     /// Caller must ensure that `ptr` was created by a call to [`Self::allocate`] with the same `layout`.
-    ///
-    /// ## Example
-    /// ```
-    /// #![feature(slice_ptr_get)]
-    /// # use core::alloc::Layout;
-    /// # use std::alloc::System;
-    /// # use std::alloc::GlobalAlloc;
-    /// # use mu_pi::dxe_services::GcdMemoryType;
-    ///
-    /// use uefi_gcd::gcd::SpinLockedGcd;
-    /// use uefi_allocator::fixed_size_block_allocator::FixedSizeBlockAllocator;
-    /// # fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
-    /// #   let layout = Layout::from_size_align(size, 0x1000).unwrap();
-    /// #   let base = unsafe { System.alloc(layout) as u64 };
-    /// #   unsafe {
-    /// #     gcd.add_memory_space(
-    /// #       GcdMemoryType::SystemMemory,
-    /// #       base as usize,
-    /// #       size,
-    /// #       0).unwrap();
-    /// #   }
-    /// #   base
-    /// # }
-    ///
-    /// static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-    /// GCD.init(48,16); //hard-coded processor address size.
-    ///
-    /// //initialize the gcd for this example with some memory from the System allocator.
-    /// let base = init_gcd(&GCD, 0x400000);
-    ///
-    /// let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
-    ///
-    /// let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-    /// let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
-    ///
-    /// unsafe {
-    ///   fsb.deallocate(allocation, layout);
-    /// }
-    /// ```
-    ///
     pub unsafe fn deallocate(&mut self, ptr: NonNull<u8>, layout: Layout) {
         self.dealloc(ptr.as_ptr(), layout)
     }
@@ -518,51 +330,6 @@ impl FixedSizeBlockAllocator {
     /// Note: `true` does not indicate that the pointer corresponds to an active allocation - it may be in either
     /// allocated or freed memory. `true` just means that the pointer falls within a memory region that this allocator
     /// manages.
-    ///
-    /// ## Example
-    /// ```
-    /// #![feature(slice_ptr_get)]
-    /// # use core::alloc::Layout;
-    /// # use std::alloc::System;
-    /// # use std::alloc::GlobalAlloc;
-    /// # use mu_pi::dxe_services::GcdMemoryType;
-    ///
-    /// use uefi_gcd::gcd::SpinLockedGcd;
-    /// use uefi_allocator::fixed_size_block_allocator::FixedSizeBlockAllocator;
-    /// # fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
-    /// #   let layout = Layout::from_size_align(size, 0x1000).unwrap();
-    /// #   let base = unsafe { System.alloc(layout) as u64 };
-    /// #   unsafe {
-    /// #     gcd.add_memory_space(
-    /// #       GcdMemoryType::SystemMemory,
-    /// #       base as usize,
-    /// #       size,
-    /// #       0).unwrap();
-    /// #   }
-    /// #   base
-    /// # }
-    ///
-    /// static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-    /// GCD.init(48,16); //hard-coded processor address size.
-    ///
-    /// //initialize the gcd for this example with some memory from the System allocator.
-    /// let base = init_gcd(&GCD, 0x400000);
-    ///
-    /// let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
-    ///
-    /// let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-    /// let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
-    ///
-    /// assert!(fsb.contains(allocation.as_ptr() as *mut u8));
-    ///
-    /// unsafe {
-    ///   fsb.deallocate(allocation, layout);
-    /// }
-    ///
-    /// // even though it is not allocated, this address now belongs to this allocator's managed pool of memory.
-    /// assert!(fsb.contains(allocation.as_ptr() as *mut u8));
-    /// ```
-    ///
     pub fn contains(&self, ptr: *mut u8) -> bool {
         AllocatorIterator::new(self.allocators).any(|node| {
             let allocator = unsafe { &mut (*node).allocator };
@@ -722,45 +489,6 @@ impl Display for FixedSizeBlockAllocator {
 /// Spin Locked Fixed Size Block Allocator
 ///
 /// A wrapper for [`FixedSizeBlockAllocator`] that provides Sync/Send via means of a spin mutex.
-///
-/// ## Example
-/// ```
-/// #![feature(allocator_api)]
-/// # use core::alloc::Layout;
-/// # use core::alloc::Allocator;
-/// # use core::alloc::GlobalAlloc;
-/// # use std::alloc::System;
-/// # use mu_pi::dxe_services::GcdMemoryType;
-///
-/// use uefi_gcd::gcd::SpinLockedGcd;
-/// use uefi_allocator::fixed_size_block_allocator::SpinLockedFixedSizeBlockAllocator;
-/// # fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
-/// #   let layout = Layout::from_size_align(size, 0x1000).unwrap();
-/// #   let base = unsafe { System.alloc(layout) as u64 };
-/// #   unsafe {
-/// #     gcd.add_memory_space(
-/// #       GcdMemoryType::SystemMemory,
-/// #       base as usize,
-/// #       size,
-/// #       0).unwrap();
-/// #   }
-/// #   base
-/// # }
-///
-/// static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-/// GCD.init(48,16); //hard-coded processor address size.
-///
-///static ALLOCATOR: SpinLockedFixedSizeBlockAllocator  = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
-///
-/// //initialize the gcd for this example with some memory from the System allocator.
-/// let base = init_gcd(&GCD, 0x400000);
-///
-/// let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-/// let allocation = ALLOCATOR.allocate(layout).unwrap().as_ptr() as *mut u8;
-///
-/// assert_ne!(allocation, core::ptr::null_mut());
-/// ```
-///
 pub struct SpinLockedFixedSizeBlockAllocator {
     inner: tpl_lock::TplMutex<FixedSizeBlockAllocator>,
 }
@@ -785,56 +513,6 @@ impl SpinLockedFixedSizeBlockAllocator {
     /// Locks the allocator
     ///
     /// This can be used to do several actions on the allocator atomically.
-    ///
-    /// ## Example
-    /// ```
-    /// #![feature(allocator_api)]
-    /// #![feature(slice_ptr_get)]
-    /// # use core::alloc::Layout;
-    /// # use core::alloc::Allocator;
-    /// # use core::alloc::GlobalAlloc;
-    /// # use std::alloc::System;
-    /// # use mu_pi::dxe_services::GcdMemoryType;
-    ///
-    /// use uefi_gcd::gcd::SpinLockedGcd;
-    /// use uefi_allocator::fixed_size_block_allocator::SpinLockedFixedSizeBlockAllocator;
-    /// # fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
-    /// #   let layout = Layout::from_size_align(size, 0x1000).unwrap();
-    /// #   let base = unsafe { System.alloc(layout) as u64 };
-    /// #   unsafe {
-    /// #     gcd.add_memory_space(
-    /// #       GcdMemoryType::SystemMemory,
-    /// #       base as usize,
-    /// #       size,
-    /// #       0).unwrap();
-    /// #   }
-    /// #   base
-    /// # }
-    ///
-    /// static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-    /// GCD.init(48,16); //hard-coded processor address size.
-    ///
-    /// static ALLOCATOR: SpinLockedFixedSizeBlockAllocator  = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
-    ///
-    /// //initialize the gcd for this example with some memory from the System allocator.
-    /// let base = init_gcd(&GCD, 0x400000);
-    ///
-    /// let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-    ///
-    /// {
-    ///   //acquire the lock
-    ///   let mut locked_alloc = ALLOCATOR.lock();
-    ///   //atomic operations
-    ///   let allocation = locked_alloc.allocate(layout).unwrap().as_non_null_ptr();
-    ///   let allocation2 = locked_alloc.allocate(layout).unwrap().as_non_null_ptr();
-    ///   unsafe {
-    ///     locked_alloc.deallocate(allocation, layout);
-    ///     locked_alloc.deallocate(allocation2, layout);
-    ///   }
-    /// }
-    ///
-    /// ```
-    ///
     pub fn lock(&self) -> tpl_lock::TplGuard<FixedSizeBlockAllocator> {
         self.inner.lock()
     }
@@ -973,6 +651,28 @@ mod tests {
             gcd.add_memory_space(GcdMemoryType::SystemMemory, base as usize, size, 0).unwrap();
         }
         base
+    }
+
+    #[test]
+    fn allocate_deallocate_test() {
+        // Create a static GCD for test.
+        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+        GCD.init(48, 16);
+
+        // Allocate some space on the heap with the global allocator (std) to be used by expand().
+        init_gcd(&GCD, 0x400000);
+
+        let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+
+        let layout = Layout::from_size_align(0x8, 0x8).unwrap();
+        let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+
+        unsafe { fsb.deallocate(allocation, layout) };
+
+        let layout = Layout::from_size_align(0x20, 0x20).unwrap();
+        let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+
+        unsafe { fsb.deallocate(allocation, layout) };
     }
 
     #[test]

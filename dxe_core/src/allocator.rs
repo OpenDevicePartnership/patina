@@ -6,6 +6,9 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
+mod fixed_size_block_allocator;
+mod uefi_allocator;
+
 use core::{
     ffi::c_void,
     fmt::Debug,
@@ -23,7 +26,8 @@ use mu_pi::{
     hob::{EFiMemoryTypeInformation, HobList, MEMORY_TYPE_INFO_HOB_GUID},
 };
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
-use uefi_allocator::{uefi_allocator::UefiAllocator, AllocationStrategy};
+use uefi_allocator::UefiAllocator;
+use uefi_gcd::gcd::AllocateType as AllocationStrategy;
 
 // Todo: Move to a centralized, permanent location
 const UEFI_PAGE_SIZE: usize = 0x1000;

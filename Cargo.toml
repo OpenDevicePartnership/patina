@@ -33,7 +33,6 @@ uefi_event = { path = "crates/uefi_event", version = "2.0.2" }
 uefi_gcd = { path = "crates/uefi_gcd", version = "2.0.2" }
 uefi_pecoff = { path = "crates/uefi_pecoff", version = "2.0.2" }
 uefi_protocol_db = { path = "crates/uefi_protocol_db", version = "2.0.2" }
-uefi_allocator = { path = "crates/uefi_allocator", version = "2.0.2" }
 uefi_component_interface = { path = "crates/uefi_component_interface", version = "2.0.2" }
 
 adv_logger = { path = "adv_logger" }

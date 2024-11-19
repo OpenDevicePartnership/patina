@@ -11,7 +11,7 @@
 use r_efi::efi;
 use uefi_gcd::gcd::SpinLockedGcd;
 
-use crate::{fixed_size_block_allocator::SpinLockedFixedSizeBlockAllocator, AllocationStrategy};
+use super::{fixed_size_block_allocator::SpinLockedFixedSizeBlockAllocator, AllocationStrategy};
 use core::{
     alloc::{Allocator, GlobalAlloc, Layout},
     ffi::c_void,
@@ -34,47 +34,6 @@ struct AllocationInfo {
 /// Wraps a [`SpinLockedFixedSizeBlockAllocator`] to provide additional UEFI-specific functionality:
 /// - Association of a particular [`r_efi::efi::MemoryType`] with the allocator
 /// - A pool implementation that allows tracking the layout and memory_type of UEFI pool allocations.
-///
-/// ## Example:
-/// ```
-/// # use core::alloc::Layout;
-/// # use core::ffi::c_void;
-/// # use std::alloc::{GlobalAlloc, System};
-/// # use r_efi::efi;
-/// # use mu_pi::dxe_services;
-///
-/// use uefi_allocator::uefi_allocator::UefiAllocator;
-/// use uefi_gcd::gcd::SpinLockedGcd;
-/// # fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
-/// #   let layout = Layout::from_size_align(size, 0x1000).unwrap();
-/// #   let base = unsafe { System.alloc(layout) as u64 };
-/// #   unsafe {
-/// #     gcd.add_memory_space(
-/// #       dxe_services::GcdMemoryType::SystemMemory,
-/// #       base as usize,
-/// #       size,
-/// #       0).unwrap();
-/// #   }
-/// #   base
-/// # }
-///
-/// static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-/// GCD.init(48,16); //hard-coded processor address size.
-///
-/// //initialize the gcd for this example with some memory from the System allocator.
-/// let base = init_gcd(&GCD, 0x400000);
-///
-/// let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
-///
-/// unsafe {
-///   let mut buffer: *mut c_void = core::ptr::null_mut();
-///   assert!(ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) == efi::Status::SUCCESS);
-///   assert!(buffer as u64 > base);
-///   assert!((buffer as u64) < base + 0x400000);
-///   assert!(ua.free_pool(buffer) == efi::Status::SUCCESS);
-/// }
-/// ```
-///
 pub struct UefiAllocator {
     allocator: SpinLockedFixedSizeBlockAllocator,
     memory_type: efi::MemoryType,
@@ -129,36 +88,9 @@ impl UefiAllocator {
     /// If the allocator does not have enough capacity, it will attempt to expand.
     /// Returns an error if the allocator cannot expand.
     /// See [`SpinLockedFixedSizeBlockAllocator::ensure_capacity`]
-    /// ## Example
-    /// ```rust
-    /// # use core::alloc::Layout;
-    /// # use core::ffi::c_void;
-    /// # use std::alloc::{GlobalAlloc, System};
-    /// # use r_efi::efi;
-    /// # use mu_pi::dxe_services;
-    /// use uefi_allocator::uefi_allocator::UefiAllocator;
-    /// use uefi_gcd::gcd::SpinLockedGcd;
-    /// # fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
-    /// #   let layout = Layout::from_size_align(size, 0x1000).unwrap();
-    /// #   let base = unsafe { System.alloc(layout) as u64 };
-    /// #   unsafe {
-    /// #     gcd.add_memory_space(
-    /// #       dxe_services::GcdMemoryType::SystemMemory,
-    /// #       base as usize,
-    /// #       size,
-    /// #       0).unwrap();
-    /// #   }
-    /// #   base
-    /// # }
-    /// static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-    /// GCD.init(48,16); //hard-coded processor address size.
-    /// //initialize the gcd for this example with some memory from the System allocator.
-    /// let base = init_gcd(&GCD, 0x400000);
-    /// let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
-    /// let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-    /// assert!(ua.ensure_capacity(layout.size(), layout.align()) == Ok(()));
-    /// ```
+    ///
     /// ## Errors
+    ///
     /// Returns an error if the allocator cannot expand.
     pub fn ensure_capacity(&self, size: usize, align: usize) -> Result<(), efi::Status> {
         self.allocator.ensure_capacity(size, align)
@@ -170,43 +102,6 @@ impl UefiAllocator {
     /// Buffer input must be a valid memory location to write the allocation to.
     ///
     /// Memory allocated by this routine should be freed by [`Self::free_pool`]
-    ///
-    /// ## Example
-    /// ```
-    /// # use core::alloc::Layout;
-    /// # use core::ffi::c_void;
-    /// # use std::alloc::{GlobalAlloc, System};
-    /// # use r_efi::efi;
-    /// # use mu_pi::dxe_services;
-    ///
-    /// use uefi_allocator::uefi_allocator::UefiAllocator;
-    /// use uefi_gcd::gcd::SpinLockedGcd;
-    /// # fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
-    /// #   let layout = Layout::from_size_align(size, 0x1000).unwrap();
-    /// #   let base = unsafe { System.alloc(layout) as u64 };
-    /// #   unsafe {
-    /// #     gcd.add_memory_space(
-    /// #       dxe_services::GcdMemoryType::SystemMemory,
-    /// #       base as usize,
-    /// #       size,
-    /// #       0).unwrap();
-    /// #   }
-    /// #   base
-    /// # }
-    ///
-    /// static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-    /// GCD.init(48,16); //hard-coded processor address size.
-    ///
-    /// //initialize the gcd for this example with some memory from the System allocator.
-    /// let base = init_gcd(&GCD, 0x400000);
-    ///
-    /// let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
-    ///
-    /// let mut buffer: *mut c_void = core::ptr::null_mut();
-    /// unsafe {
-    ///   ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer));
-    /// }
-    /// ```
     pub unsafe fn allocate_pool(&self, size: usize, buffer: *mut *mut c_void) -> efi::Status {
         let mut allocation_info = AllocationInfo {
             signature: POOL_SIG,
@@ -240,48 +135,6 @@ impl UefiAllocator {
     /// ## Safety
     ///
     /// Caller must guarantee that `buffer` was originally allocated by [`Self::allocate_pool`]
-    ///
-    /// ## Example
-    /// ```
-    /// # use core::alloc::Layout;
-    /// # use core::ffi::c_void;
-    /// # use std::alloc::{GlobalAlloc, System};
-    /// # use r_efi::efi;
-    /// # use mu_pi::dxe_services;
-    ///
-    /// use uefi_allocator::uefi_allocator::UefiAllocator;
-    /// use uefi_gcd::gcd::SpinLockedGcd;
-    /// # fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
-    /// #   let layout = Layout::from_size_align(size, 0x1000).unwrap();
-    /// #   let base = unsafe { System.alloc(layout) as u64 };
-    /// #   unsafe {
-    /// #     gcd.add_memory_space(
-    /// #       dxe_services::GcdMemoryType::SystemMemory,
-    /// #       base as usize,
-    /// #       size,
-    /// #       0).unwrap();
-    /// #   }
-    /// #   base
-    /// # }
-    ///
-    /// static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-    /// GCD.init(48,16); //hard-coded processor address size.
-    ///
-    /// //initialize the gcd for this example with some memory from the System allocator.
-    /// let base = init_gcd(&GCD, 0x400000);
-    ///
-    /// let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
-    ///
-    ///
-    /// let mut buffer: *mut c_void = core::ptr::null_mut();
-    /// unsafe {
-    ///   ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer));
-    /// }
-    /// //do stuff with the allocation...
-    /// unsafe {
-    ///   ua.free_pool(buffer);
-    /// }
-    /// ```
     pub unsafe fn free_pool(&self, buffer: *mut c_void) -> efi::Status {
         let (_, offset) = Layout::new::<AllocationInfo>()
             .extend(
@@ -398,7 +251,6 @@ mod tests {
     use mu_pi::dxe_services;
 
     use super::*;
-    use crate::AllocationStrategy;
 
     fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
         let layout = Layout::from_size_align(size, 0x1000).unwrap();
