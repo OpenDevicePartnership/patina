@@ -161,23 +161,26 @@ pub fn get_capabilities(gcd_mem_type: dxe_services::GcdMemoryType, attributes: u
     capabilities
 }
 
+type GcdAllocateFn = fn(
+    gcd: &mut GCD,
+    allocate_type: AllocateType,
+    memory_type: dxe_services::GcdMemoryType,
+    alignment: usize,
+    len: usize,
+    image_handle: efi::Handle,
+    device_handle: Option<efi::Handle>,
+) -> Result<usize, Error>;
+type GcdFreeFn =
+    fn(gcd: &mut GCD, base_address: usize, len: usize, transition: MemoryStateTransition) -> Result<(), Error>;
+
 #[derive(Debug)]
 #[allow(clippy::upper_case_acronyms)]
 //The Global Coherency Domain (GCD) Services are used to manage the memory resources visible to the boot processor.
 struct GCD {
     maximum_address: usize,
     memory_blocks: Option<Rbt<'static, MemoryBlock>>,
-    allocate_memory_space_fn: fn(
-        gcd: &mut GCD,
-        allocate_type: AllocateType,
-        memory_type: dxe_services::GcdMemoryType,
-        alignment: usize,
-        len: usize,
-        image_handle: efi::Handle,
-        device_handle: Option<efi::Handle>,
-    ) -> Result<usize, Error>,
-    free_memory_space_fn:
-        fn(gcd: &mut GCD, base_address: usize, len: usize, transition: MemoryStateTransition) -> Result<(), Error>,
+    allocate_memory_space_fn: GcdAllocateFn,
+    free_memory_space_fn: GcdFreeFn,
 }
 
 /// This service allocates nonexistent memory, reserved memory, system memory, or memory-mapped I/O resources from the global coherency domain of the processor.
