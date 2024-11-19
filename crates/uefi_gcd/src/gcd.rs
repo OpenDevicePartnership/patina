@@ -305,6 +305,11 @@ impl GCD {
         log::info!("Reassigning GCD memory fx pointers after EBS.")
     }
 
+    pub fn restore_free_allocate_fn(&mut self) {
+        self.allocate_memory_space_fn = allocate_memory_space_before_ebs;
+        self.free_memory_space_fn = free_memory_space_worker_before_ebs;
+    }
+
     pub fn init(&mut self, processor_address_bits: u32) {
         self.maximum_address = 1 << processor_address_bits;
     }
@@ -1442,6 +1447,10 @@ impl SpinLockedGcd {
 
     pub fn signal_ebs_start(&self) {
         self.memory.lock().signal_ebs_start();
+    }
+
+    pub fn restore_free_allocate_fn(&self) {
+        self.memory.lock().restore_free_allocate_fn();
     }
 
     /// Resets the GCD to default state. Intended for test scenarios.

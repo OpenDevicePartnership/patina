@@ -266,9 +266,11 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     };
 
     // Terminate the memory map
+    // According to UEFI spec, in case of an incomplete or failed EBS call we must restore boot service functionality
     let status = terminate_memory_map(map_key);
     if status.is_error() {
         EVENT_DB.signal_group(EBS_FAILED_GUID);
+        GCD.restore_free_allocate_fn();
         return status;
     }
 
