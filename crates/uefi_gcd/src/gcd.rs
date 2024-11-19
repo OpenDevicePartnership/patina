@@ -187,7 +187,7 @@ struct GCD {
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.2
-fn allocate_memory_space_before_ebs(
+fn allocate_memory_space(
     gcd: &mut GCD,
     allocate_type: AllocateType,
     memory_type: dxe_services::GcdMemoryType,
@@ -228,7 +228,7 @@ fn allocate_memory_space_before_ebs(
     }
 }
 
-fn allocate_memory_space_after_ebs(
+fn allocate_memory_space_null(
     _gcd: &mut GCD,
     _allocate_type: AllocateType,
     _memory_type: dxe_services::GcdMemoryType,
@@ -237,11 +237,12 @@ fn allocate_memory_space_after_ebs(
     _image_handle: efi::Handle,
     _device_handle: Option<efi::Handle>,
 ) -> Result<usize, Error> {
-    log::warn!("GCD not allowed to allocate after EBS has started!");
+    log::error!("GCD not allowed to allocate after EBS has started!");
+    debug_assert!(false);
     Err(Error::AccessDenied)
 }
 
-fn free_memory_space_worker_before_ebs(
+fn free_memory_space_worker(
     gcd: &mut GCD,
     base_address: usize,
     len: usize,
@@ -279,13 +280,13 @@ fn free_memory_space_worker_before_ebs(
     }
 }
 
-fn free_memory_space_worker_after_ebs(
+fn free_memory_space_worker_null(
     _gcd: &mut GCD,
     _base_address: usize,
     _len: usize,
     _transition: MemoryStateTransition,
 ) -> Result<(), Error> {
-    log::warn!("GCD not allowed to free after EBS has started!");
+    log::error!("GCD not allowed to free after EBS has started!");
     Ok(())
 }
 
@@ -303,14 +304,14 @@ impl GCD {
     }
 
     pub fn signal_ebs_start(&mut self) {
-        self.allocate_memory_space_fn = allocate_memory_space_after_ebs;
-        self.free_memory_space_fn = free_memory_space_worker_after_ebs;
-        log::info!("Reassigning GCD memory fx pointers after EBS.")
+        self.allocate_memory_space_fn = allocate_memory_space_null;
+        self.free_memory_space_fn = free_memory_space_worker_null;
+        log::info!("Disallowing alloc/free during ExitBootServices.");
     }
 
-    pub fn restore_free_allocate_fn(&mut self) {
-        self.allocate_memory_space_fn = allocate_memory_space_before_ebs;
-        self.free_memory_space_fn = free_memory_space_worker_before_ebs;
+    pub fn signal_ebs_failed(&mut self) {
+        self.allocate_memory_space_fn = allocate_memory_space;
+        self.free_memory_space_fn = free_memory_space_worker;
     }
 
     pub fn init(&mut self, processor_address_bits: u32) {
@@ -1433,8 +1434,8 @@ impl SpinLockedGcd {
                 GCD {
                     maximum_address: 0,
                     memory_blocks: None,
-                    allocate_memory_space_fn: allocate_memory_space_before_ebs,
-                    free_memory_space_fn: free_memory_space_worker_before_ebs,
+                    allocate_memory_space_fn: allocate_memory_space,
+                    free_memory_space_fn: free_memory_space_worker,
                 },
                 "GcdMemLock",
             ),
@@ -1451,8 +1452,8 @@ impl SpinLockedGcd {
         self.memory.lock().signal_ebs_start();
     }
 
-    pub fn restore_free_allocate_fn(&self) {
-        self.memory.lock().restore_free_allocate_fn();
+    pub fn signal_ebs_failed(&self) {
+        self.memory.lock().signal_ebs_failed();
     }
 
     /// Resets the GCD to default state. Intended for test scenarios.
