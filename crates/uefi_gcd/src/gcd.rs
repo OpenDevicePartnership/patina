@@ -298,8 +298,8 @@ impl GCD {
         Self {
             memory_blocks: None,
             maximum_address: 1 << processor_address_bits,
-            allocate_memory_space_fn: allocate_memory_space_before_ebs,
-            free_memory_space_fn: free_memory_space_worker_before_ebs,
+            allocate_memory_space_fn: allocate_memory_space,
+            free_memory_space_fn: free_memory_space_worker,
         }
     }
 
@@ -2664,8 +2664,8 @@ mod tests {
         let mut gcd = GCD {
             memory_blocks: None,
             maximum_address: 0,
-            allocate_memory_space_fn: allocate_memory_space_before_ebs,
-            free_memory_space_fn: free_memory_space_worker_before_ebs,
+            allocate_memory_space_fn: allocate_memory_space,
+            free_memory_space_fn: free_memory_space_worker,
         };
         assert_eq!(Err(Error::NotInitialized), gcd.set_memory_space_attributes(0, 0x50000, 0b1111));
 
