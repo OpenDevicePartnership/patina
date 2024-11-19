@@ -13,7 +13,6 @@ use core::{
     slice::{self, from_raw_parts},
     sync::atomic::{AtomicPtr, Ordering},
 };
-use uefi_gcd::gcd;
 
 use mu_pi::{dxe_services, fw_fs::FirmwareVolume, protocols::cpu_arch};
 use r_efi::efi;
@@ -23,7 +22,7 @@ use crate::{
     dispatcher::{core_dispatcher, core_schedule, core_trust},
     events::EVENT_DB,
     fv::core_install_firmware_volume,
-    misc_boot_services,
+    gcd, misc_boot_services,
     protocols::PROTOCOL_DB,
     systemtables::EfiSystemTable,
     GCD,
@@ -33,12 +32,12 @@ static CPU_ARCH_PTR: AtomicPtr<cpu_arch::Protocol> = AtomicPtr::new(core::ptr::n
 
 fn result_to_efi_status(err: gcd::Error) -> efi::Status {
     match err {
-        uefi_gcd::gcd::Error::AccessDenied => efi::Status::ACCESS_DENIED,
-        uefi_gcd::gcd::Error::InvalidParameter => efi::Status::INVALID_PARAMETER,
-        uefi_gcd::gcd::Error::NotFound => efi::Status::NOT_FOUND,
-        uefi_gcd::gcd::Error::NotInitialized => efi::Status::NOT_READY,
-        uefi_gcd::gcd::Error::OutOfResources => efi::Status::OUT_OF_RESOURCES,
-        uefi_gcd::gcd::Error::Unsupported => efi::Status::UNSUPPORTED,
+        gcd::Error::AccessDenied => efi::Status::ACCESS_DENIED,
+        gcd::Error::InvalidParameter => efi::Status::INVALID_PARAMETER,
+        gcd::Error::NotFound => efi::Status::NOT_FOUND,
+        gcd::Error::NotInitialized => efi::Status::NOT_READY,
+        gcd::Error::OutOfResources => efi::Status::OUT_OF_RESOURCES,
+        gcd::Error::Unsupported => efi::Status::UNSUPPORTED,
     }
 }
 

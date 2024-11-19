@@ -12,6 +12,7 @@
 
 extern crate alloc;
 use super::AllocationStrategy;
+use crate::gcd::{self, SpinLockedGcd};
 use core::{
     alloc::{AllocError, Allocator, GlobalAlloc, Layout},
     cmp::max,
@@ -23,7 +24,6 @@ use core::{
 use linked_list_allocator::{align_down_size, align_up_size};
 use mu_pi::dxe_services::GcdMemoryType;
 use r_efi::efi;
-use uefi_gcd::gcd::SpinLockedGcd;
 
 /// Type for describing errors that this implementation can produce.
 #[derive(Debug, PartialEq)]
@@ -167,7 +167,7 @@ impl FixedSizeBlockAllocator {
         let start_address = self
             .gcd
             .allocate_memory_space(
-                uefi_gcd::gcd::AllocateType::BottomUp(None),
+                gcd::AllocateType::BottomUp(None),
                 GcdMemoryType::SystemMemory,
                 ALIGNMENT_BITS,
                 size,
@@ -375,8 +375,8 @@ impl FixedSizeBlockAllocator {
                 None,
             )
             .map_err(|err| match err {
-                uefi_gcd::gcd::Error::InvalidParameter => efi::Status::INVALID_PARAMETER,
-                uefi_gcd::gcd::Error::NotFound => efi::Status::NOT_FOUND,
+                gcd::Error::InvalidParameter => efi::Status::INVALID_PARAMETER,
+                gcd::Error::NotFound => efi::Status::NOT_FOUND,
                 _ => efi::Status::OUT_OF_RESOURCES,
             })?;
 
@@ -402,12 +402,12 @@ impl FixedSizeBlockAllocator {
 
         if self.preferred_range.as_ref().is_some_and(|range| range.contains(&(address as efi::PhysicalAddress))) {
             self.gcd.free_memory_space_preserving_ownership(address, pages * ALIGNMENT).map_err(|err| match err {
-                uefi_gcd::gcd::Error::NotFound => efi::Status::NOT_FOUND,
+                gcd::Error::NotFound => efi::Status::NOT_FOUND,
                 _ => efi::Status::INVALID_PARAMETER,
             })?;
         } else {
             self.gcd.free_memory_space(address, pages * ALIGNMENT).map_err(|err| match err {
-                uefi_gcd::gcd::Error::NotFound => efi::Status::NOT_FOUND,
+                gcd::Error::NotFound => efi::Status::NOT_FOUND,
                 _ => efi::Status::INVALID_PARAMETER,
             })?;
         }
@@ -454,7 +454,7 @@ impl FixedSizeBlockAllocator {
 
         self.gcd.free_memory_space_preserving_ownership(preferred_block_address as usize, pages * ALIGNMENT).map_err(
             |err| match err {
-                uefi_gcd::gcd::Error::NotFound => efi::Status::NOT_FOUND,
+                gcd::Error::NotFound => efi::Status::NOT_FOUND,
                 _ => efi::Status::INVALID_PARAMETER,
             },
         )?;
@@ -927,8 +927,7 @@ mod tests {
 
         let pages = 4;
 
-        let allocation =
-            fsb.allocate_pages(uefi_gcd::gcd::AllocateType::BottomUp(None), pages).unwrap().as_non_null_ptr();
+        let allocation = fsb.allocate_pages(gcd::AllocateType::BottomUp(None), pages).unwrap().as_non_null_ptr();
 
         assert!(allocation.as_ptr() as u64 >= address);
         assert!((allocation.as_ptr() as u64) < address + 0x1000000);
@@ -959,10 +958,8 @@ mod tests {
         let target_address = address + 0x400000 - 8 * (ALIGNMENT as u64);
         let pages = 4;
 
-        let allocation = fsb
-            .allocate_pages(uefi_gcd::gcd::AllocateType::Address(target_address as usize), pages)
-            .unwrap()
-            .as_non_null_ptr();
+        let allocation =
+            fsb.allocate_pages(gcd::AllocateType::Address(target_address as usize), pages).unwrap().as_non_null_ptr();
 
         assert_eq!(allocation.as_ptr() as u64, target_address);
 
@@ -986,7 +983,7 @@ mod tests {
         let pages = 4;
 
         let allocation = fsb
-            .allocate_pages(uefi_gcd::gcd::AllocateType::BottomUp(Some(target_address as usize)), pages)
+            .allocate_pages(gcd::AllocateType::BottomUp(Some(target_address as usize)), pages)
             .unwrap()
             .as_non_null_ptr();
         assert!((allocation.as_ptr() as u64) < target_address);
@@ -1011,7 +1008,7 @@ mod tests {
         let pages = 4;
 
         let allocation = fsb
-            .allocate_pages(uefi_gcd::gcd::AllocateType::TopDown(Some(target_address as usize)), pages)
+            .allocate_pages(gcd::AllocateType::TopDown(Some(target_address as usize)), pages)
             .unwrap()
             .as_non_null_ptr();
         assert!((allocation.as_ptr() as u64) > target_address);

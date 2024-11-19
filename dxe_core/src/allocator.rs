@@ -20,14 +20,16 @@ extern crate alloc;
 use alloc::{collections::BTreeMap, vec::Vec};
 use mu_rust_helpers::function;
 
-use crate::{memory_attributes_table::MemoryAttributesTable, protocols::PROTOCOL_DB, GCD};
+use crate::{
+    gcd::AllocateType as AllocationStrategy, memory_attributes_table::MemoryAttributesTable, protocols::PROTOCOL_DB,
+    GCD,
+};
 use mu_pi::{
     dxe_services::{GcdMemoryType, MemorySpaceDescriptor},
     hob::{EFiMemoryTypeInformation, HobList, MEMORY_TYPE_INFO_HOB_GUID},
 };
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
 use uefi_allocator::UefiAllocator;
-use uefi_gcd::gcd::AllocateType as AllocationStrategy;
 
 // Todo: Move to a centralized, permanent location
 const UEFI_PAGE_SIZE: usize = 0x1000;

@@ -33,9 +33,9 @@ spin = { workspace = true }
 uuid = { workspace = true }
 
 uefi_sdk = { workspace = true }
+uefi_collections = { workspace = true }
 uefi_component_interface = { workspace = true }
 uefi_cpu_init = { workspace = true }
-uefi_gcd = { workspace = true }
 uefi_interrupt = { workspace = true }
 uefi_protocol_db = { workspace = true }
 uefi_debugger = { workspace = true }
@@ -48,6 +48,7 @@ uefi_tpl_lock = { workspace = true }
 [dev-dependencies]
 sample_components = { workspace = true }
 section_extractor = { workspace = true }
+uefi_collections = { workspace = true, default-features = true }
 mockall = { workspace = true }
 
 [features]

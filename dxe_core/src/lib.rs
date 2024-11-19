@@ -61,6 +61,8 @@
 #![feature(new_uninit)]
 #![feature(const_mut_refs)]
 #![feature(slice_ptr_get)]
+#![feature(get_many_mut)]
+#![feature(is_sorted)]
 
 extern crate alloc;
 
@@ -88,14 +90,30 @@ pub mod test_support;
 use core::{ffi::c_void, str::FromStr};
 
 use alloc::{boxed::Box, vec::Vec};
+use gcd::SpinLockedGcd;
 use mu_pi::{fw_fs, hob::HobList, protocols::bds};
 use r_efi::efi::{self};
 use uefi_component_interface::DxeComponent;
-use uefi_gcd::gcd::SpinLockedGcd;
 use uefi_sdk::{
     error::{self, Result},
     if_aarch64, if_x64,
 };
+
+#[macro_export]
+macro_rules! ensure {
+    ($condition:expr, $err:expr) => {{
+        if !($condition) {
+            error!($err);
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! error {
+    ($err:expr) => {{
+        return Err($err.into()).into();
+    }};
+}
 
 pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
 

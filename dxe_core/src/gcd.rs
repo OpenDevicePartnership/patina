@@ -6,6 +6,10 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
+mod io_block;
+mod memory_block;
+mod spin_locked_gcd;
+
 use core::{ffi::c_void, ops::Range};
 use mu_pi::{
     dxe_services::{self, GcdIoType, GcdMemoryType},
@@ -13,9 +17,10 @@ use mu_pi::{
 };
 use mu_rust_helpers::function;
 use r_efi::efi;
-use uefi_gcd::gcd;
 
 use crate::{dxe_services::core_get_memory_space_descriptor, GCD};
+
+pub use spin_locked_gcd::{AllocateType, Error, MapChangeType, SpinLockedGcd};
 
 // Align address downwards.
 //
@@ -216,7 +221,7 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList, free_memory_start
                         gcd_mem_type,
                         split_range.start as usize,
                         split_range.end.saturating_sub(split_range.start) as usize,
-                        gcd::get_capabilities(gcd_mem_type, resource_attributes as u64),
+                        spin_locked_gcd::get_capabilities(gcd_mem_type, resource_attributes as u64),
                     )
                     .expect("Failed to add memory space to GCD");
                 }
@@ -251,7 +256,7 @@ pub fn add_hob_allocations_to_gcd(hob_list: &HobList) {
                         _ => uefi_protocol_db::DXE_CORE_HANDLE,
                     };
                     if let Err(e) = GCD.allocate_memory_space(
-                        gcd::AllocateType::Address(desc.memory_base_address as usize),
+                        spin_locked_gcd::AllocateType::Address(desc.memory_base_address as usize),
                         descriptor.memory_type,
                         0,
                         desc.memory_length as usize,
@@ -287,7 +292,7 @@ pub fn add_hob_allocations_to_gcd(hob_list: &HobList) {
                 log::trace!("[{}] Processing Firmware Volume HOB:\n{:#x?}\n\n", function!(), hob);
 
                 let result = GCD.allocate_memory_space(
-                    gcd::AllocateType::Address(*base_address as usize),
+                    spin_locked_gcd::AllocateType::Address(*base_address as usize),
                     dxe_services::GcdMemoryType::MemoryMappedIo,
                     0,
                     *length as usize,

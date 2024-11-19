@@ -18,9 +18,8 @@ use r_efi::efi;
 
 use mu_pi::protocols::{cpu_arch, timer};
 use uefi_event::{SpinLockedEventDb, TimerDelay};
-use uefi_gcd::gcd;
 
-use crate::protocols::PROTOCOL_DB;
+use crate::{gcd, protocols::PROTOCOL_DB};
 
 pub static EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
 
