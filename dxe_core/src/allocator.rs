@@ -352,7 +352,6 @@ pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mu
 }
 
 extern "efiapi" fn free_pool(buffer: *mut c_void) -> efi::Status {
-    log::info!("Free pool called");
     match core_free_pool(buffer) {
         Ok(_) => efi::Status::SUCCESS,
         Err(status) => status,
@@ -360,7 +359,6 @@ extern "efiapi" fn free_pool(buffer: *mut c_void) -> efi::Status {
 }
 
 pub fn core_free_pool(buffer: *mut c_void) -> Result<(), efi::Status> {
-    log::info!("Core free pool called");
     if buffer.is_null() {
         return Err(efi::Status::INVALID_PARAMETER);
     }
