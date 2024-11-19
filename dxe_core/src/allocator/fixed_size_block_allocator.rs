@@ -12,7 +12,10 @@
 
 extern crate alloc;
 use super::AllocationStrategy;
-use crate::gcd::{self, SpinLockedGcd};
+use crate::{
+    gcd::{self, SpinLockedGcd},
+    tpl_lock,
+};
 use core::{
     alloc::{AllocError, Allocator, GlobalAlloc, Layout},
     cmp::max,

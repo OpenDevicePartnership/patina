@@ -13,7 +13,7 @@ use core::{ffi::c_void, mem::size_of, slice::from_raw_parts};
 use alloc::{alloc::Allocator, boxed::Box};
 use r_efi::efi;
 
-use crate::allocator::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR;
+use crate::{allocator::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR, tpl_lock};
 
 pub static SYSTEM_TABLE: tpl_lock::TplMutex<Option<EfiSystemTable>> =
     tpl_lock::TplMutex::new(efi::TPL_NOTIFY, None, "StLock");

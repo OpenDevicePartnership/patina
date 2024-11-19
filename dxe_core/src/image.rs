@@ -23,6 +23,7 @@ use crate::{
     protocols::{core_install_protocol_interface, core_locate_device_path, PROTOCOL_DB},
     runtime,
     systemtables::EfiSystemTable,
+    tpl_lock,
 };
 
 use corosensei::{

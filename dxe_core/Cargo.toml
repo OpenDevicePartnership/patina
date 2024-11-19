@@ -42,7 +42,6 @@ uefi_debugger = { workspace = true }
 uefi_device_path = { workspace = true }
 uefi_depex = { workspace = true }
 uefi_pecoff = { workspace = true }
-uefi_tpl_lock = { workspace = true }
 
 [dev-dependencies]
 sample_components = { workspace = true }

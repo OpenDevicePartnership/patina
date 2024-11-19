@@ -1,25 +1,12 @@
 //! UEFI Task Priority Level (TPL) Locking support
 //!
-//! This library provides a Mutex implementation based on UEFI TPL levels.
+//! This module provides a Mutex implementation based on UEFI TPL levels.
 //!
 //! ## License
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
-//!
-//! ## Examples and Usage
-//!
-//!```
-//! use tpl_lock::TplMutex;
-//! use r_efi::efi;
-//! let tpl_mutex = TplMutex::new(efi::TPL_HIGH_LEVEL, 1_usize, "test_lock");
-//! *tpl_mutex.lock() = 2_usize;
-//! assert_eq!(2_usize, *tpl_mutex.lock());
-//!```
-//!
-#![no_std]
-
 use core::{
     cell::UnsafeCell,
     fmt,
@@ -58,18 +45,6 @@ pub struct TplMutex<T: ?Sized> {
     data: UnsafeCell<T>,
 }
 /// Wrapper for guarded data, which can be accessed by Deref or DerefMut on this object.
-///
-/// ## Example
-///```
-/// use tpl_lock::TplMutex;
-/// use r_efi::efi;
-/// let tpl_mutex = TplMutex::new(efi::TPL_HIGH_LEVEL, 1_usize, "test_lock");
-///
-/// *tpl_mutex.lock() = 2_usize; //deref to set
-/// assert_eq!(2_usize, *tpl_mutex.lock()); //deref to read.
-///
-///```
-///
 pub struct TplGuard<'a, T: ?Sized + 'a> {
     release_tpl: Option<efi::Tpl>,
     lock: &'a AtomicBool,
@@ -168,7 +143,7 @@ mod tests {
     extern crate std;
     use std::{boxed::Box, println};
 
-    use crate::{init_boot_services, TplMutex};
+    use super::{init_boot_services, TplMutex};
     use core::{
         mem::MaybeUninit,
         sync::atomic::{AtomicBool, AtomicUsize, Ordering},

@@ -14,7 +14,7 @@ use mu_rust_helpers::function;
 use r_efi::efi;
 use uefi_collections::{node_size, Error as SliceError, Rbt, SliceKey};
 
-use crate::{ensure, error};
+use crate::{ensure, error, tpl_lock};
 
 use super::{
     io_block::{self, Error as IoBlockError, IoBlock, IoBlockSplit, StateTransition as IoStateTransition},

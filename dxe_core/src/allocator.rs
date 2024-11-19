@@ -22,7 +22,7 @@ use mu_rust_helpers::function;
 
 use crate::{
     gcd::AllocateType as AllocationStrategy, memory_attributes_table::MemoryAttributesTable, protocol_db,
-    protocols::PROTOCOL_DB, GCD,
+    protocols::PROTOCOL_DB, tpl_lock, GCD,
 };
 use mu_pi::{
     dxe_services::{GcdMemoryType, MemorySpaceDescriptor},

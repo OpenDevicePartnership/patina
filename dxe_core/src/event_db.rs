@@ -19,6 +19,8 @@ use alloc::{
 use core::{cmp::Ordering, ffi::c_void, fmt};
 use r_efi::efi;
 
+use crate::tpl_lock;
+
 /// Defines the supported UEFI event types
 #[repr(u32)]
 #[derive(Debug, PartialEq, Clone, Copy)]

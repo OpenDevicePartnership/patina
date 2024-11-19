@@ -19,6 +19,7 @@ use crate::{
     driver_services::{core_connect_controller, core_disconnect_controller},
     events::{signal_event, EVENT_DB},
     protocol_db::{SpinLockedProtocolDb, DXE_CORE_HANDLE},
+    tpl_lock,
 };
 
 pub static PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();

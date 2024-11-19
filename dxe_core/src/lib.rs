@@ -84,6 +84,7 @@ mod protocol_db;
 mod protocols;
 mod runtime;
 mod systemtables;
+mod tpl_lock;
 
 #[cfg(test)]
 #[macro_use]
