@@ -14,12 +14,12 @@ use r_efi::efi;
 use uefi_component_interface::DxeComponent;
 use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
 use uefi_pecoff::{relocation::RelocationBlock, UefiPeInfo};
-use uefi_protocol_db::DXE_CORE_HANDLE;
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
     component_interface, dxe_services,
     filesystems::SimpleFile,
+    protocol_db,
     protocols::{core_install_protocol_interface, core_locate_device_path, PROTOCOL_DB},
     runtime,
     systemtables::EfiSystemTable,
@@ -480,14 +480,14 @@ fn install_dxe_core_image(hob_list: &HobList) {
 
     // install the loaded_image protocol on a new handle.
     let handle = match core_install_protocol_interface(
-        Some(DXE_CORE_HANDLE),
+        Some(protocol_db::DXE_CORE_HANDLE),
         efi::protocols::loaded_image::PROTOCOL_GUID,
         image_info_ptr,
     ) {
         Err(err) => panic!("Failed to install dxe core image handle: {:?}", err),
         Ok(handle) => handle,
     };
-    assert_eq!(handle, DXE_CORE_HANDLE);
+    assert_eq!(handle, protocol_db::DXE_CORE_HANDLE);
     // record this handle as the new dxe_core handle.
     private_data.dxe_core_image_handle = handle;
 
@@ -1294,6 +1294,7 @@ mod tests {
     use super::{empty_image_info, get_buffer_by_file_path, load_image};
     use crate::{
         image::{exit, start_image, unload_image, PRIVATE_IMAGE_DATA},
+        protocol_db,
         protocols::{core_install_protocol_interface, PROTOCOL_DB},
         systemtables::{init_system_table, SYSTEM_TABLE},
         test_collateral, test_support,
@@ -1333,7 +1334,7 @@ mod tests {
 
         // install the loaded_image protocol on a new handle.
         let _ = match core_install_protocol_interface(
-            Some(uefi_protocol_db::DXE_CORE_HANDLE),
+            Some(protocol_db::DXE_CORE_HANDLE),
             efi::protocols::loaded_image::PROTOCOL_GUID,
             image_info_ptr,
         ) {
@@ -1359,7 +1360,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db::DXE_CORE_HANDLE,
+                protocol_db::DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),
@@ -1415,7 +1416,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db::DXE_CORE_HANDLE,
+                protocol_db::DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),
@@ -1499,7 +1500,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db::DXE_CORE_HANDLE,
+                protocol_db::DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),
@@ -1532,7 +1533,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db::DXE_CORE_HANDLE,
+                protocol_db::DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),
@@ -1585,7 +1586,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db::DXE_CORE_HANDLE,
+                protocol_db::DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),
@@ -1638,7 +1639,7 @@ mod tests {
             let mut image_handle: efi::Handle = core::ptr::null_mut();
             let status = load_image(
                 false.into(),
-                uefi_protocol_db::DXE_CORE_HANDLE,
+                protocol_db::DXE_CORE_HANDLE,
                 core::ptr::null_mut(),
                 image.as_mut_ptr() as *mut c_void,
                 image.len(),

@@ -13,12 +13,12 @@ use mu_rust_helpers::guid::guid_fmt;
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_device_path::{is_device_path_end, remaining_device_path};
-use uefi_protocol_db::{SpinLockedProtocolDb, DXE_CORE_HANDLE};
 
 use crate::{
     allocator::core_allocate_pool,
     driver_services::{core_connect_controller, core_disconnect_controller},
     events::{signal_event, EVENT_DB},
+    protocol_db::{SpinLockedProtocolDb, DXE_CORE_HANDLE},
 };
 
 pub static PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();

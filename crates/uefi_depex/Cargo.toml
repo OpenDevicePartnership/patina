@@ -15,5 +15,4 @@ path = "src/lib.rs"
 [dependencies]
 r-efi = {workspace=true}
 uuid = {workspace=true}
-uefi_protocol_db = {workspace=true}
 log = { workspace = true }

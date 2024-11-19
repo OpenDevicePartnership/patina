@@ -18,7 +18,7 @@ use mu_pi::{
 use mu_rust_helpers::function;
 use r_efi::efi;
 
-use crate::{dxe_services::core_get_memory_space_descriptor, GCD};
+use crate::{dxe_services::core_get_memory_space_descriptor, protocol_db, GCD};
 
 pub use spin_locked_gcd::{AllocateType, Error, MapChangeType, SpinLockedGcd};
 
@@ -244,16 +244,16 @@ pub fn add_hob_allocations_to_gcd(hob_list: &HobList) {
 
                 if let Ok(descriptor) = core_get_memory_space_descriptor(desc.memory_base_address) {
                     let allocator_handle = match desc.memory_type {
-                        efi::RESERVED_MEMORY_TYPE => uefi_protocol_db::RESERVED_MEMORY_ALLOCATOR_HANDLE,
-                        efi::LOADER_CODE => uefi_protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE,
-                        efi::LOADER_DATA => uefi_protocol_db::EFI_LOADER_DATA_ALLOCATOR_HANDLE,
-                        efi::BOOT_SERVICES_CODE => uefi_protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE,
-                        efi::BOOT_SERVICES_DATA => uefi_protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-                        efi::RUNTIME_SERVICES_CODE => uefi_protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE,
-                        efi::RUNTIME_SERVICES_DATA => uefi_protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE,
-                        efi::ACPI_RECLAIM_MEMORY => uefi_protocol_db::EFI_ACPI_RECLAIM_MEMORY_ALLOCATOR_HANDLE,
-                        efi::ACPI_MEMORY_NVS => uefi_protocol_db::EFI_ACPI_MEMORY_NVS_ALLOCATOR_HANDLE,
-                        _ => uefi_protocol_db::DXE_CORE_HANDLE,
+                        efi::RESERVED_MEMORY_TYPE => protocol_db::RESERVED_MEMORY_ALLOCATOR_HANDLE,
+                        efi::LOADER_CODE => protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE,
+                        efi::LOADER_DATA => protocol_db::EFI_LOADER_DATA_ALLOCATOR_HANDLE,
+                        efi::BOOT_SERVICES_CODE => protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE,
+                        efi::BOOT_SERVICES_DATA => protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+                        efi::RUNTIME_SERVICES_CODE => protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE,
+                        efi::RUNTIME_SERVICES_DATA => protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE,
+                        efi::ACPI_RECLAIM_MEMORY => protocol_db::EFI_ACPI_RECLAIM_MEMORY_ALLOCATOR_HANDLE,
+                        efi::ACPI_MEMORY_NVS => protocol_db::EFI_ACPI_MEMORY_NVS_ALLOCATOR_HANDLE,
+                        _ => protocol_db::DXE_CORE_HANDLE,
                     };
                     if let Err(e) = GCD.allocate_memory_space(
                         spin_locked_gcd::AllocateType::Address(desc.memory_base_address as usize),
@@ -296,7 +296,7 @@ pub fn add_hob_allocations_to_gcd(hob_list: &HobList) {
                     dxe_services::GcdMemoryType::MemoryMappedIo,
                     0,
                     *length as usize,
-                    uefi_protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+                    protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
                     None,
                 );
                 if result.is_err() {
@@ -338,7 +338,7 @@ mod tests {
     };
     use r_efi::efi;
 
-    use crate::{gcd::init_gcd, test_support, GCD};
+    use crate::{gcd::init_gcd, protocol_db, test_support, GCD};
 
     use super::{add_hob_allocations_to_gcd, add_hob_resource_descriptors_to_gcd};
 
@@ -648,16 +648,16 @@ mod tests {
         GCD.get_memory_descriptors(&mut descriptors).expect("get_memory_descriptors failed.");
         log::info!("Descriptors: {:#x?}", descriptors);
         for (idx, handle) in [
-            uefi_protocol_db::RESERVED_MEMORY_ALLOCATOR_HANDLE,
-            uefi_protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE,
-            uefi_protocol_db::EFI_LOADER_DATA_ALLOCATOR_HANDLE,
-            uefi_protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE,
-            uefi_protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-            uefi_protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE,
-            uefi_protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE,
-            uefi_protocol_db::EFI_ACPI_RECLAIM_MEMORY_ALLOCATOR_HANDLE,
-            uefi_protocol_db::EFI_ACPI_MEMORY_NVS_ALLOCATOR_HANDLE,
-            uefi_protocol_db::DXE_CORE_HANDLE,
+            protocol_db::RESERVED_MEMORY_ALLOCATOR_HANDLE,
+            protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE,
+            protocol_db::EFI_LOADER_DATA_ALLOCATOR_HANDLE,
+            protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE,
+            protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+            protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE,
+            protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE,
+            protocol_db::EFI_ACPI_RECLAIM_MEMORY_ALLOCATOR_HANDLE,
+            protocol_db::EFI_ACPI_MEMORY_NVS_ALLOCATOR_HANDLE,
+            protocol_db::DXE_CORE_HANDLE,
         ]
         .iter()
         .enumerate()
@@ -680,7 +680,7 @@ mod tests {
                 x.base_address == 0x11000000
                     && x.length == 0x80000
                     && x.memory_type == GcdMemoryType::MemoryMappedIo
-                    && x.image_handle == uefi_protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE
+                    && x.image_handle == protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE
             })
             .unwrap();
     }

@@ -1,26 +1,6 @@
 //! UEFI Protocol Database Support
 //!
-//! This library provides an UEFI protocol database implementation.
-//!
-//! ## Examples and Usage
-//!
-//! ```
-//! # use core::ffi::c_void;
-//! # use r_efi::efi;
-//! # use std::str::FromStr;
-//! # use uuid::Uuid;
-//! use uefi_protocol_db::SpinLockedProtocolDb;
-//!
-//! static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-//!
-//! let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-//! let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-//! let interface1: *mut c_void = 0x1234 as *mut c_void;
-//!
-//! SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-//!
-//! assert_eq!(SPIN_LOCKED_PROTOCOL_DB.locate_protocol(guid1), Ok(interface1));
-//! ```
+//! This module provides an UEFI protocol database implementation.
 //!
 //! ## License
 //!
@@ -28,8 +8,6 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-#![no_std]
-
 extern crate alloc;
 
 use ahash::AHasher;
@@ -43,6 +21,7 @@ use r_efi::efi;
 
 //private UUID used to create the "well-known handles"
 const WELL_KNOWN_HANDLE_PROTOCOL_GUID: uuid::Uuid = uuid::Uuid::from_u128(0xfced7c96356e48cba9a9e089b2ddf49b);
+#[allow(dead_code)]
 pub const INVALID_HANDLE: efi::Handle = 0 as efi::Handle;
 pub const DXE_CORE_HANDLE: efi::Handle = 1 as efi::Handle;
 pub const RESERVED_MEMORY_ALLOCATOR_HANDLE: efi::Handle = 2 as efi::Handle;
@@ -186,6 +165,10 @@ impl ProtocolDb {
 
     fn enable_handle_hashing(&mut self) {
         self.hash_new_handles = true;
+    }
+
+    fn registered_protocols(&self) -> Vec<efi::Guid> {
+        self.handles.iter().flat_map(|(_, handle)| handle.keys().map(|x| x.0)).collect()
     }
 
     fn install_protocol_interface(
@@ -563,13 +546,6 @@ impl ProtocolDb {
 /// The protocol database is intended to be used as a global singleton, so access
 /// is only allowed through this structure which ensures that the event database
 /// is properly guarded against race conditions.
-///
-/// ## Examples
-/// ```
-/// use uefi_protocol_db::SpinLockedProtocolDb;
-/// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-/// ```
-///
 pub struct SpinLockedProtocolDb {
     inner: tpl_lock::TplMutex<ProtocolDb>,
 }
@@ -603,6 +579,11 @@ impl SpinLockedProtocolDb {
 
     fn lock(&self) -> tpl_lock::TplGuard<ProtocolDb> {
         self.inner.lock()
+    }
+
+    /// Returns a list of all the protocols that have been registered with the protocol database.
+    pub fn registered_protocols(&self) -> Vec<efi::Guid> {
+        self.lock().registered_protocols()
     }
 
     /// Initialize the protocol database. Installs well-known handles, and then enables hashing to ensure handles are
@@ -645,23 +626,6 @@ impl SpinLockedProtocolDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// # use core::ffi::c_void;
-    /// # use r_efi::efi;
-    /// # use std::str::FromStr;
-    /// # use uuid::Uuid;
-    /// use uefi_protocol_db::SpinLockedProtocolDb;
-    ///
-    /// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-    /// let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-    /// let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-    /// let interface1: *mut c_void = 0x1234 as *mut c_void;
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// ```
-    ///
     pub fn install_protocol_interface(
         &self,
         handle: Option<efi::Handle>,
@@ -679,26 +643,6 @@ impl SpinLockedProtocolDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// # use core::ffi::c_void;
-    /// # use r_efi::efi;
-    /// # use std::str::FromStr;
-    /// # use uuid::Uuid;
-    /// use uefi_protocol_db::SpinLockedProtocolDb;
-    ///
-    /// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-    /// let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-    /// let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-    /// let interface1: *mut c_void = 0x1234 as *mut c_void;
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    ///
-    /// SPIN_LOCKED_PROTOCOL_DB.uninstall_protocol_interface(handle, guid1, interface1).unwrap();
-    ///
-    ///  ```
-    ///
     pub fn uninstall_protocol_interface(
         &self,
         handle: efi::Handle,
@@ -718,29 +662,6 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if no matching handles are found.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// # use core::ffi::c_void;
-    /// # use r_efi::efi;
-    /// # use std::str::FromStr;
-    /// # use uuid::Uuid;
-    /// use uefi_protocol_db::SpinLockedProtocolDb;
-    ///
-    /// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-    /// let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-    /// let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-    /// let interface1: *mut c_void = 0x1234 as *mut c_void;
-    /// let interface2: *mut c_void = 0x1234 as *mut c_void;
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (handle2, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface2).unwrap();
-    ///
-    /// let handles = SPIN_LOCKED_PROTOCOL_DB.locate_handles(Some(guid1)).unwrap();
-    /// assert!(handles.contains(&handle));
-    /// assert!(handles.contains(&handle2));
-    /// ```
-    ///
     pub fn locate_handles(&self, protocol: Option<efi::Guid>) -> Result<Vec<efi::Handle>, efi::Status> {
         self.lock().locate_handles(protocol)
     }
@@ -755,28 +676,6 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if no matching interfaces are found.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// # use core::ffi::c_void;
-    /// # use r_efi::efi;
-    /// # use std::str::FromStr;
-    /// # use uuid::Uuid;
-    /// use uefi_protocol_db::SpinLockedProtocolDb;
-    ///
-    /// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-    /// let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-    /// let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-    /// let interface1: *mut c_void = 0x1234 as *mut c_void;
-    /// let interface2: *mut c_void = 0x1234 as *mut c_void;
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (handle2, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface2).unwrap();
-    ///
-    /// let interface = SPIN_LOCKED_PROTOCOL_DB.locate_protocol(guid1).unwrap();
-    /// assert!(interface == interface1 || interface == interface2);
-    /// ```
-    ///
     pub fn locate_protocol(&self, protocol: efi::Guid) -> Result<*mut c_void, efi::Status> {
         self.lock().locate_protocol(protocol)
     }
@@ -789,28 +688,6 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if no matching interfaces are found on the given handle.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// # use core::ffi::c_void;
-    /// # use r_efi::efi;
-    /// # use std::str::FromStr;
-    /// # use uuid::Uuid;
-    /// use uefi_protocol_db::SpinLockedProtocolDb;
-    ///
-    /// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-    /// let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-    /// let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-    /// let interface1: *mut c_void = 0x1234 as *mut c_void;
-    /// let interface2: *mut c_void = 0x1234 as *mut c_void;
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (handle2, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface2).unwrap();
-    ///
-    /// assert_eq!(interface1, SPIN_LOCKED_PROTOCOL_DB.get_interface_for_handle(handle, guid1).unwrap());
-    /// assert_eq!(interface2, SPIN_LOCKED_PROTOCOL_DB.get_interface_for_handle(handle2, guid1).unwrap());
-    /// ```
-    ///
     pub fn get_interface_for_handle(
         &self,
         handle: efi::Handle,
@@ -820,28 +697,6 @@ impl SpinLockedProtocolDb {
     }
 
     /// Returns Ok(()) if the handle is a valid handle, Err(Status::INVALID_PARAMETER) otherwise.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// # use core::ffi::c_void;
-    /// # use r_efi::efi;
-    /// # use std::str::FromStr;
-    /// # use uuid::Uuid;
-    /// use uefi_protocol_db::SpinLockedProtocolDb;
-    ///
-    /// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-    /// let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-    /// let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-    /// let interface1: *mut c_void = 0x1234 as *mut c_void;
-    /// let interface2: *mut c_void = 0x1234 as *mut c_void;
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let handle2 = (handle as usize + 1) as efi::Handle;
-    ///
-    /// assert_eq!(SPIN_LOCKED_PROTOCOL_DB.validate_handle(handle), Ok(()));
-    /// assert_eq!(SPIN_LOCKED_PROTOCOL_DB.validate_handle(handle2), Err(efi::Status::INVALID_PARAMETER));
-    /// ```
-    ///
     pub fn validate_handle(&self, handle: efi::Handle) -> Result<(), efi::Status> {
         self.lock().validate_handle(handle)
     }
@@ -864,28 +719,6 @@ impl SpinLockedProtocolDb {
     ///     efi::OPEN_PROTOCOL_EXCLUSIVE | BY_DRIVER_EXCLUSIVE and there is an existing usage that conflicts with those
     ///     attributes.
     /// Returns [`UNSUPPORTED`](r_efi::efi::Status::UNSUPPORTED) if the handle does not support the specified protocol.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// # use core::ffi::c_void;
-    /// # use r_efi::efi;
-    /// # use std::str::FromStr;
-    /// # use uuid::Uuid;
-    /// use uefi_protocol_db::SpinLockedProtocolDb;
-    ///
-    /// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-    /// let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-    /// let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-    /// let interface1: *mut c_void = 0x1234 as *mut c_void;
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (agent_handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (controller_handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    ///
-    /// SPIN_LOCKED_PROTOCOL_DB.add_protocol_usage(handle, guid1, Some(agent_handle), Some(controller_handle), efi::OPEN_PROTOCOL_BY_DRIVER).unwrap();
-    ///
-    /// ```
-    ///
     pub fn add_protocol_usage(
         &self,
         handle: efi::Handle,
@@ -908,30 +741,6 @@ impl SpinLockedProtocolDb {
     /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if the specified handle does not support the specified protocol.
     /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if the protocol interface specified by handle and protocol are not
     ///   opened by the specified agent and controller handle.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// # use core::ffi::c_void;
-    /// # use r_efi::efi;
-    /// # use std::str::FromStr;
-    /// # use uuid::Uuid;
-    /// use uefi_protocol_db::SpinLockedProtocolDb;
-    ///
-    /// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-    /// let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-    /// let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-    /// let interface1: *mut c_void = 0x1234 as *mut c_void;
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (agent_handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (controller_handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    ///
-    /// SPIN_LOCKED_PROTOCOL_DB.add_protocol_usage(handle, guid1, Some(agent_handle), Some(controller_handle), efi::OPEN_PROTOCOL_BY_DRIVER).unwrap();
-    ///
-    /// SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle, guid1, Some(agent_handle), Some(controller_handle)).unwrap();
-    ///
-    /// ```
-    ///
     pub fn remove_protocol_usage(
         &self,
         handle: efi::Handle,
@@ -951,31 +760,6 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if the specified handle does not support the specified protocol.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// # use core::ffi::c_void;
-    /// # use r_efi::efi;
-    /// # use std::str::FromStr;
-    /// # use uuid::Uuid;
-    /// use uefi_protocol_db::SpinLockedProtocolDb;
-    ///
-    /// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-    /// let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-    /// let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-    /// let interface1: *mut c_void = 0x1234 as *mut c_void;
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (agent_handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (controller_handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    ///
-    /// SPIN_LOCKED_PROTOCOL_DB.add_protocol_usage(handle, guid1, Some(agent_handle), Some(controller_handle), efi::OPEN_PROTOCOL_BY_DRIVER).unwrap();
-    ///
-    /// let open_protocol_info = SPIN_LOCKED_PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, guid1).unwrap();
-    /// assert_eq!(open_protocol_info.len(), 1);
-    ///
-    /// ```
-    ///
     pub fn get_open_protocol_information_by_protocol(
         &self,
         handle: efi::Handle,
@@ -991,36 +775,6 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if the specified handle does not support the specified protocol.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// # use core::ffi::c_void;
-    /// # use r_efi::efi;
-    /// # use std::str::FromStr;
-    /// # use uuid::Uuid;
-    /// use uefi_protocol_db::SpinLockedProtocolDb;
-    ///
-    /// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-    /// let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-    /// let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-    /// let interface1: *mut c_void = 0x1234 as *mut c_void;
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (agent_handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (controller_handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    ///
-    /// SPIN_LOCKED_PROTOCOL_DB.add_protocol_usage(handle, guid1, Some(agent_handle), Some(controller_handle), efi::OPEN_PROTOCOL_BY_DRIVER).unwrap();
-    ///
-    /// let open_protocol_info = SPIN_LOCKED_PROTOCOL_DB.get_open_protocol_information(handle).unwrap();
-    /// assert_eq!(open_protocol_info.len(), 1);
-    /// let (guid, open_info) = &open_protocol_info[0];
-    /// assert_eq!(*guid, guid1);
-    /// assert_eq!(open_info[0].agent_handle, Some(agent_handle));
-    /// assert_eq!(open_info[0].controller_handle, Some(controller_handle));
-    /// assert_ne!(open_info[0].attributes & efi::OPEN_PROTOCOL_BY_DRIVER, 0);
-    ///
-    /// ```
-    ///
     pub fn get_open_protocol_information(
         &self,
         handle: efi::Handle,
@@ -1032,33 +786,6 @@ impl SpinLockedProtocolDb {
     ///
     /// This function generally matches the behavior of EFI_BOOT_SERVICES.ProtocolsPerHandle() API in the UEFI spec
     /// 2.10 section 7.3.14. Refer to the UEFI spec description for details on input parameters.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// # use core::ffi::c_void;
-    /// # use r_efi::efi;
-    /// # use std::str::FromStr;
-    /// # use uuid::Uuid;
-    /// use uefi_protocol_db::SpinLockedProtocolDb;
-    ///
-    /// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-    /// let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-    /// let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-    /// let interface1: *mut c_void = 0x1234 as *mut c_void;
-    /// let uuid2 = Uuid::from_str("fe20c1a0-a4ac-48f1-9307-e2f8206e1019").unwrap();
-    /// let guid2: efi::Guid = unsafe { core::mem::transmute(*uuid2.as_bytes()) };
-    /// let interface2: *mut c_void = 0x4321 as *mut c_void;
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(Some(handle), guid2, interface2).unwrap();
-    ///
-    /// let protocols = SPIN_LOCKED_PROTOCOL_DB.get_protocols_on_handle(handle).unwrap();
-    ///
-    /// assert!(protocols.contains(&guid1));
-    /// assert!(protocols.contains(&guid2));
-    ///
-    /// ```
-    ///
     pub fn get_protocols_on_handle(&self, handle: efi::Handle) -> Result<Vec<efi::Guid>, efi::Status> {
         self.lock().get_protocols_on_handle(handle)
     }
@@ -1072,31 +799,6 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns a registration token that can be used with [next_handle_for_registration](SpinLockedProtocolDb::next_handle_for_registration)
     /// to iterate over handles that have fresh installations of the specified protocol.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// # use core::ffi::c_void;
-    /// # use r_efi::efi;
-    /// # use std::str::FromStr;
-    /// # use uuid::Uuid;
-    /// use uefi_protocol_db::SpinLockedProtocolDb;
-    ///
-    /// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-    /// let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-    /// let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-    /// let interface1: *mut c_void = 0x1234 as *mut c_void;
-    ///
-    /// let event: efi::Event = 0x4321 as efi::Event;
-    ///
-    /// let registration = SPIN_LOCKED_PROTOCOL_DB.register_protocol_notify(guid1, event);
-    ///
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    ///
-    /// assert_eq!(notifies[0].event, event);
-    ///
-    /// ```
-    ///
     pub fn register_protocol_notify(&self, protocol: efi::Guid, event: efi::Event) -> Result<*mut c_void, efi::Status> {
         self.lock().register_protocol_notify(protocol, event)
     }
@@ -1104,109 +806,16 @@ impl SpinLockedProtocolDb {
     /// De-registers a list of previously installed protocol notifies.
     ///
     /// This can be used by the caller to remove previously registered event notifications.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// # use core::ffi::c_void;
-    /// # use r_efi::efi;
-    /// # use std::str::FromStr;
-    /// # use uuid::Uuid;
-    /// use uefi_protocol_db::SpinLockedProtocolDb;
-    ///
-    /// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-    /// let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-    /// let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-    /// let interface1: *mut c_void = 0x1234 as *mut c_void;
-    ///
-    /// let event: efi::Event = 0x4321 as efi::Event;
-    ///
-    /// let registration = SPIN_LOCKED_PROTOCOL_DB.register_protocol_notify(guid1, event);
-    ///
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    ///
-    /// assert_eq!(notifies[0].event, event);
-    ///
-    /// SPIN_LOCKED_PROTOCOL_DB.unregister_protocol_notify_events (vec![event]);
-    ///
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    ///
-    /// assert_eq!(notifies.len(), 0);
-    /// ```
-    ///
     pub fn unregister_protocol_notify_events(&self, events: Vec<efi::Event>) {
         self.lock().unregister_protocol_notify_events(events);
     }
 
     /// Returns the next handle for which a protocol has been installed that matches the registration.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// # use core::ffi::c_void;
-    /// # use r_efi::efi;
-    /// # use std::str::FromStr;
-    /// # use uuid::Uuid;
-    /// use uefi_protocol_db::SpinLockedProtocolDb;
-    ///
-    /// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-    /// let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-    /// let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-    /// let interface1: *mut c_void = 0x1234 as *mut c_void;
-    ///
-    /// let event: efi::Event = 0x4321 as efi::Event;
-    ///
-    /// let registration = SPIN_LOCKED_PROTOCOL_DB.register_protocol_notify(guid1, event).unwrap();
-    ///
-    /// let (handle, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (handle2, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (handle3, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    ///
-    /// assert_eq!(Some(handle), SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(registration));
-    /// assert_eq!(Some(handle2), SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(registration));
-    /// assert_eq!(Some(handle3), SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(registration));
-    /// assert_eq!(None, SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(registration));
-    /// ```
-    ///
     pub fn next_handle_for_registration(&self, registration: *mut c_void) -> Option<efi::Handle> {
         self.lock().next_handle_for_registration(registration)
     }
 
     /// Returns a vector of controller handles that have parent_handle open BY_CHILD_CONTROLLER.
-    ///
-    /// ## Examples
-    /// ```
-    /// # use core::ffi::c_void;
-    /// # use r_efi::efi;
-    /// # use std::str::FromStr;
-    /// # use uuid::Uuid;
-    /// use uefi_protocol_db::SpinLockedProtocolDb;
-    ///
-    /// static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
-    /// let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-    /// let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
-    /// let interface1: *mut c_void = 0x1234 as *mut c_void;
-    ///
-    /// let (controller, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (driver, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (child1, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (child2, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (child3, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (_notchild1, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    /// let (_notchild2, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
-    ///
-    /// for child in [child1, child2, child3] {
-    ///   SPIN_LOCKED_PROTOCOL_DB
-    ///     .add_protocol_usage(controller, guid1, Some(driver), Some(child), efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER)
-    ///     .unwrap();
-    /// }
-    ///
-    /// let child_list = SPIN_LOCKED_PROTOCOL_DB.get_child_handles(controller);
-    /// assert!(child_list.len() == 3);
-    /// for child in [child1, child2, child3] {
-    ///   assert!(child_list.contains(&child));
-    /// }
-    /// ```
     pub fn get_child_handles(&self, parent_handle: efi::Handle) -> Vec<efi::Handle> {
         self.lock().get_child_handles(parent_handle)
     }
