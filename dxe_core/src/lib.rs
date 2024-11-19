@@ -13,8 +13,19 @@
 //! # }
 //! # #[derive(Default, Clone, Copy)]
 //! # struct CpuInitExample;
-//! # impl uefi_cpu_init::CpuInitializer for CpuInitExample {
-//! #     fn initialize(&mut self) { }
+//! # impl uefi_cpu_init::EfiCpuInit for CpuInitExample {
+//! #     fn initialize(&mut self) -> Result<(), r_efi::efi::Status> {Ok(())}
+//! #     fn flush_data_cache(
+//! #         &self,
+//! #         _start: r_efi::efi::PhysicalAddress,
+//! #         _length: u64,
+//! #         _flush_type: mu_pi::protocols::cpu_arch::CpuFlushType,
+//! #     ) -> Result<(), r_efi::efi::Status> {Ok(())}
+//! #     fn enable_interrupt(&self) -> Result<(), r_efi::efi::Status> {Ok(())}
+//! #     fn disable_interrupt(&self) -> Result<(), r_efi::efi::Status> {Ok(())}
+//! #     fn get_interrupt_state(&self) -> Result<bool, r_efi::efi::Status> {Ok(true)}
+//! #     fn init(&self, _init_type: mu_pi::protocols::cpu_arch::CpuInitType) -> Result<(), r_efi::efi::Status> {Ok(())}
+//! #     fn get_timer_value(&self, _timer_index: u32) -> Result<(u64, u64), r_efi::efi::Status> {Ok((0, 0))}
 //! # }
 //! # #[derive(Default, Clone, Copy)]
 //! # struct SectionExtractExample;
@@ -28,7 +39,7 @@
 //! # }
 //! # let physical_hob_list = core::ptr::null();
 //! dxe_core::Core::default()
-//!   .with_cpu_initializer(CpuInitExample::default())
+//!   .with_cpu_init(CpuInitExample::default())
 //!   .with_interrupt_manager(InterruptManagerExample::default())
 //!   .with_section_extractor(SectionExtractExample::default())
 //!   .initialize(physical_hob_list)
@@ -53,6 +64,7 @@ extern crate alloc;
 
 mod allocator;
 mod component_interface;
+mod cpu_arch_protocol;
 mod dispatcher;
 mod driver_services;
 mod dxe_services;
@@ -87,12 +99,12 @@ pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_c
 
 if_x64! {
     /// [`Core`] type alias for x86_64 architecture with cpu architecture specific trait implementations pre-selected.
-    pub type X64Core<SectionExtractor> = Core<uefi_cpu_init::X64CpuInitializer, SectionExtractor, uefi_interrupt::InterruptManagerX64>;
+    pub type X64Core<SectionExtractor> = Core<uefi_cpu_init::X64EfiCpuInit, SectionExtractor, uefi_interrupt::InterruptManagerX64>;
 }
 
 if_aarch64! {
     /// [`Core`] type alias for aarch64 architecture with cpu architecture specific trait implementations pre-selected.
-    pub type Aarch64Core<SectionExtractor> = Core<uefi_cpu_init::NullCpuInitializer, SectionExtractor, uefi_interrupt::InterruptManagerAarch64>;
+    pub type Aarch64Core<SectionExtractor> = Core<uefi_cpu_init::NullEfiCpuInit, SectionExtractor, uefi_interrupt::InterruptManagerAarch64>;
 }
 
 /// The initialize phase DxeCore, responsible for setting up the environment with the given configuration.
@@ -114,8 +126,19 @@ if_aarch64! {
 /// # }
 /// # #[derive(Default, Clone, Copy)]
 /// # struct CpuInitExample;
-/// # impl uefi_cpu_init::CpuInitializer for CpuInitExample {
-/// #     fn initialize(&mut self) { }
+/// # impl uefi_cpu_init::EfiCpuInit for CpuInitExample {
+/// #     fn initialize(&mut self) -> Result<(), r_efi::efi::Status> {Ok(())}
+/// #     fn flush_data_cache(
+/// #         &self,
+/// #         _start: r_efi::efi::PhysicalAddress,
+/// #         _length: u64,
+/// #         _flush_type: mu_pi::protocols::cpu_arch::CpuFlushType,
+/// #     ) -> Result<(), r_efi::efi::Status> {Ok(())}
+/// #     fn enable_interrupt(&self) -> Result<(), r_efi::efi::Status> {Ok(())}
+/// #     fn disable_interrupt(&self) -> Result<(), r_efi::efi::Status> {Ok(())}
+/// #     fn get_interrupt_state(&self) -> Result<bool, r_efi::efi::Status> {Ok(true)}
+/// #     fn init(&self, _init_type: mu_pi::protocols::cpu_arch::CpuInitType) -> Result<(), r_efi::efi::Status> {Ok(())}
+/// #     fn get_timer_value(&self, _timer_index: u32) -> Result<(u64, u64), r_efi::efi::Status> {Ok((0, 0))}
 /// # }
 /// # #[derive(Default, Clone, Copy)]
 /// # struct SectionExtractExample;
@@ -129,7 +152,7 @@ if_aarch64! {
 /// # }
 /// # let physical_hob_list = core::ptr::null();
 /// dxe_core::Core::default()
-///   .with_cpu_initializer(CpuInitExample::default())
+///   .with_cpu_init(CpuInitExample::default())
 ///   .with_interrupt_manager(InterruptManagerExample::default())
 ///   .with_section_extractor(SectionExtractExample::default())
 ///   .initialize(physical_hob_list)
@@ -138,26 +161,26 @@ if_aarch64! {
 ///   .unwrap();
 /// ```
 #[derive(Default)]
-pub struct Core<CpuInitializer, SectionExtractor, InterruptManager>
+pub struct Core<CpuInit, SectionExtractor, InterruptManager>
 where
-    CpuInitializer: uefi_cpu_init::CpuInitializer + Default,
+    CpuInit: uefi_cpu_init::EfiCpuInit + Default + 'static,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
     InterruptManager: uefi_interrupt::InterruptManager + Default + Copy + 'static,
 {
-    cpu_initializer: CpuInitializer,
+    cpu_init: CpuInit,
     section_extractor: SectionExtractor,
     interrupt_manager: InterruptManager,
 }
 
-impl<CpuInitializer, SectionExtractor, InterruptManager> Core<CpuInitializer, SectionExtractor, InterruptManager>
+impl<CpuInit, SectionExtractor, InterruptManager> Core<CpuInit, SectionExtractor, InterruptManager>
 where
-    CpuInitializer: uefi_cpu_init::CpuInitializer + Default,
+    CpuInit: uefi_cpu_init::EfiCpuInit + Default + 'static,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
     InterruptManager: uefi_interrupt::InterruptManager + Default + Copy + 'static,
 {
-    /// Registers the CPU initializer with it's own configuration.
-    pub fn with_cpu_initializer(mut self, cpu_initializer: CpuInitializer) -> Self {
-        self.cpu_initializer = cpu_initializer;
+    /// Registers the CPU Init with it's own configuration.
+    pub fn with_cpu_init(mut self, cpu_init: CpuInit) -> Self {
+        self.cpu_init = cpu_init;
         self
     }
 
@@ -175,7 +198,7 @@ where
 
     /// Initializes the core with the given configuration, including GCD initialization, enabling allocations.
     pub fn initialize(mut self, physical_hob_list: *const c_void) -> CorePostInit {
-        self.cpu_initializer.initialize();
+        let _ = self.cpu_init.initialize();
         self.interrupt_manager.initialize().expect("Failed to initialize interrupt manager!");
         uefi_debugger::initialize(&mut self.interrupt_manager);
 
@@ -219,6 +242,11 @@ where
             fv::init_fv_support(&hob_list, Box::from(self.section_extractor));
             dxe_services::init_dxe_services(st);
             driver_services::init_driver_services(st.boot_services());
+
+            // Commenting out below install procotcol call until we stub the CPU
+            // arch protocol install from C CpuDxe.
+            // cpu_arch_protocol::install_cpu_arch_protocol(&mut self.cpu_init, &mut self.interrupt_manager);
+
             // re-checksum the system tables after above initialization.
             st.checksum_all();
 

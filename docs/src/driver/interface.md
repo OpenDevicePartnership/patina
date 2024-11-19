@@ -26,8 +26,8 @@ dependencies in your component implementation is the same as described above.
 
 ``` rust
     pub struct MyComponent;
-    impl uefi_core::Component for MyComponent {
-        fn entry_point() -> Result<(), uefi_core::error::EfiError> {
+    impl uefi_sdk::Component for MyComponent {
+        fn entry_point() -> Result<(), uefi_sdk::error::EfiError> {
             // Your component code here
             Ok(())
         }
@@ -41,10 +41,10 @@ code organization / readability - especially if there are many trait dependencie
 multiple components in the same workspace.
 
 ``` rust
-    use uefi_core::Component;
+    use uefi_sdk::Component;
     pub struct MyComponent;
     impl Component for MyComponent {
-    fn entry_point() -> Result<(), uefi_core::error::EfiError> {
+    fn entry_point() -> Result<(), uefi_sdk::error::EfiError> {
         // Your component code here
         Ok(())
     }
