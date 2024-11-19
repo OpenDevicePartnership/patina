@@ -214,7 +214,7 @@ impl TestRunnerComponent {
 }
 
 impl DxeComponent for TestRunnerComponent {
-    fn entry_point(&self, interface: &dyn DxeComponentInterface) -> uefi_core::error::Result<()> {
+    fn entry_point(&self, interface: &dyn DxeComponentInterface) -> uefi_sdk::error::Result<()> {
         let test_list = __private_api::test_cases();
         let count = test_list.len();
         match count {

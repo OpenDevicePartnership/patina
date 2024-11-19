@@ -14,9 +14,9 @@ use core::{ffi::c_void, ptr};
 use mu_pi::hob::{Hob, PhaseHandoffInformationTable};
 use r_efi::efi;
 use uefi_component_interface::{DxeComponent, DxeComponentInterface};
-use uefi_core::{
+use uefi_sdk::{
     error::{EfiError, Result},
-    interface::SerialIO,
+    serial::SerialIO,
 };
 
 use crate::{logger::AdvancedLogger, memory_log, memory_log::AdvLoggerInfo};
@@ -172,12 +172,12 @@ mod tests {
     use core::mem::size_of;
 
     use mu_pi::hob::{header::Hob, GuidHob, GUID_EXTENSION};
-    use serial_writer::UartNull;
+    use uefi_sdk::serial::UartNull;
 
     use super::*;
 
     static TEST_LOGGER: AdvancedLogger<UartNull> =
-        AdvancedLogger::new(uefi_logger::Format::Standard, &[], log::LevelFilter::Trace, UartNull {});
+        AdvancedLogger::new(uefi_sdk::log::Format::Standard, &[], log::LevelFilter::Trace, UartNull {});
 
     unsafe fn create_adv_logger_hob_list() -> *const c_void {
         const LOG_LEN: usize = 0x2000;

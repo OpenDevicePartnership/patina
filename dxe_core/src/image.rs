@@ -883,6 +883,13 @@ pub fn core_load_image(
         private_info.pe_info.filename.as_ref().unwrap_or(&String::from("<no PDB>"))
     );
 
+    // Notify the debugger of the image load.
+    uefi_debugger::notify_module_load(
+        private_info.pe_info.filename.as_ref().unwrap_or(&String::from("")),
+        private_info.image_info.image_base as usize,
+        private_info.image_info.image_size as usize,
+    );
+
     // install the loaded_image protocol for this freshly loaded image on a new
     // handle.
     let handle = core_install_protocol_interface(None, efi::protocols::loaded_image::PROTOCOL_GUID, image_info_ptr)

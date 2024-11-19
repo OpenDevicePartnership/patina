@@ -1,6 +1,6 @@
 [package]
 name = "uefi_pecoff"
-version = "2.0.0"
+version = "2.0.2"
 edition = "2021"
 readme = "README.md"
 description = "A PE/COFF parsing implementation for the dxe_core."

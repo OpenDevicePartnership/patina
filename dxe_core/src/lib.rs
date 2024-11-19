@@ -9,11 +9,11 @@
 //! # #[derive(Default, Clone, Copy)]
 //! # struct Driver;
 //! # impl uefi_component_interface::DxeComponent for Driver {
-//! #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_core::error::Result<()> { Ok(()) }
+//! #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_sdk::error::Result<()> { Ok(()) }
 //! # }
 //! # #[derive(Default, Clone, Copy)]
 //! # struct CpuInitExample;
-//! # impl uefi_core::interface::CpuInitializer for CpuInitExample {
+//! # impl uefi_cpu_init::CpuInitializer for CpuInitExample {
 //! #     fn initialize(&mut self) { }
 //! # }
 //! # #[derive(Default, Clone, Copy)]
@@ -24,7 +24,7 @@
 //! # #[derive(Default, Clone, Copy)]
 //! # struct InterruptManagerExample;
 //! # impl uefi_interrupt::InterruptManager for InterruptManagerExample {
-//! #     fn initialize(&mut self) -> uefi_core::error::Result<()> { Ok(()) }
+//! #     fn initialize(&mut self) -> uefi_sdk::error::Result<()> { Ok(()) }
 //! # }
 //! # let physical_hob_list = core::ptr::null();
 //! dxe_core::Core::default()
@@ -77,11 +77,11 @@ use alloc::{boxed::Box, vec::Vec};
 use mu_pi::{fw_fs, hob::HobList, protocols::bds};
 use r_efi::efi::{self};
 use uefi_component_interface::DxeComponent;
-use uefi_core::{
-    error::{self, Result},
-    if_aarch64, if_x64, interface,
-};
 use uefi_gcd::gcd::SpinLockedGcd;
+use uefi_sdk::{
+    error::{self, Result},
+    if_aarch64, if_x64,
+};
 
 pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
 
@@ -110,11 +110,11 @@ if_aarch64! {
 /// # #[derive(Default, Clone, Copy)]
 /// # struct Driver;
 /// # impl uefi_component_interface::DxeComponent for Driver {
-/// #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_core::error::Result<()> { Ok(()) }
+/// #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_sdk::error::Result<()> { Ok(()) }
 /// # }
 /// # #[derive(Default, Clone, Copy)]
 /// # struct CpuInitExample;
-/// # impl uefi_core::interface::CpuInitializer for CpuInitExample {
+/// # impl uefi_cpu_init::CpuInitializer for CpuInitExample {
 /// #     fn initialize(&mut self) { }
 /// # }
 /// # #[derive(Default, Clone, Copy)]
@@ -125,7 +125,7 @@ if_aarch64! {
 /// # #[derive(Default, Clone, Copy)]
 /// # struct InterruptManagerExample;
 /// # impl uefi_interrupt::InterruptManager for InterruptManagerExample {
-/// #     fn initialize(&mut self) -> uefi_core::error::Result<()> { Ok(()) }
+/// #     fn initialize(&mut self) -> uefi_sdk::error::Result<()> { Ok(()) }
 /// # }
 /// # let physical_hob_list = core::ptr::null();
 /// dxe_core::Core::default()
@@ -140,7 +140,7 @@ if_aarch64! {
 #[derive(Default)]
 pub struct Core<CpuInitializer, SectionExtractor, InterruptManager>
 where
-    CpuInitializer: interface::CpuInitializer + Default,
+    CpuInitializer: uefi_cpu_init::CpuInitializer + Default,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
     InterruptManager: uefi_interrupt::InterruptManager + Default + Copy + 'static,
 {
@@ -151,7 +151,7 @@ where
 
 impl<CpuInitializer, SectionExtractor, InterruptManager> Core<CpuInitializer, SectionExtractor, InterruptManager>
 where
-    CpuInitializer: interface::CpuInitializer + Default,
+    CpuInitializer: uefi_cpu_init::CpuInitializer + Default,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
     InterruptManager: uefi_interrupt::InterruptManager + Default + Copy + 'static,
 {
@@ -177,6 +177,8 @@ where
     pub fn initialize(mut self, physical_hob_list: *const c_void) -> CorePostInit {
         self.cpu_initializer.initialize();
         self.interrupt_manager.initialize().expect("Failed to initialize interrupt manager!");
+        uefi_debugger::initialize(&mut self.interrupt_manager);
+
         let (free_memory_start, free_memory_size) = gcd::init_gcd(physical_hob_list);
 
         log::trace!("Free memory start: {:#x}", free_memory_start);
