@@ -235,7 +235,7 @@ fn allocate_memory_space_after_ebs(
     _device_handle: Option<efi::Handle>,
 ) -> Result<usize, Error> {
     log::warn!("GCD not allowed to allocate after EBS has started!");
-    return Err(Error::AccessDenied);
+    Err(Error::AccessDenied)
 }
 
 fn free_memory_space_worker_before_ebs(
@@ -283,7 +283,7 @@ fn free_memory_space_worker_after_ebs(
     _transition: MemoryStateTransition,
 ) -> Result<(), Error> {
     log::warn!("GCD not allowed to free after EBS has started!");
-    return Ok(());
+    Ok(())
 }
 
 impl GCD {
