@@ -7,7 +7,6 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use core::{
-    convert::TryFrom,
     ffi::c_void,
     sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicUsize, Ordering},
 };
@@ -17,9 +16,12 @@ use alloc::vec;
 use r_efi::efi;
 
 use mu_pi::protocols::{cpu_arch, timer};
-use uefi_event::{SpinLockedEventDb, TimerDelay};
 
-use crate::{gcd, protocols::PROTOCOL_DB};
+use crate::{
+    event_db::{SpinLockedEventDb, TimerDelay},
+    gcd,
+    protocols::PROTOCOL_DB,
+};
 
 pub static EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
 
@@ -190,9 +192,9 @@ pub extern "efiapi" fn set_timer(event: efi::Event, timer_type: efi::TimerDelay,
     };
 
     let (trigger_time, period) = match timer_type {
-        TimerDelay::TimerCancel => (None, None),
-        TimerDelay::TimerRelative => (Some(SYSTEM_TIME.load(Ordering::SeqCst) + trigger_time), None),
-        TimerDelay::TimerPeriodic => (Some(SYSTEM_TIME.load(Ordering::SeqCst) + trigger_time), Some(trigger_time)),
+        TimerDelay::Cancel => (None, None),
+        TimerDelay::Relative => (Some(SYSTEM_TIME.load(Ordering::SeqCst) + trigger_time), None),
+        TimerDelay::Periodic => (Some(SYSTEM_TIME.load(Ordering::SeqCst) + trigger_time), Some(trigger_time)),
     };
 
     match EVENT_DB.set_timer(event, timer_type, trigger_time, period) {

@@ -72,6 +72,7 @@ mod cpu_arch_protocol;
 mod dispatcher;
 mod driver_services;
 mod dxe_services;
+mod event_db;
 mod events;
 mod filesystems;
 mod fv;

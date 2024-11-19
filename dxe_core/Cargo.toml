@@ -40,7 +40,6 @@ uefi_interrupt = { workspace = true }
 uefi_protocol_db = { workspace = true }
 uefi_debugger = { workspace = true }
 uefi_device_path = { workspace = true }
-uefi_event = { workspace = true }
 uefi_depex = { workspace = true }
 uefi_pecoff = { workspace = true }
 uefi_tpl_lock = { workspace = true }

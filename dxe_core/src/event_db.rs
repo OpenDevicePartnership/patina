@@ -1,26 +1,6 @@
 //! UEFI Event Database support
 //!
-//! This library provides an UEFI event database implementation.
-//!
-//! ## Examples and Usage
-//!
-//! ```
-//! use uefi_event::SpinLockedEventDb;
-//!
-//! static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-//! let result = SPIN_LOCKED_EVENT_DB.create_event(
-//!   0,
-//!   0,
-//!   None,
-//!   None,
-//!   None,
-//! );
-//!
-//! SPIN_LOCKED_EVENT_DB.signal_event (result.unwrap());
-//!
-//! assert!(SPIN_LOCKED_EVENT_DB.is_signaled (result.unwrap()));
-//!
-//! ```
+//! This module provides an UEFI event database implementation.
 //!
 //! ## License
 //!
@@ -28,7 +8,6 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-#![no_std]
 #![warn(missing_docs)]
 
 extern crate alloc;
@@ -48,57 +27,57 @@ pub enum EventType {
     /// 0x80000200       Timer event with a notification function that is
     /// queue when the event is signaled with SignalEvent()
     ///
-    TimerNotifyEvent = efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
+    TimerNotify = efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
     ///
     /// 0x80000000       Timer event without a notification function. It can be
     /// signaled with SignalEvent() and checked with CheckEvent() or WaitForEvent().
     ///
-    TimerEvent = efi::EVT_TIMER,
+    Timer = efi::EVT_TIMER,
     ///
     /// 0x00000100       Generic event with a notification function that
     /// can be waited on with CheckEvent() or WaitForEvent()
     ///
-    NotifyWaitEvent = efi::EVT_NOTIFY_WAIT,
+    NotifyWait = efi::EVT_NOTIFY_WAIT,
     ///
     /// 0x00000200       Generic event with a notification function that
     /// is queue when the event is signaled with SignalEvent()
     ///
-    NotifySignalEvent = efi::EVT_NOTIFY_SIGNAL,
+    NotifySignal = efi::EVT_NOTIFY_SIGNAL,
     ///
     /// 0x00000201       ExitBootServicesEvent.
     ///
-    ExitBootServicesEvent = efi::EVT_SIGNAL_EXIT_BOOT_SERVICES,
+    ExitBootServices = efi::EVT_SIGNAL_EXIT_BOOT_SERVICES,
     ///
     /// 0x60000202       SetVirtualAddressMapEvent.
     ///
-    SetVirtualAddressEvent = efi::EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
+    SetVirtualAddress = efi::EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
     ///
     /// 0x00000000       Generic event without a notification function.
     /// It can be signaled with SignalEvent() and checked with CheckEvent()
     /// or WaitForEvent().
     ///
-    GenericEvent = 0x00000000,
+    Generic = 0x00000000,
     ///
     /// 0x80000100       Timer event with a notification function that can be
     /// waited on with CheckEvent() or WaitForEvent()
     ///
-    TimerNotifyWaitEvent = efi::EVT_TIMER | efi::EVT_NOTIFY_WAIT,
+    TimerNotifyWait = efi::EVT_TIMER | efi::EVT_NOTIFY_WAIT,
 }
 
 impl TryFrom<u32> for EventType {
     type Error = efi::Status;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
-            x if x == EventType::TimerNotifyEvent as u32 => Ok(EventType::TimerNotifyEvent),
-            x if x == EventType::TimerEvent as u32 => Ok(EventType::TimerEvent),
-            x if x == EventType::NotifyWaitEvent as u32 => Ok(EventType::NotifyWaitEvent),
-            x if x == EventType::NotifySignalEvent as u32 => Ok(EventType::NotifySignalEvent),
+            x if x == EventType::TimerNotify as u32 => Ok(EventType::TimerNotify),
+            x if x == EventType::Timer as u32 => Ok(EventType::Timer),
+            x if x == EventType::NotifyWait as u32 => Ok(EventType::NotifyWait),
+            x if x == EventType::NotifySignal as u32 => Ok(EventType::NotifySignal),
             //NOTE: the following are placeholders for corresponding event groups; we don't allow them here
             //as the code using the library should do the appropriate translation to event groups before calling create_event
-            x if x == EventType::ExitBootServicesEvent as u32 => Err(efi::Status::INVALID_PARAMETER),
-            x if x == EventType::SetVirtualAddressEvent as u32 => Err(efi::Status::INVALID_PARAMETER),
-            x if x == EventType::GenericEvent as u32 => Ok(EventType::GenericEvent),
-            x if x == EventType::TimerNotifyWaitEvent as u32 => Ok(EventType::TimerNotifyWaitEvent),
+            x if x == EventType::ExitBootServices as u32 => Err(efi::Status::INVALID_PARAMETER),
+            x if x == EventType::SetVirtualAddress as u32 => Err(efi::Status::INVALID_PARAMETER),
+            x if x == EventType::Generic as u32 => Ok(EventType::Generic),
+            x if x == EventType::TimerNotifyWait as u32 => Ok(EventType::TimerNotifyWait),
             _ => Err(efi::Status::INVALID_PARAMETER),
         }
     }
@@ -126,20 +105,20 @@ impl EventType {
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum TimerDelay {
     /// Cancels a pending timer
-    TimerCancel,
+    Cancel,
     /// Creates a periodic timer
-    TimerPeriodic,
+    Periodic,
     /// Creates a one-shot relative timer
-    TimerRelative,
+    Relative,
 }
 
 impl TryFrom<u32> for TimerDelay {
     type Error = efi::Status;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
-            x if x == TimerDelay::TimerCancel as u32 => Ok(TimerDelay::TimerCancel),
-            x if x == TimerDelay::TimerPeriodic as u32 => Ok(TimerDelay::TimerPeriodic),
-            x if x == TimerDelay::TimerRelative as u32 => Ok(TimerDelay::TimerRelative),
+            x if x == TimerDelay::Cancel as u32 => Ok(TimerDelay::Cancel),
+            x if x == TimerDelay::Periodic as u32 => Ok(TimerDelay::Periodic),
+            x if x == TimerDelay::Relative as u32 => Ok(TimerDelay::Relative),
             _ => Err(efi::Status::INVALID_PARAMETER),
         }
     }
@@ -427,17 +406,17 @@ impl EventDb {
                 return Err(efi::Status::INVALID_PARAMETER);
             }
             match timer_type {
-                TimerDelay::TimerCancel => {
+                TimerDelay::Cancel => {
                     if trigger_time.is_some() || period.is_some() {
                         return Err(efi::Status::INVALID_PARAMETER);
                     }
                 }
-                TimerDelay::TimerPeriodic => {
+                TimerDelay::Periodic => {
                     if trigger_time.is_none() || period.is_none() {
                         return Err(efi::Status::INVALID_PARAMETER);
                     }
                 }
-                TimerDelay::TimerRelative => {
+                TimerDelay::Relative => {
                     if trigger_time.is_none() || period.is_some() {
                         return Err(efi::Status::INVALID_PARAMETER);
                     }
@@ -532,14 +511,6 @@ impl Iterator for EventNotificationIterator {
 /// The event database is intended to be used as a global singleton, so access
 /// is only allowed through this structure which ensures that the event database
 /// is properly guarded against race conditions.
-///
-/// ## Examples
-/// ```
-/// use uefi_event::SpinLockedEventDb;
-/// static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-/// ```
-///
-///
 pub struct SpinLockedEventDb {
     inner: tpl_lock::TplMutex<EventDb>,
 }
@@ -570,23 +541,6 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use uefi_event::SpinLockedEventDb;
-    ///
-    /// static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-    /// let result = SPIN_LOCKED_EVENT_DB.create_event(
-    ///   0,
-    ///   0,
-    ///   None,
-    ///   None,
-    ///   None,
-    /// );
-    /// assert_ne!(result.unwrap(), core::ptr::null_mut());
-    /// ```
-    ///
     pub fn create_event(
         &self,
         event_type: u32,
@@ -606,24 +560,6 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use uefi_event::SpinLockedEventDb;
-    ///
-    /// static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-    /// let result = SPIN_LOCKED_EVENT_DB.create_event(
-    ///   0,
-    ///   0,
-    ///   None,
-    ///   None,
-    ///   None,
-    /// );
-    /// let result = SPIN_LOCKED_EVENT_DB.close_event(result.unwrap());
-    /// assert_eq!(result, Ok(()));
-    /// ```
-    ///
     pub fn close_event(&self, event: efi::Event) -> Result<(), efi::Status> {
         self.lock().close_event(event)
     }
@@ -636,26 +572,6 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use uefi_event::SpinLockedEventDb;
-    ///
-    /// static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-    /// let result = SPIN_LOCKED_EVENT_DB.create_event(
-    ///   0,
-    ///   0,
-    ///   None,
-    ///   None,
-    ///   None,
-    /// );
-    /// let handle = result.unwrap();
-    /// let result = SPIN_LOCKED_EVENT_DB.signal_event(handle);
-    /// assert_eq!(result, Ok(()));
-    /// assert!(SPIN_LOCKED_EVENT_DB.is_signaled(handle));
-    /// ```
-    ///
     pub fn signal_event(&self, event: efi::Event) -> Result<(), efi::Status> {
         self.lock().signal_event(event)
     }
@@ -665,29 +581,6 @@ impl SpinLockedEventDb {
     /// This routine signals all events in the given event group. There isn't an equivalent UEFI spec API for this; the
     /// equivalent would need to be accomplished by creating a dummy event that is a member of the group and signalling
     /// that event.
-    ///
-    /// ##Examples
-    ///
-    /// ```
-    /// use r_efi::efi;
-    /// use std::str::FromStr;
-    /// use uuid::Uuid;
-    /// use uefi_event::SpinLockedEventDb;
-    /// let uuid = Uuid::from_str("aefcf33c-ce02-47b4-89f6-4bacdeda3377").unwrap();
-    /// let group1: efi::Guid = unsafe { core::mem::transmute(*uuid.as_bytes()) };
-    /// static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-    /// let result = SPIN_LOCKED_EVENT_DB.create_event(
-    ///   0,
-    ///   0,
-    ///   None,
-    ///   None,
-    ///   Some(group1),
-    /// );
-    /// let handle = result.unwrap();
-    /// let result = SPIN_LOCKED_EVENT_DB.signal_group(group1);
-    /// assert!(SPIN_LOCKED_EVENT_DB.is_signaled(handle));
-    /// ```
-    ///
     pub fn signal_group(&self, group: efi::Guid) {
         self.lock().signal_group(group)
     }
@@ -697,25 +590,6 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect event is given.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use uefi_event::SpinLockedEventDb;
-    /// use uefi_event::EventType::GenericEvent;
-    ///
-    /// static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-    /// let result = SPIN_LOCKED_EVENT_DB.create_event(
-    ///   0,
-    ///   0,
-    ///   None,
-    ///   None,
-    ///   None,
-    /// );
-    /// let result = SPIN_LOCKED_EVENT_DB.get_event_type(result.unwrap());
-    /// assert_eq!(result, Ok(GenericEvent));
-    /// ```
-    ///
     pub fn get_event_type(&self, event: efi::Event) -> Result<EventType, efi::Status> {
         self.lock().get_event_type(event)
     }
@@ -725,26 +599,6 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use uefi_event::SpinLockedEventDb;
-    ///
-    /// static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-    /// let result = SPIN_LOCKED_EVENT_DB.create_event(
-    ///   0,
-    ///   0,
-    ///   None,
-    ///   None,
-    ///   None,
-    /// );
-    /// let handle = result.unwrap();
-    /// let result = SPIN_LOCKED_EVENT_DB.signal_event(handle);
-    /// assert_eq!(result, Ok(()));
-    /// assert!(SPIN_LOCKED_EVENT_DB.is_signaled(handle));
-    /// ```
-    ///
     pub fn is_signaled(&self, event: efi::Event) -> bool {
         self.lock().is_signaled(event)
     }
@@ -754,28 +608,6 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use uefi_event::SpinLockedEventDb;
-    ///
-    /// static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-    /// let result = SPIN_LOCKED_EVENT_DB.create_event(
-    ///   0,
-    ///   0,
-    ///   None,
-    ///   None,
-    ///   None,
-    /// );
-    /// let handle = result.unwrap();
-    /// SPIN_LOCKED_EVENT_DB.signal_event(handle);
-    /// assert!(SPIN_LOCKED_EVENT_DB.is_signaled(handle));
-    /// SPIN_LOCKED_EVENT_DB.clear_signal(handle);
-    /// assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(handle));
-    ///
-    /// ```
-    ///
     pub fn clear_signal(&self, event: efi::Event) -> Result<(), efi::Status> {
         self.lock().clear_signal(event)
     }
@@ -785,34 +617,6 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use uefi_event::SpinLockedEventDb;
-    ///
-    /// static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-    /// let result = SPIN_LOCKED_EVENT_DB.create_event(
-    ///   0,
-    ///   0,
-    ///   None,
-    ///   None,
-    ///   None,
-    /// );
-    /// let handle = result.unwrap();
-    ///
-    /// SPIN_LOCKED_EVENT_DB.signal_event(handle);
-    /// assert!(SPIN_LOCKED_EVENT_DB.is_signaled(handle));
-    ///
-    /// let result = SPIN_LOCKED_EVENT_DB.read_and_clear_signaled(handle);
-    /// assert_eq!(result, Ok(true));
-    /// assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(handle));
-    ///
-    /// let result = SPIN_LOCKED_EVENT_DB.read_and_clear_signaled(handle);
-    /// assert_eq!(result, Ok(false));
-    ///
-    /// ```
-    ///
     pub fn read_and_clear_signaled(&self, event: efi::Event) -> Result<bool, efi::Status> {
         let mut event_db = self.lock();
         let signaled = event_db.is_signaled(event);
@@ -829,33 +633,6 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use uefi_event::*;
-    /// use r_efi::efi;
-    ///
-    /// extern "efiapi" fn notify_function(_:efi::Event, _:*mut core::ffi::c_void) {}
-    ///
-    /// static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-    /// let result = SPIN_LOCKED_EVENT_DB.create_event(
-    ///   efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
-    ///   efi::TPL_CALLBACK,
-    ///   Some(notify_function),
-    ///   None,
-    ///   None,
-    /// );
-    /// let handle = result.unwrap();
-    ///
-    /// SPIN_LOCKED_EVENT_DB.queue_event_notify(handle).unwrap();
-    /// assert_eq!(
-    ///   SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>().len(),
-    ///   1
-    /// );
-    ///
-    /// ```
-    ///
     pub fn queue_event_notify(&self, event: efi::Event) -> Result<(), efi::Status> {
         self.lock().queue_event_notify(event)
     }
@@ -865,34 +642,6 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use uefi_event::*;
-    /// use core::ffi::c_void;
-    /// use r_efi::efi;
-    ///
-    /// extern "efiapi" fn notify_function(_:efi::Event, _:*mut core::ffi::c_void) {}
-    ///
-    /// let notify_context = 0x1234 as *mut c_void;
-    /// static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-    /// let result = SPIN_LOCKED_EVENT_DB.create_event(
-    ///   efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
-    ///   efi::TPL_CALLBACK,
-    ///   Some(notify_function),
-    ///   Some(notify_context),
-    ///   None,
-    /// );
-    /// let handle = result.unwrap();
-    ///
-    /// let notification_data = SPIN_LOCKED_EVENT_DB.get_notification_data(handle).unwrap();
-    /// assert_eq!(notification_data.notify_tpl, efi::TPL_CALLBACK);
-    /// assert_eq!(notification_data.notify_function.unwrap() as usize, notify_function as usize);
-    /// assert_eq!(notification_data.notify_context, Some(notify_context));
-    ///
-    /// ```
-    ///
     pub fn get_notification_data(&self, event: efi::Event) -> Result<EventNotification, efi::Status> {
         self.lock().get_notification_data(event)
     }
@@ -905,35 +654,6 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use uefi_event::{SpinLockedEventDb, TimerDelay, EventNotification};
-    /// use core::ffi::c_void;
-    /// use r_efi::efi;
-    ///
-    /// extern "efiapi" fn notify_function(_:efi::Event, _:*mut core::ffi::c_void) {};
-    ///
-    /// let notify_context = 0x1234 as *mut c_void;
-    /// static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-    /// let result = SPIN_LOCKED_EVENT_DB.create_event(
-    ///   efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
-    ///   efi::TPL_CALLBACK,
-    ///   Some(notify_function),
-    ///   Some(notify_context),
-    ///   None,
-    /// );
-    /// let handle = result.unwrap();
-    ///
-    /// SPIN_LOCKED_EVENT_DB.set_timer(handle, TimerDelay::TimerRelative, Some(0x100), None).unwrap();
-    /// SPIN_LOCKED_EVENT_DB.timer_tick(0x200);
-    /// assert_eq!(
-    ///   SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>().len(),
-    ///   1
-    /// );
-    /// ```
-    ///
     pub fn set_timer(
         &self,
         event: efi::Event,
@@ -955,35 +675,6 @@ impl SpinLockedEventDb {
     ///
     /// signaled events with notifications are queued and can be retrieved via
     /// [`event_notification_iter`](SpinLockedEventDb::event_notification_iter).
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use uefi_event::{SpinLockedEventDb, TimerDelay, EventNotification};
-    /// use core::ffi::c_void;
-    /// use r_efi::efi;
-    ///
-    /// extern "efiapi" fn notify_function(_:efi::Event, _:*mut core::ffi::c_void) {}
-    ///
-    /// let notify_context = 0x1234 as *mut c_void;
-    /// static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-    /// let result = SPIN_LOCKED_EVENT_DB.create_event(
-    ///   efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
-    ///   efi::TPL_CALLBACK,
-    ///   Some(notify_function),
-    ///   Some(notify_context),
-    ///   None,
-    /// );
-    /// let handle = result.unwrap();
-    ///
-    /// SPIN_LOCKED_EVENT_DB.set_timer(handle, TimerDelay::TimerRelative, Some(0x100), None).unwrap();
-    /// SPIN_LOCKED_EVENT_DB.timer_tick(0x200);
-    /// assert_eq!(
-    ///   SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>().len(),
-    ///   1
-    /// );
-    /// ```
-    ///
     pub fn timer_tick(&self, current_time: u64) {
         self.lock().timer_tick(current_time);
     }
@@ -998,58 +689,11 @@ impl SpinLockedEventDb {
     /// Any new events added to the dispatch queue between calls to next() on the iterator will also be returned by the
     /// iterator - the iterator will only stop if there are no pending dispatches at or above the given efi::TPL on a call to
     /// next().
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use uefi_event::{SpinLockedEventDb, TimerDelay, EventNotification};
-    /// use core::ffi::c_void;
-    /// use r_efi::efi;
-    ///
-    /// extern "efiapi" fn notify_function(_:efi::Event, _:*mut core::ffi::c_void) {}
-    ///
-    /// let notify_context = 0x1234 as *mut c_void;
-    /// static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-    /// let result = SPIN_LOCKED_EVENT_DB.create_event(
-    ///   efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
-    ///   efi::TPL_CALLBACK,
-    ///   Some(notify_function),
-    ///   Some(notify_context),
-    ///   None,
-    /// );
-    /// let handle = result.unwrap();
-    ///
-    /// SPIN_LOCKED_EVENT_DB.set_timer(handle, TimerDelay::TimerRelative, Some(0x100), None).unwrap();
-    /// SPIN_LOCKED_EVENT_DB.timer_tick(0x200);
-    /// assert_eq!(
-    ///   SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>().len(),
-    ///   1
-    /// );
-    /// ```
-    ///
     pub fn event_notification_iter(&'static self, tpl_level: efi::Tpl) -> impl Iterator<Item = EventNotification> {
         EventNotificationIterator::new(self, tpl_level)
     }
 
     /// Indicates whether a given event is valid.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use uefi_event::SpinLockedEventDb;
-    ///
-    /// static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
-    /// let result = SPIN_LOCKED_EVENT_DB.create_event(
-    ///   0,
-    ///   0,
-    ///   None,
-    ///   None,
-    ///   None,
-    /// );
-    /// let handle = result.unwrap();
-    /// assert!(SPIN_LOCKED_EVENT_DB.is_valid(handle));
-    /// ```
-    ///
     pub fn is_valid(&self, event: efi::Event) -> bool {
         self.lock().is_valid(event)
     }
@@ -1101,7 +745,7 @@ mod tests {
         let index = event as usize;
         assert!(index < SPIN_LOCKED_EVENT_DB.lock().next_event_id);
         let events = &SPIN_LOCKED_EVENT_DB.lock().events;
-        assert_eq!(events.get(&index).unwrap().event_type, EventType::TimerNotifyEvent);
+        assert_eq!(events.get(&index).unwrap().event_type, EventType::TimerNotify);
         assert_eq!(events.get(&index).unwrap().event_type as u32, efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL);
         assert_eq!(events.get(&index).unwrap().notify_tpl, efi::TPL_NOTIFY);
         assert_eq!(events.get(&index).unwrap().notify_function.unwrap() as usize, test_notify_function as usize);
@@ -1732,7 +1376,7 @@ mod tests {
             .unwrap();
 
         let result = SPIN_LOCKED_EVENT_DB.get_event_type(event);
-        assert_eq!(result.unwrap(), EventType::TimerNotifyEvent);
+        assert_eq!(result.unwrap(), EventType::TimerNotify);
 
         let event = (event as usize + 1) as *mut c_void;
         let result = SPIN_LOCKED_EVENT_DB.get_event_type(event);
@@ -1794,7 +1438,7 @@ mod tests {
 
         let index = event as usize;
 
-        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::TimerRelative, Some(0x100), None);
+        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Relative, Some(0x100), None);
         assert!(result.is_ok());
         {
             let events = &SPIN_LOCKED_EVENT_DB.lock().events;
@@ -1802,7 +1446,7 @@ mod tests {
             assert_eq!(events.get(&index).unwrap().period, None);
         }
 
-        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::TimerPeriodic, Some(0x100), Some(0x200));
+        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Periodic, Some(0x100), Some(0x200));
         assert!(result.is_ok());
         {
             let events = &SPIN_LOCKED_EVENT_DB.lock().events;
@@ -1810,7 +1454,7 @@ mod tests {
             assert_eq!(events.get(&index).unwrap().period, Some(0x200));
         }
 
-        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::TimerCancel, None, None);
+        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Cancel, None, None);
         assert!(result.is_ok());
         {
             let events = &SPIN_LOCKED_EVENT_DB.lock().events;
@@ -1822,32 +1466,31 @@ mod tests {
             .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_NOTIFY, Some(test_notify_function), None, None)
             .unwrap();
 
-        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::TimerPeriodic, Some(0x100), Some(0x200));
+        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Periodic, Some(0x100), Some(0x200));
         assert_eq!(result.err(), Some(efi::Status::INVALID_PARAMETER));
 
         let event = SPIN_LOCKED_EVENT_DB
             .create_event(efi::EVT_TIMER, efi::TPL_NOTIFY, Some(test_notify_function), None, None)
             .unwrap();
-        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::TimerCancel, Some(0x100), None);
+        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Cancel, Some(0x100), None);
         assert_eq!(result.err(), Some(efi::Status::INVALID_PARAMETER));
 
         let event = SPIN_LOCKED_EVENT_DB
             .create_event(efi::EVT_TIMER, efi::TPL_NOTIFY, Some(test_notify_function), None, None)
             .unwrap();
-        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::TimerPeriodic, None, None);
+        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Periodic, None, None);
         assert_eq!(result.err(), Some(efi::Status::INVALID_PARAMETER));
 
         let event = SPIN_LOCKED_EVENT_DB
             .create_event(efi::EVT_TIMER, efi::TPL_NOTIFY, Some(test_notify_function), None, None)
             .unwrap();
-        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::TimerRelative, None, Some(0x100));
+        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Relative, None, Some(0x100));
         assert_eq!(result.err(), Some(efi::Status::INVALID_PARAMETER));
 
-        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::TimerRelative, None, Some(0x100));
+        let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Relative, None, Some(0x100));
         assert_eq!(result.err(), Some(efi::Status::INVALID_PARAMETER));
 
-        let result =
-            SPIN_LOCKED_EVENT_DB.set_timer(0x1234 as *mut c_void, TimerDelay::TimerRelative, Some(0x100), None);
+        let result = SPIN_LOCKED_EVENT_DB.set_timer(0x1234 as *mut c_void, TimerDelay::Relative, Some(0x100), None);
         assert_eq!(result.err(), Some(efi::Status::INVALID_PARAMETER));
     }
 
@@ -1874,8 +1517,8 @@ mod tests {
             )
             .unwrap();
 
-        SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::TimerRelative, Some(0x100), None).unwrap();
-        SPIN_LOCKED_EVENT_DB.set_timer(event2, TimerDelay::TimerRelative, Some(0x400), None).unwrap();
+        SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Relative, Some(0x100), None).unwrap();
+        SPIN_LOCKED_EVENT_DB.set_timer(event2, TimerDelay::Relative, Some(0x400), None).unwrap();
         assert_eq!(
             SPIN_LOCKED_EVENT_DB
                 .event_notification_iter(efi::TPL_APPLICATION)
@@ -1931,8 +1574,8 @@ mod tests {
             )
             .unwrap();
 
-        SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::TimerPeriodic, Some(0x100), Some(0x100)).unwrap();
-        SPIN_LOCKED_EVENT_DB.set_timer(event2, TimerDelay::TimerPeriodic, Some(0x500), Some(0x500)).unwrap();
+        SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Periodic, Some(0x100), Some(0x100)).unwrap();
+        SPIN_LOCKED_EVENT_DB.set_timer(event2, TimerDelay::Periodic, Some(0x500), Some(0x500)).unwrap();
 
         assert_eq!(
             SPIN_LOCKED_EVENT_DB
@@ -1978,7 +1621,7 @@ mod tests {
         assert_eq!(events[0].event, event);
 
         //cancel the first timer
-        SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::TimerCancel, None, None).unwrap();
+        SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Cancel, None, None).unwrap();
 
         //tick past where it would have been.
         SPIN_LOCKED_EVENT_DB.timer_tick(0x700);
