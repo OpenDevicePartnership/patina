@@ -21,33 +21,33 @@ path = "examples/std.rs"
 required-features = ["std"]
 
 [dependencies]
+ahash = { workspace=  true }
 corosensei = { workspace = true }
 crc32fast = { workspace = true }
+goblin = {workspace = true}
 lazy_static = { workspace = true }
+linked_list_allocator = { workspace = true }
 log = { workspace = true }
 mu_pi = { workspace = true }
 mu_rust_helpers = { workspace = true }
 r-efi = { workspace = true }
+scroll = {workspace = true}
 spin = { workspace = true }
 uuid = { workspace = true }
 
 uefi_sdk = { workspace = true }
+uefi_collections = { workspace = true }
 uefi_component_interface = { workspace = true }
 uefi_cpu_init = { workspace = true }
-uefi_gcd = { workspace = true }
 uefi_interrupt = { workspace = true }
-uefi_protocol_db = { workspace = true }
-uefi_allocator = { workspace = true }
 uefi_debugger = { workspace = true }
 uefi_device_path = { workspace = true }
-uefi_event = { workspace = true }
-uefi_depex = { workspace = true }
-uefi_pecoff = { workspace = true }
-uefi_tpl_lock = { workspace = true }
+uefi_depex = { workspace = true}
 
 [dev-dependencies]
 sample_components = { workspace = true }
 section_extractor = { workspace = true }
+uefi_collections = { workspace = true, default-features = true }
 mockall = { workspace = true }
 
 [features]

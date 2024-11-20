@@ -82,7 +82,7 @@ where
     ///
     pub fn add(&mut self, data: D) -> Result<(usize, &mut Node<D>)> {
         let available_ptr = self.available.load(Ordering::SeqCst);
-        if !available_ptr.is_null() {
+        if !available_ptr.is_null() && self.length != self.capacity() {
             let node = unsafe { &mut *available_ptr };
             self.available.store(node.right_ptr(), Ordering::SeqCst);
             node.set_left(None);

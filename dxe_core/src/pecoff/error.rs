@@ -10,6 +10,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 /// Type for describing errors that result from working with PeCoff images.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum Error {
     /// Goblin failed to parse the PE32 image.
     ///

@@ -28,7 +28,7 @@ pub struct RelocationBlock {
     pub relocations: Vec<Relocation>,
 }
 
-pub(crate) fn parse_relocation_blocks(block: &[u8]) -> crate::error::Result<Vec<RelocationBlock>> {
+pub(crate) fn parse_relocation_blocks(block: &[u8]) -> super::error::Result<Vec<RelocationBlock>> {
     let mut offset: usize = 0;
     let mut blocks = Vec::new();
 

@@ -21,13 +21,14 @@ use mu_rust_helpers::guid::guid_fmt;
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
-use uefi_protocol_db::DXE_CORE_HANDLE;
 
 use crate::{
     events::EVENT_DB,
     fv::{core_install_firmware_volume, device_path_bytes_for_fv_file},
     image::{core_load_image, core_start_image},
+    protocol_db::DXE_CORE_HANDLE,
     protocols::PROTOCOL_DB,
+    tpl_lock,
 };
 
 // Default Dependency expression per PI spec v1.2 Vol 2 section 10.9.
@@ -158,14 +159,14 @@ fn dispatch() -> Result<bool, efi::Status> {
     {
         let mut dispatcher = DISPATCHER_CONTEXT.lock();
         if !dispatcher.arch_protocols_available {
-            dispatcher.arch_protocols_available = Depex::from(ALL_ARCH_DEPEX).eval(&PROTOCOL_DB);
+            dispatcher.arch_protocols_available = Depex::from(ALL_ARCH_DEPEX).eval(&PROTOCOL_DB.registered_protocols());
         }
         let driver_candidates: Vec<_> = dispatcher.pending_drivers.drain(..).collect();
         let mut scheduled_driver_candidates = Vec::new();
         for mut candidate in driver_candidates {
             log::info!("Evaluting depex for candidate: {:?}", guid_fmt!(candidate.file_name));
             let depex_satisfied = match candidate.depex {
-                Some(ref mut depex) => depex.eval(&PROTOCOL_DB),
+                Some(ref mut depex) => depex.eval(&PROTOCOL_DB.registered_protocols()),
                 None => dispatcher.arch_protocols_available,
             };
 
@@ -245,7 +246,7 @@ fn dispatch() -> Result<bool, efi::Status> {
 
         for mut candidate in fv_image_candidates {
             let depex_satisfied = match candidate.depex {
-                Some(ref mut depex) => depex.eval(&PROTOCOL_DB),
+                Some(ref mut depex) => depex.eval(&PROTOCOL_DB.registered_protocols()),
                 None => true,
             };
 

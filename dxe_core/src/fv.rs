@@ -24,6 +24,7 @@ use uefi_device_path::concat_device_path_to_boxed_slice;
 use crate::{
     allocator::core_allocate_pool,
     protocols::{core_install_protocol_interface, PROTOCOL_DB},
+    tpl_lock,
 };
 
 struct PrivateFvbData {

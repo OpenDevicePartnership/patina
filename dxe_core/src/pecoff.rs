@@ -6,7 +6,6 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-#![no_std]
 extern crate alloc;
 
 use alloc::{
@@ -20,6 +19,7 @@ pub mod error;
 pub mod relocation;
 mod resource_directory;
 
+#[allow(unused_imports)]
 pub use goblin::pe::section_table::IMAGE_SCN_CNT_CODE;
 
 use relocation::{parse_relocation_blocks, RelocationBlock};
@@ -203,27 +203,6 @@ impl UefiPeInfo {
 /// ## Panics
 ///
 /// Panics if the loaded_image buffer is not the same length as the image.
-///
-/// ## Examples
-///
-/// ```
-/// extern crate std;
-///
-/// use std::{fs::File, io::Read};
-/// use uefi_pecoff::{UefiPeInfo, load_image};
-///
-/// let mut file: File = File::open(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/test/pe32/","test_image.pe32"))
-///   .expect("failed to open test file.");
-///
-/// let mut image: Vec<u8> = Vec::new();
-/// file.read_to_end(&mut image).expect("Failed to read test file");
-///
-/// let image_info = UefiPeInfo::parse(&image).unwrap();
-///
-/// let mut relocated_image: Vec<u8> = vec![0; image_info.size_of_image as usize];
-/// load_image(&image_info, &image, &mut relocated_image).unwrap();
-/// ```
-///
 pub fn load_image(pe_info: &UefiPeInfo, image: &[u8], loaded_image: &mut [u8]) -> error::Result<()> {
     loaded_image.fill(0);
 
@@ -265,29 +244,6 @@ pub fn load_image(pe_info: &UefiPeInfo, image: &[u8], loaded_image: &mut [u8]) -
 ///
 /// Returns [`BufferTooShort`](error::Error::BufferTooShort) error if either of the buffers provided are
 /// not large enough to contain the image as specified by the image header.
-///
-/// ## Examples
-///
-/// ```
-/// extern crate std;
-///
-/// use std::{fs::File, io::Read};
-/// use uefi_pecoff::{UefiPeInfo, load_image, relocate_image
-/// };
-///
-/// let mut file: File = File::open(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/test/pe32/","test_image.pe32"))
-///   .expect("failed to open test file.");
-///
-/// let mut image: Vec<u8> = Vec::new();
-/// file.read_to_end(&mut image).expect("Failed to read test file");
-///
-/// let image_info = UefiPeInfo::parse(&image).unwrap();
-///
-/// let mut relocated_image: Vec<u8> = vec![0; image_info.size_of_image as usize];
-/// load_image(&image_info, &image, &mut relocated_image).unwrap();
-///
-/// relocate_image(&image_info, 0x04158000, &mut relocated_image, &Vec::new()).unwrap();
-/// ```
 pub fn relocate_image(
     pe_info: &UefiPeInfo,
     destination: usize,
@@ -363,30 +319,6 @@ pub fn relocate_image(
 ///
 /// Returns [`Goblin`](error::Error::Goblin) error if parsing a image containing a PE32 header
 /// failed. Contains the exact parsing [`Error`](goblin::error::Error).
-///
-/// ## Examples
-///
-/// ```
-/// extern crate std;
-///
-/// use std::{fs::File, io::Read};
-/// use uefi_pecoff::{UefiPeInfo, load_image, load_resource_section};
-///
-/// let mut image = File::open(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/test/pe32/", "test_image_msvc_hii.pe32"))
-///   .expect("failed to open test file.");
-///
-/// let mut image_buffer = Vec::new();
-/// image.read_to_end(&mut image_buffer).expect("failed to read the test image.");
-/// let image_info = UefiPeInfo::parse(&image_buffer).unwrap();
-///
-/// let mut loaded_image: Vec<u8> = vec![0; image_info.size_of_image as usize];
-/// load_image(&image_info, &image_buffer, &mut loaded_image).unwrap();;
-///
-/// let result = load_resource_section(&image_info, &image_buffer).unwrap();
-/// let (resource_section_offset, resource_section_size) = result.unwrap();
-///
-/// let resource_section = &loaded_image[resource_section_offset..(resource_section_offset + resource_section_size)];
-/// ```
 pub fn load_resource_section(pe_info: &UefiPeInfo, image: &[u8]) -> error::Result<Option<(usize, usize)>> {
     for section in &pe_info.sections {
         if String::from_utf8_lossy(&section.name).trim_end_matches('\0') == ".rsrc" {
