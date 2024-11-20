@@ -183,113 +183,6 @@ struct GCD {
     free_memory_space_fn: GcdFreeFn,
 }
 
-/// This service allocates nonexistent memory, reserved memory, system memory, or memory-mapped I/O resources from the global coherency domain of the processor.
-///
-/// # Documentation
-/// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.2
-fn allocate_memory_space(
-    gcd: &mut GCD,
-    allocate_type: AllocateType,
-    memory_type: dxe_services::GcdMemoryType,
-    alignment: usize,
-    len: usize,
-    image_handle: efi::Handle,
-    device_handle: Option<efi::Handle>,
-) -> Result<usize, Error> {
-    ensure!(gcd.maximum_address != 0, Error::NotInitialized);
-    ensure!(
-        len > 0 && image_handle > ptr::null_mut() && memory_type != dxe_services::GcdMemoryType::Unaccepted,
-        Error::InvalidParameter
-    );
-
-    log::trace!(target: "allocations", "[{}] Allocating memory space: {:x?}", function!(), allocate_type);
-    log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
-    log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
-    log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
-    log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-    log::trace!(target: "allocations", "[{}]   Device Handle: {:#x}\n", function!(), alignment);
-
-    match allocate_type {
-        AllocateType::BottomUp(max_address) => gcd.allocate_bottom_up(
-            memory_type,
-            alignment,
-            len,
-            image_handle,
-            device_handle,
-            max_address.unwrap_or(usize::MAX),
-        ),
-        AllocateType::TopDown(min_address) => {
-            gcd.allocate_top_down(memory_type, alignment, len, image_handle, device_handle, min_address.unwrap_or(0))
-        }
-        AllocateType::Address(address) => {
-            ensure!(address + len <= gcd.maximum_address, Error::NotFound);
-            gcd.allocate_address(memory_type, alignment, len, image_handle, device_handle, address)
-        }
-    }
-}
-
-fn allocate_memory_space_null(
-    _gcd: &mut GCD,
-    _allocate_type: AllocateType,
-    _memory_type: dxe_services::GcdMemoryType,
-    _alignment: usize,
-    _len: usize,
-    _image_handle: efi::Handle,
-    _device_handle: Option<efi::Handle>,
-) -> Result<usize, Error> {
-    log::error!("GCD not allowed to allocate after EBS has started!");
-    debug_assert!(false);
-    Err(Error::AccessDenied)
-}
-
-fn free_memory_space_worker(
-    gcd: &mut GCD,
-    base_address: usize,
-    len: usize,
-    transition: MemoryStateTransition,
-) -> Result<(), Error> {
-    ensure!(gcd.maximum_address != 0, Error::NotInitialized);
-    ensure!(len > 0, Error::InvalidParameter);
-    ensure!(base_address + len <= gcd.maximum_address, Error::Unsupported);
-
-    log::trace!(target: "allocations", "[{}] Freeing memory space at {:#x}", function!(), base_address);
-    log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
-    log::trace!(target: "allocations", "[{}]   Memory State Transition: {:?}\n", function!(), transition);
-
-    // This is temporary until mu-paging is enabled. Free memory in the current scheme has 0 attrs set, so when
-    // we free pages, we need to reset the attrs to 0 so that the pages can be merged with other free pages
-    // When mu-paging is brought in, unallocated memory will be unmapped, so this logic will look different
-    // Don't check the error here, we still want to free the memory if possible
-    let attributes = match gcd.get_memory_descriptor_for_address(base_address as efi::PhysicalAddress) {
-        Ok(descriptor) => descriptor.attributes & !efi::MEMORY_ACCESS_MASK,
-        Err(_) => 0,
-    };
-
-    let _ = gcd.set_memory_space_attributes(base_address, len, attributes);
-
-    let memory_blocks = gcd.memory_blocks.as_mut().ok_or(Error::NotFound)?;
-
-    log::trace!(target: "gcd_measure", "search");
-    let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(Error::NotFound)?;
-
-    match GCD::split_state_transition_at_idx(memory_blocks, idx, base_address, len, transition) {
-        Ok(_) => Ok(()),
-        Err(InternalError::MemoryBlock(_)) => error!(Error::NotFound),
-        Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
-        Err(e) => panic!("{e:?}"),
-    }
-}
-
-fn free_memory_space_worker_null(
-    _gcd: &mut GCD,
-    _base_address: usize,
-    _len: usize,
-    _transition: MemoryStateTransition,
-) -> Result<(), Error> {
-    log::error!("GCD not allowed to free after EBS has started!");
-    Ok(())
-}
-
 impl GCD {
     // Create an instance of the Global Coherency Domain (GCD) for testing.
     #[cfg(test)]
@@ -298,20 +191,20 @@ impl GCD {
         Self {
             memory_blocks: None,
             maximum_address: 1 << processor_address_bits,
-            allocate_memory_space_fn: allocate_memory_space,
-            free_memory_space_fn: free_memory_space_worker,
+            allocate_memory_space_fn: Self::allocate_memory_space_internal,
+            free_memory_space_fn: Self::free_memory_space_worker,
         }
     }
 
     pub fn signal_ebs_start(&mut self) {
-        self.allocate_memory_space_fn = allocate_memory_space_null;
-        self.free_memory_space_fn = free_memory_space_worker_null;
+        self.allocate_memory_space_fn = Self::allocate_memory_space_null;
+        self.free_memory_space_fn = Self::free_memory_space_worker_null;
         log::info!("Disallowing alloc/free during ExitBootServices.");
     }
 
     pub fn signal_ebs_failed(&mut self) {
-        self.allocate_memory_space_fn = allocate_memory_space;
-        self.free_memory_space_fn = free_memory_space_worker;
+        self.allocate_memory_space_fn = Self::allocate_memory_space_internal;
+        self.free_memory_space_fn = Self::free_memory_space_worker;
     }
 
     pub fn init(&mut self, processor_address_bits: u32) {
@@ -459,6 +352,118 @@ impl GCD {
         device_handle: Option<efi::Handle>,
     ) -> Result<usize, Error> {
         (self.allocate_memory_space_fn)(self, allocate_type, memory_type, alignment, len, image_handle, device_handle)
+    }
+
+    /// This service allocates nonexistent memory, reserved memory, system memory, or memory-mapped I/O resources from the global coherency domain of the processor.
+    ///
+    /// # Documentation
+    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.2
+    fn allocate_memory_space_internal(
+        gcd: &mut GCD,
+        allocate_type: AllocateType,
+        memory_type: dxe_services::GcdMemoryType,
+        alignment: usize,
+        len: usize,
+        image_handle: efi::Handle,
+        device_handle: Option<efi::Handle>,
+    ) -> Result<usize, Error> {
+        ensure!(gcd.maximum_address != 0, Error::NotInitialized);
+        ensure!(
+            len > 0 && image_handle > ptr::null_mut() && memory_type != dxe_services::GcdMemoryType::Unaccepted,
+            Error::InvalidParameter
+        );
+
+        log::trace!(target: "allocations", "[{}] Allocating memory space: {:x?}", function!(), allocate_type);
+        log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
+        log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
+        log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
+        log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x}\n", function!(), alignment);
+
+        match allocate_type {
+            AllocateType::BottomUp(max_address) => gcd.allocate_bottom_up(
+                memory_type,
+                alignment,
+                len,
+                image_handle,
+                device_handle,
+                max_address.unwrap_or(usize::MAX),
+            ),
+            AllocateType::TopDown(min_address) => gcd.allocate_top_down(
+                memory_type,
+                alignment,
+                len,
+                image_handle,
+                device_handle,
+                min_address.unwrap_or(0),
+            ),
+            AllocateType::Address(address) => {
+                ensure!(address + len <= gcd.maximum_address, Error::NotFound);
+                gcd.allocate_address(memory_type, alignment, len, image_handle, device_handle, address)
+            }
+        }
+    }
+
+    fn allocate_memory_space_null(
+        _gcd: &mut GCD,
+        _allocate_type: AllocateType,
+        _memory_type: dxe_services::GcdMemoryType,
+        _alignment: usize,
+        _len: usize,
+        _image_handle: efi::Handle,
+        _device_handle: Option<efi::Handle>,
+    ) -> Result<usize, Error> {
+        log::error!("GCD not allowed to allocate after EBS has started!");
+        debug_assert!(false);
+        Err(Error::AccessDenied)
+    }
+
+    fn free_memory_space_worker(
+        gcd: &mut GCD,
+        base_address: usize,
+        len: usize,
+        transition: MemoryStateTransition,
+    ) -> Result<(), Error> {
+        ensure!(gcd.maximum_address != 0, Error::NotInitialized);
+        ensure!(len > 0, Error::InvalidParameter);
+        ensure!(base_address + len <= gcd.maximum_address, Error::Unsupported);
+
+        log::trace!(target: "allocations", "[{}] Freeing memory space at {:#x}", function!(), base_address);
+        log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
+        log::trace!(target: "allocations", "[{}]   Memory State Transition: {:?}\n", function!(), transition);
+
+        // This is temporary until mu-paging is enabled. Free memory in the current scheme has 0 attrs set, so when
+        // we free pages, we need to reset the attrs to 0 so that the pages can be merged with other free pages
+        // When mu-paging is brought in, unallocated memory will be unmapped, so this logic will look different
+        // Don't check the error here, we still want to free the memory if possible
+        let attributes = match gcd.get_memory_descriptor_for_address(base_address as efi::PhysicalAddress) {
+            Ok(descriptor) => descriptor.attributes & !efi::MEMORY_ACCESS_MASK,
+            Err(_) => 0,
+        };
+
+        let _ = gcd.set_memory_space_attributes(base_address, len, attributes);
+
+        let memory_blocks = gcd.memory_blocks.as_mut().ok_or(Error::NotFound)?;
+
+        log::trace!(target: "gcd_measure", "search");
+        let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(Error::NotFound)?;
+
+        match GCD::split_state_transition_at_idx(memory_blocks, idx, base_address, len, transition) {
+            Ok(_) => Ok(()),
+            Err(InternalError::MemoryBlock(_)) => error!(Error::NotFound),
+            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+            Err(e) => panic!("{e:?}"),
+        }
+    }
+
+    fn free_memory_space_worker_null(
+        _gcd: &mut GCD,
+        _base_address: usize,
+        _len: usize,
+        _transition: MemoryStateTransition,
+    ) -> Result<(), Error> {
+        log::error!("GCD not allowed to free after EBS has started!");
+        Err(Error::AccessDenied)
     }
 
     fn allocate_bottom_up(
@@ -1434,8 +1439,8 @@ impl SpinLockedGcd {
                 GCD {
                     maximum_address: 0,
                     memory_blocks: None,
-                    allocate_memory_space_fn: allocate_memory_space,
-                    free_memory_space_fn: free_memory_space_worker,
+                    allocate_memory_space_fn: GCD::allocate_memory_space_internal,
+                    free_memory_space_fn: GCD::free_memory_space_worker,
                 },
                 "GcdMemLock",
             ),
@@ -2664,8 +2669,8 @@ mod tests {
         let mut gcd = GCD {
             memory_blocks: None,
             maximum_address: 0,
-            allocate_memory_space_fn: allocate_memory_space,
-            free_memory_space_fn: free_memory_space_worker,
+            allocate_memory_space_fn: GCD::allocate_memory_space_internal,
+            free_memory_space_fn: GCD::free_memory_space_worker,
         };
         assert_eq!(Err(Error::NotInitialized), gcd.set_memory_space_attributes(0, 0x50000, 0b1111));
 
