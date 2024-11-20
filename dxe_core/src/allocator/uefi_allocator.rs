@@ -148,7 +148,10 @@ impl UefiAllocator {
         let allocation_info: *mut AllocationInfo = ((buffer as usize) - offset) as *mut AllocationInfo;
 
         //must be true for any pool allocation
-        assert!((*allocation_info).signature == POOL_SIG);
+        if (*allocation_info).signature != POOL_SIG {
+            debug_assert!(false, "Pool signature is incorrect.");
+            return efi::Status::INVALID_PARAMETER;
+        }
         // check if allocation is from this pool.
         if (*allocation_info).memory_type != self.memory_type {
             return efi::Status::NOT_FOUND;
