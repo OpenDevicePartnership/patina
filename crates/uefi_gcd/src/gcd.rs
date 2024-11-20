@@ -463,6 +463,7 @@ impl GCD {
         _transition: MemoryStateTransition,
     ) -> Result<(), Error> {
         log::error!("GCD not allowed to free after EBS has started!");
+        debug_assert!(false);
         Err(Error::AccessDenied)
     }
 
