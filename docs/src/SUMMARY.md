@@ -4,6 +4,7 @@
 [Core Concepts](concepts.md)
 
 # Rust Development for UEFI
+
 - [Best Practices](dev/principles.md)
   - [Abstractions](dev/principles/abstractions.md)
   - [Code Reuse](dev/principles/reuse.md)
@@ -28,6 +29,7 @@
 - [Updating the Platform](integrate/platform.md)
   - [Local to the Platform](integrate/platform_local.md)
   - [External to the Platform](integrate/platform_external.md)
+- [Rust DXE Core vs. EDK II](integrate/rust_vs_edk2.md)
 
 # Contributing to the Rust DXE Core
 
@@ -46,6 +48,7 @@
   - [Testing](dxe_core/testing.md)
 
 # Creating a Rust DXE Driver
+
 - [Component Interface](driver/interface.md)
 
 -----------

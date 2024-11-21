@@ -196,13 +196,13 @@ impl GCD {
         }
     }
 
-    pub fn signal_ebs_start(&mut self) {
+    pub fn lock_memory_space(&mut self) {
         self.allocate_memory_space_fn = Self::allocate_memory_space_null;
         self.free_memory_space_fn = Self::free_memory_space_worker_null;
         log::info!("Disallowing alloc/free during ExitBootServices.");
     }
 
-    pub fn signal_ebs_failed(&mut self) {
+    pub fn unlock_memory_space(&mut self) {
         self.allocate_memory_space_fn = Self::allocate_memory_space_internal;
         self.free_memory_space_fn = Self::free_memory_space_worker;
     }
@@ -1454,12 +1454,12 @@ impl SpinLockedGcd {
         }
     }
 
-    pub fn signal_ebs_start(&self) {
-        self.memory.lock().signal_ebs_start();
+    pub fn lock_memory_space(&self) {
+        self.memory.lock().lock_memory_space();
     }
 
-    pub fn signal_ebs_failed(&self) {
-        self.memory.lock().signal_ebs_failed();
+    pub fn unlock_memory_space(&self) {
+        self.memory.lock().unlock_memory_space();
     }
 
     /// Resets the GCD to default state. Intended for test scenarios.
