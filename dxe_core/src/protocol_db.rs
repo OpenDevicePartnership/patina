@@ -570,6 +570,7 @@ impl SpinLockedProtocolDb {
     ///
     /// This call completely resets the protocol database and is intended mostly for use in test.
     ///
+    #[cfg(test)]
     pub unsafe fn reset(&self) {
         let mut inner = self.inner.lock();
         inner.handles.clear();

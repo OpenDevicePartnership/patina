@@ -1389,6 +1389,7 @@ impl SpinLockedGcd {
     /// This call potentially invalidates all allocations made by any allocator on top of this GCD.
     /// Caller is responsible for ensuring that no such allocations exist.
     ///
+    #[cfg(test)]
     pub unsafe fn reset(&self) {
         let (mut mem, mut io) = (self.memory.lock(), self.io.lock());
         mem.maximum_address = 0;
