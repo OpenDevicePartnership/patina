@@ -45,9 +45,7 @@ goblin = { version = "^0.9", default-features = false, features = [
 ] }
 lazy_static = { version = "^1", features = ["spin_no_std"] }
 linked_list_allocator = "^0.10"
-log = { version = "^0.4", default-features = false, features = [
-    "release_max_level_warn",
-] }
+log = { version = "^0.4", default-features = false }
 mockall = "0.13.0"
 mu_pi = { git = "https://github.com/microsoft/mu_rust_pi.git", tag = "v5.1.0" }
 mu_rust_helpers = { git = "https://github.com/microsoft/mu_rust_helpers.git", tag = "v1.2.0" }
