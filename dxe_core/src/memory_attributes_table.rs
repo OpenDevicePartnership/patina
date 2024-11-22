@@ -309,7 +309,7 @@ mod tests {
                 match core_allocate_pages(
                     efi::ALLOCATE_ANY_PAGES,
                     page_type.0,
-                    entry_count as usize + 0x1,
+                    entry_count + 0x1,
                     core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress,
                 ) {
                     // because we allocate top down, we need to insert at the front of the vector
@@ -360,7 +360,7 @@ mod tests {
                 // ignore the first entry for the system table, we don't need to randomize this test
                 // by checking it. Annoyingly, the system table is not guaranteed to be the first entry
                 // if other tests run first, so we need to check for it.
-                if entry_slice.len() == entry_count as usize + 1 {
+                if entry_slice.len() == entry_count + 1 {
                     entry_slice = &entry_slice[1..];
                 }
 
