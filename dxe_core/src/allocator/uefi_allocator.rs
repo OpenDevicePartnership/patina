@@ -58,6 +58,7 @@ impl UefiAllocator {
     /// Indicates whether the given pointer falls within a memory region managed by this allocator.
     ///
     /// See [`SpinLockedFixedSizeBlockAllocator::contains`]
+    #[allow(dead_code)]
     pub fn contains(&self, ptr: NonNull<u8>) -> bool {
         self.allocator.contains(ptr)
     }
@@ -199,6 +200,7 @@ impl UefiAllocator {
     }
 
     /// Returns the preferred memory range, if any.
+    #[allow(dead_code)]
     pub fn preferred_range(&self) -> Option<Range<efi::PhysicalAddress>> {
         self.allocator.preferred_range()
     }

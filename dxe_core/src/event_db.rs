@@ -378,6 +378,7 @@ impl EventDb {
         Ok(self.events.get(&id).ok_or(efi::Status::INVALID_PARAMETER)?.event_type)
     }
 
+    #[allow(dead_code)]
     fn get_notification_data(&mut self, event: efi::Event) -> Result<EventNotification, efi::Status> {
         let id = event as usize;
         if let Some(found_event) = self.events.get(&id) {
@@ -597,10 +598,7 @@ impl SpinLockedEventDb {
     }
 
     /// Indicates whether the given event is in the signaled state
-    ///
-    /// ## Errors
-    ///
-    /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
+    #[allow(dead_code)]
     pub fn is_signaled(&self, event: efi::Event) -> bool {
         self.lock().is_signaled(event)
     }
@@ -610,6 +608,7 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
+    #[allow(dead_code)]
     pub fn clear_signal(&self, event: efi::Event) -> Result<(), efi::Status> {
         self.lock().clear_signal(event)
     }
@@ -644,6 +643,7 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
+    #[allow(dead_code)]
     pub fn get_notification_data(&self, event: efi::Event) -> Result<EventNotification, efi::Status> {
         self.lock().get_notification_data(event)
     }
