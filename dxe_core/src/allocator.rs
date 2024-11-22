@@ -31,8 +31,7 @@ use mu_pi::{
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
 use uefi_allocator::UefiAllocator;
 
-// Todo: Move to a centralized, permanent location
-const UEFI_PAGE_SIZE: usize = 0x1000;
+use uefi_sdk::base::UEFI_PAGE_SIZE;
 
 // Private tracking guid used to generate new handles for allocator tracking
 // {9D1FA6E9-0C86-4F7F-A99B-DD229C9B3893}

@@ -27,6 +27,7 @@ use core::{
 use linked_list_allocator::{align_down_size, align_up_size};
 use mu_pi::dxe_services::GcdMemoryType;
 use r_efi::efi;
+use uefi_sdk::base::UEFI_PAGE_SHIFT;
 
 /// Type for describing errors that this implementation can produce.
 #[derive(Debug, PartialEq)]
@@ -40,7 +41,6 @@ pub enum FixedSizeBlockAllocatorError {
 /// Minimum expansion size - allocator will request at least this much memory
 /// from the underlying GCD instance expansion is needed.
 pub const MIN_EXPANSION: usize = 0x100000;
-const ALIGNMENT_BITS: usize = 12;
 const ALIGNMENT: usize = 0x1000;
 const DEFAULT_POOL_ALIGNMENT: usize = 0x8;
 
@@ -172,7 +172,7 @@ impl FixedSizeBlockAllocator {
             .allocate_memory_space(
                 gcd::AllocateType::BottomUp(None),
                 GcdMemoryType::SystemMemory,
-                ALIGNMENT_BITS,
+                UEFI_PAGE_SHIFT,
                 size,
                 self.handle,
                 None,
@@ -372,7 +372,7 @@ impl FixedSizeBlockAllocator {
             .allocate_memory_space(
                 allocation_strategy,
                 GcdMemoryType::SystemMemory,
-                ALIGNMENT_BITS,
+                UEFI_PAGE_SHIFT,
                 pages * ALIGNMENT,
                 self.handle,
                 None,

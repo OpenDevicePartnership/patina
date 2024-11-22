@@ -13,6 +13,7 @@ use mu_pi::{dxe_services, hob};
 use mu_rust_helpers::function;
 use r_efi::efi;
 use uefi_collections::{node_size, Error as SliceError, Rbt, SliceKey};
+use uefi_sdk::base::UEFI_PAGE_MASK;
 
 use crate::{ensure, error, tpl_lock};
 
@@ -22,10 +23,6 @@ use super::{
         self, Error as MemoryBlockError, MemoryBlock, MemoryBlockSplit, StateTransition as MemoryStateTransition,
     },
 };
-
-// Todo: Move these to a centralized, permanent location
-const UEFI_PAGE_SIZE: usize = 0x1000;
-const UEFI_PAGE_MASK: usize = UEFI_PAGE_SIZE - 1;
 
 const MEMORY_BLOCK_SLICE_LEN: usize = 4096;
 pub const MEMORY_BLOCK_SLICE_SIZE: usize = MEMORY_BLOCK_SLICE_LEN * node_size::<MemoryBlock>();
@@ -1726,6 +1723,7 @@ unsafe impl Send for SpinLockedGcd {}
 mod tests {
     extern crate std;
     use core::{alloc::Layout, sync::atomic::AtomicBool};
+    use uefi_sdk::base::align_up;
 
     use super::*;
     use alloc::{vec, vec::Vec};
@@ -3113,10 +3111,6 @@ mod tests {
         assert!(CALLBACK_INVOKED.load(core::sync::atomic::Ordering::SeqCst));
     }
 
-    fn align_up(address: usize, alignment: usize) -> usize {
-        (address + alignment - 1) & !(alignment - 1)
-    }
-
     #[test]
     fn test_spin_locked_set_attributes_capabilities() {
         static CALLBACK1: AtomicBool = AtomicBool::new(false);
@@ -3134,7 +3128,7 @@ mod tests {
         assert_eq!(GCD.memory.lock().maximum_address, 0);
 
         let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 2) };
-        let address = align_up(mem.as_ptr() as usize, 0x1000);
+        let address = align_up(mem.as_ptr() as u64, 0x1000).unwrap() as usize;
         GCD.init(48, 16);
         unsafe {
             GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)

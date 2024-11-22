@@ -17,42 +17,11 @@ use mu_pi::{
 };
 use mu_rust_helpers::function;
 use r_efi::efi;
+use uefi_sdk::base::{align_down, align_up};
 
 use crate::{dxe_services::core_get_memory_space_descriptor, protocol_db, GCD};
 
 pub use spin_locked_gcd::{AllocateType, Error, MapChangeType, SpinLockedGcd};
-
-// Align address downwards.
-//
-// Returns the greatest `x` with alignment `align` so that `x <= addr`.
-//
-// Panics if the alignment is not a power of two.
-#[inline]
-const fn align_down(addr: u64, align: u64) -> u64 {
-    assert!(align.is_power_of_two(), "`align` must be a power of two");
-    addr & !(align - 1)
-}
-
-// Align address upwards.
-//
-// Returns the smallest `x` with alignment `align` so that `x >= addr`.
-//
-// Panics if the alignment is not a power of two or if an overflow occurs.
-#[inline]
-const fn align_up(addr: u64, align: u64) -> u64 {
-    assert!(align.is_power_of_two(), "`align` must be a power of two");
-    let align_mask = align - 1;
-    if addr & align_mask == 0 {
-        addr // already aligned
-    } else {
-        // FIXME: Replace with .expect, once `Option::expect` is const.
-        if let Some(aligned) = (addr | align_mask).checked_add(1) {
-            aligned
-        } else {
-            panic!("attempt to add with overflow")
-        }
-    }
-}
 
 pub fn init_gcd(physical_hob_list: *const c_void) -> (u64, u64) {
     let mut free_memory_start: u64 = 0;
@@ -68,8 +37,9 @@ pub fn init_gcd(physical_hob_list: *const c_void) -> (u64, u64) {
     for hob in &hob_list {
         match hob {
             Hob::Handoff(handoff) => {
-                free_memory_start = align_up(handoff.free_memory_bottom, 0x1000);
-                free_memory_size = align_down(handoff.free_memory_top, 0x1000) - free_memory_start;
+                free_memory_start = align_up(handoff.free_memory_bottom, 0x1000).expect("Unaligned free memory bottom");
+                free_memory_size =
+                    align_down(handoff.free_memory_top, 0x1000).expect("Unaligned free memory top") - free_memory_start;
                 memory_start = handoff.memory_bottom;
                 memory_end = handoff.memory_top;
             }

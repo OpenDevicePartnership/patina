@@ -14,6 +14,7 @@ use core::{
 use mu_pi::{list_entry, protocols::runtime};
 use r_efi::efi;
 use spin::Mutex;
+use uefi_sdk::base::UEFI_PAGE_SIZE;
 
 use crate::{
     allocator::core_allocate_pool, events::EVENT_DB, image::core_relocate_runtime_images,
@@ -219,8 +220,8 @@ pub extern "efiapi" fn convert_pointer(debug_disposition: usize, convert_address
             if (desc.attribute & efi::MEMORY_RUNTIME) == efi::MEMORY_RUNTIME && address as u64 >= desc.physical_start {
                 let virt_end_of_range = desc
                     .physical_start
-                    .checked_add(desc.number_of_pages * 0x1000)
-                    .expect("Virtual address exceeds expected range"); // Replace with efi::PAGE_SIZE when available
+                    .checked_add(desc.number_of_pages * UEFI_PAGE_SIZE as u64)
+                    .expect("Virtual address exceeds expected range");
 
                 if (address as u64) < virt_end_of_range {
                     unsafe {

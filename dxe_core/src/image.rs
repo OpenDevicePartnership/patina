@@ -13,6 +13,8 @@ use mu_pi::hob::{Hob, HobList};
 use r_efi::efi;
 use uefi_component_interface::DxeComponent;
 use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
+use uefi_sdk::base::{align_up, UEFI_PAGE_SIZE};
+use uefi_sdk::uefi_size_to_pages;
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
@@ -37,16 +39,6 @@ pub const EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER: u16 = 12;
 
 pub const ENTRY_POINT_STACK_SIZE: usize = 0x100000;
 
-// Todo: Move these to a centralized, permanent location
-const UEFI_PAGE_SIZE: usize = 0x1000;
-const UEFI_PAGE_MASK: usize = UEFI_PAGE_SIZE - 1;
-
-macro_rules! uefi_size_to_pages {
-    ($size:expr) => {
-        (($size) + UEFI_PAGE_MASK) / UEFI_PAGE_SIZE
-    };
-}
-
 // dummy function used to initialize PrivateImageData.entry_point.
 #[cfg(not(tarpaulin_include))]
 extern "efiapi" fn unimplemented_entry_point(
@@ -66,7 +58,13 @@ struct ImageStack {
 impl ImageStack {
     fn new(size: usize) -> Result<Self, efi::Status> {
         let mut stack: efi::PhysicalAddress = 0;
-        let len = align_up(size.max(MIN_STACK_SIZE) as u64, STACK_ALIGNMENT as u64) as usize;
+        let len = match align_up(size.max(MIN_STACK_SIZE) as u64, STACK_ALIGNMENT as u64) {
+            Ok(len) => len,
+            Err(e) => {
+                log::error!("Error occurred aligning the image stack up: {}", e);
+                return Err(efi::Status::INVALID_PARAMETER);
+            }
+        } as usize;
         // allocate an extra page for the stack guard page.
         let allocated_pages = uefi_size_to_pages!(len) + 1;
 
@@ -190,7 +188,8 @@ impl PrivateImageData {
             return Err(efi::Status::OUT_OF_RESOURCES);
         }
 
-        let aligned_image_start = align_up(image_base_page as u64, pe_info.section_alignment as u64);
+        let aligned_image_start =
+            align_up(image_base_page as u64, pe_info.section_alignment as u64).map_err(|_| efi::Status::LOAD_ERROR)?;
 
         let mut image_data = PrivateImageData {
             image_buffer: core::ptr::slice_from_raw_parts_mut(
@@ -232,7 +231,8 @@ impl PrivateImageData {
             return Err(efi::Status::OUT_OF_RESOURCES);
         }
 
-        let aligned_hii_start = align_up(hii_base_page as u64, alignment as u64);
+        let aligned_hii_start =
+            align_up(hii_base_page as u64, alignment as u64).map_err(|_| efi::Status::LOAD_ERROR)?;
 
         self.hii_resource_section = Some(core::ptr::slice_from_raw_parts_mut(aligned_hii_start as *mut u8, size));
         self.hii_resource_section_base = Some(hii_base_page);
@@ -365,7 +365,18 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
         // attributes. We also need to ensure the capabilities are set. We set the capabilities as the old capabilities
         // plus our new attribute, as we need to ensure all existing attributes are supported by the new
         // capabilities.
-        let aligned_virtual_size = align_up(section.virtual_size as u64, pe_info.section_alignment as u64);
+        let aligned_virtual_size =
+            if let Ok(virtual_size) = align_up(section.virtual_size as u64, pe_info.section_alignment as u64) {
+                virtual_size
+            } else {
+                log::error!(
+                    "Failed to align up section size {:#X} with alignment {:#X}",
+                    section.virtual_size,
+                    pe_info.section_alignment
+                );
+                continue;
+            };
+
         if let Err(status) =
             dxe_services::core_set_memory_space_capabilities(section_base_addr, aligned_virtual_size, capabilities)
         {
@@ -411,7 +422,17 @@ fn remove_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateI
                 let attributes = desc.attributes & !efi::MEMORY_ATTRIBUTE_MASK | efi::MEMORY_XP;
 
                 // now set the attributes back to only caching attrs.
-                let aligned_virtual_size = align_up(section.virtual_size as u64, pe_info.section_alignment as u64);
+                let aligned_virtual_size =
+                    if let Ok(virtual_size) = align_up(section.virtual_size as u64, pe_info.section_alignment as u64) {
+                        virtual_size
+                    } else {
+                        log::error!(
+                            "Failed to align up section size {:#X} with alignment {:#X}",
+                            section.virtual_size,
+                            pe_info.section_alignment
+                        );
+                        continue;
+                    };
                 if let Err(status) =
                     dxe_services::core_set_memory_space_attributes(section_base_addr, aligned_virtual_size, attributes)
                 {
@@ -502,27 +523,6 @@ fn install_dxe_core_image(hob_list: &HobList) {
 
     // store the dxe_core image private data in the private image data map.
     private_data.private_image_data.insert(handle, private_image_data);
-}
-
-/// Align address upwards.
-///
-/// Returns the smallest `x` with alignment `align` so that `x >= addr`.
-///
-/// Panics if the alignment is not a power of two or if an overflow occurs.
-#[inline]
-const fn align_up(addr: u64, align: u64) -> u64 {
-    assert!(align.is_power_of_two(), "`align` must be a power of two");
-    let align_mask = align - 1;
-    if addr & align_mask == 0 {
-        addr // already aligned
-    } else {
-        // FIXME: Replace with .expect, once `Option::expect` is const.
-        if let Some(aligned) = (addr | align_mask).checked_add(1) {
-            aligned
-        } else {
-            panic!("attempt to add with overflow")
-        }
-    }
 }
 
 // loads and relocates the image in the specified slice and returns the

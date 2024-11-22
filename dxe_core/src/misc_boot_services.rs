@@ -15,6 +15,7 @@ use core::{
 use mu_pi::protocols;
 use mu_pi::status_code;
 use r_efi::efi;
+use uefi_sdk::guid;
 
 use crate::{
     allocator::{terminate_memory_map, EFI_RUNTIME_SERVICES_DATA_ALLOCATOR},
@@ -30,16 +31,14 @@ static PRE_EXIT_BOOT_SERVICES_SIGNAL: AtomicBool = AtomicBool::new(false);
 
 // TODO [BEGIN]: LOCAL (TEMP) GUID DEFINITIONS (MOVE LATER)
 
-// These will likely get moved to different places. Pre-exit boot services is defined in. DXE Core GUID is
-// the GUID of this DXE Core instance. Exit Boot Services Failed is an edk2 customization.
+// These will likely get moved to different places. DXE Core GUID is the GUID of this DXE Core instance.
+// Exit Boot Services Failed is an edk2 customization.
 
+// Pre-EBS GUID is a Project Mu defined GUID. It should be removed in favor of the UEFI Spec defined
+// Before Exit Boot Services event group when all platform usage is confirmed to be transitioned to that.
 // { 0x5f1d7e16, 0x784a, 0x4da2, { 0xb0, 0x84, 0xf8, 0x12, 0xf2, 0x3a, 0x8d, 0xce }}
 pub const PRE_EBS_GUID: efi::Guid =
     efi::Guid::from_fields(0x5f1d7e16, 0x784a, 0x4da2, 0xb0, 0x84, &[0xf8, 0x12, 0xf2, 0x3a, 0x8d, 0xce]);
-
-// { 0x4f6c5507, 0x232f, 0x4787, { 0xb9, 0x5e, 0x72, 0xf8, 0x62, 0x49, 0xc, 0xb1 } }
-pub const EBS_FAILED_GUID: efi::Guid =
-    efi::Guid::from_fields(0x4f6c5507, 0x232f, 0x4787, 0xb9, 0x5e, &[0x72, 0xf8, 0x62, 0x49, 0x0c, 0xb1]);
 
 // DxeCore module GUID (23C9322F-2AF2-476A-BC4C-26BC88266C71)
 pub const DXE_CORE_GUID: efi::Guid =
@@ -270,7 +269,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     let status = terminate_memory_map(map_key);
     if status.is_error() {
         GCD.unlock_memory_space();
-        EVENT_DB.signal_group(EBS_FAILED_GUID);
+        EVENT_DB.signal_group(guid::EBS_FAILED);
         return status;
     }
 

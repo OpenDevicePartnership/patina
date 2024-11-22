@@ -264,6 +264,7 @@ mod tests {
         systemtables::init_system_table,
         test_support,
     };
+    use uefi_sdk::base::UEFI_PAGE_SIZE;
 
     fn with_locked_state<F: Fn()>(f: F) {
         test_support::with_global_lock(|| {
@@ -286,7 +287,6 @@ mod tests {
     #[test]
     fn test_memory_attributes_table_generation() {
         with_locked_state(|| {
-            const UEFI_PAGE_SIZE: u64 = 0x1000;
             // Create a vector to store the allocated pages
             let mut allocated_pages = Vec::new();
             let mut entry_count = 0;
@@ -323,8 +323,8 @@ mod tests {
                 let len = (entry_count + 1) * UEFI_PAGE_SIZE;
                 // ignore failures here, we can't set attributes in the actual page table here, but the GCD will
                 // get updated
-                let _ = core_set_memory_space_capabilities(buffer_ptr as u64, len, u64::MAX);
-                let _ = core_set_memory_space_attributes(buffer_ptr as u64, len, page_type.1);
+                let _ = core_set_memory_space_capabilities(buffer_ptr as u64, len as u64, u64::MAX);
+                let _ = core_set_memory_space_attributes(buffer_ptr as u64, len as u64, page_type.1);
             }
 
             // before we create the MAT, we expect MEMORY_ATTRIBUTES_TABLE to be None
@@ -368,7 +368,7 @@ mod tests {
                     let expected_type = allocated_pages[i].1 .0;
 
                     let expected_physical_start = allocated_pages[i].0 as u64;
-                    let expected_number_of_pages = allocated_pages[i].2;
+                    let expected_number_of_pages = allocated_pages[i].2 as u64;
                     let expected_attribute = allocated_pages[i].1 .1;
 
                     assert_eq!(entry.r#type, expected_type);
