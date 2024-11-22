@@ -349,10 +349,10 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
                 capabilities |= desc.capabilities;
             }
             Err(status) => {
-                log::error!(
+                debug_assert!(
+                    false,
                     "Failed to find GCD desc for image section {:#X} with Status {:#X?}",
-                    section_base_addr,
-                    status
+                    section_base_addr, status
                 );
                 continue;
             }
@@ -369,10 +369,10 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
             if let Ok(virtual_size) = align_up(section.virtual_size as u64, pe_info.section_alignment as u64) {
                 virtual_size
             } else {
-                log::error!(
+                debug_assert!(
+                    false,
                     "Failed to align up section size {:#X} with alignment {:#X}",
-                    section.virtual_size,
-                    pe_info.section_alignment
+                    section.virtual_size, pe_info.section_alignment
                 );
                 continue;
             };
@@ -426,10 +426,10 @@ fn remove_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateI
                     if let Ok(virtual_size) = align_up(section.virtual_size as u64, pe_info.section_alignment as u64) {
                         virtual_size
                     } else {
-                        log::error!(
+                        debug_assert!(
+                            false,
                             "Failed to align up section size {:#X} with alignment {:#X}",
-                            section.virtual_size,
-                            pe_info.section_alignment
+                            section.virtual_size, pe_info.section_alignment
                         );
                         continue;
                     };
