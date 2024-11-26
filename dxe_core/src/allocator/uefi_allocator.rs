@@ -11,7 +11,10 @@
 use crate::gcd::SpinLockedGcd;
 use r_efi::efi;
 
-use super::{fixed_size_block_allocator::SpinLockedFixedSizeBlockAllocator, AllocationStrategy};
+use super::{
+    fixed_size_block_allocator::{PageChangeCallback, SpinLockedFixedSizeBlockAllocator},
+    AllocationStrategy,
+};
 use core::{
     alloc::{Allocator, GlobalAlloc, Layout},
     ffi::c_void,
@@ -47,7 +50,7 @@ impl UefiAllocator {
         gcd: &'static SpinLockedGcd,
         memory_type: efi::MemoryType,
         allocator_handle: efi::Handle,
-        page_change_callback: Option<fn()>,
+        page_change_callback: PageChangeCallback,
     ) -> Self {
         UefiAllocator {
             allocator: SpinLockedFixedSizeBlockAllocator::new(gcd, allocator_handle, memory_type, page_change_callback),
@@ -255,9 +258,11 @@ mod tests {
 
     use mu_pi::dxe_services;
 
-    use crate::test_support;
+    use crate::{allocator::FixedSizeBlockAllocator, test_support};
 
     use super::*;
+
+    fn page_change_callback(_allocator: &mut FixedSizeBlockAllocator) {}
 
     fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
         let layout = Layout::from_size_align(size, 0x1000).unwrap();
@@ -280,7 +285,7 @@ mod tests {
         with_locked_state(|| {
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
             GCD.init(48, 16);
-            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
             assert_eq!(ua.memory_type, efi::BOOT_SERVICES_DATA);
         });
     }
@@ -293,7 +298,7 @@ mod tests {
 
             let base = init_gcd(&GCD, 0x400000);
 
-            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
 
             let mut buffer: *mut c_void = core::ptr::null_mut();
             assert_eq!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }, efi::Status::SUCCESS);
@@ -325,7 +330,7 @@ mod tests {
 
             let base = init_gcd(&GCD, 0x400000);
 
-            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
 
             let mut buffer: *mut c_void = core::ptr::null_mut();
             assert_eq!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }, efi::Status::SUCCESS);
@@ -361,7 +366,7 @@ mod tests {
 
             let base = init_gcd(&GCD, 0x400000);
 
-            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
 
             let buffer = ua.allocate_pages(AllocationStrategy::BottomUp(None), 4).unwrap();
             let buffer_address = buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
@@ -393,8 +398,8 @@ mod tests {
 
             init_gcd(&GCD, 0x400000);
 
-            let bs_allocator = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
-            let bc_allocator = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_CODE, 2 as _, None);
+            let bs_allocator = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
+            let bc_allocator = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_CODE, 2 as _, page_change_callback);
 
             let bs_buffer = bs_allocator.allocate_pages(AllocationStrategy::BottomUp(None), 4).unwrap();
             let bc_buffer = bc_allocator.allocate_pages(AllocationStrategy::BottomUp(None), 4).unwrap();
@@ -419,7 +424,7 @@ mod tests {
             GCD.init(48, 16);
             let _ = init_gcd(&GCD, 0x400000);
 
-            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
 
             let layout = Layout::from_size_align(0x8, 0x8).unwrap();
             unsafe {
@@ -444,7 +449,7 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             init_gcd(&GCD, 0x400000);
 
-            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
 
             let layout = Layout::from_size_align(0x8, 0x8).unwrap();
             let allocation = ua.allocate(layout).unwrap().as_non_null_ptr();
@@ -462,7 +467,7 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             init_gcd(&GCD, 0x400000);
 
-            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
             assert_eq!(ua.memory_type(), efi::BOOT_SERVICES_DATA);
             assert_eq!(ua.handle(), 1 as _);
 
@@ -507,10 +512,10 @@ mod tests {
             let base = init_gcd(&GCD, 0x400000);
             let gcd_range = base..base + 0x400000;
 
-            let reserved_allocator = UefiAllocator::new(&GCD, efi::RUNTIME_SERVICES_DATA, 1 as _, None);
+            let reserved_allocator = UefiAllocator::new(&GCD, efi::RUNTIME_SERVICES_DATA, 1 as _, page_change_callback);
             reserved_allocator.reserve_memory_pages(0x100).unwrap();
 
-            let unreserved_allocator = UefiAllocator::new(&GCD, efi::LOADER_DATA, 2 as _, None);
+            let unreserved_allocator = UefiAllocator::new(&GCD, efi::LOADER_DATA, 2 as _, page_change_callback);
 
             //check that the ranges are set up.
             let allocator = reserved_allocator.allocator.lock();
@@ -588,7 +593,7 @@ mod tests {
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
             GCD.init(48, 16);
             init_gcd(&GCD, 0x400000);
-            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
             println!("{:}", ua);
 
             for (memory_type, name) in &[
@@ -614,7 +619,7 @@ mod tests {
             GCD.init(48, 16);
             init_gcd(&GCD, 0x400000);
 
-            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
 
             // Ensure capacity for a small allocation
             assert_eq!(ua.ensure_capacity(0x1000, 0x8), Ok(()));
@@ -631,7 +636,7 @@ mod tests {
             GCD.init(48, 16);
             let base = init_gcd(&GCD, 0x400000);
 
-            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
 
             // Ensure capacity before allocation
             assert_eq!(ua.ensure_capacity(0x1000, 0x8), Ok(()));

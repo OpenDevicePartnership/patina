@@ -18,7 +18,9 @@ use core::{
 };
 
 use crate::{
-    allocator::{core_allocate_pool, core_free_pool, get_memory_map_descriptors, MemoryDescriptorSlice},
+    allocator::{
+        core_allocate_pool, core_free_pool, get_memory_map_descriptors, FixedSizeBlockAllocator, MemoryDescriptorSlice,
+    },
     events::EVENT_DB,
     misc_boot_services::core_install_configuration_table,
     systemtables,
@@ -53,7 +55,7 @@ impl MemoryAttributesTable {
     /// // continue allocator logic
     /// ```
     ///
-    pub fn install() {
+    pub fn install(_allocator: &mut FixedSizeBlockAllocator) {
         if POST_RTB.load(Ordering::Relaxed) {
             core_install_memory_attributes_table()
         }

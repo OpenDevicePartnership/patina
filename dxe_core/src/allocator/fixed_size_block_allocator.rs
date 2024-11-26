@@ -108,12 +108,29 @@ impl AllocationStatistics {
     }
 }
 
+/// PageChangeCallback is invoked whenever the allocator performs an operation that would potentially allocate or free
+/// pages from the GCD and thus change the memory map. It receives a mutable reference to the allocator that is
+/// performing the operation.
+///
+/// ## Safety
+/// This callback has several constraints and cautions on its usage:
+/// 1. The callback is invoked while the allocator in question is locked. This means that to avoid a re-entrant lock
+///    on the allocator, any operations required from the allocator must be invoked via the given reference, and not
+///    via other means (such as global allocation routines that target this same allocator).
+/// 2. The allocator could potentially be the "global" allocator (i.e. EFI_BOOT_SERVICES_DATA). Extra care should be
+///    taken to avoid implicit heap usage (e.g. `Box::new()`)if that's the case.
+///
+/// Generally - be very cautious about any allocations performed with this callback. There be dragons.
+///
+pub type PageChangeCallback = fn(&mut FixedSizeBlockAllocator);
+
 /// Fixed Size Block Allocator
 ///
 /// Implements an expandable memory allocator using fixed-sized blocks for speed backed by a linked-list allocator
 /// implementation when an appropriate sized free block is not available. If more memory is required than can be
 /// satisfied by either the block list or the linked-list, more memory is requested from the GCD supplied at
 /// instantiation and a new backing linked-list is created.
+///
 pub struct FixedSizeBlockAllocator {
     gcd: &'static SpinLockedGcd,
     handle: efi::Handle,
@@ -122,7 +139,7 @@ pub struct FixedSizeBlockAllocator {
     allocators: Option<*mut AllocatorListNode>,
     pub(crate) preferred_range: Option<Range<efi::PhysicalAddress>>,
     stats: AllocationStatistics,
-    page_change_callback: Option<fn()>,
+    page_change_callback: PageChangeCallback,
 }
 
 impl FixedSizeBlockAllocator {
@@ -132,7 +149,7 @@ impl FixedSizeBlockAllocator {
         gcd: &'static SpinLockedGcd,
         allocator_handle: efi::Handle,
         memory_type: efi::MemoryType,
-        page_change_callback: Option<fn()>,
+        page_change_callback: PageChangeCallback,
     ) -> Self {
         const EMPTY: Option<&'static mut BlockListNode> = None;
         FixedSizeBlockAllocator {
@@ -234,9 +251,7 @@ impl FixedSizeBlockAllocator {
         }
 
         // if we managed to allocate pages, call into the page change callback to trigger a MAT update, if applicable
-        if let Some(callback) = self.page_change_callback {
-            callback();
-        }
+        (self.page_change_callback)(self);
 
         Ok(())
     }
@@ -432,9 +447,7 @@ impl FixedSizeBlockAllocator {
         }
 
         // if we managed to allocate pages, call into the page change callback to trigger a MAT update, if applicable
-        if let Some(callback) = self.page_change_callback {
-            callback();
-        }
+        (self.page_change_callback)(self);
 
         Ok(allocation)
     }
@@ -475,9 +488,7 @@ impl FixedSizeBlockAllocator {
         }
 
         // if we managed to allocate pages, call into the page change callback to trigger a MAT update, if applicable
-        if let Some(callback) = self.page_change_callback {
-            callback();
-        }
+        (self.page_change_callback)(self);
 
         Ok(())
     }
@@ -527,6 +538,16 @@ impl FixedSizeBlockAllocator {
 
         Ok(())
     }
+
+    /// Returns the memory type for this allocator
+    pub fn memory_type(&self) -> efi::MemoryType {
+        self.memory_type
+    }
+
+    /// Returns a reference to the allocation stats for this allocator.
+    pub fn stats(&self) -> &AllocationStatistics {
+        &self.stats
+    }
 }
 
 impl Display for FixedSizeBlockAllocator {
@@ -571,7 +592,7 @@ impl SpinLockedFixedSizeBlockAllocator {
         gcd: &'static SpinLockedGcd,
         allocator_handle: efi::Handle,
         memory_type: efi::MemoryType,
-        callback: Option<fn()>,
+        callback: fn(allocator: &mut FixedSizeBlockAllocator),
     ) -> Self {
         SpinLockedFixedSizeBlockAllocator {
             inner: tpl_lock::TplMutex::new(
@@ -612,15 +633,7 @@ impl SpinLockedFixedSizeBlockAllocator {
         allocation_strategy: AllocationStrategy,
         pages: usize,
     ) -> Result<core::ptr::NonNull<[u8]>, efi::Status> {
-        let result = self.lock().allocate_pages(allocation_strategy, pages);
-
-        // if we managed to allocate pages, call into the page change callback to trigger a MAT update, if applicable
-        if result.is_ok() {
-            if let Some(callback) = self.inner.lock().page_change_callback {
-                callback();
-            }
-        }
-        result
+        self.lock().allocate_pages(allocation_strategy, pages)
     }
 
     /// Frees the block of pages at the given address of the given size.
@@ -628,15 +641,7 @@ impl SpinLockedFixedSizeBlockAllocator {
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
     /// [Self::allocate_pages]
     pub unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), efi::Status> {
-        let result = self.lock().free_pages(address, pages);
-
-        // if we managed to free pages, call into the page change callback to trigger a MAT update, if applicable
-        if result.is_ok() {
-            if let Some(callback) = self.inner.lock().page_change_callback {
-                callback();
-            }
-        }
-        result
+        self.lock().free_pages(address, pages)
     }
 
     /// Reserves a range of memory to be used by this allocator of the given size in pages.
@@ -680,9 +685,13 @@ impl SpinLockedFixedSizeBlockAllocator {
         self.inner.lock().preferred_range.clone()
     }
 
+    pub fn memory_type(&self) -> efi::MemoryType {
+        self.inner.lock().memory_type
+    }
+
     /// Returns allocation statistics for this allocator.
     pub fn allocation_statistics(&self) -> AllocationStatistics {
-        self.inner.lock().stats
+        *self.inner.lock().stats()
     }
 }
 
@@ -741,6 +750,8 @@ mod tests {
         .unwrap();
     }
 
+    fn page_change_callback(_allocator: &mut FixedSizeBlockAllocator) {}
+
     #[test]
     fn allocate_deallocate_test() {
         with_locked_state(|| {
@@ -751,7 +762,8 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             init_gcd(&GCD, 0x400000);
 
-            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let fsb =
+                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let layout = Layout::from_size_align(0x8, 0x8).unwrap();
             let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
@@ -791,7 +803,7 @@ mod tests {
         with_locked_state(|| {
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
             GCD.init(48, 16);
-            let fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
             assert!(core::ptr::eq(fsb.gcd, &GCD));
             assert!(fsb.list_heads.iter().all(|x| x.is_none()));
             assert!(fsb.allocators.is_none());
@@ -809,7 +821,7 @@ mod tests {
             let base = init_gcd(&GCD, 0x400000);
 
             //verify no allocators exist before expand.
-            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
             assert!(fsb.allocators.is_none());
 
             //expand by a page. This will round up to MIN_EXPANSION.
@@ -848,7 +860,7 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             init_gcd(&GCD, 0x800000);
 
-            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
             let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
             fsb.expand(layout).unwrap();
             fsb.expand(layout).unwrap();
@@ -872,7 +884,7 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             let base = init_gcd(&GCD, 0x400000);
 
-            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
             let allocation = fsb.fallback_alloc(layout);
@@ -892,7 +904,8 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             let base = init_gcd(&GCD, 0x400000);
 
-            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let fsb =
+                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
             let allocation = unsafe { fsb.alloc(layout) };
@@ -912,7 +925,8 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             let base = init_gcd(&GCD, 0x400000);
 
-            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let fsb =
+                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
             let allocation = fsb.allocate(layout).unwrap().as_ptr() as *mut u8;
@@ -932,7 +946,7 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             init_gcd(&GCD, 0x400000);
 
-            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let layout = Layout::from_size_align(0x8, 0x8).unwrap();
             let allocation = fsb.fallback_alloc(layout);
@@ -954,7 +968,8 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             init_gcd(&GCD, 0x400000);
 
-            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let fsb =
+                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let layout = Layout::from_size_align(0x8, 0x8).unwrap();
             let allocation = unsafe { fsb.alloc(layout) };
@@ -984,7 +999,8 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             init_gcd(&GCD, 0x400000);
 
-            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let fsb =
+                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let layout = Layout::from_size_align(0x8, 0x8).unwrap();
             let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
@@ -1016,7 +1032,8 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             init_gcd(&GCD, 0x400000);
 
-            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let fsb =
+                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let layout = Layout::from_size_align(0x8, 0x8).unwrap();
             let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
@@ -1034,7 +1051,8 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to back the test GCD.
             let address = init_gcd(&GCD, 0x1000000);
 
-            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let fsb =
+                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let pages = 4;
 
@@ -1066,7 +1084,8 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to back the test GCD.
             let address = init_gcd(&GCD, 0x1000000);
 
-            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let fsb =
+                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let target_address = address + 0x400000 - 8 * (ALIGNMENT as u64);
             let pages = 4;
@@ -1094,7 +1113,8 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be back the test GCD.
             let address = init_gcd(&GCD, 0x1000000);
 
-            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let fsb =
+                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let target_address = address + 0x400000 - 8 * (ALIGNMENT as u64);
             let pages = 4;
@@ -1121,7 +1141,8 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to back the test GCD.
             let address = init_gcd(&GCD, 0x1000000);
 
-            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let fsb =
+                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let target_address = address + 0x400000 - 8 * (ALIGNMENT as u64);
             let pages = 4;
@@ -1149,13 +1170,15 @@ mod tests {
             let _ = init_gcd(&GCD, 0x400000);
 
             // Test commands with bad handle.
-            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 0 as _, efi::BOOT_SERVICES_DATA, None);
+            let fsb =
+                SpinLockedFixedSizeBlockAllocator::new(&GCD, 0 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
             match fsb.allocate_pages(AllocationStrategy::Address(0x1000), 5) {
                 Err(efi::Status::INVALID_PARAMETER) => {}
                 _ => panic!("Expected INVALID_PARAMETER"),
             }
 
-            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let fsb =
+                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let allocation_strategy = AllocationStrategy::Address(0x1000);
             match fsb.allocate_pages(allocation_strategy, 5) {
@@ -1188,7 +1211,7 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             let _ = init_gcd(&GCD, 0x400000);
 
-            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
             fsb.allocate_pages(AllocationStrategy::BottomUp(None), 5).unwrap();
 
             let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
@@ -1208,7 +1231,7 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             let _ = init_gcd(&GCD, 0x400000);
 
-            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             // Test ensuring capacity with valid parameters
             assert!(fsb.ensure_capacity(0x1000, 0x10).is_ok());
@@ -1231,7 +1254,7 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             let _ = init_gcd(&GCD, 0x400000);
 
-            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             // Test ensuring capacity with invalid size parameter
             assert_eq!(fsb.ensure_capacity(usize::MAX, 0x10), Err(FixedSizeBlockAllocatorError::InvalidParameter));
@@ -1252,7 +1275,7 @@ mod tests {
                 // Test ensuring capacity with invalid alignment parameter
                 // in debug mode, this will panic. do to the overflow
                 // in release, it returns 0 internally, which will return an error
-                let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+                let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
                 fsb.ensure_capacity(0x1000, usize::MAX).unwrap();
             });
             assert!(result.is_err())
@@ -1270,7 +1293,8 @@ mod tests {
             let _ = init_gcd(&GCD, 0x1000000);
 
             // Make a fixed-sized-block allocator
-            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, None);
+            let fsb =
+                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let stats = fsb.allocation_statistics();
             assert_eq!(stats.pool_allocation_calls, 0);

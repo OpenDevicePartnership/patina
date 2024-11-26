@@ -31,6 +31,9 @@ use mu_pi::{
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
 use uefi_allocator::UefiAllocator;
 
+//FixedSizeBlockAllocator is passed as a reference to the callbacks on page allocations
+pub use fixed_size_block_allocator::FixedSizeBlockAllocator;
+
 use uefi_sdk::base::UEFI_PAGE_SIZE;
 
 // Private tracking guid used to generate new handles for allocator tracking
@@ -43,17 +46,25 @@ const PRIVATE_ALLOCATOR_TRACKING_GUID: efi::Guid =
 // to a different allocator. This allocator does not need to be public since all dynamic allocations will implicitly
 // allocate from it.
 #[cfg_attr(target_os = "uefi", global_allocator)]
-static EFI_BOOT_SERVICES_DATA_ALLOCATOR: UefiAllocator =
-    UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE, None);
+static EFI_BOOT_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocator::new(
+    &GCD,
+    efi::BOOT_SERVICES_DATA,
+    protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+    page_change_callback,
+);
 
 // The following allocators are directly used by the core. These allocators are declared static so that they can easily
 // be used in the core without e.g. the overhead of acquiring a lock to retrieve them from the allocator map that all
 // the other allocators use.
 pub static EFI_LOADER_CODE_ALLOCATOR: UefiAllocator =
-    UefiAllocator::new(&GCD, efi::LOADER_CODE, protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE, None);
+    UefiAllocator::new(&GCD, efi::LOADER_CODE, protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE, page_change_callback);
 
-pub static EFI_BOOT_SERVICES_CODE_ALLOCATOR: UefiAllocator =
-    UefiAllocator::new(&GCD, efi::BOOT_SERVICES_CODE, protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE, None);
+pub static EFI_BOOT_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
+    &GCD,
+    efi::BOOT_SERVICES_CODE,
+    protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE,
+    page_change_callback,
+);
 
 // This needs to call MemoryAttributesTable::install on allocation/deallocation, hence having the real callback
 // passed in
@@ -61,7 +72,7 @@ pub static EFI_RUNTIME_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::n
     &GCD,
     efi::RUNTIME_SERVICES_CODE,
     protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE,
-    Some(MemoryAttributesTable::install),
+    page_change_callback,
 );
 
 // This needs to call MemoryAttributesTable::install on allocation/deallocation, hence having the real callback
@@ -70,7 +81,7 @@ pub static EFI_RUNTIME_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocator::n
     &GCD,
     efi::RUNTIME_SERVICES_DATA,
     protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE,
-    Some(MemoryAttributesTable::install),
+    page_change_callback,
 );
 
 static STATIC_ALLOCATORS: &[&UefiAllocator] = &[
@@ -250,7 +261,9 @@ impl<'a> AllocatorMap {
         // the lock ensures exclusive access to the map, but an allocator may have been created already; so only create
         // the allocator if it doesn't yet exist for this memory type. MAT callbacks are only needed for Runtime
         // Services Code and Data, which are static allocators, so we can always do None here
-        self.map.entry(memory_type).or_insert_with(|| UefiAllocator::new(&GCD, memory_type, handle, None))
+        self.map
+            .entry(memory_type)
+            .or_insert_with(|| UefiAllocator::new(&GCD, memory_type, handle, page_change_callback))
     }
 
     // retrieves an allocator if it exists
@@ -696,6 +709,28 @@ pub(crate) fn ensure_capacity(memory_type: efi::MemoryType, size: usize, align: 
     }
 
     Ok(())
+}
+
+// This callback is invoked whenever the allocator performs an operation that would potentially allocate or free pages
+// from the GCD and thus change the memory map. It receives a mutable reference to the allocator that is performing
+// the operation.
+//
+// ## Safety
+// (copied from dxe_core::fixed_size_block_allocator::PageChangeCallback)
+// This callback has several constraints and cautions on its usage:
+// 1. The callback is invoked while the allocator in question is locked. This means that to avoid a re-entrant lock
+//    on the allocator, any operations required from the allocator must be invoked via the given reference, and not
+//    via other means (such as global allocation routines that target this same allocator).
+// 2. The allocator could potentially be the "global" allocator (i.e. EFI_BOOT_SERVICES_DATA). Extra care should be
+//    taken to avoid implicit heap usage (e.g. `Box::new()`)if that's the case.
+//
+// Generally - be very cautious about any allocations performed with this callback. There be dragons.
+//
+fn page_change_callback(allocator: &mut FixedSizeBlockAllocator) {
+    match allocator.memory_type() {
+        efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA => MemoryAttributesTable::install(allocator),
+        _ => (),
+    }
 }
 
 /// Initializes memory support
