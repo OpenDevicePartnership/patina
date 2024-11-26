@@ -143,27 +143,25 @@ mod tests {
     extern crate std;
     use std::{boxed::Box, println};
 
+    use crate::test_support;
+
     use super::{init_boot_services, TplMutex};
     use core::{
         mem::MaybeUninit,
-        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+        sync::atomic::{AtomicUsize, Ordering},
     };
     use r_efi::efi;
 
-    static BOOT_SERVICES_LOCK: AtomicBool = AtomicBool::new(false);
     static TPL: AtomicUsize = AtomicUsize::new(efi::TPL_APPLICATION);
 
-    fn lock_boot_services() {
-        loop {
-            //spin until we get access to do boot services stuff. This ensures that parallel tests don't clobber BootServices interactions.
-            if BOOT_SERVICES_LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
-                break;
-            }
-        }
-    }
-
-    fn release_boot_services() {
-        BOOT_SERVICES_LOCK.store(false, Ordering::Release);
+    fn with_locked_state<F: Fn()>(f: F) {
+        test_support::with_global_lock(|| {
+            f();
+            //ensure that TPL mutex doesn't end up with partially initialized
+            //mock boot services - otherwise tests for unrelated implementations that
+            //use TplMutex might end up calling the mocks unexpectedly.
+            init_boot_services(core::ptr::null_mut());
+        });
     }
 
     extern "efiapi" fn mock_raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {
@@ -192,36 +190,36 @@ mod tests {
 
     #[test]
     fn tpl_mutex_can_be_created() {
-        lock_boot_services();
-        let tpl_mutex = TplMutex::new(efi::TPL_HIGH_LEVEL, 1_usize, "test_lock");
-        *tpl_mutex.lock() = 2_usize;
-        assert_eq!(2_usize, *tpl_mutex.lock());
-        release_boot_services();
+        with_locked_state(|| {
+            let tpl_mutex = TplMutex::new(efi::TPL_HIGH_LEVEL, 1_usize, "test_lock");
+            *tpl_mutex.lock() = 2_usize;
+            assert_eq!(2_usize, *tpl_mutex.lock());
+        });
     }
 
     #[test]
     fn tpl_mutex_should_change_tpl_if_bs_available() {
-        lock_boot_services();
-        let boot_services = mock_boot_services();
-        let tpl_mutex = TplMutex::new(efi::TPL_NOTIFY, 1_usize, "test_lock");
-        init_boot_services(boot_services);
+        with_locked_state(|| {
+            let boot_services = mock_boot_services();
+            let tpl_mutex = TplMutex::new(efi::TPL_NOTIFY, 1_usize, "test_lock");
+            init_boot_services(boot_services);
 
-        let guard = tpl_mutex.lock();
-        assert_eq!(TPL.load(Ordering::SeqCst), efi::TPL_NOTIFY);
-        drop(guard);
-        assert_eq!(TPL.load(Ordering::SeqCst), efi::TPL_APPLICATION);
-        release_boot_services();
+            let guard = tpl_mutex.lock();
+            assert_eq!(TPL.load(Ordering::SeqCst), efi::TPL_NOTIFY);
+            drop(guard);
+            assert_eq!(TPL.load(Ordering::SeqCst), efi::TPL_APPLICATION);
+        });
     }
 
     #[test]
     fn tpl_mutex_and_guard_should_support_debug_and_display() {
-        lock_boot_services();
-        let tpl_mutex = TplMutex::new(efi::TPL_HIGH_LEVEL, 1_usize, "test_lock");
-        println!("{:?}", tpl_mutex);
-        let guard = tpl_mutex.lock();
-        println!("{:?}", tpl_mutex);
-        println!("{:?}", guard);
-        println!("{:}", guard);
-        release_boot_services();
+        with_locked_state(|| {
+            let tpl_mutex = TplMutex::new(efi::TPL_HIGH_LEVEL, 1_usize, "test_lock");
+            println!("{:?}", tpl_mutex);
+            let guard = tpl_mutex.lock();
+            println!("{:?}", tpl_mutex);
+            println!("{:?}", guard);
+            println!("{:}", guard);
+        });
     }
 }
