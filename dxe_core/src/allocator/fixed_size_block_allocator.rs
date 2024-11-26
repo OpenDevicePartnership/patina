@@ -118,7 +118,7 @@ impl AllocationStatistics {
 ///    on the allocator, any operations required from the allocator must be invoked via the given reference, and not
 ///    via other means (such as global allocation routines that target this same allocator).
 /// 2. The allocator could potentially be the "global" allocator (i.e. EFI_BOOT_SERVICES_DATA). Extra care should be
-///    taken to avoid implicit heap usage (e.g. `Box::new()`)if that's the case.
+///    taken to avoid implicit heap usage (e.g. `Box::new()`) if that's the case.
 ///
 /// Generally - be very cautious about any allocations performed with this callback. There be dragons.
 ///

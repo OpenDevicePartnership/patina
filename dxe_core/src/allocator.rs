@@ -18,11 +18,11 @@ use core::{
 
 extern crate alloc;
 use alloc::{collections::BTreeMap, vec::Vec};
-use mu_rust_helpers::function;
+use mu_rust_helpers::{function, guid::guid};
 
 use crate::{
-    gcd::AllocateType as AllocationStrategy, memory_attributes_table::MemoryAttributesTable, protocol_db,
-    protocols::PROTOCOL_DB, tpl_lock, GCD,
+    gcd::AllocateType as AllocationStrategy, memory_attributes_table::MemoryAttributesTable, misc_boot_services,
+    protocol_db, protocols::PROTOCOL_DB, systemtables::EfiSystemTable, tpl_lock, GCD,
 };
 use mu_pi::{
     dxe_services::{GcdMemoryType, MemorySpaceDescriptor},
@@ -30,11 +30,12 @@ use mu_pi::{
 };
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
 use uefi_allocator::UefiAllocator;
+use uuid::uuid;
 
 //FixedSizeBlockAllocator is passed as a reference to the callbacks on page allocations
 pub use fixed_size_block_allocator::FixedSizeBlockAllocator;
 
-use uefi_sdk::base::UEFI_PAGE_SIZE;
+use uefi_sdk::{base::UEFI_PAGE_SIZE, uefi_size_to_pages};
 
 // Private tracking guid used to generate new handles for allocator tracking
 // {9D1FA6E9-0C86-4F7F-A99B-DD229C9B3893}
@@ -711,6 +712,26 @@ pub(crate) fn ensure_capacity(memory_type: efi::MemoryType, size: usize, align: 
     Ok(())
 }
 
+static mut MEMORY_TYPE_INFO_TABLE: [EFiMemoryTypeInformation; 17] = [
+    EFiMemoryTypeInformation { memory_type: efi::RESERVED_MEMORY_TYPE, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: efi::LOADER_CODE, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: efi::LOADER_DATA, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: efi::BOOT_SERVICES_CODE, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: efi::BOOT_SERVICES_DATA, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: efi::RUNTIME_SERVICES_CODE, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: efi::RUNTIME_SERVICES_DATA, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: efi::CONVENTIONAL_MEMORY, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: efi::UNUSABLE_MEMORY, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: efi::ACPI_RECLAIM_MEMORY, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: efi::ACPI_MEMORY_NVS, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: efi::MEMORY_MAPPED_IO, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: efi::MEMORY_MAPPED_IO_PORT_SPACE, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: efi::PAL_CODE, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: efi::PERSISTENT_MEMORY, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: efi::UNACCEPTED_MEMORY_TYPE, number_of_pages: 0 },
+    EFiMemoryTypeInformation { memory_type: 16 /*EfiMaxMemoryType*/, number_of_pages: 0 },
+];
+
 // This callback is invoked whenever the allocator performs an operation that would potentially allocate or free pages
 // from the GCD and thus change the memory map. It receives a mutable reference to the allocator that is performing
 // the operation.
@@ -722,7 +743,7 @@ pub(crate) fn ensure_capacity(memory_type: efi::MemoryType, size: usize, align: 
 //    on the allocator, any operations required from the allocator must be invoked via the given reference, and not
 //    via other means (such as global allocation routines that target this same allocator).
 // 2. The allocator could potentially be the "global" allocator (i.e. EFI_BOOT_SERVICES_DATA). Extra care should be
-//    taken to avoid implicit heap usage (e.g. `Box::new()`)if that's the case.
+//    taken to avoid implicit heap usage (e.g. `Box::new()`) if that's the case.
 //
 // Generally - be very cautious about any allocations performed with this callback. There be dragons.
 //
@@ -731,6 +752,28 @@ fn page_change_callback(allocator: &mut FixedSizeBlockAllocator) {
         efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA => MemoryAttributesTable::install(allocator),
         _ => (),
     }
+
+    // Update MEMORY_TYPE_INFO_TABLE.
+    unsafe {
+        // Custom Memory types (higher than EfiMaxMemoryType) are not tracked.
+        let idx = allocator.memory_type() as usize;
+        if idx < MEMORY_TYPE_INFO_TABLE.len() {
+            let stats = allocator.stats();
+            let reserved_free = uefi_size_to_pages!(stats.reserved_size - stats.reserved_used);
+            MEMORY_TYPE_INFO_TABLE[idx].number_of_pages = (stats.claimed_pages - reserved_free) as u32;
+        }
+    }
+}
+
+pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), efi::Status> {
+    //MEMORY_TYPE_INFO_TABLE is static mut, so we know the pointer is good.
+    let memory_table_mut = unsafe { (MEMORY_TYPE_INFO_TABLE.as_mut_ptr() as *mut c_void).as_mut().unwrap() };
+
+    misc_boot_services::core_install_configuration_table(
+        guid!("4c19049f-4137-4dd3-9c10-8b97a83ffdfa"),
+        Some(memory_table_mut),
+        system_table,
+    )
 }
 
 /// Initializes memory support

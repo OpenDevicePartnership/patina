@@ -299,6 +299,9 @@ where
                 st,
             )
             .expect("Unable to create configuration table due to invalid table entry.");
+
+            // Install Memory Type Info configuration table.
+            allocator::install_memory_type_info_table(st).expect("Unable to create Memory Type Info Table");
         }
 
         let mut st = systemtables::SYSTEM_TABLE.lock();
