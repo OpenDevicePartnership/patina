@@ -703,11 +703,12 @@ mod test {
     use super::*;
     use crate::test_support;
 
-    fn with_locked_state<F: Fn()>(f: F) {
+    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
             unsafe { test_support::init_test_gcd(Some(0x4000000)) };
             f();
-        });
+        })
+        .unwrap();
     }
 
     #[test]

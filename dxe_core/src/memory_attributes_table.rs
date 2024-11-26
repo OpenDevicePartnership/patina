@@ -266,7 +266,7 @@ mod tests {
     };
     use uefi_sdk::base::UEFI_PAGE_SIZE;
 
-    fn with_locked_state<F: Fn()>(f: F) {
+    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
             POST_RTB.store(false, Ordering::Relaxed);
             MEMORY_ATTRIBUTES_TABLE.store(core::ptr::null_mut(), Ordering::Relaxed);
@@ -276,7 +276,8 @@ mod tests {
                 init_system_table();
             }
             f();
-        });
+        })
+        .unwrap();
     }
 
     #[test]

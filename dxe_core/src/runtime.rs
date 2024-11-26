@@ -277,14 +277,15 @@ mod tests {
     use core::{ffi::c_void, mem};
     use r_efi::efi;
 
-    fn with_locked_state<F: Fn()>(f: F) {
+    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
             unsafe {
                 test_support::init_test_gcd(Some(0x100000));
                 test_support::init_test_protocol_db();
             }
             f();
-        });
+        })
+        .unwrap();
     }
 
     fn fake_runtime_services() -> efi::RuntimeServices {

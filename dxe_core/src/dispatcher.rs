@@ -499,13 +499,14 @@ mod tests {
     // Locks and resets the dispatcher context before running the provided closure.
     fn with_locked_state<F>(f: F)
     where
-        F: Fn(),
+        F: Fn() + std::panic::RefUnwindSafe,
     {
         crate::test_support::with_global_lock(|| {
             unsafe { crate::test_support::init_test_protocol_db() };
             *DISPATCHER_CONTEXT.lock() = DispatcherContext::new();
             f();
-        });
+        })
+        .unwrap();
     }
 
     // Monkey patch for get_physical_address that always returns NOT_FOUND.

@@ -772,7 +772,7 @@ mod tests {
     use mu_pi::hob::{header, GuidHob, Hob, GUID_EXTENSION};
     use r_efi::efi;
 
-    fn with_locked_state<F: Fn()>(gcd_size: usize, f: F) {
+    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(gcd_size: usize, f: F) {
         test_support::with_global_lock(|| {
             unsafe {
                 test_support::init_test_gcd(Some(gcd_size));
@@ -780,7 +780,8 @@ mod tests {
                 ALLOCATORS.lock().reset();
             }
             f();
-        });
+        })
+        .unwrap();
     }
 
     #[test]

@@ -154,14 +154,15 @@ mod tests {
 
     static TPL: AtomicUsize = AtomicUsize::new(efi::TPL_APPLICATION);
 
-    fn with_locked_state<F: Fn()>(f: F) {
+    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
             f();
             //ensure that TPL mutex doesn't end up with partially initialized
             //mock boot services - otherwise tests for unrelated implementations that
             //use TplMutex might end up calling the mocks unexpectedly.
             init_boot_services(core::ptr::null_mut());
-        });
+        })
+        .unwrap();
     }
 
     extern "efiapi" fn mock_raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {

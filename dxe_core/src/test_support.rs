@@ -11,6 +11,7 @@
 use crate::{protocols::PROTOCOL_DB, GCD};
 use mu_pi::dxe_services::GcdMemoryType;
 use r_efi::efi;
+use std::any::Any;
 
 #[macro_export]
 macro_rules! test_collateral {
@@ -62,7 +63,9 @@ pub(crate) unsafe fn init_test_protocol_db() {
 }
 
 /// All tests should run from inside this.
-pub(crate) fn with_global_lock<F: Fn()>(f: F) {
+pub(crate) fn with_global_lock<F: Fn() + std::panic::RefUnwindSafe>(f: F) -> Result<(), Box<dyn Any + Send>> {
     let _guard = GLOBAL_STATE_TEST_LOCK.lock().unwrap();
-    f();
+    std::panic::catch_unwind(|| {
+        f();
+    })
 }

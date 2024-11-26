@@ -645,6 +645,8 @@ mod tests {
     use core::alloc::GlobalAlloc;
     use std::alloc::System;
 
+    use crate::test_support;
+
     use super::*;
 
     fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
@@ -656,26 +658,35 @@ mod tests {
         base
     }
 
+    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
+        test_support::with_global_lock(|| {
+            f();
+        })
+        .unwrap();
+    }
+
     #[test]
     fn allocate_deallocate_test() {
-        // Create a static GCD for test.
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD for test.
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            init_gcd(&GCD, 0x400000);
 
-        let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
 
-        let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-        let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+            let layout = Layout::from_size_align(0x8, 0x8).unwrap();
+            let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
 
-        unsafe { fsb.deallocate(allocation, layout) };
+            unsafe { fsb.deallocate(allocation, layout) };
 
-        let layout = Layout::from_size_align(0x20, 0x20).unwrap();
-        let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+            let layout = Layout::from_size_align(0x20, 0x20).unwrap();
+            let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
 
-        unsafe { fsb.deallocate(allocation, layout) };
+            unsafe { fsb.deallocate(allocation, layout) };
+        });
     }
 
     #[test]
@@ -701,433 +712,474 @@ mod tests {
 
     #[test]
     fn test_construct_empty_fixed_size_block_allocator() {
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
-        let fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
-        assert!(core::ptr::eq(fsb.gcd, &GCD));
-        assert!(fsb.list_heads.iter().all(|x| x.is_none()));
-        assert!(fsb.allocators.is_none());
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
+            let fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            assert!(core::ptr::eq(fsb.gcd, &GCD));
+            assert!(fsb.list_heads.iter().all(|x| x.is_none()));
+            assert!(fsb.allocators.is_none());
+        });
     }
 
     #[test]
     fn test_expand() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        let base = init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            let base = init_gcd(&GCD, 0x400000);
 
-        //verify no allocators exist before expand.
-        let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
-        assert!(fsb.allocators.is_none());
+            //verify no allocators exist before expand.
+            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            assert!(fsb.allocators.is_none());
 
-        //expand by a page. This will round up to MIN_EXPANSION.
-        let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-        fsb.expand(layout).unwrap();
-        assert!(fsb.allocators.is_some());
-        unsafe {
-            assert!((*fsb.allocators.unwrap()).next.is_none());
-            assert!((*fsb.allocators.unwrap()).allocator.bottom() as usize > base as usize);
-            assert_eq!((*fsb.allocators.unwrap()).allocator.free(), MIN_EXPANSION - size_of::<AllocatorListNode>());
-        }
-        //expand by larger than MIN_EXPANSION.
-        let layout = Layout::from_size_align(MIN_EXPANSION + 0x1000, 0x10).unwrap();
-        fsb.expand(layout).unwrap();
-        assert!(fsb.allocators.is_some());
-        unsafe {
-            assert!((*fsb.allocators.unwrap()).next.is_some());
-            assert!((*(*fsb.allocators.unwrap()).next.unwrap()).next.is_none());
-            assert!((*fsb.allocators.unwrap()).allocator.bottom() as usize > base as usize);
-            assert_eq!(
-                (*fsb.allocators.unwrap()).allocator.free(),
-                //expected free: size + a page to hold allocator node - size of allocator node.
-                layout.pad_to_align().size() + 0x1000 - size_of::<AllocatorListNode>()
-            );
-        }
+            //expand by a page. This will round up to MIN_EXPANSION.
+            let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
+            fsb.expand(layout).unwrap();
+            assert!(fsb.allocators.is_some());
+            unsafe {
+                assert!((*fsb.allocators.unwrap()).next.is_none());
+                assert!((*fsb.allocators.unwrap()).allocator.bottom() as usize > base as usize);
+                assert_eq!((*fsb.allocators.unwrap()).allocator.free(), MIN_EXPANSION - size_of::<AllocatorListNode>());
+            }
+            //expand by larger than MIN_EXPANSION.
+            let layout = Layout::from_size_align(MIN_EXPANSION + 0x1000, 0x10).unwrap();
+            fsb.expand(layout).unwrap();
+            assert!(fsb.allocators.is_some());
+            unsafe {
+                assert!((*fsb.allocators.unwrap()).next.is_some());
+                assert!((*(*fsb.allocators.unwrap()).next.unwrap()).next.is_none());
+                assert!((*fsb.allocators.unwrap()).allocator.bottom() as usize > base as usize);
+                assert_eq!(
+                    (*fsb.allocators.unwrap()).allocator.free(),
+                    //expected free: size + a page to hold allocator node - size of allocator node.
+                    layout.pad_to_align().size() + 0x1000 - size_of::<AllocatorListNode>()
+                );
+            }
+        });
     }
 
     #[test]
     fn test_allocation_iterator() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        init_gcd(&GCD, 0x800000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            init_gcd(&GCD, 0x800000);
 
-        let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
-        let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-        fsb.expand(layout).unwrap();
-        fsb.expand(layout).unwrap();
-        fsb.expand(layout).unwrap();
-        fsb.expand(layout).unwrap();
-        fsb.expand(layout).unwrap();
+            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
+            fsb.expand(layout).unwrap();
+            fsb.expand(layout).unwrap();
+            fsb.expand(layout).unwrap();
+            fsb.expand(layout).unwrap();
+            fsb.expand(layout).unwrap();
 
-        assert_eq!(5, AllocatorIterator::new(fsb.allocators).count());
-        assert!(AllocatorIterator::new(fsb.allocators)
-            .all(|node| unsafe { (*node).allocator.free() == MIN_EXPANSION - size_of::<AllocatorListNode>() }));
+            assert_eq!(5, AllocatorIterator::new(fsb.allocators).count());
+            assert!(AllocatorIterator::new(fsb.allocators)
+                .all(|node| unsafe { (*node).allocator.free() == MIN_EXPANSION - size_of::<AllocatorListNode>() }));
+        });
     }
 
     #[test]
     fn test_fallback_alloc() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        let base = init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            let base = init_gcd(&GCD, 0x400000);
 
-        let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
 
-        let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-        let allocation = fsb.fallback_alloc(layout);
-        assert!(fsb.allocators.is_some());
-        assert!((allocation as u64) > base);
-        assert!((allocation as u64) < base + MIN_EXPANSION as u64);
+            let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
+            let allocation = fsb.fallback_alloc(layout);
+            assert!(fsb.allocators.is_some());
+            assert!((allocation as u64) > base);
+            assert!((allocation as u64) < base + MIN_EXPANSION as u64);
+        });
     }
 
     #[test]
     fn test_alloc() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        let base = init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            let base = init_gcd(&GCD, 0x400000);
 
-        let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
 
-        let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-        let allocation = unsafe { fsb.alloc(layout) };
-        assert!(fsb.lock().allocators.is_some());
-        assert!((allocation as u64) > base);
-        assert!((allocation as u64) < base + MIN_EXPANSION as u64);
+            let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
+            let allocation = unsafe { fsb.alloc(layout) };
+            assert!(fsb.lock().allocators.is_some());
+            assert!((allocation as u64) > base);
+            assert!((allocation as u64) < base + MIN_EXPANSION as u64);
+        });
     }
 
     #[test]
     fn test_allocate() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        let base = init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            let base = init_gcd(&GCD, 0x400000);
 
-        let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
 
-        let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-        let allocation = fsb.allocate(layout).unwrap().as_ptr() as *mut u8;
-        assert!(fsb.lock().allocators.is_some());
-        assert!((allocation as u64) > base);
-        assert!((allocation as u64) < base + MIN_EXPANSION as u64);
+            let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
+            let allocation = fsb.allocate(layout).unwrap().as_ptr() as *mut u8;
+            assert!(fsb.lock().allocators.is_some());
+            assert!((allocation as u64) > base);
+            assert!((allocation as u64) < base + MIN_EXPANSION as u64);
+        });
     }
 
     #[test]
     fn test_fallback_dealloc() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            init_gcd(&GCD, 0x400000);
 
-        let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
 
-        let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-        let allocation = fsb.fallback_alloc(layout);
+            let layout = Layout::from_size_align(0x8, 0x8).unwrap();
+            let allocation = fsb.fallback_alloc(layout);
 
-        fsb.fallback_dealloc(allocation, layout);
-        unsafe {
-            assert_eq!((*fsb.allocators.unwrap()).allocator.free(), MIN_EXPANSION - size_of::<AllocatorListNode>());
-        }
+            fsb.fallback_dealloc(allocation, layout);
+            unsafe {
+                assert_eq!((*fsb.allocators.unwrap()).allocator.free(), MIN_EXPANSION - size_of::<AllocatorListNode>());
+            }
+        });
     }
 
     #[test]
     fn test_dealloc() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            init_gcd(&GCD, 0x400000);
 
-        let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
 
-        let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-        let allocation = unsafe { fsb.alloc(layout) };
+            let layout = Layout::from_size_align(0x8, 0x8).unwrap();
+            let allocation = unsafe { fsb.alloc(layout) };
 
-        unsafe { fsb.dealloc(allocation, layout) };
-        let free_block_ptr =
-            fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap() as *mut BlockListNode as *mut u8;
-        assert_eq!(free_block_ptr, allocation);
+            unsafe { fsb.dealloc(allocation, layout) };
+            let free_block_ptr =
+                fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap() as *mut BlockListNode as *mut u8;
+            assert_eq!(free_block_ptr, allocation);
 
-        let layout = Layout::from_size_align(0x20, 0x20).unwrap();
-        let allocation = unsafe { fsb.alloc(layout) };
+            let layout = Layout::from_size_align(0x20, 0x20).unwrap();
+            let allocation = unsafe { fsb.alloc(layout) };
 
-        unsafe { fsb.dealloc(allocation, layout) };
-        let free_block_ptr =
-            fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap() as *mut BlockListNode as *mut u8;
-        assert_eq!(free_block_ptr, allocation);
+            unsafe { fsb.dealloc(allocation, layout) };
+            let free_block_ptr =
+                fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap() as *mut BlockListNode as *mut u8;
+            assert_eq!(free_block_ptr, allocation);
+        });
     }
 
     #[test]
     fn test_deallocate() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            init_gcd(&GCD, 0x400000);
 
-        let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
 
-        let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-        let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
-        let allocation_ptr = allocation.as_ptr();
+            let layout = Layout::from_size_align(0x8, 0x8).unwrap();
+            let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+            let allocation_ptr = allocation.as_ptr();
 
-        unsafe { fsb.deallocate(allocation, layout) };
-        let free_block_ptr =
-            fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap() as *mut BlockListNode as *mut u8;
-        assert_eq!(free_block_ptr, allocation_ptr);
+            unsafe { fsb.deallocate(allocation, layout) };
+            let free_block_ptr =
+                fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap() as *mut BlockListNode as *mut u8;
+            assert_eq!(free_block_ptr, allocation_ptr);
 
-        let layout = Layout::from_size_align(0x20, 0x20).unwrap();
-        let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
-        let allocation_ptr = allocation.as_ptr();
+            let layout = Layout::from_size_align(0x20, 0x20).unwrap();
+            let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+            let allocation_ptr = allocation.as_ptr();
 
-        unsafe { fsb.deallocate(allocation, layout) };
-        let free_block_ptr =
-            fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap() as *mut BlockListNode as *mut u8;
-        assert_eq!(free_block_ptr, allocation_ptr);
+            unsafe { fsb.deallocate(allocation, layout) };
+            let free_block_ptr =
+                fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap() as *mut BlockListNode as *mut u8;
+            assert_eq!(free_block_ptr, allocation_ptr);
+        });
     }
 
     #[test]
     fn test_contains() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            init_gcd(&GCD, 0x400000);
 
-        let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
 
-        let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-        let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
-        assert!(fsb.contains(allocation));
+            let layout = Layout::from_size_align(0x8, 0x8).unwrap();
+            let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+            assert!(fsb.contains(allocation));
+        });
     }
 
     #[test]
     fn test_allocate_pages() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to back the test GCD.
-        let address = init_gcd(&GCD, 0x1000000);
+            // Allocate some space on the heap with the global allocator (std) to back the test GCD.
+            let address = init_gcd(&GCD, 0x1000000);
 
-        let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
 
-        let pages = 4;
+            let pages = 4;
 
-        let allocation = fsb.allocate_pages(gcd::AllocateType::BottomUp(None), pages).unwrap().as_non_null_ptr();
+            let allocation = fsb.allocate_pages(gcd::AllocateType::BottomUp(None), pages).unwrap().as_non_null_ptr();
 
-        assert!(allocation.as_ptr() as u64 >= address);
-        assert!((allocation.as_ptr() as u64) < address + 0x1000000);
+            assert!(allocation.as_ptr() as u64 >= address);
+            assert!((allocation.as_ptr() as u64) < address + 0x1000000);
 
-        unsafe {
-            match fsb.free_pages(0, pages) {
-                Err(efi::Status::NOT_FOUND) => {}
-                _ => panic!("Expected NOT_FOUND"),
+            unsafe {
+                match fsb.free_pages(0, pages) {
+                    Err(efi::Status::NOT_FOUND) => {}
+                    _ => panic!("Expected NOT_FOUND"),
+                };
             };
-        };
 
-        unsafe {
-            fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
-        };
+            unsafe {
+                fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
+            };
+        });
     }
 
     #[test]
     fn test_allocate_at_address() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to back the test GCD.
-        let address = init_gcd(&GCD, 0x1000000);
+            // Allocate some space on the heap with the global allocator (std) to back the test GCD.
+            let address = init_gcd(&GCD, 0x1000000);
 
-        let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
 
-        let target_address = address + 0x400000 - 8 * (ALIGNMENT as u64);
-        let pages = 4;
+            let target_address = address + 0x400000 - 8 * (ALIGNMENT as u64);
+            let pages = 4;
 
-        let allocation =
-            fsb.allocate_pages(gcd::AllocateType::Address(target_address as usize), pages).unwrap().as_non_null_ptr();
+            let allocation = fsb
+                .allocate_pages(gcd::AllocateType::Address(target_address as usize), pages)
+                .unwrap()
+                .as_non_null_ptr();
 
-        assert_eq!(allocation.as_ptr() as u64, target_address);
+            assert_eq!(allocation.as_ptr() as u64, target_address);
 
-        unsafe {
-            fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
-        };
+            unsafe {
+                fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
+            };
+        });
     }
 
     #[test]
     fn test_allocate_below_address() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be back the test GCD.
-        let address = init_gcd(&GCD, 0x1000000);
+            // Allocate some space on the heap with the global allocator (std) to be back the test GCD.
+            let address = init_gcd(&GCD, 0x1000000);
 
-        let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
 
-        let target_address = address + 0x400000 - 8 * (ALIGNMENT as u64);
-        let pages = 4;
+            let target_address = address + 0x400000 - 8 * (ALIGNMENT as u64);
+            let pages = 4;
 
-        let allocation = fsb
-            .allocate_pages(gcd::AllocateType::BottomUp(Some(target_address as usize)), pages)
-            .unwrap()
-            .as_non_null_ptr();
-        assert!((allocation.as_ptr() as u64) < target_address);
+            let allocation = fsb
+                .allocate_pages(gcd::AllocateType::BottomUp(Some(target_address as usize)), pages)
+                .unwrap()
+                .as_non_null_ptr();
+            assert!((allocation.as_ptr() as u64) < target_address);
 
-        unsafe {
-            fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
-        };
+            unsafe {
+                fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
+            };
+        });
     }
 
     #[test]
     fn test_allocate_above_address() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to back the test GCD.
-        let address = init_gcd(&GCD, 0x1000000);
+            // Allocate some space on the heap with the global allocator (std) to back the test GCD.
+            let address = init_gcd(&GCD, 0x1000000);
 
-        let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
 
-        let target_address = address + 0x400000 - 8 * (ALIGNMENT as u64);
-        let pages = 4;
+            let target_address = address + 0x400000 - 8 * (ALIGNMENT as u64);
+            let pages = 4;
 
-        let allocation = fsb
-            .allocate_pages(gcd::AllocateType::TopDown(Some(target_address as usize)), pages)
-            .unwrap()
-            .as_non_null_ptr();
-        assert!((allocation.as_ptr() as u64) > target_address);
+            let allocation = fsb
+                .allocate_pages(gcd::AllocateType::TopDown(Some(target_address as usize)), pages)
+                .unwrap()
+                .as_non_null_ptr();
+            assert!((allocation.as_ptr() as u64) > target_address);
 
-        unsafe {
-            fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
-        };
+            unsafe {
+                fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
+            };
+        });
     }
 
     #[test]
     fn test_allocator_commands_with_invalid_parameters() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        let _ = init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            let _ = init_gcd(&GCD, 0x400000);
 
-        // Test commands with bad handle.
-        let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 0 as _, None);
-        match fsb.allocate_pages(AllocationStrategy::Address(0x1000), 5) {
-            Err(efi::Status::INVALID_PARAMETER) => {}
-            _ => panic!("Expected INVALID_PARAMETER"),
-        }
-
-        let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
-
-        let allocation_strategy = AllocationStrategy::Address(0x1000);
-        match fsb.allocate_pages(allocation_strategy, 5) {
-            Err(efi::Status::NOT_FOUND) => {}
-            _ => panic!("Expected NOT_FOUND"),
-        }
-        // Test invalid alignment
-        let allocation_strategy = AllocationStrategy::Address(0x1001);
-        match fsb.allocate_pages(allocation_strategy, 5) {
-            Err(efi::Status::INVALID_PARAMETER) => {}
-            _ => panic!("Expected INVALID_PARAMETER"),
-        }
-
-        unsafe {
-            match fsb.free_pages(0x1001, 5) {
+            // Test commands with bad handle.
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 0 as _, None);
+            match fsb.allocate_pages(AllocationStrategy::Address(0x1000), 5) {
                 Err(efi::Status::INVALID_PARAMETER) => {}
                 _ => panic!("Expected INVALID_PARAMETER"),
             }
-        }
+
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+
+            let allocation_strategy = AllocationStrategy::Address(0x1000);
+            match fsb.allocate_pages(allocation_strategy, 5) {
+                Err(efi::Status::NOT_FOUND) => {}
+                _ => panic!("Expected NOT_FOUND"),
+            }
+            // Test invalid alignment
+            let allocation_strategy = AllocationStrategy::Address(0x1001);
+            match fsb.allocate_pages(allocation_strategy, 5) {
+                Err(efi::Status::INVALID_PARAMETER) => {}
+                _ => panic!("Expected INVALID_PARAMETER"),
+            }
+
+            unsafe {
+                match fsb.free_pages(0x1001, 5) {
+                    Err(efi::Status::INVALID_PARAMETER) => {}
+                    _ => panic!("Expected INVALID_PARAMETER"),
+                }
+            }
+        });
     }
 
     #[test]
     fn validate_display_impl_does_not_panic() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        let _ = init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            let _ = init_gcd(&GCD, 0x400000);
 
-        let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
-        fsb.allocate_pages(AllocationStrategy::BottomUp(None), 5).unwrap();
+            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            fsb.allocate_pages(AllocationStrategy::BottomUp(None), 5).unwrap();
 
-        let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-        fsb.expand(layout).unwrap();
+            let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
+            fsb.expand(layout).unwrap();
 
-        let _ = std::format!("{}", fsb);
+            let _ = std::format!("{}", fsb);
+        });
     }
 
     #[test]
     fn test_ensure_capacity() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        let _ = init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            let _ = init_gcd(&GCD, 0x400000);
 
-        let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
 
-        // Test ensuring capacity with valid parameters
-        assert!(fsb.ensure_capacity(0x1000, 0x10).is_ok());
-        assert!(fsb.allocators.is_some());
+            // Test ensuring capacity with valid parameters
+            assert!(fsb.ensure_capacity(0x1000, 0x10).is_ok());
+            assert!(fsb.allocators.is_some());
 
-        // Test ensuring capacity when out of memory
-        // Allocate all available memory
-        fsb.allocate_pages(AllocationStrategy::TopDown(None), 0x2A0).unwrap();
-        assert_eq!(fsb.ensure_capacity(0x100000, 0x10), Err(FixedSizeBlockAllocatorError::OutOfMemory));
+            // Test ensuring capacity when out of memory
+            // Allocate all available memory
+            fsb.allocate_pages(AllocationStrategy::TopDown(None), 0x2A0).unwrap();
+            assert_eq!(fsb.ensure_capacity(0x100000, 0x10), Err(FixedSizeBlockAllocatorError::OutOfMemory));
+        });
     }
 
     #[test]
     fn test_ensure_capacity_bad_size() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        let _ = init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            let _ = init_gcd(&GCD, 0x400000);
 
-        let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
 
-        // Test ensuring capacity with invalid size parameter
-        assert_eq!(fsb.ensure_capacity(usize::MAX, 0x10), Err(FixedSizeBlockAllocatorError::InvalidParameter));
+            // Test ensuring capacity with invalid size parameter
+            assert_eq!(fsb.ensure_capacity(usize::MAX, 0x10), Err(FixedSizeBlockAllocatorError::InvalidParameter));
+        });
     }
 
     #[test]
-    #[should_panic]
     fn test_ensure_capacity_bad_alignment() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        let _ = init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            let _ = init_gcd(&GCD, 0x400000);
 
-        let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
-
-        // Test ensuring capacity with invalid alignment parameter
-        // in debug mode, this will panic. do to the overflow
-        // in release, it returns 0 internally, which will return an error
-        fsb.ensure_capacity(0x1000, usize::MAX).unwrap();
+            let result = std::panic::catch_unwind(|| {
+                // Test ensuring capacity with invalid alignment parameter
+                // in debug mode, this will panic. do to the overflow
+                // in release, it returns 0 internally, which will return an error
+                let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+                fsb.ensure_capacity(0x1000, usize::MAX).unwrap();
+            });
+            assert!(result.is_err())
+        });
     }
 }

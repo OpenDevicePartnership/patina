@@ -840,10 +840,11 @@ mod tests {
 
     use super::*;
 
-    fn with_locked_state<F: Fn()>(f: F) {
+    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
             f();
-        });
+        })
+        .unwrap();
     }
 
     #[test]
