@@ -1725,9 +1725,18 @@ mod tests {
     use core::{alloc::Layout, sync::atomic::AtomicBool};
     use uefi_sdk::base::align_up;
 
+    use crate::test_support;
+
     use super::*;
     use alloc::{vec, vec::Vec};
     use r_efi::efi;
+
+    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
+        test_support::with_global_lock(|| {
+            f();
+        })
+        .unwrap();
+    }
 
     #[test]
     fn test_gcd_initialization() {
@@ -3045,177 +3054,189 @@ mod tests {
 
     #[test]
     fn spin_locked_allocator_should_error_if_not_initialized() {
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-        assert_eq!(GCD.memory.lock().maximum_address, 0);
+            assert_eq!(GCD.memory.lock().maximum_address, 0);
 
-        let add_result = unsafe { GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 100, 0) };
-        assert_eq!(add_result, Err(Error::NotInitialized));
+            let add_result = unsafe { GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 100, 0) };
+            assert_eq!(add_result, Err(Error::NotInitialized));
 
-        let allocate_result = GCD.allocate_memory_space(
-            AllocateType::Address(0),
-            dxe_services::GcdMemoryType::SystemMemory,
-            0,
-            10,
-            1 as _,
-            None,
-        );
-        assert_eq!(allocate_result, Err(Error::NotInitialized));
+            let allocate_result = GCD.allocate_memory_space(
+                AllocateType::Address(0),
+                dxe_services::GcdMemoryType::SystemMemory,
+                0,
+                10,
+                1 as _,
+                None,
+            );
+            assert_eq!(allocate_result, Err(Error::NotInitialized));
 
-        let free_result = GCD.free_memory_space(0, 10);
-        assert_eq!(free_result, Err(Error::NotInitialized));
+            let free_result = GCD.free_memory_space(0, 10);
+            assert_eq!(free_result, Err(Error::NotInitialized));
 
-        let remove_result = GCD.remove_memory_space(0, 10);
-        assert_eq!(remove_result, Err(Error::NotInitialized));
+            let remove_result = GCD.remove_memory_space(0, 10);
+            assert_eq!(remove_result, Err(Error::NotInitialized));
+        });
     }
 
     #[test]
     fn spin_locked_allocator_init_should_initialize() {
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-        assert_eq!(GCD.memory.lock().maximum_address, 0);
+            assert_eq!(GCD.memory.lock().maximum_address, 0);
 
-        let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE) };
-        let address = mem.as_ptr() as usize;
-        GCD.init(48, 16);
-        unsafe {
-            GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
-                .unwrap();
-        }
+            let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE) };
+            let address = mem.as_ptr() as usize;
+            GCD.init(48, 16);
+            unsafe {
+                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
+                    .unwrap();
+            }
 
-        GCD.add_io_space(dxe_services::GcdIoType::Io, 0, 100).unwrap();
-        GCD.allocate_io_space(AllocateType::Address(0), dxe_services::GcdIoType::Io, 0, 10, 1 as _, None).unwrap();
-        GCD.free_io_space(0, 10).unwrap();
-        GCD.remove_io_space(0, 10).unwrap();
+            GCD.add_io_space(dxe_services::GcdIoType::Io, 0, 100).unwrap();
+            GCD.allocate_io_space(AllocateType::Address(0), dxe_services::GcdIoType::Io, 0, 10, 1 as _, None).unwrap();
+            GCD.free_io_space(0, 10).unwrap();
+            GCD.remove_io_space(0, 10).unwrap();
+        });
     }
 
     #[test]
     fn callback_should_fire_when_map_changes() {
-        static CALLBACK_INVOKED: AtomicBool = AtomicBool::new(false);
-        fn map_callback(map_change_type: MapChangeType) {
-            CALLBACK_INVOKED.store(true, core::sync::atomic::Ordering::SeqCst);
-            assert_eq!(map_change_type, MapChangeType::AddMemorySpace);
-        }
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(map_callback));
+        with_locked_state(|| {
+            static CALLBACK_INVOKED: AtomicBool = AtomicBool::new(false);
+            fn map_callback(map_change_type: MapChangeType) {
+                CALLBACK_INVOKED.store(true, core::sync::atomic::Ordering::SeqCst);
+                assert_eq!(map_change_type, MapChangeType::AddMemorySpace);
+            }
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(map_callback));
 
-        assert_eq!(GCD.memory.lock().maximum_address, 0);
+            assert_eq!(GCD.memory.lock().maximum_address, 0);
 
-        let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE) };
-        let address = mem.as_ptr() as usize;
-        GCD.init(48, 16);
-        unsafe {
-            GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
-                .unwrap();
-        }
+            let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE) };
+            let address = mem.as_ptr() as usize;
+            GCD.init(48, 16);
+            unsafe {
+                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
+                    .unwrap();
+            }
 
-        assert!(CALLBACK_INVOKED.load(core::sync::atomic::Ordering::SeqCst));
+            assert!(CALLBACK_INVOKED.load(core::sync::atomic::Ordering::SeqCst));
+        });
     }
 
     #[test]
     fn test_spin_locked_set_attributes_capabilities() {
-        static CALLBACK1: AtomicBool = AtomicBool::new(false);
-        static CALLBACK2: AtomicBool = AtomicBool::new(false);
-        fn map_callback(map_change_type: MapChangeType) {
-            match map_change_type {
-                MapChangeType::SetMemoryAttributes => CALLBACK1.store(true, core::sync::atomic::Ordering::SeqCst),
-                MapChangeType::SetMemoryCapabilities => CALLBACK2.store(true, core::sync::atomic::Ordering::SeqCst),
-                _ => {}
+        with_locked_state(|| {
+            static CALLBACK1: AtomicBool = AtomicBool::new(false);
+            static CALLBACK2: AtomicBool = AtomicBool::new(false);
+            fn map_callback(map_change_type: MapChangeType) {
+                match map_change_type {
+                    MapChangeType::SetMemoryAttributes => CALLBACK1.store(true, core::sync::atomic::Ordering::SeqCst),
+                    MapChangeType::SetMemoryCapabilities => CALLBACK2.store(true, core::sync::atomic::Ordering::SeqCst),
+                    _ => {}
+                }
             }
-        }
 
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(map_callback));
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(map_callback));
 
-        assert_eq!(GCD.memory.lock().maximum_address, 0);
+            assert_eq!(GCD.memory.lock().maximum_address, 0);
 
-        let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 2) };
-        let address = align_up(mem.as_ptr() as u64, 0x1000).unwrap() as usize;
-        GCD.init(48, 16);
-        unsafe {
-            GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
-                .unwrap();
-        }
-        GCD.set_memory_space_capabilities(address, 0x1000, 0b1111).unwrap();
-        GCD.set_memory_space_attributes(address, 0x1000, 0b1011).unwrap();
+            let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 2) };
+            let address = align_up(mem.as_ptr() as u64, 0x1000).unwrap() as usize;
+            GCD.init(48, 16);
+            unsafe {
+                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
+                    .unwrap();
+            }
+            GCD.set_memory_space_capabilities(address, 0x1000, 0b1111).unwrap();
+            GCD.set_memory_space_attributes(address, 0x1000, 0b1011).unwrap();
 
-        assert!(CALLBACK1.load(core::sync::atomic::Ordering::SeqCst));
-        assert!(CALLBACK2.load(core::sync::atomic::Ordering::SeqCst));
+            assert!(CALLBACK1.load(core::sync::atomic::Ordering::SeqCst));
+            assert!(CALLBACK2.load(core::sync::atomic::Ordering::SeqCst));
+        });
     }
 
     #[test]
     fn allocate_bottom_up_should_allocate_increasing_addresses() {
-        use std::{alloc::GlobalAlloc, println};
-        const GCD_SIZE: usize = 0x100000;
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            use std::{alloc::GlobalAlloc, println};
+            const GCD_SIZE: usize = 0x100000;
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        let layout = Layout::from_size_align(GCD_SIZE, 0x1000).unwrap();
-        let base = unsafe { std::alloc::System.alloc(layout) as u64 };
-        unsafe {
-            GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, base as usize, GCD_SIZE, 0).unwrap();
-        }
-
-        println!("GCD base: {:#x?}", base);
-        let mut last_allocation = 0;
-        loop {
-            let allocate_result = GCD.allocate_memory_space(
-                AllocateType::BottomUp(None),
-                dxe_services::GcdMemoryType::SystemMemory,
-                12,
-                0x1000,
-                1 as _,
-                None,
-            );
-            println!("Allocation result: {:#x?}", allocate_result);
-            if let Ok(address) = allocate_result {
-                assert!(
-                    address > last_allocation,
-                    "address {:#x?} is lower than previously allocated address {:#x?}",
-                    address,
-                    last_allocation
-                );
-                last_allocation = address;
-            } else {
-                break;
+            let layout = Layout::from_size_align(GCD_SIZE, 0x1000).unwrap();
+            let base = unsafe { std::alloc::System.alloc(layout) as u64 };
+            unsafe {
+                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, base as usize, GCD_SIZE, 0).unwrap();
             }
-        }
+
+            println!("GCD base: {:#x?}", base);
+            let mut last_allocation = 0;
+            loop {
+                let allocate_result = GCD.allocate_memory_space(
+                    AllocateType::BottomUp(None),
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    12,
+                    0x1000,
+                    1 as _,
+                    None,
+                );
+                println!("Allocation result: {:#x?}", allocate_result);
+                if let Ok(address) = allocate_result {
+                    assert!(
+                        address > last_allocation,
+                        "address {:#x?} is lower than previously allocated address {:#x?}",
+                        address,
+                        last_allocation
+                    );
+                    last_allocation = address;
+                } else {
+                    break;
+                }
+            }
+        });
     }
 
     #[test]
     fn allocate_top_down_should_allocate_decreasing_addresses() {
-        use std::{alloc::GlobalAlloc, println};
-        const GCD_SIZE: usize = 0x100000;
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            use std::{alloc::GlobalAlloc, println};
+            const GCD_SIZE: usize = 0x100000;
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        let layout = Layout::from_size_align(GCD_SIZE, 0x1000).unwrap();
-        let base = unsafe { std::alloc::System.alloc(layout) as u64 };
-        unsafe {
-            GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, base as usize, GCD_SIZE, 0).unwrap();
-        }
-
-        println!("GCD base: {:#x?}", base);
-        let mut last_allocation = usize::MAX;
-        loop {
-            let allocate_result = GCD.allocate_memory_space(
-                AllocateType::TopDown(None),
-                dxe_services::GcdMemoryType::SystemMemory,
-                12,
-                0x1000,
-                1 as _,
-                None,
-            );
-            println!("Allocation result: {:#x?}", allocate_result);
-            if let Ok(address) = allocate_result {
-                assert!(
-                    address < last_allocation,
-                    "address {:#x?} is higher than previously allocated address {:#x?}",
-                    address,
-                    last_allocation
-                );
-                last_allocation = address;
-            } else {
-                break;
+            let layout = Layout::from_size_align(GCD_SIZE, 0x1000).unwrap();
+            let base = unsafe { std::alloc::System.alloc(layout) as u64 };
+            unsafe {
+                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, base as usize, GCD_SIZE, 0).unwrap();
             }
-        }
+
+            println!("GCD base: {:#x?}", base);
+            let mut last_allocation = usize::MAX;
+            loop {
+                let allocate_result = GCD.allocate_memory_space(
+                    AllocateType::TopDown(None),
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    12,
+                    0x1000,
+                    1 as _,
+                    None,
+                );
+                println!("Allocation result: {:#x?}", allocate_result);
+                if let Ok(address) = allocate_result {
+                    assert!(
+                        address < last_allocation,
+                        "address {:#x?} is higher than previously allocated address {:#x?}",
+                        address,
+                        last_allocation
+                    );
+                    last_allocation = address;
+                } else {
+                    break;
+                }
+            }
+        });
     }
 }
