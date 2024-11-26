@@ -255,6 +255,8 @@ mod tests {
 
     use mu_pi::dxe_services;
 
+    use crate::test_support;
+
     use super::*;
 
     fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
@@ -266,158 +268,179 @@ mod tests {
         base
     }
 
+    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
+        test_support::with_global_lock(|| {
+            f();
+        })
+        .unwrap();
+    }
+
     #[test]
     fn test_uefi_allocator_new() {
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
-        let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
-        assert_eq!(ua.memory_type, efi::BOOT_SERVICES_DATA);
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            assert_eq!(ua.memory_type, efi::BOOT_SERVICES_DATA);
+        });
     }
 
     #[test]
     fn test_allocate_pool() {
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        let base = init_gcd(&GCD, 0x400000);
+            let base = init_gcd(&GCD, 0x400000);
 
-        let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
 
-        let mut buffer: *mut c_void = core::ptr::null_mut();
-        assert_eq!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }, efi::Status::SUCCESS);
-        assert!(buffer as u64 > base);
-        assert!((buffer as u64) < base + 0x400000);
+            let mut buffer: *mut c_void = core::ptr::null_mut();
+            assert_eq!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }, efi::Status::SUCCESS);
+            assert!(buffer as u64 > base);
+            assert!((buffer as u64) < base + 0x400000);
 
-        let (layout, offset) = Layout::new::<AllocationInfo>()
-            .extend(
-                Layout::from_size_align(0x1000, UEFI_POOL_ALIGN)
-                    .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err)),
-            )
-            .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err));
+            let (layout, offset) = Layout::new::<AllocationInfo>()
+                .extend(
+                    Layout::from_size_align(0x1000, UEFI_POOL_ALIGN)
+                        .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err)),
+                )
+                .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err));
 
-        let allocation_info: *mut AllocationInfo = ((buffer as usize) - offset) as *mut AllocationInfo;
-        unsafe {
-            let allocation_info = &*allocation_info;
-            assert_eq!(allocation_info.signature, POOL_SIG);
-            assert_eq!(allocation_info.memory_type, efi::BOOT_SERVICES_DATA);
-            assert_eq!(allocation_info.layout, layout)
-        }
+            let allocation_info: *mut AllocationInfo = ((buffer as usize) - offset) as *mut AllocationInfo;
+            unsafe {
+                let allocation_info = &*allocation_info;
+                assert_eq!(allocation_info.signature, POOL_SIG);
+                assert_eq!(allocation_info.memory_type, efi::BOOT_SERVICES_DATA);
+                assert_eq!(allocation_info.layout, layout)
+            }
+        });
     }
 
     #[test]
     fn test_free_pool() {
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        let base = init_gcd(&GCD, 0x400000);
+            let base = init_gcd(&GCD, 0x400000);
 
-        let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
 
-        let mut buffer: *mut c_void = core::ptr::null_mut();
-        assert_eq!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }, efi::Status::SUCCESS);
+            let mut buffer: *mut c_void = core::ptr::null_mut();
+            assert_eq!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }, efi::Status::SUCCESS);
 
-        assert!(unsafe { ua.free_pool(buffer) } == efi::Status::SUCCESS);
+            assert!(unsafe { ua.free_pool(buffer) } == efi::Status::SUCCESS);
 
-        let (_, offset) = Layout::new::<AllocationInfo>()
-            .extend(
-                Layout::from_size_align(0x1000, UEFI_POOL_ALIGN)
-                    .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err)),
-            )
-            .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err));
+            let (_, offset) = Layout::new::<AllocationInfo>()
+                .extend(
+                    Layout::from_size_align(0x1000, UEFI_POOL_ALIGN)
+                        .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err)),
+                )
+                .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err));
 
-        let allocation_info: *mut AllocationInfo = ((buffer as usize) - offset) as *mut AllocationInfo;
-        unsafe {
-            let allocation_info = &*allocation_info;
-            assert_eq!(allocation_info.signature, 0);
-        }
+            let allocation_info: *mut AllocationInfo = ((buffer as usize) - offset) as *mut AllocationInfo;
+            unsafe {
+                let allocation_info = &*allocation_info;
+                assert_eq!(allocation_info.signature, 0);
+            }
 
-        let prev_buffer = buffer;
-        assert_eq!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }, efi::Status::SUCCESS);
-        assert!(buffer as u64 > base);
-        assert!((buffer as u64) < base + 0x400000);
-        assert_eq!(buffer, prev_buffer);
+            let prev_buffer = buffer;
+            assert_eq!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }, efi::Status::SUCCESS);
+            assert!(buffer as u64 > base);
+            assert!((buffer as u64) < base + 0x400000);
+            assert_eq!(buffer, prev_buffer);
+        });
     }
 
     #[test]
     fn test_allocate_and_free_pages() {
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        let base = init_gcd(&GCD, 0x400000);
+            let base = init_gcd(&GCD, 0x400000);
 
-        let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
 
-        let buffer = ua.allocate_pages(AllocationStrategy::BottomUp(None), 4).unwrap();
-        let buffer_address = buffer.as_ptr() as *mut u8 as u64;
-        assert_eq!(buffer_address & 0xFFF, 0); // must be page aligned.
-        assert_eq!(buffer.len(), 0x1000 * 4); //should be 4 pages in size.
-        assert!(buffer_address >= base);
-        assert!(buffer_address < base + 0x400000);
+            let buffer = ua.allocate_pages(AllocationStrategy::BottomUp(None), 4).unwrap();
+            let buffer_address = buffer.as_ptr() as *mut u8 as u64;
+            assert_eq!(buffer_address & 0xFFF, 0); // must be page aligned.
+            assert_eq!(buffer.len(), 0x1000 * 4); //should be 4 pages in size.
+            assert!(buffer_address >= base);
+            assert!(buffer_address < base + 0x400000);
 
-        unsafe {
-            ua.free_pages(buffer_address as usize, 4).unwrap();
-        }
+            unsafe {
+                ua.free_pages(buffer_address as usize, 4).unwrap();
+            }
 
-        let buffer = ua.allocate_pages(AllocationStrategy::Address(buffer_address as usize), 4).unwrap();
-        let buffer_address2 = buffer.as_ptr() as *mut u8 as u64;
-        assert_eq!(buffer_address, buffer_address2);
-        assert_eq!(buffer.len(), 0x1000 * 4); //should be 4 pages in size.
+            let buffer = ua.allocate_pages(AllocationStrategy::Address(buffer_address as usize), 4).unwrap();
+            let buffer_address2 = buffer.as_ptr() as *mut u8 as u64;
+            assert_eq!(buffer_address, buffer_address2);
+            assert_eq!(buffer.len(), 0x1000 * 4); //should be 4 pages in size.
 
-        unsafe {
-            ua.free_pages(buffer_address2 as usize, 4).unwrap();
-        }
+            unsafe {
+                ua.free_pages(buffer_address2 as usize, 4).unwrap();
+            }
+        });
     }
 
     #[test]
     fn test_system_alloc_dealloc() {
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
-        let _ = init_gcd(&GCD, 0x400000);
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
+            let _ = init_gcd(&GCD, 0x400000);
 
-        let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
 
-        let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-        unsafe {
-            let a = ua.alloc(layout);
-            ua.dealloc(a, layout)
-        }
+            let layout = Layout::from_size_align(0x8, 0x8).unwrap();
+            unsafe {
+                let a = ua.alloc(layout);
+                ua.dealloc(a, layout)
+            }
 
-        unsafe {
-            let a = ua.alloc(layout);
-            ua.deallocate(NonNull::new_unchecked(a), layout);
-        }
+            unsafe {
+                let a = ua.alloc(layout);
+                ua.deallocate(NonNull::new_unchecked(a), layout);
+            }
+        });
     }
 
     #[test]
     fn test_contains() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            init_gcd(&GCD, 0x400000);
 
-        let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
 
-        let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-        let allocation = ua.allocate(layout).unwrap().as_non_null_ptr();
-        assert!(ua.contains(allocation));
+            let layout = Layout::from_size_align(0x8, 0x8).unwrap();
+            let allocation = ua.allocate(layout).unwrap().as_non_null_ptr();
+            assert!(ua.contains(allocation));
+        });
     }
 
     #[test]
     fn test_uefi_allocator_fn_conformance() {
-        // Create a static GCD
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        // Allocate some space on the heap with the global allocator (std) to be used by expand().
-        init_gcd(&GCD, 0x400000);
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            init_gcd(&GCD, 0x400000);
 
-        let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
-        assert_eq!(ua.memory_type(), efi::BOOT_SERVICES_DATA);
-        assert_eq!(ua.handle(), 1 as _);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            assert_eq!(ua.memory_type(), efi::BOOT_SERVICES_DATA);
+            assert_eq!(ua.handle(), 1 as _);
 
-        assert_eq!(std::format!("{}", ua), "Memory Type: BootServices Data Allocation Ranges:\n");
+            assert_eq!(std::format!("{}", ua), "Memory Type: BootServices Data Allocation Ranges:\n");
+        });
     }
 
     #[test]
@@ -435,153 +458,162 @@ mod tests {
 
     #[test]
     fn reserve_memory_pages_reserves_the_pages() {
-        use std::println;
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
+        with_locked_state(|| {
+            use std::println;
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
 
-        let base = init_gcd(&GCD, 0x400000);
-        let gcd_range = base..base + 0x400000;
+            let base = init_gcd(&GCD, 0x400000);
+            let gcd_range = base..base + 0x400000;
 
-        let reserved_allocator = UefiAllocator::new(&GCD, efi::RUNTIME_SERVICES_DATA, 1 as _, None);
-        reserved_allocator.reserve_memory_pages(0x100).unwrap();
+            let reserved_allocator = UefiAllocator::new(&GCD, efi::RUNTIME_SERVICES_DATA, 1 as _, None);
+            reserved_allocator.reserve_memory_pages(0x100).unwrap();
 
-        let unreserved_allocator = UefiAllocator::new(&GCD, efi::LOADER_DATA, 2 as _, None);
+            let unreserved_allocator = UefiAllocator::new(&GCD, efi::LOADER_DATA, 2 as _, None);
 
-        //check that the ranges are set up.
-        let allocator = reserved_allocator.allocator.lock();
-        let preferred_range = allocator.preferred_range.clone().unwrap();
-        assert!(gcd_range.contains(&preferred_range.start));
-        assert!(gcd_range.contains(&(preferred_range.end - 1)));
-        drop(allocator);
+            //check that the ranges are set up.
+            let allocator = reserved_allocator.allocator.lock();
+            let preferred_range = allocator.preferred_range.clone().unwrap();
+            assert!(gcd_range.contains(&preferred_range.start));
+            assert!(gcd_range.contains(&(preferred_range.end - 1)));
+            drop(allocator);
 
-        let allocator = unreserved_allocator.allocator.lock();
-        assert!(allocator.preferred_range.is_none());
-        drop(allocator);
+            let allocator = unreserved_allocator.allocator.lock();
+            assert!(allocator.preferred_range.is_none());
+            drop(allocator);
 
-        println!("preferred range: {:#x?}", preferred_range);
-        //verify that the first 0x100 pages from the reserved allocator are in the preferred_range, and that allocating
-        //from the unreserved allocator at the same time doesn't allocate from the preferred range or cause the reserved
-        //allocator to fail in any way.
-        for _page in 0..0x100 {
+            println!("preferred range: {:#x?}", preferred_range);
+            //verify that the first 0x100 pages from the reserved allocator are in the preferred_range, and that allocating
+            //from the unreserved allocator at the same time doesn't allocate from the preferred range or cause the reserved
+            //allocator to fail in any way.
+            for _page in 0..0x100 {
+                let reserved_page = reserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
+                let reserved_page_addr = reserved_page.as_ptr() as *mut u8 as u64;
+                println!("reserved page address: {:#x?}", reserved_page_addr);
+                assert!(preferred_range.contains(&(reserved_page_addr)));
+                assert!(preferred_range.contains(&(reserved_page_addr + 0xFFF)));
+
+                let unreserved_page =
+                    unreserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
+                let unreserved_page_addr = unreserved_page.as_ptr() as *mut u8 as u64;
+                println!("unreserved page address: {:#x?}", unreserved_page_addr);
+                assert!(!preferred_range.contains(&(unreserved_page_addr)));
+                assert!(!preferred_range.contains(&(unreserved_page_addr + 0xFFF)));
+            }
+
+            //verify that further page allocations from the reserved allocator are outside the preferred range but succeed.
             let reserved_page = reserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
             let reserved_page_addr = reserved_page.as_ptr() as *mut u8 as u64;
             println!("reserved page address: {:#x?}", reserved_page_addr);
-            assert!(preferred_range.contains(&(reserved_page_addr)));
-            assert!(preferred_range.contains(&(reserved_page_addr + 0xFFF)));
+            assert!(!preferred_range.contains(&(reserved_page_addr)));
+            assert!(!preferred_range.contains(&(reserved_page_addr + 0xFFF)));
 
+            //verify that if the reserved allocation that is not in the preferred range is freed, other allocators can
+            //use it.
+            unsafe {
+                reserved_allocator.free_pages(reserved_page_addr as usize, 1).unwrap();
+            }
             let unreserved_page = unreserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
             let unreserved_page_addr = unreserved_page.as_ptr() as *mut u8 as u64;
-            println!("unreserved page address: {:#x?}", unreserved_page_addr);
+            assert_eq!(
+                reserved_page_addr, unreserved_page_addr,
+                "reserved_page_addr: {:#x?}, unreserved_page_addr: {:#x?}",
+                reserved_page_addr, unreserved_page_addr
+            );
+
+            //verify that if pages are freed within the preferred range, that other allocators cannot use them.
+            unsafe {
+                reserved_allocator.free_pages(preferred_range.start as usize, 0x10).unwrap();
+            }
+            let unreserved_page = unreserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
+            let unreserved_page_addr = unreserved_page.as_ptr() as *mut u8 as u64;
             assert!(!preferred_range.contains(&(unreserved_page_addr)));
             assert!(!preferred_range.contains(&(unreserved_page_addr + 0xFFF)));
-        }
 
-        //verify that further page allocations from the reserved allocator are outside the preferred range but succeed.
-        let reserved_page = reserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
-        let reserved_page_addr = reserved_page.as_ptr() as *mut u8 as u64;
-        println!("reserved page address: {:#x?}", reserved_page_addr);
-        assert!(!preferred_range.contains(&(reserved_page_addr)));
-        assert!(!preferred_range.contains(&(reserved_page_addr + 0xFFF)));
-
-        //verify that if the reserved allocation that is not in the preferred range is freed, other allocators can
-        //use it.
-        unsafe {
-            reserved_allocator.free_pages(reserved_page_addr as usize, 1).unwrap();
-        }
-        let unreserved_page = unreserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
-        let unreserved_page_addr = unreserved_page.as_ptr() as *mut u8 as u64;
-        assert_eq!(
-            reserved_page_addr, unreserved_page_addr,
-            "reserved_page_addr: {:#x?}, unreserved_page_addr: {:#x?}",
-            reserved_page_addr, unreserved_page_addr
-        );
-
-        //verify that if pages are freed within the preferred range, that other allocators cannot use them.
-        unsafe {
-            reserved_allocator.free_pages(preferred_range.start as usize, 0x10).unwrap();
-        }
-        let unreserved_page = unreserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
-        let unreserved_page_addr = unreserved_page.as_ptr() as *mut u8 as u64;
-        assert!(!preferred_range.contains(&(unreserved_page_addr)));
-        assert!(!preferred_range.contains(&(unreserved_page_addr + 0xFFF)));
-
-        //verify that previously freed pags within the preferred range can be reused by the reserving allocator.
-        for _page in 0..0x10 {
-            let reserved_page = reserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
-            let reserved_page_addr = reserved_page.as_ptr() as *mut u8 as u64;
-            println!("reserved page address: {:#x?}", reserved_page_addr);
-            assert!(preferred_range.contains(&(reserved_page_addr)));
-            assert!(preferred_range.contains(&(reserved_page_addr + 0xFFF)));
-        }
+            //verify that previously freed pags within the preferred range can be reused by the reserving allocator.
+            for _page in 0..0x10 {
+                let reserved_page = reserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
+                let reserved_page_addr = reserved_page.as_ptr() as *mut u8 as u64;
+                println!("reserved page address: {:#x?}", reserved_page_addr);
+                assert!(preferred_range.contains(&(reserved_page_addr)));
+                assert!(preferred_range.contains(&(reserved_page_addr + 0xFFF)));
+            }
+        });
     }
 
     #[test]
     fn uefi_allocator_display_implementation() {
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
-        init_gcd(&GCD, 0x400000);
-        let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
-        println!("{:}", ua);
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
+            init_gcd(&GCD, 0x400000);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            println!("{:}", ua);
 
-        for (memory_type, name) in &[
-            (efi::LOADER_CODE, "Loader Code"),
-            (efi::LOADER_DATA, "Loader Data"),
-            (efi::BOOT_SERVICES_CODE, "BootServices Code"),
-            (efi::BOOT_SERVICES_DATA, "BootServices Data"),
-            (efi::RUNTIME_SERVICES_CODE, "RuntimeServices Code"),
-            (efi::RUNTIME_SERVICES_DATA, "RuntimeServices Data"),
-            (efi::ACPI_RECLAIM_MEMORY, "ACPI Reclaim"),
-            (efi::ACPI_MEMORY_NVS, "ACPI NVS"),
-            (efi::RESERVED_MEMORY_TYPE, "Unknown"),
-        ] {
-            assert_eq!(string_for_memory_type(*memory_type), *name);
-        }
+            for (memory_type, name) in &[
+                (efi::LOADER_CODE, "Loader Code"),
+                (efi::LOADER_DATA, "Loader Data"),
+                (efi::BOOT_SERVICES_CODE, "BootServices Code"),
+                (efi::BOOT_SERVICES_DATA, "BootServices Data"),
+                (efi::RUNTIME_SERVICES_CODE, "RuntimeServices Code"),
+                (efi::RUNTIME_SERVICES_DATA, "RuntimeServices Data"),
+                (efi::ACPI_RECLAIM_MEMORY, "ACPI Reclaim"),
+                (efi::ACPI_MEMORY_NVS, "ACPI NVS"),
+                (efi::RESERVED_MEMORY_TYPE, "Unknown"),
+            ] {
+                assert_eq!(string_for_memory_type(*memory_type), *name);
+            }
+        });
     }
 
     #[test]
     fn test_ensure_capacity() {
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
-        init_gcd(&GCD, 0x400000);
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
+            init_gcd(&GCD, 0x400000);
 
-        let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
 
-        // Ensure capacity for a small allocation
-        assert_eq!(ua.ensure_capacity(0x1000, 0x8), Ok(()));
+            // Ensure capacity for a small allocation
+            assert_eq!(ua.ensure_capacity(0x1000, 0x8), Ok(()));
 
-        // Ensure capacity for a larger allocation
-        assert_eq!(ua.ensure_capacity(0x10000, 0x1000), Ok(()));
+            // Ensure capacity for a larger allocation
+            assert_eq!(ua.ensure_capacity(0x10000, 0x1000), Ok(()));
+        });
     }
 
     #[test]
     fn test_allocate_pool_with_ensure_capacity() {
-        static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-        GCD.init(48, 16);
-        let base = init_gcd(&GCD, 0x400000);
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
+            let base = init_gcd(&GCD, 0x400000);
 
-        let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
 
-        // Ensure capacity before allocation
-        assert_eq!(ua.ensure_capacity(0x1000, 0x8), Ok(()));
+            // Ensure capacity before allocation
+            assert_eq!(ua.ensure_capacity(0x1000, 0x8), Ok(()));
 
-        let mut buffer: *mut c_void = core::ptr::null_mut();
-        assert_eq!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }, efi::Status::SUCCESS);
-        assert!(buffer as u64 > base);
-        assert!((buffer as u64) < base + 0x400000);
+            let mut buffer: *mut c_void = core::ptr::null_mut();
+            assert_eq!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }, efi::Status::SUCCESS);
+            assert!(buffer as u64 > base);
+            assert!((buffer as u64) < base + 0x400000);
 
-        let (layout, offset) = Layout::new::<AllocationInfo>()
-            .extend(
-                Layout::from_size_align(0x1000, UEFI_POOL_ALIGN)
-                    .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err)),
-            )
-            .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err));
+            let (layout, offset) = Layout::new::<AllocationInfo>()
+                .extend(
+                    Layout::from_size_align(0x1000, UEFI_POOL_ALIGN)
+                        .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err)),
+                )
+                .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err));
 
-        let allocation_info: *mut AllocationInfo = ((buffer as usize) - offset) as *mut AllocationInfo;
-        unsafe {
-            let allocation_info = &*allocation_info;
-            assert_eq!(allocation_info.signature, POOL_SIG);
-            assert_eq!(allocation_info.memory_type, efi::BOOT_SERVICES_DATA);
-            assert_eq!(allocation_info.layout, layout)
-        }
+            let allocation_info: *mut AllocationInfo = ((buffer as usize) - offset) as *mut AllocationInfo;
+            unsafe {
+                let allocation_info = &*allocation_info;
+                assert_eq!(allocation_info.signature, POOL_SIG);
+                assert_eq!(allocation_info.memory_type, efi::BOOT_SERVICES_DATA);
+                assert_eq!(allocation_info.layout, layout)
+            }
+        });
     }
 }

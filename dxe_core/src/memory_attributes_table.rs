@@ -282,7 +282,9 @@ mod tests {
 
     #[test]
     fn test_mat_init() {
-        init_memory_attributes_table_support();
+        with_locked_state(|| {
+            init_memory_attributes_table_support();
+        });
     }
 
     #[test]
