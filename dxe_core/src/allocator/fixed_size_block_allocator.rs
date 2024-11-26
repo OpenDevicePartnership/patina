@@ -403,6 +403,16 @@ impl FixedSizeBlockAllocator {
             return Err(efi::Status::INVALID_PARAMETER);
         }
 
+        let descriptor =
+            self.gcd.get_memory_descriptor_for_address(address as efi::PhysicalAddress).map_err(|err| match err {
+                gcd::Error::NotFound => efi::Status::NOT_FOUND,
+                _ => efi::Status::INVALID_PARAMETER,
+            })?;
+
+        if descriptor.image_handle != self.handle {
+            Err(efi::Status::NOT_FOUND)?;
+        }
+
         if self.preferred_range.as_ref().is_some_and(|range| range.contains(&(address as efi::PhysicalAddress))) {
             self.gcd.free_memory_space_preserving_ownership(address, pages * ALIGNMENT).map_err(|err| match err {
                 gcd::Error::NotFound => efi::Status::NOT_FOUND,

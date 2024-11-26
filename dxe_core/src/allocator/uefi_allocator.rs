@@ -364,7 +364,7 @@ mod tests {
             let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
 
             let buffer = ua.allocate_pages(AllocationStrategy::BottomUp(None), 4).unwrap();
-            let buffer_address = buffer.as_ptr() as *mut u8 as u64;
+            let buffer_address = buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
             assert_eq!(buffer_address & 0xFFF, 0); // must be page aligned.
             assert_eq!(buffer.len(), 0x1000 * 4); //should be 4 pages in size.
             assert!(buffer_address >= base);
@@ -375,12 +375,39 @@ mod tests {
             }
 
             let buffer = ua.allocate_pages(AllocationStrategy::Address(buffer_address as usize), 4).unwrap();
-            let buffer_address2 = buffer.as_ptr() as *mut u8 as u64;
+            let buffer_address2 = buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
             assert_eq!(buffer_address, buffer_address2);
             assert_eq!(buffer.len(), 0x1000 * 4); //should be 4 pages in size.
 
             unsafe {
                 ua.free_pages(buffer_address2 as usize, 4).unwrap();
+            }
+        });
+    }
+
+    #[test]
+    fn free_pages_should_only_succeed_in_the_source_allocator() {
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
+
+            init_gcd(&GCD, 0x400000);
+
+            let bs_allocator = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, None);
+            let bc_allocator = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_CODE, 2 as _, None);
+
+            let bs_buffer = bs_allocator.allocate_pages(AllocationStrategy::BottomUp(None), 4).unwrap();
+            let bc_buffer = bc_allocator.allocate_pages(AllocationStrategy::BottomUp(None), 4).unwrap();
+
+            let bs_buffer_address = bs_buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
+            let bc_buffer_address = bc_buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
+
+            unsafe {
+                assert_eq!(bs_allocator.free_pages(bc_buffer_address as usize, 4), Err(efi::Status::NOT_FOUND));
+                assert_eq!(bc_allocator.free_pages(bs_buffer_address as usize, 4), Err(efi::Status::NOT_FOUND));
+
+                bs_allocator.free_pages(bs_buffer_address as usize, 4).unwrap();
+                bc_allocator.free_pages(bc_buffer_address as usize, 4).unwrap();
             }
         });
     }
