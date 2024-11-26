@@ -37,6 +37,9 @@ pub use fixed_size_block_allocator::FixedSizeBlockAllocator;
 
 use uefi_sdk::{base::UEFI_PAGE_SIZE, uefi_size_to_pages};
 
+// Allocation Strategy when not specified by caller.
+const DEFAULT_ALLOCATION_STRATEGY: AllocationStrategy = AllocationStrategy::TopDown(None);
+
 // Private tracking guid used to generate new handles for allocator tracking
 // {9D1FA6E9-0C86-4F7F-A99B-DD229C9B3893}
 const PRIVATE_ALLOCATOR_TRACKING_GUID: efi::Guid =
@@ -426,7 +429,7 @@ pub fn core_allocate_pages(
     match ALLOCATORS.lock().get_or_create_allocator(memory_type, handle) {
         Ok(allocator) => {
             let result = match allocation_type {
-                efi::ALLOCATE_ANY_PAGES => allocator.allocate_pages(AllocationStrategy::TopDown(None), pages),
+                efi::ALLOCATE_ANY_PAGES => allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages),
                 efi::ALLOCATE_MAX_ADDRESS => {
                     let address = unsafe { memory.as_ref().expect("checked non-null is null") };
                     allocator.allocate_pages(AllocationStrategy::BottomUp(Some(*address as usize)), pages)

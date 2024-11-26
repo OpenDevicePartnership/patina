@@ -11,7 +11,7 @@
 //!
 
 extern crate alloc;
-use super::AllocationStrategy;
+use super::{AllocationStrategy, DEFAULT_ALLOCATION_STRATEGY};
 use crate::{
     gcd::{self, SpinLockedGcd},
     tpl_lock,
@@ -217,7 +217,7 @@ impl FixedSizeBlockAllocator {
         let start_address = self
             .gcd
             .allocate_memory_space(
-                gcd::AllocateType::BottomUp(None),
+                DEFAULT_ALLOCATION_STRATEGY,
                 GcdMemoryType::SystemMemory,
                 UEFI_PAGE_SHIFT,
                 size,
@@ -522,7 +522,7 @@ impl FixedSizeBlockAllocator {
         // any general allocations are serviced; that way all "owned" memory is in prime position before any "unowned"
         // memory.
         //
-        let preferred_block = self.allocate_pages(AllocationStrategy::BottomUp(None), pages)?;
+        let preferred_block = self.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages)?;
         let preferred_block_address = preferred_block.as_ptr() as *mut u8 as efi::PhysicalAddress;
 
         // this will fail if called more than once, but check at start of function should guarantee that doesn't happen.
@@ -893,7 +893,7 @@ mod tests {
             let allocation = fsb.fallback_alloc(layout);
             assert!(fsb.allocators.is_some());
             assert!((allocation as u64) > base);
-            assert!((allocation as u64) < base + MIN_EXPANSION as u64);
+            assert!((allocation as u64) < base + 0x400000);
         });
     }
 
@@ -914,7 +914,7 @@ mod tests {
             let allocation = unsafe { fsb.alloc(layout) };
             assert!(fsb.lock().allocators.is_some());
             assert!((allocation as u64) > base);
-            assert!((allocation as u64) < base + MIN_EXPANSION as u64);
+            assert!((allocation as u64) < base + 0x400000);
         });
     }
 
@@ -935,7 +935,7 @@ mod tests {
             let allocation = fsb.allocate(layout).unwrap().as_ptr() as *mut u8;
             assert!(fsb.lock().allocators.is_some());
             assert!((allocation as u64) > base);
-            assert!((allocation as u64) < base + MIN_EXPANSION as u64);
+            assert!((allocation as u64) < base + 0x400000);
         });
     }
 
@@ -1215,7 +1215,7 @@ mod tests {
             let _ = init_gcd(&GCD, 0x400000);
 
             let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
-            fsb.allocate_pages(AllocationStrategy::BottomUp(None), 5).unwrap();
+            fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 5).unwrap();
 
             let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
             fsb.expand(layout).unwrap();
@@ -1242,7 +1242,7 @@ mod tests {
 
             // Test ensuring capacity when out of memory
             // Allocate all available memory
-            fsb.allocate_pages(AllocationStrategy::TopDown(None), 0x2A0).unwrap();
+            fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 0x2A0).unwrap();
             assert_eq!(fsb.ensure_capacity(0x100000, 0x10), Err(FixedSizeBlockAllocatorError::OutOfMemory));
         });
     }
@@ -1383,7 +1383,7 @@ mod tests {
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
 
             // test that a small page allocation fits in the 1MB free reserved region.
-            let ptr = fsb.allocate_pages(AllocationStrategy::BottomUp(None), 0x4).unwrap().as_ptr();
+            let ptr = fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 0x4).unwrap().as_ptr();
 
             //after this allocate_pages, the basic memory map of the FSB should look like:
             //1MB range as a result of previous pool allocation expand - available for pool allocation.
@@ -1421,7 +1421,7 @@ mod tests {
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
 
             //test that a lage page allocation results in more claimed pages.
-            let ptr = fsb.allocate_pages(AllocationStrategy::BottomUp(None), 0x104).unwrap().as_ptr();
+            let ptr = fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 0x104).unwrap().as_ptr();
 
             //after this allocate_pages, the basic memory map of the FSB should look like:
             //1MB range as a result of previous pool allocation expand - available for pool allocation.
@@ -1440,7 +1440,7 @@ mod tests {
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1 + 0x104);
 
             // test that a small page allocation fits in the 1MB free reserved region.
-            let ptr1 = fsb.allocate_pages(AllocationStrategy::BottomUp(None), 0x4).unwrap().as_ptr();
+            let ptr1 = fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 0x4).unwrap().as_ptr();
 
             //after this allocate_pages, the basic memory map of the FSB should look like:
             //1MB range as a result of previous pool allocation expand - available for pool allocation.
