@@ -50,7 +50,7 @@ impl UefiAllocator {
         page_change_callback: Option<fn()>,
     ) -> Self {
         UefiAllocator {
-            allocator: SpinLockedFixedSizeBlockAllocator::new(gcd, allocator_handle, page_change_callback),
+            allocator: SpinLockedFixedSizeBlockAllocator::new(gcd, allocator_handle, memory_type, page_change_callback),
             memory_type,
         }
     }
