@@ -685,12 +685,15 @@ impl SpinLockedFixedSizeBlockAllocator {
         self.inner.lock().preferred_range.clone()
     }
 
+    /// Returns the memory type for this allocator.
+    #[allow(dead_code)]
     pub fn memory_type(&self) -> efi::MemoryType {
         self.inner.lock().memory_type
     }
 
     /// Returns allocation statistics for this allocator.
-    pub fn allocation_statistics(&self) -> AllocationStatistics {
+    #[allow(dead_code)]
+    pub fn stats(&self) -> AllocationStatistics {
         *self.inner.lock().stats()
     }
 }
@@ -1296,7 +1299,7 @@ mod tests {
             let fsb =
                 SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
-            let stats = fsb.allocation_statistics();
+            let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 0);
             assert_eq!(stats.pool_free_calls, 0);
             assert_eq!(stats.page_allocation_calls, 0);
@@ -1308,7 +1311,7 @@ mod tests {
             //reserve some space and check the stats.
             fsb.reserve_memory_pages(uefi_size_to_pages!(MIN_EXPANSION * 2)).unwrap();
 
-            let stats = fsb.allocation_statistics();
+            let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 0);
             assert_eq!(stats.pool_free_calls, 0);
             assert_eq!(stats.page_allocation_calls, 1);
@@ -1320,7 +1323,7 @@ mod tests {
             //test alloc/deallocate and stats within the bucket
             let ptr = unsafe { fsb.alloc(Layout::from_size_align(0x100, 0x8).unwrap()) };
 
-            let stats = fsb.allocation_statistics();
+            let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 1);
             assert_eq!(stats.pool_free_calls, 0);
             assert_eq!(stats.page_allocation_calls, 1);
@@ -1333,7 +1336,7 @@ mod tests {
                 fsb.dealloc(ptr, Layout::from_size_align(0x100, 0x8).unwrap());
             }
 
-            let stats = fsb.allocation_statistics();
+            let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 1);
             assert_eq!(stats.pool_free_calls, 1);
             assert_eq!(stats.page_allocation_calls, 1);
@@ -1351,7 +1354,7 @@ mod tests {
             //1MB free but owned by the allocator (not pool) as a result of 2MB reservation.
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node.
 
-            let stats = fsb.allocation_statistics();
+            let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 1);
             assert_eq!(stats.page_allocation_calls, 1);
@@ -1370,7 +1373,7 @@ mod tests {
             //1MB free but owned by the allocator (not pool) as a result of 2MB reservation.
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
 
-            let stats = fsb.allocation_statistics();
+            let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 1);
@@ -1389,7 +1392,7 @@ mod tests {
             //1MB-16k free but owned by the allocator (not pool) as a result of 2MB reservation.
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
 
-            let stats = fsb.allocation_statistics();
+            let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 2);
@@ -1408,7 +1411,7 @@ mod tests {
             //1MB free but owned by the allocator (not pool) as a result of 2MB reservation.
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
 
-            let stats = fsb.allocation_statistics();
+            let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 2);
@@ -1427,7 +1430,7 @@ mod tests {
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
             //104 pages (1MB+16K) page as a result of allocation.
 
-            let stats = fsb.allocation_statistics();
+            let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 3);
@@ -1447,7 +1450,7 @@ mod tests {
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
             //104 pages (1MB+16K) page as a result of allocation.
 
-            let stats = fsb.allocation_statistics();
+            let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 4);
@@ -1469,7 +1472,7 @@ mod tests {
             //1MB free but owned by the allocator (not pool) as a result of 2MB reservation.
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
 
-            let stats = fsb.allocation_statistics();
+            let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 4);
