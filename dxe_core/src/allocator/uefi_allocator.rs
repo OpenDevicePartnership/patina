@@ -466,7 +466,21 @@ mod tests {
             assert_eq!(ua.memory_type(), efi::BOOT_SERVICES_DATA);
             assert_eq!(ua.handle(), 1 as _);
 
-            assert_eq!(std::format!("{}", ua), "Memory Type: BootServices Data Allocation Ranges:\n");
+            assert_eq!(
+                std::format!("{}", ua),
+                concat!(
+                    "Memory Type: BootServices Data Allocation Ranges:\n",
+                    "Bucket Range: None\n",
+                    "Allocation Stats:\n",
+                    "  pool_allocation_calls: 0\n",
+                    "  pool_free_calls: 0\n",
+                    "  page_allocation_calls: 0\n",
+                    "  page_free_calls: 0\n",
+                    "  reserved_size: 0\n",
+                    "  reserved_used: 0\n",
+                    "  claimed_pages: 0\n"
+                )
+            );
         });
     }
 
@@ -514,14 +528,14 @@ mod tests {
             //from the unreserved allocator at the same time doesn't allocate from the preferred range or cause the reserved
             //allocator to fail in any way.
             for _page in 0..0x100 {
-                let reserved_page = reserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
+                let reserved_page = reserved_allocator.allocate_pages(AllocationStrategy::BottomUp(None), 1).unwrap();
                 let reserved_page_addr = reserved_page.as_ptr() as *mut u8 as u64;
                 println!("reserved page address: {:#x?}", reserved_page_addr);
                 assert!(preferred_range.contains(&(reserved_page_addr)));
                 assert!(preferred_range.contains(&(reserved_page_addr + 0xFFF)));
 
                 let unreserved_page =
-                    unreserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
+                    unreserved_allocator.allocate_pages(AllocationStrategy::BottomUp(None), 1).unwrap();
                 let unreserved_page_addr = unreserved_page.as_ptr() as *mut u8 as u64;
                 println!("unreserved page address: {:#x?}", unreserved_page_addr);
                 assert!(!preferred_range.contains(&(unreserved_page_addr)));
@@ -529,7 +543,7 @@ mod tests {
             }
 
             //verify that further page allocations from the reserved allocator are outside the preferred range but succeed.
-            let reserved_page = reserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
+            let reserved_page = reserved_allocator.allocate_pages(AllocationStrategy::BottomUp(None), 1).unwrap();
             let reserved_page_addr = reserved_page.as_ptr() as *mut u8 as u64;
             println!("reserved page address: {:#x?}", reserved_page_addr);
             assert!(!preferred_range.contains(&(reserved_page_addr)));
@@ -540,7 +554,7 @@ mod tests {
             unsafe {
                 reserved_allocator.free_pages(reserved_page_addr as usize, 1).unwrap();
             }
-            let unreserved_page = unreserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
+            let unreserved_page = unreserved_allocator.allocate_pages(AllocationStrategy::BottomUp(None), 1).unwrap();
             let unreserved_page_addr = unreserved_page.as_ptr() as *mut u8 as u64;
             assert_eq!(
                 reserved_page_addr, unreserved_page_addr,
@@ -552,14 +566,14 @@ mod tests {
             unsafe {
                 reserved_allocator.free_pages(preferred_range.start as usize, 0x10).unwrap();
             }
-            let unreserved_page = unreserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
+            let unreserved_page = unreserved_allocator.allocate_pages(AllocationStrategy::BottomUp(None), 1).unwrap();
             let unreserved_page_addr = unreserved_page.as_ptr() as *mut u8 as u64;
             assert!(!preferred_range.contains(&(unreserved_page_addr)));
             assert!(!preferred_range.contains(&(unreserved_page_addr + 0xFFF)));
 
             //verify that previously freed pags within the preferred range can be reused by the reserving allocator.
             for _page in 0..0x10 {
-                let reserved_page = reserved_allocator.allocate_pages(AllocationStrategy::TopDown(None), 1).unwrap();
+                let reserved_page = reserved_allocator.allocate_pages(AllocationStrategy::BottomUp(None), 1).unwrap();
                 let reserved_page_addr = reserved_page.as_ptr() as *mut u8 as u64;
                 println!("reserved page address: {:#x?}", reserved_page_addr);
                 assert!(preferred_range.contains(&(reserved_page_addr)));

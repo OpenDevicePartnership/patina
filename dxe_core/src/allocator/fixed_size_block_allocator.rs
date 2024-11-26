@@ -27,7 +27,7 @@ use core::{
 use linked_list_allocator::{align_down_size, align_up_size};
 use mu_pi::dxe_services::GcdMemoryType;
 use r_efi::efi;
-use uefi_sdk::base::UEFI_PAGE_SHIFT;
+use uefi_sdk::{base::UEFI_PAGE_SHIFT, uefi_size_to_pages};
 
 /// Type for describing errors that this implementation can produce.
 #[derive(Debug, PartialEq)]
@@ -83,6 +83,31 @@ impl Iterator for AllocatorIterator {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct AllocationStatistics {
+    pub pool_allocation_calls: usize,
+    pub pool_free_calls: usize,
+    pub page_allocation_calls: usize,
+    pub page_free_calls: usize,
+    pub reserved_size: usize,
+    pub reserved_used: usize,
+    pub claimed_pages: usize,
+}
+
+impl AllocationStatistics {
+    const fn new() -> Self {
+        Self {
+            pool_allocation_calls: 0,
+            pool_free_calls: 0,
+            page_allocation_calls: 0,
+            page_free_calls: 0,
+            reserved_size: 0,
+            reserved_used: 0,
+            claimed_pages: 0,
+        }
+    }
+}
+
 /// Fixed Size Block Allocator
 ///
 /// Implements an expandable memory allocator using fixed-sized blocks for speed backed by a linked-list allocator
@@ -95,6 +120,7 @@ pub struct FixedSizeBlockAllocator {
     list_heads: [Option<&'static mut BlockListNode>; BLOCK_SIZES.len()],
     allocators: Option<*mut AllocatorListNode>,
     pub(crate) preferred_range: Option<Range<efi::PhysicalAddress>>,
+    stats: AllocationStatistics,
     page_change_callback: Option<fn()>,
 }
 
@@ -113,6 +139,7 @@ impl FixedSizeBlockAllocator {
             list_heads: [EMPTY; BLOCK_SIZES.len()],
             allocators: None,
             preferred_range: None,
+            stats: AllocationStatistics::new(),
             page_change_callback,
         }
     }
@@ -197,6 +224,12 @@ impl FixedSizeBlockAllocator {
 
         self.allocators = Some(alloc_node_ptr);
 
+        if self.preferred_range.as_ref().is_some_and(|range| range.contains(&(start_address as efi::PhysicalAddress))) {
+            self.stats.reserved_used += size;
+        } else {
+            self.stats.claimed_pages += uefi_size_to_pages!(size);
+        }
+
         // if we managed to allocate pages, call into the page change callback to trigger a MAT update, if applicable
         if let Some(callback) = self.page_change_callback {
             callback();
@@ -234,6 +267,7 @@ impl FixedSizeBlockAllocator {
     ///
     /// Returns [`core::ptr::null_mut()`] on failure to allocate.
     pub fn alloc(&mut self, layout: Layout) -> *mut u8 {
+        self.stats.pool_allocation_calls += 1;
         match list_index(&layout) {
             Some(index) => {
                 match self.list_heads[index].take() {
@@ -298,6 +332,7 @@ impl FixedSizeBlockAllocator {
     ///
     /// Caller must ensure that `ptr` was created by a call to [`Self::alloc`] with the same `layout`.
     pub unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
+        self.stats.pool_free_calls += 1;
         match list_index(&layout) {
             Some(index) => {
                 let new_node = BlockListNode { next: self.list_heads[index].take() };
@@ -356,6 +391,7 @@ impl FixedSizeBlockAllocator {
         allocation_strategy: AllocationStrategy,
         pages: usize,
     ) -> Result<core::ptr::NonNull<[u8]>, efi::Status> {
+        self.stats.page_allocation_calls += 1;
         // validate allocation strategy addresses for direct address allocation is properly aligned.
         // for BottomUp and TopDown strategies, the address parameter doesn't have to be page-aligned, but
         // the resulting allocation will be page-aligned.
@@ -386,6 +422,12 @@ impl FixedSizeBlockAllocator {
         let allocation = slice_from_raw_parts_mut(start_address as *mut u8, pages * ALIGNMENT);
         let allocation = NonNull::new(allocation).ok_or(efi::Status::OUT_OF_RESOURCES)?;
 
+        if self.preferred_range.as_ref().is_some_and(|range| range.contains(&(start_address as efi::PhysicalAddress))) {
+            self.stats.reserved_used += pages * ALIGNMENT;
+        } else {
+            self.stats.claimed_pages += pages;
+        }
+
         // if we managed to allocate pages, call into the page change callback to trigger a MAT update, if applicable
         if let Some(callback) = self.page_change_callback {
             callback();
@@ -399,6 +441,7 @@ impl FixedSizeBlockAllocator {
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
     /// [Self::allocate_pages]
     pub unsafe fn free_pages(&mut self, address: usize, pages: usize) -> Result<(), efi::Status> {
+        self.stats.page_free_calls += 1;
         if address % ALIGNMENT != 0 {
             return Err(efi::Status::INVALID_PARAMETER);
         }
@@ -418,11 +461,14 @@ impl FixedSizeBlockAllocator {
                 gcd::Error::NotFound => efi::Status::NOT_FOUND,
                 _ => efi::Status::INVALID_PARAMETER,
             })?;
+            self.stats.reserved_used -= pages * ALIGNMENT;
+            // don't update claimed_pages stats here, because they are never actually "released".
         } else {
             self.gcd.free_memory_space(address, pages * ALIGNMENT).map_err(|err| match err {
                 gcd::Error::NotFound => efi::Status::NOT_FOUND,
                 _ => efi::Status::INVALID_PARAMETER,
             })?;
+            self.stats.claimed_pages -= pages;
         }
 
         // if we managed to allocate pages, call into the page change callback to trigger a MAT update, if applicable
@@ -462,19 +508,19 @@ impl FixedSizeBlockAllocator {
         // any general allocations are serviced; that way all "owned" memory is in prime position before any "unowned"
         // memory.
         //
-        let preferred_block = self.allocate_pages(AllocationStrategy::TopDown(None), pages)?;
+        let preferred_block = self.allocate_pages(AllocationStrategy::BottomUp(None), pages)?;
         let preferred_block_address = preferred_block.as_ptr() as *mut u8 as efi::PhysicalAddress;
-
-        self.gcd.free_memory_space_preserving_ownership(preferred_block_address as usize, pages * ALIGNMENT).map_err(
-            |err| match err {
-                gcd::Error::NotFound => efi::Status::NOT_FOUND,
-                _ => efi::Status::INVALID_PARAMETER,
-            },
-        )?;
 
         // this will fail if called more than once, but check at start of function should guarantee that doesn't happen.
         self.preferred_range =
             Some(preferred_block_address..preferred_block_address + (pages * ALIGNMENT) as efi::PhysicalAddress);
+
+        // update reserved stat here, since allocate_pages was not yet aware of preferred range to properly track.
+        self.stats.reserved_size = pages * ALIGNMENT;
+        self.stats.reserved_used += pages * ALIGNMENT;
+        unsafe {
+            self.free_pages(preferred_block_address as usize, pages).unwrap();
+        };
 
         Ok(())
     }
@@ -495,6 +541,15 @@ impl Display for FixedSizeBlockAllocator {
                 allocator.free(),
             )?;
         }
+        writeln!(f, "Bucket Range: {:x?}", self.preferred_range)?;
+        writeln!(f, "Allocation Stats:")?;
+        writeln!(f, "  pool_allocation_calls: {}", self.stats.pool_allocation_calls)?;
+        writeln!(f, "  pool_free_calls: {}", self.stats.pool_free_calls)?;
+        writeln!(f, "  page_allocation_calls: {}", self.stats.page_allocation_calls)?;
+        writeln!(f, "  page_free_calls: {}", self.stats.page_free_calls)?;
+        writeln!(f, "  reserved_size: {}", self.stats.reserved_size)?;
+        writeln!(f, "  reserved_used: {}", self.stats.reserved_used)?;
+        writeln!(f, "  claimed_pages: {}", self.stats.claimed_pages)?;
         Ok(())
     }
 }
@@ -620,6 +675,11 @@ impl SpinLockedFixedSizeBlockAllocator {
     pub fn preferred_range(&self) -> Option<Range<efi::PhysicalAddress>> {
         self.inner.lock().preferred_range.clone()
     }
+
+    /// Returns allocation statistics for this allocator.
+    pub fn allocation_statistics(&self) -> AllocationStatistics {
+        self.inner.lock().stats
+    }
 }
 
 unsafe impl GlobalAlloc for SpinLockedFixedSizeBlockAllocator {
@@ -654,6 +714,8 @@ mod tests {
     extern crate std;
     use core::alloc::GlobalAlloc;
     use std::alloc::System;
+
+    use uefi_sdk::uefi_pages_to_size;
 
     use crate::test_support;
 
@@ -1190,6 +1252,203 @@ mod tests {
                 fsb.ensure_capacity(0x1000, usize::MAX).unwrap();
             });
             assert!(result.is_err())
+        });
+    }
+
+    #[test]
+    fn test_allocation_stats() {
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
+
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            let _ = init_gcd(&GCD, 0x1000000);
+
+            // Make a fixed-sized-block allocator
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, None);
+
+            let stats = fsb.allocation_statistics();
+            assert_eq!(stats.pool_allocation_calls, 0);
+            assert_eq!(stats.pool_free_calls, 0);
+            assert_eq!(stats.page_allocation_calls, 0);
+            assert_eq!(stats.page_free_calls, 0);
+            assert_eq!(stats.reserved_size, 0);
+            assert_eq!(stats.reserved_used, 0);
+            assert_eq!(stats.claimed_pages, 0);
+
+            //reserve some space and check the stats.
+            fsb.reserve_memory_pages(uefi_size_to_pages!(MIN_EXPANSION * 2)).unwrap();
+
+            let stats = fsb.allocation_statistics();
+            assert_eq!(stats.pool_allocation_calls, 0);
+            assert_eq!(stats.pool_free_calls, 0);
+            assert_eq!(stats.page_allocation_calls, 1);
+            assert_eq!(stats.page_free_calls, 1);
+            assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
+            assert_eq!(stats.reserved_used, 0);
+            assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 2));
+
+            //test alloc/deallocate and stats within the bucket
+            let ptr = unsafe { fsb.alloc(Layout::from_size_align(0x100, 0x8).unwrap()) };
+
+            let stats = fsb.allocation_statistics();
+            assert_eq!(stats.pool_allocation_calls, 1);
+            assert_eq!(stats.pool_free_calls, 0);
+            assert_eq!(stats.page_allocation_calls, 1);
+            assert_eq!(stats.page_free_calls, 1);
+            assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION);
+            assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 2));
+
+            unsafe {
+                fsb.dealloc(ptr, Layout::from_size_align(0x100, 0x8).unwrap());
+            }
+
+            let stats = fsb.allocation_statistics();
+            assert_eq!(stats.pool_allocation_calls, 1);
+            assert_eq!(stats.pool_free_calls, 1);
+            assert_eq!(stats.page_allocation_calls, 1);
+            assert_eq!(stats.page_free_calls, 1);
+            assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION);
+            assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 2));
+
+            //test alloc/deallocate and stats blowing the bucket
+            let ptr = unsafe { fsb.alloc(Layout::from_size_align(MIN_EXPANSION * 3, 0x8).unwrap()) };
+
+            //after this allocate, the basic memory map of the FSB should look like:
+            //1MB range as a result of previous pool allocation expand - available for pool allocation.
+            //    Claims first 1MB of 2MB reserved region.
+            //1MB free but owned by the allocator (not pool) as a result of 2MB reservation.
+            //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node.
+
+            let stats = fsb.allocation_statistics();
+            assert_eq!(stats.pool_allocation_calls, 2);
+            assert_eq!(stats.pool_free_calls, 1);
+            assert_eq!(stats.page_allocation_calls, 1);
+            assert_eq!(stats.page_free_calls, 1);
+            assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION);
+            assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
+
+            unsafe {
+                fsb.dealloc(ptr, Layout::from_size_align(MIN_EXPANSION * 3, 0x8).unwrap());
+            }
+
+            //after this free, the basic memory map of the FSB should look like:
+            //1MB range as a result of previous pool allocation expand - available for pool allocation.
+            //    Claims first 1MB of 2MB reserved region.
+            //1MB free but owned by the allocator (not pool) as a result of 2MB reservation.
+            //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
+
+            let stats = fsb.allocation_statistics();
+            assert_eq!(stats.pool_allocation_calls, 2);
+            assert_eq!(stats.pool_free_calls, 2);
+            assert_eq!(stats.page_allocation_calls, 1);
+            assert_eq!(stats.page_free_calls, 1);
+            assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION);
+            assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
+
+            // test that a small page allocation fits in the 1MB free reserved region.
+            let ptr = fsb.allocate_pages(AllocationStrategy::BottomUp(None), 0x4).unwrap().as_ptr();
+
+            //after this allocate_pages, the basic memory map of the FSB should look like:
+            //1MB range as a result of previous pool allocation expand - available for pool allocation.
+            //    Claims first 1MB of 2MB reserved region.
+            //16K allocated.
+            //1MB-16k free but owned by the allocator (not pool) as a result of 2MB reservation.
+            //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
+
+            let stats = fsb.allocation_statistics();
+            assert_eq!(stats.pool_allocation_calls, 2);
+            assert_eq!(stats.pool_free_calls, 2);
+            assert_eq!(stats.page_allocation_calls, 2);
+            assert_eq!(stats.page_free_calls, 1);
+            assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION + uefi_pages_to_size!(4));
+            assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
+
+            unsafe {
+                fsb.free_pages(ptr as *mut u8 as usize, 0x4).unwrap();
+            }
+
+            //after this free, the basic memory map of the FSB should look like:
+            //1MB range as a result of previous pool allocation expand - available for pool allocation.
+            //    Claims first 1MB of 2MB reserved region.
+            //1MB free but owned by the allocator (not pool) as a result of 2MB reservation.
+            //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
+
+            let stats = fsb.allocation_statistics();
+            assert_eq!(stats.pool_allocation_calls, 2);
+            assert_eq!(stats.pool_free_calls, 2);
+            assert_eq!(stats.page_allocation_calls, 2);
+            assert_eq!(stats.page_free_calls, 2);
+            assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION);
+            assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
+
+            //test that a lage page allocation results in more claimed pages.
+            let ptr = fsb.allocate_pages(AllocationStrategy::BottomUp(None), 0x104).unwrap().as_ptr();
+
+            //after this allocate_pages, the basic memory map of the FSB should look like:
+            //1MB range as a result of previous pool allocation expand - available for pool allocation.
+            //    Claims first 1MB of 2MB reserved region.
+            //1MB free but owned by the allocator (not pool) as a result of 2MB reservation.
+            //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
+            //104 pages (1MB+16K) page as a result of allocation.
+
+            let stats = fsb.allocation_statistics();
+            assert_eq!(stats.pool_allocation_calls, 2);
+            assert_eq!(stats.pool_free_calls, 2);
+            assert_eq!(stats.page_allocation_calls, 3);
+            assert_eq!(stats.page_free_calls, 2);
+            assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION);
+            assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1 + 0x104);
+
+            // test that a small page allocation fits in the 1MB free reserved region.
+            let ptr1 = fsb.allocate_pages(AllocationStrategy::BottomUp(None), 0x4).unwrap().as_ptr();
+
+            //after this allocate_pages, the basic memory map of the FSB should look like:
+            //1MB range as a result of previous pool allocation expand - available for pool allocation.
+            //    Claims first 1MB of 2MB reserved region.
+            //16K allocated.
+            //1MB-16k free but owned by the allocator (not pool) as a result of 2MB reservation.
+            //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
+            //104 pages (1MB+16K) page as a result of allocation.
+
+            let stats = fsb.allocation_statistics();
+            assert_eq!(stats.pool_allocation_calls, 2);
+            assert_eq!(stats.pool_free_calls, 2);
+            assert_eq!(stats.page_allocation_calls, 4);
+            assert_eq!(stats.page_free_calls, 2);
+            assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION + uefi_pages_to_size!(4));
+            assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1 + 0x104);
+
+            unsafe {
+                fsb.free_pages(ptr1 as *mut u8 as usize, 0x4).unwrap();
+            }
+            unsafe {
+                fsb.free_pages(ptr as *mut u8 as usize, 0x104).unwrap();
+            }
+
+            //after this free, the basic memory map of the FSB should look like:
+            //1MB range as a result of previous pool allocation expand - available for pool allocation.
+            //    Claims first 1MB of 2MB reserved region.
+            //1MB free but owned by the allocator (not pool) as a result of 2MB reservation.
+            //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
+
+            let stats = fsb.allocation_statistics();
+            assert_eq!(stats.pool_allocation_calls, 2);
+            assert_eq!(stats.pool_free_calls, 2);
+            assert_eq!(stats.page_allocation_calls, 4);
+            assert_eq!(stats.page_free_calls, 4);
+            assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION);
+            assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
         });
     }
 }
