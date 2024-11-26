@@ -459,9 +459,18 @@ impl GCD {
         _len: usize,
         _transition: MemoryStateTransition,
     ) -> Result<(), Error> {
-        log::error!("GCD not allowed to free after EBS has started!");
-        debug_assert!(false);
-        Err(Error::AccessDenied)
+        log::error!("GCD not allowed to free after EBS has started! Silently failing, returning success");
+
+        // TODO: We actually want to check if this is a runtime memory type and debug_assert/return an error if so,
+        // as freeing this memory in an EBS handler would cause a change in the OS memory map and we don't want to leave
+        // this memory around. However, with the current architecture, it is very hard to figure out what EFI memory
+        // type memory in the GCD is. There are two different ways this can be fixed: one, merge the GCD and allocator
+        // mods, as is already planned, and then be able to access the memory_type_for_handle function in the allocator
+        // from here. Two, add an EFI memory type to the GCD. Both of these options require more work and this is
+        // currently blocking a platform, which was not the original intention here, discussion on the assert on
+        // runtime memory led to an assert on all frees, which was not the intention. So, for now this is just made
+        // a silent failure and this will be revisited. This will be tracked in a GH issue for resolution.
+        Ok(())
     }
 
     fn allocate_bottom_up(
