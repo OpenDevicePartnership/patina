@@ -259,11 +259,6 @@ where
         log::trace!("GCD - After adding resource descriptor HOBs.");
         log::trace!("{:#x?}", GCD);
 
-        gcd::add_hob_allocations_to_gcd(&hob_list);
-
-        log::info!("GCD - After adding memory allocation HOBs.");
-        log::info!("{:#x?}", GCD);
-
         // Instantiate system table.
         systemtables::init_system_table();
 

@@ -21,12 +21,17 @@ use alloc::{collections::BTreeMap, vec::Vec};
 use mu_rust_helpers::{function, guid::guid};
 
 use crate::{
-    gcd::AllocateType as AllocationStrategy, memory_attributes_table::MemoryAttributesTable, misc_boot_services,
-    protocol_db, protocols::PROTOCOL_DB, systemtables::EfiSystemTable, tpl_lock, GCD,
+    gcd::AllocateType as AllocationStrategy,
+    memory_attributes_table::MemoryAttributesTable,
+    misc_boot_services,
+    protocol_db::{self, INVALID_HANDLE},
+    protocols::PROTOCOL_DB,
+    systemtables::EfiSystemTable,
+    tpl_lock, GCD,
 };
 use mu_pi::{
-    dxe_services::{GcdMemoryType, MemorySpaceDescriptor},
-    hob::{EFiMemoryTypeInformation, HobList, MEMORY_TYPE_INFO_HOB_GUID},
+    dxe_services::{self, GcdMemoryType, MemorySpaceDescriptor},
+    hob::{self, EFiMemoryTypeInformation, Hob, HobList, MEMORY_TYPE_INFO_HOB_GUID},
 };
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
 use uefi_allocator::UefiAllocator;
@@ -35,7 +40,10 @@ use uuid::uuid;
 //FixedSizeBlockAllocator is passed as a reference to the callbacks on page allocations
 pub use fixed_size_block_allocator::FixedSizeBlockAllocator;
 
-use uefi_sdk::{base::UEFI_PAGE_SIZE, uefi_size_to_pages};
+use uefi_sdk::{
+    base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
+    uefi_size_to_pages,
+};
 
 // Allocation Strategy when not specified by caller.
 const DEFAULT_ALLOCATION_STRATEGY: AllocationStrategy = AllocationStrategy::TopDown(None);
@@ -779,6 +787,120 @@ pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Resu
     )
 }
 
+fn process_hob_allocations(hob_list: &HobList) {
+    for hob in hob_list.iter() {
+        match hob {
+            Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
+            | Hob::MemoryAllocationModule(hob::MemoryAllocationModule {
+                header: _,
+                alloc_descriptor: desc,
+                module_name: _,
+                entry_point: _,
+            }) => {
+                log::trace!("[{}] Processing Memory Allocation HOB:\n{:#x?}\n\n", function!(), hob);
+                //Use allocate_pages here to record these allocations and keep the allocator stats up to date.
+                //Note: PI spec 1.8 III-5.4.1.1 stipulates that memory allocations must have page-granularity,
+                //which allows us to use allocate_pages. Check and warn if an allocation doesn't meet the alignment
+                //criteria and skip it.
+                if (desc.memory_base_address & UEFI_PAGE_MASK as u64) != 0
+                    || (desc.memory_length & UEFI_PAGE_MASK as u64) != 0
+                {
+                    log::warn!("Memory Allocation HOB has invalid address or length granularity:\n{:#x?}", hob);
+                    continue;
+                }
+
+                // Typically a pre-DXE image load will create both a MemoryAllocationHob and a MemoryAllocationModule HOB
+                // both associated with it an pointing to the same memory. Check to see if the region has already
+                // been reserved in the GCD. If so, skip attempting to allocate it again.
+                if let Ok(existing_desc) = GCD.get_memory_descriptor_for_address(desc.memory_base_address) {
+                    if existing_desc.base_address == desc.memory_base_address
+                        && existing_desc.length == desc.memory_length
+                        && existing_desc.memory_type == dxe_services::GcdMemoryType::SystemMemory
+                        && existing_desc.image_handle != INVALID_HANDLE
+                    {
+                        log::info!(
+                            "Skipping duplicate Memory Allocation/Module HOB at {:#x?} of length {:#x?}. Region already present in GCD.",
+                            desc.memory_base_address,
+                            desc.memory_length,
+                        );
+                        continue;
+                    }
+                }
+
+                let mut address = desc.memory_base_address;
+                let _ = core_allocate_pages(
+                    efi::ALLOCATE_ADDRESS,
+                    desc.memory_type,
+                    uefi_size_to_pages!(desc.memory_length as usize),
+                    &mut address as *mut efi::PhysicalAddress)
+                    .inspect_err(|err|{
+                        log::error!(
+                            "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
+                            desc.memory_base_address,
+                            desc.memory_length,
+                            err
+                        );
+                    });
+            }
+            Hob::FirmwareVolume(hob::FirmwareVolume { header: _, base_address, length })
+            | Hob::FirmwareVolume2(hob::FirmwareVolume2 {
+                header: _,
+                base_address,
+                length,
+                fv_name: _,
+                file_name: _,
+            })
+            | Hob::FirmwareVolume3(hob::FirmwareVolume3 {
+                header: _,
+                base_address,
+                length,
+                authentication_status: _,
+                extracted_fv: _,
+                fv_name: _,
+                file_name: _,
+            }) => {
+                log::trace!("[{}] Processing Firmware Volume HOB:\n{:#x?}\n\n", function!(), hob);
+
+                //The EDK2 C reference core maps FVs to MMIO space, but many implementations don't declare the
+                //corresponding resource descriptor. Check the current region in the GCD to see whether a resource
+                //descriptor of the appropriate type has been reported. If not, print a warning and skip attempting
+                //to reserve it in the GCD.
+                if let Ok(existing_desc) = GCD.get_memory_descriptor_for_address(*base_address) {
+                    if existing_desc.memory_type != dxe_services::GcdMemoryType::MemoryMappedIo
+                        || existing_desc.image_handle != INVALID_HANDLE
+                    {
+                        log::warn!(
+                            "Skipping FV HOB at {:#x?} of length {:#x?}. Containing region is not MMIO.",
+                            base_address,
+                            length,
+                        );
+                        continue;
+                    }
+                }
+
+                //The 4K granularity rule does not apply to FV hobs, so allocate_pages cannot be used.
+                //This means they must be direct-allocated in the GCD, and no stats will be tracked for them.
+                let _ = GCD.allocate_memory_space(
+                    AllocationStrategy::Address(*base_address as usize),
+                    dxe_services::GcdMemoryType::MemoryMappedIo,
+                    0,
+                    *length as usize,
+                    protocol_db::DXE_CORE_HANDLE,
+                    None)
+                    .inspect_err(|err|{
+                        log::warn!(
+                            "Failed to allocate memory space for firmware volume HOB at {:#x?} of length {:#x?}. Error: {:x?}",
+                            base_address,
+                            length,
+                            err
+                        );
+                    });
+            }
+            _ => continue,
+        };
+    }
+}
+
 /// Initializes memory support
 ///
 /// This routine sets the boot services routines for memory allocation and does initial configuration of the allocators.
@@ -796,6 +918,9 @@ pub fn init_memory_support(bs: &mut efi::BootServices, hob_list: &HobList) {
     bs.copy_mem = copy_mem;
     bs.set_mem = set_mem;
     bs.get_memory_map = get_memory_map;
+
+    // process pre-DXE allocations from the Hob list
+    process_hob_allocations(hob_list);
 
     // If memory type info HOB is available, then pre-allocate the corresponding buckets.
     if let Some(memory_type_info) = hob_list.iter().find_map(|x| {

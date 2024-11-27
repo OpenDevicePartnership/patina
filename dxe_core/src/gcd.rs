@@ -12,14 +12,13 @@ mod spin_locked_gcd;
 
 use core::{ffi::c_void, ops::Range};
 use mu_pi::{
-    dxe_services::{self, GcdIoType, GcdMemoryType},
+    dxe_services::{GcdIoType, GcdMemoryType},
     hob::{self, Hob, HobList, PhaseHandoffInformationTable},
 };
-use mu_rust_helpers::function;
 use r_efi::efi;
 use uefi_sdk::base::{align_down, align_up};
 
-use crate::{dxe_services::core_get_memory_space_descriptor, protocol_db, GCD};
+use crate::GCD;
 
 pub use spin_locked_gcd::{AllocateType, Error, MapChangeType, SpinLockedGcd};
 
@@ -200,88 +199,6 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList, free_memory_start
     }
 }
 
-pub fn add_hob_allocations_to_gcd(hob_list: &HobList) {
-    for hob in hob_list.iter() {
-        match hob {
-            Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
-            | Hob::MemoryAllocationModule(hob::MemoryAllocationModule {
-                header: _,
-                alloc_descriptor: desc,
-                module_name: _,
-                entry_point: _,
-            }) => {
-                log::trace!("[{}] Processing Memory Allocation HOB:\n{:#x?}\n\n", function!(), hob);
-
-                if let Ok(descriptor) = core_get_memory_space_descriptor(desc.memory_base_address) {
-                    let allocator_handle = match desc.memory_type {
-                        efi::RESERVED_MEMORY_TYPE => protocol_db::RESERVED_MEMORY_ALLOCATOR_HANDLE,
-                        efi::LOADER_CODE => protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE,
-                        efi::LOADER_DATA => protocol_db::EFI_LOADER_DATA_ALLOCATOR_HANDLE,
-                        efi::BOOT_SERVICES_CODE => protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE,
-                        efi::BOOT_SERVICES_DATA => protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-                        efi::RUNTIME_SERVICES_CODE => protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE,
-                        efi::RUNTIME_SERVICES_DATA => protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE,
-                        efi::ACPI_RECLAIM_MEMORY => protocol_db::EFI_ACPI_RECLAIM_MEMORY_ALLOCATOR_HANDLE,
-                        efi::ACPI_MEMORY_NVS => protocol_db::EFI_ACPI_MEMORY_NVS_ALLOCATOR_HANDLE,
-                        _ => protocol_db::DXE_CORE_HANDLE,
-                    };
-                    if let Err(e) = GCD.allocate_memory_space(
-                        spin_locked_gcd::AllocateType::Address(desc.memory_base_address as usize),
-                        descriptor.memory_type,
-                        0,
-                        desc.memory_length as usize,
-                        allocator_handle,
-                        None,
-                    ) {
-                        log::error!(
-                            "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:?}",
-                            desc.memory_base_address,
-                            desc.memory_length,
-                            e
-                        );
-                    }
-                }
-            }
-            Hob::FirmwareVolume(hob::FirmwareVolume { header: _, base_address, length })
-            | Hob::FirmwareVolume2(hob::FirmwareVolume2 {
-                header: _,
-                base_address,
-                length,
-                fv_name: _,
-                file_name: _,
-            })
-            | Hob::FirmwareVolume3(hob::FirmwareVolume3 {
-                header: _,
-                base_address,
-                length,
-                authentication_status: _,
-                extracted_fv: _,
-                fv_name: _,
-                file_name: _,
-            }) => {
-                log::trace!("[{}] Processing Firmware Volume HOB:\n{:#x?}\n\n", function!(), hob);
-
-                let result = GCD.allocate_memory_space(
-                    spin_locked_gcd::AllocateType::Address(*base_address as usize),
-                    dxe_services::GcdMemoryType::MemoryMappedIo,
-                    0,
-                    *length as usize,
-                    protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-                    None,
-                );
-                if result.is_err() {
-                    log::warn!(
-                        "Memory space is not yet available for the FV at {:#x?} of length {:#x?}.",
-                        base_address,
-                        length
-                    );
-                }
-            }
-            _ => continue,
-        };
-    }
-}
-
 fn remove_range_overlap<T: PartialOrd + Copy>(a: &Range<T>, b: &Range<T>) -> [Option<Range<T>>; 2] {
     if a.start < b.end && a.end > b.start {
         // Check if `a` has a portion before the overlap
@@ -308,9 +225,9 @@ mod tests {
     };
     use r_efi::efi;
 
-    use crate::{gcd::init_gcd, protocol_db, test_support, GCD};
+    use crate::{gcd::init_gcd, test_support, GCD};
 
-    use super::{add_hob_allocations_to_gcd, add_hob_resource_descriptors_to_gcd};
+    use super::add_hob_resource_descriptors_to_gcd;
 
     const MEM_SIZE: u64 = 0x200000;
 
@@ -613,49 +530,6 @@ mod tests {
         descriptors.iter().find(|x| x.base_address == 0x1000 && x.io_type == GcdIoType::Io).unwrap();
     }
 
-    fn add_allocations_should_add_allocations(hob_list: &HobList, mem_base: u64) {
-        add_hob_allocations_to_gcd(hob_list);
-        let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
-        GCD.get_memory_descriptors(&mut descriptors).expect("get_memory_descriptors failed.");
-        log::info!("Descriptors: {:#x?}", descriptors);
-        for (idx, handle) in [
-            protocol_db::RESERVED_MEMORY_ALLOCATOR_HANDLE,
-            protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE,
-            protocol_db::EFI_LOADER_DATA_ALLOCATOR_HANDLE,
-            protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE,
-            protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-            protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE,
-            protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE,
-            protocol_db::EFI_ACPI_RECLAIM_MEMORY_ALLOCATOR_HANDLE,
-            protocol_db::EFI_ACPI_MEMORY_NVS_ALLOCATOR_HANDLE,
-            protocol_db::DXE_CORE_HANDLE,
-        ]
-        .iter()
-        .enumerate()
-        {
-            log::info!("Testing allocation descriptor idx: {:#x?} handle: {:#x?}", idx, handle);
-            descriptors
-                .iter()
-                .find(|x| {
-                    x.base_address == mem_base + 0xE0000 + idx as u64 * 0x1000
-                        && x.length == 0x1000
-                        && x.memory_type == GcdMemoryType::SystemMemory
-                        && x.image_handle == *handle
-                })
-                .unwrap();
-        }
-        //FV allocation
-        descriptors
-            .iter()
-            .find(|x| {
-                x.base_address == 0x11000000
-                    && x.length == 0x80000
-                    && x.memory_type == GcdMemoryType::MemoryMappedIo
-                    && x.image_handle == protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE
-            })
-            .unwrap();
-    }
-
     #[test]
     fn test_full_gcd_init() {
         with_locked_state(|| {
@@ -672,8 +546,6 @@ mod tests {
                 free_memory_size,
                 physical_hob_list as u64,
             );
-
-            add_allocations_should_add_allocations(&hob_list, physical_hob_list as u64);
         });
     }
 }
