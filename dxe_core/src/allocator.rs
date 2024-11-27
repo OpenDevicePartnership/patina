@@ -330,10 +330,13 @@ impl<'a> AllocatorMap {
         self.iter().find_map(|x| if x.handle() == handle { Some(x.memory_type()) } else { None })
     }
 
-    // resets the ALLOCATOR map to empty.
+    // resets the ALLOCATOR map to empty and resets the static allocators.
     #[cfg(test)]
     unsafe fn reset(&mut self) {
         self.map.clear();
+        for allocator in STATIC_ALLOCATORS.iter() {
+            allocator.reset();
+        }
     }
 }
 
@@ -972,7 +975,10 @@ pub fn init_memory_support(bs: &mut efi::BootServices, hob_list: &HobList) {
 #[cfg(test)]
 mod tests {
 
-    use crate::test_support;
+    use crate::{
+        gcd,
+        test_support::{self, build_test_hob_list},
+    };
 
     use super::*;
     use mu_pi::hob::{header, GuidHob, Hob, GUID_EXTENSION};
@@ -1034,6 +1040,52 @@ mod tests {
             let nvs_range = ALLOCATORS.lock().get_allocator(efi::ACPI_MEMORY_NVS).unwrap().preferred_range().unwrap();
             assert_eq!(nvs_range.end - nvs_range.start, 0x300 * 0x1000);
         });
+    }
+
+    #[test]
+    fn init_memory_support_should_process_resource_allocations() {
+        test_support::with_global_lock(|| {
+            let physical_hob_list = build_test_hob_list(0x200000);
+            let free_memory_start;
+            let free_memory_size;
+            unsafe {
+                (free_memory_start, free_memory_size) = gcd::init_gcd(physical_hob_list);
+                test_support::init_test_protocol_db();
+                ALLOCATORS.lock().reset();
+            }
+
+            let boot_services = core::mem::MaybeUninit::zeroed();
+            let mut boot_services: efi::BootServices = unsafe { boot_services.assume_init() };
+
+            let mut hob_list = HobList::default();
+            hob_list.discover_hobs(physical_hob_list);
+
+            gcd::add_hob_resource_descriptors_to_gcd(&hob_list, free_memory_start, free_memory_size);
+
+            init_memory_support(&mut boot_services, &hob_list);
+
+            let allocators = ALLOCATORS.lock();
+
+            //Verify that the memory allocation hobs resulted in claimed pages in the allocator.
+            for memory_type in [
+                efi::RESERVED_MEMORY_TYPE,
+                efi::LOADER_CODE,
+                efi::LOADER_DATA,
+                efi::BOOT_SERVICES_CODE,
+                efi::BOOT_SERVICES_DATA,
+                efi::RUNTIME_SERVICES_CODE,
+                efi::RUNTIME_SERVICES_DATA,
+                efi::ACPI_RECLAIM_MEMORY,
+                efi::ACPI_MEMORY_NVS,
+                efi::PAL_CODE,
+            ]
+            .iter()
+            {
+                let allocator = allocators.get_allocator(*memory_type).unwrap();
+                assert_eq!(allocator.stats().claimed_pages, 1);
+            }
+        })
+        .unwrap();
     }
 
     #[test]

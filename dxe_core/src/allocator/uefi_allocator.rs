@@ -12,7 +12,7 @@ use crate::gcd::SpinLockedGcd;
 use r_efi::efi;
 
 use super::{
-    fixed_size_block_allocator::{PageChangeCallback, SpinLockedFixedSizeBlockAllocator},
+    fixed_size_block_allocator::{AllocationStatistics, PageChangeCallback, SpinLockedFixedSizeBlockAllocator},
     AllocationStrategy,
 };
 use core::{
@@ -56,6 +56,11 @@ impl UefiAllocator {
             allocator: SpinLockedFixedSizeBlockAllocator::new(gcd, allocator_handle, memory_type, page_change_callback),
             memory_type,
         }
+    }
+
+    #[cfg(test)]
+    pub fn reset(&self) {
+        self.allocator.reset();
     }
 
     /// Indicates whether the given pointer falls within a memory region managed by this allocator.
@@ -207,6 +212,12 @@ impl UefiAllocator {
     pub fn preferred_range(&self) -> Option<Range<efi::PhysicalAddress>> {
         self.allocator.preferred_range()
     }
+
+    /// Returns the allocator stats
+    #[allow(dead_code)]
+    pub fn stats(&self) -> AllocationStatistics {
+        self.allocator.stats()
+    }
 }
 
 unsafe impl GlobalAlloc for UefiAllocator {
@@ -244,7 +255,7 @@ fn string_for_memory_type(memory_type: efi::MemoryType) -> &'static str {
 
 impl Display for UefiAllocator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Memory Type: {} ", string_for_memory_type(self.memory_type))?;
+        writeln!(f, "Memory Type: {}", string_for_memory_type(self.memory_type))?;
         self.allocator.fmt(f)
     }
 }
@@ -477,7 +488,9 @@ mod tests {
             assert_eq!(
                 std::format!("{}", ua),
                 concat!(
-                    "Memory Type: BootServices Data Allocation Ranges:\n",
+                    "Memory Type: BootServices Data\n",
+                    "Memory Type: 4\n",
+                    "Allocation Ranges:\n",
                     "Bucket Range: None\n",
                     "Allocation Stats:\n",
                     "  pool_allocation_calls: 0\n",

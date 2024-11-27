@@ -164,6 +164,17 @@ impl FixedSizeBlockAllocator {
         }
     }
 
+    // This routine resets some aspects of allocator state for testing purposes.
+    // Note: this does not reset the GCD nor change the page_change_callback.
+    #[cfg(test)]
+    pub fn reset(&mut self) {
+        const EMPTY: Option<&'static mut BlockListNode> = None;
+        self.list_heads = [EMPTY; BLOCK_SIZES.len()];
+        self.allocators = None;
+        self.preferred_range = None;
+        self.stats = AllocationStatistics::new();
+    }
+
     /// Ensures that the allocator has enough capacity to satisfy an allocation of the given size and alignment.
     /// If the allocator does not have enough capacity, it will request more memory from the GCD.
     /// If the allocator has enough capacity, it will return Ok(()).
@@ -552,6 +563,7 @@ impl FixedSizeBlockAllocator {
 
 impl Display for FixedSizeBlockAllocator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Memory Type: {:x?}", self.memory_type)?;
         writeln!(f, "Allocation Ranges:")?;
         for node in AllocatorIterator::new(self.allocators) {
             let allocator = unsafe { &mut (*node).allocator };
@@ -601,6 +613,13 @@ impl SpinLockedFixedSizeBlockAllocator {
                 "FsbLock",
             ),
         }
+    }
+
+    // This routine resets some aspects of allocator state for testing purposes.
+    // Note: this does not reset the GCD nor change the page_change_callback.
+    #[cfg(test)]
+    pub fn reset(&self) {
+        self.lock().reset();
     }
 
     /// Locks the allocator
