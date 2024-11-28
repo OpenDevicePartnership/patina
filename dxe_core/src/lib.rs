@@ -245,6 +245,7 @@ where
 
         log::trace!("Free memory start: {:#x}", free_memory_start);
         log::trace!("Free memory size: {:#x}", free_memory_size);
+        log::trace!("Initial GCD:\n{}", GCD);
 
         // After this point Rust Heap usage is permitted (since GCD is initialized with a single known-free region).
         // Relocate the hobs from the input list pointer into a Vec.
@@ -257,8 +258,7 @@ where
         // Initialize full allocation support.
         allocator::init_memory_support(&hob_list);
 
-        log::trace!("GCD - After memory init.");
-        log::trace!("{:#x?}", GCD);
+        log::info!("GCD - After memory init:\n{}", GCD);
 
         // Instantiate system table.
         systemtables::init_system_table();

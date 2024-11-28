@@ -6,7 +6,7 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use core::ptr;
+use core::{fmt::Display, ptr};
 
 use alloc::{boxed::Box, slice, vec, vec::Vec};
 use mu_pi::{dxe_services, hob};
@@ -15,7 +15,7 @@ use r_efi::efi;
 use uefi_collections::{node_size, Error as SliceError, Rbt, SliceKey};
 use uefi_sdk::base::UEFI_PAGE_MASK;
 
-use crate::{ensure, error, tpl_lock};
+use crate::{ensure, error, protocol_db::INVALID_HANDLE, tpl_lock};
 
 use super::{
     io_block::{self, Error as IoBlockError, IoBlock, IoBlockSplit, StateTransition as IoStateTransition},
@@ -879,6 +879,51 @@ impl GCD {
     pub fn memory_descriptor_count(&self) -> usize {
         self.memory_blocks.as_ref().map(|mbs| mbs.len()).unwrap_or(0)
     }
+
+    //Note: truncated strings here are expected and are for alignment with EDK2 reference prints.
+    const GCD_MEMORY_TYPE_NAMES: [&'static str; 8] = [
+        "NonExist ", // EfiGcdMemoryTypeNonExistent
+        "Reserved ", // EfiGcdMemoryTypeReserved
+        "SystemMem", // EfiGcdMemoryTypeSystemMemory
+        "MMIO     ", // EfiGcdMemoryTypeMemoryMappedIo
+        "PersisMem", // EfiGcdMemoryTypePersistent
+        "MoreRelia", // EfiGcdMemoryTypeMoreReliable
+        "Unaccepte", // EfiGcdMemoryTypeUnaccepted
+        "Unknown  ", // EfiGcdMemoryTypeMaximum
+    ];
+}
+
+impl Display for GCD {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        writeln!(f, "GCDMemType Range                             Capabilities     Attributes       ImageHandle      DeviceHandle")?;
+        writeln!(f, "========== ================================= ================ ================ ================ ================")?;
+
+        if let Some(blocks) = &self.memory_blocks {
+            let mut current = blocks.first_idx();
+            while let Some(idx) = current {
+                let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
+                match mb {
+                    MemoryBlock::Allocated(descriptor) | MemoryBlock::Unallocated(descriptor) => {
+                        let mem_type_str_idx =
+                            usize::min(descriptor.memory_type as usize, Self::GCD_MEMORY_TYPE_NAMES.len() - 1);
+                        writeln!(
+                            f,
+                            "{}  {:016x?}-{:016x?} {:016x?} {:016x?} {:016x?} {:016x?}",
+                            GCD::GCD_MEMORY_TYPE_NAMES[mem_type_str_idx],
+                            descriptor.base_address,
+                            descriptor.base_address + descriptor.length - 1,
+                            descriptor.capabilities,
+                            descriptor.attributes,
+                            descriptor.image_handle,
+                            descriptor.device_handle
+                        )?;
+                    }
+                }
+                current = blocks.next_idx(idx);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl SliceKey for MemoryBlock {
@@ -1398,6 +1443,49 @@ impl IoGCD {
     pub fn io_descriptor_count(&self) -> usize {
         self.io_blocks.as_ref().map(|ibs| ibs.len()).unwrap_or(0)
     }
+
+    const GCD_IO_TYPE_NAMES: [&'static str; 4] = [
+        "NonExist", // EfiGcdIoTypeNonExistent
+        "Reserved", // EfiGcdIoTypeReserved
+        "I/O     ", // EfiGcdIoTypeIo
+        "Unknown ", // EfiGcdIoTypeMaximum
+    ];
+}
+
+impl Display for IoGCD {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        writeln!(f, "GCDIoType  Range                            ")?;
+        writeln!(f, "========== =================================")?;
+
+        if let Some(blocks) = &self.io_blocks {
+            let mut current = blocks.first_idx();
+            while let Some(idx) = current {
+                let ib = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
+                match ib {
+                    IoBlock::Allocated(descriptor) | IoBlock::Unallocated(descriptor) => {
+                        let io_type_str_idx =
+                            usize::min(descriptor.io_type as usize, Self::GCD_IO_TYPE_NAMES.len() - 1);
+                        writeln!(
+                            f,
+                            "{}  {:016x?}-{:016x?}{}",
+                            IoGCD::GCD_IO_TYPE_NAMES[io_type_str_idx],
+                            descriptor.base_address,
+                            descriptor.base_address + descriptor.length - 1,
+                            {
+                                if descriptor.image_handle == INVALID_HANDLE {
+                                    ""
+                                } else {
+                                    "*"
+                                }
+                            }
+                        )?;
+                    }
+                }
+                current = blocks.next_idx(idx);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl SliceKey for IoBlock {
@@ -1722,6 +1810,14 @@ impl SpinLockedGcd {
     /// Acquires lock and delegates to [`IoGCD::io_descriptor_count`]
     pub fn io_descriptor_count(&self) -> usize {
         self.io.lock().io_descriptor_count()
+    }
+}
+
+impl Display for SpinLockedGcd {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        writeln!(f, "{}", self.memory.lock())?;
+        writeln!(f, "{}", self.io.lock())?;
+        Ok(())
     }
 }
 
