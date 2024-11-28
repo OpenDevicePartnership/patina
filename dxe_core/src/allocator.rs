@@ -21,7 +21,7 @@ use alloc::{collections::BTreeMap, vec::Vec};
 use mu_rust_helpers::{function, guid::guid};
 
 use crate::{
-    gcd::AllocateType as AllocationStrategy,
+    gcd::{self, AllocateType as AllocationStrategy},
     memory_attributes_table::MemoryAttributesTable,
     misc_boot_services,
     protocol_db::{self, INVALID_HANDLE},
@@ -801,6 +801,19 @@ fn process_hob_allocations(hob_list: &HobList) {
                 entry_point: _,
             }) => {
                 log::trace!("[{}] Processing Memory Allocation HOB:\n{:#x?}\n\n", function!(), hob);
+
+                // Some PEI implementations generate "EfiConventionalMemory" MemoryAllocationHobs as a side effect of
+                // using MemoryAllocationHob structures for memory allocation tracking in PEI. These represent "freed"
+                // memory, which is the default state for memory in the GCD. So we do not need to insert them here.
+                if desc.memory_type == efi::CONVENTIONAL_MEMORY {
+                    log::info!(
+                        "Skipping Memory Allocation HOB that represents free memory at {:#x?} of length {:#x?}.",
+                        desc.memory_base_address,
+                        desc.memory_length
+                    );
+                    continue;
+                }
+
                 //Use allocate_pages here to record these allocations and keep the allocator stats up to date.
                 //Note: PI spec 1.8 III-5.4.1.1 stipulates that memory allocations must have page-granularity,
                 //which allows us to use allocate_pages. Check and warn if an allocation doesn't meet the alignment
@@ -812,24 +825,6 @@ fn process_hob_allocations(hob_list: &HobList) {
                     continue;
                 }
 
-                // Typically a pre-DXE image load will create both a MemoryAllocationHob and a MemoryAllocationModule HOB
-                // both associated with it an pointing to the same memory. Check to see if the region has already
-                // been reserved in the GCD. If so, skip attempting to allocate it again.
-                if let Ok(existing_desc) = GCD.get_memory_descriptor_for_address(desc.memory_base_address) {
-                    if existing_desc.base_address == desc.memory_base_address
-                        && existing_desc.length == desc.memory_length
-                        && existing_desc.memory_type == dxe_services::GcdMemoryType::SystemMemory
-                        && existing_desc.image_handle != INVALID_HANDLE
-                    {
-                        log::info!(
-                            "Skipping duplicate Memory Allocation/Module HOB at {:#x?} of length {:#x?}. Region already present in GCD.",
-                            desc.memory_base_address,
-                            desc.memory_length,
-                        );
-                        continue;
-                    }
-                }
-
                 let mut address = desc.memory_base_address;
                 let _ = core_allocate_pages(
                     efi::ALLOCATE_ADDRESS,
@@ -837,12 +832,38 @@ fn process_hob_allocations(hob_list: &HobList) {
                     uefi_size_to_pages!(desc.memory_length as usize),
                     &mut address as *mut efi::PhysicalAddress)
                     .inspect_err(|err|{
-                        log::error!(
-                            "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
-                            desc.memory_base_address,
-                            desc.memory_length,
-                            err
-                        );
+                        if *err == efi::Status::NOT_FOUND && desc.name != guid!("00000000-0000-0000-0000-000000000000") {
+                            //Guided Memory Allocation Hobs are typically MemoryAllocationModule or MemoryAllocationStack HOBs
+                            //which have corresponding non-guided allocation HOBs associated with them; they are rejected as
+                            //duplicates if we attempt to log them. Only log trace messages for these.
+                            log::trace!(
+                                "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
+                                desc.memory_base_address,
+                                desc.memory_length,
+                                err
+                            );
+                        } else {
+                            // check to see if a duplicate HOB has already added this allocation
+                            if let Ok(existing_desc) = GCD.get_memory_descriptor_for_address(desc.memory_base_address) {
+                                if existing_desc.base_address == desc.memory_base_address &&
+                                   existing_desc.length == desc.memory_length &&
+                                   existing_desc.image_handle != INVALID_HANDLE {
+                                        log::trace!(
+                                            "Duplicate allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
+                                            desc.memory_base_address,
+                                            desc.memory_length,
+                                            err
+                                        );
+                                        return;
+                                   }
+                            }
+                            log::error!(
+                                "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
+                                desc.memory_base_address,
+                                desc.memory_length,
+                                err
+                            );
+                        }
                     });
             }
             Hob::FirmwareVolume(hob::FirmwareVolume { header: _, base_address, length })
@@ -872,7 +893,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                     if existing_desc.memory_type != dxe_services::GcdMemoryType::MemoryMappedIo
                         || existing_desc.image_handle != INVALID_HANDLE
                     {
-                        log::warn!(
+                        log::info!(
                             "Skipping FV HOB at {:#x?} of length {:#x?}. Containing region is not MMIO.",
                             base_address,
                             length,
@@ -891,7 +912,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                     protocol_db::DXE_CORE_HANDLE,
                     None)
                     .inspect_err(|err|{
-                        log::warn!(
+                        log::error!(
                             "Failed to allocate memory space for firmware volume HOB at {:#x?} of length {:#x?}. Error: {:x?}",
                             base_address,
                             length,
@@ -913,17 +934,17 @@ fn process_hob_allocations(hob_list: &HobList) {
 /// memory map reported to the OS can be stable even in the face of small variations in memory from boot-to-boot, which
 /// helps to avoid S4 failure due to memory map change.
 ///
-pub fn init_memory_support(bs: &mut efi::BootServices, hob_list: &HobList) {
-    bs.allocate_pages = allocate_pages;
-    bs.free_pages = free_pages;
-    bs.allocate_pool = allocate_pool;
-    bs.free_pool = free_pool;
-    bs.copy_mem = copy_mem;
-    bs.set_mem = set_mem;
-    bs.get_memory_map = get_memory_map;
+pub fn init_memory_support(hob_list: &HobList) {
+    // Add the rest of the system resources to the GCD.
+    // Caution: care must be taken to ensure no allocations occur after this call but before the allocation hobs are
+    // processed - otherwise they could occupy space corresponding to a pre-DXE memory allocation that has not yet been
+    // reserved.
+    gcd::add_hob_resource_descriptors_to_gcd(hob_list);
 
     // process pre-DXE allocations from the Hob list
     process_hob_allocations(hob_list);
+
+    // After this point the GCD and existing allocations are fully processed and it is safe to arbitrarily allocate.
 
     // If memory type info HOB is available, then pre-allocate the corresponding buckets.
     if let Some(memory_type_info) = hob_list.iter().find_map(|x| {
@@ -972,6 +993,16 @@ pub fn init_memory_support(bs: &mut efi::BootServices, hob_list: &HobList) {
     }
 }
 
+pub fn install_memory_services(bs: &mut efi::BootServices) {
+    bs.allocate_pages = allocate_pages;
+    bs.free_pages = free_pages;
+    bs.allocate_pool = allocate_pool;
+    bs.free_pool = free_pool;
+    bs.copy_mem = copy_mem;
+    bs.set_mem = set_mem;
+    bs.get_memory_map = get_memory_map;
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -998,10 +1029,10 @@ mod tests {
 
     #[test]
     #[allow(clippy::fn_address_comparisons)]
-    fn init_memory_support_should_populate_boot_services_ptrs() {
+    fn install_memory_support_should_populate_boot_services_ptrs() {
         let boot_services = core::mem::MaybeUninit::zeroed();
         let mut boot_services: efi::BootServices = unsafe { boot_services.assume_init() };
-        init_memory_support(&mut boot_services, &Default::default());
+        install_memory_services(&mut boot_services);
         assert!(boot_services.allocate_pages == allocate_pages);
         assert!(boot_services.free_pages == free_pages);
         assert!(boot_services.allocate_pool == allocate_pool);
@@ -1012,10 +1043,18 @@ mod tests {
 
     #[test]
     fn init_memory_support_should_process_memory_bucket_hobs() {
-        with_locked_state(0x4000000, || {
-            let boot_services = core::mem::MaybeUninit::zeroed();
-            let mut boot_services: efi::BootServices = unsafe { boot_services.assume_init() };
-            let mut hob_list = HobList::new();
+        test_support::with_global_lock(|| {
+            let physical_hob_list = build_test_hob_list(0x1000000);
+            unsafe {
+                GCD.reset();
+                gcd::init_gcd(physical_hob_list);
+                test_support::init_test_protocol_db();
+                ALLOCATORS.lock().reset();
+            }
+
+            let mut hob_list = HobList::default();
+            hob_list.discover_hobs(physical_hob_list);
+
             hob_list.push(Hob::GuidHob(
                 &GuidHob {
                     header: header::Hob { r#type: GUID_EXTENSION, length: 48, reserved: 0 },
@@ -1028,7 +1067,8 @@ mod tests {
                     0x0a, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, //0x0300 pages of ACPI_MEMORY_NVS
                 ],
             ));
-            init_memory_support(&mut boot_services, &hob_list);
+
+            init_memory_support(&hob_list);
 
             let loader_range = ALLOCATORS.lock().get_allocator(efi::LOADER_DATA).unwrap().preferred_range().unwrap();
             assert_eq!(loader_range.end - loader_range.start, 0x100 * 0x1000);
@@ -1039,30 +1079,25 @@ mod tests {
 
             let nvs_range = ALLOCATORS.lock().get_allocator(efi::ACPI_MEMORY_NVS).unwrap().preferred_range().unwrap();
             assert_eq!(nvs_range.end - nvs_range.start, 0x300 * 0x1000);
-        });
+        })
+        .unwrap();
     }
 
     #[test]
     fn init_memory_support_should_process_resource_allocations() {
         test_support::with_global_lock(|| {
             let physical_hob_list = build_test_hob_list(0x200000);
-            let free_memory_start;
-            let free_memory_size;
             unsafe {
-                (free_memory_start, free_memory_size) = gcd::init_gcd(physical_hob_list);
+                GCD.reset();
+                gcd::init_gcd(physical_hob_list);
                 test_support::init_test_protocol_db();
                 ALLOCATORS.lock().reset();
             }
 
-            let boot_services = core::mem::MaybeUninit::zeroed();
-            let mut boot_services: efi::BootServices = unsafe { boot_services.assume_init() };
-
             let mut hob_list = HobList::default();
             hob_list.discover_hobs(physical_hob_list);
 
-            gcd::add_hob_resource_descriptors_to_gcd(&hob_list, free_memory_start, free_memory_size);
-
-            init_memory_support(&mut boot_services, &hob_list);
+            init_memory_support(&hob_list);
 
             let allocators = ALLOCATORS.lock();
 

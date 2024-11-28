@@ -81,7 +81,19 @@ pub fn init_gcd(physical_hob_list: *const c_void) -> (u64, u64) {
     (free_memory_start, free_memory_size)
 }
 
-pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList, free_memory_start: u64, free_memory_size: u64) {
+pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
+    let phit = hob_list
+        .iter()
+        .find_map(|x| match x {
+            mu_pi::hob::Hob::Handoff(handoff) => Some(*handoff),
+            _ => None,
+        })
+        .expect("Failed to find PHIT Hob");
+
+    let free_memory_start = align_up(phit.free_memory_bottom, 0x1000).expect("Unaligned free memory bottom");
+    let free_memory_size =
+        align_down(phit.free_memory_top, 0x1000).expect("Unaligned free memory top") - free_memory_start;
+
     //Iterate over the hob list and map resource descriptor HOBs into the GCD.
     for hob in hob_list.iter() {
         let mut gcd_mem_type: GcdMemoryType = GcdMemoryType::NonExistent;
@@ -255,13 +267,8 @@ mod tests {
         (free_memory_start, free_memory_size)
     }
 
-    fn add_resource_descriptors_should_add_resource_descriptors(
-        hob_list: &HobList,
-        free_memory_start: u64,
-        free_memory_size: u64,
-        mem_base: u64,
-    ) {
-        add_hob_resource_descriptors_to_gcd(hob_list, free_memory_start, free_memory_size);
+    fn add_resource_descriptors_should_add_resource_descriptors(hob_list: &HobList, mem_base: u64) {
+        add_hob_resource_descriptors_to_gcd(hob_list);
         let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
         GCD.get_memory_descriptors(&mut descriptors).expect("get_memory_descriptors failed.");
         descriptors
@@ -291,18 +298,12 @@ mod tests {
     fn test_full_gcd_init() {
         with_locked_state(|| {
             let physical_hob_list = build_test_hob_list(MEM_SIZE);
-            let (free_memory_start, free_memory_size) =
-                init_gcd_should_init_gcd(physical_hob_list, physical_hob_list as u64);
+            init_gcd_should_init_gcd(physical_hob_list, physical_hob_list as u64);
 
             let mut hob_list = HobList::default();
             hob_list.discover_hobs(physical_hob_list);
 
-            add_resource_descriptors_should_add_resource_descriptors(
-                &hob_list,
-                free_memory_start,
-                free_memory_size,
-                physical_hob_list as u64,
-            );
+            add_resource_descriptors_should_add_resource_descriptors(&hob_list, physical_hob_list as u64);
         });
     }
 }

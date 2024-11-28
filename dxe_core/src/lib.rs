@@ -246,7 +246,7 @@ where
         log::trace!("Free memory start: {:#x}", free_memory_start);
         log::trace!("Free memory size: {:#x}", free_memory_size);
 
-        // After this point Rust Heap usage is permitted (since GCD is initialized).
+        // After this point Rust Heap usage is permitted (since GCD is initialized with a single known-free region).
         // Relocate the hobs from the input list pointer into a Vec.
         let mut hob_list = HobList::default();
         hob_list.discover_hobs(physical_hob_list);
@@ -254,9 +254,10 @@ where
         log::trace!("HOB list discovered is:");
         log::trace!("{:#x?}", hob_list);
 
-        gcd::add_hob_resource_descriptors_to_gcd(&hob_list, free_memory_start, free_memory_size);
+        // Initialize full allocation support.
+        allocator::init_memory_support(&hob_list);
 
-        log::trace!("GCD - After adding resource descriptor HOBs.");
+        log::trace!("GCD - After memory init.");
         log::trace!("{:#x?}", GCD);
 
         // Instantiate system table.
@@ -266,7 +267,7 @@ where
             let mut st = systemtables::SYSTEM_TABLE.lock();
             let st = st.as_mut().expect("System Table not initialized!");
 
-            allocator::init_memory_support(st.boot_services(), &hob_list);
+            allocator::install_memory_services(st.boot_services());
             events::init_events_support(st.boot_services());
             protocols::init_protocol_support(st.boot_services());
             misc_boot_services::init_misc_boot_services_support(st.boot_services());
