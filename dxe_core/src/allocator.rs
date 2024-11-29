@@ -968,7 +968,11 @@ pub fn init_memory_support(hob_list: &HobList) {
             if bucket.number_of_pages == 0 {
                 continue;
             }
-            log::info!("Allocating memory bucket: {:#x?}", bucket);
+            log::info!(
+                "Allocating memory bucket for memory type: {:#x?}, {:#x?} pages.",
+                bucket.memory_type,
+                bucket.number_of_pages
+            );
             let handle = match AllocatorMap::handle_for_memory_type(bucket.memory_type) {
                 Ok(handle) => handle,
                 Err(err) => {
