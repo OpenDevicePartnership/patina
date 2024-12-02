@@ -22,7 +22,7 @@ use crate::GCD;
 
 pub use spin_locked_gcd::{AllocateType, Error, MapChangeType, SpinLockedGcd};
 
-pub fn init_gcd(physical_hob_list: *const c_void) -> (u64, u64) {
+pub fn init_gcd(physical_hob_list: *const c_void) {
     let mut free_memory_start: u64 = 0;
     let mut free_memory_size: u64 = 0;
     let mut memory_start: u64 = 0;
@@ -77,8 +77,7 @@ pub fn init_gcd(physical_hob_list: *const c_void) -> (u64, u64) {
         // Mark the first page of memory as non-existent
         GCD.add_memory_space(GcdMemoryType::Reserved, 0, 0x1000, 0)
             .expect("Failed to mark the first page as non-existent in the GCD.");
-    };
-    (free_memory_start, free_memory_size)
+    }
 }
 
 pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
@@ -232,7 +231,7 @@ mod tests {
 
     use mu_pi::{
         dxe_services::{GcdIoType, GcdMemoryType, IoSpaceDescriptor, MemorySpaceDescriptor},
-        hob::HobList,
+        hob::{HobList, PhaseHandoffInformationTable},
     };
 
     use crate::{
@@ -255,16 +254,24 @@ mod tests {
         .unwrap();
     }
 
-    fn init_gcd_should_init_gcd(physical_hob_list: *const c_void, mem_base: u64) -> (u64, u64) {
-        let (free_memory_start, free_memory_size) = init_gcd(physical_hob_list);
+    fn init_gcd_should_init_gcd(physical_hob_list: *const c_void, mem_base: u64) {
+        let handoff = unsafe {
+            (physical_hob_list as *const PhaseHandoffInformationTable)
+                .as_ref::<'static>()
+                .expect("Physical hob list pointer is null, but it must exist and be valid.")
+        };
+
+        let free_memory_start = handoff.free_memory_bottom;
+        let free_memory_size = handoff.free_memory_top - handoff.free_memory_bottom;
+
+        init_gcd(physical_hob_list);
         assert!(free_memory_start >= mem_base && free_memory_start < mem_base + MEM_SIZE);
         assert!(free_memory_size <= 0x100000);
         let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
         GCD.get_memory_descriptors(&mut descriptors).expect("get_memory_descriptors failed.");
         assert!(descriptors
             .iter()
-            .any(|x| x.base_address == free_memory_start && x.memory_type == GcdMemoryType::SystemMemory));
-        (free_memory_start, free_memory_size)
+            .any(|x| x.base_address == free_memory_start && x.memory_type == GcdMemoryType::SystemMemory))
     }
 
     fn add_resource_descriptors_should_add_resource_descriptors(hob_list: &HobList, mem_base: u64) {

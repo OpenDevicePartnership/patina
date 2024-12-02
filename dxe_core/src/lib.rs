@@ -241,10 +241,8 @@ where
         self.interrupt_manager.initialize().expect("Failed to initialize interrupt manager!");
         uefi_debugger::initialize(&mut self.interrupt_manager);
 
-        let (free_memory_start, free_memory_size) = gcd::init_gcd(physical_hob_list);
+        gcd::init_gcd(physical_hob_list);
 
-        log::trace!("Free memory start: {:#x}", free_memory_start);
-        log::trace!("Free memory size: {:#x}", free_memory_size);
         log::trace!("Initial GCD:\n{}", GCD);
 
         // After this point Rust Heap usage is permitted (since GCD is initialized with a single known-free region).
