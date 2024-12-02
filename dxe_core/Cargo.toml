@@ -38,8 +38,7 @@ uuid = { workspace = true }
 uefi_sdk = { workspace = true }
 uefi_collections = { workspace = true }
 uefi_component_interface = { workspace = true }
-uefi_cpu_init = { workspace = true }
-uefi_interrupt = { workspace = true }
+uefi_cpu = { workspace = true }
 uefi_debugger = { workspace = true }
 uefi_device_path = { workspace = true }
 uefi_depex = { workspace = true}
@@ -53,7 +52,7 @@ mockall = { workspace = true }
 [features]
 default = []
 std = ["uefi_sdk/std"]
-doc = ["uefi_cpu_init/doc", "uefi_interrupt/doc"]
+doc = ["uefi_cpu/doc"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }

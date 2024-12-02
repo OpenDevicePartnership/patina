@@ -78,7 +78,7 @@ trait. However multiple implementations are provided via [section_extractor](htt
 such as brotli, crc32, uefi_decompress, etc.
 
 `EfiCpuInit` is an abstraction point for architecture specific initialization steps.
-Implementations are provided via [uefi_cpu_init](https://github.com/pop-project/uefi-core/tree/main/uefi_cpu_init),
+Implementations are provided via [uefi_cpu](https://github.com/pop-project/uefi-core/tree/main/uefi_cpu),
 however if necessary, a platform can create their own implementation via the [EfiCpuInit](https://github.com/pop-project/uefi-core/blob/main/uefi_core/src/interface.rs)
 trait.
 
@@ -215,7 +215,7 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     adv_logger_component.init_advanced_logger(physical_hob_list).unwrap();
 
     Core::default()
-        .with_cpu_init(uefi_cpu_init::X64EfiCpuInit::default())
+        .with_cpu_init(uefi_cpu::EfiCpuInitX64::default())
         .with_section_extractor(section_extractor::CompositeSectionExtractor::default())
         .initialize(physical_hob_list)
         .with_driver(Box::new(adv_logger_component))

@@ -4,8 +4,7 @@ use crate::protocols::PROTOCOL_DB;
 use alloc::boxed::Box;
 use core::ffi::c_void;
 use r_efi::efi;
-use uefi_cpu_init::EfiCpuInit;
-use uefi_interrupt::InterruptManager;
+use uefi_cpu::{cpu::EfiCpuInit, interrupts::InterruptManager};
 use uefi_sdk::error::EfiError;
 
 use mu_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandler, Protocol, PROTOCOL_GUID};
@@ -48,21 +47,21 @@ extern "efiapi" fn flush_data_cache(
 
     let result = cpu_init.flush_data_cache(start, length, flush_type);
 
-    result.map(|_| efi::Status::SUCCESS).unwrap_or_else(|err| err)
+    result.map(|_| efi::Status::SUCCESS).unwrap_or_else(|err| err.into())
 }
 
 extern "efiapi" fn enable_interrupt(this: *const Protocol) -> efi::Status {
     let cpu_init = &get_impl_ref(this).cpu_init;
     let result = cpu_init.enable_interrupt();
 
-    result.map(|_| efi::Status::SUCCESS).unwrap_or_else(|err| err)
+    result.map(|_| efi::Status::SUCCESS).unwrap_or_else(|err| err.into())
 }
 
 extern "efiapi" fn disable_interrupt(this: *const Protocol) -> efi::Status {
     let cpu_init = &get_impl_ref(this).cpu_init;
     let result = cpu_init.disable_interrupt();
 
-    result.map(|_| efi::Status::SUCCESS).unwrap_or_else(|err| err)
+    result.map(|_| efi::Status::SUCCESS).unwrap_or_else(|err| err.into())
 }
 
 extern "efiapi" fn get_interrupt_state(this: *const Protocol, state: *mut bool) -> efi::Status {
@@ -76,7 +75,7 @@ extern "efiapi" fn get_interrupt_state(this: *const Protocol, state: *mut bool) 
             }
             efi::Status::SUCCESS
         })
-        .unwrap_or_else(|err| err)
+        .unwrap_or_else(|err| err.into())
 }
 
 extern "efiapi" fn init(this: *const Protocol, init_type: CpuInitType) -> efi::Status {
@@ -84,7 +83,7 @@ extern "efiapi" fn init(this: *const Protocol, init_type: CpuInitType) -> efi::S
 
     let result = cpu_init.init(init_type);
 
-    result.map(|_| efi::Status::SUCCESS).unwrap_or_else(|err| err)
+    result.map(|_| efi::Status::SUCCESS).unwrap_or_else(|err| err.into())
 }
 
 extern "efiapi" fn register_interrupt_handler(
@@ -124,7 +123,7 @@ extern "efiapi" fn get_timer_value(
             }
             efi::Status::SUCCESS
         }
-        Err(err) => err,
+        Err(err) => err.into(),
     }
 }
 
@@ -188,22 +187,23 @@ mod tests {
     use mockall::*;
     use mu_pi::protocols::cpu_arch::EfiSystemContext;
     use r_efi::efi;
-    use uefi_cpu_init::EfiCpuPaging;
-    use uefi_interrupt::UefiExceptionHandler;
+    use uefi_cpu::interrupts::InterruptManager;
+    use uefi_cpu::interrupts::UefiExceptionHandler;
+    use uefi_cpu::paging::EfiCpuPaging;
 
     // CPU Init Trait Mock
     mock! {
         pub(crate) MockEfiCpuInit {}
 
         impl EfiCpuInit for MockEfiCpuInit {
-            fn initialize(&mut self) -> Result<(), efi::Status>;
+            fn initialize(&mut self) -> Result<(), EfiError>;
 
-            fn flush_data_cache(&self, start: efi::PhysicalAddress, length: u64, flush_type: CpuFlushType) -> Result<(), efi::Status>;
-            fn enable_interrupt(&self) -> Result<(), efi::Status>;
-            fn disable_interrupt(&self) -> Result<(), efi::Status>;
-            fn get_interrupt_state(&self) -> Result<bool, efi::Status>;
-            fn init(&self, init_type: CpuInitType) -> Result<(), efi::Status>;
-            fn get_timer_value(&self, timer_index: u32) -> Result<(u64, u64), efi::Status>;
+            fn flush_data_cache(&self, start: efi::PhysicalAddress, length: u64, flush_type: CpuFlushType) -> Result<(), EfiError>;
+            fn enable_interrupt(&self) -> Result<(), EfiError>;
+            fn disable_interrupt(&self) -> Result<(), EfiError>;
+            fn get_interrupt_state(&self) -> Result<bool, EfiError>;
+            fn init(&self, init_type: CpuInitType) -> Result<(), EfiError>;
+            fn get_timer_value(&self, timer_index: u32) -> Result<(u64, u64), EfiError>;
         }
     }
 
@@ -211,13 +211,13 @@ mod tests {
         pub(crate) MockEfiCpuPaging {}
 
         impl EfiCpuPaging for MockEfiCpuPaging {
-            fn set_memory_attributes(&mut self, base_address: efi::PhysicalAddress, length: u64, attributes: u64) -> Result<(), efi::Status>;
+            fn set_memory_attributes(&mut self, base_address: efi::PhysicalAddress, length: u64, attributes: u64) -> Result<(), EfiError>;
 
-            fn map_memory_region(&mut self, base_address: efi::PhysicalAddress, length: u64, attributes: u64) -> Result<(), efi::Status>;
-            fn unmap_memory_region(&mut self, base_address: efi::PhysicalAddress, length: u64) -> Result<(), efi::Status>;
-            fn remap_memory_region(&mut self, base_address: efi::PhysicalAddress, length: u64, attributes: u64) -> Result<(), efi::Status>;
-            fn install_page_table(&self) -> Result<(), efi::Status>;
-            fn query_memory_region(&self, base_address: efi::PhysicalAddress, length: u64) -> Result<u64, efi::Status>;
+            fn map_memory_region(&mut self, base_address: efi::PhysicalAddress, length: u64, attributes: u64) -> Result<(), EfiError>;
+            fn unmap_memory_region(&mut self, base_address: efi::PhysicalAddress, length: u64) -> Result<(), EfiError>;
+            fn remap_memory_region(&mut self, base_address: efi::PhysicalAddress, length: u64, attributes: u64) -> Result<(), EfiError>;
+            fn install_page_table(&self) -> Result<(), EfiError>;
+            fn query_memory_region(&self, base_address: efi::PhysicalAddress, length: u64) -> Result<u64, EfiError>;
         }
     }
 

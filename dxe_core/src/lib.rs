@@ -6,6 +6,10 @@
 //! ## Examples
 //!
 //! ``` rust,no_run
+//! use uefi_cpu::cpu::EfiCpuInit;
+//! use uefi_cpu::interrupts::InterruptManager;
+//! use uefi_cpu::interrupts::UefiExceptionHandler;
+//! use uefi_sdk::error::EfiError;
 //! # #[derive(Default, Clone, Copy)]
 //! # struct Driver;
 //! # impl uefi_component_interface::DxeComponent for Driver {
@@ -13,19 +17,19 @@
 //! # }
 //! # #[derive(Default, Clone, Copy)]
 //! # struct CpuInitExample;
-//! # impl uefi_cpu_init::EfiCpuInit for CpuInitExample {
-//! #     fn initialize(&mut self) -> Result<(), r_efi::efi::Status> {Ok(())}
+//! # impl uefi_cpu::cpu::EfiCpuInit for CpuInitExample {
+//! #     fn initialize(&mut self) -> Result<(), EfiError> {Ok(())}
 //! #     fn flush_data_cache(
 //! #         &self,
 //! #         _start: r_efi::efi::PhysicalAddress,
 //! #         _length: u64,
 //! #         _flush_type: mu_pi::protocols::cpu_arch::CpuFlushType,
-//! #     ) -> Result<(), r_efi::efi::Status> {Ok(())}
-//! #     fn enable_interrupt(&self) -> Result<(), r_efi::efi::Status> {Ok(())}
-//! #     fn disable_interrupt(&self) -> Result<(), r_efi::efi::Status> {Ok(())}
-//! #     fn get_interrupt_state(&self) -> Result<bool, r_efi::efi::Status> {Ok(true)}
-//! #     fn init(&self, _init_type: mu_pi::protocols::cpu_arch::CpuInitType) -> Result<(), r_efi::efi::Status> {Ok(())}
-//! #     fn get_timer_value(&self, _timer_index: u32) -> Result<(u64, u64), r_efi::efi::Status> {Ok((0, 0))}
+//! #     ) -> Result<(), EfiError> {Ok(())}
+//! #     fn enable_interrupt(&self) -> Result<(), EfiError> {Ok(())}
+//! #     fn disable_interrupt(&self) -> Result<(), EfiError> {Ok(())}
+//! #     fn get_interrupt_state(&self) -> Result<bool, EfiError> {Ok(true)}
+//! #     fn init(&self, _init_type: mu_pi::protocols::cpu_arch::CpuInitType) -> Result<(), EfiError> {Ok(())}
+//! #     fn get_timer_value(&self, _timer_index: u32) -> Result<(u64, u64), EfiError> {Ok((0, 0))}
 //! # }
 //! # #[derive(Default, Clone, Copy)]
 //! # struct SectionExtractExample;
@@ -34,8 +38,17 @@
 //! # }
 //! # #[derive(Default, Clone, Copy)]
 //! # struct InterruptManagerExample;
-//! # impl uefi_interrupt::InterruptManager for InterruptManagerExample {
+//! # impl uefi_cpu::interrupts::InterruptManager for InterruptManagerExample {
 //! #     fn initialize(&mut self) -> uefi_sdk::error::Result<()> { Ok(()) }
+//! #     fn register_exception_handler(
+//! #        &mut self,
+//! #        exception_type: usize,
+//! #        handler: UefiExceptionHandler,
+//! #    ) -> Result<(), EfiError> { Ok(()) }
+//! #     fn unregister_exception_handler(
+//! #        &mut self,
+//! #        exception_type: usize,
+//! #    ) -> Result<(), EfiError> { Ok(()) }
 //! # }
 //! # let physical_hob_list = core::ptr::null();
 //! dxe_core::Core::default()
@@ -98,10 +111,7 @@ use gcd::SpinLockedGcd;
 use mu_pi::{fw_fs, hob::HobList, protocols::bds};
 use r_efi::efi::{self};
 use uefi_component_interface::DxeComponent;
-use uefi_sdk::{
-    error::{self, Result},
-    if_aarch64, if_x64,
-};
+use uefi_sdk::error::{self, Result};
 
 #[macro_export]
 macro_rules! ensure {
@@ -121,16 +131,6 @@ macro_rules! error {
 
 pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
 
-if_x64! {
-    /// [`Core`] type alias for x86_64 architecture with cpu architecture specific trait implementations pre-selected.
-    pub type X64Core<SectionExtractor> = Core<uefi_cpu_init::X64EfiCpuInit, SectionExtractor, uefi_interrupt::InterruptManagerX64>;
-}
-
-if_aarch64! {
-    /// [`Core`] type alias for aarch64 architecture with cpu architecture specific trait implementations pre-selected.
-    pub type Aarch64Core<SectionExtractor> = Core<uefi_cpu_init::NullEfiCpuInit, SectionExtractor, uefi_interrupt::InterruptManagerAarch64>;
-}
-
 /// The initialize phase DxeCore, responsible for setting up the environment with the given configuration.
 ///
 /// This struct is the entry point for the DXE Core, which is a two phase system. This struct is responsible for
@@ -143,6 +143,10 @@ if_aarch64! {
 /// ## Examples
 ///
 /// ``` rust,no_run
+/// use uefi_cpu::cpu::EfiCpuInit;
+/// use uefi_cpu::interrupts::InterruptManager;
+/// use uefi_cpu::interrupts::UefiExceptionHandler;
+/// use uefi_sdk::error::EfiError;
 /// # #[derive(Default, Clone, Copy)]
 /// # struct Driver;
 /// # impl uefi_component_interface::DxeComponent for Driver {
@@ -150,19 +154,19 @@ if_aarch64! {
 /// # }
 /// # #[derive(Default, Clone, Copy)]
 /// # struct CpuInitExample;
-/// # impl uefi_cpu_init::EfiCpuInit for CpuInitExample {
-/// #     fn initialize(&mut self) -> Result<(), r_efi::efi::Status> {Ok(())}
+/// # impl EfiCpuInit for CpuInitExample {
+/// #     fn initialize(&mut self) -> Result<(), EfiError> {Ok(())}
 /// #     fn flush_data_cache(
 /// #         &self,
 /// #         _start: r_efi::efi::PhysicalAddress,
 /// #         _length: u64,
 /// #         _flush_type: mu_pi::protocols::cpu_arch::CpuFlushType,
-/// #     ) -> Result<(), r_efi::efi::Status> {Ok(())}
-/// #     fn enable_interrupt(&self) -> Result<(), r_efi::efi::Status> {Ok(())}
-/// #     fn disable_interrupt(&self) -> Result<(), r_efi::efi::Status> {Ok(())}
-/// #     fn get_interrupt_state(&self) -> Result<bool, r_efi::efi::Status> {Ok(true)}
-/// #     fn init(&self, _init_type: mu_pi::protocols::cpu_arch::CpuInitType) -> Result<(), r_efi::efi::Status> {Ok(())}
-/// #     fn get_timer_value(&self, _timer_index: u32) -> Result<(u64, u64), r_efi::efi::Status> {Ok((0, 0))}
+/// #     ) -> Result<(), EfiError> {Ok(())}
+/// #     fn enable_interrupt(&self) -> Result<(), EfiError> {Ok(())}
+/// #     fn disable_interrupt(&self) -> Result<(), EfiError> {Ok(())}
+/// #     fn get_interrupt_state(&self) -> Result<bool, EfiError> {Ok(true)}
+/// #     fn init(&self, _init_type: mu_pi::protocols::cpu_arch::CpuInitType) -> Result<(), EfiError> {Ok(())}
+/// #     fn get_timer_value(&self, _timer_index: u32) -> Result<(u64, u64), EfiError> {Ok((0, 0))}
 /// # }
 /// # #[derive(Default, Clone, Copy)]
 /// # struct SectionExtractExample;
@@ -171,8 +175,17 @@ if_aarch64! {
 /// # }
 /// # #[derive(Default, Clone, Copy)]
 /// # struct InterruptManagerExample;
-/// # impl uefi_interrupt::InterruptManager for InterruptManagerExample {
+/// # impl uefi_cpu::interrupts::InterruptManager for InterruptManagerExample {
 /// #     fn initialize(&mut self) -> uefi_sdk::error::Result<()> { Ok(()) }
+/// #     fn register_exception_handler(
+/// #        &mut self,
+/// #        exception_type: usize,
+/// #        handler: UefiExceptionHandler,
+/// #    ) -> Result<(), EfiError> { Ok(()) }
+/// #     fn unregister_exception_handler(
+/// #        &mut self,
+/// #        exception_type: usize,
+/// #    ) -> Result<(), EfiError> { Ok(()) }
 /// # }
 /// # let physical_hob_list = core::ptr::null();
 /// dxe_core::Core::default()
@@ -187,9 +200,9 @@ if_aarch64! {
 #[derive(Default)]
 pub struct Core<CpuInit, SectionExtractor, InterruptManager>
 where
-    CpuInit: uefi_cpu_init::EfiCpuInit + Default + 'static,
+    CpuInit: uefi_cpu::cpu::EfiCpuInit + Default + 'static,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
-    InterruptManager: uefi_interrupt::InterruptManager + Default + Copy + 'static,
+    InterruptManager: uefi_cpu::interrupts::InterruptManager + Default + Copy + 'static,
 {
     cpu_init: CpuInit,
     section_extractor: SectionExtractor,
@@ -198,9 +211,9 @@ where
 
 impl<CpuInit, SectionExtractor, InterruptManager> Core<CpuInit, SectionExtractor, InterruptManager>
 where
-    CpuInit: uefi_cpu_init::EfiCpuInit + Default + 'static,
+    CpuInit: uefi_cpu::cpu::EfiCpuInit + Default + 'static,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
-    InterruptManager: uefi_interrupt::InterruptManager + Default + Copy + 'static,
+    InterruptManager: uefi_cpu::interrupts::InterruptManager + Default + Copy + 'static,
 {
     /// Registers the CPU Init with it's own configuration.
     pub fn with_cpu_init(mut self, cpu_init: CpuInit) -> Self {
