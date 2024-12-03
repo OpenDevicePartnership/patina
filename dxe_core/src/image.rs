@@ -14,7 +14,7 @@ use r_efi::efi;
 use uefi_component_interface::DxeComponent;
 use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
 use uefi_sdk::base::{align_up, UEFI_PAGE_SIZE};
-use uefi_sdk::uefi_size_to_pages;
+use uefi_sdk::{guid, uefi_size_to_pages};
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
@@ -464,8 +464,11 @@ fn install_dxe_core_image(hob_list: &HobList) {
     // (i.e. this driver).
     let dxe_core_hob = hob_list
         .iter()
-        .find_map(|x| if let Hob::MemoryAllocationModule(module) = x { Some(module) } else { None })
-        .expect("Did not find MemoryAllocationModule Hob for DxeCore");
+        .find_map(|x| match x {
+            Hob::MemoryAllocationModule(module) if module.module_name == guid::DXE_CORE => Some(module),
+            _ => None,
+        })
+        .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use uefi_sdk::guid::DXE_CORE as FFS GUID.");
 
     // get exclusive access to the global private data.
     let mut private_data = PRIVATE_IMAGE_DATA.lock();

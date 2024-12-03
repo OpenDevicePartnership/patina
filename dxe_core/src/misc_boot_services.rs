@@ -40,10 +40,6 @@ static PRE_EXIT_BOOT_SERVICES_SIGNAL: AtomicBool = AtomicBool::new(false);
 pub const PRE_EBS_GUID: efi::Guid =
     efi::Guid::from_fields(0x5f1d7e16, 0x784a, 0x4da2, 0xb0, 0x84, &[0xf8, 0x12, 0xf2, 0x3a, 0x8d, 0xce]);
 
-// DxeCore module GUID (23C9322F-2AF2-476A-BC4C-26BC88266C71)
-pub const DXE_CORE_GUID: efi::Guid =
-    efi::Guid::from_fields(0x23C9322F, 0x2AF2, 0x476A, 0xBC, 0x4C, &[0x26, 0xBC, 0x88, 0x26, 0x6C, 0x71]);
-
 // TODO [END]: LOCAL (TEMP) GUID DEFINITIONS (MOVE LATER)
 
 extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, crc_32: *mut u32) -> efi::Status {
@@ -285,7 +281,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
                 status_code::EFI_PROGRESS_CODE,
                 status_code::EFI_SOFTWARE_EFI_BOOT_SERVICE | status_code::EFI_SW_BS_PC_EXIT_BOOT_SERVICES,
                 0,
-                &DXE_CORE_GUID,
+                &guid::DXE_CORE,
                 core::ptr::null(),
             );
         }
