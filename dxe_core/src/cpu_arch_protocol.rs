@@ -317,7 +317,9 @@ mod tests {
         let interrupt_handler: InterruptHandler = my_interrupt_handler;
         let status = unsafe { (protocol_impl.protocol.register_interrupt_handler)(protocol, 0, interrupt_handler) };
         assert_eq!(status, efi::Status::SUCCESS);
-        let null_fn = unsafe { core::mem::transmute(core::ptr::null::<()>()) };
+
+        #[allow(clippy::transmute_null_to_fn)]
+        let null_fn: InterruptHandler = unsafe { core::mem::transmute(core::ptr::null::<()>()) };
         let status = unsafe { (protocol_impl.protocol.register_interrupt_handler)(protocol, 0, null_fn) };
         assert_eq!(status, efi::Status::SUCCESS);
     }
