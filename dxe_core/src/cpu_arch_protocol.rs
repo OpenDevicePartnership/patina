@@ -193,7 +193,6 @@ mod tests {
     use mu_pi::protocols::cpu_arch::EfiSystemContext;
     use r_efi::efi;
     use uefi_cpu::interrupts::InterruptManager;
-    use uefi_cpu::interrupts::UefiExceptionHandler;
     use uefi_cpu::paging::EfiCpuPaging;
 
     // CPU Init Trait Mock
@@ -232,8 +231,8 @@ mod tests {
 
         impl InterruptManager for MockInterruptManager {
             fn initialize(&mut self) -> Result<(), EfiError>;
-            fn register_exception_handler(&mut self, interrupt_type: usize, interrupt_handler: UefiExceptionHandler) -> Result<(), EfiError>;
-            fn unregister_exception_handler(&mut self, exception_type: usize) -> Result<(), EfiError>;
+            fn register_exception_handler(&self, exception_type: ExceptionType, handler: HandlerType) -> Result<(), EfiError>;
+            fn unregister_exception_handler(&self, exception_type: ExceptionType) -> Result<(), EfiError>;
         }
     }
 
@@ -308,7 +307,8 @@ mod tests {
         let mut cpu_init = MockMockEfiCpuInit::new();
 
         let mut interrupt_manager = MockMockInterruptManager::new();
-        interrupt_manager.expect_register_exception_handler().times(0).returning(|_, _| Ok(()));
+        interrupt_manager.expect_register_exception_handler().times(1).returning(|_, _| Ok(()));
+        interrupt_manager.expect_unregister_exception_handler().times(1).returning(|_| Ok(()));
 
         let mut protocol_impl = EfiCpuArchProtocolImpl::new(&mut cpu_init, &mut interrupt_manager);
         let protocol = &protocol_impl.protocol as *const _;
@@ -316,6 +316,9 @@ mod tests {
         extern "efiapi" fn my_interrupt_handler(_interrupt_type: isize, _system_context: EfiSystemContext) {}
         let interrupt_handler: InterruptHandler = my_interrupt_handler;
         let status = unsafe { (protocol_impl.protocol.register_interrupt_handler)(protocol, 0, interrupt_handler) };
+        assert_eq!(status, efi::Status::SUCCESS);
+        let null_fn = unsafe { core::mem::transmute(core::ptr::null::<()>()) };
+        let status = unsafe { (protocol_impl.protocol.register_interrupt_handler)(protocol, 0, null_fn) };
         assert_eq!(status, efi::Status::SUCCESS);
     }
     #[test]

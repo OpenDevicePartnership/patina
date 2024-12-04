@@ -8,7 +8,8 @@
 //! ``` rust,no_run
 //! use uefi_cpu::cpu::EfiCpuInit;
 //! use uefi_cpu::interrupts::InterruptManager;
-//! use uefi_cpu::interrupts::UefiExceptionHandler;
+//! use uefi_cpu::interrupts::ExceptionType;
+//! use uefi_cpu::interrupts::HandlerType;
 //! use uefi_sdk::error::EfiError;
 //! # #[derive(Default, Clone, Copy)]
 //! # struct Driver;
@@ -41,13 +42,13 @@
 //! # impl uefi_cpu::interrupts::InterruptManager for InterruptManagerExample {
 //! #     fn initialize(&mut self) -> uefi_sdk::error::Result<()> { Ok(()) }
 //! #     fn register_exception_handler(
-//! #        &mut self,
-//! #        exception_type: usize,
-//! #        handler: UefiExceptionHandler,
+//! #        &self,
+//! #        exception_type: ExceptionType,
+//! #        handler: HandlerType,
 //! #    ) -> Result<(), EfiError> { Ok(()) }
 //! #     fn unregister_exception_handler(
-//! #        &mut self,
-//! #        exception_type: usize,
+//! #        &self,
+//! #        exception_type: ExceptionType,
 //! #    ) -> Result<(), EfiError> { Ok(()) }
 //! # }
 //! # let physical_hob_list = core::ptr::null();
@@ -145,7 +146,8 @@ pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_c
 /// ``` rust,no_run
 /// use uefi_cpu::cpu::EfiCpuInit;
 /// use uefi_cpu::interrupts::InterruptManager;
-/// use uefi_cpu::interrupts::UefiExceptionHandler;
+/// use uefi_cpu::interrupts::ExceptionType;
+/// use uefi_cpu::interrupts::HandlerType;
 /// use uefi_sdk::error::EfiError;
 /// # #[derive(Default, Clone, Copy)]
 /// # struct Driver;
@@ -178,13 +180,13 @@ pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_c
 /// # impl uefi_cpu::interrupts::InterruptManager for InterruptManagerExample {
 /// #     fn initialize(&mut self) -> uefi_sdk::error::Result<()> { Ok(()) }
 /// #     fn register_exception_handler(
-/// #        &mut self,
-/// #        exception_type: usize,
-/// #        handler: UefiExceptionHandler,
+/// #        &self,
+/// #        exception_type: ExceptionType,
+/// #        handler: HandlerType,
 /// #    ) -> Result<(), EfiError> { Ok(()) }
 /// #     fn unregister_exception_handler(
-/// #        &mut self,
-/// #        exception_type: usize,
+/// #        &self,
+/// #        exception_type: ExceptionType,
 /// #    ) -> Result<(), EfiError> { Ok(()) }
 /// # }
 /// # let physical_hob_list = core::ptr::null();
