@@ -4,7 +4,10 @@ use crate::protocols::PROTOCOL_DB;
 use alloc::boxed::Box;
 use core::ffi::c_void;
 use r_efi::efi;
-use uefi_cpu::{cpu::EfiCpuInit, interrupts::InterruptManager};
+use uefi_cpu::{
+    cpu::EfiCpuInit,
+    interrupts::{ExceptionType, HandlerType, InterruptManager},
+};
 use uefi_sdk::error::EfiError;
 
 use mu_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandler, Protocol, PROTOCOL_GUID};
@@ -91,18 +94,20 @@ extern "efiapi" fn register_interrupt_handler(
     interrupt_type: isize,
     interrupt_handler: InterruptHandler,
 ) -> efi::Status {
-    // TODO: Fix interrupt manager to use mu_pi::protocols::cpu_arch::InterruptHandler
-    // then enable below code.
+    let interrupt_manager = &get_impl_ref(this).interrupt_manager;
 
-    // let interrupt_manager = &mut get_impl_ref(this).interrupt_manager;
+    let const_fn_ptr = interrupt_handler as *const ();
+    let result = if const_fn_ptr.is_null() {
+        interrupt_manager.unregister_exception_handler(interrupt_type as ExceptionType)
+    } else {
+        interrupt_manager
+            .register_exception_handler(interrupt_type as ExceptionType, HandlerType::UefiRoutine(interrupt_handler))
+    };
 
-    // let result = interrupt_manager.register_exception_handler(interrupt_type, interrupt_handler);
-
-    // match result {
-    //     Ok(()) => efi::Status::SUCCESS,
-    //     Err(err) => err.into(),
-    // }
-    efi::Status::SUCCESS
+    match result {
+        Ok(()) => efi::Status::SUCCESS,
+        Err(err) => err.into(),
+    }
 }
 
 extern "efiapi" fn get_timer_value(
