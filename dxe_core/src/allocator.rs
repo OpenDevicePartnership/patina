@@ -18,7 +18,7 @@ use core::{
 
 extern crate alloc;
 use alloc::{collections::BTreeMap, vec::Vec};
-use mu_rust_helpers::{function, guid::guid};
+use mu_rust_helpers::function;
 
 use crate::{
     gcd::{self, AllocateType as AllocationStrategy},
@@ -35,14 +35,13 @@ use mu_pi::{
 };
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
 use uefi_allocator::UefiAllocator;
-use uuid::uuid;
 
 //FixedSizeBlockAllocator is passed as a reference to the callbacks on page allocations
 pub use fixed_size_block_allocator::FixedSizeBlockAllocator;
 
 use uefi_sdk::{
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
-    uefi_size_to_pages,
+    guid, uefi_size_to_pages,
 };
 
 // Allocation Strategy when not specified by caller.
@@ -784,7 +783,7 @@ pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Resu
     let memory_table_mut = unsafe { (MEMORY_TYPE_INFO_TABLE.as_mut_ptr() as *mut c_void).as_mut().unwrap() };
 
     misc_boot_services::core_install_configuration_table(
-        guid!("4c19049f-4137-4dd3-9c10-8b97a83ffdfa"),
+        guid::MEMORY_TYPE_INFORMATION,
         Some(memory_table_mut),
         system_table,
     )
@@ -832,7 +831,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                     uefi_size_to_pages!(desc.memory_length as usize),
                     &mut address as *mut efi::PhysicalAddress)
                     .inspect_err(|err|{
-                        if *err == efi::Status::NOT_FOUND && desc.name != guid!("00000000-0000-0000-0000-000000000000") {
+                        if *err == efi::Status::NOT_FOUND && desc.name != guid::ZERO {
                             //Guided Memory Allocation Hobs are typically MemoryAllocationModule or MemoryAllocationStack HOBs
                             //which have corresponding non-guided allocation HOBs associated with them; they are rejected as
                             //duplicates if we attempt to log them. Only log trace messages for these.
