@@ -247,8 +247,7 @@ impl DxeComponent for TestRunnerComponent {
 #[cfg(test)]
 mod tests {
     use super::TestRunnerComponent;
-    use core::ffi::c_void;
-    use core::result::Result;
+    use core::{ffi::c_void, result::Result};
     use r_efi::efi;
     use uefi_component_interface::{DxeComponent, DxeComponentInterface};
 

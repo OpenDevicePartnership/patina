@@ -12,8 +12,7 @@ use core::{
     slice::{from_raw_parts, from_raw_parts_mut},
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
-use mu_pi::protocols;
-use mu_pi::status_code;
+use mu_pi::{protocols, status_code};
 use r_efi::efi;
 use uefi_sdk::guid;
 

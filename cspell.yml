@@ -26,6 +26,8 @@ words:
   - "brotli"
   - "corosensei"
   - "depex"
+  - "debugln"
+  - "deassertion"
   - "docsrs"
   - "dxecore"
   - "dxefv"

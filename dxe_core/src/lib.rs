@@ -105,14 +105,22 @@ mod tpl_lock;
 #[macro_use]
 pub mod test_support;
 
-use core::{ffi::c_void, str::FromStr};
+use core::{ffi::c_void, ptr, str::FromStr};
 
 use alloc::{boxed::Box, vec::Vec};
 use gcd::SpinLockedGcd;
-use mu_pi::{fw_fs, hob::HobList, protocols::bds};
-use r_efi::efi::{self};
+use mu_pi::{
+    fw_fs,
+    hob::HobList,
+    protocols::{bds, status_code},
+    status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
+};
+use r_efi::efi;
 use uefi_component_interface::DxeComponent;
 use uefi_sdk::error::{self, Result};
+
+pub const DXE_CORE_GUID: efi::Guid =
+    efi::Guid::from_fields(0x23C9322F, 0x2AF2, 0x476A, 0xBC, 0x4C, &[0x26, 0xBC, 0x88, 0x26, 0x6C, 0x71]);
 
 #[macro_export]
 macro_rules! ensure {
@@ -260,26 +268,20 @@ where
 
         // Instantiate system table.
         systemtables::init_system_table();
-
         {
             let mut st = systemtables::SYSTEM_TABLE.lock();
             let st = st.as_mut().expect("System Table not initialized!");
 
-            allocator::install_memory_services(st.boot_services());
-            events::init_events_support(st.boot_services());
-            protocols::init_protocol_support(st.boot_services());
-            misc_boot_services::init_misc_boot_services_support(st.boot_services());
-            runtime::init_runtime_support(st.runtime_services());
+            allocator::init_memory_support(&hob_list);
+            events::init_events_support(st.boot_services_mut());
+            protocols::init_protocol_support(st.boot_services_mut());
+            misc_boot_services::init_misc_boot_services_support(st.boot_services_mut());
+            runtime::init_runtime_support(st.runtime_services_mut());
             image::init_image_support(&hob_list, st);
             dispatcher::init_dispatcher(Box::from(self.section_extractor));
             fv::init_fv_support(&hob_list, Box::from(self.section_extractor));
             dxe_services::init_dxe_services(st);
-            driver_services::init_driver_services(st.boot_services());
-
-            // Commenting out below install procotcol call until we stub the CPU
-            // arch protocol install from C CpuDxe.
-            // cpu_arch_protocol::install_cpu_arch_protocol(&mut self.cpu_init, &mut self.interrupt_manager);
-
+            driver_services::init_driver_services(st.boot_services_mut());
             // re-checksum the system tables after above initialization.
             st.checksum_all();
 
@@ -298,12 +300,20 @@ where
             allocator::install_memory_type_info_table(st).expect("Unable to create Memory Type Info Table");
         }
 
-        let mut st = systemtables::SYSTEM_TABLE.lock();
-        let bs = st.as_mut().unwrap().boot_services() as *mut efi::BootServices;
-        drop(st);
-        tpl_lock::init_boot_services(bs);
+        let boot_services_ptr;
+        let runtime_services_ptr;
+        {
+            let mut st = systemtables::SYSTEM_TABLE.lock();
+            boot_services_ptr = st.as_mut().unwrap().boot_services_mut() as *mut efi::BootServices;
+            runtime_services_ptr = st.as_mut().unwrap().runtime_services_mut() as *mut efi::RuntimeServices;
+        }
+        tpl_lock::init_boot_services(boot_services_ptr);
 
         memory_attributes_table::init_memory_attributes_table_support();
+
+        _ = uefi_performance::init_performance_lib(&hob_list, unsafe { boot_services_ptr.as_ref().unwrap() }, unsafe {
+            runtime_services_ptr.as_ref().unwrap()
+        });
 
         CorePostInit::new(/* Potentially transfer configuration data here. */)
     }
@@ -389,4 +399,18 @@ fn call_bds() {
             ((*bds).entry)(bds);
         }
     }
+
+    match protocols::PROTOCOL_DB.locate_protocol(status_code::PROTOCOL_GUID) {
+        Ok(status_code_ptr) => {
+            let status_code_protocol = unsafe { (status_code_ptr as *mut status_code::Protocol).as_mut() }.unwrap();
+            (status_code_protocol.report_status_code)(
+                EFI_PROGRESS_CODE,
+                EFI_SOFTWARE_DXE_CORE | EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT,
+                0,
+                &uefi_sdk::guid::DXE_CORE,
+                ptr::null(),
+            );
+        }
+        Err(err) => log::error!("Unable to locate status code runtime protocol: {:?}", err),
+    };
 }

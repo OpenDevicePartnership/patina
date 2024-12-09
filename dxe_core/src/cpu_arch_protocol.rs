@@ -188,8 +188,7 @@ pub(crate) fn install_cpu_arch_protocol<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockall::predicate::*;
-    use mockall::*;
+    use mockall::{predicate::*, *};
     use mu_pi::protocols::cpu_arch::EfiSystemContext;
     use r_efi::efi;
     use uefi_cpu::interrupts::InterruptManager;

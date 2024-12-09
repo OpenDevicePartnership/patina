@@ -42,6 +42,7 @@ uefi_cpu = { workspace = true }
 uefi_debugger = { workspace = true }
 uefi_device_path = { workspace = true }
 uefi_depex = { workspace = true}
+uefi_performance = { workspace = true }
 
 [dev-dependencies]
 sample_components = { workspace = true }

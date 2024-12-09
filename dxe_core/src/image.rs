@@ -7,8 +7,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
-use core::convert::TryInto;
-use core::{ffi::c_void, mem::transmute, slice::from_raw_parts};
+use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
 use mu_pi::hob::{Hob, HobList};
 use r_efi::efi;
 use uefi_component_interface::DxeComponent;
@@ -1285,10 +1284,10 @@ pub fn init_image_support(hob_list: &HobList, system_table: &mut EfiSystemTable)
     install_dxe_core_image(hob_list);
 
     //set up imaging services
-    system_table.boot_services().load_image = load_image;
-    system_table.boot_services().start_image = start_image;
-    system_table.boot_services().unload_image = unload_image;
-    system_table.boot_services().exit = exit;
+    system_table.boot_services_mut().load_image = load_image;
+    system_table.boot_services_mut().start_image = start_image;
+    system_table.boot_services_mut().unload_image = unload_image;
+    system_table.boot_services_mut().exit = exit;
 }
 
 #[cfg(test)]
@@ -1347,10 +1346,10 @@ mod tests {
         };
 
         //set up imaging services
-        system_table.boot_services().load_image = load_image;
-        system_table.boot_services().start_image = start_image;
-        system_table.boot_services().unload_image = unload_image;
-        system_table.boot_services().exit = exit;
+        system_table.boot_services_mut().load_image = load_image;
+        system_table.boot_services_mut().start_image = start_image;
+        system_table.boot_services_mut().unload_image = unload_image;
+        system_table.boot_services_mut().exit = exit;
     }
 
     #[test]
