@@ -14,12 +14,12 @@ use uefi_sdk::{
         BootServices,
     },
     runtime_services::RuntimeServices,
+    base::UEFI_PAGE_SIZE
 };
 
 use crate::performance_record::{self, PerformanceRecord, PerformanceRecordBuffer};
 
 const PUBLISHED_FBPT_EXTRA_SPACE: usize = 0x10_000;
-const PAGE_SIZE_4K: usize = 0x1000;
 
 #[derive(Debug, Clone, Pwrite)]
 #[repr(C)]
@@ -68,8 +68,8 @@ impl FBPT {
             efi::Guid::from_fields(0xc095791a, 0x3001, 0x47b2, 0x80, 0xc9, &[0xea, 0xc7, 0x31, 0x9f, 0x2f, 0xa4]);
 
         let allocation_size = Self::size_of_empty_table() + self.other_records.size() + PUBLISHED_FBPT_EXTRA_SPACE;
-        let allocation_nb_page = allocation_size.div_ceil(PAGE_SIZE_4K);
-        let allocation_size = allocation_nb_page * PAGE_SIZE_4K;
+        let allocation_nb_page = allocation_size.div_ceil(UEFI_PAGE_SIZE);
+        let allocation_size = allocation_nb_page * UEFI_PAGE_SIZE;
 
         self.fbpt_address = 'find_address: {
             if let Ok(prev_address) = {

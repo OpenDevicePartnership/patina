@@ -119,9 +119,6 @@ use r_efi::efi;
 use uefi_component_interface::DxeComponent;
 use uefi_sdk::error::{self, Result};
 
-pub const DXE_CORE_GUID: efi::Guid =
-    efi::Guid::from_fields(0x23C9322F, 0x2AF2, 0x476A, 0xBC, 0x4C, &[0x26, 0xBC, 0x88, 0x26, 0x6C, 0x71]);
-
 #[macro_export]
 macro_rules! ensure {
     ($condition:expr, $err:expr) => {{
@@ -272,7 +269,6 @@ where
             let mut st = systemtables::SYSTEM_TABLE.lock();
             let st = st.as_mut().expect("System Table not initialized!");
 
-            allocator::init_memory_support(&hob_list);
             events::init_events_support(st.boot_services_mut());
             protocols::init_protocol_support(st.boot_services_mut());
             misc_boot_services::init_misc_boot_services_support(st.boot_services_mut());

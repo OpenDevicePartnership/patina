@@ -15,10 +15,6 @@ license = "BSD-2-Clause-Patent"
 edition = "2021"
 rust-version = "1.80.0"
 
-
-[patch."https://github.com/pop-project/uefi-sdk"]
-uefi_sdk = { path = "D:\\Repositories\\uefi-sdk\\uefi_sdk" }
-
 [workspace.dependencies]
 uefi_sdk = { git = "https://github.com/pop-project/uefi-sdk", rev = "v0.1.3" }
 uefi_cpu = { git = "https://github.com/pop-project/uefi-core.git", rev = "v7.0.1" }

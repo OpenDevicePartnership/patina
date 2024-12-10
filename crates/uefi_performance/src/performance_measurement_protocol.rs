@@ -6,7 +6,7 @@ use core::{
 
 use r_efi::efi;
 
-use mu_rust_helpers::boot_services::protocol_handler::Protocol;
+use uefi_sdk::boot_services::protocol_handler::Protocol;
 
 pub const EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0xc85d06be, 0x5f75, 0x48ce, 0xa8, 0x0f, &[0x12, 0x36, 0xba, 0x3b, 0x87, 0xb1]);

@@ -70,10 +70,7 @@ impl ReportStatusCode for StatusCodeRuntimeProtocol {
 
         let caller_id = caller_id.unwrap_or(&mu_rust_helpers::guid::CALLER_ID);
 
-        // debugln!(DEBUG_INFO, "[RustStatusCodeRuntime] caller_id: {}", guid::guid_fmt!(caller_id));
-
-        let status =
-            (protocol.report_status_code)(status_code_type, status_code_value, instance, caller_id, data_ptr);
+        let status = (protocol.report_status_code)(status_code_type, status_code_value, instance, caller_id, data_ptr);
 
         if status.is_error() {
             Err(status)

@@ -44,8 +44,10 @@ use performance_measurement_protocol::{
 };
 use performance_table::FBPT;
 
+use r_efi::system::EVENT_GROUP_READY_TO_BOOT;
+
 use guid::{
-    EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE_GUID, END_OF_DXE_EVENT_GROUP_GUID, EVENT_READY_TO_BOOT_GUID,
+    EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE_GUID, END_OF_DXE_EVENT_GROUP_GUID,
     PERFORMANCE_PROTOCOL_GUID,
 };
 
@@ -81,15 +83,11 @@ pub fn init_performance_lib(
     FBPT.lock().set_records(pei_records);
 
     // Install the protocol interfaces for DXE performance library instance.
-    static PERFORMANCE_MEASUREMENT_INTERFACE: EdkiiPerformanceMeasurementInterface =
-        EdkiiPerformanceMeasurementInterface { create_performance_measurement };
-    unsafe {
-        BOOT_SERVICES.install_protocol_interface_unchecked(
-            None,
-            &EdkiiPerformanceMeasurement,
-            ptr::addr_of!(PERFORMANCE_MEASUREMENT_INTERFACE) as *mut EdkiiPerformanceMeasurementInterface as _,
-        )
-    }?;
+    BOOT_SERVICES.install_protocol_interface(
+        None,
+        &EdkiiPerformanceMeasurement,
+        Box::new(EdkiiPerformanceMeasurementInterface { create_performance_measurement }),
+    )?;
 
     // Register EndOfDxe event to allocate the boot performance table and report the table address through status code.
     BOOT_SERVICES.create_event_ex(
@@ -106,7 +104,7 @@ pub fn init_performance_lib(
         Tpl::CALLBACK,
         Some(update_boot_performance_table),
         &(),
-        &EVENT_READY_TO_BOOT_GUID,
+        &EVENT_GROUP_READY_TO_BOOT,
     )?;
 
     // Install configuration table for performance property.

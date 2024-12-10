@@ -1,23 +1,15 @@
-use alloc::string::String;
-use core::{ffi::c_char, ptr};
+use alloc::string::{String, ToString};
+use core::{
+    ffi::{c_char, CStr},
+};
 
 /// # Safety
 /// make sure c_ptr a valid c string pointer.
-pub unsafe fn string_from_c_char_ptr(mut c_ptr: *const c_char) -> Option<String> {
+pub unsafe fn string_from_c_char_ptr(c_ptr: *const c_char) -> Option<String> {
     if c_ptr.is_null() {
         return None;
     }
-
-    let mut str = String::new();
-    loop {
-        let c = unsafe { ptr::read(c_ptr) };
-        if c == 0 {
-            break;
-        }
-        str.push(c as u8 as char);
-        c_ptr = unsafe { c_ptr.add(1) };
-    }
-    Some(str)
+    Some(CStr::from_ptr(c_ptr).to_str().unwrap().to_string())
 }
 
 pub fn c_char_ptr_from_str(str: &str) -> *const c_char {
