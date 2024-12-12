@@ -1,3 +1,10 @@
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
+
 pub mod extended;
 
 use alloc::vec::Vec;
@@ -8,7 +15,7 @@ use scroll::{self, Pread, Pwrite};
 
 use crate::_debug::DbgMemory;
 
-pub const HEADER_SIZE: usize = mem::size_of::<u16>() // Type
+pub const PERFORMANCE_RECORD_HEADER_SIZE: usize = mem::size_of::<u16>() // Type
         + mem::size_of::<u8>() // Length 
         + mem::size_of::<u8>(); // Revision
 
@@ -22,7 +29,7 @@ pub trait PerformanceRecord: Sized + scroll::ctx::TryIntoCtx<scroll::Endian, Err
     }
 
     fn size(&self) -> usize {
-        HEADER_SIZE + self.data_size()
+        PERFORMANCE_RECORD_HEADER_SIZE + self.data_size()
     }
 
     fn write_into(self, buff: &mut [u8], offset: &mut usize) -> Result<usize, scroll::Error> {

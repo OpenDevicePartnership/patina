@@ -1,3 +1,10 @@
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
+
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
@@ -337,7 +344,7 @@ extern "efiapi" fn create_performance_measurement(
 
 extern "efiapi" fn report_fpdt_record_buffer(_event: efi::Event, _ctx: &()) {
     let fbpt = &mut FBPT.lock();
-    fbpt.report_table(&BOOT_SERVICES, &RUNTIME_SERVICES).unwrap();
+    fbpt.report_table(&BOOT_SERVICES, &RUNTIME_SERVICES).expect("Failed to allocate table.");
 
     const EFI_SOFTWARE: u32 = 0x03000000;
     const EFI_PROGRESS_CODE: u32 = 0x00000001;

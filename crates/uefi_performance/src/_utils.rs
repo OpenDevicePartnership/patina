@@ -1,3 +1,10 @@
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
+
 use alloc::string::{String, ToString};
 use core::{
     ffi::{c_char, CStr},

@@ -1,3 +1,10 @@
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
+
 use core::{
     ffi::{c_char, c_void},
     ops::Deref,

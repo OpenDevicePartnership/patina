@@ -1,3 +1,10 @@
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
+
 use r_efi::efi;
 
 pub const EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE_GUID: efi::Guid =

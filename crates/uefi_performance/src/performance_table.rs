@@ -1,3 +1,10 @@
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
+
 use alloc::vec::Vec;
 use core::{
     fmt::Debug,
@@ -147,7 +154,7 @@ impl FBPT {
     pub const fn size_of_empty_table() -> usize {
         mem::size_of::<u32>() // Header signature
         + mem::size_of::<u32>() // Header length
-        + performance_record::HEADER_SIZE
+        + performance_record::PERFORMANCE_RECORD_HEADER_SIZE
         + FirmwareBasicBootPerfDataRecord::data_size()
     }
 }
