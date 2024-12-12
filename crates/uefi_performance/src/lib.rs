@@ -12,7 +12,6 @@ extern crate alloc;
 pub mod _debug;
 pub mod _status_code_runtime;
 pub mod _utils;
-pub mod guid;
 pub mod performance_measurement_protocol;
 pub mod performance_record;
 pub mod performance_table;
@@ -53,11 +52,6 @@ use performance_table::FBPT;
 
 use r_efi::system::EVENT_GROUP_READY_TO_BOOT;
 
-use guid::{
-    EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE_GUID, END_OF_DXE_EVENT_GROUP_GUID,
-    PERFORMANCE_PROTOCOL_GUID,
-};
-
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 use uefi_sdk::{
     boot_services::{
@@ -68,6 +62,7 @@ use uefi_sdk::{
     },
     runtime_services::StandardRuntimeServices,
     tpl_mutex::TplMutex,
+    guid
 };
 
 static BOOT_SERVICES: StandardBootServices = StandardBootServices::new_uninit();
@@ -102,7 +97,7 @@ pub fn init_performance_lib(
         Tpl::CALLBACK,
         Some(report_fpdt_record_buffer),
         &(),
-        &END_OF_DXE_EVENT_GROUP_GUID,
+        &guid::EVENT_GROUP_END_OF_DXE,
     )?;
 
     // Register ReadyToBoot event to update the boot performance table for SMM performance data.
@@ -116,7 +111,7 @@ pub fn init_performance_lib(
 
     // Install configuration table for performance property.
     BOOT_SERVICES.install_configuration_table(
-        &PERFORMANCE_PROTOCOL_GUID,
+        &guid::PERFORMANCE_PROTOCOL,
         Box::new(PerformanceProperty::new(Arch::cpu_count_frequency(), Arch::cpu_count_start(), Arch::cpu_count_end())),
     )?;
     Ok(())
@@ -128,7 +123,7 @@ pub fn extract_pei_performance_records(hob_list: &HobList) -> Result<(Performanc
 
     for hob in hob_list.iter() {
         let guid_hob = match *hob {
-            Hob::GuidHob(hob, _) if hob.name == EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE_GUID => hob,
+            Hob::GuidHob(hob, _) if hob.name == guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE => hob,
             _ => continue,
         };
         let perf_header_ptr =
@@ -356,7 +351,7 @@ extern "efiapi" fn report_fpdt_record_buffer(_event: efi::Event, _ctx: &()) {
         EFI_SOFTWARE_DXE_BS_DRIVER,
         0,
         None,
-        efi::Guid::clone(&EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE_GUID),
+        efi::Guid::clone(&guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE),
         fbpt.fbpt_address(),
     );
     if status.is_err() {
@@ -365,7 +360,7 @@ extern "efiapi" fn report_fpdt_record_buffer(_event: efi::Event, _ctx: &()) {
 
     let status = unsafe {
         BOOT_SERVICES.install_configuration_table_unchecked(
-            &guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE_GUID,
+            &guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
             fbpt.fbpt_address() as *mut c_void,
         )
     };
