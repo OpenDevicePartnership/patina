@@ -110,6 +110,7 @@ use core::{ffi::c_void, str::FromStr};
 use alloc::{boxed::Box, vec::Vec};
 use gcd::SpinLockedGcd;
 use mu_pi::{fw_fs, hob::HobList, protocols::bds};
+use mu_rust_helpers::function;
 use r_efi::efi::{self};
 use uefi_component_interface::DxeComponent;
 use uefi_sdk::error::{self, Result};
@@ -260,21 +261,31 @@ where
 
         // Instantiate system table.
         systemtables::init_system_table();
-
+        log::info!("{}:{}, system table initialized", function!(), line!());
         {
             let mut st = systemtables::SYSTEM_TABLE.lock();
             let st = st.as_mut().expect("System Table not initialized!");
 
             allocator::install_memory_services(st.boot_services());
+            log::info!("{}:{}, memory service installed", function!(), line!());
             events::init_events_support(st.boot_services());
+            log::info!("{}:{}, events initialized", function!(), line!());
             protocols::init_protocol_support(st.boot_services());
+            log::info!("{}:{}, protocol support initialized", function!(), line!());
             misc_boot_services::init_misc_boot_services_support(st.boot_services());
+            log::info!("{}:{}, misc boot services support initialized", function!(), line!());
             runtime::init_runtime_support(st.runtime_services());
+            log::info!("{}:{}, runtime support initialized", function!(), line!());
             image::init_image_support(&hob_list, st);
+            log::info!("{}:{}, image support initialized", function!(), line!());
             dispatcher::init_dispatcher(Box::from(self.section_extractor));
+            log::info!("{}:{}, dispatcher initialized", function!(), line!());
             fv::init_fv_support(&hob_list, Box::from(self.section_extractor));
+            log::info!("{}:{}, fv support initialized", function!(), line!());
             dxe_services::init_dxe_services(st);
+            log::info!("{}:{}, dxe services initialized", function!(), line!());
             driver_services::init_driver_services(st.boot_services());
+            log::info!("{}:{}, driver services initialized", function!(), line!());
 
             // Commenting out below install procotcol call until we stub the CPU
             // arch protocol install from C CpuDxe.
@@ -293,18 +304,23 @@ where
                 st,
             )
             .expect("Unable to create configuration table due to invalid table entry.");
+            log::info!("{}:{}, HOB table installed", function!(), line!());
 
             // Install Memory Type Info configuration table.
             allocator::install_memory_type_info_table(st).expect("Unable to create Memory Type Info Table");
+            log::info!("{}:{}, Memory Typte Info table installed", function!(), line!());
         }
 
         let mut st = systemtables::SYSTEM_TABLE.lock();
         let bs = st.as_mut().unwrap().boot_services() as *mut efi::BootServices;
         drop(st);
         tpl_lock::init_boot_services(bs);
+        log::info!("{}:{}, TPL lock initialized", function!(), line!());
 
         memory_attributes_table::init_memory_attributes_table_support();
+        log::info!("{}:{}, MAT table installed", function!(), line!());
 
+        log::info!("{}:{}, Transferring to Post Init", function!(), line!());
         CorePostInit::new(/* Potentially transfer configuration data here. */)
     }
 }
