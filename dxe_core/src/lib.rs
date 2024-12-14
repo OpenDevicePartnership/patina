@@ -8,6 +8,7 @@
 //! ``` rust,no_run
 //! use uefi_cpu::cpu::EfiCpuInit;
 //! use uefi_cpu::interrupts::InterruptManager;
+//! use uefi_cpu::interrupts::InterruptBases;
 //! use uefi_cpu::interrupts::ExceptionType;
 //! use uefi_cpu::interrupts::HandlerType;
 //! use uefi_sdk::error::EfiError;
@@ -201,22 +202,25 @@ pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_c
 ///   .unwrap();
 /// ```
 #[derive(Default)]
-pub struct Core<CpuInit, SectionExtractor, InterruptManager>
+pub struct Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases>
 where
     CpuInit: uefi_cpu::cpu::EfiCpuInit + Default + 'static,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
     InterruptManager: uefi_cpu::interrupts::InterruptManager + Default + Copy + 'static,
+    InterruptBases: uefi_cpu::interrupts::InterruptBases + Default + Copy + 'static,
 {
     cpu_init: CpuInit,
     section_extractor: SectionExtractor,
     interrupt_manager: InterruptManager,
+    interrupt_bases: InterruptBases,
 }
 
-impl<CpuInit, SectionExtractor, InterruptManager> Core<CpuInit, SectionExtractor, InterruptManager>
+impl<CpuInit, SectionExtractor, InterruptManager, InterruptBases> Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases>
 where
     CpuInit: uefi_cpu::cpu::EfiCpuInit + Default + 'static,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
     InterruptManager: uefi_cpu::interrupts::InterruptManager + Default + Copy + 'static,
+    InterruptBases: uefi_cpu::interrupts::InterruptBases + Default + Copy + 'static,
 {
     /// Registers the CPU Init with it's own configuration.
     pub fn with_cpu_init(mut self, cpu_init: CpuInit) -> Self {
@@ -233,6 +237,12 @@ where
     /// Registers the section extractor with it's own configuration.
     pub fn with_section_extractor(mut self, section_extractor: SectionExtractor) -> Self {
         self.section_extractor = section_extractor;
+        self
+    }
+
+    /// Registers the interrupt bases with it's own configuration.
+    pub fn with_interrupt_bases(mut self, interrupt_bases: InterruptBases) -> Self {
+        self.interrupt_bases = interrupt_bases;
         self
     }
 
@@ -280,8 +290,7 @@ where
             // Commenting out below install procotcol call until we stub the CPU
             // arch protocol install from C CpuDxe.
             cpu_arch_protocol::install_cpu_arch_protocol(&mut self.cpu_init, &mut self.interrupt_manager);
-            // TODO: Figure out how to propagate the addresses
-            hw_interrupt_protocol::install_hw_interrupt_protocol(&mut self.interrupt_manager, 0x40060000 as _, 0x40080000 as _);
+            hw_interrupt_protocol::install_hw_interrupt_protocol(&mut self.interrupt_manager, &self.interrupt_bases);
 
             // re-checksum the system tables after above initialization.
             st.checksum_all();

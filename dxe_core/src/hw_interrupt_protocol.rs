@@ -4,7 +4,7 @@ use core::ffi::c_void;
 use r_efi::efi;
 use uefi_cpu::interrupts::aarch64::hw_interrupt::AArch64InterruptInitializer;
 use uefi_cpu::interrupts::aarch64::gic::get_max_interrupt_number;
-use uefi_cpu::interrupts::{InterruptManager, ExceptionContext, InterruptHandler};
+use uefi_cpu::interrupts::{InterruptManager, ExceptionContext, InterruptHandler, InterruptBases};
 use alloc::vec;
 use alloc::vec::Vec;
 use spin::Mutex;
@@ -298,7 +298,6 @@ impl InterruptHandler for HwInterruptProtocolHandler {
         }
 
         let int_id = int_id.unwrap();
-        // TODO: connect this to the IntId.
         let raw_value: u32 = int_id.into();
 
         if let Some(handler) = self.handlers.lock()[raw_value as usize] {
@@ -319,13 +318,6 @@ impl HwInterruptProtocolHandler {
     ) -> Self {
         Self { handlers, aarch64_int }
     }
-
-    // pub fn clone_with_handlers(&self) -> Self {
-    //     Self {
-    //         handlers: Arc::clone(&self.handlers),
-    //         aarch64_int: Arc::clone(&self.aarch64_int),
-    //     }
-    // }
 
     /// Internal implementation of interrupt related functions.
     pub fn register_interrupt_source(&mut self, interrupt_source: usize, handler: HwInterruptHandler) -> efi::Status {
@@ -360,10 +352,9 @@ impl HwInterruptProtocolHandler {
 /// This function is called by the DXE Core to install the protocol.
 pub(crate) fn install_hw_interrupt_protocol<'a>(
     interrupt_manager: &'a mut dyn InterruptManager,
-    gicd_base: u64,
-    gicr_base: u64,
+    interrupt_bases: &'a dyn InterruptBases
 ) {
-    let gic_v3 = unsafe { GicV3::new(gicd_base as _, gicr_base as _) };
+    let gic_v3 = unsafe { GicV3::new(interrupt_bases.get_interrupt_base_d() as _, interrupt_bases.get_interrupt_base_r() as _) };
     let gic_v3 = Mutex::new(gic_v3);
     let max_int = get_max_interrupt_number(gic_v3.lock().gicd_ptr()) as usize;
     let handlers = Mutex::new(vec![None; max_int]);
@@ -383,10 +374,6 @@ pub(crate) fn install_hw_interrupt_protocol<'a>(
     } else {
         log::info!("installed EFI_HARDWARE_INTERRUPT_GUID");
     }
-
-    // Prepare context for the v2 interrupt handler
-    // let aarch64_int = AArch64InterruptInitializer::new(gic_v3.clone());
-    // let hw_int_protocol_handler_v2 = hw_int_protocol_handler.clone_with_handlers();
 
     // Produce Interrupt Protocol with the initialized GIC
     let interrupt_protocol_v2 =
