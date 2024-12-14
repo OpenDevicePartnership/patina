@@ -54,22 +54,22 @@ extern "efiapi" fn flush_data_cache(
 }
 
 extern "efiapi" fn enable_interrupt(this: *const Protocol) -> efi::Status {
-    let cpu_init = &get_impl_ref(this).cpu_init;
-    let result = cpu_init.enable_interrupt();
+    let interrupt_manager = &get_impl_ref(this).interrupt_manager;
+    interrupt_manager.enable_interrupt();
 
-    result.map(|_| efi::Status::SUCCESS).unwrap_or_else(|err| err.into())
+    efi::Status::SUCCESS
 }
 
 extern "efiapi" fn disable_interrupt(this: *const Protocol) -> efi::Status {
-    let cpu_init = &get_impl_ref(this).cpu_init;
-    let result = cpu_init.disable_interrupt();
+    let interrupt_manager = &get_impl_ref(this).interrupt_manager;
+    interrupt_manager.disable_interrupt();
 
-    result.map(|_| efi::Status::SUCCESS).unwrap_or_else(|err| err.into())
+    efi::Status::SUCCESS
 }
 
 extern "efiapi" fn get_interrupt_state(this: *const Protocol, state: *mut bool) -> efi::Status {
-    let cpu_init = &get_impl_ref(this).cpu_init;
-    let result = cpu_init.get_interrupt_state();
+    let interrupt_manager = &get_impl_ref(this).interrupt_manager;
+    let result = interrupt_manager.get_interrupt_state();
 
     result
         .map(|interrupt_state| {

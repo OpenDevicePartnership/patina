@@ -91,6 +91,7 @@ mod events;
 mod filesystems;
 mod fv;
 mod gcd;
+mod hw_interrupt_protocol;
 mod image;
 mod memory_attributes_table;
 mod misc_boot_services;
@@ -278,7 +279,9 @@ where
 
             // Commenting out below install procotcol call until we stub the CPU
             // arch protocol install from C CpuDxe.
-            // cpu_arch_protocol::install_cpu_arch_protocol(&mut self.cpu_init, &mut self.interrupt_manager);
+            cpu_arch_protocol::install_cpu_arch_protocol(&mut self.cpu_init, &mut self.interrupt_manager);
+            // TODO: Figure out how to propagate the addresses
+            hw_interrupt_protocol::install_hw_interrupt_protocol(&mut self.interrupt_manager, 0x40060000 as _, 0x40080000 as _);
 
             // re-checksum the system tables after above initialization.
             st.checksum_all();

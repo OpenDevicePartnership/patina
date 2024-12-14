@@ -34,6 +34,7 @@ r-efi = { workspace = true }
 scroll = {workspace = true}
 spin = { workspace = true }
 uuid = { workspace = true }
+arm-gic = { workspace = true }
 
 uefi_sdk = { workspace = true }
 uefi_collections = { workspace = true }
