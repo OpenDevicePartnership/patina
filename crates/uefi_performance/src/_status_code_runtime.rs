@@ -16,7 +16,7 @@ use mu_pi::protocols::{
     status_code::{EfiStatusCodeData, EfiStatusCodeType, EfiStatusCodeValue},
 };
 use r_efi::efi;
-use uefi_sdk::boot_services::{protocol_handler::Protocol, BootServices};
+use uefi_sdk::{boot_services::BootServices, protocol::Protocol};
 
 pub struct StatusCodeRuntimeProtocol;
 
@@ -36,8 +36,9 @@ unsafe impl Protocol for StatusCodeRuntimeProtocol {
     }
 }
 
-unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
-    slice::from_raw_parts((p as *const T) as *const u8, mem::size_of::<T>())
+fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
+    // SAFETY: P is a ref thus a valid pointer and since the type is sized, the memory boundary of this type is known.
+    unsafe { slice::from_raw_parts((p as *const T) as *const u8, mem::size_of::<T>()) }
 }
 
 /// Rust interface for Report Status Code
@@ -70,8 +71,8 @@ impl ReportStatusCode for StatusCodeRuntimeProtocol {
 
         let header = EfiStatusCodeData { header_size: header_size as u16, size: data_size as u16, r#type: data_type };
 
-        let mut data_buffer = Vec::from(unsafe { any_as_u8_slice(&header) });
-        data_buffer.extend(unsafe { any_as_u8_slice(&data) });
+        let mut data_buffer = Vec::from(any_as_u8_slice(&header));
+        data_buffer.extend(any_as_u8_slice(&data));
 
         let data_ptr: *mut EfiStatusCodeData = data_buffer.as_mut_ptr() as *mut EfiStatusCodeData;
 

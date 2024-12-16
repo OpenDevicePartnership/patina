@@ -7,13 +7,14 @@
 
 use core::{
     ffi::{c_char, c_void},
+    fmt::Debug,
     ops::Deref,
     option::Option,
 };
 
 use r_efi::efi;
 
-use uefi_sdk::boot_services::protocol_handler::Protocol;
+use uefi_sdk::protocol::Protocol;
 
 pub const EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0xc85d06be, 0x5f75, 0x48ce, 0xa8, 0x0f, &[0x12, 0x36, 0xba, 0x3b, 0x87, 0xb1]);
@@ -52,6 +53,33 @@ impl PerfId {
     pub const PERF_IN_MODULE_END: u16 = 0x41;
     pub const PERF_CROSS_MODULE_START: u16 = 0x50;
     pub const PERF_CROSS_MODULE_END: u16 = 0x51;
+
+    pub fn fmt(id: u16) -> &'static str {
+        match id {
+            PerfId::PERF_EVENT => "PERF_EVENT",
+            PerfId::MODULE_START => "MODULE_START",
+            PerfId::MODULE_END => "MODULE_END",
+            PerfId::MODULE_LOAD_IMAGE_START => "MODULE_LOAD_IMAGE_START",
+            PerfId::MODULE_LOAD_IMAGE_END => "MODULE_LOAD_IMAGE_END",
+            PerfId::MODULE_DB_START => "MODULE_DB_START",
+            PerfId::MODULE_DB_END => "MODULE_DB_END",
+            PerfId::MODULE_DB_SUPPORT_START => "MODULE_DB_SUPPORT_START",
+            PerfId::MODULE_DB_SUPPORT_END => "MODULE_DB_SUPPORT_END",
+            PerfId::MODULE_DB_STOP_START => "MODULE_DB_STOP_START",
+            PerfId::MODULE_DB_STOP_END => "MODULE_DB_STOP_END",
+            PerfId::PERF_EVENT_SIGNAL_START => "PERF_EVENT_SIGNAL_START",
+            PerfId::PERF_EVENT_SIGNAL_END => "PERF_EVENT_SIGNAL_END",
+            PerfId::PERF_CALLBACK_START => "PERF_CALLBACK_START",
+            PerfId::PERF_CALLBACK_END => "PERF_CALLBACK_END",
+            PerfId::PERF_FUNCTION_START => "PERF_FUNCTION_START",
+            PerfId::PERF_FUNCTION_END => "PERF_FUNCTION_END",
+            PerfId::PERF_IN_MODULE_START => "PERF_IN_MODULE_START",
+            PerfId::PERF_IN_MODULE_END => "PERF_IN_MODULE_END",
+            PerfId::PERF_CROSS_MODULE_START => "PERF_CROSS_MODULE_START",
+            PerfId::PERF_CROSS_MODULE_END => "PERF_CROSS_MODULE_END",
+            _ => "Unknown",
+        }
+    }
 }
 
 pub type CreateMeasurementProtocol = extern "efiapi" fn(
