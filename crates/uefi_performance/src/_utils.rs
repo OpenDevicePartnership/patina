@@ -6,9 +6,7 @@
 //!
 
 use alloc::string::{String, ToString};
-use core::{
-    ffi::{c_char, CStr},
-};
+use core::ffi::{c_char, CStr};
 
 /// # Safety
 /// make sure c_ptr a valid c string pointer.

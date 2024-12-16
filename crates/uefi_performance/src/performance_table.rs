@@ -16,12 +16,12 @@ use r_efi::efi;
 use scroll::Pwrite;
 
 use uefi_sdk::{
+    base::UEFI_PAGE_SIZE,
     boot_services::{
         allocation::{AllocType, MemoryType},
         BootServices,
     },
     runtime_services::RuntimeServices,
-    base::UEFI_PAGE_SIZE
 };
 
 use crate::performance_record::{self, PerformanceRecord, PerformanceRecordBuffer};
