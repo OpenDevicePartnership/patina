@@ -282,6 +282,7 @@ where
             let st = st.as_mut().expect("System Table not initialized!");
 
             allocator::install_memory_services(st.boot_services_mut());
+            gcd::init_paging(&hob_list);
             events::init_events_support(st.boot_services_mut());
             protocols::init_protocol_support(st.boot_services_mut());
             misc_boot_services::init_misc_boot_services_support(st.boot_services_mut());

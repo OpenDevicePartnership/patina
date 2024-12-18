@@ -360,9 +360,7 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
 
         // now actually set the attributes. We need to use the virtual size for the section length, but
         // we cannot rely on this to be section aligned, as some compilers rely on the loader to align this
-        // while we are still relying on the C CpuDxe for page table mgmt, we expect failures here before CpuDxe is
-        // loaded as core_set_memory_space_attributes will attempt to call the Cpu Arch protocol to set the page table
-        // attributes. We also need to ensure the capabilities are set. We set the capabilities as the old capabilities
+        // We also need to ensure the capabilities are set. We set the capabilities as the old capabilities
         // plus our new attribute, as we need to ensure all existing attributes are supported by the new
         // capabilities.
         let aligned_virtual_size =
@@ -517,14 +515,6 @@ fn install_dxe_core_image(hob_list: &HobList) {
     assert_eq!(handle, protocol_db::DXE_CORE_HANDLE);
     // record this handle as the new dxe_core handle.
     private_data.dxe_core_image_handle = handle;
-
-    let dxe_core_ptr = dxe_core_hob.alloc_descriptor.memory_base_address as *mut c_void;
-    if dxe_core_ptr.is_null() {
-        log::error!("DXE Core ptr is null. Cannot apply DXE Core memory protections");
-    } else {
-        // now apply memory protections
-        apply_image_memory_protections(&pe_info, &private_image_data);
-    }
 
     // store the dxe_core image private data in the private image data map.
     private_data.private_image_data.insert(handle, private_image_data);

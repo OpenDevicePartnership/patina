@@ -81,6 +81,10 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
     }
 }
 
+pub fn init_paging(hob_list: &HobList) {
+    GCD.init_paging(hob_list);
+}
+
 pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
     let phit = hob_list
         .iter()
