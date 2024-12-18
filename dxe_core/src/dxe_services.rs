@@ -29,18 +29,6 @@ use crate::{
 };
 
 static CPU_ARCH_PTR: AtomicPtr<cpu_arch::Protocol> = AtomicPtr::new(core::ptr::null_mut());
-
-fn result_to_efi_status(err: gcd::Error) -> efi::Status {
-    match err {
-        gcd::Error::AccessDenied => efi::Status::ACCESS_DENIED,
-        gcd::Error::InvalidParameter => efi::Status::INVALID_PARAMETER,
-        gcd::Error::NotFound => efi::Status::NOT_FOUND,
-        gcd::Error::NotInitialized => efi::Status::NOT_READY,
-        gcd::Error::OutOfResources => efi::Status::OUT_OF_RESOURCES,
-        gcd::Error::Unsupported => efi::Status::UNSUPPORTED,
-    }
-}
-
 extern "efiapi" fn add_memory_space(
     gcd_memory_type: dxe_services::GcdMemoryType,
     base_address: efi::PhysicalAddress,
@@ -51,7 +39,7 @@ extern "efiapi" fn add_memory_space(
 
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -100,7 +88,7 @@ extern "efiapi" fn allocate_memory_space(
             unsafe { base_address.write(allocated_addr as u64) };
             efi::Status::SUCCESS
         }
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -109,7 +97,7 @@ extern "efiapi" fn free_memory_space(base_address: efi::PhysicalAddress, length:
 
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -117,7 +105,7 @@ extern "efiapi" fn remove_memory_space(base_address: efi::PhysicalAddress, lengt
     let result = GCD.remove_memory_space(base_address as usize, length as usize);
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -141,7 +129,7 @@ extern "efiapi" fn get_memory_space_descriptor(
 pub fn core_get_memory_space_descriptor(
     base_address: efi::PhysicalAddress,
 ) -> Result<dxe_services::MemorySpaceDescriptor, efi::Status> {
-    GCD.get_memory_descriptor_for_address(base_address).map_err(result_to_efi_status)
+    GCD.get_memory_descriptor_for_address(base_address).map_err(|err| efi::Status::from(err))
 }
 
 extern "efiapi" fn set_memory_space_attributes(
@@ -160,12 +148,8 @@ pub fn core_set_memory_space_attributes(
     length: u64,
     attributes: u64,
 ) -> Result<(), efi::Status> {
-    let result = GCD.set_memory_space_attributes(base_address as usize, length as usize, attributes);
-    if let Err(err) = result {
-        return Err(result_to_efi_status(err));
-    }
-
-    cpu_set_memory_space_attributes(base_address, length, convert_to_cpu_arch_attributes(attributes))
+    GCD.set_memory_space_attributes(base_address as usize, length as usize, attributes)
+        .map_err(|err| efi::Status::from(err))
 }
 
 extern "efiapi" fn set_memory_space_capabilities(
@@ -185,7 +169,7 @@ pub fn core_set_memory_space_capabilities(
     capabilities: u64,
 ) -> Result<(), efi::Status> {
     GCD.set_memory_space_capabilities(base_address as usize, length as usize, capabilities)
-        .map_err(result_to_efi_status)
+        .map_err(|err| efi::Status::from(err))
 }
 
 extern "efiapi" fn get_memory_space_map(
@@ -203,7 +187,7 @@ extern "efiapi" fn get_memory_space_map(
     let result = GCD.get_memory_descriptors(&mut descriptors);
 
     if let Err(err) = result {
-        return result_to_efi_status(err);
+        return efi::Status::from(err);
     }
 
     //caller is supposed to free the handle buffer using free pool, so we need to allocate it using allocate pool.
@@ -227,7 +211,7 @@ extern "efiapi" fn add_io_space(
     let result = GCD.add_io_space(gcd_io_type, base_address as usize, length as usize);
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -276,7 +260,7 @@ extern "efiapi" fn allocate_io_space(
             unsafe { base_address.write(allocated_addr as u64) };
             efi::Status::SUCCESS
         }
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -285,7 +269,7 @@ extern "efiapi" fn free_io_space(base_address: efi::PhysicalAddress, length: u64
 
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -293,7 +277,7 @@ extern "efiapi" fn remove_io_space(base_address: efi::PhysicalAddress, length: u
     let result = GCD.remove_io_space(base_address as usize, length as usize);
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -310,7 +294,7 @@ extern "efiapi" fn get_io_space_descriptor(
     let result = GCD.get_io_descriptors(&mut descriptors);
 
     if let Err(err) = result {
-        return result_to_efi_status(err);
+        return efi::Status::from(err);
     }
 
     let target_descriptor =
@@ -337,7 +321,7 @@ extern "efiapi" fn get_io_space_map(
     let result = GCD.get_io_descriptors(&mut descriptors);
 
     if let Err(err) = result {
-        return result_to_efi_status(err);
+        return efi::Status::from(err);
     }
 
     //caller is supposed to free the handle buffer using free pool, so we need to allocate it using allocate pool.

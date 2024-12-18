@@ -24,6 +24,33 @@ use super::{
     },
 };
 
+impl From<Error> for efi::Status {
+    fn from(err: Error) -> Self {
+        match err {
+            Error::AccessDenied => efi::Status::ACCESS_DENIED,
+            Error::InvalidParameter => efi::Status::INVALID_PARAMETER,
+            Error::NotFound => efi::Status::NOT_FOUND,
+            Error::NotInitialized => efi::Status::NOT_READY,
+            Error::OutOfResources => efi::Status::OUT_OF_RESOURCES,
+            Error::Unsupported => efi::Status::UNSUPPORTED,
+        }
+    }
+}
+
+impl From<efi::Status> for Error {
+    fn from(err: efi::Status) -> Self {
+        match err {
+            efi::Status::ACCESS_DENIED => Error::AccessDenied,
+            efi::Status::INVALID_PARAMETER => Error::InvalidParameter,
+            efi::Status::NOT_FOUND => Error::NotFound,
+            efi::Status::NOT_READY => Error::NotInitialized,
+            efi::Status::OUT_OF_RESOURCES => Error::OutOfResources,
+            efi::Status::UNSUPPORTED => Error::Unsupported,
+            _ => Error::Unsupported,
+        }
+    }
+}
+
 const MEMORY_BLOCK_SLICE_LEN: usize = 4096;
 pub const MEMORY_BLOCK_SLICE_SIZE: usize = MEMORY_BLOCK_SLICE_LEN * node_size::<MemoryBlock>();
 
@@ -178,6 +205,15 @@ struct GCD {
     memory_blocks: Option<Rbt<'static, MemoryBlock>>,
     allocate_memory_space_fn: GcdAllocateFn,
     free_memory_space_fn: GcdFreeFn,
+}
+
+impl core::fmt::Debug for GCD {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("GCD")
+            .field("maximum_address", &self.maximum_address)
+            .field("memory_blocks", &self.memory_blocks)
+            .finish()
+    }
 }
 
 impl GCD {
@@ -375,7 +411,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
         log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x}\n", function!(), alignment);
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
         match allocate_type {
             AllocateType::BottomUp(max_address) => gcd.allocate_bottom_up(
@@ -489,7 +525,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x}\n", function!(), alignment);
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
         let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
 
@@ -551,7 +587,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x}\n", function!(), alignment);
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
         let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
 
@@ -616,7 +652,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
         log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x}\n", function!(), alignment);
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
         let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
 
@@ -1108,7 +1144,7 @@ impl IoGCD {
         log::trace!(target: "allocations", "[{}]   IO Type: {:?}", function!(), io_type);
         log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x}\n", function!(), alignment);
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
         match allocate_type {
             AllocateType::BottomUp(max_address) => self.allocate_bottom_up(
@@ -1145,7 +1181,7 @@ impl IoGCD {
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x}\n", function!(), alignment);
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
         if self.io_blocks.is_none() {
             self.init_io_blocks()?;
@@ -1207,7 +1243,7 @@ impl IoGCD {
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x}\n", function!(), alignment);
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
         if self.io_blocks.is_none() {
             self.init_io_blocks()?;
@@ -1272,7 +1308,7 @@ impl IoGCD {
         log::trace!(target: "allocations", "[{}]   IO Type: {:?}", function!(), io_type);
         log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
-        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x}\n", function!(), alignment);
+        log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
         if self.io_blocks.is_none() {
             self.init_io_blocks()?;
