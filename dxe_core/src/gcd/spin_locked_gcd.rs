@@ -1675,7 +1675,7 @@ impl SpinLockedGcd {
         );
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::AllocateMemorySpace)
+                callback(MapChangeType::AllocateMemorySpace);
             }
 
             // if we successfully allocated memory, we want to set the range as NX. For any standard data, we should
@@ -1691,7 +1691,11 @@ impl SpinLockedGcd {
                 // because we set efi::MEMORY_XP as a capability on all memory ranges we add to the GCD. A driver could
                 // call set_memory_space_capabilities to remove the XP capability, but that is something that should
                 // be caught and fixed.
-                match self.set_memory_space_attributes(*base_address, len, attributes | efi::MEMORY_XP) {
+                match self.set_memory_space_attributes(
+                    *base_address,
+                    len,
+                    (attributes & efi::CACHE_ATTRIBUTE_MASK) | efi::MEMORY_XP,
+                ) {
                     Ok(_) => (),
                     Err(Error::NotInitialized) => {
                         // this is expected if mu-paging is not initialized yet. The GCD will still be updated, but

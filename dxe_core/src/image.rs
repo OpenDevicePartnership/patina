@@ -344,7 +344,7 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
             // all new memory has efi::MEMORY_XP set, so we need to remove this if this is becoming a code
             // section
             Ok(desc) => {
-                attributes |= desc.attributes & !efi::MEMORY_ATTRIBUTE_MASK;
+                attributes |= desc.attributes & !efi::MEMORY_ACCESS_MASK;
                 capabilities |= desc.capabilities;
             }
             Err(status) => {

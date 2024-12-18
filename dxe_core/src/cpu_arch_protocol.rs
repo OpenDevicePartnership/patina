@@ -1,6 +1,6 @@
 #![allow(unused)]
 /// Architecture independent public C EFI CPU Architectural Protocol definition.
-use crate::protocols::PROTOCOL_DB;
+use crate::{dxe_services, protocols::PROTOCOL_DB};
 use alloc::boxed::Box;
 use core::ffi::c_void;
 use r_efi::efi;
@@ -129,15 +129,14 @@ extern "efiapi" fn get_timer_value(
 
 extern "efiapi" fn set_memory_attributes(
     _this: *const Protocol,
-    _base_address: efi::PhysicalAddress,
-    _length: u64,
-    _attributes: u64,
+    base_address: efi::PhysicalAddress,
+    length: u64,
+    attributes: u64,
 ) -> efi::Status {
-    let result: Result<bool, efi::Status> = Ok(true);
-
-    // TODO: call in to gcd here.
-
-    result.map(|_| efi::Status::SUCCESS).unwrap_or_else(|err| err)
+    match dxe_services::core_set_memory_space_attributes(base_address, length, attributes) {
+        Ok(_) => efi::Status::SUCCESS,
+        Err(status) => status,
+    }
 }
 
 impl<'a> EfiCpuArchProtocolImpl<'a> {
@@ -171,8 +170,6 @@ pub(crate) fn install_cpu_arch_protocol<'a>(
     let protocol = EfiCpuArchProtocolImpl::new(cpu_init, interrupt_manager);
 
     // Convert the protocol to a raw pointer and store it in to protocol DB
-    // TODO: This is a "deleberate" memory leak. We need to free this memory
-    // when the protocol is uninstalled.
     let interface = Box::into_raw(Box::new(protocol));
     let interface = interface as *mut c_void;
 
