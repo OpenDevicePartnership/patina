@@ -17,10 +17,11 @@ use r_efi::efi;
 use uefi_collections::{node_size, Error as SliceError, Rbt, SliceKey};
 use uefi_sdk::{
     base::{align_up, SIZE_4GB, UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE},
+    guid::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP,
     uefi_pages_to_size,
 };
 
-use crate::{ensure, error, protocol_db, protocol_db::INVALID_HANDLE, tpl_lock};
+use crate::{ensure, error, events::EVENT_DB, protocol_db, protocol_db::INVALID_HANDLE, tpl_lock};
 use paging::{page_allocator::PageAllocator, MemoryAttributes, PageTable, PtError, PtResult};
 use uefi_cpu::paging::create_cpu_paging;
 
@@ -1193,7 +1194,25 @@ impl GCD {
                         != paging_attrs
                     {
                         match page_table.remap_memory_region(base_address as u64, len as u64, paging_attrs) {
-                            Ok(_) => {}
+                            Ok(_) => {
+                                // if the cache attributes changed, we need to publish an event, as some architectures
+                                // (such as x86) need to populate APs with the caching information
+                                if (region_attrs & MemoryAttributes::CacheAttributesMask
+                                    != paging_attrs & MemoryAttributes::CacheAttributesMask)
+                                    && paging_attrs & MemoryAttributes::CacheAttributesMask != MemoryAttributes::empty()
+                                {
+                                    log::trace!(
+                                        target: "paging",
+                                        "Attributes for memory region {:#x?} of length {:#x?} were updated to {:#x?} from {:#x?}, sending cache attributes changed event",
+                                        base_address,
+                                        len,
+                                        paging_attrs,
+                                        region_attrs
+                                    );
+
+                                    EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
+                                }
+                            }
                             Err(e) => {
                                 log::error!(
                                     "Failed to remap memory region {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
@@ -1215,7 +1234,22 @@ impl GCD {
                     // bail out if it didn't
                     preallocated?;
                     match page_table.map_memory_region(base_address as u64, len as u64, paging_attrs) {
-                        Ok(_) => Ok(()),
+                        Ok(_) => {
+                            // we are setting the cache attributes for the first time, we need to publish an event,
+                            // as some architectures (such as x86) need to populate APs with the caching information
+                            if paging_attrs & MemoryAttributes::CacheAttributesMask != MemoryAttributes::empty() {
+                                log::trace!(
+                                    target: "paging",
+                                    "Memory region {:#x?} of length {:#x?} added with attrs {:#x?}, sending cache attributes changed event",
+                                    base_address,
+                                    len,
+                                    paging_attrs
+                                );
+
+                                EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
+                            }
+                            Ok(())
+                        }
                         Err(e) => {
                             log::error!(
                                 "Failed to map memory region {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
