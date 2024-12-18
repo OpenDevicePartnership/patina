@@ -8,14 +8,14 @@
 //!
 use core::{
     ffi::c_void,
-    sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 
 use alloc::vec;
 
 use r_efi::efi;
 
-use mu_pi::protocols::{cpu_arch, timer};
+use mu_pi::protocols::timer;
 
 use uefi_cpu::interrupts;
 
@@ -29,7 +29,6 @@ pub static EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
 
 static CURRENT_TPL: AtomicUsize = AtomicUsize::new(efi::TPL_APPLICATION);
 static SYSTEM_TIME: AtomicU64 = AtomicU64::new(0);
-static CPU_ARCH_PTR: AtomicPtr<cpu_arch::Protocol> = AtomicPtr::new(core::ptr::null_mut());
 static EVENT_NOTIFIES_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 extern "efiapi" fn create_event(
@@ -301,18 +300,6 @@ extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_
     }
 }
 
-extern "efiapi" fn cpu_arch_available(event: efi::Event, _context: *mut c_void) {
-    match PROTOCOL_DB.locate_protocol(cpu_arch::PROTOCOL_GUID) {
-        Ok(cpu_arch_ptr) => {
-            CPU_ARCH_PTR.store(cpu_arch_ptr as *mut cpu_arch::Protocol, Ordering::SeqCst);
-            if let Err(status_err) = EVENT_DB.close_event(event) {
-                log::warn!("Could not close event for cpu_arch_available due to error {:?}", status_err);
-            }
-        }
-        Err(err) => panic!("Unable to cpu arch: {:?}", err),
-    }
-}
-
 // indicates that eventing subsystem is fully initialized.
 static EVENT_DB_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
@@ -339,15 +326,6 @@ pub fn init_events_support(bs: &mut efi::BootServices) {
     bs.set_timer = set_timer;
     bs.raise_tpl = raise_tpl;
     bs.restore_tpl = restore_tpl;
-
-    //set up call back for cpu arch protocol installation.
-    let event = EVENT_DB
-        .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(cpu_arch_available), None, None)
-        .expect("Failed to create timer available callback.");
-
-    PROTOCOL_DB
-        .register_protocol_notify(cpu_arch::PROTOCOL_GUID, event)
-        .expect("Failed to register protocol notify on timer arch callback.");
 
     //set up call back for timer arch protocol installation.
     let event = EVENT_DB
