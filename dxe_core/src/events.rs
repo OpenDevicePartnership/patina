@@ -17,6 +17,8 @@ use r_efi::efi;
 
 use mu_pi::protocols::{cpu_arch, timer};
 
+use uefi_cpu::interrupts;
+
 use crate::{
     event_db::{SpinLockedEventDb, TimerDelay},
     gcd,
@@ -216,7 +218,7 @@ pub extern "efiapi" fn raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {
     );
 
     if (new_tpl == efi::TPL_HIGH_LEVEL) && (prev_tpl < efi::TPL_HIGH_LEVEL) {
-        set_interrupt_state(false);
+        interrupts::disable_interrupts();
     }
     prev_tpl
 }
@@ -249,9 +251,9 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
 
         for event in events {
             if event.notify_tpl < efi::TPL_HIGH_LEVEL {
-                set_interrupt_state(true);
+                interrupts::enable_interrupts();
             } else {
-                set_interrupt_state(false);
+                interrupts::disable_interrupts();
             }
             CURRENT_TPL.store(event.notify_tpl, Ordering::SeqCst);
             let notify_context = match event.notify_context {
@@ -272,7 +274,7 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
     }
 
     if new_tpl < efi::TPL_HIGH_LEVEL {
-        set_interrupt_state(true);
+        interrupts::enable_interrupts();
     }
     CURRENT_TPL.store(new_tpl, Ordering::SeqCst);
 }
@@ -283,20 +285,6 @@ extern "efiapi" fn timer_tick(time: u64) {
     let current_time = SYSTEM_TIME.load(Ordering::SeqCst);
     EVENT_DB.timer_tick(current_time);
     restore_tpl(old_tpl); //implicitly dispatches timer notifies if any.
-}
-
-fn set_interrupt_state(enable: bool) {
-    let cpu_arch_ptr = CPU_ARCH_PTR.load(Ordering::SeqCst);
-    if let Some(cpu_arch) = unsafe { cpu_arch_ptr.as_mut() } {
-        match enable {
-            true => {
-                (cpu_arch.enable_interrupt)(cpu_arch_ptr);
-            }
-            false => {
-                (cpu_arch.disable_interrupt)(cpu_arch_ptr);
-            }
-        };
-    }
 }
 
 extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_void) {

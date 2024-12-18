@@ -6,7 +6,7 @@ use core::ffi::c_void;
 use r_efi::efi;
 use uefi_cpu::{
     cpu::EfiCpuInit,
-    interrupts::{ExceptionType, HandlerType, InterruptManager},
+    interrupts::{self, ExceptionType, HandlerType, InterruptManager},
 };
 use uefi_sdk::error::EfiError;
 
@@ -54,24 +54,19 @@ extern "efiapi" fn flush_data_cache(
 }
 
 extern "efiapi" fn enable_interrupt(this: *const Protocol) -> efi::Status {
-    let cpu_init = &get_impl_ref(this).cpu_init;
-    let result = cpu_init.enable_interrupt();
+    interrupts::enable_interrupts();
 
-    result.map(|_| efi::Status::SUCCESS).unwrap_or_else(|err| err.into())
+    efi::Status::SUCCESS
 }
 
 extern "efiapi" fn disable_interrupt(this: *const Protocol) -> efi::Status {
-    let cpu_init = &get_impl_ref(this).cpu_init;
-    let result = cpu_init.disable_interrupt();
+    interrupts::disable_interrupts();
 
-    result.map(|_| efi::Status::SUCCESS).unwrap_or_else(|err| err.into())
+    efi::Status::SUCCESS
 }
 
 extern "efiapi" fn get_interrupt_state(this: *const Protocol, state: *mut bool) -> efi::Status {
-    let cpu_init = &get_impl_ref(this).cpu_init;
-    let result = cpu_init.get_interrupt_state();
-
-    result
+    interrupts::get_interrupt_state()
         .map(|interrupt_state| {
             unsafe {
                 *state = interrupt_state;
@@ -202,9 +197,6 @@ mod tests {
             fn initialize(&mut self) -> Result<(), EfiError>;
 
             fn flush_data_cache(&self, start: efi::PhysicalAddress, length: u64, flush_type: CpuFlushType) -> Result<(), EfiError>;
-            fn enable_interrupt(&self) -> Result<(), EfiError>;
-            fn disable_interrupt(&self) -> Result<(), EfiError>;
-            fn get_interrupt_state(&self) -> Result<bool, EfiError>;
             fn init(&self, init_type: CpuInitType) -> Result<(), EfiError>;
             fn get_timer_value(&self, timer_index: u32) -> Result<(u64, u64), EfiError>;
         }
