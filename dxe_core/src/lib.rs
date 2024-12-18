@@ -92,6 +92,7 @@ mod filesystems;
 mod fv;
 mod gcd;
 mod image;
+mod memory_attributes_protocol;
 mod memory_attributes_table;
 mod misc_boot_services;
 mod pecoff;
@@ -290,6 +291,12 @@ where
             fv::init_fv_support(&hob_list, Box::from(self.section_extractor));
             dxe_services::init_dxe_services(st);
             driver_services::init_driver_services(st.boot_services_mut());
+
+            // Commenting out below install procotcol call until we stub the CPU
+            // arch protocol install from C CpuDxe.
+            // cpu_arch_protocol::install_cpu_arch_protocol(&mut self.cpu_init, &mut self.interrupt_manager);
+            memory_attributes_protocol::install_memory_attributes_protocol();
+
             // re-checksum the system tables after above initialization.
             st.checksum_all();
 
