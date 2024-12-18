@@ -361,8 +361,7 @@ pub(crate) fn install_hw_interrupt_protocol<'a>(
     let aarch64_int = Mutex::new(AArch64InterruptInitializer::new(gic_v3));
 
     // Prepare context for the v1 interrupt handler
-    let mut hw_int_protocol_handler = HwInterruptProtocolHandler::new(handlers, aarch64_int);
-
+    let mut hw_int_protocol_handler = Box::leak(Box::new(HwInterruptProtocolHandler::new(handlers, aarch64_int)));
     // Produce Interrupt Protocol with the initialized GIC
     let interrupt_protocol =
         Box::into_raw(Box::new(EfiHardwareInterruptProtocol::new(&mut hw_int_protocol_handler)));
@@ -387,7 +386,7 @@ pub(crate) fn install_hw_interrupt_protocol<'a>(
         log::info!("installed EFI_HARDWARE_INTERRUPT2_PROTOCOL_GUID");
     }
 
-    let hw_int_protocol_handler_exp = Box::leak(Box::new(hw_int_protocol_handler));
+    let hw_int_protocol_handler_exp = hw_int_protocol_handler;
 
     // Register the interrupt handlers for IRQs after CPU arch protocol is installed
     let result = interrupt_manager.register_exception_handler(1, uefi_cpu::interrupts::HandlerType::Handler(hw_int_protocol_handler_exp));
