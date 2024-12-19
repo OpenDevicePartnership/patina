@@ -16,7 +16,7 @@ edition = "2021"
 rust-version = "1.80.0"
 
 [workspace.dependencies]
-uefi_sdk = { git = "https://github.com/pop-project/uefi-sdk", rev = "v0.1.3" }
+uefi_sdk = { git = "https://github.com/pop-project/uefi-sdk", rev = "v0.1.4" }
 uefi_cpu = { git = "https://github.com/pop-project/uefi-core.git", rev = "v7.0.1" }
 uefi_debugger = { git = "https://github.com/pop-project/uefi-core.git", rev = "v7.0.1" }
 section_extractor = { git = "https://github.com/pop-project/uefi-core.git", rev = "v7.0.1" }

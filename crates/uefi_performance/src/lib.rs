@@ -1,4 +1,8 @@
-//! ## License
+//! A library that enables performance analysis of every step of the UEFI boot process.
+//! The Performance library exports a protocol that can be used by other libraries or drivers to publish performance reports.
+//! These reports are saved in the Firmware Basic Boot Performance Table (FBPT), so they can be extracted later from the operating system.
+//!
+//!  ## License
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
 //!
@@ -39,11 +43,7 @@ use performance_record::{
     Iter, PerformanceRecordBuffer,
 };
 
-use mu_pi::{
-    fw_fs::{ffs::section::Type, FirmwareVolume},
-    hob::{GuidHob, Hob, HobList},
-    protocols::firmware_volume_block,
-};
+use mu_pi::hob::{GuidHob, Hob, HobList};
 
 use performance_measurement_protocol::{
     EdkiiPerformanceMeasurement, EdkiiPerformanceMeasurementInterface, PerfAttribute, PerfId,
@@ -57,9 +57,7 @@ use mu_rust_helpers::{
     perf_timer::{Arch, ArchFunctionality},
 };
 use uefi_sdk::{
-    boot_services::{
-        event::EventType, protocol_handler::HandleSearchType, tpl::Tpl, BootServices, StandardBootServices,
-    },
+    boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
     guid,
     protocol::{DriverBinding, LoadedImage},
     runtime_services::StandardRuntimeServices,

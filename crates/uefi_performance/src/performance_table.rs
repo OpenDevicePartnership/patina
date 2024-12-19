@@ -35,9 +35,14 @@ pub struct PerformanceTableHeader {
     pub length: u32,
 }
 
+/// Firmware Basic Boot Performance Table (FBPT)
 pub struct FBPT {
+    /// When the table will be reported, this will be the address where the fbpt table is.
     fbpt_address: usize,
+    /// First value is the length when the table is not been reported and the second one is when the table is reported.
+    /// Use `length()` or `length_mut()`. Do now use this field directly.
     _length: (u32, AtomicPtr<u32>),
+    /// Buffer containing all the performance record.
     other_records: PerformanceRecordBuffer,
 }
 
