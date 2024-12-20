@@ -934,9 +934,6 @@ fn process_hob_allocations(hob_list: &HobList) {
 /// helps to avoid S4 failure due to memory map change.
 ///
 pub fn init_memory_support(hob_list: &HobList) {
-    //make sure that well-known handles exist.
-    PROTOCOL_DB.init_protocol_db();
-
     // Add the rest of the system resources to the GCD.
     // Caution: care must be taken to ensure no allocations occur after this call but before the allocation hobs are
     // processed - otherwise they could occupy space corresponding to a pre-DXE memory allocation that has not yet been
@@ -1048,7 +1045,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn init_memory_support_should_process_memory_bucket_hobs() {
         test_support::with_global_lock(|| {
             let physical_hob_list = build_test_hob_list(0x1000000);
@@ -1091,7 +1087,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn init_memory_support_should_process_resource_allocations() {
         test_support::with_global_lock(|| {
             let physical_hob_list = build_test_hob_list(0x200000);

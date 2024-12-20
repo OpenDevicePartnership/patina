@@ -115,6 +115,7 @@ use mu_pi::{
     protocols::{bds, status_code},
     status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
 };
+use protocols::PROTOCOL_DB;
 use r_efi::efi;
 use uefi_component_interface::DxeComponent;
 use uefi_sdk::error::{self, Result};
@@ -258,6 +259,8 @@ where
         log::trace!("HOB list discovered is:");
         log::trace!("{:#x?}", hob_list);
 
+        //make sure that well-known handles exist.
+        PROTOCOL_DB.init_protocol_db();
         // Initialize full allocation support.
         allocator::init_memory_support(&hob_list);
 
