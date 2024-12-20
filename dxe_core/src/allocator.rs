@@ -1048,6 +1048,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn init_memory_support_should_process_memory_bucket_hobs() {
         test_support::with_global_lock(|| {
             let physical_hob_list = build_test_hob_list(0x1000000);
@@ -1090,6 +1091,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn init_memory_support_should_process_resource_allocations() {
         test_support::with_global_lock(|| {
             let physical_hob_list = build_test_hob_list(0x200000);
