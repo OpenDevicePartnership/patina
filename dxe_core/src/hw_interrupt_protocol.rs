@@ -7,6 +7,7 @@ use uefi_cpu::interrupts::aarch64::gic::get_max_interrupt_number;
 use uefi_cpu::interrupts::{InterruptManager, ExceptionContext, InterruptHandler, InterruptBases};
 use alloc::vec;
 use alloc::vec::Vec;
+use crate::tpl_lock::TplMutex;
 use spin::Mutex;
 
 use arm_gic::gicv3::{Trigger, GicV3};
@@ -285,8 +286,8 @@ pub extern "efiapi" fn set_trigger_type_v2(
 }
 
 struct HwInterruptProtocolHandler {
-    handlers: Mutex<Vec<Option<HwInterruptHandler>>>,
-    aarch64_int: Mutex<AArch64InterruptInitializer>,
+    handlers: TplMutex<Vec<Option<HwInterruptHandler>>>,
+    aarch64_int: TplMutex<AArch64InterruptInitializer>,
 }
 
 impl InterruptHandler for HwInterruptProtocolHandler {
@@ -313,8 +314,8 @@ impl InterruptHandler for HwInterruptProtocolHandler {
 
 impl HwInterruptProtocolHandler {
     pub fn new(
-        handlers: Mutex<Vec<Option<HwInterruptHandler>>>,
-        aarch64_int: Mutex<AArch64InterruptInitializer>
+        handlers: TplMutex<Vec<Option<HwInterruptHandler>>>,
+        aarch64_int: TplMutex<AArch64InterruptInitializer>
     ) -> Self {
         Self { handlers, aarch64_int }
     }
@@ -357,8 +358,8 @@ pub(crate) fn install_hw_interrupt_protocol<'a>(
     let gic_v3 = unsafe { GicV3::new(interrupt_bases.get_interrupt_base_d() as _, interrupt_bases.get_interrupt_base_r() as _) };
     let gic_v3 = Mutex::new(gic_v3);
     let max_int = get_max_interrupt_number(gic_v3.lock().gicd_ptr()) as usize;
-    let handlers = Mutex::new(vec![None; max_int]);
-    let aarch64_int = Mutex::new(AArch64InterruptInitializer::new(gic_v3));
+    let handlers = TplMutex::new(efi::TPL_HIGH_LEVEL, vec![None; max_int], "Hardware Interrupt Handlers");
+    let aarch64_int = TplMutex::new(efi::TPL_HIGH_LEVEL, AArch64InterruptInitializer::new(gic_v3), "AArch64 GIC Object");
 
     // Prepare context for the v1 interrupt handler
     let mut hw_int_protocol_handler = Box::leak(Box::new(HwInterruptProtocolHandler::new(handlers, aarch64_int)));
