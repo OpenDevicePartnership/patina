@@ -26,9 +26,6 @@
 //! #         _length: u64,
 //! #         _flush_type: mu_pi::protocols::cpu_arch::CpuFlushType,
 //! #     ) -> Result<(), EfiError> {Ok(())}
-//! #     fn enable_interrupt(&self) -> Result<(), EfiError> {Ok(())}
-//! #     fn disable_interrupt(&self) -> Result<(), EfiError> {Ok(())}
-//! #     fn get_interrupt_state(&self) -> Result<bool, EfiError> {Ok(true)}
 //! #     fn init(&self, _init_type: mu_pi::protocols::cpu_arch::CpuInitType) -> Result<(), EfiError> {Ok(())}
 //! #     fn get_timer_value(&self, _timer_index: u32) -> Result<(u64, u64), EfiError> {Ok((0, 0))}
 //! # }
@@ -171,9 +168,6 @@ pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_c
 /// #         _length: u64,
 /// #         _flush_type: mu_pi::protocols::cpu_arch::CpuFlushType,
 /// #     ) -> Result<(), EfiError> {Ok(())}
-/// #     fn enable_interrupt(&self) -> Result<(), EfiError> {Ok(())}
-/// #     fn disable_interrupt(&self) -> Result<(), EfiError> {Ok(())}
-/// #     fn get_interrupt_state(&self) -> Result<bool, EfiError> {Ok(true)}
 /// #     fn init(&self, _init_type: mu_pi::protocols::cpu_arch::CpuInitType) -> Result<(), EfiError> {Ok(())}
 /// #     fn get_timer_value(&self, _timer_index: u32) -> Result<(u64, u64), EfiError> {Ok((0, 0))}
 /// # }
