@@ -9,7 +9,7 @@
 use core::{fmt::Display, ptr};
 
 use crate::pecoff::{self, UefiPeInfo};
-use alloc::{boxed::Box, format, slice, vec, vec::Vec};
+use alloc::{boxed::Box, slice, vec, vec::Vec};
 
 use mu_pi::{dxe_services, hob};
 use mu_rust_helpers::function;
@@ -21,7 +21,10 @@ use uefi_sdk::{
     uefi_pages_to_size,
 };
 
-use crate::{ensure, error, events::EVENT_DB, protocol_db, protocol_db::INVALID_HANDLE, tpl_lock};
+use crate::{
+    allocator::DEFAULT_ALLOCATION_STRATEGY, ensure, error, events::EVENT_DB, protocol_db, protocol_db::INVALID_HANDLE,
+    tpl_lock,
+};
 use paging::{page_allocator::PageAllocator, MemoryAttributes, PageTable, PtError, PtResult};
 use uefi_cpu::paging::create_cpu_paging;
 
@@ -353,9 +356,9 @@ impl GCD {
         if let Some(page_table) = self.page_table.as_mut() {
             // we only need more pages if this memory region is unmapped. If it is already mapped
             // we are only changing attributes and will not incur allocations
-            match page_table.query_memory_region(base_address as u64, UEFI_PAGE_SIZE as u64) {
+            match page_table.query_memory_region(base_address, UEFI_PAGE_SIZE as u64) {
                 Err(PtError::NoMapping) => {
-                    needed_pages = match page_table.get_page_table_pages_for_size(base_address as u64, size) {
+                    needed_pages = match page_table.get_page_table_pages_for_size(base_address, size) {
                         // we want to allocate exactly the number of pages we need because we will use some pages from the pool
                         // potentially when we map the memory regions for these pages we are allocating. If we do not allocate all
                         // the pages, we could run out of pages for the actual allocation occurring, not the pool refilling.
@@ -374,10 +377,10 @@ impl GCD {
 
         if needed_pages > 0 {
             match self.allocate_memory_space(
-                AllocateType::TopDown(None),
+                DEFAULT_ALLOCATION_STRATEGY,
                 dxe_services::GcdMemoryType::SystemMemory,
                 UEFI_PAGE_SHIFT,
-                uefi_pages_to_size!(needed_pages) as usize,
+                uefi_pages_to_size!(needed_pages),
                 protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
                 None,
             ) {
@@ -486,7 +489,7 @@ impl GCD {
         log::info!("Initializing paging for the GCD");
         let mut page_allocator = PagingAllocator::new();
 
-        // We need to explictly allocate the root page below 4GB for x86 MP Services.
+        // We need to explicitly allocate the root page below 4GB for x86 MP Services.
         // See comment in PagingAllocator.allocate_pages
         match self.allocate_memory_space(
             AllocateType::BottomUp(Some(SIZE_4GB - 1)),
@@ -509,10 +512,10 @@ impl GCD {
         // pages needed for 5 level paging
         let len = 6;
         match self.allocate_memory_space(
-            AllocateType::TopDown(None),
+            DEFAULT_ALLOCATION_STRATEGY,
             dxe_services::GcdMemoryType::SystemMemory,
             UEFI_PAGE_SHIFT,
-            uefi_pages_to_size!(len) as usize,
+            uefi_pages_to_size!(len),
             protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
             None,
         ) {
@@ -543,7 +546,7 @@ impl GCD {
 
         let mut needed_pages: u64 = 0;
         for desc in &descriptors {
-            needed_pages += match page_table.get_page_table_pages_for_size(desc.base_address, desc.length as u64) {
+            needed_pages += match page_table.get_page_table_pages_for_size(desc.base_address, desc.length) {
                 Ok(pages) => pages,
                 Err(e) => {
                     panic!("Failed to get page table pages for size {}: {:?}", desc.length, e);
@@ -566,7 +569,7 @@ impl GCD {
 
         // we also can't use preallocate_pages here, because it assumes the page table is already installed
         match self.allocate_memory_space(
-            AllocateType::TopDown(None),
+            DEFAULT_ALLOCATION_STRATEGY,
             dxe_services::GcdMemoryType::SystemMemory,
             UEFI_PAGE_SHIFT,
             uefi_pages_to_size!(needed_pages as usize),
@@ -642,10 +645,12 @@ impl GCD {
             dxe_core_hob.alloc_descriptor.memory_length as usize,
             efi::MEMORY_XP,
         )
-        .expect(&format!(
-            "Failed to map DXE Core image {:#x?} of length {:#x?} with attributes {:#x?}.",
-            dxe_core_hob.alloc_descriptor.memory_base_address, 0x1000, 0
-        ));
+        .unwrap_or_else(|_| {
+            panic!(
+                "Failed to map DXE Core image {:#x?} of length {:#x?} with attributes {:#x?}.",
+                dxe_core_hob.alloc_descriptor.memory_base_address, 0x1000, 0
+            )
+        });
 
         // now map each section with the correct image protections
         for section in pe_info.sections {
@@ -678,10 +683,12 @@ impl GCD {
             );
 
             self.set_memory_space_attributes(section_base_address as usize, aligned_virtual_size as usize, attributes)
-                .expect(&format!(
-                    "Failed to map DXE Core image {:#x?} of length {:#x?} with attributes {:#x?}.",
-                    section.virtual_address, section.virtual_size, attributes
-                ));
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "Failed to map DXE Core image {:#x?} of length {:#x?} with attributes {:#x?}.",
+                        section.virtual_address, section.virtual_size, attributes
+                    )
+                });
         }
 
         // now map MMIO. Drivers expect to be able to access MMIO regions as RW, so we need to map them as such
@@ -1251,7 +1258,7 @@ impl GCD {
                                 e
                             );
                             debug_assert!(false);
-                            return Err(Error::from(e));
+                            Err(Error::from(e))
                         }
                     }
                 }
@@ -1264,7 +1271,7 @@ impl GCD {
                         e
                     );
                     debug_assert!(false);
-                    return Err(Error::from(e));
+                    Err(Error::from(e))
                 }
             }
         } else {
@@ -3917,9 +3924,8 @@ mod tests {
         with_locked_state(|| {
             static CALLBACK2: AtomicBool = AtomicBool::new(false);
             fn map_callback(map_change_type: MapChangeType) {
-                match map_change_type {
-                    MapChangeType::SetMemoryCapabilities => CALLBACK2.store(true, core::sync::atomic::Ordering::SeqCst),
-                    _ => {}
+                if map_change_type == MapChangeType::SetMemoryCapabilities {
+                    CALLBACK2.store(true, core::sync::atomic::Ordering::SeqCst);
                 }
             }
 

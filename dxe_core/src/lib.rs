@@ -236,11 +236,22 @@ where
         self
     }
 
+    /// Returns the length of the HOB list.
+    /// Clippy gets unhappy if we call get_c_hob_list_size directly, because it gets confused, thinking
+    /// get_c_hob_list_size is not marked unsafe, but it is
+    fn get_hob_list_len(hob_list: *const c_void) -> usize {
+        unsafe { get_c_hob_list_size(hob_list) }
+    }
+
     /// Initializes the core with the given configuration, including GCD initialization, enabling allocations.
     pub fn initialize(mut self, physical_hob_list: *const c_void) -> CorePostInit {
         let _ = self.cpu_init.initialize();
         self.interrupt_manager.initialize().expect("Failed to initialize interrupt manager!");
         uefi_debugger::initialize(&mut self.interrupt_manager);
+
+        if physical_hob_list.is_null() {
+            panic!("HOB list pointer is null!");
+        }
 
         gcd::init_gcd(physical_hob_list);
 
@@ -263,7 +274,7 @@ where
         // the initial HOB list is not in mapped memory as passed from pre-DXE.
         hob_list.relocate_hobs();
         let hob_list_slice = unsafe {
-            core::slice::from_raw_parts(physical_hob_list as *const u8, get_c_hob_list_size(physical_hob_list))
+            core::slice::from_raw_parts(physical_hob_list as *const u8, Self::get_hob_list_len(physical_hob_list))
         };
         let relocated_c_hob_list = hob_list_slice.to_vec().into_boxed_slice();
 

@@ -280,7 +280,7 @@ mod tests {
         let mut interrupt_manager = MockInterruptManager::new();
         interrupt_manager
             .expect_register_exception_handler()
-            .with(eq(ExceptionType::from(0 as usize)), always())
+            .with(eq(ExceptionType::from(0_usize)), always())
             .returning(|_, _| Ok(()));
         let protocol = EfiCpuArchProtocolImpl::new(&mut cpu_init, &mut interrupt_manager);
 

@@ -125,7 +125,7 @@ extern "efiapi" fn get_memory_space_descriptor(
 pub fn core_get_memory_space_descriptor(
     base_address: efi::PhysicalAddress,
 ) -> Result<dxe_services::MemorySpaceDescriptor, efi::Status> {
-    GCD.get_memory_descriptor_for_address(base_address).map_err(|err| efi::Status::from(err))
+    GCD.get_memory_descriptor_for_address(base_address).map_err(efi::Status::from)
 }
 
 extern "efiapi" fn set_memory_space_attributes(
@@ -144,8 +144,7 @@ pub fn core_set_memory_space_attributes(
     length: u64,
     attributes: u64,
 ) -> Result<(), efi::Status> {
-    GCD.set_memory_space_attributes(base_address as usize, length as usize, attributes)
-        .map_err(|err| efi::Status::from(err))
+    GCD.set_memory_space_attributes(base_address as usize, length as usize, attributes).map_err(efi::Status::from)
 }
 
 extern "efiapi" fn set_memory_space_capabilities(
@@ -164,8 +163,7 @@ pub fn core_set_memory_space_capabilities(
     length: u64,
     capabilities: u64,
 ) -> Result<(), efi::Status> {
-    GCD.set_memory_space_capabilities(base_address as usize, length as usize, capabilities)
-        .map_err(|err| efi::Status::from(err))
+    GCD.set_memory_space_capabilities(base_address as usize, length as usize, capabilities).map_err(efi::Status::from)
 }
 
 extern "efiapi" fn get_memory_space_map(
