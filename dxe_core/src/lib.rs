@@ -111,7 +111,11 @@ use core::{ffi::c_void, str::FromStr};
 
 use alloc::{boxed::Box, vec::Vec};
 use gcd::SpinLockedGcd;
-use mu_pi::{fw_fs, hob::HobList, protocols::bds};
+use mu_pi::{
+    fw_fs,
+    hob::{get_c_hob_list_size, HobList},
+    protocols::bds,
+};
 use r_efi::efi::{self};
 use uefi_component_interface::DxeComponent;
 use uefi_sdk::error::{self, Result};
@@ -266,6 +270,14 @@ where
 
         // Initialize full allocation support.
         allocator::init_memory_support(&hob_list);
+        // we have to relocate HOBs after memory services are initialized as we are going to allocate memory and
+        // the initial free memory may not be enough to contain the HOB list. We need to relocate the HOBs because
+        // the initial HOB list is not in mapped memory as passed from pre-DXE.
+        hob_list.relocate_hobs();
+        let hob_list_slice = unsafe {
+            core::slice::from_raw_parts(physical_hob_list as *const u8, get_c_hob_list_size(physical_hob_list))
+        };
+        let relocated_c_hob_list = hob_list_slice.to_vec().into_boxed_slice();
 
         log::info!("GCD - After memory init:\n{}", GCD);
 
@@ -299,9 +311,10 @@ where
             let hob_list_guid =
                 uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").expect("Invalid UUID format.");
             let hob_list_guid: efi::Guid = unsafe { *(hob_list_guid.to_bytes_le().as_ptr() as *const efi::Guid) };
+
             misc_boot_services::core_install_configuration_table(
                 hob_list_guid,
-                unsafe { (physical_hob_list as *mut c_void).as_mut() },
+                Some(unsafe { &mut *(Box::leak(relocated_c_hob_list).as_mut_ptr() as *mut c_void) }),
                 st,
             )
             .expect("Unable to create configuration table due to invalid table entry.");

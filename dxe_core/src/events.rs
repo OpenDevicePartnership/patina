@@ -16,6 +16,7 @@ use alloc::vec;
 use r_efi::efi;
 
 use mu_pi::protocols::{cpu_arch, timer};
+use uefi_cpu::interrupts;
 
 use crate::{
     event_db::{SpinLockedEventDb, TimerDelay},
@@ -286,17 +287,14 @@ extern "efiapi" fn timer_tick(time: u64) {
 }
 
 fn set_interrupt_state(enable: bool) {
-    let cpu_arch_ptr = CPU_ARCH_PTR.load(Ordering::SeqCst);
-    if let Some(cpu_arch) = unsafe { cpu_arch_ptr.as_mut() } {
-        match enable {
-            true => {
-                (cpu_arch.enable_interrupt)(cpu_arch_ptr);
-            }
-            false => {
-                (cpu_arch.disable_interrupt)(cpu_arch_ptr);
-            }
-        };
-    }
+    match enable {
+        true => {
+            interrupts::enable_interrupts();
+        }
+        false => {
+            interrupts::disable_interrupts();
+        }
+    };
 }
 
 extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_void) {

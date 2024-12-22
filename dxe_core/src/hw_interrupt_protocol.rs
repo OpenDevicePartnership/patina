@@ -8,9 +8,10 @@ use uefi_cpu::interrupts::{InterruptManager, ExceptionContext, InterruptHandler,
 use alloc::vec;
 use alloc::vec::Vec;
 use crate::tpl_lock::TplMutex;
-use spin::Mutex;
 
 use arm_gic::gicv3::{Trigger, GicV3};
+
+use uefi_cpu::interrupts::aarch64::gic::gic_initialize;
 
 pub type HwInterruptHandler = extern "efiapi" fn(u64, &mut ExceptionContext);
 
@@ -355,9 +356,17 @@ pub(crate) fn install_hw_interrupt_protocol<'a>(
     interrupt_manager: &'a mut dyn InterruptManager,
     interrupt_bases: &'a dyn InterruptBases
 ) {
-    let gic_v3 = unsafe { GicV3::new(interrupt_bases.get_interrupt_base_d() as _, interrupt_bases.get_interrupt_base_r() as _) };
-    let gic_v3 = Mutex::new(gic_v3);
-    let max_int = get_max_interrupt_number(gic_v3.lock().gicd_ptr()) as usize;
+    let gic_v3 = gic_initialize(interrupt_bases.get_interrupt_base_d() as _, interrupt_bases.get_interrupt_base_r() as _);
+    if gic_v3.is_none() {
+        log::info!("GICv3 initialized");
+    } else {
+        log::error!("Failed to initialize GICv3");
+        return;
+    }
+
+    let mut gic_v3 = gic_v3.unwrap();
+
+    let max_int = get_max_interrupt_number(gic_v3.gicd_ptr()) as usize;
     let handlers = TplMutex::new(efi::TPL_HIGH_LEVEL, vec![None; max_int], "Hardware Interrupt Handlers");
     let aarch64_int = TplMutex::new(efi::TPL_HIGH_LEVEL, AArch64InterruptInitializer::new(gic_v3), "AArch64 GIC Object");
 

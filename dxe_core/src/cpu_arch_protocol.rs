@@ -6,7 +6,8 @@ use core::ffi::c_void;
 use r_efi::efi;
 use uefi_cpu::{
     cpu::EfiCpuInit,
-    interrupts::{ExceptionType, HandlerType, InterruptManager},
+    interrupts::{ExceptionType, HandlerType, InterruptManager, enable_interrupts, disable_interrupts},
+    interrupts
 };
 use uefi_sdk::error::EfiError;
 
@@ -54,22 +55,19 @@ extern "efiapi" fn flush_data_cache(
 }
 
 extern "efiapi" fn enable_interrupt(this: *const Protocol) -> efi::Status {
-    let interrupt_manager = &get_impl_ref(this).interrupt_manager;
-    interrupt_manager.enable_interrupt();
+    enable_interrupts();
 
     efi::Status::SUCCESS
 }
 
 extern "efiapi" fn disable_interrupt(this: *const Protocol) -> efi::Status {
-    let interrupt_manager = &get_impl_ref(this).interrupt_manager;
-    interrupt_manager.disable_interrupt();
+    disable_interrupts();
 
     efi::Status::SUCCESS
 }
 
 extern "efiapi" fn get_interrupt_state(this: *const Protocol, state: *mut bool) -> efi::Status {
-    let interrupt_manager = &get_impl_ref(this).interrupt_manager;
-    let result = interrupt_manager.get_interrupt_state();
+    let result = interrupts::get_interrupt_state();
 
     result
         .map(|interrupt_state| {
