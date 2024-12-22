@@ -219,7 +219,8 @@ where
     interrupt_bases: InterruptBases,
 }
 
-impl<CpuInit, SectionExtractor, InterruptManager, InterruptBases> Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases>
+impl<CpuInit, SectionExtractor, InterruptManager, InterruptBases>
+    Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases>
 where
     CpuInit: uefi_cpu::cpu::EfiCpuInit + Default + 'static,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,

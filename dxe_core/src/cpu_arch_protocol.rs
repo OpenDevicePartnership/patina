@@ -6,8 +6,8 @@ use core::ffi::c_void;
 use r_efi::efi;
 use uefi_cpu::{
     cpu::EfiCpuInit,
-    interrupts::{ExceptionType, HandlerType, InterruptManager, enable_interrupts, disable_interrupts},
-    interrupts
+    interrupts,
+    interrupts::{disable_interrupts, enable_interrupts, ExceptionType, HandlerType, InterruptManager},
 };
 use uefi_sdk::error::EfiError;
 
