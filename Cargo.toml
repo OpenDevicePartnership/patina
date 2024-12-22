@@ -36,6 +36,8 @@ sample_components = { path = "sample_components" }
 ahash = { version = "^0.8", default-features = false, features = [
     "compile-time-rng",
 ] }
+# temporary until aarch64 paging comes in
+cfg-if = "1.0.0"
 crc32fast = { version = "^1", default-features = false }
 criterion = "^0.5"
 goblin = { version = "^0.9", default-features = false, features = [

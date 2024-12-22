@@ -26,7 +26,67 @@ use crate::{
     tpl_lock,
 };
 use paging::{page_allocator::PageAllocator, MemoryAttributes, PageTable, PtError, PtResult};
-use uefi_cpu::paging::create_cpu_paging;
+
+// temporary until aarch64 paging comes in. this cfg_if block will be removed
+// and just the else use statement will be used. cfg_if can be removed from
+// Cargo.toml then
+cfg_if::cfg_if! {
+    if #[cfg(all(target_os = "uefi", target_arch = "x86_64"))] {
+        use uefi_cpu::paging::create_cpu_paging;
+    } else if #[cfg(all(target_os = "uefi", target_arch = "aarch64"))] {
+        #[derive(Default)]
+        pub struct EfiCpuPagingNull<A>
+        where
+            A: PageAllocator,
+        {
+            _allocator: core::marker::PhantomData<A>,
+        }
+
+        impl<A> PageTable for EfiCpuPagingNull<A>
+        where
+            A: PageAllocator,
+        {
+            type ALLOCATOR = A;
+            fn borrow_allocator(&mut self) -> &mut A {
+                panic!("NullEfiCpuInit does not have a page allocator");
+            }
+
+            fn map_memory_region(&mut self, _address: u64, _size: u64, _attributes: MemoryAttributes) -> Result<(), PtError> {
+                Ok(())
+            }
+
+            fn unmap_memory_region(&mut self, _address: u64, _size: u64) -> Result<(), PtError> {
+                Ok(())
+            }
+
+            fn remap_memory_region(&mut self, _address: u64, _size: u64, _attributes: MemoryAttributes) -> Result<(), PtError> {
+                Ok(())
+            }
+
+            fn install_page_table(&self) -> Result<(), PtError> {
+                Ok(())
+            }
+
+            fn query_memory_region(&self, _address: u64, _size: u64) -> Result<MemoryAttributes, PtError> {
+                Ok(MemoryAttributes::empty())
+            }
+
+            fn get_page_table_pages_for_size(&self, _address: u64, _size: u64) -> Result<u64, PtError> {
+                Ok(0)
+            }
+
+            fn dump_page_tables(&self, _address: u64, _size: u64) {}
+        }
+
+        fn create_cpu_paging<A: PageAllocator + 'static>(
+            _page_allocator: A,
+        ) -> Result<Box<dyn PageTable<ALLOCATOR = A>>, efi::Status> {
+            Ok(Box::new(EfiCpuPagingNull { _allocator: core::marker::PhantomData }))
+        }
+    } else {
+        use uefi_cpu::paging::create_cpu_paging;
+    }
+}
 
 use mu_pi::hob::{Hob, HobList};
 
