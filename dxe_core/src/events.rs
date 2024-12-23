@@ -18,8 +18,6 @@ use r_efi::efi;
 use mu_pi::protocols::timer;
 use uefi_cpu::interrupts;
 
-use uefi_cpu::interrupts;
-
 use crate::{
     event_db::{SpinLockedEventDb, TimerDelay},
     gcd,
