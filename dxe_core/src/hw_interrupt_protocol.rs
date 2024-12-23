@@ -322,37 +322,37 @@ impl InterruptHandler for HwInterruptProtocolHandler {
 
 impl HwInterruptProtocolHandler {
     pub fn new(
-        handlers: TplMutex<Vec<Option<HwInterruptHandler>>>,
-        aarch64_int: TplMutex<AArch64InterruptInitializer>,
+        handlers: Vec<Option<HwInterruptHandler>>,
+        aarch64_int: AArch64InterruptInitializer,
     ) -> Self {
-        Self { handlers, aarch64_int }
+        Self { handlers: TplMutex::new(efi::TPL_HIGH_LEVEL, handlers, "Hardware Interrupt Lock"),
+                aarch64_int: TplMutex::new(efi::TPL_HIGH_LEVEL, aarch64_int, "AArch64 GIC Lock")
+     }
     }
 
     /// Internal implementation of interrupt related functions.
     pub fn register_interrupt_source(&mut self, interrupt_source: usize, handler: HwInterruptHandler) -> efi::Status {
-        let mut handlers = self.handlers.lock();
-
-        if interrupt_source >= handlers.len() {
+        if interrupt_source >= self.handlers.lock().len() {
             return efi::Status::INVALID_PARAMETER;
         }
 
         let m_handler = handler as *const c_void;
 
         // If the handler is a null pointer, return invalid parameter
-        if m_handler.is_null() & handlers[interrupt_source].is_none() {
+        if m_handler.is_null() & self.handlers.lock()[interrupt_source].is_none() {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        if !m_handler.is_null() & handlers[interrupt_source].is_some() {
+        if !m_handler.is_null() & self.handlers.lock()[interrupt_source].is_some() {
             return efi::Status::ALREADY_STARTED;
         }
 
         // If the interrupt handler is unregistered then disable the interrupt
         if m_handler.is_null() {
-            handlers[interrupt_source as usize] = None;
+            self.handlers.lock()[interrupt_source as usize] = None;
             return self.aarch64_int.lock().disable_interrupt_source(interrupt_source as u64);
         } else {
-            handlers[interrupt_source as usize] = Some(handler);
+            self.handlers.lock()[interrupt_source as usize] = Some(handler);
             return self.aarch64_int.lock().enable_interrupt_source(interrupt_source as u64);
         }
     }
@@ -376,9 +376,8 @@ pub(crate) fn install_hw_interrupt_protocol<'a>(
     let mut gic_v3 = gic_v3.unwrap();
 
     let max_int = unsafe { get_max_interrupt_number(gic_v3.gicd_ptr()) as usize };
-    let handlers = TplMutex::new(efi::TPL_HIGH_LEVEL, vec![None; max_int], "Hardware Interrupt Handlers");
-    let aarch64_int =
-        TplMutex::new(efi::TPL_HIGH_LEVEL, AArch64InterruptInitializer::new(gic_v3), "AArch64 GIC Object");
+    let handlers = vec![None; max_int];
+    let aarch64_int = AArch64InterruptInitializer::new(gic_v3);
 
     // Prepare context for the v1 interrupt handler
     let mut hw_int_protocol_handler = Box::leak(Box::new(HwInterruptProtocolHandler::new(handlers, aarch64_int)));
