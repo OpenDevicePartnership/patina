@@ -321,13 +321,11 @@ impl InterruptHandler for HwInterruptProtocolHandler {
 }
 
 impl HwInterruptProtocolHandler {
-    pub fn new(
-        handlers: Vec<Option<HwInterruptHandler>>,
-        aarch64_int: AArch64InterruptInitializer,
-    ) -> Self {
-        Self { handlers: TplMutex::new(efi::TPL_HIGH_LEVEL, handlers, "Hardware Interrupt Lock"),
-                aarch64_int: TplMutex::new(efi::TPL_HIGH_LEVEL, aarch64_int, "AArch64 GIC Lock")
-     }
+    pub fn new(handlers: Vec<Option<HwInterruptHandler>>, aarch64_int: AArch64InterruptInitializer) -> Self {
+        Self {
+            handlers: TplMutex::new(efi::TPL_HIGH_LEVEL, handlers, "Hardware Interrupt Lock"),
+            aarch64_int: TplMutex::new(efi::TPL_HIGH_LEVEL, aarch64_int, "AArch64 GIC Lock"),
+        }
     }
 
     /// Internal implementation of interrupt related functions.
