@@ -104,11 +104,16 @@ pub extern "efiapi" fn get_interrupt_source_state_v1(
     state: *mut bool,
 ) -> efi::Status {
     let protocol = this as *const c_void;
-    if protocol.is_null() {
+    if protocol.is_null() || state.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
 
-    unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source, state)
+    let enable =
+        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source);
+    unsafe {
+        *state = enable;
+    }
+    efi::Status::SUCCESS
 }
 
 pub extern "efiapi" fn end_of_interrupt_v1(
@@ -219,7 +224,12 @@ pub extern "efiapi" fn get_interrupt_source_state_v2(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source, state)
+    let enable =
+        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source);
+    unsafe {
+        *state = enable;
+    }
+    efi::Status::SUCCESS
 }
 
 pub extern "efiapi" fn end_of_interrupt_v2(
@@ -353,8 +363,9 @@ pub(crate) fn install_hw_interrupt_protocol<'a>(
     interrupt_manager: &'a mut dyn InterruptManager,
     interrupt_bases: &'a dyn InterruptBases,
 ) {
-    let gic_v3 =
-        gic_initialize(interrupt_bases.get_interrupt_base_d() as _, interrupt_bases.get_interrupt_base_r() as _);
+    let gic_v3 = unsafe {
+        gic_initialize(interrupt_bases.get_interrupt_base_d() as _, interrupt_bases.get_interrupt_base_r() as _)
+    };
     if !gic_v3.is_none() {
         log::info!("GICv3 initialized");
     } else {
@@ -364,7 +375,7 @@ pub(crate) fn install_hw_interrupt_protocol<'a>(
 
     let mut gic_v3 = gic_v3.unwrap();
 
-    let max_int = get_max_interrupt_number(gic_v3.gicd_ptr()) as usize;
+    let max_int = unsafe { get_max_interrupt_number(gic_v3.gicd_ptr()) as usize };
     let handlers = TplMutex::new(efi::TPL_HIGH_LEVEL, vec![None; max_int], "Hardware Interrupt Handlers");
     let aarch64_int =
         TplMutex::new(efi::TPL_HIGH_LEVEL, AArch64InterruptInitializer::new(gic_v3), "AArch64 GIC Object");
