@@ -355,7 +355,7 @@ pub(crate) fn install_hw_interrupt_protocol<'a>(
 ) {
     let gic_v3 =
         gic_initialize(interrupt_bases.get_interrupt_base_d() as _, interrupt_bases.get_interrupt_base_r() as _);
-    if gic_v3.is_none() {
+    if !gic_v3.is_none() {
         log::info!("GICv3 initialized");
     } else {
         log::error!("Failed to initialize GICv3");
