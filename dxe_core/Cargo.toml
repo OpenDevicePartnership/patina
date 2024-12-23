@@ -22,8 +22,6 @@ required-features = ["std"]
 
 [dependencies]
 ahash = { workspace=  true }
-# temporary until aarch64 paging comes in
-cfg-if = { workspace = true }
 corosensei = { workspace = true }
 crc32fast = { workspace = true }
 goblin = {workspace = true}
