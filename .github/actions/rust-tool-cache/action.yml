@@ -22,6 +22,9 @@ runs:
           ~/.cargo/bin/
           ~/.rustup/toolchains/
         key: ${{ runner.os }}-rust-tools-${{ hashFiles('**/rust-toolchain.toml' )}}
+    
+    - name: Install cargo-binstall
+      uses: cargo-bins/cargo-binstall@v1.10.17      
 
     # Read any tools from rust-toolchain.toml file and installs them
     - name: Install Rust Tools
@@ -29,8 +32,24 @@ runs:
       run: |
         # Extract tools section from rust-toolchain.toml
         sed -n '/\[tools\]/,/^$/p' rust-toolchain.toml | grep -v '\[tools\]' | while read -r line; do
-          TOOL_NAME=$(echo "$line" | awk -F'=' '{gsub(/ /, "", $1); print $1}')
-          TOOL_VERSION=$(echo "$line" | awk -F'=' '{gsub(/["'\'']/,"",$2); print $2}')
-          cargo install "$TOOL_NAME" --version "$TOOL_VERSION"
+          # Extract tool name and clean it
+          TOOL_NAME=${line%%=*}
+          TOOL_NAME=${TOOL_NAME//[[:space:]]/}
+          TOOL_NAME="${TOOL_NAME//$'\n'/}"
+
+          # Extract tool version and clean it
+          TOOL_VERSION=${line#*=}
+          TOOL_VERSION=${TOOL_VERSION//[[:space:]]/}
+          TOOL_VERSION=${TOOL_VERSION//\"/}
+          TOOL_VERSION="${TOOL_VERSION//$'\n'/}"
+
+          echo ""
+          echo "##################################################################"
+          echo "Installing $TOOL_NAME@$TOOL_VERSION"
+          echo "##################################################################"
+          echo ""
+
+          # Attempt to binstall the tool first. If it fails, install it using cargo
+          cargo binstall -y $TOOL_NAME --version $TOOL_VERSION || cargo install $TOOL_NAME --version $TOOL_VERSION
         done
       if: steps.tool-cache.outputs.cache-hit != 'true'

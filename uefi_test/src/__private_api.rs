@@ -76,8 +76,7 @@ impl TestCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::ffi::c_void;
-    use core::result::Result;
+    use core::{ffi::c_void, result::Result};
     use r_efi::efi;
 
     mockall::mock! {

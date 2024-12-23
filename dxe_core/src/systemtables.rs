@@ -631,15 +631,27 @@ impl EfiSystemTable {
         self.system_table.as_ref() as *const efi::SystemTable
     }
 
-    pub fn system_table(&mut self) -> &mut efi::SystemTable {
+    pub fn system_table(&self) -> &efi::SystemTable {
+        self.system_table.as_ref()
+    }
+
+    pub fn system_table_mut(&mut self) -> &mut efi::SystemTable {
         self.system_table.as_mut()
     }
 
-    pub fn boot_services(&mut self) -> &mut efi::BootServices {
+    pub fn boot_services(&self) -> &efi::BootServices {
+        unsafe { self.system_table.boot_services.as_ref().expect("BootServices uninitialized") }
+    }
+
+    pub fn boot_services_mut(&mut self) -> &mut efi::BootServices {
         unsafe { self.system_table.boot_services.as_mut().expect("BootServices uninitialized") }
     }
 
-    pub fn runtime_services(&mut self) -> &mut efi::RuntimeServices {
+    pub fn runtime_services(&self) -> &efi::RuntimeServices {
+        unsafe { self.system_table.runtime_services.as_ref().expect("RuntimeServices uninitialized") }
+    }
+
+    pub fn runtime_services_mut(&mut self) -> &mut efi::RuntimeServices {
         unsafe { self.system_table.runtime_services.as_mut().expect("RuntimeServices uninitialized") }
     }
 
@@ -718,14 +730,14 @@ mod test {
             table.checksum();
 
             let system_table_crc32 = table.as_ref().hdr.crc32;
-            let boot_services_crc32 = table.boot_services().hdr.crc32;
-            let runtime_services_crc32 = table.runtime_services().hdr.crc32;
+            let boot_services_crc32 = table.boot_services_mut().hdr.crc32;
+            let runtime_services_crc32 = table.runtime_services_mut().hdr.crc32;
 
             // Update a boot_services function
             extern "efiapi" fn raise_tpl(_: efi::Tpl) -> efi::Tpl {
                 efi::TPL_APPLICATION
             }
-            table.boot_services().raise_tpl = raise_tpl;
+            table.boot_services_mut().raise_tpl = raise_tpl;
 
             // Update a runtime_services function
             extern "efiapi" fn get_variable(
@@ -737,21 +749,21 @@ mod test {
             ) -> efi::Status {
                 efi::Status::SUCCESS
             }
-            table.runtime_services().get_variable = get_variable;
+            table.runtime_services_mut().get_variable = get_variable;
 
             // Update a system_table field
             table.as_mut().hdr.revision = 0x100;
 
             // Checksums should be different
             table.checksum_all();
-            assert_ne!(system_table_crc32, table.system_table().hdr.crc32);
-            assert_ne!(boot_services_crc32, table.boot_services().hdr.crc32);
-            assert_ne!(runtime_services_crc32, table.runtime_services().hdr.crc32);
+            assert_ne!(system_table_crc32, table.system_table_mut().hdr.crc32);
+            assert_ne!(boot_services_crc32, table.boot_services_mut().hdr.crc32);
+            assert_ne!(runtime_services_crc32, table.runtime_services_mut().hdr.crc32);
 
             // Check that clearing boot time services changes the checksum
-            table.system_table().hdr.revision = efi::RUNTIME_SERVICES_REVISION;
+            table.system_table_mut().hdr.revision = efi::RUNTIME_SERVICES_REVISION;
             table.clear_boot_time_services();
-            assert_eq!(table.system_table().boot_services, core::ptr::null_mut());
+            assert_eq!(table.system_table_mut().boot_services, core::ptr::null_mut());
         })
     }
 }

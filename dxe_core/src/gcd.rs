@@ -53,6 +53,7 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
     log::info!("memory_size: {:#x?}", memory_end - memory_start);
     log::info!("free_memory_start: {:#x?}", free_memory_start);
     log::info!("free_memory_size: {:#x?}", free_memory_size);
+    log::info!("physical_hob_list: {:#x?}", physical_hob_list as u64);
 
     // make sure the PHIT is present and it was reasonable.
     assert!(free_memory_size > 0, "Not enough free memory for DXE core to start");
@@ -78,6 +79,10 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
         GCD.add_memory_space(GcdMemoryType::Reserved, 0, 0x1000, 0)
             .expect("Failed to mark the first page as non-existent in the GCD.");
     }
+}
+
+pub fn init_paging(hob_list: &HobList) {
+    GCD.init_paging(hob_list);
 }
 
 pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {

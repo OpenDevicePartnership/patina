@@ -208,6 +208,12 @@ impl MemoryBlock {
             {
                 md.memory_type = memory_type;
                 md.capabilities = capabilities;
+                // by default all free memory is unmapped (which translated to MEMORY_RP)
+                // when it is allocated, it is mapped as MEMORY_XP and then the caller is
+                // responsible for updating the attributes further if required.
+                // when it is freed, it is unmapped in the page table and in the GCD set back to MEMORY_RP
+                // to merge back with free memory
+                md.attributes = efi::MEMORY_RP;
                 Ok(())
             }
             _ => Err(Error::InvalidStateTransition),

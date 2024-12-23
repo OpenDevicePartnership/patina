@@ -1,0 +1,18 @@
+[package]
+name = "uefi_performance"
+version = "6.1.0"
+edition = "2021"
+
+[lib]
+name = "uefi_performance"
+path = "src/lib.rs"
+
+[dependencies]
+r-efi = { workspace = true }
+scroll = { workspace = true }
+log = { workspace = true }
+uuid = { workspace = true }
+
+mu_pi = { workspace = true }
+mu_rust_helpers = { workspace = true }
+uefi_sdk = { workspace = true }

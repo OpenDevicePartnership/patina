@@ -1,6 +1,6 @@
 [package]
 name = "dxe_core"
-version = "5.0.0"
+version = "6.1.0"
 edition = "2021"
 readme = "../README.md"
 description = "A pure rust implementation of the UEFI DXE Core."
@@ -22,6 +22,8 @@ required-features = ["std"]
 
 [dependencies]
 ahash = { workspace=  true }
+# temporary until aarch64 paging comes in
+cfg-if = { workspace = true }
 corosensei = { workspace = true }
 crc32fast = { workspace = true }
 goblin = {workspace = true}
@@ -30,6 +32,7 @@ linked_list_allocator = { workspace = true }
 log = { workspace = true }
 mu_pi = { workspace = true }
 mu_rust_helpers = { workspace = true }
+paging = { workspace = true }
 r-efi = { workspace = true }
 scroll = {workspace = true}
 spin = { workspace = true }
@@ -43,6 +46,7 @@ uefi_cpu = { workspace = true }
 uefi_debugger = { workspace = true }
 uefi_device_path = { workspace = true }
 uefi_depex = { workspace = true}
+uefi_performance = { workspace = true }
 
 [dev-dependencies]
 sample_components = { workspace = true }

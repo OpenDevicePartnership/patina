@@ -756,9 +756,6 @@ extern "efiapi" fn locate_device_path(
 }
 
 pub fn init_protocol_support(bs: &mut efi::BootServices) {
-    //make sure that well-known handles exist.
-    PROTOCOL_DB.init_protocol_db();
-
     //This bit of trickery is needed because r_efi definition of (Un)InstallMultipleProtocolInterfaces
     //is not variadic, due to rust only supporting variadic for "unsafe extern C" and not "efiapi"
     //until very recently. For x86_64 "efiapi" and "extern C" match, so we can get away with a

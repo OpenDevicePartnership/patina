@@ -1,6 +1,6 @@
 [package]
 name = "uefi_depex"
-version = "5.0.0"
+version = "6.1.0"
 edition = "2021"
 readme = "README.md"
 description = "A Depex parsing implementation for the dxe_core."

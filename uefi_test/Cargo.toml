@@ -1,6 +1,6 @@
 [package]
 name = "uefi_test"
-version = "5.0.0"
+version = "6.1.0"
 edition = "2021"
 readme = "README.md"
 description = "An on-platform test harness for UEFI firmware."

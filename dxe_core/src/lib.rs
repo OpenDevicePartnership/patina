@@ -27,9 +27,6 @@
 //! #         _length: u64,
 //! #         _flush_type: mu_pi::protocols::cpu_arch::CpuFlushType,
 //! #     ) -> Result<(), EfiError> {Ok(())}
-//! #     fn enable_interrupt(&self) -> Result<(), EfiError> {Ok(())}
-//! #     fn disable_interrupt(&self) -> Result<(), EfiError> {Ok(())}
-//! #     fn get_interrupt_state(&self) -> Result<bool, EfiError> {Ok(true)}
 //! #     fn init(&self, _init_type: mu_pi::protocols::cpu_arch::CpuInitType) -> Result<(), EfiError> {Ok(())}
 //! #     fn get_timer_value(&self, _timer_index: u32) -> Result<(u64, u64), EfiError> {Ok((0, 0))}
 //! # }
@@ -94,6 +91,7 @@ mod fv;
 mod gcd;
 mod hw_interrupt_protocol;
 mod image;
+mod memory_attributes_protocol;
 mod memory_attributes_table;
 mod misc_boot_services;
 mod pecoff;
@@ -107,16 +105,18 @@ mod tpl_lock;
 #[macro_use]
 pub mod test_support;
 
-use core::{ffi::c_void, str::FromStr};
+use core::{ffi::c_void, ptr, str::FromStr};
 
 use alloc::{boxed::Box, vec::Vec};
 use gcd::SpinLockedGcd;
 use mu_pi::{
     fw_fs,
     hob::{get_c_hob_list_size, HobList},
-    protocols::bds,
+    protocols::{bds, status_code},
+    status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
 };
-use r_efi::efi::{self};
+use protocols::PROTOCOL_DB;
+use r_efi::efi;
 use uefi_component_interface::DxeComponent;
 use uefi_sdk::error::{self, Result};
 
@@ -170,9 +170,6 @@ pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_c
 /// #         _length: u64,
 /// #         _flush_type: mu_pi::protocols::cpu_arch::CpuFlushType,
 /// #     ) -> Result<(), EfiError> {Ok(())}
-/// #     fn enable_interrupt(&self) -> Result<(), EfiError> {Ok(())}
-/// #     fn disable_interrupt(&self) -> Result<(), EfiError> {Ok(())}
-/// #     fn get_interrupt_state(&self) -> Result<bool, EfiError> {Ok(true)}
 /// #     fn init(&self, _init_type: mu_pi::protocols::cpu_arch::CpuInitType) -> Result<(), EfiError> {Ok(())}
 /// #     fn get_timer_value(&self, _timer_index: u32) -> Result<(u64, u64), EfiError> {Ok((0, 0))}
 /// # }
@@ -245,6 +242,13 @@ where
         self
     }
 
+    /// Returns the length of the HOB list.
+    /// Clippy gets unhappy if we call get_c_hob_list_size directly, because it gets confused, thinking
+    /// get_c_hob_list_size is not marked unsafe, but it is
+    fn get_hob_list_len(hob_list: *const c_void) -> usize {
+        unsafe { get_c_hob_list_size(hob_list) }
+    }
+
     /// Registers the interrupt bases with it's own configuration.
     pub fn with_interrupt_bases(mut self, interrupt_bases: InterruptBases) -> Self {
         self.interrupt_bases = interrupt_bases;
@@ -256,6 +260,10 @@ where
         let _ = self.cpu_init.initialize();
         self.interrupt_manager.initialize().expect("Failed to initialize interrupt manager!");
         uefi_debugger::initialize(&mut self.interrupt_manager);
+
+        if physical_hob_list.is_null() {
+            panic!("HOB list pointer is null!");
+        }
 
         gcd::init_gcd(physical_hob_list);
 
@@ -269,6 +277,8 @@ where
         log::trace!("HOB list discovered is:");
         log::trace!("{:#x?}", hob_list);
 
+        //make sure that well-known handles exist.
+        PROTOCOL_DB.init_protocol_db();
         // Initialize full allocation support.
         allocator::init_memory_support(&hob_list);
         // we have to relocate HOBs after memory services are initialized as we are going to allocate memory and
@@ -276,7 +286,7 @@ where
         // the initial HOB list is not in mapped memory as passed from pre-DXE.
         hob_list.relocate_hobs();
         let hob_list_slice = unsafe {
-            core::slice::from_raw_parts(physical_hob_list as *const u8, get_c_hob_list_size(physical_hob_list))
+            core::slice::from_raw_parts(physical_hob_list as *const u8, Self::get_hob_list_len(physical_hob_list))
         };
         let relocated_c_hob_list = hob_list_slice.to_vec().into_boxed_slice();
 
@@ -284,25 +294,24 @@ where
 
         // Instantiate system table.
         systemtables::init_system_table();
-
         {
             let mut st = systemtables::SYSTEM_TABLE.lock();
             let st = st.as_mut().expect("System Table not initialized!");
 
-            allocator::install_memory_services(st.boot_services());
-            events::init_events_support(st.boot_services());
-            protocols::init_protocol_support(st.boot_services());
-            misc_boot_services::init_misc_boot_services_support(st.boot_services());
-            runtime::init_runtime_support(st.runtime_services());
+            allocator::install_memory_services(st.boot_services_mut());
+            gcd::init_paging(&hob_list);
+            events::init_events_support(st.boot_services_mut());
+            protocols::init_protocol_support(st.boot_services_mut());
+            misc_boot_services::init_misc_boot_services_support(st.boot_services_mut());
+            runtime::init_runtime_support(st.runtime_services_mut());
             image::init_image_support(&hob_list, st);
             dispatcher::init_dispatcher(Box::from(self.section_extractor));
             fv::init_fv_support(&hob_list, Box::from(self.section_extractor));
             dxe_services::init_dxe_services(st);
-            driver_services::init_driver_services(st.boot_services());
+            driver_services::init_driver_services(st.boot_services_mut());
 
-            // Commenting out below install procotcol call until we stub the CPU
-            // arch protocol install from C CpuDxe.
             cpu_arch_protocol::install_cpu_arch_protocol(&mut self.cpu_init, &mut self.interrupt_manager);
+            memory_attributes_protocol::install_memory_attributes_protocol();
             hw_interrupt_protocol::install_hw_interrupt_protocol(&mut self.interrupt_manager, &self.interrupt_bases);
 
             // re-checksum the system tables after above initialization.
@@ -324,12 +333,20 @@ where
             allocator::install_memory_type_info_table(st).expect("Unable to create Memory Type Info Table");
         }
 
-        let mut st = systemtables::SYSTEM_TABLE.lock();
-        let bs = st.as_mut().unwrap().boot_services() as *mut efi::BootServices;
-        drop(st);
-        tpl_lock::init_boot_services(bs);
+        let boot_services_ptr;
+        let runtime_services_ptr;
+        {
+            let mut st = systemtables::SYSTEM_TABLE.lock();
+            boot_services_ptr = st.as_mut().unwrap().boot_services_mut() as *mut efi::BootServices;
+            runtime_services_ptr = st.as_mut().unwrap().runtime_services_mut() as *mut efi::RuntimeServices;
+        }
+        tpl_lock::init_boot_services(boot_services_ptr);
 
         memory_attributes_table::init_memory_attributes_table_support();
+
+        _ = uefi_performance::init_performance_lib(&hob_list, unsafe { boot_services_ptr.as_ref().unwrap() }, unsafe {
+            runtime_services_ptr.as_ref().unwrap()
+        });
 
         CorePostInit::new(/* Potentially transfer configuration data here. */)
     }
@@ -415,4 +432,18 @@ fn call_bds() {
             ((*bds).entry)(bds);
         }
     }
+
+    match protocols::PROTOCOL_DB.locate_protocol(status_code::PROTOCOL_GUID) {
+        Ok(status_code_ptr) => {
+            let status_code_protocol = unsafe { (status_code_ptr as *mut status_code::Protocol).as_mut() }.unwrap();
+            (status_code_protocol.report_status_code)(
+                EFI_PROGRESS_CODE,
+                EFI_SOFTWARE_DXE_CORE | EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT,
+                0,
+                &uefi_sdk::guid::DXE_CORE,
+                ptr::null(),
+            );
+        }
+        Err(err) => log::error!("Unable to locate status code runtime protocol: {:?}", err),
+    };
 }

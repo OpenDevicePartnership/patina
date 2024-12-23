@@ -1,6 +1,6 @@
 [package]
 name = "uefi_test_macro"
-version = "5.0.0"
+version = "6.1.0"
 edition = "2021"
 readme = "README.md"
 description = "Proc macros for the uefi_test crate."

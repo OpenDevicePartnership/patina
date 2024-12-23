@@ -1,6 +1,6 @@
 [package]
 name = "uefi_component_interface"
-version = "5.0.0"
+version = "6.1.0"
 edition = "2021"
 readme = "README.md"
 description = "The trait interface any dxe component should implement to be executed by the DXE Core."
