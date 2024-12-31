@@ -5,13 +5,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ffi::c_void;
 use r_efi::efi;
-use uefi_cpu::interrupts::aarch64::gic::get_max_interrupt_number;
-use uefi_cpu::interrupts::aarch64::hw_interrupt::AArch64InterruptInitializer;
+use uefi_cpu::interrupts::aarch64::gic_manager::{gic_initialize, get_max_interrupt_number, AArch64InterruptInitializer};
 use uefi_cpu::interrupts::{ExceptionContext, InterruptBases, InterruptHandler, InterruptManager};
 
 use arm_gic::gicv3::{GicV3, Trigger};
-
-use uefi_cpu::interrupts::aarch64::gic::gic_initialize;
 
 pub type HwInterruptHandler = extern "efiapi" fn(u64, &mut ExceptionContext);
 
@@ -361,17 +358,18 @@ pub(crate) fn install_hw_interrupt_protocol<'a>(
     interrupt_manager: &'a mut dyn InterruptManager,
     interrupt_bases: &'a dyn InterruptBases,
 ) {
-    let gic_v3 = unsafe {
+    let res = unsafe {
         gic_initialize(interrupt_bases.get_interrupt_base_d() as _, interrupt_bases.get_interrupt_base_r() as _)
     };
-    if !gic_v3.is_none() {
-        log::info!("GICv3 initialized");
-    } else {
+
+    if res.is_err() {
         log::error!("Failed to initialize GICv3");
         return;
+    } else {
+        log::info!("GICv3 initialized");
     }
 
-    let mut gic_v3 = gic_v3.unwrap();
+    let mut gic_v3 = res.unwrap();
 
     let max_int = unsafe { get_max_interrupt_number(gic_v3.gicd_ptr()) as usize };
     let handlers = vec![None; max_int];
