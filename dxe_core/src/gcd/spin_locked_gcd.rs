@@ -2356,7 +2356,7 @@ impl SpinLockedGcd {
         let result = self.memory.lock().add_memory_space(memory_type, base_address, len, capabilities);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::AddMemorySpace)
+                callback(MapChangeType::AddMemorySpace);
             }
         }
         result
@@ -2370,7 +2370,7 @@ impl SpinLockedGcd {
         let result = self.memory.lock().remove_memory_space(base_address, len);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::RemoveMemorySpace)
+                callback(MapChangeType::RemoveMemorySpace);
             }
         }
         result
@@ -2457,7 +2457,7 @@ impl SpinLockedGcd {
         let result = self.memory.lock().free_memory_space(base_address, len);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::FreeMemorySpace)
+                callback(MapChangeType::FreeMemorySpace);
             }
         }
         result
@@ -2476,7 +2476,7 @@ impl SpinLockedGcd {
         let result = self.memory.lock().free_memory_space_preserving_ownership(base_address, len);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::FreeMemorySpace)
+                callback(MapChangeType::FreeMemorySpace);
             }
         }
         result
@@ -2509,7 +2509,7 @@ impl SpinLockedGcd {
         let result = self.memory.lock().set_memory_space_capabilities(base_address, len, capabilities);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::SetMemoryCapabilities)
+                callback(MapChangeType::SetMemoryCapabilities);
             }
         }
         result
