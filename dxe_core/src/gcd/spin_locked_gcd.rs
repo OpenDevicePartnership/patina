@@ -1389,8 +1389,27 @@ impl GCD {
             MemoryStateTransition::SetAttributes(attributes),
         ) {
             Ok(_) => Ok(()),
-            Err(InternalError::MemoryBlock(_)) => error!(Error::Unsupported),
-            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+            Err(InternalError::MemoryBlock(e)) => {
+                log::error!(
+                    "GCD failed to set attributes on range {:#x?} of length {:#x?} with attributes {:#x?}. error {:?}",
+                    base_address,
+                    len,
+                    attributes,
+                    e
+                );
+                debug_assert!(false);
+                error!(Error::Unsupported)
+            }
+            Err(InternalError::Slice(SliceError::OutOfSpace)) => {
+                log::error!(
+                    "GCD failed to set attributes on range {:#x?} of length {:#x?} with attributes {:#x?} due to space",
+                    base_address,
+                    len,
+                    attributes
+                );
+                debug_assert!(false);
+                error!(Error::OutOfResources)
+            }
             Err(e) => panic!("{e:?}"),
         }
     }
@@ -3587,12 +3606,28 @@ mod tests {
         .unwrap();
         // Trying to set capabilities where the range falls outside a block should return unsupported
         assert_eq!(Err(Error::Unsupported), gcd.set_memory_space_capabilities(0, 0x3000, 0b1111));
-
         gcd.set_memory_space_capabilities(0, 0x2000, efi::MEMORY_RP | efi::MEMORY_RO).unwrap();
-
-        // Trying to set attributes where the range falls outside a block should return unsupported
-        assert_eq!(Err(Error::Unsupported), gcd.set_memory_space_attributes(0, 0x3000, 0b1));
         gcd.set_gcd_memory_attributes(0, 0x2000, efi::MEMORY_RO).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_set_attributes_panic() {
+        let (mut gcd, address) = create_gcd();
+        unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, address, 0) }.unwrap();
+
+        gcd.allocate_memory_space(
+            AllocateType::BottomUp(None),
+            dxe_services::GcdMemoryType::SystemMemory,
+            0,
+            0x2000,
+            1 as _,
+            None,
+        )
+        .unwrap();
+        gcd.set_memory_space_capabilities(0, 0x2000, efi::MEMORY_RP | efi::MEMORY_RO).unwrap();
+        // Trying to set attributes where the range falls outside a block should panic in debug case
+        gcd.set_memory_space_attributes(0, 0x3000, 0b1).unwrap();
     }
 
     // comment out for now, this test needs to be reworked
