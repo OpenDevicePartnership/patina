@@ -2487,13 +2487,30 @@ impl SpinLockedGcd {
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.6
     pub fn set_memory_space_attributes(&self, base_address: usize, len: usize, attributes: u64) -> Result<(), Error> {
-        let result = self.memory.lock().set_memory_space_attributes(base_address, len, attributes);
-        if result.is_ok() {
-            if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::SetMemoryAttributes)
-            }
+        // this API allows for setting attributes across multiple descriptors in the GCD (assuming the capabilities
+        // allow it). The lower level set_memory_space_attributes will only operate on a single entry in the GCD/page
+        // table, so at this level we need to check to see if the range spans multiple entries and if so, we need to
+        // split the range and call set_memory_space_attributes for each entry.
+
+        let mut current_base = base_address as u64;
+        let range_end = (base_address + len) as u64;
+        while current_base < range_end {
+            let descriptor = self.get_memory_descriptor_for_address(current_base as efi::PhysicalAddress)?;
+            let descriptor_end = descriptor.base_address + descriptor.length;
+
+            // it is still legal to split a descriptor and only set the attributes on part of it
+            let next_base = u64::min(descriptor_end, range_end);
+            let current_len = next_base - current_base;
+            self.memory.lock().set_memory_space_attributes(current_base as usize, current_len as usize, attributes)?;
+            current_base = next_base;
         }
-        result
+
+        // if we made it out of the loop, we set the attributes correctly and should call the memory change callback,
+        // if there is one
+        if let Some(callback) = self.memory_change_callback {
+            callback(MapChangeType::SetMemoryAttributes);
+        }
+        Ok(())
     }
 
     /// This service sets capabilities on the given memory space.
