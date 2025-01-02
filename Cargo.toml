@@ -53,7 +53,7 @@ mu_pi = { git = "https://github.com/microsoft/mu_rust_pi.git", tag = "v5.1.2" }
 mu_rust_helpers = { git = "https://github.com/microsoft/mu_rust_helpers.git", tag = "v1.2.0" }
 paging = { git = "https://github.com/pop-project/paging.git", rev = "00d9ab1dbb46b201069e6e58de16679f26d3c54f" }
 rand = "^0.8"
-r-efi = { version = "^5", default-features = false }
+r-efi = { version = "^5.2.0", default-features = false }
 scroll = { version = "^0.12", default-features = false, features = ["derive"] }
 spin = "^0.5"
 uint = "^0.10"

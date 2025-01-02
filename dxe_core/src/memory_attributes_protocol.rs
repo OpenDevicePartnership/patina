@@ -4,56 +4,22 @@ use crate::{dxe_services, protocols::PROTOCOL_DB};
 use alloc::boxed::Box;
 use core::ffi::c_void;
 use mu_rust_helpers::function;
-use r_efi::{efi, eficall, eficall_abi};
-use uefi_sdk::error::EfiError;
-
-/// Temporarily host this here as the r-efi maintainer is out and not merging PRs
-pub const MEMORY_ATTRIBUTES_PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0xf4560cf6, 0x40ec, 0x4b4a, 0xa1, 0x92, &[0xbf, 0x1d, 0x57, 0xd0, 0xb1, 0x89]);
-
-pub type GetMemoryAttributes = eficall! {fn(
-    *const Protocol,
-    efi::PhysicalAddress,
-    u64,
-    *mut u64,
-) -> efi::Status};
-
-pub type SetMemoryAttributes = eficall! {fn(
-    *const Protocol,
-    efi::PhysicalAddress,
-    u64,
-    u64,
-) -> efi::Status};
-
-pub type ClearMemoryAttributes = eficall! {fn(
-    *const Protocol,
-    efi::PhysicalAddress,
-    u64,
-    u64,
-) -> efi::Status};
-
-#[repr(C)]
-pub struct Protocol {
-    pub get_memory_attributes: GetMemoryAttributes,
-    pub set_memory_attributes: SetMemoryAttributes,
-    pub clear_memory_attributes: ClearMemoryAttributes,
-}
+use r_efi::efi;
+use uefi_sdk::{base::UEFI_PAGE_MASK, error::EfiError};
 
 #[repr(C)]
 pub struct EfiMemoryAttributesProtocolImpl {
-    protocol: Protocol,
+    protocol: efi::protocols::memory_attribute::Protocol,
 }
 
-const UEFI_PAGE_MASK: u64 = 0xFFF;
-
 extern "efiapi" fn get_memory_attributes(
-    _this: *const Protocol,
+    _this: *mut efi::protocols::memory_attribute::Protocol,
     base_address: efi::PhysicalAddress,
     length: u64,
     attributes: *mut u64,
 ) -> efi::Status {
     // We can only get attributes on page aligned base_addresses and lengths
-    if (base_address & UEFI_PAGE_MASK) != 0 || (length & UEFI_PAGE_MASK) != 0 {
+    if (base_address & UEFI_PAGE_MASK as u64) != 0 || (length & UEFI_PAGE_MASK as u64) != 0 {
         log::error!("base_address and length must be page aligned in {}", function!());
         return efi::Status::INVALID_PARAMETER;
     }
@@ -83,13 +49,13 @@ extern "efiapi" fn get_memory_attributes(
 }
 
 extern "efiapi" fn set_memory_attributes(
-    _this: *const Protocol,
+    _this: *mut efi::protocols::memory_attribute::Protocol,
     base_address: efi::PhysicalAddress,
     length: u64,
     attributes: u64,
 ) -> efi::Status {
     // We can only set attributes on page aligned base_addresses and lengths
-    if (base_address & UEFI_PAGE_MASK) != 0 || (length & UEFI_PAGE_MASK) != 0 {
+    if (base_address & UEFI_PAGE_MASK as u64) != 0 || (length & UEFI_PAGE_MASK as u64) != 0 {
         log::error!("base_address and length must be page aligned in {}", function!());
         return efi::Status::INVALID_PARAMETER;
     }
@@ -123,13 +89,13 @@ extern "efiapi" fn set_memory_attributes(
 }
 
 extern "efiapi" fn clear_memory_attributes(
-    _this: *const Protocol,
+    _this: *mut efi::protocols::memory_attribute::Protocol,
     base_address: efi::PhysicalAddress,
     length: u64,
     attributes: u64,
 ) -> efi::Status {
     // We can only clear attributes on page aligned base_addresses and lengths
-    if (base_address & UEFI_PAGE_MASK) != 0 || (length & UEFI_PAGE_MASK) != 0 {
+    if (base_address & UEFI_PAGE_MASK as u64) != 0 || (length & UEFI_PAGE_MASK as u64) != 0 {
         log::error!("base_address and length must be page aligned in {}", function!());
         return efi::Status::INVALID_PARAMETER;
     }
@@ -164,7 +130,13 @@ extern "efiapi" fn clear_memory_attributes(
 
 impl EfiMemoryAttributesProtocolImpl {
     fn new() -> Self {
-        Self { protocol: Protocol { get_memory_attributes, set_memory_attributes, clear_memory_attributes } }
+        Self {
+            protocol: efi::protocols::memory_attribute::Protocol {
+                get_memory_attributes,
+                set_memory_attributes,
+                clear_memory_attributes,
+            },
+        }
     }
 }
 
@@ -176,6 +148,6 @@ pub(crate) fn install_memory_attributes_protocol() {
     let interface = Box::into_raw(Box::new(protocol));
     let interface = interface as *mut c_void;
 
-    let _ = PROTOCOL_DB.install_protocol_interface(None, MEMORY_ATTRIBUTES_PROTOCOL_GUID, interface);
+    let _ = PROTOCOL_DB.install_protocol_interface(None, efi::protocols::memory_attribute::PROTOCOL_GUID, interface);
     log::info!("installed MEMORY_ATTRIBUTES_PROTOCOL_GUID");
 }
