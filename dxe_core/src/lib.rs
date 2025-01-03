@@ -8,7 +8,6 @@
 //! ``` rust,no_run
 //! use uefi_cpu::cpu::EfiCpuInit;
 //! use uefi_cpu::interrupts::InterruptManager;
-//! use uefi_cpu::interrupts::InterruptBases;
 //! use uefi_cpu::interrupts::ExceptionType;
 //! use uefi_cpu::interrupts::HandlerType;
 //! use uefi_sdk::error::EfiError;
@@ -203,36 +202,27 @@ pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_c
 ///   .unwrap();
 /// ```
 #[derive(Default)]
-pub struct Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases>
+pub struct Core<CpuInit, SectionExtractor, InterruptManager>
 where
     CpuInit: uefi_cpu::cpu::EfiCpuInit + Default + 'static,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
     InterruptManager: uefi_cpu::interrupts::InterruptManager + Default + Copy + 'static,
-    InterruptBases: uefi_cpu::interrupts::InterruptBases + Default + Copy + 'static,
 {
     cpu_init: CpuInit,
     section_extractor: SectionExtractor,
     interrupt_manager: InterruptManager,
-    interrupt_bases: InterruptBases,
 }
 
-impl<CpuInit, SectionExtractor, InterruptManager, InterruptBases>
-    Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases>
+impl<CpuInit, SectionExtractor, InterruptManager>
+    Core<CpuInit, SectionExtractor, InterruptManager>
 where
     CpuInit: uefi_cpu::cpu::EfiCpuInit + Default + 'static,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
     InterruptManager: uefi_cpu::interrupts::InterruptManager + Default + Copy + 'static,
-    InterruptBases: uefi_cpu::interrupts::InterruptBases + Default + Copy + 'static,
 {
     /// Registers the CPU Init with it's own configuration.
     pub fn with_cpu_init(mut self, cpu_init: CpuInit) -> Self {
         self.cpu_init = cpu_init;
-        self
-    }
-
-    /// Registers the Interrupt Manager with it's own configuration.
-    pub fn with_interrupt_manager(mut self, interrupt_manager: InterruptManager) -> Self {
-        self.interrupt_manager = interrupt_manager;
         self
     }
 
@@ -247,12 +237,6 @@ where
     /// get_c_hob_list_size is not marked unsafe, but it is
     fn get_hob_list_len(hob_list: *const c_void) -> usize {
         unsafe { get_c_hob_list_size(hob_list) }
-    }
-
-    /// Registers the interrupt bases with it's own configuration.
-    pub fn with_interrupt_bases(mut self, interrupt_bases: InterruptBases) -> Self {
-        self.interrupt_bases = interrupt_bases;
-        self
     }
 
     /// Initializes the core with the given configuration, including GCD initialization, enabling allocations.
@@ -312,7 +296,7 @@ where
 
             cpu_arch_protocol::install_cpu_arch_protocol(&mut self.cpu_init, &mut self.interrupt_manager);
             memory_attributes_protocol::install_memory_attributes_protocol();
-            hw_interrupt_protocol::install_hw_interrupt_protocol(&mut self.interrupt_manager, &self.interrupt_bases);
+            hw_interrupt_protocol::install_hw_interrupt_protocol(&mut self.interrupt_manager);
 
             // re-checksum the system tables after above initialization.
             st.checksum_all();
