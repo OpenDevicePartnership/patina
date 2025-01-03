@@ -1329,8 +1329,27 @@ impl GCD {
             MemoryStateTransition::SetAttributes(attributes),
         ) {
             Ok(_) => Ok(()),
-            Err(InternalError::MemoryBlock(_)) => error!(Error::Unsupported),
-            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+            Err(InternalError::MemoryBlock(e)) => {
+                log::error!(
+                    "GCD failed to set attributes on range {:#x?} of length {:#x?} with attributes {:#x?}. error {:?}",
+                    base_address,
+                    len,
+                    attributes,
+                    e
+                );
+                debug_assert!(false);
+                error!(Error::Unsupported)
+            }
+            Err(InternalError::Slice(SliceError::OutOfSpace)) => {
+                log::error!(
+                    "GCD failed to set attributes on range {:#x?} of length {:#x?} with attributes {:#x?} due to space",
+                    base_address,
+                    len,
+                    attributes
+                );
+                debug_assert!(false);
+                error!(Error::OutOfResources)
+            }
             Err(e) => panic!("{e:?}"),
         }
     }
@@ -2277,7 +2296,7 @@ impl SpinLockedGcd {
         let result = self.memory.lock().add_memory_space(memory_type, base_address, len, capabilities);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::AddMemorySpace)
+                callback(MapChangeType::AddMemorySpace);
             }
         }
         result
@@ -2291,7 +2310,7 @@ impl SpinLockedGcd {
         let result = self.memory.lock().remove_memory_space(base_address, len);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::RemoveMemorySpace)
+                callback(MapChangeType::RemoveMemorySpace);
             }
         }
         result
@@ -2378,7 +2397,7 @@ impl SpinLockedGcd {
         let result = self.memory.lock().free_memory_space(base_address, len);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::FreeMemorySpace)
+                callback(MapChangeType::FreeMemorySpace);
             }
         }
         result
@@ -2397,7 +2416,7 @@ impl SpinLockedGcd {
         let result = self.memory.lock().free_memory_space_preserving_ownership(base_address, len);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::FreeMemorySpace)
+                callback(MapChangeType::FreeMemorySpace);
             }
         }
         result
@@ -2408,13 +2427,30 @@ impl SpinLockedGcd {
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.6
     pub fn set_memory_space_attributes(&self, base_address: usize, len: usize, attributes: u64) -> Result<(), Error> {
-        let result = self.memory.lock().set_memory_space_attributes(base_address, len, attributes);
-        if result.is_ok() {
-            if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::SetMemoryAttributes)
-            }
+        // this API allows for setting attributes across multiple descriptors in the GCD (assuming the capabilities
+        // allow it). The lower level set_memory_space_attributes will only operate on a single entry in the GCD/page
+        // table, so at this level we need to check to see if the range spans multiple entries and if so, we need to
+        // split the range and call set_memory_space_attributes for each entry.
+
+        let mut current_base = base_address as u64;
+        let range_end = (base_address + len) as u64;
+        while current_base < range_end {
+            let descriptor = self.get_memory_descriptor_for_address(current_base as efi::PhysicalAddress)?;
+            let descriptor_end = descriptor.base_address + descriptor.length;
+
+            // it is still legal to split a descriptor and only set the attributes on part of it
+            let next_base = u64::min(descriptor_end, range_end);
+            let current_len = next_base - current_base;
+            self.memory.lock().set_memory_space_attributes(current_base as usize, current_len as usize, attributes)?;
+            current_base = next_base;
         }
-        result
+
+        // if we made it out of the loop, we set the attributes correctly and should call the memory change callback,
+        // if there is one
+        if let Some(callback) = self.memory_change_callback {
+            callback(MapChangeType::SetMemoryAttributes);
+        }
+        Ok(())
     }
 
     /// This service sets capabilities on the given memory space.
@@ -2430,7 +2466,7 @@ impl SpinLockedGcd {
         let result = self.memory.lock().set_memory_space_capabilities(base_address, len, capabilities);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::SetMemoryCapabilities)
+                callback(MapChangeType::SetMemoryCapabilities);
             }
         }
         result
@@ -3527,12 +3563,28 @@ mod tests {
         .unwrap();
         // Trying to set capabilities where the range falls outside a block should return unsupported
         assert_eq!(Err(Error::Unsupported), gcd.set_memory_space_capabilities(0, 0x3000, 0b1111));
-
         gcd.set_memory_space_capabilities(0, 0x2000, efi::MEMORY_RP | efi::MEMORY_RO).unwrap();
-
-        // Trying to set attributes where the range falls outside a block should return unsupported
-        assert_eq!(Err(Error::Unsupported), gcd.set_memory_space_attributes(0, 0x3000, 0b1));
         gcd.set_gcd_memory_attributes(0, 0x2000, efi::MEMORY_RO).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_set_attributes_panic() {
+        let (mut gcd, address) = create_gcd();
+        unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, address, 0) }.unwrap();
+
+        gcd.allocate_memory_space(
+            AllocateType::BottomUp(None),
+            dxe_services::GcdMemoryType::SystemMemory,
+            0,
+            0x2000,
+            1 as _,
+            None,
+        )
+        .unwrap();
+        gcd.set_memory_space_capabilities(0, 0x2000, efi::MEMORY_RP | efi::MEMORY_RO).unwrap();
+        // Trying to set attributes where the range falls outside a block should panic in debug case
+        gcd.set_memory_space_attributes(0, 0x3000, 0b1).unwrap();
     }
 
     // comment out for now, this test needs to be reworked
