@@ -271,7 +271,6 @@ where
         PROTOCOL_DB.init_protocol_db();
         // Initialize full allocation support.
         allocator::init_memory_support(&hob_list);
-
         // we have to relocate HOBs after memory services are initialized as we are going to allocate memory and
         // the initial free memory may not be enough to contain the HOB list. We need to relocate the HOBs because
         // the initial HOB list is not in mapped memory as passed from pre-DXE.
