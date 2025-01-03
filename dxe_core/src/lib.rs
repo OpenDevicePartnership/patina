@@ -271,8 +271,6 @@ where
         PROTOCOL_DB.init_protocol_db();
         // Initialize full allocation support.
         allocator::init_memory_support(&hob_list);
-        // Initialize the debugger if it is enabled.
-        uefi_debugger::initialize(&mut self.interrupt_manager);
 
         // we have to relocate HOBs after memory services are initialized as we are going to allocate memory and
         // the initial free memory may not be enough to contain the HOB list. We need to relocate the HOBs because
@@ -282,6 +280,9 @@ where
             core::slice::from_raw_parts(physical_hob_list as *const u8, Self::get_hob_list_len(physical_hob_list))
         };
         let relocated_c_hob_list = hob_list_slice.to_vec().into_boxed_slice();
+
+        // Initialize the debugger if it is enabled.
+        uefi_debugger::initialize(&mut self.interrupt_manager);
 
         log::info!("GCD - After memory init:\n{}", GCD);
 
