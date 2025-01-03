@@ -3,10 +3,12 @@ use crate::tpl_lock::TplMutex;
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
+use uefi_sdk::error::EfiError;
 use core::ffi::c_void;
 use r_efi::efi;
 use uefi_cpu::interrupts::aarch64::gic_manager::{gic_initialize, get_max_interrupt_number, AArch64InterruptInitializer};
-use uefi_cpu::interrupts::{ExceptionContext, InterruptHandler, InterruptManager, InterruptManagerAArch64};
+use uefi_cpu::interrupts::{ExceptionContext, InterruptHandler, InterruptManager};
+use uefi_cpu::interrupts::aarch64::InterruptBasesAArch64;
 
 use arm_gic::gicv3::{GicV3, Trigger};
 
@@ -353,12 +355,48 @@ impl HwInterruptProtocolHandler {
     }
 }
 
+trait GetGicBasesDefault {
+    fn get_gic_bases(&self) -> Result<(u64, u64), EfiError>;
+}
+
+trait GetGicBasesAArch64 {
+    fn get_gic_bases(&self) -> Result<(u64, u64), EfiError>;
+}
+
+impl<T> GetGicBasesDefault for T
+where
+    T: InterruptManager,
+{
+    fn get_gic_bases(&self) -> Result<(u64, u64), EfiError> {
+        Err(EfiError::Unsupported)
+    }
+}
+
+impl<T> GetGicBasesAArch64 for &T
+where
+    T: InterruptBasesAArch64 + InterruptManager,
+{
+    fn get_gic_bases(&self) -> Result<(u64, u64), EfiError> {
+        Ok((self.get_interrupt_base_d(), self.get_interrupt_base_r()))
+    }
+}
+
 /// This function is called by the DXE Core to install the protocol.
-pub(crate) fn install_hw_interrupt_protocol<'a>(
-    interrupt_manager: &'a mut dyn InterruptManager
-) {
+pub(crate) fn install_hw_interrupt_protocol<'a, I>(
+    interrupt_manager: &'a mut I)
+where
+    I: InterruptManager,
+{
+    let res = interrupt_manager.get_gic_bases(); // This is a dummy call to make sure the interrupt manager is initialized
+    if res.is_err() {
+        log::error!("Not supported interrupt manager");
+        return;
+    }
+
+    let (gic_r, gic_d) = res.unwrap();
+
     let res = unsafe {
-        gic_initialize(interrupt_bases.get_interrupt_base_d() as _, interrupt_bases.get_interrupt_base_r() as _)
+        gic_initialize(gic_d as _, gic_r as _)
     };
 
     if res.is_err() {
