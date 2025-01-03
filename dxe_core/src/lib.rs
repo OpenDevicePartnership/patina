@@ -247,7 +247,9 @@ where
     pub fn initialize(mut self, physical_hob_list: *const c_void) -> CorePostInit {
         let _ = self.cpu_init.initialize();
         self.interrupt_manager.initialize().expect("Failed to initialize interrupt manager!");
-        uefi_debugger::initialize(&mut self.interrupt_manager);
+
+        // For early debugging, the "no_alloc" feature must be enabled in the debugger crate.
+        // uefi_debugger::initialize(&mut self.interrupt_manager);
 
         if physical_hob_list.is_null() {
             panic!("HOB list pointer is null!");
@@ -269,6 +271,9 @@ where
         PROTOCOL_DB.init_protocol_db();
         // Initialize full allocation support.
         allocator::init_memory_support(&hob_list);
+        // Initialize the debugger if it is enabled.
+        uefi_debugger::initialize(&mut self.interrupt_manager);
+
         // we have to relocate HOBs after memory services are initialized as we are going to allocate memory and
         // the initial free memory may not be enough to contain the HOB list. We need to relocate the HOBs because
         // the initial HOB list is not in mapped memory as passed from pre-DXE.
