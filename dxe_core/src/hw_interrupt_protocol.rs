@@ -310,7 +310,7 @@ struct HwInterruptProtocolHandler {
 }
 
 impl InterruptHandler for HwInterruptProtocolHandler {
-    fn handle_interrupt(&'static self, exception_type: usize, _context: &mut ExceptionContext) {
+    fn handle_interrupt(&'static self, exception_type: usize, context: &mut ExceptionContext) {
         let int_id = GicV3::get_and_acknowledge_interrupt();
         if int_id.is_none() {
             // The special interrupt do not need to be acknowledge
@@ -321,11 +321,11 @@ impl InterruptHandler for HwInterruptProtocolHandler {
         let raw_value: u32 = int_id.into();
 
         if let Some(handler) = self.handlers.lock()[raw_value as usize] {
-            handler(raw_value as u64, _context);
+            handler(raw_value as u64, context);
         } else {
             GicV3::end_interrupt(int_id);
             log::error!("Unhandled Exception! 0x{:x}", exception_type);
-            log::error!("Exception Context: {:#x?}", _context);
+            log::error!("Exception Context: {:#x?}", context);
             panic! {"Unhandled Exception! 0x{:x}", exception_type};
         }
     }
