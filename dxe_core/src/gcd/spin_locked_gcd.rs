@@ -16,7 +16,7 @@ use mu_rust_helpers::function;
 use r_efi::efi;
 use uefi_collections::{node_size, Error as SliceError, Rbt, SliceKey};
 use uefi_sdk::{
-    base::{align_up, SIZE_4GB, UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE},
+    base::{align_up, UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE},
     guid::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP,
     uefi_pages_to_size,
 };
@@ -492,7 +492,7 @@ impl GCD {
         // We need to explicitly allocate the root page below 4GB for x86 MP Services.
         // See comment in PagingAllocator.allocate_pages
         match self.allocate_memory_space(
-            AllocateType::BottomUp(Some(SIZE_4GB - 1)),
+            AllocateType::BottomUp(Some(usize::MAX)),
             dxe_services::GcdMemoryType::SystemMemory,
             UEFI_PAGE_SHIFT,
             UEFI_PAGE_SIZE,
