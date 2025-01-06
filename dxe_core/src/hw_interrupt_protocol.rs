@@ -31,7 +31,7 @@ type HardwareInterruptDisable = extern "efiapi" fn(*mut EfiHardwareInterruptProt
 type HardwareInterruptGetState = extern "efiapi" fn(*mut EfiHardwareInterruptProtocol, u64, *mut bool) -> efi::Status;
 type HardwareInterruptEnd = extern "efiapi" fn(*mut EfiHardwareInterruptProtocol, u64) -> efi::Status;
 
-/// C struct for the Advanced Logger protocol.
+/// C struct for the Hardware Interrupt protocol.
 #[repr(C)]
 pub struct EfiHardwareInterruptProtocol<'a> {
     register_interrupt_source: HardwareInterruptRegister,
@@ -142,7 +142,7 @@ type HardwareInterruptGetTriggerTypeV2 =
 type HardwareInterruptSetTriggerTypeV2 =
     extern "efiapi" fn(*mut EfiHardwareInterruptV2Protocol, u64, HardwareInterrupt2TriggerType) -> efi::Status;
 
-/// C struct for the Advanced Logger protocol.
+/// C struct for the Hardware Interrupt protocol v2.
 #[repr(C)]
 pub struct EfiHardwareInterruptV2Protocol<'a> {
     register_interrupt_source: HardwareInterruptRegisterV2,
@@ -169,6 +169,26 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
             get_trigger_type: get_trigger_type_v2,
             set_trigger_type: set_trigger_type_v2,
             hw_interrupt_handler,
+        }
+    }
+}
+
+impl From<Trigger> for HardwareInterrupt2TriggerType {
+    fn from(a: Trigger) -> HardwareInterrupt2TriggerType {
+        // convert A to B
+        match a {
+            Trigger::Level => HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeLevelHigh,
+            Trigger::Edge => HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeEdgeRising,
+        }
+    }
+}
+
+impl From<HardwareInterrupt2TriggerType> for Trigger {
+    fn from(a: HardwareInterrupt2TriggerType) -> Trigger {
+        // convert A to B
+        match a {
+            HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeLevelHigh => Trigger::Level,
+            HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeEdgeRising => Trigger::Edge,
         }
     }
 }
@@ -254,10 +274,7 @@ pub extern "efiapi" fn get_trigger_type_v2(
     let level = unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().get_trigger_type(interrupt_source);
 
     // I know this looks odd, but this is how ArmGicV3 in EDK2 does it...
-    let t_type = match level {
-        Trigger::Level => HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeLevelHigh,
-        Trigger::Edge => HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeEdgeRising,
-    };
+    let t_type = level.into();
 
     unsafe {
         *trigger_type = t_type;
@@ -276,10 +293,7 @@ pub extern "efiapi" fn set_trigger_type_v2(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let level = match trigger_type {
-        HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeLevelHigh => Trigger::Level,
-        HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeEdgeRising => Trigger::Edge,
-    };
+    let level = trigger_type.into();
 
     let result =
         unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().set_trigger_type(interrupt_source, level);

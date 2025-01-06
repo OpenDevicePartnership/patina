@@ -16,6 +16,7 @@ use alloc::vec;
 use r_efi::efi;
 
 use mu_pi::protocols::timer;
+
 use uefi_cpu::interrupts;
 
 use crate::{
