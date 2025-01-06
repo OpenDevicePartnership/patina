@@ -226,12 +226,6 @@ where
         self
     }
 
-    /// Registers the Interrupt Manager with it's own configuration.
-    pub fn with_interrupt_manager(mut self, interrupt_manager: InterruptManager) -> Self {
-        self.interrupt_manager = interrupt_manager;
-        self
-    }
-
     /// Registers the section extractor with it's own configuration.
     pub fn with_section_extractor(mut self, section_extractor: SectionExtractor) -> Self {
         self.section_extractor = section_extractor;
