@@ -8,6 +8,7 @@ use r_efi::efi;
 use uefi_cpu::interrupts::aarch64::gic_manager::{gic_initialize, get_max_interrupt_number, AArch64InterruptInitializer};
 use uefi_cpu::interrupts::{ExceptionContext, InterruptBases, InterruptHandler, InterruptManager};
 
+use uefi_sdk::guid::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2};
 use arm_gic::gicv3::{GicV3, Trigger};
 
 pub type HwInterruptHandler = extern "efiapi" fn(u64, &mut ExceptionContext);
@@ -19,10 +20,6 @@ pub enum HardwareInterrupt2TriggerType {
     // HardwareInterrupt2TriggerTypeEdgeFalling = 2, // Not used
     HardwareInterrupt2TriggerTypeEdgeRising = 3,
 }
-
-// { 0x2890B3EA, 0x053D, 0x1643, { 0xAD, 0x0C, 0xD6, 0x48, 0x08, 0xDA, 0x3F, 0xF1 } }
-pub const EFI_HARDWARE_INTERRUPT_PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0x2890B3EA, 0x053D, 0x1643, 0xAD, 0x0C, &[0xD6, 0x48, 0x08, 0xDA, 0x3F, 0xF1]);
 
 type HardwareInterruptRegister =
     extern "efiapi" fn(*mut EfiHardwareInterruptProtocol, u64, HwInterruptHandler) -> efi::Status;
@@ -47,87 +44,83 @@ pub struct EfiHardwareInterruptProtocol<'a> {
 impl<'a> EfiHardwareInterruptProtocol<'a> {
     fn new(hw_interrupt_handler: &'a mut HwInterruptProtocolHandler) -> Self {
         Self {
-            register_interrupt_source: register_interrupt_source_v1,
-            enable_interrupt_source: enable_interrupt_source_v1,
-            disable_interrupt_source: disable_interrupt_source_v1,
-            get_interrupt_source_state: get_interrupt_source_state_v1,
-            end_of_interrupt: end_of_interrupt_v1,
+            register_interrupt_source: Self::register_interrupt_source,
+            enable_interrupt_source: Self::enable_interrupt_source,
+            disable_interrupt_source: Self::disable_interrupt_source,
+            get_interrupt_source_state: Self::get_interrupt_source_state,
+            end_of_interrupt: Self::end_of_interrupt,
             hw_interrupt_handler,
         }
     }
-}
 
-/// EFIAPI for V1 protocol.
-pub extern "efiapi" fn register_interrupt_source_v1(
-    this: *mut EfiHardwareInterruptProtocol,
-    interrupt_source: u64,
-    handler: HwInterruptHandler,
-) -> efi::Status {
-    let protocol = this as *const c_void;
-    if protocol.is_null() {
-        return efi::Status::INVALID_PARAMETER;
+    /// EFIAPI for V1 protocol.
+    pub extern "efiapi" fn register_interrupt_source(
+        this: *mut EfiHardwareInterruptProtocol,
+        interrupt_source: u64,
+        handler: HwInterruptHandler,
+    ) -> efi::Status {
+        let protocol = this as *const c_void;
+        if protocol.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        unsafe { &mut *this }.hw_interrupt_handler.register_interrupt_source(interrupt_source as usize, handler)
     }
 
-    unsafe { &mut *this }.hw_interrupt_handler.register_interrupt_source(interrupt_source as usize, handler)
-}
+    pub extern "efiapi" fn enable_interrupt_source(
+        this: *mut EfiHardwareInterruptProtocol,
+        interrupt_source: u64,
+    ) -> efi::Status {
+        let protocol = this as *const c_void;
+        if protocol.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
 
-pub extern "efiapi" fn enable_interrupt_source_v1(
-    this: *mut EfiHardwareInterruptProtocol,
-    interrupt_source: u64,
-) -> efi::Status {
-    let protocol = this as *const c_void;
-    if protocol.is_null() {
-        return efi::Status::INVALID_PARAMETER;
+        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().enable_interrupt_source(interrupt_source)
     }
 
-    unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().enable_interrupt_source(interrupt_source)
-}
+    pub extern "efiapi" fn disable_interrupt_source(
+        this: *mut EfiHardwareInterruptProtocol,
+        interrupt_source: u64,
+    ) -> efi::Status {
+        let protocol = this as *const c_void;
+        if protocol.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
 
-pub extern "efiapi" fn disable_interrupt_source_v1(
-    this: *mut EfiHardwareInterruptProtocol,
-    interrupt_source: u64,
-) -> efi::Status {
-    let protocol = this as *const c_void;
-    if protocol.is_null() {
-        return efi::Status::INVALID_PARAMETER;
+        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().disable_interrupt_source(interrupt_source)
     }
 
-    unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().disable_interrupt_source(interrupt_source)
-}
+    pub extern "efiapi" fn get_interrupt_source_state(
+        this: *mut EfiHardwareInterruptProtocol,
+        interrupt_source: u64,
+        state: *mut bool,
+    ) -> efi::Status {
+        let protocol = this as *const c_void;
+        if protocol.is_null() || state.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
 
-pub extern "efiapi" fn get_interrupt_source_state_v1(
-    this: *mut EfiHardwareInterruptProtocol,
-    interrupt_source: u64,
-    state: *mut bool,
-) -> efi::Status {
-    let protocol = this as *const c_void;
-    if protocol.is_null() || state.is_null() {
-        return efi::Status::INVALID_PARAMETER;
+        let enable =
+            unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source);
+        unsafe {
+            *state = enable;
+        }
+        efi::Status::SUCCESS
     }
 
-    let enable =
-        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source);
-    unsafe {
-        *state = enable;
+    pub extern "efiapi" fn end_of_interrupt(
+        this: *mut EfiHardwareInterruptProtocol,
+        interrupt_source: u64,
+    ) -> efi::Status {
+        let protocol = this as *const c_void;
+        if protocol.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().end_of_interrupt(interrupt_source)
     }
-    efi::Status::SUCCESS
 }
-
-pub extern "efiapi" fn end_of_interrupt_v1(
-    this: *mut EfiHardwareInterruptProtocol,
-    interrupt_source: u64,
-) -> efi::Status {
-    let protocol = this as *const c_void;
-    if protocol.is_null() {
-        return efi::Status::INVALID_PARAMETER;
-    }
-
-    unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().end_of_interrupt(interrupt_source)
-}
-
-//   { 0x32898322, 0x2d1a, 0x474a, { 0xba, 0xaa, 0xf3, 0xf7, 0xcf, 0x56, 0x94, 0x70 } }
-pub const EFI_HARDWARE_INTERRUPT2_PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0x32898322, 0x2d1a, 0x474a, 0xba, 0xaa, &[0xf3, 0xf7, 0xcf, 0x56, 0x94, 0x70]);
 
 type HardwareInterruptRegisterV2 =
     extern "efiapi" fn(*mut EfiHardwareInterruptV2Protocol, u64, HwInterruptHandler) -> efi::Status;
@@ -161,14 +154,125 @@ pub struct EfiHardwareInterruptV2Protocol<'a> {
 impl<'a> EfiHardwareInterruptV2Protocol<'a> {
     fn new(hw_interrupt_handler: &'a mut HwInterruptProtocolHandler) -> Self {
         Self {
-            register_interrupt_source: register_interrupt_source_v2,
-            enable_interrupt_source: enable_interrupt_source_v2,
-            disable_interrupt_source: disable_interrupt_source_v2,
-            get_interrupt_source_state: get_interrupt_source_state_v2,
-            end_of_interrupt: end_of_interrupt_v2,
-            get_trigger_type: get_trigger_type_v2,
-            set_trigger_type: set_trigger_type_v2,
+            register_interrupt_source: Self::register_interrupt_source,
+            enable_interrupt_source: Self::enable_interrupt_source,
+            disable_interrupt_source: Self::disable_interrupt_source,
+            get_interrupt_source_state: Self::get_interrupt_source_state,
+            end_of_interrupt: Self::end_of_interrupt,
+            get_trigger_type: Self::get_trigger_type,
+            set_trigger_type: Self::set_trigger_type,
             hw_interrupt_handler,
+        }
+    }
+
+    /// EFIAPI for V2 protocol.
+    pub extern "efiapi" fn register_interrupt_source(
+        this: *mut EfiHardwareInterruptV2Protocol,
+        interrupt_source: u64,
+        handler: HwInterruptHandler,
+    ) -> efi::Status {
+        let protocol = this as *const c_void;
+        if protocol.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        unsafe { &mut *this }.hw_interrupt_handler.register_interrupt_source(interrupt_source as usize, handler)
+    }
+
+    pub extern "efiapi" fn enable_interrupt_source(
+        this: *mut EfiHardwareInterruptV2Protocol,
+        interrupt_source: u64,
+    ) -> efi::Status {
+        let protocol = this as *const c_void;
+        if protocol.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().enable_interrupt_source(interrupt_source)
+    }
+
+    pub extern "efiapi" fn disable_interrupt_source(
+        this: *mut EfiHardwareInterruptV2Protocol,
+        interrupt_source: u64,
+    ) -> efi::Status {
+        let protocol = this as *const c_void;
+        if protocol.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().disable_interrupt_source(interrupt_source)
+    }
+
+    pub extern "efiapi" fn get_interrupt_source_state(
+        this: *mut EfiHardwareInterruptV2Protocol,
+        interrupt_source: u64,
+        state: *mut bool,
+    ) -> efi::Status {
+        let protocol = this as *const c_void;
+        if protocol.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        let enable =
+            unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source);
+        unsafe {
+            *state = enable;
+        }
+        efi::Status::SUCCESS
+    }
+
+    pub extern "efiapi" fn end_of_interrupt(
+        this: *mut EfiHardwareInterruptV2Protocol,
+        interrupt_source: u64,
+    ) -> efi::Status {
+        let protocol = this as *const c_void;
+        if protocol.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().end_of_interrupt(interrupt_source)
+    }
+
+    pub extern "efiapi" fn get_trigger_type(
+        this: *mut EfiHardwareInterruptV2Protocol,
+        interrupt_source: u64,
+        trigger_type: *mut HardwareInterrupt2TriggerType,
+    ) -> efi::Status {
+        let protocol = this as *const c_void;
+        if protocol.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        let level = unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().get_trigger_type(interrupt_source);
+
+        // I know this looks odd, but this is how ArmGicV3 in EDK2 does it...
+        let t_type = level.into();
+
+        unsafe {
+            *trigger_type = t_type;
+        }
+
+        efi::Status::SUCCESS
+    }
+
+    pub extern "efiapi" fn set_trigger_type(
+        this: *mut EfiHardwareInterruptV2Protocol,
+        interrupt_source: u64,
+        trigger_type: HardwareInterrupt2TriggerType,
+    ) -> efi::Status {
+        let protocol = this as *const c_void;
+        if protocol.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        let level = trigger_type.into();
+
+        let result =
+            unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().set_trigger_type(interrupt_source, level);
+
+        match result {
+            Ok(()) => efi::Status::SUCCESS,
+            Err(err) => err.into(),
         }
     }
 }
@@ -190,117 +294,6 @@ impl From<HardwareInterrupt2TriggerType> for Trigger {
             HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeLevelHigh => Trigger::Level,
             HardwareInterrupt2TriggerType::HardwareInterrupt2TriggerTypeEdgeRising => Trigger::Edge,
         }
-    }
-}
-
-/// EFIAPI for V2 protocol.
-pub extern "efiapi" fn register_interrupt_source_v2(
-    this: *mut EfiHardwareInterruptV2Protocol,
-    interrupt_source: u64,
-    handler: HwInterruptHandler,
-) -> efi::Status {
-    let protocol = this as *const c_void;
-    if protocol.is_null() {
-        return efi::Status::INVALID_PARAMETER;
-    }
-
-    unsafe { &mut *this }.hw_interrupt_handler.register_interrupt_source(interrupt_source as usize, handler)
-}
-
-pub extern "efiapi" fn enable_interrupt_source_v2(
-    this: *mut EfiHardwareInterruptV2Protocol,
-    interrupt_source: u64,
-) -> efi::Status {
-    let protocol = this as *const c_void;
-    if protocol.is_null() {
-        return efi::Status::INVALID_PARAMETER;
-    }
-
-    unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().enable_interrupt_source(interrupt_source)
-}
-
-pub extern "efiapi" fn disable_interrupt_source_v2(
-    this: *mut EfiHardwareInterruptV2Protocol,
-    interrupt_source: u64,
-) -> efi::Status {
-    let protocol = this as *const c_void;
-    if protocol.is_null() {
-        return efi::Status::INVALID_PARAMETER;
-    }
-
-    unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().disable_interrupt_source(interrupt_source)
-}
-
-pub extern "efiapi" fn get_interrupt_source_state_v2(
-    this: *mut EfiHardwareInterruptV2Protocol,
-    interrupt_source: u64,
-    state: *mut bool,
-) -> efi::Status {
-    let protocol = this as *const c_void;
-    if protocol.is_null() {
-        return efi::Status::INVALID_PARAMETER;
-    }
-
-    let enable =
-        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source);
-    unsafe {
-        *state = enable;
-    }
-    efi::Status::SUCCESS
-}
-
-pub extern "efiapi" fn end_of_interrupt_v2(
-    this: *mut EfiHardwareInterruptV2Protocol,
-    interrupt_source: u64,
-) -> efi::Status {
-    let protocol = this as *const c_void;
-    if protocol.is_null() {
-        return efi::Status::INVALID_PARAMETER;
-    }
-
-    unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().end_of_interrupt(interrupt_source)
-}
-
-pub extern "efiapi" fn get_trigger_type_v2(
-    this: *mut EfiHardwareInterruptV2Protocol,
-    interrupt_source: u64,
-    trigger_type: *mut HardwareInterrupt2TriggerType,
-) -> efi::Status {
-    let protocol = this as *const c_void;
-    if protocol.is_null() {
-        return efi::Status::INVALID_PARAMETER;
-    }
-
-    let level = unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().get_trigger_type(interrupt_source);
-
-    // I know this looks odd, but this is how ArmGicV3 in EDK2 does it...
-    let t_type = level.into();
-
-    unsafe {
-        *trigger_type = t_type;
-    }
-
-    efi::Status::SUCCESS
-}
-
-pub extern "efiapi" fn set_trigger_type_v2(
-    this: *mut EfiHardwareInterruptV2Protocol,
-    interrupt_source: u64,
-    trigger_type: HardwareInterrupt2TriggerType,
-) -> efi::Status {
-    let protocol = this as *const c_void;
-    if protocol.is_null() {
-        return efi::Status::INVALID_PARAMETER;
-    }
-
-    let level = trigger_type.into();
-
-    let result =
-        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().set_trigger_type(interrupt_source, level);
-
-    match result {
-        Ok(()) => efi::Status::SUCCESS,
-        Err(err) => err.into(),
     }
 }
 
@@ -395,11 +388,11 @@ pub(crate) fn install_hw_interrupt_protocol<'a>(
     let interrupt_protocol = Box::into_raw(Box::new(EfiHardwareInterruptProtocol::new(&mut hw_int_protocol_handler)));
     let interrupt_protocol = interrupt_protocol as *mut c_void;
 
-    let result = PROTOCOL_DB.install_protocol_interface(None, EFI_HARDWARE_INTERRUPT_PROTOCOL_GUID, interrupt_protocol);
+    let result = PROTOCOL_DB.install_protocol_interface(None, HARDWARE_INTERRUPT_PROTOCOL, interrupt_protocol);
     if result.is_err() {
-        log::error!("Failed to install EFI_HARDWARE_INTERRUPT_GUID with result: {:?}", result);
+        log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL with result: {:?}", result);
     } else {
-        log::info!("installed EFI_HARDWARE_INTERRUPT_GUID");
+        log::info!("installed HARDWARE_INTERRUPT_PROTOCOL");
     }
 
     // Produce Interrupt Protocol with the initialized GIC
@@ -407,11 +400,11 @@ pub(crate) fn install_hw_interrupt_protocol<'a>(
         Box::into_raw(Box::new(EfiHardwareInterruptV2Protocol::new(&mut hw_int_protocol_handler)));
     let interrupt_protocol_v2 = interrupt_protocol_v2 as *mut c_void;
 
-    let _ = PROTOCOL_DB.install_protocol_interface(None, EFI_HARDWARE_INTERRUPT2_PROTOCOL_GUID, interrupt_protocol_v2);
+    let _ = PROTOCOL_DB.install_protocol_interface(None, HARDWARE_INTERRUPT_PROTOCOL_V2, interrupt_protocol_v2);
     if result.is_err() {
-        log::error!("Failed to install EFI_HARDWARE_INTERRUPT2_PROTOCOL_GUID with result: {:?}", result);
+        log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL_V2 with result: {:?}", result);
     } else {
-        log::info!("installed EFI_HARDWARE_INTERRUPT2_PROTOCOL_GUID");
+        log::info!("installed HARDWARE_INTERRUPT_PROTOCOL_V2");
     }
 
     let hw_int_protocol_handler_exp = hw_int_protocol_handler;
