@@ -89,6 +89,7 @@ mod events;
 mod filesystems;
 mod fv;
 mod gcd;
+#[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
 mod hw_interrupt_protocol;
 mod image;
 mod memory_attributes_protocol;
@@ -317,6 +318,7 @@ where
 
             cpu_arch_protocol::install_cpu_arch_protocol(&mut self.cpu_init, &mut self.interrupt_manager);
             memory_attributes_protocol::install_memory_attributes_protocol();
+            #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
             hw_interrupt_protocol::install_hw_interrupt_protocol(&mut self.interrupt_manager, &self.interrupt_bases);
 
             // re-checksum the system tables after above initialization.
