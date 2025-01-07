@@ -5,11 +5,13 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ffi::c_void;
 use r_efi::efi;
-use uefi_cpu::interrupts::aarch64::gic_manager::{gic_initialize, get_max_interrupt_number, AArch64InterruptInitializer};
+use uefi_cpu::interrupts::aarch64::gic_manager::{
+    get_max_interrupt_number, gic_initialize, AArch64InterruptInitializer,
+};
 use uefi_cpu::interrupts::{ExceptionContext, InterruptBases, InterruptHandler, InterruptManager};
 
-use uefi_sdk::guid::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2};
 use arm_gic::gicv3::{GicV3, Trigger};
+use uefi_sdk::guid::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2};
 
 pub type HwInterruptHandler = extern "efiapi" fn(u64, &mut ExceptionContext);
 
@@ -26,7 +28,8 @@ type HardwareInterruptRegister =
     unsafe extern "efiapi" fn(*mut EfiHardwareInterruptProtocol, u64, HwInterruptHandler) -> efi::Status;
 type HardwareInterruptEnable = unsafe extern "efiapi" fn(*mut EfiHardwareInterruptProtocol, u64) -> efi::Status;
 type HardwareInterruptDisable = unsafe extern "efiapi" fn(*mut EfiHardwareInterruptProtocol, u64) -> efi::Status;
-type HardwareInterruptGetState = unsafe extern "efiapi" fn(*mut EfiHardwareInterruptProtocol, u64, *mut bool) -> efi::Status;
+type HardwareInterruptGetState =
+    unsafe extern "efiapi" fn(*mut EfiHardwareInterruptProtocol, u64, *mut bool) -> efi::Status;
 type HardwareInterruptEnd = unsafe extern "efiapi" fn(*mut EfiHardwareInterruptProtocol, u64) -> efi::Status;
 
 /// C struct for the Hardware Interrupt protocol.
@@ -126,8 +129,11 @@ type HardwareInterruptGetStateV2 =
     unsafe extern "efiapi" fn(*mut EfiHardwareInterruptV2Protocol, u64, *mut bool) -> efi::Status;
 type HardwareInterruptEndV2 = unsafe extern "efiapi" fn(*mut EfiHardwareInterruptV2Protocol, u64) -> efi::Status;
 
-type HardwareInterruptGetTriggerTypeV2 =
-    unsafe extern "efiapi" fn(*mut EfiHardwareInterruptV2Protocol, u64, *mut HardwareInterrupt2TriggerType) -> efi::Status;
+type HardwareInterruptGetTriggerTypeV2 = unsafe extern "efiapi" fn(
+    *mut EfiHardwareInterruptV2Protocol,
+    u64,
+    *mut HardwareInterrupt2TriggerType,
+) -> efi::Status;
 type HardwareInterruptSetTriggerTypeV2 =
     unsafe extern "efiapi" fn(*mut EfiHardwareInterruptV2Protocol, u64, HardwareInterrupt2TriggerType) -> efi::Status;
 
