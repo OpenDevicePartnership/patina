@@ -259,7 +259,9 @@ where
     pub fn initialize(mut self, physical_hob_list: *const c_void) -> CorePostInit {
         let _ = self.cpu_init.initialize();
         self.interrupt_manager.initialize().expect("Failed to initialize interrupt manager!");
-        uefi_debugger::initialize(&mut self.interrupt_manager);
+
+        // For early debugging, the "no_alloc" feature must be enabled in the debugger crate.
+        // uefi_debugger::initialize(&mut self.interrupt_manager);
 
         if physical_hob_list.is_null() {
             panic!("HOB list pointer is null!");
@@ -289,6 +291,9 @@ where
             core::slice::from_raw_parts(physical_hob_list as *const u8, Self::get_hob_list_len(physical_hob_list))
         };
         let relocated_c_hob_list = hob_list_slice.to_vec().into_boxed_slice();
+
+        // Initialize the debugger if it is enabled.
+        uefi_debugger::initialize(&mut self.interrupt_manager);
 
         log::info!("GCD - After memory init:\n{}", GCD);
 
