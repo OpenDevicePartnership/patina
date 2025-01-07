@@ -49,11 +49,18 @@
 //! #        exception_type: ExceptionType,
 //! #    ) -> Result<(), EfiError> { Ok(()) }
 //! # }
+//! # #[derive(Default, Clone, Copy)]
+//! # struct InterruptBasesExample;
+//! # impl uefi_cpu::interrupts::InterruptBases for InterruptBasesExample {
+//! #     fn get_interrupt_base_d(&self) -> u64 { 0 }
+//! #     fn get_interrupt_base_r(&self) -> u64 { 0 }
+//! # }
 //! # let physical_hob_list = core::ptr::null();
 //! dxe_core::Core::default()
 //!   .with_cpu_init(CpuInitExample::default())
 //!   .with_interrupt_manager(InterruptManagerExample::default())
 //!   .with_section_extractor(SectionExtractExample::default())
+//!   .with_interrupt_bases(InterruptBasesExample::default())
 //!   .initialize(physical_hob_list)
 //!   .with_driver(Box::new(Driver::default()))
 //!   .start()
@@ -193,11 +200,18 @@ pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_c
 /// #        exception_type: ExceptionType,
 /// #    ) -> Result<(), EfiError> { Ok(()) }
 /// # }
+/// # #[derive(Default, Clone, Copy)]
+/// # struct InterruptBasesExample;
+/// # impl uefi_cpu::interrupts::InterruptBases for InterruptBasesExample {
+/// #     fn get_interrupt_base_d(&self) -> u64 { 0 }
+/// #     fn get_interrupt_base_r(&self) -> u64 { 0 }
+/// # }
 /// # let physical_hob_list = core::ptr::null();
 /// dxe_core::Core::default()
 ///   .with_cpu_init(CpuInitExample::default())
 ///   .with_interrupt_manager(InterruptManagerExample::default())
 ///   .with_section_extractor(SectionExtractExample::default())
+///   .with_interrupt_bases(InterruptBasesExample::default())
 ///   .initialize(physical_hob_list)
 ///   .with_driver(Box::new(Driver::default()))
 ///   .start()
