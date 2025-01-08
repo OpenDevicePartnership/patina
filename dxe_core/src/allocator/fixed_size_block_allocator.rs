@@ -449,8 +449,8 @@ impl FixedSizeBlockAllocator {
                 None,
             )
             .map_err(|err| match err {
-                gcd::Error::InvalidParameter => efi::Status::INVALID_PARAMETER,
-                gcd::Error::NotFound => efi::Status::NOT_FOUND,
+                efi::Status::INVALID_PARAMETER => efi::Status::INVALID_PARAMETER,
+                efi::Status::NOT_FOUND => efi::Status::NOT_FOUND,
                 _ => efi::Status::OUT_OF_RESOURCES,
             })?;
 
@@ -481,7 +481,7 @@ impl FixedSizeBlockAllocator {
 
         let descriptor =
             self.gcd.get_memory_descriptor_for_address(address as efi::PhysicalAddress).map_err(|err| match err {
-                gcd::Error::NotFound => efi::Status::NOT_FOUND,
+                efi::Status::NOT_FOUND => efi::Status::NOT_FOUND,
                 _ => efi::Status::INVALID_PARAMETER,
             })?;
 
@@ -491,14 +491,14 @@ impl FixedSizeBlockAllocator {
 
         if self.preferred_range.as_ref().is_some_and(|range| range.contains(&(address as efi::PhysicalAddress))) {
             self.gcd.free_memory_space_preserving_ownership(address, pages * ALIGNMENT).map_err(|err| match err {
-                gcd::Error::NotFound => efi::Status::NOT_FOUND,
+                efi::Status::NOT_FOUND => efi::Status::NOT_FOUND,
                 _ => efi::Status::INVALID_PARAMETER,
             })?;
             self.stats.reserved_used -= pages * ALIGNMENT;
             // don't update claimed_pages stats here, because they are never actually "released".
         } else {
             self.gcd.free_memory_space(address, pages * ALIGNMENT).map_err(|err| match err {
-                gcd::Error::NotFound => efi::Status::NOT_FOUND,
+                efi::Status::NOT_FOUND => efi::Status::NOT_FOUND,
                 _ => efi::Status::INVALID_PARAMETER,
             })?;
             self.stats.claimed_pages -= pages;
