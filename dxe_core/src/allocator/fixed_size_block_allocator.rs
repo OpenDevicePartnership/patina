@@ -753,9 +753,9 @@ mod tests {
     use core::alloc::GlobalAlloc;
     use std::alloc::System;
 
-    use uefi_sdk::uefi_pages_to_size;
-    use crate::{gcd, test_support};
     use super::*;
+    use crate::{gcd, test_support};
+    use uefi_sdk::uefi_pages_to_size;
 
     fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
         let layout = Layout::from_size_align(size, 0x1000).unwrap();
