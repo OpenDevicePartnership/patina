@@ -754,9 +754,7 @@ mod tests {
     use std::alloc::System;
 
     use uefi_sdk::uefi_pages_to_size;
-
-    use crate::test_support;
-
+    use crate::{gcd, test_support};
     use super::*;
 
     fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
