@@ -69,14 +69,14 @@ jobs:
               console.log(`Draft Release Tag: ${tag}`);
             }
 
+      - name: Login to Crates.io
+        run: cargo login ${{ secrets.CRATES_IO_TOKEN }} --registry UefiRust
+
       - name: Cargo Release Dry Run
         run: cargo release ${{ steps.draft_release.outputs.tag }} --workspace
         env:
           RUSTC_BOOTSTRAP: 1
           CARGO_REGISTRIES_UEFIRUST_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-
-      - name: Login to Crates.io
-        run: cargo login ${{ secrets.CRATES_IO_TOKEN }} --registry UefiRust
 
       - name: Update git credentials
         run: |
