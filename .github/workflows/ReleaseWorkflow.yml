@@ -72,7 +72,10 @@ jobs:
       - name: Setup Cred Provider
         run: |
           mkdir -p ~/.cargo
-          echo '[credential] \nhelper = "cargo:token"' >> ~/.cargo/config.toml
+          cat <<EOF >> ~/.cargo/config.toml
+          [registry]
+          global-credential-providers = ["cargo:token"]
+          EOF
 
       - name: Login to Crates.io
         run: cargo login "${{ secrets.CRATES_IO_TOKEN }}" --registry UefiRust
