@@ -35,7 +35,7 @@ extern "efiapi" fn add_memory_space(
 
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => efi::Status::from(err),
+        Err(err) => err,
     }
 }
 
@@ -84,7 +84,7 @@ extern "efiapi" fn allocate_memory_space(
             unsafe { base_address.write(allocated_addr as u64) };
             efi::Status::SUCCESS
         }
-        Err(err) => efi::Status::from(err),
+        Err(err) => err,
     }
 }
 
@@ -93,7 +93,7 @@ extern "efiapi" fn free_memory_space(base_address: efi::PhysicalAddress, length:
 
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => efi::Status::from(err),
+        Err(err) => err,
     }
 }
 
@@ -101,7 +101,7 @@ extern "efiapi" fn remove_memory_space(base_address: efi::PhysicalAddress, lengt
     let result = GCD.remove_memory_space(base_address as usize, length as usize);
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => efi::Status::from(err),
+        Err(err) => err,
     }
 }
 
@@ -181,7 +181,7 @@ extern "efiapi" fn get_memory_space_map(
     let result = GCD.get_memory_descriptors(&mut descriptors);
 
     if let Err(err) = result {
-        return efi::Status::from(err);
+        return err;
     }
 
     //caller is supposed to free the handle buffer using free pool, so we need to allocate it using allocate pool.
@@ -205,7 +205,7 @@ extern "efiapi" fn add_io_space(
     let result = GCD.add_io_space(gcd_io_type, base_address as usize, length as usize);
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => efi::Status::from(err),
+        Err(err) => err,
     }
 }
 
@@ -254,7 +254,7 @@ extern "efiapi" fn allocate_io_space(
             unsafe { base_address.write(allocated_addr as u64) };
             efi::Status::SUCCESS
         }
-        Err(err) => efi::Status::from(err),
+        Err(err) => err,
     }
 }
 
@@ -263,7 +263,7 @@ extern "efiapi" fn free_io_space(base_address: efi::PhysicalAddress, length: u64
 
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => efi::Status::from(err),
+        Err(err) => err,
     }
 }
 
@@ -271,7 +271,7 @@ extern "efiapi" fn remove_io_space(base_address: efi::PhysicalAddress, length: u
     let result = GCD.remove_io_space(base_address as usize, length as usize);
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => efi::Status::from(err),
+        Err(err) => err,
     }
 }
 
@@ -288,7 +288,7 @@ extern "efiapi" fn get_io_space_descriptor(
     let result = GCD.get_io_descriptors(&mut descriptors);
 
     if let Err(err) = result {
-        return efi::Status::from(err);
+        return err;
     }
 
     let target_descriptor =
@@ -315,7 +315,7 @@ extern "efiapi" fn get_io_space_map(
     let result = GCD.get_io_descriptors(&mut descriptors);
 
     if let Err(err) = result {
-        return efi::Status::from(err);
+        return err;
     }
 
     //caller is supposed to free the handle buffer using free pool, so we need to allocate it using allocate pool.
