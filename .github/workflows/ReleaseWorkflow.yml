@@ -73,6 +73,7 @@ jobs:
         run: cargo release ${{ steps.draft_release.outputs.tag }} --workspace
         env:
           RUSTC_BOOTSTRAP: 1
+          CARGO_REGISTRIES_UEFIRUST_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
 
       - name: Login to Crates.io
         run: cargo login ${{ secrets.CRATES_IO_TOKEN }} --registry UefiRust
@@ -86,6 +87,7 @@ jobs:
         run: cargo release ${{ steps.draft_release.outputs.tag }} -x --no-tag --no-confirm --workspace
         env:
           RUSTC_BOOTSTRAP: 1
+          CARGO_REGISTRIES_UEFIRUST_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
 
       - name: Wait for Release Draft Updater
         uses: actions/github-script@v7
