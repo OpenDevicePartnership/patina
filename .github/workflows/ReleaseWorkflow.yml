@@ -71,7 +71,7 @@ jobs:
 
       - name: Install msrustup
         env:
-          MSRUSTUP_ACCESS_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          MSRUSTUP_PAT: ${{ secrets.CRATES_IO_TOKEN }}
         run: |
           # Originally from https://aka.ms/install-msrustup.sh
           # Version 5
