@@ -435,21 +435,14 @@ impl FixedSizeBlockAllocator {
 
         // Page allocations and pool allocations are disjoint; page allocations are allocated directly from the GCD and are
         // freed straight back to GCD. As such, a tracking allocator structure is not required.
-        let start_address = self
-            .gcd
-            .allocate_memory_space(
-                allocation_strategy,
-                memory_type,
-                UEFI_PAGE_SHIFT,
-                pages * ALIGNMENT,
-                self.handle,
-                None,
-            )
-            .map_err(|err| match err {
-                efi::Status::INVALID_PARAMETER => efi::Status::INVALID_PARAMETER,
-                efi::Status::NOT_FOUND => efi::Status::NOT_FOUND,
-                _ => efi::Status::OUT_OF_RESOURCES,
-            })?;
+        let start_address = self.gcd.allocate_memory_space(
+            allocation_strategy,
+            memory_type,
+            UEFI_PAGE_SHIFT,
+            pages * ALIGNMENT,
+            self.handle,
+            None,
+        )?;
 
         let allocation = slice_from_raw_parts_mut(start_address as *mut u8, pages * ALIGNMENT);
         let allocation = NonNull::new(allocation).ok_or(efi::Status::OUT_OF_RESOURCES)?;
@@ -476,28 +469,18 @@ impl FixedSizeBlockAllocator {
             return Err(efi::Status::INVALID_PARAMETER);
         }
 
-        let descriptor =
-            self.gcd.get_memory_descriptor_for_address(address as efi::PhysicalAddress).map_err(|err| match err {
-                efi::Status::NOT_FOUND => efi::Status::NOT_FOUND,
-                _ => efi::Status::INVALID_PARAMETER,
-            })?;
+        let descriptor = self.gcd.get_memory_descriptor_for_address(address as efi::PhysicalAddress)?;
 
         if descriptor.image_handle != self.handle {
             Err(efi::Status::NOT_FOUND)?;
         }
 
         if self.preferred_range.as_ref().is_some_and(|range| range.contains(&(address as efi::PhysicalAddress))) {
-            self.gcd.free_memory_space_preserving_ownership(address, pages * ALIGNMENT).map_err(|err| match err {
-                efi::Status::NOT_FOUND => efi::Status::NOT_FOUND,
-                _ => efi::Status::INVALID_PARAMETER,
-            })?;
+            self.gcd.free_memory_space_preserving_ownership(address, pages * ALIGNMENT)?;
             self.stats.reserved_used -= pages * ALIGNMENT;
             // don't update claimed_pages stats here, because they are never actually "released".
         } else {
-            self.gcd.free_memory_space(address, pages * ALIGNMENT).map_err(|err| match err {
-                efi::Status::NOT_FOUND => efi::Status::NOT_FOUND,
-                _ => efi::Status::INVALID_PARAMETER,
-            })?;
+            self.gcd.free_memory_space(address, pages * ALIGNMENT)?;
             self.stats.claimed_pages -= pages;
         }
 
