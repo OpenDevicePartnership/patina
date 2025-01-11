@@ -233,6 +233,16 @@ type GcdAllocateFn = fn(
 type GcdFreeFn =
     fn(gcd: &mut GCD, base_address: usize, len: usize, transition: MemoryStateTransition) -> Result<(), Error>;
 
+// This controls the minimum capacity of the page_pool vector that tracks pages in the pool.
+//
+// Note: In some scenarios an allocation request to the global allocator (i.e. the EfiBootServicesData allocator)
+// may be the source of the page table adjustments. If the page_pool tracking vector does not have enough capacity
+// track all the pages in the page pool, Vec will attempt to expand leading to a re-entrant access to the global allocator
+// which will deadlock. This sets the pool to an initial size that should be large enough to track all pages for any
+// reasonable allocation in the global allocator to avoid this problem.
+//
+const PAGE_POOL_MIN_CAPACITY: usize = 1024;
+
 #[derive(Debug)]
 struct PagingAllocator {
     page_pool: Vec<efi::PhysicalAddress>,
@@ -241,7 +251,7 @@ struct PagingAllocator {
 
 impl PagingAllocator {
     fn new() -> Self {
-        Self { page_pool: Vec::new(), root_page: None }
+        Self { page_pool: Vec::with_capacity(PAGE_POOL_MIN_CAPACITY), root_page: None }
     }
 }
 
