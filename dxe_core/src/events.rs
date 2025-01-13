@@ -18,7 +18,7 @@ use mu_pi::protocols::timer;
 use uefi_cpu::interrupts;
 
 use crate::{
-    event_db::{EventNotification, SpinLockedEventDb, TimerDelay},
+    event_db::{SpinLockedEventDb, TimerDelay},
     gcd,
     protocols::PROTOCOL_DB,
 };
@@ -236,48 +236,36 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
         // restore_tpl is accessing the locked EVENT_DB. restore_tpl calls that occur while the event notification iter is
         // in use will get back an empty vector of event notifications and will simply restore the TPL and exit.
         static EVENT_NOTIFIES_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
-        loop {
-            if EVENT_NOTIFIES_IN_PROGRESS.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-                break;
-            }
+        if EVENT_NOTIFIES_IN_PROGRESS.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+            // The notify function may register new event notifications, which will be processed in this same iter so
+            // long as we do not collect the events before iterating over them.
+            for event in EVENT_DB.event_notification_iter(new_tpl) {
+                if event.notify_tpl < efi::TPL_HIGH_LEVEL {
+                    interrupts::enable_interrupts();
+                } else {
+                    interrupts::disable_interrupts();
+                }
+                CURRENT_TPL.store(event.notify_tpl, Ordering::SeqCst);
+                let notify_context = event.notify_context.unwrap_or(core::ptr::null_mut());
 
-            let events = EVENT_DB.event_notification_iter(new_tpl).collect::<alloc::vec::Vec<_>>();
+                //Caution: this is calling function pointer supplied by code outside DXE Rust.
+                //The notify_function is not "unsafe" per the signature, even though it's
+                //supplied by code outside the core module. If it were marked 'unsafe'
+                //then other Rust modules executing under DXE Rust would need to mark all event
+                //callbacks as "unsafe", and the r_efi definition for EventNotify would need to
+                //change.
+                if let Some(notify_function) = event.notify_function {
+                    (notify_function)(event.event, notify_context);
+                }
+            }
             EVENT_NOTIFIES_IN_PROGRESS.store(false, Ordering::Release);
-
-            if events.is_empty() {
-                break;
-            }
-
-            process_events(&events);
         }
     }
+
     if new_tpl < efi::TPL_HIGH_LEVEL {
         interrupts::enable_interrupts();
     }
     CURRENT_TPL.store(new_tpl, Ordering::SeqCst);
-}
-
-/// Processes all events passed in.
-fn process_events(events: &[EventNotification]) {
-    for event in events {
-        if event.notify_tpl < efi::TPL_HIGH_LEVEL {
-            interrupts::enable_interrupts();
-        } else {
-            interrupts::disable_interrupts();
-        }
-        CURRENT_TPL.store(event.notify_tpl, Ordering::SeqCst);
-        let notify_context = event.notify_context.unwrap_or(core::ptr::null_mut());
-
-        //Caution: this is calling function pointer supplied by code outside DXE Rust.
-        //The notify_function is not "unsafe" per the signature, even though it's
-        //supplied by code outside the core module. If it were marked 'unsafe'
-        //then other Rust modules executing under DXE Rust would need to mark all event
-        //callbacks as "unsafe", and the r_efi definition for EventNotify would need to
-        //change.
-        if let Some(notify_function) = event.notify_function {
-            (notify_function)(event.event, notify_context);
-        }
-    }
 }
 
 extern "efiapi" fn timer_tick(time: u64) {
