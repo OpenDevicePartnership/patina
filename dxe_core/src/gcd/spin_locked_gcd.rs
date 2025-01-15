@@ -6,10 +6,10 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use core::{fmt::Display, ptr};
-
 use crate::pecoff::{self, UefiPeInfo};
 use alloc::{boxed::Box, slice, vec, vec::Vec};
+use core::{fmt::Display, ptr};
+use uefi_sdk::error::EfiError;
 
 use mu_pi::{dxe_services, hob};
 use mu_rust_helpers::function;
@@ -37,71 +37,11 @@ use super::{
     },
 };
 
-impl From<PtError> for Error {
-    fn from(err: PtError) -> Self {
-        match err {
-            PtError::OutOfResources => Error::OutOfResources,
-            PtError::NoMapping => Error::NotFound,
-            _ => Error::InvalidParameter,
-        }
-    }
-}
-
-impl From<Error> for efi::Status {
-    fn from(err: Error) -> Self {
-        match err {
-            Error::AccessDenied => efi::Status::ACCESS_DENIED,
-            Error::InvalidParameter => efi::Status::INVALID_PARAMETER,
-            Error::NotFound => efi::Status::NOT_FOUND,
-            Error::NotInitialized => efi::Status::NOT_READY,
-            Error::OutOfResources => efi::Status::OUT_OF_RESOURCES,
-            Error::Unsupported => efi::Status::UNSUPPORTED,
-        }
-    }
-}
-
-impl From<efi::Status> for Error {
-    fn from(err: efi::Status) -> Self {
-        match err {
-            efi::Status::ACCESS_DENIED => Error::AccessDenied,
-            efi::Status::INVALID_PARAMETER => Error::InvalidParameter,
-            efi::Status::NOT_FOUND => Error::NotFound,
-            efi::Status::NOT_READY => Error::NotInitialized,
-            efi::Status::OUT_OF_RESOURCES => Error::OutOfResources,
-            efi::Status::UNSUPPORTED => Error::Unsupported,
-            _ => Error::Unsupported,
-        }
-    }
-}
-
-impl From<Error> for PtError {
-    fn from(err: Error) -> Self {
-        match err {
-            Error::AccessDenied => PtError::InvalidParameter,
-            Error::InvalidParameter => PtError::InvalidParameter,
-            Error::NotFound => PtError::NoMapping,
-            Error::NotInitialized => PtError::InvalidParameter,
-            Error::OutOfResources => PtError::OutOfResources,
-            Error::Unsupported => PtError::InvalidParameter,
-        }
-    }
-}
-
 const MEMORY_BLOCK_SLICE_LEN: usize = 4096;
 pub const MEMORY_BLOCK_SLICE_SIZE: usize = MEMORY_BLOCK_SLICE_LEN * node_size::<MemoryBlock>();
 
 const IO_BLOCK_SLICE_LEN: usize = 4096;
 const IO_BLOCK_SLICE_SIZE: usize = IO_BLOCK_SLICE_LEN * node_size::<IoBlock>();
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Error {
-    NotInitialized,
-    InvalidParameter,
-    OutOfResources,
-    Unsupported,
-    AccessDenied,
-    NotFound,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InternalError {
@@ -229,9 +169,9 @@ type GcdAllocateFn = fn(
     len: usize,
     image_handle: efi::Handle,
     device_handle: Option<efi::Handle>,
-) -> Result<usize, Error>;
+) -> Result<usize, EfiError>;
 type GcdFreeFn =
-    fn(gcd: &mut GCD, base_address: usize, len: usize, transition: MemoryStateTransition) -> Result<(), Error>;
+    fn(gcd: &mut GCD, base_address: usize, len: usize, transition: MemoryStateTransition) -> Result<(), EfiError>;
 
 // This controls the minimum capacity of the page_pool vector that tracks pages in the pool.
 //
@@ -443,7 +383,14 @@ impl GCD {
                 Err(e) => {
                     log::error!("Failed to allocate pages for the page pool: {:?}", e);
                     debug_assert!(false);
-                    Err(efi::Status::from(e))?
+                    match e {
+                        EfiError::AccessDenied => efi::Status::ACCESS_DENIED,
+                        EfiError::InvalidParameter => efi::Status::INVALID_PARAMETER,
+                        EfiError::NotFound => efi::Status::NOT_FOUND,
+                        EfiError::NotReady => efi::Status::NOT_READY,
+                        EfiError::OutOfResources => efi::Status::OUT_OF_RESOURCES,
+                        _ => efi::Status::UNSUPPORTED,
+                    };
                 }
             }
         }
@@ -456,11 +403,11 @@ impl GCD {
         base_address: usize,
         len: usize,
         capabilities: u64,
-    ) -> Result<usize, Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
+    ) -> Result<usize, EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
         ensure!(
             memory_type == dxe_services::GcdMemoryType::SystemMemory && len >= MEMORY_BLOCK_SLICE_SIZE,
-            Error::OutOfResources
+            EfiError::OutOfResources
         );
 
         log::trace!(target: "allocations", "[{}] Initializing memory blocks at {:#x}", function!(), base_address);
@@ -477,7 +424,7 @@ impl GCD {
 
         let mut memory_blocks =
             Rbt::new(slice::from_raw_parts_mut::<'static>(base_address as *mut u8, MEMORY_BLOCK_SLICE_SIZE));
-        memory_blocks.add(unallocated_memory_space).map_err(|_| Error::OutOfResources)?;
+        memory_blocks.add(unallocated_memory_space).map_err(|_| EfiError::OutOfResources)?;
         self.memory_blocks.replace(memory_blocks);
 
         self.add_memory_space(memory_type, base_address, len, capabilities)?;
@@ -771,10 +718,10 @@ impl GCD {
         base_address: usize,
         len: usize,
         mut capabilities: u64,
-    ) -> Result<usize, Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
-        ensure!(len > 0, Error::InvalidParameter);
-        ensure!(base_address + len <= self.maximum_address, Error::Unsupported);
+    ) -> Result<usize, EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
+        ensure!(len > 0, EfiError::InvalidParameter);
+        ensure!(base_address + len <= self.maximum_address, EfiError::Unsupported);
 
         log::trace!(target: "allocations", "[{}] Adding memory space at {:#x}", function!(), base_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
@@ -794,10 +741,10 @@ impl GCD {
         };
 
         log::trace!(target: "gcd_measure", "search");
-        let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(Error::NotFound)?;
-        let block = memory_blocks.get_with_idx(idx).ok_or(Error::NotFound)?;
+        let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
+        let block = memory_blocks.get_with_idx(idx).ok_or(EfiError::NotFound)?;
 
-        ensure!(block.as_ref().memory_type == dxe_services::GcdMemoryType::NonExistent, Error::AccessDenied);
+        ensure!(block.as_ref().memory_type == dxe_services::GcdMemoryType::NonExistent, EfiError::AccessDenied);
 
         match Self::split_state_transition_at_idx(
             memory_blocks,
@@ -807,11 +754,11 @@ impl GCD {
             MemoryStateTransition::Add(memory_type, capabilities),
         ) {
             Ok(idx) => Ok(idx),
-            Err(InternalError::MemoryBlock(MemoryBlockError::BlockOutsideRange)) => error!(Error::AccessDenied),
+            Err(InternalError::MemoryBlock(MemoryBlockError::BlockOutsideRange)) => error!(EfiError::AccessDenied),
             Err(InternalError::MemoryBlock(MemoryBlockError::InvalidStateTransition)) => {
-                error!(Error::InvalidParameter)
+                error!(EfiError::InvalidParameter)
             }
-            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(EfiError::OutOfResources),
             Err(e) => panic!("{e:?}"),
         }
     }
@@ -820,28 +767,28 @@ impl GCD {
     ///
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.4
-    pub fn remove_memory_space(&mut self, base_address: usize, len: usize) -> Result<(), Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
-        ensure!(len > 0, Error::InvalidParameter);
-        ensure!(base_address + len <= self.maximum_address, Error::Unsupported);
+    pub fn remove_memory_space(&mut self, base_address: usize, len: usize) -> Result<(), EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
+        ensure!(len > 0, EfiError::InvalidParameter);
+        ensure!(base_address + len <= self.maximum_address, EfiError::Unsupported);
 
         log::trace!(target: "allocations", "[{}] Removing memory space at {:#x} of length {:#x}", function!(), base_address, len);
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
+        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
 
         log::trace!(target: "gcd_measure", "search");
-        let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(Error::NotFound)?;
-        let block = *memory_blocks.get_with_idx(idx).ok_or(Error::NotFound)?;
+        let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
+        let block = *memory_blocks.get_with_idx(idx).ok_or(EfiError::NotFound)?;
 
         match Self::split_state_transition_at_idx(memory_blocks, idx, base_address, len, MemoryStateTransition::Remove)
         {
             Ok(_) => Ok(()),
-            Err(InternalError::MemoryBlock(MemoryBlockError::BlockOutsideRange)) => error!(Error::NotFound),
+            Err(InternalError::MemoryBlock(MemoryBlockError::BlockOutsideRange)) => error!(EfiError::NotFound),
             Err(InternalError::MemoryBlock(MemoryBlockError::InvalidStateTransition)) => match block {
-                MemoryBlock::Unallocated(_) => error!(Error::NotFound),
-                MemoryBlock::Allocated(_) => error!(Error::AccessDenied),
+                MemoryBlock::Unallocated(_) => error!(EfiError::NotFound),
+                MemoryBlock::Allocated(_) => error!(EfiError::AccessDenied),
             },
-            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(EfiError::OutOfResources),
             Err(e) => panic!("{e:?}"),
         }
     }
@@ -854,7 +801,7 @@ impl GCD {
         len: usize,
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
-    ) -> Result<usize, Error> {
+    ) -> Result<usize, EfiError> {
         (self.allocate_memory_space_fn)(self, allocate_type, memory_type, alignment, len, image_handle, device_handle)
     }
 
@@ -870,11 +817,11 @@ impl GCD {
         len: usize,
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
-    ) -> Result<usize, Error> {
-        ensure!(gcd.maximum_address != 0, Error::NotInitialized);
+    ) -> Result<usize, EfiError> {
+        ensure!(gcd.maximum_address != 0, EfiError::NotReady);
         ensure!(
             len > 0 && image_handle > ptr::null_mut() && memory_type != dxe_services::GcdMemoryType::Unaccepted,
-            Error::InvalidParameter
+            EfiError::InvalidParameter
         );
 
         log::trace!(target: "allocations", "[{}] Allocating memory space: {:x?}", function!(), allocate_type);
@@ -902,7 +849,7 @@ impl GCD {
                 min_address.unwrap_or(0),
             ),
             AllocateType::Address(address) => {
-                ensure!(address + len <= gcd.maximum_address, Error::NotFound);
+                ensure!(address + len <= gcd.maximum_address, EfiError::NotFound);
                 gcd.allocate_address(memory_type, alignment, len, image_handle, device_handle, address)
             }
         }
@@ -916,10 +863,10 @@ impl GCD {
         _len: usize,
         _image_handle: efi::Handle,
         _device_handle: Option<efi::Handle>,
-    ) -> Result<usize, Error> {
+    ) -> Result<usize, EfiError> {
         log::error!("GCD not allowed to allocate after EBS has started!");
         debug_assert!(false);
-        Err(Error::AccessDenied)
+        Err(EfiError::AccessDenied)
     }
 
     fn free_memory_space_worker(
@@ -927,25 +874,25 @@ impl GCD {
         base_address: usize,
         len: usize,
         transition: MemoryStateTransition,
-    ) -> Result<(), Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
-        ensure!(len > 0, Error::InvalidParameter);
-        ensure!(base_address + len <= self.maximum_address, Error::Unsupported);
-        ensure!((base_address & UEFI_PAGE_MASK) == 0 && (len & UEFI_PAGE_MASK) == 0, Error::InvalidParameter);
+    ) -> Result<(), EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
+        ensure!(len > 0, EfiError::InvalidParameter);
+        ensure!(base_address + len <= self.maximum_address, EfiError::Unsupported);
+        ensure!((base_address & UEFI_PAGE_MASK) == 0 && (len & UEFI_PAGE_MASK) == 0, EfiError::InvalidParameter);
 
         log::trace!(target: "allocations", "[{}] Freeing memory space at {:#x}", function!(), base_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Memory State Transition: {:?}\n", function!(), transition);
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
+        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
 
         log::trace!(target: "gcd_measure", "search");
-        let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(Error::NotFound)?;
+        let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
 
         match Self::split_state_transition_at_idx(memory_blocks, idx, base_address, len, transition) {
             Ok(_) => {}
-            Err(InternalError::MemoryBlock(_)) => error!(Error::NotFound),
-            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+            Err(InternalError::MemoryBlock(_)) => error!(EfiError::NotFound),
+            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(EfiError::OutOfResources),
             Err(e) => panic!("{e:?}"),
         }
 
@@ -964,7 +911,11 @@ impl GCD {
                         status
                     );
                     debug_assert!(false);
-                    Err(Error::from(status))?;
+                    match status {
+                        PtError::OutOfResources => EfiError::OutOfResources,
+                        PtError::NoMapping => EfiError::NotFound,
+                        _ => EfiError::InvalidParameter,
+                    };
                 }
             }
         }
@@ -992,7 +943,7 @@ impl GCD {
         _base_address: usize,
         _len: usize,
         _transition: MemoryStateTransition,
-    ) -> Result<(), Error> {
+    ) -> Result<(), EfiError> {
         log::error!("GCD not allowed to free after EBS has started! Silently failing, returning success");
 
         // TODO: We actually want to check if this is a runtime memory type and debug_assert/return an error if so,
@@ -1015,8 +966,8 @@ impl GCD {
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
         max_address: usize,
-    ) -> Result<usize, Error> {
-        ensure!(len > 0, Error::InvalidParameter);
+    ) -> Result<usize, EfiError> {
+        ensure!(len > 0, EfiError::InvalidParameter);
 
         log::trace!(target: "allocations", "[{}] Bottom up GCD allocation: {:#?}", function!(), memory_type);
         log::trace!(target: "allocations", "[{}]   Max Address: {:#x}", function!(), max_address);
@@ -1025,7 +976,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
         log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
+        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
 
         log::trace!(target: "gcd_measure", "search");
         let mut current = memory_blocks.first_idx();
@@ -1040,7 +991,7 @@ impl GCD {
             if addr < address {
                 addr += 1 << alignment;
             }
-            ensure!(addr + len <= max_address, Error::NotFound);
+            ensure!(addr + len <= max_address, EfiError::NotFound);
             if mb.as_ref().memory_type != memory_type {
                 current = memory_blocks.next_idx(idx);
                 continue;
@@ -1058,14 +1009,14 @@ impl GCD {
                     current = memory_blocks.next_idx(idx);
                     continue;
                 }
-                Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+                Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(EfiError::OutOfResources),
                 Err(e) => panic!("{e:?}"),
             }
         }
         if max_address == usize::MAX {
-            Err(Error::OutOfResources)
+            Err(EfiError::OutOfResources)
         } else {
-            Err(Error::NotFound)
+            Err(EfiError::NotFound)
         }
     }
 
@@ -1077,8 +1028,8 @@ impl GCD {
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
         min_address: usize,
-    ) -> Result<usize, Error> {
-        ensure!(len > 0, Error::InvalidParameter);
+    ) -> Result<usize, EfiError> {
+        ensure!(len > 0, EfiError::InvalidParameter);
 
         log::trace!(target: "allocations", "[{}] Top down GCD allocation: {:#?}", function!(), memory_type);
         log::trace!(target: "allocations", "[{}]   Min Address: {:#x}", function!(), min_address);
@@ -1087,7 +1038,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
         log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
+        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
 
         log::trace!(target: "gcd_measure", "search");
         let mut current = memory_blocks.last_idx();
@@ -1103,7 +1054,7 @@ impl GCD {
                 continue;
             }
             addr &= usize::MAX << alignment;
-            ensure!(addr >= min_address, Error::NotFound);
+            ensure!(addr >= min_address, EfiError::NotFound);
 
             if mb.as_ref().memory_type != memory_type {
                 current = memory_blocks.prev_idx(idx);
@@ -1122,14 +1073,14 @@ impl GCD {
                     current = memory_blocks.prev_idx(idx);
                     continue;
                 }
-                Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+                Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(EfiError::OutOfResources),
                 Err(e) => panic!("{e:?}"),
             }
         }
         if min_address == 0 {
-            Err(Error::OutOfResources)
+            Err(EfiError::OutOfResources)
         } else {
-            Err(Error::NotFound)
+            Err(EfiError::NotFound)
         }
     }
 
@@ -1141,8 +1092,8 @@ impl GCD {
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
         address: usize,
-    ) -> Result<usize, Error> {
-        ensure!(len > 0, Error::InvalidParameter);
+    ) -> Result<usize, EfiError> {
+        ensure!(len > 0, EfiError::InvalidParameter);
 
         log::trace!(target: "allocations", "[{}] Exact address GCD allocation: {:#?}", function!(), memory_type);
         log::trace!(target: "allocations", "[{}]   Address: {:#x}", function!(), address);
@@ -1152,15 +1103,15 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
         log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
+        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
 
         log::trace!(target: "gcd_measure", "search");
-        let idx = memory_blocks.get_closest_idx(&(address as u64)).ok_or(Error::NotFound)?;
-        let block = memory_blocks.get_with_idx(idx).ok_or(Error::NotFound)?;
+        let idx = memory_blocks.get_closest_idx(&(address as u64)).ok_or(EfiError::NotFound)?;
+        let block = memory_blocks.get_with_idx(idx).ok_or(EfiError::NotFound)?;
 
         ensure!(
             block.as_ref().memory_type == memory_type && address == address & (usize::MAX << alignment),
-            Error::NotFound
+            EfiError::NotFound
         );
 
         match Self::split_state_transition_at_idx(
@@ -1171,8 +1122,8 @@ impl GCD {
             MemoryStateTransition::Allocate(image_handle, device_handle),
         ) {
             Ok(_) => Ok(address),
-            Err(InternalError::MemoryBlock(_)) => error!(Error::NotFound),
-            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+            Err(InternalError::MemoryBlock(_)) => error!(EfiError::NotFound),
+            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(EfiError::OutOfResources),
             Err(e) => panic!("{e:?}"),
         }
     }
@@ -1182,7 +1133,7 @@ impl GCD {
     ///
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.3
-    pub fn free_memory_space(&mut self, base_address: usize, len: usize) -> Result<(), Error> {
+    pub fn free_memory_space(&mut self, base_address: usize, len: usize) -> Result<(), EfiError> {
         (self.free_memory_space_fn)(self, base_address, len, MemoryStateTransition::Free)
     }
 
@@ -1195,11 +1146,11 @@ impl GCD {
     ///
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.3
-    pub fn free_memory_space_preserving_ownership(&mut self, base_address: usize, len: usize) -> Result<(), Error> {
+    pub fn free_memory_space_preserving_ownership(&mut self, base_address: usize, len: usize) -> Result<(), EfiError> {
         (self.free_memory_space_fn)(self, base_address, len, MemoryStateTransition::FreePreservingOwnership)
     }
 
-    fn set_paging_attributes(&mut self, base_address: usize, len: usize, attributes: u64) -> Result<(), Error> {
+    fn set_paging_attributes(&mut self, base_address: usize, len: usize, attributes: u64) -> Result<(), EfiError> {
         // we preallocate pages first, even if we won't create new mappings here, because we have to avoid borrowing
         // self mutably twice and the logic is considerably simpler to preallocate first. In one case where we don't
         // have a full page pool, we will cause an extra allocation here, but we would have done that next time we
@@ -1246,7 +1197,11 @@ impl GCD {
                                     e
                                 );
                                 debug_assert!(false);
-                                Err(Error::from(e))?;
+                                match e {
+                                    PtError::OutOfResources => EfiError::OutOfResources,
+                                    PtError::NoMapping => EfiError::NotFound,
+                                    _ => EfiError::InvalidParameter,
+                                };
                             }
                         }
                     }
@@ -1256,7 +1211,12 @@ impl GCD {
                     // if this isn't mapped yet, we need to map the range
                     // this is the only case where we need preallocated pages, so let's make sure that succeeded and
                     // bail out if it didn't
-                    preallocated?;
+                    preallocated.map_err(|err| match err {
+                        efi::Status::INVALID_PARAMETER => EfiError::InvalidParameter,
+                        efi::Status::NOT_FOUND => EfiError::NotFound,
+                        _ => EfiError::OutOfResources,
+                    })?;
+
                     match page_table.map_memory_region(base_address as u64, len as u64, paging_attrs) {
                         Ok(_) => {
                             // we are setting the cache attributes for the first time, we need to publish an event,
@@ -1283,7 +1243,7 @@ impl GCD {
                                 e
                             );
                             debug_assert!(false);
-                            Err(Error::from(e))
+                            Err(EfiError::InvalidParameter)?
                         }
                     }
                 }
@@ -1296,13 +1256,13 @@ impl GCD {
                         e
                     );
                     debug_assert!(false);
-                    Err(Error::from(e))
+                    Err(EfiError::InvalidParameter)?
                 }
             }
         } else {
             // if we don't have the page table, we shouldn't panic, this may just be the case that we are allocating
             // the initial GCD memory space and we haven't initialized the page table yet
-            Err(Error::NotInitialized)
+            Err(EfiError::NotReady)
         }
     }
 
@@ -1315,11 +1275,11 @@ impl GCD {
         base_address: usize,
         len: usize,
         attributes: u64,
-    ) -> Result<(), Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
-        ensure!(len > 0, Error::InvalidParameter);
-        ensure!(base_address + len <= self.maximum_address, Error::Unsupported);
-        ensure!((base_address & UEFI_PAGE_MASK) == 0 && (len & UEFI_PAGE_MASK) == 0, Error::InvalidParameter);
+    ) -> Result<(), EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
+        ensure!(len > 0, EfiError::InvalidParameter);
+        ensure!(base_address + len <= self.maximum_address, EfiError::Unsupported);
+        ensure!((base_address & UEFI_PAGE_MASK) == 0 && (len & UEFI_PAGE_MASK) == 0, EfiError::InvalidParameter);
 
         // we set the GCD attributes first as we do allocate memory space in the GCD before paging is enabled;
         // this is the memory that the page table is created from. So we need to allow for paging to fail but the
@@ -1336,15 +1296,15 @@ impl GCD {
     ///
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.6
-    fn set_gcd_memory_attributes(&mut self, base_address: usize, len: usize, attributes: u64) -> Result<(), Error> {
+    fn set_gcd_memory_attributes(&mut self, base_address: usize, len: usize, attributes: u64) -> Result<(), EfiError> {
         log::trace!(target: "allocations", "[{}] Setting memory space attributes for {:#x}", function!(), base_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Attributes: {:#x}\n", function!(), attributes);
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
+        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
 
         log::trace!(target: "gcd_measure", "search");
-        let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(Error::NotFound)?;
+        let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
 
         match Self::split_state_transition_at_idx(
             memory_blocks,
@@ -1363,7 +1323,7 @@ impl GCD {
                     e
                 );
                 debug_assert!(false);
-                error!(Error::Unsupported)
+                error!(EfiError::Unsupported)
             }
             Err(InternalError::Slice(SliceError::OutOfSpace)) => {
                 log::error!(
@@ -1373,7 +1333,7 @@ impl GCD {
                     attributes
                 );
                 debug_assert!(false);
-                error!(Error::OutOfResources)
+                error!(EfiError::OutOfResources)
             }
             Err(e) => panic!("{e:?}"),
         }
@@ -1388,20 +1348,20 @@ impl GCD {
         base_address: usize,
         len: usize,
         capabilities: u64,
-    ) -> Result<(), Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
-        ensure!(len > 0, Error::InvalidParameter);
-        ensure!(base_address + len <= self.maximum_address, Error::Unsupported);
-        ensure!((base_address & UEFI_PAGE_MASK) == 0 && (len & UEFI_PAGE_MASK) == 0, Error::InvalidParameter);
+    ) -> Result<(), EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
+        ensure!(len > 0, EfiError::InvalidParameter);
+        ensure!(base_address + len <= self.maximum_address, EfiError::Unsupported);
+        ensure!((base_address & UEFI_PAGE_MASK) == 0 && (len & UEFI_PAGE_MASK) == 0, EfiError::InvalidParameter);
 
         log::trace!(target: "allocations", "[{}] Setting memory space capabilities for {:#x}", function!(), base_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Capabilities: {:#x}\n", function!(), capabilities);
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
+        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
 
         log::trace!(target: "gcd_measure", "search");
-        let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(Error::NotFound)?;
+        let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
 
         match Self::split_state_transition_at_idx(
             memory_blocks,
@@ -1411,8 +1371,8 @@ impl GCD {
             MemoryStateTransition::SetCapabilities(capabilities),
         ) {
             Ok(_) => Ok(()),
-            Err(InternalError::MemoryBlock(_)) => error!(Error::Unsupported),
-            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+            Err(InternalError::MemoryBlock(_)) => error!(EfiError::Unsupported),
+            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(EfiError::OutOfResources),
             Err(e) => panic!("{e:?}"),
         }
     }
@@ -1424,10 +1384,10 @@ impl GCD {
     pub fn get_memory_descriptors(
         &mut self,
         buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>,
-    ) -> Result<(), Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
-        ensure!(buffer.capacity() >= self.memory_descriptor_count(), Error::InvalidParameter);
-        ensure!(buffer.is_empty(), Error::InvalidParameter);
+    ) -> Result<(), EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
+        ensure!(buffer.capacity() >= self.memory_descriptor_count(), EfiError::InvalidParameter);
+        ensure!(buffer.is_empty(), EfiError::InvalidParameter);
 
         log::trace!(target: "allocations", "[{}] Enter\n", function!(), );
 
@@ -1444,17 +1404,17 @@ impl GCD {
             }
             Ok(())
         } else {
-            Err(Error::NotFound)
+            Err(EfiError::NotFound)
         }
     }
 
     fn get_allocated_memory_descriptors(
         &self,
         buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>,
-    ) -> Result<(), Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
-        ensure!(buffer.capacity() >= self.memory_descriptor_count(), Error::InvalidParameter);
-        ensure!(buffer.is_empty(), Error::InvalidParameter);
+    ) -> Result<(), EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
+        ensure!(buffer.capacity() >= self.memory_descriptor_count(), EfiError::InvalidParameter);
+        ensure!(buffer.is_empty(), EfiError::InvalidParameter);
 
         if let Some(blocks) = &self.memory_blocks {
             let mut current = blocks.first_idx();
@@ -1467,13 +1427,13 @@ impl GCD {
             }
             Ok(())
         } else {
-            Err(Error::NotFound)
+            Err(EfiError::NotFound)
         }
     }
 
-    fn get_mmio_descriptors(&self, buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>) -> Result<(), Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
-        ensure!(buffer.is_empty(), Error::InvalidParameter);
+    fn get_mmio_descriptors(&self, buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>) -> Result<(), EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
+        ensure!(buffer.is_empty(), EfiError::InvalidParameter);
 
         if let Some(blocks) = &self.memory_blocks {
             let mut current = blocks.first_idx();
@@ -1488,7 +1448,7 @@ impl GCD {
             }
             Ok(())
         } else {
-            Err(Error::NotFound)
+            Err(EfiError::NotFound)
         }
     }
 
@@ -1496,13 +1456,13 @@ impl GCD {
     pub fn get_memory_descriptor_for_address(
         &mut self,
         address: efi::PhysicalAddress,
-    ) -> Result<dxe_services::MemorySpaceDescriptor, Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
+    ) -> Result<dxe_services::MemorySpaceDescriptor, EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
+        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
 
         log::trace!(target: "gcd_measure", "search");
-        let idx = memory_blocks.get_closest_idx(&(address)).ok_or(Error::NotFound)?;
+        let idx = memory_blocks.get_closest_idx(&(address)).ok_or(EfiError::NotFound)?;
         let mb = memory_blocks.get_with_idx(idx).expect("idx is valid from get_closest_idx");
         match mb {
             MemoryBlock::Allocated(descriptor) | MemoryBlock::Unallocated(descriptor) => Ok(*descriptor),
@@ -1684,8 +1644,8 @@ impl IoGCD {
         self.maximum_address = 1 << io_address_bits;
     }
 
-    fn init_io_blocks(&mut self) -> Result<(), Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
+    fn init_io_blocks(&mut self) -> Result<(), EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
 
         let mut io_blocks = Rbt::new(unsafe {
             Box::into_raw(vec![0_u8; IO_BLOCK_SLICE_SIZE].into_boxed_slice())
@@ -1700,13 +1660,13 @@ impl IoGCD {
                 length: self.maximum_address as u64,
                 ..Default::default()
             }))
-            .map_err(|_| Error::OutOfResources)?;
+            .map_err(|_| EfiError::OutOfResources)?;
 
         self.io_blocks.replace(io_blocks);
 
         Ok(())
         /*
-        ensure!(memory_type == dxe_services::GcdMemoryType::SystemMemory && len >= MEMORY_BLOCK_SLICE_SIZE, Error::OutOfResources);
+        ensure!(memory_type == dxe_services::GcdMemoryType::SystemMemory && len >= MEMORY_BLOCK_SLICE_SIZE, EfiError::OutOfResources);
 
         let unallocated_memory_space = MemoryBlock::Unallocated(dxe_services::MemorySpaceDescriptor {
           memory_type: dxe_services::GcdMemoryType::NonExistent,
@@ -1717,7 +1677,7 @@ impl IoGCD {
 
         let mut memory_blocks =
           SortedSlice::new(slice::from_raw_parts_mut::<'static>(base_address as *mut u8, MEMORY_BLOCK_SLICE_SIZE));
-        memory_blocks.add(unallocated_memory_space).map_err(|_| Error::OutOfResources)?;
+        memory_blocks.add(unallocated_memory_space).map_err(|_| EfiError::OutOfResources)?;
         self.memory_blocks.replace(memory_blocks);
 
         self.add_memory_space(memory_type, base_address, len, capabilities)?;
@@ -1741,10 +1701,10 @@ impl IoGCD {
         io_type: dxe_services::GcdIoType,
         base_address: usize,
         len: usize,
-    ) -> Result<usize, Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
-        ensure!(len > 0, Error::InvalidParameter);
-        ensure!(base_address + len <= self.maximum_address, Error::Unsupported);
+    ) -> Result<usize, EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
+        ensure!(len > 0, EfiError::InvalidParameter);
+        ensure!(base_address + len <= self.maximum_address, EfiError::Unsupported);
 
         log::trace!(target: "allocations", "[{}] Adding IO space at {:#x}", function!(), base_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
@@ -1755,20 +1715,20 @@ impl IoGCD {
         }
 
         let Some(io_blocks) = &mut self.io_blocks else {
-            return Err(Error::NotInitialized);
+            return Err(EfiError::NotReady);
         };
 
         log::trace!(target: "gcd_measure", "search");
-        let idx = io_blocks.get_closest_idx(&(base_address as u64)).ok_or(Error::NotFound)?;
-        let block = io_blocks.get_with_idx(idx).ok_or(Error::NotFound)?;
+        let idx = io_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
+        let block = io_blocks.get_with_idx(idx).ok_or(EfiError::NotFound)?;
 
-        ensure!(block.as_ref().io_type == dxe_services::GcdIoType::NonExistent, Error::AccessDenied);
+        ensure!(block.as_ref().io_type == dxe_services::GcdIoType::NonExistent, EfiError::AccessDenied);
 
         match Self::split_state_transition_at_idx(io_blocks, idx, base_address, len, IoStateTransition::Add(io_type)) {
             Ok(idx) => Ok(idx),
-            Err(InternalError::IoBlock(IoBlockError::BlockOutsideRange)) => error!(Error::AccessDenied),
-            Err(InternalError::IoBlock(IoBlockError::InvalidStateTransition)) => error!(Error::InvalidParameter),
-            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+            Err(InternalError::IoBlock(IoBlockError::BlockOutsideRange)) => error!(EfiError::AccessDenied),
+            Err(InternalError::IoBlock(IoBlockError::InvalidStateTransition)) => error!(EfiError::InvalidParameter),
+            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(EfiError::OutOfResources),
             Err(e) => panic!("{e:?}"),
         }
     }
@@ -1777,10 +1737,10 @@ impl IoGCD {
     ///
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.12
-    pub fn remove_io_space(&mut self, base_address: usize, len: usize) -> Result<(), Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
-        ensure!(len > 0, Error::InvalidParameter);
-        ensure!(base_address + len <= self.maximum_address, Error::Unsupported);
+    pub fn remove_io_space(&mut self, base_address: usize, len: usize) -> Result<(), EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
+        ensure!(len > 0, EfiError::InvalidParameter);
+        ensure!(base_address + len <= self.maximum_address, EfiError::Unsupported);
 
         log::trace!(target: "allocations", "[{}] Removing IO space at {:#x}", function!(), base_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}\n", function!(), len);
@@ -1789,20 +1749,20 @@ impl IoGCD {
             self.init_io_blocks()?;
         }
 
-        let io_blocks = self.io_blocks.as_mut().ok_or(Error::NotInitialized)?;
+        let io_blocks = self.io_blocks.as_mut().ok_or(EfiError::NotReady)?;
 
         log::trace!(target: "gcd_measure", "search");
-        let idx = io_blocks.get_closest_idx(&(base_address as u64)).ok_or(Error::NotFound)?;
+        let idx = io_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
         let block = *io_blocks.get_with_idx(idx).expect("Idx valid from get_closest_idx");
 
         match Self::split_state_transition_at_idx(io_blocks, idx, base_address, len, IoStateTransition::Remove) {
             Ok(_) => Ok(()),
-            Err(InternalError::IoBlock(IoBlockError::BlockOutsideRange)) => error!(Error::NotFound),
+            Err(InternalError::IoBlock(IoBlockError::BlockOutsideRange)) => error!(EfiError::NotFound),
             Err(InternalError::IoBlock(IoBlockError::InvalidStateTransition)) => match block {
-                IoBlock::Unallocated(_) => error!(Error::NotFound),
-                IoBlock::Allocated(_) => error!(Error::AccessDenied),
+                IoBlock::Unallocated(_) => error!(EfiError::NotFound),
+                IoBlock::Allocated(_) => error!(EfiError::AccessDenied),
             },
-            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(EfiError::OutOfResources),
             Err(e) => panic!("{e:?}"),
         }
     }
@@ -1819,9 +1779,9 @@ impl IoGCD {
         len: usize,
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
-    ) -> Result<usize, Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
-        ensure!(len > 0 && image_handle > ptr::null_mut(), Error::InvalidParameter);
+    ) -> Result<usize, EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
+        ensure!(len > 0 && image_handle > ptr::null_mut(), EfiError::InvalidParameter);
 
         log::trace!(target: "allocations", "[{}] Allocating IO space: {:x?}", function!(), allocate_type);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
@@ -1843,7 +1803,7 @@ impl IoGCD {
                 self.allocate_top_down(io_type, alignment, len, image_handle, device_handle, min_address.unwrap_or(0))
             }
             AllocateType::Address(address) => {
-                ensure!(address + len <= self.maximum_address, Error::Unsupported);
+                ensure!(address + len <= self.maximum_address, EfiError::Unsupported);
                 self.allocate_address(io_type, alignment, len, image_handle, device_handle, address)
             }
         }
@@ -1857,8 +1817,8 @@ impl IoGCD {
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
         max_address: usize,
-    ) -> Result<usize, Error> {
-        ensure!(len > 0, Error::InvalidParameter);
+    ) -> Result<usize, EfiError> {
+        ensure!(len > 0, EfiError::InvalidParameter);
 
         log::trace!(target: "allocations", "[{}] Bottom up IO allocation: {:#?}", function!(), io_type);
         log::trace!(target: "allocations", "[{}]   Max Address: {:#x}", function!(), max_address);
@@ -1871,7 +1831,7 @@ impl IoGCD {
             self.init_io_blocks()?;
         }
 
-        let io_blocks = self.io_blocks.as_mut().ok_or(Error::NotInitialized)?;
+        let io_blocks = self.io_blocks.as_mut().ok_or(EfiError::NotReady)?;
 
         log::trace!(target: "gcd_measure", "search");
         let mut current = io_blocks.first_idx();
@@ -1886,7 +1846,7 @@ impl IoGCD {
             if addr < address {
                 addr += 1 << alignment;
             }
-            ensure!(addr + len <= max_address, Error::NotFound);
+            ensure!(addr + len <= max_address, EfiError::NotFound);
             if ib.as_ref().io_type != io_type {
                 current = io_blocks.next_idx(idx);
                 continue;
@@ -1904,11 +1864,11 @@ impl IoGCD {
                     current = io_blocks.next_idx(idx);
                     continue;
                 }
-                Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+                Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(EfiError::OutOfResources),
                 Err(e) => panic!("{e:?}"),
             }
         }
-        Err(Error::NotFound)
+        Err(EfiError::NotFound)
     }
 
     fn allocate_top_down(
@@ -1919,8 +1879,8 @@ impl IoGCD {
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
         min_address: usize,
-    ) -> Result<usize, Error> {
-        ensure!(len > 0, Error::InvalidParameter);
+    ) -> Result<usize, EfiError> {
+        ensure!(len > 0, EfiError::InvalidParameter);
 
         log::trace!(target: "allocations", "[{}] Top dowm IO allocation: {:#?}", function!(), io_type);
         log::trace!(target: "allocations", "[{}]   Min Address: {:#x}", function!(), min_address);
@@ -1933,7 +1893,7 @@ impl IoGCD {
             self.init_io_blocks()?;
         }
 
-        let io_blocks = self.io_blocks.as_mut().ok_or(Error::NotInitialized)?;
+        let io_blocks = self.io_blocks.as_mut().ok_or(EfiError::NotReady)?;
 
         log::trace!(target: "gcd_measure", "search");
         let mut current = io_blocks.last_idx();
@@ -1949,7 +1909,7 @@ impl IoGCD {
                 continue;
             }
             addr &= usize::MAX << alignment;
-            ensure!(addr >= min_address, Error::NotFound);
+            ensure!(addr >= min_address, EfiError::NotFound);
 
             if ib.as_ref().io_type != io_type {
                 current = io_blocks.prev_idx(idx);
@@ -1968,11 +1928,11 @@ impl IoGCD {
                     current = io_blocks.prev_idx(idx);
                     continue;
                 }
-                Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+                Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(EfiError::OutOfResources),
                 Err(e) => panic!("{e:?}"),
             }
         }
-        Err(Error::NotFound)
+        Err(EfiError::NotFound)
     }
 
     fn allocate_address(
@@ -1983,8 +1943,8 @@ impl IoGCD {
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
         address: usize,
-    ) -> Result<usize, Error> {
-        ensure!(len > 0, Error::InvalidParameter);
+    ) -> Result<usize, EfiError> {
+        ensure!(len > 0, EfiError::InvalidParameter);
 
         log::trace!(target: "allocations", "[{}] Exact address IO allocation: {:#?}", function!(), io_type);
         log::trace!(target: "allocations", "[{}]   Address: {:#x}", function!(), address);
@@ -1997,13 +1957,16 @@ impl IoGCD {
         if self.io_blocks.is_none() {
             self.init_io_blocks()?;
         }
-        let io_blocks = self.io_blocks.as_mut().ok_or(Error::NotInitialized)?;
+        let io_blocks = self.io_blocks.as_mut().ok_or(EfiError::NotReady)?;
 
         log::trace!(target: "gcd_measure", "search");
-        let idx = io_blocks.get_closest_idx(&(address as u64)).ok_or(Error::NotFound)?;
-        let block = io_blocks.get_with_idx(idx).ok_or(Error::NotFound)?;
+        let idx = io_blocks.get_closest_idx(&(address as u64)).ok_or(EfiError::NotFound)?;
+        let block = io_blocks.get_with_idx(idx).ok_or(EfiError::NotFound)?;
 
-        ensure!(block.as_ref().io_type == io_type && address == address & (usize::MAX << alignment), Error::NotFound);
+        ensure!(
+            block.as_ref().io_type == io_type && address == address & (usize::MAX << alignment),
+            EfiError::NotFound
+        );
 
         match Self::split_state_transition_at_idx(
             io_blocks,
@@ -2013,8 +1976,8 @@ impl IoGCD {
             IoStateTransition::Allocate(image_handle, device_handle),
         ) {
             Ok(_) => Ok(address),
-            Err(InternalError::IoBlock(_)) => error!(Error::NotFound),
-            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+            Err(InternalError::IoBlock(_)) => error!(EfiError::NotFound),
+            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(EfiError::OutOfResources),
             Err(e) => panic!("{e:?}"),
         }
     }
@@ -2023,10 +1986,10 @@ impl IoGCD {
     ///
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.11
-    pub fn free_io_space(&mut self, base_address: usize, len: usize) -> Result<(), Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
-        ensure!(len > 0, Error::InvalidParameter);
-        ensure!(base_address + len <= self.maximum_address, Error::Unsupported);
+    pub fn free_io_space(&mut self, base_address: usize, len: usize) -> Result<(), EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
+        ensure!(len > 0, EfiError::InvalidParameter);
+        ensure!(base_address + len <= self.maximum_address, EfiError::Unsupported);
 
         log::trace!(target: "allocations", "[{}] Free IO space at {:#?}", function!(), base_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}\n", function!(), len);
@@ -2035,15 +1998,15 @@ impl IoGCD {
             self.init_io_blocks()?;
         }
 
-        let io_blocks = self.io_blocks.as_mut().ok_or(Error::NotInitialized)?;
+        let io_blocks = self.io_blocks.as_mut().ok_or(EfiError::NotReady)?;
 
         log::trace!(target: "gcd_measure", "search");
-        let idx = io_blocks.get_closest_idx(&(base_address as u64)).ok_or(Error::NotFound)?;
+        let idx = io_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
 
         match Self::split_state_transition_at_idx(io_blocks, idx, base_address, len, IoStateTransition::Free) {
             Ok(_) => Ok(()),
-            Err(InternalError::IoBlock(_)) => error!(Error::NotFound),
-            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+            Err(InternalError::IoBlock(_)) => error!(EfiError::NotFound),
+            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(EfiError::OutOfResources),
             Err(e) => panic!("{e:?}"),
         }
     }
@@ -2052,10 +2015,10 @@ impl IoGCD {
     /// Since GCD is used to service heap expansion requests and thus should avoid allocations,
     /// Caller is required to initialize a vector of sufficient capacity to hold the descriptors
     /// and provide a mutable reference to it.
-    pub fn get_io_descriptors(&mut self, buffer: &mut Vec<dxe_services::IoSpaceDescriptor>) -> Result<(), Error> {
-        ensure!(self.maximum_address != 0, Error::NotInitialized);
-        ensure!(buffer.capacity() >= self.io_descriptor_count(), Error::InvalidParameter);
-        ensure!(buffer.is_empty(), Error::InvalidParameter);
+    pub fn get_io_descriptors(&mut self, buffer: &mut Vec<dxe_services::IoSpaceDescriptor>) -> Result<(), EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
+        ensure!(buffer.capacity() >= self.io_descriptor_count(), EfiError::InvalidParameter);
+        ensure!(buffer.is_empty(), EfiError::InvalidParameter);
 
         log::trace!(target: "allocations", "[{}] Enter\n", function!(), );
 
@@ -2074,7 +2037,7 @@ impl IoGCD {
             }
             Ok(())
         } else {
-            Err(Error::NotFound)
+            Err(EfiError::NotFound)
         }
     }
 
@@ -2245,7 +2208,7 @@ pub struct SpinLockedGcd {
 
 impl SpinLockedGcd {
     /// Creates a new uninitialized GCD. [`Self::init`] must be invoked before any other functions or they will return
-    /// [`Error::NotInitialized`]. An optional callback can be provided which will be invoked whenever an operation
+    /// [`EfiError::NotReady`]. An optional callback can be provided which will be invoked whenever an operation
     /// changes the GCD map.
     pub const fn new(memory_change_callback: Option<MapChangeCallback>) -> Self {
         Self {
@@ -2317,7 +2280,7 @@ impl SpinLockedGcd {
         base_address: usize,
         len: usize,
         capabilities: u64,
-    ) -> Result<usize, Error> {
+    ) -> Result<usize, EfiError> {
         let result = self.memory.lock().add_memory_space(memory_type, base_address, len, capabilities);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
@@ -2331,7 +2294,7 @@ impl SpinLockedGcd {
     ///
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.4
-    pub fn remove_memory_space(&self, base_address: usize, len: usize) -> Result<(), Error> {
+    pub fn remove_memory_space(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
         let result = self.memory.lock().remove_memory_space(base_address, len);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
@@ -2353,7 +2316,7 @@ impl SpinLockedGcd {
         len: usize,
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
-    ) -> Result<usize, Error> {
+    ) -> Result<usize, EfiError> {
         let result = self.memory.lock().allocate_memory_space(
             allocate_type,
             memory_type,
@@ -2386,7 +2349,7 @@ impl SpinLockedGcd {
                     (attributes & efi::CACHE_ATTRIBUTE_MASK) | efi::MEMORY_XP,
                 ) {
                     Ok(_) => (),
-                    Err(Error::NotInitialized) => {
+                    Err(EfiError::NotReady) => {
                         // this is expected if mu-paging is not initialized yet. The GCD will still be updated, but
                         // the page table will not yet. When we initialize mu-paging, the GCD will use the attributes
                         // that have been updated here to initialize the page table. mu-paging must allocate memory
@@ -2418,7 +2381,7 @@ impl SpinLockedGcd {
     ///
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.3
-    pub fn free_memory_space(&self, base_address: usize, len: usize) -> Result<(), Error> {
+    pub fn free_memory_space(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
         let result = self.memory.lock().free_memory_space(base_address, len);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
@@ -2437,7 +2400,7 @@ impl SpinLockedGcd {
     ///
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.3
-    pub fn free_memory_space_preserving_ownership(&self, base_address: usize, len: usize) -> Result<(), Error> {
+    pub fn free_memory_space_preserving_ownership(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
         let result = self.memory.lock().free_memory_space_preserving_ownership(base_address, len);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
@@ -2451,7 +2414,12 @@ impl SpinLockedGcd {
     ///
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.6
-    pub fn set_memory_space_attributes(&self, base_address: usize, len: usize, attributes: u64) -> Result<(), Error> {
+    pub fn set_memory_space_attributes(
+        &self,
+        base_address: usize,
+        len: usize,
+        attributes: u64,
+    ) -> Result<(), EfiError> {
         // this API allows for setting attributes across multiple descriptors in the GCD (assuming the capabilities
         // allow it). The lower level set_memory_space_attributes will only operate on a single entry in the GCD/page
         // table, so at this level we need to check to see if the range spans multiple entries and if so, we need to
@@ -2487,7 +2455,7 @@ impl SpinLockedGcd {
         base_address: usize,
         len: usize,
         capabilities: u64,
-    ) -> Result<(), Error> {
+    ) -> Result<(), EfiError> {
         let result = self.memory.lock().set_memory_space_capabilities(base_address, len, capabilities);
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
@@ -2498,7 +2466,10 @@ impl SpinLockedGcd {
     }
 
     /// returns a copy of the current set of memory blocks descriptors in the GCD.
-    pub fn get_memory_descriptors(&self, buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>) -> Result<(), Error> {
+    pub fn get_memory_descriptors(
+        &self,
+        buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>,
+    ) -> Result<(), EfiError> {
         self.memory.lock().get_memory_descriptors(buffer)
     }
 
@@ -2506,7 +2477,7 @@ impl SpinLockedGcd {
     pub fn get_memory_descriptor_for_address(
         &self,
         address: efi::PhysicalAddress,
-    ) -> Result<dxe_services::MemorySpaceDescriptor, Error> {
+    ) -> Result<dxe_services::MemorySpaceDescriptor, EfiError> {
         self.memory.lock().get_memory_descriptor_for_address(address)
     }
 
@@ -2521,12 +2492,12 @@ impl SpinLockedGcd {
         io_type: dxe_services::GcdIoType,
         base_address: usize,
         len: usize,
-    ) -> Result<usize, Error> {
+    ) -> Result<usize, EfiError> {
         self.io.lock().add_io_space(io_type, base_address, len)
     }
 
     /// Acquires lock and delegates to [`IoGCD::remove_io_space`]
-    pub fn remove_io_space(&self, base_address: usize, len: usize) -> Result<(), Error> {
+    pub fn remove_io_space(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
         self.io.lock().remove_io_space(base_address, len)
     }
 
@@ -2539,17 +2510,17 @@ impl SpinLockedGcd {
         len: usize,
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
-    ) -> Result<usize, Error> {
+    ) -> Result<usize, EfiError> {
         self.io.lock().allocate_io_space(allocate_type, io_type, alignment, len, image_handle, device_handle)
     }
 
     /// Acquires lock and delegates to [`IoGCD::free_io_space]
-    pub fn free_io_space(&self, base_address: usize, len: usize) -> Result<(), Error> {
+    pub fn free_io_space(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
         self.io.lock().free_io_space(base_address, len)
     }
 
     /// Acquires lock and delegates to [`IoGCD::get_io_descriptors`]
-    pub fn get_io_descriptors(&self, buffer: &mut Vec<dxe_services::IoSpaceDescriptor>) -> Result<(), Error> {
+    pub fn get_io_descriptors(&self, buffer: &mut Vec<dxe_services::IoSpaceDescriptor>) -> Result<(), EfiError> {
         self.io.lock().get_io_descriptors(buffer)
     }
 
@@ -2604,14 +2575,14 @@ mod tests {
         let mut gcd = GCD::new(48);
 
         assert_eq!(
-            Err(Error::OutOfResources),
+            Err(EfiError::OutOfResources),
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, address, MEMORY_BLOCK_SLICE_SIZE, 0) },
             "First add memory space should be a system memory."
         );
         assert_eq!(0, gcd.memory_descriptor_count());
 
         assert_eq!(
-            Err(Error::OutOfResources),
+            Err(EfiError::OutOfResources),
             unsafe {
                 gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE - 1, 0)
             },
@@ -2634,7 +2605,7 @@ mod tests {
         let snapshot = copy_memory_block(&gcd);
 
         assert_eq!(
-            Err(Error::InvalidParameter),
+            Err(EfiError::InvalidParameter),
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::NonExistent, 10, 1, 0) },
             "Can't manually add NonExistent memory space manually."
         );
@@ -2647,7 +2618,7 @@ mod tests {
     fn test_add_memory_space_with_0_len_block() {
         let (mut gcd, _) = create_gcd();
         let snapshot = copy_memory_block(&gcd);
-        assert_eq!(Err(Error::InvalidParameter), unsafe {
+        assert_eq!(Err(EfiError::InvalidParameter), unsafe {
             gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 0, 0)
         });
         assert_eq!(snapshot, copy_memory_block(&gcd));
@@ -2670,7 +2641,7 @@ mod tests {
 
         let res = unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, addr + n, 1, n as u64) };
         assert_eq!(
-            Err(Error::OutOfResources),
+            Err(EfiError::OutOfResources),
             res,
             "Should return out of memory if there is no space in memory blocks."
         );
@@ -2684,13 +2655,13 @@ mod tests {
 
         let snapshot = copy_memory_block(&gcd);
 
-        assert_eq!(Err(Error::Unsupported), unsafe {
+        assert_eq!(Err(EfiError::Unsupported), unsafe {
             gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, gcd.maximum_address + 1, 1, 0)
         });
-        assert_eq!(Err(Error::Unsupported), unsafe {
+        assert_eq!(Err(EfiError::Unsupported), unsafe {
             gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, gcd.maximum_address, 1, 0)
         });
-        assert_eq!(Err(Error::Unsupported), unsafe {
+        assert_eq!(Err(EfiError::Unsupported), unsafe {
             gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, gcd.maximum_address - 1, 2, 0)
         });
 
@@ -2706,17 +2677,17 @@ mod tests {
         let snapshot = copy_memory_block(&gcd);
 
         assert_eq!(
-            Err(Error::AccessDenied),
+            Err(EfiError::AccessDenied),
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 1002, 5, 0) },
             "Can't add inside a range previously added."
         );
         assert_eq!(
-            Err(Error::AccessDenied),
+            Err(EfiError::AccessDenied),
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 998, 5, 0) },
             "Can't add partially inside a range previously added (Start)."
         );
         assert_eq!(
-            Err(Error::AccessDenied),
+            Err(EfiError::AccessDenied),
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, 1009, 5, 0) },
             "Can't add partially inside a range previously added (End)."
         );
@@ -2733,12 +2704,12 @@ mod tests {
         let snapshot = copy_memory_block(&gcd);
 
         assert_eq!(
-            Err(Error::AccessDenied),
+            Err(EfiError::AccessDenied),
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, 5, 0) },
             "Can't add inside a range previously allocated."
         );
         assert_eq!(
-            Err(Error::AccessDenied),
+            Err(EfiError::AccessDenied),
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, address - 100, 200, 0) },
             "Can't add partially inside a range previously allocated."
         );
@@ -2816,7 +2787,7 @@ mod tests {
         let address = mem.as_ptr() as usize;
         let mut gcd = GCD::new(48);
 
-        assert_eq!(Err(Error::NotFound), gcd.remove_memory_space(address, MEMORY_BLOCK_SLICE_SIZE));
+        assert_eq!(Err(EfiError::NotFound), gcd.remove_memory_space(address, MEMORY_BLOCK_SLICE_SIZE));
     }
 
     #[test]
@@ -2827,10 +2798,10 @@ mod tests {
         assert!(unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 10, 0) }.is_ok());
 
         let snapshot = copy_memory_block(&gcd);
-        assert_eq!(Err(Error::InvalidParameter), gcd.remove_memory_space(5, 0));
+        assert_eq!(Err(EfiError::InvalidParameter), gcd.remove_memory_space(5, 0));
 
         assert_eq!(
-            Err(Error::InvalidParameter),
+            Err(EfiError::InvalidParameter),
             gcd.remove_memory_space(10, 0),
             "If there is no allocate done first, 0 length invalid param should have priority."
         );
@@ -2850,12 +2821,12 @@ mod tests {
         let snapshot = copy_memory_block(&gcd);
 
         assert_eq!(
-            Err(Error::Unsupported),
+            Err(EfiError::Unsupported),
             gcd.remove_memory_space(gcd.maximum_address - 10, 11),
             "An address outside the processor range support is invalid."
         );
         assert_eq!(
-            Err(Error::Unsupported),
+            Err(EfiError::Unsupported),
             gcd.remove_memory_space(gcd.maximum_address, 10),
             "An address outside the processor range support is invalid."
         );
@@ -2871,14 +2842,18 @@ mod tests {
 
         let snapshot = copy_memory_block(&gcd);
 
-        assert_eq!(Err(Error::NotFound), gcd.remove_memory_space(95, 10), "Can't remove memory space partially added.");
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
+            gcd.remove_memory_space(95, 10),
+            "Can't remove memory space partially added."
+        );
+        assert_eq!(
+            Err(EfiError::NotFound),
             gcd.remove_memory_space(105, 10),
             "Can't remove memory space partially added."
         );
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.remove_memory_space(10, 10),
             "Can't remove memory space not previously added."
         );
@@ -2894,18 +2869,18 @@ mod tests {
 
         // Not found has a priority over the access denied because the check if the range is valid is done earlier.
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.remove_memory_space(address - 5, 10),
             "Can't remove memory space partially allocated."
         );
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.remove_memory_space(address + MEMORY_BLOCK_SLICE_SIZE - 5, 10),
             "Can't remove memory space partially allocated."
         );
 
         assert_eq!(
-            Err(Error::AccessDenied),
+            Err(EfiError::AccessDenied),
             gcd.remove_memory_space(address + 10, 10),
             "Can't remove memory space not previously allocated."
         );
@@ -2932,7 +2907,7 @@ mod tests {
         let memory_blocks_snapshot = copy_memory_block(&gcd);
 
         assert_eq!(
-            Err(Error::OutOfResources),
+            Err(EfiError::OutOfResources),
             gcd.remove_memory_space(addr, 5),
             "Should return out of memory if there is no space in memory blocks."
         );
@@ -3002,7 +2977,7 @@ mod tests {
     fn test_allocate_memory_space_before_memory_blocks_instantiated() {
         let mut gcd = GCD::new(48);
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.allocate_memory_space(
                 AllocateType::Address(0),
                 dxe_services::GcdMemoryType::SystemMemory,
@@ -3019,7 +2994,7 @@ mod tests {
         let (mut gcd, _) = create_gcd();
         let snapshot = copy_memory_block(&gcd);
         assert_eq!(
-            Err(Error::InvalidParameter),
+            Err(EfiError::InvalidParameter),
             gcd.allocate_memory_space(
                 AllocateType::BottomUp(None),
                 dxe_services::GcdMemoryType::Reserved,
@@ -3037,7 +3012,7 @@ mod tests {
         let (mut gcd, _) = create_gcd();
         let snapshot = copy_memory_block(&gcd);
         assert_eq!(
-            Err(Error::InvalidParameter),
+            Err(EfiError::InvalidParameter),
             gcd.allocate_memory_space(
                 AllocateType::BottomUp(None),
                 dxe_services::GcdMemoryType::Reserved,
@@ -3056,7 +3031,7 @@ mod tests {
         let snapshot = copy_memory_block(&gcd);
 
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.allocate_memory_space(
                 AllocateType::Address(gcd.maximum_address - 100),
                 dxe_services::GcdMemoryType::Reserved,
@@ -3067,7 +3042,7 @@ mod tests {
             ),
         );
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.allocate_memory_space(
                 AllocateType::Address(gcd.maximum_address + 100),
                 dxe_services::GcdMemoryType::Reserved,
@@ -3098,7 +3073,7 @@ mod tests {
             unsafe { gcd.add_memory_space(memory_type, i * 10, 10, 0) }.unwrap();
             let res = gcd.allocate_memory_space(AllocateType::Address(i * 10), memory_type, 0, 10, 1 as _, None);
             match memory_type {
-                dxe_services::GcdMemoryType::Unaccepted => assert_eq!(Err(Error::InvalidParameter), res),
+                dxe_services::GcdMemoryType::Unaccepted => assert_eq!(Err(EfiError::InvalidParameter), res),
                 _ => assert!(res.is_ok()),
             }
         }
@@ -3119,7 +3094,7 @@ mod tests {
         // Try to allocate chunk bigger than 100.
         for allocate_type in [AllocateType::BottomUp(None), AllocateType::TopDown(None)] {
             assert_eq!(
-                Err(Error::OutOfResources),
+                Err(EfiError::OutOfResources),
                 gcd.allocate_memory_space(
                     allocate_type,
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -3136,7 +3111,7 @@ mod tests {
             [AllocateType::BottomUp(Some(10_000)), AllocateType::TopDown(Some(10_000)), AllocateType::Address(10_000)]
         {
             assert_eq!(
-                Err(Error::NotFound),
+                Err(EfiError::NotFound),
                 gcd.allocate_memory_space(
                     allocate_type,
                     dxe_services::GcdMemoryType::SystemMemory,
@@ -3246,7 +3221,7 @@ mod tests {
         let memory_blocks_snapshot = copy_memory_block(&gcd);
 
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.allocate_memory_space(
                 AllocateType::Address(0xa0f),
                 dxe_services::GcdMemoryType::SystemMemory,
@@ -3327,7 +3302,7 @@ mod tests {
         let snapshot = copy_memory_block(&gcd);
 
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.allocate_memory_space(
                 AllocateType::Address(0x100),
                 dxe_services::GcdMemoryType::SystemMemory,
@@ -3338,7 +3313,7 @@ mod tests {
             ),
         );
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.allocate_memory_space(
                 AllocateType::Address(0x95),
                 dxe_services::GcdMemoryType::SystemMemory,
@@ -3349,7 +3324,7 @@ mod tests {
             ),
         );
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.allocate_memory_space(
                 AllocateType::Address(110),
                 dxe_services::GcdMemoryType::SystemMemory,
@@ -3360,7 +3335,7 @@ mod tests {
             ),
         );
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.allocate_memory_space(
                 AllocateType::Address(0),
                 dxe_services::GcdMemoryType::SystemMemory,
@@ -3378,7 +3353,7 @@ mod tests {
     fn test_allocate_memory_space_with_address_allocated() {
         let (mut gcd, address) = create_gcd();
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.allocate_memory_space(
                 AllocateType::Address(address),
                 dxe_services::GcdMemoryType::SystemMemory,
@@ -3393,14 +3368,14 @@ mod tests {
     #[test]
     fn test_free_memory_space_before_memory_blocks_instantiated() {
         let mut gcd = GCD::new(48);
-        assert_eq!(Err(Error::NotFound), gcd.free_memory_space(0x1000, 0x1000));
+        assert_eq!(Err(EfiError::NotFound), gcd.free_memory_space(0x1000, 0x1000));
     }
 
     #[test]
     fn test_free_memory_space_when_0_len_block() {
         let (mut gcd, _) = create_gcd();
         let snapshot = copy_memory_block(&gcd);
-        assert_eq!(Err(Error::InvalidParameter), gcd.remove_memory_space(0, 0));
+        assert_eq!(Err(EfiError::InvalidParameter), gcd.remove_memory_space(0, 0));
         assert_eq!(snapshot, copy_memory_block(&gcd));
     }
 
@@ -3422,9 +3397,9 @@ mod tests {
 
         let snapshot = copy_memory_block(&gcd);
 
-        assert_eq!(Err(Error::Unsupported), gcd.free_memory_space(gcd.maximum_address, 10));
-        assert_eq!(Err(Error::Unsupported), gcd.free_memory_space(gcd.maximum_address - 99, 100));
-        assert_eq!(Err(Error::Unsupported), gcd.free_memory_space(gcd.maximum_address + 1, 100));
+        assert_eq!(Err(EfiError::Unsupported), gcd.free_memory_space(gcd.maximum_address, 10));
+        assert_eq!(Err(EfiError::Unsupported), gcd.free_memory_space(gcd.maximum_address - 99, 100));
+        assert_eq!(Err(EfiError::Unsupported), gcd.free_memory_space(gcd.maximum_address + 1, 100));
 
         assert_eq!(snapshot, copy_memory_block(&gcd));
     }
@@ -3443,9 +3418,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(Err(Error::NotFound), gcd.free_memory_space(0x2000, 0x1000));
-        assert_eq!(Err(Error::NotFound), gcd.free_memory_space(0x4000, 0x1000));
-        assert_eq!(Err(Error::NotFound), gcd.free_memory_space(0, 0x1000));
+        assert_eq!(Err(EfiError::NotFound), gcd.free_memory_space(0x2000, 0x1000));
+        assert_eq!(Err(EfiError::NotFound), gcd.free_memory_space(0x4000, 0x1000));
+        assert_eq!(Err(EfiError::NotFound), gcd.free_memory_space(0, 0x1000));
     }
 
     // comment out for now, this needs revisiting. The assumptions it makes are not valid
@@ -3471,7 +3446,7 @@ mod tests {
     //     }
     //     let memory_blocks_snapshot = copy_memory_block(&gcd);
 
-    //     assert_eq!(Err(Error::OutOfResources), gcd.free_memory_space(0, 1));
+    //     assert_eq!(Err(EfiError::OutOfResources), gcd.free_memory_space(0, 1));
 
     //     assert_eq!(memory_blocks_snapshot, copy_memory_block(&gcd),);
     // }
@@ -3534,40 +3509,43 @@ mod tests {
             free_memory_space_fn: GCD::free_memory_space_worker,
             page_table: None,
         };
-        assert_eq!(Err(Error::NotInitialized), gcd.set_memory_space_attributes(0, 0x50000, 0b1111));
+        assert_eq!(Err(EfiError::NotReady), gcd.set_memory_space_attributes(0, 0x50000, 0b1111));
 
         let (mut gcd, _) = create_gcd();
 
         // Test that setting memory space attributes on more space than is available is an error
-        assert_eq!(Err(Error::Unsupported), gcd.set_memory_space_attributes(0x100000000000000, 50, 0b1111));
+        assert_eq!(Err(EfiError::Unsupported), gcd.set_memory_space_attributes(0x100000000000000, 50, 0b1111));
 
         // Test that calling set_memory_space_attributes with no size returns invalid parameter
-        assert_eq!(Err(Error::InvalidParameter), gcd.set_memory_space_attributes(0, 0, 0b1111));
+        assert_eq!(Err(EfiError::InvalidParameter), gcd.set_memory_space_attributes(0, 0, 0b1111));
 
         // Test that calling set_memory_space_attributes with invalid attributes returns invalid parameter
-        assert_eq!(Err(Error::InvalidParameter), gcd.set_memory_space_attributes(0, 0, 0));
+        assert_eq!(Err(EfiError::InvalidParameter), gcd.set_memory_space_attributes(0, 0, 0));
 
         // Test that a non-page aligned address returns invalid parameter
-        assert_eq!(Err(Error::InvalidParameter), gcd.set_memory_space_attributes(0xFFFFFFFF, 0x1000, efi::MEMORY_WB));
+        assert_eq!(
+            Err(EfiError::InvalidParameter),
+            gcd.set_memory_space_attributes(0xFFFFFFFF, 0x1000, efi::MEMORY_WB)
+        );
 
         // Test that a non-page aligned address with the runtime attribute set returns invalid parameter
         assert_eq!(
-            Err(Error::InvalidParameter),
+            Err(EfiError::InvalidParameter),
             gcd.set_memory_space_attributes(0xFFFFFFFF, 0x1000, efi::MEMORY_RUNTIME | efi::MEMORY_WB)
         );
 
         // Test that a non-page aligned size returns invalid parameter
-        assert_eq!(Err(Error::InvalidParameter), gcd.set_memory_space_attributes(0x1000, 0xFFF, efi::MEMORY_WB));
+        assert_eq!(Err(EfiError::InvalidParameter), gcd.set_memory_space_attributes(0x1000, 0xFFF, efi::MEMORY_WB));
 
         // Test that a non-page aligned size returns invalid parameter
         assert_eq!(
-            Err(Error::InvalidParameter),
+            Err(EfiError::InvalidParameter),
             gcd.set_memory_space_attributes(0x1000, 0xFFF, efi::MEMORY_RUNTIME | efi::MEMORY_WB)
         );
 
         // Test that a non-page aligned address and size returns invalid parameter
         assert_eq!(
-            Err(Error::InvalidParameter),
+            Err(EfiError::InvalidParameter),
             gcd.set_memory_space_attributes(0xFFFFFFFF, 0xFFF, efi::MEMORY_RUNTIME | efi::MEMORY_WB)
         );
     }
@@ -3587,7 +3565,7 @@ mod tests {
         )
         .unwrap();
         // Trying to set capabilities where the range falls outside a block should return unsupported
-        assert_eq!(Err(Error::Unsupported), gcd.set_memory_space_capabilities(0, 0x3000, 0b1111));
+        assert_eq!(Err(EfiError::Unsupported), gcd.set_memory_space_capabilities(0, 0x3000, 0b1111));
         gcd.set_memory_space_capabilities(0, 0x2000, efi::MEMORY_RP | efi::MEMORY_RO).unwrap();
         gcd.set_gcd_memory_attributes(0, 0x2000, efi::MEMORY_RO).unwrap();
     }
@@ -3637,7 +3615,7 @@ mod tests {
 
     //     // Test that allocate_memory_space fails when full
     //     assert_eq!(
-    //         Err(Error::OutOfResources),
+    //         Err(EfiError::OutOfResources),
     //         gcd.allocate_memory_space(
     //             AllocateType::BottomUp(None),
     //             dxe_services::GcdMemoryType::SystemMemory,
@@ -3650,11 +3628,11 @@ mod tests {
     //     assert_eq!(memory_blocks_snapshot, copy_memory_block(&gcd));
 
     //     // Test that set_memory_space_attributes fails when full, if the block requires a split
-    //     assert_eq!(Err(Error::OutOfResources), gcd.set_memory_space_capabilities(0x1000, 0x1000, 0b1111));
+    //     assert_eq!(Err(EfiError::OutOfResources), gcd.set_memory_space_capabilities(0x1000, 0x1000, 0b1111));
 
     //     // Set capabilities on an exact block so we don't split it, and can test failing set_attributes
     //     gcd.set_memory_space_capabilities(0x4000, 0x2000, 0b1111).unwrap();
-    //     assert_eq!(Err(Error::OutOfResources), gcd.set_memory_space_attributes(0x5000, 0x1000, 0b1111));
+    //     assert_eq!(Err(EfiError::OutOfResources), gcd.set_memory_space_attributes(0x5000, 0x1000, 0b1111));
     // }
 
     #[test]
@@ -3663,10 +3641,10 @@ mod tests {
 
         assert!(gcd.add_io_space(dxe_services::GcdIoType::Io, 0, 10).is_ok());
         // Cannot Allocate a range in a range that is already allocated
-        assert_eq!(Err(Error::AccessDenied), gcd.add_io_space(dxe_services::GcdIoType::Io, 0, 10));
+        assert_eq!(Err(EfiError::AccessDenied), gcd.add_io_space(dxe_services::GcdIoType::Io, 0, 10));
 
         // Cannot allocate a range as NonExistent
-        assert_eq!(Err(Error::InvalidParameter), gcd.add_io_space(dxe_services::GcdIoType::NonExistent, 10, 10));
+        assert_eq!(Err(EfiError::InvalidParameter), gcd.add_io_space(dxe_services::GcdIoType::NonExistent, 10, 10));
 
         // Cannot do more allocations if the underlying data structure is full
         for i in 1..IO_BLOCK_SLICE_LEN {
@@ -3677,7 +3655,7 @@ mod tests {
             }
         }
         assert_eq!(
-            Err(Error::OutOfResources),
+            Err(EfiError::OutOfResources),
             gcd.add_io_space(dxe_services::GcdIoType::Io, (IO_BLOCK_SLICE_LEN + 1) * 10, 10)
         );
     }
@@ -3687,18 +3665,18 @@ mod tests {
         let mut gcd = IoGCD::_new(16);
 
         // Cannot remove a range of 0
-        assert_eq!(Err(Error::InvalidParameter), gcd.remove_io_space(0, 0));
+        assert_eq!(Err(EfiError::InvalidParameter), gcd.remove_io_space(0, 0));
 
         // Cannot remove a range greater than what is available
-        assert_eq!(Err(Error::Unsupported), gcd.remove_io_space(0, 70_000));
+        assert_eq!(Err(EfiError::Unsupported), gcd.remove_io_space(0, 70_000));
 
         // Cannot remove an io space if it does not exist
-        assert_eq!(Err(Error::NotFound), gcd.remove_io_space(0, 10));
+        assert_eq!(Err(EfiError::NotFound), gcd.remove_io_space(0, 10));
 
         // Cannot remove an io space if it is allocated
         gcd.add_io_space(dxe_services::GcdIoType::Io, 0, 10).unwrap();
         gcd.allocate_io_space(AllocateType::Address(0), dxe_services::GcdIoType::Io, 0, 10, 1 as _, None).unwrap();
-        assert_eq!(Err(Error::AccessDenied), gcd.remove_io_space(0, 10));
+        assert_eq!(Err(EfiError::AccessDenied), gcd.remove_io_space(0, 10));
 
         // Cannot remove an io space if it is partially in a block and we are full, as it
         // causes a split with no space to add a new node.
@@ -3710,7 +3688,7 @@ mod tests {
                 gcd.add_io_space(dxe_services::GcdIoType::Io, i * 10, 10).unwrap();
             }
         }
-        assert_eq!(Err(Error::OutOfResources), gcd.remove_io_space(25, 3));
+        assert_eq!(Err(EfiError::OutOfResources), gcd.remove_io_space(25, 3));
         assert!(gcd.remove_io_space(20, 10).is_ok());
     }
 
@@ -3749,15 +3727,15 @@ mod tests {
         }
 
         assert_eq!(
-            Err(Error::OutOfResources),
+            Err(EfiError::OutOfResources),
             gcd.allocate_bottom_up(dxe_services::GcdIoType::Io, 0, 5, 2 as _, None, 0x4000)
         );
         assert_eq!(
-            Err(Error::OutOfResources),
+            Err(EfiError::OutOfResources),
             gcd.allocate_top_down(dxe_services::GcdIoType::Io, 0, 5, 2 as _, None, 0)
         );
         assert_eq!(
-            Err(Error::OutOfResources),
+            Err(EfiError::OutOfResources),
             gcd.allocate_address(dxe_services::GcdIoType::Io, 0, 5, 2 as _, None, 210)
         );
     }
@@ -3768,7 +3746,7 @@ mod tests {
 
         // Cannot allocate if no blocks have been added
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.allocate_bottom_up(dxe_services::GcdIoType::Io, 0, 0x100, 1 as _, None, 0x4000)
         );
 
@@ -3796,7 +3774,7 @@ mod tests {
 
         // Cannot allocate if no blocks have been added
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.allocate_bottom_up(dxe_services::GcdIoType::Io, 0, 0x100, 1 as _, None, 0x4000)
         );
 
@@ -3813,7 +3791,7 @@ mod tests {
         assert_eq!(Ok(0xB0), gcd.allocate_top_down(dxe_services::GcdIoType::Io, 0, 0x150, 1 as _, None, 0));
 
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.allocate_top_down(dxe_services::GcdIoType::Reserved, 0, 0x150, 1 as _, None, 0)
         );
     }
@@ -3824,7 +3802,7 @@ mod tests {
 
         // Cannot allocate if no blocks have been added
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.allocate_address(dxe_services::GcdIoType::Io, 0, 0x100, 1 as _, None, 0x200)
         );
 
@@ -3837,7 +3815,7 @@ mod tests {
         // If we find a block with the address, but its not the right Io type, we should
         // report not found
         assert_eq!(
-            Err(Error::NotFound),
+            Err(EfiError::NotFound),
             gcd.allocate_address(dxe_services::GcdIoType::Reserved, 0, 0x100, 1 as _, None, 0)
         );
     }
@@ -3847,13 +3825,13 @@ mod tests {
         let mut gcd = IoGCD::_new(16);
 
         // Cannot free a range of 0
-        assert_eq!(Err(Error::InvalidParameter), gcd.free_io_space(0, 0));
+        assert_eq!(Err(EfiError::InvalidParameter), gcd.free_io_space(0, 0));
 
         // Cannot free a range greater than what is available
-        assert_eq!(Err(Error::Unsupported), gcd.free_io_space(0, 70_000));
+        assert_eq!(Err(EfiError::Unsupported), gcd.free_io_space(0, 70_000));
 
         // Cannot free an io space if it does not exist
-        assert_eq!(Err(Error::NotFound), gcd.free_io_space(0, 10));
+        assert_eq!(Err(EfiError::NotFound), gcd.free_io_space(0, 10));
 
         gcd.add_io_space(dxe_services::GcdIoType::Io, 0, 10).unwrap();
         gcd.allocate_io_space(AllocateType::Address(0), dxe_services::GcdIoType::Io, 0, 10, 1 as _, None).unwrap();
@@ -3872,7 +3850,7 @@ mod tests {
 
         // Cannot partially free a block when full, but we can free the whole block
         gcd.allocate_address(dxe_services::GcdIoType::Maximum, 0, 10, 1 as _, None, 100).unwrap();
-        assert_eq!(Err(Error::OutOfResources), gcd.free_io_space(105, 3));
+        assert_eq!(Err(EfiError::OutOfResources), gcd.free_io_space(105, 3));
         assert_eq!(Ok(()), gcd.free_io_space(100, 10));
     }
 
@@ -3930,7 +3908,7 @@ mod tests {
             assert_eq!(GCD.memory.lock().maximum_address, 0);
 
             let add_result = unsafe { GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 100, 0) };
-            assert_eq!(add_result, Err(Error::NotInitialized));
+            assert_eq!(add_result, Err(EfiError::NotReady));
 
             let allocate_result = GCD.allocate_memory_space(
                 AllocateType::Address(0),
@@ -3940,13 +3918,13 @@ mod tests {
                 1 as _,
                 None,
             );
-            assert_eq!(allocate_result, Err(Error::NotInitialized));
+            assert_eq!(allocate_result, Err(EfiError::NotReady));
 
             let free_result = GCD.free_memory_space(0, 10);
-            assert_eq!(free_result, Err(Error::NotInitialized));
+            assert_eq!(free_result, Err(EfiError::NotReady));
 
             let remove_result = GCD.remove_memory_space(0, 10);
-            assert_eq!(remove_result, Err(Error::NotInitialized));
+            assert_eq!(remove_result, Err(EfiError::NotReady));
         });
     }
 

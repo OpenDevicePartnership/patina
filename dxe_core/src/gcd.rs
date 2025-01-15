@@ -20,7 +20,7 @@ use uefi_sdk::base::{align_down, align_up};
 
 use crate::GCD;
 
-pub use spin_locked_gcd::{AllocateType, Error, MapChangeType, SpinLockedGcd};
+pub use spin_locked_gcd::{AllocateType, MapChangeType, SpinLockedGcd};
 
 pub fn init_gcd(physical_hob_list: *const c_void) {
     let mut free_memory_start: u64 = 0;
