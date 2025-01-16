@@ -1,11 +1,13 @@
 [package]
 name = "dxe_core"
-version = "6.1.0"
-edition = "2021"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
 readme = "../README.md"
 description = "A pure rust implementation of the UEFI DXE Core."
-license.workspace = true
-repository.workspace = true
 
 [lib]
 name = "dxe_core"
@@ -22,7 +24,6 @@ required-features = ["std"]
 
 [dependencies]
 ahash = { workspace=  true }
-corosensei = { workspace = true }
 crc32fast = { workspace = true }
 goblin = {workspace = true}
 lazy_static = { workspace = true }
@@ -34,6 +35,7 @@ paging = { workspace = true }
 r-efi = { workspace = true }
 scroll = {workspace = true}
 spin = { workspace = true }
+uefi_corosensei = { workspace = true }
 uuid = { workspace = true }
 
 uefi_sdk = { workspace = true }
