@@ -540,19 +540,19 @@ fn end_perf_measurement(
 }
 
 pub fn perf_image_start_begin(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_START);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_START);
 }
 
 pub fn perf_image_start_end(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_END);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_END);
 }
 
 pub fn perf_load_image_begin(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_DB_START);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_START);
 }
 
 pub fn perf_load_image_end(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_DB_END);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_END);
 }
 
 pub fn perf_driver_binding_support_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
@@ -589,10 +589,11 @@ pub fn perf_event(event_string: &str, caller_id: &efi::Guid) {
     );
 }
 
+// SHERRY: the prepended mod names are necessary (but ugly) due to the way Rust scopes macros
 #[macro_export]
 macro_rules! perf_event_signal_begin {
-    (&event_guid:expr) => {
-        _perf_event_signal_begin($event_guid, function()!)
+    ($event_guid:expr, $caller_id:expr) => {
+        uefi_performance::_perf_event_signal_begin($event_guid, mu_rust_helpers::function!(), $caller_id)
     };
 }
 
@@ -608,8 +609,8 @@ pub fn _perf_event_signal_begin(event_guid: &efi::Guid, fun_name: &str, caller_i
 
 #[macro_export]
 macro_rules! perf_event_signal_end {
-    (&event_guid:expr) => {
-        _perf_event_signal_end($event_guid, function()!)
+    ($event_guid:expr, $caller_id:expr) => {
+        uefi_performance::_perf_event_signal_end($event_guid, mu_rust_helpers::function!(), $caller_id)
     };
 }
 
@@ -625,8 +626,8 @@ pub fn _perf_event_signal_end(event_guid: &efi::Guid, fun_name: &str, caller_id:
 
 #[macro_export]
 macro_rules! perf_callback_begin {
-    (&trigger_guid:expr) => {
-        _perf_callback_begin($trigger_guid, function()!)
+    ($trigger_guid:expr, $caller_id:expr) => {
+        uefi_performance::_perf_callback_begin($trigger_guid, mu_rust_helpers::function!(), $caller_id)
     };
 }
 
@@ -642,8 +643,8 @@ pub fn _perf_callback_begin(trigger_guid: &efi::Guid, fun_name: &str, caller_id:
 
 #[macro_export]
 macro_rules! perf_callback_end {
-    (&trigger_guid:expr) => {
-        _perf_callback_end($trigger_guid, function()!)
+    ($trigger_guid:expr, $caller_id:expr) => {
+        uefi_performance::_perf_callback_end($trigger_guid, mu_rust_helpers::function!(), $caller_id)
     };
 }
 
@@ -659,8 +660,8 @@ pub fn _perf_callback_end(trigger_guid: &efi::Guid, fun_name: &str, caller_id: &
 
 #[macro_export]
 macro_rules! perf_function_begin {
-    (&trigger_guid:expr) => {
-        _perf_function_begin($trigger_guid, function()!)
+    ($caller_id:expr) => {
+        uefi_performance::_perf_function_begin(mu_rust_helpers::function!(), $caller_id)
     };
 }
 
@@ -676,8 +677,8 @@ pub fn _perf_function_begin(fun_name: &str, caller_id: &efi::Guid) {
 
 #[macro_export]
 macro_rules! perf_function_end {
-    (&trigger_guid:expr) => {
-        _perf_function_end($trigger_guid, function()!)
+    ($caller_id:expr) => {
+        uefi_performance::_perf_function_end(mu_rust_helpers::function!(), $caller_id)
     };
 }
 
