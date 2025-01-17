@@ -430,10 +430,6 @@ impl FixedSizeBlockAllocator {
             if address % ALIGNMENT != 0 {
                 return Err(efi::Status::INVALID_PARAMETER);
             }
-            // For directed address allocation, allow allocations to GCD types other than SystemMemory.
-            if let Ok(descriptor) = self.gcd.get_memory_descriptor_for_address(address as efi::PhysicalAddress) {
-                memory_type = descriptor.memory_type;
-            }
         }
 
         // Page allocations and pool allocations are disjoint; page allocations are allocated directly from the GCD and are
