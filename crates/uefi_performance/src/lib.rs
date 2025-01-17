@@ -52,10 +52,9 @@ use performance_table::FBPT;
 
 use r_efi::system::EVENT_GROUP_READY_TO_BOOT;
 
-use mu_rust_helpers::{
-    function,
-    perf_timer::{Arch, ArchFunctionality},
-};
+pub use mu_rust_helpers::function;
+use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
+
 use uefi_sdk::{
     boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
     guid,
@@ -593,7 +592,7 @@ pub fn perf_event(event_string: &str, caller_id: &efi::Guid) {
 #[macro_export]
 macro_rules! perf_event_signal_begin {
     ($event_guid:expr, $caller_id:expr) => {
-        uefi_performance::_perf_event_signal_begin($event_guid, mu_rust_helpers::function!(), $caller_id)
+        $crate::_perf_event_signal_begin($event_guid, $crate::function!(), $caller_id)
     };
 }
 
@@ -610,7 +609,7 @@ pub fn _perf_event_signal_begin(event_guid: &efi::Guid, fun_name: &str, caller_i
 #[macro_export]
 macro_rules! perf_event_signal_end {
     ($event_guid:expr, $caller_id:expr) => {
-        uefi_performance::_perf_event_signal_end($event_guid, mu_rust_helpers::function!(), $caller_id)
+        $crate::_perf_event_signal_end($event_guid, $crate::function!(), $caller_id)
     };
 }
 
@@ -627,7 +626,7 @@ pub fn _perf_event_signal_end(event_guid: &efi::Guid, fun_name: &str, caller_id:
 #[macro_export]
 macro_rules! perf_callback_begin {
     ($trigger_guid:expr, $caller_id:expr) => {
-        uefi_performance::_perf_callback_begin($trigger_guid, mu_rust_helpers::function!(), $caller_id)
+        $crate::_perf_callback_begin($trigger_guid, $crate::function!(), $caller_id)
     };
 }
 
@@ -644,7 +643,7 @@ pub fn _perf_callback_begin(trigger_guid: &efi::Guid, fun_name: &str, caller_id:
 #[macro_export]
 macro_rules! perf_callback_end {
     ($trigger_guid:expr, $caller_id:expr) => {
-        uefi_performance::_perf_callback_end($trigger_guid, mu_rust_helpers::function!(), $caller_id)
+        $crate::_perf_callback_end($trigger_guid, $crate::function!(), $caller_id)
     };
 }
 
@@ -661,7 +660,7 @@ pub fn _perf_callback_end(trigger_guid: &efi::Guid, fun_name: &str, caller_id: &
 #[macro_export]
 macro_rules! perf_function_begin {
     ($caller_id:expr) => {
-        uefi_performance::_perf_function_begin(mu_rust_helpers::function!(), $caller_id)
+        $crate::_perf_function_begin($crate::function!(), $caller_id)
     };
 }
 
@@ -678,7 +677,7 @@ pub fn _perf_function_begin(fun_name: &str, caller_id: &efi::Guid) {
 #[macro_export]
 macro_rules! perf_function_end {
     ($caller_id:expr) => {
-        uefi_performance::_perf_function_end(mu_rust_helpers::function!(), $caller_id)
+        $crate::_perf_function_end($crate::function!(), $caller_id)
     };
 }
 
