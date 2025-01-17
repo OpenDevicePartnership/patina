@@ -7,6 +7,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
+use uefi_performance::{perf_image_start_begin, perf_image_start_end};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
 use mu_pi::hob::{Hob, HobList};
 use r_efi::efi;
@@ -1053,6 +1054,8 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
     // allocate a buffer for the entry point stack.
     let stack = ImageStack::new(ENTRY_POINT_STACK_SIZE)?;
 
+    perf_image_start_begin(image_handle);
+
     // define a co-routine that wraps the entry point execution. this doesn't
     // run until the coroutine.resume() call below.
     let mut coroutine = Coroutine::with_stack(stack, move |yielder, image_handle| {
@@ -1117,6 +1120,7 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
     unsafe { coroutine.force_reset() };
 
     PRIVATE_IMAGE_DATA.lock().current_running_image = previous_image;
+    perf_image_start_end(image_handle);
     match status {
         efi::Status::SUCCESS => Ok(()),
         err => Err(err),

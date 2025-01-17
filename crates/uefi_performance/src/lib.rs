@@ -540,19 +540,20 @@ fn end_perf_measurement(
 }
 
 pub fn perf_image_start_begin(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_START);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_START);
 }
 
 pub fn perf_image_start_end(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_END);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_END);
 }
 
+
 pub fn perf_load_image_begin(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_DB_START);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_START);
 }
 
 pub fn perf_load_image_end(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_DB_END);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_END);
 }
 
 pub fn perf_driver_binding_support_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
