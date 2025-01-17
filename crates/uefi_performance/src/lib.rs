@@ -589,7 +589,7 @@ pub fn perf_event(event_string: &str, caller_id: &efi::Guid) {
     );
 }
 
-// SHERRY: the prepended mod names are necessary (but ugly) due to the way Rust scopes macros
+// Due to the way Rust scopes macros, prepending the module names is necessary
 #[macro_export]
 macro_rules! perf_event_signal_begin {
     ($event_guid:expr, $caller_id:expr) => {
