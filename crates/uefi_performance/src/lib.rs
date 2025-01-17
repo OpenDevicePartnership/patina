@@ -220,15 +220,11 @@ extern "efiapi" fn create_performance_measurement(
 
     let string = unsafe { _utils::string_from_c_char_ptr(string) };
 
-    log::info!("attribute {:?}", attribute);
-
     let mut perf_id = identifier as u16;
-    log::info!("perf id before {}", perf_id);
     if attribute != PerfAttribute::PerfEntry {
         if perf_id != 0 && is_known_id(perf_id) && !is_known_token(string.as_ref()) {
             return efi::Status::INVALID_PARAMETER;
         } else if perf_id != 0 && !is_known_id(perf_id) && !is_known_token(string.as_ref()) {
-            log::info!("encountered the fixed case");
             if attribute == PerfAttribute::PerfStartEntry && ((perf_id & 0x000F) != 0) {
                 perf_id &= 0xFFF0;
             } else if attribute == PerfAttribute::PerfEndEntry && ((perf_id & 0x000F) == 0) {
@@ -241,7 +237,6 @@ extern "efiapi" fn create_performance_measurement(
             }
         }
     }
-    log::info!("perf id after {}", perf_id);
 
     let cpu_count = Arch::cpu_count();
     let timestamp = match ticker {
