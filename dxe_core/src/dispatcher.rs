@@ -6,21 +6,25 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use core::{cmp::Ordering, ffi::c_void};
-
 use alloc::{
     boxed::Box,
     collections::{BTreeMap, BTreeSet},
     vec::Vec,
 };
+use core::{cmp::Ordering, ffi::c_void};
 use mu_pi::{
     fw_fs::{FfsFileRawType, FfsSectionType, FirmwareVolume, Section, SectionExtractor},
     protocols::firmware_volume_block,
 };
 use mu_rust_helpers::guid::guid_fmt;
+use mu_rust_helpers::guid::CALLER_ID;
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
+use uefi_performance::{
+    perf_callback_begin, perf_callback_end, perf_event_signal_begin, perf_event_signal_end, perf_function_begin,
+    perf_function_end,
+};
 
 use crate::{
     events::EVENT_DB,
@@ -155,6 +159,7 @@ static DISPATCHER_CONTEXT: TplMutex<DispatcherContext> =
     TplMutex::new(efi::TPL_NOTIFY, DispatcherContext::new(), "Dispatcher Context");
 
 fn dispatch() -> Result<bool, efi::Status> {
+    perf_event_signal_end!(&CALLER_ID, &CALLER_ID);
     let scheduled: Vec<PendingDriver>;
     {
         let mut dispatcher = DISPATCHER_CONTEXT.lock();
@@ -413,6 +418,10 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
 }
 
 pub fn core_schedule(handle: efi::Handle, file: &efi::Guid) -> Result<(), efi::Status> {
+    perf_event_signal_begin!(&CALLER_ID, &CALLER_ID);
+    perf_callback_begin!(&CALLER_ID, &CALLER_ID);
+    perf_callback_end!(&CALLER_ID, &CALLER_ID);
+    perf_function_end!(&CALLER_ID);
     let mut dispatcher = DISPATCHER_CONTEXT.lock();
     for driver in dispatcher.pending_drivers.iter_mut() {
         if driver.firmware_volume_handle == handle && OrdGuid(driver.file_name) == OrdGuid(*file) {
@@ -439,7 +448,11 @@ pub fn core_trust(handle: efi::Handle, file: &efi::Guid) -> Result<(), efi::Stat
 }
 
 pub fn core_dispatcher() -> Result<(), efi::Status> {
+    // SHERRY: this should be instrumented but how do i get a GUID?
+    perf_function_begin!(&CALLER_ID);
+
     if DISPATCHER_CONTEXT.lock().executing {
+        // perf_function_end!();
         return Err(efi::Status::ALREADY_STARTED);
     }
 
