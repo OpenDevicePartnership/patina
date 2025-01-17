@@ -148,6 +148,7 @@ extern "efiapi" fn create_performance_measurement(
     identifier: u32,
     attribute: PerfAttribute,
 ) -> efi::Status {
+    log::info!("creating perf measurement");
     fn is_known_token(token: Option<&String>) -> bool {
         let Some(token) = token else {
             return false;
@@ -219,15 +220,18 @@ extern "efiapi" fn create_performance_measurement(
 
     let string = unsafe { _utils::string_from_c_char_ptr(string) };
 
+    log::info!("attribute {:?}", attribute);
+
     let mut perf_id = identifier as u16;
-    if attribute == PerfAttribute::PerfEntry {
+    log::info!("perf id before {}", perf_id);
+    if attribute != PerfAttribute::PerfEntry {
         if perf_id != 0 && is_known_id(perf_id) && !is_known_token(string.as_ref()) {
             return efi::Status::INVALID_PARAMETER;
         } else if perf_id != 0 && !is_known_id(perf_id) && !is_known_token(string.as_ref()) {
+            log::info!("encountered the fixed case");
             if attribute == PerfAttribute::PerfStartEntry && ((perf_id & 0x000F) != 0) {
                 perf_id &= 0xFFF0;
-            }
-            if attribute == PerfAttribute::PerfStartEntry && ((perf_id & 0x000F) == 0) {
+            } else if attribute == PerfAttribute::PerfEndEntry && ((perf_id & 0x000F) == 0) {
                 perf_id += 1;
             }
         } else if perf_id == 0 {
@@ -237,6 +241,7 @@ extern "efiapi" fn create_performance_measurement(
             }
         }
     }
+    log::info!("perf id after {}", perf_id);
 
     let cpu_count = Arch::cpu_count();
     let timestamp = match ticker {
@@ -249,7 +254,7 @@ extern "efiapi" fn create_performance_measurement(
         PerfId::MODULE_START | PerfId::MODULE_END => {
             // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
             log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
+                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet. MODULE_START",
                 module_path!(),
                 line!(),
                 function!()
@@ -262,7 +267,7 @@ extern "efiapi" fn create_performance_measurement(
         PerfId::MODULE_LOAD_IMAGE_START | PerfId::MODULE_LOAD_IMAGE_END => {
             // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
             log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
+                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet. MODULE_LOAD_IMAGE_START",
                 module_path!(),
                 line!(),
                 function!()
@@ -288,7 +293,7 @@ extern "efiapi" fn create_performance_measurement(
         | PerfId::MODULE_DB_START => {
             // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
             log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
+                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet. MODULE_DB_SUPPORT_START",
                 module_path!(),
                 line!(),
                 function!()
@@ -301,7 +306,7 @@ extern "efiapi" fn create_performance_measurement(
         PerfId::MODULE_DB_END => {
             // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
             log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
+                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet. MODULE_DB_END",
                 module_path!(),
                 line!(),
                 function!()
@@ -338,10 +343,10 @@ extern "efiapi" fn create_performance_measurement(
                 DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, string.as_deref().unwrap_or("unknown name"));
             _ = &FBPT.lock().add_record(record);
         }
-        _ if attribute == PerfAttribute::PerfEntry => {
+        _ if attribute != PerfAttribute::PerfEntry => {
             // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
             log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
+                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet. PERF_FUNCTION_START",
                 module_path!(),
                 line!(),
                 function!()
