@@ -148,7 +148,6 @@ extern "efiapi" fn create_performance_measurement(
     identifier: u32,
     attribute: PerfAttribute,
 ) -> efi::Status {
-    log::info!("creating perf measurement");
     fn is_known_token(token: Option<&String>) -> bool {
         let Some(token) = token else {
             return false;
@@ -249,7 +248,7 @@ extern "efiapi" fn create_performance_measurement(
         PerfId::MODULE_START | PerfId::MODULE_END => {
             // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
             log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet. MODULE_START",
+                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
                 module_path!(),
                 line!(),
                 function!()
@@ -262,7 +261,7 @@ extern "efiapi" fn create_performance_measurement(
         PerfId::MODULE_LOAD_IMAGE_START | PerfId::MODULE_LOAD_IMAGE_END => {
             // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
             log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet. MODULE_LOAD_IMAGE_START",
+                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
                 module_path!(),
                 line!(),
                 function!()
@@ -288,7 +287,7 @@ extern "efiapi" fn create_performance_measurement(
         | PerfId::MODULE_DB_START => {
             // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
             log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet. MODULE_DB_SUPPORT_START",
+                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
                 module_path!(),
                 line!(),
                 function!()
@@ -301,7 +300,7 @@ extern "efiapi" fn create_performance_measurement(
         PerfId::MODULE_DB_END => {
             // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
             log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet. MODULE_DB_END",
+                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
                 module_path!(),
                 line!(),
                 function!()
@@ -341,7 +340,7 @@ extern "efiapi" fn create_performance_measurement(
         _ if attribute != PerfAttribute::PerfEntry => {
             // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
             log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet. PERF_FUNCTION_START",
+                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
                 module_path!(),
                 line!(),
                 function!()
