@@ -210,7 +210,6 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                 }
             }
             if let Hob::ResourceDescriptor(res_desc) = hob {
-                log::info!("Resource descriptor 2: {:#x?}", res_desc);
                 let memory_attributes = (MemoryAttributes::from_bits_truncate(res_desc.attributes) & MemoryAttributes::CacheAttributesMask).bits() as u64;
                 match GCD.set_memory_space_attributes(res_desc.physical_start as usize, res_desc.resource_length as usize, memory_attributes) {
                     Err(Error::NotInitialized) => {
