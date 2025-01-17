@@ -10,12 +10,13 @@ mod io_block;
 mod memory_block;
 mod spin_locked_gcd;
 
-use core::{ffi::c_void, ops::Range};
+use core::{ffi::c_void, ops::Range, panic};
 use mu_pi::{
     dxe_services::{GcdIoType, GcdMemoryType},
     hob::{self, Hob, HobList, PhaseHandoffInformationTable},
 };
 use r_efi::efi;
+use paging::MemoryAttributes;
 use uefi_sdk::base::{align_down, align_up};
 
 use crate::GCD;
@@ -75,9 +76,6 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
                 | efi::MEMORY_RO,
         )
         .expect("Failed to add initial region to GCD.");
-        // Mark the first page of memory as non-existent
-        GCD.add_memory_space(GcdMemoryType::Reserved, 0, 0x1000, 0)
-            .expect("Failed to mark the first page as non-existent in the GCD.");
     }
 }
 
@@ -210,6 +208,17 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                     )
                     .expect("Failed to add memory space to GCD");
                 }
+            }
+            if let Hob::ResourceDescriptor(res_desc) = hob {
+                log::info!("Resource descriptor 2: {:#x?}", res_desc);
+                let memory_attributes = (MemoryAttributes::from_bits_truncate(res_desc.attributes) & MemoryAttributes::CacheAttributesMask).bits() as u64;
+                match GCD.set_memory_space_attributes(res_desc.physical_start as usize, res_desc.resource_length as usize, memory_attributes) {
+                    Err(Error::NotInitialized) => {
+                        log::warn!("GCD not initialized, skipping memory attribute setting");
+                    }
+                    _ => { panic!("Failed to set memory attributes"); }
+                }
+                log::error!("GCD after set mem: {}", GCD);
             }
         }
     }
