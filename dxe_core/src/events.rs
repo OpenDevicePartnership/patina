@@ -8,14 +8,16 @@
 //!
 use core::{
     ffi::c_void,
-    sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 
 use alloc::vec;
 
 use r_efi::efi;
 
-use mu_pi::protocols::{cpu_arch, timer};
+use mu_pi::protocols::timer;
+
+use uefi_cpu::interrupts;
 
 use crate::{
     event_db::{SpinLockedEventDb, TimerDelay},
@@ -27,7 +29,6 @@ pub static EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
 
 static CURRENT_TPL: AtomicUsize = AtomicUsize::new(efi::TPL_APPLICATION);
 static SYSTEM_TIME: AtomicU64 = AtomicU64::new(0);
-static CPU_ARCH_PTR: AtomicPtr<cpu_arch::Protocol> = AtomicPtr::new(core::ptr::null_mut());
 static EVENT_NOTIFIES_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 extern "efiapi" fn create_event(
@@ -216,7 +217,7 @@ pub extern "efiapi" fn raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {
     );
 
     if (new_tpl == efi::TPL_HIGH_LEVEL) && (prev_tpl < efi::TPL_HIGH_LEVEL) {
-        set_interrupt_state(false);
+        interrupts::disable_interrupts();
     }
     prev_tpl
 }
@@ -249,9 +250,9 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
 
         for event in events {
             if event.notify_tpl < efi::TPL_HIGH_LEVEL {
-                set_interrupt_state(true);
+                interrupts::enable_interrupts();
             } else {
-                set_interrupt_state(false);
+                interrupts::disable_interrupts();
             }
             CURRENT_TPL.store(event.notify_tpl, Ordering::SeqCst);
             let notify_context = match event.notify_context {
@@ -272,7 +273,7 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
     }
 
     if new_tpl < efi::TPL_HIGH_LEVEL {
-        set_interrupt_state(true);
+        interrupts::enable_interrupts();
     }
     CURRENT_TPL.store(new_tpl, Ordering::SeqCst);
 }
@@ -283,20 +284,6 @@ extern "efiapi" fn timer_tick(time: u64) {
     let current_time = SYSTEM_TIME.load(Ordering::SeqCst);
     EVENT_DB.timer_tick(current_time);
     restore_tpl(old_tpl); //implicitly dispatches timer notifies if any.
-}
-
-fn set_interrupt_state(enable: bool) {
-    let cpu_arch_ptr = CPU_ARCH_PTR.load(Ordering::SeqCst);
-    if let Some(cpu_arch) = unsafe { cpu_arch_ptr.as_mut() } {
-        match enable {
-            true => {
-                (cpu_arch.enable_interrupt)(cpu_arch_ptr);
-            }
-            false => {
-                (cpu_arch.disable_interrupt)(cpu_arch_ptr);
-            }
-        };
-    }
 }
 
 extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_void) {
@@ -310,18 +297,6 @@ extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_
             }
         }
         Err(err) => panic!("Unable to locate timer arch: {:?}", err),
-    }
-}
-
-extern "efiapi" fn cpu_arch_available(event: efi::Event, _context: *mut c_void) {
-    match PROTOCOL_DB.locate_protocol(cpu_arch::PROTOCOL_GUID) {
-        Ok(cpu_arch_ptr) => {
-            CPU_ARCH_PTR.store(cpu_arch_ptr as *mut cpu_arch::Protocol, Ordering::SeqCst);
-            if let Err(status_err) = EVENT_DB.close_event(event) {
-                log::warn!("Could not close event for cpu_arch_available due to error {:?}", status_err);
-            }
-        }
-        Err(err) => panic!("Unable to cpu arch: {:?}", err),
     }
 }
 
@@ -351,15 +326,6 @@ pub fn init_events_support(bs: &mut efi::BootServices) {
     bs.set_timer = set_timer;
     bs.raise_tpl = raise_tpl;
     bs.restore_tpl = restore_tpl;
-
-    //set up call back for cpu arch protocol installation.
-    let event = EVENT_DB
-        .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(cpu_arch_available), None, None)
-        .expect("Failed to create timer available callback.");
-
-    PROTOCOL_DB
-        .register_protocol_notify(cpu_arch::PROTOCOL_GUID, event)
-        .expect("Failed to register protocol notify on timer arch callback.");
 
     //set up call back for timer arch protocol installation.
     let event = EVENT_DB

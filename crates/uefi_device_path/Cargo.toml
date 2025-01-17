@@ -1,11 +1,13 @@
 [package]
 name = "uefi_device_path"
-version = "6.1.0"
-edition = "2021"
-readme = "README.md"
-description = "A Device Path parsing implementation for the dxe_core."
-license.workspace = true
+resolver = "2"
+version.workspace = true
 repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+readme = "README.md"
+description = "A device path parsing implementation for the DXE Core."
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
@@ -13,4 +15,4 @@ name = "uefi_device_path"
 path = "src/lib.rs"
 
 [dependencies]
-r-efi = {workspace=true}
+r-efi = { workspace = true }

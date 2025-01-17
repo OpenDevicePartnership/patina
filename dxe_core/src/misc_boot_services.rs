@@ -14,6 +14,7 @@ use core::{
 };
 use mu_pi::{protocols, status_code};
 use r_efi::efi;
+use uefi_cpu::interrupts;
 use uefi_sdk::guid;
 
 use crate::{
@@ -288,14 +289,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     };
 
     // Disable CPU interrupts
-    match PROTOCOL_DB.locate_protocol(protocols::cpu_arch::PROTOCOL_GUID) {
-        Ok(cpu_arch_ptr) => {
-            let cpu_arch_ptr = cpu_arch_ptr as *mut protocols::cpu_arch::Protocol;
-            let cpu_arch_protocol = unsafe { &*(cpu_arch_ptr) };
-            (cpu_arch_protocol.disable_interrupt)(cpu_arch_ptr);
-        }
-        Err(err) => log::error!("Unable to locate CPU arch protocol: {:?}", err),
-    };
+    interrupts::disable_interrupts();
 
     // Clear non-runtime services from the EFI System Table
     SYSTEM_TABLE

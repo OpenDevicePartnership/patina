@@ -1,11 +1,13 @@
 [package]
 name = "uefi_test_macro"
-version = "6.1.0"
-edition = "2021"
-readme = "README.md"
-description = "Proc macros for the uefi_test crate."
-license.workspace = true
+resolver = "2"
+version.workspace = true
 repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+readme = "README.md"
+description = "Proc macros for UEFI testing."
 
 [lib]
 proc-macro = true
