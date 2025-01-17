@@ -11,35 +11,19 @@ use core::{
     ffi::c_void,
     mem,
     slice::{self, from_raw_parts},
-    sync::atomic::{AtomicPtr, Ordering},
 };
 
-use mu_pi::{dxe_services, fw_fs::FirmwareVolume, protocols::cpu_arch};
+use mu_pi::{dxe_services, fw_fs::FirmwareVolume};
 use r_efi::efi;
 
 use crate::{
     allocator::{core_allocate_pool, EFI_RUNTIME_SERVICES_DATA_ALLOCATOR},
     dispatcher::{core_dispatcher, core_schedule, core_trust},
-    events::EVENT_DB,
     fv::core_install_firmware_volume,
     gcd, misc_boot_services,
-    protocols::PROTOCOL_DB,
     systemtables::EfiSystemTable,
     GCD,
 };
-
-static CPU_ARCH_PTR: AtomicPtr<cpu_arch::Protocol> = AtomicPtr::new(core::ptr::null_mut());
-
-fn result_to_efi_status(err: gcd::Error) -> efi::Status {
-    match err {
-        gcd::Error::AccessDenied => efi::Status::ACCESS_DENIED,
-        gcd::Error::InvalidParameter => efi::Status::INVALID_PARAMETER,
-        gcd::Error::NotFound => efi::Status::NOT_FOUND,
-        gcd::Error::NotInitialized => efi::Status::NOT_READY,
-        gcd::Error::OutOfResources => efi::Status::OUT_OF_RESOURCES,
-        gcd::Error::Unsupported => efi::Status::UNSUPPORTED,
-    }
-}
 
 extern "efiapi" fn add_memory_space(
     gcd_memory_type: dxe_services::GcdMemoryType,
@@ -51,7 +35,7 @@ extern "efiapi" fn add_memory_space(
 
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -100,7 +84,7 @@ extern "efiapi" fn allocate_memory_space(
             unsafe { base_address.write(allocated_addr as u64) };
             efi::Status::SUCCESS
         }
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -109,7 +93,7 @@ extern "efiapi" fn free_memory_space(base_address: efi::PhysicalAddress, length:
 
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -117,7 +101,7 @@ extern "efiapi" fn remove_memory_space(base_address: efi::PhysicalAddress, lengt
     let result = GCD.remove_memory_space(base_address as usize, length as usize);
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -141,7 +125,7 @@ extern "efiapi" fn get_memory_space_descriptor(
 pub fn core_get_memory_space_descriptor(
     base_address: efi::PhysicalAddress,
 ) -> Result<dxe_services::MemorySpaceDescriptor, efi::Status> {
-    GCD.get_memory_descriptor_for_address(base_address).map_err(result_to_efi_status)
+    GCD.get_memory_descriptor_for_address(base_address).map_err(efi::Status::from)
 }
 
 extern "efiapi" fn set_memory_space_attributes(
@@ -160,12 +144,7 @@ pub fn core_set_memory_space_attributes(
     length: u64,
     attributes: u64,
 ) -> Result<(), efi::Status> {
-    let result = GCD.set_memory_space_attributes(base_address as usize, length as usize, attributes);
-    if let Err(err) = result {
-        return Err(result_to_efi_status(err));
-    }
-
-    cpu_set_memory_space_attributes(base_address, length, convert_to_cpu_arch_attributes(attributes))
+    GCD.set_memory_space_attributes(base_address as usize, length as usize, attributes).map_err(efi::Status::from)
 }
 
 extern "efiapi" fn set_memory_space_capabilities(
@@ -184,8 +163,7 @@ pub fn core_set_memory_space_capabilities(
     length: u64,
     capabilities: u64,
 ) -> Result<(), efi::Status> {
-    GCD.set_memory_space_capabilities(base_address as usize, length as usize, capabilities)
-        .map_err(result_to_efi_status)
+    GCD.set_memory_space_capabilities(base_address as usize, length as usize, capabilities).map_err(efi::Status::from)
 }
 
 extern "efiapi" fn get_memory_space_map(
@@ -203,7 +181,7 @@ extern "efiapi" fn get_memory_space_map(
     let result = GCD.get_memory_descriptors(&mut descriptors);
 
     if let Err(err) = result {
-        return result_to_efi_status(err);
+        return efi::Status::from(err);
     }
 
     //caller is supposed to free the handle buffer using free pool, so we need to allocate it using allocate pool.
@@ -227,7 +205,7 @@ extern "efiapi" fn add_io_space(
     let result = GCD.add_io_space(gcd_io_type, base_address as usize, length as usize);
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -276,7 +254,7 @@ extern "efiapi" fn allocate_io_space(
             unsafe { base_address.write(allocated_addr as u64) };
             efi::Status::SUCCESS
         }
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -285,7 +263,7 @@ extern "efiapi" fn free_io_space(base_address: efi::PhysicalAddress, length: u64
 
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -293,7 +271,7 @@ extern "efiapi" fn remove_io_space(base_address: efi::PhysicalAddress, length: u
     let result = GCD.remove_io_space(base_address as usize, length as usize);
     match result {
         Ok(_) => efi::Status::SUCCESS,
-        Err(err) => result_to_efi_status(err),
+        Err(err) => efi::Status::from(err),
     }
 }
 
@@ -310,7 +288,7 @@ extern "efiapi" fn get_io_space_descriptor(
     let result = GCD.get_io_descriptors(&mut descriptors);
 
     if let Err(err) = result {
-        return result_to_efi_status(err);
+        return efi::Status::from(err);
     }
 
     let target_descriptor =
@@ -337,7 +315,7 @@ extern "efiapi" fn get_io_space_map(
     let result = GCD.get_io_descriptors(&mut descriptors);
 
     if let Err(err) = result {
-        return result_to_efi_status(err);
+        return efi::Status::from(err);
     }
 
     //caller is supposed to free the handle buffer using free pool, so we need to allocate it using allocate pool.
@@ -410,70 +388,6 @@ extern "efiapi" fn process_firmware_volume(
     efi::Status::SUCCESS
 }
 
-// This routine filters memory space attributes to those accepted by the CPU architectural protocol.
-fn convert_to_cpu_arch_attributes(attributes: u64) -> u64 {
-    let mut cpu_arch_attributes: u64 = attributes & efi::MEMORY_ATTRIBUTE_MASK;
-
-    if (attributes & efi::MEMORY_UC) == efi::MEMORY_UC {
-        cpu_arch_attributes |= efi::MEMORY_UC;
-    } else if (attributes & efi::MEMORY_WC) == efi::MEMORY_WC {
-        cpu_arch_attributes |= efi::MEMORY_WC;
-    } else if (attributes & efi::MEMORY_WT) == efi::MEMORY_WT {
-        cpu_arch_attributes |= efi::MEMORY_WT;
-    } else if (attributes & efi::MEMORY_WB) == efi::MEMORY_WB {
-        cpu_arch_attributes |= efi::MEMORY_WB;
-    } else if (attributes & efi::MEMORY_UCE) == efi::MEMORY_UCE {
-        cpu_arch_attributes |= efi::MEMORY_UCE;
-    } else if (attributes & efi::MEMORY_WP) == efi::MEMORY_WP {
-        cpu_arch_attributes |= efi::MEMORY_WP;
-    }
-
-    cpu_arch_attributes
-}
-
-// This routine passes attribute changes into the CPU architectural protocol so that the CPU attribute states for memory
-// are consistent with the GCD view. If the CPU arch protocol is not available yet, then this routine does nothing.
-fn cpu_set_memory_space_attributes(
-    base_address: efi::PhysicalAddress,
-    length: u64,
-    attributes: u64,
-) -> Result<(), efi::Status> {
-    //Note: matches EDK C reference behavior, but caller really should pass all intended attributes rather than assuming behavior.
-    if attributes == 0 {
-        return Ok(());
-    }
-
-    let cpu_arch_ptr = CPU_ARCH_PTR.load(Ordering::SeqCst);
-    if let Some(cpu_arch) = unsafe { cpu_arch_ptr.as_mut() } {
-        let status = (cpu_arch.set_memory_attributes)(cpu_arch_ptr, base_address, length, attributes);
-        if status.is_error() {
-            log::warn!(
-                "Warning: cpu_arch.set_memory_attributes({:#x?},{:#x?},{:#x?}) returned: {:#x?}",
-                base_address,
-                length,
-                attributes,
-                status
-            );
-            return Err(status);
-        }
-    }
-    Ok(())
-}
-
-//This call back is invoked when the CPU Architectural protocol is installed. It updates the global atomic CPU_ARCH_PTR
-//to point to the CPU architectural protocol interface.
-extern "efiapi" fn cpu_arch_available(event: efi::Event, _context: *mut c_void) {
-    match PROTOCOL_DB.locate_protocol(cpu_arch::PROTOCOL_GUID) {
-        Ok(cpu_arch_ptr) => {
-            CPU_ARCH_PTR.store(cpu_arch_ptr as *mut cpu_arch::Protocol, Ordering::SeqCst);
-            if let Err(status_err) = EVENT_DB.close_event(event) {
-                log::warn!("Could not close event for cpu_arch_available due to error {:?}", status_err);
-            }
-        }
-        Err(err) => panic!("Unable to locate timer arch: {:?}", err),
-    }
-}
-
 pub fn init_dxe_services(system_table: &mut EfiSystemTable) {
     let mut dxe_system_table = dxe_services::DxeServicesTable {
         header: efi::TableHeader {
@@ -518,75 +432,4 @@ pub fn init_dxe_services(system_table: &mut EfiSystemTable) {
         unsafe { (Box::into_raw(dxe_system_table) as *mut c_void).as_mut() },
         system_table,
     );
-
-    //set up call back for cpu arch protocol installation.
-    let event = EVENT_DB
-        .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(cpu_arch_available), None, None)
-        .expect("Failed to create timer available callback.");
-
-    PROTOCOL_DB
-        .register_protocol_notify(cpu_arch::PROTOCOL_GUID, event)
-        .expect("Failed to register protocol notify on timer arch callback.");
-}
-
-// This routine filters memory space attributes to those accepted by the CPU architectural protocol.
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_convert_to_cpu_arch_attributes() {
-        let attributes =
-            efi::MEMORY_UC | efi::MEMORY_WC | efi::MEMORY_WT | efi::MEMORY_WB | efi::MEMORY_UCE | efi::MEMORY_WP;
-        assert_eq!(
-            convert_to_cpu_arch_attributes(attributes) & efi::CACHE_ATTRIBUTE_MASK,
-            efi::MEMORY_UC,
-            "UC should take precedent"
-        );
-
-        let attributes = efi::MEMORY_WC | efi::MEMORY_WT | efi::MEMORY_WB | efi::MEMORY_UCE | efi::MEMORY_WP;
-        assert_eq!(
-            convert_to_cpu_arch_attributes(attributes) & efi::CACHE_ATTRIBUTE_MASK,
-            efi::MEMORY_WC,
-            "WC should take precedent"
-        );
-
-        let attributes = efi::MEMORY_WT | efi::MEMORY_WB | efi::MEMORY_UCE | efi::MEMORY_WP;
-        assert_eq!(
-            convert_to_cpu_arch_attributes(attributes) & efi::CACHE_ATTRIBUTE_MASK,
-            efi::MEMORY_WT,
-            "WT should take precedent"
-        );
-
-        let attributes = efi::MEMORY_WB | efi::MEMORY_UCE | efi::MEMORY_WP;
-        assert_eq!(
-            convert_to_cpu_arch_attributes(attributes) & efi::CACHE_ATTRIBUTE_MASK,
-            efi::MEMORY_WB,
-            "WB should take precedent"
-        );
-
-        let attributes = efi::MEMORY_UCE | efi::MEMORY_WP;
-        assert_eq!(
-            convert_to_cpu_arch_attributes(attributes) & efi::CACHE_ATTRIBUTE_MASK,
-            efi::MEMORY_UCE,
-            "UCE should take precedent"
-        );
-
-        let attributes = efi::MEMORY_WP;
-        assert_eq!(
-            convert_to_cpu_arch_attributes(attributes) & efi::CACHE_ATTRIBUTE_MASK,
-            efi::MEMORY_WP,
-            "WP should be set"
-        );
-
-        let attributes = efi::MEMORY_SP | efi::MEMORY_WP;
-        assert_eq!(
-            convert_to_cpu_arch_attributes(attributes) & efi::MEMORY_ATTRIBUTE_MASK,
-            efi::MEMORY_SP,
-            "SP should always be set if specified"
-        );
-
-        let attributes = 0;
-        assert_eq!(convert_to_cpu_arch_attributes(attributes), 0, "No attributes should be set");
-    }
 }

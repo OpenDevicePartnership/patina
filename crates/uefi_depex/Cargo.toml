@@ -1,11 +1,13 @@
 [package]
 name = "uefi_depex"
-version = "6.1.0"
-edition = "2021"
-readme = "README.md"
-description = "A Depex parsing implementation for the dxe_core."
-license.workspace = true
+resolver = "2"
+version.workspace = true
 repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+readme = "README.md"
+description = "A dependency expression (depex) parsing implementation for the DXE Core."
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
@@ -13,6 +15,6 @@ name = "uefi_depex"
 path = "src/lib.rs"
 
 [dependencies]
-r-efi = {workspace=true}
-uuid = {workspace=true}
+r-efi = { workspace = true }
+uuid = { workspace = true }
 log = { workspace = true }

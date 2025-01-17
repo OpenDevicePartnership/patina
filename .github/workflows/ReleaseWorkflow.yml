@@ -34,12 +34,12 @@ jobs:
 
       - name: 🛠️ Download Rust Tools 🛠️
         uses: pop-project/uefi-dxe-core/.github/actions/rust-tool-cache@main
-      
+
       - name: Add Credentials # Remove once repositories are public
         run: |
           git config --global url."https://${{ secrets.GH_PAT }}@github.com".insteadOf https://github.com
         shell: bash
-      
+
       - name: Get Current Draft Release
         id: draft_release
         uses: actions/github-script@v7
@@ -68,25 +68,33 @@ jobs:
               console.log(`Draft Release ID: ${draftRelease.id}`);
               console.log(`Draft Release Tag: ${tag}`);
             }
-        
+
+      - name: Setup Cred Provider
+        run: |
+          mkdir -p ~/.cargo
+          cat <<EOF >> ~/.cargo/config.toml
+          [registry]
+          global-credential-providers = ["cargo:token"]
+          EOF
+
+      - name: Login to Registry
+        run: cargo login "${{ secrets.CRATES_IO_TOKEN }}" --registry UefiRust
+
       - name: Cargo Release Dry Run
         run: cargo release ${{ steps.draft_release.outputs.tag }} --workspace
         env:
           RUSTC_BOOTSTRAP: 1
-      
-      - name: Login to Crates.io
-        run: cargo login ${{ secrets.CRATES_IO_TOKEN }}
-      
+
       - name: Update git credentials
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-      
+
       - name: Cargo Release
         run: cargo release ${{ steps.draft_release.outputs.tag }} -x --no-tag --no-confirm --workspace
         env:
           RUSTC_BOOTSTRAP: 1
-  
+
       - name: Wait for Release Draft Updater
         uses: actions/github-script@v7
         with:
@@ -118,7 +126,7 @@ jobs:
                 attempt++;
               }
             }
-            
+
             if (!completed) {
               core.setFailed("Release Drafter did not complete in time. Please perform the release manually.");
             }
