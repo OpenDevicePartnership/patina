@@ -238,6 +238,7 @@ impl Debug for DualGuidStringEventRecord<'_> {
     }
 }
 
+#[repr(C)]
 pub struct GuidQwordEventRecord {
     /// ProgressID < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and
@@ -250,7 +251,7 @@ pub struct GuidQwordEventRecord {
     /// 64-bit value (nanosecond) describing elapsed time since the most recent deassertion of processor reset.
     pub timestamp: u64,
     /// GUID of the module logging the event.
-    pub guid: efi::Guid,
+    pub guid: efi::Guid, // 16B
     /// Qword of misc data, meaning depends on the ProgressId.
     pub qword: u64,
 }
@@ -278,8 +279,15 @@ impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidQwordEventRecord {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        // Padding is necessary because of the C representation
+        // 0-2: progress_id
+        // 2-4: padding
+        // 4-8: acpi_id
+        // ... rest of fields
+        let padding : u16 = 0;
         let mut offset = 0;
         dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
+        dest.gwrite_with(padding, &mut offset, ctx)?;
         dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
         dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
         dest.gwrite_with(*self.guid.as_bytes(), &mut offset, ctx)?;
