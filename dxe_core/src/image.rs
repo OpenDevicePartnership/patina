@@ -7,7 +7,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
-use uefi_performance::{perf_image_start_begin, perf_image_start_end};
+use uefi_performance::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
 use mu_pi::hob::{Hob, HobList};
 use r_efi::efi;
@@ -828,6 +828,10 @@ pub fn core_load_image(
     device_path: *mut efi::protocols::device_path::Protocol,
     image: Option<&[u8]>,
 ) -> Result<(efi::Handle, efi::Status), efi::Status> {
+    // SHERRY: this is NULL in C, why?
+    // is making this an option better
+    perf_load_image_begin(core::ptr::null_mut());
+    
     if image.is_none() && device_path.is_null() {
         log::error!("failed to load image: image is none or device path is null.");
         return Err(efi::Status::INVALID_PARAMETER);
@@ -929,6 +933,8 @@ pub fn core_load_image(
 
     // save the private image data for this image in the private image data map.
     PRIVATE_IMAGE_DATA.lock().private_image_data.insert(handle, private_info);
+
+    perf_load_image_begin(handle);
 
     // return the new handle.
     Ok((handle, security_status))

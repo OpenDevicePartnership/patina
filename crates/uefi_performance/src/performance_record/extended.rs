@@ -51,8 +51,15 @@ impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidEventRecord {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
+        // Padding is necessary because of the C representation
+        // 0-2: progress_id
+        // 2-4: padding
+        // 4-8: acpi_id
+        // ... rest of fields
+        let padding : u16 = 0;
         let mut offset = 0;
         dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
+        dest.gwrite_with(padding, &mut offset, ctx)?;
         dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
         dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
         dest.gwrite_with(self.guid.as_bytes().as_slice(), &mut offset, ())?;
