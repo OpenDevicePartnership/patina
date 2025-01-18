@@ -588,7 +588,6 @@ pub fn perf_event(event_string: &str, caller_id: &efi::Guid) {
     );
 }
 
-// SHERRY: the prepended mod names are necessary (but ugly) due to the way Rust scopes macros
 #[macro_export]
 macro_rules! perf_event_signal_begin {
     ($event_guid:expr, $caller_id:expr) => {
@@ -752,3 +751,6 @@ pub fn perf_start_ex(
 pub fn perf_end_ex(handle: efi::Handle, token: *const c_char, module: *const c_char, timestamp: u64, identifier: u32) {
     end_perf_measurement(handle, token, module, timestamp, identifier);
 }
+
+// TODOs: cross-module measurements
+// TODO: advanced logger / section extractor
