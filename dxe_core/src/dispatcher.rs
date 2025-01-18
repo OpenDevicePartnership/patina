@@ -418,10 +418,6 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
 }
 
 pub fn core_schedule(handle: efi::Handle, file: &efi::Guid) -> Result<(), efi::Status> {
-    perf_event_signal_begin!(&CALLER_ID, &CALLER_ID);
-    perf_callback_begin!(&CALLER_ID, &CALLER_ID);
-    perf_callback_end!(&CALLER_ID, &CALLER_ID);
-    perf_function_end!(&CALLER_ID);
     let mut dispatcher = DISPATCHER_CONTEXT.lock();
     for driver in dispatcher.pending_drivers.iter_mut() {
         if driver.firmware_volume_handle == handle && OrdGuid(driver.file_name) == OrdGuid(*file) {
@@ -448,11 +444,10 @@ pub fn core_trust(handle: efi::Handle, file: &efi::Guid) -> Result<(), efi::Stat
 }
 
 pub fn core_dispatcher() -> Result<(), efi::Status> {
-    // SHERRY: this should be instrumented but how do i get a GUID?
     perf_function_begin!(&CALLER_ID);
 
     if DISPATCHER_CONTEXT.lock().executing {
-        // perf_function_end!();
+        perf_function_end!(&CALLER_ID);
         return Err(efi::Status::ALREADY_STARTED);
     }
 
@@ -469,6 +464,7 @@ pub fn core_dispatcher() -> Result<(), efi::Status> {
 }
 
 pub fn init_dispatcher(extractor: Box<dyn SectionExtractor>) {
+    perf_function_begin!(&CALLER_ID);
     //set up call back for FV protocol installation.
     let event = EVENT_DB
         .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(core_fw_vol_event_protocol_notify), None, None)
@@ -479,6 +475,7 @@ pub fn init_dispatcher(extractor: Box<dyn SectionExtractor>) {
         .expect("Failed to register protocol notify on fv protocol.");
 
     DISPATCHER_CONTEXT.lock().section_extractor = Some(extractor);
+    perf_function_end!(&CALLER_ID);
 }
 
 pub fn display_discovered_not_dispatched() {
