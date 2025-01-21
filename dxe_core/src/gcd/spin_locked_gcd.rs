@@ -181,7 +181,7 @@ type GcdFreeFn =
 // which will deadlock. This sets the pool to an initial size that should be large enough to track all pages for any
 // reasonable allocation in the global allocator to avoid this problem.
 //
-const PAGE_POOL_MIN_CAPACITY: usize = 1024;
+const PAGE_POOL_MIN_CAPACITY: usize = 1024 * 32;
 
 #[derive(Debug)]
 struct PagingAllocator {
