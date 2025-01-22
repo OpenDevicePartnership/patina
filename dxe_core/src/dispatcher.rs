@@ -319,7 +319,7 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
 
             for file in fv.file_iter() {
                 let file = file?;
-                if file.file_type_raw() == FfsFileRawType::DRIVER {
+                if file.file_type_raw() == FfsFileRawType::DRIVER || file.file_type_raw() == FfsFileRawType::COMBINED_MM_DXE {
                     let file = file.clone();
                     let file_name = file.name();
                     let sections = {
