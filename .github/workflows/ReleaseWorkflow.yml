@@ -75,7 +75,7 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Cargo Release
-        run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace
+        run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace --no-push
         env:
           RUSTC_BOOTSTRAP: 1
 
