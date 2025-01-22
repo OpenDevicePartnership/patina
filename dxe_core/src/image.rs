@@ -7,12 +7,12 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
-use uefi_performance::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
 use mu_pi::hob::{Hob, HobList};
 use r_efi::efi;
 use uefi_component_interface::DxeComponent;
 use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
+use uefi_performance::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin};
 use uefi_sdk::base::{align_up, UEFI_PAGE_SIZE};
 use uefi_sdk::{guid, uefi_size_to_pages};
 
@@ -831,7 +831,7 @@ pub fn core_load_image(
     // SHERRY: this is NULL in C, why?
     // is making this an option better
     perf_load_image_begin(core::ptr::null_mut());
-    
+
     if image.is_none() && device_path.is_null() {
         log::error!("failed to load image: image is none or device path is null.");
         return Err(efi::Status::INVALID_PARAMETER);
