@@ -161,11 +161,12 @@ pub struct NoAlloc;
 /// to the `Alloc` phase. Each phase provides a subset of methods that are available to the struct, allowing
 /// for a more controlled configuration and execution process.
 ///
-/// During the `NoAlloc` phase, the struct provides methods to configure the dxe core's cpu related
-/// functionality, the section extractor. During this time, no allocations are available.
+/// During the `NoAlloc` phase, the struct provides methods to configure the DXE core environment
+/// prior to allocation capability such as CPU functionality and section extraction. During this time,
+/// no allocations are available.
 ///
 /// Once the [initialize](Core::initialize) method is called, the struct transitions to the `Alloc` phase,
-/// which provides methods for adding configuration and components with the dxe core, and eventually starting the
+/// which provides methods for adding configuration and components with the DXE core, and eventually starting the
 /// dispatching process and eventual handoff to the BDS phase.
 ///
 /// ## Examples
