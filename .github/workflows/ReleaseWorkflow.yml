@@ -27,6 +27,7 @@ jobs:
     permissions:
       contents: write
       actions: read
+      pull-requests: write
 
     steps:
       - name: ✅ Checkout Repository ✅
@@ -40,34 +41,17 @@ jobs:
           git config --global url."https://${{ secrets.GH_PAT }}@github.com".insteadOf https://github.com
         shell: bash
 
-      - name: Get Current Draft Release
-        id: draft_release
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const releases = await github.rest.repos.listReleases({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-            });
+      - name: Get Release Tag
+        id: release_tag
+        run: |
+          tag_name="${{ github.event.release.tag_name }}"
+          
+          # remove the leading 'v' if it exists
+          release_tag="${tag_name#v}" 
 
-            const draftReleaseList = releases.data.filter(release => release.draft);
-
-            if (draftReleaseList.length === 0) {
-              core.setFailed("No draft release found. Exiting with error.");
-            } else if (draftReleaseList.length > 1) {
-              core.setFailed("Multiple draft releases found. Exiting with error.");
-            } else {
-              const draftRelease = draftReleaseList[0];
-
-              let tag = draftRelease.tag_name;
-              if (tag.startsWith('v')) {
-                tag = tag.slice(1);
-              }
-              core.setOutput("id", draftRelease.id);
-              core.setOutput("tag", tag);
-              console.log(`Draft Release ID: ${draftRelease.id}`);
-              console.log(`Draft Release Tag: ${tag}`);
-            }
+          echo "Release Tag: $release_tag"
+          echo "tag=$release_tag" >> $GITHUB_OUTPUT
+        shell: bash
 
       - name: Setup Cred Provider
         run: |
@@ -81,7 +65,7 @@ jobs:
         run: cargo login "${{ secrets.CRATES_IO_TOKEN }}" --registry UefiRust
 
       - name: Cargo Release Dry Run
-        run: cargo release ${{ steps.draft_release.outputs.tag }} --workspace
+        run: cargo release ${{ steps.release_tag.outputs.tag }} --workspace
         env:
           RUSTC_BOOTSTRAP: 1
 
@@ -91,59 +75,29 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Cargo Release
-        run: cargo release ${{ steps.draft_release.outputs.tag }} -x --no-tag --no-confirm --workspace
+        run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace
         env:
           RUSTC_BOOTSTRAP: 1
 
-      - name: Wait for Release Draft Updater
+      - name: Checkout New Branch
+        run: |
+          git checkout -b "github-actions/release-${{ steps.release_tag.outputs.tag }}"
+          git push origin "github-actions/release-${{ steps.release_tag.outputs.tag }}"
+    
+      - name: Publish PR
         uses: actions/github-script@v7
         with:
           script: |
-            const workflowId = "update-release-draft.yml";
-            const ref = "main";
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
+            const defaultBranch = context.payload.repository.default_branch;
 
-            // Try for 10 minutes. It should only take a few seconds
-            let maxAttempts = 40;
-            let attempt = 0;
-            let completed = false
-
-            while (attempt < maxAttempts && !completed) {
-              await new Promise(resolve => setTimeout(resolve, 15000));
-              const runs = await github.rest.actions.listWorkflowRuns({
-                owner,
-                repo,
-                workflow_id: workflowId,
-                branch: ref,
-                event: 'push',
-                status: 'in_progress',
-              });
-
-              if (runs.data.workflow_runs.length === 0) {
-                completed = true;
-              } else {
-                attempt++;
-              }
-            }
-
-            if (!completed) {
-              core.setFailed("Release Drafter did not complete in time. Please perform the release manually.");
-            }
-
-      - name: Publish Release
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const releaseId = ${{ steps.draft_release.outputs.id }};
-
-            const response = await github.rest.repos.updateRelease({
+            const { data: pullRequest } = await github.rest.pulls.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              release_id: releaseId,
-              draft: false,
+              title: 'chore: Update repo version to ${{ steps.release_tag.outputs.tag }}',
+              head: `github-actions/release-${{ steps.release_tag.outputs.tag }}`,
+              base: defaultBranch,
+              body: 'An automatically created pull request to update the version of the repo due to a release.',
+              draft: false
             });
 
-            if (response.status !== 200) {
-              core.setFailed(`Failed to publish release. Exiting with error.`);
-            }
+            console.log(`PR created ${pullRequest.html_url}`);

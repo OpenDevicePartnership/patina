@@ -10,29 +10,15 @@
 name: Publish Release
 
 on:
-  workflow_dispatch:
+  release:
+    types: [published]
 
 jobs:
-  validate_branch:
-    name: Validate Branch
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Validate Branch
-        run: |
-          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
-              echo "This workflow can only be run on the main branch."
-              exit 1
-          fi
-    
   release:
     name: Release
-    needs: validate_branch
     uses: ./.github/workflows/ReleaseWorkflow.yml
     secrets: inherit
     permissions:
       contents: write
       actions: read
+      pull-requests: write
