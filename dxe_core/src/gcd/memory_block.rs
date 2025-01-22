@@ -252,6 +252,7 @@ impl MemoryBlock {
                 if let Some(device_handle) = device_handle {
                     md.device_handle = device_handle;
                 }
+                md.attributes = (md.attributes & efi::CACHE_ATTRIBUTE_MASK) | efi::MEMORY_XP;
                 *self = Self::Allocated(*md);
                 Ok(())
             }
