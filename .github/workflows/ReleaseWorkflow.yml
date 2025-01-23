@@ -75,12 +75,12 @@ jobs:
         run: cargo login "${{ secrets.CRATES_IO_TOKEN }}" --registry UefiRust
 
       - name: Cargo Release Dry Run
-        run: cargo release ${{ steps.release_tag.outputs.tag }} --workspace
+        run: cargo release ${{ steps.release_tag.outputs.tag }} --workspace --Registry UefiRust
         env:
           RUSTC_BOOTSTRAP: 1
 
       # - name: Cargo Release
-      #   run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace
+      #   run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace --Registry UefiRust
       #   env:
       #     RUSTC_BOOTSTRAP: 1
     
