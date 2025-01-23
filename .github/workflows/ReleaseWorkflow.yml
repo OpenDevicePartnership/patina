@@ -24,7 +24,6 @@ jobs:
     permissions:
       contents: write
       actions: read
-      pull-requests: write
 
     steps:
       - name: ✅ Checkout Repository ✅
@@ -60,6 +59,7 @@ jobs:
     
       - name: Checkout New Branch
         run: |
+          git config --global core.autocrlf false
           git checkout -b "github-actions/release-${{ steps.release_tag.outputs.tag }}"
           git push origin "github-actions/release-${{ steps.release_tag.outputs.tag }}"
 
@@ -75,21 +75,5 @@ jobs:
         run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace --registry UefiRust
         env:
           RUSTC_BOOTSTRAP: 1
-    
-      - name: Publish PR
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const defaultBranch = context.payload.repository.default_branch;
-
-            const { data: pullRequest } = await github.rest.pulls.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: 'chore: Update repo version to ${{ steps.release_tag.outputs.tag }}',
-              head: `github-actions/release-${{ steps.release_tag.outputs.tag }}`,
-              base: defaultBranch,
-              body: 'An automatically created pull request to update the version of the repo due to a release.',
-              draft: false
-            });
-
-            console.log(`PR created ${pullRequest.html_url}`);
+          
+      # TODO: Add ability for a github app to create a release from the published branch
