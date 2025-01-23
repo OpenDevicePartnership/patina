@@ -75,5 +75,18 @@ jobs:
         run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace --registry UefiRust
         env:
           RUSTC_BOOTSTRAP: 1
-          
+      
+      - name: 
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = `github-actions/release-${{ steps.release_tag.outputs.tag }}`;
+            const baseBranch = context.payload.repository.default_branch;
+            const repo = context.repo;
+
+            const prUrl = `https://github.com/${repo.owner}/${repo.repo}/compare/${baseBranch}...${branch}?expand=1`;
+
+            core.warning('A pull request needs to be created to update the version')
+            core.info(`Click the link below to create the pull request:`);
+            core.info(prUrl);
       # TODO: Add ability for a github app to create a release from the published branch
