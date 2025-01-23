@@ -89,4 +89,5 @@ jobs:
             core.warning('A pull request needs to be created to update the version')
             core.info(`Click the link below to create the pull request:`);
             core.info(prUrl);
+
       # TODO: Add ability for a github app to create a release from the published branch
