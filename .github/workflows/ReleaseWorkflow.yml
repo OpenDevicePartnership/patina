@@ -75,8 +75,8 @@ jobs:
         run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace --registry UefiRust
         env:
           RUSTC_BOOTSTRAP: 1
-      
-      - name: 
+
+      - name: Notify Branch Creation
         uses: actions/github-script@v7
         with:
           script: |
