@@ -15,8 +15,8 @@ use mu_pi::{
     dxe_services::{GcdIoType, GcdMemoryType},
     hob::{self, Hob, HobList, PhaseHandoffInformationTable, ResourceDescriptorV2},
 };
-use r_efi::efi;
 use paging::MemoryAttributes;
+use r_efi::efi;
 use uefi_sdk::base::{align_down, align_up};
 
 use crate::GCD;
@@ -104,7 +104,7 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
 
         let mut res_desc_op = None;
         if let Hob::ResourceDescriptor(t_res_desc) = hob {
-            res_desc_op =  Some(ResourceDescriptorV2::from(**t_res_desc));
+            res_desc_op = Some(ResourceDescriptorV2::from(**t_res_desc));
         } else if let Hob::ResourceDescriptorV2(t_res_desc) = hob {
             res_desc_op = Some(**t_res_desc);
         }
@@ -214,10 +214,21 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                 }
             }
             if let Hob::ResourceDescriptorV2(res_desc) = hob {
-                let memory_attributes = (MemoryAttributes::from_bits_truncate(res_desc.attributes) & MemoryAttributes::CacheAttributesMask).bits() as u64;
-                match GCD.set_memory_space_attributes(res_desc.v1.physical_start as usize, res_desc.v1.resource_length as usize, memory_attributes) {
+                let memory_attributes = (MemoryAttributes::from_bits_truncate(res_desc.attributes)
+                    & MemoryAttributes::CacheAttributesMask)
+                    .bits() as u64;
+                match GCD.set_memory_space_attributes(
+                    res_desc.v1.physical_start as usize,
+                    res_desc.v1.resource_length as usize,
+                    memory_attributes,
+                ) {
                     Err(Error::NotInitialized) => (),
-                    _ => { panic!("GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}", memory_attributes, res_desc.v1.physical_start, res_desc.v1.resource_length); }
+                    _ => {
+                        panic!(
+                            "GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}",
+                            memory_attributes, res_desc.v1.physical_start, res_desc.v1.resource_length
+                        );
+                    }
                 }
             }
         }

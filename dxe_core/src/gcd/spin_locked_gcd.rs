@@ -348,7 +348,10 @@ impl GCD {
                                         .remap_memory_region(
                                             addr as u64,
                                             uefi_pages_to_size!(needed_pages) as u64,
-                                            MemoryAttributes::ExecuteProtect | MemoryAttributes::from_bits_truncate(desc.attributes & efi::CACHE_ATTRIBUTE_MASK),
+                                            MemoryAttributes::ExecuteProtect
+                                                | MemoryAttributes::from_bits_truncate(
+                                                    desc.attributes & efi::CACHE_ATTRIBUTE_MASK,
+                                                ),
                                         )
                                         .expect("Failed to remap memory region");
                                 }
@@ -359,7 +362,10 @@ impl GCD {
                                     .map_memory_region(
                                         addr as u64,
                                         uefi_pages_to_size!(needed_pages) as u64,
-                                        MemoryAttributes::ExecuteProtect | MemoryAttributes::from_bits_truncate(desc.attributes & efi::CACHE_ATTRIBUTE_MASK),
+                                        MemoryAttributes::ExecuteProtect
+                                            | MemoryAttributes::from_bits_truncate(
+                                                desc.attributes & efi::CACHE_ATTRIBUTE_MASK,
+                                            ),
                                     )
                                     .expect("Failed to map memory region");
                             }
@@ -583,7 +589,6 @@ impl GCD {
                 // is actually being used. On future allocations of this region, the pages will
                 // get mapped again.
                 if desc.attributes & efi::MEMORY_RP != 0 {
-
                     continue;
                 }
 
@@ -621,7 +626,8 @@ impl GCD {
             .expect("Failed to parse PE info for DXE Core")
         };
 
-        let desc = self.get_memory_descriptor_for_address(dxe_core_hob.alloc_descriptor.memory_base_address)
+        let desc = self
+            .get_memory_descriptor_for_address(dxe_core_hob.alloc_descriptor.memory_base_address)
             .expect("Failed to get memory descriptor for DXE Core");
 
         // map the entire image as RW, as the PE headers don't live in the sections
@@ -935,7 +941,11 @@ impl GCD {
             }
         }
 
-        match self.set_gcd_memory_attributes(base_address, len, efi::MEMORY_RP | (desc.attributes & efi::CACHE_ATTRIBUTE_MASK)) {
+        match self.set_gcd_memory_attributes(
+            base_address,
+            len,
+            efi::MEMORY_RP | (desc.attributes & efi::CACHE_ATTRIBUTE_MASK),
+        ) {
             Ok(_) => Ok(()),
             Err(e) => {
                 // if we failed to set the attributes in the GCD, we want to catch it, but should still try to go
@@ -2450,7 +2460,11 @@ impl SpinLockedGcd {
             // it is still legal to split a descriptor and only set the attributes on part of it
             let next_base = u64::min(descriptor_end, range_end);
             let current_len = next_base - current_base;
-            match self.memory.lock().set_memory_space_attributes(current_base as usize, current_len as usize, attributes) {
+            match self.memory.lock().set_memory_space_attributes(
+                current_base as usize,
+                current_len as usize,
+                attributes,
+            ) {
                 Err(Error::NotInitialized) => {
                     // before the page table is installed, we expect to get a return of NotInitialized. This means the GCD
                     // has been updated with the attributes, but the page table is NotInitialized yet. In init_paging, the
@@ -2459,12 +2473,11 @@ impl SpinLockedGcd {
                     // make sure any attribute updates across descriptors update the full range and not error out here.
                     res = Err(Error::NotInitialized);
                 }
-                Ok(())  => {},
-                _ => { 
-                // some nicer log here
-                debug_assert!(false);
+                Ok(()) => {}
+                _ => {
+                    // some nicer log here
+                    debug_assert!(false);
                 }
-
             }
             current_base = next_base;
         }
