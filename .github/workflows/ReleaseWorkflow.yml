@@ -79,10 +79,10 @@ jobs:
         env:
           RUSTC_BOOTSTRAP: 1
 
-      - name: Cargo Release
-        run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace
-        env:
-          RUSTC_BOOTSTRAP: 1
+      # - name: Cargo Release
+      #   run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace
+      #   env:
+      #     RUSTC_BOOTSTRAP: 1
     
       - name: Publish PR
         uses: actions/github-script@v7
