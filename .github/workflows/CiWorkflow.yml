@@ -17,8 +17,8 @@ on:
         default: ""
         type: string
     secrets:
-      GH_PAT:
-        description: "GitHub Personal Access Token"
+      CRATES_IO_TOKEN:
+        description: "Token to access the UefiRust registry"
         required: true
 
 jobs:
@@ -69,11 +69,6 @@ jobs:
 
       - name: 🛠️ Download Rust Tools 🛠️
         uses: pop-project/uefi-dxe-core/.github/actions/rust-tool-cache@main
-
-      - name: Add Credentials # Remove once repositories are public
-        run: |
-          git config --global url."https://${{ secrets.GH_PAT }}@github.com".insteadOf https://github.com
-        shell: bash
 
       - name: Setup Cred Provider
         if: runner.os == 'Linux'
