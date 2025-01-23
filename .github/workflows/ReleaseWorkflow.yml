@@ -26,6 +26,10 @@ jobs:
       actions: read
 
     steps:
+      - name: Set CRLF line endings
+        run: |
+          git config --global core.autocrlf false
+
       - name: ✅ Checkout Repository ✅
         uses: actions/checkout@v4
 
