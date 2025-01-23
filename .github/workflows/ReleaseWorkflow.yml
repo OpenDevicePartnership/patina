@@ -86,7 +86,7 @@ jobs:
 
             const prUrl = `https://github.com/${repo.owner}/${repo.repo}/compare/${baseBranch}...${branch}?expand=1`;
 
-            core.warning('A pull request needs to be created to update the version')
+            core.warning('A pull request needs to be created to update the version');
             core.info(`Click the link below to create the pull request:`);
             core.info(prUrl);
 
