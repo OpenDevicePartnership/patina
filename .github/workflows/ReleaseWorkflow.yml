@@ -26,7 +26,7 @@ jobs:
       actions: read
 
     steps:
-      - name: Set CRLF line endings
+      - name: Turn off autocrlf
         run: |
           git config --global core.autocrlf false
 
