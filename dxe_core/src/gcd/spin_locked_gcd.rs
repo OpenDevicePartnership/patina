@@ -631,7 +631,12 @@ impl GCD {
                     (MemoryAttributes::from_bits_truncate(desc.attributes) & MemoryAttributes::CacheAttributesMask)
                         | MemoryAttributes::ExecuteProtect);
 
+                // we have large ranges of memory that have been allocated but then freed
+                // this is what the memory bin code does. We should only map what memory
+                // is actually being used. On future allocations of this region, the pages will
+                // get mapped again.
                 if desc.attributes & efi::MEMORY_RP != 0 {
+
                     continue;
                 }
 
