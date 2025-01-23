@@ -2484,7 +2484,7 @@ impl SpinLockedGcd {
                     res = Err(Error::NotInitialized);
                 }
                 Ok(())  => {},
-                _ => { panic!("Failed to set memory attributes"); }
+                _ => { panic!("SLG Failed to set memory attributes {:#X} for {:#X} - {:#X}", attributes, current_base, next_base); }
             }
             current_base = next_base;
         }

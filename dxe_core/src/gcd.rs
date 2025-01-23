@@ -219,7 +219,7 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                     Err(Error::NotInitialized) => {
                         log::warn!("GCD not initialized, skipping memory attribute setting");
                     }
-                    _ => { panic!("Failed to set memory attributes"); }
+                    _ => { panic!("GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}", memory_attributes, res_desc.v1.physical_start, res_desc.v1.resource_length); }
                 }
                 log::error!("GCD after set mem: {}", GCD);
             }
