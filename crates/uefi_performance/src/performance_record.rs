@@ -25,7 +25,7 @@ pub trait PerformanceRecord: Sized + scroll::ctx::TryIntoCtx<scroll::Endian, Err
     fn revision(&self) -> u8;
 
     fn data_size(&self) -> usize {
-        log::info!("mem size {}", mem::size_of::<Self>());
+        // log::info!("mem size {}", mem::size_of::<Self>());
         mem::size_of::<Self>()
     }
 

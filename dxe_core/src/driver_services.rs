@@ -219,6 +219,8 @@ fn core_connect_single_controller(
             let device_path = remaining_device_path.or(Some(core::ptr::null_mut())).expect("must be some");
             // SHERRY: all the perf instrumentation looks ugly. maybe we should make them SCREAMING_SNAKE_CASE or something
             // to distinguish from regular code
+            // also, i took out the binding support instrumentation because it was
+            // causing waaayyy too many entries (like 40k)
             perf_driver_binding_support_begin(driver_binding.driver_binding_handle, controller_handle);
             match (driver_binding.supported)(driver_binding_interface, controller_handle, device_path) {
                 efi::Status::SUCCESS => {
