@@ -631,7 +631,12 @@ impl GCD {
                     (MemoryAttributes::from_bits_truncate(desc.attributes) & MemoryAttributes::CacheAttributesMask)
                         | MemoryAttributes::ExecuteProtect);
 
+                // we have large ranges of memory that have been allocated but then freed
+                // this is what the memory bin code does. We should only map what memory
+                // is actually being used. On future allocations of this region, the pages will
+                // get mapped again.
                 if desc.attributes & efi::MEMORY_RP != 0 {
+
                     continue;
                 }
 
@@ -2477,14 +2482,21 @@ impl SpinLockedGcd {
             // it is still legal to split a descriptor and only set the attributes on part of it
             let next_base = u64::min(descriptor_end, range_end);
             let current_len = next_base - current_base;
-            log::error!("Setting attributes for {:#X} - {:#X} with attributes {:#X}, len {:#X}, range_end {:#X}", current_base, next_base, attributes, len, range_end);
             match self.memory.lock().set_memory_space_attributes(current_base as usize, current_len as usize, attributes) {
                 Err(Error::NotInitialized) => {
-                    log::warn!("Set attr returned not initialized, skipping memory attribute setting");
+                    // before the page table is installed, we expect to get a return of NotInitialized. This means the GCD
+                    // has been updated with the attributes, but the page table is NotInitialized yet. In init_paging, the
+                    // page table will be updated with the current state of the GCD. The code that calls into this expects
+                    // NotInitialized to be returned, so we must catch that error and report it. However, we also need to
+                    // make sure any attribute updates across descriptors update the full range and not error out here.
                     res = Err(Error::NotInitialized);
                 }
                 Ok(())  => {},
-                _ => { panic!("SLG Failed to set memory attributes {:#X} for {:#X} - {:#X}", attributes, current_base, next_base); }
+                _ => { 
+                // some nicer log here
+                debug_assert!(false);
+                }
+
             }
             current_base = next_base;
         }
