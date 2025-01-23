@@ -422,7 +422,6 @@ impl FixedSizeBlockAllocator {
     ) -> Result<core::ptr::NonNull<[u8]>, efi::Status> {
         self.stats.page_allocation_calls += 1;
 
-        let mut memory_type = GcdMemoryType::SystemMemory;
         if let AllocationStrategy::Address(address) = allocation_strategy {
             // validate allocation strategy addresses for direct address allocation is properly aligned.
             // for BottomUp and TopDown strategies, the address parameter doesn't have to be page-aligned, but
@@ -438,7 +437,7 @@ impl FixedSizeBlockAllocator {
             .gcd
             .allocate_memory_space(
                 allocation_strategy,
-                memory_type,
+                GcdMemoryType::SystemMemory,
                 UEFI_PAGE_SHIFT,
                 pages * ALIGNMENT,
                 self.handle,

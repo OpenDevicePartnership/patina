@@ -2465,13 +2465,13 @@ impl SpinLockedGcd {
                 current_len as usize,
                 attributes,
             ) {
-                Err(Error::NotInitialized) => {
+                Err(EfiError::NotReady) => {
                     // before the page table is installed, we expect to get a return of NotInitialized. This means the GCD
                     // has been updated with the attributes, but the page table is NotInitialized yet. In init_paging, the
                     // page table will be updated with the current state of the GCD. The code that calls into this expects
                     // NotInitialized to be returned, so we must catch that error and report it. However, we also need to
                     // make sure any attribute updates across descriptors update the full range and not error out here.
-                    res = Err(Error::NotInitialized);
+                    res = Err(EfiError::NotReady);
                 }
                 Ok(()) => {}
                 _ => {
