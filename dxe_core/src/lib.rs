@@ -146,14 +146,28 @@ macro_rules! error {
 
 pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
 
+#[doc(hidden)]
+/// A zero-sized type to gate allocation functions in the [Core].
+pub struct Alloc;
+
+#[doc(hidden)]
+/// A zero-sized type to gate non-allocation functions in the [Core].
+pub struct NoAlloc;
 /// The initialize phase DxeCore, responsible for setting up the environment with the given configuration.
 ///
-/// This struct is the entry point for the DXE Core, which is a two phase system. This struct is responsible for
-/// initializing the system and applying any configuration from the `with_*` function calls. During this phase, no
-/// allocations are available. Allocations are only available once [initialize](Core::initialize) is called.
+/// This struct is the entry point for the DXE Core, which is a two phase system. The current phase is denoted by the
+/// current struct representing the generic parameter "MemoryState". Creating a [Core] object will initialize the
+/// struct in the `NoAlloc` phase. Calling the [initialize](Core::initialize) method will transition the struct
+/// to the `Alloc` phase. Each phase provides a subset of methods that are available to the struct, allowing
+/// for a more controlled configuration and execution process.
 ///
-/// The return type from [initialize](Core::initialize) is a [CorePostInit] object, which signals the completion of
-/// the first phase of the DXE Core and that allocations are available. See [CorePostInit] for more information.
+/// During the `NoAlloc` phase, the struct provides methods to configure the DXE core environment
+/// prior to allocation capability such as CPU functionality and section extraction. During this time,
+/// no allocations are available.
+///
+/// Once the [initialize](Core::initialize) method is called, the struct transitions to the `Alloc` phase,
+/// which provides methods for adding configuration and components with the DXE core, and eventually starting the
+/// dispatching process and eventual handoff to the BDS phase.
 ///
 /// ## Examples
 ///
@@ -217,8 +231,7 @@ pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_c
 ///   .start()
 ///   .unwrap();
 /// ```
-#[derive(Default)]
-pub struct Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases>
+pub struct Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases, MemoryState>
 where
     CpuInit: uefi_cpu::cpu::EfiCpuInit + Default + 'static,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
@@ -229,10 +242,32 @@ where
     section_extractor: SectionExtractor,
     interrupt_manager: InterruptManager,
     interrupt_bases: InterruptBases,
+    drivers: Vec<Box<dyn DxeComponent>>,
+    _memory_state: core::marker::PhantomData<MemoryState>,
+}
+
+impl<CpuInit, SectionExtractor, InterruptManager, InterruptBases> Default
+    for Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases, NoAlloc>
+where
+    CpuInit: uefi_cpu::cpu::EfiCpuInit + Default + 'static,
+    SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
+    InterruptManager: uefi_cpu::interrupts::InterruptManager + Default + Copy + 'static,
+    InterruptBases: uefi_cpu::interrupts::InterruptBases + Default + Copy + 'static,
+{
+    fn default() -> Self {
+        Core {
+            cpu_init: CpuInit::default(),
+            section_extractor: SectionExtractor::default(),
+            interrupt_manager: InterruptManager::default(),
+            interrupt_bases: InterruptBases::default(),
+            drivers: Vec::new(),
+            _memory_state: core::marker::PhantomData,
+        }
+    }
 }
 
 impl<CpuInit, SectionExtractor, InterruptManager, InterruptBases>
-    Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases>
+    Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases, NoAlloc>
 where
     CpuInit: uefi_cpu::cpu::EfiCpuInit + Default + 'static,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
@@ -271,7 +306,10 @@ where
     }
 
     /// Initializes the core with the given configuration, including GCD initialization, enabling allocations.
-    pub fn initialize(mut self, physical_hob_list: *const c_void) -> CorePostInit {
+    pub fn initialize(
+        mut self,
+        physical_hob_list: *const c_void,
+    ) -> Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases, Alloc> {
         let _ = self.cpu_init.initialize();
         self.interrupt_manager.initialize().expect("Failed to initialize interrupt manager!");
 
@@ -373,26 +411,25 @@ where
         //     runtime_services_ptr.as_ref().unwrap()
         // });
 
-        CorePostInit::new(/* Potentially transfer configuration data here. */)
+        Core {
+            cpu_init: self.cpu_init,
+            section_extractor: self.section_extractor,
+            interrupt_manager: self.interrupt_manager,
+            interrupt_bases: self.interrupt_bases,
+            drivers: self.drivers,
+            _memory_state: core::marker::PhantomData,
+        }
     }
 }
 
-/// The execute phase of the DxeCore, responsible for dispatching all drivers.
-///
-/// This phase is responsible for dispatching all drivers that have been registered with the core or discovered by the
-/// core. This structure cannot be generated directly, but is returned from [Core::initialize]. This phase allows for
-/// additional configuration that may require allocations, as allocations are now available. Once all configuration has
-/// been completed via the provided `with_*` functions, [start](CorePostInit::start) should be called to begin driver
-/// dispatch and handoff to bds.
-pub struct CorePostInit {
-    drivers: Vec<Box<dyn DxeComponent>>,
-}
-
-impl CorePostInit {
-    fn new() -> Self {
-        Self { drivers: Vec::new() }
-    }
-
+impl<CpuInit, SectionExtractor, InterruptManager, InterruptBases>
+    Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases, Alloc>
+where
+    CpuInit: uefi_cpu::cpu::EfiCpuInit + Default + 'static,
+    SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
+    InterruptManager: uefi_cpu::interrupts::InterruptManager + Default + Copy + 'static,
+    InterruptBases: uefi_cpu::interrupts::InterruptBases + Default + Copy + 'static,
+{
     /// Registers a driver to be dispatched by the core.
     pub fn with_driver(mut self, driver: Box<dyn DxeComponent>) -> Self {
         self.drivers.push(driver);

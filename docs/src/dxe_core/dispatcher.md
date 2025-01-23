@@ -169,9 +169,73 @@ firmware volume will be processed.
 The core dispatcher uses the `uefi_depex` library crate to support DEPEX parsing and evaluation, which implements all of
 the DEPEX operators and capabilities specified in the UEFI Platform Initialization Spec.
 
+## A Priori File
+
 ```admonish warning title="No APRIORI Support"
 The Rust DXE Core does not presently provide support for APRIORI file control of dispatch order for drivers.
 ```
+
+The *a priori* file was introduced in the Platform Initialization (PI) Specification to provide additional flexibility
+when designing platform firmware. A single *a priori* file was optionally allowed per firmware volume. The *a priori*
+file allowed a list of DXE drivers to be specified by their module GUID that received special treatment from the DXE
+dispatcher:
+
+- Drivers listed in the *a priori* file were always dispatched first, regardless of their dependency expressions (DEPEX
+  are ignored).
+- Drivers listed in the *a priori* file were always dispatched in the order they were listed in the file.
+
+The *a priori* mechanism was envisioned to support two primary use cases:
+
+1. Allow a small set of early drivers to be grouped for early dispatch before the remainder of drivers are evaluated
+   via their dependency expressions.
+2. Allow a platform to bypass the DEPEX evaluation mechanism entirely in a given platform. This was targeted at
+   smaller, embedded projects that wanted to maintain a fixed and predictable dispatch order.
+
+In practice, we have found that an *a priori* file serves neither of these purposes well and makes DXE driver dispatch
+error prone and brittle. **(1)** has largely evolved into a code smell that indicates the drivers have not defined
+their dependencies correctly and **(2)** has shown to be impractical. Truly embedded projects have opted for boot loader
+designs outside of the PI Specification while projects adhering to the PI Specification remain large and complex,
+consisting of hundreds of DXE drivers.
+
+### Brittleness of *a priori*
+
+First, an *a priori* file is not reusable. It must be constructed correctly per platform. This alone makes the exercise
+of maintaining an *a priori* file error prone. Second, a modern platform constructed with industry standard DXE drivers
+and common layers of abstraction will have in excess of 100 DXE drivers which exacerbates the complexity of crafting the
+*a priori* file correctly and the maintainability of the file over time.
+
+Of the hundreds of DXE drivers in modern platform firmware, only a very small number are authored by the platform
+engineer that will be responsible for constructing an *a priori* file for a given platform.
+
+- It is not practical to expect a platform engineer(s) to understand the dependencies of all the drivers in the system.
+  - The dependencies are not fixed per driver but an aggregation of all the dependencies that are in code linked into
+    the driver. This means the platform engineer must now account for the dependencies of code within each driver and
+    how those dependencies interact with the dependencies of other drivers.
+- Even if dependency expressions are ignored entirely, in order for code written by other authors to be portable,
+  **dependencies** must be declared and accounted for correctly. There has been no tangible value in bypassing or
+  duplicating alternate dependency systems.
+- While both a pure *a priori* and a dependency-based dispatch can "appear to work" with room for error in dependencies,
+  the *a priori* file is much more brittle. The human responsible for constructing the *a priori* file must get the
+  dependencies correct that would already be correct with dependency-based dispatch in addition to those that are not.
+
+### Alternatives
+
+To foster a more maintainable, robust, and correct DXE environment, the Rust DXE Core does not support *a priori* files
+and requires that code being dispatched declare its dependencies properly. These are alternatives to maintain some of
+the properties in *a priori* without using an *a priori* file:
+
+- **Driver Order**: Files will be dispatched in order of their placement within a firmware volume. If two drivers are
+  both eligible for dispatch, the one that appears first in the firmware volume will be dispatched first.
+- **Driver vs Code Dependency**: Driver and code dispatch are separate. A driver must establish what dependencies
+  are necessary for its entry point. The entry point may install additional notifications and events that will trigger
+  specific code on other external events.
+
+### Summary
+
+The Rust DXE Core opts to require a programatically accurate evaluation of author-declared dependencies rather than a
+"predictable" order that is more susceptible to error and assumptions built around that order that result in rigid code.
+Libraries and drivers should declare their dependencies correctly so that platforms can quickly and easily integrate
+their code into larger systems.
 
 ## Firmware Volume Processing
 

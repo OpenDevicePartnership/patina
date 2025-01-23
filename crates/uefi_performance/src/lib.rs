@@ -52,10 +52,9 @@ use performance_table::FBPT;
 
 use r_efi::system::EVENT_GROUP_READY_TO_BOOT;
 
-use mu_rust_helpers::{
-    function,
-    perf_timer::{Arch, ArchFunctionality},
-};
+pub use mu_rust_helpers::function;
+use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
+
 use uefi_sdk::{
     boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
     guid,
@@ -220,14 +219,13 @@ extern "efiapi" fn create_performance_measurement(
     let string = unsafe { _utils::string_from_c_char_ptr(string) };
 
     let mut perf_id = identifier as u16;
-    if attribute == PerfAttribute::PerfEntry {
+    if attribute != PerfAttribute::PerfEntry {
         if perf_id != 0 && is_known_id(perf_id) && !is_known_token(string.as_ref()) {
             return efi::Status::INVALID_PARAMETER;
         } else if perf_id != 0 && !is_known_id(perf_id) && !is_known_token(string.as_ref()) {
             if attribute == PerfAttribute::PerfStartEntry && ((perf_id & 0x000F) != 0) {
                 perf_id &= 0xFFF0;
-            }
-            if attribute == PerfAttribute::PerfStartEntry && ((perf_id & 0x000F) == 0) {
+            } else if attribute == PerfAttribute::PerfEndEntry && ((perf_id & 0x000F) == 0) {
                 perf_id += 1;
             }
         } else if perf_id == 0 {
@@ -338,7 +336,7 @@ extern "efiapi" fn create_performance_measurement(
                 DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, string.as_deref().unwrap_or("unknown name"));
             _ = &FBPT.lock().add_record(record);
         }
-        _ if attribute == PerfAttribute::PerfEntry => {
+        _ if attribute != PerfAttribute::PerfEntry => {
             // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
             log::warn!(
                 "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
@@ -541,19 +539,19 @@ fn end_perf_measurement(
 }
 
 pub fn perf_image_start_begin(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_START);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_START);
 }
 
 pub fn perf_image_start_end(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_END);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_END);
 }
 
 pub fn perf_load_image_begin(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_DB_START);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_START);
 }
 
 pub fn perf_load_image_end(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_DB_END);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_END);
 }
 
 pub fn perf_driver_binding_support_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
@@ -592,8 +590,8 @@ pub fn perf_event(event_string: &str, caller_id: &efi::Guid) {
 
 #[macro_export]
 macro_rules! perf_event_signal_begin {
-    (&event_guid:expr) => {
-        _perf_event_signal_begin($event_guid, function()!)
+    ($event_guid:expr, $caller_id:expr) => {
+        $crate::_perf_event_signal_begin($event_guid, $crate::function!(), $caller_id)
     };
 }
 
@@ -609,8 +607,8 @@ pub fn _perf_event_signal_begin(event_guid: &efi::Guid, fun_name: &str, caller_i
 
 #[macro_export]
 macro_rules! perf_event_signal_end {
-    (&event_guid:expr) => {
-        _perf_event_signal_end($event_guid, function()!)
+    ($event_guid:expr, $caller_id:expr) => {
+        $crate::_perf_event_signal_end($event_guid, $crate::function!(), $caller_id)
     };
 }
 
@@ -626,8 +624,8 @@ pub fn _perf_event_signal_end(event_guid: &efi::Guid, fun_name: &str, caller_id:
 
 #[macro_export]
 macro_rules! perf_callback_begin {
-    (&trigger_guid:expr) => {
-        _perf_callback_begin($trigger_guid, function()!)
+    ($trigger_guid:expr, $caller_id:expr) => {
+        $crate::_perf_callback_begin($trigger_guid, $crate::function!(), $caller_id)
     };
 }
 
@@ -643,8 +641,8 @@ pub fn _perf_callback_begin(trigger_guid: &efi::Guid, fun_name: &str, caller_id:
 
 #[macro_export]
 macro_rules! perf_callback_end {
-    (&trigger_guid:expr) => {
-        _perf_callback_end($trigger_guid, function()!)
+    ($trigger_guid:expr, $caller_id:expr) => {
+        $crate::_perf_callback_end($trigger_guid, $crate::function!(), $caller_id)
     };
 }
 
@@ -660,8 +658,8 @@ pub fn _perf_callback_end(trigger_guid: &efi::Guid, fun_name: &str, caller_id: &
 
 #[macro_export]
 macro_rules! perf_function_begin {
-    (&trigger_guid:expr) => {
-        _perf_function_begin($trigger_guid, function()!)
+    ($caller_id:expr) => {
+        $crate::_perf_function_begin($crate::function!(), $caller_id)
     };
 }
 
@@ -677,8 +675,8 @@ pub fn _perf_function_begin(fun_name: &str, caller_id: &efi::Guid) {
 
 #[macro_export]
 macro_rules! perf_function_end {
-    (&trigger_guid:expr) => {
-        _perf_function_end($trigger_guid, function()!)
+    ($caller_id:expr) => {
+        $crate::_perf_function_end($crate::function!(), $caller_id)
     };
 }
 
