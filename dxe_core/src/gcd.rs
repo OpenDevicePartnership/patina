@@ -216,9 +216,7 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
             if let Hob::ResourceDescriptorV2(res_desc) = hob {
                 let memory_attributes = (MemoryAttributes::from_bits_truncate(res_desc.attributes) & MemoryAttributes::CacheAttributesMask).bits() as u64;
                 match GCD.set_memory_space_attributes(res_desc.v1.physical_start as usize, res_desc.v1.resource_length as usize, memory_attributes) {
-                    Err(Error::NotInitialized) => {
-                        log::warn!("GCD not initialized, skipping memory attribute setting");
-                    }
+                    Err(Error::NotInitialized) => (),
                     _ => { panic!("Failed to set memory attributes"); }
                 }
                 log::error!("GCD after set mem: {}", GCD);
