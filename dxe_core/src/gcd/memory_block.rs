@@ -252,7 +252,14 @@ impl MemoryBlock {
                 if let Some(device_handle) = device_handle {
                     md.device_handle = device_handle;
                 }
+                // Whenever memory is allocated, we need to set it as XP and preserve the cache
+                // attributes. This is done at this level because in early initialization, the GCD and
+                // page table are not initialized and various checks will fail when done from the
+                // top down. Those components will be synchronized when initialization of them
+                // completes and so this addition becomes a no-op later, but is required at the
+                // beginning.
                 md.attributes = (md.attributes & efi::CACHE_ATTRIBUTE_MASK) | efi::MEMORY_XP;
+
                 *self = Self::Allocated(*md);
                 Ok(())
             }
