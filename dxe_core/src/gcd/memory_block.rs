@@ -295,7 +295,10 @@ impl MemoryBlock {
             Self::Allocated(md) | Self::Unallocated(md)
                 if md.memory_type != dxe_services::GcdMemoryType::NonExistent =>
             {
-                if (capabilities | md.attributes) != capabilities {
+                if (capabilities | md.attributes) != md.attributes {
+                    //
+                    // Current attributes must still be supported with new capabilities
+                    //
                     Err(Error::InvalidStateTransition)
                 } else {
                     md.capabilities = capabilities;
