@@ -2,7 +2,7 @@
 
 Platform testing is supported through the `uefi_test` crate, which provides a testing framework similar to the typical
 rust testing framework. The key difference is that instead of tests being collected and executed on the host based
-system, they are instead collected and executed via a component (`TestRunnerComponent`) provided by the same crate.
+system, they are instead collected and executed via a component (`uefi_test::TestRunner`) provided by the same crate.
 The platform must register this component with the dxe_core. The dxe_core will then dispatch this component, which will
 run all registered tests.
 
@@ -14,14 +14,13 @@ the documentation in that crate. However, for ease of access, some high level co
 ## Writing On-Platform Tests
 
 Writing a test to be run on-platform is as simple as setting the `uefi_test` attribute on a function with the following
-interface:
+interface where `...` can be any number of parameters that implement the `Param` trait from `uefi_sdk::component::*`:
 
 ``` rust
 use uefi_test::{Result, uefi_test};
-use uefi_component_interface::DxeComponentInterface;
 
 #[uefi_test]
-fn my_test(&dyn DxeComponentInterface) -> Result { todo!() }
+fn my_test(...) -> Result { todo!() }
 ```
 
 Writing on-platform tests is not just for driver testing, it can also be used for testing general purpose code on a
@@ -30,17 +29,18 @@ ability to filter out tests, but you should also be conscious of when tests shou
 `skip` attribute is a great way to have tests ignored for reasons like host architecture, or through feature flags!
 
 ``` admonish note
-uefi_test::Result is simply `core::result::Result<(), &'static str>`, and you could use that instead. The
-`DxeComponentInterface` will be the same interface that general-use components receive.
+uefi_test::Result is simply `core::result::Result<(), &'static str>`, and you could use that instead.
 ```
 
 Similar to `test` attribute, there are a few additional attribute customizations to help with writing tests platform
 based tests. The first is the `skip` attribute, which paired with `cfg_attr` can be used to skip certain tests.
 
 ``` rust
+use uefi_sdk::boot_services::StandardBootServices;
+
 #[uefi_test]
 #[cfg_attr(target_arch = "aarch64", skip)]
-fn my_test(&dyn DxeComponentInterface) -> Result { todo!() }
+fn my_test(bs: StandardBootServices) -> Result { todo!() }
 ```
 
 Next is the `should_fail` attribute which allows you to specify that this test should fail. It has an additional
@@ -49,11 +49,11 @@ customization that allows you to specify the expected failure message.
 ``` rust
 #[uefi_test]
 #[should_fail]
-fn my_test1(&dyn DxeComponentInterface) -> Result { todo!() }
+fn my_test1() -> Result { todo!() }
 
 #[uefi_test]
 #[should_fail = "Failed for this reason"]
-fn my_test2(&dyn DxeComponentInterface) -> Result { todo!() }
+fn my_test2() -> Result { todo!() }
 ```
 
 ## Running On-Platform Tests
@@ -62,14 +62,12 @@ Running all these tests on a platform is as easy as instantiating the test runne
 dxe core:
 
 ``` rust
-use uefi_test::TestRunnerComponent;
-use dxe_core::Core;
 
-let test_runner = TestRunnerComponent::default();
+let test_runner = TestRunner::default();
 
 Core::default()
-    .initialize()
-    .with_driver(Box::new(test_runner))
+    .init_memory()
+    .with_component(test_runner)
     .start()
     .unwrap();
 ```
@@ -85,17 +83,14 @@ customization is `fail_fast` which will immediately exit the test harness as soo
 default). These two customizations can only be called once. Subsequent calls will overwrite the previous value.
 
 ``` rust
-use uefi_test::TestRunnerComponent;
-use dxe_core::Core;
-
 let test_runner = TestRunnerComponent::default()
     .with_filter("X64")
     .debug_mode(true)
-    .fail_fast(true)
+    .fail_fast(true);
 
 Core::default()
-    .initialize()
-    .with_driver(Box::new(test_runner))
+    .init_memory()
+    .with_component(test_runner)
     .start()
     .unwrap();
 ```

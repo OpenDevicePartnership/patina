@@ -40,6 +40,7 @@
   - [Event, Timer, and Task Priority](dxe_core/events.md)
   - [Protocol Database](dxe_core/protocol_database.md)
   - [UEFI Driver Model](dxe_core/driver_model.md)
+  - [Component Model](dxe_core/component_model.md)
   - [Memory Management]()
   - [Image Loading and Execution](dxe_core/images.md)
   - [Dispatcher](dxe_core/dispatcher.md)

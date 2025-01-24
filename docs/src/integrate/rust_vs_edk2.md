@@ -36,3 +36,7 @@ Platforms should ensure the following specifications are met when transitioning 
     simplification of the overall DXE environment.
 
 - When `EXIT_BOOT_SERVICES` is signalled, the memory map is not allowed to change. See [Exit Boot Services Handlers](../dxe_core/memory_management.md#exit-boot-services-handlers)
+- Writing pure rust components do not use the standard EDKII entry point
+  (`EFI_HANDLE ImageHandle,EFI_SYSTEM_TABLE *SystemTable`). Instead, the dispatcher uses dependency injection, allowing
+  component writers to define their own custom function interface defining all necessary data to be dispatched. See
+  [Monolithically Compiled Components](../driver/interface.md).
