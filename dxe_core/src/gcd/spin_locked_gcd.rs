@@ -4039,7 +4039,8 @@ mod tests {
                 GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
                     .unwrap();
             }
-            GCD.set_memory_space_capabilities(address, 0x1000, efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP).unwrap();
+            GCD.set_memory_space_capabilities(address, 0x1000, efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP)
+                .unwrap();
 
             assert!(CALLBACK2.load(core::sync::atomic::Ordering::SeqCst));
         });
