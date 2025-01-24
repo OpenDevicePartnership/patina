@@ -10,14 +10,13 @@ use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
 use mu_pi::hob::{Hob, HobList};
 use r_efi::efi;
-use uefi_component_interface::DxeComponent;
 use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
 use uefi_sdk::base::{align_up, UEFI_PAGE_SIZE};
 use uefi_sdk::{guid, uefi_size_to_pages};
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
-    component_interface, dxe_services,
+    dxe_services,
     filesystems::SimpleFile,
     pecoff::{self, relocation::RelocationBlock, UefiPeInfo},
     protocol_db,
@@ -1029,29 +1028,6 @@ extern "efiapi" fn start_image(
     match status {
         Ok(()) => efi::Status::SUCCESS,
         Err(err) => err,
-    }
-}
-
-pub fn core_start_local_image(component: &'static dyn DxeComponent) -> Result<(), efi::Status> {
-    // we get an NX stack for "free" because new pages area allocated efi::MEMORY_XP by default
-    let stack = ImageStack::new(ENTRY_POINT_STACK_SIZE)?;
-
-    let mut coroutine =
-        Coroutine::with_stack(stack, move |_: &Yielder<&dyn DxeComponent, crate::error::Result<()>>, component| {
-            component.entry_point(&component_interface::ComponentInterface)?;
-            Ok::<(), crate::error::EfiError>(())
-        });
-
-    let status = match coroutine.resume(component) {
-        CoroutineResult::Yield(status) => status,
-        // Note: `CoroutineResult::Return` is unexpected, since it would imply
-        // that exit() failed. TODO: should panic here?
-        CoroutineResult::Return(status) => status,
-    };
-
-    match status {
-        Ok(()) => Ok(()),
-        Err(_) => Err(efi::Status::LOAD_ERROR),
     }
 }
 

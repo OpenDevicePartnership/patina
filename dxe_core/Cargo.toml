@@ -38,9 +38,8 @@ spin = { workspace = true }
 uefi_corosensei = { workspace = true }
 uuid = { workspace = true }
 
-uefi_sdk = { workspace = true }
+uefi_sdk = { workspace = true, features = ["core"] }
 uefi_collections = { workspace = true }
-uefi_component_interface = { workspace = true }
 uefi_cpu = { workspace = true }
 uefi_debugger = { workspace = true }
 uefi_device_path = { workspace = true }

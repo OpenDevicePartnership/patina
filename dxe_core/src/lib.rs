@@ -12,11 +12,7 @@
 //! use uefi_cpu::interrupts::ExceptionType;
 //! use uefi_cpu::interrupts::HandlerType;
 //! use uefi_sdk::error::EfiError;
-//! # #[derive(Default, Clone, Copy)]
-//! # struct Driver;
-//! # impl uefi_component_interface::DxeComponent for Driver {
-//! #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_sdk::error::Result<()> { Ok(()) }
-//! # }
+//! # fn example_component() -> uefi_sdk::error::Result<()> { Ok(()) }
 //! # #[derive(Default, Clone, Copy)]
 //! # struct CpuInitExample;
 //! # impl uefi_cpu::cpu::EfiCpuInit for CpuInitExample {
@@ -61,8 +57,8 @@
 //!   .with_interrupt_manager(InterruptManagerExample::default())
 //!   .with_section_extractor(SectionExtractExample::default())
 //!   .with_interrupt_bases(InterruptBasesExample::default())
-//!   .initialize(physical_hob_list)
-//!   .with_driver(Box::new(Driver::default()))
+//!   .init_memory(physical_hob_list)
+//!   .with_component(example_component)
 //!   .start()
 //!   .unwrap();
 //! ```
@@ -86,7 +82,6 @@
 extern crate alloc;
 
 mod allocator;
-mod component_interface;
 mod cpu_arch_protocol;
 mod dispatcher;
 mod driver_services;
@@ -125,8 +120,10 @@ use mu_pi::{
 };
 use protocols::PROTOCOL_DB;
 use r_efi::efi;
-use uefi_component_interface::DxeComponent;
-use uefi_sdk::error::{self, Result};
+use uefi_sdk::{
+    component::{Component, IntoComponent, Storage},
+    error::{self, Result},
+};
 
 #[macro_export]
 macro_rules! ensure {
@@ -153,11 +150,12 @@ pub struct Alloc;
 #[doc(hidden)]
 /// A zero-sized type to gate non-allocation functions in the [Core].
 pub struct NoAlloc;
+
 /// The initialize phase DxeCore, responsible for setting up the environment with the given configuration.
 ///
 /// This struct is the entry point for the DXE Core, which is a two phase system. The current phase is denoted by the
 /// current struct representing the generic parameter "MemoryState". Creating a [Core] object will initialize the
-/// struct in the `NoAlloc` phase. Calling the [initialize](Core::initialize) method will transition the struct
+/// struct in the `NoAlloc` phase. Calling the [init_memory](Core::init_memory) method will transition the struct
 /// to the `Alloc` phase. Each phase provides a subset of methods that are available to the struct, allowing
 /// for a more controlled configuration and execution process.
 ///
@@ -165,7 +163,7 @@ pub struct NoAlloc;
 /// prior to allocation capability such as CPU functionality and section extraction. During this time,
 /// no allocations are available.
 ///
-/// Once the [initialize](Core::initialize) method is called, the struct transitions to the `Alloc` phase,
+/// Once the [init_memory](Core::init_memory) method is called, the struct transitions to the `Alloc` phase,
 /// which provides methods for adding configuration and components with the DXE core, and eventually starting the
 /// dispatching process and eventual handoff to the BDS phase.
 ///
@@ -177,11 +175,7 @@ pub struct NoAlloc;
 /// use uefi_cpu::interrupts::ExceptionType;
 /// use uefi_cpu::interrupts::HandlerType;
 /// use uefi_sdk::error::EfiError;
-/// # #[derive(Default, Clone, Copy)]
-/// # struct Driver;
-/// # impl uefi_component_interface::DxeComponent for Driver {
-/// #     fn entry_point(&self, _: &dyn uefi_component_interface::DxeComponentInterface) -> uefi_sdk::error::Result<()> { Ok(()) }
-/// # }
+/// # fn example_component() -> uefi_sdk::error::Result<()> { Ok(()) }
 /// # #[derive(Default, Clone, Copy)]
 /// # struct CpuInitExample;
 /// # impl EfiCpuInit for CpuInitExample {
@@ -226,8 +220,8 @@ pub struct NoAlloc;
 ///   .with_interrupt_manager(InterruptManagerExample::default())
 ///   .with_section_extractor(SectionExtractExample::default())
 ///   .with_interrupt_bases(InterruptBasesExample::default())
-///   .initialize(physical_hob_list)
-///   .with_driver(Box::new(Driver::default()))
+///   .init_memory(physical_hob_list)
+///   .with_component(example_component)
 ///   .start()
 ///   .unwrap();
 /// ```
@@ -242,7 +236,8 @@ where
     section_extractor: SectionExtractor,
     interrupt_manager: InterruptManager,
     interrupt_bases: InterruptBases,
-    drivers: Vec<Box<dyn DxeComponent>>,
+    components: Vec<Box<dyn Component>>,
+    storage: Storage,
     _memory_state: core::marker::PhantomData<MemoryState>,
 }
 
@@ -260,7 +255,8 @@ where
             section_extractor: SectionExtractor::default(),
             interrupt_manager: InterruptManager::default(),
             interrupt_bases: InterruptBases::default(),
-            drivers: Vec::new(),
+            components: Vec::new(),
+            storage: Storage::new(),
             _memory_state: core::marker::PhantomData,
         }
     }
@@ -306,7 +302,7 @@ where
     }
 
     /// Initializes the core with the given configuration, including GCD initialization, enabling allocations.
-    pub fn initialize(
+    pub fn init_memory(
         mut self,
         physical_hob_list: *const c_void,
     ) -> Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases, Alloc> {
@@ -411,12 +407,14 @@ where
         //     runtime_services_ptr.as_ref().unwrap()
         // });
 
+        self.storage.set_boot_services(boot_services_ptr);
         Core {
             cpu_init: self.cpu_init,
             section_extractor: self.section_extractor,
             interrupt_manager: self.interrupt_manager,
             interrupt_bases: self.interrupt_bases,
-            drivers: self.drivers,
+            components: self.components,
+            storage: self.storage,
             _memory_state: core::marker::PhantomData,
         }
     }
@@ -430,24 +428,88 @@ where
     InterruptManager: uefi_cpu::interrupts::InterruptManager + Default + Copy + 'static,
     InterruptBases: uefi_cpu::interrupts::InterruptBases + Default + Copy + 'static,
 {
-    /// Registers a driver to be dispatched by the core.
-    pub fn with_driver(mut self, driver: Box<dyn DxeComponent>) -> Self {
-        self.drivers.push(driver);
+    /// Registers a component with the core, that will be dispatched during the driver execution phase.
+    pub fn with_component<I>(mut self, component: impl IntoComponent<I>) -> Self {
+        let mut component = component.into_component();
+        component.initialize(&mut self.storage);
+        self.components.push(component);
         self
     }
 
-    /// Starts the core, dispatching all drivers.
-    pub fn start(self) -> Result<()> {
-        log::info!("Dispatching Local Drivers");
-        for driver in self.drivers {
-            // This leaks the driver, making it static for the lifetime of the program.
-            // Since the number of drivers is fixed and this function can only be called once (due to
-            // `self` instead of `&self`), we don't have to worry about leaking memory.
-            if let Err(driver_err) = image::core_start_local_image(Box::leak(driver)) {
-                debug_assert!(false, "Driver failed with status {:?}", driver_err);
-                log::error!("Driver failed with status {:?}", driver_err);
+    /// Adds a configuration value to the Core's storage. All configuration is locked by default. If a component is
+    /// present that requires a mutable configuration, it will automatically be unlocked.
+    pub fn with_config<C: Default + 'static>(mut self, config: C) -> Self {
+        self.storage.add_config(config);
+        self
+    }
+
+    /// Attempts to dispatch all components.
+    ///
+    /// This method will exit once no components remain or no components were dispatched during a full iteration.
+    fn dispatch_components(&mut self) {
+        loop {
+            let len = self.components.len();
+            self.components.retain_mut(|component| {
+                // Ok(true): Dispatchable and dispatched returning success
+                // Ok(false): Not dispatchable at this time.
+                // Err(e): Dispatchable and dispatched returning failure
+                log::info!("DISPATCH_ATTEMPT BEGIN: Id = [{:?}]", component.metadata().name());
+                !match component.run(&mut self.storage) {
+                    Ok(true) => {
+                        log::info!("DISPATCH_ATTEMPT END: Id = [{:?}] Status = [Success]", component.metadata().name());
+                        true
+                    }
+                    Ok(false) => {
+                        log::info!("DISPATCH_ATTEMPT END: Id = [{:?}] Status = [Skipped]", component.metadata().name());
+                        false
+                    }
+                    Err(err) => {
+                        log::error!(
+                            "DISPATCH_ATTEMPT END: Id = [{:?}] Status = [Failed] Error = [{:?}]",
+                            component.metadata().name(),
+                            err
+                        );
+                        debug_assert!(false);
+                        true // Component dispatched, even if it did fail, so remove from self.components to avoid re-dispatch.
+                    }
+                }
+            });
+            if self.components.len() == len {
+                break;
             }
         }
+    }
+
+    fn display_components_not_dispatched(&self) {
+        let name_len = "name".len();
+        let param_len = "failed_param".len();
+
+        let max_name_len = self.components.iter().map(|c| c.metadata().name().len()).max().unwrap_or(name_len);
+        let max_param_len = self
+            .components
+            .iter()
+            .map(|c| c.metadata().failed_param().map(|s| s.len()).unwrap_or(0))
+            .max()
+            .unwrap_or(param_len);
+
+        log::warn!("Components not dispatched:");
+        log::warn!("{:-<max_name_len$} {:-<max_param_len$}", "", "");
+        log::warn!("{:<max_name_len$} {:<max_param_len$}", "name", "failed_param");
+
+        for component in &self.components {
+            let metadata = component.metadata();
+            log::warn!("{:<max_name_len$} {:<max_param_len$}", metadata.name(), metadata.failed_param().unwrap_or(""));
+        }
+    }
+
+    /// Starts the core, dispatching all drivers.
+    pub fn start(mut self) -> Result<()> {
+        log::info!("Dispatching Local Drivers");
+        self.dispatch_components();
+        self.storage.lock_configs();
+        self.dispatch_components();
+        log::info!("Finished Dispatching Local Drivers");
+        self.display_components_not_dispatched();
 
         dispatcher::core_dispatcher().expect("initial dispatch failed.");
 
