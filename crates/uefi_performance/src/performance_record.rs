@@ -39,8 +39,10 @@ pub trait PerformanceRecord: Sized + scroll::ctx::TryIntoCtx<scroll::Endian, Err
         let mut record_size = 0;
 
         // Write performance record header.
+        // log::info!("offset before: {}", *offset);
         record_size += buff.gwrite(self.record_type(), offset)?;
         let mut record_size_offset = *offset;
+        // log::info!("offset after: {}", record_size_offset);
         record_size += buff.gwrite(0 as u8, offset)?;
         record_size += buff.gwrite(self.revision(), offset)?;
 

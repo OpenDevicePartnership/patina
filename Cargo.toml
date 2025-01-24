@@ -28,7 +28,7 @@ uefi_collections = { path = "crates/uefi_collections", version = "6.1.0", defaul
 uefi_depex = { path = "crates/uefi_depex", version = "6.1.0" }
 uefi_device_path = { path = "crates/uefi_device_path", version = "6.1.0" }
 uefi_component_interface = { path = "crates/uefi_component_interface", version = "6.1.0" }
-uefi_performance = { path = "crates/uefi_performance", version = "6.1.0" }
+uefi_performance = { path = "crates/uefi_performance", version = "6.1.0"}
 
 adv_logger = { path = "adv_logger" }
 sample_components = { path = "sample_components" }
@@ -48,7 +48,7 @@ linked_list_allocator = "^0.10"
 log = { version = "^0.4", default-features = false }
 mockall = "0.13.0"
 mu_pi = { git = "https://github.com/microsoft/mu_rust_pi.git", tag = "v5.1.1" }
-mu_rust_helpers = { git = "https://github.com/microsoft/mu_rust_helpers.git", tag = "v1.2.0" }
+mu_rust_helpers = { path = "C:/Users/sherryfan/mu_rust_helpers"}
 rand = "^0.8"
 r-efi = { version = "^5", default-features = false }
 scroll = { version = "^0.12", default-features = false, features = ["derive"] }
