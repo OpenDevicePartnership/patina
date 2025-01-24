@@ -15,6 +15,8 @@ use scroll::{self, Pread, Pwrite};
 
 use crate::_debug::DbgMemory;
 
+pub const FPDT_MAX_PERF_RECORD_SIZE: usize = u8::MAX as usize;
+
 pub const PERFORMANCE_RECORD_HEADER_SIZE: usize = mem::size_of::<u16>() // Type
         + mem::size_of::<u8>() // Length 
         + mem::size_of::<u8>(); // Revision
@@ -24,25 +26,22 @@ pub trait PerformanceRecord: Sized + scroll::ctx::TryIntoCtx<scroll::Endian, Err
 
     fn revision(&self) -> u8;
 
-    fn data_size(&self) -> usize {
-        mem::size_of::<Self>()
-    }
-
-    fn size(&self) -> usize {
-        PERFORMANCE_RECORD_HEADER_SIZE + self.data_size()
-    }
-
     fn write_into(self, buff: &mut [u8], offset: &mut usize) -> Result<usize, scroll::Error> {
-        let mut nb_byte_written = 0;
-        let record_size = self.size();
+        let mut record_size = 0;
+
         // Write performance record header.
-        nb_byte_written += buff.gwrite(self.record_type(), offset)?;
-        nb_byte_written += buff.gwrite(record_size as u8, offset)?;
-        nb_byte_written += buff.gwrite(self.revision(), offset)?;
+        record_size += buff.gwrite(self.record_type(), offset)?;
+        let mut record_size_offset = *offset;
+        record_size += buff.gwrite(0 as u8, offset)?;
+        record_size += buff.gwrite(self.revision(), offset)?;
+
         // Write data.
-        nb_byte_written += buff.gwrite(self, offset)?;
-        debug_assert_eq!(record_size, nb_byte_written);
-        Ok(nb_byte_written)
+        record_size += buff.gwrite(self, offset)?;
+
+        // Write record size
+        buff.gwrite(record_size as u8, &mut record_size_offset)?;
+
+        Ok(record_size)
     }
 }
 
@@ -79,13 +78,6 @@ impl<T: Deref<Target = [u8]>> PerformanceRecord for GenericPerformanceRecord<T> 
         self.revision
     }
 
-    fn data_size(&self) -> usize {
-        self.data.len()
-    }
-
-    fn size(&self) -> usize {
-        self.length as usize
-    }
 }
 
 impl<T: Deref<Target = [u8]>> Debug for GenericPerformanceRecord<T> {
@@ -109,18 +101,19 @@ impl PerformanceRecordBuffer {
         Self::Unpublished(Vec::new())
     }
 
-    pub fn push_record<T: PerformanceRecord>(&mut self, record: T) -> Result<(), efi::Status> {
+    pub fn push_record<T: PerformanceRecord>(&mut self, record: T) -> Result<usize, efi::Status> {
         match self {
             Self::Unpublished(buffer) => {
                 let mut offset = buffer.len();
-                buffer.resize(offset + record.size(), 0);
-                record.write_into(buffer, &mut offset).unwrap();
+                buffer.resize(offset + FPDT_MAX_PERF_RECORD_SIZE, 0);
+                let record_size = record.write_into(buffer, &mut offset).expect("Record size should not exceed FPDT_MAX_PERF_RECORD_SIZE");
+                buffer.truncate(offset);
+                Ok(record_size)
             }
             Self::Published(buffer, offset) => {
-                record.write_into(buffer, offset).map_err(|_| efi::Status::OUT_OF_RESOURCES)?;
+                record.write_into(buffer, offset).map_err(|_| efi::Status::OUT_OF_RESOURCES)
             }
-        };
-        Ok(())
+        }
     }
 
     pub fn report(&mut self, buffer: &'static mut [u8]) {
