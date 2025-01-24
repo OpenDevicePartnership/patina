@@ -1,0 +1,31 @@
+//! A Hello world component implementation example using a function component.
+//!
+//! A simple component implementation used to demonstrate how to build a component.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
+use log::info;
+use uefi_sdk::{component::params::Config, error::Result};
+
+#[derive(Default, Clone, Copy)]
+pub struct Name(pub &'static str);
+
+pub fn log_hello(name: Config<Name>) -> Result<()> {
+    info!("Hello, {}!", name.0);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uefi_sdk::component::IntoComponent;
+
+    #[test]
+    fn test_func_implements_into_component() {
+        let _ = log_hello.into_component();
+    }
+}
