@@ -3610,7 +3610,7 @@ mod tests {
         .unwrap();
         // Trying to set capabilities where the range falls outside a block should return unsupported
         assert_eq!(Err(EfiError::Unsupported), gcd.set_memory_space_capabilities(0, 0x3000, 0b1111));
-        gcd.set_memory_space_capabilities(0, 0x2000, efi::MEMORY_RP | efi::MEMORY_RO).unwrap();
+        gcd.set_memory_space_capabilities(0, 0x2000, efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP).unwrap();
         gcd.set_gcd_memory_attributes(0, 0x2000, efi::MEMORY_RO).unwrap();
     }
 
@@ -4039,7 +4039,7 @@ mod tests {
                 GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
                     .unwrap();
             }
-            GCD.set_memory_space_capabilities(address, 0x1000, efi::MEMORY_RP | efi::MEMORY_RO).unwrap();
+            GCD.set_memory_space_capabilities(address, 0x1000, efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP).unwrap();
 
             assert!(CALLBACK2.load(core::sync::atomic::Ordering::SeqCst));
         });
