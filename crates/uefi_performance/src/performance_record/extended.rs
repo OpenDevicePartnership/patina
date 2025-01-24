@@ -199,7 +199,6 @@ impl PerformanceRecord for DualGuidStringEventRecord<'_> {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
-
 }
 
 impl Debug for DualGuidStringEventRecord<'_> {
@@ -250,7 +249,7 @@ impl PerformanceRecord for GuidQwordEventRecord {
 
     fn revision(&self) -> u8 {
         Self::REVISION
-    }    
+    }
 }
 
 impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidQwordEventRecord {
@@ -333,7 +332,6 @@ impl PerformanceRecord for GuidQwordStringEventRecord<'_> {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
-
 }
 
 impl Debug for GuidQwordStringEventRecord<'_> {

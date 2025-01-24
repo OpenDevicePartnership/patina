@@ -244,8 +244,6 @@ impl PerformanceRecord for FirmwareBasicBootPerfDataRecord {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
-
-   
 }
 
 impl Default for FirmwareBasicBootPerfDataRecord {

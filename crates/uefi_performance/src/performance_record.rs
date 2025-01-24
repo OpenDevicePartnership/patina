@@ -32,7 +32,7 @@ pub trait PerformanceRecord: Sized + scroll::ctx::TryIntoCtx<scroll::Endian, Err
         // Write performance record header.
         record_size += buff.gwrite(self.record_type(), offset)?;
         let mut record_size_offset = *offset;
-        record_size += buff.gwrite(0 as u8, offset)?;
+        record_size += buff.gwrite(0_u8, offset)?;
         record_size += buff.gwrite(self.revision(), offset)?;
 
         // Write data.
@@ -77,7 +77,6 @@ impl<T: Deref<Target = [u8]>> PerformanceRecord for GenericPerformanceRecord<T> 
     fn revision(&self) -> u8 {
         self.revision
     }
-
 }
 
 impl<T: Deref<Target = [u8]>> Debug for GenericPerformanceRecord<T> {
@@ -106,7 +105,9 @@ impl PerformanceRecordBuffer {
             Self::Unpublished(buffer) => {
                 let mut offset = buffer.len();
                 buffer.resize(offset + FPDT_MAX_PERF_RECORD_SIZE, 0);
-                let record_size = record.write_into(buffer, &mut offset).expect("Record size should not exceed FPDT_MAX_PERF_RECORD_SIZE");
+                let record_size = record
+                    .write_into(buffer, &mut offset)
+                    .expect("Record size should not exceed FPDT_MAX_PERF_RECORD_SIZE");
                 buffer.truncate(offset);
                 Ok(record_size)
             }
