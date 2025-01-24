@@ -338,6 +338,7 @@ impl GCD {
                     // this level of allocate_memory_space doesn't set the attributes in the page table, so we have to
                     // do it manually here. As always, we need to check if we have to map the memory region first
                     {
+                        let desc = self.get_memory_descriptor_for_address(addr as efi::PhysicalAddress)?;
                         let page_table = self.page_table.as_mut().expect("Page table not initialized");
                         match page_table.query_memory_region(addr as u64, uefi_pages_to_size!(needed_pages) as u64) {
                             Ok(attr) => {
@@ -347,7 +348,10 @@ impl GCD {
                                         .remap_memory_region(
                                             addr as u64,
                                             uefi_pages_to_size!(needed_pages) as u64,
-                                            MemoryAttributes::ExecuteProtect,
+                                            MemoryAttributes::ExecuteProtect
+                                                | MemoryAttributes::from_bits_truncate(
+                                                    desc.attributes & efi::CACHE_ATTRIBUTE_MASK,
+                                                ),
                                         )
                                         .expect("Failed to remap memory region");
                                 }
@@ -358,7 +362,10 @@ impl GCD {
                                     .map_memory_region(
                                         addr as u64,
                                         uefi_pages_to_size!(needed_pages) as u64,
-                                        MemoryAttributes::ExecuteProtect,
+                                        MemoryAttributes::ExecuteProtect
+                                            | MemoryAttributes::from_bits_truncate(
+                                                desc.attributes & efi::CACHE_ATTRIBUTE_MASK,
+                                            ),
                                     )
                                     .expect("Failed to map memory region");
                             }
@@ -574,8 +581,16 @@ impl GCD {
                     "Mapping memory region {:#x?} of length {:#x?} with attributes {:#x?}",
                     desc.base_address,
                     desc.length,
-                    desc.attributes
-                );
+                    (MemoryAttributes::from_bits_truncate(desc.attributes) & MemoryAttributes::CacheAttributesMask)
+                        | MemoryAttributes::ExecuteProtect);
+
+                // we have large ranges of memory that have been allocated but then freed
+                // this is what the memory bin code does. We should only map what memory
+                // is actually being used. On future allocations of this region, the pages will
+                // get mapped again.
+                if desc.attributes & efi::MEMORY_RP != 0 {
+                    continue;
+                }
 
                 if let Err(err) = page_table.map_memory_region(
                     desc.base_address,
@@ -611,11 +626,15 @@ impl GCD {
             .expect("Failed to parse PE info for DXE Core")
         };
 
+        let desc = self
+            .get_memory_descriptor_for_address(dxe_core_hob.alloc_descriptor.memory_base_address)
+            .expect("Failed to get memory descriptor for DXE Core");
+
         // map the entire image as RW, as the PE headers don't live in the sections
         self.set_memory_space_attributes(
             dxe_core_hob.alloc_descriptor.memory_base_address as usize,
             dxe_core_hob.alloc_descriptor.memory_length as usize,
-            efi::MEMORY_XP,
+            efi::MEMORY_XP | (desc.attributes & efi::CACHE_ATTRIBUTE_MASK),
         )
         .unwrap_or_else(|_| {
             panic!(
@@ -629,9 +648,9 @@ impl GCD {
             // each section starts at image_base + virtual_address, per PE/COFF spec.
             let section_base_address =
                 dxe_core_hob.alloc_descriptor.memory_base_address + (section.virtual_address as u64);
-            let mut attributes = efi::MEMORY_XP;
+            let mut attributes = efi::MEMORY_XP | (desc.attributes & efi::CACHE_ATTRIBUTE_MASK);
             if section.characteristics & pecoff::IMAGE_SCN_CNT_CODE == pecoff::IMAGE_SCN_CNT_CODE {
-                attributes = efi::MEMORY_RO;
+                attributes = efi::MEMORY_RO | (desc.attributes & efi::CACHE_ATTRIBUTE_MASK);
             }
 
             // We need to use the virtual size for the section length, but
@@ -896,6 +915,8 @@ impl GCD {
             Err(e) => panic!("{e:?}"),
         }
 
+        let desc = self.get_memory_descriptor_for_address(base_address as efi::PhysicalAddress)?;
+
         // when we free, we want to unmap this memory region and mark it EFI_MEMORY_RP in the GCD
         // we don't panic if we don't have a page table because the memory bucket code does a free before the
         // page table is initialized. If we were to end up without the page table initialized, we would still
@@ -920,7 +941,11 @@ impl GCD {
             }
         }
 
-        match self.set_gcd_memory_attributes(base_address, len, efi::MEMORY_RP) {
+        match self.set_gcd_memory_attributes(
+            base_address,
+            len,
+            efi::MEMORY_RP | (desc.attributes & efi::CACHE_ATTRIBUTE_MASK),
+        ) {
             Ok(_) => Ok(()),
             Err(e) => {
                 // if we failed to set the attributes in the GCD, we want to catch it, but should still try to go
@@ -2426,6 +2451,7 @@ impl SpinLockedGcd {
         // split the range and call set_memory_space_attributes for each entry.
 
         let mut current_base = base_address as u64;
+        let mut res = Ok(());
         let range_end = (base_address + len) as u64;
         while current_base < range_end {
             let descriptor = self.get_memory_descriptor_for_address(current_base as efi::PhysicalAddress)?;
@@ -2434,7 +2460,25 @@ impl SpinLockedGcd {
             // it is still legal to split a descriptor and only set the attributes on part of it
             let next_base = u64::min(descriptor_end, range_end);
             let current_len = next_base - current_base;
-            self.memory.lock().set_memory_space_attributes(current_base as usize, current_len as usize, attributes)?;
+            match self.memory.lock().set_memory_space_attributes(
+                current_base as usize,
+                current_len as usize,
+                attributes,
+            ) {
+                Err(EfiError::NotReady) => {
+                    // before the page table is installed, we expect to get a return of NotInitialized. This means the GCD
+                    // has been updated with the attributes, but the page table is NotInitialized yet. In init_paging, the
+                    // page table will be updated with the current state of the GCD. The code that calls into this expects
+                    // NotInitialized to be returned, so we must catch that error and report it. However, we also need to
+                    // make sure any attribute updates across descriptors update the full range and not error out here.
+                    res = Err(EfiError::NotReady);
+                }
+                Ok(()) => {}
+                _ => {
+                    // some nicer log here
+                    debug_assert!(false);
+                }
+            }
             current_base = next_base;
         }
 
@@ -2443,7 +2487,7 @@ impl SpinLockedGcd {
         if let Some(callback) = self.memory_change_callback {
             callback(MapChangeType::SetMemoryAttributes);
         }
-        Ok(())
+        res
     }
 
     /// This service sets capabilities on the given memory space.
@@ -3566,7 +3610,7 @@ mod tests {
         .unwrap();
         // Trying to set capabilities where the range falls outside a block should return unsupported
         assert_eq!(Err(EfiError::Unsupported), gcd.set_memory_space_capabilities(0, 0x3000, 0b1111));
-        gcd.set_memory_space_capabilities(0, 0x2000, efi::MEMORY_RP | efi::MEMORY_RO).unwrap();
+        gcd.set_memory_space_capabilities(0, 0x2000, efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP).unwrap();
         gcd.set_gcd_memory_attributes(0, 0x2000, efi::MEMORY_RO).unwrap();
     }
 
@@ -3995,7 +4039,8 @@ mod tests {
                 GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
                     .unwrap();
             }
-            GCD.set_memory_space_capabilities(address, 0x1000, efi::MEMORY_RP | efi::MEMORY_RO).unwrap();
+            GCD.set_memory_space_capabilities(address, 0x1000, efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP)
+                .unwrap();
 
             assert!(CALLBACK2.load(core::sync::atomic::Ordering::SeqCst));
         });
