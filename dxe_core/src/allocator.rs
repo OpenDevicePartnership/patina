@@ -565,6 +565,9 @@ pub(crate) fn get_memory_map_descriptors() -> Result<Vec<efi::MemoryDescriptor>,
                     // in the GCD.
                     GcdMemoryType::Unaccepted => Some(efi::UNACCEPTED_MEMORY_TYPE),
 
+                    // Reserved.
+                    GcdMemoryType::Reserved => Some(efi::RESERVED_MEMORY_TYPE),
+
                     // Other memory types are ignored for purposes of the memory map
                     _ => None,
                 }
