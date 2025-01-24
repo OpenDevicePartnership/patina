@@ -2,7 +2,7 @@
 //!
 //! This crate provides a UEFI component that can be registered with the pure rust DXE core that discovers and runs all
 //! test cases marked with the `#[uefi_test]` attribute. The component provides multiple configuration options as
-//! documented in [`TestRunnerComponent`]. The `#[uefi_test]` attribute provides multiple configuration attributes
+//! documented in [TestRunner] object. The `#[uefi_test]` attribute provides multiple configuration attributes
 //! as documented in [`uefi_test`]. All tests are discovered across all crates used to compile the pure-rust DXE
 //! core, so it is important that test providers use the `cfg_attr` attribute to only compile tests in scenarios where
 //! they are expected to run.
@@ -18,48 +18,48 @@
 //!
 //! ```rust
 //! use uefi_test::*;
-//! use uefi_component_interface::DxeComponentInterface;
+//! use uefi_sdk::boot_services::StandardBootServices;
 //!
-//! let component = TestRunnerComponent::default()
+//! let component = uefi_test::TestRunner::default()
 //!   .with_filter("aarch64") // Only run tests with "aarch64" in their name & path (my_crate::aarch64::test)
 //!   .debug_mode(true)
 //!   .fail_fast(true);
 //!
 //! #[cfg_attr(target_arch = "aarch64", uefi_test)]
-//! fn test_case(_interface: &dyn DxeComponentInterface) -> Result {
+//! fn test_case() -> Result {
 //!   u_assert_eq!(1, 1);
 //!   Ok(())
 //! }
 //!
 //! #[uefi_test]
-//! fn test_case2(_interface: &dyn DxeComponentInterface) -> Result {
+//! fn test_case2() -> Result {
 //!   u_assert_eq!(1, 1);
 //!   Ok(())
 //! }
 //!
 //! #[uefi_test]
 //! #[should_fail]
-//! fn failing_test_case(_interface: &dyn DxeComponentInterface) -> Result {
+//! fn failing_test_case() -> Result {
 //!    u_assert_eq!(1, 2);
 //!    Ok(())
 //! }
 //!
 //! #[uefi_test]
 //! #[should_fail = "This test failed"]
-//! fn failing_test_case_with_msg(_interface: &dyn DxeComponentInterface) -> Result {
+//! fn failing_test_case_with_msg() -> Result {
 //!   u_assert_eq!(1, 2, "This test failed");
 //!   Ok(())
 //! }
 //!
 //! #[uefi_test]
 //! #[skip]
-//! fn skipped_test_case(_interface: &dyn DxeComponentInterface) -> Result {
+//! fn skipped_test_case() -> Result {
 //!    todo!()
 //! }
 //!
 //! #[uefi_test]
 //! #[cfg_attr(not(target_arch = "x86_64"), skip)]
-//! fn x86_64_only_test_case(_interface: &dyn DxeComponentInterface) -> Result {
+//! fn x86_64_only_test_case(bs: StandardBootServices) -> Result {
 //!   todo!()
 //! }
 //! ```
@@ -71,9 +71,10 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 #![cfg_attr(not(test), no_std)]
-use uefi_component_interface::{DxeComponent, DxeComponentInterface};
 extern crate alloc;
 use alloc::vec::Vec;
+
+use uefi_sdk::component::{IntoComponent, Storage};
 
 #[doc(hidden)]
 pub use linkme;
@@ -84,7 +85,7 @@ pub mod __private_api;
 /// The result type for a test case, an alias for `Result<(), &'static str>`.
 pub type Result = core::result::Result<(), &'static str>;
 
-/// A proc-macro that registers the annotated function as a test case to be run by [`TestRunnerComponent`].
+/// A proc-macro that registers the annotated function as a test case to be run by uefi_test component.
 ///
 /// There is a distinct difference between doing a #[cfg_attr(..., skip)] and a
 /// #[cfg_attr(..., uefi_test)]. The first still compiles the test case, but skips it at runtime. The second does not
@@ -102,36 +103,36 @@ pub type Result = core::result::Result<(), &'static str>;
 ///
 /// ```rust
 /// use uefi_test::*;
-/// use uefi_component_interface::DxeComponentInterface;
+/// use uefi_sdk::boot_services::StandardBootServices;
 ///
 /// #[uefi_test]
-/// fn test_case(_interface: &dyn DxeComponentInterface) -> Result {
+/// fn test_case() -> Result {
 ///     todo!()
 /// }
 ///
 /// #[uefi_test]
 /// #[should_fail]
-/// fn failing_test_case(_interface: &dyn DxeComponentInterface) -> Result {
+/// fn failing_test_case() -> Result {
 ///     u_assert_eq!(1, 2);
 ///     Ok(())
 /// }
 ///
 /// #[uefi_test]
 /// #[should_fail = "This test failed"]
-/// fn failing_test_case_with_msg(_interface: &dyn DxeComponentInterface) -> Result {
+/// fn failing_test_case_with_msg() -> Result {
 ///    u_assert_eq!(1, 2, "This test failed");
 ///    Ok(())
 /// }
 ///
 /// #[uefi_test]
 /// #[skip]
-/// fn skipped_test_case(_interface: &dyn DxeComponentInterface) -> Result {
+/// fn skipped_test_case() -> Result {
 ///    todo!()
 /// }
 ///
 /// #[uefi_test]
 /// #[cfg_attr(not(target_arch = "x86_64"), skip)]
-/// fn x86_64_only_test_case(_interface: &dyn DxeComponentInterface) -> Result {
+/// fn x86_64_only_test_case(bs: StandardBootServices) -> Result {
 ///   todo!()
 /// }
 /// ```
@@ -177,14 +178,14 @@ macro_rules! u_assert_ne {
 }
 
 /// A component that runs all test cases marked with the `#[uefi_test]` attribute when loaded by the DXE core.
-#[derive(Default)]
-pub struct TestRunnerComponent {
+#[derive(IntoComponent, Default, Clone)]
+pub struct TestRunner {
     filters: Vec<&'static str>,
     debug_mode: bool,
     fail_fast: bool,
 }
 
-impl TestRunnerComponent {
+impl TestRunner {
     /// Adds a filter that will reduce the tests ran to only those that contain the filter value in their test name.
     ///
     /// The `name` is not just the test name, but also the module path. For example, if a test is defined in
@@ -211,82 +212,74 @@ impl TestRunnerComponent {
         self.fail_fast = fail_fast;
         self
     }
-}
 
-impl DxeComponent for TestRunnerComponent {
-    fn entry_point(&self, interface: &dyn DxeComponentInterface) -> uefi_sdk::error::Result<()> {
-        let test_list = __private_api::test_cases();
+    /// The entry point for the test runner component.
+    fn entry_point(self, storage: &mut Storage) -> uefi_sdk::error::Result<()> {
+        let test_list: &[__private_api::TestCase] = __private_api::test_cases();
         let count = test_list.len();
         match count {
             0 => log::warn!("No Tests Found"),
             1 => log::info!("running 1 test"),
             _ => log::info!("running {} tests", count),
-        };
+        }
 
+        let mut did_error = false;
         for test in test_list {
             if !test.should_run(&self.filters) {
                 log::info!("{} ... skipped", test.name);
                 continue;
             }
 
-            match test.run(interface, self.debug_mode) {
+            match test.run(storage, self.debug_mode) {
                 Ok(_) => log::info!("{} ... ok", test.name),
                 Err(e) => {
                     log::error!("{} ... fail: {}", test.name, e);
+                    did_error = true;
                     if self.fail_fast {
-                        break;
+                        return Err(uefi_sdk::error::EfiError::Aborted);
                     }
                 }
             }
         }
 
-        Ok(())
+        match did_error {
+            true => Err(uefi_sdk::error::EfiError::Aborted),
+            false => Ok(()),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::TestRunnerComponent;
-    use core::{ffi::c_void, result::Result};
-    use r_efi::efi;
-    use uefi_component_interface::{DxeComponent, DxeComponentInterface};
-
-    mockall::mock! {
-        ComponentInterface {}
-        impl DxeComponentInterface for ComponentInterface {
-            fn install_protocol_interface(&self, handle: Option<efi::Handle>, protocol: efi::Guid, interface: *mut c_void) -> Result<efi::Handle, efi::Status>;
-        }
-    }
+    use uefi_sdk::component::{params::Config, IntoComponent, Storage};
 
     // A test function where we mock DxeComponentInterface to return what we want for the test.
     #[allow(unused)]
-    fn test_function(interface: &dyn DxeComponentInterface) -> crate::Result {
-        match interface.install_protocol_interface(
-            None,
-            efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]),
-            core::ptr::null_mut(),
-        ) {
-            Ok(_) => Ok(()),
-            Err(_) => Err("Failed to install protocol interface"),
-        }
+    fn test_function(config: Config<i32>) -> Result<(), &'static str> {
+        assert!(*config == 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_func_implements_into_component() {
+        let _ = super::TestRunner::default().into_component();
     }
 
     #[test]
     fn verify_default_values() {
-        let component = TestRunnerComponent::default();
-        assert_eq!(component.filters.len(), 0);
-        assert!(!component.debug_mode);
-        assert!(!component.fail_fast);
+        let config = super::TestRunner::default();
+        assert_eq!(config.filters.len(), 0);
+        assert!(!config.debug_mode);
+        assert!(!config.fail_fast);
     }
 
     #[test]
     fn verify_config_sets_properly() {
-        let component =
-            TestRunnerComponent::default().with_filter("aarch64").with_filter("test").debug_mode(true).fail_fast(true);
-
-        assert_eq!(component.filters.len(), 2);
-        assert!(component.debug_mode);
-        assert!(component.fail_fast);
+        let config =
+            super::TestRunner::default().with_filter("aarch64").with_filter("test").debug_mode(true).fail_fast(true);
+        assert_eq!(config.filters.len(), 2);
+        assert!(config.debug_mode);
+        assert!(config.fail_fast);
     }
 
     #[cfg_attr(not(feature = "off"), linkme::distributed_slice(super::__private_api::TEST_CASES))]
@@ -296,7 +289,7 @@ mod tests {
         skip: false,
         should_fail: false,
         fail_msg: None,
-        func: test_function,
+        func: |storage| crate::__private_api::FunctionTest::new(test_function).run(storage.into()),
     };
 
     #[cfg_attr(not(feature = "off"), linkme::distributed_slice(super::__private_api::TEST_CASES))]
@@ -306,20 +299,19 @@ mod tests {
         skip: true,
         should_fail: false,
         fail_msg: None,
-        func: test_function,
+        func: |storage| crate::__private_api::FunctionTest::new(test_function).run(storage.into()),
     };
 
     #[test]
     fn test_we_run_without_panicking() {
         assert_eq!(2, super::__private_api::test_cases().len());
-        let component = TestRunnerComponent::default().fail_fast(true);
 
-        let mut interface = MockComponentInterface::new();
-        interface.expect_install_protocol_interface().return_once(move |_, _, _| Ok(core::ptr::null_mut()));
-        let _ = component.entry_point(&interface);
+        let mut storage = Storage::new();
 
-        let mut interface = MockComponentInterface::new();
-        interface.expect_install_protocol_interface().return_once(move |_, _, _| Err(efi::Status::UNSUPPORTED));
-        let _ = component.entry_point(&interface);
+        storage.add_config(1_i32);
+
+        let mut component = super::TestRunner::default().fail_fast(true).into_component();
+        component.initialize(&mut storage);
+        let _ = component.run(&mut storage);
     }
 }

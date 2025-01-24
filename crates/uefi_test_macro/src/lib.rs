@@ -100,7 +100,7 @@ fn generate_expanded_test_case(
     item: &ItemFn,
     test_case_config: &HashMap<&'static str, proc_macro2::TokenStream>,
 ) -> proc_macro2::TokenStream {
-    let fn_name = &item.sig.ident; // The function's name
+    let fn_name = &item.sig.ident; // The Component function's name
     let struct_name = format_ident!("__{}_TestCase", fn_name);
 
     // Extract the configuration
@@ -119,7 +119,7 @@ fn generate_expanded_test_case(
             skip: #skip,
             should_fail: #should_fail,
             fail_msg: #fail_msg,
-            func: #fn_name,
+            func: |storage| uefi_test::__private_api::FunctionTest::new(#fn_name).run(storage.into()),
         };
         #item
     };
@@ -144,7 +144,7 @@ mod tests {
     fn test_standard_use_case() {
         let stream = quote! {
             #[uefi_test]
-            fn my_test_case(&interface: &dyn DxeComponentInterface) -> Result {
+            fn my_test_case() -> Result {
                 assert!(true);
             }
         };
@@ -160,9 +160,9 @@ mod tests {
                 skip: false,
                 should_fail: false,
                 fail_msg: None,
-                func: my_test_case,
+                func: |storage| uefi_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
             };
-            fn my_test_case(&interface: &dyn DxeComponentInterface) -> Result {
+            fn my_test_case() -> Result {
                 assert!(true);
             }
         };
@@ -175,7 +175,7 @@ mod tests {
         let stream = quote! {
             #[uefi_test]
             #[skip]
-            fn my_test_case(&interface: &dyn DxeComponentInterface) -> Result {
+            fn my_test_case() -> Result {
                 assert!(true);
             }
         };
@@ -192,9 +192,9 @@ mod tests {
                 skip: true,
                 should_fail: false,
                 fail_msg: None,
-                func: my_test_case,
+                func: |storage| uefi_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
             };
-            fn my_test_case(&interface: &dyn DxeComponentInterface) -> Result {
+            fn my_test_case() -> Result {
                 assert!(true);
             }
         };
@@ -247,7 +247,7 @@ mod tests {
             #[should_fail = "Expected Error"]
             #[skip]
             #[not_our_attr]
-            fn my_test_case(&interface: &dyn DxeComponentInterface) -> Result {
+            fn my_test_case() -> Result {
                 assert!(true);
             }
         };
