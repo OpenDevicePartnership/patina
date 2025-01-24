@@ -295,7 +295,7 @@ impl MemoryBlock {
             Self::Allocated(md) | Self::Unallocated(md)
                 if md.memory_type != dxe_services::GcdMemoryType::NonExistent =>
             {
-                if (capabilities | md.attributes) != md.attributes {
+                if (capabilities & md.attributes) != md.attributes {
                     //
                     // Current attributes must still be supported with new capabilities
                     //
@@ -396,8 +396,10 @@ mod memory_block_tests {
         // test capabilities transition
         let mut b5 = block;
         b5.as_mut().memory_type = GcdMemoryType::MemoryMappedIo;
+        b5.as_mut().attributes = 0b11;
+        b5.as_mut().capabilities = 0b111;
 
-        // Attributes before capabilities should fail
+        // Attributes before extending capabilities should fail
         assert!(b5.state_transition(StateTransition::SetAttributes(0b1111)).is_err());
 
         b5.state_transition(StateTransition::SetCapabilities(0b1111)).unwrap();
