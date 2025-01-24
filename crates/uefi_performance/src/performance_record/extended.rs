@@ -54,13 +54,13 @@ impl PerformanceRecord for GuidEventRecord {
         Self::REVISION
     }
 
-    fn data_size(&self) -> usize {
-        mem::size_of_val(&self.progress_id)
-            + mem::size_of_val(&PROGRESS_ID_PADDING)
-            + mem::size_of_val(&self.acpi_id)
-            + mem::size_of_val(&self.timestamp)
-            + mem::size_of_val(&self.guid)
-    }
+    // fn data_size(&self) -> usize {
+    //     mem::size_of_val(&self.progress_id)
+    //         + mem::size_of_val(&PROGRESS_ID_PADDING)
+    //         + mem::size_of_val(&self.acpi_id)
+    //         + mem::size_of_val(&self.timestamp)
+    //         + mem::size_of_val(&self.guid)
+    // }
 }
 
 impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidEventRecord {
@@ -69,7 +69,7 @@ impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidEventRecord {
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
         let mut offset = 0;
         dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
-        dest.gwrite_with(PROGRESS_ID_PADDING, &mut offset, ctx)?;
+        // dest.gwrite_with(PROGRESS_ID_PADDING, &mut offset, ctx)?;
         dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
         dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
         dest.gwrite_with(self.guid.as_bytes().as_slice(), &mut offset, ())?;
@@ -81,7 +81,7 @@ impl Debug for GuidEventRecord {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("GuidEventRecord")
             .field("type", &self.record_type())
-            .field("length", &self.data_size())
+            // .field("length", &self.data_size())
             .field("revision", &self.revision())
             .field("progress_id", &self.progress_id)
             .field("acpi_id", &self.acpi_id)
@@ -125,7 +125,7 @@ impl scroll::ctx::TryIntoCtx<scroll::Endian> for DynamicStringEventRecord<'_> {
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
         let mut offset = 0;
         dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
-        dest.gwrite_with(PROGRESS_ID_PADDING, &mut offset, ctx)?;
+        // dest.gwrite_with(PROGRESS_ID_PADDING, &mut offset, ctx)?;
         dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
         dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
         dest.gwrite_with(self.guid.as_bytes().as_slice(), &mut offset, ())?;
@@ -144,22 +144,22 @@ impl PerformanceRecord for DynamicStringEventRecord<'_> {
         Self::REVISION
     }
 
-    fn data_size(&self) -> usize {
-        mem::size_of_val(&self.progress_id)
-            + mem::size_of_val(&PROGRESS_ID_PADDING)
-            + mem::size_of_val(&self.acpi_id)
-            + mem::size_of_val(&self.timestamp)
-            + mem::size_of_val(&self.guid)
-            + self.string.len()
-            + mem::size_of_val(&0_u8)
-    }
+    // fn data_size(&self) -> usize {
+    //     mem::size_of_val(&self.progress_id)
+    //         + mem::size_of_val(&PROGRESS_ID_PADDING)
+    //         + mem::size_of_val(&self.acpi_id)
+    //         + mem::size_of_val(&self.timestamp)
+    //         + mem::size_of_val(&self.guid)
+    //         + self.string.len()
+    //         + mem::size_of_val(&0_u8)
+    // }
 }
 
 impl Debug for DynamicStringEventRecord<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DynamicStringEventRecord")
             .field("type", &self.record_type())
-            .field("length", &self.data_size())
+            // .field("length", &self.data_size())
             .field("revision", &self.revision())
             .field("progress_id", &self.progress_id)
             .field("acpi_id", &self.acpi_id)
@@ -213,7 +213,7 @@ impl scroll::ctx::TryIntoCtx<scroll::Endian> for DualGuidStringEventRecord<'_> {
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
         let mut offset = 0;
         dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
-        dest.gwrite_with(PROGRESS_ID_PADDING, &mut offset, ctx)?;
+        // dest.gwrite_with(PROGRESS_ID_PADDING, &mut offset, ctx)?;
         dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
         dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
         dest.gwrite_with(self.guid_1.as_bytes().as_slice(), &mut offset, ())?;
@@ -233,23 +233,23 @@ impl PerformanceRecord for DualGuidStringEventRecord<'_> {
         Self::REVISION
     }
 
-    fn data_size(&self) -> usize {
-        mem::size_of_val(&self.progress_id)
-            + mem::size_of_val(&PROGRESS_ID_PADDING)
-            + mem::size_of_val(&self.acpi_id)
-            + mem::size_of_val(&self.timestamp)
-            + mem::size_of_val(&self.guid_1)
-            + mem::size_of_val(&self.guid_2)
-            + self.string.len()
-            + mem::size_of_val(&0_u8)
-    }
+    // fn data_size(&self) -> usize {
+    //     mem::size_of_val(&self.progress_id)
+    //         + mem::size_of_val(&PROGRESS_ID_PADDING)
+    //         + mem::size_of_val(&self.acpi_id)
+    //         + mem::size_of_val(&self.timestamp)
+    //         + mem::size_of_val(&self.guid_1)
+    //         + mem::size_of_val(&self.guid_2)
+    //         + self.string.len()
+    //         + mem::size_of_val(&0_u8)
+    // }
 }
 
 impl Debug for DualGuidStringEventRecord<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DualGuidStringEventRecord")
             .field("type", &self.record_type())
-            .field("length", &self.data_size())
+            // .field("length", &self.data_size())
             .field("revision", &self.revision())
             .field("progress_id", &self.progress_id)
             .field("acpi_id", &self.acpi_id)
@@ -297,14 +297,14 @@ impl PerformanceRecord for GuidQwordEventRecord {
         Self::REVISION
     }
 
-    fn data_size(&self) -> usize {
-        mem::size_of_val(&self.progress_id)
-            + mem::size_of_val(&PROGRESS_ID_PADDING)
-            + mem::size_of_val(&self.acpi_id)
-            + mem::size_of_val(&self.timestamp)
-            + mem::size_of_val(&self.guid)
-            + mem::size_of_val(&self.qword)
-    }
+    // fn data_size(&self) -> usize {
+    //     mem::size_of_val(&self.progress_id)
+    //         + mem::size_of_val(&PROGRESS_ID_PADDING)
+    //         + mem::size_of_val(&self.acpi_id)
+    //         + mem::size_of_val(&self.timestamp)
+    //         + mem::size_of_val(&self.guid)
+    //         + mem::size_of_val(&self.qword)
+    // }
 }
 
 impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidQwordEventRecord {
@@ -313,7 +313,7 @@ impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidQwordEventRecord {
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
         let mut offset = 0;
         dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
-        dest.gwrite_with(PROGRESS_ID_PADDING, &mut offset, ctx)?;
+        // dest.gwrite_with(PROGRESS_ID_PADDING, &mut offset, ctx)?;
         dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
         dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
         dest.gwrite_with(*self.guid.as_bytes(), &mut offset, ctx)?;
@@ -326,7 +326,7 @@ impl Debug for GuidQwordEventRecord {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("GuidQwordEventRecord")
             .field("type", &self.record_type())
-            .field("length", &self.data_size())
+            // .field("length", &self.data_size())
             .field("revision", &self.revision())
             .field("progress_id", &self.progress_id)
             .field("acpi_id", &self.acpi_id)
@@ -372,7 +372,7 @@ impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidQwordStringEventRecord<'_> 
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
         let mut offset = 0;
         dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
-        dest.gwrite_with(PROGRESS_ID_PADDING, &mut offset, ctx)?;
+        // dest.gwrite_with(PROGRESS_ID_PADDING, &mut offset, ctx)?;
         dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
         dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
         dest.gwrite_with(*self.guid.as_bytes(), &mut offset, ctx)?;
@@ -392,23 +392,23 @@ impl PerformanceRecord for GuidQwordStringEventRecord<'_> {
         Self::REVISION
     }
 
-    fn data_size(&self) -> usize {
-        mem::size_of_val(&self.progress_id)
-            + mem::size_of_val(&PROGRESS_ID_PADDING)
-            + mem::size_of_val(&self.acpi_id)
-            + mem::size_of_val(&self.timestamp)
-            + mem::size_of_val(&self.guid)
-            + mem::size_of_val(&self.qword)
-            + self.string.len()
-            + mem::size_of_val(&0_u8)
-    }
+    // fn data_size(&self) -> usize {
+    //     mem::size_of_val(&self.progress_id)
+    //         + mem::size_of_val(&PROGRESS_ID_PADDING)
+    //         + mem::size_of_val(&self.acpi_id)
+    //         + mem::size_of_val(&self.timestamp)
+    //         + mem::size_of_val(&self.guid)
+    //         + mem::size_of_val(&self.qword)
+    //         + self.string.len()
+    //         + mem::size_of_val(&0_u8)
+    // }
 }
 
 impl Debug for GuidQwordStringEventRecord<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("GuidQwordStringEventRecord")
             .field("type", &self.record_type())
-            .field("length", &self.data_size())
+            // .field("length", &self.data_size())
             .field("revision", &self.revision())
             .field("progress_id", &self.progress_id)
             .field("acpi_id", &self.acpi_id)
