@@ -26,10 +26,6 @@ jobs:
       actions: read
 
     steps:
-      - name: Turn off autocrlf
-        run: |
-          git config --global core.autocrlf false
-
       - name: ✅ Checkout Repository ✅
         uses: actions/checkout@v4
 
