@@ -59,7 +59,6 @@ jobs:
     
       - name: Checkout New Branch
         run: |
-          git config --global core.autocrlf false
           git checkout -b "github-actions/release-${{ steps.release_tag.outputs.tag }}"
           git push origin "github-actions/release-${{ steps.release_tag.outputs.tag }}"
 
