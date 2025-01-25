@@ -14,16 +14,18 @@
 extern crate alloc;
 
 pub mod _debug;
+mod _smm;
 pub mod _status_code_runtime;
 pub mod _utils;
 pub mod performance_measurement_protocol;
 pub mod performance_record;
 pub mod performance_table;
 
+use alloc::vec::Vec;
 use core::{
     ffi::{c_char, c_void},
     ptr, slice,
-    sync::atomic::{AtomicU32, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 use _status_code_runtime::{ReportStatusCode, StatusCodeRuntimeProtocol};
@@ -55,7 +57,12 @@ use r_efi::system::EVENT_GROUP_READY_TO_BOOT;
 pub use mu_rust_helpers::function;
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 
+use _smm::{
+    CommunicateProtocol, SmmCommunicationRegionTable, SmmFpdtGetRecordDataByOffset, SmmFpdtGetRecordSize,
+    EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID,
+};
 use scroll::Pread;
+
 use uefi_device_path::DevicePathWalker;
 use uefi_sdk::{
     boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
@@ -76,11 +83,10 @@ pub const PERF_ENABLED: bool = cfg!(feature = "instrument_performance");
 
 pub fn init_performance_lib(
     hob_list: &HobList,
-    efi_boot_services: &efi::BootServices,
-    efi_runtime_services: &efi::RuntimeServices,
+    efi_system_table: &'static efi::SystemTable,
 ) -> Result<(), efi::Status> {
-    BOOT_SERVICES.initialize(efi_boot_services);
-    RUNTIME_SERVICES.initialize(efi_runtime_services);
+    BOOT_SERVICES.initialize(unsafe { efi_system_table.boot_services.as_ref() }.unwrap());
+    RUNTIME_SERVICES.initialize(unsafe { efi_system_table.runtime_services.as_ref() }.unwrap());
 
     let (pei_records, pei_load_image_count) = extract_pei_performance_records(hob_list)?;
     LOAD_IMAGE_COUNT.store(pei_load_image_count, Ordering::Relaxed);
@@ -109,8 +115,8 @@ pub fn init_performance_lib(
     BOOT_SERVICES.create_event_ex(
         EventType::NOTIFY_SIGNAL,
         Tpl::CALLBACK,
-        Some(update_boot_performance_table),
-        &(),
+        Some(fetch_and_add_smm_performance_records),
+        efi_system_table,
         &EVENT_GROUP_READY_TO_BOOT,
     )?;
 
@@ -392,10 +398,97 @@ extern "efiapi" fn report_fpdt_record_buffer(_event: efi::Event, _ctx: &()) {
     if status.is_err() {
         log::error!("Fail to install configuration table for FPDT firmware performance.");
     }
+
+    log::info!("Report FPDT Table: {:#?}", fbpt);
 }
 
-extern "efiapi" fn update_boot_performance_table(_event: efi::Event, _: &()) {
-    // TODO: There is a task in the backlog for this.
+extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, system_table: &efi::SystemTable) {
+    // Make sure that this event only run once.
+    static HAS_RAN_ONCE: AtomicBool = AtomicBool::new(false);
+    let Ok(false) = HAS_RAN_ONCE.compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed) else {
+        return;
+    };
+
+    let configuration_tables =
+        unsafe { slice::from_raw_parts(system_table.configuration_table, system_table.number_of_table_entries) };
+
+    let Some(smm_comm_region_table) = configuration_tables
+        .iter()
+        .find(|config_table| config_table.vendor_guid == EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID)
+        .and_then(|config_table| unsafe { (config_table.vendor_table as *const SmmCommunicationRegionTable).as_ref() })
+    else {
+        log::error!("Could not find any smm communication region table.");
+        return;
+    };
+
+    let Some(smm_communication_memory_region) =
+        smm_comm_region_table.iter().find(|a| a.r#type == efi::CONVENTIONAL_MEMORY)
+    else {
+        log::error!("Could not find an available memory region to communication with smm.");
+        return;
+    };
+
+    let Ok(communication) = (unsafe { BOOT_SERVICES.locate_protocol(&CommunicateProtocol, None) }) else {
+        log::error!("Could not locate communicate protocol interface.");
+        return;
+    };
+
+    // Ask smm for the total size of the perf records.
+    let boot_record_size = match unsafe {
+        communication.communicate(SmmFpdtGetRecordSize::new(), smm_communication_memory_region)
+    } {
+        Ok(SmmFpdtGetRecordSize { return_status, boot_record_size }) if return_status == efi::Status::SUCCESS => {
+            boot_record_size
+        }
+        Ok(SmmFpdtGetRecordSize { return_status, .. }) => {
+            log::error!(
+                "Asking for the smm perf records size result in an error with return status of: {:?}",
+                return_status
+            );
+            return;
+        }
+        Err(status) => {
+            log::error!("Error while trying to communicate with communicate protocol with error code: {:?}", status);
+            return;
+        }
+    };
+
+    let mut smm_boot_records_data = Vec::with_capacity(boot_record_size);
+
+    while smm_boot_records_data.len() < boot_record_size {
+        match unsafe {
+            // Ask smm to return us the next bytes in its buffer.
+            communication.communicate(
+                SmmFpdtGetRecordDataByOffset::<1024>::new(smm_boot_records_data.len()),
+                smm_communication_memory_region,
+            )
+        } {
+            Ok(record_data) if record_data.return_status == efi::Status::SUCCESS => {
+                // Append the byte to the total smm performance record data.
+                smm_boot_records_data.extend_from_slice(record_data.boot_record_data());
+            }
+            Ok(SmmFpdtGetRecordDataByOffset { return_status, .. }) => {
+                log::error!(
+                    "Asking for smm perf records data result in an error with return status of: {:?}",
+                    return_status
+                );
+                return;
+            }
+            Err(status) => {
+                log::error!(
+                    "Error while trying to communicate with communicate protocol with error code: {:?}",
+                    status
+                );
+                return;
+            }
+        };
+    }
+
+    // Write found perf records in the fbpt table.
+    let mut fbpt = FBPT.lock();
+    for r in Iter::new(&smm_boot_records_data) {
+        fbpt.add_record(r).unwrap();
+    }
 }
 
 #[repr(C)]
@@ -477,7 +570,7 @@ fn get_module_info_from_handle(
     // Method 3 - Get the name string from FFS UI Section.
     // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/193
 
-    Ok((None, guid))
+    Ok((Some(String::from("TODO Get name from UefiPeInfo")), guid))
 }
 
 macro_rules! __log_perf_measurement {

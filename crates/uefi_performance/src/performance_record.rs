@@ -176,10 +176,12 @@ impl Debug for PerformanceRecordBuffer {
         let size = self.size();
         let capacity = self.capacity();
         let nb_report = self.iter().count();
+        let records = self.iter().collect::<Vec<_>>();
         f.debug_struct("PerformanceRecordBuffer")
             .field("size", &size)
             .field("capacity", &capacity)
             .field("nb_report", &nb_report)
+            .field("records", &records)
             .finish()
     }
 }

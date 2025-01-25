@@ -386,12 +386,14 @@ where
         }
 
         let boot_services_ptr;
-        // let runtime_services_ptr;
+        let system_table_ptr;
         {
             let mut st = systemtables::SYSTEM_TABLE.lock();
             boot_services_ptr = st.as_mut().unwrap().boot_services_mut() as *mut efi::BootServices;
-            // runtime_services_ptr = st.as_mut().unwrap().runtime_services_mut() as *mut efi::RuntimeServices;
+            let system_table = st.as_ref().expect("System Table not initialized!").system_table();
+            system_table_ptr = system_table as *const efi::SystemTable;
         }
+
         tpl_lock::init_boot_services(boot_services_ptr);
 
         memory_attributes_table::init_memory_attributes_table_support();
@@ -400,9 +402,10 @@ where
         // reading the time stamp counter in the way done in this code and results in a divide by zero exception.
         // Other cpu models crash in various other ways. It will be resolved, but is removed now to unblock other
         // development
-        // _ = uefi_performance::init_performance_lib(&hob_list, unsafe { boot_services_ptr.as_ref().unwrap() }, unsafe {
-        //     runtime_services_ptr.as_ref().unwrap()
-        // });
+        _ = uefi_performance::init_performance_lib(
+            &hob_list,
+            unsafe { system_table_ptr.as_ref() }.expect("System Table not initialized!"),
+        );
 
         self.storage.set_boot_services(boot_services_ptr);
         Core {

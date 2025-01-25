@@ -178,6 +178,7 @@ impl Debug for FBPT {
             .field("other_records::size", &self.other_records.size())
             .field("other_records::capacity", &self.other_records.capacity())
             .field("other_records::count", &record_count)
+            .field("other_records", &self.other_records)
             .finish()
     }
 }
