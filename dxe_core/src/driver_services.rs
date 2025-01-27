@@ -221,10 +221,10 @@ fn core_connect_single_controller(
             // to distinguish from regular code
             // also, i took out the binding support instrumentation because it was
             // causing waaayyy too many entries (like 40k)
-            perf_driver_binding_support_begin(driver_binding.driver_binding_handle, controller_handle);
+            // perf_driver_binding_support_begin(driver_binding.driver_binding_handle, controller_handle);
             match (driver_binding.supported)(driver_binding_interface, controller_handle, device_path) {
                 efi::Status::SUCCESS => {
-                    perf_driver_binding_support_end(driver_binding.driver_binding_handle, controller_handle);
+                    // perf_driver_binding_support_end(driver_binding.driver_binding_handle, controller_handle);
                     //driver claims support; attempt to start it.
                     started_drivers.push(driver_binding_interface);
                     perf_driver_binding_start_begin(driver_binding.driver_binding_handle, controller_handle);
@@ -236,7 +236,7 @@ fn core_connect_single_controller(
                     perf_driver_binding_start_end(driver_binding.driver_binding_handle, controller_handle);
                 }
                 _ => {
-                    perf_driver_binding_support_end(driver_binding.driver_binding_handle, controller_handle);
+                    // perf_driver_binding_support_end(driver_binding.driver_binding_handle, controller_handle);
                     continue;
                 }
             }

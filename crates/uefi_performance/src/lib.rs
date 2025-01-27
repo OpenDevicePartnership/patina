@@ -258,7 +258,7 @@ extern "efiapi" fn create_performance_measurement(
             //     function!()
             // );
             if let Ok((_, guid)) = get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void) {
-                log::info!("guid: {:?}, {}", guid, line!());
+                // log::info!("guid: {:?}, {}", guid, line!());
                 let record = GuidEventRecord::new(perf_id, 0, timestamp, guid);
                 _ = &FBPT.lock().add_record(record);
             }
@@ -276,7 +276,7 @@ extern "efiapi" fn create_performance_measurement(
                 LOAD_IMAGE_COUNT.fetch_add(1, Ordering::Relaxed);
             }
             if let Ok((_, guid)) = get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void) {
-                log::info!("guid: {:?}, {}", guid, line!());
+                // log::info!("guid: {:?}, {}", guid, line!());
 
                 let record = GuidQwordEventRecord::new(
                     perf_id,
@@ -300,7 +300,7 @@ extern "efiapi" fn create_performance_measurement(
             //     function!()
             // );
             if let Ok((_, guid)) = get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void) {
-                log::info!("guid: {:?}, {}", guid, line!());
+                // log::info!("guid: {:?}, {}", guid, line!());
 
                 let record = GuidQwordEventRecord::new(perf_id, timestamp, guid, address as u64);
                 _ = &FBPT.lock().add_record(record);
@@ -317,7 +317,7 @@ extern "efiapi" fn create_performance_measurement(
             if let Ok((module_name, guid)) =
                 get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void)
             {
-                log::info!("guid: {:?}, {}", guid, line!());
+                // log::info!("guid: {:?}, {}", guid, line!());
 
                 let module_name = module_name.unwrap_or(String::from("unknown name"));
                 let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, &module_name);
@@ -346,7 +346,7 @@ extern "efiapi" fn create_performance_measurement(
         | PerfId::PERF_CROSS_MODULE_START
         | PerfId::PERF_CROSS_MODULE_END => {
             let guid = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
-            log::info!("guid: {:?}, {}", guid, line!());
+            // log::info!("guid: {:?}, {}", guid, line!());
             let record =
                 DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, string.as_deref().unwrap_or("unknown name"));
             _ = &FBPT.lock().add_record(record);
@@ -363,15 +363,15 @@ extern "efiapi" fn create_performance_measurement(
             let (module_name, guid) = if let Ok((Some(module_name), guid)) =
                 get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void)
             {
-                log::info!("guid: {:?}, {}", guid, line!());
+                // log::info!("guid: {:?}, {}", guid, line!());
                 (module_name, guid)
             } else if let Some(string) = string {
                 let guid = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
-                log::info!("guid: {:?}, {}", guid, line!());
+                // log::info!("guid: {:?}, {}", guid, line!());
                 (string, guid)
             } else {
                 let guid = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
-                log::info!("guid: {:?}, {}", guid, line!());
+                // log::info!("guid: {:?}, {}", guid, line!());
                 (String::from("unknown name"), guid)
             };
             let record = DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, &module_name);
