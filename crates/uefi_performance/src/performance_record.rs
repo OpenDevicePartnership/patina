@@ -21,8 +21,6 @@ pub const PERFORMANCE_RECORD_HEADER_SIZE: usize = mem::size_of::<u16>() // Type
         + mem::size_of::<u8>() // Length 
         + mem::size_of::<u8>(); // Revision
 
-pub const FPDT_MAX_PERF_RECORD_SIZE: usize = u8::MAX as usize;
-
 pub trait PerformanceRecord: Sized + scroll::ctx::TryIntoCtx<scroll::Endian, Error = scroll::Error> {
     fn record_type(&self) -> u16;
 

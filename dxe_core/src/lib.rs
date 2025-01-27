@@ -352,7 +352,6 @@ where
 
         // Instantiate system table.
         systemtables::init_system_table();
-
         {
             let mut st = systemtables::SYSTEM_TABLE.lock();
             let st = st.as_mut().expect("System Table not initialized!");

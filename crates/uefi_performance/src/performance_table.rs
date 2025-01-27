@@ -244,13 +244,6 @@ impl PerformanceRecord for FirmwareBasicBootPerfDataRecord {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
-<<<<<<< HEAD
-
-    // fn data_size(&self) -> usize {
-    //     Self::data_size()
-    // }
-=======
->>>>>>> 2dff8f65eafce041a57e02945b4e3da7e21c6daf
 }
 
 impl Default for FirmwareBasicBootPerfDataRecord {

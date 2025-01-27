@@ -17,11 +17,9 @@ pub unsafe fn string_from_c_char_ptr(c_ptr: *const c_char) -> Option<String> {
     if c_ptr.is_null() {
         return None;
     }
-    // log::info!("c_ptr from string: {:?}", c_ptr);
     Some(CStr::from_ptr(c_ptr).to_str().unwrap().to_string())
 }
 
 pub fn c_char_ptr_from_str(s: &str) -> *const c_char {
-    // log::info!("string: {:?}", s);
     CString::new(s).map_or(core::ptr::null(), |c_string| c_string.into_raw())
 }

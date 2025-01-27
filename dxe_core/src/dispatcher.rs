@@ -464,7 +464,6 @@ pub fn core_dispatcher() -> Result<(), efi::Status> {
 }
 
 pub fn init_dispatcher(extractor: Box<dyn SectionExtractor>) {
-    // perf_function_begin!(&CALLER_ID);
     //set up call back for FV protocol installation.
     let event = EVENT_DB
         .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(core_fw_vol_event_protocol_notify), None, None)
@@ -475,7 +474,6 @@ pub fn init_dispatcher(extractor: Box<dyn SectionExtractor>) {
         .expect("Failed to register protocol notify on fv protocol.");
 
     DISPATCHER_CONTEXT.lock().section_extractor = Some(extractor);
-    // perf_function_end!(&CALLER_ID);
 }
 
 pub fn display_discovered_not_dispatched() {

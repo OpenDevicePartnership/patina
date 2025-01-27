@@ -46,14 +46,6 @@ impl PerformanceRecord for GuidEventRecord {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
-
-    // fn data_size(&self) -> usize {
-    //     mem::size_of_val(&self.progress_id)
-    //         + mem::size_of_val(&PROGRESS_ID_PADDING)
-    //         + mem::size_of_val(&self.acpi_id)
-    //         + mem::size_of_val(&self.timestamp)
-    //         + mem::size_of_val(&self.guid)
-    // }
 }
 
 impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidEventRecord {
@@ -62,7 +54,6 @@ impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidEventRecord {
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
         let mut offset = 0;
         dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
-        // dest.gwrite_with(PROGRESS_ID_PADDING, &mut offset, ctx)?;
         dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
         dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
         dest.gwrite_with(self.guid.as_bytes().as_slice(), &mut offset, ())?;
@@ -117,7 +108,6 @@ impl scroll::ctx::TryIntoCtx<scroll::Endian> for DynamicStringEventRecord<'_> {
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
         let mut offset = 0;
         dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
-        // dest.gwrite_with(PROGRESS_ID_PADDING, &mut offset, ctx)?;
         dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
         dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
         dest.gwrite_with(self.guid.as_bytes().as_slice(), &mut offset, ())?;
@@ -194,7 +184,6 @@ impl scroll::ctx::TryIntoCtx<scroll::Endian> for DualGuidStringEventRecord<'_> {
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
         let mut offset = 0;
         dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
-        // dest.gwrite_with(PROGRESS_ID_PADDING, &mut offset, ctx)?;
         dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
         dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
         dest.gwrite_with(self.guid_1.as_bytes().as_slice(), &mut offset, ())?;
@@ -265,15 +254,6 @@ impl PerformanceRecord for GuidQwordEventRecord {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
-
-    // fn data_size(&self) -> usize {
-    //     mem::size_of_val(&self.progress_id)
-    //         + mem::size_of_val(&PROGRESS_ID_PADDING)
-    //         + mem::size_of_val(&self.acpi_id)
-    //         + mem::size_of_val(&self.timestamp)
-    //         + mem::size_of_val(&self.guid)
-    //         + mem::size_of_val(&self.qword)
-    // }
 }
 
 impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidQwordEventRecord {
@@ -282,7 +262,6 @@ impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidQwordEventRecord {
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
         let mut offset = 0;
         dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
-        // dest.gwrite_with(PROGRESS_ID_PADDING, &mut offset, ctx)?;
         dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
         dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
         dest.gwrite_with(*self.guid.as_bytes(), &mut offset, ctx)?;
@@ -340,7 +319,6 @@ impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidQwordStringEventRecord<'_> 
     fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
         let mut offset = 0;
         dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
-        // dest.gwrite_with(PROGRESS_ID_PADDING, &mut offset, ctx)?;
         dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
         dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
         dest.gwrite_with(*self.guid.as_bytes(), &mut offset, ctx)?;

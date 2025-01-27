@@ -217,7 +217,6 @@ extern "efiapi" fn create_performance_measurement(
     }
 
     let string = unsafe { _utils::string_from_c_char_ptr(string) };
-    // log::info!("string from c_ptr: {:?}", string);
 
     let mut perf_id = identifier as u16;
     if attribute != PerfAttribute::PerfEntry {
@@ -292,8 +291,7 @@ extern "efiapi" fn create_performance_measurement(
             let (Some(string), Some(guid_2)) = (string, guid) else {
                 return efi::Status::INVALID_PARAMETER;
             };
-            let guid_1: efi::Guid = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
-            log::info!("guid1, guide2: {:?}, {:?}", guid_1, guid_2);
+            let guid_1 = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
 
             let record = DualGuidStringEventRecord::new(perf_id, 0, timestamp, guid_1, *guid_2, string.as_str());
             _ = &FBPT.lock().add_record(record);
@@ -306,7 +304,6 @@ extern "efiapi" fn create_performance_measurement(
         | PerfId::PERF_CROSS_MODULE_START
         | PerfId::PERF_CROSS_MODULE_END => {
             let guid = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
-            // log::info!("guid: {:?}, {}", guid, line!());
             let record =
                 DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, string.as_deref().unwrap_or("unknown name"));
             _ = &FBPT.lock().add_record(record);
@@ -315,15 +312,12 @@ extern "efiapi" fn create_performance_measurement(
             let (module_name, guid) = if let Ok((Some(module_name), guid)) =
                 get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void)
             {
-                // log::info!("guid: {:?}, {}", guid, line!());
                 (module_name, guid)
             } else if let Some(string) = string {
                 let guid = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
-                // log::info!("guid: {:?}, {}", guid, line!());
                 (string, guid)
             } else {
                 let guid = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
-                // log::info!("guid: {:?}, {}", guid, line!());
                 (String::from("unknown name"), guid)
             };
             let record = DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, &module_name);
@@ -508,8 +502,6 @@ fn end_perf_measurement(
     create_performance_measurement(handle, None, string, timestamp, 0, identifier, PerfAttribute::PerfEndEntry);
 }
 
-// SHERRY: fix these. we cannot just use the function name for the string
-
 pub fn perf_image_start_begin(module_handle: efi::Handle) {
     log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_START);
 }
@@ -568,7 +560,6 @@ macro_rules! perf_event_signal_begin {
 }
 
 pub fn _perf_event_signal_begin(event_guid: &efi::Guid, fun_name: &str, caller_id: &efi::Guid) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         Some(event_guid),
@@ -718,7 +709,7 @@ pub fn perf_start_ex(
     timestamp: u64,
     identifier: u32,
 ) {
-\    start_perf_measurement(handle, token, module, timestamp, identifier);
+    start_perf_measurement(handle, token, module, timestamp, identifier);
 }
 
 pub fn perf_end_ex(handle: efi::Handle, token: *const c_char, module: *const c_char, timestamp: u64, identifier: u32) {
@@ -727,4 +718,4 @@ pub fn perf_end_ex(handle: efi::Handle, token: *const c_char, module: *const c_c
 
 // TODOs: cross-module measurements
 // TODO: advanced logger / section extractor
-// TODO: boot services initialization issues
+// TODO: boot services initialization issues in init_dispatcher
