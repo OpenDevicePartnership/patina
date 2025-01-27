@@ -30,15 +30,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🛠️ Download Rust Tools 🛠️
-        uses: pop-project/uefi-dxe-core/.github/actions/rust-tool-cache@main
+        uses: OpenDevicePartnership/uefi-dxe-core/.github/actions/rust-tool-cache@main
 
       - name: Get Release Tag
         id: release_tag
         run: |
           tag_name="${{ github.event.release.tag_name }}"
-          
+
           # remove the leading 'v' if it exists
-          release_tag="${tag_name#v}" 
+          release_tag="${tag_name#v}"
 
           echo "Release Tag: $release_tag"
           echo "tag=$release_tag" >> $GITHUB_OUTPUT
@@ -56,7 +56,7 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-    
+
       - name: Checkout New Branch
         run: |
           git checkout -b "github-actions/release-${{ steps.release_tag.outputs.tag }}"

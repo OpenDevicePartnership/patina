@@ -18,7 +18,7 @@ dxe_core = "$(VERSION)"
 If you want the latest and greatest, you can use the `main` branch from our github repository:
 
 ``` toml
-dxe_core = { git = "https://github.com/pop-project/uefi-dxe-core", branch = "main" }
+dxe_core = { git = "https://github.com/OpenDevicePartnership/uefi-dxe-core", branch = "main" }
 ```
 ````
 
@@ -74,12 +74,12 @@ points of abstraction, `SectionExtractor` and `EfiCpuInit`.
 extraction methods it supports. As an example, a platform may only compress it's sections with
 brotli, so it only needs to support brotli extractions. A platform may create their own extractor,
 it only needs implement the [SectionExtractor](https://github.com/microsoft/mu_rust_pi/blob/c8dd7f990d87746cfae9a5e821ad69501c46f346/src/fw_fs.rs#L77)
-trait. However multiple implementations are provided via [section_extractor](https://github.com/pop-project/uefi-core/tree/main/section_extractor),
+trait. However multiple implementations are provided via [section_extractor](https://github.com/OpenDevicePartnership/uefi-core/tree/main/section_extractor),
 such as brotli, crc32, uefi_decompress, etc.
 
 `EfiCpuInit` is an abstraction point for architecture specific initialization steps.
-Implementations are provided via [uefi_cpu](https://github.com/pop-project/uefi-core/tree/main/uefi_cpu),
-however if necessary, a platform can create their own implementation via the [EfiCpuInit](https://github.com/pop-project/uefi-core/blob/main/uefi_core/src/interface.rs)
+Implementations are provided via [uefi_cpu](https://github.com/OpenDevicePartnership/uefi-core/tree/main/uefi_cpu),
+however if necessary, a platform can create their own implementation via the [EfiCpuInit](https://github.com/OpenDevicePartnership/uefi-core/blob/main/uefi_core/src/interface.rs)
 trait.
 
 ```admonish note

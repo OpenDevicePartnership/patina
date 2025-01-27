@@ -12,7 +12,7 @@ members = [
 [workspace.package]
 version = "7.1.2"
 publish = ["UefiRust"]
-repository = "https://github.com/pop-project/uefi-dxe-core"
+repository = "https://github.com/OpenDevicePartnership/uefi-dxe-core"
 license = "BSD-2-Clause-Patent"
 edition = "2021"
 rust-version = "1.80.0"

@@ -245,7 +245,7 @@ extern "efiapi" fn create_performance_measurement(
 
     match perf_id {
         PerfId::MODULE_START | PerfId::MODULE_END => {
-            // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
+            // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/195
             log::warn!(
                 "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
                 module_path!(),
@@ -258,7 +258,7 @@ extern "efiapi" fn create_performance_measurement(
             }
         }
         PerfId::MODULE_LOAD_IMAGE_START | PerfId::MODULE_LOAD_IMAGE_END => {
-            // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
+            // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/195
             log::warn!(
                 "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
                 module_path!(),
@@ -284,7 +284,7 @@ extern "efiapi" fn create_performance_measurement(
         | PerfId::MODULE_DB_STOP_START
         | PerfId::MODULE_DB_STOP_END
         | PerfId::MODULE_DB_START => {
-            // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
+            // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/195
             log::warn!(
                 "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
                 module_path!(),
@@ -297,7 +297,7 @@ extern "efiapi" fn create_performance_measurement(
             }
         }
         PerfId::MODULE_DB_END => {
-            // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
+            // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/195
             log::warn!(
                 "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
                 module_path!(),
@@ -311,7 +311,7 @@ extern "efiapi" fn create_performance_measurement(
                 let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, &module_name);
                 _ = &FBPT.lock().add_record(record);
             }
-            // TODO something to do if address is not 0 need example to continue development. (https://github.com/pop-project/uefi-dxe-core/issues/194)
+            // TODO something to do if address is not 0 need example to continue development. (https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/194)
         }
         PerfId::PERF_EVENT_SIGNAL_START
         | PerfId::PERF_EVENT_SIGNAL_END
@@ -337,7 +337,7 @@ extern "efiapi" fn create_performance_measurement(
             _ = &FBPT.lock().add_record(record);
         }
         _ if attribute != PerfAttribute::PerfEntry => {
-            // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
+            // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/195
             log::warn!(
                 "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
                 module_path!(),
@@ -458,16 +458,16 @@ fn get_module_info_from_handle(
         let _image_bytes = unsafe {
             slice::from_raw_parts(loaded_image.image_base as *const _ as *const u8, loaded_image.image_size as usize)
         };
-        // TODO: Find Module name in handle (image_bytes) (https://github.com/pop-project/uefi-dxe-core/issues/187).
+        // TODO: Find Module name in handle (image_bytes) (https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/187).
 
         return Ok((Some(String::from("TODO Get name from UefiPeInfo")), guid));
     }
 
     // Method 2 - Get the name string from ComponentName2
-    // TODO: https://github.com/pop-project/uefi-dxe-core/issues/192
+    // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/192
 
     // Method 3 - Get the name string from FFS UI Section.
-    // TODO: https://github.com/pop-project/uefi-dxe-core/issues/193
+    // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/193
 
     Ok((None, guid))
 }

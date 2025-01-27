@@ -27,7 +27,7 @@ Before making pull requests at a minimum, run:
 ## Documentation
 
 We have "Getting Started" documentation located in this repository at `docs/*`. The latest documentation can be found
-at <https://pop-project.github.io/uefi-dxe-core/>, however this documentation can also be self-hosted via
+at <https://OpenDevicePartnership.github.io/uefi-dxe-core/>, however this documentation can also be self-hosted via
 ([mdbook](https://github.com/rust-lang/mdBook)). Once you all dependencies installed as specified below, you can run
 `mdbook serve docs` to self host the getting started book.
 
