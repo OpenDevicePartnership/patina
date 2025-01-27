@@ -232,7 +232,7 @@ pub struct GuidQwordEventRecord {
     /// 64-bit value (nanosecond) describing elapsed time since the most recent deassertion of processor reset.
     pub timestamp: u64,
     /// GUID of the module logging the event.
-    pub guid: efi::Guid, // 16B
+    pub guid: efi::Guid,
     /// Qword of misc data, meaning depends on the ProgressId.
     pub qword: u64,
 }

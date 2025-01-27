@@ -217,6 +217,7 @@ fn core_connect_single_controller(
         for driver_binding_interface in driver_candidates.clone() {
             let driver_binding = unsafe { &mut *(driver_binding_interface) };
             let device_path = remaining_device_path.or(Some(core::ptr::null_mut())).expect("must be some");
+            //driver claims support; attempt to start it.
             perf_driver_binding_support_begin(driver_binding.driver_binding_handle, controller_handle);
             match (driver_binding.supported)(driver_binding_interface, controller_handle, device_path) {
                 efi::Status::SUCCESS => {

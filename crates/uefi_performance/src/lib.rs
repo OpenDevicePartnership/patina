@@ -292,7 +292,6 @@ extern "efiapi" fn create_performance_measurement(
                 return efi::Status::INVALID_PARAMETER;
             };
             let guid_1 = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
-
             let record = DualGuidStringEventRecord::new(perf_id, 0, timestamp, guid_1, *guid_2, string.as_str());
             _ = &FBPT.lock().add_record(record);
         }
