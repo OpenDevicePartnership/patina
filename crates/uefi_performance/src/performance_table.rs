@@ -63,9 +63,7 @@ impl FBPT {
     }
 
     pub fn add_record(&mut self, record: impl PerformanceRecord) -> Result<(), efi::Status> {
-        // let record_size = record.size();
         let record_size = self.other_records.push_record(record)?;
-        // self.other_records.push_record(record)?;
         *self.length_mut() += record_size as u32;
         Ok(())
     }
@@ -246,10 +244,13 @@ impl PerformanceRecord for FirmwareBasicBootPerfDataRecord {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
+<<<<<<< HEAD
 
     // fn data_size(&self) -> usize {
     //     Self::data_size()
     // }
+=======
+>>>>>>> 2dff8f65eafce041a57e02945b4e3da7e21c6daf
 }
 
 impl Default for FirmwareBasicBootPerfDataRecord {

@@ -5,20 +5,13 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
-use core::{fmt::Debug, mem};
+use core::fmt::Debug;
 
 use mu_rust_helpers::guid::guid_fmt;
 use r_efi::efi;
 use scroll::Pwrite;
 
 use super::PerformanceRecord;
-
-// Padding is necessary because of the C representation
-// 0-2: progress_id
-// 2-4: padding
-// 4-8: acpi_id
-// ... rest of fields
-const PROGRESS_ID_PADDING: u16 = 0;
 
 #[repr(C)]
 pub struct GuidEventRecord {
@@ -81,7 +74,6 @@ impl Debug for GuidEventRecord {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("GuidEventRecord")
             .field("type", &self.record_type())
-            // .field("length", &self.data_size())
             .field("revision", &self.revision())
             .field("progress_id", &self.progress_id)
             .field("acpi_id", &self.acpi_id)
@@ -143,23 +135,12 @@ impl PerformanceRecord for DynamicStringEventRecord<'_> {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
-
-    // fn data_size(&self) -> usize {
-    //     mem::size_of_val(&self.progress_id)
-    //         + mem::size_of_val(&PROGRESS_ID_PADDING)
-    //         + mem::size_of_val(&self.acpi_id)
-    //         + mem::size_of_val(&self.timestamp)
-    //         + mem::size_of_val(&self.guid)
-    //         + self.string.len()
-    //         + mem::size_of_val(&0_u8)
-    // }
 }
 
 impl Debug for DynamicStringEventRecord<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DynamicStringEventRecord")
             .field("type", &self.record_type())
-            // .field("length", &self.data_size())
             .field("revision", &self.revision())
             .field("progress_id", &self.progress_id)
             .field("acpi_id", &self.acpi_id)
@@ -232,24 +213,12 @@ impl PerformanceRecord for DualGuidStringEventRecord<'_> {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
-
-    // fn data_size(&self) -> usize {
-    //     mem::size_of_val(&self.progress_id)
-    //         + mem::size_of_val(&PROGRESS_ID_PADDING)
-    //         + mem::size_of_val(&self.acpi_id)
-    //         + mem::size_of_val(&self.timestamp)
-    //         + mem::size_of_val(&self.guid_1)
-    //         + mem::size_of_val(&self.guid_2)
-    //         + self.string.len()
-    //         + mem::size_of_val(&0_u8)
-    // }
 }
 
 impl Debug for DualGuidStringEventRecord<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DualGuidStringEventRecord")
             .field("type", &self.record_type())
-            // .field("length", &self.data_size())
             .field("revision", &self.revision())
             .field("progress_id", &self.progress_id)
             .field("acpi_id", &self.acpi_id)
@@ -326,7 +295,6 @@ impl Debug for GuidQwordEventRecord {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("GuidQwordEventRecord")
             .field("type", &self.record_type())
-            // .field("length", &self.data_size())
             .field("revision", &self.revision())
             .field("progress_id", &self.progress_id)
             .field("acpi_id", &self.acpi_id)
@@ -391,24 +359,12 @@ impl PerformanceRecord for GuidQwordStringEventRecord<'_> {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
-
-    // fn data_size(&self) -> usize {
-    //     mem::size_of_val(&self.progress_id)
-    //         + mem::size_of_val(&PROGRESS_ID_PADDING)
-    //         + mem::size_of_val(&self.acpi_id)
-    //         + mem::size_of_val(&self.timestamp)
-    //         + mem::size_of_val(&self.guid)
-    //         + mem::size_of_val(&self.qword)
-    //         + self.string.len()
-    //         + mem::size_of_val(&0_u8)
-    // }
 }
 
 impl Debug for GuidQwordStringEventRecord<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("GuidQwordStringEventRecord")
             .field("type", &self.record_type())
-            // .field("length", &self.data_size())
             .field("revision", &self.revision())
             .field("progress_id", &self.progress_id)
             .field("acpi_id", &self.acpi_id)

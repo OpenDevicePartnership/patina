@@ -12,10 +12,10 @@
 
 extern crate alloc;
 use super::{AllocationStrategy, DEFAULT_ALLOCATION_STRATEGY};
-use crate::{
-    gcd::{self, SpinLockedGcd},
-    tpl_lock,
-};
+
+use crate::{gcd::SpinLockedGcd, tpl_lock};
+use uefi_sdk::error::EfiError;
+
 use core::{
     alloc::{AllocError, Allocator, GlobalAlloc, Layout},
     cmp::max,
@@ -422,17 +422,12 @@ impl FixedSizeBlockAllocator {
     ) -> Result<core::ptr::NonNull<[u8]>, efi::Status> {
         self.stats.page_allocation_calls += 1;
 
-        let mut memory_type = GcdMemoryType::SystemMemory;
         if let AllocationStrategy::Address(address) = allocation_strategy {
             // validate allocation strategy addresses for direct address allocation is properly aligned.
             // for BottomUp and TopDown strategies, the address parameter doesn't have to be page-aligned, but
             // the resulting allocation will be page-aligned.
             if address % ALIGNMENT != 0 {
                 return Err(efi::Status::INVALID_PARAMETER);
-            }
-            // For directed address allocation, allow allocations to GCD types other than SystemMemory.
-            if let Ok(descriptor) = self.gcd.get_memory_descriptor_for_address(address as efi::PhysicalAddress) {
-                memory_type = descriptor.memory_type;
             }
         }
 
@@ -442,15 +437,15 @@ impl FixedSizeBlockAllocator {
             .gcd
             .allocate_memory_space(
                 allocation_strategy,
-                memory_type,
+                GcdMemoryType::SystemMemory,
                 UEFI_PAGE_SHIFT,
                 pages * ALIGNMENT,
                 self.handle,
                 None,
             )
             .map_err(|err| match err {
-                gcd::Error::InvalidParameter => efi::Status::INVALID_PARAMETER,
-                gcd::Error::NotFound => efi::Status::NOT_FOUND,
+                EfiError::InvalidParameter => efi::Status::INVALID_PARAMETER,
+                EfiError::NotFound => efi::Status::NOT_FOUND,
                 _ => efi::Status::OUT_OF_RESOURCES,
             })?;
 
@@ -481,7 +476,7 @@ impl FixedSizeBlockAllocator {
 
         let descriptor =
             self.gcd.get_memory_descriptor_for_address(address as efi::PhysicalAddress).map_err(|err| match err {
-                gcd::Error::NotFound => efi::Status::NOT_FOUND,
+                EfiError::NotFound => efi::Status::NOT_FOUND,
                 _ => efi::Status::INVALID_PARAMETER,
             })?;
 
@@ -491,14 +486,14 @@ impl FixedSizeBlockAllocator {
 
         if self.preferred_range.as_ref().is_some_and(|range| range.contains(&(address as efi::PhysicalAddress))) {
             self.gcd.free_memory_space_preserving_ownership(address, pages * ALIGNMENT).map_err(|err| match err {
-                gcd::Error::NotFound => efi::Status::NOT_FOUND,
+                EfiError::NotFound => efi::Status::NOT_FOUND,
                 _ => efi::Status::INVALID_PARAMETER,
             })?;
             self.stats.reserved_used -= pages * ALIGNMENT;
             // don't update claimed_pages stats here, because they are never actually "released".
         } else {
             self.gcd.free_memory_space(address, pages * ALIGNMENT).map_err(|err| match err {
-                gcd::Error::NotFound => efi::Status::NOT_FOUND,
+                EfiError::NotFound => efi::Status::NOT_FOUND,
                 _ => efi::Status::INVALID_PARAMETER,
             })?;
             self.stats.claimed_pages -= pages;
@@ -753,12 +748,11 @@ unsafe impl Send for SpinLockedFixedSizeBlockAllocator {}
 #[cfg(test)]
 mod tests {
     extern crate std;
+    use crate::{gcd, test_support};
     use core::alloc::GlobalAlloc;
     use std::alloc::System;
 
     use uefi_sdk::uefi_pages_to_size;
-
-    use crate::test_support;
 
     use super::*;
 

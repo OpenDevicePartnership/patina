@@ -15,6 +15,8 @@ use scroll::{self, Pread, Pwrite};
 
 use crate::_debug::DbgMemory;
 
+pub const FPDT_MAX_PERF_RECORD_SIZE: usize = u8::MAX as usize;
+
 pub const PERFORMANCE_RECORD_HEADER_SIZE: usize = mem::size_of::<u16>() // Type
         + mem::size_of::<u8>() // Length 
         + mem::size_of::<u8>(); // Revision
@@ -26,24 +28,13 @@ pub trait PerformanceRecord: Sized + scroll::ctx::TryIntoCtx<scroll::Endian, Err
 
     fn revision(&self) -> u8;
 
-    // fn data_size(&self) -> usize {
-    //     // log::info!("mem size {}", mem::size_of::<Self>());
-    //     mem::size_of::<Self>()
-    // }
-
-    // fn size(&self) -> usize {
-    //     PERFORMANCE_RECORD_HEADER_SIZE + self.data_size()
-    // }
-
     fn write_into(self, buff: &mut [u8], offset: &mut usize) -> Result<usize, scroll::Error> {
         let mut record_size = 0;
 
         // Write performance record header.
-        // log::info!("offset before: {}", *offset);
         record_size += buff.gwrite(self.record_type(), offset)?;
         let mut record_size_offset = *offset;
-        // log::info!("offset after: {}", record_size_offset);
-        record_size += buff.gwrite(0 as u8, offset)?;
+        record_size += buff.gwrite(0_u8, offset)?;
         record_size += buff.gwrite(self.revision(), offset)?;
 
         // Write data.
@@ -88,14 +79,6 @@ impl<T: Deref<Target = [u8]>> PerformanceRecord for GenericPerformanceRecord<T> 
     fn revision(&self) -> u8 {
         self.revision
     }
-
-    // fn data_size(&self) -> usize {
-    //     self.data.len()
-    // }
-
-    // fn size(&self) -> usize {
-    //     self.length as usize
-    // }
 }
 
 impl<T: Deref<Target = [u8]>> Debug for GenericPerformanceRecord<T> {

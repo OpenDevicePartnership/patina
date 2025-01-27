@@ -1,7 +1,7 @@
 # DXE Core Testing
 
 Writing DXE Core tests follows all the same principles defined in the [Testing](../dev/testing.md) chapter, so if you
-have not reviewed it yet, please do so before continuing. One of the reasons that [uefi-dxe-core](https://github.com/pop-project/uefi-dxe-core)
+have not reviewed it yet, please do so before continuing. One of the reasons that [uefi-dxe-core](https://github.com/OpenDevicePartnership/uefi-dxe-core)
 is split into multiple crates and merged the the `dxe_core` umbrella crate is to support code separation and ease of
 unit testing. Support crates (in the `crates/*` folder) should not contain any static data used by the core. Instead,
 they should provide the generic implementation details that the core uses to function. This simplifies unit tests, code
@@ -18,7 +18,7 @@ static pieces of data that are referenced throughout the codebase. Since unit te
 that multiple tests may be manipulating this static data at the same time. This will lead to either dead-locks, panics,
 or the static data being in an unexpected state for the test.
 
-To help with this issue in the dxe_core crate, a [test_support](https://github.com/pop-project/uefi-dxe-core/blob/main/dxe_core/src/test_support.rs)
+To help with this issue in the dxe_core crate, a [test_support](https://github.com/OpenDevicePartnership/uefi-dxe-core/blob/main/dxe_core/src/test_support.rs)
 module was added to make writing tests more convenient. The most important functionality in the module is the
 `with_global_lock` function which takes your test closure / function as a parameter. This function locks a private
 global mutex, ensuring you have exclusive access to all statics within the dxe_core.

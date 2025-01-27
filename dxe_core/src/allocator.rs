@@ -45,7 +45,7 @@ use uefi_sdk::{
 };
 
 // Allocation Strategy when not specified by caller.
-const DEFAULT_ALLOCATION_STRATEGY: AllocationStrategy = AllocationStrategy::TopDown(None);
+pub const DEFAULT_ALLOCATION_STRATEGY: AllocationStrategy = AllocationStrategy::TopDown(None);
 
 // Private tracking guid used to generate new handles for allocator tracking
 // {9D1FA6E9-0C86-4F7F-A99B-DD229C9B3893}
@@ -564,6 +564,9 @@ pub(crate) fn get_memory_map_descriptors() -> Result<Vec<efi::MemoryDescriptor>,
                     // Unaccepted. Note: this type is not allocatable, but might be created by agents other than the core directly
                     // in the GCD.
                     GcdMemoryType::Unaccepted => Some(efi::UNACCEPTED_MEMORY_TYPE),
+
+                    // Reserved.
+                    GcdMemoryType::Reserved => Some(efi::RESERVED_MEMORY_TYPE),
 
                     // Other memory types are ignored for purposes of the memory map
                     _ => None,

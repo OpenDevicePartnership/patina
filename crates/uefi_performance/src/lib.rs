@@ -220,7 +220,6 @@ extern "efiapi" fn create_performance_measurement(
     // log::info!("string from c_ptr: {:?}", string);
 
     let mut perf_id = identifier as u16;
-    // log::info!("perf id: {}", perf_id);
     if attribute != PerfAttribute::PerfEntry {
         if perf_id != 0 && is_known_id(perf_id) && !is_known_token(string.as_ref()) {
             return efi::Status::INVALID_PARAMETER;
@@ -238,46 +237,25 @@ extern "efiapi" fn create_performance_measurement(
         }
     }
 
-    // cycle * 1/Hz (seconds/cycle) * 1_000 ms/second = ms
     let cpu_count = Arch::cpu_count();
-    // log::info!("cpu_count: {}, cpu_freq: {}, ticker: {}", cpu_count, Arch::cpu_count_frequency(), ticker);
     let timestamp = match ticker {
-        0 => (cpu_count as f64 / Arch::cpu_count_frequency() as f64 * 1_000_f64) as u64,
+        0 => (cpu_count as f64 / Arch::cpu_count_frequency() as f64 * 1_000_000_000_f64) as u64,
         1 => 0,
-        ticker => (ticker as f64 / Arch::cpu_count_frequency() as f64 * 1_000_f64) as u64,
+        ticker => (ticker as f64 / Arch::cpu_count_frequency() as f64 * 1_000_000_000_f64) as u64,
     };
-    // log::info!("timestamp: {}", timestamp);
 
     match perf_id {
         PerfId::MODULE_START | PerfId::MODULE_END => {
-            // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
-            // log::warn!(
-            //     "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
-            //     module_path!(),
-            //     line!(),
-            //     function!()
-            // );
             if let Ok((_, guid)) = get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void) {
-                // log::info!("guid: {:?}, {}", guid, line!());
                 let record = GuidEventRecord::new(perf_id, 0, timestamp, guid);
                 _ = &FBPT.lock().add_record(record);
             }
         }
         PerfId::MODULE_LOAD_IMAGE_START | PerfId::MODULE_LOAD_IMAGE_END => {
-            // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
-            // log::warn!(
-            //     "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
-            //     module_path!(),
-            //     line!(),
-            //     function!()
-            // );
-
             if perf_id == PerfId::MODULE_LOAD_IMAGE_START {
                 LOAD_IMAGE_COUNT.fetch_add(1, Ordering::Relaxed);
             }
             if let Ok((_, guid)) = get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void) {
-                // log::info!("guid: {:?}, {}", guid, line!());
-
                 let record = GuidQwordEventRecord::new(
                     perf_id,
                     timestamp,
@@ -292,38 +270,20 @@ extern "efiapi" fn create_performance_measurement(
         | PerfId::MODULE_DB_STOP_START
         | PerfId::MODULE_DB_STOP_END
         | PerfId::MODULE_DB_START => {
-            // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
-            // log::warn!(
-            //     "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
-            //     module_path!(),
-            //     line!(),
-            //     function!()
-            // );
             if let Ok((_, guid)) = get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void) {
-                // log::info!("guid: {:?}, {}", guid, line!());
-
                 let record = GuidQwordEventRecord::new(perf_id, timestamp, guid, address as u64);
                 _ = &FBPT.lock().add_record(record);
             }
         }
         PerfId::MODULE_DB_END => {
-            // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
-            // log::warn!(
-            //     "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
-            //     module_path!(),
-            //     line!(),
-            //     function!()
-            // );
             if let Ok((module_name, guid)) =
                 get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void)
             {
-                // log::info!("guid: {:?}, {}", guid, line!());
-
                 let module_name = module_name.unwrap_or(String::from("unknown name"));
                 let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, &module_name);
                 _ = &FBPT.lock().add_record(record);
             }
-            // TODO something to do if address is not 0 need example to continue development. (https://github.com/pop-project/uefi-dxe-core/issues/194)
+            // TODO something to do if address is not 0 need example to continue development. (https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/194)
         }
         PerfId::PERF_EVENT_SIGNAL_START
         | PerfId::PERF_EVENT_SIGNAL_END
@@ -352,14 +312,6 @@ extern "efiapi" fn create_performance_measurement(
             _ = &FBPT.lock().add_record(record);
         }
         _ if attribute != PerfAttribute::PerfEntry => {
-            // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
-            log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
-                module_path!(),
-                line!(),
-                function!()
-            );
-
             let (module_name, guid) = if let Ok((Some(module_name), guid)) =
                 get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void)
             {
@@ -440,7 +392,6 @@ fn get_module_info_from_handle(
     boot_services: &impl BootServices,
     handle: efi::Handle,
 ) -> Result<(Option<String>, efi::Guid), efi::Status> {
-    // TODO: SHERRY we need to handle boot services not being intiialized
     let mut guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
 
     let loaded_image_protocol = 'find_loaded_image_protocol: {
@@ -477,16 +428,16 @@ fn get_module_info_from_handle(
         let _image_bytes = unsafe {
             slice::from_raw_parts(loaded_image.image_base as *const _ as *const u8, loaded_image.image_size as usize)
         };
-        // TODO: Find Module name in handle (image_bytes) (https://github.com/pop-project/uefi-dxe-core/issues/187).
+        // TODO: Find Module name in handle (image_bytes) (https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/187).
 
         return Ok((Some(String::from("TODO Get name from UefiPeInfo")), guid));
     }
 
     // Method 2 - Get the name string from ComponentName2
-    // TODO: https://github.com/pop-project/uefi-dxe-core/issues/192
+    // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/192
 
     // Method 3 - Get the name string from FFS UI Section.
-    // TODO: https://github.com/pop-project/uefi-dxe-core/issues/193
+    // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/193
 
     Ok((None, guid))
 }
@@ -560,57 +511,46 @@ fn end_perf_measurement(
 // SHERRY: fix these. we cannot just use the function name for the string
 
 pub fn perf_image_start_begin(module_handle: efi::Handle) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_START);
 }
 
 pub fn perf_image_start_end(module_handle: efi::Handle) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_END);
 }
 
 pub fn perf_load_image_begin(module_handle: efi::Handle) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_START);
 }
 
 pub fn perf_load_image_end(module_handle: efi::Handle) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_END);
 }
 
 pub fn perf_driver_binding_support_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_SUPPORT_START);
 }
 
 pub fn perf_driver_binding_support_end(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_SUPPORT_END);
 }
 
 pub fn perf_driver_binding_start_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_START);
 }
 
 pub fn perf_driver_binding_start_end(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_END);
 }
 
 pub fn perf_driver_binding_stop_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_STOP_START);
 }
 
 pub fn perf_driver_binding_stop_end(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_STOP_END);
 }
 
 pub fn perf_event(event_string: &str, caller_id: &efi::Guid) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         None,
@@ -623,7 +563,6 @@ pub fn perf_event(event_string: &str, caller_id: &efi::Guid) {
 #[macro_export]
 macro_rules! perf_event_signal_begin {
     ($event_guid:expr, $caller_id:expr) => {
-        // log::info!("{} {}", function!(), line!());
         $crate::_perf_event_signal_begin($event_guid, $crate::function!(), $caller_id)
     };
 }
@@ -642,13 +581,11 @@ pub fn _perf_event_signal_begin(event_guid: &efi::Guid, fun_name: &str, caller_i
 #[macro_export]
 macro_rules! perf_event_signal_end {
     ($event_guid:expr, $caller_id:expr) => {
-        // log::info!("{} {}", $crate::function!(), line!());
         $crate::_perf_event_signal_end($event_guid, $crate::function!(), $caller_id)
     };
 }
 
 pub fn _perf_event_signal_end(event_guid: &efi::Guid, fun_name: &str, caller_id: &efi::Guid) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         Some(event_guid),
@@ -661,13 +598,11 @@ pub fn _perf_event_signal_end(event_guid: &efi::Guid, fun_name: &str, caller_id:
 #[macro_export]
 macro_rules! perf_callback_begin {
     ($trigger_guid:expr, $caller_id:expr) => {
-        // log::info!("{} {}", function!(), line!());
         $crate::_perf_callback_begin($trigger_guid, $crate::function!(), $caller_id)
     };
 }
 
 pub fn _perf_callback_begin(trigger_guid: &efi::Guid, fun_name: &str, caller_id: &efi::Guid) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         Some(trigger_guid),
@@ -680,13 +615,11 @@ pub fn _perf_callback_begin(trigger_guid: &efi::Guid, fun_name: &str, caller_id:
 #[macro_export]
 macro_rules! perf_callback_end {
     ($trigger_guid:expr, $caller_id:expr) => {
-        // log::info!("{} {}", function!(), line!());
         $crate::_perf_callback_end($trigger_guid, $crate::function!(), $caller_id)
     };
 }
 
 pub fn _perf_callback_end(trigger_guid: &efi::Guid, fun_name: &str, caller_id: &efi::Guid) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         Some(trigger_guid),
@@ -699,13 +632,11 @@ pub fn _perf_callback_end(trigger_guid: &efi::Guid, fun_name: &str, caller_id: &
 #[macro_export]
 macro_rules! perf_function_begin {
     ($caller_id:expr) => {
-        // log::info!("{} {}", $crate::function!(), line!());
         $crate::_perf_function_begin($crate::function!(), $caller_id)
     };
 }
 
 pub fn _perf_function_begin(fun_name: &str, caller_id: &efi::Guid) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         None,
@@ -718,13 +649,11 @@ pub fn _perf_function_begin(fun_name: &str, caller_id: &efi::Guid) {
 #[macro_export]
 macro_rules! perf_function_end {
     ($caller_id:expr) => {
-        // log::info!("{} {}", $crate::function!(), line!());
         $crate::_perf_function_end($crate::function!(), $caller_id)
     };
 }
 
 pub fn _perf_function_end(fun_name: &str, caller_id: &efi::Guid) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         None,
@@ -735,7 +664,6 @@ pub fn _perf_function_end(fun_name: &str, caller_id: &efi::Guid) {
 }
 
 pub fn perf_in_module_begin(measurement_str: &str, caller_id: &efi::Guid) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         None,
@@ -746,7 +674,6 @@ pub fn perf_in_module_begin(measurement_str: &str, caller_id: &efi::Guid) {
 }
 
 pub fn perf_in_module_end(measurement_str: &str, caller_id: &efi::Guid) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         None,
@@ -757,7 +684,6 @@ pub fn perf_in_module_end(measurement_str: &str, caller_id: &efi::Guid) {
 }
 
 pub fn perf_in_cross_module_begin(measurement_str: &str, caller_id: &efi::Guid) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         None,
@@ -768,7 +694,6 @@ pub fn perf_in_cross_module_begin(measurement_str: &str, caller_id: &efi::Guid) 
 }
 
 pub fn perf_cross_module_end(measurement_str: &str, caller_id: &efi::Guid) {
-    // log::info!("{} {}", function!(), line!());
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         None,
@@ -779,12 +704,10 @@ pub fn perf_cross_module_end(measurement_str: &str, caller_id: &efi::Guid) {
 }
 
 pub fn perf_start(handle: efi::Handle, token: *const c_char, module: *const c_char, timestamp: u64) {
-    // log::info!("{} {}", function!(), line!());
     start_perf_measurement(handle, token, module, timestamp, 0);
 }
 
 pub fn perf_end(handle: efi::Handle, token: *const c_char, module: *const c_char, timestamp: u64) {
-    // log::info!("{} {}", function!(), line!());
     end_perf_measurement(handle, token, module, timestamp, 0);
 }
 
@@ -795,14 +718,13 @@ pub fn perf_start_ex(
     timestamp: u64,
     identifier: u32,
 ) {
-    // log::info!("{} {}", function!(), line!());
-    start_perf_measurement(handle, token, module, timestamp, identifier);
+\    start_perf_measurement(handle, token, module, timestamp, identifier);
 }
 
 pub fn perf_end_ex(handle: efi::Handle, token: *const c_char, module: *const c_char, timestamp: u64, identifier: u32) {
-    // log::info!("{} {}", function!(), line!());
     end_perf_measurement(handle, token, module, timestamp, identifier);
 }
 
 // TODOs: cross-module measurements
 // TODO: advanced logger / section extractor
+// TODO: boot services initialization issues

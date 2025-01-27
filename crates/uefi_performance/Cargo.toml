@@ -1,7 +1,12 @@
 [package]
 name = "uefi_performance"
-version = "6.1.0"
-edition = "2021"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Performance support for the DXE Core."
 
 [lib]
 name = "uefi_performance"

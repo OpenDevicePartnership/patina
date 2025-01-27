@@ -59,7 +59,7 @@ where
     }
 
     pub fn set_log_info_address(&self, address: efi::PhysicalAddress) {
-        assert!(self.memory_log.r#try().is_none());
+        assert!(!self.memory_log.is_completed());
         if let Some(log_info) = unsafe { AdvLoggerInfo::adopt_memory_log(address) } {
             self.memory_log.call_once(|| log_info);
             log::info!("Advanced logger buffer initialized. Address = {:#p}", log_info);
@@ -69,7 +69,7 @@ where
     }
 
     pub fn get_log_info(&self) -> Option<&AdvLoggerInfo> {
-        match self.memory_log.r#try() {
+        match self.memory_log.get() {
             Some(log_info) => Some(*log_info),
             None => None,
         }

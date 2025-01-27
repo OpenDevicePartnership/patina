@@ -6,8 +6,6 @@ RUSTC_BOOTSTRAP = 1
 NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
 TEST_FLAGS = { value = "", condition = { env_not_set = ["TEST_FLAGS"] } }
-# TODO: Remove when https://github.com/xd009642/tarpaulin/issues/1642 is resolved.
-COV_FILTER = { value = "-e uefi_test_macro", condition = { platforms = ["windows"], env_true = ["CARGO_MAKE_CI"] } }
 COV_FLAGS = { value = "--workspace --out html --out xml --exclude-files **/tests/* --exclude-files **/benches/*", condition = { env_not_set = ["COV_FLAGS"] } }
 
 [env.development]
@@ -122,7 +120,7 @@ dependencies = ["individual-package-targets"]
 description = "Build and run all tests and calculate coverage."
 clear = true
 command = "cargo"
-args = ["tarpaulin", "@@split(COV_FLAGS, )", "@@split(COV_FILTER, )", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target"]
+args = ["tarpaulin", "@@split(COV_FLAGS, )", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target"]
 dependencies = ["individual-package-targets"]
 
 [tasks.coverage-filter]

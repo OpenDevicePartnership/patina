@@ -208,6 +208,12 @@ impl MemoryBlock {
             {
                 md.memory_type = memory_type;
                 md.capabilities = capabilities;
+                // by default all free memory is unmapped (which translated to MEMORY_RP)
+                // when it is allocated, it is mapped as MEMORY_XP and then the caller is
+                // responsible for updating the attributes further if required.
+                // when it is freed, it is unmapped in the page table and in the GCD set back to MEMORY_RP
+                // to merge back with free memory
+                md.attributes = efi::MEMORY_RP;
                 Ok(())
             }
             _ => Err(Error::InvalidStateTransition),
@@ -246,6 +252,14 @@ impl MemoryBlock {
                 if let Some(device_handle) = device_handle {
                     md.device_handle = device_handle;
                 }
+                // Whenever memory is allocated, we need to set it as XP and preserve the cache
+                // attributes. This is done at this level because in early initialization, the GCD and
+                // page table are not initialized and various checks will fail when done from the
+                // top down. Those components will be synchronized when initialization of them
+                // completes and so this addition becomes a no-op later, but is required at the
+                // beginning.
+                md.attributes = (md.attributes & efi::CACHE_ATTRIBUTE_MASK) | efi::MEMORY_XP;
+
                 *self = Self::Allocated(*md);
                 Ok(())
             }
@@ -288,7 +302,10 @@ impl MemoryBlock {
             Self::Allocated(md) | Self::Unallocated(md)
                 if md.memory_type != dxe_services::GcdMemoryType::NonExistent =>
             {
-                if (capabilities | md.attributes) != capabilities {
+                if (capabilities & md.attributes) != md.attributes {
+                    //
+                    // Current attributes must still be supported with new capabilities
+                    //
                     Err(Error::InvalidStateTransition)
                 } else {
                     md.capabilities = capabilities;
@@ -386,8 +403,10 @@ mod memory_block_tests {
         // test capabilities transition
         let mut b5 = block;
         b5.as_mut().memory_type = GcdMemoryType::MemoryMappedIo;
+        b5.as_mut().attributes = 0b11;
+        b5.as_mut().capabilities = 0b111;
 
-        // Attributes before capabilities should fail
+        // Attributes before extending capabilities should fail
         assert!(b5.state_transition(StateTransition::SetAttributes(0b1111)).is_err());
 
         b5.state_transition(StateTransition::SetCapabilities(0b1111)).unwrap();

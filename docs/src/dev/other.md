@@ -18,10 +18,10 @@ Other repositories related to the uefi-dxe-core project.
 
 | Repository | Description |
 |------------|-------------|
-| [uefi-dxe-core](https://github.com/pop-project/uefi-dxe-core) | The pure-rust implementation of the UEFI DXE Core. |
-| [uefi-core](https://github.com/pop-project/uefi-core) | Abstraction point implementations, such as for CPU initialization, serial writing, logging, etc. |
-| [mtrr](https://github.com/pop-project/mtrr) | Memory Type Range Registers for x86_64. |
-| [paging](https://github.com/pop-project/paging) | Paging implementation. |
+| [uefi-dxe-core](https://github.com/OpenDevicePartnership/uefi-dxe-core) | The pure-rust implementation of the UEFI DXE Core. |
+| [uefi-core](https://github.com/OpenDevicePartnership/uefi-core) | Abstraction point implementations, such as for CPU initialization, serial writing, logging, etc. |
+| [mtrr](https://github.com/OpenDevicePartnership/mtrr) | Memory Type Range Registers for x86_64. |
+| [paging](https://github.com/OpenDevicePartnership/paging) | Paging implementation. |
 | [r-efi](https://github.com/r-efi/r-efi) | UEFI reference specification protocol constants and definitions. |
 | [mu_rust_pi](https://github.com/microsoft/mu_rust_pi) | Platform initialization (PI) specification definitions and support code. |
 | [mu_rust_helpers](https://github.com/microsoft/mu_rust_helpers) | Miscellaneous rust UEFI helper code. |
