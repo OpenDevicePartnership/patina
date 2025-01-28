@@ -12,9 +12,11 @@ use mu_pi::hob::{Hob, HobList};
 use r_efi::efi;
 use uefi_component_interface::DxeComponent;
 use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
-use uefi_performance::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end};
 use uefi_sdk::base::{align_up, UEFI_PAGE_SIZE};
 use uefi_sdk::{guid, uefi_size_to_pages};
+
+#[cfg(feature = "instrument_performance")]
+use uefi_performance::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end};
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},

@@ -17,11 +17,14 @@ use mu_pi::{
     protocols::firmware_volume_block,
 };
 use mu_rust_helpers::guid::guid_fmt;
-use mu_rust_helpers::guid::CALLER_ID;
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
-use uefi_performance::{perf_event_signal_end, perf_function_begin, perf_function_end};
+
+#[cfg(feature = "instrument_performance")]
+use mu_rust_helpers::guid::CALLER_ID;
+#[cfg(feature = "instrument_performance")]
+use uefi_performance::{perf_function_begin, perf_function_end};
 
 use crate::{
     events::EVENT_DB,

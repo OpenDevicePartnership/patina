@@ -456,7 +456,6 @@ fn log_perf_measurement(
     address: usize,
     identifier: u16,
 ) {
-    #[cfg(not(test))]
     create_performance_measurement(
         caller_identifier,
         guid,
