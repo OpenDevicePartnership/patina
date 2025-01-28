@@ -12,7 +12,7 @@ use mu_pi::hob::{Hob, HobList};
 use r_efi::efi;
 use uefi_component_interface::DxeComponent;
 use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
-use uefi_performance::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin};
+use uefi_performance::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end};
 use uefi_sdk::base::{align_up, UEFI_PAGE_SIZE};
 use uefi_sdk::{guid, uefi_size_to_pages};
 
@@ -822,6 +822,7 @@ pub fn core_load_image(
     device_path: *mut efi::protocols::device_path::Protocol,
     image: Option<&[u8]>,
 ) -> Result<(efi::Handle, efi::Status), efi::Status> {
+    #[cfg(feature = "instrument_performance")]
     perf_load_image_begin(core::ptr::null_mut());
 
     if image.is_none() && device_path.is_null() {
@@ -926,7 +927,8 @@ pub fn core_load_image(
     // save the private image data for this image in the private image data map.
     PRIVATE_IMAGE_DATA.lock().private_image_data.insert(handle, private_info);
 
-    perf_load_image_begin(handle);
+    #[cfg(feature = "instrument_performance")]
+    perf_load_image_end(handle);
 
     // return the new handle.
     Ok((handle, security_status))
@@ -1052,6 +1054,7 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
     // allocate a buffer for the entry point stack.
     let stack = ImageStack::new(ENTRY_POINT_STACK_SIZE)?;
 
+    #[cfg(feature = "instrument_performance")]
     perf_image_start_begin(image_handle);
 
     // define a co-routine that wraps the entry point execution. this doesn't
@@ -1118,7 +1121,10 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
     unsafe { coroutine.force_reset() };
 
     PRIVATE_IMAGE_DATA.lock().current_running_image = previous_image;
+
+    #[cfg(feature = "instrument_performance")]
     perf_image_start_end(image_handle);
+
     match status {
         efi::Status::SUCCESS => Ok(()),
         err => Err(err),

@@ -156,7 +156,6 @@ static DISPATCHER_CONTEXT: TplMutex<DispatcherContext> =
     TplMutex::new(efi::TPL_NOTIFY, DispatcherContext::new(), "Dispatcher Context");
 
 fn dispatch() -> Result<bool, efi::Status> {
-    perf_event_signal_end!(&CALLER_ID, &CALLER_ID);
     let scheduled: Vec<PendingDriver>;
     {
         let mut dispatcher = DISPATCHER_CONTEXT.lock();
@@ -441,17 +440,20 @@ pub fn core_trust(handle: efi::Handle, file: &efi::Guid) -> Result<(), efi::Stat
 }
 
 pub fn core_dispatcher() -> Result<(), efi::Status> {
-    perf_function_begin!(&CALLER_ID);
-
     if DISPATCHER_CONTEXT.lock().executing {
-        perf_function_end!(&CALLER_ID);
         return Err(efi::Status::ALREADY_STARTED);
     }
+
+    #[cfg(feature = "instrument_performance")]
+    perf_function_begin!(&CALLER_ID);
 
     let mut something_dispatched = false;
     while dispatch()? {
         something_dispatched = true;
     }
+
+    #[cfg(feature = "instrument_performance")]
+    perf_function_end!(&CALLER_ID);
 
     if something_dispatched {
         Ok(())
