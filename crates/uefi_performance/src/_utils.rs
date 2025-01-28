@@ -5,11 +5,9 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
-use alloc::alloc::alloc;
 use alloc::ffi::CString;
 use alloc::string::{String, ToString};
 use core::ffi::{c_char, CStr};
-use core::ptr;
 
 /// # Safety
 /// make sure c_ptr a valid c string pointer.

@@ -21,10 +21,7 @@ use mu_rust_helpers::guid::CALLER_ID;
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
-use uefi_performance::{
-    perf_callback_begin, perf_callback_end, perf_event_signal_begin, perf_event_signal_end, perf_function_begin,
-    perf_function_end,
-};
+use uefi_performance::{perf_event_signal_end, perf_function_begin, perf_function_end};
 
 use crate::{
     events::EVENT_DB,
