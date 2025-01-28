@@ -469,6 +469,14 @@ fn get_module_info_from_handle(
     // Method 3 - Get the name string from FFS UI Section.
     // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/193
 
+    if guid == ZERO_GUID && !_module_guid_is_ffs {
+        // Handle is GUID
+        if !handle.is_null() {
+            let handle_as_guid = unsafe { *(handle as *const efi::Guid) };
+            return Ok((Some(String::from("TODO Get Zero GUID module name")), handle_as_guid));
+        }
+    }
+
     Ok((None, guid))
 }
 
