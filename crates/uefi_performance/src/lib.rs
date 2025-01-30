@@ -22,7 +22,7 @@ pub mod performance_table;
 
 use core::{
     ffi::{c_char, c_void},
-    mem, ptr, slice,
+    ptr, slice,
     sync::atomic::{AtomicU32, Ordering},
 };
 
@@ -43,7 +43,7 @@ use performance_record::{
     Iter, PerformanceRecordBuffer,
 };
 
-use mu_pi::hob::{GuidHob, Hob, HobList};
+use mu_pi::hob::{Hob, HobList};
 
 use performance_measurement_protocol::{
     EdkiiPerformanceMeasurement, EdkiiPerformanceMeasurementInterface, PerfAttribute, PerfId,
@@ -56,6 +56,7 @@ pub use mu_rust_helpers::function;
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 
 use uefi_device_path::DevicePathWalker;
+use scroll::Pread;
 use uefi_sdk::{
     boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
     guid,
@@ -126,20 +127,19 @@ fn extract_pei_performance_records(hob_list: &HobList) -> Result<(PerformanceRec
     let mut pei_load_image_count = 0;
 
     for hob in hob_list.iter() {
-        let guid_hob = match *hob {
-            Hob::GuidHob(hob, _) if hob.name == guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE => hob,
+        match hob {
+            Hob::GuidHob(hob, data) if hob.name == guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE => {
+                let mut offset = 0;
+                let [size_of_all_entries, load_image_count, _hob_is_full] =
+                    data.gread::<[u32; 3]>(&mut offset).unwrap();
+                let records_data_buffer = &data[offset..offset + size_of_all_entries as usize];
+                pei_load_image_count += load_image_count;
+                for r in Iter::new(records_data_buffer) {
+                    pei_records.push_record(r)?;
+                }
+            }
             _ => continue,
         };
-        let perf_header_ptr =
-            unsafe { (guid_hob as *const _ as *const (u32, u32, u32)).byte_add(mem::size_of::<GuidHob>()) };
-        let (size_of_all_entries, load_image_count, _hob_is_full) = unsafe { ptr::read_unaligned(perf_header_ptr) };
-        let record_data_ptr = unsafe { perf_header_ptr.add(1) as *const u8 };
-        let records_data_buffer = unsafe { slice::from_raw_parts(record_data_ptr, size_of_all_entries as usize) };
-
-        pei_load_image_count += load_image_count;
-        for r in Iter::new(records_data_buffer) {
-            pei_records.push_record(r)?;
-        }
     }
     Ok((pei_records, pei_load_image_count))
 }
