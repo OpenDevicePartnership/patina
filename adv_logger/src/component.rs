@@ -14,14 +14,16 @@ use core::{ffi::c_void, marker::PhantomData, ptr};
 use mu_pi::hob::{Hob, PhaseHandoffInformationTable};
 use r_efi::efi;
 use uefi_sdk::{
-    boot_services::{BootServices, StandardBootServices}, component::IntoComponent, error::{EfiError, Result}, serial::SerialIO
+    boot_services::{BootServices, StandardBootServices},
+    component::IntoComponent,
+    error::{EfiError, Result},
+    serial::SerialIO,
 };
 
 use crate::{logger::AdvancedLogger, memory_log, memory_log::AdvLoggerInfo};
 
 type AdvancedLoggerWriteProtocol<S> =
     extern "efiapi" fn(*const AdvancedLoggerProtocol<S>, usize, *const u8, usize) -> efi::Status;
-
 
 struct Protocol<S>(PhantomData<S>);
 unsafe impl<S: SerialIO + Send + 'static> uefi_sdk::protocol::Protocol for Protocol<S> {
@@ -30,7 +32,7 @@ unsafe impl<S: SerialIO + Send + 'static> uefi_sdk::protocol::Protocol for Proto
     fn protocol_guid(&self) -> &'static efi::Guid {
         &AdvancedLoggerProtocol::<S>::GUID
     }
-} 
+}
 impl<S: SerialIO + Send + 'static> core::ops::Deref for Protocol<S> {
     type Target = r_efi::efi::Guid;
 
@@ -159,7 +161,7 @@ where
 
         let address = log_info as *const AdvLoggerInfo as efi::PhysicalAddress;
         let protocol = AdvancedLoggerProtocol::new(Self::adv_log_write, address, self.adv_logger);
-        
+
         match bs.install_protocol_interface(None, &Protocol(PhantomData), Box::new(protocol)) {
             Err((_, status)) => {
                 log::error!("Failed to install Advanced Logger protocol! Status = {:#x?}", status);
