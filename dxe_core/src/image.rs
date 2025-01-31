@@ -8,7 +8,6 @@
 //!
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
-use mu_pi::fw_fs::fv::file;
 use mu_pi::hob::{Hob, HobList};
 use mu_rust_helpers::function;
 use r_efi::efi;
@@ -16,10 +15,6 @@ use uefi_component_interface::DxeComponent;
 use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
 use uefi_sdk::base::{align_up, UEFI_PAGE_SIZE};
 use uefi_sdk::{guid, uefi_size_to_pages};
-
-use crate::protocols::handle_protocol;
-#[cfg(feature = "instrument_performance")]
-use uefi_performance::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end};
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
@@ -173,7 +168,7 @@ impl PrivateImageData {
         // Allocate pages for the image to be loaded into. We use pages here instead of a pool because we are going to
         // set memory attributes on this range and it is not valid to set attributes on pool backed memory.
         let mut image_base_page: efi::PhysicalAddress = 0;
-        log::info!("{}:{}", function!(), line!());
+
         // if we have a unique alignment requirement, we need to overallocate the buffer to ensure we can align the base
         let num_pages: usize = if pe_info.section_alignment as usize > UEFI_PAGE_SIZE {
             if let Some(image_size) = image_info.image_size.checked_add(pe_info.section_alignment as u64) {
@@ -190,16 +185,16 @@ impl PrivateImageData {
                 Err(_) => return Err(efi::Status::LOAD_ERROR),
             }
         };
-        log::info!("{}:{}", function!(), line!());
+
         core_allocate_pages(efi::ALLOCATE_ANY_PAGES, image_info.image_code_type, num_pages, &mut image_base_page)?;
-        log::info!("{}:{}", function!(), line!());
+
         if image_base_page == 0 {
             return Err(efi::Status::OUT_OF_RESOURCES);
         }
-        log::info!("{}:{}", function!(), line!());
+
         let aligned_image_start =
             align_up(image_base_page as u64, pe_info.section_alignment as u64).map_err(|_| efi::Status::LOAD_ERROR)?;
-        log::info!("{}:{}", function!(), line!());
+
         let mut image_data = PrivateImageData {
             image_buffer: core::ptr::slice_from_raw_parts_mut(
                 aligned_image_start as *mut u8,
@@ -219,9 +214,9 @@ impl PrivateImageData {
             image_base_page,
             image_num_pages: num_pages,
         };
-        log::info!("{}:{}", function!(), line!());
+
         image_data.image_info.image_base = image_data.image_buffer as *mut c_void;
-        log::info!("{}:{}", function!(), line!());
+
         Ok(image_data)
     }
 
@@ -468,7 +463,6 @@ fn remove_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateI
 // retrieves the dxe core image info from the hob list, and installs the
 // loaded_image protocol on it to create the dxe_core image handle.
 fn install_dxe_core_image(hob_list: &HobList) {
-    log::info!("{}:{}", function!(), line!());
     // Retrieve the MemoryAllocationModule hob corresponding to the DXE core
     // (i.e. this driver).
     let dxe_core_hob = hob_list
@@ -478,10 +472,10 @@ fn install_dxe_core_image(hob_list: &HobList) {
             _ => None,
         })
         .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use uefi_sdk::guid::DXE_CORE as FFS GUID.");
-    log::info!("{}:{}", function!(), line!());
+
     // get exclusive access to the global private data.
     let mut private_data = PRIVATE_IMAGE_DATA.lock();
-    log::info!("{}:{}", function!(), line!());
+
     // convert the entry point from the hob into the appropriate function
     // pointer type and save it in the private_image_data structure for the core.
     // Safety: dxe_core_hob.entry_point must be the correct and actual entry
@@ -491,14 +485,14 @@ fn install_dxe_core_image(hob_list: &HobList) {
             dxe_core_hob.entry_point,
         )
     };
-    log::info!("{}:{}", function!(), line!());
+
     // create the loaded_image structure for the core and populate it with data
     // from the hob.
     let mut image_info = empty_image_info();
     image_info.system_table = private_data.system_table;
     image_info.image_base = dxe_core_hob.alloc_descriptor.memory_base_address as *mut c_void;
     image_info.image_size = dxe_core_hob.alloc_descriptor.memory_length;
-    log::info!("{}:{}", function!(), line!());
+
     let pe_info = unsafe {
         UefiPeInfo::parse(core::slice::from_raw_parts(
             dxe_core_hob.alloc_descriptor.memory_base_address as *const u8,
@@ -506,16 +500,16 @@ fn install_dxe_core_image(hob_list: &HobList) {
         ))
         .expect("Failed to parse PE info for DXE Core")
     };
-    log::info!("{}:{}", function!(), line!());
+
     let mut private_image_data =
         PrivateImageData::new(image_info, &pe_info).expect("Failed to create PrivateImageData for dxe_core");
-    log::info!("{}:{}", function!(), line!());
+
     private_image_data.entry_point = entry_point;
 
     let image_info_ptr = private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol;
     let image_info_ptr = image_info_ptr as *mut c_void;
     private_image_data.image_info_ptr = image_info_ptr;
-    log::info!("{}:{}", function!(), line!());
+
     // install the loaded_image protocol on a new handle.
     let handle = match core_install_protocol_interface(
         Some(protocol_db::DXE_CORE_HANDLE),
@@ -528,10 +522,9 @@ fn install_dxe_core_image(hob_list: &HobList) {
     assert_eq!(handle, protocol_db::DXE_CORE_HANDLE);
     // record this handle as the new dxe_core handle.
     private_data.dxe_core_image_handle = handle;
-    log::info!("{}:{}", function!(), line!());
+
     // store the dxe_core image private data in the private image data map.
     private_data.private_image_data.insert(handle, private_image_data);
-    log::info!("{}:{}", function!(), line!());
 }
 
 // loads and relocates the image in the specified slice and returns the
@@ -833,9 +826,6 @@ pub fn core_load_image(
     file_path: *mut efi::protocols::device_path::Protocol,
     image: Option<&[u8]>,
 ) -> Result<(efi::Handle, efi::Status), efi::Status> {
-    #[cfg(feature = "instrument_performance")]
-    perf_load_image_begin(core::ptr::null_mut());
-
     if image.is_none() && file_path.is_null() {
         log::error!("failed to load image: image is none or device path is null.");
         return Err(efi::Status::INVALID_PARAMETER);
@@ -852,19 +842,14 @@ pub fn core_load_image(
 
     let (image_to_load, from_fv, device_handle, authentication_status) = match image {
         Some(image) => {
-            // if the buffer is specified, then the device_handle and device_path are set to the input file_path
-            //Check if this is coming from a FV device (if so, then core_locate_device_path(FV) will return OK)
+            // If the buffer is specified, then the device_handle and device_path are set to the input file_path
+            // Check if this is coming from a FV device (if so, then core_locate_device_path(FV) will return OK)
             if let Ok((_device_path, handle)) =
                 core_locate_device_path(mu_pi::protocols::firmware_volume::PROTOCOL_GUID, file_path)
-                // A / B / C /  ( FV ) / File / End
-                // 1   2   3    ( 4  )  5      <-handles
             {
-                // SHERRY: here, device_path = file_path because it gets the device_handle from file_path
-                //this is coming from an FV
-                log::info!("Taking the SOME branch to core_locate_device_path");
                 (image.to_vec(), false, handle, 0)
             } else {
-                // error: this means that file_path is supposed to be a device path, but the device path isn't installed on any handle
+                // Error: this means that file_path is supposed to be a device path, but the device path isn't installed on any handle
                 // (i.e. it doesn't correspond to anything that actually exists in the system)
                 (image.to_vec(), false, protocol_db::INVALID_HANDLE, 0)
             }
@@ -889,27 +874,16 @@ pub fn core_load_image(
     if device_handle == protocol_db::INVALID_HANDLE {
         image_info.file_path = file_path;
     } else if !file_path.is_null() {
-        //get the device path for the parent device
-        // device_path = / .. full / path / without_filenode / end
-        // file_path = / full / path / ... / filenode / end
+        // Get the device path for the parent device
         if let Ok(device_path) =
-            PROTOCOL_DB.get_interface_for_handle(device_handle, efi::protocols::device_path::PROTOCOL_GUID) // here, this is the short one (no filename, ending in FV)
+            PROTOCOL_DB.get_interface_for_handle(device_handle, efi::protocols::device_path::PROTOCOL_GUID)
         {
             let (_, device_path_size) =
                 device_path_node_count(device_path as *mut efi::protocols::device_path::Protocol)?;
-            let (_, file_path_size_before) =
-                device_path_node_count(file_path as *mut efi::protocols::device_path::Protocol)?;
-            log::info!("file_path_size_before {}", file_path_size_before);
-            log::info!("device_path_size {}", device_path_size);
             let device_path_size_minus_end_node: usize =
                 device_path_size.saturating_sub(core::mem::size_of::<efi::protocols::device_path::Protocol>());
-            log::info!("device_path_size_minus_end_node {}", device_path_size_minus_end_node);
             let file_path = unsafe { (file_path as *const u8).add(device_path_size_minus_end_node) };
             image_info.file_path = file_path as *mut efi::protocols::device_path::Protocol;
-            let (_, file_path_size_after) =
-                device_path_node_count(file_path as *mut efi::protocols::device_path::Protocol)?;
-            log::info!("file_path_size_after {}", file_path_size_after);
-            log::info!("file_path from core_load_image type {}", unsafe { (*image_info.file_path).r#type });
         } else {
             image_info.file_path = file_path;
         }
@@ -971,9 +945,6 @@ pub fn core_load_image(
 
     // save the private image data for this image in the private image data map.
     PRIVATE_IMAGE_DATA.lock().private_image_data.insert(handle, private_info);
-
-    #[cfg(feature = "instrument_performance")]
-    perf_load_image_end(handle);
 
     // return the new handle.
     Ok((handle, security_status))
@@ -1099,9 +1070,6 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
     // allocate a buffer for the entry point stack.
     let stack = ImageStack::new(ENTRY_POINT_STACK_SIZE)?;
 
-    #[cfg(feature = "instrument_performance")]
-    perf_image_start_begin(image_handle);
-
     // define a co-routine that wraps the entry point execution. this doesn't
     // run until the coroutine.resume() call below.
     let mut coroutine = Coroutine::with_stack(stack, move |yielder, image_handle| {
@@ -1166,9 +1134,6 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
     unsafe { coroutine.force_reset() };
 
     PRIVATE_IMAGE_DATA.lock().current_running_image = previous_image;
-
-    #[cfg(feature = "instrument_performance")]
-    perf_image_start_end(image_handle);
 
     match status {
         efi::Status::SUCCESS => Ok(()),
@@ -1328,27 +1293,23 @@ extern "efiapi" fn exit(
 
 /// Initializes image services for the DXE core.
 pub fn init_image_support(hob_list: &HobList, system_table: &mut EfiSystemTable) {
-    log::info!("{}:{}", function!(), line!());
     // initialize system table entry in private global.
     let mut private_data = PRIVATE_IMAGE_DATA.lock();
-    log::info!("{}:{}", function!(), line!());
+
     private_data.system_table = system_table.as_ptr() as *mut efi::SystemTable;
-    log::info!("{}:{}", function!(), line!());
+
     drop(private_data);
-    log::info!("{}:{}", function!(), line!());
 
     // install the image protocol for the dxe_core.
-    log::info!("{}:{}", function!(), line!());
+
     install_dxe_core_image(hob_list);
-    log::info!("{}:{}", function!(), line!());
 
     //set up imaging services
-    log::info!("{}:{}", function!(), line!());
+
     system_table.boot_services_mut().load_image = load_image;
     system_table.boot_services_mut().start_image = start_image;
     system_table.boot_services_mut().unload_image = unload_image;
     system_table.boot_services_mut().exit = exit;
-    log::info!("{}:{}", function!(), line!());
 }
 
 #[cfg(test)]

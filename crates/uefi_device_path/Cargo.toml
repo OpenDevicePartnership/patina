@@ -16,4 +16,3 @@ path = "src/lib.rs"
 
 [dependencies]
 r-efi = { workspace = true }
-log = { version = "^0.4", default-features = false }

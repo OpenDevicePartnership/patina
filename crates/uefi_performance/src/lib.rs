@@ -247,12 +247,27 @@ extern "efiapi" fn create_performance_measurement(
 
     match perf_id {
         PerfId::MODULE_START | PerfId::MODULE_END => {
+            // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/195
+            log::warn!(
+                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
+                module_path!(),
+                line!(),
+                function!()
+            );
             if let Ok((_, guid)) = get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void) {
                 let record = GuidEventRecord::new(perf_id, 0, timestamp, guid);
                 _ = &FBPT.lock().add_record(record);
             }
         }
         PerfId::MODULE_LOAD_IMAGE_START | PerfId::MODULE_LOAD_IMAGE_END => {
+            // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/195
+            log::warn!(
+                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
+                module_path!(),
+                line!(),
+                function!()
+            );
+
             if perf_id == PerfId::MODULE_LOAD_IMAGE_START {
                 LOAD_IMAGE_COUNT.fetch_add(1, Ordering::Relaxed);
             }
@@ -271,12 +286,26 @@ extern "efiapi" fn create_performance_measurement(
         | PerfId::MODULE_DB_STOP_START
         | PerfId::MODULE_DB_STOP_END
         | PerfId::MODULE_DB_START => {
+            // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/195
+            log::warn!(
+                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
+                module_path!(),
+                line!(),
+                function!()
+            );
             if let Ok((_, guid)) = get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void) {
                 let record = GuidQwordEventRecord::new(perf_id, timestamp, guid, address as u64);
                 _ = &FBPT.lock().add_record(record);
             }
         }
         PerfId::MODULE_DB_END => {
+            // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/195
+            log::warn!(
+                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
+                module_path!(),
+                line!(),
+                function!()
+            );
             if let Ok((module_name, guid)) =
                 get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void)
             {
@@ -310,6 +339,14 @@ extern "efiapi" fn create_performance_measurement(
             _ = &FBPT.lock().add_record(record);
         }
         _ if attribute != PerfAttribute::PerfEntry => {
+            // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/195
+            log::warn!(
+                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
+                module_path!(),
+                line!(),
+                function!()
+            );
+
             let (module_name, guid) = if let Ok((Some(module_name), guid)) =
                 get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void)
             {
@@ -414,7 +451,6 @@ fn get_module_info_from_handle(
     let mut _module_guid_is_ffs = false;
     if let Some(loaded_image) = loaded_image_protocol {
         if let Some(file_path) = unsafe { loaded_image.file_path.as_ref() } {
-            // log::info!("file type {} subtype {}", file_path.r#type, file_path.sub_type);
             if file_path.r#type == TYPE_MEDIA && file_path.sub_type == Media::SUBTYPE_PIWG_FIRMWARE_FILE {
                 _module_guid_is_ffs = true;
                 guid = unsafe { ptr::read(loaded_image.file_path.add(1) as *const efi::Guid) }
@@ -717,7 +753,3 @@ pub fn perf_start_ex(
 pub fn perf_end_ex(handle: efi::Handle, token: *const c_char, module: *const c_char, timestamp: u64, identifier: u32) {
     end_perf_measurement(handle, token, module, timestamp, identifier);
 }
-
-// TODOs: cross-module measurements
-// TODO: advanced logger / section extractor
-// TODO: boot services initialization issues in init_dispatcher

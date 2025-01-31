@@ -13,7 +13,6 @@ use scroll::Pwrite;
 
 use super::PerformanceRecord;
 
-#[repr(C)]
 pub struct GuidEventRecord {
     /// ProgressID < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and
@@ -74,7 +73,6 @@ impl Debug for GuidEventRecord {
     }
 }
 
-#[repr(C)]
 pub struct DynamicStringEventRecord<'a> {
     /// ProgressID < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and
@@ -141,7 +139,6 @@ impl Debug for DynamicStringEventRecord<'_> {
     }
 }
 
-#[repr(C)]
 pub struct DualGuidStringEventRecord<'a> {
     /// ProgressID < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and
@@ -219,7 +216,6 @@ impl Debug for DualGuidStringEventRecord<'_> {
     }
 }
 
-#[repr(C)]
 pub struct GuidQwordEventRecord {
     /// ProgressID < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and
@@ -284,7 +280,6 @@ impl Debug for GuidQwordEventRecord {
     }
 }
 
-#[repr(C)]
 pub struct GuidQwordStringEventRecord<'a> {
     /// ProgressID < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and

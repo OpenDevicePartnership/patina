@@ -22,11 +22,6 @@ use tpl_lock::TplMutex;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
 use uefi_device_path::{concat_device_path_to_boxed_slice, device_path_node_count};
 
-#[cfg(feature = "instrument_performance")]
-use mu_rust_helpers::guid::CALLER_ID;
-#[cfg(feature = "instrument_performance")]
-use uefi_performance::{perf_function_begin, perf_function_end};
-
 use crate::{
     events::EVENT_DB,
     fv::{core_install_firmware_volume, device_path_bytes_for_fv_file},
@@ -66,7 +61,7 @@ const ALL_ARCH_DEPEX: &[Opcode] = &[
 
 struct PendingDriver {
     firmware_volume_handle: efi::Handle,
-    device_path: *mut efi::protocols::device_path::Protocol, // should this include the file or not????
+    device_path: *mut efi::protocols::device_path::Protocol,
     file_name: efi::Guid,
     depex: Option<Depex>,
     pe32: Section,
@@ -305,15 +300,9 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
             }
 
             let fv_device_path =
-                PROTOCOL_DB.get_interface_for_handle(handle, efi::protocols::device_path::PROTOCOL_GUID); // here, this is treated as the long one
-                                                                                                          // this is the file_path eventually passed to core_load_image SHERRY
-                                                                                                          // maybe need to append file path SHERRY
-            let mut fv_device_path =
+                PROTOCOL_DB.get_interface_for_handle(handle, efi::protocols::device_path::PROTOCOL_GUID);
+            let fv_device_path =
                 fv_device_path.unwrap_or(core::ptr::null_mut()) as *mut efi::protocols::device_path::Protocol;
-            log::info!("is fv_device_path_null {}", fv_device_path.is_null());
-            let (fv_device_path_nodes_before, fv_device_path_size_before) = device_path_node_count(fv_device_path)?;
-            log::info!("fv_device_path before {} {}", fv_device_path_nodes_before, fv_device_path_size_before);
-
             // Safety: this code assumes that the fv_address from FVB protocol yields a pointer to a real FV.
             let fv = match unsafe { FirmwareVolume::new_from_address(fv_address) } {
                 Ok(fv) => fv,
@@ -356,22 +345,24 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
                     if let Some(pe32_section) =
                         sections.into_iter().find(|x| x.section_type() == Some(FfsSectionType::Pe32))
                     {
-                        log::info!("starting sherry's bad code");
-                        // BEGINNING OF SHERRY'S BAD CODE
-                        // TODO SHERRY: these hardcoded values are probably wrong
-                        // TODO: SHERRY this needs some data probably the filename
+                        // In this case, this is sizeof(guid) + sizeof(protocol) = 20, so it should always fit an u8
+                        const FILENAME_NODE_SIZE: usize = core::mem::size_of::<efi::protocols::device_path::Protocol>()
+                            + core::mem::size_of::<r_efi::efi::Guid>();
+                        // In this case, this is sizeof(protocol) = 4, so it should always fit an u8
+                        const END_NODE_SIZE: usize = core::mem::size_of::<efi::protocols::device_path::Protocol>();
+
                         let filename_node = efi::protocols::device_path::Protocol {
                             r#type: r_efi::protocols::device_path::TYPE_MEDIA,
                             sub_type: r_efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE,
-                            length: [0x14, 0x00],
+                            length: [FILENAME_NODE_SIZE as u8, 0x00],
                         };
-
                         let filename_end_node = efi::protocols::device_path::Protocol {
                             r#type: r_efi::protocols::device_path::TYPE_END,
-                            sub_type: u8::MAX,
-                            length: [0x04, 0x00],
+                            sub_type: efi::protocols::device_path::End::SUBTYPE_ENTIRE,
+                            length: [END_NODE_SIZE as u8, 0x00],
                         };
-                        let mut filename_nodes_buf = Vec::<u8>::with_capacity(20 + 4); // 20 bytes (filename_node + GUID) + 4 bytes (end node)
+
+                        let mut filename_nodes_buf = Vec::<u8>::with_capacity(FILENAME_NODE_SIZE + END_NODE_SIZE); // 20 bytes (filename_node + GUID) + 4 bytes (end node)
                         filename_nodes_buf.extend_from_slice(unsafe {
                             core::slice::from_raw_parts(
                                 &filename_node as *const _ as *const u8,
@@ -390,18 +381,12 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
                         });
 
                         let boxed_device_path = filename_nodes_buf.into_boxed_slice();
-
                         let filename_device_path =
                             Box::leak(boxed_device_path) as *mut _ as *const efi::protocols::device_path::Protocol;
-
                         let full_path_bytes = concat_device_path_to_boxed_slice(fv_device_path, filename_device_path);
-
                         let full_device_path_for_file = full_path_bytes
                             .map(|full_path| Box::into_raw(full_path) as *mut efi::protocols::device_path::Protocol)
                             .unwrap_or(fv_device_path);
-
-                        // END OF SHERRY'S BAD CODE
-                        log::info!("ending sherry's bad code");
 
                         dispatcher.pending_drivers.push(PendingDriver {
                             file_name,
@@ -499,18 +484,10 @@ pub fn core_dispatcher() -> Result<(), efi::Status> {
     if DISPATCHER_CONTEXT.lock().executing {
         return Err(efi::Status::ALREADY_STARTED);
     }
-
-    #[cfg(feature = "instrument_performance")]
-    perf_function_begin!(&CALLER_ID);
-
     let mut something_dispatched = false;
     while dispatch()? {
         something_dispatched = true;
     }
-
-    #[cfg(feature = "instrument_performance")]
-    perf_function_end!(&CALLER_ID);
-
     if something_dispatched {
         Ok(())
     } else {

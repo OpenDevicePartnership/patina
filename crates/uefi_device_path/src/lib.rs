@@ -100,7 +100,6 @@ pub fn device_path_as_slice(
     device_path: *const efi::protocols::device_path::Protocol,
 ) -> Result<&'static [u8], efi::Status> {
     let (_, byte_count) = device_path_node_count(device_path)?;
-    log::info!("device path byte count in device_path_as_slice: {}", byte_count);
     unsafe { Ok(from_raw_parts(device_path as *const u8, byte_count)) }
 }
 
@@ -264,17 +263,11 @@ pub fn concat_device_path_to_boxed_slice(
     b: *const efi::protocols::device_path::Protocol,
 ) -> Result<Box<[u8]>, efi::Status> {
     let a_slice = device_path_as_slice(a)?;
-    log::info!("concat_device_path_to_boxed_slice {}", line!());
     let b_slice = device_path_as_slice(b)?;
-    log::info!("concat_device_path_to_boxed_slice {}", line!());
     let end_path_size = core::mem::size_of::<efi::protocols::device_path::End>();
-    log::info!("concat_device_path_to_boxed_slice {}", line!());
     let mut out_bytes = vec![0u8; a_slice.len() + b_slice.len() - end_path_size];
-    log::info!("concat_device_path_to_boxed_slice {}", line!());
     out_bytes[..a_slice.len()].copy_from_slice(a_slice);
-    log::info!("concat_device_path_to_boxed_slice {}", line!());
     out_bytes[a_slice.len() - end_path_size..].copy_from_slice(b_slice);
-    log::info!("concat_device_path_to_boxed_slice {}", line!());
     Ok(out_bytes.into_boxed_slice())
 }
 
