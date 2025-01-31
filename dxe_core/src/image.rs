@@ -216,7 +216,6 @@ impl PrivateImageData {
         };
 
         image_data.image_info.image_base = image_data.image_buffer as *mut c_void;
-
         Ok(image_data)
     }
 
@@ -503,7 +502,6 @@ fn install_dxe_core_image(hob_list: &HobList) {
 
     let mut private_image_data =
         PrivateImageData::new(image_info, &pe_info).expect("Failed to create PrivateImageData for dxe_core");
-
     private_image_data.entry_point = entry_point;
 
     let image_info_ptr = private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol;
@@ -1134,7 +1132,6 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
     unsafe { coroutine.force_reset() };
 
     PRIVATE_IMAGE_DATA.lock().current_running_image = previous_image;
-
     match status {
         efi::Status::SUCCESS => Ok(()),
         err => Err(err),
@@ -1295,17 +1292,13 @@ extern "efiapi" fn exit(
 pub fn init_image_support(hob_list: &HobList, system_table: &mut EfiSystemTable) {
     // initialize system table entry in private global.
     let mut private_data = PRIVATE_IMAGE_DATA.lock();
-
     private_data.system_table = system_table.as_ptr() as *mut efi::SystemTable;
-
     drop(private_data);
 
     // install the image protocol for the dxe_core.
-
     install_dxe_core_image(hob_list);
 
     //set up imaging services
-
     system_table.boot_services_mut().load_image = load_image;
     system_table.boot_services_mut().start_image = start_image;
     system_table.boot_services_mut().unload_image = unload_image;

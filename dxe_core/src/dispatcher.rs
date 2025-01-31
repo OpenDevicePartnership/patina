@@ -303,6 +303,7 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
                 PROTOCOL_DB.get_interface_for_handle(handle, efi::protocols::device_path::PROTOCOL_GUID);
             let fv_device_path =
                 fv_device_path.unwrap_or(core::ptr::null_mut()) as *mut efi::protocols::device_path::Protocol;
+
             // Safety: this code assumes that the fv_address from FVB protocol yields a pointer to a real FV.
             let fv = match unsafe { FirmwareVolume::new_from_address(fv_address) } {
                 Ok(fv) => fv,
