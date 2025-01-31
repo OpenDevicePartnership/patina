@@ -10,19 +10,34 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::boxed::Box;
-use core::{ffi::c_void, ptr};
+use core::{ffi::c_void, marker::PhantomData, ptr};
 use mu_pi::hob::{Hob, PhaseHandoffInformationTable};
 use r_efi::efi;
-use uefi_component_interface::{DxeComponent, DxeComponentInterface};
 use uefi_sdk::{
-    error::{EfiError, Result},
-    serial::SerialIO,
+    boot_services::{BootServices, StandardBootServices}, component::IntoComponent, error::{EfiError, Result}, serial::SerialIO
 };
 
 use crate::{logger::AdvancedLogger, memory_log, memory_log::AdvLoggerInfo};
 
 type AdvancedLoggerWriteProtocol<S> =
     extern "efiapi" fn(*const AdvancedLoggerProtocol<S>, usize, *const u8, usize) -> efi::Status;
+
+
+struct Protocol<S>(PhantomData<S>);
+unsafe impl<S: SerialIO + Send + 'static> uefi_sdk::protocol::Protocol for Protocol<S> {
+    type Interface = AdvancedLoggerProtocol<S>;
+
+    fn protocol_guid(&self) -> &'static efi::Guid {
+        &AdvancedLoggerProtocol::<S>::GUID
+    }
+} 
+impl<S: SerialIO + Send + 'static> core::ops::Deref for Protocol<S> {
+    type Target = r_efi::efi::Guid;
+
+    fn deref(&self) -> &Self::Target {
+        &AdvancedLoggerProtocol::<S>::GUID
+    }
+}
 
 /// C struct for the Advanced Logger protocol.
 #[repr(C)]
@@ -63,6 +78,7 @@ where
 }
 
 /// The component that will install the Advanced Logger protocol.
+#[derive(IntoComponent)]
 pub struct AdvancedLoggerComponent<S>
 where
     S: SerialIO + Send + 'static,
@@ -127,17 +143,12 @@ where
         unsafe { (*this).adv_logger }.log_write(error_level, data);
         efi::Status::SUCCESS
     }
-}
 
-impl<S> DxeComponent for AdvancedLoggerComponent<S>
-where
-    S: SerialIO + Send,
-{
     /// Entry point to the AdvancedLoggerComponent.
     ///
     /// Installs the Advanced Logger Protocol for use by non-local components.
     ///
-    fn entry_point(&self, dxe_interface: &dyn DxeComponentInterface) -> Result<()> {
+    fn entry_point(self, bs: StandardBootServices) -> Result<()> {
         let log_info = match self.adv_logger.get_log_info() {
             Some(log_info) => log_info,
             None => {
@@ -148,13 +159,9 @@ where
 
         let address = log_info as *const AdvLoggerInfo as efi::PhysicalAddress;
         let protocol = AdvancedLoggerProtocol::new(Self::adv_log_write, address, self.adv_logger);
-
-        // deliberate leak
-        let interface = Box::into_raw(Box::new(protocol));
-        let interface = interface as *mut c_void;
-
-        match dxe_interface.install_protocol_interface(None, AdvancedLoggerProtocol::<S>::GUID, interface) {
-            Err(status) => {
+        
+        match bs.install_protocol_interface(None, &Protocol(PhantomData), Box::new(protocol)) {
+            Err((_, status)) => {
                 log::error!("Failed to install Advanced Logger protocol! Status = {:#x?}", status);
                 Err(EfiError::ProtocolError)
             }
