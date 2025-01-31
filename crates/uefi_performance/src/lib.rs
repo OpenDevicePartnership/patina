@@ -83,11 +83,13 @@ pub fn init_performance_lib(
     FBPT.lock().set_records(pei_records);
 
     // Install the protocol interfaces for DXE performance library instance.
-    BOOT_SERVICES.install_protocol_interface(
-        None,
-        &EdkiiPerformanceMeasurement,
-        Box::new(EdkiiPerformanceMeasurementInterface { create_performance_measurement }),
-    )?;
+    BOOT_SERVICES
+        .install_protocol_interface(
+            None,
+            &EdkiiPerformanceMeasurement,
+            Box::new(EdkiiPerformanceMeasurementInterface { create_performance_measurement }),
+        )
+        .map_err(|(_, err)| err)?;
 
     // Register EndOfDxe event to allocate the boot performance table and report the table address through status code.
     BOOT_SERVICES.create_event_ex(
