@@ -245,27 +245,12 @@ extern "efiapi" fn create_performance_measurement(
 
     match perf_id {
         PerfId::MODULE_START | PerfId::MODULE_END => {
-            // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
-            log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
-                module_path!(),
-                line!(),
-                function!()
-            );
             if let Ok((_, guid)) = get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void) {
                 let record = GuidEventRecord::new(perf_id, 0, timestamp, guid);
                 _ = &FBPT.lock().add_record(record);
             }
         }
         PerfId::MODULE_LOAD_IMAGE_START | PerfId::MODULE_LOAD_IMAGE_END => {
-            // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
-            log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
-                module_path!(),
-                line!(),
-                function!()
-            );
-
             if perf_id == PerfId::MODULE_LOAD_IMAGE_START {
                 LOAD_IMAGE_COUNT.fetch_add(1, Ordering::Relaxed);
             }
@@ -284,26 +269,12 @@ extern "efiapi" fn create_performance_measurement(
         | PerfId::MODULE_DB_STOP_START
         | PerfId::MODULE_DB_STOP_END
         | PerfId::MODULE_DB_START => {
-            // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
-            log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
-                module_path!(),
-                line!(),
-                function!()
-            );
             if let Ok((_, guid)) = get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void) {
                 let record = GuidQwordEventRecord::new(perf_id, timestamp, guid, address as u64);
                 _ = &FBPT.lock().add_record(record);
             }
         }
         PerfId::MODULE_DB_END => {
-            // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
-            log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
-                module_path!(),
-                line!(),
-                function!()
-            );
             if let Ok((module_name, guid)) =
                 get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void)
             {
@@ -311,7 +282,7 @@ extern "efiapi" fn create_performance_measurement(
                 let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, &module_name);
                 _ = &FBPT.lock().add_record(record);
             }
-            // TODO something to do if address is not 0 need example to continue development. (https://github.com/pop-project/uefi-dxe-core/issues/194)
+            // TODO something to do if address is not 0 need example to continue development. (https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/194)
         }
         PerfId::PERF_EVENT_SIGNAL_START
         | PerfId::PERF_EVENT_SIGNAL_END
@@ -337,14 +308,6 @@ extern "efiapi" fn create_performance_measurement(
             _ = &FBPT.lock().add_record(record);
         }
         _ if attribute != PerfAttribute::PerfEntry => {
-            // TODO: https://github.com/pop-project/uefi-dxe-core/issues/195
-            log::warn!(
-                "[Module: {}, Line: {}, Function: {}] TODO: This path need to be verified. It has not been tested yet.",
-                module_path!(),
-                line!(),
-                function!()
-            );
-
             let (module_name, guid) = if let Ok((Some(module_name), guid)) =
                 get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void)
             {
@@ -449,6 +412,7 @@ fn get_module_info_from_handle(
     let mut _module_guid_is_ffs = false;
     if let Some(loaded_image) = loaded_image_protocol {
         if let Some(file_path) = unsafe { loaded_image.file_path.as_ref() } {
+            // log::info!("file type {} subtype {}", file_path.r#type, file_path.sub_type);
             if file_path.r#type == TYPE_MEDIA && file_path.sub_type == Media::SUBTYPE_PIWG_FIRMWARE_FILE {
                 _module_guid_is_ffs = true;
                 guid = unsafe { ptr::read(loaded_image.file_path.add(1) as *const efi::Guid) }
@@ -458,16 +422,16 @@ fn get_module_info_from_handle(
         let _image_bytes = unsafe {
             slice::from_raw_parts(loaded_image.image_base as *const _ as *const u8, loaded_image.image_size as usize)
         };
-        // TODO: Find Module name in handle (image_bytes) (https://github.com/pop-project/uefi-dxe-core/issues/187).
+        // TODO: Find Module name in handle (image_bytes) (https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/187).
 
         return Ok((Some(String::from("TODO Get name from UefiPeInfo")), guid));
     }
 
     // Method 2 - Get the name string from ComponentName2
-    // TODO: https://github.com/pop-project/uefi-dxe-core/issues/192
+    // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/192
 
     // Method 3 - Get the name string from FFS UI Section.
-    // TODO: https://github.com/pop-project/uefi-dxe-core/issues/193
+    // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/193
 
     Ok((None, guid))
 }
@@ -751,3 +715,7 @@ pub fn perf_start_ex(
 pub fn perf_end_ex(handle: efi::Handle, token: *const c_char, module: *const c_char, timestamp: u64, identifier: u32) {
     end_perf_measurement(handle, token, module, timestamp, identifier);
 }
+
+// TODOs: cross-module measurements
+// TODO: advanced logger / section extractor
+// TODO: boot services initialization issues in init_dispatcher

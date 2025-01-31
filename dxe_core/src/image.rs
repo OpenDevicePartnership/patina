@@ -18,6 +18,9 @@ use uefi_sdk::base::{align_up, UEFI_PAGE_SIZE};
 use uefi_sdk::{guid, uefi_size_to_pages};
 
 use crate::protocols::handle_protocol;
+#[cfg(feature = "instrument_performance")]
+use uefi_performance::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end};
+
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
     component_interface, dxe_services,
@@ -830,6 +833,9 @@ pub fn core_load_image(
     file_path: *mut efi::protocols::device_path::Protocol,
     image: Option<&[u8]>,
 ) -> Result<(efi::Handle, efi::Status), efi::Status> {
+    #[cfg(feature = "instrument_performance")]
+    perf_load_image_begin(core::ptr::null_mut());
+
     if image.is_none() && file_path.is_null() {
         log::error!("failed to load image: image is none or device path is null.");
         return Err(efi::Status::INVALID_PARAMETER);
@@ -849,9 +855,13 @@ pub fn core_load_image(
             // if the buffer is specified, then the device_handle and device_path are set to the input file_path
             //Check if this is coming from a FV device (if so, then core_locate_device_path(FV) will return OK)
             if let Ok((_device_path, handle)) =
-                core_locate_device_path(efi::protocols::device_path::PROTOCOL_GUID, file_path)
+                core_locate_device_path(mu_pi::protocols::firmware_volume::PROTOCOL_GUID, file_path)
+                // A / B / C /  ( FV ) / File / End
+                // 1   2   3    ( 4  )  5      <-handles
             {
+                // SHERRY: here, device_path = file_path because it gets the device_handle from file_path
                 //this is coming from an FV
+                log::info!("Taking the SOME branch to core_locate_device_path");
                 (image.to_vec(), false, handle, 0)
             } else {
                 // error: this means that file_path is supposed to be a device path, but the device path isn't installed on any handle
@@ -880,15 +890,26 @@ pub fn core_load_image(
         image_info.file_path = file_path;
     } else if !file_path.is_null() {
         //get the device path for the parent device
+        // device_path = / .. full / path / without_filenode / end
+        // file_path = / full / path / ... / filenode / end
         if let Ok(device_path) =
-            PROTOCOL_DB.get_interface_for_handle(device_handle, efi::protocols::device_path::PROTOCOL_GUID)
+            PROTOCOL_DB.get_interface_for_handle(device_handle, efi::protocols::device_path::PROTOCOL_GUID) // here, this is the short one (no filename, ending in FV)
         {
             let (_, device_path_size) =
                 device_path_node_count(device_path as *mut efi::protocols::device_path::Protocol)?;
+            let (_, file_path_size_before) =
+                device_path_node_count(file_path as *mut efi::protocols::device_path::Protocol)?;
+            log::info!("file_path_size_before {}", file_path_size_before);
+            log::info!("device_path_size {}", device_path_size);
             let device_path_size_minus_end_node: usize =
                 device_path_size.saturating_sub(core::mem::size_of::<efi::protocols::device_path::Protocol>());
+            log::info!("device_path_size_minus_end_node {}", device_path_size_minus_end_node);
             let file_path = unsafe { (file_path as *const u8).add(device_path_size_minus_end_node) };
             image_info.file_path = file_path as *mut efi::protocols::device_path::Protocol;
+            let (_, file_path_size_after) =
+                device_path_node_count(file_path as *mut efi::protocols::device_path::Protocol)?;
+            log::info!("file_path_size_after {}", file_path_size_after);
+            log::info!("file_path from core_load_image type {}", unsafe { (*image_info.file_path).r#type });
         } else {
             image_info.file_path = file_path;
         }
@@ -950,6 +971,9 @@ pub fn core_load_image(
 
     // save the private image data for this image in the private image data map.
     PRIVATE_IMAGE_DATA.lock().private_image_data.insert(handle, private_info);
+
+    #[cfg(feature = "instrument_performance")]
+    perf_load_image_end(handle);
 
     // return the new handle.
     Ok((handle, security_status))
@@ -1075,6 +1099,9 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
     // allocate a buffer for the entry point stack.
     let stack = ImageStack::new(ENTRY_POINT_STACK_SIZE)?;
 
+    #[cfg(feature = "instrument_performance")]
+    perf_image_start_begin(image_handle);
+
     // define a co-routine that wraps the entry point execution. this doesn't
     // run until the coroutine.resume() call below.
     let mut coroutine = Coroutine::with_stack(stack, move |yielder, image_handle| {
@@ -1139,6 +1166,10 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
     unsafe { coroutine.force_reset() };
 
     PRIVATE_IMAGE_DATA.lock().current_running_image = previous_image;
+
+    #[cfg(feature = "instrument_performance")]
+    perf_image_start_end(image_handle);
+
     match status {
         efi::Status::SUCCESS => Ok(()),
         err => Err(err),
