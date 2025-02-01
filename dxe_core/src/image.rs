@@ -9,7 +9,6 @@
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
 use mu_pi::hob::{Hob, HobList};
-use mu_rust_helpers::function;
 use r_efi::efi;
 use uefi_component_interface::DxeComponent;
 use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
@@ -1909,7 +1908,7 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            assert_eq!(get_buffer_by_file_path(true, device_path_ptr), Ok((image, false, 0)));
+            assert_eq!(get_buffer_by_file_path(true, device_path_ptr), Ok((image, false, handle, 0)));
         });
     }
 
@@ -1970,7 +1969,7 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            assert_eq!(get_buffer_by_file_path(true, device_path_ptr), Ok((image, false, 0)));
+            assert_eq!(get_buffer_by_file_path(true, device_path_ptr), Ok((image, false, handle, 0)));
         });
     }
 }

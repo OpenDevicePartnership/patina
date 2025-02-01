@@ -11,7 +11,7 @@ use alloc::{
     collections::{BTreeMap, BTreeSet},
     vec::Vec,
 };
-use core::{cmp::Ordering, ffi::c_void, u8};
+use core::{cmp::Ordering, ffi::c_void};
 use mu_pi::{
     fw_fs::{FfsFileRawType, FfsSectionType, FirmwareVolume, Section, SectionExtractor},
     protocols::firmware_volume_block,
@@ -20,7 +20,7 @@ use mu_rust_helpers::guid::guid_fmt;
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
-use uefi_device_path::{concat_device_path_to_boxed_slice, device_path_node_count};
+use uefi_device_path::concat_device_path_to_boxed_slice;
 
 use crate::{
     events::EVENT_DB,
