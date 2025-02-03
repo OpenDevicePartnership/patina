@@ -618,7 +618,7 @@ fn core_load_pe_image(
 }
 
 // Reads an image buffer using simple file system or load file protocols.
-// Return value is (image_buffer, from_fv, authentication_status).
+// Return value is (image_buffer, device_handle, from_fv, authentication_status).
 // Note: presently none of the supported methods return `from_fv` or `authentication_status`.
 fn get_buffer_by_file_path(
     boot_policy: bool,
@@ -636,17 +636,17 @@ fn get_buffer_by_file_path(
     }
 
     if !boot_policy {
-        if let Ok((buffer, device_path)) =
+        if let Ok((buffer, device_handle)) =
             get_file_buffer_from_load_protocol(efi::protocols::load_file2::PROTOCOL_GUID, false, file_path)
         {
-            return Ok((buffer, false, device_path, 0));
+            return Ok((buffer, false, device_handle, 0));
         }
     }
 
-    if let Ok((buffer, device_path)) =
+    if let Ok((buffer, device_handle)) =
         get_file_buffer_from_load_protocol(efi::protocols::load_file::PROTOCOL_GUID, boot_policy, file_path)
     {
-        return Ok((buffer, false, device_path, 0));
+        return Ok((buffer, false, device_handle, 0));
     }
 
     Err(efi::Status::NOT_FOUND)
@@ -875,6 +875,7 @@ pub fn core_load_image(
         if let Ok(device_path) =
             PROTOCOL_DB.get_interface_for_handle(device_handle, efi::protocols::device_path::PROTOCOL_GUID)
         {
+            // Strip the parent device path prefix from the full device path to leave only the file node
             let (_, device_path_size) =
                 device_path_node_count(device_path as *mut efi::protocols::device_path::Protocol)?;
             let device_path_size_minus_end_node: usize =

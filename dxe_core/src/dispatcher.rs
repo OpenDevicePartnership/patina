@@ -393,7 +393,7 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
                             file_name,
                             firmware_volume_handle: handle,
                             pe32: pe32_section,
-                            device_path: full_device_path_for_file, // copy + append file node
+                            device_path: full_device_path_for_file,
                             depex,
                             image_handle: None,
                             security_status: efi::Status::NOT_READY,
