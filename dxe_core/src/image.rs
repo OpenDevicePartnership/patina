@@ -842,10 +842,9 @@ pub fn core_load_image(
             // If the buffer is specified, then the device_handle and device_path are set to the input file_path
             // Check if this is coming from a FV device (if so, then core_locate_device_path(FV) will return OK)
             if let Ok((_device_path, fv_handle)) =
-
                 core_locate_device_path(mu_pi::protocols::firmware_volume::PROTOCOL_GUID, file_path)
             {
-                (image.to_vec(), false, handle, 0)
+                (image.to_vec(), false, fv_handle, 0)
             } else {
                 // This means that file_path is supposed to be a device path, but the device path isn't installed on any handle
 

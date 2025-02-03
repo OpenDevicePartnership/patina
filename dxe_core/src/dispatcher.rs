@@ -382,7 +382,8 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
                         });
 
                         let boxed_device_path = filename_nodes_buf.into_boxed_slice();
-                        let filename_device_path = boxed_device_path.as_ptr() as *const efi::protocols::device_path::Protocol;
+                        let filename_device_path =
+                            boxed_device_path.as_ptr() as *const efi::protocols::device_path::Protocol;
 
                         let full_path_bytes = concat_device_path_to_boxed_slice(fv_device_path, filename_device_path);
                         let full_device_path_for_file = full_path_bytes
