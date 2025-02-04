@@ -215,9 +215,13 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                 }
             }
             if let Hob::ResourceDescriptorV2(res_desc) = hob {
-                let memory_attributes = (MemoryAttributes::from_bits_truncate(res_desc.attributes)
-                    & MemoryAttributes::CacheAttributesMask)
-                    .bits();
+                let mut memory_attributes = MemoryAttributes::from_bits_truncate(res_desc.attributes);
+                memory_attributes &= MemoryAttributes::CacheAttributesMask; //clear everything but caching attributes.
+                if gcd_mem_type == GcdMemoryType::SystemMemory {
+                    memory_attributes |= MemoryAttributes::ReadProtect; //force all system memory to be RP by default (since none is allocated yet).
+                }
+                let memory_attributes = memory_attributes.bits();
+
                 match GCD.set_memory_space_attributes(
                     res_desc.v1.physical_start as usize,
                     res_desc.v1.resource_length as usize,
