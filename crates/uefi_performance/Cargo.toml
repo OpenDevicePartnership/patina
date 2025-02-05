@@ -21,3 +21,6 @@ uuid = { workspace = true }
 mu_pi = { workspace = true }
 mu_rust_helpers = { workspace = true }
 uefi_sdk = { workspace = true }
+
+[features]
+instrument_performance = []
