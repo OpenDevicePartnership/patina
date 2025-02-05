@@ -69,6 +69,8 @@ static FBPT: TplMutex<FBPT> = TplMutex::new(&BOOT_SERVICES, Tpl::NOTIFY, FBPT::n
 
 static LOAD_IMAGE_COUNT: AtomicU32 = AtomicU32::new(0);
 
+const PERF_ENABLED: bool = cfg!(feature = "instrument_performance");
+
 pub fn init_performance_lib(
     hob_list: &HobList,
     efi_boot_services: &efi::BootServices,
@@ -149,10 +151,6 @@ extern "efiapi" fn create_performance_measurement(
     identifier: u32,
     attribute: PerfAttribute,
 ) -> efi::Status {
-    if !PERF_ENABLED {
-        return efi::Status::SUCCESS;
-    }
-
     fn is_known_token(token: Option<&String>) -> bool {
         let Some(token) = token else {
             return false;
@@ -220,6 +218,10 @@ extern "efiapi" fn create_performance_measurement(
         } else {
             Err(efi::Status::INVALID_PARAMETER)
         }
+    }
+
+    if !PERF_ENABLED {
+        return efi::Status::SUCCESS;
     }
 
     let string = unsafe { _utils::string_from_c_char_ptr(string) };
@@ -509,47 +511,146 @@ fn end_perf_measurement(
     create_performance_measurement(handle, None, string, timestamp, 0, identifier, PerfAttribute::PerfEndEntry);
 }
 
-pub fn perf_image_start_begin(module_handle: efi::Handle) {
+#[macro_export]
+macro_rules! perf_image_start_begin {
+    ($caller_id:expr) => {
+        if cfg!(feature = "instrument_performance") {
+            $crate::_perf_image_start_begin($caller_id);
+        }
+    };
+}
+
+pub fn _perf_image_start_begin(module_handle: efi::Handle) {
     log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_START);
 }
 
-pub fn perf_image_start_end(module_handle: efi::Handle) {
+#[macro_export]
+macro_rules! perf_image_start_end {
+    ($caller_id:expr) => {
+        if cfg!(feature = "instrument_performance") {
+            $crate::_perf_image_start_end($caller_id);
+        }
+    };
+}
+
+pub fn _perf_image_start_end(module_handle: efi::Handle) {
     log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_END);
 }
 
-pub fn perf_load_image_begin(module_handle: efi::Handle) {
+#[macro_export]
+macro_rules! perf_load_image_begin {
+    ($caller_id:expr) => {
+        if cfg!(feature = "instrument_performance") {
+            $crate::_perf_load_image_begin($caller_id);
+        }
+    };
+}
+
+pub fn _perf_load_image_begin(module_handle: efi::Handle) {
     log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_START);
 }
 
-pub fn perf_load_image_end(module_handle: efi::Handle) {
+#[macro_export]
+macro_rules! perf_load_image_end {
+    ($caller_id:expr) => {
+        if cfg!(feature = "instrument_performance") {
+            $crate::_perf_load_image_end($caller_id);
+        }
+    };
+}
+
+pub fn _perf_load_image_end(module_handle: efi::Handle) {
     log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_END);
 }
 
-pub fn perf_driver_binding_support_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
+#[macro_export]
+macro_rules! perf_driver_binding_support_begin {
+    ($caller_id:expr, $address:expr) => {
+        if cfg!(feature = "instrument_performance") {
+            $crate::_perf_driver_binding_support_begin($caller_id, $address);
+        }
+    };
+}
+
+pub fn _perf_driver_binding_support_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
     log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_SUPPORT_START);
 }
 
-pub fn perf_driver_binding_support_end(module_handle: efi::Handle, controller_handle: efi::Handle) {
+#[macro_export]
+macro_rules! perf_driver_binding_support_end {
+    ($caller_id:expr, $address:expr) => {
+        if cfg!(feature = "instrument_performance") {
+            $crate::_perf_driver_binding_support_end($caller_id, $address);
+        }
+    };
+}
+
+pub fn _perf_driver_binding_support_end(module_handle: efi::Handle, controller_handle: efi::Handle) {
     log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_SUPPORT_END);
 }
 
-pub fn perf_driver_binding_start_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
+#[macro_export]
+macro_rules! perf_driver_binding_start_begin {
+    ($caller_id:expr, $address:expr) => {
+        if cfg!(feature = "instrument_performance") {
+            $crate::_perf_driver_binding_start_begin($caller_id, $address);
+        }
+    };
+}
+
+pub fn _perf_driver_binding_start_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
     log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_START);
 }
 
-pub fn perf_driver_binding_start_end(module_handle: efi::Handle, controller_handle: efi::Handle) {
+#[macro_export]
+macro_rules! perf_driver_binding_start_end {
+    ($caller_id:expr, $address:expr) => {
+        if cfg!(feature = "instrument_performance") {
+            $crate::_perf_driver_binding_start_end($caller_id, $address);
+        }
+    };
+}
+
+pub fn _perf_driver_binding_start_end(module_handle: efi::Handle, controller_handle: efi::Handle) {
     log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_END);
 }
 
-pub fn perf_driver_binding_stop_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
+#[macro_export]
+macro_rules! perf_driver_binding_stop_begin {
+    ($caller_id:expr, $address:expr) => {
+        if cfg!(feature = "instrument_performance") {
+            $crate::_perf_driver_binding_stop_begin($caller_id, $address);
+        }
+    };
+}
+
+pub fn _perf_driver_binding_stop_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
     log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_STOP_START);
 }
 
-pub fn perf_driver_binding_stop_end(module_handle: efi::Handle, controller_handle: efi::Handle) {
+#[macro_export]
+macro_rules! perf_driver_binding_stop_end {
+    ($caller_id:expr, $address:expr) => {
+        if cfg!(feature = "instrument_performance") {
+            $crate::_perf_driver_binding_stop_end($caller_id, $address);
+        }
+    };
+}
+
+pub fn _perf_driver_binding_stop_end(module_handle: efi::Handle, controller_handle: efi::Handle) {
     log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_STOP_END);
 }
 
-pub fn perf_event(event_string: &str, caller_id: &efi::Guid) {
+#[macro_export]
+macro_rules! perf_event {
+    ($event_guid:expr, $caller_id:expr) => {
+        if cfg!(feature = "instrument_performance") {
+            $crate::_perf_event($event_guid, $crate::function!(), $caller_id)
+        }
+    };
+}
+
+pub fn _perf_event(event_string: &str, caller_id: &efi::Guid) {
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         None,
@@ -639,6 +740,7 @@ pub fn _perf_callback_end(trigger_guid: &efi::Guid, fun_name: &str, caller_id: &
 macro_rules! perf_function_begin {
     ($caller_id:expr) => {
         if cfg!(feature = "instrument_performance") {
+            log::info!("dkddkdk");
             $crate::_perf_function_begin($crate::function!(), $caller_id)
         }
     };
@@ -673,7 +775,16 @@ pub fn _perf_function_end(fun_name: &str, caller_id: &efi::Guid) {
     );
 }
 
-pub fn perf_in_module_begin(measurement_str: &str, caller_id: &efi::Guid) {
+#[macro_export]
+macro_rules! perf_in_module_begin {
+    ($measurement_str:expr, $caller_id:expr) => {
+        if cfg!(feature = "instrument_performance") {
+            $crate::_perf_in_module_begin($measurement_str, $caller_id)
+        }
+    };
+}
+
+pub fn _perf_in_module_begin(measurement_str: &str, caller_id: &efi::Guid) {
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         None,
@@ -683,7 +794,16 @@ pub fn perf_in_module_begin(measurement_str: &str, caller_id: &efi::Guid) {
     );
 }
 
-pub fn perf_in_module_end(measurement_str: &str, caller_id: &efi::Guid) {
+#[macro_export]
+macro_rules! perf_in_module_end {
+    ($measurement_str:expr, $caller_id:expr) => {
+        if cfg!(feature = "instrument_performance") {
+            $crate::_perf_in_module_end($measurement_str, $caller_id)
+        }
+    };
+}
+
+pub fn _perf_in_module_end(measurement_str: &str, caller_id: &efi::Guid) {
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         None,
@@ -693,7 +813,16 @@ pub fn perf_in_module_end(measurement_str: &str, caller_id: &efi::Guid) {
     );
 }
 
-pub fn perf_in_cross_module_begin(measurement_str: &str, caller_id: &efi::Guid) {
+#[macro_export]
+macro_rules! perf_in_cross_module_begin {
+    ($measurement_str:expr, $caller_id:expr) => {
+        if cfg!(feature = "instrument_performance") {
+            $crate::_perf_in_cross_module_begin($measurement_str, $caller_id)
+        }
+    };
+}
+
+pub fn _perf_in_cross_module_begin(measurement_str: &str, caller_id: &efi::Guid) {
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         None,
@@ -703,7 +832,16 @@ pub fn perf_in_cross_module_begin(measurement_str: &str, caller_id: &efi::Guid) 
     );
 }
 
-pub fn perf_cross_module_end(measurement_str: &str, caller_id: &efi::Guid) {
+#[macro_export]
+macro_rules! perf_cross_module_end {
+    ($measurement_str:expr, $caller_id:expr) => {
+        if cfg!(feature = "instrument_performance") {
+            $crate::_perf_cross_module_end($measurement_str, $caller_id)
+        }
+    };
+}
+
+pub fn _perf_cross_module_end(measurement_str: &str, caller_id: &efi::Guid) {
     log_perf_measurement(
         caller_id as *const efi::Guid as *mut c_void,
         None,
