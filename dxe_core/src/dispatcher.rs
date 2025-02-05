@@ -21,9 +21,7 @@ use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
 
-#[cfg(feature = "instrument_performance")]
 use mu_rust_helpers::guid::CALLER_ID;
-#[cfg(feature = "instrument_performance")]
 use uefi_performance::{perf_function_begin, perf_function_end};
 
 use crate::{
@@ -447,7 +445,6 @@ pub fn core_dispatcher() -> Result<(), efi::Status> {
         return Err(efi::Status::ALREADY_STARTED);
     }
 
-    #[cfg(feature = "instrument_performance")]
     perf_function_begin!(&CALLER_ID);
 
     let mut something_dispatched = false;
@@ -455,7 +452,6 @@ pub fn core_dispatcher() -> Result<(), efi::Status> {
         something_dispatched = true;
     }
 
-    #[cfg(feature = "instrument_performance")]
     perf_function_end!(&CALLER_ID);
 
     if something_dispatched {

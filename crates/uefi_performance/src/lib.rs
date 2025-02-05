@@ -69,6 +69,8 @@ static FBPT: TplMutex<FBPT> = TplMutex::new(&BOOT_SERVICES, Tpl::NOTIFY, FBPT::n
 
 static LOAD_IMAGE_COUNT: AtomicU32 = AtomicU32::new(0);
 
+const PERF_ENABLED: bool = cfg!(feature = "instrument_performance");
+
 pub fn init_performance_lib(
     hob_list: &HobList,
     efi_boot_services: &efi::BootServices,
@@ -147,6 +149,10 @@ extern "efiapi" fn create_performance_measurement(
     identifier: u32,
     attribute: PerfAttribute,
 ) -> efi::Status {
+    if !PERF_ENABLED {
+        return efi::Status::SUCCESS;
+    }
+
     fn is_known_token(token: Option<&String>) -> bool {
         let Some(token) = token else {
             return false;
@@ -456,15 +462,19 @@ fn log_perf_measurement(
     address: usize,
     identifier: u16,
 ) {
-    create_performance_measurement(
-        caller_identifier,
-        guid,
-        string,
-        0,
-        address,
-        identifier as u32,
-        PerfAttribute::PerfEntry,
-    );
+    log::info!("Perf enabled {}", PERF_ENABLED);
+    if PERF_ENABLED {
+        log::info!("Calling create_perf_measurement");
+        create_performance_measurement(
+            caller_identifier,
+            guid,
+            string,
+            0,
+            address,
+            identifier as u32,
+            PerfAttribute::PerfEntry,
+        );
+    }
 }
 
 fn start_perf_measurement(
