@@ -462,19 +462,15 @@ fn log_perf_measurement(
     address: usize,
     identifier: u16,
 ) {
-    log::info!("Perf enabled {}", PERF_ENABLED);
-    if PERF_ENABLED {
-        log::info!("Calling create_perf_measurement");
-        create_performance_measurement(
-            caller_identifier,
-            guid,
-            string,
-            0,
-            address,
-            identifier as u32,
-            PerfAttribute::PerfEntry,
-        );
-    }
+    create_performance_measurement(
+        caller_identifier,
+        guid,
+        string,
+        0,
+        address,
+        identifier as u32,
+        PerfAttribute::PerfEntry,
+    );
 }
 
 fn start_perf_measurement(
@@ -724,7 +720,3 @@ pub fn perf_start_ex(
 pub fn perf_end_ex(handle: efi::Handle, token: *const c_char, module: *const c_char, timestamp: u64, identifier: u32) {
     end_perf_measurement(handle, token, module, timestamp, identifier);
 }
-
-// TODOs: cross-module measurements
-// TODO: advanced logger / section extractor
-// TODO: boot services initialization issues in init_dispatcher
