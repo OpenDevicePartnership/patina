@@ -69,7 +69,8 @@ static FBPT: TplMutex<FBPT> = TplMutex::new(&BOOT_SERVICES, Tpl::NOTIFY, FBPT::n
 
 static LOAD_IMAGE_COUNT: AtomicU32 = AtomicU32::new(0);
 
-const PERF_ENABLED: bool = cfg!(feature = "instrument_performance");
+#[doc(hidden)]
+pub const PERF_ENABLED: bool = cfg!(feature = "instrument_performance");
 
 pub fn init_performance_lib(
     hob_list: &HobList,
@@ -452,7 +453,7 @@ macro_rules! __log_perf_measurement {
         $identifier:expr,
         $perf_id:expr
     ) => {{
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             let string = concat!($string, "\0").as_ptr() as *const c_char;
             create_performance_measurement(caller_identifier, guid, string, ticker, 0, identifier, perf_id);
         }
@@ -514,7 +515,7 @@ fn end_perf_measurement(
 #[macro_export]
 macro_rules! perf_image_start_begin {
     ($caller_id:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_image_start_begin($caller_id);
         }
     };
@@ -527,7 +528,7 @@ pub fn _perf_image_start_begin(module_handle: efi::Handle) {
 #[macro_export]
 macro_rules! perf_image_start_end {
     ($caller_id:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_image_start_end($caller_id);
         }
     };
@@ -540,7 +541,7 @@ pub fn _perf_image_start_end(module_handle: efi::Handle) {
 #[macro_export]
 macro_rules! perf_load_image_begin {
     ($caller_id:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_load_image_begin($caller_id);
         }
     };
@@ -553,7 +554,7 @@ pub fn _perf_load_image_begin(module_handle: efi::Handle) {
 #[macro_export]
 macro_rules! perf_load_image_end {
     ($caller_id:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_load_image_end($caller_id);
         }
     };
@@ -566,7 +567,7 @@ pub fn _perf_load_image_end(module_handle: efi::Handle) {
 #[macro_export]
 macro_rules! perf_driver_binding_support_begin {
     ($caller_id:expr, $address:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_driver_binding_support_begin($caller_id, $address);
         }
     };
@@ -579,7 +580,7 @@ pub fn _perf_driver_binding_support_begin(module_handle: efi::Handle, controller
 #[macro_export]
 macro_rules! perf_driver_binding_support_end {
     ($caller_id:expr, $address:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_driver_binding_support_end($caller_id, $address);
         }
     };
@@ -592,7 +593,7 @@ pub fn _perf_driver_binding_support_end(module_handle: efi::Handle, controller_h
 #[macro_export]
 macro_rules! perf_driver_binding_start_begin {
     ($caller_id:expr, $address:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_driver_binding_start_begin($caller_id, $address);
         }
     };
@@ -605,7 +606,7 @@ pub fn _perf_driver_binding_start_begin(module_handle: efi::Handle, controller_h
 #[macro_export]
 macro_rules! perf_driver_binding_start_end {
     ($caller_id:expr, $address:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_driver_binding_start_end($caller_id, $address);
         }
     };
@@ -618,7 +619,7 @@ pub fn _perf_driver_binding_start_end(module_handle: efi::Handle, controller_han
 #[macro_export]
 macro_rules! perf_driver_binding_stop_begin {
     ($caller_id:expr, $address:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_driver_binding_stop_begin($caller_id, $address);
         }
     };
@@ -631,7 +632,7 @@ pub fn _perf_driver_binding_stop_begin(module_handle: efi::Handle, controller_ha
 #[macro_export]
 macro_rules! perf_driver_binding_stop_end {
     ($caller_id:expr, $address:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_driver_binding_stop_end($caller_id, $address);
         }
     };
@@ -644,7 +645,7 @@ pub fn _perf_driver_binding_stop_end(module_handle: efi::Handle, controller_hand
 #[macro_export]
 macro_rules! perf_event {
     ($event_guid:expr, $caller_id:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_event($event_guid, $crate::function!(), $caller_id)
         }
     };
@@ -663,7 +664,7 @@ pub fn _perf_event(event_string: &str, caller_id: &efi::Guid) {
 #[macro_export]
 macro_rules! perf_event_signal_begin {
     ($event_guid:expr, $caller_id:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_event_signal_begin($event_guid, $crate::function!(), $caller_id)
         }
     };
@@ -682,7 +683,7 @@ pub fn _perf_event_signal_begin(event_guid: &efi::Guid, fun_name: &str, caller_i
 #[macro_export]
 macro_rules! perf_event_signal_end {
     ($event_guid:expr, $caller_id:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_event_signal_end($event_guid, $crate::function!(), $caller_id)
         }
     };
@@ -701,7 +702,7 @@ pub fn _perf_event_signal_end(event_guid: &efi::Guid, fun_name: &str, caller_id:
 #[macro_export]
 macro_rules! perf_callback_begin {
     ($trigger_guid:expr, $caller_id:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_callback_begin($trigger_guid, $crate::function!(), $caller_id)
         }
     };
@@ -720,7 +721,7 @@ pub fn _perf_callback_begin(trigger_guid: &efi::Guid, fun_name: &str, caller_id:
 #[macro_export]
 macro_rules! perf_callback_end {
     ($trigger_guid:expr, $caller_id:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_callback_end($trigger_guid, $crate::function!(), $caller_id)
         }
     };
@@ -739,7 +740,7 @@ pub fn _perf_callback_end(trigger_guid: &efi::Guid, fun_name: &str, caller_id: &
 #[macro_export]
 macro_rules! perf_function_begin {
     ($caller_id:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_function_begin($crate::function!(), $caller_id)
         }
     };
@@ -758,7 +759,7 @@ pub fn _perf_function_begin(fun_name: &str, caller_id: &efi::Guid) {
 #[macro_export]
 macro_rules! perf_function_end {
     ($caller_id:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_function_end($crate::function!(), $caller_id)
         }
     };
@@ -777,7 +778,7 @@ pub fn _perf_function_end(fun_name: &str, caller_id: &efi::Guid) {
 #[macro_export]
 macro_rules! perf_in_module_begin {
     ($measurement_str:expr, $caller_id:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_in_module_begin($measurement_str, $caller_id)
         }
     };
@@ -796,7 +797,7 @@ pub fn _perf_in_module_begin(measurement_str: &str, caller_id: &efi::Guid) {
 #[macro_export]
 macro_rules! perf_in_module_end {
     ($measurement_str:expr, $caller_id:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_in_module_end($measurement_str, $caller_id)
         }
     };
@@ -815,7 +816,7 @@ pub fn _perf_in_module_end(measurement_str: &str, caller_id: &efi::Guid) {
 #[macro_export]
 macro_rules! perf_in_cross_module_begin {
     ($measurement_str:expr, $caller_id:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_in_cross_module_begin($measurement_str, $caller_id)
         }
     };
@@ -834,7 +835,7 @@ pub fn _perf_in_cross_module_begin(measurement_str: &str, caller_id: &efi::Guid)
 #[macro_export]
 macro_rules! perf_cross_module_end {
     ($measurement_str:expr, $caller_id:expr) => {
-        if cfg!(feature = "instrument_performance") {
+        if $crate::PERF_ENABLED {
             $crate::_perf_cross_module_end($measurement_str, $caller_id)
         }
     };
