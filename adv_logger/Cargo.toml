@@ -16,5 +16,4 @@ uefi_sdk = { workspace = true }
 mu_pi = { workspace = true }
 r-efi = { workspace = true }
 spin = { workspace = true }
-uefi_component_interface = { workspace = true }
 mu_rust_helpers = { workspace = true }

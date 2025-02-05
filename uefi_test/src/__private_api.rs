@@ -9,7 +9,13 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use uefi_component_interface::DxeComponentInterface;
+
+use core::marker::PhantomData;
+
+use uefi_sdk::component::{
+    params::{Param, ParamFunction},
+    MetaData, Storage, UnsafeStorageCell,
+};
 
 /// Where all the test cases marked with `#[uefi_test]` are collated to.
 #[cfg(not(feature = "off"))]
@@ -38,7 +44,7 @@ pub struct TestCase {
     pub skip: bool,
     pub should_fail: bool,
     pub fail_msg: Option<&'static str>,
-    pub func: fn(&dyn DxeComponentInterface) -> super::Result,
+    pub func: fn(&mut Storage) -> Result<bool, &'static str>,
 }
 
 impl TestCase {
@@ -49,64 +55,76 @@ impl TestCase {
         filters.iter().any(|pattern| self.name.contains(pattern)) && !self.skip
     }
 
-    pub fn run(&self, interface: &dyn DxeComponentInterface, debug_mode: bool) -> super::Result {
+    pub fn run(&self, storage: &mut Storage, debug_mode: bool) -> super::Result {
         let ret = if debug_mode {
             log::debug!("#### {} Output Start ####", self.name);
-            let ret = (self.func)(interface);
+            let ret = (self.func)(storage);
             log::debug!("####  {} Output End  ####", self.name);
             ret
         } else {
             let level = log::max_level();
             log::set_max_level(log::LevelFilter::Off);
-            let ret = (self.func)(interface);
+            let ret = (self.func)(storage);
             log::set_max_level(level);
             ret
         };
 
         match (self.should_fail, ret) {
-            (true, Ok(_)) => Err("Test passed when it should have failed"),
+            (_, Ok(false)) => Err("Test failed to run due to un-retrievable parameters."),
+            (true, Ok(true)) => Err("Test passed when it should have failed"),
             (true, Err(msg)) if self.fail_msg.is_some() && Some(msg) != self.fail_msg => Err(msg),
             (true, Err(msg)) if self.fail_msg.is_some() && Some(msg) == self.fail_msg => Ok(()),
             (true, Err(_)) if self.fail_msg.is_none() => Ok(()),
-            _ => ret,
+            _ => ret.map(|_| ()),
         }
+    }
+}
+
+/// A [ParamFunction] implementation for an on-system unit test.
+///
+/// note: Once we can unwind a panic, we can remove the `Result` return type in favor of () and wrap the function in a
+/// `catch_unwind` that maps the panic message to a Err(&'static str).
+pub struct FunctionTest<Marker, Func>
+where
+    Func: ParamFunction<Marker, In = (), Out = Result<(), &'static str>>,
+{
+    func: Func,
+    _marker: PhantomData<fn() -> Marker>,
+}
+
+impl<Marker, Func> FunctionTest<Marker, Func>
+where
+    Marker: 'static,
+    Func: ParamFunction<Marker, In = (), Out = Result<(), &'static str>>,
+{
+    pub const fn new(func: Func) -> Self {
+        Self { func, _marker: PhantomData }
+    }
+
+    pub fn run(&mut self, storage: UnsafeStorageCell) -> Result<bool, &'static str> {
+        let mut metadata = MetaData::default();
+
+        let param_state = unsafe { Func::Param::init_state(storage.storage_mut(), &mut metadata) };
+
+        if let Err(bad_param) = Func::Param::try_validate(&param_state, storage) {
+            log::warn!("Failed to retreive parameter: {:?}", bad_param);
+            return Ok(false);
+        }
+
+        let param_value = unsafe { Func::Param::get_param(&param_state, storage) };
+
+        self.func.run((), param_value).map(|_| true)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::{ffi::c_void, result::Result};
-    use r_efi::efi;
-
-    mockall::mock! {
-        ComponentInterface {}
-        impl DxeComponentInterface for ComponentInterface {
-            fn install_protocol_interface(&self, handle: Option<efi::Handle>, protocol: efi::Guid, interface: *mut c_void) -> Result<efi::Handle, efi::Status>;
-        }
-    }
-
-    // A test function where we mock DxeComponentInterface to return what we want for the test.
-    fn test_function(interface: &dyn DxeComponentInterface) -> crate::Result {
-        match interface.install_protocol_interface(
-            None,
-            efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]),
-            core::ptr::null_mut(),
-        ) {
-            Ok(_) => Ok(()),
-            Err(_) => Err("Failed to install protocol interface"),
-        }
-    }
+    use uefi_sdk::component::Storage;
 
     #[test]
     fn test_should_run() {
-        let test_case = TestCase {
-            name: "test",
-            skip: false,
-            should_fail: false,
-            fail_msg: None,
-            func: |_: &dyn DxeComponentInterface| Ok(()),
-        };
+        let test_case = TestCase { name: "test", skip: false, should_fail: false, fail_msg: None, func: |_| Ok(true) };
 
         std::assert!(test_case.should_run(&["test"]));
         std::assert!(test_case.should_run(&["t"]));
@@ -116,52 +134,64 @@ mod tests {
 
     #[test]
     fn test_run_with_default_settings() {
-        let test_case = TestCase { name: "test", skip: false, should_fail: false, fail_msg: None, func: test_function };
+        let mut storage = Storage::new();
+
+        let test_case_pass =
+            TestCase { name: "test", skip: false, should_fail: false, fail_msg: None, func: |_| Ok(true) };
+        let test_case_fail = TestCase {
+            name: "test",
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            func: |_| Err("Failed to install protocol interface"),
+        };
 
         // Test that a passing test passes
-        let mut interface = MockComponentInterface::new();
-        interface.expect_install_protocol_interface().return_once(move |_, _, _| Ok(core::ptr::null_mut()));
-        let result = test_case.run(&interface, true);
+        let result = test_case_pass.run(&mut storage, true);
         std::assert_eq!(result, Ok(()));
 
         // Test that a failing test fails
-        let mut interface = MockComponentInterface::new();
-        interface.expect_install_protocol_interface().return_once(move |_, _, _| Err(efi::Status::UNSUPPORTED));
-        let result = test_case.run(&interface, true);
+        let result = test_case_fail.run(&mut storage, true);
         std::assert_eq!(result, Err("Failed to install protocol interface"));
     }
 
     #[test]
     fn test_run_with_should_fail() {
-        let test_case = TestCase { name: "test", skip: false, should_fail: true, fail_msg: None, func: test_function };
+        let mut storage = Storage::new();
+
+        let test_case_pass =
+            TestCase { name: "test", skip: false, should_fail: true, fail_msg: None, func: |_| Ok(true) };
+        let test_case_fail = TestCase {
+            name: "test",
+            skip: false,
+            should_fail: true,
+            fail_msg: None,
+            func: |_| Err("Failed to install protocol interface"),
+        };
 
         // Test that a test that passes, should fail because its expected to fail
-        let mut interface = MockComponentInterface::new();
-        interface.expect_install_protocol_interface().return_once(move |_, _, _| Ok(core::ptr::null_mut()));
-        let result = test_case.run(&interface, true);
+        let result = test_case_pass.run(&mut storage, true);
         std::assert_eq!(result, Err("Test passed when it should have failed"));
 
         // Test that a test that fails, should pass because its expected to fail
-        let mut interface = MockComponentInterface::new();
-        interface.expect_install_protocol_interface().return_once(move |_, _, _| Err(efi::Status::UNSUPPORTED));
-        let result = test_case.run(&interface, true);
+        let result = test_case_fail.run(&mut storage, true);
         std::assert_eq!(result, Ok(()));
     }
 
     #[test]
     fn test_run_with_should_fail_and_fail_msg_matches() {
+        let mut storage = Storage::new();
+
         // Test that a test that fails with the expected message, should pass
         let test_case = TestCase {
             name: "test",
             skip: false,
             should_fail: true,
             fail_msg: Some("Failed to install protocol interface"),
-            func: test_function,
+            func: |_| Err("Failed to install protocol interface"),
         };
 
-        let mut interface = MockComponentInterface::new();
-        interface.expect_install_protocol_interface().return_once(move |_, _, _| Err(efi::Status::UNSUPPORTED));
-        let result = test_case.run(&interface, false);
+        let result = test_case.run(&mut storage, false);
         std::assert_eq!(result, Ok(()));
 
         // Test that a test that fails with an unexpected message, should fail
@@ -170,12 +200,10 @@ mod tests {
             skip: false,
             should_fail: true,
             fail_msg: Some("Other failure"),
-            func: test_function,
+            func: |_| Err("Failed to install protocol interface"),
         };
 
-        let mut interface = MockComponentInterface::new();
-        interface.expect_install_protocol_interface().return_once(move |_, _, _| Err(efi::Status::UNSUPPORTED));
-        let result = test_case.run(&interface, false);
+        let result = test_case.run(&mut storage, false);
         std::assert_eq!(result, Err("Failed to install protocol interface"));
     }
 }

@@ -1,4 +1,4 @@
-//! Hello World Sample Component
+//! Hello World Sample Components
 //!
 //! A simple component used for demonstration.
 //!
@@ -9,6 +9,8 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 #![cfg_attr(not(feature = "std"), no_std)]
-mod hello;
+mod function_component;
+mod struct_component;
 
-pub use hello::HelloComponent;
+pub use function_component::{log_hello, Name};
+pub use struct_component::{GreetingsEnum, HelloStruct};

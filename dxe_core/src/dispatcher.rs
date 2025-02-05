@@ -20,6 +20,7 @@ use mu_rust_helpers::guid::guid_fmt;
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
+use uefi_device_path::concat_device_path_to_boxed_slice;
 
 use mu_rust_helpers::guid::CALLER_ID;
 use uefi_performance::{perf_function_begin, perf_function_end};
@@ -348,11 +349,55 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
                     if let Some(pe32_section) =
                         sections.into_iter().find(|x| x.section_type() == Some(FfsSectionType::Pe32))
                     {
+                        // In this case, this is sizeof(guid) + sizeof(protocol) = 20, so it should always fit an u8
+                        const FILENAME_NODE_SIZE: usize = core::mem::size_of::<efi::protocols::device_path::Protocol>()
+                            + core::mem::size_of::<r_efi::efi::Guid>();
+                        // In this case, this is sizeof(protocol) = 4, so it should always fit an u8
+                        const END_NODE_SIZE: usize = core::mem::size_of::<efi::protocols::device_path::Protocol>();
+
+                        let filename_node = efi::protocols::device_path::Protocol {
+                            r#type: r_efi::protocols::device_path::TYPE_MEDIA,
+                            sub_type: r_efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE,
+                            length: [FILENAME_NODE_SIZE as u8, 0x00],
+                        };
+                        let filename_end_node = efi::protocols::device_path::Protocol {
+                            r#type: r_efi::protocols::device_path::TYPE_END,
+                            sub_type: efi::protocols::device_path::End::SUBTYPE_ENTIRE,
+                            length: [END_NODE_SIZE as u8, 0x00],
+                        };
+
+                        let mut filename_nodes_buf = Vec::<u8>::with_capacity(FILENAME_NODE_SIZE + END_NODE_SIZE); // 20 bytes (filename_node + GUID) + 4 bytes (end node)
+                        filename_nodes_buf.extend_from_slice(unsafe {
+                            core::slice::from_raw_parts(
+                                &filename_node as *const _ as *const u8,
+                                core::mem::size_of::<efi::protocols::device_path::Protocol>(),
+                            )
+                        });
+                        // Copy the GUID into the buffer
+                        filename_nodes_buf.extend_from_slice(file_name.as_bytes());
+
+                        // Copy filename_end_node into the buffer
+                        filename_nodes_buf.extend_from_slice(unsafe {
+                            core::slice::from_raw_parts(
+                                &filename_end_node as *const _ as *const u8,
+                                core::mem::size_of::<efi::protocols::device_path::Protocol>(),
+                            )
+                        });
+
+                        let boxed_device_path = filename_nodes_buf.into_boxed_slice();
+                        let filename_device_path =
+                            boxed_device_path.as_ptr() as *const efi::protocols::device_path::Protocol;
+
+                        let full_path_bytes = concat_device_path_to_boxed_slice(fv_device_path, filename_device_path);
+                        let full_device_path_for_file = full_path_bytes
+                            .map(|full_path| Box::into_raw(full_path) as *mut efi::protocols::device_path::Protocol)
+                            .unwrap_or(fv_device_path);
+
                         dispatcher.pending_drivers.push(PendingDriver {
                             file_name,
                             firmware_volume_handle: handle,
                             pe32: pe32_section,
-                            device_path: fv_device_path,
+                            device_path: full_device_path_for_file,
                             depex,
                             image_handle: None,
                             security_status: efi::Status::NOT_READY,

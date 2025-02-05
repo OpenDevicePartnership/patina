@@ -16,7 +16,6 @@ use mu_pi::{
     BootMode,
 };
 use r_efi::efi;
-use sample_components::HelloComponent;
 use std::ffi::c_void;
 
 static LOGGER: uefi_sdk::log::SerialLogger<uefi_sdk::serial::Terminal> = uefi_sdk::log::SerialLogger::new(
@@ -43,12 +42,11 @@ fn main() -> uefi_sdk::error::Result<()> {
         .with_interrupt_bases(uefi_cpu::interrupts::InterruptBasesNull::default())
         // Add any config knob functions for pre-gcd-init Core
         // .with_some_config(true)
-        .initialize(hob_list) // We can make allocations now!
+        .init_memory(hob_list) // We can make allocations now!
         // Add any config knob functions for post-gcd-init Core
         // .with_some_config(true)
-        .with_driver(Box::new(HelloComponent::default()))
-        .with_driver(Box::new(HelloComponent::default().with_name("Dxe Core")))
-        .with_driver(Box::new(HelloComponent::default().with_name("World")))
+        .with_config(sample_components::Name("World"))
+        .with_component(sample_components::log_hello)
         .start()
 }
 

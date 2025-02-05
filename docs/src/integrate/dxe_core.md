@@ -99,8 +99,8 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     Core::default()
         .with_section_extractor(BrotliSectionExtractor::default())
         .with_cpu_init(X64EfiCpuInit::default())
-        .initialize()
-        .start(physical_hob_list)
+        .init_memory(physical_hob_list)
+        .start()
         .unwrap()
     loop {}
 }
@@ -136,6 +136,8 @@ adv_logger = "$(VERSION)
 Next, update main.rs with the following:
 
 ``` rust
+use adv_logger::{AdvancedLogger, init_advanced_logger};
+
 static LOGGER: AdvancedLogger<uefi_sdk::serial::Uart16550> = AdvancedLogger::new(
     uefi_sdk::log::Format::Standard,
     &[
@@ -147,20 +149,18 @@ static LOGGER: AdvancedLogger<uefi_sdk::serial::Uart16550> = AdvancedLogger::new
     uefi_sdk::serial::Uart16550::new(uefi_sdk::serial::Interface::Io(0x402)),
 );
 
-static ADV_LOGGER_COMP: AdvancedLoggerComponent<uefi_sdk::serial::Uart16550> = AdvancedLoggerComponent::new(&LOGGER);
-
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
-    let adv_logger = AdvancedLoggerComponent::<uefi_sdk::serial::Uart16550>::new(&LOGGER);
-    adv_logger.init_advanced_logger(physical_hob_list);
+    let adv_logger = AdvancedLoggerComponent::<Uart16550>::new(&LOGGER);
+    adv_logger.init_advanced_logger(physical_hob_list).unwrap();
 
     Core::default()
         .with_section_extractor(BrotliSectionExtractor::default())
         .with_cpu_init(X64EfiCpuInit::default())
-        .initialize()
-        .with_driver(Box::new(adv_logger_component))
-        .start(physical_hob_list)
+        .init_memory(physical_hob_list)
+        .with_component(adv_logger)
+        .start()
         .unwrap()
     loop {}
 }
@@ -187,7 +187,7 @@ execute.
 #![no_main]
 extern crate alloc;
 
-use adv_logger::{component::AdvancedLoggerComponent, logger::AdvancedLogger};
+use adv_logger::{AdvancedLogger, init_advanced_logger};
 use core::{ffi::c_void, panic::PanicInfo};
 use dxe_core::Core;
 
@@ -211,14 +211,14 @@ static LOGGER: AdvancedLogger<uefi_sdk::serial::Uart16550> = AdvancedLogger::new
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
-    let adv_logger_component = AdvancedLoggerComponent::<uefi_sdk::serial::Uart16550>::new(&LOGGER);
-    adv_logger_component.init_advanced_logger(physical_hob_list).unwrap();
+    let adv_logger = AdvancedLoggerComponent::<Uart16550>::new(&LOGGER);
+    adv_logger.init_advanced_logger(physical_hob_list).unwrap();
 
     Core::default()
         .with_cpu_init(uefi_cpu::EfiCpuInitX64::default())
         .with_section_extractor(section_extractor::CompositeSectionExtractor::default())
-        .initialize(physical_hob_list)
-        .with_driver(Box::new(adv_logger_component))
+        .init_memory(physical_hob_list)
+        .with_driver(adv_logger)
         .start()
         .unwrap();
 
