@@ -740,7 +740,6 @@ pub fn _perf_callback_end(trigger_guid: &efi::Guid, fun_name: &str, caller_id: &
 macro_rules! perf_function_begin {
     ($caller_id:expr) => {
         if cfg!(feature = "instrument_performance") {
-            log::info!("dkddkdk");
             $crate::_perf_function_begin($crate::function!(), $caller_id)
         }
     };
