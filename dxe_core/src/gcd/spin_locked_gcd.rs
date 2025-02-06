@@ -451,8 +451,9 @@ impl GCD {
     // as we need to allocate memory for the page table structure
     pub(crate) fn init_paging(&mut self, hob_list: &HobList) {
         log::info!("Initializing paging for the GCD");
+        log::info!("{}:{}", function!(), line!());
         let mut page_allocator = PagingAllocator::new();
-
+        log::info!("{}:{}", function!(), line!());
         // We need to explicitly allocate the root page below 4GB for x86 MP Services.
         // See comment in PagingAllocator.allocate_pages
         match self.allocate_memory_space(
@@ -464,6 +465,7 @@ impl GCD {
             None,
         ) {
             Ok(addr) => {
+                log::info!("{}:{} root_page: {addr:x?}", function!(), line!());
                 page_allocator.root_page = Some(addr as u64);
             }
             Err(e) => {
@@ -477,6 +479,7 @@ impl GCD {
                     None,
                 ) {
                     Ok(addr) => {
+                        log::info!("{}:{} root_page: {addr:x?}", function!(), line!());
                         page_allocator.root_page = Some(addr as u64);
                     }
                     Err(e) => {
@@ -507,22 +510,24 @@ impl GCD {
                 panic!("Failed to allocate pages for the initial page table page pool: {:?}", e);
             }
         }
-
+        log::info!("{}:{}", function!(), line!());
         let mut page_table = create_cpu_paging(page_allocator).expect("Failed to create CPU page table");
-
+        log::info!("{}:{} page_table: {:p}", function!(), line!(), page_table);
         // this is before we get allocated descriptors, so we don't need to preallocate memory here
         let mut mmio_descs: Vec<dxe_services::MemorySpaceDescriptor> = Vec::new();
         self.get_mmio_descriptors(mmio_descs.as_mut()).expect("Failed to get MMIO descriptors!");
-
+        log::info!("{}:{}", function!(), line!());
         // Before we install this page table, we need to ensure that DXE Core is mapped correctly here as well as any
         // allocated memory and MMIO. All other memory will be unmapped initially. Do allocated memory first, then the
         // DXE Core, so that we can ensure that the DXE Core is mapped correctly and not overwritten by the allocated
         // memory attrs. We also need to preallocate memory here so that we do not allocate memory after getting the
         // descriptors
+        log::info!("{}:{}", function!(), line!());
         let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
             Vec::with_capacity(self.memory_descriptor_count() + 10);
+        log::info!("{}:{}", function!(), line!());
         self.get_allocated_memory_descriptors(&mut descriptors).expect("Failed to get allocated memory descriptors!");
-
+        log::info!("{}:{}", function!(), line!());
         let mut needed_pages: u64 = 0;
         for desc in &descriptors {
             needed_pages += match page_table.get_page_table_pages_for_size(desc.base_address, desc.length) {
@@ -568,8 +573,10 @@ impl GCD {
 
         // we just allocated more memory, so now we need to fetch the allocated descriptors again to make sure we
         // have all the memory we need to map
+        log::info!("{}:{}", function!(), line!());
         descriptors.clear();
         self.get_allocated_memory_descriptors(&mut descriptors).expect("Failed to get allocated memory descriptors!");
+        log::info!("{}:{}", function!(), line!());
 
         self.page_table = Some(page_table);
 
@@ -665,7 +672,7 @@ impl GCD {
                 }
             };
 
-            log::trace!(
+            log::info!(
                 target: "paging",
                 "Mapping DXE Core image memory region {:#x?} of length {:#x?} with attributes {:#x?}",
                 section_base_address,
@@ -719,6 +726,9 @@ impl GCD {
         if let Some(ref page_table) = self.page_table {
             page_table.install_page_table().expect("Failed to install the page table");
         }
+
+        let foo = {unsafe {*(0x80000000 as *const u128)}};
+        log::info!("{foo:x?}");
 
         log::info!("Paging initialized for the GCD");
     }
