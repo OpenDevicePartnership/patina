@@ -23,3 +23,6 @@ mu_rust_helpers = { workspace = true }
 uefi_sdk = { workspace = true }
 uefi_device_path = { workspace = true }
 
+
+[features]
+instrument_performance = []

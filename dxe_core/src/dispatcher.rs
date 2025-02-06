@@ -22,6 +22,9 @@ use tpl_lock::TplMutex;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
 use uefi_device_path::concat_device_path_to_boxed_slice;
 
+use mu_rust_helpers::guid::CALLER_ID;
+use uefi_performance::{perf_function_begin, perf_function_end};
+
 use crate::{
     events::EVENT_DB,
     fv::{core_install_firmware_volume, device_path_bytes_for_fv_file},
@@ -486,10 +489,16 @@ pub fn core_dispatcher() -> Result<(), efi::Status> {
     if DISPATCHER_CONTEXT.lock().executing {
         return Err(efi::Status::ALREADY_STARTED);
     }
+
+    perf_function_begin!(&CALLER_ID);
+
     let mut something_dispatched = false;
     while dispatch()? {
         something_dispatched = true;
     }
+
+    perf_function_end!(&CALLER_ID);
+
     if something_dispatched {
         Ok(())
     } else {
