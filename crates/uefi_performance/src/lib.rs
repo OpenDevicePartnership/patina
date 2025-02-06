@@ -309,7 +309,7 @@ extern "efiapi" fn create_performance_measurement(
             if let Ok((module_name, guid)) =
                 get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void)
             {
-                let module_name = module_name.unwrap_or(String::from("unknown name"));
+                let device_path_string = device_path_data_to_string();
                 let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, &module_name);
                 _ = &FBPT.lock().add_record(record);
             }

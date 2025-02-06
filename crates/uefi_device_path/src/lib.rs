@@ -12,7 +12,8 @@
 
 extern crate alloc;
 
-use alloc::{boxed::Box, vec, vec::Vec};
+use alloc::vec;
+use alloc::{boxed::Box, format, string::String, vec::Vec};
 use core::{mem::size_of_val, ptr::slice_from_raw_parts, slice::from_raw_parts};
 
 use r_efi::efi;
@@ -341,6 +342,28 @@ impl Iterator for DevicePathWalker {
             None => None,
         }
     }
+}
+
+/// Prints out the data of each device path node as a string.
+///
+/// Returns a string containing the data from each node concatenated together.
+pub fn device_path_data_to_string(device_path: *const efi::protocols::device_path::Protocol) -> alloc::string::String {
+    let mut result = String::new();
+
+    // Create the walker and iterate over nodes
+    unsafe {
+        let walker = DevicePathWalker::new(device_path);
+        for node in walker {
+            // Push node header info using display formatting
+            result.push_str(&format!("{:?} ", node.header));
+            // Convert node data bytes to hex string
+            for byte in node.data {
+                result.push_str(&format!("{:02x}", byte));
+            }
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]
