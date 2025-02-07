@@ -441,7 +441,7 @@ impl GCD {
             dxe_services::GcdMemoryType::SystemMemory,
             0,
             MEMORY_BLOCK_SLICE_SIZE,
-            1 as _,
+            protocol_db::DXE_CORE_HANDLE,
             None,
         )
     }
@@ -511,8 +511,10 @@ impl GCD {
             }
         }
         log::info!("{}:{}", function!(), line!());
+        log::info!("GCD - Before page_table_create:\n{}", self);
         let mut page_table = create_cpu_paging(page_allocator).expect("Failed to create CPU page table");
         log::info!("{}:{} page_table: {:p}", function!(), line!(), page_table);
+        log::info!("GCD - After page_table_create:\n{}", self);
         // this is before we get allocated descriptors, so we don't need to preallocate memory here
         let mut mmio_descs: Vec<dxe_services::MemorySpaceDescriptor> = Vec::new();
         self.get_mmio_descriptors(mmio_descs.as_mut()).expect("Failed to get MMIO descriptors!");
@@ -579,6 +581,8 @@ impl GCD {
         log::info!("{}:{}", function!(), line!());
 
         self.page_table = Some(page_table);
+
+        log::info!("GCD - Before mapping allocations:\n{}", self);
 
         // now map the memory regions, keeping any cache attributes set in the GCD descriptors
         for desc in descriptors {
@@ -732,7 +736,7 @@ impl GCD {
 
         log::info!("Paging initialized for the GCD");
 
-        const TEST_ADDRESS:usize = 0x855267a8;  
+        const TEST_ADDRESS:usize = 0x855267a8;
         let root_table = unsafe { from_raw_parts(0x80000000 as *const VMSAv864TableDescriptor, 512) };
         log::info!("trying to log table for test address {TEST_ADDRESS:x?}");
         let level0_idx = (TEST_ADDRESS >> 39) & 0x1FF;
@@ -744,7 +748,7 @@ impl GCD {
         log::info!("level_1 idx: {level1_idx:x?}");
         log::info!("level_2 idx: {level2_idx:x?}");
         log::info!("level_3 idx: {level3_idx:x?}");
-        
+
         log::info!("\nlevel_0 table:");
         for (idx, entry) in root_table.iter().enumerate() {
             if entry.get_u64() != 0 {
