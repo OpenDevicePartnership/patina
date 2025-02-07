@@ -345,10 +345,13 @@ impl Iterator for DevicePathWalker {
     }
 }
 
+// cSpell marks certain words here as mispelled, even though they are technically spelled correctly
+// cSpell:disable
 fn protocol_to_subtype_str(protocol: efi::protocols::device_path::Protocol) -> &'static str {
     match protocol.r#type {
         r_efi::protocols::device_path::TYPE_HARDWARE => match protocol.sub_type {
             Hardware::SUBTYPE_PCI => "Pci",
+            // cspell:ignore someWord anotherWord
             Hardware::SUBTYPE_PCCARD => "PcCard",
             Hardware::SUBTYPE_MMAP => "MemMap",
             Hardware::SUBTYPE_VENDOR => "Vendor",
@@ -379,6 +382,7 @@ fn protocol_to_subtype_str(protocol: efi::protocols::device_path::Protocol) -> &
         _ => "UnknownType",
     }
 }
+/* cSpell:enable */
 
 /// Returns a string containing the data from each node concatenated together.
 ///
