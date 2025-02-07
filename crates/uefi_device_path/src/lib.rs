@@ -15,6 +15,7 @@ extern crate alloc;
 use alloc::vec;
 use alloc::{boxed::Box, format, string::String, vec::Vec};
 use core::{mem::size_of_val, ptr::slice_from_raw_parts, slice::from_raw_parts};
+use r_efi::protocols::device_path::{End, Hardware, Media};
 
 use r_efi::efi;
 
@@ -344,6 +345,41 @@ impl Iterator for DevicePathWalker {
     }
 }
 
+fn protocol_to_subtype_str(protocol: efi::protocols::device_path::Protocol) -> &'static str {
+    match protocol.r#type {
+        r_efi::protocols::device_path::TYPE_HARDWARE => match protocol.sub_type {
+            Hardware::SUBTYPE_PCI => "Pci",
+            Hardware::SUBTYPE_PCCARD => "PcCard",
+            Hardware::SUBTYPE_MMAP => "MemMap",
+            Hardware::SUBTYPE_VENDOR => "Vendor",
+            Hardware::SUBTYPE_CONTROLLER => "Controller",
+            Hardware::SUBTYPE_BMC => "Bmc",
+            _ => "UnknownHardware",
+        },
+        r_efi::protocols::device_path::TYPE_ACPI => "Acpi",
+        r_efi::protocols::device_path::TYPE_MESSAGING => "Msg",
+        r_efi::protocols::device_path::TYPE_BIOS => "Bios",
+        r_efi::protocols::device_path::TYPE_MEDIA => match protocol.sub_type {
+            Media::SUBTYPE_HARDDRIVE => "HardDrive",
+            Media::SUBTYPE_CDROM => "CdRom",
+            Media::SUBTYPE_VENDOR => "Vendor",
+            Media::SUBTYPE_FILE_PATH => "FilePath",
+            Media::SUBTYPE_MEDIA_PROTOCOL => "MediaProtocol",
+            Media::SUBTYPE_PIWG_FIRMWARE_FILE => "FirmwareFile",
+            Media::SUBTYPE_PIWG_FIRMWARE_VOLUME => "FirmwareVolume",
+            Media::SUBTYPE_RELATIVE_OFFSET_RANGE => "RelativeOffsetRange",
+            Media::SUBTYPE_RAM_DISK => "RamDisk",
+            _ => "UnknownMedia",
+        },
+        r_efi::protocols::device_path::TYPE_END => match protocol.sub_type {
+            End::SUBTYPE_INSTANCE => "EndInstance",
+            End::SUBTYPE_ENTIRE => "EndEntire",
+            _ => "UnknownEnd",
+        },
+        _ => "UnknownType",
+    }
+}
+
 /// Prints out the data of each device path node as a string.
 ///
 /// Returns a string containing the data from each node concatenated together.
@@ -351,15 +387,29 @@ pub fn device_path_data_to_string(device_path: *const efi::protocols::device_pat
     let mut result = String::new();
 
     // Create the walker and iterate over nodes
-    unsafe {
-        let walker = DevicePathWalker::new(device_path);
-        for node in walker {
-            // Push node header info using display formatting
-            result.push_str(&format!("{:?} ", node.header));
-            // Convert node data bytes to hex string
-            for byte in node.data {
-                result.push_str(&format!("{:02x}", byte));
+    let mut walker = unsafe { DevicePathWalker::new(device_path) }.peekable();
+
+    while let Some(node) = walker.next() {
+        // Check if there's another node ahead
+        if walker.peek().is_none() {
+            break; // Skip the last node
+        }
+
+        // Push node header info using display formatting
+        result.push_str(protocol_to_subtype_str(node.header));
+        result.push_str(": ");
+
+        // Convert node data bytes to hex string
+        for (i, byte) in node.data.iter().enumerate() {
+            if i > 0 {
+                result.push_str(",");
             }
+            result.push_str(&format!("0x{:02x}", byte));
+        }
+
+        // Add a slash only if node.data is not empty
+        if !node.data.is_empty() {
+            result.push_str("/");
         }
     }
 
