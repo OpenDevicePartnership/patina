@@ -941,9 +941,7 @@ pub fn init_memory_support(hob_list: &HobList) {
     // Caution: care must be taken to ensure no allocations occur after this call but before the allocation hobs are
     // processed - otherwise they could occupy space corresponding to a pre-DXE memory allocation that has not yet been
     // reserved.
-    log::info!("GCD - Before Resource Descriptors:\n{}", GCD);
     gcd::add_hob_resource_descriptors_to_gcd(hob_list);
-    log::info!("GCD - After Resource Descriptors:\n{}", GCD);
 
     // process pre-DXE allocations from the Hob list
     process_hob_allocations(hob_list);
@@ -999,7 +997,6 @@ pub fn init_memory_support(hob_list: &HobList) {
             }
         }
     }
-    log::info!("GCD - After bucket init:\n{}", GCD);
 }
 
 pub fn install_memory_services(bs: &mut efi::BootServices) {

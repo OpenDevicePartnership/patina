@@ -8,7 +8,7 @@
 //!
 use crate::pecoff::{self, UefiPeInfo};
 use alloc::{boxed::Box, slice, vec, vec::Vec};
-use core::{fmt::Display, ptr, slice::from_raw_parts};
+use core::{fmt::Display, ptr};
 use uefi_sdk::error::EfiError;
 
 use mu_pi::{dxe_services, hob};
@@ -25,7 +25,7 @@ use crate::{
     allocator::DEFAULT_ALLOCATION_STRATEGY, ensure, error, events::EVENT_DB, protocol_db, protocol_db::INVALID_HANDLE,
     tpl_lock,
 };
-use paging::{aarch64::VMSAv864TableDescriptor, page_allocator::PageAllocator, MemoryAttributes, PageTable, PtError, PtResult};
+use paging::{page_allocator::PageAllocator, MemoryAttributes, PageTable, PtError, PtResult};
 use uefi_cpu::paging::create_cpu_paging;
 
 use mu_pi::hob::{Hob, HobList};
@@ -451,9 +451,8 @@ impl GCD {
     // as we need to allocate memory for the page table structure
     pub(crate) fn init_paging(&mut self, hob_list: &HobList) {
         log::info!("Initializing paging for the GCD");
-        log::info!("{}:{}", function!(), line!());
         let mut page_allocator = PagingAllocator::new();
-        log::info!("{}:{}", function!(), line!());
+
         // We need to explicitly allocate the root page below 4GB for x86 MP Services.
         // See comment in PagingAllocator.allocate_pages
         match self.allocate_memory_space(
@@ -465,7 +464,6 @@ impl GCD {
             None,
         ) {
             Ok(addr) => {
-                log::info!("{}:{} root_page: {addr:x?}", function!(), line!());
                 page_allocator.root_page = Some(addr as u64);
             }
             Err(e) => {
@@ -479,7 +477,6 @@ impl GCD {
                     None,
                 ) {
                     Ok(addr) => {
-                        log::info!("{}:{} root_page: {addr:x?}", function!(), line!());
                         page_allocator.root_page = Some(addr as u64);
                     }
                     Err(e) => {
@@ -510,26 +507,22 @@ impl GCD {
                 panic!("Failed to allocate pages for the initial page table page pool: {:?}", e);
             }
         }
-        log::info!("{}:{}", function!(), line!());
-        log::info!("GCD - Before page_table_create:\n{}", self);
+
         let mut page_table = create_cpu_paging(page_allocator).expect("Failed to create CPU page table");
-        log::info!("{}:{} page_table: {:p}", function!(), line!(), page_table);
-        log::info!("GCD - After page_table_create:\n{}", self);
+
         // this is before we get allocated descriptors, so we don't need to preallocate memory here
         let mut mmio_descs: Vec<dxe_services::MemorySpaceDescriptor> = Vec::new();
         self.get_mmio_descriptors(mmio_descs.as_mut()).expect("Failed to get MMIO descriptors!");
-        log::info!("{}:{}", function!(), line!());
+
         // Before we install this page table, we need to ensure that DXE Core is mapped correctly here as well as any
         // allocated memory and MMIO. All other memory will be unmapped initially. Do allocated memory first, then the
         // DXE Core, so that we can ensure that the DXE Core is mapped correctly and not overwritten by the allocated
         // memory attrs. We also need to preallocate memory here so that we do not allocate memory after getting the
         // descriptors
-        log::info!("{}:{}", function!(), line!());
         let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
             Vec::with_capacity(self.memory_descriptor_count() + 10);
-        log::info!("{}:{}", function!(), line!());
         self.get_allocated_memory_descriptors(&mut descriptors).expect("Failed to get allocated memory descriptors!");
-        log::info!("{}:{}", function!(), line!());
+
         let mut needed_pages: u64 = 0;
         for desc in &descriptors {
             needed_pages += match page_table.get_page_table_pages_for_size(desc.base_address, desc.length) {
@@ -575,19 +568,15 @@ impl GCD {
 
         // we just allocated more memory, so now we need to fetch the allocated descriptors again to make sure we
         // have all the memory we need to map
-        log::info!("{}:{}", function!(), line!());
         descriptors.clear();
         self.get_allocated_memory_descriptors(&mut descriptors).expect("Failed to get allocated memory descriptors!");
-        log::info!("{}:{}", function!(), line!());
 
         self.page_table = Some(page_table);
-
-        log::info!("GCD - Before mapping allocations:\n{}", self);
 
         // now map the memory regions, keeping any cache attributes set in the GCD descriptors
         for desc in descriptors {
             if let Some(page_table) = self.page_table.as_mut() {
-                log::info!(
+                log::trace!(
                     target: "paging",
                     "Mapping memory region {:#x?} of length {:#x?} with attributes {:#x?}",
                     desc.base_address,
@@ -676,7 +665,7 @@ impl GCD {
                 }
             };
 
-            log::info!(
+            log::trace!(
                 target: "paging",
                 "Mapping DXE Core image memory region {:#x?} of length {:#x?} with attributes {:#x?}",
                 section_base_address,
@@ -731,58 +720,7 @@ impl GCD {
             page_table.install_page_table().expect("Failed to install the page table");
         }
 
-        let foo = {unsafe {*(0x80000000 as *const u128)}};
-        log::info!("{foo:x?}");
-
         log::info!("Paging initialized for the GCD");
-
-        const TEST_ADDRESS:usize = 0x855267a8;
-        let root_table = unsafe { from_raw_parts(0x80000000 as *const VMSAv864TableDescriptor, 512) };
-        log::info!("trying to log table for test address {TEST_ADDRESS:x?}");
-        let level0_idx = (TEST_ADDRESS >> 39) & 0x1FF;
-        let level1_idx = (TEST_ADDRESS >> 30) & 0x1FF;
-        let level2_idx = (TEST_ADDRESS >> 21) & 0x1FF;
-        let level3_idx = (TEST_ADDRESS >> 12) & 0x1FF;
-
-        log::info!("level_0 idx: {level0_idx:x?}");
-        log::info!("level_1 idx: {level1_idx:x?}");
-        log::info!("level_2 idx: {level2_idx:x?}");
-        log::info!("level_3 idx: {level3_idx:x?}");
-
-        log::info!("\nlevel_0 table:");
-        for (idx, entry) in root_table.iter().enumerate() {
-            if entry.get_u64() != 0 {
-                log::info!("idx: {idx:x?}: table-base: {:x?} entry:{:x?}", entry.get_canonical_page_table_base(), entry);
-            }
-        }
-
-        let level_0_entry = root_table[level0_idx];
-        if level_0_entry.is_valid_table() {
-            let level_1_base_address: u64 = level_0_entry.get_canonical_page_table_base().into();
-            log::info!("\nlevel_1 table (at {:x?})", level_0_entry.get_canonical_page_table_base());
-            let level_1_table = unsafe { from_raw_parts(level_1_base_address as *const VMSAv864TableDescriptor, 512) };
-            for (idx, entry) in level_1_table.iter().enumerate() {
-                if entry.get_u64() != 0 {
-                    log::info!("idx: {idx:x?}: table-base: {:x?} entry:{:x?}", entry.get_canonical_page_table_base(), entry);
-                } else if idx == level1_idx {
-                    log::info!("idx: {idx:x?}: expected but missing: {}", entry.get_u64());
-                }
-            }
-            let level_1_entry = level_1_table[level1_idx];
-            if level_1_entry.is_valid_table() {
-                let level_2_base_address: u64 = level_1_entry.get_canonical_page_table_base().into();
-                log::info!("\nlevel_2 table (at {:x?})", level_1_entry.get_canonical_page_table_base());
-                let level_2_table = unsafe { from_raw_parts(level_2_base_address as *const VMSAv864TableDescriptor, 512) };
-                for (idx, entry) in level_2_table.iter().enumerate() {
-                    if entry.get_u64() != 0 {
-                        log::info!("idx: {idx:x?}: table-base: {:x?} entry:{:x?}", entry.get_canonical_page_table_base(), entry);
-                    } else if idx == level2_idx {
-                        log::info!("idx: {idx:x?}: expected but missing: {}", entry.get_u64());
-                    }
-                }
-            }
-        }
-
     }
 
     /// This service adds reserved memory, system memory, or memory-mapped I/O resources to the global coherency domain of the processor.

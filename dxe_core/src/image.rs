@@ -438,14 +438,6 @@ fn remove_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateI
                         debug_assert!(false);
                         continue;
                     };
-                // this may be verbose to log, but we also have a lot of errors historically here, so let's log at info level
-                // for now
-                log::info!(
-                    "Removing image memory protections on {:#X} for len {:#X} with attributes {:#X}",
-                    section_base_addr,
-                    aligned_virtual_size,
-                    attributes
-                );
                 if let Err(status) =
                     dxe_services::core_set_memory_space_attributes(section_base_addr, aligned_virtual_size, attributes)
                 {

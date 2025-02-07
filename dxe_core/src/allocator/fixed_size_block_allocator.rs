@@ -14,13 +14,12 @@ extern crate alloc;
 use super::{AllocationStrategy, DEFAULT_ALLOCATION_STRATEGY};
 
 use crate::{gcd::SpinLockedGcd, tpl_lock};
-use mu_rust_helpers::function;
 use uefi_sdk::error::EfiError;
 
 use core::{
     alloc::{AllocError, Allocator, GlobalAlloc, Layout},
     cmp::max,
-    fmt::{self, Alignment, Display},
+    fmt::{self, Display},
     mem::{align_of, size_of},
     ops::Range,
     ptr::{self, slice_from_raw_parts_mut, NonNull},
@@ -297,35 +296,29 @@ impl FixedSizeBlockAllocator {
     ///
     /// Returns [`core::ptr::null_mut()`] on failure to allocate.
     pub fn alloc(&mut self, layout: Layout) -> *mut u8 {
-        let res = {
-            self.stats.pool_allocation_calls += 1;
-            match list_index(&layout) {
-                Some(index) => {
-                    match self.list_heads[index].take() {
-                        Some(node) => {
-                            self.list_heads[index] = node.next.take();
-                            node as *mut BlockListNode as *mut u8
-                        }
-                        None => {
-                            // no block exists in list => allocate new block
-                            let block_size = BLOCK_SIZES[index];
-                            // only works if all block sizes are a power of 2
-                            let block_align = block_size;
-                            let layout = match Layout::from_size_align(block_size, block_align) {
-                                Ok(layout) => layout,
-                                Err(_) => return core::ptr::null_mut(),
-                            };
-                            self.fallback_alloc(layout)
-                        }
+        self.stats.pool_allocation_calls += 1;
+        match list_index(&layout) {
+            Some(index) => {
+                match self.list_heads[index].take() {
+                    Some(node) => {
+                        self.list_heads[index] = node.next.take();
+                        node as *mut BlockListNode as *mut u8
+                    }
+                    None => {
+                        // no block exists in list => allocate new block
+                        let block_size = BLOCK_SIZES[index];
+                        // only works if all block sizes are a power of 2
+                        let block_align = block_size;
+                        let layout = match Layout::from_size_align(block_size, block_align) {
+                            Ok(layout) => layout,
+                            Err(_) => return core::ptr::null_mut(),
+                        };
+                        self.fallback_alloc(layout)
                     }
                 }
-                None => self.fallback_alloc(layout),
             }
-        };
-        if res as u64 <= 0x855297a0 && res as u64 + layout.size() as u64 > 0x855297a0 {
-            log::info!("{}:{} contains 0x855297a0 {res:x?}, {:x?}", function!(), line!(), layout.size());
+            None => self.fallback_alloc(layout),
         }
-        res
     }
 
     /// Allocates and returns a NonNull byte slice for the given layout.
@@ -456,9 +449,6 @@ impl FixedSizeBlockAllocator {
                 _ => efi::Status::OUT_OF_RESOURCES,
             })?;
 
-        if 0x855297a0 >= start_address && start_address + pages * ALIGNMENT > 0x855297a0 {
-            log::info!("{}:{} page containing 0x855297a0 allocated.", function!(), line!());
-        }
         let allocation = slice_from_raw_parts_mut(start_address as *mut u8, pages * ALIGNMENT);
         let allocation = NonNull::new(allocation).ok_or(efi::Status::OUT_OF_RESOURCES)?;
 
