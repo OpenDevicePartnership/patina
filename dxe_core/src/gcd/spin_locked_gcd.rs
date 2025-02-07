@@ -8,7 +8,7 @@
 //!
 use crate::pecoff::{self, UefiPeInfo};
 use alloc::{boxed::Box, slice, vec, vec::Vec};
-use core::{fmt::Display, ptr};
+use core::{fmt::Display, ptr, slice::from_raw_parts};
 use uefi_sdk::error::EfiError;
 
 use mu_pi::{dxe_services, hob};
@@ -25,7 +25,7 @@ use crate::{
     allocator::DEFAULT_ALLOCATION_STRATEGY, ensure, error, events::EVENT_DB, protocol_db, protocol_db::INVALID_HANDLE,
     tpl_lock,
 };
-use paging::{page_allocator::PageAllocator, MemoryAttributes, PageTable, PtError, PtResult};
+use paging::{aarch64::VMSAv864TableDescriptor, page_allocator::PageAllocator, MemoryAttributes, PageTable, PtError, PtResult};
 use uefi_cpu::paging::create_cpu_paging;
 
 use mu_pi::hob::{Hob, HobList};
@@ -583,7 +583,7 @@ impl GCD {
         // now map the memory regions, keeping any cache attributes set in the GCD descriptors
         for desc in descriptors {
             if let Some(page_table) = self.page_table.as_mut() {
-                log::trace!(
+                log::info!(
                     target: "paging",
                     "Mapping memory region {:#x?} of length {:#x?} with attributes {:#x?}",
                     desc.base_address,
@@ -731,6 +731,54 @@ impl GCD {
         log::info!("{foo:x?}");
 
         log::info!("Paging initialized for the GCD");
+
+        const TEST_ADDRESS:usize = 0x855267a8;  
+        let root_table = unsafe { from_raw_parts(0x80000000 as *const VMSAv864TableDescriptor, 512) };
+        log::info!("trying to log table for test address {TEST_ADDRESS:x?}");
+        let level0_idx = (TEST_ADDRESS >> 39) & 0x1FF;
+        let level1_idx = (TEST_ADDRESS >> 30) & 0x1FF;
+        let level2_idx = (TEST_ADDRESS >> 21) & 0x1FF;
+        let level3_idx = (TEST_ADDRESS >> 12) & 0x1FF;
+
+        log::info!("level_0 idx: {level0_idx:x?}");
+        log::info!("level_1 idx: {level1_idx:x?}");
+        log::info!("level_2 idx: {level2_idx:x?}");
+        log::info!("level_3 idx: {level3_idx:x?}");
+        
+        log::info!("\nlevel_0 table:");
+        for (idx, entry) in root_table.iter().enumerate() {
+            if entry.get_u64() != 0 {
+                log::info!("idx: {idx:x?}: table-base: {:x?} entry:{:x?}", entry.get_canonical_page_table_base(), entry);
+            }
+        }
+
+        let level_0_entry = root_table[level0_idx];
+        if level_0_entry.is_valid_table() {
+            let level_1_base_address: u64 = level_0_entry.get_canonical_page_table_base().into();
+            log::info!("\nlevel_1 table (at {:x?})", level_0_entry.get_canonical_page_table_base());
+            let level_1_table = unsafe { from_raw_parts(level_1_base_address as *const VMSAv864TableDescriptor, 512) };
+            for (idx, entry) in level_1_table.iter().enumerate() {
+                if entry.get_u64() != 0 {
+                    log::info!("idx: {idx:x?}: table-base: {:x?} entry:{:x?}", entry.get_canonical_page_table_base(), entry);
+                } else if idx == level1_idx {
+                    log::info!("idx: {idx:x?}: expected but missing: {}", entry.get_u64());
+                }
+            }
+            let level_1_entry = level_1_table[level1_idx];
+            if level_1_entry.is_valid_table() {
+                let level_2_base_address: u64 = level_1_entry.get_canonical_page_table_base().into();
+                log::info!("\nlevel_2 table (at {:x?})", level_1_entry.get_canonical_page_table_base());
+                let level_2_table = unsafe { from_raw_parts(level_2_base_address as *const VMSAv864TableDescriptor, 512) };
+                for (idx, entry) in level_2_table.iter().enumerate() {
+                    if entry.get_u64() != 0 {
+                        log::info!("idx: {idx:x?}: table-base: {:x?} entry:{:x?}", entry.get_canonical_page_table_base(), entry);
+                    } else if idx == level2_idx {
+                        log::info!("idx: {idx:x?}: expected but missing: {}", entry.get_u64());
+                    }
+                }
+            }
+        }
+
     }
 
     /// This service adds reserved memory, system memory, or memory-mapped I/O resources to the global coherency domain of the processor.
