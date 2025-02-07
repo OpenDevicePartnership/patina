@@ -302,17 +302,14 @@ extern "efiapi" fn create_performance_measurement(
             }
         }
         PerfId::MODULE_DB_END => {
-            if let Ok((module_name, guid)) = get_module_info_from_handle(
+            if let Ok((Some(module_name), guid)) = get_module_info_from_handle(
                 &BOOT_SERVICES,
                 caller_identifier as *mut c_void,
                 controller_handle,
                 perf_id,
             ) {
-                if let Some(module_name) = module_name {
-                    let record =
-                        GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, &module_name);
-                    _ = &FBPT.lock().add_record(record);
-                }
+                let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, &module_name);
+                _ = &FBPT.lock().add_record(record);
             }
             // TODO something to do if address is not 0 need example to continue development. (https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/194)
         }
@@ -461,7 +458,7 @@ fn get_module_info_from_handle(
         {
             let device_path_protocol = unsafe { boot_services.handle_protocol(controller_handle, &DevicePath) };
             if let Ok(device_path_protocol) = device_path_protocol {
-                let device_path_string = device_path_data_to_string(device_path_protocol);
+                let device_path_string = unsafe { device_path_data_to_string(device_path_protocol) };
                 return Ok((Some(device_path_string), guid));
             }
         }

@@ -380,10 +380,20 @@ fn protocol_to_subtype_str(protocol: efi::protocols::device_path::Protocol) -> &
     }
 }
 
-/// Prints out the data of each device path node as a string.
-///
 /// Returns a string containing the data from each node concatenated together.
-pub fn device_path_data_to_string(device_path: *const efi::protocols::device_path::Protocol) -> alloc::string::String {
+///
+/// # Safety
+///
+/// The caller must ensure that:
+/// - `device_path` points to a valid UEFI device path structure in memory
+/// - The device path is properly terminated with an end node
+/// - The device path nodes contain valid length fields that correctly represent their size
+/// - The memory referenced by the device path remains valid for the duration of this function call
+/// - Each node's length field accurately reflects the size of its data section
+///
+pub unsafe fn device_path_data_to_string(
+    device_path: *const efi::protocols::device_path::Protocol,
+) -> alloc::string::String {
     let mut result = String::new();
 
     // Create the walker and iterate over nodes
@@ -402,14 +412,14 @@ pub fn device_path_data_to_string(device_path: *const efi::protocols::device_pat
         // Convert node data bytes to hex string
         for (i, byte) in node.data.iter().enumerate() {
             if i > 0 {
-                result.push_str(",");
+                result.push(',');
             }
             result.push_str(&format!("0x{:02x}", byte));
         }
 
         // Add a slash only if node.data is not empty
         if !node.data.is_empty() {
-            result.push_str("/");
+            result.push('/');
         }
     }
 
