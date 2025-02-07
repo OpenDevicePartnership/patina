@@ -345,7 +345,7 @@ impl Iterator for DevicePathWalker {
     }
 }
 
-// cSpell marks certain words here as mispelled, even though they are technically spelled correctly
+// cSpell marks certain words here as misspelled, even though they are technically spelled correctly
 // cSpell:disable
 fn protocol_to_subtype_str(protocol: efi::protocols::device_path::Protocol) -> &'static str {
     match protocol.r#type {
