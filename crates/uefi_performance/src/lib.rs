@@ -460,10 +460,8 @@ fn get_module_info_from_handle(
             || perf_id == PerfId::MODULE_DB_STOP_END
         {
             let device_path_protocol = unsafe { boot_services.handle_protocol(controller_handle, &DevicePath) };
-            // log::info!("bad");
             if let Ok(device_path_protocol) = device_path_protocol {
                 let device_path_string = device_path_data_to_string(device_path_protocol);
-                // log::info!("perf_id = {:?}, device_path_string = {:?}", perf_id, device_path_string);
                 return Ok((Some(device_path_string), guid));
             }
         }
