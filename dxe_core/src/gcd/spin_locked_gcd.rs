@@ -445,7 +445,7 @@ impl GCD {
             dxe_services::GcdMemoryType::SystemMemory,
             0,
             MEMORY_BLOCK_SLICE_SIZE,
-            protocol_db::DXE_CORE_HANDLE,
+            protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
             None,
         )?;
         Ok(idx)

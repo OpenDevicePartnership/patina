@@ -813,10 +813,10 @@ fn authenticate_image(
 
 /// Loads the image specified by the device path (not yet supported) or slice.
 /// * parent_image_handle - the handle of the image that is loading this one.
-/// * device_path - optional device path describing where to load the image from.
+/// * file_path - optional device path describing where to load the image from.
 /// * image - optional slice containing the image data.
 ///
-/// One of `device_path` or `image` must be specified.
+/// One of `file_path` or `image` must be specified.
 /// returns the image handle of the freshly loaded image.
 pub fn core_load_image(
     boot_policy: bool,
@@ -849,10 +849,15 @@ pub fn core_load_image(
             {
                 (image.to_vec(), false, fv_handle, 0)
             } else {
-                // This means that file_path is supposed to be a device path, but the device path isn't installed on any handle
-
-                // (i.e. it doesn't correspond to anything that actually exists in the system)
-                (image.to_vec(), false, protocol_db::INVALID_HANDLE, 0)
+                // This means that file_path is not an FV handle - get the device path handle in general
+                if let Ok((_device_path, device_handle)) =
+                    core_locate_device_path(efi::protocols::device_path::PROTOCOL_GUID, file_path)
+                {
+                    (image.to_vec(), false, device_handle, 0)
+                } else {
+                    // (i.e. it doesn't correspond to anything that actually exists in the system)
+                    (image.to_vec(), false, protocol_db::INVALID_HANDLE, 0)
+                }
             }
         }
         None => get_buffer_by_file_path(boot_policy, file_path)?,
