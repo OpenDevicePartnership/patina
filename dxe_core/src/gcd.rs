@@ -233,6 +233,9 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                         split_range.end.saturating_sub(split_range.start) as usize,
                         attributes,
                     ) {
+                        // NotReady is expected result here since page table is not yet initialized. In this case GCD
+                        // will be updated with the appropriate attributes which will then be sync'd to page table
+                        // once it is initialized.
                         Err(EfiError::NotReady) => (),
                         _ => {
                             panic!(
