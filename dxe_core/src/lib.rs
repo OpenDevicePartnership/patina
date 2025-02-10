@@ -397,7 +397,7 @@ where
         }
         tpl_lock::init_boot_services(boot_services_ptr);
 
-        memory_attributes_table::init_memory_attributes_table_support();
+        //memory_attributes_table::init_memory_attributes_table_support();
 
         // This is currently commented out as it is breaking top of tree booting Q35 as qemu64 does not support
         // reading the time stamp counter in the way done in this code and results in a divide by zero exception.
