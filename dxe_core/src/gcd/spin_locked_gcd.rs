@@ -435,8 +435,12 @@ impl GCD {
         self.memory_blocks.replace(memory_blocks);
 
         let idx = self.add_memory_space(memory_type, base_address, len, capabilities)?;
-        match self.set_memory_space_attributes(base_address, len, (MemoryAttributes::Writeback | MemoryAttributes::ExecuteProtect).bits()) {
-            Ok(_) | Err(EfiError::NotReady)=> Ok(()),
+        match self.set_memory_space_attributes(
+            base_address,
+            len,
+            (MemoryAttributes::Writeback | MemoryAttributes::ExecuteProtect).bits(),
+        ) {
+            Ok(_) | Err(EfiError::NotReady) => Ok(()),
             Err(err) => Err(err),
         }?;
 

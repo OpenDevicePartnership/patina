@@ -192,7 +192,6 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         }
 
         if gcd_mem_type != GcdMemoryType::NonExistent {
-
             let memory_attributes = {
                 if let Hob::ResourceDescriptorV2(res_desc) = hob {
                     let mut memory_attributes = MemoryAttributes::from_bits_truncate(res_desc.attributes);
@@ -238,7 +237,9 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                         _ => {
                             panic!(
                                 "GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}",
-                                attributes, split_range.start, split_range.end.saturating_sub(split_range.start)
+                                attributes,
+                                split_range.start,
+                                split_range.end.saturating_sub(split_range.start)
                             );
                         }
                     }

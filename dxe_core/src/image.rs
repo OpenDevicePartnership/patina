@@ -842,22 +842,16 @@ pub fn core_load_image(
 
     let (image_to_load, from_fv, device_handle, authentication_status) = match image {
         Some(image) => {
-            // If the buffer is specified, then the device_handle and device_path are set to the input file_path
-            // Check if this is coming from a FV device (if so, then core_locate_device_path(FV) will return OK)
-            if let Ok((_device_path, fv_handle)) =
-                core_locate_device_path(mu_pi::protocols::firmware_volume::PROTOCOL_GUID, file_path)
+            // If the buffer is specified and the device_path resolves with core_locate_device_path, then use the
+            // resolved handle as the device_handle. Note: the associated device path for the device_handle will
+            // likely be shorter than file_path.
+            if let Ok((_device_path, device_handle)) =
+                core_locate_device_path(efi::protocols::device_path::PROTOCOL_GUID, file_path)
             {
-                (image.to_vec(), false, fv_handle, 0)
+                (image.to_vec(), false, device_handle, 0)
             } else {
-                // This means that file_path is not an FV handle - get the device path handle in general
-                if let Ok((_device_path, device_handle)) =
-                    core_locate_device_path(efi::protocols::device_path::PROTOCOL_GUID, file_path)
-                {
-                    (image.to_vec(), false, device_handle, 0)
-                } else {
-                    // (i.e. it doesn't correspond to anything that actually exists in the system)
-                    (image.to_vec(), false, protocol_db::INVALID_HANDLE, 0)
-                }
+                // (i.e. it doesn't correspond to anything that actually exists in the system)
+                (image.to_vec(), false, protocol_db::INVALID_HANDLE, 0)
             }
         }
         None => get_buffer_by_file_path(boot_policy, file_path)?,
