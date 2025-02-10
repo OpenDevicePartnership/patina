@@ -434,16 +434,25 @@ impl GCD {
         memory_blocks.add(unallocated_memory_space).map_err(|_| EfiError::OutOfResources)?;
         self.memory_blocks.replace(memory_blocks);
 
-        self.add_memory_space(memory_type, base_address, len, capabilities)?;
+        let idx = self.add_memory_space(memory_type, base_address, len, capabilities)?;
+        match self.set_memory_space_attributes(
+            base_address,
+            len,
+            (MemoryAttributes::Writeback | MemoryAttributes::ExecuteProtect).bits(),
+        ) {
+            Ok(_) | Err(EfiError::NotReady) => Ok(()),
+            Err(err) => Err(err),
+        }?;
 
         self.allocate_memory_space(
             AllocateType::Address(base_address),
             dxe_services::GcdMemoryType::SystemMemory,
             0,
             MEMORY_BLOCK_SLICE_SIZE,
-            1 as _,
+            protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
             None,
-        )
+        )?;
+        Ok(idx)
     }
 
     // Take control of our own destiny and create a page table that the GCD controls
