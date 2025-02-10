@@ -420,7 +420,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}] Initializing memory blocks at {:#x}", function!(), base_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
-        log::trace!(target: "allocations", "[{}]   Capabilities: {:#x}\n", function!(), capabilities);
+        log::trace!(target: "allocations", "[{}]   Capabilities: {:#x}", function!(), capabilities);
 
         let unallocated_memory_space = MemoryBlock::Unallocated(dxe_services::MemorySpaceDescriptor {
             memory_type: dxe_services::GcdMemoryType::NonExistent,
@@ -3912,8 +3912,13 @@ mod tests {
         let address = mem.as_ptr() as usize;
         let mut gcd = GCD::new(48);
         unsafe {
-            gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
-                .unwrap();
+            gcd.add_memory_space(
+                dxe_services::GcdMemoryType::SystemMemory,
+                address,
+                MEMORY_BLOCK_SLICE_SIZE,
+                efi::MEMORY_WB,
+            )
+            .unwrap();
         }
         (gcd, address)
     }
@@ -3949,7 +3954,7 @@ mod tests {
     }
 
     unsafe fn get_memory(size: usize) -> &'static mut [u8] {
-        let addr = alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 8).unwrap());
+        let addr = alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, UEFI_PAGE_SIZE).unwrap());
         core::slice::from_raw_parts_mut(addr, size)
     }
 
@@ -3992,8 +3997,13 @@ mod tests {
             let address = mem.as_ptr() as usize;
             GCD.init(48, 16);
             unsafe {
-                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
-                    .unwrap();
+                GCD.add_memory_space(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    MEMORY_BLOCK_SLICE_SIZE,
+                    efi::MEMORY_WB,
+                )
+                .unwrap();
             }
 
             GCD.add_io_space(dxe_services::GcdIoType::Io, 0, 100).unwrap();
@@ -4019,8 +4029,13 @@ mod tests {
             let address = mem.as_ptr() as usize;
             GCD.init(48, 16);
             unsafe {
-                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
-                    .unwrap();
+                GCD.add_memory_space(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    MEMORY_BLOCK_SLICE_SIZE,
+                    efi::MEMORY_WB,
+                )
+                .unwrap();
             }
 
             assert!(CALLBACK_INVOKED.load(core::sync::atomic::Ordering::SeqCst));
@@ -4045,11 +4060,20 @@ mod tests {
             let address = align_up(mem.as_ptr() as u64, 0x1000).unwrap() as usize;
             GCD.init(48, 16);
             unsafe {
-                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
-                    .unwrap();
-            }
-            GCD.set_memory_space_capabilities(address, 0x1000, efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP)
+                GCD.add_memory_space(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    MEMORY_BLOCK_SLICE_SIZE,
+                    efi::MEMORY_WB,
+                )
                 .unwrap();
+            }
+            GCD.set_memory_space_capabilities(
+                address,
+                0x1000,
+                efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP | efi::MEMORY_WB,
+            )
+            .unwrap();
 
             assert!(CALLBACK2.load(core::sync::atomic::Ordering::SeqCst));
         });
@@ -4066,7 +4090,13 @@ mod tests {
             let layout = Layout::from_size_align(GCD_SIZE, 0x1000).unwrap();
             let base = unsafe { std::alloc::System.alloc(layout) as u64 };
             unsafe {
-                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, base as usize, GCD_SIZE, 0).unwrap();
+                GCD.add_memory_space(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    base as usize,
+                    GCD_SIZE,
+                    efi::MEMORY_WB,
+                )
+                .unwrap();
             }
 
             println!("GCD base: {:#x?}", base);
@@ -4107,7 +4137,13 @@ mod tests {
             let layout = Layout::from_size_align(GCD_SIZE, 0x1000).unwrap();
             let base = unsafe { std::alloc::System.alloc(layout) as u64 };
             unsafe {
-                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, base as usize, GCD_SIZE, 0).unwrap();
+                GCD.add_memory_space(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    base as usize,
+                    GCD_SIZE,
+                    efi::MEMORY_WB,
+                )
+                .unwrap();
             }
 
             println!("GCD base: {:#x?}", base);

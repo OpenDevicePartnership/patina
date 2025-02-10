@@ -268,6 +268,7 @@ mod tests {
     };
 
     use mu_pi::dxe_services;
+    use uefi_sdk::base::UEFI_PAGE_SIZE;
 
     use crate::{
         allocator::{FixedSizeBlockAllocator, DEFAULT_ALLOCATION_STRATEGY},
@@ -279,10 +280,11 @@ mod tests {
     fn page_change_callback(_allocator: &mut FixedSizeBlockAllocator) {}
 
     fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
-        let layout = Layout::from_size_align(size, 0x1000).unwrap();
+        let layout = Layout::from_size_align(size, UEFI_PAGE_SIZE).unwrap();
         let base = unsafe { System.alloc(layout) as u64 };
         unsafe {
-            gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, base as usize, size, 0).unwrap();
+            gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, base as usize, size, efi::MEMORY_WB)
+                .unwrap();
         }
         base
     }
