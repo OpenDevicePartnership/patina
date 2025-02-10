@@ -458,9 +458,8 @@ impl GCD {
     // Take control of our own destiny and create a page table that the GCD controls
     // This must be done after the GCD is initialized and memory services are available,
     // as we need to allocate memory for the page table structure
-    pub(crate) fn init_paging(&mut self, hob_list: &HobList) {
+    pub(crate) fn init_paging(&mut self, hob_list: &HobList, mut page_allocator: PagingAllocator) {
         log::info!("Initializing paging for the GCD");
-        let mut page_allocator = PagingAllocator::new();
 
         // We need to explicitly allocate the root page below 4GB for x86 MP Services.
         // See comment in PagingAllocator.allocate_pages
@@ -2297,7 +2296,7 @@ impl SpinLockedGcd {
     }
 
     pub(crate) fn init_paging(&self, hob_list: &HobList) {
-        self.memory.lock().init_paging(hob_list)
+        self.memory.lock().init_paging(hob_list, PagingAllocator::new());
     }
 
     /// This service adds reserved memory, system memory, or memory-mapped I/O resources to the global coherency domain of the processor.
