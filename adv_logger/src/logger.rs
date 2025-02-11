@@ -17,6 +17,7 @@ use spin::Once;
 use uefi_sdk::{log::Format, serial::SerialIO};
 
 // Exists for the debugger to find the log buffer.
+#[used]
 static mut DBG_ADV_LOG_BUFFER: u64 = 0;
 
 /// The logger for memory/hardware port logging.
