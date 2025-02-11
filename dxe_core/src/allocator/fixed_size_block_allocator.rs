@@ -752,15 +752,15 @@ mod tests {
     use core::alloc::GlobalAlloc;
     use std::alloc::System;
 
-    use uefi_sdk::uefi_pages_to_size;
+    use uefi_sdk::{base::UEFI_PAGE_SIZE, uefi_pages_to_size};
 
     use super::*;
 
     fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
-        let layout = Layout::from_size_align(size, 0x1000).unwrap();
+        let layout = Layout::from_size_align(size, UEFI_PAGE_SIZE).unwrap();
         let base = unsafe { System.alloc(layout) as u64 };
         unsafe {
-            gcd.add_memory_space(GcdMemoryType::SystemMemory, base as usize, size, 0).unwrap();
+            gcd.add_memory_space(GcdMemoryType::SystemMemory, base as usize, size, efi::MEMORY_WB).unwrap();
         }
         base
     }

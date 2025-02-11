@@ -420,7 +420,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}] Initializing memory blocks at {:#x}", function!(), base_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
-        log::trace!(target: "allocations", "[{}]   Capabilities: {:#x}\n", function!(), capabilities);
+        log::trace!(target: "allocations", "[{}]   Capabilities: {:#x}", function!(), capabilities);
 
         let unallocated_memory_space = MemoryBlock::Unallocated(dxe_services::MemorySpaceDescriptor {
             memory_type: dxe_services::GcdMemoryType::NonExistent,
@@ -434,24 +434,32 @@ impl GCD {
         memory_blocks.add(unallocated_memory_space).map_err(|_| EfiError::OutOfResources)?;
         self.memory_blocks.replace(memory_blocks);
 
-        self.add_memory_space(memory_type, base_address, len, capabilities)?;
+        let idx = self.add_memory_space(memory_type, base_address, len, capabilities)?;
+        match self.set_memory_space_attributes(
+            base_address,
+            len,
+            (MemoryAttributes::Writeback | MemoryAttributes::ExecuteProtect).bits(),
+        ) {
+            Ok(_) | Err(EfiError::NotReady) => Ok(()),
+            Err(err) => Err(err),
+        }?;
 
         self.allocate_memory_space(
             AllocateType::Address(base_address),
             dxe_services::GcdMemoryType::SystemMemory,
             0,
             MEMORY_BLOCK_SLICE_SIZE,
-            1 as _,
+            protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
             None,
-        )
+        )?;
+        Ok(idx)
     }
 
     // Take control of our own destiny and create a page table that the GCD controls
     // This must be done after the GCD is initialized and memory services are available,
     // as we need to allocate memory for the page table structure
-    pub(crate) fn init_paging(&mut self, hob_list: &HobList) {
+    pub(crate) fn init_paging(&mut self, hob_list: &HobList, mut page_allocator: PagingAllocator) {
         log::info!("Initializing paging for the GCD");
-        let mut page_allocator = PagingAllocator::new();
 
         // We need to explicitly allocate the root page below 4GB for x86 MP Services.
         // See comment in PagingAllocator.allocate_pages
@@ -2288,7 +2296,7 @@ impl SpinLockedGcd {
     }
 
     pub(crate) fn init_paging(&self, hob_list: &HobList) {
-        self.memory.lock().init_paging(hob_list)
+        self.memory.lock().init_paging(hob_list, PagingAllocator::new());
     }
 
     /// This service adds reserved memory, system memory, or memory-mapped I/O resources to the global coherency domain of the processor.
@@ -3903,8 +3911,13 @@ mod tests {
         let address = mem.as_ptr() as usize;
         let mut gcd = GCD::new(48);
         unsafe {
-            gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
-                .unwrap();
+            gcd.add_memory_space(
+                dxe_services::GcdMemoryType::SystemMemory,
+                address,
+                MEMORY_BLOCK_SLICE_SIZE,
+                efi::MEMORY_WB,
+            )
+            .unwrap();
         }
         (gcd, address)
     }
@@ -3940,7 +3953,7 @@ mod tests {
     }
 
     unsafe fn get_memory(size: usize) -> &'static mut [u8] {
-        let addr = alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 8).unwrap());
+        let addr = alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, UEFI_PAGE_SIZE).unwrap());
         core::slice::from_raw_parts_mut(addr, size)
     }
 
@@ -3983,8 +3996,13 @@ mod tests {
             let address = mem.as_ptr() as usize;
             GCD.init(48, 16);
             unsafe {
-                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
-                    .unwrap();
+                GCD.add_memory_space(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    MEMORY_BLOCK_SLICE_SIZE,
+                    efi::MEMORY_WB,
+                )
+                .unwrap();
             }
 
             GCD.add_io_space(dxe_services::GcdIoType::Io, 0, 100).unwrap();
@@ -4010,8 +4028,13 @@ mod tests {
             let address = mem.as_ptr() as usize;
             GCD.init(48, 16);
             unsafe {
-                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
-                    .unwrap();
+                GCD.add_memory_space(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    MEMORY_BLOCK_SLICE_SIZE,
+                    efi::MEMORY_WB,
+                )
+                .unwrap();
             }
 
             assert!(CALLBACK_INVOKED.load(core::sync::atomic::Ordering::SeqCst));
@@ -4036,11 +4059,20 @@ mod tests {
             let address = align_up(mem.as_ptr() as u64, 0x1000).unwrap() as usize;
             GCD.init(48, 16);
             unsafe {
-                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE, 0)
-                    .unwrap();
-            }
-            GCD.set_memory_space_capabilities(address, 0x1000, efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP)
+                GCD.add_memory_space(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    MEMORY_BLOCK_SLICE_SIZE,
+                    efi::MEMORY_WB,
+                )
                 .unwrap();
+            }
+            GCD.set_memory_space_capabilities(
+                address,
+                0x1000,
+                efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP | efi::MEMORY_WB,
+            )
+            .unwrap();
 
             assert!(CALLBACK2.load(core::sync::atomic::Ordering::SeqCst));
         });
@@ -4057,7 +4089,13 @@ mod tests {
             let layout = Layout::from_size_align(GCD_SIZE, 0x1000).unwrap();
             let base = unsafe { std::alloc::System.alloc(layout) as u64 };
             unsafe {
-                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, base as usize, GCD_SIZE, 0).unwrap();
+                GCD.add_memory_space(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    base as usize,
+                    GCD_SIZE,
+                    efi::MEMORY_WB,
+                )
+                .unwrap();
             }
 
             println!("GCD base: {:#x?}", base);
@@ -4098,7 +4136,13 @@ mod tests {
             let layout = Layout::from_size_align(GCD_SIZE, 0x1000).unwrap();
             let base = unsafe { std::alloc::System.alloc(layout) as u64 };
             unsafe {
-                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, base as usize, GCD_SIZE, 0).unwrap();
+                GCD.add_memory_space(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    base as usize,
+                    GCD_SIZE,
+                    efi::MEMORY_WB,
+                )
+                .unwrap();
             }
 
             println!("GCD base: {:#x?}", base);
