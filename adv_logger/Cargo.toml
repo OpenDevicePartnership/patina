@@ -17,3 +17,4 @@ mu_pi = { workspace = true }
 r-efi = { workspace = true }
 spin = { workspace = true }
 mu_rust_helpers = { workspace = true }
+uefi_test = { workspace = true }
