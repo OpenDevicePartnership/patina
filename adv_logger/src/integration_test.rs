@@ -1,4 +1,8 @@
-//! Integrations tests for Advanced Logger.
+//! Integration tests for Advanced Logger.
+//!
+//! These tests are intended to be run on the target hardware. They test the
+//! Advanced Logger component and the Advanced Logger protocol are functioning
+//! correctly and the the log messages are present in the memory log.
 //!
 //! ## License
 //!
