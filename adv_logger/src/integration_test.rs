@@ -17,7 +17,6 @@ use crate::memory_log;
 #[uefi_test]
 fn adv_logger_test(bs: StandardBootServices) -> uefi_test::Result {
     const DIRECT_STR: &str = "adv_logger_test: Direct log message!!!";
-    const DIRECT_CHECK: &str = "INFO - adv_logger_test: Direct log message!!!\n";
     const PROTOCOL_STR: &str = "adv_logger_test: Logged through the protocol!!!\n";
 
     // Get a reference to the advanced logger buffer. The actual transport does
@@ -27,7 +26,6 @@ fn adv_logger_test(bs: StandardBootServices) -> uefi_test::Result {
 
     u_assert!(result.is_ok(), "adv_logger_test: Failed to locate the advanced logger protocol.");
     let protocol = result.unwrap();
-    let log_info = unsafe { memory_log::AdvLoggerInfo::adopt_memory_log(protocol.log_info) };
 
     // Test that directly logging makes it to the memory buffer. Make sure this
     // message gets though by adjusting the max logging temporarily.
@@ -47,18 +45,23 @@ fn adv_logger_test(bs: StandardBootServices) -> uefi_test::Result {
     u_assert_eq!(efi_status, efi::Status::SUCCESS, "adv_logger_test: Failed to write to the advanced logger protocol.");
 
     // Check that the strings were added to the log.
+    let log_info = unsafe { memory_log::AdvLoggerInfo::adopt_memory_log(protocol.log_info) };
     u_assert!(log_info.is_some(), "adv_logger_test: Failed to adopt the memory log.");
     let log_info = log_info.unwrap();
     let mut direct_found = false;
     let mut protocol_found = false;
     for entry in log_info.iter() {
-        if entry.get_message() == DIRECT_CHECK.as_bytes() {
+        let log_str = core::str::from_utf8(entry.get_message());
+        u_assert!(log_str.is_ok(), "adv_logger_test: Failed to convert log entry to string.");
+        let log_str = log_str.unwrap();
+
+        if log_str.contains(DIRECT_STR) {
             direct_found = true;
             u_assert!(
                 entry.level == memory_log::DEBUG_LEVEL_INFO,
                 "adv_logger_test: Direct log message has incorrect level."
             );
-        } else if entry.get_message() == PROTOCOL_STR.as_bytes() {
+        } else if log_str.contains(PROTOCOL_STR) {
             protocol_found = true;
             u_assert!(direct_found, "adv_logger_test: Protocol log message found before direct log message.");
             u_assert!(
