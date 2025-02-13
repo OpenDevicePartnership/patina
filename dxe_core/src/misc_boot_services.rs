@@ -27,7 +27,6 @@ use crate::{
 
 static METRONOME_ARCH_PTR: AtomicPtr<protocols::metronome::Protocol> = AtomicPtr::new(core::ptr::null_mut());
 static WATCHDOG_ARCH_PTR: AtomicPtr<protocols::watchdog::Protocol> = AtomicPtr::new(core::ptr::null_mut());
-static EXIT_BOOT_SERVICES_CALLED: AtomicBool = AtomicBool::new(false);
 
 // TODO [BEGIN]: LOCAL (TEMP) GUID DEFINITIONS (MOVE LATER)
 
@@ -239,6 +238,8 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
 }
 
 pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) -> efi::Status {
+    static EXIT_BOOT_SERVICES_CALLED: AtomicBool = AtomicBool::new(false);
+
     log::info!("EBS initiated.");
     // Pre-exit boot services and before exit boot services are only signaled once
     if !EXIT_BOOT_SERVICES_CALLED.load(Ordering::SeqCst) {
