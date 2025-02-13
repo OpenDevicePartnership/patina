@@ -872,3 +872,33 @@ pub fn perf_start_ex(
 pub fn perf_end_ex(handle: efi::Handle, token: *const c_char, module: *const c_char, timestamp: u64, identifier: u32) {
     end_perf_measurement(handle, token, module, timestamp, identifier);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mu_pi::hob::{header, HobList, GUID_EXTENSION, MEMORY_TYPE_INFO_HOB_GUID};
+    use r_efi::efi;
+
+    #[test]
+    fn test_extract_pei_performance_records() {
+        let mut hob_list = HobList::default();
+        let pei_perf_hob = Hob::GuidHob(
+            &GuidHob {
+                header: header::Hob { r#type: GUID_EXTENSION, length: 48, reserved: 0 },
+                name: guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
+            },
+            &[
+                0x08, 0x00, 0x00, 0x00, // size_of_all_entries = 8
+                0x02, 0x00, 0x00, 0x00, // load_image_count = 2
+                0x01, 0x00, 0x00, 0x00, // _hob_is_full = true (1)
+                0x00, 0x00, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00, // 8B of record buffer data
+            ],
+        );
+        hob_list.push(pei_perf_hob);
+        let result = extract_pei_performance_records(&hob_list);
+        assert!(result.is_ok());
+        let (pei_records, pei_load_image_count) = result.unwrap();
+        assert_eq!(pei_records.size(), 8); // 8 bytes of data
+        assert_eq!(pei_load_image_count, 2);
+    }
+}

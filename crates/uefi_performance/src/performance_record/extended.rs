@@ -353,3 +353,124 @@ impl Debug for GuidQwordStringEventRecord<'_> {
             .finish()
     }
 }
+
+mod tests {
+    use scroll::Endian;
+
+    use super::*;
+    #[test]
+    fn test_write_guid_event_record() {
+        let guid =
+            efi::Guid::from_fields(0x12345678, 0x9ABC, 0xDEF1, 0x23, 0x45, &[0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x12]);
+        let record = GuidEventRecord::new(0x12, 0x3456789, 0x1122334455667788, guid);
+        let guid_bytes = record.guid.as_bytes().to_owned();
+
+        let mut buffer = [0u8; 30]; // Adjust size based on the actual struct size
+        let result = buffer.pwrite_with(record, 0, Endian::Little);
+
+        // Ensure no errors occurred and check the written byte count
+        assert!(result.is_ok());
+        let written_bytes = result.unwrap();
+        assert_eq!(written_bytes, 30); // Expected byte size
+
+        // Manually check if the fields were written correctly in little-endian
+        assert_eq!(&buffer[0..2], &0x12u16.to_le_bytes());
+        assert_eq!(&buffer[2..6], &0x3456789u32.to_le_bytes());
+        assert_eq!(&buffer[6..14], &0x1122334455667788u64.to_le_bytes());
+        assert_eq!(&buffer[14..], guid_bytes.as_slice()); // GUID should be written directly
+    }
+
+    #[test]
+    fn test_write_dynamic_string_event_record() {
+        let guid =
+            efi::Guid::from_fields(0x12345678, 0x9ABC, 0xDEF1, 0x23, 0x45, &[0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x12]);
+        let record = DynamicStringEventRecord::new(0x12, 0x3456789, 0x1122334455667788, guid, "test_string");
+
+        let mut buffer = [0u8; 42]; // 30 bytes for header + 12 for string+null
+        let result = buffer.pwrite_with(record, 0, Endian::Little);
+
+        assert!(result.is_ok());
+        let written_bytes = result.unwrap();
+        assert_eq!(written_bytes, 42);
+
+        assert_eq!(&buffer[0..2], &0x12u16.to_le_bytes());
+        assert_eq!(&buffer[2..6], &0x3456789u32.to_le_bytes());
+        assert_eq!(&buffer[6..14], &0x1122334455667788u64.to_le_bytes());
+        assert_eq!(&buffer[14..30], guid.as_bytes());
+        assert_eq!(&buffer[30..41], b"test_string");
+        assert_eq!(buffer[41], 0); // Null terminator
+    }
+
+    #[test]
+    fn test_write_dual_guid_string_event_record() {
+        let guid1 =
+            efi::Guid::from_fields(0x12345678, 0x9ABC, 0xDEF1, 0x23, 0x45, &[0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x12]);
+        let guid2 =
+            efi::Guid::from_fields(0x87654321, 0xCBA9, 0x1FED, 0x32, 0x54, &[0x76, 0x98, 0xBA, 0xDC, 0xFE, 0x21]);
+        let record = DualGuidStringEventRecord::new(0x12, 0x3456789, 0x1122334455667788, guid1, guid2, "test_string");
+
+        let mut buffer = [0u8; 58]; // 46 bytes for header + 12 for string+null
+        let result = buffer.pwrite_with(record, 0, Endian::Little);
+
+        assert!(result.is_ok());
+        let written_bytes = result.unwrap();
+        assert_eq!(written_bytes, 58);
+
+        assert_eq!(&buffer[0..2], &0x12u16.to_le_bytes());
+        assert_eq!(&buffer[2..6], &0x3456789u32.to_le_bytes());
+        assert_eq!(&buffer[6..14], &0x1122334455667788u64.to_le_bytes());
+        assert_eq!(&buffer[14..30], guid1.as_bytes());
+        assert_eq!(&buffer[30..46], guid2.as_bytes());
+        assert_eq!(&buffer[46..57], b"test_string");
+        assert_eq!(buffer[57], 0); // Null terminator
+    }
+
+    #[test]
+    fn test_write_guid_qword_event_record() {
+        let guid =
+            efi::Guid::from_fields(0x12345678, 0x9ABC, 0xDEF1, 0x23, 0x45, &[0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x12]);
+        let record = GuidQwordEventRecord::new(0x12, 0x1122334455667788, guid, 0x8877665544332211);
+
+        let mut buffer = [0u8; 38]; // 30 bytes + 8 for qword
+        let result = buffer.pwrite_with(record, 0, Endian::Little);
+
+        assert!(result.is_ok());
+        let written_bytes = result.unwrap();
+        assert_eq!(written_bytes, 38);
+
+        assert_eq!(&buffer[0..2], &0x12u16.to_le_bytes());
+        assert_eq!(&buffer[2..6], &0x0u32.to_le_bytes());
+        assert_eq!(&buffer[6..14], &0x1122334455667788u64.to_le_bytes());
+        assert_eq!(&buffer[14..30], guid.as_bytes());
+        assert_eq!(&buffer[30..38], &0x8877665544332211u64.to_le_bytes());
+    }
+
+    #[test]
+    fn test_write_guid_qword_string_event_record() {
+        let guid =
+            efi::Guid::from_fields(0x12345678, 0x9ABC, 0xDEF1, 0x23, 0x45, &[0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x12]);
+        let record = GuidQwordStringEventRecord::new(
+            0x12,
+            0x3456789,
+            0x1122334455667788,
+            guid,
+            0x8877665544332211,
+            "test_string",
+        );
+
+        let mut buffer = [0u8; 50]; // 38 bytes + 12 for string+null
+        let result = buffer.pwrite_with(record, 0, Endian::Little);
+
+        assert!(result.is_ok());
+        let written_bytes = result.unwrap();
+        assert_eq!(written_bytes, 50);
+
+        assert_eq!(&buffer[0..2], &0x12u16.to_le_bytes());
+        assert_eq!(&buffer[2..6], &0x3456789u32.to_le_bytes());
+        assert_eq!(&buffer[6..14], &0x1122334455667788u64.to_le_bytes());
+        assert_eq!(&buffer[14..30], guid.as_bytes());
+        assert_eq!(&buffer[30..38], &0x8877665544332211u64.to_le_bytes());
+        assert_eq!(&buffer[38..49], b"test_string");
+        assert_eq!(buffer[49], 0); // Null terminator
+    }
+}

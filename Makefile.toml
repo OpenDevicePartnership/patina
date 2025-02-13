@@ -96,13 +96,13 @@ args = ["build", "@@split(STD_FLAGS, )", "--example", "dxe_core_std"]
 description = "Checks rust code for no_std build errors with results."
 private = true
 command = "cargo"
-args = ["check", "--target", "x86_64-unknown-uefi", "@@split(NO_STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["check", "--target", "x86_64-unknown-uefi", "@@split(NO_STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )", "--tests"]
 
 [tasks.check_std]
 description = "Checks rust code for std build errors with results."
 private = true
 command = "cargo"
-args = ["check", "@@split(STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["check", "@@split(STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )", "--tests"]
 
 [tasks.check]
 description = "Checks rust code for errors. Example `cargo make check`"
@@ -120,7 +120,7 @@ dependencies = ["individual-package-targets"]
 description = "Build and run all tests and calculate coverage."
 clear = true
 command = "cargo"
-args = ["tarpaulin", "@@split(COV_FLAGS, )", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target"]
+args = ["tarpaulin", "@@split(COV_FLAGS, )", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target", "--exclude", "uefi_test_macro"]
 dependencies = ["individual-package-targets"]
 
 [tasks.coverage-filter]
