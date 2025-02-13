@@ -247,11 +247,11 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
         // Signal the event group before exit boot services
         EVENT_DB.signal_group(efi::EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES);
 
-        // Lock down the GCD so no further changes can be made, even if this EBS
-        // call fails.
-        GCD.lock_memory_space();
         EXIT_BOOT_SERVICES_CALLED.store(true, Ordering::SeqCst);
     }
+
+    // Lock the memory space to prevent edits to the memory map after this point.
+    GCD.lock_memory_space();
 
     // Disable the timer
     match PROTOCOL_DB.locate_protocol(protocols::timer::PROTOCOL_GUID) {
