@@ -27,7 +27,7 @@ use crate::{
 
 static METRONOME_ARCH_PTR: AtomicPtr<protocols::metronome::Protocol> = AtomicPtr::new(core::ptr::null_mut());
 static WATCHDOG_ARCH_PTR: AtomicPtr<protocols::watchdog::Protocol> = AtomicPtr::new(core::ptr::null_mut());
-static PRE_EXIT_BOOT_SERVICES_SIGNAL: AtomicBool = AtomicBool::new(false);
+static EXIT_BOOT_SERVICES_CALLED: AtomicBool = AtomicBool::new(false);
 
 // TODO [BEGIN]: LOCAL (TEMP) GUID DEFINITIONS (MOVE LATER)
 
@@ -240,15 +240,18 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
 
 pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) -> efi::Status {
     log::info!("EBS initiated.");
-    GCD.lock_memory_space();
-    // Pre-exit boot services is only signaled once
-    if !PRE_EXIT_BOOT_SERVICES_SIGNAL.load(Ordering::SeqCst) {
+    // Pre-exit boot services and before exit boot services are only signaled once
+    if !EXIT_BOOT_SERVICES_CALLED.load(Ordering::SeqCst) {
         EVENT_DB.signal_group(PRE_EBS_GUID);
-        PRE_EXIT_BOOT_SERVICES_SIGNAL.store(true, Ordering::SeqCst);
-    }
 
-    // Signal the event group before exit boot services
-    EVENT_DB.signal_group(efi::EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES);
+        // Signal the event group before exit boot services
+        EVENT_DB.signal_group(efi::EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES);
+
+        // Lock down the GCD so no further changes can be made, even if this EBS
+        // call fails.
+        GCD.lock_memory_space();
+        EXIT_BOOT_SERVICES_CALLED.store(true, Ordering::SeqCst);
+    }
 
     // Disable the timer
     match PROTOCOL_DB.locate_protocol(protocols::timer::PROTOCOL_GUID) {
