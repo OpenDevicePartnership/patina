@@ -251,9 +251,6 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
         EXIT_BOOT_SERVICES_CALLED.store(true, Ordering::SeqCst);
     }
 
-    // Lock the memory space to prevent edits to the memory map after this point.
-    GCD.lock_memory_space();
-
     // Disable the timer
     match PROTOCOL_DB.locate_protocol(protocols::timer::PROTOCOL_GUID) {
         Ok(timer_arch_ptr) => {
@@ -263,6 +260,9 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
         }
         Err(err) => log::error!("Unable to locate timer arch: {:?}", err),
     };
+
+    // Lock the memory space to prevent edits to the memory map after this point.
+    GCD.lock_memory_space();
 
     // Terminate the memory map
     // According to UEFI spec, in case of an incomplete or failed EBS call we must restore boot services memory allocation functionality
