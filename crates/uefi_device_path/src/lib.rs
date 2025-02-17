@@ -316,6 +316,29 @@ pub struct DevicePathWalker {
     next_node: Option<*const efi::protocols::device_path::Protocol>,
 }
 
+impl Into<String> for DevicePathWalker {
+    fn into(self) -> String {
+        let mut result = String::new();
+        for node in self {
+            if is_device_path_end(&node.header) {
+                break;
+            }
+            result.push_str(protocol_to_subtype_str(node.header));
+            if !node.data.is_empty() {
+                result.push_str(": ");
+                for (i, byte) in node.data.iter().enumerate() {
+                    if i > 0 {
+                        result.push(',');
+                    }
+                    result.push_str(&format!("0x{:02x}", byte));
+                }
+                result.push('/');
+            }
+        }
+        result
+    }
+}
+
 impl DevicePathWalker {
     /// Creates a DevicePathWalker iterator for the given raw device path pointer.
     ///
@@ -383,52 +406,6 @@ fn protocol_to_subtype_str(protocol: efi::protocols::device_path::Protocol) -> &
     }
 }
 /* cSpell:enable */
-
-/// Returns a string containing the data from each node concatenated together.
-///
-/// # Safety
-///
-/// The caller must ensure that:
-/// - `device_path` points to a valid UEFI device path structure in memory
-/// - The device path is properly terminated with an end node
-/// - The device path nodes contain valid length fields that correctly represent their size
-/// - The memory referenced by the device path remains valid for the duration of this function call
-/// - Each node's length field accurately reflects the size of its data section
-///
-pub unsafe fn device_path_data_to_string(
-    device_path: *const efi::protocols::device_path::Protocol,
-) -> alloc::string::String {
-    let mut result = String::new();
-
-    // Create the walker and iterate over nodes
-    let mut walker = unsafe { DevicePathWalker::new(device_path) }.peekable();
-
-    while let Some(node) = walker.next() {
-        // Check if there's another node ahead
-        if walker.peek().is_none() {
-            break; // Skip the last node
-        }
-
-        // Push node header info using display formatting
-        result.push_str(protocol_to_subtype_str(node.header));
-        result.push_str(": ");
-
-        // Convert node data bytes to hex string
-        for (i, byte) in node.data.iter().enumerate() {
-            if i > 0 {
-                result.push(',');
-            }
-            result.push_str(&format!("0x{:02x}", byte));
-        }
-
-        // Add a slash only if node.data is not empty
-        if !node.data.is_empty() {
-            result.push('/');
-        }
-    }
-
-    result
-}
 
 #[cfg(test)]
 mod tests {

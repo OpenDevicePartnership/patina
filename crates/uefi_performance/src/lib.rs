@@ -55,7 +55,7 @@ use r_efi::system::EVENT_GROUP_READY_TO_BOOT;
 pub use mu_rust_helpers::function;
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 
-use uefi_device_path::device_path_data_to_string;
+use uefi_device_path::DevicePathWalker;
 use uefi_sdk::{
     boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
     guid,
@@ -458,7 +458,7 @@ fn get_module_info_from_handle(
         {
             let device_path_protocol = unsafe { boot_services.handle_protocol(controller_handle, &DevicePath) };
             if let Ok(device_path_protocol) = device_path_protocol {
-                let device_path_string = unsafe { device_path_data_to_string(device_path_protocol) };
+                let device_path_string: String = unsafe { DevicePathWalker::new(device_path_protocol) }.into();
                 return Ok((Some(device_path_string), guid));
             }
         }
