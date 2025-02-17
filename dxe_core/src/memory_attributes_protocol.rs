@@ -33,6 +33,15 @@ extern "efiapi" fn get_memory_attributes(
     // TODO: This should really go to the page table, not GCD, even though GCD is the source of truth...page table actually is
     match dxe_services::core_get_memory_space_descriptor(base_address) {
         Ok(descriptor) => {
+            if descriptor.base_address != base_address || descriptor.length != length {
+                log::error!(
+                    "{} Inconsistent attributes for: base_address {:#x} length {:#x}",
+                    function!(),
+                    base_address,
+                    length
+                );
+                return efi::Status::NO_MAPPING;
+            }
             unsafe { *attributes = descriptor.attributes & efi::MEMORY_ACCESS_MASK };
             efi::Status::SUCCESS
         }
@@ -43,7 +52,7 @@ extern "efiapi" fn get_memory_attributes(
                 status,
                 function!()
             );
-            status
+            efi::Status::NO_MAPPING
         }
     }
 }
@@ -66,26 +75,46 @@ extern "efiapi" fn set_memory_attributes(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    // this API only adds new attributes that are set, it ignores all 0 attributes. So, we need to get the memory
-    // descriptor first and then set the new attributes as the GCD API takes into account all attributes set or unset.
-    match dxe_services::core_get_memory_space_descriptor(base_address) {
-        Ok(descriptor) => {
-            let new_attributes = descriptor.attributes | attributes;
-            match dxe_services::core_set_memory_space_attributes(base_address, length, new_attributes) {
-                Ok(_) => efi::Status::SUCCESS,
-                Err(status) => status,
+    let mut current_base = base_address;
+    let range_end = (base_address + length);
+    while current_base < range_end {
+        let descriptor = match dxe_services::core_get_memory_space_descriptor(current_base as efi::PhysicalAddress) {
+            Ok(descriptor) => descriptor,
+            Err(e) => {
+                log::error!(
+                    "Memory descriptor fetching failed with error {:#x?} for {:#x} in {}",
+                    e,
+                    current_base,
+                    function!()
+                );
+                // Only a few error codes are allowed per UEFI spec, so return unsupported
+                return efi::Status::UNSUPPORTED;
             }
-        }
-        Err(status) => {
-            log::error!(
-                "Failed to get memory descriptor for address {:#x}: {:?} in {}",
-                base_address,
-                status,
-                function!()
-            );
-            status
-        }
+        };
+        let descriptor_end = descriptor.base_address + descriptor.length;
+
+        // it is still legal to split a descriptor and only set the attributes on part of it
+        let next_base = u64::min(descriptor_end, range_end);
+        let current_len = next_base - current_base;
+
+        // this API only adds new attributes that are set, it ignores all 0 attributes. So, we need to get the memory
+        // descriptor first and then set the new attributes as the GCD API takes into account all attributes set or unset.
+        let new_attributes = descriptor.attributes | attributes;
+
+        match dxe_services::core_set_memory_space_attributes(current_base, current_len, new_attributes) {
+            Ok(_) => {}
+            // only a few status codes are allowed per UEFI spec, so return unsupported
+            // we don't have a reliable mechanism to reset any previously set attributes if an earlier block succeeded
+            // because any tracking mechanism would be require memory allocations which could change the descriptors
+            // and cause some attributes to be set on a potentially incorrect memory region. At this point if we have
+            // failed, the system is dead, barring a bootloader allocating new memory and attempting to set attributes
+            // there, because this API is only used by a bootloader setting memory attributes for the next image it is
+            // loading. The expectation is that on a future boot the platform would disable this protocol.
+            Err(status) => return efi::Status::UNSUPPORTED,
+        };
+        current_base = next_base;
     }
+    efi::Status::SUCCESS
 }
 
 extern "efiapi" fn clear_memory_attributes(
@@ -106,26 +135,46 @@ extern "efiapi" fn clear_memory_attributes(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    // this API only adds clears attributes that are set to 1, it ignores all 0 attributes. So, we need to get the memory
-    // descriptor first and then set the new attributes as the GCD API takes into account all attributes set or unset.
-    match dxe_services::core_get_memory_space_descriptor(base_address) {
-        Ok(descriptor) => {
-            let new_attributes = descriptor.attributes & !attributes;
-            match dxe_services::core_set_memory_space_attributes(base_address, length, new_attributes) {
-                Ok(_) => efi::Status::SUCCESS,
-                Err(status) => status,
+    let mut current_base = base_address;
+    let range_end = (base_address + length);
+    while current_base < range_end {
+        let descriptor = match dxe_services::core_get_memory_space_descriptor(current_base as efi::PhysicalAddress) {
+            Ok(descriptor) => descriptor,
+            Err(e) => {
+                log::error!(
+                    "Memory descriptor fetching failed with error {:#x?} for {:#x} in {}",
+                    e,
+                    current_base,
+                    function!()
+                );
+                // Only a few error codes are allowed per UEFI spec, so return unsupported
+                return efi::Status::UNSUPPORTED;
             }
-        }
-        Err(status) => {
-            log::error!(
-                "Failed to get memory descriptor for address {:#x}: {:?} in {}",
-                base_address,
-                status,
-                function!()
-            );
-            status
-        }
+        };
+        let descriptor_end = descriptor.base_address + descriptor.length;
+
+        // it is still legal to split a descriptor and only set the attributes on part of it
+        let next_base = u64::min(descriptor_end, range_end);
+        let current_len = next_base - current_base;
+
+        // this API only adds clears attributes that are set to 1, it ignores all 0 attributes. So, we need to get the memory
+        // descriptor first and then set the new attributes as the GCD API takes into account all attributes set or unset.
+        let new_attributes = descriptor.attributes & !attributes;
+
+        match dxe_services::core_set_memory_space_attributes(current_base, current_len, new_attributes) {
+            Ok(_) => {}
+            // only a few status codes are allowed per UEFI spec, so return unsupported
+            // we don't have a reliable mechanism to reset any previously set attributes if an earlier block succeeded
+            // because any tracking mechanism would be require memory allocations which could change the descriptors
+            // and cause some attributes to be set on a potentially incorrect memory region. At this point if we have
+            // failed, the system is dead, barring a bootloader allocating new memory and attempting to set attributes
+            // there, because this API is only used by a bootloader setting memory attributes for the next image it is
+            // loading. The expectation is that on a future boot the platform would disable this protocol.
+            Err(status) => return efi::Status::UNSUPPORTED,
+        };
+        current_base = next_base;
     }
+    efi::Status::SUCCESS
 }
 
 impl EfiMemoryAttributesProtocolImpl {

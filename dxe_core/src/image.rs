@@ -219,6 +219,32 @@ impl PrivateImageData {
         Ok(image_data)
     }
 
+    fn new_with_existing_allocation(
+        image_info: efi::protocols::loaded_image::Protocol,
+        image_buffer: *mut [u8],
+        entry_point: efi::ImageEntryPoint,
+        pe_info: &UefiPeInfo,
+        image_base_page: efi::PhysicalAddress,
+        image_num_pages: usize,
+    ) -> Self {
+        PrivateImageData {
+            image_buffer,
+            image_info: Box::new(image_info),
+            hii_resource_section: None,
+            hii_resource_section_base: None,
+            hii_resource_section_num_pages: None,
+            entry_point,
+            started: true,
+            exit_data: None,
+            image_info_ptr: core::ptr::null_mut(),
+            image_device_path_ptr: core::ptr::null_mut(),
+            pe_info: pe_info.clone(),
+            relocation_data: Vec::new(),
+            image_base_page,
+            image_num_pages,
+        }
+    }
+
     fn allocate_resource_section(
         &mut self,
         size: usize,
@@ -500,9 +526,20 @@ fn install_dxe_core_image(hob_list: &HobList) {
         .expect("Failed to parse PE info for DXE Core")
     };
 
-    let mut private_image_data =
-        PrivateImageData::new(image_info, &pe_info).expect("Failed to create PrivateImageData for dxe_core");
-    private_image_data.entry_point = entry_point;
+    // we do not use PrivateImageData::new() here because it
+    // expects we are about to load this image and so allocates
+    // an image buffer for us. We already have the image buffer
+    // here as DXE Core is uniquely already loaded
+    let image_buffer =
+        core::ptr::slice_from_raw_parts_mut(image_info.image_base as *mut u8, image_info.image_size as usize);
+    let mut private_image_data = PrivateImageData::new_with_existing_allocation(
+        image_info,
+        image_buffer,
+        entry_point,
+        &pe_info,
+        dxe_core_hob.alloc_descriptor.memory_base_address,
+        uefi_size_to_pages!(dxe_core_hob.alloc_descriptor.memory_length as usize),
+    );
 
     let image_info_ptr = private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol;
     let image_info_ptr = image_info_ptr as *mut c_void;
@@ -813,10 +850,10 @@ fn authenticate_image(
 
 /// Loads the image specified by the device path (not yet supported) or slice.
 /// * parent_image_handle - the handle of the image that is loading this one.
-/// * device_path - optional device path describing where to load the image from.
+/// * file_path - optional device path describing where to load the image from.
 /// * image - optional slice containing the image data.
 ///
-/// One of `device_path` or `image` must be specified.
+/// One of `file_path` or `image` must be specified.
 /// returns the image handle of the freshly loaded image.
 pub fn core_load_image(
     boot_policy: bool,
@@ -842,15 +879,14 @@ pub fn core_load_image(
 
     let (image_to_load, from_fv, device_handle, authentication_status) = match image {
         Some(image) => {
-            // If the buffer is specified, then the device_handle and device_path are set to the input file_path
-            // Check if this is coming from a FV device (if so, then core_locate_device_path(FV) will return OK)
-            if let Ok((_device_path, fv_handle)) =
-                core_locate_device_path(mu_pi::protocols::firmware_volume::PROTOCOL_GUID, file_path)
+            // If the buffer is specified and the device_path resolves with core_locate_device_path, then use the
+            // resolved handle as the device_handle. Note: the associated device path for the device_handle will
+            // likely be shorter than file_path.
+            if let Ok((_device_path, device_handle)) =
+                core_locate_device_path(efi::protocols::device_path::PROTOCOL_GUID, file_path)
             {
-                (image.to_vec(), false, fv_handle, 0)
+                (image.to_vec(), false, device_handle, 0)
             } else {
-                // This means that file_path is supposed to be a device path, but the device path isn't installed on any handle
-
                 // (i.e. it doesn't correspond to anything that actually exists in the system)
                 (image.to_vec(), false, protocol_db::INVALID_HANDLE, 0)
             }

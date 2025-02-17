@@ -192,6 +192,20 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         }
 
         if gcd_mem_type != GcdMemoryType::NonExistent {
+            let memory_attributes = {
+                if let Hob::ResourceDescriptorV2(res_desc) = hob {
+                    let mut memory_attributes = MemoryAttributes::from_bits_truncate(res_desc.attributes);
+                    memory_attributes &= MemoryAttributes::CacheAttributesMask; //clear everything but caching attributes.
+                    if gcd_mem_type == GcdMemoryType::SystemMemory {
+                        memory_attributes |= MemoryAttributes::ReadProtect; //force all system memory to be RP by default (since none is allocated yet).
+                    }
+                    let memory_attributes = memory_attributes.bits();
+                    Some(memory_attributes)
+                } else {
+                    None
+                }
+            };
+
             for split_range in
                 remove_range_overlap(&mem_range, &(free_memory_start..(free_memory_start + free_memory_size)))
                     .into_iter()
@@ -213,22 +227,24 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                     )
                     .expect("Failed to add memory space to GCD");
                 }
-            }
-            if let Hob::ResourceDescriptorV2(res_desc) = hob {
-                let memory_attributes = (MemoryAttributes::from_bits_truncate(res_desc.attributes)
-                    & MemoryAttributes::CacheAttributesMask)
-                    .bits();
-                match GCD.set_memory_space_attributes(
-                    res_desc.v1.physical_start as usize,
-                    res_desc.v1.resource_length as usize,
-                    memory_attributes,
-                ) {
-                    Err(EfiError::NotReady) => (),
-                    _ => {
-                        panic!(
-                            "GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}",
-                            memory_attributes, res_desc.v1.physical_start, res_desc.v1.resource_length
-                        );
+                if let Some(attributes) = memory_attributes {
+                    match GCD.set_memory_space_attributes(
+                        split_range.start as usize,
+                        split_range.end.saturating_sub(split_range.start) as usize,
+                        attributes,
+                    ) {
+                        // NotReady is expected result here since page table is not yet initialized. In this case GCD
+                        // will be updated with the appropriate attributes which will then be sync'd to page table
+                        // once it is initialized.
+                        Err(EfiError::NotReady) => (),
+                        _ => {
+                            panic!(
+                                "GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}",
+                                attributes,
+                                split_range.start,
+                                split_range.end.saturating_sub(split_range.start)
+                            );
+                        }
                     }
                 }
             }

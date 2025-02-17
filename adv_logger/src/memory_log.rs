@@ -48,7 +48,7 @@ pub struct AdvLoggerInfo {
     /// Current Version
     version: u16,
     /// Reserved for future
-    reserved1: [u8; 3],
+    reserved1: [u16; 3],
     /// Offset from LoggerInfo to start of log, expected to be the size of this structure 8 byte aligned
     log_buffer_offset: u32,
     /// Reserved for future
@@ -266,7 +266,7 @@ impl AdvLoggerMessageEntry {
 
         // Write the header.
         let adv_entry = address as *mut AdvLoggerMessageEntry;
-        ptr::write(
+        ptr::write_volatile(
             adv_entry,
             Self::new(log_entry.phase, log_entry.level, log_entry.timestamp, log_entry.data.len() as u16),
         );
