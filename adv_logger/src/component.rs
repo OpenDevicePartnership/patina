@@ -25,7 +25,7 @@ use crate::{logger::AdvancedLogger, memory_log, memory_log::AdvLoggerInfo};
 type AdvancedLoggerWriteProtocol<S> =
     extern "efiapi" fn(*const AdvancedLoggerProtocol<S>, usize, *const u8, usize) -> efi::Status;
 
-struct Protocol<S>(PhantomData<S>);
+pub(crate) struct Protocol<S>(pub PhantomData<S>);
 unsafe impl<S: SerialIO + Send + 'static> uefi_sdk::protocol::Protocol for Protocol<S> {
     type Interface = AdvancedLoggerProtocol<S>;
 
@@ -43,14 +43,14 @@ impl<S: SerialIO + Send + 'static> core::ops::Deref for Protocol<S> {
 
 /// C struct for the Advanced Logger protocol.
 #[repr(C)]
-struct AdvancedLoggerProtocol<S>
+pub(crate) struct AdvancedLoggerProtocol<S>
 where
     S: SerialIO + Send + 'static,
 {
-    signature: u32,
-    version: u32,
-    write_log: AdvancedLoggerWriteProtocol<S>,
-    log_info: efi::PhysicalAddress, // Internal field for access lib.
+    pub signature: u32,
+    pub version: u32,
+    pub write_log: AdvancedLoggerWriteProtocol<S>,
+    pub log_info: efi::PhysicalAddress, // Internal field for access lib.
 
     // Internal rust access only! Does not exist in C definition.
     adv_logger: &'static AdvancedLogger<'static, S>,

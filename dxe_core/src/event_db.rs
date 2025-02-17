@@ -434,6 +434,10 @@ impl EventDb {
     }
 
     fn timer_tick(&mut self, current_time: u64) {
+        // Poll the debugger before processing any events. This has no effect if
+        // the debugger is not enabled.
+        uefi_debugger::poll_debugger();
+
         let events: Vec<usize> = self.events.keys().cloned().collect();
         for event in events {
             let current_event = if let Some(current) = self.events.get_mut(&event) {

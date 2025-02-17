@@ -219,6 +219,32 @@ impl PrivateImageData {
         Ok(image_data)
     }
 
+    fn new_with_existing_allocation(
+        image_info: efi::protocols::loaded_image::Protocol,
+        image_buffer: *mut [u8],
+        entry_point: efi::ImageEntryPoint,
+        pe_info: &UefiPeInfo,
+        image_base_page: efi::PhysicalAddress,
+        image_num_pages: usize,
+    ) -> Self {
+        PrivateImageData {
+            image_buffer,
+            image_info: Box::new(image_info),
+            hii_resource_section: None,
+            hii_resource_section_base: None,
+            hii_resource_section_num_pages: None,
+            entry_point,
+            started: true,
+            exit_data: None,
+            image_info_ptr: core::ptr::null_mut(),
+            image_device_path_ptr: core::ptr::null_mut(),
+            pe_info: pe_info.clone(),
+            relocation_data: Vec::new(),
+            image_base_page,
+            image_num_pages,
+        }
+    }
+
     fn allocate_resource_section(
         &mut self,
         size: usize,
@@ -500,9 +526,20 @@ fn install_dxe_core_image(hob_list: &HobList) {
         .expect("Failed to parse PE info for DXE Core")
     };
 
-    let mut private_image_data =
-        PrivateImageData::new(image_info, &pe_info).expect("Failed to create PrivateImageData for dxe_core");
-    private_image_data.entry_point = entry_point;
+    // we do not use PrivateImageData::new() here because it
+    // expects we are about to load this image and so allocates
+    // an image buffer for us. We already have the image buffer
+    // here as DXE Core is uniquely already loaded
+    let image_buffer =
+        core::ptr::slice_from_raw_parts_mut(image_info.image_base as *mut u8, image_info.image_size as usize);
+    let mut private_image_data = PrivateImageData::new_with_existing_allocation(
+        image_info,
+        image_buffer,
+        entry_point,
+        &pe_info,
+        dxe_core_hob.alloc_descriptor.memory_base_address,
+        uefi_size_to_pages!(dxe_core_hob.alloc_descriptor.memory_length as usize),
+    );
 
     let image_info_ptr = private_image_data.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol;
     let image_info_ptr = image_info_ptr as *mut c_void;
