@@ -316,10 +316,10 @@ pub struct DevicePathWalker {
     next_node: Option<*const efi::protocols::device_path::Protocol>,
 }
 
-impl Into<String> for DevicePathWalker {
-    fn into(self) -> String {
+impl From<DevicePathWalker> for String {
+    fn from(device_path_walker: DevicePathWalker) -> Self {
         let mut result = String::new();
-        for node in self {
+        for node in device_path_walker {
             if is_device_path_end(&node.header) {
                 break;
             }
