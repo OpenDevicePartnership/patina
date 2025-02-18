@@ -369,7 +369,6 @@ impl Iterator for DevicePathWalker {
 }
 
 // cSpell marks certain words here as misspelled, even though they are technically spelled correctly
-// cSpell:disable
 fn protocol_to_subtype_str(protocol: efi::protocols::device_path::Protocol) -> &'static str {
     match protocol.r#type {
         r_efi::protocols::device_path::TYPE_HARDWARE => match protocol.sub_type {
@@ -405,13 +404,13 @@ fn protocol_to_subtype_str(protocol: efi::protocols::device_path::Protocol) -> &
         _ => "UnknownType",
     }
 }
-/* cSpell:enable */
 
 #[cfg(test)]
 mod tests {
     use core::mem::size_of;
 
     use efi::protocols::device_path::{End, Hardware, TYPE_END, TYPE_HARDWARE};
+    use r_efi::protocols::device_path::{TYPE_ACPI, TYPE_MEDIA};
 
     use super::*;
 
@@ -667,5 +666,77 @@ mod tests {
         let boxed_device_path = copy_device_path_to_boxed_slice(device_path_ptr);
 
         assert_eq!(boxed_device_path.unwrap().to_vec(), device_path_bytes.to_vec());
+    }
+
+    #[test]
+    fn device_path_walker_can_be_converted_to_string() {
+        let device_path_bytes = [
+            TYPE_HARDWARE,
+            Hardware::SUBTYPE_PCI,
+            0x6,  //length[0]
+            0x0,  //length[1]
+            0x0,  //func
+            0x1C, //device
+            TYPE_ACPI,
+            0x0, // subtype doesn't matter for ACPI
+            0xC, //length[0]
+            0x0, //length[1]
+            0x0,
+            0x1,
+            0x2,
+            0x3,
+            0x4,
+            0x5,
+            0x6,
+            0x7,
+            TYPE_END,
+            End::SUBTYPE_ENTIRE,
+            0x4,  //length[0]
+            0x00, //length[1]
+        ];
+        let device_path_ptr = device_path_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
+        let device_path_walker = unsafe { DevicePathWalker::new(device_path_ptr) };
+        let string: String = device_path_walker.into();
+
+        assert_eq!(string, "Pci: 0x00,0x1c/Acpi: 0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07/");
+    }
+
+    #[test]
+    fn test_protocol_to_subtype_str() {
+        let mut protocol = efi::protocols::device_path::Protocol {
+            r#type: TYPE_HARDWARE,
+            sub_type: Hardware::SUBTYPE_PCI,
+            length: [0, 0],
+        };
+        assert_eq!(protocol_to_subtype_str(protocol), "Pci");
+
+        protocol.sub_type = Hardware::SUBTYPE_PCCARD;
+        assert_eq!(protocol_to_subtype_str(protocol), "PcCard");
+
+        protocol.sub_type = Hardware::SUBTYPE_MMAP;
+        assert_eq!(protocol_to_subtype_str(protocol), "MemMap");
+
+        protocol.sub_type = Hardware::SUBTYPE_VENDOR;
+        assert_eq!(protocol_to_subtype_str(protocol), "Vendor");
+
+        protocol.sub_type = Hardware::SUBTYPE_CONTROLLER;
+        assert_eq!(protocol_to_subtype_str(protocol), "Controller");
+
+        protocol.sub_type = Hardware::SUBTYPE_BMC;
+        assert_eq!(protocol_to_subtype_str(protocol), "Bmc");
+
+        protocol.sub_type = 99; // Unknown hardware subtype
+        assert_eq!(protocol_to_subtype_str(protocol), "UnknownHardware");
+
+        protocol.r#type = TYPE_MEDIA;
+        protocol.sub_type = Media::SUBTYPE_HARDDRIVE;
+        assert_eq!(protocol_to_subtype_str(protocol), "HardDrive");
+
+        protocol.r#type = TYPE_END;
+        protocol.sub_type = End::SUBTYPE_INSTANCE;
+        assert_eq!(protocol_to_subtype_str(protocol), "EndInstance");
+
+        protocol.r#type = 99; // Unknown type
+        assert_eq!(protocol_to_subtype_str(protocol), "UnknownType");
     }
 }
