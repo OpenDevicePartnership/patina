@@ -16,6 +16,10 @@ use r_efi::efi;
 use spin::Once;
 use uefi_sdk::{log::Format, serial::SerialIO};
 
+// Exists for the debugger to find the log buffer.
+#[used]
+static mut DBG_ADV_LOG_BUFFER: u64 = 0;
+
 /// The logger for memory/hardware port logging.
 pub struct AdvancedLogger<'a, S>
 where
@@ -63,6 +67,11 @@ where
         if let Some(log_info) = unsafe { AdvLoggerInfo::adopt_memory_log(address) } {
             self.memory_log.call_once(|| log_info);
             log::info!("Advanced logger buffer initialized. Address = {:#p}", log_info);
+
+            // SAFETY: This is only set for discoverability while debugging.
+            unsafe {
+                DBG_ADV_LOG_BUFFER = address;
+            }
         } else {
             log::error!("Failed to initialize on existing advanced logger buffer!");
         }

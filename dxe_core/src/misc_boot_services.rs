@@ -27,7 +27,6 @@ use crate::{
 
 static METRONOME_ARCH_PTR: AtomicPtr<protocols::metronome::Protocol> = AtomicPtr::new(core::ptr::null_mut());
 static WATCHDOG_ARCH_PTR: AtomicPtr<protocols::watchdog::Protocol> = AtomicPtr::new(core::ptr::null_mut());
-static PRE_EXIT_BOOT_SERVICES_SIGNAL: AtomicBool = AtomicBool::new(false);
 
 // TODO [BEGIN]: LOCAL (TEMP) GUID DEFINITIONS (MOVE LATER)
 
@@ -239,16 +238,18 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
 }
 
 pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) -> efi::Status {
-    log::info!("EBS initiated.");
-    GCD.lock_memory_space();
-    // Pre-exit boot services is only signaled once
-    if !PRE_EXIT_BOOT_SERVICES_SIGNAL.load(Ordering::SeqCst) {
-        EVENT_DB.signal_group(PRE_EBS_GUID);
-        PRE_EXIT_BOOT_SERVICES_SIGNAL.store(true, Ordering::SeqCst);
-    }
+    static EXIT_BOOT_SERVICES_CALLED: AtomicBool = AtomicBool::new(false);
 
-    // Signal the event group before exit boot services
-    EVENT_DB.signal_group(efi::EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES);
+    log::info!("EBS initiated.");
+    // Pre-exit boot services and before exit boot services are only signaled once
+    if !EXIT_BOOT_SERVICES_CALLED.load(Ordering::SeqCst) {
+        EVENT_DB.signal_group(PRE_EBS_GUID);
+
+        // Signal the event group before exit boot services
+        EVENT_DB.signal_group(efi::EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES);
+
+        EXIT_BOOT_SERVICES_CALLED.store(true, Ordering::SeqCst);
+    }
 
     // Disable the timer
     match PROTOCOL_DB.locate_protocol(protocols::timer::PROTOCOL_GUID) {
@@ -259,6 +260,9 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
         }
         Err(err) => log::error!("Unable to locate timer arch: {:?}", err),
     };
+
+    // Lock the memory space to prevent edits to the memory map after this point.
+    GCD.lock_memory_space();
 
     // Terminate the memory map
     // According to UEFI spec, in case of an incomplete or failed EBS call we must restore boot services memory allocation functionality

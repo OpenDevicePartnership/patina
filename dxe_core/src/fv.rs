@@ -769,7 +769,6 @@ mod tests {
     use std::{fs::File, io::Read, vec};
     use uefi_sdk::error::{self, Result};
     use uefi_sdk::guid::EVENT_GROUP_END_OF_DXE;
-
     // Populate Interfaces which all functions can use.
 
     //Populate Null References for error cases
