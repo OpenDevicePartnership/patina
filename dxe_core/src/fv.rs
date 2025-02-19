@@ -749,34 +749,23 @@ pub fn init_fv_support(hob_list: &hob::HobList, extractor: Box<dyn SectionExtrac
 mod tests {
     use super::*;
     use crate::test_support;
-    use mu_pi::hob::MEMORY_TYPE_INFO_HOB_GUID;
-    use mu_pi::hob::{header, GuidHob, Hob, GUID_EXTENSION};
+    use mu_pi::hob::Hob;
     extern crate alloc;
-    use crate::allocator;
     use crate::test_collateral;
-    use crate::GCD;
-    use crate::{gcd, test_support::build_test_hob_list};
     use mu_pi::fw_fs::FfsFileRawType;
-    use mu_pi::hob::FV;
-    use mu_pi::hob::{get_c_hob_list_size, HobList};
+    use mu_pi::hob::HobList;
     use mu_pi::{hob, BootMode};
-    use r_efi::efi::{Handle, Lba, Status};
     use std::alloc::{alloc, dealloc, Layout};
     use std::ffi::c_void;
-    use std::fs;
-    use std::io;
     use std::ptr;
-    use std::{fs::File, io::Read, vec};
-    use uefi_sdk::error::{self, Result};
-    use uefi_sdk::guid::EVENT_GROUP_END_OF_DXE;
-    // Populate Interfaces which all functions can use.
+    use std::{fs::File, io::Read};
 
     //Populate Null References for error cases
-    const buffer_size_empty: usize = 0;
-    const lba: u64 = 0;
-    const offset: usize = 0;
-    const section_type: fw_fs::EfiSectionType = 0;
-    const section_instance: usize = 0;
+    const BUFFER_SIZE_EMPTY: usize = 0;
+    const LBA: u64 = 0;
+    const OFFSET: usize = 0;
+    const SECTION_TYPE: fw_fs::EfiSectionType = 0;
+    const SECTION_INSTANCE: usize = 0;
 
     #[test]
     fn test_fv_init_core() {
@@ -941,7 +930,7 @@ mod tests {
                 fv_ptr3 as *const mu_pi::protocols::firmware_volume::Protocol;
 
             /* Corrupt the base address to cover error conditions  */
-            let base_no2: u64 = (fv.as_ptr() as u64 + 0x1000);
+            let base_no2: u64 = fv.as_ptr() as u64 + 0x1000;
             let private_data2 = PrivateFvData { _interface: fv_interface3, physical_address: base_no2 };
             //save the protocol structure we're about to install in the private data.
             PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr3, PrivateDataItem::FvData(private_data2));
@@ -981,7 +970,7 @@ mod tests {
                 fvb_intf_invalid.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
             let fvb_intf_invalid_mutpro =
                 fvb_intf_invalid.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol;
-            let base_no: u64 = (fv.as_ptr() as u64 + 0x1000);
+            let base_no: u64 = fv.as_ptr() as u64 + 0x1000;
 
             let private_data4 = PrivateFvbData { _interface: fvb_intf_invalid, physical_address: base_no };
             // save the protocol structure we're about to install in the private data.
@@ -1011,7 +1000,7 @@ mod tests {
 
             unsafe {
                 let fv_test_set_info = || {
-                    fv_set_info(ptr::null(), ptr::null(), buffer_size_empty, ptr::null());
+                    fv_set_info(ptr::null(), ptr::null(), BUFFER_SIZE_EMPTY, ptr::null());
                 };
 
                 let fv_test_get_info = || {
@@ -1052,13 +1041,13 @@ mod tests {
                         panic!("Memory allocation failed!");
                     }
                     /* Handle various cases for different conditions to hit */
-                    fvb_read(fvb_ptr_mut_prot, lba, 0, std::ptr::null_mut(), std::ptr::null_mut());
-                    fvb_read(fvb_ptr_mut_prot, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
-                    fvb_read(fvb_ptr_mut_prot, 0xfffffffff, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
-                    fvb_read(fvb_intf_invalid_mutpro, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
-                    fvb_read(fvb_ptr_mut_prot, u64::MAX, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
-                    fvb_read(fvb_ptr_mut_prot, 0x22299222, 0x999999, buffer_valid_size3, buffer_valid3 as *mut c_void);
-                    fvb_read(fvb_intf_data_n_mut, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
+                    fvb_read(fvb_ptr_mut_prot, LBA, 0, std::ptr::null_mut(), std::ptr::null_mut());
+                    fvb_read(fvb_ptr_mut_prot, LBA, 0, buffer_valid_size3, buffer_valid3);
+                    fvb_read(fvb_ptr_mut_prot, 0xfffffffff, 0, buffer_valid_size3, buffer_valid3);
+                    fvb_read(fvb_intf_invalid_mutpro, LBA, 0, buffer_valid_size3, buffer_valid3);
+                    fvb_read(fvb_ptr_mut_prot, u64::MAX, 0, buffer_valid_size3, buffer_valid3);
+                    fvb_read(fvb_ptr_mut_prot, 0x22299222, 0x999999, buffer_valid_size3, buffer_valid3);
+                    fvb_read(fvb_intf_data_n_mut, LBA, 0, buffer_valid_size3, buffer_valid3);
 
                     /* Free Memory */
                     dealloc(buffer_valid3 as *mut u8, layout3);
@@ -1083,10 +1072,10 @@ mod tests {
                     let num_buffer_empty_ref: *mut usize = &mut num_buffer_empty;
 
                     /* Handle the Null Case */
-                    fvb_get_block_size(fvb_ptr_mut_prot, lba, std::ptr::null_mut(), std::ptr::null_mut());
-                    fvb_get_block_size(fvb_ptr_mut_prot, lba, buffer_valid_size3, buffer_valid_size3);
-                    fvb_get_block_size(fvb_intf_invalid_mutpro, lba, buffer_valid_size3, buffer_valid_size3);
-                    fvb_get_block_size(fvb_intf_data_n_mut, lba, buffer_valid_size3, buffer_valid_size3);
+                    fvb_get_block_size(fvb_ptr_mut_prot, LBA, std::ptr::null_mut(), std::ptr::null_mut());
+                    fvb_get_block_size(fvb_ptr_mut_prot, LBA, buffer_valid_size3, buffer_valid_size3);
+                    fvb_get_block_size(fvb_intf_invalid_mutpro, LBA, buffer_valid_size3, buffer_valid_size3);
+                    fvb_get_block_size(fvb_intf_data_n_mut, LBA, buffer_valid_size3, buffer_valid_size3);
                     fvb_get_block_size(fvb_ptr_mut_prot, u64::MAX, buffer_valid_size3, buffer_valid_size3);
                     fvb_get_block_size(fvb_ptr_mut_prot, 222222, buffer_size_random_ref, num_buffer_empty_ref);
                     /* Free Memory */
@@ -1126,10 +1115,10 @@ mod tests {
                         panic!("Memory allocation failed!");
                     }
 
-                    fvb_write(fvb_ptr_mut_prot, lba, 0, std::ptr::null_mut(), std::ptr::null_mut());
-                    fvb_write(fvb_ptr_mut_prot, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
-                    fvb_write(fvb_intf_invalid_mutpro, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
-                    fvb_write(fvb_intf_data_n_mut, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
+                    fvb_write(fvb_ptr_mut_prot, LBA, 0, std::ptr::null_mut(), std::ptr::null_mut());
+                    fvb_write(fvb_ptr_mut_prot, LBA, 0, buffer_valid_size3, buffer_valid3);
+                    fvb_write(fvb_intf_invalid_mutpro, LBA, 0, buffer_valid_size3, buffer_valid3);
+                    fvb_write(fvb_intf_data_n_mut, LBA, 0, buffer_valid_size3, buffer_valid3);
                     /* Free Memory */
                     dealloc(buffer_valid3 as *mut u8, layout3);
                 };
@@ -1170,7 +1159,7 @@ mod tests {
                     );
                     fv_get_next_file(
                         ptr::null(),
-                        buffer_valid3 as *mut c_void,
+                        buffer_valid3,
                         file_type_read_ref,
                         n_guid_ref_mut,
                         file_attributes,
@@ -1178,7 +1167,7 @@ mod tests {
                     );
                     fv_get_next_file(
                         fv_ptr1,
-                        buffer_valid3 as *mut c_void,
+                        buffer_valid3,
                         file_type_read_ref,
                         n_guid_ref_mut,
                         file_attributes,
@@ -1186,7 +1175,7 @@ mod tests {
                     );
                     fv_get_next_file(
                         fv_ptr3_const,
-                        buffer_valid3 as *mut c_void,
+                        buffer_valid3,
                         file_type_read_ref,
                         n_guid_ref_mut,
                         file_attributes,
@@ -1194,7 +1183,7 @@ mod tests {
                     );
                     fv_get_next_file(
                         fv_ptr_no_data,
-                        buffer_valid3 as *mut c_void,
+                        buffer_valid3,
                         file_type_read_ref,
                         n_guid_ref_mut,
                         file_attributes,
@@ -1205,7 +1194,7 @@ mod tests {
 
                     fv_get_next_file(
                         fv_ptr1,
-                        buffer_valid3 as *mut c_void,
+                        buffer_valid3,
                         file_type_read_ref,
                         n_guid_ref_mut,
                         file_attributes,
@@ -1253,8 +1242,8 @@ mod tests {
                     fv_read_section(
                         ptr::null(),
                         ptr::null(),
-                        section_type,
-                        section_instance,
+                        SECTION_TYPE,
+                        SECTION_INSTANCE,
                         std::ptr::null_mut(),
                         std::ptr::null_mut(),
                         std::ptr::null_mut(),
@@ -1265,7 +1254,7 @@ mod tests {
                         guid_ref_invalid_ref,
                         6,
                         10,
-                        (&mut buffer_valid3 as *mut *mut c_void),
+                        &mut buffer_valid3 as *mut *mut c_void,
                         buffer_valid_size3,
                         auth_valid_p,
                     );
@@ -1277,7 +1266,7 @@ mod tests {
                         guid_valid_ref,
                         6,
                         10,
-                       (&mut buffer_valid3 as *mut *mut c_void),
+                       &mut buffer_valid3 as *mut *mut c_void,
                        buffer_valid_size3,
                        auth_valid_p,
                     );*/
@@ -1287,7 +1276,7 @@ mod tests {
                         name_guid2,
                         6,
                         10,
-                        (&mut buffer_valid3 as *mut *mut c_void),
+                        &mut buffer_valid3 as *mut *mut c_void,
                         buffer_valid_size3,
                         auth_valid_p,
                     );
@@ -1298,7 +1287,7 @@ mod tests {
                         guid_ref_invalid_ref,
                         1,
                         1,
-                        (&mut buffer_valid3 as *mut *mut c_void),
+                        &mut buffer_valid3 as *mut *mut c_void,
                         buffer_valid_size3,
                         auth_valid_p,
                     );
@@ -1309,7 +1298,7 @@ mod tests {
                         guid_ref_invalid_ref,
                         1,
                         1,
-                        (&mut buffer_valid3 as *mut *mut c_void),
+                        &mut buffer_valid3 as *mut *mut c_void,
                         buffer_valid_size3,
                         auth_valid_p,
                     );
@@ -1335,7 +1324,7 @@ mod tests {
                     fv_read_file(
                         ptr::null(),
                         ptr::null(),
-                        (&mut buffer_valid3 as *mut *mut c_void),
+                        &mut buffer_valid3 as *mut *mut c_void,
                         std::ptr::null_mut(),
                         found_type_ref,
                         file_attributes,
@@ -1345,7 +1334,7 @@ mod tests {
                     fv_read_file(
                         fv_ptr1,
                         guid_ref_invalid_ref,
-                        (&mut buffer_valid3 as *mut *mut c_void),
+                        &mut buffer_valid3 as *mut *mut c_void,
                         buffer_valid_size3,
                         found_type_ref,
                         file_attributes,
@@ -1354,7 +1343,7 @@ mod tests {
                     fv_read_file(
                         fv_ptr1,
                         guid_valid_ref,
-                        (&mut buffer_valid3 as *mut *mut c_void),
+                        &mut buffer_valid3 as *mut *mut c_void,
                         buffer_valid_size3,
                         found_type_ref,
                         file_attributes,
@@ -1363,7 +1352,7 @@ mod tests {
                     fv_read_file(
                         fv_ptr3_const,
                         guid_valid_ref,
-                        (&mut buffer_valid3 as *mut *mut c_void),
+                        &mut buffer_valid3 as *mut *mut c_void,
                         buffer_valid_size3,
                         found_type_ref,
                         file_attributes,
@@ -1372,7 +1361,7 @@ mod tests {
                     fv_read_file(
                         fv_ptr_no_data,
                         guid_valid_ref,
-                        (&mut buffer_valid3 as *mut *mut c_void),
+                        &mut buffer_valid3 as *mut *mut c_void,
                         buffer_valid_size3,
                         found_type_ref,
                         file_attributes,
@@ -1421,11 +1410,8 @@ mod tests {
             let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
             let mut fv: Vec<u8> = Vec::new();
             file.read_to_end(&mut fv).expect("failed to read test file");
-            let mut base_address: u64;
-            let parent_handle: Option<efi::Handle>;
-
-            base_address = fv.as_ptr() as u64;
-            parent_handle = None;
+            let base_address: u64 = fv.as_ptr() as u64;
+            let parent_handle: Option<efi::Handle> = None;
 
             let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
                 get_volume_attributes: fv_get_volume_attributes,
@@ -1478,7 +1464,7 @@ mod tests {
                     name_guid3,
                     6,
                     10,
-                    (&mut buffer as *mut *mut c_void),
+                    &mut buffer as *mut *mut c_void,
                     buffer_size,
                     authentication_statusp,
                 );
