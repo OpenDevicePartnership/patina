@@ -840,7 +840,8 @@ mod tests {
             hoblist.push(Hob::FirmwareVolume2(&firmware_volume2));
             hoblist.push(Hob::Handoff(&end_of_hob_list));
             init_fv_support(&hoblist, Box::new(section_extractor::BrotliSectionExtractor));
-        }).expect("Unexpected Error Initalising hob fvs ");
+        })
+        .expect("Unexpected Error Initalising hob fvs ");
     }
 
     #[test]
