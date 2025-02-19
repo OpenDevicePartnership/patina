@@ -785,10 +785,8 @@ mod tests {
                 let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
                 let mut fv: Vec<u8> = Vec::new();
                 file.read_to_end(&mut fv).expect("failed to read test file");
-                let base: u64;
                 let len: u64 = fv.len() as u64;
-
-                base = fv.as_ptr() as u64;
+                let base: u64 = fv.as_ptr() as u64;
 
                 let header =
                     hob::header::Hob { r#type: hob::FV, length: size_of::<hob::FirmwareVolume>() as u16, reserved: 0 };
@@ -1140,7 +1138,7 @@ mod tests {
                     let mut file_type_read: fw_fs::EfiFvFileType = 1;
                     let file_type_read_ref: *mut fw_fs::EfiFvFileType = &mut file_type_read;
                     let mut n_guid_mut: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
-                    let mut n_guid_ref_mut: *mut efi::Guid = &mut n_guid_mut;
+                    let n_guid_ref_mut: *mut efi::Guid = &mut n_guid_mut;
 
                     if buffer_valid3.is_null() {
                         panic!("Memory allocation failed!");
