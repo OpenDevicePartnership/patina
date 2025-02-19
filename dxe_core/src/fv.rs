@@ -753,21 +753,23 @@ mod tests {
     use mu_pi::hob::{header, GuidHob, Hob, GUID_EXTENSION};
     extern crate alloc;
     use crate::allocator;
-    use crate::GCD;
-    const MEM_SIZE: u64 = 0x200000;
     use crate::test_collateral;
+    use crate::GCD;
+    use crate::{gcd, test_support::build_test_hob_list};
     use mu_pi::fw_fs::FfsFileRawType;
+    use mu_pi::hob::FV;
     use mu_pi::hob::{get_c_hob_list_size, HobList};
+    use mu_pi::{hob, BootMode};
     use r_efi::efi::{Handle, Lba, Status};
     use std::alloc::{alloc, dealloc, Layout};
     use std::ffi::c_void;
     use std::fs;
-    use std::io::Write;
+    use std::io;
     use std::ptr;
     use std::{fs::File, io::Read, vec};
-    use uefi_sdk::guid::EVENT_GROUP_END_OF_DXE;
     use uefi_sdk::error::{self, Result};
-    use crate::{gcd, test_support::build_test_hob_list};
+    use uefi_sdk::guid::EVENT_GROUP_END_OF_DXE;
+
     // Populate Interfaces which all functions can use.
 
     //Populate Null References for error cases
@@ -777,620 +779,714 @@ mod tests {
     const section_type: fw_fs::EfiSectionType = 0;
     const section_instance: usize = 0;
 
-    /* FV Init is crashing because of memory protection, debug with team. */
-    /*
-     /* Returns the length of the HOB list.
-      * Clippy gets unhappy if we call get_c_hob_list_size directly, because it gets confused, thinking
-      * get_c_hob_list_size is not marked unsafe, but it is
-      */
-    fn get_hob_list_len1(hob_list: *const c_void) -> usize {
-        unsafe { get_c_hob_list_size(hob_list) }
+    #[test]
+    fn test_fv_init_core() {
+        test_support::with_global_lock(|| {
+            fn gen_firmware_volume2() -> hob::FirmwareVolume2 {
+                let header =
+                    hob::header::Hob { r#type: hob::FV, length: size_of::<hob::FirmwareVolume2>() as u16, reserved: 0 };
+
+                hob::FirmwareVolume2 {
+                    header,
+                    base_address: 0,
+                    length: 0x8000,
+                    fv_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+                    file_name: r_efi::efi::Guid::from_fields(1, 2, 3, 4, 5, &[6, 7, 8, 9, 10, 11]),
+                }
+            }
+            fn gen_firmware_volume() -> hob::FirmwareVolume {
+                let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+                let mut fv: Vec<u8> = Vec::new();
+                file.read_to_end(&mut fv).expect("failed to read test file");
+                let mut base: u64;
+                let len: u64 = fv.len() as u64;
+
+                base = fv.as_ptr() as u64;
+
+                let header =
+                    hob::header::Hob { r#type: hob::FV, length: size_of::<hob::FirmwareVolume>() as u16, reserved: 0 };
+
+                hob::FirmwareVolume { header, base_address: base, length: len }
+            }
+
+            fn gen_end_of_hoblist() -> hob::PhaseHandoffInformationTable {
+                let header = hob::header::Hob {
+                    r#type: hob::END_OF_HOB_LIST,
+                    length: size_of::<hob::PhaseHandoffInformationTable>() as u16,
+                    reserved: 0,
+                };
+
+                hob::PhaseHandoffInformationTable {
+                    header,
+                    version: 0x00010000,
+                    boot_mode: BootMode::BootWithFullConfiguration,
+                    memory_top: 0xdeadbeef,
+                    memory_bottom: 0xdeadc0de,
+                    free_memory_top: 104,
+                    free_memory_bottom: 255,
+                    end_of_hob_list: 0xdeaddeadc0dec0de,
+                }
+            }
+
+            // Generate some example HOBs
+
+            let firmware_volume2 = gen_firmware_volume2();
+            let firmware_volume0 = gen_firmware_volume();
+            let end_of_hob_list = gen_end_of_hoblist();
+
+            // Create a new empty HOB list
+            let mut hoblist = HobList::new();
+
+            // Push the example HOBs onto the HOB l
+            hoblist.push(Hob::FirmwareVolume2(&firmware_volume2));
+            hoblist.push(Hob::Handoff(&end_of_hob_list));
+            init_fv_support(&hoblist, Box::new(section_extractor::BrotliSectionExtractor));
+        }).expect("Unexpected Error Initalising hob fvs ");
     }
 
     #[test]
-    fn fv_hob_init() {
+    fn test_fv_functionality() {
         test_support::with_global_lock(|| {
-            let physical_hob_list = build_test_hob_list(MEM_SIZE);
-            if physical_hob_list.is_null() {
-               panic!("HOB list pointer is null!");
-            }
+            let mut fv_att: u64 = 0x1;
+            let mut fv_attributes: *mut fw_fs::EfiFvAttributes = &mut fv_att;
+            let guid_invalid: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
+            let guid_ref_invalid_ref: *const efi::Guid = &guid_invalid;
+            let mut auth_valid_status: u32 = 1;
+            let mut auth_valid_p: *mut u32 = &mut auth_valid_status;
+            let mut guid_valid: efi::Guid =
+                efi::Guid::from_fields(0x1fa1f39e, 0xfeff, 0x4aae, 0xbd, 0x7b, &[0x38, 0xa0, 0x70, 0xa3, 0xb6, 0x09]);
+            let mut guid_valid_ref: *mut efi::Guid = &mut guid_valid;
+            let mut file_rd_attr: u32 = fw_fs::Fvb2RawAttributes::READ_STATUS;
+            let file_attributes: *mut fw_fs::EfiFvFileAttributes = &mut file_rd_attr;
+
+            let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+            let mut fv: Vec<u8> = Vec::new();
+            file.read_to_end(&mut fv).expect("failed to read test file");
+            let mut base_address: u64;
+            let parent_handle: Option<efi::Handle>;
+
+            base_address = fv.as_ptr() as u64;
+            parent_handle = None;
+            let handle = install_fv_device_path_protocol(None, base_address);
+
+            /* Create Firmware Interface, this will be used by the whole test module */
+            let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
+                get_volume_attributes: fv_get_volume_attributes,
+                set_volume_attributes: fv_set_volume_attributes,
+                read_file: fv_read_file,
+                read_section: fv_read_section,
+                write_file: fv_write_file,
+                get_next_file: fv_get_next_file,
+                key_size: size_of::<usize>() as u32,
+                parent_handle: match parent_handle {
+                    Some(handle) => handle,
+                    None => core::ptr::null_mut(),
+                },
+                get_info: fv_get_info,
+                set_info: fv_set_info,
+            });
+
+            let fv_ptr = fv_interface.as_mut() as *mut mu_pi::protocols::firmware_volume::Protocol as *mut c_void;
+
+            let private_data = PrivateFvData { _interface: fv_interface, physical_address: base_address };
+            // save the protocol structure we're about to install in the private data.
+            PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr, PrivateDataItem::FvData(private_data));
+            let fv_ptr1: *const mu_pi::protocols::firmware_volume::Protocol =
+                fv_ptr as *const mu_pi::protocols::firmware_volume::Protocol;
+
+            /* Build Firmware Volume Block Interface*/
+            let mut fvb_interface = Box::from(mu_pi::protocols::firmware_volume_block::Protocol {
+                get_attributes: fvb_get_attributes,
+                set_attributes: fvb_set_attributes,
+                get_physical_address: fvb_get_physical_address,
+                get_block_size: fvb_get_block_size,
+                read: fvb_read,
+                write: fvb_write,
+                erase_blocks: fvb_erase_blocks,
+                parent_handle: match parent_handle {
+                    Some(handle) => handle,
+                    None => core::ptr::null_mut(),
+                },
+            });
+            let fvb_ptr =
+                fvb_interface.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
+            let fvb_ptr_mut_prot = fvb_interface.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol;
+
+            /* Build Private Data */
+            let private_data = PrivateFvbData { _interface: fvb_interface, physical_address: base_address };
+            // save the protocol structure we're about to install in the private data.
+            PRIVATE_FV_DATA.lock().fv_information.insert(fvb_ptr, PrivateDataItem::FvbData(private_data));
+
+            //let fv_attributes3: *mut fw_fs::EfiFvAttributes = &mut fv_att;
+
+            /* Instance 2 - Create a FV  interface with Bad physical address to handle Error cases. */
+            let mut fv_interface3 = Box::from(mu_pi::protocols::firmware_volume::Protocol {
+                get_volume_attributes: fv_get_volume_attributes,
+                set_volume_attributes: fv_set_volume_attributes,
+                read_file: fv_read_file,
+                read_section: fv_read_section,
+                write_file: fv_write_file,
+                get_next_file: fv_get_next_file,
+                key_size: size_of::<usize>() as u32,
+                parent_handle: match parent_handle {
+                    Some(handle) => handle,
+                    None => core::ptr::null_mut(),
+                },
+                get_info: fv_get_info,
+                set_info: fv_set_info,
+            });
+
+            let fv_ptr3 = fv_interface3.as_mut() as *mut mu_pi::protocols::firmware_volume::Protocol as *mut c_void;
+            let fv_ptr3_const: *const mu_pi::protocols::firmware_volume::Protocol =
+                fv_ptr3 as *const mu_pi::protocols::firmware_volume::Protocol;
+
+            /* Corrupt the base address to cover error conditions  */
+            let base_no2: u64 = (fv.as_ptr() as u64 + 0x1000);
+            let private_data2 = PrivateFvData { _interface: fv_interface3, physical_address: base_no2 };
+            //save the protocol structure we're about to install in the private data.
+            PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr3, PrivateDataItem::FvData(private_data2));
+
+            /* Create an interface with No physical address and no private data - cover Error Conditions */
+            let fv_interface_no_data = mu_pi::protocols::firmware_volume::Protocol {
+                get_volume_attributes: fv_get_volume_attributes,
+                set_volume_attributes: fv_set_volume_attributes,
+                read_file: fv_read_file,
+                read_section: fv_read_section,
+                write_file: fv_write_file,
+                get_next_file: fv_get_next_file,
+                key_size: size_of::<usize>() as u32,
+                parent_handle: core::ptr::null_mut(),
+
+                get_info: fv_get_info,
+                set_info: fv_set_info,
+            };
+
+            let fv_ptr_no_data = &fv_interface_no_data as *const mu_pi::protocols::firmware_volume::Protocol;
+
+            /* Create a Firmware Volume Block Interface with Invalid Physical Address */
+            let mut fvb_intf_invalid = Box::from(mu_pi::protocols::firmware_volume_block::Protocol {
+                get_attributes: fvb_get_attributes,
+                set_attributes: fvb_set_attributes,
+                get_physical_address: fvb_get_physical_address,
+                get_block_size: fvb_get_block_size,
+                read: fvb_read,
+                write: fvb_write,
+                erase_blocks: fvb_erase_blocks,
+                parent_handle: match parent_handle {
+                    Some(handle) => handle,
+                    None => core::ptr::null_mut(),
+                },
+            });
+            let fvb_intf_invalid_void =
+                fvb_intf_invalid.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
+            let fvb_intf_invalid_mutpro =
+                fvb_intf_invalid.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol;
+            let base_no: u64 = (fv.as_ptr() as u64 + 0x1000);
+
+            let private_data4 = PrivateFvbData { _interface: fvb_intf_invalid, physical_address: base_no };
+            // save the protocol structure we're about to install in the private data.
+            PRIVATE_FV_DATA
+                .lock()
+                .fv_information
+                .insert(fvb_intf_invalid_void, PrivateDataItem::FvbData(private_data4));
+
+            /* Create a Firmware Volume Block Interface without Physical address populated  */
+            let mut fvb_intf_data_n = Box::from(mu_pi::protocols::firmware_volume_block::Protocol {
+                get_attributes: fvb_get_attributes,
+                set_attributes: fvb_set_attributes,
+                get_physical_address: fvb_get_physical_address,
+                get_block_size: fvb_get_block_size,
+                read: fvb_read,
+                write: fvb_write,
+                erase_blocks: fvb_erase_blocks,
+                parent_handle: match parent_handle {
+                    Some(handle) => handle,
+                    None => core::ptr::null_mut(),
+                },
+            });
+            let fvb_intf_data_n_void =
+                fvb_intf_data_n.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
+            let fvb_intf_data_n_mut =
+                fvb_intf_data_n.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol;
 
             unsafe {
-                GCD.reset();
-                gcd::init_gcd(physical_hob_list);
-                test_support::init_test_protocol_db();
+                let fv_test_set_info = || {
+                    fv_set_info(ptr::null(), ptr::null(), buffer_size_empty, ptr::null());
+                };
+
+                let fv_test_get_info = || {
+                    fv_get_info(ptr::null(), ptr::null(), ptr::null_mut(), ptr::null_mut());
+                };
+
+                let fv_test_set_volume_attributes = || {
+                    /* Cover the NULL Case */
+                    fv_set_volume_attributes(ptr::null(), fv_attributes);
+
+                    /* Non Null Case*/
+                };
+
+                let fv_test_get_volume_attributes = || {
+                    /* Cover the NULL Case, User Passing Invalid Parameter Case  */
+                    fv_get_volume_attributes(fv_ptr1, std::ptr::null_mut());
+
+                    /* Handle bad firmware volume data - return efi::Status::NOT_FOUND */
+                    fv_get_volume_attributes(fv_ptr_no_data, fv_attributes);
+
+                    /* Handle Invalid Physical address case */
+                    fv_get_volume_attributes(fv_ptr3_const, fv_attributes);
+
+                    /* Non Null Case, success case */
+                    fv_get_volume_attributes(fv_ptr1, fv_attributes);
+                };
+
+                let fv_test_fvb_read = || {
+                    /* Mutable Reference cannot be borrowed more than once,
+                     * hence delcare and free up after use immediately
+                     */
+                    let mut len3 = 1000;
+                    let buffer_valid_size3: *mut usize = &mut len3;
+                    let layout3 = Layout::from_size_align(1001, 8).unwrap();
+                    let mut buffer_valid3 = alloc(layout3) as *mut c_void;
+
+                    if buffer_valid3.is_null() {
+                        panic!("Memory allocation failed!");
+                    }
+                    /* Handle various cases for different conditions to hit */
+                    fvb_read(fvb_ptr_mut_prot, lba, 0, std::ptr::null_mut(), std::ptr::null_mut());
+                    fvb_read(fvb_ptr_mut_prot, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
+                    fvb_read(fvb_ptr_mut_prot, 0xfffffffff, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
+                    fvb_read(fvb_intf_invalid_mutpro, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
+                    fvb_read(fvb_ptr_mut_prot, u64::MAX, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
+                    fvb_read(fvb_ptr_mut_prot, 0x22299222, 0x999999, buffer_valid_size3, buffer_valid3 as *mut c_void);
+                    fvb_read(fvb_intf_data_n_mut, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
+
+                    /* Free Memory */
+                    dealloc(buffer_valid3 as *mut u8, layout3);
+                };
+
+                let fv_test_get_block_size = || {
+                    /* Mutable Reference cannot be borrowed more than once,
+                     * hence delcare and free up after use immediately
+                     */
+                    let mut len3 = 1000;
+                    let buffer_valid_size3: *mut usize = &mut len3;
+                    let layout3 = Layout::from_size_align(1001, 8).unwrap();
+                    let mut buffer_valid3 = alloc(layout3) as *mut c_void;
+
+                    if buffer_valid3.is_null() {
+                        panic!("Memory allocation failed!");
+                    }
+
+                    let mut buffer_size_random: usize = 99;
+                    let buffer_size_random_ref: *mut usize = &mut buffer_size_random;
+                    let mut num_buffer_empty: usize = 0;
+                    let num_buffer_empty_ref: *mut usize = &mut num_buffer_empty;
+
+                    /* Handle the Null Case */
+                    fvb_get_block_size(fvb_ptr_mut_prot, lba, std::ptr::null_mut(), std::ptr::null_mut());
+                    fvb_get_block_size(fvb_ptr_mut_prot, lba, buffer_valid_size3, buffer_valid_size3);
+                    fvb_get_block_size(fvb_intf_invalid_mutpro, lba, buffer_valid_size3, buffer_valid_size3);
+                    fvb_get_block_size(fvb_intf_data_n_mut, lba, buffer_valid_size3, buffer_valid_size3);
+                    fvb_get_block_size(fvb_ptr_mut_prot, u64::MAX, buffer_valid_size3, buffer_valid_size3);
+                    fvb_get_block_size(fvb_ptr_mut_prot, 222222, buffer_size_random_ref, num_buffer_empty_ref);
+                    /* Free Memory */
+                    dealloc(buffer_valid3 as *mut u8, layout3);
+                };
+
+                let fvb_test_erase_block = || {
+                    fvb_erase_blocks(fvb_ptr_mut_prot);
+                };
+
+                let fvb_test_get_physical_address = || {
+                    /* Handling Not Found Case */
+                    let mut p_address: efi::PhysicalAddress = 0x12345;
+
+                    fvb_get_physical_address(fvb_intf_data_n_mut, &mut p_address as *mut u64);
+                    fvb_get_physical_address(fvb_intf_invalid_mutpro, &mut p_address as *mut u64);
+                    fvb_get_physical_address(fvb_ptr_mut_prot, &mut p_address as *mut u64);
+                    fvb_get_physical_address(fvb_ptr_mut_prot, std::ptr::null_mut());
+                };
+                let fvb_test_write_file = || {
+                    let number_of_files: u32 = 0;
+                    let write_policy: mu_pi::protocols::firmware_volume::EfiFvWritePolicy = 0;
+                    fv_write_file(fv_ptr1, number_of_files, write_policy, std::ptr::null_mut());
+                };
+
+                let fvb_test_set_attributes = || {
+                    fvb_set_attributes(fvb_ptr_mut_prot, std::ptr::null_mut());
+                };
+
+                let fvb_test_write = || {
+                    let mut len3 = 1000;
+                    let buffer_valid_size3: *mut usize = &mut len3;
+                    let layout3 = Layout::from_size_align(1001, 8).unwrap();
+                    let mut buffer_valid3 = alloc(layout3) as *mut c_void;
+
+                    if buffer_valid3.is_null() {
+                        panic!("Memory allocation failed!");
+                    }
+
+                    fvb_write(fvb_ptr_mut_prot, lba, 0, std::ptr::null_mut(), std::ptr::null_mut());
+                    fvb_write(fvb_ptr_mut_prot, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
+                    fvb_write(fvb_intf_invalid_mutpro, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
+                    fvb_write(fvb_intf_data_n_mut, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
+                    /* Free Memory */
+                    dealloc(buffer_valid3 as *mut u8, layout3);
+                };
+
+                let fvb_test_get_attributes = || {
+                    let mut fvb_attributes: fw_fs::EfiFvbAttributes2 = 0x123456;
+                    let fvb_attributes_ref: *mut fw_fs::EfiFvbAttributes2 = &mut fvb_attributes;
+
+                    fvb_get_attributes(fvb_ptr_mut_prot, std::ptr::null_mut());
+                    fvb_get_attributes(fvb_ptr_mut_prot, fvb_attributes_ref);
+                    fvb_get_attributes(fvb_intf_invalid_mutpro, fvb_attributes_ref);
+                    fvb_get_attributes(fvb_intf_data_n_mut, fvb_attributes_ref);
+                };
+
+                let mut fvb_test_get_next_file = || {
+                    /* Mutable Reference cannot be borrowed more than once,
+                     * hence delcare and free up after use immediately
+                     */
+                    let mut len3 = 1000;
+                    let buffer_valid_size3: *mut usize = &mut len3;
+                    let layout3 = Layout::from_size_align(1001, 8).unwrap();
+                    let mut buffer_valid3 = alloc(layout3) as *mut c_void;
+                    let mut file_type_read: fw_fs::EfiFvFileType = 1;
+                    let mut file_type_read_ref: *mut fw_fs::EfiFvFileType = &mut file_type_read;
+                    let mut n_guid_mut: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
+                    let mut n_guid_ref_mut: *mut efi::Guid = &mut n_guid_mut;
+
+                    if buffer_valid3.is_null() {
+                        panic!("Memory allocation failed!");
+                    }
+                    fv_get_next_file(
+                        ptr::null(),
+                        std::ptr::null_mut(),
+                        file_type_read_ref,
+                        std::ptr::null_mut(),
+                        file_attributes,
+                        buffer_valid_size3,
+                    );
+                    fv_get_next_file(
+                        ptr::null(),
+                        buffer_valid3 as *mut c_void,
+                        file_type_read_ref,
+                        n_guid_ref_mut,
+                        file_attributes,
+                        buffer_valid_size3,
+                    );
+                    fv_get_next_file(
+                        fv_ptr1,
+                        buffer_valid3 as *mut c_void,
+                        file_type_read_ref,
+                        n_guid_ref_mut,
+                        file_attributes,
+                        buffer_valid_size3,
+                    );
+                    fv_get_next_file(
+                        fv_ptr3_const,
+                        buffer_valid3 as *mut c_void,
+                        file_type_read_ref,
+                        n_guid_ref_mut,
+                        file_attributes,
+                        buffer_valid_size3,
+                    );
+                    fv_get_next_file(
+                        fv_ptr_no_data,
+                        buffer_valid3 as *mut c_void,
+                        file_type_read_ref,
+                        n_guid_ref_mut,
+                        file_attributes,
+                        buffer_valid_size3,
+                    );
+                    /*handle  fw_fs::FfsFileRawType::FFS_MIN case */
+                    file_type_read = fw_fs::FfsFileRawType::FFS_MIN;
+
+                    fv_get_next_file(
+                        fv_ptr1,
+                        buffer_valid3 as *mut c_void,
+                        file_type_read_ref,
+                        n_guid_ref_mut,
+                        file_attributes,
+                        buffer_valid_size3,
+                    );
+                    /* Null BUffer Case*/
+                    fv_get_next_file(
+                        fv_ptr1,
+                        std::ptr::null_mut(),
+                        file_type_read_ref,
+                        n_guid_ref_mut,
+                        file_attributes,
+                        buffer_valid_size3,
+                    );
+                    // Deallocate the memory
+                    dealloc(buffer_valid3 as *mut u8, layout3);
+                };
+
+                let fvb_test_read_section = || {
+                    /* Mutable Reference cannot be borrowed more than once,
+                     * hence delcare and free up after use immediately
+                     */
+                    let mut len3 = 1000;
+                    let buffer_valid_size3: *mut usize = &mut len3;
+                    let layout3 = Layout::from_size_align(1001, 8).unwrap();
+                    let mut buffer_valid3 = alloc(layout3) as *mut c_void;
+
+                    if buffer_valid3.is_null() {
+                        panic!("Memory allocation failed!");
+                    }
+
+                    let mut gd1: efi::Guid = mu_pi::protocols::firmware_volume_block::PROTOCOL_GUID; //EVENT_GROUP_END_OF_DXE;
+                    let mut gd2: efi::Guid = efi::Guid::from_fields(
+                        0x434f695c,
+                        0xef26,
+                        0x4a12,
+                        0x9e,
+                        0xba,
+                        &[0xdd, 0xef, 0x00, 0x97, 0x49, 0x7c],
+                    );
+                    let name_guid1: *mut efi::Guid = &mut gd1;
+                    let name_guid2: *mut efi::Guid = &mut gd2;
+
+                    /* Cover the NULL Case, User Passing Invalid Parameter Case  */
+                    fv_read_section(
+                        ptr::null(),
+                        ptr::null(),
+                        section_type,
+                        section_instance,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    );
+
+                    fv_read_section(
+                        fv_ptr1,
+                        guid_ref_invalid_ref,
+                        6,
+                        10,
+                        (&mut buffer_valid3 as *mut *mut c_void),
+                        buffer_valid_size3,
+                        auth_valid_p,
+                    );
+
+                    //fv_read_section(fv_ptr1 , name_guid3, 6, 10,(&mut buffer as *mut *mut c_void), buffer_size, authentication_statusp);
+                    /* Valid guid case - panicing, debug this further, for now comment*/
+                    /*fv_read_section(
+                        fv_ptr1,
+                        guid_valid_ref,
+                        6,
+                        10,
+                       (&mut buffer_valid3 as *mut *mut c_void),
+                       buffer_valid_size3,
+                       auth_valid_p,
+                    );*/
+
+                    fv_read_section(
+                        fv_ptr1,
+                        name_guid2,
+                        6,
+                        10,
+                        (&mut buffer_valid3 as *mut *mut c_void),
+                        buffer_valid_size3,
+                        auth_valid_p,
+                    );
+
+                    /* Handle Invalid Physical address case */
+                    fv_read_section(
+                        fv_ptr3_const,
+                        guid_ref_invalid_ref,
+                        1,
+                        1,
+                        (&mut buffer_valid3 as *mut *mut c_void),
+                        buffer_valid_size3,
+                        auth_valid_p,
+                    );
+
+                    /* Handle bad firmware volume data - return efi::Status::NOT_FOUND */
+                    fv_read_section(
+                        fv_ptr_no_data,
+                        guid_ref_invalid_ref,
+                        1,
+                        1,
+                        (&mut buffer_valid3 as *mut *mut c_void),
+                        buffer_valid_size3,
+                        auth_valid_p,
+                    );
+                    /* Free Memory */
+                    dealloc(buffer_valid3 as *mut u8, layout3);
+                };
+
+                let fvb_test_read_file = || {
+                    /* Mutable Reference cannot be borrowed more than once,
+                     * hence delcare and free up after use immediately
+                     */
+                    let mut len3 = 1000;
+                    let buffer_valid_size3: *mut usize = &mut len3;
+                    let layout3 = Layout::from_size_align(1001, 8).unwrap();
+                    let mut buffer_valid3 = alloc(layout3) as *mut c_void;
+                    let mut found_type: u8 = FfsFileRawType::DRIVER;
+                    let found_type_ref: *mut fw_fs::EfiFvFileType = &mut found_type;
+
+                    if buffer_valid3.is_null() {
+                        panic!("Memory allocation failed!");
+                    }
+
+                    fv_read_file(
+                        ptr::null(),
+                        ptr::null(),
+                        (&mut buffer_valid3 as *mut *mut c_void),
+                        std::ptr::null_mut(),
+                        found_type_ref,
+                        file_attributes,
+                        std::ptr::null_mut(),
+                    );
+
+                    fv_read_file(
+                        fv_ptr1,
+                        guid_ref_invalid_ref,
+                        (&mut buffer_valid3 as *mut *mut c_void),
+                        buffer_valid_size3,
+                        found_type_ref,
+                        file_attributes,
+                        auth_valid_p,
+                    );
+                    fv_read_file(
+                        fv_ptr1,
+                        guid_valid_ref,
+                        (&mut buffer_valid3 as *mut *mut c_void),
+                        buffer_valid_size3,
+                        found_type_ref,
+                        file_attributes,
+                        auth_valid_p,
+                    );
+                    fv_read_file(
+                        fv_ptr3_const,
+                        guid_valid_ref,
+                        (&mut buffer_valid3 as *mut *mut c_void),
+                        buffer_valid_size3,
+                        found_type_ref,
+                        file_attributes,
+                        auth_valid_p,
+                    );
+                    fv_read_file(
+                        fv_ptr_no_data,
+                        guid_valid_ref,
+                        (&mut buffer_valid3 as *mut *mut c_void),
+                        buffer_valid_size3,
+                        found_type_ref,
+                        file_attributes,
+                        auth_valid_p,
+                    );
+                    fv_read_file(
+                        fv_ptr1,
+                        guid_valid_ref,
+                        std::ptr::null_mut(),
+                        buffer_valid_size3,
+                        found_type_ref,
+                        file_attributes,
+                        auth_valid_p,
+                    );
+                    /* Raise Bug for this case , case when Buffer size is 0 and buffer not NULL. last block*/
+                    /*fv_read_file(fv_ptr1 , guid_valid_ref, (&mut buffer_valid as *mut *mut c_void),
+                    buffer_equal_0p, found_type_ref, file_attributes,
+                    auth_valid_p ); */
+                    /* Free Memory */
+                    dealloc(buffer_valid3 as *mut u8, layout3);
+                };
+
+                fv_test_set_info();
+                fv_test_get_info();
+                fv_test_set_volume_attributes();
+                fv_test_get_volume_attributes();
+                fv_test_fvb_read();
+                fv_test_get_block_size();
+                fvb_test_erase_block();
+                fvb_test_get_physical_address();
+                fvb_test_set_attributes();
+                fvb_test_get_attributes();
+                fvb_test_write();
+                fvb_test_read_section();
+                fvb_test_get_next_file();
+                fvb_test_read_file();
+                fvb_test_write_file();
             }
-
-            let mut hob_list = HobList::default();
-            hob_list.discover_hobs(physical_hob_list);
-            hob_list.push(Hob::GuidHob(
-                &GuidHob {
-                   header: header::Hob { r#type: GUID_EXTENSION, length: 48, reserved: 0 },
-                   name: MEMORY_TYPE_INFO_HOB_GUID,
-                },
-                &[
-                      // for test, pick dynamic allocators, since state is easier to clean up for those.
-                      0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, //0x0100 pages of LOADER_DATA
-                ],
-            ));
-
-            // Initialize full allocation support.
-            allocator::init_memory_support(&hob_list);
-            /* we have to relocate HOBs after memory services are initialized as we are going to allocate memory and
-             * the initial free memory may not be enough to contain the HOB list. We need to relocate the HOBs because
-             * the initial HOB list is not in mapped memory as passed from pre-DXE.
-             */
-            hob_list.relocate_hobs();
-            let hob_list_slice = unsafe {
-                core::slice::from_raw_parts(physical_hob_list as *const u8, get_hob_list_len1(physical_hob_list))
-            };
-            let relocated_c_hob_list = hob_list_slice.to_vec().into_boxed_slice();
-
-            init_fv_support(&hob_list, Box::new(section_extractor::BrotliSectionExtractor));
-
         })
         .unwrap();
-
-    } */
+    }
 
     #[test]
-    fn evaluate_fv_validation() {
-        let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
-        let mut fv: Vec<u8> = Vec::new();
+    fn test_fv_special_section_read() {
+        test_support::with_global_lock(|| {
+            let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+            let mut fv: Vec<u8> = Vec::new();
+            file.read_to_end(&mut fv).expect("failed to read test file");
+            let mut base_address: u64;
+            let parent_handle: Option<efi::Handle>;
 
-        file.read_to_end(&mut fv).expect("failed to read test file");
-        let mut base_address: u64;
-        let parent_handle: Option<efi::Handle>;
-        let mut fv_att: u64 = 0x0000000000000001;
-        let mut fv_attributes: *mut fw_fs::EfiFvAttributes = &mut fv_att;
-        let fv_attributes_null: *mut fw_fs::EfiFvAttributes = std::ptr::null_mut();
-        let guid_invalid: efi::Guid            = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
-        let guidp_invalidp: *const efi::Guid   = &guid_invalid;
-        let mut auth_valid_status: u32         = 1;
-        let mut auth_valid_p: *mut u32         = &mut auth_valid_status;
-        let mut guid_valid_for_file: efi::Guid =
-            efi::Guid::from_fields(0x1fa1f39e, 0xfeff, 0x4aae, 0xbd, 0x7b, &[0x38, 0xa0, 0x70, 0xa3, 0xb6, 0x09]);
-        let mut guid_valid_for_filep: *mut efi::Guid = &mut guid_valid_for_file;
-        let mut file_type_read: fw_fs::EfiFvFileType = 1;
-        let mut file_type_readp: *mut fw_fs::EfiFvFileType = &mut file_type_read;
-        let mut file_rd_attr: u32 = fw_fs::Fvb2RawAttributes::READ_STATUS;
-        let file_attributes: *mut fw_fs::EfiFvFileAttributes = &mut file_rd_attr;
-        let mut n_guid_mut: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
-        let mut n_guidp_mut: *mut efi::Guid = &mut n_guid_mut;
-        let mut found_type: u8 = FfsFileRawType::DRIVER;
-        let found_typep: *mut fw_fs::EfiFvFileType = &mut found_type;
-        let mut fvb_attributes: fw_fs::EfiFvbAttributes2 = 0x123456;
-        let fvb_attributesp: *mut fw_fs::EfiFvbAttributes2 = &mut fvb_attributes;
+            base_address = fv.as_ptr() as u64;
+            parent_handle = None;
 
-        base_address = fv.as_ptr() as u64;
-        parent_handle = None;
-        let handle = install_fv_device_path_protocol(None, base_address);
+            let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
+                get_volume_attributes: fv_get_volume_attributes,
+                set_volume_attributes: fv_set_volume_attributes,
+                read_file: fv_read_file,
+                read_section: fv_read_section,
+                write_file: fv_write_file,
+                get_next_file: fv_get_next_file,
+                key_size: size_of::<usize>() as u32,
+                parent_handle: match parent_handle {
+                    Some(handle) => handle,
+                    None => core::ptr::null_mut(),
+                },
+                get_info: fv_get_info,
+                set_info: fv_set_info,
+            });
 
-        /* Create Firmware Interface, this will be used by the whole test module */
-        let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
-            get_volume_attributes: fv_get_volume_attributes,
-            set_volume_attributes: fv_set_volume_attributes,
-            read_file: fv_read_file,
-            read_section: fv_read_section,
-            write_file: fv_write_file,
-            get_next_file: fv_get_next_file,
-            key_size: size_of::<usize>() as u32,
-            parent_handle: match parent_handle {
-                Some(handle) => handle,
-                None => core::ptr::null_mut(),
-            },
-            get_info: fv_get_info,
-            set_info: fv_set_info,
-        });
+            let fv_ptr = fv_interface.as_mut() as *mut mu_pi::protocols::firmware_volume::Protocol as *mut c_void;
 
-        let fv_ptr = fv_interface.as_mut() as *mut mu_pi::protocols::firmware_volume::Protocol as *mut c_void;
-        let fv_ptr1: *const mu_pi::protocols::firmware_volume::Protocol =
-            fv_ptr as *const mu_pi::protocols::firmware_volume::Protocol;
-        /* Build Privte Data */
-        let private_data = PrivateFvData { _interface: fv_interface, physical_address: base_address };
-        // save the protocol structure we're about to install in the private data.
-        PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr, PrivateDataItem::FvData(private_data));
+            let private_data = PrivateFvData { _interface: fv_interface, physical_address: base_address };
+            // save the protocol structure we're about to install in the private data.
+            PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr, PrivateDataItem::FvData(private_data));
+            let fv_ptr1: *const mu_pi::protocols::firmware_volume::Protocol =
+                fv_ptr as *const mu_pi::protocols::firmware_volume::Protocol;
 
-        /* Build Firmware Volume Block Interface*/
-        let mut fvb_interface = Box::from(mu_pi::protocols::firmware_volume_block::Protocol {
-            get_attributes: fvb_get_attributes,
-            set_attributes: fvb_set_attributes,
-            get_physical_address: fvb_get_physical_address,
-            get_block_size: fvb_get_block_size,
-            read: fvb_read,
-            write: fvb_write,
-            erase_blocks: fvb_erase_blocks,
-            parent_handle: match parent_handle {
-                Some(handle) => handle,
-                None => core::ptr::null_mut(),
-            },
-        });
-        let fvb_ptr = fvb_interface.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
-        let fvb_ptr_mut_prot = fvb_interface.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol;
+            unsafe {
+                let layout = Layout::from_size_align(1000, 8).unwrap();
+                let mut buffer = alloc(layout) as *mut c_void;
 
-        /* Build Privte Data */
-        let private_data = PrivateFvbData { _interface: fvb_interface, physical_address: base_address };
-        // save the protocol structure we're about to install in the private data.
-        PRIVATE_FV_DATA.lock().fv_information.insert(fvb_ptr, PrivateDataItem::FvbData(private_data));
-
-        let fv_attributes3: *mut fw_fs::EfiFvAttributes = &mut fv_att;
-
-        /* Instance 2 - Create a FV  interface with Bad physical address to handle Error cases. */
-        let mut fv_interface3 = Box::from(mu_pi::protocols::firmware_volume::Protocol {
-            get_volume_attributes: fv_get_volume_attributes,
-            set_volume_attributes: fv_set_volume_attributes,
-            read_file: fv_read_file,
-            read_section: fv_read_section,
-            write_file: fv_write_file,
-            get_next_file: fv_get_next_file,
-            key_size: size_of::<usize>() as u32,
-            parent_handle: match parent_handle {
-                Some(handle) => handle,
-                None => core::ptr::null_mut(),
-            },
-            get_info: fv_get_info,
-            set_info: fv_set_info,
-        });
-
-        let fv_ptr3 = fv_interface3.as_mut() as *mut mu_pi::protocols::firmware_volume::Protocol as *mut c_void;
-        let fv_ptr3_const: *const mu_pi::protocols::firmware_volume::Protocol =
-            fv_ptr3 as *const mu_pi::protocols::firmware_volume::Protocol;
-
-        /* Corrupt the base address to cover error conditions  */
-        let base_no2: u64 = (fv.as_ptr() as u64 + 0x1000);
-        let private_data2 = PrivateFvData { _interface: fv_interface3, physical_address: base_no2 };
-        //save the protocol structure we're about to install in the private data.
-        PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr3, PrivateDataItem::FvData(private_data2));
-
-        /* Create an interface with No physical address and no private data - cover Error Conditions */
-        let fv_interface_no_data = mu_pi::protocols::firmware_volume::Protocol {
-            get_volume_attributes: fv_get_volume_attributes,
-            set_volume_attributes: fv_set_volume_attributes,
-            read_file: fv_read_file,
-            read_section: fv_read_section,
-            write_file: fv_write_file,
-            get_next_file: fv_get_next_file,
-            key_size: size_of::<usize>() as u32,
-            parent_handle: core::ptr::null_mut(),
-
-            get_info: fv_get_info,
-            set_info: fv_set_info,
-        };
-
-        let fv_ptr_no_data = &fv_interface_no_data as *const mu_pi::protocols::firmware_volume::Protocol;
-
-        /* Create a Firmware Volume Block Interface with Invalid Physical Address */
-        let mut fvb_intf_invalid = Box::from(mu_pi::protocols::firmware_volume_block::Protocol {
-            get_attributes: fvb_get_attributes,
-            set_attributes: fvb_set_attributes,
-            get_physical_address: fvb_get_physical_address,
-            get_block_size: fvb_get_block_size,
-            read: fvb_read,
-            write: fvb_write,
-            erase_blocks: fvb_erase_blocks,
-            parent_handle: match parent_handle {
-                Some(handle) => handle,
-                None => core::ptr::null_mut(),
-            },
-        });
-        let fvb_intf_invalid_cvoid =
-            fvb_intf_invalid.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
-        let fvb_intf_invalid_mutpro =
-            fvb_intf_invalid.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol;
-        let base_no: u64 = (fv.as_ptr() as u64 + 0x1000);
-
-        let private_data4 = PrivateFvbData { _interface: fvb_intf_invalid, physical_address: base_no };
-        // save the protocol structure we're about to install in the private data.
-        PRIVATE_FV_DATA.lock().fv_information.insert(fvb_intf_invalid_cvoid, PrivateDataItem::FvbData(private_data4));
-
-        /* Create a Firmware Volume Block Interface without Physical address populated  */
-        let mut fvb_intf_ndata = Box::from(mu_pi::protocols::firmware_volume_block::Protocol {
-            get_attributes: fvb_get_attributes,
-            set_attributes: fvb_set_attributes,
-            get_physical_address: fvb_get_physical_address,
-            get_block_size: fvb_get_block_size,
-            read: fvb_read,
-            write: fvb_write,
-            erase_blocks: fvb_erase_blocks,
-            parent_handle: match parent_handle {
-                Some(handle) => handle,
-                None => core::ptr::null_mut(),
-            },
-        });
-        let fvb_intf_ndata_cvoid =
-            fvb_intf_ndata.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
-        let fvb_intf_ndata_mut = fvb_intf_ndata.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol;
-
-        unsafe {
-
-            let fv_test_set_info = || {
-                fv_set_info(ptr::null(), ptr::null(), buffer_size_empty, ptr::null());
-            };
-
-            let fv_test_get_info = || {
-                fv_get_info(ptr::null(), ptr::null(), ptr::null_mut(), ptr::null_mut());
-            };
-
-            let fv_test_set_volume_attributes = || {
-                /* Cover the NULL Case */
-                fv_set_volume_attributes(ptr::null(), fv_attributes);
-
-                /* Non Null Case*/
-            };
-
-            let fv_test_get_volume_attributes = || {
-                /* Cover the NULL Case, User Passing Invalid Parameter Case  */
-                fv_get_volume_attributes(fv_ptr1, fv_attributes_null);
-
-                /* Handle bad firmware volume data - return efi::Status::NOT_FOUND */
-                fv_get_volume_attributes(fv_ptr_no_data, fv_attributes);
-
-                /* Handle Invalid Physical address case */
-                fv_get_volume_attributes(fv_ptr3_const, fv_attributes);
-
-                /* Non Null Case, success case */
-                fv_get_volume_attributes(fv_ptr1, fv_attributes3);
-
-            };
-
-            let fv_test_fvb_read = || {
-                /* Mutable Reference cannot be borrowed more than once,
-                 * hence delcare and free up after use immediately
-                 */
-                 let mut len3                       = 1000;
-                 let buffer_valid_size3: *mut usize = &mut len3;
-                 let layout3                        = Layout::from_size_align(1001, 8).unwrap();
-                 let mut buffer_valid3              = alloc(layout3) as *mut c_void;
-
-                if buffer_valid3.is_null() {
+                if buffer.is_null() {
                     panic!("Memory allocation failed!");
                 }
 
-                fvb_read(fvb_ptr_mut_prot, lba, 0, std::ptr::null_mut(), std::ptr::null_mut());
-                fvb_read(fvb_ptr_mut_prot, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
-                fvb_read(fvb_ptr_mut_prot, 0xfffffffff, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
-                fvb_read(fvb_intf_invalid_mutpro, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
-                fvb_read(fvb_ptr_mut_prot, u64::MAX, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
-                fvb_read(fvb_intf_ndata_mut, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
-
-                /* Free Memory */
-                dealloc(buffer_valid3 as *mut u8, layout3);
-            };
-
-            let fv_test_get_block_size = || {
-                /* Mutable Reference cannot be borrowed more than once,
-                 * hence delcare and free up after use immediately
-                 */
-                 let mut len3                       = 1000;
-                 let buffer_valid_size3: *mut usize = &mut len3;
-                 let layout3                        = Layout::from_size_align(1001, 8).unwrap();
-                 let mut buffer_valid3              = alloc(layout3) as *mut c_void;
-
-                if buffer_valid3.is_null() {
-                    panic!("Memory allocation failed!");
-                }
-
-                /* Handle the Null Case */
-                fvb_get_block_size(fvb_ptr_mut_prot, lba, std::ptr::null_mut(), std::ptr::null_mut());
-                fvb_get_block_size(fvb_ptr_mut_prot, lba, buffer_valid_size3, buffer_valid_size3);
-                fvb_get_block_size(fvb_intf_invalid_mutpro, lba, buffer_valid_size3, buffer_valid_size3);
-                fvb_get_block_size(fvb_intf_ndata_mut, lba, buffer_valid_size3, buffer_valid_size3);
-                //fvb_get_block_size(fvb_intf_ndata_mut, lba, buffer_valid_size3, buffer_valid_size3);
-                //fvb_get_block_size(fvb_ptr_mut_prot, 0xfffffffff, buffer_valid_size3, buffer_valid_size3);
-                fvb_get_block_size(fvb_ptr_mut_prot, u64::MAX, buffer_valid_size3, buffer_valid_size3);
-                /* Free Memory */
-                dealloc(buffer_valid3 as *mut u8, layout3);
-            };
-
-
-            let fvb_test_erase_block = || {
-                fvb_erase_blocks(fvb_ptr_mut_prot);
-            };
-
-            let fvb_test_get_physical_address = || {
-                /* Handling Not Found Case */
-                let mut p_address: efi::PhysicalAddress = 0x12345;
-
-                fvb_get_physical_address(fvb_intf_ndata_mut, &mut p_address as *mut u64);
-                fvb_get_physical_address(fvb_intf_invalid_mutpro, &mut p_address as *mut u64);
-                fvb_get_physical_address(fvb_ptr_mut_prot, &mut p_address as *mut u64);
-                fvb_get_physical_address(fvb_ptr_mut_prot, std::ptr::null_mut());
-            };
-            let fvb_test_write_file = || {
- 
-                let number_of_files: u32 = 0;
-                let write_policy: mu_pi::protocols::firmware_volume::EfiFvWritePolicy = 0;
-                fv_write_file(fv_ptr1, number_of_files, write_policy, std::ptr::null_mut());
-            };
-
-            let fvb_test_set_attributes = || {
-                fvb_set_attributes(fvb_ptr_mut_prot, std::ptr::null_mut());
-            };
-
-            let fvb_test_write = || {
-                let mut len3 = 1000;
-                let buffer_valid_size3: *mut usize = &mut len3;
-                let layout3 = Layout::from_size_align(1001, 8).unwrap();
-                let mut buffer_valid3 = alloc(layout3) as *mut c_void;
-
-                if buffer_valid3.is_null() {
-                    panic!("Memory allocation failed!");
-                }
-
-                fvb_write(fvb_ptr_mut_prot, lba, 0, std::ptr::null_mut(), std::ptr::null_mut());
-                fvb_write(fvb_ptr_mut_prot, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
-                fvb_write(fvb_intf_invalid_mutpro, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
-                fvb_write(fvb_intf_ndata_mut, lba, 0, buffer_valid_size3, buffer_valid3 as *mut c_void);
-                /* Free Memory */
-                dealloc(buffer_valid3 as *mut u8, layout3);
-            };
-
-            let fvb_test_get_attributes = || {
-                fvb_get_attributes(fvb_ptr_mut_prot, std::ptr::null_mut());
-                fvb_get_attributes(fvb_ptr_mut_prot, fvb_attributesp);
-                fvb_get_attributes(fvb_intf_invalid_mutpro, fvb_attributesp);
-                fvb_get_attributes(fvb_intf_ndata_mut, fvb_attributesp);
-            };
-
-
-            let mut fvb_test_get_next_file = || {
-                /* Mutable Reference cannot be borrowed more than once,
-                 * hence delcare and free up after use immediately
-                 */
-                let mut len3                       = 1000;
-                let buffer_valid_size3: *mut usize = &mut len3;
-                let layout3                        = Layout::from_size_align(1001, 8).unwrap();
-                let mut buffer_valid3              = alloc(layout3) as *mut c_void;
-
-                if buffer_valid3.is_null() {
-                    panic!("Memory allocation failed!");
-                }
-                fv_get_next_file(
-                    ptr::null(),
-                    std::ptr::null_mut(),
-                    file_type_readp,
-                    std::ptr::null_mut(),
-                    file_attributes,
-                    buffer_valid_size3,
+                let mut len = 1000;
+                let buffer_size: *mut usize = &mut len;
+                let mut authentication_status: u32 = 1;
+                let authentication_statusp: *mut u32 = &mut authentication_status;
+                let mut guid1: efi::Guid = efi::Guid::from_fields(
+                    0x1fa1f39e,
+                    0xfeff,
+                    0x4aae,
+                    0xbd,
+                    0x7b,
+                    &[0x38, 0xa0, 0x70, 0xa3, 0xb6, 0x09],
                 );
-                fv_get_next_file(
-                    ptr::null(),
-                    buffer_valid3 as *mut c_void,
-                    file_type_readp,
-                    n_guidp_mut,
-                    file_attributes,
-                    buffer_valid_size3,
-                );
-                fv_get_next_file(
+                let name_guid3: *mut efi::Guid = &mut guid1;
+
+                fv_read_section(
                     fv_ptr1,
-                    buffer_valid3 as *mut c_void,
-                    file_type_readp,
-                    n_guidp_mut,
-                    file_attributes,
-                    buffer_valid_size3,
+                    name_guid3,
+                    6,
+                    10,
+                    (&mut buffer as *mut *mut c_void),
+                    buffer_size,
+                    authentication_statusp,
                 );
-                fv_get_next_file(
-                    fv_ptr3_const,
-                    buffer_valid3 as *mut c_void,
-                    file_type_readp,
-                    n_guidp_mut,
-                    file_attributes,
-                    buffer_valid_size3,
-                );
-                fv_get_next_file(
-                    fv_ptr_no_data,
-                    buffer_valid3 as *mut c_void,
-                    file_type_readp,
-                    n_guidp_mut,
-                    file_attributes,
-                    buffer_valid_size3,
-                );
-                /*handle  fw_fs::FfsFileRawType::FFS_MIN case */
-                file_type_read = fw_fs::FfsFileRawType::FFS_MIN;
 
-                fv_get_next_file(
-                    fv_ptr1,
-                    buffer_valid3 as *mut c_void,
-                    file_type_readp,
-                    n_guidp_mut,
-                    file_attributes,
-                    buffer_valid_size3,
-                );
-                /* Null BUffer Case*/
-                fv_get_next_file(
-                    fv_ptr1,
-                    std::ptr::null_mut(),
-                    file_type_readp,
-                    n_guidp_mut,
-                    file_attributes,
-                    buffer_valid_size3,
-                );
                 // Deallocate the memory
-                dealloc(buffer_valid3 as *mut u8, layout3);
-            };
-
-            let fvb_test_read_section = || {
-                /* Mutable Reference cannot be borrowed more than once,
-                 * hence delcare and free up after use immediately
-                 */
-                let mut len3                       = 1000;
-                let buffer_valid_size3: *mut usize = &mut len3;
-                let layout3                        = Layout::from_size_align(1001, 8).unwrap();
-                let mut buffer_valid3              = alloc(layout3) as *mut c_void;
-
-                if buffer_valid3.is_null() {
-                    panic!("Memory allocation failed!");
-                }
-
-                let mut gd1: efi::Guid = mu_pi::protocols::firmware_volume_block::PROTOCOL_GUID; //EVENT_GROUP_END_OF_DXE;
-                let mut gd2: efi::Guid = efi::Guid::from_fields(
-                    0x434f695c,
-                    0xef26,
-                    0x4a12,
-                    0x9e,
-                    0xba,
-                    &[0xdd, 0xef, 0x00, 0x97, 0x49, 0x7c],
-                );
-                let name_guid1: *mut efi::Guid = &mut gd1;
-                let name_guid2: *mut efi::Guid = &mut gd2;
-
-                /* Cover the NULL Case, User Passing Invalid Parameter Case  */
-                fv_read_section(
-                    ptr::null(),
-                    ptr::null(),
-                    section_type,
-                    section_instance,
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                );
-
-                fv_read_section(
-                    fv_ptr1,
-                    guidp_invalidp,
-                    6,
-                    10,
-                    (&mut buffer_valid3 as *mut *mut c_void),
-                    buffer_valid_size3,
-                    auth_valid_p,
-                );
-                /* Valid guid case - panicing, debug this further, for now comment*/
-                /*fv_read_section(
-                    fv_ptr1,
-                    guid_valid_for_filep,
-                    1,
-                    1,
-                   (&mut buffer_valid as *mut *mut c_void),
-                   buffer_valid_size,
-                   auth_valid_p,
-                  ); */
-
-                fv_read_section(
-                    fv_ptr1,
-                    name_guid2,
-                    6,
-                    10,
-                    (&mut buffer_valid3 as *mut *mut c_void),
-                    buffer_valid_size3,
-                    auth_valid_p,
-                );
-
-                /* Handle Invalid Physical address case */
-                fv_read_section(
-                    fv_ptr3_const,
-                    guidp_invalidp,
-                    1,
-                    1,
-                    (&mut buffer_valid3 as *mut *mut c_void),
-                    buffer_valid_size3,
-                    auth_valid_p,
-                );
-
-                /* Handle bad firmware volume data - return efi::Status::NOT_FOUND */
-                fv_read_section(
-                    fv_ptr_no_data,
-                    guidp_invalidp,
-                    1,
-                    1,
-                    (&mut buffer_valid3 as *mut *mut c_void),
-                    buffer_valid_size3,
-                    auth_valid_p,
-                );
-                /* Free Memory */
-                dealloc(buffer_valid3 as *mut u8, layout3);
-            };
-
-            let fvb_test_read_file = || {
-                /* Mutable Reference cannot be borrowed more than once,
-                 * hence delcare and free up after use immediately
-                 */
-                 let mut len3                       = 1000;
-                 let buffer_valid_size3: *mut usize = &mut len3;
-                 let layout3                        = Layout::from_size_align(1001, 8).unwrap();
-                 let mut buffer_valid3              = alloc(layout3) as *mut c_void;
-
-                if buffer_valid3.is_null() {
-                    panic!("Memory allocation failed!");
-                }
-
-                fv_read_file(
-                    ptr::null(),
-                    ptr::null(),
-                    (&mut buffer_valid3 as *mut *mut c_void),
-                    std::ptr::null_mut(),
-                    found_typep,
-                    file_attributes,
-                    std::ptr::null_mut(),
-                );
-
-                fv_read_file(
-                    fv_ptr1,
-                    guidp_invalidp,
-                    (&mut buffer_valid3 as *mut *mut c_void),
-                    buffer_valid_size3,
-                    found_typep,
-                    file_attributes,
-                    auth_valid_p,
-                );
-                fv_read_file(
-                    fv_ptr1,
-                    guid_valid_for_filep,
-                    (&mut buffer_valid3 as *mut *mut c_void),
-                    buffer_valid_size3,
-                    found_typep,
-                    file_attributes,
-                    auth_valid_p,
-                );
-                fv_read_file(
-                    fv_ptr3_const,
-                    guid_valid_for_filep,
-                    (&mut buffer_valid3 as *mut *mut c_void),
-                    buffer_valid_size3,
-                    found_typep,
-                    file_attributes,
-                    auth_valid_p,
-                );
-                fv_read_file(
-                    fv_ptr_no_data,
-                    guid_valid_for_filep,
-                    (&mut buffer_valid3 as *mut *mut c_void),
-                    buffer_valid_size3,
-                    found_typep,
-                    file_attributes,
-                    auth_valid_p,
-                );
-                fv_read_file(
-                    fv_ptr1,
-                    guid_valid_for_filep,
-                    std::ptr::null_mut(),
-                    buffer_valid_size3,
-                    found_typep,
-                    file_attributes,
-                    auth_valid_p,
-                );
-                /* Raise Bug for this case , case when Buffer size is 0 and buffer not NULL. last block*/
-                /*fv_read_file(fv_ptr1 , guid_valid_for_filep, (&mut buffer_valid as *mut *mut c_void), 
-                  buffer_equal_0p, found_typep, file_attributes,
-                  auth_valid_p ); */
-                /* Free Memory */
-                dealloc(buffer_valid3 as *mut u8, layout3);
-            };
-
-            fv_test_set_info();
-            fv_test_get_info();
-            fv_test_set_volume_attributes();
-            fv_test_get_volume_attributes();
-            fv_test_fvb_read();
-            fv_test_get_block_size();
-            fvb_test_erase_block();
-            fvb_test_get_physical_address();
-            fvb_test_set_attributes();
-            fvb_test_get_attributes();
-            fvb_test_write();
-            fvb_test_read_section();
-            fvb_test_get_next_file();
-            fvb_test_read_file();
-            fvb_test_write_file();
-        }
+                dealloc(buffer as *mut u8, layout);
+            }
+        })
+        .expect("Failed to read Firmware Volume Section");
     }
 }
