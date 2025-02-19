@@ -848,7 +848,7 @@ mod tests {
             let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
             let mut fv: Vec<u8> = Vec::new();
             file.read_to_end(&mut fv).expect("failed to read test file");
-            let base_address: u64 = fv.as_ptr() as u64;
+            let base_address: u64  = fv.as_ptr() as u64;
             let parent_handle: Option<efi::Handle> = None;
             let _handle = install_fv_device_path_protocol(None, base_address);
 
@@ -987,8 +987,6 @@ mod tests {
                     None => core::ptr::null_mut(),
                 },
             });
-            let fvb_intf_data_n_void =
-                fvb_intf_data_n.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
             let fvb_intf_data_n_mut =
                 fvb_intf_data_n.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol;
 
@@ -1029,7 +1027,7 @@ mod tests {
                     let mut len3 = 1000;
                     let buffer_valid_size3: *mut usize = &mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
-                    let mut buffer_valid3 = alloc(layout3) as *mut c_void;
+                    let buffer_valid3 = alloc(layout3) as *mut c_void;
 
                     if buffer_valid3.is_null() {
                         panic!("Memory allocation failed!");
@@ -1054,7 +1052,7 @@ mod tests {
                     let mut len3 = 1000;
                     let buffer_valid_size3: *mut usize = &mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
-                    let mut buffer_valid3 = alloc(layout3) as *mut c_void;
+                    let buffer_valid3 = alloc(layout3) as *mut c_void;
 
                     if buffer_valid3.is_null() {
                         panic!("Memory allocation failed!");
@@ -1103,7 +1101,7 @@ mod tests {
                     let mut len3 = 1000;
                     let buffer_valid_size3: *mut usize = &mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
-                    let mut buffer_valid3 = alloc(layout3) as *mut c_void;
+                    let buffer_valid3 = alloc(layout3) as *mut c_void;
 
                     if buffer_valid3.is_null() {
                         panic!("Memory allocation failed!");
@@ -1134,7 +1132,7 @@ mod tests {
                     let mut len3 = 1000;
                     let buffer_valid_size3: *mut usize = &mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
-                    let mut buffer_valid3 = alloc(layout3) as *mut c_void;
+                    let buffer_valid3 = alloc(layout3) as *mut c_void;
                     let mut file_type_read: fw_fs::EfiFvFileType = 1;
                     let file_type_read_ref: *mut fw_fs::EfiFvFileType = &mut file_type_read;
                     let mut n_guid_mut: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
@@ -1229,7 +1227,6 @@ mod tests {
                         0xba,
                         &[0xdd, 0xef, 0x00, 0x97, 0x49, 0x7c],
                     );
-                    let name_guid1: *mut efi::Guid = &mut gd1;
                     let name_guid2: *mut efi::Guid = &mut gd2;
 
                     /* Cover the NULL Case, User Passing Invalid Parameter Case  */
