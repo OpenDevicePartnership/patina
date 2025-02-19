@@ -818,7 +818,7 @@ mod tests {
             // Generate some example HOBs
 
             let _firmware_volume2 = gen_firmware_volume2();
-            let _firmware_volume0= gen_firmware_volume();
+            let _firmware_volume0 = gen_firmware_volume();
             let end_of_hob_list = gen_end_of_hoblist();
 
             // Create a new empty HOB list
@@ -850,7 +850,7 @@ mod tests {
             let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
             let mut fv: Vec<u8> = Vec::new();
             file.read_to_end(&mut fv).expect("failed to read test file");
-            let base_address:u64  = fv.as_ptr() as u64;
+            let base_address: u64  = fv.as_ptr() as u64;
             let parent_handle: Option<efi::Handle> = None;
             let _handle = install_fv_device_path_protocol(None, base_address);
 
