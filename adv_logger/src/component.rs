@@ -128,18 +128,8 @@ where
         };
 
         let protocol = Box::leak(Box::new(protocol));
-
-        // SAFETY: The protocol pointer is valid and should match callers expectations.
-        // There is not a clean way to do this using the existing unchecked interface
-        // because this is wrapped in a generic internal structure.
-        match unsafe {
-            bs.install_protocol_interface_unchecked(
-                None,
-                &AdvancedLoggerProtocolRegister {},
-                &mut protocol.protocol as *mut AdvancedLoggerProtocol as *mut c_void,
-            )
-        } {
-            Err(status) => {
+        match bs.install_protocol_interface(None, &AdvancedLoggerProtocolRegister {}, &mut protocol.protocol) {
+            Err((_, status)) => {
                 log::error!("Failed to install Advanced Logger protocol! Status = {:#x?}", status);
                 Err(EfiError::ProtocolError)
             }
