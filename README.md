@@ -24,6 +24,19 @@ Before making pull requests at a minimum, run:
 - `cargo clippy -- -D warnings`
 - `cargo fmt --all`
 
+## Performing a Release
+
+Below is the information required to perform a release that publishes to the internal UefiRust feed:
+
+1. Review the current draft release on github: https://github.com/OpenDevicePartnership/uefi-dxe-core/releases
+   a. If something is incorrect, update it in the draft release
+   b. If you need to manually change the version, make sure you update the associated tag in the draft release
+2. Publish the release
+3. Monitor the publish release workflow that is automatically started:
+   https://github.com/OpenDevicePartnership/uefi-dxe-core/actions/workflows/publish-release.yml
+4. Once completed successfully, click on the  "Notify Branch Creation Step" and click the provided link to create the
+   PR to update all versions in all Cargo.toml files across the repository.
+
 ## Documentation
 
 We have "Getting Started" documentation located in this repository at `docs/*`. The latest documentation can be found
