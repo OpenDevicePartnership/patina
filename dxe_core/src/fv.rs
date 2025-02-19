@@ -763,7 +763,6 @@ mod tests {
     //Populate Null References for error cases
     const BUFFER_SIZE_EMPTY: usize = 0;
     const LBA: u64 = 0;
-    const OFFSET: usize = 0;
     const SECTION_TYPE: fw_fs::EfiSectionType = 0;
     const SECTION_INSTANCE: usize = 0;
 
@@ -786,7 +785,7 @@ mod tests {
                 let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
                 let mut fv: Vec<u8> = Vec::new();
                 file.read_to_end(&mut fv).expect("failed to read test file");
-                let mut base: u64;
+                let base: u64;
                 let len: u64 = fv.len() as u64;
 
                 base = fv.as_ptr() as u64;
@@ -818,15 +817,15 @@ mod tests {
 
             // Generate some example HOBs
 
-            let firmware_volume2 = gen_firmware_volume2();
-            let firmware_volume0 = gen_firmware_volume();
+            let _firmware_volume2 = gen_firmware_volume2();
+            let _firmware_volume0= gen_firmware_volume();
             let end_of_hob_list = gen_end_of_hoblist();
 
             // Create a new empty HOB list
             let mut hoblist = HobList::new();
 
             // Push the example HOBs onto the HOB l
-            hoblist.push(Hob::FirmwareVolume2(&firmware_volume2));
+            hoblist.push(Hob::FirmwareVolume2(&_firmware_volume2));
             hoblist.push(Hob::Handoff(&end_of_hob_list));
             init_fv_support(&hoblist, Box::new(section_extractor::BrotliSectionExtractor));
         })
@@ -837,26 +836,23 @@ mod tests {
     fn test_fv_functionality() {
         test_support::with_global_lock(|| {
             let mut fv_att: u64 = 0x1;
-            let mut fv_attributes: *mut fw_fs::EfiFvAttributes = &mut fv_att;
+            let fv_attributes: *mut fw_fs::EfiFvAttributes = &mut fv_att;
             let guid_invalid: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
             let guid_ref_invalid_ref: *const efi::Guid = &guid_invalid;
             let mut auth_valid_status: u32 = 1;
-            let mut auth_valid_p: *mut u32 = &mut auth_valid_status;
+            let auth_valid_p: *mut u32 = &mut auth_valid_status;
             let mut guid_valid: efi::Guid =
                 efi::Guid::from_fields(0x1fa1f39e, 0xfeff, 0x4aae, 0xbd, 0x7b, &[0x38, 0xa0, 0x70, 0xa3, 0xb6, 0x09]);
-            let mut guid_valid_ref: *mut efi::Guid = &mut guid_valid;
+            let guid_valid_ref: *mut efi::Guid = &mut guid_valid;
             let mut file_rd_attr: u32 = fw_fs::Fvb2RawAttributes::READ_STATUS;
             let file_attributes: *mut fw_fs::EfiFvFileAttributes = &mut file_rd_attr;
 
             let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
             let mut fv: Vec<u8> = Vec::new();
             file.read_to_end(&mut fv).expect("failed to read test file");
-            let mut base_address: u64;
-            let parent_handle: Option<efi::Handle>;
-
-            base_address = fv.as_ptr() as u64;
-            parent_handle = None;
-            let handle = install_fv_device_path_protocol(None, base_address);
+            let base_address:u64  = fv.as_ptr() as u64;
+            let parent_handle: Option<efi::Handle> = None;
+            let _handle = install_fv_device_path_protocol(None, base_address);
 
             /* Create Firmware Interface, this will be used by the whole test module */
             let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
@@ -868,7 +864,7 @@ mod tests {
                 get_next_file: fv_get_next_file,
                 key_size: size_of::<usize>() as u32,
                 parent_handle: match parent_handle {
-                    Some(handle) => handle,
+                    Some(_handle) => _handle,
                     None => core::ptr::null_mut(),
                 },
                 get_info: fv_get_info,
@@ -1142,7 +1138,7 @@ mod tests {
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
                     let mut buffer_valid3 = alloc(layout3) as *mut c_void;
                     let mut file_type_read: fw_fs::EfiFvFileType = 1;
-                    let mut file_type_read_ref: *mut fw_fs::EfiFvFileType = &mut file_type_read;
+                    let file_type_read_ref: *mut fw_fs::EfiFvFileType = &mut file_type_read;
                     let mut n_guid_mut: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
                     let mut n_guid_ref_mut: *mut efi::Guid = &mut n_guid_mut;
 
