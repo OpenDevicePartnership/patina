@@ -18,8 +18,9 @@ pub struct AdvancedLoggerProtocol {
     pub version: u32,
     /// Function to write a log message to the Advanced Logger.
     pub write_log: AdvancedLoggerWrite,
-    /// Physical address of the Advanced Logger memory buffer.
-    pub log_info: efi::PhysicalAddress,
+    // Physical address of the Advanced Logger memory buffer. This is not a public
+    // field so should should only be accessed from within the crate.
+    pub(crate) log_info: efi::PhysicalAddress,
 }
 
 /// Structure for registering and locating the Advanced Logger protocol.
@@ -56,7 +57,8 @@ impl AdvancedLoggerProtocol {
     /// Current version of the Advanced Logger protocol.
     pub const VERSION: u32 = 2;
 
-    pub const fn new(write_log: AdvancedLoggerWrite, log_info: efi::PhysicalAddress) -> Self {
+    /// Creates a new instance of the Advanced Logger protocol.
+    pub(crate) const fn new(write_log: AdvancedLoggerWrite, log_info: efi::PhysicalAddress) -> Self {
         AdvancedLoggerProtocol { signature: Self::SIGNATURE, version: Self::VERSION, write_log, log_info }
     }
 }

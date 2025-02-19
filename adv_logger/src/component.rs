@@ -128,6 +128,10 @@ where
         };
 
         let protocol = Box::leak(Box::new(protocol));
+
+        // SAFETY: The protocol pointer is valid and should match callers expectations.
+        // There is not a clean way to do this using the existing unchecked interface
+        // because this is wrapped in a generic internal structure.
         match unsafe {
             bs.install_protocol_interface_unchecked(
                 None,
