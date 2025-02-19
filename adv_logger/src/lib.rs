@@ -55,6 +55,8 @@
 extern crate alloc;
 
 pub mod component;
-mod integration_test;
 pub mod logger;
+pub mod protocol;
+
+mod integration_test;
 mod memory_log;
