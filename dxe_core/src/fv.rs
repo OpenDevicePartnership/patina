@@ -1125,7 +1125,7 @@ mod tests {
                     fvb_get_attributes(fvb_intf_data_n_mut, fvb_attributes_ref);
                 };
 
-                let mut fvb_test_get_next_file = || {
+                let fvb_test_get_next_file = || {
                     /* Mutable Reference cannot be borrowed more than once,
                      * hence delcare and free up after use immediately
                      */
@@ -1182,12 +1182,13 @@ mod tests {
                         buffer_valid_size3,
                     );
                     /*handle  fw_fs::FfsFileRawType::FFS_MIN case */
-                    file_type_read = fw_fs::FfsFileRawType::FFS_MIN;
+                    let mut file_type_read: fw_fs::EfiFvFileType = fw_fs::FfsFileRawType::FFS_MIN;
+                    let file_type_read_ref1: *mut fw_fs::EfiFvFileType = &mut file_type_read;
 
                     fv_get_next_file(
                         fv_ptr1,
                         buffer_valid3,
-                        file_type_read_ref,
+                        file_type_read_ref1,
                         n_guid_ref_mut,
                         file_attributes,
                         buffer_valid_size3,
@@ -1218,7 +1219,6 @@ mod tests {
                         panic!("Memory allocation failed!");
                     }
 
-                    let mut gd1: efi::Guid = mu_pi::protocols::firmware_volume_block::PROTOCOL_GUID; //EVENT_GROUP_END_OF_DXE;
                     let mut gd2: efi::Guid = efi::Guid::from_fields(
                         0x434f695c,
                         0xef26,
