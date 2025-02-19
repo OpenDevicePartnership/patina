@@ -23,7 +23,7 @@ fn adv_logger_test(bs: StandardBootServices) -> uefi_test::Result {
 
     // Get a reference to the advanced logger buffer. The actual transport does
     // not matter so use the NULL implementation as a stand-in.
-    let result = unsafe { bs.locate_protocol(&protocol::AdvancedLoggerProtocolRegister {}, None) };
+    let result = unsafe { bs.locate_protocol(&protocol::AdvancedLoggerProtocolRegister, None) };
 
     u_assert!(result.is_ok(), "adv_logger_test: Failed to locate the advanced logger protocol.");
     let protocol = result.unwrap();

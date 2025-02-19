@@ -24,7 +24,7 @@ pub struct AdvancedLoggerProtocol {
 }
 
 /// Structure for registering and locating the Advanced Logger protocol.
-pub struct AdvancedLoggerProtocolRegister {}
+pub struct AdvancedLoggerProtocolRegister;
 
 /// Function definition for writing a log message to the Advanced Logger through
 /// the protocol.
