@@ -55,10 +55,11 @@ use r_efi::system::EVENT_GROUP_READY_TO_BOOT;
 pub use mu_rust_helpers::function;
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 
+use uefi_device_path::DevicePathWalker;
 use uefi_sdk::{
     boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
     guid,
-    protocol::{DriverBinding, LoadedImage},
+    protocol::{DevicePath, DriverBinding, LoadedImage},
     runtime_services::StandardRuntimeServices,
     tpl_mutex::TplMutex,
 };
@@ -252,9 +253,16 @@ extern "efiapi" fn create_performance_measurement(
         ticker => (ticker as f64 / Arch::cpu_count_frequency() as f64 * 1_000_000_000_f64) as u64,
     };
 
+    let controller_handle = address as efi::Handle;
+
     match perf_id {
         PerfId::MODULE_START | PerfId::MODULE_END => {
-            if let Ok((_, guid)) = get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void) {
+            if let Ok((_, guid)) = get_module_info_from_handle(
+                &BOOT_SERVICES,
+                caller_identifier as *mut c_void,
+                controller_handle,
+                perf_id,
+            ) {
                 let record = GuidEventRecord::new(perf_id, 0, timestamp, guid);
                 _ = &FBPT.lock().add_record(record);
             }
@@ -263,7 +271,12 @@ extern "efiapi" fn create_performance_measurement(
             if perf_id == PerfId::MODULE_LOAD_IMAGE_START {
                 LOAD_IMAGE_COUNT.fetch_add(1, Ordering::Relaxed);
             }
-            if let Ok((_, guid)) = get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void) {
+            if let Ok((_, guid)) = get_module_info_from_handle(
+                &BOOT_SERVICES,
+                caller_identifier as *mut c_void,
+                controller_handle,
+                perf_id,
+            ) {
                 let record = GuidQwordEventRecord::new(
                     perf_id,
                     timestamp,
@@ -278,16 +291,23 @@ extern "efiapi" fn create_performance_measurement(
         | PerfId::MODULE_DB_STOP_START
         | PerfId::MODULE_DB_STOP_END
         | PerfId::MODULE_DB_START => {
-            if let Ok((_, guid)) = get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void) {
+            if let Ok((_, guid)) = get_module_info_from_handle(
+                &BOOT_SERVICES,
+                caller_identifier as *mut c_void,
+                controller_handle,
+                perf_id,
+            ) {
                 let record = GuidQwordEventRecord::new(perf_id, timestamp, guid, address as u64);
                 _ = &FBPT.lock().add_record(record);
             }
         }
         PerfId::MODULE_DB_END => {
-            if let Ok((module_name, guid)) =
-                get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void)
-            {
-                let module_name = module_name.unwrap_or(String::from("unknown name"));
+            if let Ok((Some(module_name), guid)) = get_module_info_from_handle(
+                &BOOT_SERVICES,
+                caller_identifier as *mut c_void,
+                controller_handle,
+                perf_id,
+            ) {
                 let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, &module_name);
                 _ = &FBPT.lock().add_record(record);
             }
@@ -317,9 +337,12 @@ extern "efiapi" fn create_performance_measurement(
             _ = &FBPT.lock().add_record(record);
         }
         _ if attribute != PerfAttribute::PerfEntry => {
-            let (module_name, guid) = if let Ok((Some(module_name), guid)) =
-                get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void)
-            {
+            let (module_name, guid) = if let Ok((Some(module_name), guid)) = get_module_info_from_handle(
+                &BOOT_SERVICES,
+                caller_identifier as *mut c_void,
+                controller_handle,
+                perf_id,
+            ) {
                 (module_name, guid)
             } else if let Some(string) = string {
                 let guid = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
@@ -393,6 +416,8 @@ impl PerformanceProperty {
 fn get_module_info_from_handle(
     boot_services: &impl BootServices,
     handle: efi::Handle,
+    controller_handle: efi::Handle,
+    perf_id: u16,
 ) -> Result<(Option<String>, efi::Guid), efi::Status> {
     let mut guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
 
@@ -426,6 +451,17 @@ fn get_module_info_from_handle(
                 guid = unsafe { ptr::read(loaded_image.file_path.add(1) as *const efi::Guid) }
             }
         };
+
+        if perf_id == PerfId::MODULE_DB_END
+            || perf_id == PerfId::MODULE_DB_SUPPORT_END
+            || perf_id == PerfId::MODULE_DB_STOP_END
+        {
+            let device_path_protocol = unsafe { boot_services.handle_protocol(controller_handle, &DevicePath) };
+            if let Ok(device_path_protocol) = device_path_protocol {
+                let device_path_string: String = unsafe { DevicePathWalker::new(device_path_protocol) }.into();
+                return Ok((Some(device_path_string), guid));
+            }
+        }
 
         let _image_bytes = unsafe {
             slice::from_raw_parts(loaded_image.image_base as *const _ as *const u8, loaded_image.image_size as usize)
