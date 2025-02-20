@@ -55,8 +55,8 @@ use r_efi::system::EVENT_GROUP_READY_TO_BOOT;
 pub use mu_rust_helpers::function;
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 
-use uefi_device_path::DevicePathWalker;
 use scroll::Pread;
+use uefi_device_path::DevicePathWalker;
 use uefi_sdk::{
     boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
     guid,
