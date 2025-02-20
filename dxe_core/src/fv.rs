@@ -766,9 +766,22 @@ mod tests {
     const SECTION_TYPE: fw_fs::EfiSectionType = 0;
     const SECTION_INSTANCE: usize = 0;
 
+    pub unsafe fn fv_private_data_reset() {
+        // Clear inserted elements
+        PRIVATE_FV_DATA.lock().fv_information.clear();
+    }
+
     #[test]
     fn test_fv_init_core() {
         test_support::with_global_lock(|| {
+            /* Start with Clearing Private Global Data, Please note that this is to be done only once
+             * for test_fv_functionality.
+             * In case other functions/modules are written, clear the private global data again.
+             */
+            unsafe {
+                fv_private_data_reset();
+            }
+            assert!(PRIVATE_FV_DATA.lock().fv_information.is_empty());
             fn gen_firmware_volume2() -> hob::FirmwareVolume2 {
                 let header =
                     hob::header::Hob { r#type: hob::FV, length: size_of::<hob::FirmwareVolume2>() as u16, reserved: 0 };
@@ -851,6 +864,15 @@ mod tests {
             let base_address: u64 = fv.as_ptr() as u64;
             let parent_handle: Option<efi::Handle> = None;
             let _handle = install_fv_device_path_protocol(None, base_address);
+
+            /* Start with Clearing Private Global Data, Please note that this is to be done only once
+             * for test_fv_functionality.
+             * In case other functions/modules are written, clear the private global data again.
+             */
+            unsafe {
+                fv_private_data_reset();
+            }
+            assert!(PRIVATE_FV_DATA.lock().fv_information.is_empty());
 
             /* Create Firmware Interface, this will be used by the whole test module */
             let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
@@ -1250,7 +1272,6 @@ mod tests {
                         auth_valid_p,
                     );
 
-                    //fv_read_section(fv_ptr1 , name_guid3, 6, 10,(&mut buffer as *mut *mut c_void), buffer_size, authentication_statusp);
                     /* Valid guid case - panicing, debug this further, for now comment*/
                     /*fv_read_section(
                         fv_ptr1,
@@ -1403,6 +1424,14 @@ mod tests {
             file.read_to_end(&mut fv).expect("failed to read test file");
             let base_address: u64 = fv.as_ptr() as u64;
             let parent_handle: Option<efi::Handle> = None;
+            /* Start with Clearing Private Global Data, Please note that this is to be done only once
+             * for test_fv_functionality.
+             * In case other functions/modules are written, clear the private global data again.
+             */
+            unsafe {
+                fv_private_data_reset();
+            }
+            assert!(PRIVATE_FV_DATA.lock().fv_information.is_empty());
 
             let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
                 get_volume_attributes: fv_get_volume_attributes,
