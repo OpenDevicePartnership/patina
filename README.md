@@ -28,7 +28,7 @@ Before making pull requests at a minimum, run:
 
 Below is the information required to perform a release that publishes to the internal UefiRust feed:
 
-1. Review the current draft release on github: [Releases](https://github.com/OpenDevicePartnership/uefi-dxe-core/releases)
+1. Review the current draft release on the github repo: [Releases](https://github.com/OpenDevicePartnership/uefi-dxe-core/releases)
    a. If something is incorrect, update it in the draft release
    b. If you need to manually change the version, make sure you update the associated tag in the draft release
 2. Publish the release
