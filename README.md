@@ -32,7 +32,8 @@ Below is the information required to perform a release that publishes to the int
    a. If something is incorrect, update it in the draft release
    b. If you need to manually change the version, make sure you update the associated git tag value in the draft release
 2. Publish the release
-3. Monitor the publish release workflow that is automatically triggered on the release being published: [Publish Release Workflow](https://github.com/OpenDevicePartnership/uefi-dxe-core/actions/workflows/publish-release.yml)
+3. Monitor the publish release workflow that is automatically triggered on the release being published:
+   [Publish Release Workflow](https://github.com/OpenDevicePartnership/uefi-dxe-core/actions/workflows/publish-release.yml)
 4. Once completed successfully, click on the  "Notify Branch Creation Step" and click the provided link to create the
    PR to update all versions in all Cargo.toml files across the repository.
 
