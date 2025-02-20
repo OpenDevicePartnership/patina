@@ -2296,7 +2296,8 @@ impl SpinLockedGcd {
     }
 
     pub(crate) fn init_paging(&self, hob_list: &HobList) {
-        self.memory.lock().init_paging(hob_list, PagingAllocator::new());
+        let page_allocator = PagingAllocator::new();
+        self.memory.lock().init_paging(hob_list, page_allocator);
     }
 
     /// This service adds reserved memory, system memory, or memory-mapped I/O resources to the global coherency domain of the processor.
