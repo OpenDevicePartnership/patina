@@ -10,13 +10,11 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use core::marker::PhantomData;
-
 use r_efi::efi;
 use uefi_sdk::boot_services::{BootServices, StandardBootServices};
 use uefi_test::{u_assert, u_assert_eq, uefi_test};
 
-use crate::memory_log;
+use crate::{memory_log, protocol};
 
 #[uefi_test]
 fn adv_logger_test(bs: StandardBootServices) -> uefi_test::Result {
@@ -25,8 +23,7 @@ fn adv_logger_test(bs: StandardBootServices) -> uefi_test::Result {
 
     // Get a reference to the advanced logger buffer. The actual transport does
     // not matter so use the NULL implementation as a stand-in.
-    let result =
-        unsafe { bs.locate_protocol(&crate::component::Protocol::<uefi_sdk::serial::UartNull>(PhantomData), None) };
+    let result = unsafe { bs.locate_protocol(&protocol::AdvancedLoggerProtocolRegister, None) };
 
     u_assert!(result.is_ok(), "adv_logger_test: Failed to locate the advanced logger protocol.");
     let protocol = result.unwrap();
