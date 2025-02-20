@@ -30,7 +30,7 @@ Below is the information required to perform a release that publishes to the int
 
 1. Review the current draft release on the github repo: [Releases](https://github.com/OpenDevicePartnership/uefi-dxe-core/releases)
    a. If something is incorrect, update it in the draft release
-   b. If you need to manually change the version, make sure you update the associated tag in the draft release
+   b. If you need to manually change the version, make sure you update the associated git tag value in the draft release
 2. Publish the release
 3. Monitor the publish release workflow that is automatically started: [Publish Release Workflow](https://github.com/OpenDevicePartnership/uefi-dxe-core/actions/workflows/publish-release.yml)
 4. Once completed successfully, click on the  "Notify Branch Creation Step" and click the provided link to create the
