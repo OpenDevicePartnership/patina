@@ -10,7 +10,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::boxed::Box;
-use core::{ffi::c_void, marker::PhantomData, ptr};
+use core::{ffi::c_void, ptr};
 use mu_pi::hob::{Hob, PhaseHandoffInformationTable};
 use r_efi::efi;
 use uefi_sdk::{
@@ -20,63 +20,23 @@ use uefi_sdk::{
     serial::SerialIO,
 };
 
-use crate::{logger::AdvancedLogger, memory_log, memory_log::AdvLoggerInfo};
+use crate::{
+    logger::AdvancedLogger,
+    memory_log::{self, AdvLoggerInfo},
+    protocol::{AdvancedLoggerProtocol, AdvancedLoggerProtocolRegister},
+};
 
-type AdvancedLoggerWriteProtocol<S> =
-    extern "efiapi" fn(*const AdvancedLoggerProtocol<S>, usize, *const u8, usize) -> efi::Status;
-
-pub(crate) struct Protocol<S>(pub PhantomData<S>);
-unsafe impl<S: SerialIO + Send + 'static> uefi_sdk::protocol::Protocol for Protocol<S> {
-    type Interface = AdvancedLoggerProtocol<S>;
-
-    fn protocol_guid(&self) -> &'static efi::Guid {
-        &AdvancedLoggerProtocol::<S>::GUID
-    }
-}
-impl<S: SerialIO + Send + 'static> core::ops::Deref for Protocol<S> {
-    type Target = r_efi::efi::Guid;
-
-    fn deref(&self) -> &Self::Target {
-        &AdvancedLoggerProtocol::<S>::GUID
-    }
-}
-
-/// C struct for the Advanced Logger protocol.
+/// C struct for the internal Advanced Logger protocol for the component.
 #[repr(C)]
-pub(crate) struct AdvancedLoggerProtocol<S>
+struct AdvancedLoggerProtocolInternal<S>
 where
     S: SerialIO + Send + 'static,
 {
-    pub signature: u32,
-    pub version: u32,
-    pub write_log: AdvancedLoggerWriteProtocol<S>,
-    pub log_info: efi::PhysicalAddress, // Internal field for access lib.
+    // The public protocol that external callers will depend on.
+    protocol: AdvancedLoggerProtocol,
 
-    // Internal rust access only! Does not exist in C definition.
+    // Internal component access only! Does not exist in C definition.
     adv_logger: &'static AdvancedLogger<'static, S>,
-}
-
-impl<S> AdvancedLoggerProtocol<S>
-where
-    S: SerialIO + Send,
-{
-    /// Protocol GUID for the Advanced Logger protocol.
-    pub const GUID: efi::Guid =
-        efi::Guid::from_fields(0x434f695c, 0xef26, 0x4a12, 0x9e, 0xba, &[0xdd, 0xef, 0x00, 0x97, 0x49, 0x7c]);
-
-    /// Signature used for the Advanced Logger protocol.
-    pub const SIGNATURE: u32 = 0x50474F4C; // "LOGP"
-
-    /// Current version of the Advanced Logger protocol.
-    pub const VERSION: u32 = 2;
-
-    pub const fn new(
-        write_log: AdvancedLoggerWriteProtocol<S>,
-        log_info: efi::PhysicalAddress,
-        adv_logger: &'static AdvancedLogger<S>,
-    ) -> Self {
-        AdvancedLoggerProtocol { signature: Self::SIGNATURE, version: Self::VERSION, write_log, log_info, adv_logger }
-    }
 }
 
 /// The component that will install the Advanced Logger protocol.
@@ -131,7 +91,7 @@ where
 
     /// EFI API to write to the advanced logger through the advanced logger protocol.
     extern "efiapi" fn adv_log_write(
-        this: *const AdvancedLoggerProtocol<S>,
+        this: *const AdvancedLoggerProtocol,
         error_level: usize,
         buffer: *const u8,
         num_bytes: usize,
@@ -142,7 +102,9 @@ where
         let error_level = error_level as u32;
 
         // SAFETY: We must trust the C code was a responsible steward of this buffer.
-        unsafe { (*this).adv_logger }.log_write(error_level, data);
+        let internal = unsafe { &*(this as *const AdvancedLoggerProtocolInternal<S>) };
+
+        internal.adv_logger.log_write(error_level, data);
         efi::Status::SUCCESS
     }
 
@@ -160,9 +122,13 @@ where
         };
 
         let address = log_info as *const AdvLoggerInfo as efi::PhysicalAddress;
-        let protocol = AdvancedLoggerProtocol::new(Self::adv_log_write, address, self.adv_logger);
+        let protocol = AdvancedLoggerProtocolInternal {
+            protocol: AdvancedLoggerProtocol::new(Self::adv_log_write, address),
+            adv_logger: self.adv_logger,
+        };
 
-        match bs.install_protocol_interface(None, &Protocol(PhantomData), Box::new(protocol)) {
+        let protocol = Box::leak(Box::new(protocol));
+        match bs.install_protocol_interface(None, &AdvancedLoggerProtocolRegister, &mut protocol.protocol) {
             Err((_, status)) => {
                 log::error!("Failed to install Advanced Logger protocol! Status = {:#x?}", status);
                 Err(EfiError::ProtocolError)
