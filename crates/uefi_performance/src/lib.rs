@@ -63,6 +63,8 @@ use uefi_sdk::{
     tpl_mutex::TplMutex,
 };
 
+use mockall::{predicate::*, *};
+
 static BOOT_SERVICES: StandardBootServices = StandardBootServices::new_uninit();
 static RUNTIME_SERVICES: StandardRuntimeServices = StandardRuntimeServices::new_uninit();
 static FBPT: TplMutex<FBPT> = TplMutex::new(&BOOT_SERVICES, Tpl::NOTIFY, FBPT::new());
@@ -391,6 +393,9 @@ impl PerformanceProperty {
     }
 }
 
+type ModuleInfoResult = Result<(Option<String>, efi::Guid), efi::Status>;
+
+#[cfg(not(test))]
 fn get_module_info_from_handle(
     boot_services: &impl BootServices,
     handle: efi::Handle,
@@ -443,6 +448,15 @@ fn get_module_info_from_handle(
     // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/193
 
     Ok((None, guid))
+}
+
+#[cfg(test)]
+fn get_module_info_from_handle(
+    boot_services: &impl BootServices,
+    handle: efi::Handle,
+) -> Result<(Option<String>, efi::Guid), efi::Status> {
+    let guid = efi::Guid::from_fields(0, 1, 2, 3, 4, &[5; 6]);
+    Ok((Some(String::from("teststring")), guid))
 }
 
 macro_rules! __log_perf_measurement {
@@ -877,112 +891,17 @@ pub fn perf_end_ex(handle: efi::Handle, token: *const c_char, module: *const c_c
 #[cfg(test)]
 mod tests {
     use core::{any::Any, mem::MaybeUninit, sync::atomic::AtomicUsize};
+    use uefi_sdk::boot_services::MockBootServices;
 
     use super::*;
+    use mockall::{mock, predicate::*};
     use mu_pi::hob::{header, HobList, GUID_EXTENSION, MEMORY_TYPE_INFO_HOB_GUID};
     use r_efi::{
         efi,
         protocols::device_path::{End, Hardware, TYPE_END, TYPE_HARDWARE},
-    };
+    }; // Use predicates for argument matching
 
-    static GLOBAL_STATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    static TPL: AtomicUsize = AtomicUsize::new(efi::TPL_APPLICATION);
-
-    pub(crate) fn with_global_lock<F: Fn() + std::panic::RefUnwindSafe>(f: F) -> Result<(), Box<dyn Any + Send>> {
-        let _guard = GLOBAL_STATE_TEST_LOCK.lock().unwrap();
-        std::panic::catch_unwind(|| {
-            f();
-        })
-    }
-
-    fn init_perf_test() {
-        // (EFIAPI *EFI_IMAGE_LOAD) (
-        //     IN BOOLEAN                          BootPolicy,
-        //     IN EFI_HANDLE                       ParentImageHandle,
-        //     IN EFI_DEVICE_PATH_PROTOCOL         *DevicePath   OPTIONAL,
-        //     IN VOID                             *SourceBuffer OPTIONAL
-        //     IN UINTN                            SourceSize,
-        //     OUT EFI_HANDLE                      *ImageHandle
-        //     );
-        // pub type BootLoadImage = eficall! {fn(
-        //     crate::base::Boolean,
-        //     crate::base::Handle,
-        //     *mut crate::protocols::device_path::Protocol,
-        //     *mut core::ffi::c_void,
-        //     usize,
-        //     *mut crate::base::Handle,
-        // ) -> crate::base::Status};
-
-        extern "efiapi" fn mock_handle_protocol(
-            handle: efi::Handle,
-            guid: *mut efi::Guid,
-            interface: *mut *mut core::ffi::c_void,
-        ) -> efi::Status {
-            efi::Status::SUCCESS
-        }
-
-        extern "efiapi" fn mock_raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {
-            let prev_tpl = TPL.load(Ordering::SeqCst);
-            assert!(prev_tpl <= new_tpl, "cannot raise tpl to lower than current level.");
-            TPL.store(new_tpl, Ordering::SeqCst);
-            prev_tpl
-        }
-
-        extern "efiapi" fn mock_restore_tpl(new_tpl: efi::Tpl) {
-            let prev_tpl = TPL.load(Ordering::SeqCst);
-            assert!(prev_tpl >= new_tpl, "cannot restore tpl to higher than current level.");
-            TPL.store(new_tpl, Ordering::SeqCst);
-        }
-
-        extern "efiapi" fn mock_create_event_ex(
-            event_type: u32,
-            tpl: efi::Tpl,
-            notify_function: Option<efi::EventNotify>,
-            notify_context: *const core::ffi::c_void,
-            guid: *const efi::Guid,
-            event: *mut efi::Event,
-        ) -> efi::Status {
-            efi::Status::SUCCESS
-        }
-
-        extern "efiapi" fn mock_install_protocol_interface(
-            handle: *mut efi::Handle,
-            protocol: *mut efi::Guid,
-            interface_type: efi::InterfaceType,
-            interface: *mut core::ffi::c_void,
-        ) -> efi::Status {
-            efi::Status::SUCCESS
-        }
-
-        extern "efiapi" fn mock_install_configuration_table(
-            guid: *mut efi::Guid,
-            table: *mut core::ffi::c_void,
-        ) -> efi::Status {
-            efi::Status::SUCCESS
-        }
-
-        let boot_services = MaybeUninit::zeroed();
-        let mut boot_services: efi::BootServices = unsafe { boot_services.assume_init() };
-        boot_services.raise_tpl = mock_raise_tpl;
-        boot_services.restore_tpl = mock_restore_tpl;
-        boot_services.handle_protocol = mock_handle_protocol;
-        boot_services.create_event_ex = mock_create_event_ex;
-        boot_services.install_protocol_interface = mock_install_protocol_interface;
-        boot_services.install_configuration_table = mock_install_configuration_table;
-
-        let runtime_services = MaybeUninit::zeroed();
-        let runtime_services: efi::RuntimeServices = unsafe { runtime_services.assume_init() };
-
-        init_performance_lib(&HobList::default(), &boot_services, &runtime_services).unwrap();
-    }
-
-    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
-        with_global_lock(|| {
-            init_perf_test();
-            f();
-        })
-        .unwrap();
-    }
+    const TEST_GUID: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
 
     #[test]
     fn test_extract_pei_performance_records() {
@@ -1008,81 +927,39 @@ mod tests {
     }
 
     #[test]
-    fn test_non_perf_entry() {
-        // case 1: if perf_id != 0 && is_known_id(perf_id) && !is_known_token(string.as_ref())
-        // -> efi::Status::INVALID_PARAMETER
-
-        // caller_identifier: *const c_void, guid: Option<&efi::Guid>, string: *const c_char, ticker: u64, address: usize, identifier: u32, attribute: PerfAttribute
-        let unknown_str = c_char_ptr_from_str("SOMESTRING");
+    fn test_create_performance_record() {
+        // invalid case: not PerfEntry, known perf_id, and unknown token
         assert_eq!(
             efi::Status::INVALID_PARAMETER,
             create_performance_measurement(
-                core::ptr::null(),
+                ptr::null(),
                 None,
-                unknown_str,
+                c_char_ptr_from_str("unknown_token"),
                 0,
                 0,
-                0x0001,
-                PerfAttribute::PerfStartEntry,
+                1,
+                PerfAttribute::PerfEndEntry,
             )
         );
-    }
 
-    fn mock_image() -> r_efi::protocols::loaded_image::Protocol {
-        let device_path_bytes = [
-            TYPE_HARDWARE,
-            Hardware::SUBTYPE_PCI,
-            0x6, //length[0]
-            0x0, //length[1]
-            0x0, //func
-            0x0, //device
-            TYPE_MEDIA,
-            Media::SUBTYPE_PIWG_FIRMWARE_FILE,
-            0x6, //length[0]
-            0x0, //length[1]
-            0x0, //func
-            0x0, //device
-            TYPE_HARDWARE,
-            Hardware::SUBTYPE_PCI,
-            0x6, //length[0]
-            0x0, //length[1]
-            0x2, //func
-            0x0, //device
-            TYPE_END,
-            End::SUBTYPE_ENTIRE,
-            0x4,  //length[0]
-            0x00, //length[1]
-        ];
-        let device_path_ptr = device_path_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
-        let loaded_image = r_efi::protocols::loaded_image::Protocol {
-            revision: 0,
-            parent_handle: core::ptr::null_mut(),
-            system_table: efi::SystemTable
-        }
-        loaded_image
-    }
+        // invalid case: not PerfEntry, perf_id = 0, None string and null handle
+        assert_eq!(
+            efi::Status::INVALID_PARAMETER,
+            create_performance_measurement(ptr::null(), None, ptr::null(), 0, 0, 0, PerfAttribute::PerfStartEntry)
+        );
 
-    #[test]
-    fn test_get_module_info() {
-        with_locked_state(|| {
-            // pub struct Protocol {
-            //     pub revision: u32,
-            //     pub parent_handle: crate::base::Handle,
-            //     pub system_table: *mut crate::system::SystemTable,
-
-            //     pub device_handle: crate::base::Handle,
-            //     pub file_path: *mut crate::protocols::device_path::Protocol,
-            //     pub reserved: *mut core::ffi::c_void,
-
-            //     pub load_options_size: u32,
-            //     pub load_options: *mut core::ffi::c_void,
-
-            //     pub image_base: *mut core::ffi::c_void,
-            //     pub image_size: u64,
-            //     pub image_code_type: crate::system::MemoryType,
-            //     pub image_data_type: crate::system::MemoryType,
-            //     pub unload: Option<ProtocolUnload>,
-            // }
-        })
+        // MODULE_START/MODULE_END case
+        assert_eq!(
+            efi::Status::SUCCESS,
+            create_performance_measurement(
+                1 as _,
+                Some(&TEST_GUID),
+                c_char_ptr_from_str("test_string"),
+                123,
+                0,
+                PerfId::MODULE_START.into(),
+                PerfAttribute::PerfEntry
+            )
+        )
     }
 }

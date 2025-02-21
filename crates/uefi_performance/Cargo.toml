@@ -21,6 +21,9 @@ uuid = { workspace = true }
 mu_pi = { workspace = true }
 mu_rust_helpers = { workspace = true }
 uefi_sdk = { workspace = true }
+mockall = "0.11" 
+
 
 [features]
 instrument_performance = []
+

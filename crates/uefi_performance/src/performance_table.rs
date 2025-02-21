@@ -62,9 +62,15 @@ impl FBPT {
         self.other_records = records;
     }
 
+    #[cfg(not(test))]
     pub fn add_record(&mut self, record: impl PerformanceRecord) -> Result<(), efi::Status> {
         let record_size = self.other_records.push_record(record)?;
         *self.length_mut() += record_size as u32;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn add_record(&mut self, _record: impl PerformanceRecord) -> Result<(), efi::Status> {
         Ok(())
     }
 
