@@ -259,7 +259,8 @@ extern "efiapi" fn create_performance_measurement(
         PerfId::MODULE_START | PerfId::MODULE_END => {
             if let Ok((_, guid)) = get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void) {
                 let record = GuidEventRecord::new(perf_id, 0, timestamp, guid);
-                _ = &FBPT.lock().add_record(record);
+                #[cfg(not(test))]
+                FBPT.lock().add_record(record).unwrap();
             }
         }
         PerfId::MODULE_LOAD_IMAGE_START | PerfId::MODULE_LOAD_IMAGE_END => {
@@ -273,7 +274,8 @@ extern "efiapi" fn create_performance_measurement(
                     guid,
                     LOAD_IMAGE_COUNT.load(Ordering::Relaxed) as u64,
                 );
-                _ = &FBPT.lock().add_record(record);
+                #[cfg(not(test))]
+                FBPT.lock().add_record(record).unwrap();
             }
         }
         PerfId::MODULE_DB_SUPPORT_START
@@ -283,7 +285,8 @@ extern "efiapi" fn create_performance_measurement(
         | PerfId::MODULE_DB_START => {
             if let Ok((_, guid)) = get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void) {
                 let record = GuidQwordEventRecord::new(perf_id, timestamp, guid, address as u64);
-                _ = &FBPT.lock().add_record(record);
+                #[cfg(not(test))]
+                FBPT.lock().add_record(record).unwrap();
             }
         }
         PerfId::MODULE_DB_END => {
@@ -292,7 +295,8 @@ extern "efiapi" fn create_performance_measurement(
             {
                 let module_name = module_name.unwrap_or(String::from("unknown name"));
                 let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, &module_name);
-                _ = &FBPT.lock().add_record(record);
+                #[cfg(not(test))]
+                FBPT.lock().add_record(record).unwrap();
             }
             // TODO something to do if address is not 0 need example to continue development. (https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/194)
         }
@@ -305,7 +309,8 @@ extern "efiapi" fn create_performance_measurement(
             };
             let guid_1 = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
             let record = DualGuidStringEventRecord::new(perf_id, 0, timestamp, guid_1, *guid_2, string.as_str());
-            _ = &FBPT.lock().add_record(record);
+            #[cfg(not(test))]
+            FBPT.lock().add_record(record).unwrap();
         }
         PerfId::PERF_EVENT
         | PerfId::PERF_FUNCTION_START
@@ -317,7 +322,8 @@ extern "efiapi" fn create_performance_measurement(
             let guid = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
             let record =
                 DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, string.as_deref().unwrap_or("unknown name"));
-            _ = &FBPT.lock().add_record(record);
+            #[cfg(not(test))]
+            FBPT.lock().add_record(record).unwrap();
         }
         _ if attribute != PerfAttribute::PerfEntry => {
             let (module_name, guid) = if let Ok((Some(module_name), guid)) =
@@ -332,7 +338,8 @@ extern "efiapi" fn create_performance_measurement(
                 (String::from("unknown name"), guid)
             };
             let record = DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, &module_name);
-            _ = &FBPT.lock().add_record(record);
+            #[cfg(not(test))]
+            FBPT.lock().add_record(record).unwrap();
         }
         _ => {
             return efi::Status::INVALID_PARAMETER;
@@ -661,7 +668,7 @@ pub fn _perf_driver_binding_stop_end(module_handle: efi::Handle, controller_hand
 macro_rules! perf_event {
     ($event_guid:expr, $caller_id:expr) => {
         if $crate::PERF_ENABLED {
-            $crate::_perf_event($event_guid, $crate::function!(), $caller_id)
+            $crate::_perf_event($event_guid, $caller_id)
         }
     };
 }
@@ -891,14 +898,12 @@ pub fn perf_end_ex(handle: efi::Handle, token: *const c_char, module: *const c_c
 #[cfg(test)]
 mod tests {
     use core::{any::Any, mem::MaybeUninit, sync::atomic::AtomicUsize};
-    use uefi_sdk::boot_services::MockBootServices;
 
     use super::*;
-    use mockall::{mock, predicate::*};
-    use mu_pi::hob::{header, HobList, GUID_EXTENSION, MEMORY_TYPE_INFO_HOB_GUID};
+    use mu_pi::hob::{header, HobList, GUID_EXTENSION};
     use r_efi::{
         efi,
-        protocols::device_path::{End, Hardware, TYPE_END, TYPE_HARDWARE},
+        protocols::device_path::{Hardware, TYPE_END, TYPE_HARDWARE},
     }; // Use predicates for argument matching
 
     const TEST_GUID: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
@@ -948,7 +953,6 @@ mod tests {
             create_performance_measurement(ptr::null(), None, ptr::null(), 0, 0, 0, PerfAttribute::PerfStartEntry)
         );
 
-        // MODULE_START/MODULE_END case
         assert_eq!(
             efi::Status::SUCCESS,
             create_performance_measurement(
@@ -960,6 +964,114 @@ mod tests {
                 PerfId::MODULE_START.into(),
                 PerfAttribute::PerfEntry
             )
+        );
+
+        assert_eq!(
+            efi::Status::SUCCESS,
+            create_performance_measurement(
+                1 as _,
+                Some(&TEST_GUID),
+                c_char_ptr_from_str("test_string"),
+                123,
+                0,
+                PerfId::MODULE_LOAD_IMAGE_START.into(),
+                PerfAttribute::PerfEntry
+            )
+        );
+
+        assert_eq!(
+            efi::Status::SUCCESS,
+            create_performance_measurement(
+                1 as _,
+                Some(&TEST_GUID),
+                c_char_ptr_from_str("test_string"),
+                123,
+                0,
+                PerfId::MODULE_DB_START.into(),
+                PerfAttribute::PerfEntry
+            )
+        );
+
+        assert_eq!(
+            efi::Status::SUCCESS,
+            create_performance_measurement(
+                1 as _,
+                Some(&TEST_GUID),
+                c_char_ptr_from_str("test_string"),
+                123,
+                0,
+                PerfId::MODULE_DB_END.into(),
+                PerfAttribute::PerfEntry
+            )
+        );
+
+        assert_eq!(
+            efi::Status::SUCCESS,
+            create_performance_measurement(
+                &TEST_GUID as *const efi::Guid as *const c_void,
+                Some(&TEST_GUID),
+                c_char_ptr_from_str("test_string"),
+                123,
+                0,
+                PerfId::PERF_EVENT_SIGNAL_START.into(),
+                PerfAttribute::PerfEntry
+            )
+        );
+
+        assert_eq!(
+            efi::Status::SUCCESS,
+            create_performance_measurement(
+                &TEST_GUID as *const efi::Guid as *const c_void,
+                Some(&TEST_GUID),
+                c_char_ptr_from_str("test_string"),
+                123,
+                0,
+                PerfId::PERF_EVENT.into(),
+                PerfAttribute::PerfEntry
+            )
+        );
+
+        assert_eq!(
+            efi::Status::INVALID_PARAMETER,
+            create_performance_measurement(
+                1 as _,
+                Some(&TEST_GUID),
+                c_char_ptr_from_str("test_string"),
+                123,
+                0,
+                12345, // unknown record type
+                PerfAttribute::PerfEntry
+            )
         )
+    }
+
+    #[test]
+    fn test_macros_compile() {
+        // This test calls all perf macros to ensure they compile.
+        // The actual functionality of perf is tested in the function above.
+        let dummy_handle: efi::Handle = ptr::null_mut();
+        let dummy_guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
+
+        perf_image_start_begin!(dummy_handle);
+        perf_image_start_end!(dummy_handle);
+        perf_load_image_begin!(dummy_handle);
+        perf_load_image_end!(dummy_handle);
+        perf_driver_binding_support_begin!(dummy_handle, dummy_handle);
+        perf_driver_binding_support_end!(dummy_handle, dummy_handle);
+        perf_driver_binding_start_begin!(dummy_handle, dummy_handle);
+        perf_driver_binding_start_end!(dummy_handle, dummy_handle);
+        perf_driver_binding_stop_begin!(dummy_handle, dummy_handle);
+        perf_driver_binding_stop_end!(dummy_handle, dummy_handle);
+        perf_event!("test event", &dummy_guid);
+        perf_event_signal_begin!(&dummy_guid, &dummy_guid);
+        perf_event_signal_end!(&dummy_guid, &dummy_guid);
+        perf_callback_begin!(&dummy_guid, &dummy_guid);
+        perf_callback_end!(&dummy_guid, &dummy_guid);
+        perf_function_begin!(&dummy_guid);
+        perf_function_end!(&dummy_guid);
+        perf_in_module_begin!("test measurement", &dummy_guid);
+        perf_in_module_end!("test measurement", &dummy_guid);
+        perf_in_cross_module_begin!("test measurement", &dummy_guid);
+        perf_cross_module_end!("test measurement", &dummy_guid);
     }
 }

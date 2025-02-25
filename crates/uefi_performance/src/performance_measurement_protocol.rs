@@ -113,3 +113,14 @@ impl Deref for EdkiiPerformanceMeasurement {
         self.protocol_guid()
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deref() {
+        let perf = EdkiiPerformanceMeasurement;
+        let guid = *perf;
+        assert_eq!(guid, EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID);
+    }
+}

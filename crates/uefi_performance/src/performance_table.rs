@@ -62,15 +62,9 @@ impl FBPT {
         self.other_records = records;
     }
 
-    #[cfg(not(test))]
     pub fn add_record(&mut self, record: impl PerformanceRecord) -> Result<(), efi::Status> {
         let record_size = self.other_records.push_record(record)?;
         *self.length_mut() += record_size as u32;
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub fn add_record(&mut self, _record: impl PerformanceRecord) -> Result<(), efi::Status> {
         Ok(())
     }
 
@@ -255,5 +249,25 @@ impl PerformanceRecord for FirmwareBasicBootPerfDataRecord {
 impl Default for FirmwareBasicBootPerfDataRecord {
     fn default() -> Self {
         Self::new()
+    }
+}
+#[cfg(test)]
+mod tests {
+    use crate::performance_record::PERFORMANCE_RECORD_HEADER_SIZE;
+
+    use super::*;
+
+    #[test]
+    fn test_fbpt_add_record() {
+        let mut fbpt = FBPT::new();
+        let record = FirmwareBasicBootPerfDataRecord::new();
+        let initial_length = *fbpt.length();
+        let _ = fbpt.add_record(record);
+        assert_eq!(
+            *fbpt.length(),
+            initial_length
+                + PERFORMANCE_RECORD_HEADER_SIZE as u32
+                + FirmwareBasicBootPerfDataRecord::data_size() as u32
+        );
     }
 }

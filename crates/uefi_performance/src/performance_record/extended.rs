@@ -473,4 +473,31 @@ mod tests {
         assert_eq!(&buffer[38..49], b"test_string");
         assert_eq!(buffer[49], 0); // Null terminator
     }
+
+    #[test]
+    fn test_debug_guid_qword_string_event_record() {
+        let guid =
+            efi::Guid::from_fields(0x12345678, 0x9ABC, 0xDEF1, 0x23, 0x45, &[0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x12]);
+        let record = GuidQwordStringEventRecord::new(
+            0x12,
+            0x3456789,
+            0x1122334455667788,
+            guid,
+            0x8877665544332211,
+            "test_string",
+        );
+
+        let debug_output = format!("{:?}", record);
+        println!("{}", debug_output);
+
+        assert!(debug_output.contains("GuidQwordStringEventRecord"));
+        assert!(debug_output.contains("type: 4116")); // 0x1014
+        assert!(debug_output.contains("revision: 1"));
+        assert!(debug_output.contains("progress_id: 18")); // 0x12
+        assert!(debug_output.contains("acpi_id: 54880137")); // 0x3456789
+        assert!(debug_output.contains("timestamp: 1234605616436508552")); // 0x1122334455667788
+        assert!(debug_output.contains("guid: 12345678-9ABC-DEF1-2345-6789ABCDEF12")); // Partial GUID check
+        assert!(debug_output.contains("qword: 9833440827789222417")); // 0x8877665544332211
+        assert!(debug_output.contains("string: \"test_string\""));
+    }
 }

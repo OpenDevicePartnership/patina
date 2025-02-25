@@ -19,7 +19,7 @@ rust-version = "1.80.0"
 
 [workspace.dependencies]
 section_extractor = { version = "^9.1.1" }
-uefi_sdk = { path = "C:/Users/sherryfan/uefi-sdk/uefi_sdk" }
+uefi_sdk = { version = "2" }
 uefi_cpu = { version = "^9.1.1" }
 uefi_debugger = { version = "^9.1.1" }
 uefi_corosensei = { version = "0.1", default-features = false }
