@@ -6,7 +6,7 @@ RUSTC_BOOTSTRAP = 1
 NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
 TEST_FLAGS = { value = "", condition = { env_not_set = ["TEST_FLAGS"] } }
-COV_FLAGS = { value = "--workspace --out html --out xml --exclude-files **/tests/* --exclude-files **/benches/*", condition = { env_not_set = ["COV_FLAGS"] } }
+COV_FLAGS = { value = "--workspace --out html --out xml --exclude-files **/tests/* --exclude-files **/benches/* --exclude uefi_test_macro", condition = { env_not_set = ["COV_FLAGS"] } }
 
 [env.development]
 RUSTC_PROFILE = "dev"
@@ -210,3 +210,33 @@ description = "Builds all rust documentation in the workspace. Example `cargo ma
 env = { RUSTDOCFLAGS = "-D warnings"}
 command = "cargo"
 args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc", "--open"]
+
+[tasks.clippy]
+description = "Run cargo clippy."
+clear = true
+command = "cargo"
+args = ["clippy", "--all-targets", "--all-features", "--", "-D", "warnings"]
+
+[tasks.fmt]
+description = "Run cargo format."
+clear = true
+command = "cargo"
+args = ["fmt", "--all"]
+
+[tasks.cspell]
+description = "Run cspell for spell checking." # npm install -g cspell@latest
+script = "cspell --quiet  --no-progress --no-summary  --dot --gitignore -e \"{.git/**,.github/**,.vscode/**}\" ."
+
+[tasks.all]
+description = "Run all tasks for PR readiness."
+dependencies = [
+    "clippy",
+    "cspell",
+    "build",
+    "build-x64",
+    "build-aarch64",
+    "test",
+    "coverage",
+    "fmt",
+    "doc",
+]

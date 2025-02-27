@@ -11,6 +11,20 @@ description = "Proc macros for UEFI testing."
 
 [lib]
 proc-macro = true
+# NOTE: Procedural macro crates depend on std-xxxxx.dll. When Tarpaulin tries to
+# run the test binary directly, it fails to find std-xxxxx.dll. This does not
+# happen when invoking `cargo test` because it appropriately sets the Rust
+# compiler binary path (sysroot) before running the test binaries. Based on the
+# discussion at https://github.com/xd009642/tarpaulin/issues/1642, below are
+# some workarounds to enable code coverage at the workspace level:
+# 1. Mark this crate as not test-ready by setting `test = false` here. The unit
+#    tests in this crate can still be run manually using `cargo test
+#    --all-targets`.
+# 2. Pass `--exclude uefi_test_macro` to the `cargo tarpaulin` command to
+#    exclude this package from code coverage.
+# 3. This dependency issue seems to be fixed in Rust 1.82 (untested).
+#
+# We are opting for workaround #2.
 
 [features]
 default = []
