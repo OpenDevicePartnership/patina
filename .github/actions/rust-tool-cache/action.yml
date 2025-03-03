@@ -23,6 +23,13 @@ runs:
           ~/.rustup/toolchains/
         key: ${{ runner.os }}-rust-tools-${{ hashFiles('**/rust-toolchain.toml' )}}
 
+    # Installs toolchain specified in the rust-toolchain.toml file
+    - name: Install toolchains
+      shell: bash
+      run: |
+        rustup toolchain install
+      if: steps.tool-cache.outputs.cache-hit != 'true'
+
     - name: Install cargo-binstall
       uses: cargo-bins/cargo-binstall@v1.10.17
 

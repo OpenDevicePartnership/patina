@@ -45,10 +45,14 @@ The following instructions install Rust.
 
    \>`cargo --version`
 
-3. While the specific toolchains and components specified in `[toolchain]` section of the `rust-toolchain.toml` are
-automatically gathered by cargo, the tools in the `[tools]` section, such as `cargo-make` are not. At a minimum, you
-should download `cargo-make` and `cargo-tarpaulin`, however it is suggested that you download all tools in the
-`[tools]` section of the `rust-toolchain.toml`.
+3. Install toolchain specified in `rust-toolchain.toml`
+
+   \>`rustup toolchain install`
+
+4. While the specific toolchains and components specified in `[toolchain]` section of the `rust-toolchain.toml` are
+automatically installed with `rustup toolchain install`, the tools in the `[tools]` section, such as `cargo-make`
+are not. At a minimum, you should download `cargo-make` and `cargo-tarpaulin`, however it is suggested that you
+download all tools in the `[tools]` section of the `rust-toolchain.toml`.
 
 ### DXE Core Goals
 
