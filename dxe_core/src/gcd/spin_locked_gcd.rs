@@ -519,8 +519,8 @@ impl GCD {
         let mut page_table = create_cpu_paging(page_allocator).expect("Failed to create CPU page table");
 
         // this is before we get allocated descriptors, so we don't need to preallocate memory here
-        let mut mmio_descs: Vec<dxe_services::MemorySpaceDescriptor> = Vec::new();
-        self.get_mmio_descriptors(mmio_descs.as_mut()).expect("Failed to get MMIO descriptors!");
+        let mut mmio_res_descs: Vec<dxe_services::MemorySpaceDescriptor> = Vec::new();
+        self.get_mmio_and_reserved_descriptors(mmio_res_descs.as_mut()).expect("Failed to get MMIO descriptors!");
 
         // Before we install this page table, we need to ensure that DXE Core is mapped correctly here as well as any
         // allocated memory and MMIO. All other memory will be unmapped initially. Do allocated memory first, then the
@@ -541,7 +541,7 @@ impl GCD {
             }
         }
 
-        for desc in &mmio_descs {
+        for desc in &mmio_res_descs {
             // MMIO pages are not necessarily at page granularity, but we need to map them as such
             needed_pages += match page_table.get_page_table_pages_for_size(
                 desc.base_address & !UEFI_PAGE_MASK as u64,
@@ -690,8 +690,8 @@ impl GCD {
                 });
         }
 
-        // now map MMIO. Drivers expect to be able to access MMIO regions as RW, so we need to map them as such
-        for desc in mmio_descs {
+        // now map MMIO and reserved. Drivers expect to be able to access MMIO regions as RW, so we need to map them as such
+        for desc in mmio_res_descs {
             if let Some(page_table) = self.page_table.as_mut() {
                 // MMIO is not necessarily described at page granularity, but needs to be mapped as such in the page
                 // table
@@ -703,7 +703,8 @@ impl GCD {
 
                 log::trace!(
                     target: "paging",
-                    "Mapping MMIO region {:#x?} of length {:#x?} with attributes {:#x?}",
+                    "Mapping {:?} region {:#x?} of length {:#x?} with attributes {:#x?}",
+                    desc.memory_type,
                     base_address,
                     len,
                     new_attributes
@@ -713,7 +714,8 @@ impl GCD {
                     // if we fail to set these attributes we may or may not be able to continue to boot. It depends on
                     // if a driver attempts to touch this MMIO region
                     log::error!(
-                        "Failed to map MMIO region {:#x?} of length {:#x?} with attributes {:#x?}. Error: {:?}",
+                        "Failed to map {:?} region {:#x?} of length {:#x?} with attributes {:#x?}. Error: {:?}",
+                        desc.memory_type,
                         base_address,
                         len,
                         new_attributes,
@@ -1464,7 +1466,10 @@ impl GCD {
         }
     }
 
-    fn get_mmio_descriptors(&self, buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>) -> Result<(), EfiError> {
+    fn get_mmio_and_reserved_descriptors(
+        &self,
+        buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>,
+    ) -> Result<(), EfiError> {
         ensure!(self.maximum_address != 0, EfiError::NotReady);
         ensure!(buffer.is_empty(), EfiError::InvalidParameter);
 
@@ -1473,7 +1478,9 @@ impl GCD {
             while let Some(idx) = current {
                 let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
                 if let MemoryBlock::Unallocated(descriptor) = mb {
-                    if descriptor.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo {
+                    if descriptor.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo
+                        || descriptor.memory_type == dxe_services::GcdMemoryType::Reserved
+                    {
                         buffer.push(*descriptor);
                     }
                 }
