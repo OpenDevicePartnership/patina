@@ -103,6 +103,7 @@ mod protocols;
 mod runtime;
 mod systemtables;
 mod tpl_lock;
+mod verification;
 
 #[cfg(test)]
 #[macro_use]
@@ -124,6 +125,7 @@ use uefi_sdk::{
     component::{Component, IntoComponent, Storage},
     error::{self, Result},
 };
+use verification::verify_platform_requirements;
 
 #[macro_export]
 macro_rules! ensure {
@@ -324,6 +326,13 @@ where
         // Relocate the hobs from the input list pointer into a Vec.
         let mut hob_list = HobList::default();
         hob_list.discover_hobs(physical_hob_list);
+
+        // SHERRY: this is not correct because this is post-gcd init
+        // in the "real" tool we will NOT have memory allocation unless we implement our own allocator
+        // in the final tool we need to replicate GCD memory functionality and hob discovery
+        if let Err(e) = verify_platform_requirements(&hob_list) {
+            panic!("Platform requirements verification failed: {}", e);
+        }
 
         log::trace!("HOB list discovered is:");
         log::trace!("{:#x?}", hob_list);
