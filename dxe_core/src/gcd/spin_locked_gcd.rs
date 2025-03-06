@@ -180,7 +180,7 @@ type GcdFreeFn =
 // track all the pages in the page pool, Vec will attempt to expand leading to a re-entrant access to the global allocator
 // which will deadlock. This sets the pool to an initial size that should be large enough to track all pages for any
 // reasonable allocation in the global allocator to avoid this problem.
-// Increased PAGE_POOL_MIN_CAPACITY from 1024 * 32 to 1024 * 512 to avoid re-entrant access issues caused by 
+// Increased PAGE_POOL_MIN_CAPACITY from 1024 * 32 to 1024 * 512 to avoid re-entrant access issues caused by
 // resizing the vector
 //
 const PAGE_POOL_MIN_CAPACITY: usize = 1024 * 512;
