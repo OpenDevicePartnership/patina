@@ -23,7 +23,7 @@ use uefi_sdk::{
 
 use crate::{
     allocator::DEFAULT_ALLOCATION_STRATEGY, ensure, error, events::EVENT_DB, protocol_db, protocol_db::INVALID_HANDLE,
-    tpl_lock,
+    tpl_lock, GCD,
 };
 use paging::{page_allocator::PageAllocator, MemoryAttributes, PageTable, PtError, PtResult};
 use uefi_cpu::paging::create_cpu_paging;
@@ -42,6 +42,8 @@ pub const MEMORY_BLOCK_SLICE_SIZE: usize = MEMORY_BLOCK_SLICE_LEN * node_size::<
 
 const IO_BLOCK_SLICE_LEN: usize = 4096;
 const IO_BLOCK_SLICE_SIZE: usize = IO_BLOCK_SLICE_LEN * node_size::<IoBlock>();
+
+const PAGE_POOL_CAPACITY: usize = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InternalError {
@@ -173,27 +175,14 @@ type GcdAllocateFn = fn(
 type GcdFreeFn =
     fn(gcd: &mut GCD, base_address: usize, len: usize, transition: MemoryStateTransition) -> Result<(), EfiError>;
 
-// This controls the minimum capacity of the page_pool vector that tracks pages in the pool.
-//
-// Note: In some scenarios an allocation request to the global allocator (i.e. the EfiBootServicesData allocator)
-// may be the source of the page table adjustments. If the page_pool tracking vector does not have enough capacity
-// track all the pages in the page pool, Vec will attempt to expand leading to a re-entrant access to the global allocator
-// which will deadlock. This sets the pool to an initial size that should be large enough to track all pages for any
-// reasonable allocation in the global allocator to avoid this problem.
-// Increased PAGE_POOL_MIN_CAPACITY from 1024 * 32 to 1024 * 512 to avoid re-entrant access issues caused by
-// resizing the vector
-//
-const PAGE_POOL_MIN_CAPACITY: usize = 1024 * 512;
-
 #[derive(Debug)]
 struct PagingAllocator {
     page_pool: Vec<efi::PhysicalAddress>,
-    root_page: Option<efi::PhysicalAddress>,
 }
 
 impl PagingAllocator {
     fn new() -> Self {
-        Self { page_pool: Vec::with_capacity(PAGE_POOL_MIN_CAPACITY), root_page: None }
+        Self { page_pool: Vec::with_capacity(PAGE_POOL_CAPACITY) }
     }
 }
 
@@ -204,26 +193,78 @@ impl PageAllocator for PagingAllocator {
             return Err(PtError::InvalidParameter);
         }
 
-        // if this is the root page, we need to allocate it under 4GB to support x86 MPServices, they will copy
-        // the cr3 register to the APs and the APs come up in real mode, transition to protected mode, enable paging,
-        // and then transition to long mode. This means that the root page must be under 4GB so that the 32 bit code
-        // can do 32 bit register moves to move it to cr3. For other architectures, this is not necessary, but not
-        // an issue to allocate.
-        // We can allocate the root page at any time, as it won't trigger a recursive allocation,
-        // so it doesn't have to be preallocated
         if is_root {
-            match self.root_page {
-                Some(addr) => Ok(addr),
-                None => {
-                    panic!("Page table root not allocated, cannot continue!");
+            // allocate 1 page
+            let len = 1;
+            // allocate under 4GB to support x86 MPServices
+            let addr: u64 = (SIZE_4GB - 1) as u64;
+
+            // if this is the root page, we need to allocate it under 4GB to support x86 MPServices, they will copy
+            // the cr3 register to the APs and the APs come up in real mode, transition to protected mode, enable paging,
+            // and then transition to long mode. This means that the root page must be under 4GB so that the 32 bit code
+            // can do 32 bit register moves to move it to cr3. For other architectures, this is not necessary, but not
+            // an issue to allocate. However, some architectures may not have memory under 4GB, so if we fail here,
+            // simply retry with the normal allocation
+
+            let res = GCD.memory.lock().allocate_memory_space(
+                AllocateType::BottomUp(Some(addr as usize)),
+                dxe_services::GcdMemoryType::SystemMemory,
+                UEFI_PAGE_SHIFT,
+                uefi_pages_to_size!(len),
+                protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+                None,
+            );
+            match res {
+                Ok(root_page) => Ok(root_page as u64),
+                Err(_) => {
+                    // if we failed, try again with normal allocation
+                    log::error!(
+                        "Failed to allocate root page for the page table page pool, retrying with normal allocation"
+                    );
+
+                    match GCD.memory.lock().allocate_memory_space(
+                        DEFAULT_ALLOCATION_STRATEGY,
+                        dxe_services::GcdMemoryType::SystemMemory,
+                        UEFI_PAGE_SHIFT,
+                        uefi_pages_to_size!(len),
+                        protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+                        None,
+                    ) {
+                        Ok(root_page) => Ok(root_page as u64),
+                        Err(e) => {
+                            // okay we are good and dead now
+                            panic!("Failed to allocate root page for the page table page pool: {:?}", e);
+                        }
+                    }
                 }
             }
         } else {
             match self.page_pool.pop() {
                 Some(page) => Ok(page),
                 None => {
-                    debug_assert!(false);
-                    Err(PtError::OutOfResources)
+                    // allocate 512 pages at a time
+                    let len = PAGE_POOL_CAPACITY;
+
+                    // we only allocate here, not map. The page table is self-mapped, so we don't have to identity
+                    // map them. This function is called with the page table lock held, so we cannot do that
+                    match GCD.memory.lock().allocate_memory_space(
+                        DEFAULT_ALLOCATION_STRATEGY,
+                        dxe_services::GcdMemoryType::SystemMemory,
+                        UEFI_PAGE_SHIFT,
+                        uefi_pages_to_size!(len),
+                        protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
+                        None,
+                    ) {
+                        Ok(addr) => {
+                            for i in 0..len {
+                                self.page_pool.push(addr as u64 + ((i * UEFI_PAGE_SIZE) as u64));
+                            }
+                            self.page_pool.pop().ok_or(PtError::OutOfResources)
+                        }
+                        Err(e) => {
+                            panic!("Failed to allocate pages for the page table page pool {:?}", e);
+                        }
+                    }
                 }
             }
         }
@@ -237,7 +278,6 @@ struct GCD {
     memory_blocks: Option<Rbt<'static, MemoryBlock>>,
     allocate_memory_space_fn: GcdAllocateFn,
     free_memory_space_fn: GcdFreeFn,
-    page_table: Option<Box<dyn PageTable<ALLOCATOR = PagingAllocator>>>,
 }
 
 impl core::fmt::Debug for GCD {
@@ -259,7 +299,6 @@ impl GCD {
             maximum_address: 1 << processor_address_bits,
             allocate_memory_space_fn: Self::allocate_memory_space_internal,
             free_memory_space_fn: Self::free_memory_space_worker,
-            page_table: None,
         }
     }
 
@@ -276,148 +315,6 @@ impl GCD {
 
     pub fn init(&mut self, processor_address_bits: u32) {
         self.maximum_address = 1 << processor_address_bits;
-    }
-
-    /// Preallocates pages for a given memory region.
-    ///
-    /// This function checks if the specified memory region is already mapped in the page table.
-    /// If it is not mapped, it calculates the number of pages needed in the worst case and allocates them.
-    ///
-    /// # Arguments
-    ///
-    /// * `base_address` - The base address of the memory region to preallocate pages for.
-    /// * `size` - The size of the memory region to preallocate pages for.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` - If the pages were successfully preallocated or if the memory region is already mapped.
-    /// * `Err(efi::Status)` - If there was an error during the preallocation process.
-    ///
-    /// # Errors
-    ///
-    /// * `efi::Status::INVALID_PARAMETER` - If the size is invalid or if there was an error querying the memory region.
-    /// * `efi::Status::NOT_READY` - If the page table is not initialized.
-    ///
-    /// # Panics
-    ///
-    /// This function may panic if it fails to map or remap a memory region.
-    ///
-    fn preallocate_pages(&mut self, base_address: efi::PhysicalAddress, size: u64) -> Result<(), efi::Status> {
-        let mut needed_pages: usize = 0;
-
-        if let Some(page_table) = self.page_table.as_mut() {
-            // we only need more pages if this memory region is unmapped. If it is already mapped
-            // we are only changing attributes and will not incur allocations
-            match page_table.query_memory_region(base_address, UEFI_PAGE_SIZE as u64) {
-                Err(PtError::NoMapping) => {
-                    needed_pages = match page_table.get_page_table_pages_for_size(base_address, size) {
-                        // we want to allocate exactly the number of pages we need because we will use some pages from the pool
-                        // potentially when we map the memory regions for these pages we are allocating. If we do not allocate all
-                        // the pages, we could run out of pages for the actual allocation occurring, not the pool refilling.
-                        Ok(pages) => pages as usize,
-                        Err(e) => {
-                            log::error!("Failed to get page table pages for size {}: {:?}", size, e);
-                            return Err(efi::Status::INVALID_PARAMETER);
-                        }
-                    }
-                }
-                Ok(_) => return Ok(()),
-                // any other error is unexpected
-                Err(_) => Err(efi::Status::INVALID_PARAMETER)?,
-            }
-        }
-
-        let paging_allocator = if let Some(pt) = self.page_table.as_mut() {
-            pt.borrow_allocator()
-        } else {
-            return Err(efi::Status::NOT_READY);
-        };
-
-        let current_pages = paging_allocator.page_pool.len();
-
-        if current_pages >= needed_pages {
-            return Ok(());
-        }
-
-        let needed_pages = needed_pages - current_pages;
-
-        if needed_pages > 0 {
-            match self.allocate_memory_space(
-                DEFAULT_ALLOCATION_STRATEGY,
-                dxe_services::GcdMemoryType::SystemMemory,
-                UEFI_PAGE_SHIFT,
-                uefi_pages_to_size!(needed_pages),
-                protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-                None,
-            ) {
-                Ok(addr) => {
-                    // this level of allocate_memory_space doesn't set the attributes in the page table, so we have to
-                    // do it manually here. As always, we need to check if we have to map the memory region first
-                    {
-                        let desc = self.get_memory_descriptor_for_address(addr as efi::PhysicalAddress)?;
-                        let page_table = self.page_table.as_mut().expect("Page table not initialized");
-                        match page_table.query_memory_region(addr as u64, uefi_pages_to_size!(needed_pages) as u64) {
-                            Ok(attr) => {
-                                // this region is mapped, let's make sure the attributes are RW
-                                if (attr & MemoryAttributes::AccessAttributesMask) != MemoryAttributes::ExecuteProtect {
-                                    page_table
-                                        .remap_memory_region(
-                                            addr as u64,
-                                            uefi_pages_to_size!(needed_pages) as u64,
-                                            MemoryAttributes::ExecuteProtect
-                                                | MemoryAttributes::from_bits_truncate(
-                                                    desc.attributes & efi::CACHE_ATTRIBUTE_MASK,
-                                                ),
-                                        )
-                                        .expect("Failed to remap memory region");
-                                }
-                            }
-                            Err(PtError::NoMapping) => {
-                                // we need to map this new page
-                                page_table
-                                    .map_memory_region(
-                                        addr as u64,
-                                        uefi_pages_to_size!(needed_pages) as u64,
-                                        MemoryAttributes::ExecuteProtect
-                                            | MemoryAttributes::from_bits_truncate(
-                                                desc.attributes & efi::CACHE_ATTRIBUTE_MASK,
-                                            ),
-                                    )
-                                    .expect("Failed to map memory region");
-                            }
-                            Err(e) => {
-                                log::error!("Failed to query memory region: {:?}", e);
-                                return Err(efi::Status::INVALID_PARAMETER);
-                            }
-                        }
-                    }
-
-                    let paging_allocator = if let Some(pt) = self.page_table.as_mut() {
-                        pt.borrow_allocator()
-                    } else {
-                        return Err(efi::Status::NOT_READY);
-                    };
-
-                    for i in 0..needed_pages {
-                        // store each page base address in the page pool
-                        paging_allocator.page_pool.push(addr as u64 + ((i * UEFI_PAGE_SIZE) as u64));
-                    }
-                }
-                Err(e) => {
-                    log::error!("Failed to allocate pages for the page pool: {:?}", e);
-                    debug_assert!(false);
-                    match e {
-                        EfiError::AccessDenied => efi::Status::ACCESS_DENIED,
-                        EfiError::InvalidParameter => efi::Status::INVALID_PARAMETER,
-                        EfiError::NotFound => efi::Status::NOT_FOUND,
-                        EfiError::NotReady => efi::Status::NOT_READY,
-                        EfiError::OutOfResources => efi::Status::OUT_OF_RESOURCES,
-                        _ => efi::Status::UNSUPPORTED,
-                    };
-                }
-            }
-        }
-        Ok(())
     }
 
     unsafe fn init_memory_blocks(
@@ -469,282 +366,6 @@ impl GCD {
             None,
         )?;
         Ok(idx)
-    }
-
-    // Take control of our own destiny and create a page table that the GCD controls
-    // This must be done after the GCD is initialized and memory services are available,
-    // as we need to allocate memory for the page table structure
-    pub(crate) fn init_paging(&mut self, hob_list: &HobList, mut page_allocator: PagingAllocator) {
-        log::info!("Initializing paging for the GCD");
-
-        // We need to explicitly allocate the root page below 4GB for x86 MP Services.
-        // See comment in PagingAllocator.allocate_pages
-        match self.allocate_memory_space(
-            AllocateType::BottomUp(Some(SIZE_4GB - 1)),
-            dxe_services::GcdMemoryType::SystemMemory,
-            UEFI_PAGE_SHIFT,
-            UEFI_PAGE_SIZE,
-            protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-            None,
-        ) {
-            Ok(addr) => {
-                page_allocator.root_page = Some(addr as u64);
-            }
-            Err(e) => {
-                log::warn!("Failed to allocate root page for the page table: {:?}. Attempting default strategy", e);
-                match self.allocate_memory_space(
-                    DEFAULT_ALLOCATION_STRATEGY,
-                    dxe_services::GcdMemoryType::SystemMemory,
-                    UEFI_PAGE_SHIFT,
-                    UEFI_PAGE_SIZE,
-                    protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-                    None,
-                ) {
-                    Ok(addr) => {
-                        page_allocator.root_page = Some(addr as u64);
-                    }
-                    Err(e) => {
-                        panic!("Failed to allocate root page for the page table: {:?}", e);
-                    }
-                }
-            }
-        }
-
-        // Allocate a pool of pages for the page table to use for the initial mapping. We can't use preallocate_pages
-        // here, because it assumes the page table is installed. Use 6 pages to start as it is the greatest number of
-        // pages needed for 5 level paging
-        let len = 6;
-        match self.allocate_memory_space(
-            DEFAULT_ALLOCATION_STRATEGY,
-            dxe_services::GcdMemoryType::SystemMemory,
-            UEFI_PAGE_SHIFT,
-            uefi_pages_to_size!(len),
-            protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-            None,
-        ) {
-            Ok(addr) => {
-                for i in 0..len {
-                    page_allocator.page_pool.push(addr as u64 + ((i * UEFI_PAGE_SIZE) as u64));
-                }
-            }
-            Err(e) => {
-                panic!("Failed to allocate pages for the initial page table page pool: {:?}", e);
-            }
-        }
-
-        let mut page_table = create_cpu_paging(page_allocator).expect("Failed to create CPU page table");
-
-        // this is before we get allocated descriptors, so we don't need to preallocate memory here
-        let mut mmio_descs: Vec<dxe_services::MemorySpaceDescriptor> = Vec::new();
-        self.get_mmio_descriptors(mmio_descs.as_mut()).expect("Failed to get MMIO descriptors!");
-
-        // Before we install this page table, we need to ensure that DXE Core is mapped correctly here as well as any
-        // allocated memory and MMIO. All other memory will be unmapped initially. Do allocated memory first, then the
-        // DXE Core, so that we can ensure that the DXE Core is mapped correctly and not overwritten by the allocated
-        // memory attrs. We also need to preallocate memory here so that we do not allocate memory after getting the
-        // descriptors
-        let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
-            Vec::with_capacity(self.memory_descriptor_count() + 10);
-        self.get_allocated_memory_descriptors(&mut descriptors).expect("Failed to get allocated memory descriptors!");
-
-        let mut needed_pages: u64 = 0;
-        for desc in &descriptors {
-            needed_pages += match page_table.get_page_table_pages_for_size(desc.base_address, desc.length) {
-                Ok(pages) => pages,
-                Err(e) => {
-                    panic!("Failed to get page table pages for size {}: {:?}", desc.length, e);
-                }
-            }
-        }
-
-        for desc in &mmio_descs {
-            // MMIO pages are not necessarily at page granularity, but we need to map them as such
-            needed_pages += match page_table.get_page_table_pages_for_size(
-                desc.base_address & !UEFI_PAGE_MASK as u64,
-                (desc.length + UEFI_PAGE_MASK as u64) & !UEFI_PAGE_MASK as u64,
-            ) {
-                Ok(pages) => pages,
-                Err(e) => {
-                    panic!("Failed to get page table pages for size {}: {:?}", desc.length, e);
-                }
-            }
-        }
-
-        // we also can't use preallocate_pages here, because it assumes the page table is already installed
-        match self.allocate_memory_space(
-            DEFAULT_ALLOCATION_STRATEGY,
-            dxe_services::GcdMemoryType::SystemMemory,
-            UEFI_PAGE_SHIFT,
-            uefi_pages_to_size!(needed_pages as usize),
-            protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-            None,
-        ) {
-            Ok(addr) => {
-                let paging_allocator = page_table.borrow_allocator();
-                for i in 0..needed_pages {
-                    paging_allocator.page_pool.push(addr as u64 + (i * UEFI_PAGE_SIZE as u64));
-                }
-            }
-            Err(e) => {
-                panic!("Failed to allocate pages for the initial page table page pool: {:?}", e);
-            }
-        }
-
-        // we just allocated more memory, so now we need to fetch the allocated descriptors again to make sure we
-        // have all the memory we need to map
-        descriptors.clear();
-        self.get_allocated_memory_descriptors(&mut descriptors).expect("Failed to get allocated memory descriptors!");
-
-        self.page_table = Some(page_table);
-
-        // now map the memory regions, keeping any cache attributes set in the GCD descriptors
-        for desc in descriptors {
-            if let Some(page_table) = self.page_table.as_mut() {
-                log::trace!(
-                    target: "paging",
-                    "Mapping memory region {:#x?} of length {:#x?} with attributes {:#x?}",
-                    desc.base_address,
-                    desc.length,
-                    (MemoryAttributes::from_bits_truncate(desc.attributes) & MemoryAttributes::CacheAttributesMask)
-                        | MemoryAttributes::ExecuteProtect);
-
-                // we have large ranges of memory that have been allocated but then freed
-                // this is what the memory bin code does. We should only map what memory
-                // is actually being used. On future allocations of this region, the pages will
-                // get mapped again.
-                if desc.attributes & efi::MEMORY_RP != 0 {
-                    continue;
-                }
-
-                if let Err(err) = page_table.map_memory_region(
-                    desc.base_address,
-                    desc.length,
-                    (MemoryAttributes::from_bits_truncate(desc.attributes) & MemoryAttributes::CacheAttributesMask)
-                        | MemoryAttributes::ExecuteProtect,
-                ) {
-                    // if we fail to set these attributes (which should just be XP at this point), we should try to
-                    // continue
-                    log::error!(
-                        "Failed to map memory region {:#x?} of length {:#x?} with attributes {:#x?}. Error: {:?}",
-                        desc.base_address,
-                        desc.length,
-                        desc.attributes,
-                        err
-                    );
-                    debug_assert!(false);
-                }
-            }
-        }
-
-        // Retrieve the MemoryAllocationModule hob corresponding to the DXE core so that we can map it correctly
-        let dxe_core_hob = hob_list
-            .iter()
-            .find_map(|x| if let Hob::MemoryAllocationModule(module) = x { Some(module) } else { None })
-            .expect("Did not find MemoryAllocationModule Hob for DxeCore");
-
-        let pe_info = unsafe {
-            UefiPeInfo::parse(core::slice::from_raw_parts(
-                dxe_core_hob.alloc_descriptor.memory_base_address as *const u8,
-                dxe_core_hob.alloc_descriptor.memory_length as usize,
-            ))
-            .expect("Failed to parse PE info for DXE Core")
-        };
-
-        let desc = self
-            .get_memory_descriptor_for_address(dxe_core_hob.alloc_descriptor.memory_base_address)
-            .expect("Failed to get memory descriptor for DXE Core");
-
-        // map the entire image as RW, as the PE headers don't live in the sections
-        self.set_memory_space_attributes(
-            dxe_core_hob.alloc_descriptor.memory_base_address as usize,
-            dxe_core_hob.alloc_descriptor.memory_length as usize,
-            efi::MEMORY_XP | (desc.attributes & efi::CACHE_ATTRIBUTE_MASK),
-        )
-        .unwrap_or_else(|_| {
-            panic!(
-                "Failed to map DXE Core image {:#x?} of length {:#x?} with attributes {:#x?}.",
-                dxe_core_hob.alloc_descriptor.memory_base_address, 0x1000, 0
-            )
-        });
-
-        // now map each section with the correct image protections
-        for section in pe_info.sections {
-            // each section starts at image_base + virtual_address, per PE/COFF spec.
-            let section_base_address =
-                dxe_core_hob.alloc_descriptor.memory_base_address + (section.virtual_address as u64);
-            let mut attributes = efi::MEMORY_XP | (desc.attributes & efi::CACHE_ATTRIBUTE_MASK);
-            if section.characteristics & pecoff::IMAGE_SCN_CNT_CODE == pecoff::IMAGE_SCN_CNT_CODE {
-                attributes = efi::MEMORY_RO | (desc.attributes & efi::CACHE_ATTRIBUTE_MASK);
-            }
-
-            // We need to use the virtual size for the section length, but
-            // we cannot rely on this to be section aligned, as some compilers rely on the loader to align this
-            let aligned_virtual_size = match align_up(section.virtual_size as u64, pe_info.section_alignment as u64) {
-                Ok(size) => size,
-                Err(_) => {
-                    panic!(
-                        "Failed to align section size {:#x?} with alignment {:#x?}",
-                        section.virtual_size, pe_info.section_alignment
-                    );
-                }
-            };
-
-            log::trace!(
-                target: "paging",
-                "Mapping DXE Core image memory region {:#x?} of length {:#x?} with attributes {:#x?}",
-                section_base_address,
-                aligned_virtual_size,
-                attributes
-            );
-
-            self.set_memory_space_attributes(section_base_address as usize, aligned_virtual_size as usize, attributes)
-                .unwrap_or_else(|_| {
-                    panic!(
-                        "Failed to map DXE Core image {:#x?} of length {:#x?} with attributes {:#x?}.",
-                        section.virtual_address, section.virtual_size, attributes
-                    )
-                });
-        }
-
-        // now map MMIO. Drivers expect to be able to access MMIO regions as RW, so we need to map them as such
-        for desc in mmio_descs {
-            if let Some(page_table) = self.page_table.as_mut() {
-                // MMIO is not necessarily described at page granularity, but needs to be mapped as such in the page
-                // table
-                let base_address = desc.base_address & !UEFI_PAGE_MASK as u64;
-                let len = (desc.length + UEFI_PAGE_MASK as u64) & !UEFI_PAGE_MASK as u64;
-                let new_attributes = (MemoryAttributes::from_bits_truncate(desc.attributes)
-                    & MemoryAttributes::CacheAttributesMask)
-                    | MemoryAttributes::ExecuteProtect;
-
-                log::trace!(
-                    target: "paging",
-                    "Mapping MMIO region {:#x?} of length {:#x?} with attributes {:#x?}",
-                    base_address,
-                    len,
-                    new_attributes
-                );
-
-                if let Err(err) = page_table.map_memory_region(base_address, len, new_attributes) {
-                    // if we fail to set these attributes we may or may not be able to continue to boot. It depends on
-                    // if a driver attempts to touch this MMIO region
-                    log::error!(
-                        "Failed to map MMIO region {:#x?} of length {:#x?} with attributes {:#x?}. Error: {:?}",
-                        base_address,
-                        len,
-                        new_attributes,
-                        err
-                    );
-                    debug_assert!(false);
-                }
-            }
-        }
-
-        if let Some(ref page_table) = self.page_table {
-            page_table.install_page_table().expect("Failed to install the page table");
-        }
-
-        log::info!("Paging initialized for the GCD");
     }
 
     /// This service adds reserved memory, system memory, or memory-mapped I/O resources to the global coherency domain of the processor.
@@ -940,30 +561,6 @@ impl GCD {
         }
 
         let desc = self.get_memory_descriptor_for_address(base_address as efi::PhysicalAddress)?;
-
-        // when we free, we want to unmap this memory region and mark it EFI_MEMORY_RP in the GCD
-        // we don't panic if we don't have a page table because the memory bucket code does a free before the
-        // page table is initialized. If we were to end up without the page table initialized, we would still
-        // keep track of state in the GCD
-        if let Some(page_table) = &mut self.page_table {
-            match page_table.unmap_memory_region(base_address as u64, len as u64) {
-                Ok(_) => {}
-                Err(status) => {
-                    log::error!(
-                        "Failed to unmap memory region {:#x?} of length {:#x?}. Status: {:#x?}",
-                        base_address,
-                        len,
-                        status
-                    );
-                    debug_assert!(false);
-                    match status {
-                        PtError::OutOfResources => EfiError::OutOfResources,
-                        PtError::NoMapping => EfiError::NotFound,
-                        _ => EfiError::InvalidParameter,
-                    };
-                }
-            }
-        }
 
         match self.set_gcd_memory_attributes(
             base_address,
@@ -1199,122 +796,6 @@ impl GCD {
         (self.free_memory_space_fn)(self, base_address, len, MemoryStateTransition::FreePreservingOwnership)
     }
 
-    fn set_paging_attributes(&mut self, base_address: usize, len: usize, attributes: u64) -> Result<(), EfiError> {
-        // we preallocate pages first, even if we won't create new mappings here, because we have to avoid borrowing
-        // self mutably twice and the logic is considerably simpler to preallocate first. In one case where we don't
-        // have a full page pool, we will cause an extra allocation here, but we would have done that next time we
-        // create a new mapping anyway, otherwise this just checks the size of the page pool and returns
-        let preallocated = self.preallocate_pages(base_address as u64, len as u64);
-        if let Some(page_table) = &mut self.page_table {
-            // only apply page table attributes to the page table, not our virtual GCD attributes
-            let paging_attrs = MemoryAttributes::from_bits_truncate(attributes)
-                & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask);
-            match page_table.query_memory_region(base_address as u64, len as u64) {
-                Ok(region_attrs) => {
-                    // if this region already has the attributes we want, we don't need to do anything
-                    // in the page table. The GCD already got updated before we got here (this may have been a virtual
-                    // attribute update)
-                    if region_attrs & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask)
-                        != paging_attrs
-                    {
-                        match page_table.remap_memory_region(base_address as u64, len as u64, paging_attrs) {
-                            Ok(_) => {
-                                // if the cache attributes changed, we need to publish an event, as some architectures
-                                // (such as x86) need to populate APs with the caching information
-                                if (region_attrs & MemoryAttributes::CacheAttributesMask
-                                    != paging_attrs & MemoryAttributes::CacheAttributesMask)
-                                    && paging_attrs & MemoryAttributes::CacheAttributesMask != MemoryAttributes::empty()
-                                {
-                                    log::trace!(
-                                        target: "paging",
-                                        "Attributes for memory region {:#x?} of length {:#x?} were updated to {:#x?} from {:#x?}, sending cache attributes changed event",
-                                        base_address,
-                                        len,
-                                        paging_attrs,
-                                        region_attrs
-                                    );
-
-                                    EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
-                                }
-                            }
-                            Err(e) => {
-                                log::error!(
-                                    "Failed to remap memory region {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
-                                    base_address,
-                                    len,
-                                    attributes,
-                                    e
-                                );
-                                debug_assert!(false);
-                                match e {
-                                    PtError::OutOfResources => EfiError::OutOfResources,
-                                    PtError::NoMapping => EfiError::NotFound,
-                                    _ => EfiError::InvalidParameter,
-                                };
-                            }
-                        }
-                    }
-                    Ok(())
-                }
-                Err(PtError::NoMapping) => {
-                    // if this isn't mapped yet, we need to map the range
-                    // this is the only case where we need preallocated pages, so let's make sure that succeeded and
-                    // bail out if it didn't
-                    preallocated.map_err(|err| match err {
-                        efi::Status::INVALID_PARAMETER => EfiError::InvalidParameter,
-                        efi::Status::NOT_FOUND => EfiError::NotFound,
-                        _ => EfiError::OutOfResources,
-                    })?;
-
-                    match page_table.map_memory_region(base_address as u64, len as u64, paging_attrs) {
-                        Ok(_) => {
-                            // we are setting the cache attributes for the first time, we need to publish an event,
-                            // as some architectures (such as x86) need to populate APs with the caching information
-                            if paging_attrs & MemoryAttributes::CacheAttributesMask != MemoryAttributes::empty() {
-                                log::trace!(
-                                    target: "paging",
-                                    "Memory region {:#x?} of length {:#x?} added with attrs {:#x?}, sending cache attributes changed event",
-                                    base_address,
-                                    len,
-                                    paging_attrs
-                                );
-
-                                EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
-                            }
-                            Ok(())
-                        }
-                        Err(e) => {
-                            log::error!(
-                                "Failed to map memory region {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
-                                base_address,
-                                len,
-                                attributes,
-                                e
-                            );
-                            debug_assert!(false);
-                            Err(EfiError::InvalidParameter)?
-                        }
-                    }
-                }
-                Err(e) => {
-                    log::error!(
-                        "Failed to query memory region {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
-                        base_address,
-                        len,
-                        attributes,
-                        e
-                    );
-                    debug_assert!(false);
-                    Err(EfiError::InvalidParameter)?
-                }
-            }
-        } else {
-            // if we don't have the page table, we shouldn't panic, this may just be the case that we are allocating
-            // the initial GCD memory space and we haven't initialized the page table yet
-            Err(EfiError::NotReady)
-        }
-    }
-
     /// This service sets attributes on the given memory space.
     ///
     /// # Documentation
@@ -1330,15 +811,9 @@ impl GCD {
         ensure!(base_address + len <= self.maximum_address, EfiError::Unsupported);
         ensure!((base_address & UEFI_PAGE_MASK) == 0 && (len & UEFI_PAGE_MASK) == 0, EfiError::InvalidParameter);
 
-        // we set the GCD attributes first as we do allocate memory space in the GCD before paging is enabled;
-        // this is the memory that the page table is created from. So we need to allow for paging to fail but the
-        // GCD attributes to set correctly. When init_paging is called, it will apply all the attributes set
-        // in the GCD to the page table.
-        // In the case where paging fails after it is initialized, we will have a torn state between the GCD and
-        // the page table, but in critical cases, this will result in a panic, in other cases this should be ok
-        // and caught by debug_asserts
-        self.set_gcd_memory_attributes(base_address, len, attributes)?;
-        self.set_paging_attributes(base_address, len, attributes)
+        // we split allocating memory from mapping it, so this function only sets attributes (which may result
+        // in mapping memory if it was previously unmapped)
+        self.set_gcd_memory_attributes(base_address, len, attributes)
     }
 
     /// This service sets attributes on the given memory space.
@@ -2248,11 +1723,11 @@ pub enum MapChangeType {
 pub type MapChangeCallback = fn(MapChangeType);
 
 /// Implements a spin locked GCD  suitable for use as a static global.
-#[derive(Debug)]
 pub struct SpinLockedGcd {
     memory: tpl_lock::TplMutex<GCD>,
     io: tpl_lock::TplMutex<IoGCD>,
     memory_change_callback: Option<MapChangeCallback>,
+    page_table: tpl_lock::TplMutex<Option<Box<dyn PageTable<ALLOCATOR = PagingAllocator>>>>,
 }
 
 impl SpinLockedGcd {
@@ -2268,7 +1743,6 @@ impl SpinLockedGcd {
                     memory_blocks: None,
                     allocate_memory_space_fn: GCD::allocate_memory_space_internal,
                     free_memory_space_fn: GCD::free_memory_space_worker,
-                    page_table: None,
                 },
                 "GcdMemLock",
             ),
@@ -2278,6 +1752,110 @@ impl SpinLockedGcd {
                 "GcdIoLock",
             ),
             memory_change_callback,
+            page_table: tpl_lock::TplMutex::new(efi::TPL_HIGH_LEVEL, None, "GcdPageTableLock"),
+        }
+    }
+
+    fn set_paging_attributes(&self, base_address: usize, len: usize, attributes: u64) -> Result<(), EfiError> {
+        if let Some(page_table) = &mut *self.page_table.lock() {
+            // only apply page table attributes to the page table, not our virtual GCD attributes
+            let paging_attrs = MemoryAttributes::from_bits_truncate(attributes)
+                & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask);
+            match page_table.query_memory_region(base_address as u64, len as u64) {
+                Ok(region_attrs) => {
+                    // if this region already has the attributes we want, we don't need to do anything
+                    // in the page table. The GCD already got updated before we got here (this may have been a virtual
+                    // attribute update)
+                    if region_attrs & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask)
+                        != paging_attrs
+                    {
+                        match page_table.remap_memory_region(base_address as u64, len as u64, paging_attrs) {
+                            Ok(_) => {
+                                // if the cache attributes changed, we need to publish an event, as some architectures
+                                // (such as x86) need to populate APs with the caching information
+                                if (region_attrs & MemoryAttributes::CacheAttributesMask
+                                    != paging_attrs & MemoryAttributes::CacheAttributesMask)
+                                    && paging_attrs & MemoryAttributes::CacheAttributesMask != MemoryAttributes::empty()
+                                {
+                                    log::trace!(
+                                        target: "paging",
+                                        "Attributes for memory region {:#x?} of length {:#x?} were updated to {:#x?} from {:#x?}, sending cache attributes changed event",
+                                        base_address,
+                                        len,
+                                        paging_attrs,
+                                        region_attrs
+                                    );
+
+                                    EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
+                                }
+                            }
+                            Err(e) => {
+                                log::error!(
+                                    "Failed to remap memory region {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
+                                    base_address,
+                                    len,
+                                    attributes,
+                                    e
+                                );
+                                debug_assert!(false);
+                                match e {
+                                    PtError::OutOfResources => EfiError::OutOfResources,
+                                    PtError::NoMapping => EfiError::NotFound,
+                                    _ => EfiError::InvalidParameter,
+                                };
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+                Err(PtError::NoMapping) => {
+                    // if this isn't mapped yet, we need to map the range
+                    match page_table.map_memory_region(base_address as u64, len as u64, paging_attrs) {
+                        Ok(_) => {
+                            // we are setting the cache attributes for the first time, we need to publish an event,
+                            // as some architectures (such as x86) need to populate APs with the caching information
+                            if paging_attrs & MemoryAttributes::CacheAttributesMask != MemoryAttributes::empty() {
+                                log::trace!(
+                                    target: "paging",
+                                    "Memory region {:#x?} of length {:#x?} added with attrs {:#x?}, sending cache attributes changed event",
+                                    base_address,
+                                    len,
+                                    paging_attrs
+                                );
+
+                                EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
+                            }
+                            Ok(())
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "Failed to map memory region {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
+                                base_address,
+                                len,
+                                attributes,
+                                e
+                            );
+                            debug_assert!(false);
+                            Err(EfiError::InvalidParameter)?
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!(
+                        "Failed to query memory region {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
+                        base_address,
+                        len,
+                        attributes,
+                        e
+                    );
+                    debug_assert!(false);
+                    Err(EfiError::InvalidParameter)?
+                }
+            }
+        } else {
+            // if we don't have the page table, we shouldn't panic, this may just be the case that we are allocating
+            // the initial GCD memory space and we haven't initialized the page table yet
+            Err(EfiError::NotReady)
         }
     }
 
@@ -2311,9 +1889,179 @@ impl SpinLockedGcd {
         self.io.lock().init(io_address_bits);
     }
 
+    // Take control of our own destiny and create a page table that the GCD controls
+    // This must be done after the GCD is initialized and memory services are available,
+    // as we need to allocate memory for the page table structure
     pub(crate) fn init_paging(&self, hob_list: &HobList) {
+        log::info!("Initializing paging for the GCD");
+
         let page_allocator = PagingAllocator::new();
-        self.memory.lock().init_paging(hob_list, page_allocator);
+        let mut page_table = create_cpu_paging(page_allocator).expect("Failed to create CPU page table");
+
+        // this is before we get allocated descriptors, so we don't need to preallocate memory here
+        let mut mmio_descs: Vec<dxe_services::MemorySpaceDescriptor> = Vec::new();
+        self.memory.lock().get_mmio_descriptors(mmio_descs.as_mut()).expect("Failed to get MMIO descriptors!");
+
+        // Before we install this page table, we need to ensure that DXE Core is mapped correctly here as well as any
+        // allocated memory and MMIO. All other memory will be unmapped initially. Do allocated memory first, then the
+        // DXE Core, so that we can ensure that the DXE Core is mapped correctly and not overwritten by the allocated
+        // memory attrs. We also need to preallocate memory here so that we do not allocate memory after getting the
+        // descriptors
+        let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
+            Vec::with_capacity(self.memory_descriptor_count() + 10);
+        self.memory
+            .lock()
+            .get_allocated_memory_descriptors(&mut descriptors)
+            .expect("Failed to get allocated memory descriptors!");
+
+        // now map the memory regions, keeping any cache attributes set in the GCD descriptors
+        for desc in descriptors {
+            log::trace!(
+                target: "paging",
+                "Mapping memory region {:#x?} of length {:#x?} with attributes {:#x?}",
+                desc.base_address,
+                desc.length,
+                desc.attributes
+            );
+
+            if let Err(err) = page_table.map_memory_region(
+                desc.base_address,
+                desc.length,
+                (MemoryAttributes::from_bits_truncate(desc.attributes) & MemoryAttributes::CacheAttributesMask)
+                    | MemoryAttributes::ExecuteProtect,
+            ) {
+                // if we fail to set these attributes (which should just be XP at this point), we should try to
+                // continue
+                log::error!(
+                    "Failed to map memory region {:#x?} of length {:#x?} with attributes {:#x?}. Error: {:?}",
+                    desc.base_address,
+                    desc.length,
+                    desc.attributes,
+                    err
+                );
+                debug_assert!(false);
+            }
+        }
+
+        // Retrieve the MemoryAllocationModule hob corresponding to the DXE core so that we can map it correctly
+        let dxe_core_hob = hob_list
+            .iter()
+            .find_map(|x| if let Hob::MemoryAllocationModule(module) = x { Some(module) } else { None })
+            .expect("Did not find MemoryAllocationModule Hob for DxeCore");
+
+        let pe_info = unsafe {
+            UefiPeInfo::parse(core::slice::from_raw_parts(
+                dxe_core_hob.alloc_descriptor.memory_base_address as *const u8,
+                dxe_core_hob.alloc_descriptor.memory_length as usize,
+            ))
+            .expect("Failed to parse PE info for DXE Core")
+        };
+
+        let dxe_core_cache_attr =
+            match self.get_memory_descriptor_for_address(dxe_core_hob.alloc_descriptor.memory_base_address) {
+                Ok(desc) => desc.attributes & efi::CACHE_ATTRIBUTE_MASK,
+                Err(e) => panic!("DXE Core not mapped in GCD {e:?}"),
+            };
+
+        // at this point we need to add the page table to the GCD so that we can use some GCD APIs that
+        // expect this
+        *self.page_table.lock() = Some(page_table);
+
+        // map the entire image as RW, as the PE headers don't live in the sections
+        self.set_memory_space_attributes(
+            dxe_core_hob.alloc_descriptor.memory_base_address as usize,
+            dxe_core_hob.alloc_descriptor.memory_length as usize,
+            efi::MEMORY_XP | dxe_core_cache_attr,
+        )
+        .unwrap_or_else(|_| {
+            panic!(
+                "Failed to map DXE Core image {:#x?} of length {:#x?} with attributes {:#x?}.",
+                dxe_core_hob.alloc_descriptor.memory_base_address, 0x1000, 0
+            )
+        });
+
+        // now map each section with the correct image protections
+        for section in pe_info.sections {
+            // each section starts at image_base + virtual_address, per PE/COFF spec.
+            let section_base_address =
+                dxe_core_hob.alloc_descriptor.memory_base_address + (section.virtual_address as u64);
+            let mut attributes = efi::MEMORY_XP;
+            if section.characteristics & pecoff::IMAGE_SCN_CNT_CODE == pecoff::IMAGE_SCN_CNT_CODE {
+                attributes = efi::MEMORY_RO;
+            }
+
+            // We need to use the virtual size for the section length, but
+            // we cannot rely on this to be section aligned, as some compilers rely on the loader to align this
+            let aligned_virtual_size = match align_up(section.virtual_size as u64, pe_info.section_alignment as u64) {
+                Ok(size) => size,
+                Err(_) => {
+                    panic!(
+                        "Failed to align section size {:#x?} with alignment {:#x?}",
+                        section.virtual_size, pe_info.section_alignment
+                    );
+                }
+            };
+
+            log::trace!(
+                target: "paging",
+                "Mapping DXE Core image memory region {:#x?} of length {:#x?} with attributes {:#x?}",
+                section_base_address,
+                aligned_virtual_size,
+                attributes
+            );
+
+            attributes |=
+                match self.get_memory_descriptor_for_address(dxe_core_hob.alloc_descriptor.memory_base_address) {
+                    Ok(desc) => desc.attributes & efi::CACHE_ATTRIBUTE_MASK,
+                    Err(e) => panic!("DXE Core section not mapped in GCD {e:?}"),
+                };
+
+            self.set_memory_space_attributes(section_base_address as usize, aligned_virtual_size as usize, attributes)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "Failed to map DXE Core image {:#x?} of length {:#x?} with attributes {:#x?}.",
+                        dxe_core_hob.alloc_descriptor.memory_base_address, 0x1000, 0
+                    )
+                });
+        }
+
+        // now map MMIO. Drivers expect to be able to access MMIO regions as RW, so we need to map them as such
+        for desc in mmio_descs {
+            // MMIO is not necessarily described at page granularity, but needs to be mapped as such in the page
+            // table
+            let base_address = desc.base_address & !UEFI_PAGE_MASK as u64;
+            let len = (desc.length + UEFI_PAGE_MASK as u64) & !UEFI_PAGE_MASK as u64;
+            let new_attributes = (MemoryAttributes::from_bits_truncate(desc.attributes)
+                & MemoryAttributes::CacheAttributesMask)
+                | MemoryAttributes::ExecuteProtect;
+
+            log::trace!(
+                target: "paging",
+                "Mapping MMIO region {:#x?} of length {:#x?} with attributes {:#x?}",
+                base_address,
+                len,
+                new_attributes
+            );
+
+            if let Err(err) =
+                self.page_table.lock().as_mut().unwrap().map_memory_region(base_address, len, new_attributes)
+            {
+                // if we fail to set these attributes we may or may not be able to continue to boot. It depends on
+                // if a driver attempts to touch this MMIO region
+                log::error!(
+                    "Failed to map MMIO region {:#x?} of length {:#x?} with attributes {:#x?}. Error: {:?}",
+                    base_address,
+                    len,
+                    new_attributes,
+                    err
+                );
+                debug_assert!(false);
+            }
+        }
+
+        self.page_table.lock().as_mut().unwrap().install_page_table().expect("Failed to install the page table");
+
+        log::info!("Paging initialized for the GCD");
     }
 
     /// This service adds reserved memory, system memory, or memory-mapped I/O resources to the global coherency domain of the processor.
@@ -2376,10 +2124,6 @@ impl SpinLockedGcd {
             device_handle,
         );
         if result.is_ok() {
-            if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::AllocateMemorySpace);
-            }
-
             // if we successfully allocated memory, we want to set the range as NX. For any standard data, we should
             // always have NX set and no consumer needs to update it. If a code region is going to be allocated
             // here, we rely on the image loader to update the attributes as appropriate for the code sections. The
@@ -2422,6 +2166,10 @@ impl SpinLockedGcd {
                 log::error!("Could not extract base address from allocation result, unable to set memory attributes.");
                 debug_assert!(false);
             }
+
+            if let Some(callback) = self.memory_change_callback {
+                callback(MapChangeType::AllocateMemorySpace);
+            }
         }
         result
     }
@@ -2432,12 +2180,43 @@ impl SpinLockedGcd {
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.3
     pub fn free_memory_space(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
-        let result = self.memory.lock().free_memory_space(base_address, len);
-        if result.is_ok() {
-            if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::FreeMemorySpace);
+        let mut result = self.memory.lock().free_memory_space(base_address, len);
+
+        match result {
+            Ok(_) => {
+                // when we free, we want to unmap this memory region and mark it EFI_MEMORY_RP in the GCD
+                // we don't panic if we don't have a page table because the memory bucket code does a free before the
+                // page table is initialized. If we were to end up without the page table initialized, we would still
+                // keep track of state in the GCD
+                if let Some(page_table) = &mut *self.page_table.lock() {
+                    match page_table.unmap_memory_region(base_address as u64, len as u64) {
+                        Ok(_) => {}
+                        Err(status) => {
+                            log::error!(
+                                "Failed to unmap memory region {:#x?} of length {:#x?}. Status: {:#x?}",
+                                base_address,
+                                len,
+                                status
+                            );
+                            debug_assert!(false);
+                            match status {
+                                PtError::OutOfResources => EfiError::OutOfResources,
+                                PtError::NoMapping => EfiError::NotFound,
+                                _ => EfiError::InvalidParameter,
+                            };
+                        }
+                    }
+                }
+
+                if let Some(callback) = self.memory_change_callback {
+                    callback(MapChangeType::FreeMemorySpace);
+                }
             }
+            // this is the post-EBS case, we silently fail and return success
+            Err(EfiError::AccessDenied) => result = Ok(()),
+            _ => {}
         }
+
         result
     }
 
@@ -2506,6 +2285,8 @@ impl SpinLockedGcd {
             }
             current_base = next_base;
         }
+
+        self.set_paging_attributes(base_address, len, attributes)?;
 
         // if we made it out of the loop, we set the attributes correctly and should call the memory change callback,
         // if there is one
@@ -2601,8 +2382,16 @@ impl SpinLockedGcd {
 
 impl Display for SpinLockedGcd {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        writeln!(f, "{}", self.memory.lock())?;
-        writeln!(f, "{}", self.io.lock())?;
+        writeln!(f, "{:?}", self.memory.try_lock())?;
+        writeln!(f, "{:?}", self.io.try_lock())?;
+        Ok(())
+    }
+}
+
+impl core::fmt::Debug for SpinLockedGcd {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        writeln!(f, "{:?}", self.memory.try_lock())?;
+        writeln!(f, "{:?}", self.io.try_lock())?;
         Ok(())
     }
 }
@@ -3576,7 +3365,6 @@ mod tests {
             maximum_address: 0,
             allocate_memory_space_fn: GCD::allocate_memory_space_internal,
             free_memory_space_fn: GCD::free_memory_space_worker,
-            page_table: None,
         };
         assert_eq!(Err(EfiError::NotReady), gcd.set_memory_space_attributes(0, 0x50000, 0b1111));
 

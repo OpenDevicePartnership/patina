@@ -18,10 +18,10 @@ edition = "2021"
 rust-version = "1.83.0"
 
 [workspace.dependencies]
-section_extractor = { version = "^9.1.1" }
+section_extractor = { version = "10" }
 uefi_sdk = { version = "2" }
-uefi_cpu = { version = "^9.1.1" }
-uefi_debugger = { version = "^9.1.1" }
+uefi_cpu = { version = "10" }
+uefi_debugger = { version = "10" }
 uefi_corosensei = { version = "0.1", default-features = false }
 
 adv_logger = { path = "adv_logger", version = "8" }
@@ -51,7 +51,7 @@ log = { version = "^0.4", default-features = false }
 mockall = "0.13.0"
 mu_pi = { version = "^5.2" }
 mu_rust_helpers = { version = "2" }
-paging = { version = "^1.0.2" }
+paging = { version = "2" }
 rand = "^0.8"
 r-efi = { version = "^5.2.0", default-features = false }
 scroll = { version = "^0.12", default-features = false, features = ["derive"] }
