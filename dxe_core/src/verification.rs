@@ -24,6 +24,48 @@ pub enum PlatformError {
         end2: EfiPhysicalAddress,
     },
     MissingMemoryProtections,
+    InternalError, // error from verification code, not the platform itself
+}
+
+/// A struct that runs multiple requirements
+/// The idea is that we'll be able to add new requirements dynamically
+/// Although it's not as dynamic as you'd like
+/// Because there is a max size on the Requirements slice
+pub struct Runner<'a> {
+    requirements: &'a mut [&'a dyn Requirement],
+    count: usize,
+}
+
+impl<'a> Runner<'a> {
+    /// Creates a new Runner instance with a mutable slice of requirements.
+    pub fn new(requirements: &'a mut [&'a dyn Requirement]) -> Self {
+        Self { requirements, count: 0 }
+    }
+
+    /// Adds a new requirement to the Runner (if space is available).
+    pub fn add_requirement(&mut self, requirement: &'a dyn Requirement) -> Result<()> {
+        if self.count < self.requirements.len() {
+            self.requirements[self.count] = requirement;
+            self.count += 1;
+            Ok(())
+        } else {
+            Err(PlatformError::InternalError) // No space left
+        }
+    }
+
+    /// Runs all added requirements against the given HOB list.
+    pub fn run(&self, physical_hob_list: *const c_void) -> Result<()> {
+        for i in 0..self.count {
+            self.requirements[i].verify_requirement(physical_hob_list)?;
+        }
+        Ok(())
+    }
+}
+
+/// Trait for verifying platform-specific requirements.
+pub trait Requirement {
+    // i don't know if this is the right argument. do we need info other than the physical hob list sometimes?
+    fn verify_requirement(&self, physical_hob_list: *const c_void) -> Result<()>;
 }
 
 // SHERRY: is this defined anywhere? i didn't see it but maybe i didn't look hard enough. could be in another repo (not here or mu_pi at least)
@@ -51,13 +93,31 @@ impl fmt::Display for PlatformError {
             PlatformError::MissingMemoryProtections => {
                 write!(f, "Memory protection settings HOB is missing or invalid")
             }
+            // This could probably be more disambiguated
+            PlatformError::InternalError => {
+                write!(f, "Verification failed due to internal error")
+            }
         }
     }
 }
+
 pub fn verify_platform_requirements(physical_hob_list: *const c_void) -> Result<()> {
     log::info!("Verifying platform requirements...");
-    verify_resource_descriptor_hobs(physical_hob_list)?;
-    verify_memory_protection_hobs(physical_hob_list)?;
+
+    let overlap_req = OverlapRequirement;
+
+    // this probably needs to have way more requirements but i'll poc it with one
+    let mut storage: [&dyn Requirement; 1] = [&overlap_req];
+    let mut runner = Runner::new(&mut storage);
+
+    let _ = runner.add_requirement(&overlap_req);
+
+    // Run the requirements
+    match runner.run(physical_hob_list) {
+        Ok(()) => log::info!("All requirements passed."),
+        Err(e) => log::info!("Requirement check failed: {:?}", e),
+    }
+
     log::info!("Passed platform verification.");
     Ok(())
 }
@@ -72,6 +132,15 @@ fn assert_hob_size<T>(hob: &header::Hob) {
     let hob_len = hob.length as usize;
     let hob_size = mem::size_of::<T>();
     assert_eq!(hob_len, hob_size, "Trying to cast hob of length {hob_len} into a pointer of size {hob_size}");
+}
+
+/// A struct that checks for memory range overlaps
+pub struct OverlapRequirement;
+
+impl Requirement for OverlapRequirement {
+    fn verify_requirement(&self, physical_hob_list: *const c_void) -> Result<()> {
+        check_hob_overlap(physical_hob_list)
+    }
 }
 
 // this is not correct since we have to account for resource types
