@@ -23,18 +23,12 @@ runs:
           ~/.rustup/toolchains/
         key: ${{ runner.os }}-rust-tools-${{ hashFiles('**/rust-toolchain.toml' )}}
 
-    # Installs toolchain specified in the rust-toolchain.toml file
-    # - name: Install toolchains
-    #   shell: bash
-    #   run: |
-    #     VERSION=$(rustup --version | awk '{print $2}')
-    #     if [ "$(printf '%s\n1.28.0' "$VERSION" | sort -V | head -n1)" = "1.28.0" ]; then
-    #       echo "Rustup is version $VERSION (>= 1.28.0). Installing toolchain manually."
-    #       rustup toolchain install
-    #     else
-    #       echo "Rustup version $VERSION (< 1.28.0). Toolchain will be installed automatically."
-    #     fi
-    #   if: steps.tool-cache.outputs.cache-hit != 'true'
+    # Installs the toolchain specified in the rust-toolchain.toml file if rustup >= 1.28.0
+    #
+    # if rustup < 1.28.0, this command will fail, but the cargo will automatically install the toolchain in the next
+    # step. This is because rustup less than 1.28.0 automatically installs the toolchain if it is not found where as
+    # This functionality was removed in 1.28.0 in favor of being able to call rustup toolchain install without the
+    # need to specify the toolchain name.
     - name: Install toolchains
       shell: bash
       run: |
