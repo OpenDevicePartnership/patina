@@ -318,6 +318,10 @@ where
             panic!("HOB list pointer is null!");
         }
 
+        if let Err(e) = verify_platform_requirements(physical_hob_list) {
+            panic!("Platform requirements verification failed: {}", e);
+        }
+
         gcd::init_gcd(physical_hob_list);
 
         log::trace!("Initial GCD:\n{}", GCD);
@@ -326,13 +330,6 @@ where
         // Relocate the hobs from the input list pointer into a Vec.
         let mut hob_list = HobList::default();
         hob_list.discover_hobs(physical_hob_list);
-
-        // SHERRY: this is not correct because this is post-gcd init
-        // in the "real" tool we will NOT have memory allocation unless we implement our own allocator
-        // in the final tool we need to replicate GCD memory functionality and hob discovery
-        if let Err(e) = verify_platform_requirements(&hob_list) {
-            panic!("Platform requirements verification failed: {}", e);
-        }
 
         log::trace!("HOB list discovered is:");
         log::trace!("{:#x?}", hob_list);

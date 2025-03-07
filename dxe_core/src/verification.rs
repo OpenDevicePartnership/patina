@@ -1,6 +1,9 @@
-use core::fmt;
+use core::{ffi::c_void, fmt, mem};
 
-use mu_pi::hob::{EfiPhysicalAddress, Hob, HobList, ResourceDescriptor};
+use mu_pi::hob::{
+    header, EfiPhysicalAddress, GuidHob, ResourceDescriptor, EFI_RESOURCE_IO, END_OF_HOB_LIST, GUID_EXTENSION,
+    RESOURCE_DESCRIPTOR, RESOURCE_DESCRIPTOR2,
+};
 use r_efi::efi;
 
 /// Public result type for the crate.
@@ -25,7 +28,8 @@ pub enum PlatformError {
 
 // SHERRY: is this defined anywhere? i didn't see it but maybe i didn't look hard enough. could be in another repo (not here or mu_pi at least)
 const DXE_MEMORY_PROTECTION_SETTINGS_GUID: efi::Guid =
-    efi::Guid::from_fields(0x9E9FD06B, 0x873D, 0x47D9, 0xA2, 0x07, &[0x4F, 0x7A, 0x2D, 0xA0, 0x07, 0x5A]);
+    efi::Guid::from_fields(0x9ABFD639, 0xD1D0, 0x4EFF, 0xBD, 0xB6, &[0x7E, 0xC4, 0x19, 0x0D, 0x17, 0xD5]);
+const NOT_NULL: &str = "Ptr should not be NULL";
 
 impl fmt::Display for PlatformError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -50,91 +54,150 @@ impl fmt::Display for PlatformError {
         }
     }
 }
-pub fn verify_platform_requirements(hob_list: &HobList) -> Result<()> {
-    verify_resource_descriptor_hobs(hob_list)?;
-    verify_memory_protection_hobs(hob_list)?;
+pub fn verify_platform_requirements(physical_hob_list: *const c_void) -> Result<()> {
+    log::info!("Verifying platform requirements...");
+    verify_resource_descriptor_hobs(physical_hob_list)?;
+    verify_memory_protection_hobs(physical_hob_list)?;
+    log::info!("Passed platform verification.");
     Ok(())
 }
 
-fn verify_resource_descriptor_hobs(hob_list: &HobList) -> Result<()> {
-    check_memory_overlap(hob_list)?;
-    check_v1_v2_consistency(hob_list)?;
+fn verify_resource_descriptor_hobs(physical_hob_list: *const c_void) -> Result<()> {
+    check_memory_overlap(physical_hob_list)?;
+    check_v1_v2_consistency(physical_hob_list)?;
     Ok(())
 }
 
-fn get_memory_range(hob: &Hob) -> Option<(EfiPhysicalAddress, EfiPhysicalAddress)> {
-    match hob {
-        Hob::ResourceDescriptorV2(hob) => {
-            let start = hob.v1.physical_start;
-            let end = start.saturating_add(hob.v1.resource_length);
-            Some((start, end))
-        }
-        Hob::ResourceDescriptor(hob) => {
-            let start = hob.physical_start;
-            let end = start.saturating_add(hob.resource_length);
-            Some((start, end))
-        }
-        _ => None, // Ignore other HOB types
-    }
+fn assert_hob_size<T>(hob: &header::Hob) {
+    let hob_len = hob.length as usize;
+    let hob_size = mem::size_of::<T>();
+    assert_eq!(hob_len, hob_size, "Trying to cast hob of length {hob_len} into a pointer of size {hob_size}");
 }
 
-fn check_hob_overlap<F>(hob_list: &HobList, filter: F) -> Result<()>
-where
-    F: Fn(&Hob) -> bool,
-{
-    for (i, hob1) in hob_list.iter().enumerate() {
-        if filter(hob1) {
-            if let Some((start1, end1)) = get_memory_range(hob1) {
-                for hob2 in hob_list.iter().skip(i + 1) {
-                    if filter(hob2) {
-                        if let Some((start2, end2)) = get_memory_range(hob2) {
+// this is not correct since we have to account for resource types
+// TODO: implement I/O + ResourceDescriptorV2
+fn check_hob_overlap(physical_hob_list: *const c_void) -> Result<()> {
+    let mut hob_header1: *const header::Hob = physical_hob_list as *const header::Hob;
+
+    loop {
+        let current_header1 = unsafe { hob_header1.cast::<header::Hob>().as_ref().expect(NOT_NULL) };
+        if current_header1.r#type == RESOURCE_DESCRIPTOR {
+            assert_hob_size::<ResourceDescriptor>(current_header1);
+            let resource_desc_hob1 = unsafe { hob_header1.cast::<ResourceDescriptor>().as_ref().expect(NOT_NULL) };
+            if resource_desc_hob1.resource_type != EFI_RESOURCE_IO {
+                let (start1, end1) = (
+                    resource_desc_hob1.physical_start,
+                    resource_desc_hob1.physical_start + resource_desc_hob1.resource_length,
+                );
+
+                // start one after the current HOB
+                let mut hob_header2: *const header::Hob =
+                    (hob_header1 as usize + current_header1.length as usize) as *const header::Hob;
+                loop {
+                    let current_header2 = unsafe { hob_header2.cast::<header::Hob>().as_ref().expect(NOT_NULL) };
+                    if current_header2.r#type == RESOURCE_DESCRIPTOR {
+                        assert_hob_size::<ResourceDescriptor>(current_header2);
+                        let resource_desc_hob2 =
+                            unsafe { hob_header2.cast::<ResourceDescriptor>().as_ref().expect(NOT_NULL) };
+                        if resource_desc_hob2.resource_type != EFI_RESOURCE_IO {
+                            let (start2, end2) = (
+                                resource_desc_hob2.physical_start,
+                                resource_desc_hob2.physical_start + resource_desc_hob2.resource_length,
+                            );
+
                             if start1 < end2 && start2 < end1 {
                                 return Err(PlatformError::MemoryRangeOverlap { start1, end1, start2, end2 });
                             }
                         }
+                    } else if current_header2.r#type == END_OF_HOB_LIST {
+                        break;
                     }
+
+                    let next_hob2 = hob_header2 as usize + current_header2.length as usize;
+                    hob_header2 = next_hob2 as *const header::Hob;
                 }
             }
+        } else if current_header1.r#type == END_OF_HOB_LIST {
+            break;
         }
+
+        let next_hob = hob_header1 as usize + current_header1.length as usize;
+        hob_header1 = next_hob as *const header::Hob;
     }
-    Ok(())
-}
-
-fn check_memory_overlap(hob_list: &HobList) -> Result<()> {
-    // Check overlaps within V2 HOBs
-    check_hob_overlap(hob_list, |hob| matches!(hob, Hob::ResourceDescriptorV2(_)))?;
-
-    // Check overlaps within V1 HOBs
-    check_hob_overlap(hob_list, |hob| matches!(hob, Hob::ResourceDescriptor(_)))?;
 
     Ok(())
 }
 
-fn check_v1_v2_consistency(hob_list: &HobList) -> Result<()> {
-    for v1_hob in hob_list.iter() {
-        if let Hob::ResourceDescriptor(v1) = v1_hob {
-            let (v1_start, v1_end) = get_memory_range(v1_hob).unwrap();
+fn check_memory_overlap(physical_hob_list: *const c_void) -> Result<()> {
+    check_hob_overlap(physical_hob_list)?;
+    Ok(())
+}
 
-            for v2_hob in hob_list.iter() {
-                if let Hob::ResourceDescriptorV2(v2) = v2_hob {
-                    let (v2_start, v2_end) = get_memory_range(v2_hob).unwrap();
+fn check_v1_v2_consistency(physical_hob_list: *const c_void) -> Result<()> {
+    let mut hob_header1: *const header::Hob = physical_hob_list as *const header::Hob;
 
-                    // Check if the V1 and V2 HOBs overlap
-                    if v1_start < v2_end && v2_start < v1_end {
-                        // Ensure fields are consistent
-                        if !is_consistent(v1, &v2.v1) {
-                            return Err(PlatformError::InconsistentMemoryAttributes {
-                                start1: v1_start,
-                                end1: v1_end,
-                                start2: v2_start,
-                                end2: v2_end,
-                            });
+    loop {
+        let current_header1 = unsafe { hob_header1.cast::<header::Hob>().as_ref().expect(NOT_NULL) };
+        if current_header1.r#type == RESOURCE_DESCRIPTOR {
+            assert_hob_size::<ResourceDescriptor>(current_header1);
+            let resource_desc_hob1 = unsafe { hob_header1.cast::<ResourceDescriptor>().as_ref().expect(NOT_NULL) };
+            if resource_desc_hob1.resource_type != EFI_RESOURCE_IO {
+                let (start1, end1) = (
+                    resource_desc_hob1.physical_start,
+                    resource_desc_hob1.physical_start + resource_desc_hob1.resource_length,
+                );
+
+                // start at the beginning
+                // the reasoning for this is a bit complex but basically at this point we have established no overlap within V1 hobs or within V2 hobs
+                // so if there is overlap, it must be between V1/V2
+                // so we pair up each possible V1 with each possible V2 (both before and after it)
+                // so that we can check for consistency between (v1, v2) hobs if they overlap
+                // if we do something like
+                // for (i, hob) in hob_list {
+                //    for (j, hob2) in hob_list[i + 1..] { (basically starting after the first hob as we do in checking overlap)
+                // }
+                // we will miss cases where the v2 hob comes before the v1 hob in the list, since it won't hit the first if case
+                // even though we still want to check overlap in this case
+                let mut hob_header2 = physical_hob_list as *const header::Hob;
+                loop {
+                    let current_header2 = unsafe { hob_header2.cast::<header::Hob>().as_ref().expect(NOT_NULL) };
+                    if current_header2.r#type == RESOURCE_DESCRIPTOR2 {
+                        assert_hob_size::<ResourceDescriptor>(current_header2);
+                        let resource_desc_hob2 =
+                            unsafe { hob_header2.cast::<ResourceDescriptor>().as_ref().expect(NOT_NULL) };
+                        if resource_desc_hob2.resource_type != EFI_RESOURCE_IO {
+                            let (start2, end2) = (
+                                resource_desc_hob2.physical_start,
+                                resource_desc_hob2.physical_start + resource_desc_hob2.resource_length,
+                            );
+
+                            if start1 < end2 && start2 < end1 {
+                                if !is_consistent(resource_desc_hob1, resource_desc_hob2) {
+                                    return Err(PlatformError::InconsistentMemoryAttributes {
+                                        start1,
+                                        end1,
+                                        start2,
+                                        end2,
+                                    });
+                                }
+                            }
                         }
+                    } else if current_header2.r#type == END_OF_HOB_LIST {
+                        break;
                     }
+
+                    let next_hob2 = hob_header2 as usize + current_header2.length as usize;
+                    hob_header2 = next_hob2 as *const header::Hob;
                 }
             }
+        } else if current_header1.r#type == END_OF_HOB_LIST {
+            break;
         }
+
+        let next_hob = hob_header1 as usize + current_header1.length as usize;
+        hob_header1 = next_hob as *const header::Hob;
     }
+
     Ok(())
 }
 
@@ -142,14 +205,90 @@ fn is_consistent(v1: &ResourceDescriptor, v2: &ResourceDescriptor) -> bool {
     v1.resource_type == v2.resource_type && v1.resource_attribute == v2.resource_attribute && v1.owner == v2.owner
 }
 
-fn verify_memory_protection_hobs(hob_list: &HobList) -> Result<()> {
-    for hob in hob_list {
-        if let Hob::GuidHob(guid_hob, _) = hob {
+fn verify_memory_protection_hobs(physical_hob_list: *const c_void) -> Result<()> {
+    let mut hob_header1: *const header::Hob = physical_hob_list as *const header::Hob;
+
+    loop {
+        let current_header1 = unsafe { hob_header1.cast::<header::Hob>().as_ref().expect(NOT_NULL) };
+        if current_header1.r#type == GUID_EXTENSION {
+            let guid_hob = unsafe { hob_header1.cast::<GuidHob>().as_ref().expect(NOT_NULL) };
             if guid_hob.name == DXE_MEMORY_PROTECTION_SETTINGS_GUID {
-                return Ok(()); // Found the target GUID, verification passes
+                return Ok(());
             }
+        } else if current_header1.r#type == END_OF_HOB_LIST {
+            break;
         }
+
+        let next_hob = hob_header1 as usize + current_header1.length as usize;
+        hob_header1 = next_hob as *const header::Hob;
     }
 
     Err(PlatformError::MissingMemoryProtections)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mu_pi::hob::{self, header::Hob};
+    use r_efi::efi::Status;
+
+    const TEST_GUID: efi::Guid =
+        efi::Guid::from_fields(0x12345678, 0x9ABC, 0xDEF0, 0x12, 0x34, &[0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]);
+
+    #[test]
+    fn test_no_overlap() {
+        // Hobs that don't overlap
+        let hob1 = ResourceDescriptor {
+            header: header::Hob {
+                length: mem::size_of::<ResourceDescriptor>() as u16,
+                r#type: RESOURCE_DESCRIPTOR,
+                reserved: 0,
+            },
+            resource_type: 0,
+            resource_length: 0x1000,
+            physical_start: 0x1000,
+            resource_attribute: 0,
+            owner: TEST_GUID,
+        };
+
+        let hob2 = ResourceDescriptor {
+            header: header::Hob {
+                length: mem::size_of::<ResourceDescriptor>() as u16,
+                r#type: RESOURCE_DESCRIPTOR,
+                reserved: 0,
+            },
+            resource_type: 0,
+            resource_length: 0x1000,
+            physical_start: 0x2000,
+            resource_attribute: 0,
+            owner: TEST_GUID,
+        };
+
+        // this is a hack
+        let end = ResourceDescriptor {
+            header: header::Hob {
+                length: mem::size_of::<ResourceDescriptor>() as u16,
+                r#type: END_OF_HOB_LIST,
+                reserved: 0,
+            },
+            resource_type: 0,
+            resource_length: 0x1000,
+            physical_start: 0x2000,
+            resource_attribute: 0,
+            owner: TEST_GUID,
+        };
+
+        let hob_list = vec![hob1, hob2, end];
+
+        assert!(check_hob_overlap(hob_list.as_ptr() as *const c_void).is_ok());
+    }
+
+    // other tests:
+    // overlapping
+    // v2
+    // v1 and v2 overlapping should be ok
+    // should not check overlap with non resource descriptor types
+    // dxe memory hobs exists / doesn't exist
+    // v2 and v1 overlap and are consistent
+    // v1 and v2 overlap and are not consistent
 }
