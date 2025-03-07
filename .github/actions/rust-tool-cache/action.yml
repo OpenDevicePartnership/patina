@@ -23,6 +23,10 @@ runs:
           ~/.rustup/toolchains/
         key: ${{ runner.os }}-rust-tools-${{ hashFiles('**/rust-toolchain.toml' )}}
 
+    - name: Check rustup version
+      shell: bash
+      run: rustup --version
+
     # Installs toolchain specified in the rust-toolchain.toml file
     - name: Install toolchains
       shell: bash
