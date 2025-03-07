@@ -33,6 +33,7 @@ runs:
       shell: bash
       run: |
         rustup toolchain install
+      if: steps.tool-cache.outputs.cache-hit != 'true'
       continue-on-error: true
 
     - name: Install cargo-binstall
