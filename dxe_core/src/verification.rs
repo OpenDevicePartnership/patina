@@ -1,8 +1,8 @@
 use core::{ffi::c_void, fmt, mem};
 
 use mu_pi::hob::{
-    header, EfiPhysicalAddress, GuidHob, ResourceDescriptor, EFI_RESOURCE_IO, END_OF_HOB_LIST, GUID_EXTENSION,
-    RESOURCE_DESCRIPTOR, RESOURCE_DESCRIPTOR2,
+    header, EfiPhysicalAddress, GuidHob, ResourceDescriptor, ResourceDescriptorV2, EFI_RESOURCE_IO, END_OF_HOB_LIST,
+    GUID_EXTENSION, RESOURCE_DESCRIPTOR, RESOURCE_DESCRIPTOR2,
 };
 use r_efi::efi;
 
@@ -23,6 +23,7 @@ pub enum PlatformError {
         start2: EfiPhysicalAddress,
         end2: EfiPhysicalAddress,
     },
+    InconsistentRanges,
     MissingMemoryProtections,
     InternalError, // error from verification code, not the platform itself
 }
@@ -86,9 +87,12 @@ impl fmt::Display for PlatformError {
             PlatformError::InconsistentMemoryAttributes { start1, end1, start2, end2 } => {
                 write!(
                     f,
-                    "Memory range overlap detected: [{:#x}, {:#x}) overlaps with [{:#x}, {:#x})",
+                    "Memory ranges overlap but have different attributes: [{:#x}, {:#x}) overlaps with [{:#x}, {:#x})",
                     start1, end1, start2, end2
                 )
+            }
+            PlatformError::InconsistentRanges => {
+                write!(f, "V1 and V2 ranges do not match")
             }
             PlatformError::MissingMemoryProtections => {
                 write!(f, "Memory protection settings HOB is missing or invalid")
@@ -202,11 +206,102 @@ fn check_memory_overlap(physical_hob_list: *const c_void) -> Result<()> {
     Ok(())
 }
 
+const MAX_INTERVALS: usize = 20; // this is probably enough based on the hob dumps?
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Interval {
+    start: u64,
+    end: u64,
+}
+
+// A simple bubble sort to sort the intervals by start time
+fn bubble_sort(intervals: &mut [Option<Interval>; MAX_INTERVALS], count: usize) {
+    for i in 0..count {
+        for j in 0..(count - i - 1) {
+            if let (Some(a), Some(b)) = (intervals[j], intervals[j + 1]) {
+                if a.start > b.start {
+                    intervals.swap(j, j + 1); // Swap if intervals are out of order
+                }
+            }
+        }
+    }
+}
+
+fn merge_intervals(
+    intervals: &mut [Option<Interval>; MAX_INTERVALS],
+    count: usize,
+) -> [Option<Interval>; MAX_INTERVALS] {
+    let mut merged: [Option<Interval>; MAX_INTERVALS] = Default::default();
+    let mut merged_count = 0;
+
+    // Sort the intervals by start using bubble_sort (no std)
+    bubble_sort(intervals, count);
+
+    let mut prev_end = i32::MIN;
+    for i in 0..count {
+        if let Some(current) = intervals[i] {
+            if merged_count == 0 || merged[merged_count - 1].unwrap().end < current.start {
+                merged[merged_count] = Some(current); // No overlap, add as a new interval
+                merged_count += 1;
+            } else {
+                // Merge overlapping intervals
+                let last = merged[merged_count - 1].as_mut().unwrap();
+                last.end = last.end.max(current.end);
+            }
+        }
+    }
+
+    merged
+}
+
+fn check_v1_v2_ranges(physical_hob_list: *const c_void) -> Result<()> {
+    let mut v1_intervals: [Option<Interval>; MAX_INTERVALS] = Default::default();
+    let mut v2_intervals: [Option<Interval>; MAX_INTERVALS] = Default::default();
+    let mut v1_index = 0;
+    let mut v2_index = 0;
+
+    let mut hob_header: *const header::Hob = physical_hob_list as *const header::Hob;
+    loop {
+        let current_header = unsafe { hob_header.cast::<header::Hob>().as_ref().expect(NOT_NULL) };
+        if current_header.r#type == RESOURCE_DESCRIPTOR {
+            assert_hob_size::<ResourceDescriptor>(current_header);
+            let resource_desc_hob = unsafe { hob_header.cast::<ResourceDescriptor>().as_ref().expect(NOT_NULL) };
+            v1_intervals[v1_index] = Some(Interval {
+                start: resource_desc_hob.physical_start,
+                end: resource_desc_hob.physical_start + resource_desc_hob.resource_length,
+            });
+            v1_index += 1;
+        } else if current_header.r#type == RESOURCE_DESCRIPTOR2 {
+            assert_hob_size::<ResourceDescriptorV2>(current_header);
+            let resource_desc_hob = unsafe { hob_header.cast::<ResourceDescriptorV2>().as_ref().expect(NOT_NULL) };
+            v2_intervals[v2_index] = Some(Interval {
+                start: resource_desc_hob.v1.physical_start,
+                end: resource_desc_hob.v1.physical_start + resource_desc_hob.v1.resource_length,
+            });
+            v2_index += 1;
+        } else if current_header.r#type == END_OF_HOB_LIST {
+            break;
+        }
+
+        let next_hob = hob_header as usize + current_header.length as usize;
+        hob_header = next_hob as *const header::Hob;
+    }
+
+    let v1_merged = merge_intervals(&mut v1_intervals, v1_index);
+    let v2_merged = merge_intervals(&mut v2_intervals, v2_index);
+    if v1_merged == v2_merged {
+        Ok(())
+    } else {
+        Err(PlatformError::InconsistentRanges)
+    }
+}
+
 fn check_v1_v2_consistency(physical_hob_list: *const c_void) -> Result<()> {
     let mut hob_header1: *const header::Hob = physical_hob_list as *const header::Hob;
 
     loop {
         let current_header1 = unsafe { hob_header1.cast::<header::Hob>().as_ref().expect(NOT_NULL) };
+        // this part checks that overlapping regions don't have any conflicting info
         if current_header1.r#type == RESOURCE_DESCRIPTOR {
             assert_hob_size::<ResourceDescriptor>(current_header1);
             let resource_desc_hob1 = unsafe { hob_header1.cast::<ResourceDescriptor>().as_ref().expect(NOT_NULL) };
@@ -266,6 +361,13 @@ fn check_v1_v2_consistency(physical_hob_list: *const c_void) -> Result<()> {
         let next_hob = hob_header1 as usize + current_header1.length as usize;
         hob_header1 = next_hob as *const header::Hob;
     }
+
+    // we also need to check that the ranges covered by each are the same
+    // the basic steps for this:
+    // 1. get all V1 intervals and V2 intervals into a list
+    // 2. sort intervals
+    // 3. merge intervals
+    // 4. make sure the final merged ranges are the same
 
     Ok(())
 }
