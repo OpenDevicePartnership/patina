@@ -322,6 +322,8 @@ where
             panic!("Platform requirements verification failed: {}", e);
         }
 
+        // LOGGING WORKS HERE
+
         gcd::init_gcd(physical_hob_list);
 
         log::trace!("Initial GCD:\n{}", GCD);
