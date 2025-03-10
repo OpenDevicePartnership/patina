@@ -187,7 +187,7 @@ extern "efiapi" fn get_memory_space_map(
     //caller is supposed to free the handle buffer using free pool, so we need to allocate it using allocate pool.
     let buffer_size = descriptors.len() * mem::size_of::<dxe_services::MemorySpaceDescriptor>();
     match core_allocate_pool(efi::BOOT_SERVICES_DATA, buffer_size) {
-        Err(err) => err,
+        Err(err) => err.into(),
         Ok(allocation) => unsafe {
             memory_space_map.write(allocation as *mut dxe_services::MemorySpaceDescriptor);
             number_of_descriptors.write(descriptors.len());
@@ -322,7 +322,7 @@ extern "efiapi" fn get_io_space_map(
     let buffer_size = descriptors.len() * mem::size_of::<dxe_services::IoSpaceDescriptor>();
 
     match core_allocate_pool(efi::BOOT_SERVICES_DATA, buffer_size) {
-        Err(err) => err,
+        Err(err) => err.into(),
         Ok(allocation) => unsafe {
             io_space_map.write(allocation as *mut dxe_services::IoSpaceDescriptor);
             number_of_descriptors.write(descriptors.len());

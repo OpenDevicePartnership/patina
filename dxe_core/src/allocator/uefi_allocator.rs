@@ -10,6 +10,7 @@
 //!
 use crate::gcd::SpinLockedGcd;
 use r_efi::efi;
+use uefi_sdk::error::EfiError;
 
 use super::{
     fixed_size_block_allocator::{AllocationStatistics, PageChangeCallback, SpinLockedFixedSizeBlockAllocator},
@@ -89,7 +90,7 @@ impl UefiAllocator {
     ///
     /// This routine will return Err(efi::Status::ALREADY_STARTED) if it is called more than once.
     ///
-    pub fn reserve_memory_pages(&self, pages: usize) -> Result<(), efi::Status> {
+    pub fn reserve_memory_pages(&self, pages: usize) -> Result<(), EfiError> {
         self.allocator.reserve_memory_pages(pages)
     }
 
@@ -101,7 +102,7 @@ impl UefiAllocator {
     /// ## Errors
     ///
     /// Returns an error if the allocator cannot expand.
-    pub fn ensure_capacity(&self, size: usize, align: usize) -> Result<(), efi::Status> {
+    pub fn ensure_capacity(&self, size: usize, align: usize) -> Result<(), EfiError> {
         self.allocator.ensure_capacity(size, align)
     }
 
@@ -111,7 +112,7 @@ impl UefiAllocator {
     /// Buffer input must be a valid memory location to write the allocation to.
     ///
     /// Memory allocated by this routine should be freed by [`Self::free_pool`]
-    pub unsafe fn allocate_pool(&self, size: usize, buffer: *mut *mut c_void) -> efi::Status {
+    pub unsafe fn allocate_pool(&self, size: usize, buffer: *mut *mut c_void) -> Result<(), EfiError> {
         let mut allocation_info = AllocationInfo {
             signature: POOL_SIG,
             memory_type: self.memory_type,
@@ -133,9 +134,9 @@ impl UefiAllocator {
                     alloc_info_ptr.write(allocation_info);
                     buffer.write((ptr.as_ptr() as *mut u8 as usize + offset) as *mut c_void);
                 }
-                efi::Status::SUCCESS
+                Ok(())
             }
-            Err(_) => efi::Status::OUT_OF_RESOURCES,
+            Err(_) => Err(EfiError::OutOfResources),
         }
     }
 
@@ -144,7 +145,7 @@ impl UefiAllocator {
     /// ## Safety
     ///
     /// Caller must guarantee that `buffer` was originally allocated by [`Self::allocate_pool`]
-    pub unsafe fn free_pool(&self, buffer: *mut c_void) -> efi::Status {
+    pub unsafe fn free_pool(&self, buffer: *mut c_void) -> Result<(), EfiError> {
         let (_, offset) = Layout::new::<AllocationInfo>()
             .extend(
                 Layout::from_size_align(0, UEFI_POOL_ALIGN)
@@ -159,20 +160,20 @@ impl UefiAllocator {
         //must be true for any pool allocation
         if (*allocation_info).signature != POOL_SIG {
             debug_assert!(false, "Pool signature is incorrect.");
-            return efi::Status::INVALID_PARAMETER;
+            return Err(EfiError::InvalidParameter);
         }
         // check if allocation is from this pool.
         if (*allocation_info).memory_type != self.memory_type {
-            return efi::Status::NOT_FOUND;
+            return Err(EfiError::NotFound);
         }
         //zero after check so it doesn't get reused.
         (*allocation_info).signature = 0;
         if let Some(non_null_ptr) = NonNull::new(allocation_info as *mut u8) {
             self.allocator.deallocate(non_null_ptr, (*allocation_info).layout);
         } else {
-            return efi::Status::INVALID_PARAMETER;
+            return Err(EfiError::InvalidParameter);
         }
-        efi::Status::SUCCESS
+        Ok(())
     }
 
     /// Attempts to allocate the given number of pages according to the given allocation strategy.
@@ -190,7 +191,7 @@ impl UefiAllocator {
         &self,
         allocation_strategy: AllocationStrategy,
         pages: usize,
-    ) -> Result<core::ptr::NonNull<[u8]>, efi::Status> {
+    ) -> Result<core::ptr::NonNull<[u8]>, EfiError> {
         self.allocator.allocate_pages(allocation_strategy, pages)
     }
 
@@ -198,7 +199,7 @@ impl UefiAllocator {
     /// ## Safety
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
     /// [Self::allocate_pages]
-    pub unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), efi::Status> {
+    pub unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), EfiError> {
         self.allocator.free_pages(address, pages)
     }
 
@@ -317,7 +318,7 @@ mod tests {
             let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
 
             let mut buffer: *mut c_void = core::ptr::null_mut();
-            assert_eq!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }, efi::Status::SUCCESS);
+            assert!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }.is_ok());
             assert!(buffer as u64 > base);
             assert!((buffer as u64) < base + 0x400000);
 
@@ -349,9 +350,9 @@ mod tests {
             let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
 
             let mut buffer: *mut c_void = core::ptr::null_mut();
-            assert_eq!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }, efi::Status::SUCCESS);
+            assert!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }.is_ok());
 
-            assert!(unsafe { ua.free_pool(buffer) } == efi::Status::SUCCESS);
+            assert!(unsafe { ua.free_pool(buffer) }.is_ok());
 
             let (_, offset) = Layout::new::<AllocationInfo>()
                 .extend(
@@ -367,7 +368,7 @@ mod tests {
             }
 
             let prev_buffer = buffer;
-            assert_eq!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }, efi::Status::SUCCESS);
+            assert!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }.is_ok());
             assert!(buffer as u64 > base);
             assert!((buffer as u64) < base + 0x400000);
             assert_eq!(buffer, prev_buffer);
@@ -424,8 +425,8 @@ mod tests {
             let bc_buffer_address = bc_buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
 
             unsafe {
-                assert_eq!(bs_allocator.free_pages(bc_buffer_address as usize, 4), Err(efi::Status::NOT_FOUND));
-                assert_eq!(bc_allocator.free_pages(bs_buffer_address as usize, 4), Err(efi::Status::NOT_FOUND));
+                assert_eq!(bs_allocator.free_pages(bc_buffer_address as usize, 4), Err(EfiError::NotFound));
+                assert_eq!(bc_allocator.free_pages(bs_buffer_address as usize, 4), Err(EfiError::NotFound));
 
                 bs_allocator.free_pages(bs_buffer_address as usize, 4).unwrap();
                 bc_allocator.free_pages(bc_buffer_address as usize, 4).unwrap();
@@ -659,7 +660,7 @@ mod tests {
             assert_eq!(ua.ensure_capacity(0x1000, 0x8), Ok(()));
 
             let mut buffer: *mut c_void = core::ptr::null_mut();
-            assert_eq!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }, efi::Status::SUCCESS);
+            assert!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }.is_ok());
             assert!(buffer as u64 > base);
             assert!((buffer as u64) < base + 0x400000);
 

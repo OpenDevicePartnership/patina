@@ -15,7 +15,7 @@ use core::{
 use mu_pi::{protocols, status_code};
 use r_efi::efi;
 use uefi_cpu::interrupts;
-use uefi_sdk::guid;
+use uefi_sdk::{error::EfiError, guid};
 
 use crate::{
     allocator::{terminate_memory_map, EFI_RUNTIME_SERVICES_DATA_ALLOCATOR},
@@ -58,7 +58,7 @@ pub fn core_install_configuration_table(
     vendor_guid: efi::Guid,
     vendor_table: Option<&mut c_void>,
     efi_system_table: &mut EfiSystemTable,
-) -> Result<(), efi::Status> {
+) -> Result<(), EfiError> {
     let system_table = efi_system_table.as_mut();
     //if a table is already present, reconstruct it from the pointer and length in the st.
     let old_cfg_table = if system_table.configuration_table.is_null() {
@@ -99,7 +99,7 @@ pub fn core_install_configuration_table(
                     //in the config table so it doesn't get dropped though. Pointer should be the same
                     //so we should not need to recompute CRC.
                     system_table.configuration_table = Box::into_raw(cfg_table) as *mut efi::ConfigurationTable;
-                    return Err(efi::Status::NOT_FOUND);
+                    return Err(EfiError::NotFound);
                 }
             }
             current_table
@@ -112,7 +112,7 @@ pub fn core_install_configuration_table(
             } else {
                 //table is none, but can't delete a table entry in a list that doesn't exist.
                 //since the list doesn't exist, we can leave the (null) pointer in the st alone.
-                return Err(efi::Status::NOT_FOUND);
+                return Err(EfiError::NotFound);
             }
         }
     };
@@ -149,7 +149,7 @@ extern "efiapi" fn install_configuration_table(table_guid: *mut efi::Guid, table
     let st = st_guard.as_mut().expect("System table support not initialized");
 
     match core_install_configuration_table(table_guid, table, st) {
-        Err(err) => err,
+        Err(err) => err.into(),
         Ok(()) => efi::Status::SUCCESS,
     }
 }
@@ -266,11 +266,14 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
 
     // Terminate the memory map
     // According to UEFI spec, in case of an incomplete or failed EBS call we must restore boot services memory allocation functionality
-    let status = terminate_memory_map(map_key);
-    if status.is_error() {
-        GCD.unlock_memory_space();
-        EVENT_DB.signal_group(guid::EBS_FAILED);
-        return status;
+    match terminate_memory_map(map_key) {
+        Ok(_) => (),
+        Err(err) => {
+            log::error!("Failed to terminate memory map: {:?}", err);
+            GCD.unlock_memory_space();
+            EVENT_DB.signal_group(guid::EBS_FAILED);
+            return err.into();
+        }
     }
 
     // Signal Exit Boot Services

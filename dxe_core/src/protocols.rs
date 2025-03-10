@@ -13,6 +13,7 @@ use mu_rust_helpers::guid::guid_fmt;
 use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_device_path::{is_device_path_end, remaining_device_path};
+use uefi_sdk::error::EfiError;
 
 use crate::{
     allocator::core_allocate_pool,
@@ -84,7 +85,7 @@ extern "efiapi" fn uninstall_protocol_interface(
 
     // Check if the handle/protocol/interface triple is legitimate
     match PROTOCOL_DB.get_interface_for_handle(handle, caller_protocol) {
-        Err(err) => return err,
+        Err(err) => return err.into(),
         Ok(found_interface) => {
             if found_interface != interface {
                 return efi::Status::NOT_FOUND;
@@ -98,8 +99,8 @@ extern "efiapi" fn uninstall_protocol_interface(
         let mut item_found = false;
         let usages = match PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, caller_protocol) {
             Ok(usages) => usages,
-            Err(efi::Status::NOT_FOUND) => Vec::new(),
-            Err(err) => return err,
+            Err(EfiError::NotFound) => Vec::new(),
+            Err(err) => return err.into(),
         };
 
         for usage in usages {
@@ -125,8 +126,8 @@ extern "efiapi" fn uninstall_protocol_interface(
     if usage_close_status.is_ok() {
         let usages = match PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, caller_protocol) {
             Ok(usages) => usages,
-            Err(efi::Status::NOT_FOUND) => Vec::new(),
-            Err(err) => return err,
+            Err(EfiError::NotFound) => Vec::new(),
+            Err(err) => return err.into(),
         };
 
         for usage in usages {
@@ -159,7 +160,7 @@ extern "efiapi" fn uninstall_protocol_interface(
     }
 
     match PROTOCOL_DB.uninstall_protocol_interface(handle, caller_protocol, interface) {
-        Err(err) => err,
+        Err(err) => err.into(),
         Ok(()) => efi::Status::SUCCESS,
     }
 }
@@ -168,13 +169,13 @@ extern "efiapi" fn uninstall_protocol_interface(
 const PRIVATE_DUMMY_INTERFACE_GUID: efi::Guid =
     efi::Guid::from_fields(0x2ed6cb57, 0x3a78, 0x4c39, 0x9a, 0x2a, &[0xca, 0x03, 0x78, 0x41, 0xd2, 0x86]);
 
-fn install_dummy_interface(handle: efi::Handle) -> Result<(), efi::Status> {
+fn install_dummy_interface(handle: efi::Handle) -> Result<(), EfiError> {
     PROTOCOL_DB
         .install_protocol_interface(Some(handle), PRIVATE_DUMMY_INTERFACE_GUID, core::ptr::null_mut())
         .map(|_| ())
 }
 
-fn uninstall_dummy_interface(handle: efi::Handle) -> Result<(), efi::Status> {
+fn uninstall_dummy_interface(handle: efi::Handle) -> Result<(), EfiError> {
     PROTOCOL_DB.uninstall_protocol_interface(handle, PRIVATE_DUMMY_INTERFACE_GUID, core::ptr::null_mut())
 }
 
@@ -194,7 +195,7 @@ extern "efiapi" fn reinstall_protocol_interface(
     // the handle from becoming empty and invalidated. Failure here means that the reinstall has failed (e.g. due to
     // invalid handle).
     if let Err(err) = install_dummy_interface(handle) {
-        return err;
+        return err.into();
     }
 
     // Call uninstall to close all agents that are currently consuming old_interface.
@@ -239,7 +240,7 @@ extern "efiapi" fn register_protocol_notify(
     }
 
     match PROTOCOL_DB.register_protocol_notify(unsafe { *protocol }, event) {
-        Err(err) => err,
+        Err(err) => err.into(),
         Ok(new_registration) => {
             unsafe { *registration = new_registration };
             efi::Status::SUCCESS
@@ -263,7 +264,7 @@ extern "efiapi" fn locate_handle(
             if let Some(handle) = PROTOCOL_DB.next_handle_for_registration(search_key) {
                 Ok(vec![handle])
             } else {
-                Err(efi::Status::NOT_FOUND)
+                Err(EfiError::NotFound)
             }
         }
         efi::BY_PROTOCOL => {
@@ -276,7 +277,7 @@ extern "efiapi" fn locate_handle(
     };
 
     match search_result {
-        Err(err) => err,
+        Err(err) => err.into(),
         Ok(mut list) => {
             if list.is_empty() {
                 return efi::Status::NOT_FOUND;
@@ -350,8 +351,8 @@ extern "efiapi" fn open_protocol(
     // open on this handle BY_DRIVER.
     if (attributes & efi::OPEN_PROTOCOL_EXCLUSIVE) != 0 {
         let usages = match PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, protocol) {
-            Err(efi::Status::NOT_FOUND) => Vec::new(),
-            Err(err) => return err,
+            Err(EfiError::NotFound) => Vec::new(),
+            Err(err) => return err.into(),
             Ok(usages) => usages,
         };
         if let Some(usage) = usages.iter().find(|x| {
@@ -368,16 +369,13 @@ extern "efiapi" fn open_protocol(
     }
 
     match PROTOCOL_DB.add_protocol_usage(handle, protocol, agent_handle, controller_handle, attributes) {
-        Err(efi::Status::UNSUPPORTED) => {
+        Err(EfiError::Unsupported) => {
             if !interface.is_null() {
                 unsafe { interface.write(core::ptr::null_mut()) };
             }
             return efi::Status::UNSUPPORTED;
         }
-        Err(efi::Status::ACCESS_DENIED) => {
-            return efi::Status::ACCESS_DENIED;
-        }
-        Err(efi::Status::ALREADY_STARTED) if (attributes & efi::OPEN_PROTOCOL_BY_DRIVER) != 0 => {
+        Err(EfiError::AlreadyStarted) if (attributes & efi::OPEN_PROTOCOL_BY_DRIVER) != 0 => {
             //For already started interface is still returned.
             let desired_interface = PROTOCOL_DB
                 .get_interface_for_handle(handle, protocol)
@@ -387,13 +385,13 @@ extern "efiapi" fn open_protocol(
             }
             return efi::Status::ALREADY_STARTED;
         }
-        Err(efi::Status::ALREADY_STARTED) => (),
-        Err(err) => return err,
+        Err(EfiError::AlreadyStarted) => (),
+        Err(err) => return err.into(),
         Ok(_) => (),
     };
 
     let desired_interface = match PROTOCOL_DB.get_interface_for_handle(handle, protocol) {
-        Err(err) => return err,
+        Err(err) => return err.into(),
         Ok(found) => found,
     };
 
@@ -428,7 +426,7 @@ extern "efiapi" fn close_protocol(
     };
 
     match PROTOCOL_DB.remove_protocol_usage(handle, unsafe { *protocol }, Some(agent_handle), controller_handle) {
-        Err(err) => err,
+        Err(err) => err.into(),
         Ok(_) => efi::Status::SUCCESS,
     }
 }
@@ -445,7 +443,7 @@ extern "efiapi" fn open_protocol_information(
 
     let mut open_info: Vec<efi::OpenProtocolInformationEntry> =
         match PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, unsafe { *protocol }) {
-            Err(err) => return err,
+            Err(err) => return err.into(),
             Ok(info) => info.into_iter().map(efi::OpenProtocolInformationEntry::from).collect(),
         };
 
@@ -454,7 +452,7 @@ extern "efiapi" fn open_protocol_information(
     let buffer_size = open_info.len() * size_of::<efi::OpenProtocolInformationEntry>();
     //caller is supposed to free the entry buffer using FreePool, so we need to allocate it using allocate pool.
     match core_allocate_pool(efi::BOOT_SERVICES_DATA, buffer_size) {
-        Err(err) => err,
+        Err(err) => err.into(),
         Ok(allocation) => unsafe {
             entry_buffer.write(allocation as *mut efi::OpenProtocolInformationEntry);
             *entry_count = open_info.len();
@@ -568,7 +566,7 @@ extern "efiapi" fn protocols_per_handle(
 
     let mut protocol_list = match PROTOCOL_DB.get_protocols_on_handle(handle) {
         Ok(list) => list,
-        Err(err) => return err,
+        Err(err) => return err.into(),
     };
     protocol_list.shrink_to_fit();
 
@@ -582,7 +580,7 @@ extern "efiapi" fn protocols_per_handle(
     let guid_buffer_size = protocol_list.len() * size_of::<efi::Guid>();
     //caller is supposed to free the entry buffer using free pool, so we need to allocate it using allocate pool.
     match core_allocate_pool(efi::BOOT_SERVICES_DATA, ptr_buffer_size + guid_buffer_size) {
-        Err(err) => err,
+        Err(err) => err.into(),
         Ok(allocation) => unsafe {
             protocol_buffer.write(allocation as *mut *mut efi::Guid);
             protocol_buffer_count.write(protocol_list.len());
@@ -625,7 +623,7 @@ extern "efiapi" fn locate_handle_buffer(
             if let Some(handle) = PROTOCOL_DB.next_handle_for_registration(search_key) {
                 Ok(vec![handle])
             } else {
-                Err(efi::Status::NOT_FOUND)
+                Err(EfiError::NotFound)
             }
         }
         efi::BY_PROTOCOL => {
@@ -637,7 +635,7 @@ extern "efiapi" fn locate_handle_buffer(
         _ => return efi::Status::INVALID_PARAMETER,
     };
     let handles = match handles {
-        Err(err) => return err,
+        Err(err) => return err.into(),
         Ok(handles) => handles,
     };
 
@@ -647,7 +645,7 @@ extern "efiapi" fn locate_handle_buffer(
         //caller is supposed to free the handle buffer using free pool, so we need to allocate it using allocate pool.
         let buffer_size = handles.len() * size_of::<efi::Handle>();
         match core_allocate_pool(efi::BOOT_SERVICES_DATA, buffer_size) {
-            Err(err) => err,
+            Err(err) => err.into(),
             Ok(allocation) => unsafe {
                 buffer.write(allocation as *mut efi::Handle);
                 no_handles.write(handles.len());
@@ -680,7 +678,7 @@ extern "efiapi" fn locate_protocol(
         match PROTOCOL_DB.locate_protocol(unsafe { *protocol }) {
             Err(err) => {
                 unsafe { interface.write(core::ptr::null_mut()) };
-                return err;
+                return err.into();
             }
             Ok(i_face) => unsafe { interface.write(i_face) },
         }
@@ -691,7 +689,7 @@ extern "efiapi" fn locate_protocol(
 pub fn core_locate_device_path(
     protocol: efi::Guid,
     device_path: *const r_efi::protocols::device_path::Protocol,
-) -> Result<(*mut r_efi::protocols::device_path::Protocol, efi::Handle), efi::Status> {
+) -> Result<(*mut r_efi::protocols::device_path::Protocol, efi::Handle), EfiError> {
     let device_path_protocol_guid = &r_efi::protocols::device_path::PROTOCOL_GUID as *const _ as *mut efi::Guid;
 
     let mut best_device: efi::Handle = core::ptr::null_mut();
@@ -721,7 +719,7 @@ pub fn core_locate_device_path(
     }
 
     if best_match == -1 {
-        return Err(efi::Status::NOT_FOUND);
+        return Err(EfiError::NotFound);
     }
 
     Ok((best_remaining_path as *mut r_efi::protocols::device_path::Protocol, best_device))
@@ -738,7 +736,7 @@ extern "efiapi" fn locate_device_path(
 
     let (best_remaining_path, best_device) =
         match core_locate_device_path(unsafe { *protocol }, unsafe { *device_path }) {
-            Err(err) => return err,
+            Err(err) => return err.into(),
             Ok((path, device)) => (path, device),
         };
     if device.is_null() {

@@ -41,6 +41,7 @@ pub use fixed_size_block_allocator::FixedSizeBlockAllocator;
 
 use uefi_sdk::{
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
+    error::EfiError,
     guid, uefi_size_to_pages,
 };
 
@@ -255,7 +256,7 @@ impl AllocatorMap {
         &mut self,
         memory_type: efi::MemoryType,
         handle: efi::Handle,
-    ) -> Result<&UefiAllocator, efi::Status> {
+    ) -> Result<&'a UefiAllocator, EfiError> {
         if let Some(allocator) = STATIC_ALLOCATORS.iter().find(|x| x.memory_type() == memory_type) {
             return Ok(allocator);
         }
@@ -288,7 +289,7 @@ impl AllocatorMap {
     // Note: this routine is used to generate new handles for the creation of allocators as needed; this means that an
     // Ok() result from this routine doesn't necessarily guarantee that an allocator associated with this handle exists or
     // memory type exists.
-    fn handle_for_memory_type(memory_type: efi::MemoryType) -> Result<efi::Handle, efi::Status> {
+    fn handle_for_memory_type(memory_type: efi::MemoryType) -> Result<efi::Handle, EfiError> {
         match memory_type {
             efi::RESERVED_MEMORY_TYPE => Ok(protocol_db::RESERVED_MEMORY_ALLOCATOR_HANDLE),
             efi::LOADER_CODE => Ok(protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE),
@@ -298,7 +299,7 @@ impl AllocatorMap {
             efi::ACPI_RECLAIM_MEMORY => Ok(protocol_db::EFI_ACPI_RECLAIM_MEMORY_ALLOCATOR_HANDLE),
             efi::ACPI_MEMORY_NVS => Ok(protocol_db::EFI_ACPI_MEMORY_NVS_ALLOCATOR_HANDLE),
             // Check to see if it is an invalid type. Memory types efi::PERSISTENT_MEMORY and above to 0x6FFFFFFF are illegal.
-            efi::PERSISTENT_MEMORY..=0x6FFFFFFF => Err(efi::Status::INVALID_PARAMETER)?,
+            efi::PERSISTENT_MEMORY..=0x6FFFFFFF => Err(EfiError::InvalidParameter)?,
             // not a well known handle or illegal memory type - check the active allocators and create a handle if it doesn't
             // already exist.
             _ => {
@@ -347,7 +348,7 @@ extern "efiapi" fn allocate_pool(pool_type: efi::MemoryType, size: usize, buffer
     }
 
     match core_allocate_pool(pool_type, size) {
-        Err(err) => err,
+        Err(err) => err.into(),
         Ok(allocation) => unsafe {
             buffer.write(allocation);
             efi::Status::SUCCESS
@@ -355,25 +356,21 @@ extern "efiapi" fn allocate_pool(pool_type: efi::MemoryType, size: usize, buffer
     }
 }
 
-pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mut c_void, efi::Status> {
+pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mut c_void, EfiError> {
     // It is not valid to attempt to allocate these memory types
     if matches!(
         pool_type,
         efi::CONVENTIONAL_MEMORY | efi::PERSISTENT_MEMORY | efi::UNUSABLE_MEMORY | efi::UNACCEPTED_MEMORY_TYPE
     ) {
-        return Err(efi::Status::INVALID_PARAMETER);
+        return Err(EfiError::InvalidParameter);
     }
 
     let handle = AllocatorMap::handle_for_memory_type(pool_type)?;
     match ALLOCATORS.lock().get_or_create_allocator(pool_type, handle) {
         Ok(allocator) => {
             let mut buffer: *mut c_void = core::ptr::null_mut();
-            let status = unsafe { allocator.allocate_pool(size, core::ptr::addr_of_mut!(buffer)) };
-            if status == efi::Status::SUCCESS {
-                Ok(buffer)
-            } else {
-                Err(status)
-            }
+
+            unsafe { allocator.allocate_pool(size, core::ptr::addr_of_mut!(buffer)).map(|_| buffer) }
         }
         Err(err) => Err(err),
     }
@@ -382,20 +379,20 @@ pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mu
 extern "efiapi" fn free_pool(buffer: *mut c_void) -> efi::Status {
     match core_free_pool(buffer) {
         Ok(_) => efi::Status::SUCCESS,
-        Err(status) => status,
+        Err(status) => status.into(),
     }
 }
 
-pub fn core_free_pool(buffer: *mut c_void) -> Result<(), efi::Status> {
+pub fn core_free_pool(buffer: *mut c_void) -> Result<(), EfiError> {
     if buffer.is_null() {
-        return Err(efi::Status::INVALID_PARAMETER);
+        return Err(EfiError::InvalidParameter);
     }
     let allocators = ALLOCATORS.lock();
     unsafe {
-        if allocators.iter().any(|allocator| allocator.free_pool(buffer) == efi::Status::SUCCESS) {
+        if allocators.iter().any(|allocator| allocator.free_pool(buffer).is_ok()) {
             Ok(())
         } else {
-            Err(efi::Status::INVALID_PARAMETER)
+            Err(EfiError::InvalidParameter)
         }
     }
 }
@@ -408,7 +405,7 @@ extern "efiapi" fn allocate_pages(
 ) -> efi::Status {
     match core_allocate_pages(allocation_type, memory_type, pages, memory) {
         Ok(_) => efi::Status::SUCCESS,
-        Err(status) => status,
+        Err(status) => status.into(),
     }
 }
 
@@ -417,9 +414,9 @@ pub fn core_allocate_pages(
     memory_type: efi::MemoryType,
     pages: usize,
     memory: *mut efi::PhysicalAddress,
-) -> Result<(), efi::Status> {
+) -> Result<(), EfiError> {
     if memory.is_null() {
-        return Err(efi::Status::INVALID_PARAMETER);
+        return Err(EfiError::InvalidParameter);
     }
 
     // It is not valid to attempt to allocate these memory types
@@ -427,7 +424,7 @@ pub fn core_allocate_pages(
         memory_type,
         efi::CONVENTIONAL_MEMORY | efi::PERSISTENT_MEMORY | efi::UNUSABLE_MEMORY | efi::UNACCEPTED_MEMORY_TYPE
     ) {
-        return Err(efi::Status::INVALID_PARAMETER);
+        return Err(EfiError::InvalidParameter);
     }
 
     let handle = AllocatorMap::handle_for_memory_type(memory_type)?;
@@ -444,7 +441,7 @@ pub fn core_allocate_pages(
                     let address = unsafe { memory.as_ref().expect("checked non-null is null") };
                     allocator.allocate_pages(AllocationStrategy::Address(*address as usize), pages)
                 }
-                _ => Err(efi::Status::INVALID_PARAMETER),
+                _ => Err(EfiError::InvalidParameter),
             };
 
             if let Ok(ptr) = result {
@@ -461,22 +458,22 @@ pub fn core_allocate_pages(
 extern "efiapi" fn free_pages(memory: efi::PhysicalAddress, pages: usize) -> efi::Status {
     match core_free_pages(memory, pages) {
         Ok(_) => efi::Status::SUCCESS,
-        Err(status) => status,
+        Err(status) => status.into(),
     }
 }
 
-pub fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(), efi::Status> {
+pub fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(), EfiError> {
     let size = match pages.checked_mul(UEFI_PAGE_SIZE) {
         Some(size) => size,
-        None => return Err(efi::Status::INVALID_PARAMETER),
+        None => return Err(EfiError::InvalidParameter),
     };
 
     if memory.checked_add(size as u64).is_none() {
-        return Err(efi::Status::INVALID_PARAMETER);
+        return Err(EfiError::InvalidParameter);
     }
 
     if memory.checked_rem(UEFI_PAGE_SIZE as efi::PhysicalAddress) != Some(0) {
-        return Err(efi::Status::INVALID_PARAMETER);
+        return Err(EfiError::InvalidParameter);
     }
 
     let allocators = ALLOCATORS.lock();
@@ -485,7 +482,7 @@ pub fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(),
         if allocators.iter().any(|allocator| allocator.free_pages(memory as usize, pages).is_ok()) {
             Ok(())
         } else {
-            Err(efi::Status::NOT_FOUND)
+            Err(EfiError::NotFound)
         }
     }
 }
@@ -522,7 +519,7 @@ fn merge_blocks(
     previous_blocks
 }
 
-pub(crate) fn get_memory_map_descriptors() -> Result<Vec<efi::MemoryDescriptor>, efi::Status> {
+pub(crate) fn get_memory_map_descriptors() -> Result<Vec<efi::MemoryDescriptor>, EfiError> {
     let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
 
     // the fold operation would allocate boot services data, which we cannot do because we cannot change the memory map
@@ -618,7 +615,7 @@ extern "efiapi" fn get_memory_map(
 
     let mut efi_descriptors = match get_memory_map_descriptors() {
         Ok(descriptors) => descriptors,
-        Err(status) => return status,
+        Err(status) => return status.into(),
     };
 
     assert_ne!(efi_descriptors.len(), 0);
@@ -662,11 +659,8 @@ extern "efiapi" fn get_memory_map(
     efi::Status::SUCCESS
 }
 
-pub fn terminate_memory_map(map_key: usize) -> efi::Status {
-    let mut mm_desc = match get_memory_map_descriptors() {
-        Ok(descriptors) => descriptors,
-        Err(status) => return status,
-    };
+pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
+    let mut mm_desc = get_memory_map_descriptors()?;
 
     for descriptor in mm_desc.iter_mut() {
         descriptor.attribute &= !efi::MEMORY_ACCESS_MASK;
@@ -676,16 +670,16 @@ pub fn terminate_memory_map(map_key: usize) -> efi::Status {
 
     let current_map_key = crc32fast::hash(mm_desc_bytes) as usize;
     if map_key == current_map_key {
-        efi::Status::SUCCESS
+        Ok(())
     } else {
-        efi::Status::INVALID_PARAMETER
+        Err(EfiError::InvalidParameter)
     }
 }
 
 // This is temporarily dead code, but will be used by mu-paging. This API just needs to be in place before we
 // can move in the mu-paging crate.
 #[allow(dead_code)]
-pub(crate) fn ensure_capacity(memory_type: efi::MemoryType, size: usize, align: usize) -> Result<(), efi::Status> {
+pub(crate) fn ensure_capacity(memory_type: efi::MemoryType, size: usize, align: usize) -> Result<(), EfiError> {
     // get a handle, in case we have to create a new allocator
     let handle = match AllocatorMap::handle_for_memory_type(memory_type) {
         Ok(handle) => handle,
@@ -778,7 +772,7 @@ fn page_change_callback(allocator: &mut FixedSizeBlockAllocator) {
     }
 }
 
-pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), efi::Status> {
+pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), EfiError> {
     //MEMORY_TYPE_INFO_TABLE is static mut, so we know the pointer is good.
     #[allow(static_mut_refs)]
     let memory_table_mut = unsafe { (MEMORY_TYPE_INFO_TABLE.as_mut_ptr() as *mut c_void).as_mut().unwrap() };
@@ -832,7 +826,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                     uefi_size_to_pages!(desc.memory_length as usize),
                     &mut address as *mut efi::PhysicalAddress)
                     .inspect_err(|err|{
-                        if *err == efi::Status::NOT_FOUND && desc.name != guid::ZERO {
+                        if *err == EfiError::NotFound && desc.name != guid::ZERO {
                             //Guided Memory Allocation Hobs are typically MemoryAllocationModule or MemoryAllocationStack HOBs
                             //which have corresponding non-guided allocation HOBs associated with them; they are rejected as
                             //duplicates if we attempt to log them. Only log trace messages for these.
@@ -1177,11 +1171,8 @@ mod tests {
             }
 
             // make sure invalid mem types throw an error.
-            assert_eq!(core_allocate_pool(efi::PERSISTENT_MEMORY, 0x1000), Err(efi::Status::INVALID_PARAMETER));
-            assert_eq!(
-                core_allocate_pool(efi::PERSISTENT_MEMORY + 0x1000, 0x1000),
-                Err(efi::Status::INVALID_PARAMETER)
-            );
+            assert_eq!(core_allocate_pool(efi::PERSISTENT_MEMORY, 0x1000), Err(EfiError::InvalidParameter));
+            assert_eq!(core_allocate_pool(efi::PERSISTENT_MEMORY + 0x1000, 0x1000), Err(EfiError::InvalidParameter));
 
             // check "OEM" and "OS" custom memory types.
             let ptr = core_allocate_pool(0x71234567, 0x1000).unwrap();
@@ -1618,8 +1609,8 @@ mod tests {
             );
             assert_eq!(status, efi::Status::SUCCESS);
 
-            assert_eq!(terminate_memory_map(map_key), efi::Status::SUCCESS);
-            assert_eq!(terminate_memory_map(map_key + 1), efi::Status::INVALID_PARAMETER);
+            assert!(terminate_memory_map(map_key).is_ok());
+            assert_eq!(terminate_memory_map(map_key + 1), Err(EfiError::InvalidParameter));
         });
     }
 }

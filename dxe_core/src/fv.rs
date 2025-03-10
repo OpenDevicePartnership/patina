@@ -357,7 +357,7 @@ extern "efiapi" fn fv_read_file(
         //is expected to free this buffer via free_pool, we need to manually
         //allocate it via allocate_pool.
         match core_allocate_pool(efi::BOOT_SERVICES_DATA, file.content().len()) {
-            Err(err) => return err,
+            Err(err) => return err.into(),
             Ok(allocation) => unsafe {
                 local_buffer_ptr = allocation;
                 buffer.write(local_buffer_ptr);
@@ -441,7 +441,7 @@ extern "efiapi" fn fv_read_section(
         //is expected to free this buffer via free_pool, we need to manually
         //allocate it via allocate_pool.
         match core_allocate_pool(efi::BOOT_SERVICES_DATA, section_data.len()) {
-            Err(err) => return err,
+            Err(err) => return err.into(),
             Ok(allocation) => unsafe {
                 local_buffer_size = section_data.len();
                 local_buffer_ptr = allocation;

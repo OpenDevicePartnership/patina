@@ -419,7 +419,7 @@ impl FixedSizeBlockAllocator {
         &mut self,
         allocation_strategy: AllocationStrategy,
         pages: usize,
-    ) -> Result<core::ptr::NonNull<[u8]>, efi::Status> {
+    ) -> Result<core::ptr::NonNull<[u8]>, EfiError> {
         self.stats.page_allocation_calls += 1;
 
         if let AllocationStrategy::Address(address) = allocation_strategy {
@@ -427,7 +427,7 @@ impl FixedSizeBlockAllocator {
             // for BottomUp and TopDown strategies, the address parameter doesn't have to be page-aligned, but
             // the resulting allocation will be page-aligned.
             if address % ALIGNMENT != 0 {
-                return Err(efi::Status::INVALID_PARAMETER);
+                return Err(EfiError::InvalidParameter);
             }
         }
 
@@ -444,13 +444,12 @@ impl FixedSizeBlockAllocator {
                 None,
             )
             .map_err(|err| match err {
-                EfiError::InvalidParameter => efi::Status::INVALID_PARAMETER,
-                EfiError::NotFound => efi::Status::NOT_FOUND,
-                _ => efi::Status::OUT_OF_RESOURCES,
+                EfiError::InvalidParameter | EfiError::NotFound => err,
+                _ => EfiError::OutOfResources,
             })?;
 
         let allocation = slice_from_raw_parts_mut(start_address as *mut u8, pages * ALIGNMENT);
-        let allocation = NonNull::new(allocation).ok_or(efi::Status::OUT_OF_RESOURCES)?;
+        let allocation = NonNull::new(allocation).ok_or(EfiError::OutOfResources)?;
 
         if self.preferred_range.as_ref().is_some_and(|range| range.contains(&(start_address as efi::PhysicalAddress))) {
             self.stats.reserved_used += pages * ALIGNMENT;
@@ -468,33 +467,33 @@ impl FixedSizeBlockAllocator {
     /// ## Safety
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
     /// [Self::allocate_pages]
-    pub unsafe fn free_pages(&mut self, address: usize, pages: usize) -> Result<(), efi::Status> {
+    pub unsafe fn free_pages(&mut self, address: usize, pages: usize) -> Result<(), EfiError> {
         self.stats.page_free_calls += 1;
         if address % ALIGNMENT != 0 {
-            return Err(efi::Status::INVALID_PARAMETER);
+            return Err(EfiError::InvalidParameter);
         }
 
         let descriptor =
             self.gcd.get_memory_descriptor_for_address(address as efi::PhysicalAddress).map_err(|err| match err {
-                EfiError::NotFound => efi::Status::NOT_FOUND,
-                _ => efi::Status::INVALID_PARAMETER,
+                EfiError::NotFound => err,
+                _ => EfiError::InvalidParameter,
             })?;
 
         if descriptor.image_handle != self.handle {
-            Err(efi::Status::NOT_FOUND)?;
+            Err(EfiError::NotFound)?;
         }
 
         if self.preferred_range.as_ref().is_some_and(|range| range.contains(&(address as efi::PhysicalAddress))) {
             self.gcd.free_memory_space_preserving_ownership(address, pages * ALIGNMENT).map_err(|err| match err {
-                EfiError::NotFound => efi::Status::NOT_FOUND,
-                _ => efi::Status::INVALID_PARAMETER,
+                EfiError::NotFound => err,
+                _ => EfiError::InvalidParameter,
             })?;
             self.stats.reserved_used -= pages * ALIGNMENT;
             // don't update claimed_pages stats here, because they are never actually "released".
         } else {
             self.gcd.free_memory_space(address, pages * ALIGNMENT).map_err(|err| match err {
-                EfiError::NotFound => efi::Status::NOT_FOUND,
-                _ => efi::Status::INVALID_PARAMETER,
+                EfiError::NotFound => err,
+                _ => EfiError::InvalidParameter,
             })?;
             self.stats.claimed_pages -= pages;
         }
@@ -517,9 +516,9 @@ impl FixedSizeBlockAllocator {
     /// memory map to vary from boot-to-boot.
     ///
     /// This routine will return Err(efi::Status::ALREADY_STARTED) if it is called more than once.
-    pub fn reserve_memory_pages(&mut self, pages: usize) -> Result<(), efi::Status> {
+    pub fn reserve_memory_pages(&mut self, pages: usize) -> Result<(), EfiError> {
         if self.preferred_range.is_some() {
-            Err(efi::Status::ALREADY_STARTED)?;
+            Err(EfiError::AlreadyStarted)?;
         }
 
         // Set up the preferred range of memory for this allocator by allocating a block of the given size, and then
@@ -652,7 +651,7 @@ impl SpinLockedFixedSizeBlockAllocator {
         &self,
         allocation_strategy: AllocationStrategy,
         pages: usize,
-    ) -> Result<core::ptr::NonNull<[u8]>, efi::Status> {
+    ) -> Result<core::ptr::NonNull<[u8]>, EfiError> {
         self.lock().allocate_pages(allocation_strategy, pages)
     }
 
@@ -660,7 +659,7 @@ impl SpinLockedFixedSizeBlockAllocator {
     /// ## Safety
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
     /// [Self::allocate_pages]
-    pub unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), efi::Status> {
+    pub unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), EfiError> {
         self.lock().free_pages(address, pages)
     }
 
@@ -677,7 +676,7 @@ impl SpinLockedFixedSizeBlockAllocator {
     ///
     /// This routine will return Err(efi::Status::ALREADY_STARTED) if it is called more than once.
     ///
-    pub fn reserve_memory_pages(&self, pages: usize) -> Result<(), efi::Status> {
+    pub fn reserve_memory_pages(&self, pages: usize) -> Result<(), EfiError> {
         self.lock().reserve_memory_pages(pages)
     }
 
@@ -688,10 +687,10 @@ impl SpinLockedFixedSizeBlockAllocator {
     /// ## Errors
     /// - `efi::Status::OUT_OF_RESOURCES`: The allocator cannot be expanded to accommodate the requested block.
     /// - `efi::Status::INVALID_PARAMETER`: The requested size or alignment is invalid
-    pub fn ensure_capacity(&self, size: usize, align: usize) -> Result<(), efi::Status> {
+    pub fn ensure_capacity(&self, size: usize, align: usize) -> Result<(), EfiError> {
         self.lock().ensure_capacity(size, align).map_err(|err| match err {
-            FixedSizeBlockAllocatorError::OutOfMemory => efi::Status::OUT_OF_RESOURCES,
-            FixedSizeBlockAllocatorError::InvalidParameter => efi::Status::INVALID_PARAMETER,
+            FixedSizeBlockAllocatorError::OutOfMemory => EfiError::OutOfResources,
+            FixedSizeBlockAllocatorError::InvalidParameter => EfiError::InvalidParameter,
         })
     }
 
@@ -1085,7 +1084,7 @@ mod tests {
 
             unsafe {
                 match fsb.free_pages(0, pages) {
-                    Err(efi::Status::NOT_FOUND) => {}
+                    Err(EfiError::NotFound) => {}
                     _ => panic!("Expected NOT_FOUND"),
                 };
             };
@@ -1195,7 +1194,7 @@ mod tests {
             let fsb =
                 SpinLockedFixedSizeBlockAllocator::new(&GCD, 0 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
             match fsb.allocate_pages(AllocationStrategy::Address(0x1000), 5) {
-                Err(efi::Status::INVALID_PARAMETER) => {}
+                Err(EfiError::InvalidParameter) => {}
                 _ => panic!("Expected INVALID_PARAMETER"),
             }
 
@@ -1204,19 +1203,19 @@ mod tests {
 
             let allocation_strategy = AllocationStrategy::Address(0x1000);
             match fsb.allocate_pages(allocation_strategy, 5) {
-                Err(efi::Status::NOT_FOUND) => {}
+                Err(EfiError::NotFound) => {}
                 _ => panic!("Expected NOT_FOUND"),
             }
             // Test invalid alignment
             let allocation_strategy = AllocationStrategy::Address(0x1001);
             match fsb.allocate_pages(allocation_strategy, 5) {
-                Err(efi::Status::INVALID_PARAMETER) => {}
+                Err(EfiError::InvalidParameter) => {}
                 _ => panic!("Expected INVALID_PARAMETER"),
             }
 
             unsafe {
                 match fsb.free_pages(0x1001, 5) {
-                    Err(efi::Status::INVALID_PARAMETER) => {}
+                    Err(EfiError::InvalidParameter) => {}
                     _ => panic!("Expected INVALID_PARAMETER"),
                 }
             }

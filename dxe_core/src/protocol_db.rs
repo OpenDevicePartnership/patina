@@ -17,6 +17,7 @@ use alloc::{
 };
 use core::{cmp::Ordering, ffi::c_void, hash::Hasher};
 use r_efi::efi;
+use uefi_sdk::error::EfiError;
 
 use crate::tpl_lock;
 
@@ -67,31 +68,31 @@ impl OpenProtocolInformation {
         agent_handle: Option<efi::Handle>,
         controller_handle: Option<efi::Handle>,
         attributes: u32,
-    ) -> Result<Self, efi::Status> {
+    ) -> Result<Self, EfiError> {
         const BY_DRIVER_EXCLUSIVE: u32 = efi::OPEN_PROTOCOL_BY_DRIVER | efi::OPEN_PROTOCOL_EXCLUSIVE;
         match attributes {
             efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER => {
                 if agent_handle.is_none()
                     || controller_handle.is_none()
-                    || handle == controller_handle.ok_or(efi::Status::INVALID_PARAMETER)?
+                    || handle == controller_handle.ok_or(EfiError::InvalidParameter)?
                 {
-                    return Err(efi::Status::INVALID_PARAMETER);
+                    return Err(EfiError::InvalidParameter);
                 }
             }
             efi::OPEN_PROTOCOL_BY_DRIVER | BY_DRIVER_EXCLUSIVE => {
                 if agent_handle.is_none() || controller_handle.is_none() {
-                    return Err(efi::Status::INVALID_PARAMETER);
+                    return Err(EfiError::InvalidParameter);
                 }
             }
             efi::OPEN_PROTOCOL_EXCLUSIVE => {
                 if agent_handle.is_none() {
-                    return Err(efi::Status::INVALID_PARAMETER);
+                    return Err(EfiError::InvalidParameter);
                 }
             }
             efi::OPEN_PROTOCOL_BY_HANDLE_PROTOCOL
             | efi::OPEN_PROTOCOL_GET_PROTOCOL
             | efi::OPEN_PROTOCOL_TEST_PROTOCOL => (),
-            _ => return Err(efi::Status::INVALID_PARAMETER),
+            _ => return Err(EfiError::InvalidParameter),
         }
         Ok(OpenProtocolInformation { agent_handle, controller_handle, attributes, open_count: 1 })
     }
@@ -177,7 +178,7 @@ impl ProtocolDb {
         handle: Option<efi::Handle>,
         protocol: efi::Guid,
         interface: *mut c_void,
-    ) -> Result<(efi::Handle, Vec<ProtocolNotify>), efi::Status> {
+    ) -> Result<(efi::Handle, Vec<ProtocolNotify>), EfiError> {
         //generate an output handle.
         let (output_handle, key) = match handle {
             Some(handle) => {
@@ -212,10 +213,10 @@ impl ProtocolDb {
         };
 
         debug_assert!(self.handles.contains_key(&key));
-        let handle_instance = self.handles.get_mut(&key).ok_or(efi::Status::UNSUPPORTED)?;
+        let handle_instance = self.handles.get_mut(&key).ok_or(EfiError::Unsupported)?;
 
         if handle_instance.contains_key(&OrdGuid(protocol)) {
-            return Err(efi::Status::INVALID_PARAMETER);
+            return Err(EfiError::InvalidParameter);
         }
 
         //create a new protocol instance to match the input.
@@ -245,16 +246,16 @@ impl ProtocolDb {
         handle: efi::Handle,
         protocol: efi::Guid,
         interface: *mut c_void,
-    ) -> Result<(), efi::Status> {
+    ) -> Result<(), EfiError> {
         self.validate_handle(handle)?;
 
         let key = handle as usize;
         let handle_instance =
             self.handles.get_mut(&key).expect("Invalid handle should not occur due to prior handle validation.");
-        let instance = handle_instance.get(&OrdGuid(protocol)).ok_or(efi::Status::NOT_FOUND)?;
+        let instance = handle_instance.get(&OrdGuid(protocol)).ok_or(EfiError::NotFound)?;
 
         if instance.interface != interface {
-            return Err(efi::Status::NOT_FOUND);
+            return Err(EfiError::NotFound);
         }
 
         //Spec requires that an attempt to uninstall an installed protocol interface that is open with an attribute of
@@ -262,7 +263,7 @@ impl ProtocolDb {
         //before uninstalling. As such, this routine simply returns ACCESS_DENIED if any agents are found active on the
         //protocol instance.
         if !instance.usage.is_empty() {
-            return Err(efi::Status::ACCESS_DENIED);
+            return Err(EfiError::AccessDenied);
         }
         handle_instance.remove(&OrdGuid(protocol));
 
@@ -274,7 +275,7 @@ impl ProtocolDb {
         Ok(())
     }
 
-    fn locate_handles(&mut self, protocol: Option<efi::Guid>) -> Result<Vec<efi::Handle>, efi::Status> {
+    fn locate_handles(&mut self, protocol: Option<efi::Guid>) -> Result<Vec<efi::Handle>, EfiError> {
         let handles: Vec<efi::Handle> = self
             .handles
             .iter()
@@ -287,38 +288,34 @@ impl ProtocolDb {
             })
             .collect();
         if handles.is_empty() {
-            return Err(efi::Status::NOT_FOUND);
+            return Err(EfiError::NotFound);
         }
         Ok(handles)
     }
 
-    fn locate_protocol(&mut self, protocol: efi::Guid) -> Result<*mut c_void, efi::Status> {
+    fn locate_protocol(&mut self, protocol: efi::Guid) -> Result<*mut c_void, EfiError> {
         let interface = self.handles.values().find_map(|x| x.get(&OrdGuid(protocol)));
 
         match interface {
             Some(interface) => Ok(interface.interface),
-            None => Err(efi::Status::NOT_FOUND),
+            None => Err(EfiError::NotFound),
         }
     }
 
-    fn get_interface_for_handle(
-        &mut self,
-        handle: efi::Handle,
-        protocol: efi::Guid,
-    ) -> Result<*mut c_void, efi::Status> {
+    fn get_interface_for_handle(&mut self, handle: efi::Handle, protocol: efi::Guid) -> Result<*mut c_void, EfiError> {
         self.validate_handle(handle)?;
 
         let key = handle as usize;
-        let handle_instance = self.handles.get_mut(&key).ok_or(efi::Status::NOT_FOUND)?;
-        let instance = handle_instance.get_mut(&OrdGuid(protocol)).ok_or(efi::Status::NOT_FOUND)?;
+        let handle_instance = self.handles.get_mut(&key).ok_or(EfiError::NotFound)?;
+        let instance = handle_instance.get_mut(&OrdGuid(protocol)).ok_or(EfiError::NotFound)?;
         Ok(instance.interface)
     }
 
-    fn validate_handle(&self, handle: efi::Handle) -> Result<(), efi::Status> {
+    fn validate_handle(&self, handle: efi::Handle) -> Result<(), EfiError> {
         let handle = handle as usize;
         //to be valid the handle must exist in the handle database (i.e. not have been deleted).
         if !self.handles.contains_key(&handle) {
-            return Err(efi::Status::INVALID_PARAMETER);
+            return Err(EfiError::InvalidParameter);
         }
         Ok(())
     }
@@ -330,7 +327,7 @@ impl ProtocolDb {
         agent_handle: Option<efi::Handle>,
         controller_handle: Option<efi::Handle>,
         attributes: u32,
-    ) -> Result<(), efi::Status> {
+    ) -> Result<(), EfiError> {
         self.validate_handle(handle)?;
 
         if let Some(agent) = agent_handle {
@@ -342,14 +339,14 @@ impl ProtocolDb {
         }
 
         let key = handle as usize;
-        let handle_instance = self.handles.get_mut(&key).ok_or(efi::Status::UNSUPPORTED)?;
-        let instance = handle_instance.get_mut(&OrdGuid(protocol)).ok_or(efi::Status::UNSUPPORTED)?;
+        let handle_instance = self.handles.get_mut(&key).ok_or(EfiError::Unsupported)?;
+        let instance = handle_instance.get_mut(&OrdGuid(protocol)).ok_or(EfiError::Unsupported)?;
 
         let new_using_agent = OpenProtocolInformation::new(handle, agent_handle, controller_handle, attributes)?;
         let exact_match = instance.usage.iter_mut().find(|user| user == &&new_using_agent);
 
         if instance.opened_by_driver && exact_match.is_some() {
-            return Err(efi::Status::ALREADY_STARTED);
+            return Err(EfiError::AlreadyStarted);
         }
 
         if !instance.opened_by_exclusive {
@@ -368,7 +365,7 @@ impl ProtocolDb {
                 //the SpinLockedProtocolDb lock (which would cause deadlock if DisconnectController attempted to use
                 //any of the protocol services). Instead, return ACCESS_DENIED.
                 if instance.opened_by_exclusive || instance.opened_by_driver {
-                    return Err(efi::Status::ACCESS_DENIED);
+                    return Err(EfiError::AccessDenied);
                 }
             }
             efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER
@@ -399,7 +396,7 @@ impl ProtocolDb {
         protocol: efi::Guid,
         agent_handle: Option<efi::Handle>,
         controller_handle: Option<efi::Handle>,
-    ) -> Result<(), efi::Status> {
+    ) -> Result<(), EfiError> {
         self.validate_handle(handle)?;
 
         if let Some(agent) = agent_handle {
@@ -412,7 +409,7 @@ impl ProtocolDb {
 
         let key = handle as usize;
         let handle_instance = self.handles.get_mut(&key).expect("valid handle, but no entry in self.handles");
-        let instance = handle_instance.get_mut(&OrdGuid(protocol)).ok_or(efi::Status::NOT_FOUND)?;
+        let instance = handle_instance.get_mut(&OrdGuid(protocol)).ok_or(EfiError::Unsupported)?;
         let mut removed = false;
         instance.usage.retain(|x| {
             if (x.agent_handle == agent_handle) && (x.controller_handle == controller_handle) {
@@ -434,7 +431,7 @@ impl ProtocolDb {
         });
 
         if !removed {
-            return Err(efi::Status::NOT_FOUND);
+            return Err(EfiError::NotFound);
         }
 
         Ok(())
@@ -444,12 +441,12 @@ impl ProtocolDb {
         &mut self,
         handle: efi::Handle,
         protocol: efi::Guid,
-    ) -> Result<Vec<OpenProtocolInformation>, efi::Status> {
+    ) -> Result<Vec<OpenProtocolInformation>, EfiError> {
         self.validate_handle(handle)?;
 
         let key = handle as usize;
-        let handle_instance = self.handles.get_mut(&key).ok_or(efi::Status::NOT_FOUND)?;
-        let instance = handle_instance.get_mut(&OrdGuid(protocol)).ok_or(efi::Status::NOT_FOUND)?;
+        let handle_instance = self.handles.get_mut(&key).ok_or(EfiError::NotFound)?;
+        let instance = handle_instance.get_mut(&OrdGuid(protocol)).ok_or(EfiError::NotFound)?;
 
         Ok(instance.usage.clone())
     }
@@ -457,23 +454,23 @@ impl ProtocolDb {
     fn get_open_protocol_information(
         &mut self,
         handle: efi::Handle,
-    ) -> Result<Vec<(efi::Guid, Vec<OpenProtocolInformation>)>, efi::Status> {
+    ) -> Result<Vec<(efi::Guid, Vec<OpenProtocolInformation>)>, EfiError> {
         let key = handle as usize;
-        let handle_instance = self.handles.get(&key).ok_or(efi::Status::NOT_FOUND)?;
+        let handle_instance = self.handles.get(&key).ok_or(EfiError::NotFound)?;
 
         let usages = handle_instance.iter().map(|(guid, instance)| (guid.0, instance.usage.clone())).collect();
 
         Ok(usages)
     }
 
-    fn get_protocols_on_handle(&mut self, handle: efi::Handle) -> Result<Vec<efi::Guid>, efi::Status> {
+    fn get_protocols_on_handle(&mut self, handle: efi::Handle) -> Result<Vec<efi::Guid>, EfiError> {
         self.validate_handle(handle)?;
 
         let key = handle as usize;
         Ok(self.handles[&key].keys().clone().map(|x| x.0).collect())
     }
 
-    fn register_protocol_notify(&mut self, protocol: efi::Guid, event: efi::Event) -> Result<*mut c_void, efi::Status> {
+    fn register_protocol_notify(&mut self, protocol: efi::Guid, event: efi::Event) -> Result<*mut c_void, EfiError> {
         let registration = self.next_registration as *mut c_void;
         self.next_registration += 1;
         let protocol_notify = ProtocolNotify { event, registration, fresh_handles: BTreeSet::new() };
@@ -633,7 +630,7 @@ impl SpinLockedProtocolDb {
         handle: Option<efi::Handle>,
         guid: efi::Guid,
         interface: *mut c_void,
-    ) -> Result<(efi::Handle, Vec<ProtocolNotify>), efi::Status> {
+    ) -> Result<(efi::Handle, Vec<ProtocolNotify>), EfiError> {
         self.lock().install_protocol_interface(handle, guid, interface)
     }
 
@@ -650,7 +647,7 @@ impl SpinLockedProtocolDb {
         handle: efi::Handle,
         guid: efi::Guid,
         interface: *mut c_void,
-    ) -> Result<(), efi::Status> {
+    ) -> Result<(), EfiError> {
         self.lock().uninstall_protocol_interface(handle, guid, interface)
     }
 
@@ -664,7 +661,7 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if no matching handles are found.
-    pub fn locate_handles(&self, protocol: Option<efi::Guid>) -> Result<Vec<efi::Handle>, efi::Status> {
+    pub fn locate_handles(&self, protocol: Option<efi::Guid>) -> Result<Vec<efi::Handle>, EfiError> {
         self.lock().locate_handles(protocol)
     }
 
@@ -678,7 +675,7 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if no matching interfaces are found.
-    pub fn locate_protocol(&self, protocol: efi::Guid) -> Result<*mut c_void, efi::Status> {
+    pub fn locate_protocol(&self, protocol: efi::Guid) -> Result<*mut c_void, EfiError> {
         self.lock().locate_protocol(protocol)
     }
 
@@ -690,16 +687,12 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if no matching interfaces are found on the given handle.
-    pub fn get_interface_for_handle(
-        &self,
-        handle: efi::Handle,
-        protocol: efi::Guid,
-    ) -> Result<*mut c_void, efi::Status> {
+    pub fn get_interface_for_handle(&self, handle: efi::Handle, protocol: efi::Guid) -> Result<*mut c_void, EfiError> {
         self.lock().get_interface_for_handle(handle, protocol)
     }
 
     /// Returns Ok(()) if the handle is a valid handle, Err(Status::INVALID_PARAMETER) otherwise.
-    pub fn validate_handle(&self, handle: efi::Handle) -> Result<(), efi::Status> {
+    pub fn validate_handle(&self, handle: efi::Handle) -> Result<(), EfiError> {
         self.lock().validate_handle(handle)
     }
 
@@ -728,7 +721,7 @@ impl SpinLockedProtocolDb {
         agent_handle: Option<efi::Handle>,
         controller_handle: Option<efi::Handle>,
         attributes: u32,
-    ) -> Result<(), efi::Status> {
+    ) -> Result<(), EfiError> {
         self.lock().add_protocol_usage(handle, protocol, agent_handle, controller_handle, attributes)
     }
 
@@ -749,7 +742,7 @@ impl SpinLockedProtocolDb {
         protocol: efi::Guid,
         agent_handle: Option<efi::Handle>,
         controller_handle: Option<efi::Handle>,
-    ) -> Result<(), efi::Status> {
+    ) -> Result<(), EfiError> {
         self.lock().remove_protocol_usage(handle, protocol, agent_handle, controller_handle)
     }
 
@@ -766,7 +759,7 @@ impl SpinLockedProtocolDb {
         &self,
         handle: efi::Handle,
         protocol: efi::Guid,
-    ) -> Result<Vec<OpenProtocolInformation>, efi::Status> {
+    ) -> Result<Vec<OpenProtocolInformation>, EfiError> {
         self.lock().get_open_protocol_information_by_protocol(handle, protocol)
     }
 
@@ -780,7 +773,7 @@ impl SpinLockedProtocolDb {
     pub fn get_open_protocol_information(
         &self,
         handle: efi::Handle,
-    ) -> Result<Vec<(efi::Guid, Vec<OpenProtocolInformation>)>, efi::Status> {
+    ) -> Result<Vec<(efi::Guid, Vec<OpenProtocolInformation>)>, EfiError> {
         self.lock().get_open_protocol_information(handle)
     }
 
@@ -788,7 +781,7 @@ impl SpinLockedProtocolDb {
     ///
     /// This function generally matches the behavior of EFI_BOOT_SERVICES.ProtocolsPerHandle() API in the UEFI spec
     /// 2.10 section 7.3.14. Refer to the UEFI spec description for details on input parameters.
-    pub fn get_protocols_on_handle(&self, handle: efi::Handle) -> Result<Vec<efi::Guid>, efi::Status> {
+    pub fn get_protocols_on_handle(&self, handle: efi::Handle) -> Result<Vec<efi::Guid>, EfiError> {
         self.lock().get_protocols_on_handle(handle)
     }
 
@@ -801,7 +794,7 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns a registration token that can be used with [next_handle_for_registration](SpinLockedProtocolDb::next_handle_for_registration)
     /// to iterate over handles that have fresh installations of the specified protocol.
-    pub fn register_protocol_notify(&self, protocol: efi::Guid, event: efi::Event) -> Result<*mut c_void, efi::Status> {
+    pub fn register_protocol_notify(&self, protocol: efi::Guid, event: efi::Event) -> Result<*mut c_void, EfiError> {
         self.lock().register_protocol_notify(protocol, event)
     }
 
@@ -968,7 +961,7 @@ mod tests {
             SPIN_LOCKED_PROTOCOL_DB.lock().handles.get_mut(&key).unwrap().insert(OrdGuid(guid1), instance);
 
             let err = SPIN_LOCKED_PROTOCOL_DB.uninstall_protocol_interface(handle, guid1, interface1);
-            assert_eq!(err, Err(efi::Status::ACCESS_DENIED));
+            assert_eq!(err, Err(EfiError::AccessDenied));
 
             let mut db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let protocol_instance = db.handles.get_mut(&key).unwrap();
@@ -992,10 +985,10 @@ mod tests {
             let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
 
             let err = SPIN_LOCKED_PROTOCOL_DB.uninstall_protocol_interface(handle, guid2, interface1);
-            assert_eq!(err, Err(efi::Status::NOT_FOUND));
+            assert_eq!(err, Err(EfiError::NotFound));
 
             let err = SPIN_LOCKED_PROTOCOL_DB.uninstall_protocol_interface(handle, guid1, interface2);
-            assert_eq!(err, Err(efi::Status::NOT_FOUND));
+            assert_eq!(err, Err(EfiError::NotFound));
         });
     }
 
@@ -1041,7 +1034,7 @@ mod tests {
                 assert!(!handles.contains(&handle));
             }
 
-            assert_eq!(SPIN_LOCKED_PROTOCOL_DB.locate_handles(Some(guid3)), Err(efi::Status::NOT_FOUND));
+            assert_eq!(SPIN_LOCKED_PROTOCOL_DB.locate_handles(Some(guid3)), Err(EfiError::NotFound));
         });
     }
 
@@ -1058,7 +1051,7 @@ mod tests {
 
             assert_eq!(SPIN_LOCKED_PROTOCOL_DB.validate_handle(handle1), Ok(()));
             let handle2 = (handle1 as usize + 1) as efi::Handle;
-            assert_eq!(SPIN_LOCKED_PROTOCOL_DB.validate_handle(handle2), Err(efi::Status::INVALID_PARAMETER));
+            assert_eq!(SPIN_LOCKED_PROTOCOL_DB.validate_handle(handle2), Err(EfiError::InvalidParameter));
         });
     }
 
@@ -1073,7 +1066,7 @@ mod tests {
 
             let (handle1, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
             SPIN_LOCKED_PROTOCOL_DB.uninstall_protocol_interface(handle1, guid1, interface1).unwrap();
-            assert_eq!(SPIN_LOCKED_PROTOCOL_DB.validate_handle(handle1), Err(efi::Status::INVALID_PARAMETER));
+            assert_eq!(SPIN_LOCKED_PROTOCOL_DB.validate_handle(handle1), Err(EfiError::InvalidParameter));
         });
     }
 
@@ -1152,7 +1145,7 @@ mod tests {
                 None,
                 efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
             );
-            assert_eq!(result, Err(efi::Status::INVALID_PARAMETER));
+            assert_eq!(result, Err(EfiError::InvalidParameter));
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let protocol_user_list =
                 &protocol_db.handles.get(&(handle1 as usize)).unwrap().get(&OrdGuid(guid1)).unwrap().usage;
@@ -1168,7 +1161,7 @@ mod tests {
                 Some(handle1),
                 efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER,
             );
-            assert_eq!(result, Err(efi::Status::INVALID_PARAMETER));
+            assert_eq!(result, Err(EfiError::InvalidParameter));
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let protocol_user_list =
                 &protocol_db.handles.get(&(handle1 as usize)).unwrap().get(&OrdGuid(guid1)).unwrap().usage;
@@ -1243,7 +1236,7 @@ mod tests {
                 Some(handle3),
                 test_attributes,
             );
-            assert_eq!(result, Err(efi::Status::ALREADY_STARTED));
+            assert_eq!(result, Err(EfiError::AlreadyStarted));
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let protocol_user_list =
                 &protocol_db.handles.get(&(handle1 as usize)).unwrap().get(&OrdGuid(guid1)).unwrap().usage;
@@ -1261,7 +1254,7 @@ mod tests {
             Some(handle3),
             efi::OPEN_PROTOCOL_BY_DRIVER,
         );
-        assert_eq!(result, Err(efi::Status::ACCESS_DENIED));
+        assert_eq!(result, Err(EfiError::AccessDenied));
         let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
         let protocol_user_list =
             &protocol_db.handles.get(&(handle1 as usize)).unwrap().get(&OrdGuid(guid1)).unwrap().usage;
@@ -1278,7 +1271,7 @@ mod tests {
             Some(handle3),
             efi::OPEN_PROTOCOL_EXCLUSIVE,
         );
-        assert_eq!(result, Err(efi::Status::ACCESS_DENIED));
+        assert_eq!(result, Err(EfiError::AccessDenied));
         let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
         let protocol_user_list =
             &protocol_db.handles.get(&(handle1 as usize)).unwrap().get(&OrdGuid(guid1)).unwrap().usage;
@@ -1463,7 +1456,7 @@ mod tests {
                 .unwrap();
 
             let result = SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle1, guid1, Some(handle3), Some(handle2));
-            assert_eq!(result, Err(efi::Status::NOT_FOUND));
+            assert_eq!(result, Err(EfiError::NotFound));
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let protocol_user_list =
                 &protocol_db.handles.get(&(handle1 as usize)).unwrap().get(&OrdGuid(guid1)).unwrap().usage;
@@ -1471,7 +1464,7 @@ mod tests {
             drop(protocol_db);
 
             let result = SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle1, guid1, None, Some(handle3));
-            assert_eq!(result, Err(efi::Status::NOT_FOUND));
+            assert_eq!(result, Err(EfiError::NotFound));
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let protocol_user_list =
                 &protocol_db.handles.get(&(handle1 as usize)).unwrap().get(&OrdGuid(guid1)).unwrap().usage;
@@ -1479,7 +1472,7 @@ mod tests {
             drop(protocol_db);
 
             let result = SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle1, guid1, Some(handle2), None);
-            assert_eq!(result, Err(efi::Status::NOT_FOUND));
+            assert_eq!(result, Err(EfiError::NotFound));
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let protocol_user_list =
                 &protocol_db.handles.get(&(handle1 as usize)).unwrap().get(&OrdGuid(guid1)).unwrap().usage;
@@ -1487,7 +1480,7 @@ mod tests {
             drop(protocol_db);
 
             let result = SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle1, guid1, None, None);
-            assert_eq!(result, Err(efi::Status::NOT_FOUND));
+            assert_eq!(result, Err(EfiError::NotFound));
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let protocol_user_list =
                 &protocol_db.handles.get(&(handle1 as usize)).unwrap().get(&OrdGuid(guid1)).unwrap().usage;
@@ -1523,7 +1516,7 @@ mod tests {
                     Some(handle3),
                     efi::OPEN_PROTOCOL_BY_DRIVER
                 ),
-                Err(efi::Status::ACCESS_DENIED)
+                Err(EfiError::AccessDenied)
             );
 
             SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle1, guid1, Some(handle2), Some(handle3)).unwrap();
@@ -1607,10 +1600,10 @@ mod tests {
                 .unwrap();
 
             let result = SPIN_LOCKED_PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, guid2);
-            assert_eq!(result, Err(efi::Status::NOT_FOUND));
+            assert_eq!(result, Err(EfiError::NotFound));
 
             let result = SPIN_LOCKED_PROTOCOL_DB.get_open_protocol_information_by_protocol(handle2, guid1);
-            assert_eq!(result, Err(efi::Status::NOT_FOUND));
+            assert_eq!(result, Err(EfiError::NotFound));
         });
     }
 
