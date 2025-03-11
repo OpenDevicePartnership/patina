@@ -33,7 +33,7 @@ use _utils::c_char_ptr_from_str;
 use alloc::{boxed::Box, string::String};
 
 use r_efi::{
-    efi,
+    efi::{self, Status},
     protocols::device_path::{Media, TYPE_MEDIA},
 };
 
@@ -85,8 +85,23 @@ pub fn init_performance_lib(
     hob_list: &HobList,
     efi_system_table: &'static efi::SystemTable,
 ) -> Result<(), efi::Status> {
-    BOOT_SERVICES.initialize(unsafe { efi_system_table.boot_services.as_ref() }.unwrap());
-    RUNTIME_SERVICES.initialize(unsafe { efi_system_table.runtime_services.as_ref() }.unwrap());
+    match unsafe { efi_system_table.boot_services.as_ref() } {
+        Some(boot_services) => BOOT_SERVICES.initialize(boot_services),
+        None => {
+            log::error!("Uefi performance exiting because of invalid parameter. BootServices is null in system table.");
+            return Err(Status::INVALID_PARAMETER);
+        }
+    }
+
+    match unsafe { efi_system_table.runtime_services.as_ref() } {
+        Some(runtime_services) => RUNTIME_SERVICES.initialize(runtime_services),
+        None => {
+            log::error!(
+                "Uefi performance exiting because of invalid parameter. RuntimeServices is null in system table."
+            );
+            return Err(Status::INVALID_PARAMETER);
+        }
+    }
 
     let (pei_records, pei_load_image_count) = extract_pei_performance_records(hob_list)?;
     LOAD_IMAGE_COUNT.store(pei_load_image_count, Ordering::Relaxed);
