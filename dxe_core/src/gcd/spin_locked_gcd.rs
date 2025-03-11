@@ -327,6 +327,20 @@ impl GCD {
             }
         }
 
+        let paging_allocator = if let Some(pt) = self.page_table.as_mut() {
+            pt.borrow_allocator()
+        } else {
+            return Err(efi::Status::NOT_READY);
+        };
+
+        let current_pages = paging_allocator.page_pool.len();
+
+        if current_pages >= needed_pages {
+            return Ok(());
+        }
+
+        let needed_pages = needed_pages - current_pages;
+
         if needed_pages > 0 {
             match self.allocate_memory_space(
                 DEFAULT_ALLOCATION_STRATEGY,
