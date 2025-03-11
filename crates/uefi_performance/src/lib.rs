@@ -105,7 +105,7 @@ pub fn init_performance_lib(
 
     let (pei_records, pei_load_image_count) = extract_pei_performance_records(hob_list)?;
     LOAD_IMAGE_COUNT.store(pei_load_image_count, Ordering::Relaxed);
-    log::info!("{} PEI Records found.", pei_records.iter().count());
+    log::info!("{} PEI performance records found.", pei_records.iter().count());
     FBPT.lock().set_records(pei_records);
 
     // Install the protocol interfaces for DXE performance library instance.
@@ -430,7 +430,14 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, sys
     let Some(smm_comm_region_table) = configuration_tables
         .iter()
         .find(|config_table| config_table.vendor_guid == EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID)
-        .and_then(|config_table| unsafe { (config_table.vendor_table as *const SmmCommunicationRegionTable).as_ref() })
+        .and_then(|config_table| {
+            // SAFETY: The cast of vendor_table to `SmmCommunicationRegionTable` is safe 
+            // because the configuration table vendor guid is `EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID`
+            // and the expected value of this configuration is a `SmmCommunicationRegionTable`.
+            unsafe {
+                (config_table.vendor_table as *const SmmCommunicationRegionTable).as_ref()
+            }
+        })
     else {
         log::error!("Could not find any smm communication region table.");
         return;
@@ -501,9 +508,13 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, sys
 
     // Write found perf records in the fbpt table.
     let mut fbpt = FBPT.lock();
+    let mut n = 0;
     for r in Iter::new(&smm_boot_records_data) {
         fbpt.add_record(r).unwrap();
+        n += 1;
     }
+
+    log::info!("{} smm performance records found.", n);
 }
 
 #[repr(C)]
