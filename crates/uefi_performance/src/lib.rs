@@ -561,7 +561,7 @@ fn get_module_info_from_handle(
         };
         // TODO: Find Module name in handle (image_bytes) (https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/187).
 
-        return Ok((Some(String::from("TODO Get name from UefiPeInfo")), guid));
+        return Ok((None, guid));
     }
 
     // Method 2 - Get the name string from ComponentName2
@@ -570,7 +570,7 @@ fn get_module_info_from_handle(
     // Method 3 - Get the name string from FFS UI Section.
     // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/193
 
-    Ok((Some(String::from("TODO Get name from UefiPeInfo")), guid))
+    Ok((None, guid))
 }
 
 macro_rules! __log_perf_measurement {
