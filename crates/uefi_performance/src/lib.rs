@@ -431,12 +431,10 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, sys
         .iter()
         .find(|config_table| config_table.vendor_guid == EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID)
         .and_then(|config_table| {
-            // SAFETY: The cast of vendor_table to `SmmCommunicationRegionTable` is safe 
+            // SAFETY: The cast of vendor_table to `SmmCommunicationRegionTable` is safe
             // because the configuration table vendor guid is `EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID`
             // and the expected value of this configuration is a `SmmCommunicationRegionTable`.
-            unsafe {
-                (config_table.vendor_table as *const SmmCommunicationRegionTable).as_ref()
-            }
+            unsafe { (config_table.vendor_table as *const SmmCommunicationRegionTable).as_ref() }
         })
     else {
         log::error!("Could not find any smm communication region table.");
@@ -455,8 +453,9 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, sys
         return;
     };
 
-    // Ask smm for the total size of the perf records.
+    // SAFETY: Is safe to use because the memroy region commes for a thrusted source and can be considered valid.
     let boot_record_size = match unsafe {
+        // Ask smm for the total size of the perf records.
         communication.communicate(SmmFpdtGetRecordSize::new(), smm_communication_memory_region)
     } {
         Ok(SmmFpdtGetRecordSize { return_status, boot_record_size }) if return_status == efi::Status::SUCCESS => {
@@ -478,6 +477,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, sys
     let mut smm_boot_records_data = Vec::with_capacity(boot_record_size);
 
     while smm_boot_records_data.len() < boot_record_size {
+        // SAFETY: Is safe to use because the memroy region commes for a thrusted source and can be considered valid.
         match unsafe {
             // Ask smm to return us the next bytes in its buffer.
             communication.communicate(
