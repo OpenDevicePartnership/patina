@@ -1,22 +1,76 @@
 #![no_std] // i'm pretty sure we need to be nostd but if we don't it would make things a lot easier
 
-use core::ffi::c_void;
 use core::mem;
+use core::{ffi::c_void, fmt};
 
-use mu_pi::hob::{header, Hob, PhaseHandoffInformationTable, END_OF_HOB_LIST, HANDOFF};
+use mu_pi::hob::{header, EfiPhysicalAddress, Hob, PhaseHandoffInformationTable, END_OF_HOB_LIST, HANDOFF};
 
 pub mod bump_allocator;
-pub mod verification;
+pub mod fv_verify;
+pub mod hob_verify;
 
-// i've been duplicating this everywhere but maybe it should be a generic crate function
+/// Public result type for the crate.
+pub type Result<T> = core::result::Result<T, PlatformError>;
+
+// also duplicated from mu_pi but again idk if we should move it
+const NOT_NULL: &str = "Ptr should not be NULL";
+
+#[derive(Debug)]
+pub enum PlatformError {
+    MemoryRangeOverlap {
+        start1: EfiPhysicalAddress,
+        end1: EfiPhysicalAddress,
+        start2: EfiPhysicalAddress,
+        end2: EfiPhysicalAddress,
+    },
+    InconsistentMemoryAttributes {
+        start1: EfiPhysicalAddress,
+        end1: EfiPhysicalAddress,
+        start2: EfiPhysicalAddress,
+        end2: EfiPhysicalAddress,
+    },
+    InconsistentRanges,
+    MissingMemoryProtections,
+    InternalError, // error from verification code, not the platform itself. don't know if this is a good error to have.
+}
+
+impl fmt::Display for PlatformError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PlatformError::MemoryRangeOverlap { start1, end1, start2, end2 } => {
+                write!(
+                    f,
+                    "Memory range overlap detected: [{:#x}, {:#x}) overlaps with [{:#x}, {:#x})",
+                    start1, end1, start2, end2
+                )
+            }
+            PlatformError::InconsistentMemoryAttributes { start1, end1, start2, end2 } => {
+                write!(
+                    f,
+                    "Memory ranges overlap but have different attributes: [{:#x}, {:#x}) overlaps with [{:#x}, {:#x})",
+                    start1, end1, start2, end2
+                )
+            }
+            PlatformError::InconsistentRanges => {
+                write!(f, "V1 and V2 ranges do not match")
+            }
+            PlatformError::MissingMemoryProtections => {
+                write!(f, "Memory protection settings HOB is missing or invalid")
+            }
+            // This could probably be more disambiguated
+            PlatformError::InternalError => {
+                write!(f, "Verification failed due to internal error")
+            }
+        }
+    }
+}
+
+// this is duplicated in mu_pi but idk if we should pull it out here
 fn assert_hob_size<T>(hob: &header::Hob) {
     let hob_len = hob.length as usize;
     let hob_size = mem::size_of::<T>();
     assert_eq!(hob_len, hob_size, "Trying to cast hob of length {hob_len} into a pointer of size {hob_size}");
 }
-
-// this is also repeated a lot
-const NOT_NULL: &str = "Ptr should not be NULL";
 
 // find free memory space for phit hob
 pub fn read_phit_hob(physical_hob_list: *const c_void) -> Option<(usize, usize)> {

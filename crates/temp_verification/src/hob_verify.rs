@@ -6,27 +6,11 @@ use mu_pi::hob::{
 };
 use r_efi::efi;
 
-/// Public result type for the crate.
-pub type Result<T> = core::result::Result<T, PlatformError>;
+use crate::{assert_hob_size, PlatformError, Result, NOT_NULL};
 
-#[derive(Debug)]
-pub enum PlatformError {
-    MemoryRangeOverlap {
-        start1: EfiPhysicalAddress,
-        end1: EfiPhysicalAddress,
-        start2: EfiPhysicalAddress,
-        end2: EfiPhysicalAddress,
-    },
-    InconsistentMemoryAttributes {
-        start1: EfiPhysicalAddress,
-        end1: EfiPhysicalAddress,
-        start2: EfiPhysicalAddress,
-        end2: EfiPhysicalAddress,
-    },
-    InconsistentRanges,
-    MissingMemoryProtections,
-    InternalError, // error from verification code, not the platform itself
-}
+// a general note:
+// i don't like how there's lots of repeated code for iterating hobs
+// if we allow memory allocation, we could use a similar strat as HobList (or even reuse it)
 
 /// A struct that runs multiple requirements
 /// The idea is that we'll be able to add new requirements dynamically
@@ -72,38 +56,6 @@ pub trait Requirement {
 // SHERRY: is this defined anywhere? i didn't see it but maybe i didn't look hard enough. could be in another repo (not here or mu_pi at least)
 const DXE_MEMORY_PROTECTION_SETTINGS_GUID: efi::Guid =
     efi::Guid::from_fields(0x9ABFD639, 0xD1D0, 0x4EFF, 0xBD, 0xB6, &[0x7E, 0xC4, 0x19, 0x0D, 0x17, 0xD5]);
-const NOT_NULL: &str = "Ptr should not be NULL";
-
-impl fmt::Display for PlatformError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PlatformError::MemoryRangeOverlap { start1, end1, start2, end2 } => {
-                write!(
-                    f,
-                    "Memory range overlap detected: [{:#x}, {:#x}) overlaps with [{:#x}, {:#x})",
-                    start1, end1, start2, end2
-                )
-            }
-            PlatformError::InconsistentMemoryAttributes { start1, end1, start2, end2 } => {
-                write!(
-                    f,
-                    "Memory ranges overlap but have different attributes: [{:#x}, {:#x}) overlaps with [{:#x}, {:#x})",
-                    start1, end1, start2, end2
-                )
-            }
-            PlatformError::InconsistentRanges => {
-                write!(f, "V1 and V2 ranges do not match")
-            }
-            PlatformError::MissingMemoryProtections => {
-                write!(f, "Memory protection settings HOB is missing or invalid")
-            }
-            // This could probably be more disambiguated
-            PlatformError::InternalError => {
-                write!(f, "Verification failed due to internal error")
-            }
-        }
-    }
-}
 
 pub fn verify_platform_requirements(physical_hob_list: *const c_void) -> Result<()> {
     // all the logs in this file are bad (we eventually need to replace them with our own logger)
@@ -131,12 +83,6 @@ fn verify_resource_descriptor_hobs(physical_hob_list: *const c_void) -> Result<(
     check_memory_overlap(physical_hob_list)?;
     check_v1_v2_consistency(physical_hob_list)?;
     Ok(())
-}
-
-fn assert_hob_size<T>(hob: &header::Hob) {
-    let hob_len = hob.length as usize;
-    let hob_size = mem::size_of::<T>();
-    assert_eq!(hob_len, hob_size, "Trying to cast hob of length {hob_len} into a pointer of size {hob_size}");
 }
 
 /// A struct that checks for memory range overlaps
