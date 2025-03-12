@@ -106,6 +106,7 @@ impl fmt::Display for PlatformError {
 }
 
 pub fn verify_platform_requirements(physical_hob_list: *const c_void) -> Result<()> {
+    // all the logs in this file are bad (we eventually need to replace them with our own logger)
     log::info!("Verifying platform requirements...");
 
     let overlap_req = OverlapRequirement;

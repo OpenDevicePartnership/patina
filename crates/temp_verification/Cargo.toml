@@ -15,4 +15,6 @@ path = "src/lib.rs"
 [dependencies]
 r-efi = { workspace = true }
 mu_pi = { workspace = true }
+log = { workspace=true }
+
 

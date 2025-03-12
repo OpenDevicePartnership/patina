@@ -6,6 +6,7 @@ use core::mem;
 use mu_pi::hob::{header, Hob, PhaseHandoffInformationTable, END_OF_HOB_LIST, HANDOFF};
 
 pub mod bump_allocator;
+pub mod verification;
 
 // i've been duplicating this everywhere but maybe it should be a generic crate function
 fn assert_hob_size<T>(hob: &header::Hob) {

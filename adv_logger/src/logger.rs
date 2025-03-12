@@ -110,7 +110,7 @@ where
 
     fn flush(&self) {
         // Do nothing
-    }
+    } 
 }
 
 /// Converts a log::Level to a EFI Debug Level.

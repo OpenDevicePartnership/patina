@@ -727,6 +727,7 @@ pub fn device_path_bytes_for_fv_file(fv_handle: efi::Handle, file_name: efi::Gui
     )
 }
 
+// SHERRY: continue investigating FV hobs here
 fn initialize_hob_fvs(hob_list: &hob::HobList) -> Result<(), efi::Status> {
     let fv_hobs = hob_list.iter().filter_map(|h| if let hob::Hob::FirmwareVolume(&fv) = h { Some(fv) } else { None });
 

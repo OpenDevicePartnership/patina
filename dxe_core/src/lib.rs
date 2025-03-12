@@ -103,7 +103,6 @@ mod protocols;
 mod runtime;
 mod systemtables;
 mod tpl_lock;
-mod verification;
 
 #[cfg(test)]
 #[macro_use]
@@ -125,7 +124,6 @@ use uefi_sdk::{
     component::{Component, IntoComponent, Storage},
     error::{self, Result},
 };
-use verification::verify_platform_requirements;
 
 #[macro_export]
 macro_rules! ensure {
@@ -316,10 +314,6 @@ where
 
         if physical_hob_list.is_null() {
             panic!("HOB list pointer is null!");
-        }
-
-        if let Err(e) = verify_platform_requirements(physical_hob_list) {
-            panic!("Platform requirements verification failed: {}", e);
         }
 
         // LOGGING WORKS HERE
