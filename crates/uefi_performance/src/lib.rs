@@ -85,21 +85,25 @@ pub fn init_performance_lib(
     hob_list: &HobList,
     efi_system_table: &'static efi::SystemTable,
 ) -> Result<(), efi::Status> {
-    match unsafe { efi_system_table.boot_services.as_ref() } {
-        Some(boot_services) => BOOT_SERVICES.initialize(boot_services),
-        None => {
-            log::error!("Uefi performance exiting because of invalid parameter. BootServices is null in system table.");
-            return Err(Status::INVALID_PARAMETER);
+    // SAFETY: This is safe because `boot_services` and `runtime services` are valid pointer to theire respective struct inside the systeme table.
+    unsafe {
+        match efi_system_table.boot_services.as_ref() {
+            Some(boot_services) => BOOT_SERVICES.initialize(boot_services),
+            None => {
+                log::error!(
+                    "Uefi performance exiting because of invalid parameter. BootServices is null in system table."
+                );
+                return Err(Status::INVALID_PARAMETER);
+            }
         }
-    }
-
-    match unsafe { efi_system_table.runtime_services.as_ref() } {
-        Some(runtime_services) => RUNTIME_SERVICES.initialize(runtime_services),
-        None => {
-            log::error!(
-                "Uefi performance exiting because of invalid parameter. RuntimeServices is null in system table."
-            );
-            return Err(Status::INVALID_PARAMETER);
+        match efi_system_table.runtime_services.as_ref() {
+            Some(runtime_services) => RUNTIME_SERVICES.initialize(runtime_services),
+            None => {
+                log::error!(
+                    "Uefi performance exiting because of invalid parameter. RuntimeServices is null in system table."
+                );
+                return Err(Status::INVALID_PARAMETER);
+            }
         }
     }
 
@@ -385,7 +389,10 @@ extern "efiapi" fn create_performance_measurement(
 
 extern "efiapi" fn report_fpdt_record_buffer(_event: efi::Event, _ctx: &()) {
     let fbpt = &mut FBPT.lock();
-    fbpt.report_table(&BOOT_SERVICES, &RUNTIME_SERVICES).expect("Failed to allocate table.");
+    if let Err(_) = fbpt.report_table(&BOOT_SERVICES, &RUNTIME_SERVICES) {
+        log::error!("Fail to report FPDT.");
+        return;
+    }
 
     const EFI_SOFTWARE: u32 = 0x03000000;
     const EFI_PROGRESS_CODE: u32 = 0x00000001;
@@ -401,9 +408,10 @@ extern "efiapi" fn report_fpdt_record_buffer(_event: efi::Event, _ctx: &()) {
         fbpt.fbpt_address(),
     );
     if status.is_err() {
-        log::error!("Fail to report FBPT table.");
+        log::error!("Fail to report FBPT status code.");
     }
 
+    // SAFETY: This operation is safe because the expected configuration type of a entry with guid `EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE` is a usize.
     let status = unsafe {
         BOOT_SERVICES.install_configuration_table_unchecked(
             &guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
@@ -413,8 +421,6 @@ extern "efiapi" fn report_fpdt_record_buffer(_event: efi::Event, _ctx: &()) {
     if status.is_err() {
         log::error!("Fail to install configuration table for FPDT firmware performance.");
     }
-
-    log::info!("Report FPDT Table: {:#?}", fbpt);
 }
 
 extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, system_table: &efi::SystemTable) {
@@ -448,6 +454,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, sys
         return;
     };
 
+    // SAFETY: This is save because the reference returned by locate_protocol is nevery mutated after installation.
     let Ok(communication) = (unsafe { BOOT_SERVICES.locate_protocol(&CommunicateProtocol, None) }) else {
         log::error!("Could not locate communicate protocol interface.");
         return;
@@ -498,7 +505,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, sys
             }
             Err(status) => {
                 log::error!(
-                    "Error while trying to communicate with communicate protocol with error code: {:?}",
+                    "Error while trying to communicate with communicate protocol with error status code: {:?}",
                     status
                 );
                 return;

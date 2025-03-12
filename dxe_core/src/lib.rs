@@ -404,6 +404,7 @@ where
         // development
         _ = uefi_performance::init_performance_lib(
             &hob_list,
+            // SAFETY: `system_table_ptr` is a valid pointer that has been initialized earlier.
             unsafe { system_table_ptr.as_ref() }.expect("System Table not initialized!"),
         );
 
