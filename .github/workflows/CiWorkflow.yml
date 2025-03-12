@@ -52,6 +52,9 @@ jobs:
         run: mdbook build ${{ inputs.mdbook-path }}
         if: ${{ inputs.mdbook-path != '' }}
       
+      - name: Login to Registry
+        run: cargo login "${{ secrets.CRATES_IO_TOKEN }}" --registry UefiRust
+
       - name: Crate Release Dry Run
         run: cargo release --dry-run --no-tag --workspace --no-push --registry UefiRust
 
