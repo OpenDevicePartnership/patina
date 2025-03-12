@@ -51,6 +51,9 @@ jobs:
       - name: 📖 Build Book 📖
         run: mdbook build ${{ inputs.mdbook-path }}
         if: ${{ inputs.mdbook-path != '' }}
+      
+      - name: Crate Release Dry Run
+        run: cargo release --dry-run --no-tag --workspace --no-push --registry UefiRust
 
   run:
     name: Rust CI
