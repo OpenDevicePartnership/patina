@@ -12,6 +12,7 @@ use mu_pi::hob::{Hob, HobList};
 use r_efi::efi;
 use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
 use uefi_sdk::base::{align_up, UEFI_PAGE_SIZE};
+use uefi_sdk::error::EfiError;
 use uefi_sdk::{guid, uefi_size_to_pages};
 
 use uefi_performance::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end};
@@ -56,13 +57,13 @@ struct ImageStack {
 }
 
 impl ImageStack {
-    fn new(size: usize) -> Result<Self, efi::Status> {
+    fn new(size: usize) -> Result<Self, EfiError> {
         let mut stack: efi::PhysicalAddress = 0;
         let len = match align_up(size.max(MIN_STACK_SIZE) as u64, STACK_ALIGNMENT as u64) {
             Ok(len) => len,
             Err(e) => {
                 log::error!("Error occurred aligning the image stack up: {}", e);
-                return Err(efi::Status::INVALID_PARAMETER);
+                return Err(EfiError::InvalidParameter);
             }
         } as usize;
         // allocate an extra page for the stack guard page.
@@ -164,7 +165,7 @@ struct PrivateImageData {
 }
 
 impl PrivateImageData {
-    fn new(image_info: efi::protocols::loaded_image::Protocol, pe_info: &UefiPeInfo) -> Result<Self, efi::Status> {
+    fn new(image_info: efi::protocols::loaded_image::Protocol, pe_info: &UefiPeInfo) -> Result<Self, EfiError> {
         // Allocate pages for the image to be loaded into. We use pages here instead of a pool because we are going to
         // set memory attributes on this range and it is not valid to set attributes on pool backed memory.
         let mut image_base_page: efi::PhysicalAddress = 0;
@@ -174,26 +175,26 @@ impl PrivateImageData {
             if let Some(image_size) = image_info.image_size.checked_add(pe_info.section_alignment as u64) {
                 match usize::try_from(image_size) {
                     Ok(size) => uefi_size_to_pages!(size),
-                    Err(_) => return Err(efi::Status::LOAD_ERROR),
+                    Err(_) => return Err(EfiError::LoadError),
                 }
             } else {
-                return Err(efi::Status::LOAD_ERROR);
+                return Err(EfiError::LoadError);
             }
         } else {
             match usize::try_from(image_info.image_size) {
                 Ok(size) => uefi_size_to_pages!(size),
-                Err(_) => return Err(efi::Status::LOAD_ERROR),
+                Err(_) => return Err(EfiError::LoadError),
             }
         };
 
         core_allocate_pages(efi::ALLOCATE_ANY_PAGES, image_info.image_code_type, num_pages, &mut image_base_page)?;
 
         if image_base_page == 0 {
-            return Err(efi::Status::OUT_OF_RESOURCES);
+            return Err(EfiError::OutOfResources);
         }
 
         let aligned_image_start =
-            align_up(image_base_page as u64, pe_info.section_alignment as u64).map_err(|_| efi::Status::LOAD_ERROR)?;
+            align_up(image_base_page as u64, pe_info.section_alignment as u64).map_err(|_| EfiError::LoadError)?;
 
         let mut image_data = PrivateImageData {
             image_buffer: core::ptr::slice_from_raw_parts_mut(
@@ -250,7 +251,7 @@ impl PrivateImageData {
         size: usize,
         alignment: usize,
         code_type: efi::MemoryType,
-    ) -> Result<(), efi::Status> {
+    ) -> Result<(), EfiError> {
         let mut hii_base_page: efi::PhysicalAddress = 0;
         // if we have a unique alignment requirement, we need to overallocate the buffer to ensure we can align the base
         let num_pages: usize =
@@ -258,11 +259,10 @@ impl PrivateImageData {
         core_allocate_pages(efi::ALLOCATE_ANY_PAGES, code_type, num_pages, &mut hii_base_page)?;
 
         if hii_base_page == 0 {
-            return Err(efi::Status::OUT_OF_RESOURCES);
+            return Err(EfiError::OutOfResources);
         }
 
-        let aligned_hii_start =
-            align_up(hii_base_page as u64, alignment as u64).map_err(|_| efi::Status::LOAD_ERROR)?;
+        let aligned_hii_start = align_up(hii_base_page as u64, alignment as u64).map_err(|_| EfiError::LoadError)?;
 
         self.hii_resource_section = Some(core::ptr::slice_from_raw_parts_mut(aligned_hii_start as *mut u8, size));
         self.hii_resource_section_base = Some(hii_base_page);
@@ -567,11 +567,11 @@ fn install_dxe_core_image(hob_list: &HobList) {
 fn core_load_pe_image(
     image: &[u8],
     mut image_info: efi::protocols::loaded_image::Protocol,
-) -> Result<PrivateImageData, efi::Status> {
+) -> Result<PrivateImageData, EfiError> {
     // parse and validate the header and retrieve the image data from it.
     let pe_info = pecoff::UefiPeInfo::parse(image)
         .inspect_err(|err| log::error!("core_load_pe_image failed: UefiPeInfo::parse returned {:#x?}", err))
-        .map_err(|_| efi::Status::UNSUPPORTED)?;
+        .map_err(|_| EfiError::Unsupported)?;
 
     // based on the image type, determine the correct allocator and code/data types.
     let (code_type, data_type) = match pe_info.image_type {
@@ -580,7 +580,7 @@ fn core_load_pe_image(
         EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER => (efi::RUNTIME_SERVICES_CODE, efi::RUNTIME_SERVICES_DATA),
         unsupported_type => {
             log::error!("core_load_pe_image_failed: unsupported image type: {:#x?}", unsupported_type);
-            return Err(efi::Status::UNSUPPORTED);
+            return Err(EfiError::Unsupported);
         }
     };
 
@@ -591,7 +591,7 @@ fn core_load_pe_image(
     if size % alignment != 0 {
         log::error!("core_load_pe_image_failed: size of image is not a multiple of the section alignment");
         debug_assert!(false);
-        return Err(efi::Status::LOAD_ERROR);
+        return Err(EfiError::LoadError);
     }
 
     image_info.image_size = size as u64;
@@ -605,13 +605,13 @@ fn core_load_pe_image(
     //load the image into the new loaded image buffer
     pecoff::load_image(&pe_info, image, loaded_image)
         .inspect_err(|err| log::error!("core_load_pe_image_failed: load_image returned status: {:#x?}", err))
-        .map_err(|_| efi::Status::LOAD_ERROR)?;
+        .map_err(|_| EfiError::LoadError)?;
 
     //relocate the image to the address at which it was loaded.
     let loaded_image_addr = private_info.image_info.image_base as usize;
     private_info.relocation_data = pecoff::relocate_image(&pe_info, loaded_image_addr, loaded_image, &Vec::new())
         .inspect_err(|err| log::error!("core_load_pe_image_failed: relocate_image returned status: {:#x?}", err))
-        .map_err(|_| efi::Status::LOAD_ERROR)?;
+        .map_err(|_| EfiError::LoadError)?;
 
     // update the entry point. Transmute is required here to cast the raw function address to the ImageEntryPoint function pointer type.
     private_info.entry_point = unsafe {
@@ -622,7 +622,7 @@ fn core_load_pe_image(
 
     let result = pecoff::load_resource_section(&pe_info, image)
         .inspect_err(|err| log::error!("core_load_pe_image_failed: load_resource_section returned status: {:#x?}", err))
-        .map_err(|_| efi::Status::LOAD_ERROR)?;
+        .map_err(|_| EfiError::LoadError)?;
 
     if let Some((resource_section_offset, resource_section_size)) = result {
         private_info.allocate_resource_section(resource_section_size, alignment, code_type)?;
@@ -661,9 +661,9 @@ fn core_load_pe_image(
 fn get_buffer_by_file_path(
     boot_policy: bool,
     file_path: *mut efi::protocols::device_path::Protocol,
-) -> Result<(Vec<u8>, bool, efi::Handle, u32), efi::Status> {
+) -> Result<(Vec<u8>, bool, efi::Handle, u32), EfiError> {
     if file_path.is_null() {
-        Err(efi::Status::INVALID_PARAMETER)?;
+        Err(EfiError::InvalidParameter)?;
     }
 
     //TODO: EDK2 core has support for loading an image from an FV device path which is not presently supported here.
@@ -687,12 +687,12 @@ fn get_buffer_by_file_path(
         return Ok((buffer, false, device_handle, 0));
     }
 
-    Err(efi::Status::NOT_FOUND)
+    Err(EfiError::NotFound)
 }
 
 fn get_file_buffer_from_sfs(
     file_path: *mut efi::protocols::device_path::Protocol,
-) -> Result<(Vec<u8>, efi::Handle), efi::Status> {
+) -> Result<(Vec<u8>, efi::Handle), EfiError> {
     let (remaining_file_path, handle) =
         core_locate_device_path(efi::protocols::simple_file_system::PROTOCOL_GUID, file_path)?;
 
@@ -703,7 +703,7 @@ fn get_file_buffer_from_sfs(
             efi::protocols::device_path::TYPE_MEDIA
                 if node.header.sub_type == efi::protocols::device_path::Media::SUBTYPE_FILE_PATH => {} //proceed on valid path node
             efi::protocols::device_path::TYPE_END => break,
-            _ => Err(efi::Status::UNSUPPORTED)?,
+            _ => Err(EfiError::Unsupported)?,
         }
         //For MEDIA_FILE_PATH_DP, file name is in the node data, but it needs to be converted to Vec<u16> for call to open.
         let filename: Vec<u16> = node
@@ -713,7 +713,7 @@ fn get_file_buffer_from_sfs(
                 if let Ok(x_bytes) = x.try_into() {
                     Ok(u16::from_le_bytes(x_bytes))
                 } else {
-                    Err(efi::Status::INVALID_PARAMETER)
+                    Err(EfiError::InvalidParameter)
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -730,47 +730,48 @@ fn get_file_buffer_from_load_protocol(
     protocol: efi::Guid,
     boot_policy: bool,
     file_path: *mut efi::protocols::device_path::Protocol,
-) -> Result<(Vec<u8>, efi::Handle), efi::Status> {
+) -> Result<(Vec<u8>, efi::Handle), EfiError> {
     if !(protocol == efi::protocols::load_file::PROTOCOL_GUID || protocol == efi::protocols::load_file2::PROTOCOL_GUID)
     {
-        Err(efi::Status::INVALID_PARAMETER)?;
+        Err(EfiError::InvalidParameter)?;
     }
 
     if protocol == efi::protocols::load_file2::PROTOCOL_GUID && boot_policy {
-        Err(efi::Status::INVALID_PARAMETER)?;
+        Err(EfiError::InvalidParameter)?;
     }
 
     let (remaining_file_path, handle) = core_locate_device_path(protocol, file_path)?;
 
     let load_file = PROTOCOL_DB.get_interface_for_handle(handle, protocol)?;
     let load_file =
-        unsafe { (load_file as *mut efi::protocols::load_file::Protocol).as_mut().ok_or(efi::Status::UNSUPPORTED)? };
+        unsafe { (load_file as *mut efi::protocols::load_file::Protocol).as_mut().ok_or(EfiError::Unsupported)? };
 
     //determine buffer size.
     let mut buffer_size = 0;
-    match (load_file.load_file)(
+    let status = (load_file.load_file)(
         load_file,
         remaining_file_path,
         boot_policy.into(),
         core::ptr::addr_of_mut!(buffer_size),
         core::ptr::null_mut(),
-    ) {
-        efi::Status::BUFFER_TOO_SMALL => (),                     //expected
-        efi::Status::SUCCESS => Err(efi::Status::DEVICE_ERROR)?, //not expected for buffer_size = 0
-        err => Err(err)?,                                        //unexpected error.
+    );
+
+    match status {
+        efi::Status::BUFFER_TOO_SMALL => (),                 // expected
+        efi::Status::SUCCESS => Err(EfiError::DeviceError)?, // not expected for buffer_size = 0
+        _ => EfiError::status_to_result(status)?,            // unexpected error.
     }
 
     let mut file_buffer = vec![0u8; buffer_size];
-    match (load_file.load_file)(
+    let status = (load_file.load_file)(
         load_file,
         remaining_file_path,
         boot_policy.into(),
         core::ptr::addr_of_mut!(buffer_size),
         file_buffer.as_mut_ptr() as *mut c_void,
-    ) {
-        efi::Status::SUCCESS => Ok((file_buffer, handle)),
-        err => Err(err),
-    }
+    );
+
+    EfiError::status_to_result(status).map(|_| (file_buffer, handle))
 }
 
 /// Relocates all runtime images to their virtual memory address. This function must only be called
@@ -798,7 +799,7 @@ fn authenticate_image(
     boot_policy: bool,
     from_fv: bool,
     authentication_status: u32,
-) -> Result<(), efi::Status> {
+) -> Result<(), EfiError> {
     let security2_protocol = unsafe {
         match PROTOCOL_DB.locate_protocol(mu_pi::protocols::security2::PROTOCOL_GUID) {
             Ok(protocol) => (protocol as *mut mu_pi::protocols::security2::Protocol).as_ref(),
@@ -842,10 +843,7 @@ fn authenticate_image(
         );
     }
 
-    if security_status != efi::Status::SUCCESS {
-        return Err(security_status);
-    }
-    Ok(())
+    EfiError::status_to_result(security_status)
 }
 
 /// Loads the image specified by the device path (not yet supported) or slice.
@@ -860,12 +858,12 @@ pub fn core_load_image(
     parent_image_handle: efi::Handle,
     file_path: *mut efi::protocols::device_path::Protocol,
     image: Option<&[u8]>,
-) -> Result<(efi::Handle, efi::Status), efi::Status> {
+) -> Result<(efi::Handle, Result<(), EfiError>), EfiError> {
     perf_load_image_begin!(core::ptr::null_mut());
 
     if image.is_none() && file_path.is_null() {
         log::error!("failed to load image: image is none or device path is null.");
-        return Err(efi::Status::INVALID_PARAMETER);
+        return Err(EfiError::InvalidParameter);
     }
 
     PROTOCOL_DB
@@ -875,7 +873,7 @@ pub fn core_load_image(
     PROTOCOL_DB
         .get_interface_for_handle(parent_image_handle, efi::protocols::loaded_image::PROTOCOL_GUID)
         .inspect_err(|err| log::error!("failed to load image: failed to get loaded image interface: {:#x?}", err))
-        .map_err(|_| efi::Status::INVALID_PARAMETER)?;
+        .map_err(|_| EfiError::InvalidParameter)?;
 
     let (image_to_load, from_fv, device_handle, authentication_status) = match image {
         Some(image) => {
@@ -895,12 +893,7 @@ pub fn core_load_image(
     };
 
     // authenticate the image
-    let security_status =
-        match authenticate_image(file_path, &image_to_load, boot_policy, from_fv, authentication_status) {
-            Ok(_) => efi::Status::SUCCESS,
-            Err(efi::Status::SECURITY_VIOLATION) => efi::Status::SECURITY_VIOLATION,
-            Err(err) => return Err(err),
-        };
+    let security_status = authenticate_image(file_path, &image_to_load, boot_policy, from_fv, authentication_status);
 
     // load the image.
     let mut image_info = empty_image_info();
@@ -917,7 +910,8 @@ pub fn core_load_image(
         {
             // Strip the parent device path prefix from the full device path to leave only the file node
             let (_, device_path_size) =
-                device_path_node_count(device_path as *mut efi::protocols::device_path::Protocol)?;
+                device_path_node_count(device_path as *mut efi::protocols::device_path::Protocol)
+                    .map_err(|status| EfiError::status_to_result(status).unwrap_err())?;
             let device_path_size_minus_end_node: usize =
                 device_path_size.saturating_sub(core::mem::size_of::<efi::protocols::device_path::Protocol>());
             let file_path = unsafe { (file_path as *const u8).add(device_path_size_minus_end_node) };
@@ -958,7 +952,10 @@ pub fn core_load_image(
         core::ptr::null_mut()
     } else {
         // make copy and convert to raw pointer to avoid drop at end of function.
-        Box::into_raw(copy_device_path_to_boxed_slice(file_path)?) as *mut u8
+        Box::into_raw(
+            copy_device_path_to_boxed_slice(file_path)
+                .map_err(|status| EfiError::status_to_result(status).unwrap_err())?,
+        ) as *mut u8
     };
 
     core_install_protocol_interface(
@@ -1026,10 +1023,13 @@ extern "efiapi" fn load_image(
     };
 
     match core_load_image(boot_policy.into(), parent_image_handle, device_path, image) {
-        Err(err) => err,
+        Err(err) => err.into(),
         Ok((handle, security_status)) => unsafe {
             image_handle.write(handle);
-            security_status
+            match security_status {
+                Ok(()) => efi::Status::SUCCESS,
+                Err(err) => err.into(),
+            }
         },
     }
 }
@@ -1078,10 +1078,10 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
 
     if let Some(private_data) = PRIVATE_IMAGE_DATA.lock().private_image_data.get_mut(&image_handle) {
         if private_data.started {
-            Err(efi::Status::INVALID_PARAMETER)?;
+            Err(EfiError::InvalidParameter)?;
         }
     } else {
-        Err(efi::Status::INVALID_PARAMETER)?;
+        Err(EfiError::InvalidParameter)?;
     }
 
     // allocate a buffer for the entry point stack.
@@ -1188,7 +1188,7 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
                 }
             }
         } else if !force_unload {
-            Err(efi::Status::UNSUPPORTED)?;
+            Err(EfiError::Unsupported)?;
         }
     }
     let handles = PROTOCOL_DB.locate_handles(None).unwrap_or_default();
@@ -1343,6 +1343,7 @@ mod tests {
     use core::{ffi::c_void, sync::atomic::AtomicBool};
     use r_efi::efi;
     use std::{fs::File, io::Read};
+    use uefi_sdk::error::EfiError;
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| unsafe {
@@ -1700,7 +1701,7 @@ mod tests {
     #[test]
     fn get_buffer_by_file_path_should_fail_if_no_file_support() {
         with_locked_state(|| {
-            assert_eq!(get_buffer_by_file_path(true, core::ptr::null_mut()), Err(efi::Status::INVALID_PARAMETER));
+            assert_eq!(get_buffer_by_file_path(true, core::ptr::null_mut()), Err(EfiError::InvalidParameter));
 
             //build a device path as a byte array for the test.
             let mut device_path_bytes = [
@@ -1733,7 +1734,7 @@ mod tests {
             ];
             let device_path_ptr = device_path_bytes.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;
 
-            assert_eq!(get_buffer_by_file_path(true, device_path_ptr), Err(efi::Status::NOT_FOUND));
+            assert_eq!(get_buffer_by_file_path(true, device_path_ptr), Err(EfiError::NotFound));
         });
     }
 

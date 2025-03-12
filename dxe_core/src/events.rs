@@ -57,7 +57,7 @@ extern "efiapi" fn create_event(
             unsafe { *event = new_event };
             efi::Status::SUCCESS
         }
-        Err(err) => err,
+        Err(err) => err.into(),
     }
 }
 
@@ -89,21 +89,21 @@ extern "efiapi" fn create_event_ex(
             unsafe { *event = new_event };
             efi::Status::SUCCESS
         }
-        Err(err) => err,
+        Err(err) => err.into(),
     }
 }
 
 pub extern "efiapi" fn close_event(event: efi::Event) -> efi::Status {
     match EVENT_DB.close_event(event) {
         Ok(()) => efi::Status::SUCCESS,
-        Err(err) => err,
+        Err(err) => err.into(),
     }
 }
 
 pub extern "efiapi" fn signal_event(event: efi::Event) -> efi::Status {
     let status = match EVENT_DB.signal_event(event) {
         Ok(()) => efi::Status::SUCCESS,
-        Err(err) => err,
+        Err(err) => err.into(),
     };
 
     //Note: The C-reference implementation of SignalEvent gets an immediate dispatch of
@@ -149,7 +149,7 @@ extern "efiapi" fn wait_for_event(
 pub extern "efiapi" fn check_event(event: efi::Event) -> efi::Status {
     let event_type = match EVENT_DB.get_event_type(event) {
         Ok(event_type) => event_type,
-        Err(err) => return err,
+        Err(err) => return err.into(),
     };
 
     if event_type.is_notify_signal() {
@@ -162,12 +162,12 @@ pub extern "efiapi" fn check_event(event: efi::Event) -> efi::Status {
                 return efi::Status::SUCCESS;
             }
         }
-        Err(err) => return err,
+        Err(err) => return err.into(),
     }
 
     match EVENT_DB.queue_event_notify(event) {
         Ok(()) => (),
-        Err(err) => return err,
+        Err(err) => return err.into(),
     }
 
     // raise/restore TPL to allow notifies to occur at the appropriate level.
@@ -180,7 +180,7 @@ pub extern "efiapi" fn check_event(event: efi::Event) -> efi::Status {
                 return efi::Status::SUCCESS;
             }
         }
-        Err(err) => return err,
+        Err(err) => return err.into(),
     }
 
     efi::Status::NOT_READY
@@ -200,7 +200,7 @@ pub extern "efiapi" fn set_timer(event: efi::Event, timer_type: efi::TimerDelay,
 
     match EVENT_DB.set_timer(event, timer_type, trigger_time, period) {
         Ok(()) => efi::Status::SUCCESS,
-        Err(err) => err,
+        Err(err) => err.into(),
     }
 }
 

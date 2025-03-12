@@ -20,6 +20,7 @@ use mu_pi::{
 
 use r_efi::efi;
 use uefi_device_path::concat_device_path_to_boxed_slice;
+use uefi_sdk::error::EfiError;
 
 use crate::{
     allocator::core_allocate_pool,
@@ -226,7 +227,7 @@ fn install_fvb_protocol(
     handle: Option<efi::Handle>,
     parent_handle: Option<efi::Handle>,
     base_address: u64,
-) -> Result<efi::Handle, efi::Status> {
+) -> Result<efi::Handle, EfiError> {
     let mut fvb_interface = Box::from(mu_pi::protocols::firmware_volume_block::Protocol {
         get_attributes: fvb_get_attributes,
         set_attributes: fvb_set_attributes,
@@ -571,7 +572,7 @@ fn install_fv_protocol(
     handle: Option<efi::Handle>,
     parent_handle: Option<efi::Handle>,
     base_address: u64,
-) -> Result<efi::Handle, efi::Status> {
+) -> Result<efi::Handle, EfiError> {
     let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
         get_volume_attributes: fv_get_volume_attributes,
         set_volume_attributes: fv_set_volume_attributes,
@@ -663,8 +664,9 @@ impl FvPiWgDevicePath {
     }
 }
 
-fn install_fv_device_path_protocol(handle: Option<efi::Handle>, base_address: u64) -> Result<efi::Handle, efi::Status> {
-    let fv = unsafe { fw_fs::FirmwareVolume::new_from_address(base_address) }?;
+fn install_fv_device_path_protocol(handle: Option<efi::Handle>, base_address: u64) -> Result<efi::Handle, EfiError> {
+    let fv = unsafe { fw_fs::FirmwareVolume::new_from_address(base_address) }
+        .map_err(|status| EfiError::status_to_result(status).unwrap_err())?;
 
     let device_path_ptr = match fv.fv_name() {
         Some(fv_name) => {
@@ -710,7 +712,7 @@ fn install_fv_device_path_protocol(handle: Option<efi::Handle>, base_address: u6
 pub fn core_install_firmware_volume(
     base_address: u64,
     parent_handle: Option<efi::Handle>,
-) -> Result<efi::Handle, efi::Status> {
+) -> Result<efi::Handle, EfiError> {
     let handle = install_fv_device_path_protocol(None, base_address)?;
     install_fvb_protocol(Some(handle), parent_handle, base_address)?;
     install_fv_protocol(Some(handle), parent_handle, base_address)?;

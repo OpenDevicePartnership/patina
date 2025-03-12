@@ -29,7 +29,7 @@ pub fn core_install_protocol_interface(
     handle: Option<efi::Handle>,
     protocol: efi::Guid,
     interface: *mut c_void,
-) -> Result<efi::Handle, efi::Status> {
+) -> Result<efi::Handle, EfiError> {
     log::info!("InstallProtocolInterface: {:?} @ {:#x?}", guid_fmt!(protocol), interface);
     let (handle, notifies) = PROTOCOL_DB.install_protocol_interface(handle, protocol, interface)?;
 
@@ -63,7 +63,7 @@ extern "efiapi" fn install_protocol_interface(
     let caller_handle = if caller_handle.is_null() { None } else { Some(caller_handle) };
 
     let installed_handle = match core_install_protocol_interface(caller_handle, caller_protocol, interface) {
-        Err(err) => return err,
+        Err(err) => return err.into(),
         Ok(handle) => handle,
     };
 
@@ -214,7 +214,7 @@ extern "efiapi" fn reinstall_protocol_interface(
     if let Err(err) = core_install_protocol_interface(Some(handle), protocol, new_interface) {
         let result = uninstall_dummy_interface(handle);
         debug_assert!(result.is_ok());
-        return err;
+        return err.into();
     }
 
     // Dummy interface is no longer required. Proceed if uninstall fails, but assert for debug.

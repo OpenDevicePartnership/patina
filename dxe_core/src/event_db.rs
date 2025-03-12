@@ -18,6 +18,7 @@ use alloc::{
 };
 use core::{cmp::Ordering, ffi::c_void, fmt};
 use r_efi::efi;
+use uefi_sdk::error::EfiError;
 
 use crate::tpl_lock;
 
@@ -67,7 +68,7 @@ pub enum EventType {
 }
 
 impl TryFrom<u32> for EventType {
-    type Error = efi::Status;
+    type Error = EfiError;
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
             x if x == EventType::TimerNotify as u32 => Ok(EventType::TimerNotify),
@@ -76,11 +77,11 @@ impl TryFrom<u32> for EventType {
             x if x == EventType::NotifySignal as u32 => Ok(EventType::NotifySignal),
             //NOTE: the following are placeholders for corresponding event groups; we don't allow them here
             //as the code using the library should do the appropriate translation to event groups before calling create_event
-            x if x == EventType::ExitBootServices as u32 => Err(efi::Status::INVALID_PARAMETER),
-            x if x == EventType::SetVirtualAddress as u32 => Err(efi::Status::INVALID_PARAMETER),
+            x if x == EventType::ExitBootServices as u32 => Err(EfiError::InvalidParameter),
+            x if x == EventType::SetVirtualAddress as u32 => Err(EfiError::InvalidParameter),
             x if x == EventType::Generic as u32 => Ok(EventType::Generic),
             x if x == EventType::TimerNotifyWait as u32 => Ok(EventType::TimerNotifyWait),
-            _ => Err(efi::Status::INVALID_PARAMETER),
+            _ => Err(EfiError::InvalidParameter),
         }
     }
 }
@@ -233,23 +234,23 @@ impl Event {
         notify_function: Option<efi::EventNotify>,
         notify_context: Option<*mut c_void>,
         event_group: Option<efi::Guid>,
-    ) -> Result<Self, efi::Status> {
+    ) -> Result<Self, EfiError> {
         let notifiable = (event_type & (efi::EVT_NOTIFY_SIGNAL | efi::EVT_NOTIFY_WAIT)) != 0;
         let event_type: EventType = event_type.try_into()?;
 
         if notifiable {
             if notify_function.is_none() {
-                return Err(efi::Status::INVALID_PARAMETER);
+                return Err(EfiError::InvalidParameter);
             }
 
             // Pedantic check; this will probably not work with "real firmware", so
             // loosen up a bit.
             // match notify_tpl {
             //     efi::TPL_APPLICATION | efi::TPL_CALLBACK | efi::TPL_NOTIFY | efi::TPL_HIGH_LEVEL => (),
-            //     _ => return Err(efi::Status::INVALID_PARAMETER),
+            //     _ => return Err(EfiError::InvalidParameter),
             // }
             if !((efi::TPL_APPLICATION + 1)..=efi::TPL_HIGH_LEVEL).contains(&notify_tpl) {
-                return Err(efi::Status::INVALID_PARAMETER);
+                return Err(EfiError::InvalidParameter);
             }
         }
 
@@ -290,7 +291,7 @@ impl EventDb {
         notify_function: Option<efi::EventNotify>,
         notify_context: Option<*mut c_void>,
         event_group: Option<efi::Guid>,
-    ) -> Result<efi::Event, efi::Status> {
+    ) -> Result<efi::Event, EfiError> {
         let id = self.next_event_id;
         self.next_event_id += 1;
         let event = Event::new(id, event_type, notify_tpl, notify_function, notify_context, event_group)?;
@@ -298,9 +299,9 @@ impl EventDb {
         Ok(id as efi::Event)
     }
 
-    fn close_event(&mut self, event: efi::Event) -> Result<(), efi::Status> {
+    fn close_event(&mut self, event: efi::Event) -> Result<(), EfiError> {
         let id = event as usize;
-        self.events.remove(&id).ok_or(efi::Status::INVALID_PARAMETER)?;
+        self.events.remove(&id).ok_or(EfiError::InvalidParameter)?;
         Ok(())
     }
 
@@ -319,9 +320,9 @@ impl EventDb {
         }
     }
 
-    fn signal_event(&mut self, event: efi::Event) -> Result<(), efi::Status> {
+    fn signal_event(&mut self, event: efi::Event) -> Result<(), EfiError> {
         let id = event as usize;
-        let current_event = self.events.get_mut(&id).ok_or(efi::Status::INVALID_PARAMETER)?;
+        let current_event = self.events.get_mut(&id).ok_or(EfiError::InvalidParameter)?;
 
         //signal all the members of the same event group (including the current one), if present.
         if let Some(target_group) = current_event.event_group {
@@ -347,9 +348,9 @@ impl EventDb {
         }
     }
 
-    fn clear_signal(&mut self, event: efi::Event) -> Result<(), efi::Status> {
+    fn clear_signal(&mut self, event: efi::Event) -> Result<(), EfiError> {
         let id = event as usize;
-        let event = self.events.get_mut(&id).ok_or(efi::Status::INVALID_PARAMETER)?;
+        let event = self.events.get_mut(&id).ok_or(EfiError::InvalidParameter)?;
         event.signaled = false;
         Ok(())
     }
@@ -363,9 +364,9 @@ impl EventDb {
         }
     }
 
-    fn queue_event_notify(&mut self, event: efi::Event) -> Result<(), efi::Status> {
+    fn queue_event_notify(&mut self, event: efi::Event) -> Result<(), EfiError> {
         let id = event as usize;
-        let current_event = self.events.get_mut(&id).ok_or(efi::Status::INVALID_PARAMETER)?;
+        let current_event = self.events.get_mut(&id).ok_or(EfiError::InvalidParameter)?;
 
         Self::queue_notify_event(&mut self.pending_notifies, current_event, self.notify_tags);
         self.notify_tags += 1;
@@ -373,17 +374,17 @@ impl EventDb {
         Ok(())
     }
 
-    fn get_event_type(&mut self, event: efi::Event) -> Result<EventType, efi::Status> {
+    fn get_event_type(&mut self, event: efi::Event) -> Result<EventType, EfiError> {
         let id = event as usize;
-        Ok(self.events.get(&id).ok_or(efi::Status::INVALID_PARAMETER)?.event_type)
+        Ok(self.events.get(&id).ok_or(EfiError::InvalidParameter)?.event_type)
     }
 
     #[allow(dead_code)]
-    fn get_notification_data(&mut self, event: efi::Event) -> Result<EventNotification, efi::Status> {
+    fn get_notification_data(&mut self, event: efi::Event) -> Result<EventNotification, EfiError> {
         let id = event as usize;
         if let Some(found_event) = self.events.get(&id) {
             if (found_event.event_type as u32) & (efi::EVT_NOTIFY_SIGNAL | efi::EVT_NOTIFY_WAIT) == 0 {
-                return Err(efi::Status::NOT_FOUND);
+                return Err(EfiError::NotFound);
             }
             Ok(EventNotification {
                 event,
@@ -392,7 +393,7 @@ impl EventDb {
                 notify_context: found_event.notify_context,
             })
         } else {
-            Err(efi::Status::NOT_FOUND)
+            Err(EfiError::NotFound)
         }
     }
 
@@ -402,26 +403,26 @@ impl EventDb {
         timer_type: TimerDelay,
         trigger_time: Option<u64>,
         period: Option<u64>,
-    ) -> Result<(), efi::Status> {
+    ) -> Result<(), EfiError> {
         let id = event as usize;
         if let Some(event) = self.events.get_mut(&id) {
             if !event.event_type.is_timer() {
-                return Err(efi::Status::INVALID_PARAMETER);
+                return Err(EfiError::InvalidParameter);
             }
             match timer_type {
                 TimerDelay::Cancel => {
                     if trigger_time.is_some() || period.is_some() {
-                        return Err(efi::Status::INVALID_PARAMETER);
+                        return Err(EfiError::InvalidParameter);
                     }
                 }
                 TimerDelay::Periodic => {
                     if trigger_time.is_none() || period.is_none() {
-                        return Err(efi::Status::INVALID_PARAMETER);
+                        return Err(EfiError::InvalidParameter);
                     }
                 }
                 TimerDelay::Relative => {
                     if trigger_time.is_none() || period.is_some() {
-                        return Err(efi::Status::INVALID_PARAMETER);
+                        return Err(EfiError::InvalidParameter);
                     }
                 }
             }
@@ -429,7 +430,7 @@ impl EventDb {
             event.period = period;
             Ok(())
         } else {
-            Err(efi::Status::INVALID_PARAMETER)
+            Err(EfiError::InvalidParameter)
         }
     }
 
@@ -555,7 +556,7 @@ impl SpinLockedEventDb {
         notify_function: Option<efi::EventNotify>,
         notify_context: Option<*mut c_void>,
         event_group: Option<efi::Guid>,
-    ) -> Result<efi::Event, efi::Status> {
+    ) -> Result<efi::Event, EfiError> {
         self.lock().create_event(event_type, notify_tpl, notify_function, notify_context, event_group)
     }
 
@@ -567,7 +568,7 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
-    pub fn close_event(&self, event: efi::Event) -> Result<(), efi::Status> {
+    pub fn close_event(&self, event: efi::Event) -> Result<(), EfiError> {
         self.lock().close_event(event)
     }
 
@@ -579,7 +580,7 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
-    pub fn signal_event(&self, event: efi::Event) -> Result<(), efi::Status> {
+    pub fn signal_event(&self, event: efi::Event) -> Result<(), EfiError> {
         self.lock().signal_event(event)
     }
 
@@ -597,7 +598,7 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect event is given.
-    pub fn get_event_type(&self, event: efi::Event) -> Result<EventType, efi::Status> {
+    pub fn get_event_type(&self, event: efi::Event) -> Result<EventType, EfiError> {
         self.lock().get_event_type(event)
     }
 
@@ -613,7 +614,7 @@ impl SpinLockedEventDb {
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
     #[allow(dead_code)]
-    pub fn clear_signal(&self, event: efi::Event) -> Result<(), efi::Status> {
+    pub fn clear_signal(&self, event: efi::Event) -> Result<(), EfiError> {
         self.lock().clear_signal(event)
     }
 
@@ -622,7 +623,7 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
-    pub fn read_and_clear_signaled(&self, event: efi::Event) -> Result<bool, efi::Status> {
+    pub fn read_and_clear_signaled(&self, event: efi::Event) -> Result<bool, EfiError> {
         let mut event_db = self.lock();
         let signaled = event_db.is_signaled(event);
         if signaled {
@@ -638,7 +639,7 @@ impl SpinLockedEventDb {
     /// ## Errors
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
-    pub fn queue_event_notify(&self, event: efi::Event) -> Result<(), efi::Status> {
+    pub fn queue_event_notify(&self, event: efi::Event) -> Result<(), EfiError> {
         self.lock().queue_event_notify(event)
     }
 
@@ -648,7 +649,7 @@ impl SpinLockedEventDb {
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
     #[allow(dead_code)]
-    pub fn get_notification_data(&self, event: efi::Event) -> Result<EventNotification, efi::Status> {
+    pub fn get_notification_data(&self, event: efi::Event) -> Result<EventNotification, EfiError> {
         self.lock().get_notification_data(event)
     }
 
@@ -666,7 +667,7 @@ impl SpinLockedEventDb {
         timer_type: TimerDelay,
         trigger_time: Option<u64>,
         period: Option<u64>,
-    ) -> Result<(), efi::Status> {
+    ) -> Result<(), EfiError> {
         self.lock().set_timer(event, timer_type, trigger_time, period)
     }
 
@@ -787,7 +788,7 @@ mod tests {
                 None,
                 None,
             );
-            assert_eq!(result, Err(efi::Status::INVALID_PARAMETER));
+            assert_eq!(result, Err(EfiError::InvalidParameter));
 
             //if type has efi::EVT_NOTIFY_SIGNAL or efi::EVT_NOTIFY_WAIT, then NotifyFunction must be non-NULL and NotifyTpl must be a valid efi::TPL.
             //Try to create a notified event with None notify_function - should fail.
@@ -798,7 +799,7 @@ mod tests {
                 None,
                 None,
             );
-            assert_eq!(result, Err(efi::Status::INVALID_PARAMETER));
+            assert_eq!(result, Err(EfiError::InvalidParameter));
 
             //Try to create a notified event with Some notify_function but invalid efi::TPL - should fail.
             let result = SPIN_LOCKED_EVENT_DB.create_event(
@@ -808,7 +809,7 @@ mod tests {
                 None,
                 None,
             );
-            assert_eq!(result, Err(efi::Status::INVALID_PARAMETER));
+            assert_eq!(result, Err(EfiError::InvalidParameter));
         });
     }
 
@@ -861,7 +862,7 @@ mod tests {
             }
 
             for event in events {
-                let result: Result<(), efi::Status> = SPIN_LOCKED_EVENT_DB.signal_event(event);
+                let result: Result<(), EfiError> = SPIN_LOCKED_EVENT_DB.signal_event(event);
                 assert!(result.is_ok());
                 assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
             }
@@ -1433,7 +1434,7 @@ mod tests {
 
             let event = (event as usize + 1) as *mut c_void;
             let result = SPIN_LOCKED_EVENT_DB.get_event_type(event);
-            assert_eq!(result, Err(efi::Status::INVALID_PARAMETER));
+            assert_eq!(result, Err(EfiError::InvalidParameter));
         });
     }
 
@@ -1478,10 +1479,10 @@ mod tests {
 
             let event = SPIN_LOCKED_EVENT_DB.create_event(efi::EVT_TIMER, efi::TPL_NOTIFY, None, None, None).unwrap();
             let notification_data = SPIN_LOCKED_EVENT_DB.get_notification_data(event);
-            assert_eq!(notification_data.err(), Some(efi::Status::NOT_FOUND));
+            assert_eq!(notification_data.err(), Some(EfiError::NotFound));
 
             let notification_data = SPIN_LOCKED_EVENT_DB.get_notification_data(0x1234 as *mut c_void);
-            assert_eq!(notification_data.err(), Some(efi::Status::NOT_FOUND));
+            assert_eq!(notification_data.err(), Some(EfiError::NotFound));
         });
     }
 
@@ -1524,31 +1525,31 @@ mod tests {
                 .unwrap();
 
             let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Periodic, Some(0x100), Some(0x200));
-            assert_eq!(result.err(), Some(efi::Status::INVALID_PARAMETER));
+            assert_eq!(result.err(), Some(EfiError::InvalidParameter));
 
             let event = SPIN_LOCKED_EVENT_DB
                 .create_event(efi::EVT_TIMER, efi::TPL_NOTIFY, Some(test_notify_function), None, None)
                 .unwrap();
             let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Cancel, Some(0x100), None);
-            assert_eq!(result.err(), Some(efi::Status::INVALID_PARAMETER));
+            assert_eq!(result.err(), Some(EfiError::InvalidParameter));
 
             let event = SPIN_LOCKED_EVENT_DB
                 .create_event(efi::EVT_TIMER, efi::TPL_NOTIFY, Some(test_notify_function), None, None)
                 .unwrap();
             let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Periodic, None, None);
-            assert_eq!(result.err(), Some(efi::Status::INVALID_PARAMETER));
+            assert_eq!(result.err(), Some(EfiError::InvalidParameter));
 
             let event = SPIN_LOCKED_EVENT_DB
                 .create_event(efi::EVT_TIMER, efi::TPL_NOTIFY, Some(test_notify_function), None, None)
                 .unwrap();
             let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Relative, None, Some(0x100));
-            assert_eq!(result.err(), Some(efi::Status::INVALID_PARAMETER));
+            assert_eq!(result.err(), Some(EfiError::InvalidParameter));
 
             let result = SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Relative, None, Some(0x100));
-            assert_eq!(result.err(), Some(efi::Status::INVALID_PARAMETER));
+            assert_eq!(result.err(), Some(EfiError::InvalidParameter));
 
             let result = SPIN_LOCKED_EVENT_DB.set_timer(0x1234 as *mut c_void, TimerDelay::Relative, Some(0x100), None);
-            assert_eq!(result.err(), Some(efi::Status::INVALID_PARAMETER));
+            assert_eq!(result.err(), Some(EfiError::InvalidParameter));
         });
     }
 

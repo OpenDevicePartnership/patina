@@ -12,6 +12,7 @@ use core::{
     mem,
     slice::{self, from_raw_parts},
 };
+use uefi_sdk::error::EfiError;
 
 use mu_pi::{dxe_services, fw_fs::FirmwareVolume};
 use r_efi::efi;
@@ -114,7 +115,7 @@ extern "efiapi" fn get_memory_space_descriptor(
     }
 
     match core_get_memory_space_descriptor(base_address) {
-        Err(err) => return err,
+        Err(err) => return err.into(),
         Ok(target_descriptor) => unsafe {
             descriptor.write(target_descriptor);
         },
@@ -124,8 +125,8 @@ extern "efiapi" fn get_memory_space_descriptor(
 
 pub fn core_get_memory_space_descriptor(
     base_address: efi::PhysicalAddress,
-) -> Result<dxe_services::MemorySpaceDescriptor, efi::Status> {
-    GCD.get_memory_descriptor_for_address(base_address).map_err(efi::Status::from)
+) -> Result<dxe_services::MemorySpaceDescriptor, EfiError> {
+    GCD.get_memory_descriptor_for_address(base_address)
 }
 
 extern "efiapi" fn set_memory_space_attributes(
@@ -134,7 +135,7 @@ extern "efiapi" fn set_memory_space_attributes(
     attributes: u64,
 ) -> efi::Status {
     match core_set_memory_space_attributes(base_address, length, attributes) {
-        Err(err) => err,
+        Err(err) => err.into(),
         Ok(_) => efi::Status::SUCCESS,
     }
 }
@@ -143,8 +144,8 @@ pub fn core_set_memory_space_attributes(
     base_address: efi::PhysicalAddress,
     length: u64,
     attributes: u64,
-) -> Result<(), efi::Status> {
-    GCD.set_memory_space_attributes(base_address as usize, length as usize, attributes).map_err(efi::Status::from)
+) -> Result<(), EfiError> {
+    GCD.set_memory_space_attributes(base_address as usize, length as usize, attributes)
 }
 
 extern "efiapi" fn set_memory_space_capabilities(
@@ -153,7 +154,7 @@ extern "efiapi" fn set_memory_space_capabilities(
     capabilities: u64,
 ) -> efi::Status {
     match core_set_memory_space_capabilities(base_address, length, capabilities) {
-        Err(err) => err,
+        Err(err) => err.into(),
         Ok(_) => efi::Status::SUCCESS,
     }
 }
@@ -162,8 +163,8 @@ pub fn core_set_memory_space_capabilities(
     base_address: efi::PhysicalAddress,
     length: u64,
     capabilities: u64,
-) -> Result<(), efi::Status> {
-    GCD.set_memory_space_capabilities(base_address as usize, length as usize, capabilities).map_err(efi::Status::from)
+) -> Result<(), EfiError> {
+    GCD.set_memory_space_capabilities(base_address as usize, length as usize, capabilities)
 }
 
 extern "efiapi" fn get_memory_space_map(
@@ -334,7 +335,7 @@ extern "efiapi" fn get_io_space_map(
 
 extern "efiapi" fn dispatch() -> efi::Status {
     match core_dispatcher() {
-        Err(err) => err,
+        Err(err) => err.into(),
         Ok(()) => efi::Status::SUCCESS,
     }
 }
@@ -345,7 +346,7 @@ extern "efiapi" fn schedule(firmware_volume_handle: efi::Handle, file_name: *con
     };
 
     match core_schedule(firmware_volume_handle, file_name) {
-        Err(status) => status,
+        Err(status) => status.into(),
         Ok(_) => efi::Status::SUCCESS,
     }
 }
@@ -356,7 +357,7 @@ extern "efiapi" fn trust(firmware_volume_handle: efi::Handle, file_name: *const 
     };
 
     match core_trust(firmware_volume_handle, file_name) {
-        Err(status) => status,
+        Err(status) => status.into(),
         Ok(_) => efi::Status::SUCCESS,
     }
 }
@@ -378,7 +379,7 @@ extern "efiapi" fn process_firmware_volume(
 
     let handle = match core_install_firmware_volume(firmware_volume_header as u64, None) {
         Ok(handle) => handle,
-        Err(err) => return err,
+        Err(err) => return err.into(),
     };
 
     unsafe {

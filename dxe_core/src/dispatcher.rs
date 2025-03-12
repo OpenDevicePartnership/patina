@@ -21,6 +21,7 @@ use r_efi::efi;
 use tpl_lock::TplMutex;
 use uefi_depex::{AssociatedDependency, Depex, Opcode};
 use uefi_device_path::concat_device_path_to_boxed_slice;
+use uefi_sdk::error::EfiError;
 
 use mu_rust_helpers::guid::CALLER_ID;
 use uefi_performance::{perf_function_begin, perf_function_end};
@@ -81,7 +82,7 @@ struct PendingFirmwareVolumeImage {
 
 impl PendingFirmwareVolumeImage {
     // authenticate the pending firmware volume via the Security Architectural Protocol
-    fn evaluate_auth(&self) -> Result<(), efi::Status> {
+    fn evaluate_auth(&self) -> Result<(), EfiError> {
         let security_protocol = unsafe {
             match PROTOCOL_DB.locate_protocol(mu_pi::protocols::security::PROTOCOL_GUID) {
                 Ok(protocol) => (protocol as *mut mu_pi::protocols::security::Protocol)
@@ -92,7 +93,8 @@ impl PendingFirmwareVolumeImage {
                 Err(_) => return Ok(()),
             }
         };
-        let file_path = device_path_bytes_for_fv_file(self.parent_fv_handle, self.file_name)?;
+        let file_path = device_path_bytes_for_fv_file(self.parent_fv_handle, self.file_name)
+            .map_err(|status| EfiError::status_to_result(status).unwrap_err())?;
 
         //Important Note: the present section extraction implementation does not support section extraction-based
         //authentication status, so it is hard-coded to zero here. The primary security handlers for the main usage
@@ -102,10 +104,7 @@ impl PendingFirmwareVolumeImage {
             0,
             file_path.as_ptr() as *const _ as *mut efi::protocols::device_path::Protocol,
         );
-        if status != efi::Status::SUCCESS {
-            return Err(status);
-        }
-        Ok(())
+        EfiError::status_to_result(status)
     }
 }
 
@@ -157,7 +156,7 @@ unsafe impl Send for DispatcherContext {}
 static DISPATCHER_CONTEXT: TplMutex<DispatcherContext> =
     TplMutex::new(efi::TPL_NOTIFY, DispatcherContext::new(), "Dispatcher Context");
 
-fn dispatch() -> Result<bool, efi::Status> {
+fn dispatch() -> Result<bool, EfiError> {
     let scheduled: Vec<PendingDriver>;
     {
         let mut dispatcher = DISPATCHER_CONTEXT.lock();
@@ -210,7 +209,10 @@ fn dispatch() -> Result<bool, efi::Status> {
             match core_load_image(false, DXE_CORE_HANDLE, driver.device_path, Some(driver.pe32.section_data())) {
                 Ok((image_handle, security_status)) => {
                     driver.image_handle = Some(image_handle);
-                    driver.security_status = security_status;
+                    driver.security_status = match security_status {
+                        Ok(_) => efi::Status::SUCCESS,
+                        Err(err) => err.into(),
+                    };
                 }
                 Err(err) => log::error!("Failed to load: load_image returned {:x?}", err),
             }
@@ -273,7 +275,7 @@ fn dispatch() -> Result<bool, efi::Status> {
     Ok(dispatch_attempted)
 }
 
-fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
+fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
     let mut dispatcher = DISPATCHER_CONTEXT.lock();
     for handle in new_handles {
         if dispatcher.processed_fvs.insert(handle) {
@@ -321,17 +323,18 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
             };
 
             for file in fv.file_iter() {
-                let file = file?;
+                let file = file.map_err(|status| EfiError::status_to_result(status).unwrap_err())?;
                 if file.file_type_raw() == FfsFileRawType::DRIVER {
                     let file = file.clone();
                     let file_name = file.name();
                     let sections = {
-                        if let Some(extractor) = &dispatcher.section_extractor {
+                        let res = if let Some(extractor) = &dispatcher.section_extractor {
                             file.section_iter_with_extractor(extractor.as_ref())
-                                .collect::<Result<Vec<_>, efi::Status>>()?
+                                .collect::<Result<Vec<_>, efi::Status>>()
                         } else {
-                            file.section_iter().collect::<Result<Vec<_>, efi::Status>>()?
-                        }
+                            file.section_iter().collect::<Result<Vec<_>, efi::Status>>()
+                        };
+                        res.map_err(|status| EfiError::status_to_result(status).unwrap_err())?
                     };
 
                     let depex = sections
@@ -414,12 +417,13 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
                     let file_name = file.name();
 
                     let sections = {
-                        if let Some(extractor) = &dispatcher.section_extractor {
+                        let res = if let Some(extractor) = &dispatcher.section_extractor {
                             file.section_iter_with_extractor(extractor.as_ref())
-                                .collect::<Result<Vec<_>, efi::Status>>()?
+                                .collect::<Result<Vec<_>, efi::Status>>()
                         } else {
-                            file.section_iter().collect::<Result<Vec<_>, efi::Status>>()?
-                        }
+                            file.section_iter().collect::<Result<Vec<_>, efi::Status>>()
+                        };
+                        res.map_err(|status| EfiError::status_to_result(status).unwrap_err())?
                     };
 
                     let depex = sections
@@ -459,7 +463,7 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), efi::Status> {
     Ok(())
 }
 
-pub fn core_schedule(handle: efi::Handle, file: &efi::Guid) -> Result<(), efi::Status> {
+pub fn core_schedule(handle: efi::Handle, file: &efi::Guid) -> Result<(), EfiError> {
     let mut dispatcher = DISPATCHER_CONTEXT.lock();
     for driver in dispatcher.pending_drivers.iter_mut() {
         if driver.firmware_volume_handle == handle && OrdGuid(driver.file_name) == OrdGuid(*file) {
@@ -471,10 +475,10 @@ pub fn core_schedule(handle: efi::Handle, file: &efi::Guid) -> Result<(), efi::S
             }
         }
     }
-    Err(efi::Status::NOT_FOUND)
+    Err(EfiError::NotFound)
 }
 
-pub fn core_trust(handle: efi::Handle, file: &efi::Guid) -> Result<(), efi::Status> {
+pub fn core_trust(handle: efi::Handle, file: &efi::Guid) -> Result<(), EfiError> {
     let mut dispatcher = DISPATCHER_CONTEXT.lock();
     for driver in dispatcher.pending_drivers.iter_mut() {
         if driver.firmware_volume_handle == handle && OrdGuid(driver.file_name) == OrdGuid(*file) {
@@ -482,12 +486,12 @@ pub fn core_trust(handle: efi::Handle, file: &efi::Guid) -> Result<(), efi::Stat
             return Ok(());
         }
     }
-    Err(efi::Status::NOT_FOUND)
+    Err(EfiError::NotFound)
 }
 
-pub fn core_dispatcher() -> Result<(), efi::Status> {
+pub fn core_dispatcher() -> Result<(), EfiError> {
     if DISPATCHER_CONTEXT.lock().executing {
-        return Err(efi::Status::ALREADY_STARTED);
+        return Err(EfiError::AlreadyStarted);
     }
 
     perf_function_begin!(&CALLER_ID);
@@ -502,7 +506,7 @@ pub fn core_dispatcher() -> Result<(), efi::Status> {
     if something_dispatched {
         Ok(())
     } else {
-        Err(efi::Status::NOT_FOUND)
+        Err(EfiError::NotFound)
     }
 }
 
@@ -775,7 +779,7 @@ mod tests {
         with_locked_state(|| {
             DISPATCHER_CONTEXT.lock().executing = true;
             let result = core_dispatcher();
-            assert_eq!(result, Err(efi::Status::ALREADY_STARTED));
+            assert_eq!(result, Err(EfiError::AlreadyStarted));
         })
     }
 
@@ -783,7 +787,7 @@ mod tests {
     fn test_dispatch_with_nothing_to_dispatch() {
         with_locked_state(|| {
             let result = core_dispatcher();
-            assert_eq!(result, Err(efi::Status::NOT_FOUND));
+            assert_eq!(result, Err(EfiError::NotFound));
         })
     }
 
@@ -800,7 +804,7 @@ mod tests {
 
             // Cannot actually dispatch
             let result = core_dispatcher();
-            assert_eq!(result, Err(efi::Status::NOT_FOUND));
+            assert_eq!(result, Err(EfiError::NotFound));
         })
     }
 
@@ -820,7 +824,7 @@ mod tests {
                 handle,
                 &efi::Guid::from_bytes(uuid::Uuid::from_u128(0x1fa1f39e_feff_4aae_bd7b_38a070a3b609).as_bytes()),
             );
-            assert_eq!(result, Err(efi::Status::NOT_FOUND));
+            assert_eq!(result, Err(EfiError::NotFound));
         })
     }
 

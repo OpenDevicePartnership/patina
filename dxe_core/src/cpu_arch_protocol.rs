@@ -135,7 +135,7 @@ extern "efiapi" fn set_memory_attributes(
 ) -> efi::Status {
     match dxe_services::core_set_memory_space_attributes(base_address, length, attributes) {
         Ok(_) => efi::Status::SUCCESS,
-        Err(status) => status,
+        Err(status) => status.into(),
     }
 }
 

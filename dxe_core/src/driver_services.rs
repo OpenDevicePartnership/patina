@@ -13,6 +13,7 @@ use uefi_performance::{
     perf_driver_binding_start_begin, perf_driver_binding_start_end, perf_driver_binding_support_begin,
     perf_driver_binding_support_end,
 };
+use uefi_sdk::error::EfiError;
 
 use r_efi::efi;
 
@@ -134,7 +135,7 @@ fn authenticate_connect(
     controller_handle: efi::Handle,
     remaining_device_path: Option<*mut efi::protocols::device_path::Protocol>,
     recursive: bool,
-) -> Result<(), efi::Status> {
+) -> Result<(), EfiError> {
     if let Ok(device_path) =
         PROTOCOL_DB.get_interface_for_handle(controller_handle, efi::protocols::device_path::PROTOCOL_GUID)
     {
@@ -165,9 +166,7 @@ fn authenticate_connect(
                     0,
                     false,
                 );
-                if security_status != efi::Status::SUCCESS {
-                    return Err(security_status);
-                }
+                EfiError::status_to_result(security_status)?;
             }
         }
     }
@@ -182,7 +181,7 @@ fn core_connect_single_controller(
     controller_handle: efi::Handle,
     driver_handles: Vec<efi::Handle>,
     remaining_device_path: Option<*mut efi::protocols::device_path::Protocol>,
-) -> Result<(), efi::Status> {
+) -> Result<(), EfiError> {
     PROTOCOL_DB.validate_handle(controller_handle)?;
 
     //The following sources for driver instances are considered per UEFI Spec 2.10 section 7.3.12:
@@ -259,7 +258,7 @@ fn core_connect_single_controller(
         }
     }
 
-    Err(efi::Status::NOT_FOUND)
+    Err(EfiError::NotFound)
 }
 
 /// Connects a controller to drivers
@@ -288,7 +287,7 @@ pub unsafe fn core_connect_controller(
     driver_handles: Vec<efi::Handle>,
     remaining_device_path: Option<*mut efi::protocols::device_path::Protocol>,
     recursive: bool,
-) -> Result<(), efi::Status> {
+) -> Result<(), EfiError> {
     authenticate_connect(handle, remaining_device_path, recursive)?;
 
     let return_status = core_connect_single_controller(handle, driver_handles, remaining_device_path);
@@ -329,7 +328,7 @@ extern "efiapi" fn connect_controller(
     let device_path = NonNull::new(remaining_device_path).map(|x| x.as_ptr());
     unsafe {
         match core_connect_controller(handle, driver_handles, device_path, recursive.into()) {
-            Err(err) => err,
+            Err(err) => err.into(),
             _ => efi::Status::SUCCESS,
         }
     }
@@ -360,7 +359,7 @@ pub unsafe fn core_disconnect_controller(
     controller_handle: efi::Handle,
     driver_image_handle: Option<efi::Handle>,
     child_handle: Option<efi::Handle>,
-) -> Result<(), efi::Status> {
+) -> Result<(), EfiError> {
     PROTOCOL_DB.validate_handle(controller_handle)?;
 
     if let Some(handle) = driver_image_handle {
@@ -442,7 +441,7 @@ pub unsafe fn core_disconnect_controller(
         //uninstall a binding that is in use.
         let driver_binding_interface = PROTOCOL_DB
             .get_interface_for_handle(driver_handle, efi::protocols::driver_binding::PROTOCOL_GUID)
-            .or(Err(efi::Status::INVALID_PARAMETER))?;
+            .or(Err(EfiError::InvalidParameter))?;
         let driver_binding_interface = driver_binding_interface as *mut efi::protocols::driver_binding::Protocol;
         let driver_binding = unsafe { &mut *(driver_binding_interface) };
 
@@ -467,7 +466,7 @@ pub unsafe fn core_disconnect_controller(
     if one_or_more_drivers_disconnected || no_drivers {
         Ok(())
     } else {
-        Err(efi::Status::NOT_FOUND)
+        Err(EfiError::NotFound)
     }
 }
 
@@ -480,7 +479,7 @@ extern "efiapi" fn disconnect_controller(
     let child_handle = NonNull::new(child_handle).map(|x| x.as_ptr());
     unsafe {
         match core_disconnect_controller(controller_handle, driver_image_handle, child_handle) {
-            Err(err) => err,
+            Err(err) => err.into(),
             _ => efi::Status::SUCCESS,
         }
     }
