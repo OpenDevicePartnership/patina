@@ -51,12 +51,6 @@ jobs:
       - name: 📖 Build Book 📖
         run: mdbook build ${{ inputs.mdbook-path }}
         if: ${{ inputs.mdbook-path != '' }}
-      
-      - name: Login to Registry
-        run: cargo login "${{ secrets.CRATES_IO_TOKEN }}" --registry UefiRust
-
-      - name: Crate Release Dry Run
-        run: cargo release --dry-run --no-tag --workspace --no-push --registry UefiRust
 
   run:
     name: Rust CI
@@ -106,6 +100,9 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
         env:
           RUSTC_BOOTSTRAP: 1
+      
+      - name: Crate Release Dry Run
+        run: cargo release --no-tag --workspace --no-push --registry UefiRust
 
       - name: 🧪 Run Tests 🧪
         run: cargo make coverage
