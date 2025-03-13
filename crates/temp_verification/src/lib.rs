@@ -8,6 +8,7 @@ use mu_pi::hob::{header, EfiPhysicalAddress, Hob, PhaseHandoffInformationTable, 
 pub mod bump_allocator;
 pub mod fv_verify;
 pub mod hob_verify;
+mod primitive_logger;
 
 /// Public result type for the crate.
 pub type Result<T> = core::result::Result<T, PlatformError>;

@@ -16,5 +16,6 @@ path = "src/lib.rs"
 r-efi = { workspace = true }
 mu_pi = { workspace = true }
 log = { workspace=true }
+uefi_sdk = { version = "2" }
 
 
