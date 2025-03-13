@@ -102,7 +102,7 @@ jobs:
           RUSTC_BOOTSTRAP: 1
       
       - name: Crate Release Dry Run
-        run: cargo release --no-tag --workspace --no-push --allow-branch * --registry UefiRust
+        run: cargo release --no-tag --workspace --no-push --allow-branch '*' --registry UefiRust
 
       - name: 🧪 Run Tests 🧪
         run: cargo make coverage
