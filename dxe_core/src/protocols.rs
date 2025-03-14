@@ -698,10 +698,7 @@ pub fn core_locate_device_path(
     let mut best_match: isize = -1;
     let mut best_remaining_path: *const r_efi::protocols::device_path::Protocol = core::ptr::null_mut();
 
-    let handles = match PROTOCOL_DB.locate_handles(Some(protocol)) {
-        Err(err) => return Err(err),
-        Ok(handles) => handles,
-    };
+    let handles = PROTOCOL_DB.locate_handles(Some(protocol))?;
 
     for handle in handles {
         let mut temp_device_path: *mut r_efi::protocols::device_path::Protocol = core::ptr::null_mut();

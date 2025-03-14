@@ -370,9 +370,9 @@ where
             st.checksum_all();
 
             // Install HobList configuration table
-            let hob_list_guid =
-                uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").expect("Invalid UUID format.");
-            let hob_list_guid: efi::Guid = unsafe { *(hob_list_guid.to_bytes_le().as_ptr() as *const efi::Guid) };
+            let (a, b, c, &[d0, d1, d2, d3, d4, d5, d6, d7]) =
+                uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").expect("Invalid UUID format.").as_fields();
+            let hob_list_guid: efi::Guid = efi::Guid::from_fields(a, b, c, d0, d1, &[d2, d3, d4, d5, d6, d7]);
 
             misc_boot_services::core_install_configuration_table(
                 hob_list_guid,

@@ -40,7 +40,7 @@ fn adv_logger_test(bs: StandardBootServices) -> uefi_test::Result {
         protocol,
         memory_log::DEBUG_LEVEL_INFO as usize,
         PROTOCOL_STR.as_bytes().as_ptr(),
-        PROTOCOL_STR.as_bytes().len(),
+        PROTOCOL_STR.len(),
     );
 
     u_assert_eq!(efi_status, efi::Status::SUCCESS, "adv_logger_test: Failed to write to the advanced logger protocol.");
