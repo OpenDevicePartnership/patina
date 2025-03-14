@@ -47,6 +47,10 @@ uefi_depex = { workspace = true}
 uefi_performance = { workspace = true }
 
 [dev-dependencies]
+# To avoid circular dependencies, cargo-release skips dev dependencies when evaluating the release order for
+# cargo-release, however they are still used when verifying the package is compileable. Any dev-dependency that is
+# local to the workspace should be added via `path` instead of `workspace = true` so that that it does not fail to
+# compile due to the dev-dependency not being published yet.
 sample_components = { path = "../sample_components" }
 section_extractor = { workspace = true }
 uefi_collections = { path = "../crates/uefi_collections" }
