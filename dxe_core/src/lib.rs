@@ -73,7 +73,6 @@
 #![feature(alloc_error_handler)]
 #![feature(c_variadic)]
 #![feature(allocator_api)]
-#![feature(const_mut_refs)]
 #![feature(slice_ptr_get)]
 #![feature(get_many_mut)]
 

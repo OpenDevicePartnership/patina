@@ -15,7 +15,7 @@ publish = ["UefiRust"]
 repository = "https://github.com/OpenDevicePartnership/uefi-dxe-core"
 license = "BSD-2-Clause-Patent"
 edition = "2021"
-rust-version = "1.82.0"
+rust-version = "1.83.0"
 
 [workspace.dependencies]
 section_extractor = { version = "^9.1.1" }

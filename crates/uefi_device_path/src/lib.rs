@@ -193,7 +193,7 @@ pub fn device_path_as_slice(
 /// let expected_ptr =
 ///   unsafe { device_path_b_bytes.as_ptr().byte_offset(offset) } as *const efi::protocols::device_path::Protocol;
 /// assert_eq!(result, (expected_ptr, a_path_length.0 - 1));
-
+///
 /// //b is equal to b.
 /// let result = remaining_device_path(device_path_b, device_path_b);
 /// assert!(result.is_some());
@@ -204,17 +204,15 @@ pub fn device_path_as_slice(
 /// let expected_ptr =
 ///   unsafe { device_path_b_bytes.as_ptr().byte_offset(offset) } as *const efi::protocols::device_path::Protocol;
 /// assert_eq!(result, (expected_ptr, b_path_length.0 - 1));
-
+///
 /// //a is not a prefix of c.
 /// let result = remaining_device_path(device_path_a, device_path_c);
 /// assert!(result.is_none());
-
+///
 /// //b is not a prefix of a.
 /// let result = remaining_device_path(device_path_b, device_path_a);
 /// assert!(result.is_none());
 /// ```
-///
-
 pub fn remaining_device_path(
     a: *const efi::protocols::device_path::Protocol,
     b: *const efi::protocols::device_path::Protocol,

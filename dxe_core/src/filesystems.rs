@@ -17,7 +17,7 @@ pub struct SimpleFile<'a> {
     file: &'a mut efi::protocols::file::Protocol,
 }
 
-impl<'a> SimpleFile<'a> {
+impl SimpleFile<'_> {
     /// Opens the given filename with appropriate mode/attributes and returns a new instance of SimpleFile for it.
     pub fn open(&mut self, filename: Vec<u16>, mode: u64, attributes: u64) -> Result<Self, efi::Status> {
         let mut file_ptr = core::ptr::null_mut();

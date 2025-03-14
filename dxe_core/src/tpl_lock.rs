@@ -100,19 +100,19 @@ impl<T: ?Sized + fmt::Debug> fmt::Debug for TplMutex<T> {
     }
 }
 
-impl<'a, T: ?Sized + fmt::Debug> fmt::Debug for TplGuard<'a, T> {
+impl<T: ?Sized + fmt::Debug> fmt::Debug for TplGuard<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&**self, f)
     }
 }
 
-impl<'a, T: ?Sized + fmt::Display> fmt::Display for TplGuard<'a, T> {
+impl<T: ?Sized + fmt::Display> fmt::Display for TplGuard<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&**self, f)
     }
 }
 
-impl<'a, T: ?Sized> Deref for TplGuard<'a, T> {
+impl<T: ?Sized> Deref for TplGuard<'_, T> {
     type Target = T;
     fn deref(&self) -> &T {
         //Safety: data is only accessible through the lock, which can only be obtained at the specified TPL.
@@ -120,14 +120,14 @@ impl<'a, T: ?Sized> Deref for TplGuard<'a, T> {
     }
 }
 
-impl<'a, T: ?Sized> DerefMut for TplGuard<'a, T> {
+impl<T: ?Sized> DerefMut for TplGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
         //Safety: data is only accessible through the lock, which can only be obtained at the specified TPL.
         unsafe { &mut *self.data }
     }
 }
 
-impl<'a, T: ?Sized> Drop for TplGuard<'a, T> {
+impl<T: ?Sized> Drop for TplGuard<'_, T> {
     fn drop(&mut self) {
         self.lock.store(false, Ordering::Release);
         if let Some(tpl) = self.release_tpl {

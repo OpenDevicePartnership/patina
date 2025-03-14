@@ -199,7 +199,7 @@ pub struct MemoryDescriptorSlice<'a>(pub &'a [efi::MemoryDescriptor]);
 
 pub struct MemoryDescriptorRef<'a>(&'a efi::MemoryDescriptor);
 
-impl<'a> Debug for MemoryDescriptorRef<'a> {
+impl Debug for MemoryDescriptorRef<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         memory_type_to_str(f, self.0.r#type)?;
         write!(f, "{:<#20X} {:<#15X} {:<#16X}", self.0.physical_start, self.0.virtual_start, self.0.number_of_pages)?;
@@ -208,7 +208,7 @@ impl<'a> Debug for MemoryDescriptorRef<'a> {
     }
 }
 
-impl<'a> Debug for MemoryDescriptorSlice<'a> {
+impl Debug for MemoryDescriptorSlice<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         writeln!(
             f,
@@ -235,9 +235,9 @@ impl AllocatorMap {
     }
 }
 
-impl<'a> AllocatorMap {
+impl AllocatorMap {
     // Returns an iterator that returns references to the static allocators followed by the custom allocators.
-    fn iter(&'a self) -> impl Iterator<Item = &UefiAllocator> {
+    fn iter(&self) -> impl Iterator<Item = &UefiAllocator> {
         STATIC_ALLOCATORS.iter().copied().chain(self.map.values())
     }
 
@@ -252,10 +252,10 @@ impl<'a> AllocatorMap {
     // make any assumptions that this handle will be the actual handle associated with the allocator. If the "real"
     // allocator handle is required, it can be obtained with [`UefiAllocator::handle`] on the returned allocator.
     fn get_or_create_allocator(
-        &'a mut self,
+        &mut self,
         memory_type: efi::MemoryType,
         handle: efi::Handle,
-    ) -> Result<&'a UefiAllocator, efi::Status> {
+    ) -> Result<&UefiAllocator, efi::Status> {
         if let Some(allocator) = STATIC_ALLOCATORS.iter().find(|x| x.memory_type() == memory_type) {
             return Ok(allocator);
         }
@@ -264,11 +264,7 @@ impl<'a> AllocatorMap {
 
     // retrieves a dynamic allocator from the map and creates a new one with the given handle if it doesn't exist.
     // See note on `handle` in [`get_or_create_allocator`]
-    fn get_or_create_dynamic_allocator(
-        &'a mut self,
-        memory_type: efi::MemoryType,
-        handle: efi::Handle,
-    ) -> &'a UefiAllocator {
+    fn get_or_create_dynamic_allocator(&mut self, memory_type: efi::MemoryType, handle: efi::Handle) -> &UefiAllocator {
         // the lock ensures exclusive access to the map, but an allocator may have been created already; so only create
         // the allocator if it doesn't yet exist for this memory type. MAT callbacks are only needed for Runtime
         // Services Code and Data, which are static allocators, so we can always do None here
@@ -279,7 +275,7 @@ impl<'a> AllocatorMap {
 
     // retrieves an allocator if it exists
     #[cfg(test)]
-    fn get_allocator(&'a self, memory_type: efi::MemoryType) -> Option<&'a UefiAllocator> {
+    fn get_allocator(&self, memory_type: efi::MemoryType) -> Option<&UefiAllocator> {
         self.iter().find(|x| x.memory_type() == memory_type)
     }
 
@@ -773,6 +769,7 @@ fn page_change_callback(allocator: &mut FixedSizeBlockAllocator) {
     unsafe {
         // Custom Memory types (higher than EfiMaxMemoryType) are not tracked.
         let idx = allocator.memory_type() as usize;
+        #[allow(static_mut_refs)]
         if idx < MEMORY_TYPE_INFO_TABLE.len() {
             let stats = allocator.stats();
             let reserved_free = uefi_size_to_pages!(stats.reserved_size - stats.reserved_used);
@@ -783,6 +780,7 @@ fn page_change_callback(allocator: &mut FixedSizeBlockAllocator) {
 
 pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), efi::Status> {
     //MEMORY_TYPE_INFO_TABLE is static mut, so we know the pointer is good.
+    #[allow(static_mut_refs)]
     let memory_table_mut = unsafe { (MEMORY_TYPE_INFO_TABLE.as_mut_ptr() as *mut c_void).as_mut().unwrap() };
 
     misc_boot_services::core_install_configuration_table(
