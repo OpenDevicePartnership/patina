@@ -47,9 +47,9 @@ uefi_depex = { workspace = true}
 uefi_performance = { workspace = true }
 
 [dev-dependencies]
-sample_components = { workspace = true }
+sample_components = { path = "../sample_components" }
 section_extractor = { workspace = true }
-uefi_collections = { workspace = true, default-features = true }
+uefi_collections = { path = "../crates/uefi_collections" }
 mockall = { workspace = true }
 
 [target.'cfg(all(target_arch="aarch64"))'.dependencies]
