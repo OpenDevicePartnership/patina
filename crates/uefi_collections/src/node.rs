@@ -277,10 +277,7 @@ where
     D: SliceKey,
 {
     fn set_color(&self, color: bool) {
-        match self {
-            Some(node) => node.set_color(color),
-            None => {}
-        }
+        self.inspect(|n| n.set_color(color));
     }
 
     fn color(&self) -> bool {
@@ -319,10 +316,7 @@ where
     }
 
     fn set_parent(&self, node: Option<&Node<D>>) {
-        match self {
-            Some(n) => n.set_parent(node),
-            None => {}
-        }
+        self.inspect(|n| n.set_parent(node));
     }
 
     fn left(&self) -> Option<&Node<D>> {
@@ -340,10 +334,7 @@ where
     }
 
     fn set_left(&self, node: Option<&Node<D>>) {
-        match self {
-            Some(n) => n.set_left(node),
-            None => {}
-        }
+        self.inspect(|n| n.set_left(node));
     }
 
     fn right(&self) -> Option<&Node<D>> {
@@ -361,10 +352,7 @@ where
     }
 
     fn set_right(&self, node: Option<&Node<D>>) {
-        match self {
-            Some(n) => n.set_right(node),
-            None => {}
-        }
+        self.inspect(|n| n.set_right(node));
     }
 
     fn as_mut_ptr(&self) -> *mut Node<D> {

@@ -53,7 +53,6 @@
 //!
 #![no_std]
 #![feature(let_chains)]
-#![feature(is_sorted)]
 mod bst;
 mod node;
 mod rbt;

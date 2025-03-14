@@ -73,11 +73,9 @@
 #![feature(alloc_error_handler)]
 #![feature(c_variadic)]
 #![feature(allocator_api)]
-#![feature(new_uninit)]
 #![feature(const_mut_refs)]
 #![feature(slice_ptr_get)]
 #![feature(get_many_mut)]
-#![feature(is_sorted)]
 
 extern crate alloc;
 
