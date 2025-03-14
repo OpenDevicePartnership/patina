@@ -631,6 +631,7 @@ impl EfiSystemTable {
         self.system_table.as_ref() as *const efi::SystemTable
     }
 
+    #[allow(dead_code)]
     pub fn system_table(&self) -> &efi::SystemTable {
         self.system_table.as_ref()
     }
@@ -639,14 +640,17 @@ impl EfiSystemTable {
         self.system_table.as_mut()
     }
 
+    #[allow(dead_code)]
     pub fn boot_services(&self) -> &efi::BootServices {
         unsafe { self.system_table.boot_services.as_ref().expect("BootServices uninitialized") }
     }
 
+    #[allow(dead_code)]
     pub fn boot_services_mut(&mut self) -> &mut efi::BootServices {
         unsafe { self.system_table.boot_services.as_mut().expect("BootServices uninitialized") }
     }
 
+    #[allow(dead_code)]
     pub fn runtime_services(&self) -> &efi::RuntimeServices {
         unsafe { self.system_table.runtime_services.as_ref().expect("RuntimeServices uninitialized") }
     }

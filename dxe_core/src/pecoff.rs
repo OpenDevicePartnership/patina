@@ -176,7 +176,7 @@ impl UefiPeInfo {
             filename.truncate(filename.len() - 4);
         }
 
-        if let Some(index) = filename.rfind(|c| c == '/' || c == '\\') {
+        if let Some(index) = filename.rfind(|ref c| ['/', '\\'].contains(c)) {
             filename.drain(..index + 1);
         }
 

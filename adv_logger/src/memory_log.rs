@@ -323,9 +323,8 @@ impl<'a> Iterator for AdvLogIterator<'a> {
         } else {
             let entry = unsafe { (self.log_info as *const AdvLoggerInfo).byte_add(self.offset) }
                 as *const AdvLoggerMessageEntry;
-            unsafe { entry.as_ref() }.map(|entry| {
+            unsafe { entry.as_ref() }.inspect(|entry| {
                 self.offset += entry.aligned_len();
-                entry
             })
         }
     }
