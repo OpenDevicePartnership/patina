@@ -1,2 +1,5 @@
 # Repo: Apply CRLF -> LF conversion to all rust files
 2e7cdb2c1572877c5aa8f23fd55131ce4f6385de
+
+# Repo: Apply CRLF -> LF conversion to all non-rust files
+a11e3519d22bd61323553f2ca448e1c4c173cc82
