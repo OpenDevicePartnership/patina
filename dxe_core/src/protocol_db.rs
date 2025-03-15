@@ -10,13 +10,13 @@
 //!
 extern crate alloc;
 
-use ahash::AHasher;
 use alloc::{
     collections::{BTreeMap, BTreeSet},
     vec,
     vec::Vec,
 };
-use core::{cmp::Ordering, ffi::c_void, hash::Hasher};
+use blake3::Hasher;
+use core::{cmp::Ordering, ffi::c_void};
 use r_efi::efi;
 
 use crate::tpl_lock;
@@ -191,14 +191,18 @@ impl ProtocolDb {
                 //installing on a new handle. Add a BTreeMap to track protocol instances on the new handle.
                 let mut key;
                 if self.hash_new_handles {
-                    let mut hasher = AHasher::default();
-                    hasher.write_usize(self.next_handle);
-                    key = hasher.finish() as usize;
+                    let mut hasher = Hasher::default();
+                    hasher.update(&self.next_handle.to_le_bytes());
+                    key = usize::from_le_bytes(
+                        hasher.finalize().as_bytes()[..size_of::<usize>()].try_into().expect("Hasher is 256 bytes"),
+                    );
                     self.next_handle += 1;
                     //make sure we don't collide with an existing key. 0 is reserved for "invalid handle".
                     while key == 0 || self.handles.contains_key(&key) {
-                        hasher.write_usize(self.next_handle);
-                        key = hasher.finish() as usize;
+                        hasher.update(&self.next_handle.to_le_bytes());
+                        key = usize::from_le_bytes(
+                            hasher.finalize().as_bytes()[..size_of::<usize>()].try_into().expect("Hasher is 256 bytes"),
+                        );
                         self.next_handle += 1;
                     }
                 } else {
