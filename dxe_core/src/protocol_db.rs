@@ -827,15 +827,19 @@ unsafe impl Send for SpinLockedProtocolDb {}
 unsafe impl Sync for SpinLockedProtocolDb {}
 
 /// A hasher that uses the Xorshift64* algorithm to generate a random number to xor with the input bytes.
+/// 
+/// https://en.wikipedia.org/wiki/Xorshift#xorshift*
 struct Xorshift64StarHasher {
     state: u64,
 }
 
 impl Xorshift64StarHasher {
+    /// Initialize the hasher with a seed.
     fn new(seed: u64) -> Self {
         Xorshift64StarHasher { state: seed }
     }
 
+    /// Generate a new random state.
     fn next_state(&mut self) -> u64 {
         self.state ^= self.state >> 12;
         self.state ^= self.state << 25;
