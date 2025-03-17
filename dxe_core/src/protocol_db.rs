@@ -15,8 +15,7 @@ use alloc::{
     vec,
     vec::Vec,
 };
-use blake3::Hasher;
-use core::{cmp::Ordering, ffi::c_void};
+use core::{cmp::Ordering, ffi::c_void, hash::Hasher};
 use r_efi::efi;
 
 use crate::tpl_lock;
@@ -191,18 +190,14 @@ impl ProtocolDb {
                 //installing on a new handle. Add a BTreeMap to track protocol instances on the new handle.
                 let mut key;
                 if self.hash_new_handles {
-                    let mut hasher = Hasher::default();
-                    hasher.update(&self.next_handle.to_le_bytes());
-                    key = usize::from_le_bytes(
-                        hasher.finalize().as_bytes()[..size_of::<usize>()].try_into().expect("Hasher is 256 bytes"),
-                    );
+                    let mut hasher = Xorshift64StarHasher::default();
+                    hasher.write_usize(self.next_handle);
+                    key = hasher.finish() as usize;
                     self.next_handle += 1;
                     //make sure we don't collide with an existing key. 0 is reserved for "invalid handle".
                     while key == 0 || self.handles.contains_key(&key) {
-                        hasher.update(&self.next_handle.to_le_bytes());
-                        key = usize::from_le_bytes(
-                            hasher.finalize().as_bytes()[..size_of::<usize>()].try_into().expect("Hasher is 256 bytes"),
-                        );
+                        hasher.write_usize(self.next_handle);
+                        key = hasher.finish() as usize;
                         self.next_handle += 1;
                     }
                 } else {
@@ -830,6 +825,44 @@ impl SpinLockedProtocolDb {
 
 unsafe impl Send for SpinLockedProtocolDb {}
 unsafe impl Sync for SpinLockedProtocolDb {}
+
+/// A hasher that uses the Xorshift64* algorithm to generate a random number to xor with the input bytes.
+struct Xorshift64StarHasher {
+    state: u64,
+}
+
+impl Xorshift64StarHasher {
+    fn new(seed: u64) -> Self {
+        Xorshift64StarHasher { state: seed }
+    }
+
+    fn next_state(&mut self) -> u64 {
+        self.state ^= self.state >> 12;
+        self.state ^= self.state << 25;
+        self.state ^= self.state >> 27;
+        self.state = self.state.wrapping_mul(0x2545F4914F6CDD1D);
+        self.state
+    }
+}
+
+impl Default for Xorshift64StarHasher {
+    fn default() -> Self {
+        Xorshift64StarHasher::new(const_random::const_random!(u64))
+    }
+}
+
+impl Hasher for Xorshift64StarHasher {
+    fn finish(&self) -> u64 {
+        self.state
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.state ^= byte as u64;
+            self.state = self.next_state();
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

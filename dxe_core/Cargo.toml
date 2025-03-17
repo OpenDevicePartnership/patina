@@ -23,7 +23,7 @@ path = "examples/std.rs"
 required-features = ["std"]
 
 [dependencies]
-blake3 = { workspace = true, default-features = false }
+const-random = { workspace = true }
 crc32fast = { workspace = true }
 goblin = {workspace = true}
 lazy_static = { workspace = true }
