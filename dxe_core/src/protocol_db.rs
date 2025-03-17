@@ -827,7 +827,7 @@ unsafe impl Send for SpinLockedProtocolDb {}
 unsafe impl Sync for SpinLockedProtocolDb {}
 
 /// A hasher that uses the Xorshift64* algorithm to generate a random number to xor with the input bytes.
-/// 
+///
 /// https://en.wikipedia.org/wiki/Xorshift#xorshift*
 struct Xorshift64StarHasher {
     state: u64,
