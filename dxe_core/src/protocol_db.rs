@@ -851,7 +851,9 @@ impl Xorshift64starHasher {
 
 impl Default for Xorshift64starHasher {
     fn default() -> Self {
-        Xorshift64starHasher::new(const_random::const_random!(u64))
+        Xorshift64starHasher::new(u64::from_le_bytes(
+            compile_time::time_str!().as_bytes().try_into().expect("time_str!() provides a str of format 'HH:MM:SS'"),
+        ))
     }
 }
 
