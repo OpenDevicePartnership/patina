@@ -851,7 +851,7 @@ impl Xorshift64starHasher {
 
 impl Default for Xorshift64starHasher {
     fn default() -> Self {
-        Xorshift64starHasher::new(compile_time::unix!() as u64)
+        Xorshift64starHasher::new(compile_time::unix!())
     }
 }
 
