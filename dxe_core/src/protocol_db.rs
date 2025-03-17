@@ -1922,4 +1922,29 @@ mod tests {
             }
         });
     }
+
+    #[test]
+    fn xorshift64starhasher_test_different_seeds() {
+        let seed1 = 12345;
+        let seed2 = 54321;
+        let mut hasher1 = Xorshift64starHasher::new(seed1);
+        let mut hasher2 = Xorshift64starHasher::new(seed2);
+
+        let num1 = hasher1.next_state();
+        let num2 = hasher2.next_state();
+
+        assert_ne!(num1, num2, "Random numbers should be different for different seeds");
+    }
+
+    #[test]
+    fn xorshift64starhasher_test_same_seed() {
+        let seed = 12345;
+        let mut hasher1 = Xorshift64starHasher::new(seed);
+        let mut hasher2 = Xorshift64starHasher::new(seed);
+
+        let num1 = hasher1.next_state();
+        let num2 = hasher2.next_state();
+
+        assert_eq!(num1, num2, "Random numbers should be the same for the same seed");
+    }
 }
