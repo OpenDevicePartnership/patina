@@ -190,7 +190,7 @@ impl ProtocolDb {
                 //installing on a new handle. Add a BTreeMap to track protocol instances on the new handle.
                 let mut key;
                 if self.hash_new_handles {
-                    let mut hasher = Xorshift64StarHasher::default();
+                    let mut hasher = Xorshift64starHasher::default();
                     hasher.write_usize(self.next_handle);
                     key = hasher.finish() as usize;
                     self.next_handle += 1;
@@ -829,14 +829,14 @@ unsafe impl Sync for SpinLockedProtocolDb {}
 /// A hasher that uses the Xorshift64* algorithm to generate a random number to xor with the input bytes.
 ///
 /// https://en.wikipedia.org/wiki/Xorshift#xorshift*
-struct Xorshift64StarHasher {
+struct Xorshift64starHasher {
     state: u64,
 }
 
-impl Xorshift64StarHasher {
+impl Xorshift64starHasher {
     /// Initialize the hasher with a seed.
     fn new(seed: u64) -> Self {
-        Xorshift64StarHasher { state: seed }
+        Xorshift64starHasher { state: seed }
     }
 
     /// Generate a new random state.
@@ -849,13 +849,13 @@ impl Xorshift64StarHasher {
     }
 }
 
-impl Default for Xorshift64StarHasher {
+impl Default for Xorshift64starHasher {
     fn default() -> Self {
-        Xorshift64StarHasher::new(const_random::const_random!(u64))
+        Xorshift64starHasher::new(const_random::const_random!(u64))
     }
 }
 
-impl Hasher for Xorshift64StarHasher {
+impl Hasher for Xorshift64starHasher {
     fn finish(&self) -> u64 {
         self.state
     }
