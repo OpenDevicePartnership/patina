@@ -176,18 +176,18 @@ type GcdFreeFn =
     fn(gcd: &mut GCD, base_address: usize, len: usize, transition: MemoryStateTransition) -> Result<(), EfiError>;
 
 #[derive(Debug)]
-struct PagingAllocator {
+struct PagingAllocator<'a> {
     page_pool: Vec<efi::PhysicalAddress>,
-    gcd: &'static SpinLockedGcd,
+    gcd: &'a SpinLockedGcd,
 }
 
-impl PagingAllocator {
-    fn new(gcd: &'static SpinLockedGcd) -> Self {
+impl<'a> PagingAllocator<'a> {
+    fn new(gcd: &'a SpinLockedGcd) -> Self {
         Self { page_pool: Vec::with_capacity(PAGE_POOL_CAPACITY), gcd }
     }
 }
 
-impl PageAllocator for PagingAllocator {
+impl PageAllocator for PagingAllocator<'_> {
     fn allocate_page(&mut self, align: u64, size: u64, is_root: bool) -> PtResult<u64> {
         if align != UEFI_PAGE_SIZE as u64 || size != UEFI_PAGE_SIZE as u64 {
             log::error!("Invalid alignment or size for page allocation: align: {:#x}, size: {:#x}", align, size);
@@ -1728,7 +1728,7 @@ pub struct SpinLockedGcd {
     memory: tpl_lock::TplMutex<GCD>,
     io: tpl_lock::TplMutex<IoGCD>,
     memory_change_callback: Option<MapChangeCallback>,
-    page_table: tpl_lock::TplMutex<Option<Box<dyn PageTable<ALLOCATOR = PagingAllocator>>>>,
+    page_table: tpl_lock::TplMutex<Option<Box<dyn PageTable<ALLOCATOR = PagingAllocator<'static>>>>>,
 }
 
 impl SpinLockedGcd {
