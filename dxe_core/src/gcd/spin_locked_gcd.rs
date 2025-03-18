@@ -178,11 +178,12 @@ type GcdFreeFn =
 #[derive(Debug)]
 struct PagingAllocator {
     page_pool: Vec<efi::PhysicalAddress>,
+    gcd: &'static SpinLockedGcd,
 }
 
 impl PagingAllocator {
-    fn new() -> Self {
-        Self { page_pool: Vec::with_capacity(PAGE_POOL_CAPACITY) }
+    fn new(gcd: &'static SpinLockedGcd) -> Self {
+        Self { page_pool: Vec::with_capacity(PAGE_POOL_CAPACITY), gcd }
     }
 }
 
@@ -206,7 +207,7 @@ impl PageAllocator for PagingAllocator {
             // an issue to allocate. However, some architectures may not have memory under 4GB, so if we fail here,
             // simply retry with the normal allocation
 
-            let res = GCD.memory.lock().allocate_memory_space(
+            let res = self.gcd.memory.lock().allocate_memory_space(
                 AllocateType::BottomUp(Some(addr as usize)),
                 dxe_services::GcdMemoryType::SystemMemory,
                 UEFI_PAGE_SHIFT,
@@ -222,7 +223,7 @@ impl PageAllocator for PagingAllocator {
                         "Failed to allocate root page for the page table page pool, retrying with normal allocation"
                     );
 
-                    match GCD.memory.lock().allocate_memory_space(
+                    match self.gcd.memory.lock().allocate_memory_space(
                         DEFAULT_ALLOCATION_STRATEGY,
                         dxe_services::GcdMemoryType::SystemMemory,
                         UEFI_PAGE_SHIFT,
@@ -247,7 +248,7 @@ impl PageAllocator for PagingAllocator {
 
                     // we only allocate here, not map. The page table is self-mapped, so we don't have to identity
                     // map them. This function is called with the page table lock held, so we cannot do that
-                    match GCD.memory.lock().allocate_memory_space(
+                    match self.gcd.memory.lock().allocate_memory_space(
                         DEFAULT_ALLOCATION_STRATEGY,
                         dxe_services::GcdMemoryType::SystemMemory,
                         UEFI_PAGE_SHIFT,
@@ -1895,7 +1896,7 @@ impl SpinLockedGcd {
     pub(crate) fn init_paging(&self, hob_list: &HobList) {
         log::info!("Initializing paging for the GCD");
 
-        let page_allocator = PagingAllocator::new();
+        let page_allocator = PagingAllocator::new(&GCD);
         let mut page_table = create_cpu_paging(page_allocator).expect("Failed to create CPU page table");
 
         // this is before we get allocated descriptors, so we don't need to preallocate memory here
