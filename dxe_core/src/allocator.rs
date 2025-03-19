@@ -256,7 +256,7 @@ impl AllocatorMap {
         &mut self,
         memory_type: efi::MemoryType,
         handle: efi::Handle,
-    ) -> Result<&'a UefiAllocator, EfiError> {
+    ) -> Result<&UefiAllocator, EfiError> {
         if let Some(allocator) = STATIC_ALLOCATORS.iter().find(|x| x.memory_type() == memory_type) {
             return Ok(allocator);
         }
