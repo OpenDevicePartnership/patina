@@ -586,7 +586,7 @@ fn call_bds() {
 #[cfg(test)]
 mod tests {
 
-    /* The coverage for this module has been put in allcoator.rs - lib_module_coverage_through_allocator_module
+    /* The coverage for this module has been put in allocator.rs - lib_module_coverage_through_allocator_module
      * with coverage already coverage around 85%. Adding that test function here causes Re-entrant locks for
      * "AllocatorMapLock" not permitted.
      */
