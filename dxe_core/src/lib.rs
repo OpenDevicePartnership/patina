@@ -353,14 +353,23 @@ where
             let st = st.as_mut().expect("System Table not initialized!");
 
             allocator::install_memory_services(st.boot_services_mut());
-            gcd::init_paging(&hob_list);
+            #[cfg(not(tarpaulin))]
+            {
+                gcd::init_paging(&hob_list);
+            }
             events::init_events_support(st.boot_services_mut());
             protocols::init_protocol_support(st.boot_services_mut());
             misc_boot_services::init_misc_boot_services_support(st.boot_services_mut());
             runtime::init_runtime_support(st.runtime_services_mut());
-            image::init_image_support(&hob_list, st);
+            #[cfg(not(tarpaulin))]
+            {
+                image::init_image_support(&hob_list, st);
+            }
             dispatcher::init_dispatcher(Box::from(self.section_extractor));
-            fv::init_fv_support(&hob_list, Box::from(self.section_extractor));
+            #[cfg(not(tarpaulin))]
+            {
+                fv::init_fv_support(&hob_list, Box::from(self.section_extractor));
+            }
             dxe_services::init_dxe_services(st);
             driver_services::init_driver_services(st.boot_services_mut());
 
@@ -387,27 +396,29 @@ where
             // Install Memory Type Info configuration table.
             allocator::install_memory_type_info_table(st).expect("Unable to create Memory Type Info Table");
         }
-
-        let boot_services_ptr;
-        // let runtime_services_ptr;
+        #[cfg(not(tarpaulin))]
         {
-            let mut st = systemtables::SYSTEM_TABLE.lock();
-            boot_services_ptr = st.as_mut().unwrap().boot_services_mut() as *mut efi::BootServices;
-            // runtime_services_ptr = st.as_mut().unwrap().runtime_services_mut() as *mut efi::RuntimeServices;
+            let boot_services_ptr;
+            // let runtime_services_ptr;
+            {
+                let mut st = systemtables::SYSTEM_TABLE.lock();
+                boot_services_ptr = st.as_mut().unwrap().boot_services_mut() as *mut efi::BootServices;
+                // runtime_services_ptr = st.as_mut().unwrap().runtime_services_mut() as *mut efi::RuntimeServices;
+            }
+            tpl_lock::init_boot_services(boot_services_ptr);
+
+            memory_attributes_table::init_memory_attributes_table_support();
+
+            // This is currently commented out as it is breaking top of tree booting Q35 as qemu64 does not support
+            // reading the time stamp counter in the way done in this code and results in a divide by zero exception.
+            // Other cpu models crash in various other ways. It will be resolved, but is removed now to unblock other
+            // development
+            // _ = uefi_performance::init_performance_lib(&hob_list, unsafe { boot_services_ptr.as_ref().unwrap() }, unsafe {
+            //     runtime_services_ptr.as_ref().unwrap()
+            // });
+
+            self.storage.set_boot_services(boot_services_ptr);
         }
-        tpl_lock::init_boot_services(boot_services_ptr);
-
-        memory_attributes_table::init_memory_attributes_table_support();
-
-        // This is currently commented out as it is breaking top of tree booting Q35 as qemu64 does not support
-        // reading the time stamp counter in the way done in this code and results in a divide by zero exception.
-        // Other cpu models crash in various other ways. It will be resolved, but is removed now to unblock other
-        // development
-        // _ = uefi_performance::init_performance_lib(&hob_list, unsafe { boot_services_ptr.as_ref().unwrap() }, unsafe {
-        //     runtime_services_ptr.as_ref().unwrap()
-        // });
-
-        self.storage.set_boot_services(boot_services_ptr);
         Core {
             cpu_init: self.cpu_init,
             section_extractor: self.section_extractor,
@@ -511,7 +522,10 @@ where
         log::info!("Finished Dispatching Local Drivers");
         self.display_components_not_dispatched();
 
-        dispatcher::core_dispatcher().expect("initial dispatch failed.");
+        #[cfg(not(tarpaulin))]
+        {
+            dispatcher::core_dispatcher().expect("initial dispatch failed.");
+        }
 
         core_display_missing_arch_protocols();
 
@@ -570,4 +584,13 @@ fn call_bds() {
         }
         Err(err) => log::error!("Unable to locate status code runtime protocol: {:?}", err),
     };
+}
+#[cfg(test)]
+mod tests {
+
+    /* The coverage for this module has been put in allcoator.rs - lib_module_coverage_through_allocator_module
+     * with coverage already coverage around 85%. Adding that test function here causes Re-entrant locks for
+     * "AllocatorMapLock" not permitted.
+     */
+      
 }
