@@ -1010,8 +1010,15 @@ mod tests {
     };
 
     use super::*;
+    use crate::Core;
+    use crate::NoAlloc;
+    use mu_pi::fw_fs;
+    use mu_pi::fw_fs::Section;
     use mu_pi::hob::{header, GuidHob, Hob, GUID_EXTENSION};
     use r_efi::efi;
+    use r_efi::efi::Status;
+    use std::ptr;
+    use uefi_sdk::error::EfiError;
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(gcd_size: usize, f: F) {
         test_support::with_global_lock(|| {
@@ -1021,6 +1028,93 @@ mod tests {
                 ALLOCATORS.lock().reset();
             }
             f();
+        })
+        .unwrap();
+    }
+    #[test]
+    fn lib_module_coverage_through_allocator_module() {
+        fn dummy_func_for_coverage(should_fail: bool) -> Result<(), uefi_sdk::error::EfiError> {
+            if should_fail {
+                Err(EfiError::NotFound) // Simulating an error case
+            } else {
+                Ok(())
+            }
+        }
+        #[derive(Default, Copy, Clone)]
+        struct CpuInitForCoverage;
+        impl uefi_cpu::cpu::EfiCpuInit for CpuInitForCoverage {
+            fn initialize(&mut self) -> std::result::Result<(), uefi_sdk::error::EfiError> {
+                println!("Coverage for initializing Cpu!");
+                let result = dummy_func_for_coverage(false);
+                result
+            }
+
+            fn flush_data_cache(
+                &self,
+                _: u64,
+                _: u64,
+                _: mu_pi::protocols::cpu_arch::CpuFlushType,
+            ) -> std::result::Result<(), uefi_sdk::error::EfiError> {
+                Ok(())
+            }
+            fn init(
+                &self,
+                _: mu_pi::protocols::cpu_arch::CpuInitType,
+            ) -> std::result::Result<(), uefi_sdk::error::EfiError> {
+                Ok(())
+            }
+            fn get_timer_value(&self, _: u32) -> std::result::Result<(u64, u64), uefi_sdk::error::EfiError> {
+                Ok((0, 0))
+            }
+        }
+
+        #[derive(Default, Copy, Clone)]
+        struct SectionExtractorForCoverage;
+        impl fw_fs::SectionExtractor for SectionExtractorForCoverage {
+            fn extract(&self, _: &Section) -> std::result::Result<std::boxed::Box<[u8]>, Status> {
+                Ok(Box::new([0]))
+            }
+        }
+
+        #[derive(Default, Copy, Clone)]
+        struct InterruptManagerForCoverage;
+        impl uefi_cpu::interrupts::InterruptManager for InterruptManagerForCoverage {
+            fn initialize(&mut self) -> std::result::Result<(), uefi_sdk::error::EfiError> {
+                println!("Coverage for initializing Interrupt Manager!");
+                let result = dummy_func_for_coverage(false);
+                result
+            }
+        }
+
+        #[derive(Default, Copy, Clone)]
+        struct InterruptBasesForCoverage;
+        impl uefi_cpu::interrupts::InterruptBases for InterruptBasesForCoverage {
+            fn get_interrupt_base_d(&self) -> u64 {
+                0
+            }
+            fn get_interrupt_base_r(&self) -> u64 {
+                0
+            }
+        }
+
+        test_support::with_global_lock(|| {
+            let physical_hob_list = build_test_hob_list(0x2000000);
+            unsafe {
+                GCD.reset();
+                PROTOCOL_DB.reset();
+                ALLOCATORS.lock().reset();
+            }
+
+            Core::default()
+                .with_cpu_init(CpuInitForCoverage)
+                .with_interrupt_manager(InterruptManagerForCoverage)
+                .with_section_extractor(SectionExtractorForCoverage)
+                .with_interrupt_bases(InterruptBasesForCoverage)
+                .init_memory(physical_hob_list) // We can make allocations now!
+                .with_config(sample_components::Name("Coverage "))
+                .with_component(sample_components::log_hello)
+                .start()
+                .expect("Initing System Core failed ")
         })
         .unwrap();
     }
