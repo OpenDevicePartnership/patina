@@ -65,4 +65,4 @@ std = ["uefi_sdk/std"]
 doc = ["uefi_cpu/doc"]
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)', 'cfg(tarpaulin)']  }

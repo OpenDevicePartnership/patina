@@ -1011,13 +1011,11 @@ mod tests {
 
     use super::*;
     use crate::Core;
-    use crate::NoAlloc;
     use mu_pi::fw_fs;
     use mu_pi::fw_fs::Section;
     use mu_pi::hob::{header, GuidHob, Hob, GUID_EXTENSION};
     use r_efi::efi;
     use r_efi::efi::Status;
-    use std::ptr;
     use uefi_sdk::error::EfiError;
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(gcd_size: usize, f: F) {
@@ -1045,8 +1043,7 @@ mod tests {
         impl uefi_cpu::cpu::EfiCpuInit for CpuInitForCoverage {
             fn initialize(&mut self) -> std::result::Result<(), uefi_sdk::error::EfiError> {
                 println!("Coverage for initializing Cpu!");
-                let result = dummy_func_for_coverage(false);
-                result
+                dummy_func_for_coverage(false)
             }
 
             fn flush_data_cache(
@@ -1081,8 +1078,7 @@ mod tests {
         impl uefi_cpu::interrupts::InterruptManager for InterruptManagerForCoverage {
             fn initialize(&mut self) -> std::result::Result<(), uefi_sdk::error::EfiError> {
                 println!("Coverage for initializing Interrupt Manager!");
-                let result = dummy_func_for_coverage(false);
-                result
+                dummy_func_for_coverage(false)
             }
         }
 
