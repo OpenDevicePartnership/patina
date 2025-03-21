@@ -1765,7 +1765,15 @@ impl SpinLockedGcd {
             // only apply page table attributes to the page table, not our virtual GCD attributes
             let paging_attrs = MemoryAttributes::from_bits_truncate(attributes)
                 & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask);
-            match page_table.query_memory_region(base_address as u64, len as u64) {
+
+            // we assume that the page table and GCD are in sync. If not, we will debug_assert and return an error here
+            // as such, we only need to query the first page of this region to get the attributes. This will tell us
+            // whether the region is mapped or not and if so, what cache attributes to persist.
+            // If the first page is unmapped, we will call map_memory_region to map it. If it finds a page that is
+            // mapped inside of there, it will fail and we will debug_assert and return an error.
+            // If the first page is mapped, we will call remap_memory_region to remap it. It queries the range already
+            // so will catch the rest of the range and return an error if it is inconsistently mapped.
+            match page_table.query_memory_region(base_address as u64, UEFI_PAGE_SIZE as u64) {
                 Ok(region_attrs) => {
                     // if this region already has the attributes we want, we don't need to do anything
                     // in the page table. The GCD already got updated before we got here (this may have been a virtual
@@ -1794,6 +1802,7 @@ impl SpinLockedGcd {
                                 }
                             }
                             Err(e) => {
+                                // this indicates the GCD and page table are out of sync
                                 log::error!(
                                     "Failed to remap memory region {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
                                     base_address,
@@ -1801,6 +1810,8 @@ impl SpinLockedGcd {
                                     attributes,
                                     e
                                 );
+                                log::error!("GCD and page table are out of sync. This is a critical error.");
+                                log::error!("GCD {}", GCD);
                                 debug_assert!(false);
                                 match e {
                                     PtError::OutOfResources => EfiError::OutOfResources,
@@ -1832,6 +1843,7 @@ impl SpinLockedGcd {
                             Ok(())
                         }
                         Err(e) => {
+                            // this indicates the GCD and page table are out of sync
                             log::error!(
                                 "Failed to map memory region {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
                                 base_address,
@@ -1839,6 +1851,8 @@ impl SpinLockedGcd {
                                 attributes,
                                 e
                             );
+                            log::error!("GCD and page table are out of sync. This is a critical error.");
+                            log::error!("GCD {}", GCD);
                             debug_assert!(false);
                             Err(EfiError::InvalidParameter)?
                         }
