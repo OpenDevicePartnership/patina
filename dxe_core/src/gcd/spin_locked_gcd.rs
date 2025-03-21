@@ -2290,7 +2290,8 @@ impl SpinLockedGcd {
         // this API allows for setting attributes across multiple descriptors in the GCD (assuming the capabilities
         // allow it). The lower level set_memory_space_attributes will only operate on a single entry in the GCD/page
         // table, so at this level we need to check to see if the range spans multiple entries and if so, we need to
-        // split the range and call set_memory_space_attributes for each entry.
+        // split the range and call set_memory_space_attributes for each entry. We also need to set the paging
+        // attributes per entry to ensure that we keep the GCD and page table in sync
 
         let mut current_base = base_address as u64;
         let mut res = Ok(());
@@ -2317,14 +2318,39 @@ impl SpinLockedGcd {
                 }
                 Ok(()) => {}
                 _ => {
-                    // some nicer log here
+                    log::error!(
+                        "Failed to set GCD memory attributes for memory region {:#x?} of length {:#x?} with attributes {:#x?}",
+                        current_base,
+                        current_len,
+                        attributes
+                    );
                     debug_assert!(false);
                 }
             }
+
+            match self.set_paging_attributes(current_base as usize, current_len as usize, attributes) {
+                Ok(_) => {}
+                Err(EfiError::NotReady) => {
+                    // before the page table is installed, we expect to get a return of NotReady. This means the GCD
+                    // has been updated with the attributes, but the page table is not installed yet. In init_paging, the
+                    // page table will be updated with the current state of the GCD. The code that calls into this expects
+                    // NotReady to be returned, so we must catch that error and report it. However, we also need to
+                    // make sure any attribute updates across descriptors update the full range and not error out here.
+                    res = Err(EfiError::NotReady);
+                }
+                _ => {
+                    log::error!(
+                        "Failed to set page table memory attributes for memory region {:#x?} of length {:#x?} with attributes {:#x?}",
+                        current_base,
+                        current_len,
+                        attributes
+                    );
+                    debug_assert!(false);
+                }
+            }
+
             current_base = next_base;
         }
-
-        self.set_paging_attributes(base_address, len, attributes)?;
 
         // if we made it out of the loop, we set the attributes correctly and should call the memory change callback,
         // if there is one
