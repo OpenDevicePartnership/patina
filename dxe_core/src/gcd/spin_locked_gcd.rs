@@ -2118,6 +2118,21 @@ impl SpinLockedGcd {
     pub fn remove_memory_space(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
         let result = self.memory.lock().remove_memory_space(base_address, len);
         if result.is_ok() {
+            if let Some(page_table) = &mut *self.page_table.lock() {
+                match page_table.unmap_memory_region(base_address as u64, len as u64) {
+                    Ok(_) => {}
+                    Err(status) => {
+                        log::error!(
+                            "Failed to unmap memory region {:#x?} of length {:#x?}. Status: {:#x?} during
+                                remove_memory_space removal. This is expected if this region was not previously mapped",
+                            base_address,
+                            len,
+                            status
+                        );
+                    }
+                }
+            }
+
             if let Some(callback) = self.memory_change_callback {
                 callback(MapChangeType::RemoveMemorySpace);
             }
