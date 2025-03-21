@@ -227,9 +227,16 @@ args = ["fmt", "--all"]
 description = "Run cspell for spell checking." # npm install -g cspell@latest
 script = "cspell --quiet  --no-progress --no-summary  --dot --gitignore -e \"{.git/**,.github/**,.vscode/**}\" ."
 
+[tasks.deny]
+description = "Run cargo deny."
+clear = true
+command = "cargo"
+args = ["deny", "check"]
+
 [tasks.all]
 description = "Run all tasks for PR readiness."
 dependencies = [
+    "deny",
     "clippy",
     "cspell",
     "build",

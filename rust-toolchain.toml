@@ -5,6 +5,7 @@ components = ["rust-src", "clippy", "rustfmt", "rust-docs"]
 
 # A custom section for CI pipelines to install tools
 [tools]
+cargo-deny = "^0.17"
 cargo-make = "0.37.21"
 cargo-tarpaulin = "0.31.5"
 cargo-release = "0.25.12"
