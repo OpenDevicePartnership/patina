@@ -349,6 +349,8 @@ impl GCD {
         self.memory_blocks.replace(memory_blocks);
 
         let idx = self.add_memory_space(memory_type, base_address, len, capabilities)?;
+
+        //initialize attributes on the first block to WB + XP
         match self.set_memory_space_attributes(
             base_address,
             len,
@@ -358,6 +360,7 @@ impl GCD {
             Err(err) => Err(err),
         }?;
 
+        //allocate a chunk of the block to hold the actual first GCD slice
         self.allocate_memory_space(
             AllocateType::Address(base_address),
             dxe_services::GcdMemoryType::SystemMemory,
@@ -366,6 +369,19 @@ impl GCD {
             protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
             None,
         )?;
+
+        // remove the XP and add RP on the remaining free block.
+        if len > MEMORY_BLOCK_SLICE_SIZE {
+            match self.set_memory_space_attributes(
+                base_address + MEMORY_BLOCK_SLICE_SIZE,
+                len - MEMORY_BLOCK_SLICE_SIZE,
+                (MemoryAttributes::Writeback | MemoryAttributes::ReadProtect).bits(),
+            ) {
+                Ok(_) | Err(EfiError::NotReady) => Ok(()),
+                Err(err) => Err(err),
+            }?;
+        }
+
         Ok(idx)
     }
 
