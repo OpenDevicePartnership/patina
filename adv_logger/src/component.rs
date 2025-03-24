@@ -147,7 +147,7 @@ mod tests {
     use core::mem::size_of;
 
     use mu_pi::hob::{header::Hob, GuidHob, GUID_EXTENSION};
-    use uefi_sdk::serial::UartNull;
+    use uefi_sdk::serial::uart::UartNull;
 
     use super::*;
 

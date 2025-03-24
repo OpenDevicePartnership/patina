@@ -26,14 +26,14 @@
 //! # use core::ffi::c_void;
 //! use adv_logger::{component::AdvancedLoggerComponent, logger::AdvancedLogger};
 //!
-//! static LOGGER: AdvancedLogger<uefi_sdk::serial::UartNull> = AdvancedLogger::new(
+//! static LOGGER: AdvancedLogger<uefi_sdk::serial::uart::UartNull> = AdvancedLogger::new(
 //!      uefi_sdk::log::Format::Standard,
 //!      &[("goblin", log::LevelFilter::Off), ("uefi_depex_lib", log::LevelFilter::Off)],
 //!      log::LevelFilter::Trace,
-//!      uefi_sdk::serial::UartNull{},
+//!      uefi_sdk::serial::uart::UartNull{},
 //! );
 //!
-//! static ADV_LOGGER: AdvancedLoggerComponent<uefi_sdk::serial::UartNull> = AdvancedLoggerComponent::new(&LOGGER);
+//! static ADV_LOGGER: AdvancedLoggerComponent<uefi_sdk::serial::uart::UartNull> = AdvancedLoggerComponent::new(&LOGGER);
 //!
 //! fn _start(physical_hob_list: *const c_void) {
 //!     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
