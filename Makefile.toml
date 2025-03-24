@@ -144,6 +144,12 @@ command = "cargo"
 args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )", "--features", "enable_patina_tests"]
 dependencies = ["individual-package-targets"]
 
+[tasks.generate-lockfile]
+description = "Generate Cargo.lock file."
+private = true
+command = "cargo"
+args = ["generate-lockfile"]
+
 [tasks.coverage]
 description = "Build and run all tests and calculate coverage."
 install_crate = false
@@ -272,10 +278,19 @@ clear = true
 command = "cargo"
 args = ["bench", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
 
+[tasks.vet]
+description = "Run cargo vet."
+install_crate = false
+clear = true
+dependencies = ["generate-lockfile"]
+command = "cargo"
+args = ["vet"]
+
 [tasks.all]
 description = "Run all tasks for PR readiness."
 dependencies = [
     "deny",
+    "vet",
     "cspell",
     "clippy",
     "build",
