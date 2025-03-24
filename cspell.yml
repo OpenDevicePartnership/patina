@@ -29,7 +29,10 @@ words:
   - aarch
   - acpibase
   - addrs
+  - amanieu
+  - anstream
   - anstyle
+  - antras
   - armasm
   - autocfg
   - bitvec
@@ -42,6 +45,7 @@ words:
   - coverity
   - cpuid
   - ctypes
+  - cuviper
   - dbgwcr
   - dbgwvr
   - deassertion
@@ -52,6 +56,7 @@ words:
   - dllcharacteristics
   - dnested
   - docsrs
+  - dtolnay
   - dword
   - dxefv
   - dxeipl
@@ -60,6 +65,7 @@ words:
   - eficall
   - efierror
   - eflags
+  - epage
   - fnent
   - funty
   - fvmain
@@ -70,6 +76,7 @@ words:
   - getsp
   - gigantor
   - gnullvm
+  - gohman
   - granularities
   - grcov
   - gread
@@ -85,7 +92,10 @@ words:
   - iscsi
   - isenabler
   - itertools
+  - jhpratt
+  - joshlf
   - keccak
+  - libyaml
   - linkme
   - longjmp
   - lzmatest
@@ -140,6 +150,7 @@ words:
   - sysreg
   - tiano
   - tianocore
+  - tolnay
   - typer
   - uefiext
   - uintn
@@ -154,6 +165,7 @@ words:
   - vcvarsarm
   - vtable
   - wakeup
+  - wasip
   - wbinvd
   - windbg
   - withf
