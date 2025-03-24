@@ -30,7 +30,7 @@ fn benchmark_search_function(c: &mut Criterion) {
 
     // RBT 32bit
     let mut mem = [0; MAX_SIZE * node_size::<u32>()];
-    let mut rbt: Rbt<u32> = Rbt::new(&mut mem);
+    let mut rbt: Rbt<u32> = Rbt::with_capacity(&mut mem);
     for i in &nums {
         rbt.add(*i).unwrap();
     }
@@ -44,7 +44,7 @@ fn benchmark_search_function(c: &mut Criterion) {
 
     // BST 32bit
     let mut mem = [0; MAX_SIZE * node_size::<u32>()];
-    let mut bst: Bst<u32> = Bst::new(&mut mem);
+    let mut bst: Bst<u32> = Bst::with_capacity(&mut mem);
     for i in &nums {
         bst.add(*i).unwrap();
     }
@@ -75,7 +75,7 @@ fn benchmark_search_function(c: &mut Criterion) {
 
     // RBT 128bit
     let mut mem = [0; MAX_SIZE * node_size::<i128>()];
-    let mut rbt: Rbt<i128> = Rbt::new(&mut mem);
+    let mut rbt: Rbt<i128> = Rbt::with_capacity(&mut mem);
     for i in &nums {
         rbt.add(*i).unwrap();
     }
@@ -89,7 +89,7 @@ fn benchmark_search_function(c: &mut Criterion) {
 
     // BST 128bit
     let mut mem = [0; MAX_SIZE * node_size::<i128>()];
-    let mut bst: Bst<i128> = Bst::new(&mut mem);
+    let mut bst: Bst<i128> = Bst::with_capacity(&mut mem);
     for i in &nums {
         bst.add(*i).unwrap();
     }
@@ -121,7 +121,7 @@ fn benchmark_search_function(c: &mut Criterion) {
 
     // RBT 384bit
     let mut mem = [0; MAX_SIZE * node_size::<U384>()];
-    let mut rbt: Rbt<U384> = Rbt::new(&mut mem);
+    let mut rbt: Rbt<U384> = Rbt::with_capacity(&mut mem);
 
     for i in &nums {
         rbt.add(*i).unwrap();
@@ -136,7 +136,7 @@ fn benchmark_search_function(c: &mut Criterion) {
 
     // BST 384bit
     let mut mem = [0; MAX_SIZE * node_size::<U384>()];
-    let mut bst: Bst<U384> = Bst::new(&mut mem);
+    let mut bst: Bst<U384> = Bst::with_capacity(&mut mem);
     for i in &nums {
         bst.add(*i).unwrap();
     }

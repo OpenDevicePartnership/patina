@@ -42,7 +42,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
                     MEM_U32.fill(0);
                 }
                 #[allow(static_mut_refs)]
-                let mut rbt: Rbt<u32> = Rbt::new(unsafe { &mut MEM_U32 });
+                let mut rbt: Rbt<u32> = Rbt::with_capacity(unsafe { &mut MEM_U32 });
                 for i in &nums {
                     rbt.add(*i).unwrap();
                 }
@@ -65,7 +65,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
                     MEM_U32.fill(0);
                 }
                 #[allow(static_mut_refs)]
-                let mut bst: Bst<u32> = Bst::new(unsafe { &mut MEM_U32 });
+                let mut bst: Bst<u32> = Bst::with_capacity(unsafe { &mut MEM_U32 });
                 for i in &nums {
                     bst.add(*i).unwrap();
                 }
@@ -124,7 +124,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
                     MEM_U128.fill(0);
                 }
                 #[allow(static_mut_refs)]
-                let mut rbt: Rbt<u128> = Rbt::new(unsafe { &mut MEM_U128 });
+                let mut rbt: Rbt<u128> = Rbt::with_capacity(unsafe { &mut MEM_U128 });
                 for i in &nums {
                     rbt.add(*i).unwrap();
                 }
@@ -147,7 +147,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
                     MEM_U128.fill(0);
                 }
                 #[allow(static_mut_refs)]
-                let mut bst: Bst<u128> = Bst::new(unsafe { &mut MEM_U128 });
+                let mut bst: Bst<u128> = Bst::with_capacity(unsafe { &mut MEM_U128 });
                 for i in &nums {
                     bst.add(*i).unwrap();
                 }
@@ -199,7 +199,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
                     MEM_U384.fill(0);
                 }
                 #[allow(static_mut_refs)]
-                let mut rbt: Rbt<U384> = Rbt::new(unsafe { &mut MEM_U384 });
+                let mut rbt: Rbt<U384> = Rbt::with_capacity(unsafe { &mut MEM_U384 });
                 for i in &nums {
                     rbt.add(*i).unwrap();
                 }
@@ -222,7 +222,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
                     MEM_U384.fill(0);
                 }
                 #[allow(static_mut_refs)]
-                let mut bst: Bst<U384> = Bst::new(unsafe { &mut MEM_U384 });
+                let mut bst: Bst<U384> = Bst::with_capacity(unsafe { &mut MEM_U384 });
                 for i in &nums {
                     bst.add(*i).unwrap();
                 }

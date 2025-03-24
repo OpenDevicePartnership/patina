@@ -7,7 +7,9 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use core::{
-    mem, slice,
+    mem,
+    ptr::NonNull,
+    slice,
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
 
@@ -40,8 +42,18 @@ impl<'a, D> Storage<'a, D>
 where
     D: SliceKey,
 {
-    /// Create a new storage container.
-    pub fn new(slice: &'a mut [u8]) -> Storage<'a, D> {
+    /// Creates a empty, zero-capacity storage container.
+    pub const fn new() -> Storage<'a, D> {
+        let ptr = NonNull::<Node<D>>::dangling();
+        Self {
+            data: unsafe { slice::from_raw_parts_mut(ptr.as_ptr(), 0) },
+            length: 0,
+            available: AtomicPtr::new(core::ptr::null_mut()),
+        }
+    }
+
+    /// Create a new storage container with a slice of memory.
+    pub fn with_capacity(slice: &'a mut [u8]) -> Storage<'a, D> {
         let storage = Storage {
             data: unsafe {
                 slice::from_raw_parts_mut::<'a, Node<D>>(
@@ -53,15 +65,18 @@ where
             available: AtomicPtr::default(),
         };
 
-        // Create a linked list of free nodes in the storage container.
-        let mut node = &storage.data[0];
-        for i in 1..storage.capacity() {
-            node.set_right(Some(&storage.data[i]));
-            storage.data[i].set_left(Some(node));
-            node = &storage.data[i];
-        }
+        Self::build_linked_list(storage.data);
         storage.available.store(storage.data[0].as_mut_ptr(), Ordering::SeqCst);
         storage
+    }
+
+    fn build_linked_list(buffer: &[Node<D>]) {
+        let mut node = &buffer[0];
+        for next in buffer.iter().skip(1) {
+            node.set_right(Some(next));
+            next.set_left(Some(node));
+            node = next;
+        }
     }
 
     /// Get the number of nodes in the storage container.
@@ -124,7 +139,11 @@ where
 
     /// Get the index of a node in the storage container based off the pointer.
     pub fn idx(&self, ptr: *mut Node<D>) -> usize {
-        (ptr as usize - self.data.as_ptr() as usize) / core::mem::size_of::<Node<D>>()
+        debug_assert!(!ptr.is_null());
+        // SAFETY: Meets the following requirements as specified in `offset_from`:
+        // - `ptr` and `self.data.as_ptr()` are derived from the same allocation (the same slice).
+        // - The distance between the pointers, in bytes, must be an exact multiple of the size of Node<T>.
+        unsafe { ptr.offset_from(self.data.as_ptr()) as usize }
     }
 
     /// Gets a reference to a node in the storage container using an index
@@ -145,6 +164,79 @@ where
     ///
     pub fn get_mut(&mut self, index: usize) -> Option<&mut Node<D>> {
         self.data.get_mut(index)
+    }
+}
+
+impl<'a, D> Storage<'a, D>
+where
+    D: SliceKey + Copy,
+{
+    /// Resizes the storage container to a new slice of memory.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the new slice is smaller than the current length of the storage container.
+    ///
+    /// # Time Complexity
+    ///
+    /// O(n)
+    pub fn resize(&mut self, slice: &'a mut [u8]) {
+        let buffer = unsafe {
+            slice::from_raw_parts_mut::<'a, Node<D>>(
+                slice as *mut [u8] as *mut Node<D>,
+                slice.len() / mem::size_of::<Node<D>>(),
+            )
+        };
+
+        assert!(buffer.len() >= self.len());
+
+        // When current capacity is 0, we just need to copy the data and build the available list
+        if self.capacity() == 0 {
+            self.data = buffer;
+            Self::build_linked_list(self.data);
+            self.available.store(self.data[0].as_mut_ptr(), Ordering::SeqCst);
+            return;
+        }
+
+        // Copy the data from the old buffer to the new buffer. Update the pointers to the new buffer
+        for i in 0..self.len() {
+            let old = &self.data[i];
+
+            buffer[i].data = old.data;
+            buffer[i].set_color(old.color());
+
+            if let Some(left) = old.left() {
+                let idx = self.idx(left.as_mut_ptr());
+                buffer[i].set_left(Some(&buffer[idx]));
+            } else {
+                buffer[i].set_left(None);
+            }
+
+            if let Some(right) = old.right() {
+                let idx = self.idx(right.as_mut_ptr());
+                buffer[i].set_right(Some(&buffer[idx]));
+            } else {
+                buffer[i].set_right(None);
+            }
+
+            if let Some(parent) = old.parent() {
+                let idx = self.idx(parent.as_mut_ptr());
+                buffer[i].set_parent(Some(&buffer[idx]));
+            } else {
+                buffer[i].set_parent(None);
+            }
+        }
+
+        let idx = if !self.available.load(Ordering::SeqCst).is_null() {
+            self.idx(self.available.load(Ordering::SeqCst))
+        } else {
+            self.len()
+        };
+
+        Self::build_linked_list(&buffer[idx..]);
+        self.available.store(buffer[idx].as_mut_ptr(), Ordering::SeqCst);
+
+        self.data = buffer;
     }
 }
 
@@ -504,7 +596,7 @@ mod test {
     #[test]
     fn test_storage() {
         let mut memory = [0; 10 * node_size::<usize>()];
-        let mut storage = Storage::<usize>::new(&mut memory);
+        let mut storage = Storage::<usize>::with_capacity(&mut memory);
 
         // Fill the storage
         for i in 0..10 {

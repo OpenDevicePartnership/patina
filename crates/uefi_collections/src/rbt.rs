@@ -36,9 +36,18 @@ impl<'a, D> Rbt<'a, D>
 where
     D: SliceKey + 'a,
 {
+    /// Creates a zero capacity red-black tree.
+    ///
+    /// This is useful for creating a tree at compile time and replacing the memory later. Use
+    /// [with_capacity](Self::with_capacity) to create a tree with a given slice of memory immediately. Otherwise use
+    /// [resize](Self::resize) to replace the memory later.
+    pub const fn new() -> Self {
+        Rbt { storage: Storage::new(), root: AtomicPtr::new(core::ptr::null_mut()) }
+    }
+
     /// Creates a new binary tree with a given slice of memory.
-    pub fn new(slice: &'a mut [u8]) -> Self {
-        Rbt { storage: Storage::new(slice), root: AtomicPtr::default() }
+    pub fn with_capacity(slice: &'a mut [u8]) -> Self {
+        Rbt { storage: Storage::with_capacity(slice), root: AtomicPtr::default() }
     }
 
     /// Returns the number of elements in the tree.
@@ -839,6 +848,18 @@ impl<'a, D> Rbt<'a, D>
 where
     D: SliceKey + Copy + 'a,
 {
+    /// Replaces the memory of the tree with a new slice, copying the data from the old slice to the new slice.
+    pub fn resize(&mut self, slice: &'a mut [u8]) {
+        let root = (!self.root.load(atomic::Ordering::SeqCst).is_null())
+            .then(|| self.storage.idx(self.root.load(atomic::Ordering::SeqCst)));
+
+        self.storage.resize(slice);
+
+        if let Some(idx) = root {
+            self.root.store(self.storage.get_mut(idx).expect("Pointer Exists."), atomic::Ordering::SeqCst);
+        }
+    }
+
     #[cfg(feature = "alloc")]
     #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
     #[allow(dead_code)]
@@ -858,6 +879,15 @@ where
             values.push(node.data);
             Self::_dfs(node.right(), values);
         }
+    }
+}
+
+impl<D> Default for Rbt<'_, D>
+where
+    D: SliceKey,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -891,7 +921,7 @@ mod tests {
     #[test]
     fn simple_test() {
         let mut mem = [0; RBT_MAX_SIZE * node_size::<i32>()];
-        let mut rbt: Rbt<i32> = Rbt::new(&mut mem);
+        let mut rbt: Rbt<i32> = Rbt::with_capacity(&mut mem);
 
         assert!(rbt.first().is_none());
         assert!(rbt.first_idx().is_none());
@@ -928,7 +958,7 @@ mod tests {
                       [81R]                  [81R]
         */
         let mut mem = [0; RBT_MAX_SIZE * node_size::<i32>()];
-        let mut rbt: Rbt<i32> = Rbt::new(&mut mem);
+        let mut rbt: Rbt<i32> = Rbt::with_capacity(&mut mem);
         rbt.add(17).unwrap();
 
         // Root should be black
@@ -990,7 +1020,7 @@ mod tests {
                     [19R] [75R]
         */
         let mut mem = [0; RBT_MAX_SIZE * node_size::<i32>()];
-        let mut rbt: Rbt<i32> = Rbt::new(&mut mem);
+        let mut rbt: Rbt<i32> = Rbt::with_capacity(&mut mem);
         rbt.add(17).unwrap();
         rbt.add(9).unwrap();
         rbt.add(19).unwrap();
@@ -1138,7 +1168,7 @@ mod tests {
     #[test]
     fn test_delete_from_storage() {
         let mut mem = [0; 10 * node_size::<i32>()];
-        let mut rbt = Rbt::<i32>::new(&mut mem);
+        let mut rbt = Rbt::<i32>::with_capacity(&mut mem);
         rbt.add(5).unwrap();
         rbt.add(3).unwrap();
         assert_eq!(rbt.storage.len(), 2);
@@ -1609,7 +1639,7 @@ mod tests {
     #[test]
     fn test_add_many() {
         let mut mem = [0; RBT_MAX_SIZE * node_size::<usize>()];
-        let mut rbt: Rbt<usize> = Rbt::new(&mut mem);
+        let mut rbt: Rbt<usize> = Rbt::with_capacity(&mut mem);
         assert!(rbt.add_many(0..RBT_MAX_SIZE).is_ok());
         assert_eq!(rbt.len(), RBT_MAX_SIZE);
     }
@@ -1626,7 +1656,7 @@ mod tests {
         }
 
         let mut mem = [0; RBT_MAX_SIZE * node_size::<MyType>()];
-        let mut rbt: Rbt<MyType> = Rbt::new(&mut mem);
+        let mut rbt: Rbt<MyType> = Rbt::with_capacity(&mut mem);
         for i in 0..RBT_MAX_SIZE {
             assert!(rbt.add(MyType(i + 1, i)).is_ok());
         }
@@ -1658,7 +1688,7 @@ mod tests {
     #[test]
     fn test_get_closest1() {
         let mut mem = [0; 4096 * node_size::<i32>()];
-        let mut rbt: Rbt<i32> = Rbt::new(&mut mem);
+        let mut rbt: Rbt<i32> = Rbt::with_capacity(&mut mem);
         assert_eq!(rbt.get_closest_idx(&1), None);
 
         let a = rbt.add(1).unwrap();
@@ -1679,7 +1709,7 @@ mod tests {
     #[test]
     fn test_get_closest2() {
         let mut mem = [0; RBT_MAX_SIZE * node_size::<usize>()];
-        let mut rbt: Rbt<usize> = Rbt::new(&mut mem);
+        let mut rbt: Rbt<usize> = Rbt::with_capacity(&mut mem);
         for i in 0..RBT_MAX_SIZE {
             assert!(rbt.add(i * 10).is_ok());
         }
@@ -1695,7 +1725,7 @@ mod tests {
     #[test]
     fn test_iteration() {
         let mut mem = [0; RBT_MAX_SIZE * node_size::<usize>()];
-        let mut rbt: Rbt<usize> = Rbt::new(&mut mem);
+        let mut rbt: Rbt<usize> = Rbt::with_capacity(&mut mem);
         for i in 0..RBT_MAX_SIZE {
             assert!(rbt.add(i).is_ok());
         }
@@ -1735,6 +1765,53 @@ mod tests {
         }
         assert_eq!(rbt.len(), 0);
     }
+
+    #[test]
+    fn test_simple_resize() {
+        let mut rbt = Rbt::<usize>::new();
+
+        let mut mem = [0; 20 * node_size::<usize>()];
+        rbt.resize(&mut mem);
+
+        for i in 0..10 {
+            assert!(rbt.add(i).is_ok());
+        }
+
+        for i in 0..10 {
+            assert_eq!(rbt.get(&i).unwrap(), &i);
+        }
+    }
+
+    #[test]
+    fn test_resize_with_existing_data() {
+        let mut mem = [0; 10 * node_size::<usize>()];
+        let mut rbt = Rbt::<usize>::with_capacity(&mut mem);
+
+        assert_eq!(rbt.len(), 0);
+        assert_eq!(rbt.capacity(), 10);
+
+        for i in 0..10 {
+            assert!(rbt.add(i).is_ok());
+        }
+
+        let mut new_mem = [0; 20 * node_size::<usize>()];
+        rbt.resize(&mut new_mem);
+
+        assert_eq!(rbt.len(), 10);
+        assert_eq!(rbt.capacity(), 20);
+
+        for i in 0..10 {
+            assert_eq!(rbt.get(&i).unwrap(), &i);
+        }
+
+        for i in 10..20 {
+            assert!(rbt.add(i).is_ok());
+        }
+
+        for i in 0..20 {
+            assert_eq!(rbt.get(&i).unwrap(), &i);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1750,7 +1827,7 @@ mod fuzz_tests {
     fn fuzz_add() {
         for _ in 0..100 {
             let mut mem = [0; RBT_MAX_SIZE * node_size::<u32>()];
-            let mut rbt: Rbt<u32> = Rbt::new(&mut mem);
+            let mut rbt: Rbt<u32> = Rbt::with_capacity(&mut mem);
             let mut rng = rand::thread_rng();
             let min = 1;
             let max = 100_000;
@@ -1781,7 +1858,7 @@ mod fuzz_tests {
     fn fuzz_delete() {
         for _ in 0..100 {
             let mut mem = [0; RBT_MAX_SIZE * node_size::<u32>()];
-            let mut rbt: Rbt<u32> = Rbt::new(&mut mem);
+            let mut rbt: Rbt<u32> = Rbt::with_capacity(&mut mem);
             let mut rng = rand::thread_rng();
             let min = 1;
             let max = 100_000;
@@ -1813,7 +1890,7 @@ mod fuzz_tests {
     #[test]
     fn fuzz_search() {
         let mut mem = [0; RBT_MAX_SIZE * node_size::<u32>()];
-        let mut rbt: Rbt<u32> = Rbt::new(&mut mem);
+        let mut rbt: Rbt<u32> = Rbt::with_capacity(&mut mem);
         let mut rng = rand::thread_rng();
         let min = 1;
         let max = 100_000;

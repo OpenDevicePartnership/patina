@@ -31,9 +31,18 @@ impl<'a, D> Bst<'a, D>
 where
     D: SliceKey + 'a,
 {
+    /// Creates a zero capacity red-black tree.
+    ///
+    /// This is useful for creating a tree at compile time and replacing the memory later. Use
+    /// [with_capacity](Self::with_capacity) to create a tree with a given slice of memory immediately. Otherwise use
+    /// [resize](Self::resize) to replace the memory later.
+    pub const fn new() -> Self {
+        Bst { storage: Storage::new(), root: AtomicPtr::new(core::ptr::null_mut()) }
+    }
+
     /// Creates a new binary tree with a given slice of memory.
-    pub fn new(slice: &'a mut [u8]) -> Self {
-        Self { storage: Storage::new(slice), root: AtomicPtr::default() }
+    pub fn with_capacity(slice: &'a mut [u8]) -> Self {
+        Self { storage: Storage::with_capacity(slice), root: AtomicPtr::default() }
     }
 
     /// Returns the number of elements in the tree.
@@ -586,11 +595,32 @@ where
     }
 }
 
+impl<D> Default for Bst<'_, D>
+where
+    D: SliceKey,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Methods that require D to also be [Copy](core::marker::Copy).
 impl<'a, D> Bst<'a, D>
 where
     D: Copy + SliceKey + 'a,
 {
+    /// Replaces the memory of the tree with a new slice, copying the data from the old slice to the new slice.
+    pub fn resize(&mut self, slice: &'a mut [u8]) {
+        let root = (!self.root.load(atomic::Ordering::SeqCst).is_null())
+            .then(|| self.storage.idx(self.root.load(atomic::Ordering::SeqCst)));
+
+        self.storage.resize(slice);
+
+        if let Some(idx) = root {
+            self.root.store(self.storage.get_mut(idx).expect("Pointer Exists."), atomic::Ordering::SeqCst);
+        }
+    }
+
     #[cfg(feature = "alloc")]
     #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
     #[allow(dead_code)]
@@ -634,7 +664,7 @@ mod tests {
     #[test]
     fn simple_test() {
         let mut mem = [0; BST_MAX_SIZE * node_size::<i32>()];
-        let mut bst: Bst<i32> = Bst::new(&mut mem);
+        let mut bst: Bst<i32> = Bst::with_capacity(&mut mem);
 
         assert!(bst.first().is_none());
         assert!(bst.first_idx().is_none());
@@ -662,7 +692,7 @@ mod tests {
     #[test]
     fn test_add_many() {
         let mut mem = [0; BST_MAX_SIZE * node_size::<usize>()];
-        let mut bst: Bst<usize> = Bst::new(&mut mem);
+        let mut bst: Bst<usize> = Bst::with_capacity(&mut mem);
         assert!(bst.add_many(0..BST_MAX_SIZE).is_ok());
         assert_eq!(bst.len(), BST_MAX_SIZE);
     }
@@ -679,7 +709,7 @@ mod tests {
         }
 
         let mut mem = [0; BST_MAX_SIZE * node_size::<MyType>()];
-        let mut bst: Bst<MyType> = Bst::new(&mut mem);
+        let mut bst: Bst<MyType> = Bst::with_capacity(&mut mem);
         for i in 0..BST_MAX_SIZE {
             assert!(bst.add(MyType(i + 1, i)).is_ok());
         }
@@ -710,7 +740,7 @@ mod tests {
     #[test]
     fn test_find_closest1() {
         let mut mem = [0; BST_MAX_SIZE * node_size::<i32>()];
-        let mut bst: Bst<i32> = Bst::new(&mut mem);
+        let mut bst: Bst<i32> = Bst::with_capacity(&mut mem);
         assert_eq!(bst.get_closest_idx(&1), None);
 
         let a = bst.add(1).unwrap();
@@ -731,7 +761,7 @@ mod tests {
     #[test]
     fn test_get_closest2() {
         let mut mem = [0; BST_MAX_SIZE * node_size::<usize>()];
-        let mut bst: Bst<usize> = Bst::new(&mut mem);
+        let mut bst: Bst<usize> = Bst::with_capacity(&mut mem);
         for i in 0..BST_MAX_SIZE {
             assert!(bst.add(i * 10).is_ok());
         }
@@ -747,7 +777,7 @@ mod tests {
     #[test]
     fn test_iteration() {
         let mut mem = [0; BST_MAX_SIZE * node_size::<usize>()];
-        let mut bst: Bst<usize> = Bst::new(&mut mem);
+        let mut bst: Bst<usize> = Bst::with_capacity(&mut mem);
         for i in 0..BST_MAX_SIZE {
             assert!(bst.add(i).is_ok());
         }
@@ -787,6 +817,53 @@ mod tests {
         }
         assert_eq!(bst.len(), 0);
     }
+
+    #[test]
+    fn test_simple_resize() {
+        let mut bst = Bst::<usize>::new();
+
+        let mut mem = [0; 20 * node_size::<usize>()];
+        bst.resize(&mut mem);
+
+        for i in 0..10 {
+            assert!(bst.add(i).is_ok());
+        }
+
+        for i in 0..10 {
+            assert_eq!(bst.get(&i).unwrap(), &i);
+        }
+    }
+
+    #[test]
+    fn test_resize_with_existing_data() {
+        let mut mem = [0; 10 * node_size::<usize>()];
+        let mut bst = Bst::<usize>::with_capacity(&mut mem);
+
+        assert_eq!(bst.len(), 0);
+        assert_eq!(bst.capacity(), 10);
+
+        for i in 0..10 {
+            assert!(bst.add(i).is_ok());
+        }
+
+        let mut new_mem = [0; 20 * node_size::<usize>()];
+        bst.resize(&mut new_mem);
+
+        assert_eq!(bst.len(), 10);
+        assert_eq!(bst.capacity(), 20);
+
+        for i in 0..10 {
+            assert_eq!(bst.get(&i).unwrap(), &i);
+        }
+
+        for i in 10..20 {
+            assert!(bst.add(i).is_ok());
+        }
+
+        for i in 0..20 {
+            assert_eq!(bst.get(&i).unwrap(), &i);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -802,7 +879,7 @@ mod fuzz_tests {
     fn fuzz_add() {
         for _ in 0..100 {
             let mut mem = [0; BST_MAX_SIZE * node_size::<i32>()];
-            let mut bst: Bst<i32> = Bst::new(&mut mem);
+            let mut bst: Bst<i32> = Bst::with_capacity(&mut mem);
             let mut rng = rand::thread_rng();
             let min = 1;
             let max = 100_000;
@@ -834,7 +911,7 @@ mod fuzz_tests {
     #[test]
     fn fuzz_search() {
         let mut mem = [0; BST_MAX_SIZE * node_size::<i32>()];
-        let mut bst: Bst<i32> = Bst::new(&mut mem);
+        let mut bst: Bst<i32> = Bst::with_capacity(&mut mem);
         let mut rng = rand::thread_rng();
         let min = 50_000;
         let max = 100_000;
@@ -871,7 +948,7 @@ mod fuzz_tests {
     #[test]
     fn fuzz_delete() {
         let mut mem = [0; BST_MAX_SIZE * node_size::<i32>()];
-        let mut bst: Bst<i32> = Bst::new(&mut mem);
+        let mut bst: Bst<i32> = Bst::with_capacity(&mut mem);
         let mut rng = rand::thread_rng();
         let min = 1;
         let max = 100_000;
