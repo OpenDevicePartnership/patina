@@ -29,13 +29,18 @@ words:
   - aarch
   - acpibase
   - addrs
+  - anstyle
   - armasm
+  - autocfg
+  - bitvec
   - bucketize
+  - bumpalo
   - cbindgen
   - cdecl
   - cdrom
   - corosensei
   - coverity
+  - cpuid
   - ctypes
   - dbgwcr
   - dbgwvr
@@ -56,6 +61,7 @@ words:
   - efierror
   - eflags
   - fnent
+  - funty
   - fvmain
   - gantt
   - gdbstub
@@ -63,6 +69,7 @@ words:
   - getrsp
   - getsp
   - gigantor
+  - gnullvm
   - granularities
   - grcov
   - gread
@@ -77,6 +84,7 @@ words:
   - irouter
   - iscsi
   - isenabler
+  - itertools
   - keccak
   - linkme
   - longjmp
@@ -97,6 +105,7 @@ words:
   - ntohs
   - nvdimm
   - oleaut
+  - oorandom
   - openvmm
   - opinfo
   - oprom
@@ -107,6 +116,7 @@ words:
   - pcddxe
   - pdata
   - pdbhelper
+  - powerfmt
   - pread
   - psapi
   - pterror
