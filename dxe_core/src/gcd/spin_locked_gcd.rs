@@ -276,7 +276,7 @@ impl PageAllocator for PagingAllocator<'_> {
 //The Global Coherency Domain (GCD) Services are used to manage the memory resources visible to the boot processor.
 struct GCD {
     maximum_address: usize,
-    memory_blocks: Option<Rbt<'static, MemoryBlock>>,
+    memory_blocks: Rbt<'static, MemoryBlock>,
     allocate_memory_space_fn: GcdAllocateFn,
     free_memory_space_fn: GcdFreeFn,
 }
@@ -296,7 +296,7 @@ impl GCD {
     pub(crate) const fn new(processor_address_bits: u32) -> Self {
         assert!(processor_address_bits > 0);
         Self {
-            memory_blocks: None,
+            memory_blocks: Rbt::new(),
             maximum_address: 1 << processor_address_bits,
             allocate_memory_space_fn: Self::allocate_memory_space_internal,
             free_memory_space_fn: Self::free_memory_space_worker,
@@ -343,11 +343,10 @@ impl GCD {
             ..Default::default()
         });
 
-        let mut memory_blocks =
-            Rbt::new(slice::from_raw_parts_mut::<'static>(base_address as *mut u8, MEMORY_BLOCK_SLICE_SIZE));
-        memory_blocks.add(unallocated_memory_space).map_err(|_| EfiError::OutOfResources)?;
-        self.memory_blocks.replace(memory_blocks);
+        self.memory_blocks
+            .resize(slice::from_raw_parts_mut::<'static>(base_address as *mut u8, MEMORY_BLOCK_SLICE_SIZE));
 
+        self.memory_blocks.add(unallocated_memory_space).map_err(|_| EfiError::OutOfResources)?;
         let idx = self.add_memory_space(memory_type, base_address, len, capabilities)?;
 
         //initialize attributes on the first block to WB + XP
@@ -417,9 +416,10 @@ impl GCD {
             capabilities |= efi::MEMORY_ISA_VALID;
         }
 
-        let Some(memory_blocks) = &mut self.memory_blocks else {
+        if self.memory_blocks.capacity() == 0 {
             return self.init_memory_blocks(memory_type, base_address, len, capabilities);
-        };
+        }
+        let memory_blocks = &mut self.memory_blocks;
 
         log::trace!(target: "gcd_measure", "search");
         let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
@@ -455,7 +455,7 @@ impl GCD {
 
         log::trace!(target: "allocations", "[{}] Removing memory space at {:#x} of length {:#x}", function!(), base_address, len);
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
+        let memory_blocks = &mut self.memory_blocks;
 
         log::trace!(target: "gcd_measure", "search");
         let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
@@ -565,7 +565,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Memory State Transition: {:?}\n", function!(), transition);
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
+        let memory_blocks = &mut self.memory_blocks;
 
         log::trace!(target: "gcd_measure", "search");
         let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
@@ -639,7 +639,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
         log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
+        let memory_blocks = &mut self.memory_blocks;
 
         log::trace!(target: "gcd_measure", "search");
         let mut current = memory_blocks.first_idx();
@@ -701,7 +701,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
         log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
+        let memory_blocks = &mut self.memory_blocks;
 
         log::trace!(target: "gcd_measure", "search");
         let mut current = memory_blocks.last_idx();
@@ -766,7 +766,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
         log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
+        let memory_blocks = &mut self.memory_blocks;
 
         log::trace!(target: "gcd_measure", "search");
         let idx = memory_blocks.get_closest_idx(&(address as u64)).ok_or(EfiError::NotFound)?;
@@ -842,7 +842,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Attributes: {:#x}\n", function!(), attributes);
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
+        let memory_blocks = &mut self.memory_blocks;
 
         log::trace!(target: "gcd_measure", "search");
         let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
@@ -899,7 +899,7 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Capabilities: {:#x}\n", function!(), capabilities);
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
+        let memory_blocks = &mut self.memory_blocks;
 
         log::trace!(target: "gcd_measure", "search");
         let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
@@ -932,21 +932,17 @@ impl GCD {
 
         log::trace!(target: "allocations", "[{}] Enter\n", function!(), );
 
-        if let Some(blocks) = &mut self.memory_blocks {
-            let mut current = blocks.first_idx();
-            while let Some(idx) = current {
-                let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
-                match mb {
-                    MemoryBlock::Allocated(descriptor) | MemoryBlock::Unallocated(descriptor) => {
-                        buffer.push(*descriptor)
-                    }
-                }
-                current = blocks.next_idx(idx);
+        let blocks = &self.memory_blocks;
+
+        let mut current = blocks.first_idx();
+        while let Some(idx) = current {
+            let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
+            match mb {
+                MemoryBlock::Allocated(descriptor) | MemoryBlock::Unallocated(descriptor) => buffer.push(*descriptor),
             }
-            Ok(())
-        } else {
-            Err(EfiError::NotFound)
+            current = blocks.next_idx(idx);
         }
+        Ok(())
     }
 
     fn get_allocated_memory_descriptors(
@@ -957,40 +953,36 @@ impl GCD {
         ensure!(buffer.capacity() >= self.memory_descriptor_count(), EfiError::InvalidParameter);
         ensure!(buffer.is_empty(), EfiError::InvalidParameter);
 
-        if let Some(blocks) = &self.memory_blocks {
-            let mut current = blocks.first_idx();
-            while let Some(idx) = current {
-                let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
-                if let MemoryBlock::Allocated(descriptor) = mb {
-                    buffer.push(*descriptor);
-                }
-                current = blocks.next_idx(idx);
+        let blocks = &self.memory_blocks;
+
+        let mut current = blocks.first_idx();
+        while let Some(idx) = current {
+            let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
+            if let MemoryBlock::Allocated(descriptor) = mb {
+                buffer.push(*descriptor);
             }
-            Ok(())
-        } else {
-            Err(EfiError::NotFound)
+            current = blocks.next_idx(idx);
         }
+        Ok(())
     }
 
     fn get_mmio_descriptors(&self, buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>) -> Result<(), EfiError> {
         ensure!(self.maximum_address != 0, EfiError::NotReady);
         ensure!(buffer.is_empty(), EfiError::InvalidParameter);
 
-        if let Some(blocks) = &self.memory_blocks {
-            let mut current = blocks.first_idx();
-            while let Some(idx) = current {
-                let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
-                if let MemoryBlock::Unallocated(descriptor) = mb {
-                    if descriptor.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo {
-                        buffer.push(*descriptor);
-                    }
+        let blocks = &self.memory_blocks;
+
+        let mut current = blocks.first_idx();
+        while let Some(idx) = current {
+            let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
+            if let MemoryBlock::Unallocated(descriptor) = mb {
+                if descriptor.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo {
+                    buffer.push(*descriptor);
                 }
-                current = blocks.next_idx(idx);
             }
-            Ok(())
-        } else {
-            Err(EfiError::NotFound)
+            current = blocks.next_idx(idx);
         }
+        Ok(())
     }
 
     /// This service returns the descriptor for the given physical address.
@@ -1000,7 +992,7 @@ impl GCD {
     ) -> Result<dxe_services::MemorySpaceDescriptor, EfiError> {
         ensure!(self.maximum_address != 0, EfiError::NotReady);
 
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(EfiError::NotFound)?;
+        let memory_blocks = &self.memory_blocks;
 
         log::trace!(target: "gcd_measure", "search");
         let idx = memory_blocks.get_closest_idx(&(address)).ok_or(EfiError::NotFound)?;
@@ -1098,7 +1090,7 @@ impl GCD {
 
     /// returns the current count of blocks in the list.
     pub fn memory_descriptor_count(&self) -> usize {
-        self.memory_blocks.as_ref().map(|mbs| mbs.len()).unwrap_or(0)
+        self.memory_blocks.len()
     }
 
     //Note: truncated strings here are expected and are for alignment with EDK2 reference prints.
@@ -1119,29 +1111,28 @@ impl Display for GCD {
         writeln!(f, "GCDMemType Range                             Capabilities     Attributes       ImageHandle      DeviceHandle")?;
         writeln!(f, "========== ================================= ================ ================ ================ ================")?;
 
-        if let Some(blocks) = &self.memory_blocks {
-            let mut current = blocks.first_idx();
-            while let Some(idx) = current {
-                let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
-                match mb {
-                    MemoryBlock::Allocated(descriptor) | MemoryBlock::Unallocated(descriptor) => {
-                        let mem_type_str_idx =
-                            usize::min(descriptor.memory_type as usize, Self::GCD_MEMORY_TYPE_NAMES.len() - 1);
-                        writeln!(
-                            f,
-                            "{}  {:016x?}-{:016x?} {:016x?} {:016x?} {:016x?} {:016x?}",
-                            GCD::GCD_MEMORY_TYPE_NAMES[mem_type_str_idx],
-                            descriptor.base_address,
-                            descriptor.base_address + descriptor.length - 1,
-                            descriptor.capabilities,
-                            descriptor.attributes,
-                            descriptor.image_handle,
-                            descriptor.device_handle
-                        )?;
-                    }
+        let blocks = &self.memory_blocks;
+        let mut current = blocks.first_idx();
+        while let Some(idx) = current {
+            let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
+            match mb {
+                MemoryBlock::Allocated(descriptor) | MemoryBlock::Unallocated(descriptor) => {
+                    let mem_type_str_idx =
+                        usize::min(descriptor.memory_type as usize, Self::GCD_MEMORY_TYPE_NAMES.len() - 1);
+                    writeln!(
+                        f,
+                        "{}  {:016x?}-{:016x?} {:016x?} {:016x?} {:016x?} {:016x?}",
+                        GCD::GCD_MEMORY_TYPE_NAMES[mem_type_str_idx],
+                        descriptor.base_address,
+                        descriptor.base_address + descriptor.length - 1,
+                        descriptor.capabilities,
+                        descriptor.attributes,
+                        descriptor.image_handle,
+                        descriptor.device_handle
+                    )?;
                 }
-                current = blocks.next_idx(idx);
             }
+            current = blocks.next_idx(idx);
         }
         Ok(())
     }
@@ -1170,7 +1161,7 @@ impl From<memory_block::Error> for InternalError {
 ///The I/O Global Coherency Domain (GCD) Services are used to manage the I/O resources visible to the boot processor.
 pub struct IoGCD {
     maximum_address: usize,
-    io_blocks: Option<Rbt<'static, IoBlock>>,
+    io_blocks: Rbt<'static, IoBlock>,
 }
 
 impl IoGCD {
@@ -1178,7 +1169,7 @@ impl IoGCD {
     #[cfg(test)]
     pub(crate) const fn _new(io_address_bits: u32) -> Self {
         assert!(io_address_bits > 0);
-        Self { io_blocks: None, maximum_address: 1 << io_address_bits }
+        Self { io_blocks: Rbt::new(), maximum_address: 1 << io_address_bits }
     }
 
     pub fn init(&mut self, io_address_bits: u32) {
@@ -1188,13 +1179,13 @@ impl IoGCD {
     fn init_io_blocks(&mut self) -> Result<(), EfiError> {
         ensure!(self.maximum_address != 0, EfiError::NotReady);
 
-        let mut io_blocks = Rbt::new(unsafe {
+        self.io_blocks.resize(unsafe {
             Box::into_raw(vec![0_u8; IO_BLOCK_SLICE_SIZE].into_boxed_slice())
                 .as_mut()
                 .expect("RBT given null pointer in initialization.")
         });
 
-        io_blocks
+        self.io_blocks
             .add(IoBlock::Unallocated(dxe_services::IoSpaceDescriptor {
                 io_type: dxe_services::GcdIoType::NonExistent,
                 base_address: 0,
@@ -1202,8 +1193,6 @@ impl IoGCD {
                 ..Default::default()
             }))
             .map_err(|_| EfiError::OutOfResources)?;
-
-        self.io_blocks.replace(io_blocks);
 
         Ok(())
         /*
@@ -1251,13 +1240,11 @@ impl IoGCD {
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   IO Type: {:?}\n", function!(), io_type);
 
-        if self.io_blocks.is_none() {
+        if self.io_blocks.capacity() == 0 {
             self.init_io_blocks()?;
         }
 
-        let Some(io_blocks) = &mut self.io_blocks else {
-            return Err(EfiError::NotReady);
-        };
+        let io_blocks = &mut self.io_blocks;
 
         log::trace!(target: "gcd_measure", "search");
         let idx = io_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
@@ -1286,11 +1273,11 @@ impl IoGCD {
         log::trace!(target: "allocations", "[{}] Removing IO space at {:#x}", function!(), base_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}\n", function!(), len);
 
-        if self.io_blocks.is_none() {
+        if self.io_blocks.capacity() == 0 {
             self.init_io_blocks()?;
         }
 
-        let io_blocks = self.io_blocks.as_mut().ok_or(EfiError::NotReady)?;
+        let io_blocks = &mut self.io_blocks;
 
         log::trace!(target: "gcd_measure", "search");
         let idx = io_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
@@ -1368,11 +1355,11 @@ impl IoGCD {
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
         log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
-        if self.io_blocks.is_none() {
+        if self.io_blocks.capacity() == 0 {
             self.init_io_blocks()?;
         }
 
-        let io_blocks = self.io_blocks.as_mut().ok_or(EfiError::NotReady)?;
+        let io_blocks = &mut self.io_blocks;
 
         log::trace!(target: "gcd_measure", "search");
         let mut current = io_blocks.first_idx();
@@ -1430,11 +1417,11 @@ impl IoGCD {
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
         log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
-        if self.io_blocks.is_none() {
+        if self.io_blocks.capacity() == 0 {
             self.init_io_blocks()?;
         }
 
-        let io_blocks = self.io_blocks.as_mut().ok_or(EfiError::NotReady)?;
+        let io_blocks = &mut self.io_blocks;
 
         log::trace!(target: "gcd_measure", "search");
         let mut current = io_blocks.last_idx();
@@ -1495,10 +1482,10 @@ impl IoGCD {
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
         log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
-        if self.io_blocks.is_none() {
+        if self.io_blocks.capacity() == 0 {
             self.init_io_blocks()?;
         }
-        let io_blocks = self.io_blocks.as_mut().ok_or(EfiError::NotReady)?;
+        let io_blocks = &mut self.io_blocks;
 
         log::trace!(target: "gcd_measure", "search");
         let idx = io_blocks.get_closest_idx(&(address as u64)).ok_or(EfiError::NotFound)?;
@@ -1535,11 +1522,11 @@ impl IoGCD {
         log::trace!(target: "allocations", "[{}] Free IO space at {:#?}", function!(), base_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}\n", function!(), len);
 
-        if self.io_blocks.is_none() {
+        if self.io_blocks.capacity() == 0 {
             self.init_io_blocks()?;
         }
 
-        let io_blocks = self.io_blocks.as_mut().ok_or(EfiError::NotReady)?;
+        let io_blocks = &mut self.io_blocks;
 
         log::trace!(target: "gcd_measure", "search");
         let idx = io_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
@@ -1563,23 +1550,20 @@ impl IoGCD {
 
         log::trace!(target: "allocations", "[{}] Enter\n", function!(), );
 
-        if self.io_blocks.is_none() {
+        if self.io_blocks.capacity() == 0 {
             self.init_io_blocks()?;
         }
 
-        if let Some(blocks) = &mut self.io_blocks {
-            let mut current = blocks.first_idx();
-            while let Some(idx) = current {
-                let ib = blocks.get_with_idx(idx).expect("Index comes from dfs and should be valid");
-                match ib {
-                    IoBlock::Allocated(descriptor) | IoBlock::Unallocated(descriptor) => buffer.push(*descriptor),
-                }
-                current = blocks.next_idx(idx);
+        let blocks = &self.io_blocks;
+        let mut current = blocks.first_idx();
+        while let Some(idx) = current {
+            let ib = blocks.get_with_idx(idx).expect("Index comes from dfs and should be valid");
+            match ib {
+                IoBlock::Allocated(descriptor) | IoBlock::Unallocated(descriptor) => buffer.push(*descriptor),
             }
-            Ok(())
-        } else {
-            Err(EfiError::NotFound)
+            current = blocks.next_idx(idx);
         }
+        Ok(())
     }
 
     fn split_state_transition_at_idx(
@@ -1665,7 +1649,7 @@ impl IoGCD {
 
     /// returns the current count of blocks in the list.
     pub fn io_descriptor_count(&self) -> usize {
-        self.io_blocks.as_ref().map(|ibs| ibs.len()).unwrap_or(0)
+        self.io_blocks.len()
     }
 
     const GCD_IO_TYPE_NAMES: [&'static str; 4] = [
@@ -1681,32 +1665,30 @@ impl Display for IoGCD {
         writeln!(f, "GCDIoType  Range                            ")?;
         writeln!(f, "========== =================================")?;
 
-        if let Some(blocks) = &self.io_blocks {
-            let mut current = blocks.first_idx();
-            while let Some(idx) = current {
-                let ib = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
-                match ib {
-                    IoBlock::Allocated(descriptor) | IoBlock::Unallocated(descriptor) => {
-                        let io_type_str_idx =
-                            usize::min(descriptor.io_type as usize, Self::GCD_IO_TYPE_NAMES.len() - 1);
-                        writeln!(
-                            f,
-                            "{}  {:016x?}-{:016x?}{}",
-                            IoGCD::GCD_IO_TYPE_NAMES[io_type_str_idx],
-                            descriptor.base_address,
-                            descriptor.base_address + descriptor.length - 1,
-                            {
-                                if descriptor.image_handle == INVALID_HANDLE {
-                                    ""
-                                } else {
-                                    "*"
-                                }
+        let blocks = &self.io_blocks;
+        let mut current = blocks.first_idx();
+        while let Some(idx) = current {
+            let ib = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
+            match ib {
+                IoBlock::Allocated(descriptor) | IoBlock::Unallocated(descriptor) => {
+                    let io_type_str_idx = usize::min(descriptor.io_type as usize, Self::GCD_IO_TYPE_NAMES.len() - 1);
+                    writeln!(
+                        f,
+                        "{}  {:016x?}-{:016x?}{}",
+                        IoGCD::GCD_IO_TYPE_NAMES[io_type_str_idx],
+                        descriptor.base_address,
+                        descriptor.base_address + descriptor.length - 1,
+                        {
+                            if descriptor.image_handle == INVALID_HANDLE {
+                                ""
+                            } else {
+                                "*"
                             }
-                        )?;
-                    }
+                        }
+                    )?;
                 }
-                current = blocks.next_idx(idx);
             }
+            current = blocks.next_idx(idx);
         }
         Ok(())
     }
@@ -1757,7 +1739,7 @@ impl SpinLockedGcd {
                 efi::TPL_HIGH_LEVEL,
                 GCD {
                     maximum_address: 0,
-                    memory_blocks: None,
+                    memory_blocks: Rbt::new(),
                     allocate_memory_space_fn: GCD::allocate_memory_space_internal,
                     free_memory_space_fn: GCD::free_memory_space_worker,
                 },
@@ -1765,7 +1747,7 @@ impl SpinLockedGcd {
             ),
             io: tpl_lock::TplMutex::new(
                 efi::TPL_HIGH_LEVEL,
-                IoGCD { maximum_address: 0, io_blocks: None },
+                IoGCD { maximum_address: 0, io_blocks: Rbt::new() },
                 "GcdIoLock",
             ),
             memory_change_callback,
@@ -1895,9 +1877,9 @@ impl SpinLockedGcd {
     pub unsafe fn reset(&self) {
         let (mut mem, mut io) = (self.memory.lock(), self.io.lock());
         mem.maximum_address = 0;
-        mem.memory_blocks = None;
+        mem.memory_blocks = Rbt::new();
         io.maximum_address = 0;
-        io.io_blocks = None;
+        io.io_blocks = Rbt::new();
     }
 
     /// Initializes the underlying memory GCD and I/O GCD with the given address bits.
@@ -2433,7 +2415,7 @@ mod tests {
     use crate::test_support;
 
     use super::*;
-    use alloc::{vec, vec::Vec};
+    use alloc::vec::Vec;
     use r_efi::efi;
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
@@ -2447,7 +2429,7 @@ mod tests {
     fn test_gcd_initialization() {
         let gdc = GCD::new(48);
         assert_eq!(2_usize.pow(48), gdc.maximum_address);
-        assert!(gdc.memory_blocks.is_none());
+        assert_eq!(gdc.memory_blocks.capacity(), 0);
         assert_eq!(0, gdc.memory_descriptor_count())
     }
 
@@ -2610,7 +2592,7 @@ mod tests {
         // Test merging when added after
         match unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 1010, 10, 0) } {
             Ok(idx) => {
-                let mb = gcd.memory_blocks.as_ref().unwrap().get_with_idx(idx).unwrap();
+                let mb = gcd.memory_blocks.get_with_idx(idx).unwrap();
                 assert_eq!(1000, mb.as_ref().base_address);
                 assert_eq!(20, mb.as_ref().length);
                 assert_eq!(block_count, gcd.memory_descriptor_count());
@@ -2621,7 +2603,7 @@ mod tests {
         // Test merging when added before
         match unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 990, 10, 0) } {
             Ok(idx) => {
-                let mb = gcd.memory_blocks.as_ref().unwrap().get_with_idx(idx).unwrap();
+                let mb = gcd.memory_blocks.get_with_idx(idx).unwrap();
                 assert_eq!(990, mb.as_ref().base_address);
                 assert_eq!(30, mb.as_ref().length);
                 assert_eq!(block_count, gcd.memory_descriptor_count());
@@ -2648,7 +2630,7 @@ mod tests {
         let (mut gcd, _) = create_gcd();
         match unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 100, 10, 123) } {
             Ok(idx) => {
-                let mb = *gcd.memory_blocks.unwrap().get_with_idx(idx).unwrap();
+                let mb = *gcd.memory_blocks.get_with_idx(idx).unwrap();
                 match mb {
                     MemoryBlock::Unallocated(md) => {
                         assert_eq!(100, md.base_address);
@@ -3386,7 +3368,7 @@ mod tests {
     #[test]
     fn test_set_memory_space_attributes_with_invalid_parameters() {
         let mut gcd = GCD {
-            memory_blocks: None,
+            memory_blocks: Rbt::new(),
             maximum_address: 0,
             allocate_memory_space_fn: GCD::allocate_memory_space_internal,
             free_memory_space_fn: GCD::free_memory_space_worker,
@@ -3753,31 +3735,26 @@ mod tests {
     }
 
     fn copy_memory_block(gcd: &GCD) -> Vec<MemoryBlock> {
-        let Some(memory_blocks) = &gcd.memory_blocks else {
-            return vec![];
-        };
-
-        memory_blocks.dfs()
+        gcd.memory_blocks.dfs()
     }
 
     fn is_gcd_memory_slice_valid(gcd: &GCD) -> bool {
-        if let Some(memory_blocks) = gcd.memory_blocks.as_ref() {
-            match memory_blocks.first_idx().map(|idx| memory_blocks.get_with_idx(idx).unwrap().start()) {
-                Some(0) => (),
-                _ => return false,
-            }
-            let mut last_addr = 0;
-            let blocks = copy_memory_block(gcd);
-            let mut w = blocks.windows(2);
-            while let Some([a, b]) = w.next() {
-                if a.end() != b.start() || a.is_same_state(b) {
-                    return false;
-                }
-                last_addr = b.end();
-            }
-            if last_addr != gcd.maximum_address {
+        let memory_blocks = &gcd.memory_blocks;
+        match memory_blocks.first_idx().map(|idx| memory_blocks.get_with_idx(idx).unwrap().start()) {
+            Some(0) => (),
+            _ => return false,
+        }
+        let mut last_addr = 0;
+        let blocks = copy_memory_block(gcd);
+        let mut w = blocks.windows(2);
+        while let Some([a, b]) = w.next() {
+            if a.end() != b.start() || a.is_same_state(b) {
                 return false;
             }
+            last_addr = b.end();
+        }
+        if last_addr != gcd.maximum_address {
+            return false;
         }
         true
     }
