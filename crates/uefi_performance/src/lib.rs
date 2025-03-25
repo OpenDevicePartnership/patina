@@ -389,7 +389,7 @@ extern "efiapi" fn create_performance_measurement(
 
 extern "efiapi" fn report_fpdt_record_buffer(_event: efi::Event, _ctx: &()) {
     let fbpt = &mut FBPT.lock();
-    if let Err(_) = fbpt.report_table(&BOOT_SERVICES, &RUNTIME_SERVICES) {
+    if fbpt.report_table(&BOOT_SERVICES, &RUNTIME_SERVICES).is_err() {
         log::error!("Fail to report FPDT.");
         return;
     }
