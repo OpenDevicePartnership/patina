@@ -448,11 +448,15 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, sys
     };
 
     let Some(smm_communication_memory_region) =
-        smm_comm_region_table.iter().find(|a| a.r#type == efi::CONVENTIONAL_MEMORY)
+        smm_comm_region_table.iter().find(|r| r.r#type == efi::CONVENTIONAL_MEMORY)
     else {
         log::error!("Could not find an available memory region to communication with smm.");
         return;
     };
+    if smm_communication_memory_region.physical_start == 0 || smm_communication_memory_region.number_of_pages == 0 {
+        log::error!("Something is wrong with the smm communication memory region.");
+        return;
+    }
 
     // SAFETY: This is safe because the reference returned by locate_protocol is never mutated after installation.
     let Ok(communication) = (unsafe { BOOT_SERVICES.locate_protocol(&CommunicateProtocol, None) }) else {
