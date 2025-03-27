@@ -118,6 +118,7 @@ dependencies = ["individual-package-targets"]
 
 [tasks.coverage]
 description = "Build and run all tests and calculate coverage."
+install_crate = false
 clear = true
 command = "cargo"
 args = ["tarpaulin", "@@split(COV_FLAGS, )", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target"]
@@ -154,6 +155,7 @@ release ${joined}
 
 [tasks.coverage-fail-package]
 private = true
+install_crate = false
 description = """Generates Code coverage for $(PACKAGE) and fails the build if coverage is below 80%."""
 dependencies = ["coverage-filter"]
 command = "cargo"
@@ -229,6 +231,7 @@ script = "cspell --quiet  --no-progress --no-summary  --dot --gitignore -e \"{.g
 
 [tasks.deny]
 description = "Run cargo deny."
+install_crate = false
 clear = true
 command = "cargo"
 args = ["deny", "check"]
