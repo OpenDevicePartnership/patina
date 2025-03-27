@@ -93,7 +93,7 @@ unsafe impl Protocol for CommunicateProtocol {
     }
 }
 
-/// This trait should be implemented on type that represent a communicate data.
+/// This trait should be implemented on type that represents communicate data.
 ///
 /// [`TryIntoCtx`] is used to define how to write the struct as the data in communicate buffer.
 ///
