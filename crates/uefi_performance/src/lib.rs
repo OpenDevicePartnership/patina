@@ -437,7 +437,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, sys
         .iter()
         .find(|config_table| config_table.vendor_guid == EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID)
         .and_then(|config_table| {
-            // SAFETY: The cast of vendor_table to `SmmCommunicationRegionTable` is safe
+            // SAFETY: The cast of vendor_table to `SmmCommunicationRegionTable` is valid
             // because the configuration table vendor guid is `EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID`
             // and the expected value of this configuration is a `SmmCommunicationRegionTable`.
             unsafe { (config_table.vendor_table as *const SmmCommunicationRegionTable).as_ref() }
