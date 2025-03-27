@@ -454,7 +454,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, sys
         return;
     };
 
-    // SAFETY: This is save because the reference returned by locate_protocol is nevery mutated after installation.
+    // SAFETY: This is safe because the reference returned by locate_protocol is never mutated after installation.
     let Ok(communication) = (unsafe { BOOT_SERVICES.locate_protocol(&CommunicateProtocol, None) }) else {
         log::error!("Could not locate communicate protocol interface.");
         return;
