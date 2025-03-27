@@ -426,7 +426,7 @@ extern "efiapi" fn report_fpdt_record_buffer(_event: efi::Event, _ctx: &()) {
 extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, system_table: &efi::SystemTable) {
     // Make sure that this event only run once.
     static HAS_RUN_ONCE: AtomicBool = AtomicBool::new(false);
-    let Ok(false) = HAS_RAN_ONCE.compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed) else {
+    let Ok(false) = HAS_RUN_ONCE.compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed) else {
         return;
     };
 

@@ -1,4 +1,4 @@
-use core::{marker::PhantomPinned, ops::Deref, ptr, slice};
+use core::{debug_assert_eq, marker::PhantomPinned, ops::Deref, ptr, result::Result::Ok, slice};
 
 use r_efi::efi;
 
@@ -152,23 +152,8 @@ impl CommunicateProtocolInterface {
     }
 }
 
-// Communicate protocol data layout to communicate with smm.
-#[derive(Debug, Default, Pwrite, Pread)]
-#[repr(C)]
-struct SmmBootRecordCommunicateMemoryLayout {
-    function: u64,
-    return_status: u64,
-    boot_record_size: u64,
-    boot_record_data: u64,
-    boot_record_offset: u64,
-}
-
-impl SmmBootRecordCommunicateMemoryLayout {
-    pub const EFI_FIRMWARE_PERFORMANCE_GUID: efi::Guid =
-        efi::Guid::from_fields(0xc095791a, 0x3001, 0x47b2, 0x80, 0xc9, &[0xea, 0xc7, 0x31, 0x9f, 0x2f, 0xa4]);
-    pub const SMM_FPDT_FUNCTION_GET_BOOT_RECORD_SIZE: u64 = 1;
-    pub const SMM_FPDT_FUNCTION_GET_BOOT_RECORD_DATA_BY_OFFSET: u64 = 3;
-}
+pub const EFI_FIRMWARE_PERFORMANCE_GUID: efi::Guid =
+    efi::Guid::from_fields(0xc095791a, 0x3001, 0x47b2, 0x80, 0xc9, &[0xea, 0xc7, 0x31, 0x9f, 0x2f, 0xa4]);
 
 // Communicate protocol data to ask smm the size of its performance records.
 #[derive(Debug, Default)]
@@ -178,29 +163,28 @@ pub struct SmmFpdtGetRecordSize {
 }
 
 impl SmmFpdtGetRecordSize {
+    pub const SMM_FPDT_FUNCTION_GET_BOOT_RECORD_SIZE: u64 = 1;
+
     pub fn new() -> Self {
         Self::default()
     }
 }
 
 unsafe impl CommunicateData for SmmFpdtGetRecordSize {
-    const GUID: efi::Guid = SmmBootRecordCommunicateMemoryLayout::EFI_FIRMWARE_PERFORMANCE_GUID;
+    const GUID: efi::Guid = EFI_FIRMWARE_PERFORMANCE_GUID;
 }
 
 impl TryIntoCtx<Endian> for SmmFpdtGetRecordSize {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: Endian) -> Result<usize, Self::Error> {
-        dest.pwrite_with(
-            SmmBootRecordCommunicateMemoryLayout {
-                function: SmmBootRecordCommunicateMemoryLayout::SMM_FPDT_FUNCTION_GET_BOOT_RECORD_SIZE,
-                boot_record_size: self.boot_record_size as u64,
-                return_status: self.return_status.as_usize() as u64,
-                ..SmmBootRecordCommunicateMemoryLayout::default()
-            },
-            0,
-            ctx,
-        )
+        let mut offset = 0;
+        dest.gwrite_with(Self::SMM_FPDT_FUNCTION_GET_BOOT_RECORD_SIZE, &mut offset, ctx)?;
+        dest.gwrite_with(self.return_status.as_usize() as u64, &mut offset, ctx)?;
+        dest.gwrite_with(self.boot_record_size as u64, &mut offset, ctx)?;
+        dest.gwrite_with(0_u64, &mut offset, ctx)?; // Boot record data.
+        dest.gwrite_with(0_u64, &mut offset, ctx)?; // Boot record offset.
+        Ok(offset)
     }
 }
 
@@ -209,18 +193,14 @@ impl TryFromCtx<'_, Endian> for SmmFpdtGetRecordSize {
 
     fn try_from_ctx(from: &'_ [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
         let mut offset = 0;
-        let boot_record_communicate = from.gread_with::<SmmBootRecordCommunicateMemoryLayout>(&mut offset, ctx)?;
-        assert_eq!(
-            SmmBootRecordCommunicateMemoryLayout::SMM_FPDT_FUNCTION_GET_BOOT_RECORD_SIZE,
-            boot_record_communicate.function
-        );
-        Ok((
-            Self {
-                boot_record_size: boot_record_communicate.boot_record_size as usize,
-                return_status: efi::Status::from_usize(boot_record_communicate.return_status as usize),
-            },
-            offset,
-        ))
+        let function = from.gread_with::<u64>(&mut offset, ctx)?;
+        debug_assert_eq!(Self::SMM_FPDT_FUNCTION_GET_BOOT_RECORD_SIZE, function);
+        let return_status = efi::Status::from_usize(from.gread_with::<u64>(&mut offset, ctx)? as usize);
+        let boot_record_size = from.gread_with::<u64>(&mut offset, ctx)? as usize;
+        let _boot_record_data_address = from.gread_with::<u64>(&mut offset, ctx)? as usize;
+        let _boot_record_offset = from.gread_with::<u64>(&mut offset, ctx)? as usize;
+
+        Ok((Self { boot_record_size, return_status }, offset))
     }
 }
 
@@ -234,6 +214,8 @@ pub struct SmmFpdtGetRecordDataByOffset<const BUFFER_SIZE: usize> {
 }
 
 impl<const BUFFER_SIZE: usize> SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
+    pub const SMM_FPDT_FUNCTION_GET_BOOT_RECORD_DATA_BY_OFFSET: u64 = 3;
+
     pub fn new(boot_record_offset: usize) -> SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
         Self {
             return_status: efi::Status::SUCCESS,
@@ -249,24 +231,20 @@ impl<const BUFFER_SIZE: usize> SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
 }
 
 unsafe impl<const BUFFER_SIZE: usize> CommunicateData for SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
-    const GUID: efi::Guid = SmmBootRecordCommunicateMemoryLayout::EFI_FIRMWARE_PERFORMANCE_GUID;
+    const GUID: efi::Guid = EFI_FIRMWARE_PERFORMANCE_GUID;
 }
 
 impl<const BUFFER_SIZE: usize> TryIntoCtx<Endian> for SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: Endian) -> Result<usize, Self::Error> {
-        dest.pwrite_with(
-            SmmBootRecordCommunicateMemoryLayout {
-                function: SmmBootRecordCommunicateMemoryLayout::SMM_FPDT_FUNCTION_GET_BOOT_RECORD_DATA_BY_OFFSET,
-                boot_record_size: self.boot_record_data_size as u64,
-                return_status: self.return_status.as_usize() as u64,
-                boot_record_offset: self.boot_record_offset as u64,
-                ..SmmBootRecordCommunicateMemoryLayout::default()
-            },
-            0,
-            ctx,
-        )
+        let mut offset = 0;
+        dest.gwrite_with(Self::SMM_FPDT_FUNCTION_GET_BOOT_RECORD_DATA_BY_OFFSET, &mut offset, ctx)?;
+        dest.gwrite_with(self.return_status.as_usize() as u64, &mut offset, ctx)?;
+        dest.gwrite_with(self.boot_record_data_size as u64, &mut offset, ctx)?;
+        dest.gwrite_with(0_u64, &mut offset, ctx)?; // Boot record data.
+        dest.gwrite_with(self.boot_record_offset as u64, &mut offset, ctx)?;
+        Ok(offset)
     }
 }
 
@@ -275,21 +253,15 @@ impl<const BUFFER_SIZE: usize> TryFromCtx<'_, Endian> for SmmFpdtGetRecordDataBy
 
     fn try_from_ctx(from: &'_ [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
         let mut offset = 0;
-        let boot_record_communicate =
-            from.gread_with::<SmmBootRecordCommunicateMemoryLayout>(&mut offset, ctx).unwrap();
-        let boot_record_data = from.gread::<[u8; BUFFER_SIZE]>(&mut offset).unwrap();
-        assert_eq!(
-            SmmBootRecordCommunicateMemoryLayout::SMM_FPDT_FUNCTION_GET_BOOT_RECORD_DATA_BY_OFFSET,
-            boot_record_communicate.function
-        );
-        Ok((
-            Self {
-                return_status: efi::Status::from_usize(boot_record_communicate.return_status as usize),
-                boot_record_data,
-                boot_record_data_size: boot_record_communicate.boot_record_size as usize,
-                boot_record_offset: boot_record_communicate.boot_record_offset as usize,
-            },
-            offset,
-        ))
+        let function = from.gread_with::<u64>(&mut offset, ctx)?;
+        debug_assert_eq!(Self::SMM_FPDT_FUNCTION_GET_BOOT_RECORD_DATA_BY_OFFSET, function);
+        let return_status = efi::Status::from_usize(from.gread_with::<u64>(&mut offset, ctx)? as usize);
+        let boot_record_data_size = from.gread_with::<u64>(&mut offset, ctx)? as usize;
+        let _boot_record_data_address = from.gread_with::<u64>(&mut offset, ctx)? as usize;
+        let boot_record_offset = from.gread_with::<u64>(&mut offset, ctx)? as usize;
+
+        let boot_record_data = from.gread::<[u8; BUFFER_SIZE]>(&mut offset)?;
+
+        Ok((Self { return_status, boot_record_data, boot_record_data_size, boot_record_offset }, offset))
     }
 }
