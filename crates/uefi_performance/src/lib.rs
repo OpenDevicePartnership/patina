@@ -460,7 +460,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, sys
         return;
     };
 
-    // SAFETY: Is safe to use because the memroy region commes for a thrusted source and can be considered valid.
+    // SAFETY: Is safe to use because the memory region comes for a trusted source and can be considered valid.
     let boot_record_size = match unsafe {
         // Ask smm for the total size of the perf records.
         communication.communicate(SmmFpdtGetRecordSize::new(), smm_communication_memory_region)
