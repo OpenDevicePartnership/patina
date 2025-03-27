@@ -346,8 +346,8 @@ where
         // Instantiate system table.
         systemtables::init_system_table();
         {
-            let mut st = systemtables::SYSTEM_TABLE.lock();
-            let st = st.as_mut().expect("System Table not initialized!");
+            let mut sys_table = systemtables::SYSTEM_TABLE.lock();
+            let st = sys_table.as_mut().expect("System Table not initialized!");
 
             allocator::install_memory_services(st.boot_services_mut());
             gcd::init_paging(&hob_list);
@@ -383,28 +383,25 @@ where
 
             // Install Memory Type Info configuration table.
             allocator::install_memory_type_info_table(st).expect("Unable to create Memory Type Info Table");
-        }
 
-        let boot_services_ptr;
-        // let runtime_services_ptr;
-        {
-            let mut st = systemtables::SYSTEM_TABLE.lock();
-            boot_services_ptr = st.as_mut().unwrap().boot_services_mut() as *mut efi::BootServices;
+            let boot_services_ptr = sys_table.as_mut().unwrap().boot_services_mut() as *mut efi::BootServices;
+            // Use `boot_services_ptr` safely here
+            // let runtime_services_ptr;
             // runtime_services_ptr = st.as_mut().unwrap().runtime_services_mut() as *mut efi::RuntimeServices;
+            tpl_lock::init_boot_services(boot_services_ptr);
+            memory_attributes_table::init_memory_attributes_table_support();
+
+            // This is currently commented out as it is breaking top of tree booting Q35 as qemu64 does not support
+            // reading the time stamp counter in the way done in this code and results in a divide by zero exception.
+            // Other cpu models crash in various other ways. It will be resolved, but is removed now to unblock other
+            // development
+            // _ = uefi_performance::init_performance_lib(&hob_list, unsafe { boot_services_ptr.as_ref().unwrap() }, unsafe {
+            //     runtime_services_ptr.as_ref().unwrap()
+            // });
+
+            self.storage.set_boot_services(boot_services_ptr);
         }
-        tpl_lock::init_boot_services(boot_services_ptr);
 
-        memory_attributes_table::init_memory_attributes_table_support();
-
-        // This is currently commented out as it is breaking top of tree booting Q35 as qemu64 does not support
-        // reading the time stamp counter in the way done in this code and results in a divide by zero exception.
-        // Other cpu models crash in various other ways. It will be resolved, but is removed now to unblock other
-        // development
-        // _ = uefi_performance::init_performance_lib(&hob_list, unsafe { boot_services_ptr.as_ref().unwrap() }, unsafe {
-        //     runtime_services_ptr.as_ref().unwrap()
-        // });
-
-        self.storage.set_boot_services(boot_services_ptr);
         Core {
             cpu_init: self.cpu_init,
             section_extractor: self.section_extractor,
@@ -508,8 +505,9 @@ where
         log::info!("Finished Dispatching Local Drivers");
         self.display_components_not_dispatched();
 
-        dispatcher::core_dispatcher().expect("initial dispatch failed.");
-
+        if let Err(err) = dispatcher::core_dispatcher() {
+            log::error!("Initial dispatch failed: {:?}", err);
+        }
         core_display_missing_arch_protocols();
 
         dispatcher::display_discovered_not_dispatched();

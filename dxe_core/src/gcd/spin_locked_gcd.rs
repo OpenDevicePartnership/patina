@@ -1914,7 +1914,13 @@ impl SpinLockedGcd {
         log::info!("Initializing paging for the GCD");
 
         let page_allocator = PagingAllocator::new(&GCD);
-        let mut page_table = create_cpu_paging(page_allocator).expect("Failed to create CPU page table");
+        let mut page_table = match create_cpu_paging(page_allocator) {
+            Ok(pt) => pt,
+            Err(e) => {
+                log::error!("Failed to create CPU page table: {:?}", e);
+                return;
+            }
+        };
 
         // this is before we get allocated descriptors, so we don't need to preallocate memory here
         let mut mmio_res_descs: Vec<dxe_services::MemorySpaceDescriptor> = Vec::new();

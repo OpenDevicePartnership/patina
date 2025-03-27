@@ -493,7 +493,14 @@ fn install_dxe_core_image(hob_list: &HobList) {
     let dxe_core_hob = hob_list
         .iter()
         .find_map(|x| match x {
-            Hob::MemoryAllocationModule(module) if module.module_name == guid::DXE_CORE => Some(module),
+            Hob::MemoryAllocationModule(module) => {
+                println!("Found MemoryAllocationModule with module_name: {:?}", module.module_name);
+                if module.module_name == uefi_sdk::guid::DXE_CORE {
+                    Some(module)
+                } else {
+                    None
+                }
+            }
             _ => None,
         })
         .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use uefi_sdk::guid::DXE_CORE as FFS GUID.");
@@ -519,11 +526,16 @@ fn install_dxe_core_image(hob_list: &HobList) {
     image_info.image_size = dxe_core_hob.alloc_descriptor.memory_length;
 
     let pe_info = unsafe {
-        UefiPeInfo::parse(core::slice::from_raw_parts(
+        match UefiPeInfo::parse(core::slice::from_raw_parts(
             dxe_core_hob.alloc_descriptor.memory_base_address as *const u8,
             dxe_core_hob.alloc_descriptor.memory_length as usize,
-        ))
-        .expect("Failed to parse PE info for DXE Core")
+        )) {
+            Ok(info) => info,
+            Err(err) => {
+                log::error!("Failed to parse PE info for DXE Core: {:?}", err);
+                return;
+            }
+        }
     };
 
     // we do not use PrivateImageData::new() here because it
