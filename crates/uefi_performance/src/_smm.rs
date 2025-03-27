@@ -224,7 +224,7 @@ impl TryFromCtx<'_, Endian> for SmmFpdtGetRecordSize {
     }
 }
 
-// Communicate protocol data to ask smm to retrun a BUFFER_SIZE about of byte at an offset.
+// Communicate protocol data to ask smm to return a BUFFER_SIZE about of byte at an offset.
 #[derive(Debug)]
 pub struct SmmFpdtGetRecordDataByOffset<const BUFFER_SIZE: usize> {
     pub return_status: efi::Status,
