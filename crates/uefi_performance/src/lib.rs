@@ -85,7 +85,7 @@ pub fn init_performance_lib(
     hob_list: &HobList,
     efi_system_table: &'static efi::SystemTable,
 ) -> Result<(), efi::Status> {
-    // SAFETY: This is safe because `boot_services` and `runtime services` are valid pointer to theire respective struct inside the systeme table.
+    // SAFETY: This is safe because `boot_services` and `runtime services` are valid pointer to theire respective struct inside the system table.
     unsafe {
         match efi_system_table.boot_services.as_ref() {
             Some(boot_services) => BOOT_SERVICES.initialize(boot_services),
