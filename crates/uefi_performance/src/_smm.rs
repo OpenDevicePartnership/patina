@@ -1,3 +1,7 @@
+//! This module is a temporary module that has for goal to make communication protocol work in perf. It will eventually be replaced by another communicate abstraction.
+//!
+//! This module also contain smm performance communicate structures that define the communicate buffer data that need to be used to fetch perf records from smm.
+
 use core::{debug_assert_eq, marker::PhantomPinned, ops::Deref, ptr, result::Result::Ok, slice};
 
 use r_efi::efi;
