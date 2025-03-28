@@ -353,39 +353,17 @@ mod tests {
         .unwrap();
     }
 
-    struct TestContext {
-        original_system_time: u64,
-    }
-
-    impl TestContext {
-        fn new() -> Self {
-            Self { original_system_time: SYSTEM_TIME.load(Ordering::SeqCst) }
-        }
-
-        fn reset(&mut self) {
-            SYSTEM_TIME.store(self.original_system_time, Ordering::SeqCst);
-        }
-    }
-
-    fn setup() -> TestContext {
-        TestContext::new()
-    }
-
-    fn teardown(mut context: TestContext) {
-        context.reset();
-    }
-
     #[test]
     fn test_timer_tick() {
         with_locked_state(|| {
-            let context = setup();
+            let original_time = SYSTEM_TIME.load(Ordering::SeqCst);
 
             let test_time = 1000;
             timer_tick(test_time);
 
-            assert_eq!(SYSTEM_TIME.load(Ordering::SeqCst), context.original_system_time + test_time);
+            assert_eq!(SYSTEM_TIME.load(Ordering::SeqCst), original_time + test_time);
 
-            teardown(context);
+            SYSTEM_TIME.store(original_time, Ordering::SeqCst);
         });
     }
 }
