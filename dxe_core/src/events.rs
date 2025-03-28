@@ -339,3 +339,31 @@ pub fn init_events_support(bs: &mut efi::BootServices) {
     //Indicate eventing is initialized
     EVENT_DB_INITIALIZED.store(true, Ordering::SeqCst);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support;
+    use std::sync::atomic::Ordering;
+
+    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
+        test_support::with_global_lock(|| {
+            f();
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_timer_tick() {
+        with_locked_state(|| {
+            let original_time = SYSTEM_TIME.load(Ordering::SeqCst);
+
+            let test_time = 1000;
+            timer_tick(test_time);
+
+            assert_eq!(SYSTEM_TIME.load(Ordering::SeqCst), original_time + test_time);
+
+            SYSTEM_TIME.store(original_time, Ordering::SeqCst);
+        });
+    }
+}
