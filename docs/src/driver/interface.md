@@ -58,13 +58,20 @@ Please reference the documentation in `uefi_sdk::component` for more information
 
 ```rust
 use uefi_sdk::{
-    boot_services::StandardBootServices,
+    boot_services::BootServices,
     component::params::{Config, ConfigMut},
     error::Result,
 };
 
-fn validate_random_data_driver(bs: StandardBootServices, data: Config<&[u8]>, expected_crc32: Config<u32>) -> Result<()> {
-    assert_eq!(bs.calculate_crc_32(*data), Ok(*expected_crc32))
+// Note: This uncommented code is valid for demonstraction, but the function will not be registered with the core where
+//       actual implementations must be specified such as the wrapper function shown in the example below.
+//
+// The wrapper function:
+// fn actual_driver(bs: StandardBootServices, data: Config<f32>, expected_crc32: Config<u32>) -> Result<()> {
+//     validate_random_data_driver(bs, data, expected_crc32)
+// }
+fn validate_random_data_driver<T: Default>(bs: impl BootServices, data: Config<T>, expected_crc32: Config<u32>) -> Result<()> {
+    assert_eq!(bs.calculate_crc_32(&*data), Ok(*expected_crc32));
     Ok(())
 }
 
@@ -114,8 +121,8 @@ struct MyComponent2 {
 }
 
 impl MyComponent2 {
-    fn entry_point(self, public_config: ConfigMut<u32>) -> uefi_sdk::error::Result<()> {
-        public_config += self.private_config;
+    fn entry_point(self, mut public_config: ConfigMut<u32>) -> uefi_sdk::error::Result<()> {
+        *public_config += self.private_config;
         Ok(())
     }
 }
