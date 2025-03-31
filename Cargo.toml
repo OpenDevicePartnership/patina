@@ -47,7 +47,7 @@ linked_list_allocator = "^0.10"
 log = { version = "^0.4", default-features = false }
 mockall = "0.13.0"
 mu_pi = { version = "^5.2" }
-mu_rust_helpers = { version = "2" }
+mu_rust_helpers = { version = "3" }
 paging = { version = "4" }
 rand = "^0.8"
 r-efi = { version = "^5.2.0", default-features = false }

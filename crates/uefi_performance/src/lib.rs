@@ -142,7 +142,7 @@ pub fn init_performance_lib(
     // Install configuration table for performance property.
     BOOT_SERVICES.install_configuration_table(
         &guid::PERFORMANCE_PROTOCOL,
-        Box::new(PerformanceProperty::new(Arch::cpu_count_frequency(), Arch::cpu_count_start(), Arch::cpu_count_end())),
+        Box::new(PerformanceProperty::new(Arch::perf_frequency(), Arch::cpu_count_start(), Arch::cpu_count_end())),
     )?;
     Ok(())
 }
@@ -273,9 +273,9 @@ extern "efiapi" fn create_performance_measurement(
 
     let cpu_count = Arch::cpu_count();
     let timestamp = match ticker {
-        0 => (cpu_count as f64 / Arch::cpu_count_frequency() as f64 * 1_000_000_000_f64) as u64,
+        0 => (cpu_count as f64 / Arch::perf_frequency() as f64 * 1_000_000_000_f64) as u64,
         1 => 0,
-        ticker => (ticker as f64 / Arch::cpu_count_frequency() as f64 * 1_000_000_000_f64) as u64,
+        ticker => (ticker as f64 / Arch::perf_frequency() as f64 * 1_000_000_000_f64) as u64,
     };
 
     let controller_handle = address as efi::Handle;
