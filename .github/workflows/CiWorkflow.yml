@@ -42,7 +42,7 @@ jobs:
       - name: Markdown Linting
         uses: avto-dev/markdown-lint@v1.5.0
         with:
-          config: markdownlint.yml
+          config: .markdownlint.yml
           args: "**/*.md"
 
       - name: 🛠️ Download Rust Tools 🛠️
