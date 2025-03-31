@@ -262,3 +262,16 @@ they do not change the memory map. This means allocating and freeing are disallo
 In the Rust DXE core in release mode, allocating and freeing within the GCD (which changes the memory map and its key)
 will return an error that can be handled by the corresponding driver.
 In debug builds, any changes to the memory map following `exit_boot_services` will panic due to an assertion.
+
+## Memory Protections
+
+The Rust DXE Core is built with a stronger set of memory protections by default than the C implementation is. In addition, the Rust DXE Core has less
+deference to platform decisions and more opinions on what the state of the system should be.
+
+### Paging
+
+For a general overview of paging, as well as specific decisions made in the paging crate, view the documentation in the
+[paging crate](https://github.com/OpenDevicePartnership/paging/blob/main/docs/paging.md).
+
+The Rust DXE Core uses page level protection of memory as a primary safety and security mechanism. The following section describes the general flow
+of memory protections in the DXE Core, as pages move from unmapped to mapped and across different memory attributes.
