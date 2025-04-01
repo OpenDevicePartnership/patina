@@ -660,10 +660,57 @@ fn core_load_pe_image(
         }
     }
 
-    // finally, update the GCD attributes for this image so that code sections have RO set and data sections have XP
-    apply_image_memory_protections(&pe_info, &private_info);
+    match pe_info.image_type {
+        EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION if !pe_info.nx_compat => {
+            // we are trying to load an application image that is not NX compatible, likely a bootloader
+            // if we are configured to allow compatibility mode, we need to activate it now. Otherwise, just continue
+            // to load the image
+            activate_compatibility_mode(&private_info)?;
+        }
+        _ => {
+            // finally, update the GCD attributes for this image so that code sections have RO set and data sections
+            // have XP
+            apply_image_memory_protections(&pe_info, &private_info);
+        }
+    }
 
     Ok(private_info)
+}
+
+#[cfg(feature = "compatibility_mode_allowed")]
+/// Activates compatibility mode for an image that is not NX compatible if the feature flag is set to allow compat mode
+/// This function will map the image as RWX in the GCD and initiate compatibility mode in the GCD
+fn activate_compatibility_mode(private_info: &PrivateImageData) -> Result<(), EfiError> {
+    log::error!("Attempting to load an application image that is not NX compatible. Activating compatibility mode.");
+    crate::gcd::activate_compatibility_mode();
+    // for this image map all mem RWX preserving cache attributes if we find them
+    let stripped_attrs = dxe_services::core_get_memory_space_descriptor(private_info.image_base_page)
+        .map(|desc| desc.attributes & efi::CACHE_ATTRIBUTE_MASK)
+        .unwrap_or(0);
+    if dxe_services::core_set_memory_space_attributes(
+        private_info.image_base_page,
+        uefi_sdk::uefi_pages_to_size!(private_info.image_num_pages) as u64,
+        stripped_attrs,
+    )
+    .is_err()
+    {
+        // if we failed to map this image RWX, we should still attempt to execute it, it may succeed
+        log::error!(
+            "Failed to set GCD attributes for image {}",
+            private_info.pe_info.filename.clone().unwrap_or(String::from("Unknown"))
+        );
+        debug_assert!(false);
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "compatibility_mode_allowed"))]
+/// If the compatibility_mode_allowed feature flag is not set, we will fail to load the image that would crash the
+/// system with memory protections enabled
+fn activate_compatibility_mode(private_info: &PrivateImageData) -> Result<(), EfiError> {
+    log::error!("Attempting to load {} that is not NX compatible. Compatibility mode is not allowed in this build, not loading image.",
+                private_info.pe_info.filename.clone().unwrap_or(String::from("Unknown")));
+    Err(EfiError::LoadError)
 }
 
 // Reads an image buffer using simple file system or load file protocols.

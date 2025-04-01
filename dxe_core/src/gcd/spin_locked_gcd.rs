@@ -279,6 +279,9 @@ struct GCD {
     memory_blocks: Rbt<'static, MemoryBlock>,
     allocate_memory_space_fn: GcdAllocateFn,
     free_memory_space_fn: GcdFreeFn,
+    /// Default attributes for memory allocations
+    /// This is efi::MEMORY_XP unless we have entered compatibility mode, in which case it is 0, e.g. no protection
+    default_attributes: u64,
 }
 
 impl core::fmt::Debug for GCD {
@@ -300,6 +303,7 @@ impl GCD {
             maximum_address: 1 << processor_address_bits,
             allocate_memory_space_fn: Self::allocate_memory_space_internal,
             free_memory_space_fn: Self::free_memory_space_worker,
+            default_attributes: efi::MEMORY_XP,
         }
     }
 
@@ -1099,6 +1103,15 @@ impl GCD {
         self.memory_blocks.len()
     }
 
+    #[cfg(feature = "compatibility_mode_allowed")]
+    /// This function activates compatibility mode for the GCD, which is just to set the default attributes to 0,
+    /// which will prevent new memory from being allocated as non-executable. This function is purposefully not set
+    /// to be pub(crate) because the only caller of it is SpinLockedGcd.activate_compatibility_mode(). And this should
+    /// not be called except by that function.
+    fn activate_compatibility_mode(&mut self) {
+        self.default_attributes = 0;
+    }
+
     //Note: truncated strings here are expected and are for alignment with EDK2 reference prints.
     const GCD_MEMORY_TYPE_NAMES: [&'static str; 8] = [
         "NonExist ", // EfiGcdMemoryTypeNonExistent
@@ -1727,7 +1740,7 @@ pub enum MapChangeType {
 /// GCD map change callback function type.
 pub type MapChangeCallback = fn(MapChangeType);
 
-/// Implements a spin locked GCD  suitable for use as a static global.
+/// Implements a spin locked GCD suitable for use as a static global.
 pub struct SpinLockedGcd {
     memory: tpl_lock::TplMutex<GCD>,
     io: tpl_lock::TplMutex<IoGCD>,
@@ -1748,6 +1761,7 @@ impl SpinLockedGcd {
                     memory_blocks: Rbt::new(),
                     allocate_memory_space_fn: GCD::allocate_memory_space_internal,
                     free_memory_space_fn: GCD::free_memory_space_worker,
+                    default_attributes: efi::MEMORY_XP,
                 },
                 "GcdMemLock",
             ),
@@ -2176,20 +2190,21 @@ impl SpinLockedGcd {
                 // because we set efi::MEMORY_XP as a capability on all memory ranges we add to the GCD. A driver could
                 // call set_memory_space_capabilities to remove the XP capability, but that is something that should
                 // be caught and fixed.
+                let default_attributes = self.memory.lock().default_attributes;
                 match self.set_memory_space_attributes(
                     *base_address,
                     len,
-                    (attributes & efi::CACHE_ATTRIBUTE_MASK) | efi::MEMORY_XP,
+                    (attributes & efi::CACHE_ATTRIBUTE_MASK) | default_attributes,
                 ) {
                     Ok(_) => (),
                     Err(EfiError::NotReady) => {
-                        // this is expected if mu-paging is not initialized yet. The GCD will still be updated, but
-                        // the page table will not yet. When we initialize mu-paging, the GCD will use the attributes
-                        // that have been updated here to initialize the page table. mu-paging must allocate memory
+                        // this is expected if paging is not initialized yet. The GCD will still be updated, but
+                        // the page table will not yet. When we initialize paging, the GCD will use the attributes
+                        // that have been updated here to initialize the page table. paging must allocate memory
                         // to form the page table we are going to use.
                     }
                     Err(e) => {
-                        // this is now a real error case, mu-paging is enabled, but we failed to set NX on the
+                        // this is now a real error case, paging is enabled, but we failed to set NX on the
                         // range. This we want to catch. In a release build, we should still continue, but we'll
                         // not have NX set on the range.
                         log::error!(
@@ -2442,6 +2457,51 @@ impl SpinLockedGcd {
     /// Acquires lock and delegates to [`IoGCD::io_descriptor_count`]
     pub fn io_descriptor_count(&self) -> usize {
         self.io.lock().io_descriptor_count()
+    }
+
+    #[cfg(feature = "compatibility_mode_allowed")]
+    /// This activates compatibility mode for the GCD.
+    /// This will:
+    /// - Map the range 0 - 0xA0000 as RWX if the memory type is SystemMemory.
+    /// - Update the locked GCD to not set efi::MEMORY_XP on newly allocated pages
+    pub(crate) fn activate_compatibility_mode(&self) {
+        const LEGACY_BIOS_WB_ADDRESS: usize = 0xA0000;
+
+        // map legacy region if system mem
+        let mut address = 0;
+        while address < LEGACY_BIOS_WB_ADDRESS {
+            let mut size = UEFI_PAGE_SIZE;
+            if let Ok(descriptor) = self.get_memory_descriptor_for_address(address as efi::PhysicalAddress) {
+                // if the legacy region is not system memory, we should not map it
+                if descriptor.memory_type == dxe_services::GcdMemoryType::SystemMemory {
+                    size = match address + descriptor.length as usize {
+                        end_addr if end_addr > LEGACY_BIOS_WB_ADDRESS => LEGACY_BIOS_WB_ADDRESS - address,
+                        _ => descriptor.length as usize,
+                    };
+
+                    // set_memory_space_attributes will set both the GCD and paging atrributes
+                    match self.set_memory_space_attributes(
+                        address,
+                        size,
+                        descriptor.attributes & efi::CACHE_ATTRIBUTE_MASK,
+                    ) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            log::error!(
+                                "Failed to map legacy bios region at {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
+                                address,
+                                size,
+                                descriptor.attributes & efi::CACHE_ATTRIBUTE_MASK,
+                                e
+                            );
+                            debug_assert!(false);
+                        }
+                    }
+                }
+            }
+            address += size;
+        }
+        self.memory.lock().activate_compatibility_mode();
     }
 }
 
@@ -3438,6 +3498,7 @@ mod tests {
             maximum_address: 0,
             allocate_memory_space_fn: GCD::allocate_memory_space_internal,
             free_memory_space_fn: GCD::free_memory_space_worker,
+            default_attributes: efi::MEMORY_XP,
         };
         assert_eq!(Err(EfiError::NotReady), gcd.set_memory_space_attributes(0, 0x50000, 0b1111));
 
