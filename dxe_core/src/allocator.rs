@@ -676,48 +676,6 @@ pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
     }
 }
 
-// This is temporarily dead code, but will be used by mu-paging. This API just needs to be in place before we
-// can move in the mu-paging crate.
-#[allow(dead_code)]
-pub(crate) fn ensure_capacity(memory_type: efi::MemoryType, size: usize, align: usize) -> Result<(), EfiError> {
-    // get a handle, in case we have to create a new allocator
-    let handle = match AllocatorMap::handle_for_memory_type(memory_type) {
-        Ok(handle) => handle,
-        Err(err) => {
-            log::error!("[{}] failed to get a handle for memory type {:#x?}: {:#x?}", function!(), memory_type, err);
-            return Err(err);
-        }
-    };
-
-    // find the associated allocator and call the ensure_capacity method
-    match ALLOCATORS.lock().get_or_create_allocator(memory_type, handle) {
-        Ok(allocator) => {
-            if let Err(err) = allocator.ensure_capacity(size, align) {
-                log::error!(
-                    "[{}] failed to ensure {:#x?} bytes with alignment {:#x?} in memory_type {:#x?} with status {:#x?}",
-                    function!(),
-                    size,
-                    align,
-                    memory_type,
-                    err
-                );
-                return Err(err);
-            }
-        }
-        Err(err) => {
-            log::error!(
-                "[{}] failed to get an allocator for memory type {:#x?} with status {:#x?}",
-                function!(),
-                memory_type,
-                err
-            );
-            return Err(err);
-        }
-    }
-
-    Ok(())
-}
-
 static mut MEMORY_TYPE_INFO_TABLE: [EFiMemoryTypeInformation; 17] = [
     EFiMemoryTypeInformation { memory_type: efi::RESERVED_MEMORY_TYPE, number_of_pages: 0 },
     EFiMemoryTypeInformation { memory_type: efi::LOADER_CODE, number_of_pages: 0 },

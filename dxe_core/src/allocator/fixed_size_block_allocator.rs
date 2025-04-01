@@ -34,15 +34,12 @@ use uefi_sdk::{base::UEFI_PAGE_SHIFT, uefi_size_to_pages};
 pub enum FixedSizeBlockAllocatorError {
     /// Could not satisfy allocation request, and expansion failed.
     OutOfMemory,
-    /// Invalid input parameter
-    InvalidParameter,
 }
 
 /// Minimum expansion size - allocator will request at least this much memory
 /// from the underlying GCD instance expansion is needed.
 pub const MIN_EXPANSION: usize = 0x100000;
 const ALIGNMENT: usize = 0x1000;
-const DEFAULT_POOL_ALIGNMENT: usize = 0x8;
 
 const BLOCK_SIZES: &[usize] = &[8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
 
@@ -173,48 +170,6 @@ impl FixedSizeBlockAllocator {
         self.allocators = None;
         self.preferred_range = None;
         self.stats = AllocationStatistics::new();
-    }
-
-    /// Ensures that the allocator has enough capacity to satisfy an allocation of the given size and alignment.
-    /// If the allocator does not have enough capacity, it will request more memory from the GCD.
-    /// If the allocator has enough capacity, it will return Ok(()).
-    /// If the allocator cannot allocate more memory, it will return Err(FixedSizeBlockAllocatorError::OutOfMemory).
-    /// If the size or alignment are invalid, it will return Err(FixedSizeBlockAllocatorError::InvalidParameter).
-    /// This function is useful for pre-allocating memory before it is needed for memory sensitive operations, such
-    /// as creating the EFI_MEMORY_MAP or allocating page table memory before changing attributes.
-    ///
-    pub fn ensure_capacity(&mut self, size: usize, align: usize) -> Result<(), FixedSizeBlockAllocatorError> {
-        let mut alignment = align;
-
-        // next power of two will return alignment here, if already a power of two, or round up to the next power of 2
-        // if overflow occurs, it will return 0
-        alignment = alignment.next_power_of_two();
-
-        if alignment == 0 {
-            return Err(FixedSizeBlockAllocatorError::InvalidParameter);
-        }
-
-        if alignment < DEFAULT_POOL_ALIGNMENT {
-            alignment = DEFAULT_POOL_ALIGNMENT;
-        }
-
-        // let's satisfy the preconditions of constructing a Layout. If we end up overallocating, that's okay, we
-        // probably will anyway when we expand
-        // we could still fail here if align(size, alignment) would cause an overflow. We'll let from_size_align
-        // determine that for us and return InvalidParameter
-        let layout =
-            Layout::from_size_align(size, alignment).map_err(|_| FixedSizeBlockAllocatorError::InvalidParameter)?;
-
-        // if we can allocate and deallocate a block of the given size and alignment, then we have enough capacity
-        // If the pool is not large enough, alloc will call expand, which will allocate more memory from the GCD and
-        // dealloc will leave the extra memory as owned by this allocator
-        let ptr = self.alloc(layout);
-        if ptr.is_null() {
-            return Err(FixedSizeBlockAllocatorError::OutOfMemory);
-        }
-        unsafe { self.dealloc(ptr, layout) };
-
-        Ok(())
     }
 
     // Expand the memory available to this allocator by requesting a new contiguous region of memory from the gcd setting
@@ -678,20 +633,6 @@ impl SpinLockedFixedSizeBlockAllocator {
     ///
     pub fn reserve_memory_pages(&self, pages: usize) -> Result<(), EfiError> {
         self.lock().reserve_memory_pages(pages)
-    }
-
-    /// Ensures that the allocator has enough capacity to allocate a block of the given size and alignment.
-    /// If the allocator does not have enough capacity, it will attempt to expand the allocator to accommodate the
-    /// requested block.
-    /// Returns an error if the allocator cannot be expanded.
-    /// ## Errors
-    /// - `efi::Status::OUT_OF_RESOURCES`: The allocator cannot be expanded to accommodate the requested block.
-    /// - `efi::Status::INVALID_PARAMETER`: The requested size or alignment is invalid
-    pub fn ensure_capacity(&self, size: usize, align: usize) -> Result<(), EfiError> {
-        self.lock().ensure_capacity(size, align).map_err(|err| match err {
-            FixedSizeBlockAllocatorError::OutOfMemory => EfiError::OutOfResources,
-            FixedSizeBlockAllocatorError::InvalidParameter => EfiError::InvalidParameter,
-        })
     }
 
     /// Returns the allocator handle associated with this allocator.
@@ -1239,67 +1180,6 @@ mod tests {
             fsb.expand(layout).unwrap();
 
             let _ = std::format!("{}", fsb);
-        });
-    }
-
-    #[test]
-    fn test_ensure_capacity() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
-
-            // Allocate some space on the heap with the global allocator (std) to be used by expand().
-            let _ = init_gcd(&GCD, 0x400000);
-
-            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
-
-            // Test ensuring capacity with valid parameters
-            assert!(fsb.ensure_capacity(0x1000, 0x10).is_ok());
-            assert!(fsb.allocators.is_some());
-
-            // Test ensuring capacity when out of memory
-            // Allocate all available memory
-            fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 0x2A0).unwrap();
-            assert_eq!(fsb.ensure_capacity(0x100000, 0x10), Err(FixedSizeBlockAllocatorError::OutOfMemory));
-        });
-    }
-
-    #[test]
-    fn test_ensure_capacity_bad_size() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
-
-            // Allocate some space on the heap with the global allocator (std) to be used by expand().
-            let _ = init_gcd(&GCD, 0x400000);
-
-            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
-
-            // Test ensuring capacity with invalid size parameter
-            assert_eq!(fsb.ensure_capacity(usize::MAX, 0x10), Err(FixedSizeBlockAllocatorError::InvalidParameter));
-        });
-    }
-
-    #[test]
-    fn test_ensure_capacity_bad_alignment() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
-
-            // Allocate some space on the heap with the global allocator (std) to be used by expand().
-            let _ = init_gcd(&GCD, 0x400000);
-
-            let result = std::panic::catch_unwind(|| {
-                // Test ensuring capacity with invalid alignment parameter
-                // in debug mode, this will panic. do to the overflow
-                // in release, it returns 0 internally, which will return an error
-                let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
-                fsb.ensure_capacity(0x1000, usize::MAX).unwrap();
-            });
-            assert!(result.is_err())
         });
     }
 

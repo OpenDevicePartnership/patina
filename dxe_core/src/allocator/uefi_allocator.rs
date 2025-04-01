@@ -94,17 +94,6 @@ impl UefiAllocator {
         self.allocator.reserve_memory_pages(pages)
     }
 
-    /// Ensures that the allocator has enough capacity to allocate a block of memory of the given size and alignment.
-    /// If the allocator does not have enough capacity, it will attempt to expand.
-    /// Returns an error if the allocator cannot expand.
-    /// See [`SpinLockedFixedSizeBlockAllocator::ensure_capacity`]
-    ///
-    /// ## Errors
-    ///
-    /// Returns an error if the allocator cannot expand.
-    pub fn ensure_capacity(&self, size: usize, align: usize) -> Result<(), EfiError> {
-        self.allocator.ensure_capacity(size, align)
-    }
 
     /// Allocates a buffer to satisfy `size` and returns in `buffer`.
     ///
@@ -626,57 +615,6 @@ mod tests {
                 (efi::RESERVED_MEMORY_TYPE, "Unknown"),
             ] {
                 assert_eq!(string_for_memory_type(*memory_type), *name);
-            }
-        });
-    }
-
-    #[test]
-    fn test_ensure_capacity() {
-        with_locked_state(|| {
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
-            init_gcd(&GCD, 0x400000);
-
-            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
-
-            // Ensure capacity for a small allocation
-            assert_eq!(ua.ensure_capacity(0x1000, 0x8), Ok(()));
-
-            // Ensure capacity for a larger allocation
-            assert_eq!(ua.ensure_capacity(0x10000, 0x1000), Ok(()));
-        });
-    }
-
-    #[test]
-    fn test_allocate_pool_with_ensure_capacity() {
-        with_locked_state(|| {
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
-            let base = init_gcd(&GCD, 0x400000);
-
-            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
-
-            // Ensure capacity before allocation
-            assert_eq!(ua.ensure_capacity(0x1000, 0x8), Ok(()));
-
-            let mut buffer: *mut c_void = core::ptr::null_mut();
-            assert!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }.is_ok());
-            assert!(buffer as u64 > base);
-            assert!((buffer as u64) < base + 0x400000);
-
-            let (layout, offset) = Layout::new::<AllocationInfo>()
-                .extend(
-                    Layout::from_size_align(0x1000, UEFI_POOL_ALIGN)
-                        .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err)),
-                )
-                .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err));
-
-            let allocation_info: *mut AllocationInfo = ((buffer as usize) - offset) as *mut AllocationInfo;
-            unsafe {
-                let allocation_info = &*allocation_info;
-                assert_eq!(allocation_info.signature, POOL_SIG);
-                assert_eq!(allocation_info.memory_type, efi::BOOT_SERVICES_DATA);
-                assert_eq!(allocation_info.layout, layout)
             }
         });
     }
