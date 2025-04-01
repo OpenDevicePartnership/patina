@@ -2,6 +2,7 @@
 
 [Introduction](introduction.md)
 [Core Concepts](concepts.md)
+[Code Organization](code_organization.md)
 
 # Rust Development for UEFI
 
