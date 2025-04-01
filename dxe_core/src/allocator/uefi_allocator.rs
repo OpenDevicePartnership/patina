@@ -94,6 +94,13 @@ impl UefiAllocator {
         self.allocator.reserve_memory_pages(pages)
     }
 
+    /// Returns an iterator over the memory ranges managed by this allocator.
+    /// Returns an empty iterator if the allocator has no memory ranges.
+    pub(crate) fn get_memory_ranges(&self) -> impl Iterator<Item = Range<efi::PhysicalAddress>> {
+        self.allocator
+            .get_memory_ranges()
+            .map(|range| range.start as efi::PhysicalAddress..range.end as efi::PhysicalAddress)
+    }
 
     /// Allocates a buffer to satisfy `size` and returns in `buffer`.
     ///

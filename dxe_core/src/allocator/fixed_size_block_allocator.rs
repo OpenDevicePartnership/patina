@@ -505,6 +505,18 @@ impl FixedSizeBlockAllocator {
         Ok(())
     }
 
+    /// Get the ranges of the memory owned by this allocator
+    ///
+    /// Returns an iterator of ranges of the memory owned by this allocator.
+    /// If the allocator does not own any memory, it will return an empty iterator.
+    pub(crate) fn get_memory_ranges(&self) -> impl Iterator<Item = Range<usize>> {
+        AllocatorIterator::new(self.allocators).map(|node| {
+            // This is safe because the node is a valid pointer to an AllocatorListNode
+            let allocator = unsafe { &(*node).allocator };
+            allocator.bottom() as usize..allocator.top() as usize
+        })
+    }
+
     /// Returns the memory type for this allocator
     pub fn memory_type(&self) -> efi::MemoryType {
         self.memory_type
@@ -633,6 +645,12 @@ impl SpinLockedFixedSizeBlockAllocator {
     ///
     pub fn reserve_memory_pages(&self, pages: usize) -> Result<(), EfiError> {
         self.lock().reserve_memory_pages(pages)
+    }
+
+    /// Returns an iterator of the ranges of memory owned by this allocator
+    /// Returns an empty iterator if the allocator does not own any memory.
+    pub fn get_memory_ranges(&self) -> impl Iterator<Item = Range<usize>> {
+        self.lock().get_memory_ranges()
     }
 
     /// Returns the allocator handle associated with this allocator.
@@ -1378,6 +1396,47 @@ mod tests {
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
             assert_eq!(stats.reserved_used, MIN_EXPANSION);
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
+        });
+    }
+
+    #[test]
+    fn test_get_memory_ranges() {
+        with_locked_state(|| {
+            // Create a static GCD
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
+
+            // Allocate some space on the heap with the global allocator (std) to be used by expand().
+            let base = init_gcd(&GCD, 0x400000);
+
+            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+
+            // Expand the allocator multiple times to add memory ranges
+            let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
+            fsb.expand(layout).unwrap();
+            fsb.expand(layout).unwrap();
+            fsb.expand(layout).unwrap();
+
+            // Collect the memory ranges reported by the allocator
+            let memory_ranges: Vec<_> = fsb.get_memory_ranges().collect();
+
+            // Verify that the reported ranges match the expected ranges
+            assert_eq!(memory_ranges.len(), 3);
+            for range in &memory_ranges {
+                assert!(range.start >= base as usize);
+                assert!(range.end <= (base + 0x400000) as usize);
+                assert!(range.start < range.end);
+            }
+
+            // Ensure that the ranges do not overlap
+            for i in 0..memory_ranges.len() {
+                for j in i + 1..memory_ranges.len() {
+                    assert!(
+                        memory_ranges[i].end <= memory_ranges[j].start
+                            || memory_ranges[j].end <= memory_ranges[i].start
+                    );
+                }
+            }
         });
     }
 }

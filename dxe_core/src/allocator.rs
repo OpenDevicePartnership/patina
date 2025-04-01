@@ -13,6 +13,7 @@ use core::{
     ffi::c_void,
     fmt::Debug,
     mem,
+    ops::Range,
     slice::{self, from_raw_parts_mut},
 };
 
@@ -221,6 +222,22 @@ impl Debug for MemoryDescriptorSlice<'_> {
         }
         Ok(())
     }
+}
+
+#[allow(dead_code)]
+/// Return a vector of the memory ranges owned by a particular allocator
+/// Returns an empty vector if the memory type is not found
+/// This function is used for compatibility mode code to set RWX attributes on memory ranges for Loader Code/Data,
+/// but it is not specific to compatibility mode, which is why it is marked as allow(dead_code) as opposed to behind
+/// the compatibility_mode_allowed feature flag. It is valid for other code to use this API in the absence of
+/// compatibility mode.
+pub(crate) fn get_memory_ranges_for_memory_type(memory_type: efi::MemoryType) -> Vec<Range<efi::PhysicalAddress>> {
+    for allocator in ALLOCATORS.lock().iter() {
+        if allocator.memory_type() == memory_type {
+            return allocator.get_memory_ranges().collect();
+        }
+    }
+    Vec::new()
 }
 
 // The following structure is used to track additional allocators that are created in response to allocation requests
