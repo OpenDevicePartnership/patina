@@ -429,7 +429,7 @@ pub fn core_allocate_pages(
 
     let handle = AllocatorMap::handle_for_memory_type(memory_type)?;
 
-    match ALLOCATORS.lock().get_or_create_allocator(memory_type, handle) {
+    let res = match ALLOCATORS.lock().get_or_create_allocator(memory_type, handle) {
         Ok(allocator) => {
             let result = match allocation_type {
                 efi::ALLOCATE_ANY_PAGES => allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages),
@@ -452,7 +452,20 @@ pub fn core_allocate_pages(
             }
         }
         Err(err) => Err(err),
+    };
+
+    // If the memory type is runtime services code or data, we need to install the memory attributes table to reflect
+    // the update. The MAT logic will decide if it is a proper time to install the MAT or not.
+    match memory_type {
+        efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA => {
+            if res.is_ok() {
+                MemoryAttributesTable::install();
+            }
+        }
+        _ => {}
     }
+
+    res
 }
 
 extern "efiapi" fn free_pages(memory: efi::PhysicalAddress, pages: usize) -> efi::Status {
@@ -478,13 +491,31 @@ pub fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(),
 
     let allocators = ALLOCATORS.lock();
 
-    unsafe {
-        if allocators.iter().any(|allocator| allocator.free_pages(memory as usize, pages).is_ok()) {
+    let mut memory_type = efi::CONVENTIONAL_MEMORY;
+
+    let res = unsafe {
+        if allocators.iter().any(|allocator| {
+            memory_type = allocator.memory_type();
+            allocator.free_pages(memory as usize, pages).is_ok()
+        }) {
             Ok(())
         } else {
             Err(EfiError::NotFound)
         }
+    };
+
+    // If the memory type is runtime services code or data, we need to install the memory attributes table to reflect
+    // the update. The MAT logic will decide if it is a proper time to install the MAT or not.
+    match memory_type {
+        efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA => {
+            if res.is_ok() {
+                MemoryAttributesTable::install();
+            }
+        }
+        _ => {}
     }
+
+    res
 }
 
 extern "efiapi" fn copy_mem(destination: *mut c_void, source: *mut c_void, length: usize) {
@@ -712,11 +743,6 @@ static mut MEMORY_TYPE_INFO_TABLE: [EFiMemoryTypeInformation; 17] = [
 // Generally - be very cautious about any allocations performed with this callback. There be dragons.
 //
 fn page_change_callback(allocator: &mut FixedSizeBlockAllocator) {
-    match allocator.memory_type() {
-        efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA => MemoryAttributesTable::install(allocator),
-        _ => (),
-    }
-
     // Update MEMORY_TYPE_INFO_TABLE.
     unsafe {
         // Custom Memory types (higher than EfiMaxMemoryType) are not tracked.

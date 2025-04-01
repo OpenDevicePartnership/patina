@@ -216,7 +216,7 @@ impl FixedSizeBlockAllocator {
             self.stats.claimed_pages += uefi_size_to_pages!(size);
         }
 
-        // if we managed to allocate pages, call into the page change callback to trigger a MAT update, if applicable
+        // if we managed to allocate pages, call into the page change callback to update stats
         (self.page_change_callback)(self);
 
         Ok(())
@@ -412,7 +412,7 @@ impl FixedSizeBlockAllocator {
             self.stats.claimed_pages += pages;
         }
 
-        // if we managed to allocate pages, call into the page change callback to trigger a MAT update, if applicable
+        // if we managed to allocate pages, call into the page change callback to update stats
         (self.page_change_callback)(self);
 
         Ok(allocation)
@@ -453,7 +453,7 @@ impl FixedSizeBlockAllocator {
             self.stats.claimed_pages -= pages;
         }
 
-        // if we managed to allocate pages, call into the page change callback to trigger a MAT update, if applicable
+        // if we managed to allocate pages, call into the page change callback to update stats
         (self.page_change_callback)(self);
 
         Ok(())
