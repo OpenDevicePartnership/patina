@@ -363,7 +363,7 @@ impl GCD {
         self.allocate_memory_space(
             AllocateType::Address(base_address),
             dxe_services::GcdMemoryType::SystemMemory,
-            0,
+            UEFI_PAGE_SHIFT,
             MEMORY_BLOCK_SLICE_SIZE,
             protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
             None,
@@ -2912,7 +2912,7 @@ mod tests {
             gcd.allocate_memory_space(
                 AllocateType::Address(0),
                 dxe_services::GcdMemoryType::SystemMemory,
-                0,
+                UEFI_PAGE_SHIFT,
                 10,
                 1 as _,
                 None
@@ -2929,7 +2929,7 @@ mod tests {
             gcd.allocate_memory_space(
                 AllocateType::BottomUp(None),
                 dxe_services::GcdMemoryType::Reserved,
-                0,
+                UEFI_PAGE_SHIFT,
                 0,
                 1 as _,
                 None
