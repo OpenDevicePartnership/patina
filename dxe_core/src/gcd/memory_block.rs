@@ -26,7 +26,7 @@ pub enum MemoryBlock {
 }
 
 pub enum StateTransition {
-    Add(dxe_services::GcdMemoryType, u64),
+    Add(dxe_services::GcdMemoryType, u64, u64),
     Remove,
     Allocate(efi::Handle, Option<efi::Handle>),
     AllocateRespectingOwnership(efi::Handle, Option<efi::Handle>),
@@ -39,10 +39,11 @@ pub enum StateTransition {
 impl Debug for StateTransition {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            StateTransition::Add(memory_type, capabilities) => f
+            StateTransition::Add(memory_type, capabilities, attributes) => f
                 .debug_struct("Add")
                 .field("memory_type", memory_type)
                 .field("capabilities", &format_args!("{:#X}", capabilities))
+                .field("attributes", &format_args!("{:#X}", attributes))
                 .finish(),
             StateTransition::Remove => f.debug_struct("Remove").finish(),
             StateTransition::Allocate(image_handle, device_handle) => f
@@ -185,7 +186,9 @@ impl MemoryBlock {
 
     pub fn state_transition(&mut self, transition: StateTransition) -> Result<(), Error> {
         match transition {
-            StateTransition::Add(memory_type, capabilities) => self.add_transition(memory_type, capabilities),
+            StateTransition::Add(memory_type, capabilities, attributes) => {
+                self.add_transition(memory_type, capabilities, attributes)
+            }
             StateTransition::Remove => self.remove_transition(),
             StateTransition::Allocate(image_handle, device_handle) => {
                 self.allocate_transition(image_handle, device_handle, false)
@@ -200,7 +203,12 @@ impl MemoryBlock {
         }
     }
 
-    pub fn add_transition(&mut self, memory_type: dxe_services::GcdMemoryType, capabilities: u64) -> Result<(), Error> {
+    pub fn add_transition(
+        &mut self,
+        memory_type: dxe_services::GcdMemoryType,
+        capabilities: u64,
+        attributes: u64,
+    ) -> Result<(), Error> {
         match self {
             Self::Unallocated(md)
                 if md.memory_type == dxe_services::GcdMemoryType::NonExistent
@@ -208,12 +216,7 @@ impl MemoryBlock {
             {
                 md.memory_type = memory_type;
                 md.capabilities = capabilities;
-                // by default all free memory is unmapped (which translated to MEMORY_RP)
-                // when it is allocated, it is mapped as MEMORY_XP and then the caller is
-                // responsible for updating the attributes further if required.
-                // when it is freed, it is unmapped in the page table and in the GCD set back to MEMORY_RP
-                // to merge back with free memory
-                md.attributes = efi::MEMORY_RP;
+                md.attributes = attributes;
                 Ok(())
             }
             _ => Err(Error::InvalidStateTransition),
@@ -252,13 +255,6 @@ impl MemoryBlock {
                 if let Some(device_handle) = device_handle {
                     md.device_handle = device_handle;
                 }
-                // Whenever memory is allocated, we need to set it as XP and preserve the cache
-                // attributes. This is done at this level because in early initialization, the GCD and
-                // page table are not initialized and various checks will fail when done from the
-                // top down. Those components will be synchronized when initialization of them
-                // completes and so this addition becomes a no-op later, but is required at the
-                // beginning.
-                md.attributes = (md.attributes & efi::CACHE_ATTRIBUTE_MASK) | efi::MEMORY_XP;
 
                 *self = Self::Allocated(*md);
                 Ok(())
@@ -369,7 +365,7 @@ mod memory_block_tests {
 
         // Test add_transition
         let mut b1 = block;
-        b1.state_transition(StateTransition::Add(GcdMemoryType::MemoryMappedIo, 0)).unwrap();
+        b1.state_transition(StateTransition::Add(GcdMemoryType::MemoryMappedIo, 0, 0)).unwrap();
         assert_eq!(b1.as_ref().memory_type, GcdMemoryType::MemoryMappedIo);
 
         // test remove transition

@@ -427,12 +427,13 @@ impl GCD {
 
         ensure!(block.as_ref().memory_type == dxe_services::GcdMemoryType::NonExistent, EfiError::AccessDenied);
 
+        // all newly added memory is marked as RP
         match Self::split_state_transition_at_idx(
             memory_blocks,
             idx,
             base_address,
             len,
-            MemoryStateTransition::Add(memory_type, capabilities),
+            MemoryStateTransition::Add(memory_type, capabilities, efi::MEMORY_RP),
         ) {
             Ok(idx) => Ok(idx),
             Err(InternalError::MemoryBlock(MemoryBlockError::BlockOutsideRange)) => error!(EfiError::AccessDenied),
