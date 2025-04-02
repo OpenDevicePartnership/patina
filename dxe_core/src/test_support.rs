@@ -434,7 +434,6 @@ pub(crate) fn build_test_hob_list_compact(mem_size: u64) -> *const c_void {
 }
 
 pub(crate) fn fill_file_buffer_in_memory_allocation_module(hob_list: &HobList) -> Result<(), &'static str> {
-
     let mut file = File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
     let mut image: Vec<u8> = Vec::new();
     file.read_to_end(&mut image).expect("failed to read test file");
