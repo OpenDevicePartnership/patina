@@ -13,7 +13,7 @@ use r_efi::efi;
 use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
 use uefi_sdk::base::{align_up, UEFI_PAGE_SIZE};
 use uefi_sdk::error::EfiError;
-use uefi_sdk::{guid, uefi_size_to_pages};
+use uefi_sdk::uefi_size_to_pages;
 
 use uefi_performance::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end};
 
@@ -531,7 +531,7 @@ fn install_dxe_core_image(hob_list: &HobList) {
         )) {
             Ok(info) => info,
             Err(err) => {
-                panic!("Failed to parse PE info for DXE Core");
+                panic!("Failed to parse PE info for DXE Core {:?}", err);
             }
         }
     };

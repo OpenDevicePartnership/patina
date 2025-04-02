@@ -10,7 +10,6 @@
 //!
 use crate::{protocols::PROTOCOL_DB, GCD};
 use core::ffi::c_void;
-use mu_pi::hob::header::Hob;
 use mu_pi::hob::Hob::MemoryAllocationModule;
 use mu_pi::hob::HobList;
 use mu_pi::{
@@ -22,7 +21,6 @@ use r_efi::efi;
 use std::any::Any;
 use std::slice;
 use std::{fs::File, io::Read};
-use uefi_sdk::guid;
 
 #[macro_export]
 macro_rules! test_collateral {
