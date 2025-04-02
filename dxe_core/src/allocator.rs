@@ -991,13 +991,6 @@ pub fn init_memory_support(hob_list: &HobList) {
     }
 }
 
-#[cfg(test)]
-pub fn allocator_lock_reset() {
-    unsafe {
-        ALLOCATORS.lock().reset();
-    }
-}
-
 pub fn install_memory_services(bs: &mut efi::BootServices) {
     bs.allocate_pages = allocate_pages;
     bs.free_pages = free_pages;
