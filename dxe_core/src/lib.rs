@@ -11,7 +11,6 @@
 //! use uefi_cpu::interrupts::InterruptBases;
 //! use uefi_cpu::interrupts::ExceptionType;
 //! use uefi_cpu::interrupts::HandlerType;
-//! use uefi_sdk::error::EfiError;
 //! # fn example_component() -> uefi_sdk::error::Result<()> { Ok(()) }
 //! # #[derive(Default, Clone, Copy)]
 //! # struct CpuInitExample;
@@ -117,6 +116,7 @@ use mu_pi::{
 };
 use protocols::PROTOCOL_DB;
 use r_efi::efi;
+use uefi_sdk::error::EfiError;
 use uefi_sdk::{
     component::{Component, IntoComponent, Storage},
     error::{self, Result},
@@ -506,7 +506,11 @@ where
         self.display_components_not_dispatched();
 
         if let Err(err) = dispatcher::core_dispatcher() {
-            log::error!("Initial dispatch failed: {:?}", err);
+            if cfg!(test) && err == EfiError::NotFound {
+                log::info!("Initial dispatch failed: {:?}", err);
+            } else {
+                panic!("Dispatch failed: {:?}", err);
+            }
         }
         core_display_missing_arch_protocols();
 

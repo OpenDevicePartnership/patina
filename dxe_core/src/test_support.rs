@@ -10,7 +10,9 @@
 //!
 use crate::{protocols::PROTOCOL_DB, GCD};
 use core::ffi::c_void;
-use mu_pi::hob::MemoryAllocationModule;
+use mu_pi::hob::header::Hob;
+use mu_pi::hob::Hob::MemoryAllocationModule;
+use mu_pi::hob::HobList;
 use mu_pi::{
     dxe_services::GcdMemoryType,
     hob::{self, header},
@@ -18,6 +20,8 @@ use mu_pi::{
 };
 use r_efi::efi;
 use std::any::Any;
+use std::slice;
+use std::{fs::File, io::Read};
 use uefi_sdk::guid;
 
 #[macro_export]
@@ -427,4 +431,39 @@ pub(crate) fn build_test_hob_list_compact(mem_size: u64) -> *const c_void {
         core::ptr::copy(&end, cursor as *mut header::Hob, 1);
     }
     mem.as_ptr() as *const c_void
+}
+
+pub(crate) fn fill_file_buffer_in_memory_allocation_module(hob_list: &HobList) -> Result<(), &'static str> {
+
+    let mut file = File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+    let mut image: Vec<u8> = Vec::new();
+    file.read_to_end(&mut image).expect("failed to read test file");
+
+    /* Locate the MemoryAllocationModule HOB for the DXE Core */
+    let dxe_core_hob = hob_list
+        .iter()
+        .find_map(|hob| match hob {
+            MemoryAllocationModule(module) if module.module_name == uefi_sdk::guid::DXE_CORE => Some(module),
+            _ => None,
+        })
+        .ok_or("DXE Core MemoryAllocationModule HOB not found")?;
+
+    let memory_base_address = dxe_core_hob.alloc_descriptor.memory_base_address;
+    let memory_length = dxe_core_hob.alloc_descriptor.memory_length;
+
+    /* Get the file size */
+    let file_size = file.metadata().map_err(|_| "Failed to get file metadata")?.len();
+
+    if file_size > (memory_length as usize).try_into().unwrap() {
+        return Err("File contents exceed allocated memory length");
+    }
+
+    /* Write the file contents into the memory region specified by the HOB */
+    unsafe {
+        let memory_slice = slice::from_raw_parts_mut(memory_base_address as *mut u8, memory_length as usize);
+        let file_size = file_size as usize; // Convert file_size to usize
+        memory_slice[..file_size].copy_from_slice(&image);
+    }
+
+    Ok(())
 }

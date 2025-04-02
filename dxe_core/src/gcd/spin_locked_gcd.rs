@@ -1918,7 +1918,10 @@ impl SpinLockedGcd {
             Ok(pt) => pt,
             Err(e) => {
                 log::error!("Failed to create CPU page table: {:?}", e);
-                return;
+                if cfg!(test) && e == efi::Status::UNSUPPORTED {
+                    return;
+                }
+                panic!("Failed to create CPU page table: {:?}", e);
             }
         };
 

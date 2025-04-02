@@ -494,7 +494,6 @@ fn install_dxe_core_image(hob_list: &HobList) {
         .iter()
         .find_map(|x| match x {
             Hob::MemoryAllocationModule(module) => {
-                println!("Found MemoryAllocationModule with module_name: {:?}", module.module_name);
                 if module.module_name == uefi_sdk::guid::DXE_CORE {
                     Some(module)
                 } else {
@@ -532,8 +531,7 @@ fn install_dxe_core_image(hob_list: &HobList) {
         )) {
             Ok(info) => info,
             Err(err) => {
-                log::error!("Failed to parse PE info for DXE Core: {:?}", err);
-                return;
+                panic!("Failed to parse PE info for DXE Core");
             }
         }
     };

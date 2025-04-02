@@ -1016,7 +1016,9 @@ mod tests {
     use crate::Core;
     use crate::{
         gcd,
-        test_support::{self, build_test_hob_list, build_test_hob_list_compact},
+        test_support::{
+            self, build_test_hob_list, build_test_hob_list_compact, fill_file_buffer_in_memory_allocation_module,
+        },
     };
     use mu_pi::fw_fs;
     use mu_pi::fw_fs::Section;
@@ -1115,25 +1117,29 @@ mod tests {
             }
 
             let physical_hob_list = build_test_hob_list_compact(0x2000000);
+            let mut hob_list = HobList::default();
+            hob_list.discover_hobs(physical_hob_list);
+            fill_file_buffer_in_memory_allocation_module(&hob_list);
             unsafe {
                 GCD.reset();
                 PROTOCOL_DB.reset();
                 ALLOCATORS.lock().reset();
-            }
 
-            Core::default()
-                .with_cpu_init(CpuInitForCoverage)
-                .with_interrupt_manager(InterruptManagerForCoverage)
-                .with_section_extractor(SectionExtractorForCoverage)
-                .with_interrupt_bases(InterruptBasesForCoverage)
-                .init_memory(physical_hob_list) // We can make allocations now!
-                .with_config(sample_components::Name("Coverage "))
-                .with_component(sample_components::log_hello)
-                .start()
-                .expect("Initing System Core failed ");
+                Core::default()
+                    .with_cpu_init(CpuInitForCoverage)
+                    .with_interrupt_manager(InterruptManagerForCoverage)
+                    .with_section_extractor(SectionExtractorForCoverage)
+                    .with_interrupt_bases(InterruptBasesForCoverage)
+                    .init_memory(physical_hob_list) // We can make allocations now!
+                    .with_config(sample_components::Name("Coverage "))
+                    .with_component(sample_components::log_hello)
+                    .start()
+                    .expect("Initing System Core failed ");
+
+                /* Reset boot Services. Fixes Panic */
+                init_boot_services(core::ptr::null_mut());
+            }
         });
-        /* Reset boot Services. Fixes Panic */
-        init_boot_services(core::ptr::null_mut());
     }
 
     #[test]
