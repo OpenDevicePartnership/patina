@@ -383,24 +383,31 @@ where
 
             // Install Memory Type Info configuration table.
             allocator::install_memory_type_info_table(st).expect("Unable to create Memory Type Info Table");
-
-            let boot_services_ptr = sys_table.as_mut().unwrap().boot_services_mut() as *mut efi::BootServices;
-            // Use `boot_services_ptr` safely here
-            // let runtime_services_ptr;
-            // runtime_services_ptr = st.as_mut().unwrap().runtime_services_mut() as *mut efi::RuntimeServices;
-            tpl_lock::init_boot_services(boot_services_ptr);
-            memory_attributes_table::init_memory_attributes_table_support();
-
-            // This is currently commented out as it is breaking top of tree booting Q35 as qemu64 does not support
-            // reading the time stamp counter in the way done in this code and results in a divide by zero exception.
-            // Other cpu models crash in various other ways. It will be resolved, but is removed now to unblock other
-            // development
-            // _ = uefi_performance::init_performance_lib(&hob_list, unsafe { boot_services_ptr.as_ref().unwrap() }, unsafe {
-            //     runtime_services_ptr.as_ref().unwrap()
-            // });
-
-            self.storage.set_boot_services(boot_services_ptr);
         }
+        let boot_services_ptr;
+        let system_table_ptr;
+        {
+            let mut st = systemtables::SYSTEM_TABLE.lock();
+            boot_services_ptr = st.as_mut().unwrap().boot_services_mut() as *mut efi::BootServices;
+            let system_table = st.as_ref().expect("System Table not initialized!").system_table();
+            system_table_ptr = system_table as *const efi::SystemTable;
+        }
+
+        tpl_lock::init_boot_services(boot_services_ptr);
+
+        memory_attributes_table::init_memory_attributes_table_support();
+
+        // This is currently commented out as it is breaking top of tree booting Q35 as qemu64 does not support
+        // reading the time stamp counter in the way done in this code and results in a divide by zero exception.
+        // Other cpu models crash in various other ways. It will be resolved, but is removed now to unblock other
+        // development
+        _ = uefi_performance::init_performance_lib(
+            &hob_list,
+            // SAFETY: `system_table_ptr` is a valid pointer that has been initialized earlier.
+            unsafe { system_table_ptr.as_ref() }.expect("System Table not initialized!"),
+        );
+
+        self.storage.set_boot_services(boot_services_ptr);
 
         Core {
             cpu_init: self.cpu_init,
