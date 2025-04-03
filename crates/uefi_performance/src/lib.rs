@@ -28,7 +28,7 @@ use core::{
     line,
     mem::{self, MaybeUninit},
     module_path,
-    option::Option::None,
+    option::Option::{self, None},
     ptr,
     result::Result::{self, Err, Ok},
     slice,
@@ -83,7 +83,7 @@ use uefi_sdk::{
 #[doc(hidden)]
 pub const PERF_ENABLED: bool = cfg!(feature = "instrument_performance");
 
-static BOOT_SERVICES: StandardBootServices = StandardBootServices::new_uninit();
+static mut BOOT_SERVICES: Option<&'static StandardBootServices> = None;
 
 static LOAD_IMAGE_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -115,6 +115,9 @@ impl PerformanceLibComponent {
         let mut fbpt = FBPT::new();
         fbpt.set_records(pei_perf_records);
 
+        unsafe {
+            Option::replace(&mut BOOT_SERVICES, boot_services);
+        }
         let fbpt = unsafe { FBPT.write(TplMutex::new(boot_services, Tpl::NOTIFY, fbpt)) };
 
         // Install the protocol interfaces for DXE performance library instance.
@@ -176,74 +179,6 @@ fn extract_pei_performance_records(hob_list: &HobList) -> Result<(PerformanceRec
     Ok((pei_records, pei_load_image_count))
 }
 
-// ##################################################################################################################
-
-// pub fn init_performance_lib(
-//     hob_list: &HobList,
-//     efi_system_table: &'static efi::SystemTable,
-// ) -> Result<(), efi::Status> {
-//     // SAFETY: This is safe because `boot_services` and `runtime services` are valid pointer to theire respective struct inside the system table.
-//     unsafe {
-//         match efi_system_table.boot_services.as_ref() {
-//             Some(boot_services) => BOOT_SERVICES.initialize(boot_services),
-//             None => {
-//                 log::error!(
-//                     "Uefi performance exiting because of invalid parameter. BootServices is null in system table."
-//                 );
-//                 return Err(Status::INVALID_PARAMETER);
-//             }
-//         }
-//         match efi_system_table.runtime_services.as_ref() {
-//             Some(runtime_services) => RUNTIME_SERVICES.initialize(runtime_services),
-//             None => {
-//                 log::error!(
-//                     "Uefi performance exiting because of invalid parameter. RuntimeServices is null in system table."
-//                 );
-//                 return Err(Status::INVALID_PARAMETER);
-//             }
-//         }
-//     }
-
-//     let (pei_records, pei_load_image_count) = extract_pei_performance_records(hob_list)?;
-//     LOAD_IMAGE_COUNT.store(pei_load_image_count, Ordering::Relaxed);
-//     log::info!("{} PEI performance records found.", pei_records.iter().count());
-//     FBPT.lock().set_records(pei_records);
-
-//     // Install the protocol interfaces for DXE performance library instance.
-//     BOOT_SERVICES
-//         .install_protocol_interface(
-//             None,
-//             &EdkiiPerformanceMeasurement,
-//             Box::new(EdkiiPerformanceMeasurementInterface { create_performance_measurement }),
-//         )
-//         .map_err(|(_, err)| err)?;
-
-//     // Register EndOfDxe event to allocate the boot performance table and report the table address through status code.
-//     BOOT_SERVICES.create_event_ex(
-//         EventType::NOTIFY_SIGNAL,
-//         Tpl::CALLBACK,
-//         Some(report_fpdt_record_buffer),
-//         &(),
-//         &guid::EVENT_GROUP_END_OF_DXE,
-//     )?;
-
-//     // Register ReadyToBoot event to update the boot performance table for SMM performance data.
-//     BOOT_SERVICES.create_event_ex(
-//         EventType::NOTIFY_SIGNAL,
-//         Tpl::CALLBACK,
-//         Some(fetch_and_add_smm_performance_records),
-//         efi_system_table,
-//         &EVENT_GROUP_READY_TO_BOOT,
-//     )?;
-
-//     // Install configuration table for performance property.
-//     BOOT_SERVICES.install_configuration_table(
-//         &guid::PERFORMANCE_PROTOCOL,
-//         Box::new(PerformanceProperty::new(Arch::perf_frequency(), Arch::cpu_count_start(), Arch::cpu_count_end())),
-//     )?;
-//     Ok(())
-// }
-
 extern "efiapi" fn create_performance_measurement(
     caller_identifier: *const c_void,
     guid: Option<&efi::Guid>,
@@ -253,8 +188,6 @@ extern "efiapi" fn create_performance_measurement(
     identifier: u32,
     attribute: PerfAttribute,
 ) -> efi::Status {
-    return efi::Status::SUCCESS;
-
     let fbpt = unsafe { FBPT.assume_init_ref() };
 
     fn is_known_token(token: Option<&String>) -> bool {
@@ -362,7 +295,7 @@ extern "efiapi" fn create_performance_measurement(
     match perf_id {
         PerfId::MODULE_START | PerfId::MODULE_END => {
             if let Ok((_, guid)) = get_module_info_from_handle(
-                &BOOT_SERVICES,
+                unsafe { BOOT_SERVICES.unwrap() },
                 caller_identifier as *mut c_void,
                 controller_handle,
                 perf_id,
@@ -376,7 +309,7 @@ extern "efiapi" fn create_performance_measurement(
                 LOAD_IMAGE_COUNT.fetch_add(1, Ordering::Relaxed);
             }
             if let Ok((_, guid)) = get_module_info_from_handle(
-                &BOOT_SERVICES,
+                unsafe { BOOT_SERVICES.unwrap() },
                 caller_identifier as *mut c_void,
                 controller_handle,
                 perf_id,
@@ -396,7 +329,7 @@ extern "efiapi" fn create_performance_measurement(
         | PerfId::MODULE_DB_STOP_END
         | PerfId::MODULE_DB_START => {
             if let Ok((_, guid)) = get_module_info_from_handle(
-                &BOOT_SERVICES,
+                unsafe { BOOT_SERVICES.unwrap() },
                 caller_identifier as *mut c_void,
                 controller_handle,
                 perf_id,
@@ -407,7 +340,7 @@ extern "efiapi" fn create_performance_measurement(
         }
         PerfId::MODULE_DB_END => {
             if let Ok((Some(module_name), guid)) = get_module_info_from_handle(
-                &BOOT_SERVICES,
+                unsafe { BOOT_SERVICES.unwrap() },
                 caller_identifier as *mut c_void,
                 controller_handle,
                 perf_id,
@@ -442,7 +375,7 @@ extern "efiapi" fn create_performance_measurement(
         }
         _ if attribute != PerfAttribute::PerfEntry => {
             let (module_name, guid) = if let Ok((Some(module_name), guid)) = get_module_info_from_handle(
-                &BOOT_SERVICES,
+                unsafe { BOOT_SERVICES.unwrap() },
                 caller_identifier as *mut c_void,
                 controller_handle,
                 perf_id,
@@ -472,7 +405,6 @@ where
     R: RuntimeServices + Debug,
 {
     let (boot_services, runtime_services) = *ctx;
-    log::info!("[12345] bs: {:?}, rs: {:?}", boot_services, runtime_services);
 
     let mut fbpt = unsafe { FBPT.assume_init_ref() }.lock();
     if fbpt.report_table(boot_services, runtime_services).is_err() {
@@ -617,10 +549,10 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(
     }
 
     // Write found perf records in the fbpt table.
-    // let mut fbpt = unsafe { FBPT.assume_init_ref() }.lock();
+    let mut fbpt = unsafe { FBPT.assume_init_ref() }.lock();
     let mut n = 0;
     for r in Iter::new(&smm_boot_records_data) {
-        // fbpt.add_record(r).unwrap();
+        fbpt.add_record(r).unwrap();
         n += 1;
     }
 
