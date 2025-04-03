@@ -10,3 +10,6 @@ replace-with = "UefiRust"
 # This tells cargo to consider the MSV of rust for our crate vs our depencencies
 [resolver]
 incompatible-rust-versions = "fallback"
+
+[build]
+rustflags = ["-Cforce-unwind-tables"]

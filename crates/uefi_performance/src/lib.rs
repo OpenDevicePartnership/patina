@@ -25,7 +25,9 @@ use alloc::vec::Vec;
 use core::{
     ffi::{c_char, c_void},
     fmt::Debug,
-    mem::MaybeUninit,
+    line,
+    mem::{self, MaybeUninit},
+    module_path,
     option::Option::None,
     ptr,
     result::Result::{self, Err, Ok},
@@ -512,12 +514,14 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(
     _event: efi::Event,
     ctx: Box<(&StandardBootServices, &efi::SystemTable)>,
 ) {
-    let (boot_services, system_table) = *ctx;
     // Make sure that this event only run once.
     static HAS_RUN_ONCE: AtomicBool = AtomicBool::new(false);
     let Ok(false) = HAS_RUN_ONCE.compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed) else {
+        mem::forget(ctx); // ctx has already been dropped.
         return;
     };
+
+    let (boot_services, system_table) = *ctx;
 
     let configuration_tables =
         unsafe { slice::from_raw_parts(system_table.configuration_table, system_table.number_of_table_entries) };
@@ -547,11 +551,15 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(
         return;
     }
 
+    log::info!("[12345] {:?} {:?} {:?}", module_path!(), function!(), line!());
+
     // SAFETY: This is safe because the reference returned by locate_protocol is never mutated after installation.
     let Ok(communication) = (unsafe { boot_services.locate_protocol(&CommunicateProtocol, None) }) else {
         log::error!("Could not locate communicate protocol interface.");
         return;
     };
+
+    log::info!("[12345] {:?} {:?} {:?}", module_path!(), function!(), line!());
 
     // SAFETY: Is safe to use because the memory region comes for a trusted source and can be considered valid.
     let boot_record_size = match unsafe {
@@ -573,6 +581,8 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(
             return;
         }
     };
+
+    log::info!("[12345] {:?} {:?} {:?}", module_path!(), function!(), line!());
 
     let mut smm_boot_records_data = Vec::with_capacity(boot_record_size);
 
@@ -607,10 +617,10 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(
     }
 
     // Write found perf records in the fbpt table.
-    let mut fbpt = unsafe { FBPT.assume_init_ref() }.lock();
+    // let mut fbpt = unsafe { FBPT.assume_init_ref() }.lock();
     let mut n = 0;
     for r in Iter::new(&smm_boot_records_data) {
-        FBPT.lock().add_record(r).unwrap();
+        // fbpt.add_record(r).unwrap();
         n += 1;
     }
 
