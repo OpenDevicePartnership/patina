@@ -84,6 +84,8 @@ use uefi_sdk::{
     runtime_services::StandardRuntimeServices,
 };
 
+pub use uefi_performance;
+
 #[macro_export]
 macro_rules! ensure {
     ($condition:expr, $err:expr) => {{
