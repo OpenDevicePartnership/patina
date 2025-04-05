@@ -241,8 +241,8 @@ impl GuidQwordEventRecord {
     pub const TYPE: u16 = 0x1013;
     pub const REVISION: u8 = 1;
 
-    pub fn new(progress_id: u16, timestamp: u64, guid: efi::Guid, qword: u64) -> Self {
-        Self { progress_id, acpi_id: 0, timestamp, guid, qword }
+    pub fn new(progress_id: u16, acpi_id: u32, timestamp: u64, guid: efi::Guid, qword: u64) -> Self {
+        Self { progress_id, acpi_id, timestamp, guid, qword }
     }
 }
 

@@ -6,6 +6,7 @@
 //!
 
 pub mod extended;
+pub mod known_records;
 
 use alloc::vec::Vec;
 use core::{fmt::Debug, mem, ops::Deref};
