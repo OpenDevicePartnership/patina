@@ -7,6 +7,14 @@ Driver, and guides on further developing the rust DXE Core.
 This book assumes you already have the pre-requisite knowledge in regards to the [EDKII](https://github.com/tianocore/edk2)
 ecosystem, and the necessary tools already installed for building EDKII packages.
 
+Major features or changes are proposed through [RFCs](https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/new?template=rfc.yml).
+
+The RFC template should be completed and included in a GitHub "RFC" issue as the content of the issue submission. It
+can be edited in place and refined over time based on feedback either given in the issue or pull requests. All updates
+must have an entry made in the change log describing what changed. The RFC issue should be linked to all relevant pull
+requests and discussions. The RFC issue should only be closed when the RFC is fully implemented and merged into the
+codebase or abandoned.
+
 ## Tools and Prerequisites
 
 Below are a list of tools that need to be installed before working with the contents of this book,
