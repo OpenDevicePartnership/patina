@@ -532,7 +532,7 @@ mod tests {
             );
             assert_eq!(result, efi::Status::SUCCESS);
 
-            // Set timer with an invalid tiemr type
+            // Set timer with an invalid timer type
             let invalid_timer_type = 10; // Any value not defined in TimerDelay enum
             let result = set_timer(event, invalid_timer_type, 100);
 
