@@ -544,6 +544,42 @@ mod tests {
     }
 
     #[test]
+    fn test_wait_for_event_null_parameters() {
+        with_locked_state(|| {
+            let mut index: usize = 0;
+            let events: [efi::Event; 1] = [ptr::null_mut()];
+
+            // Test null event array
+            let status = wait_for_event(1, ptr::null_mut(), &mut index as *mut usize);
+            assert_eq!(status, efi::Status::INVALID_PARAMETER);
+
+            // Test null out_index
+            let status = wait_for_event(1, events.as_ptr() as *mut efi::Event, ptr::null_mut());
+            assert_eq!(status, efi::Status::INVALID_PARAMETER);
+
+            // Test zero events
+            let status = wait_for_event(0, events.as_ptr() as *mut efi::Event, &mut index as *mut usize);
+            assert_eq!(status, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_wait_for_event_wrong_tpl() {
+        with_locked_state(|| {
+            let mut index: usize = 0;
+            let events: [efi::Event; 1] = [ptr::null_mut()];
+
+            // Set TPL to something other than APPLICATION
+            CURRENT_TPL.store(efi::TPL_NOTIFY, Ordering::SeqCst);
+
+            let status = wait_for_event(1, events.as_ptr() as *mut efi::Event, &mut index as *mut usize);
+            assert_eq!(status, efi::Status::UNSUPPORTED);
+
+            CURRENT_TPL.store(efi::TPL_APPLICATION, Ordering::SeqCst);
+        });
+    }
+
+    #[test]
     fn test_timer_tick() {
         with_locked_state(|| {
             let original_time = SYSTEM_TIME.load(Ordering::SeqCst);
