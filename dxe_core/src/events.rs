@@ -579,6 +579,60 @@ mod tests {
         });
     }
 
+    // Tests for check_event function
+    #[test]
+    fn test_check_event_with_invalid_event() {
+        with_locked_state(|| {
+            let invalid_event: efi::Event = ptr::null_mut();
+            let result = check_event(invalid_event);
+            assert_ne!(result, efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn test_check_event_notify_signal_type() {
+        with_locked_state(|| {
+            let mut event: efi::Event = ptr::null_mut();
+            // Create a notification signal event
+            let result =
+                create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_NOTIFY, Some(test_notify), ptr::null_mut(), &mut event);
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            // Check event should fail for notify signal events
+            let result = check_event(event);
+            assert_eq!(result, efi::Status::INVALID_PARAMETER);
+
+            // Clean up
+            let _ = close_event(event);
+        });
+    }
+
+    #[test]
+    fn test_check_event_signaled_event() {
+        with_locked_state(|| {
+            let mut event: efi::Event = ptr::null_mut();
+            // Create a wait event
+            let result =
+                create_event(efi::EVT_NOTIFY_WAIT, efi::TPL_NOTIFY, Some(test_notify), ptr::null_mut(), &mut event);
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            // Signal the event
+            let result = signal_event(event);
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            // Check event should succeed for signaled events
+            let result = check_event(event);
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            // Checking again should return NOT_READY as it's been cleared
+            let result = check_event(event);
+            assert_eq!(result, efi::Status::NOT_READY);
+
+            // Clean up
+            let _ = close_event(event);
+        });
+    }
+
     // Tests for TPL functions
     #[test]
     fn test_raise_tpl_sequence() {
