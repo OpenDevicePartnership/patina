@@ -356,6 +356,12 @@ mod tests {
 
     extern "efiapi" fn test_notify(_event: efi::Event, _context: *mut c_void) {}
 
+    // Track if notification was called
+    static NOTIFY_CALLED: AtomicBool = AtomicBool::new(false);
+    extern "efiapi" fn tracking_notify(_event: efi::Event, _context: *mut c_void) {
+        NOTIFY_CALLED.store(true, Ordering::SeqCst);
+    }
+
     #[test]
     fn test_create_event_null_event_pointer() {
         with_locked_state(|| {
@@ -576,6 +582,35 @@ mod tests {
             assert_ne!(result, efi::Status::SUCCESS);
 
             let _ = EVENT_DB.close_event(event);
+        });
+    }
+
+    // Test for event notifications
+    #[test]
+    fn test_event_notification() {
+        with_locked_state(|| {
+            NOTIFY_CALLED.store(false, Ordering::SeqCst);
+
+            let mut event: efi::Event = ptr::null_mut();
+            // Create notification signal event
+            let result = create_event(
+                efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_CALLBACK,
+                Some(tracking_notify),
+                ptr::null_mut(),
+                &mut event,
+            );
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            // Signal the event
+            let result = signal_event(event);
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            // Check if notification was called
+            assert!(NOTIFY_CALLED.load(Ordering::SeqCst));
+
+            // Clean up
+            let _ = close_event(event);
         });
     }
 
