@@ -1320,15 +1320,15 @@ mod tests {
             init_events_support(&mut boot_services);
 
             // Verify function pointers are updated
-            assert!(boot_services.create_event != dummy_create_event);
-            assert!(boot_services.create_event_ex != dummy_create_event_ex);
-            assert!(boot_services.close_event != dummy_close_event);
-            assert!(boot_services.signal_event != dummy_signal_event);
-            assert!(boot_services.wait_for_event != dummy_wait_for_event);
-            assert!(boot_services.check_event != dummy_check_event);
-            assert!(boot_services.set_timer != dummy_set_timer);
-            assert!(boot_services.raise_tpl != dummy_raise_tpl);
-            assert!(boot_services.restore_tpl != dummy_restore_tpl);
+            assert!(boot_services.create_event as usize != dummy_create_event as usize);
+            assert!(boot_services.create_event_ex as usize != dummy_create_event_ex as usize);
+            assert!(boot_services.close_event as usize != dummy_close_event as usize);
+            assert!(boot_services.signal_event as usize != dummy_signal_event as usize);
+            assert!(boot_services.wait_for_event as usize != dummy_wait_for_event as usize);
+            assert!(boot_services.check_event as usize != dummy_check_event as usize);
+            assert!(boot_services.set_timer as usize != dummy_set_timer as usize);
+            assert!(boot_services.raise_tpl as usize != dummy_raise_tpl as usize);
+            assert!(boot_services.restore_tpl as usize != dummy_restore_tpl as usize);
 
             // Verify initialization flag is set
             assert!(EVENT_DB_INITIALIZED.load(Ordering::SeqCst));
