@@ -446,6 +446,42 @@ mod tests {
     }
 
     #[test]
+    fn test_create_event_ex_exit_boot_services() {
+        with_locked_state(|| {
+            let mut event: efi::Event = ptr::null_mut();
+            // EVT_SIGNAL_EXIT_BOOT_SERVICES should fail with create_event_ex
+            let result = create_event_ex(
+                efi::EVT_SIGNAL_EXIT_BOOT_SERVICES,
+                efi::TPL_CALLBACK,
+                Some(test_notify),
+                ptr::null(),
+                ptr::null(),
+                &mut event,
+            );
+
+            assert_eq!(result, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_create_event_ex_virtual_address_change() {
+        with_locked_state(|| {
+            let mut event: efi::Event = ptr::null_mut();
+            // EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE should fail with create_event_ex
+            let result = create_event_ex(
+                efi::EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
+                efi::TPL_CALLBACK,
+                Some(test_notify),
+                ptr::null(),
+                ptr::null(),
+                &mut event,
+            );
+
+            assert_eq!(result, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
     fn test_close_event() {
         with_locked_state(|| {
             let mut event: efi::Event = ptr::null_mut();
