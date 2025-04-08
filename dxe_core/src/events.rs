@@ -585,6 +585,58 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_set_timer_cancel() {
+        with_locked_state(|| {
+            let mut event: efi::Event = ptr::null_mut();
+            let notify_fn: Option<efi::EventNotify> = Some(test_notify);
+
+            let result = create_event(
+                efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_NOTIFY,
+                notify_fn,
+                ptr::null_mut(),
+                &mut event,
+            );
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            // Set a timer
+            let result = set_timer(event, 1 /* TimerDelay::Relative */, 500);
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            // Cancel the timer
+            let result = set_timer(event, 0 /* TimerDelay::Cancel */, 0);
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            // Clean up
+            let _ = close_event(event);
+        });
+    }
+
+    #[test]
+    fn test_set_timer_periodic() {
+        with_locked_state(|| {
+            let mut event: efi::Event = ptr::null_mut();
+            let notify_fn: Option<efi::EventNotify> = Some(test_notify);
+
+            let result = create_event(
+                efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_NOTIFY,
+                notify_fn,
+                ptr::null_mut(),
+                &mut event,
+            );
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            // Set periodic timer
+            let result = set_timer(event, 2 /* TimerDelay::Periodic */, 100);
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            // Clean up
+            let _ = close_event(event);
+        });
+    }
+
     // Test for event notifications
     #[test]
     fn test_event_notification() {
