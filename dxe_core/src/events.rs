@@ -579,6 +579,38 @@ mod tests {
         });
     }
 
+    // Tests for GCD and initialization functions
+    #[test]
+    fn test_gcd_map_change() {
+        with_locked_state(|| {
+            // Set initialized flag
+            EVENT_DB_INITIALIZED.store(true, Ordering::SeqCst);
+
+            // Test each map change type
+            gcd_map_change(gcd::MapChangeType::AddMemorySpace);
+            gcd_map_change(gcd::MapChangeType::AllocateMemorySpace);
+            gcd_map_change(gcd::MapChangeType::FreeMemorySpace);
+            gcd_map_change(gcd::MapChangeType::RemoveMemorySpace);
+            gcd_map_change(gcd::MapChangeType::SetMemoryAttributes);
+            gcd_map_change(gcd::MapChangeType::SetMemoryCapabilities);
+
+            // Reset initialized flag
+            EVENT_DB_INITIALIZED.store(false, Ordering::SeqCst);
+        });
+    }
+
+    // Tests for GCD functions
+    #[test]
+    fn test_gcd_map_change_not_initialized() {
+        with_locked_state(|| {
+            // Ensure initialized flag is false
+            EVENT_DB_INITIALIZED.store(false, Ordering::SeqCst);
+
+            // Call should have no effect and not panic
+            gcd_map_change(gcd::MapChangeType::AddMemorySpace);
+        });
+    }
+
     #[test]
     fn test_timer_tick() {
         with_locked_state(|| {
