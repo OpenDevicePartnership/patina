@@ -527,6 +527,29 @@ mod tests {
     }
 
     #[test]
+    fn test_wait_for_event_signaled() {
+        with_locked_state(|| {
+            CURRENT_TPL.store(efi::TPL_APPLICATION, Ordering::SeqCst);
+            let mut event: efi::Event = ptr::null_mut();
+            create_event(efi::EVT_NOTIFY_WAIT, efi::TPL_NOTIFY, Some(test_notify), ptr::null_mut(), &mut event);
+            signal_event(event);
+
+            let events: [efi::Event; 1] = [event];
+            let mut index: usize = 0;
+
+            let mut test_wait = || {
+                let status = wait_for_event(1, events.as_ptr() as *mut efi::Event, &mut index as *mut usize);
+                assert_eq!(status, efi::Status::SUCCESS);
+                assert_eq!(index, 0);
+            };
+
+            test_wait();
+
+            let _ = close_event(event);
+        });
+    }
+
+    #[test]
     fn test_timer_delay_relative_basic() {
         with_locked_state(|| {
             let mut event: efi::Event = ptr::null_mut();
