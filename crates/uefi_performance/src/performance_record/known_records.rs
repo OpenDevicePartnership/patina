@@ -3,10 +3,6 @@ use core::{
     result::Result::{Err, Ok},
 };
 
-use alloc::vec;
-
-use super::extended::DynamicStringEventRecord;
-
 #[derive(Debug, Eq, PartialEq)]
 pub enum KnownPerfToken {
     /// SEC Phase

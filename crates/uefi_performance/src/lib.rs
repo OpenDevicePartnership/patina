@@ -24,7 +24,7 @@ pub mod performance_table;
 use _status_code_runtime_protocol::{ReportStatusCode, StatusCodeRuntimeProtocol};
 use alloc::vec::Vec;
 use core::{
-    convert::{AsRef, From, TryFrom},
+    convert::TryFrom,
     ffi::{c_char, c_void},
     fmt::Debug,
     mem::{self, MaybeUninit},
@@ -33,19 +33,13 @@ use core::{
     result::Result::{self, Err, Ok},
     slice,
     sync::atomic::{AtomicBool, AtomicU32, Ordering},
-    todo,
 };
 
 use _utils::c_char_ptr_from_str;
 use alloc::{boxed::Box, string::String};
 
 use r_efi::{
-<<<<<<< HEAD
-    efi,
-    efi,
-=======
     efi::{self, Guid},
->>>>>>> 0351336 (new create measurement fn)
     protocols::device_path::{Media, TYPE_MEDIA},
 };
 
@@ -60,7 +54,9 @@ use performance_record::{
 
 use mu_pi::hob::{Hob, HobList};
 
-use performance_measurement_protocol::{EdkiiPerformanceMeasurement, PerfAttribute, PerfId};
+use performance_measurement_protocol::{
+    EdkiiPerformanceMeasurement, EdkiiPerformanceMeasurementInterface, PerfAttribute,
+};
 use performance_table::FBPT;
 
 use r_efi::system::EVENT_GROUP_READY_TO_BOOT;
@@ -87,11 +83,12 @@ use uefi_sdk::{
 #[doc(hidden)]
 pub const PERF_ENABLED: bool = cfg!(feature = "instrument_performance");
 
-static mut BOOT_SERVICES: Option<&'static StandardBootServices> = None;
+static IS_PERF_READY: AtomicBool = AtomicBool::new(false);
 
 static LOAD_IMAGE_COUNT: AtomicU32 = AtomicU32::new(0);
 
-static mut FBPT: MaybeUninit<TplMutex<FBPT>> = MaybeUninit::zeroed();
+static BOOT_SERVICES: MaybeUninit<&'static StandardBootServices> = MaybeUninit::zeroed();
+static FBPT: MaybeUninit<TplMutex<FBPT>> = MaybeUninit::zeroed();
 
 #[derive(IntoComponent)]
 pub struct PerformanceLibComponent;
@@ -119,17 +116,19 @@ impl PerformanceLibComponent {
         let mut fbpt = FBPT::new();
         fbpt.set_records(pei_perf_records);
 
+        // SAFETY: This is safe because it is the entry point and no one is reading these value yet.
         unsafe {
-            Option::replace(&mut BOOT_SERVICES, boot_services);
+            ptr::write(BOOT_SERVICES.as_ptr() as *mut &'static StandardBootServices, boot_services);
+            ptr::write(FBPT.as_ptr() as *mut TplMutex<FBPT>, TplMutex::new(boot_services, Tpl::NOTIFY, fbpt));
         }
-        unsafe { FBPT.write(TplMutex::new(boot_services, Tpl::NOTIFY, fbpt)) };
+        IS_PERF_READY.store(true, Ordering::Relaxed);
 
         // Install the protocol interfaces for DXE performance library instance.
         boot_services
             .install_protocol_interface(
                 None,
                 &EdkiiPerformanceMeasurement,
-                Box::new(EdkiiPerformanceMeasurementInterface { create_performance_measurement: create_performance_measurement_op }),
+                Box::new(EdkiiPerformanceMeasurementInterface { create_performance_measurement }),
             )
             .map_err(|(_, err)| err)?;
 
@@ -189,10 +188,10 @@ where
     R: RuntimeServices + Debug,
 {
     let (boot_services, runtime_services) = *ctx;
-
+    // SAFETY: This is safe because FBPT is initialize before the creation of this event.
     let mut fbpt = unsafe { FBPT.assume_init_ref() }.lock();
     if fbpt.report_table(boot_services, runtime_services).is_err() {
-        log::error!("Fail to report FPDT.");
+        log::error!("Performance Lib: Fail to report FPDT.");
         return;
     }
 
@@ -213,7 +212,8 @@ where
         log::error!("Fail to report FBPT status code.");
     }
 
-    // SAFETY: This operation is safe because the expected configuration type of a entry with guid `EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE` is a usize.
+    // SAFETY: This operation is safe because the expected configuration type of a entry with guid `EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE`
+    // is a usize and the memory address is a valid and point to an FBPT.
     let status = unsafe {
         boot_services.install_configuration_table_unchecked(
             &guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
@@ -251,24 +251,24 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(
             unsafe { (config_table.vendor_table as *const SmmCommunicationRegionTable).as_ref() }
         })
     else {
-        log::error!("Could not find any smm communication region table.");
+        log::error!("Performance Lib: Could not find any smm communication region table.");
         return;
     };
 
     let Some(smm_communication_memory_region) =
         smm_comm_region_table.iter().find(|r| r.r#type == efi::CONVENTIONAL_MEMORY)
     else {
-        log::error!("Could not find an available memory region to communication with smm.");
+        log::error!("Performance Lib: Could not find an available memory region to communication with smm.");
         return;
     };
     if smm_communication_memory_region.physical_start == 0 || smm_communication_memory_region.number_of_pages == 0 {
-        log::error!("Something is wrong with the smm communication memory region.");
+        log::error!("Performance Lib: Something is wrong with the smm communication memory region.");
         return;
     }
 
     // SAFETY: This is safe because the reference returned by locate_protocol is never mutated after installation.
     let Ok(communication) = (unsafe { boot_services.locate_protocol(&CommunicateProtocol, None) }) else {
-        log::error!("Could not locate communicate protocol interface.");
+        log::error!("Performance Lib: Could not locate communicate protocol interface.");
         return;
     };
 
@@ -282,13 +282,16 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(
         }
         Ok(SmmFpdtGetRecordSize { return_status, .. }) => {
             log::error!(
-                "Asking for the smm perf records size result in an error with return status of: {:?}",
+                "Performance Lib: Asking for the smm perf records size result in an error with return status of: {:?}",
                 return_status
             );
             return;
         }
         Err(status) => {
-            log::error!("Error while trying to communicate with communicate protocol with error code: {:?}", status);
+            log::error!(
+                "Performance Lib: Error while trying to communicate with communicate protocol with error code: {:?}",
+                status
+            );
             return;
         }
     };
@@ -310,14 +313,14 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(
             }
             Ok(SmmFpdtGetRecordDataByOffset { return_status, .. }) => {
                 log::error!(
-                    "Asking for smm perf records data result in an error with return status of: {:?}",
+                    "Performance Lib: Asking for smm perf records data result in an error with return status of: {:?}",
                     return_status
                 );
                 return;
             }
             Err(status) => {
                 log::error!(
-                    "Error while trying to communicate with communicate protocol with error status code: {:?}",
+                    "Performance Lib: Error while trying to communicate with communicate protocol with error status code: {:?}",
                     status
                 );
                 return;
@@ -336,7 +339,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(
     log::info!("Performance Lib: {} smm performance records found.", n);
 }
 
-extern "efiapi" fn create_performance_measurement_op(
+extern "efiapi" fn create_performance_measurement(
     caller_identifier: *const c_void,
     guid: Option<&efi::Guid>,
     string: *const c_char,
@@ -345,8 +348,24 @@ extern "efiapi" fn create_performance_measurement_op(
     identifier: u32,
     attribute: PerfAttribute,
 ) -> efi::Status {
+    if !IS_PERF_READY.load(Ordering::Relaxed) || !PERF_ENABLED {
+        return efi::Status::SUCCESS;
+    }
+    let fbpt;
+    let boot_services;
+    // SAFETY: This is safe because FBPT and BOOTSERVCES are initialize if IS_PERF_READY is true.
+    unsafe {
+        fbpt = FBPT.assume_init_ref();
+        boot_services = BOOT_SERVICES.assume_init();
+    }
+
     let string = unsafe { _utils::string_from_c_char_ptr(string) };
 
+    // NOTE: If the Perf is not the known Token used in the core but have same ID with the core Token, this case will not be supported.
+    // And in current usage mode, for the unkown ID, there is a general rule:
+    // - If it is start pref: the lower 4 bits of the ID should be 0.
+    // - If it is end pref: the lower 4 bits of the ID should not be 0.
+    // - If input ID doesn't follow the rule, we will adjust it.
     let mut perf_id = identifier as u16;
     let is_known_id = KnownPerfId::try_from(perf_id).is_ok();
     let is_known_token = string.as_ref().map_or(false, |s| KnownPerfToken::try_from(s.as_str()).is_ok());
@@ -361,7 +380,7 @@ extern "efiapi" fn create_performance_measurement_op(
             }
         } else if perf_id == 0 {
             match get_fpdt_record_id(attribute, caller_identifier, string.as_ref()) {
-                Ok(record_id) => perf_id = record_id,
+                Ok(known_perf_id) => perf_id = known_perf_id.as_u16(),
                 Err(status) => return status,
             }
         }
@@ -374,7 +393,7 @@ extern "efiapi" fn create_performance_measurement_op(
         ticker => (ticker as f64 / Arch::perf_frequency() as f64 * 1_000_000_000_f64) as u64,
     };
 
-    match _create_performance_measurement_op(
+    match _create_performance_measurement(
         caller_identifier,
         guid,
         string,
@@ -382,8 +401,8 @@ extern "efiapi" fn create_performance_measurement_op(
         address,
         perf_id,
         attribute,
-        unsafe { FBPT.assume_init_ref() },
-        unsafe { BOOT_SERVICES.unwrap() },
+        fbpt,
+        boot_services,
     ) {
         Ok(_) => efi::Status::SUCCESS,
         Err(status) => {
@@ -396,7 +415,7 @@ extern "efiapi" fn create_performance_measurement_op(
     }
 }
 
-fn _create_performance_measurement_op(
+fn _create_performance_measurement(
     caller_identifier: *const c_void,
     guid: Option<&efi::Guid>,
     string: Option<String>,
@@ -407,19 +426,13 @@ fn _create_performance_measurement_op(
     fbpt: &TplMutex<'static, FBPT, StandardBootServices>,
     boot_services: &StandardBootServices,
 ) -> Result<(), efi::Status> {
-    if !PERF_ENABLED {
-        return Ok(());
-    }
-
     let Ok(known_perf_id) = KnownPerfId::try_from(perf_id) else {
         if attribute == PerfAttribute::PerfEntry {
             return Err(efi::Status::INVALID_PARAMETER);
         }
-
         let guid = get_module_guid_from_handle(boot_services, caller_identifier as efi::Handle)
             .unwrap_or_else(|_| unsafe { *(caller_identifier as *const Guid) });
         let module_name = string.as_ref().map(String::as_str).unwrap_or("unkown name");
-
         fbpt.lock().add_record(DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, &module_name))?;
         return Ok(());
     };
@@ -466,7 +479,7 @@ fn _create_performance_measurement_op(
                 log::error!("Performance Lib: Could not find the guid for module handle: {:?}", module_handle);
                 return Err(efi::Status::INVALID_PARAMETER);
             };
-            // todo use of commponent 2 need usecase to test further.
+            // TODO: use of commponent 2 protocol, need usecase to test further.
             let module_name = "";
             let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, module_name);
             fbpt.lock().add_record(record)?;
@@ -478,6 +491,8 @@ fn _create_performance_measurement_op(
             let (Some(function_string), Some(guid)) = (string.as_ref(), guid) else {
                 return Err(efi::Status::INVALID_PARAMETER);
             };
+            // SAFETY: On these usecases, caller identifier is actually a guid. See macro for more detailed.
+            // This strange behavior need to be kept for backward compatibility.
             let module_guid = unsafe { *(caller_identifier as *const efi::Guid) };
             let record = DualGuidStringEventRecord::new(perf_id, 0, timestamp, module_guid, *guid, function_string);
             fbpt.lock().add_record(record)?;
@@ -490,9 +505,10 @@ fn _create_performance_measurement_op(
         | KnownPerfId::PerfCrossModuleStart
         | KnownPerfId::PerfCrossModuleEnd
         | KnownPerfId::PerfEvent => {
+            // SAFETY: On these usecases, caller identifier is actually a guid. See macro for more detailed.
+            // This strange behavior need to be kept for backward compatibility.
             let module_guid = unsafe { *(caller_identifier as *const efi::Guid) };
             let string = string.as_ref().map(String::as_str).unwrap_or("unkown name");
-
             let record = DynamicStringEventRecord::new(perf_id, 0, timestamp, module_guid, string);
             fbpt.lock().add_record(record)?;
         }
@@ -505,169 +521,34 @@ fn get_fpdt_record_id(
     attribute: PerfAttribute,
     handle: *const c_void,
     string: Option<&String>,
-) -> Result<u16, efi::Status> {
+) -> Result<KnownPerfId, efi::Status> {
     if let Some(string) = string {
         let perf_id = match string.as_str() {
-            "StartImage:" if attribute == PerfAttribute::PerfStartEntry => PerfId::MODULE_START,
-            "StartImage:" => PerfId::MODULE_END,
-            "LoadImage:" if attribute == PerfAttribute::PerfStartEntry => PerfId::MODULE_LOAD_IMAGE_START,
-            "LoadImage:" => PerfId::MODULE_LOAD_IMAGE_END,
-            "DB:Start:" if attribute == PerfAttribute::PerfStartEntry => PerfId::MODULE_DB_START,
-            "DB:Start:" => PerfId::MODULE_DB_END,
-            "DB:Support:" if attribute == PerfAttribute::PerfStartEntry => PerfId::MODULE_DB_SUPPORT_START,
-            "DB:Support:" => PerfId::MODULE_DB_SUPPORT_END,
-            "DB:Stop:" if attribute == PerfAttribute::PerfStartEntry => PerfId::MODULE_DB_STOP_START,
-            "DB:Stop:" => PerfId::MODULE_DB_STOP_END,
-            "PEI" | "DXE" | "BDS" if attribute == PerfAttribute::PerfStartEntry => PerfId::PERF_CROSS_MODULE_START,
-            "PEI" | "DXE" | "BDS" => PerfId::PERF_CROSS_MODULE_END,
-            _ if attribute == PerfAttribute::PerfStartEntry => PerfId::PERF_IN_MODULE_START,
-            _ => PerfId::PERF_IN_MODULE_END,
+            "StartImage:" if attribute == PerfAttribute::PerfStartEntry => KnownPerfId::ModuleStart,
+            "StartImage:" => KnownPerfId::ModuleEnd,
+            "LoadImage:" if attribute == PerfAttribute::PerfStartEntry => KnownPerfId::ModuleLoadImageStart,
+            "LoadImage:" => KnownPerfId::ModuleLoadImageEnd,
+            "DB:Start:" if attribute == PerfAttribute::PerfStartEntry => KnownPerfId::ModuleDbStart,
+            "DB:Start:" => KnownPerfId::ModuleDbEnd,
+            "DB:Support:" if attribute == PerfAttribute::PerfStartEntry => KnownPerfId::ModuleDbSupportStart,
+            "DB:Support:" => KnownPerfId::ModuleDbSupportEnd,
+            "DB:Stop:" if attribute == PerfAttribute::PerfStartEntry => KnownPerfId::ModuleDbStopStart,
+            "DB:Stop:" => KnownPerfId::ModuleDbStopEnd,
+            "PEI" | "DXE" | "BDS" if attribute == PerfAttribute::PerfStartEntry => KnownPerfId::PerfCrossModuleStart,
+            "PEI" | "DXE" | "BDS" => KnownPerfId::PerfCrossModuleEnd,
+            _ if attribute == PerfAttribute::PerfStartEntry => KnownPerfId::PerfInModuleStart,
+            _ => KnownPerfId::PerfInModuleEnd,
         };
         Ok(perf_id)
     } else if !handle.is_null() {
         if attribute == PerfAttribute::PerfStartEntry {
-            Ok(PerfId::PERF_IN_MODULE_START)
+            Ok(KnownPerfId::PerfInModuleStart)
         } else {
-            Ok(PerfId::PERF_IN_MODULE_END)
+            Ok(KnownPerfId::PerfInModuleEnd)
         }
     } else {
         Err(efi::Status::INVALID_PARAMETER)
     }
-}
-
-extern "efiapi" fn create_performance_measurement(
-    caller_identifier: *const c_void,
-    guid: Option<&efi::Guid>,
-    string: *const c_char,
-    ticker: u64,
-    address: usize,
-    identifier: u32,
-    attribute: PerfAttribute,
-) -> efi::Status {
-    let fbpt = unsafe { FBPT.assume_init_ref() };
-
-    if !PERF_ENABLED {
-        return efi::Status::SUCCESS;
-    }
-
-    let string = unsafe { _utils::string_from_c_char_ptr(string) };
-
-    let mut perf_id = identifier as u16;
-    let is_known_id = KnownPerfId::try_from(perf_id).is_ok();
-    let is_known_token = string.as_ref().map_or(false, |s| KnownPerfToken::try_from(s.as_str()).is_ok());
-    if attribute != PerfAttribute::PerfEntry {
-        if perf_id != 0 && is_known_id && is_known_token {
-            return efi::Status::INVALID_PARAMETER;
-        } else if perf_id != 0 && !is_known_id && !is_known_token {
-            if attribute == PerfAttribute::PerfStartEntry && ((perf_id & 0x000F) != 0) {
-                perf_id &= 0xFFF0;
-            } else if attribute == PerfAttribute::PerfEndEntry && ((perf_id & 0x000F) == 0) {
-                perf_id += 1;
-            }
-        } else if perf_id == 0 {
-            match get_fpdt_record_id(attribute, caller_identifier, string.as_ref()) {
-                Ok(record_id) => perf_id = record_id,
-                Err(status) => return status,
-            }
-        }
-    }
-
-    let cpu_count = Arch::cpu_count();
-    let timestamp = match ticker {
-        0 => (cpu_count as f64 / Arch::perf_frequency() as f64 * 1_000_000_000_f64) as u64,
-        1 => 0,
-        ticker => (ticker as f64 / Arch::perf_frequency() as f64 * 1_000_000_000_f64) as u64,
-    };
-
-    let controller_handle = address as efi::Handle;
-
-    match perf_id {
-        PerfId::MODULE_START | PerfId::MODULE_END => {
-            if let Ok(guid) =
-                get_module_guid_from_handle(unsafe { BOOT_SERVICES.unwrap() }, caller_identifier as *mut c_void)
-            {
-                let record = GuidEventRecord::new(perf_id, 0, timestamp, guid);
-                _ = fbpt.lock().add_record(record);
-            }
-        }
-        PerfId::MODULE_LOAD_IMAGE_START | PerfId::MODULE_LOAD_IMAGE_END => {
-            if perf_id == PerfId::MODULE_LOAD_IMAGE_START {
-                LOAD_IMAGE_COUNT.fetch_add(1, Ordering::Relaxed);
-            }
-            if let Ok(guid) =
-                get_module_guid_from_handle(unsafe { BOOT_SERVICES.unwrap() }, caller_identifier as *mut c_void)
-            {
-                let record = GuidQwordEventRecord::new(
-                    perf_id,
-                    0,
-                    timestamp,
-                    guid,
-                    LOAD_IMAGE_COUNT.load(Ordering::Relaxed) as u64,
-                );
-                _ = fbpt.lock().add_record(record);
-            }
-        }
-        PerfId::MODULE_DB_SUPPORT_START
-        | PerfId::MODULE_DB_SUPPORT_END
-        | PerfId::MODULE_DB_STOP_START
-        | PerfId::MODULE_DB_STOP_END
-        | PerfId::MODULE_DB_START => {
-            if let Ok(guid) =
-                get_module_guid_from_handle(unsafe { BOOT_SERVICES.unwrap() }, caller_identifier as *mut c_void)
-            {
-                let record = GuidQwordEventRecord::new(perf_id, 0, timestamp, guid, address as u64);
-                _ = fbpt.lock().add_record(record);
-            }
-        }
-        PerfId::MODULE_DB_END => {
-            if let Ok(guid) =
-                get_module_guid_from_handle(unsafe { BOOT_SERVICES.unwrap() }, caller_identifier as *mut c_void)
-            {
-                let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, "");
-                _ = fbpt.lock().add_record(record);
-            }
-            // TODO something to do if address is not 0 need example to continue development. (https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/194)
-        }
-        PerfId::PERF_EVENT_SIGNAL_START
-        | PerfId::PERF_EVENT_SIGNAL_END
-        | PerfId::PERF_CALLBACK_START
-        | PerfId::PERF_CALLBACK_END => {
-            let (Some(string), Some(guid_2)) = (string, guid) else {
-                return efi::Status::INVALID_PARAMETER;
-            };
-            let guid_1 = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
-            let record = DualGuidStringEventRecord::new(perf_id, 0, timestamp, guid_1, *guid_2, string.as_str());
-            _ = fbpt.lock().add_record(record);
-        }
-        PerfId::PERF_EVENT
-        | PerfId::PERF_FUNCTION_START
-        | PerfId::PERF_FUNCTION_END
-        | PerfId::PERF_IN_MODULE_START
-        | PerfId::PERF_IN_MODULE_END
-        | PerfId::PERF_CROSS_MODULE_START
-        | PerfId::PERF_CROSS_MODULE_END => {
-            let guid = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
-            let record =
-                DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, string.as_deref().unwrap_or("unknown name"));
-            _ = fbpt.lock().add_record(record);
-        }
-        _ if attribute != PerfAttribute::PerfEntry => {
-            let (module_name, guid) = if let Some(string) = string {
-                let guid = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
-                (string, guid)
-            } else {
-                let guid = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
-                (String::from("unknown name"), guid)
-            };
-            let record = DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, &module_name);
-            _ = fbpt.lock().add_record(record);
-        }
-        _ => {
-            return efi::Status::INVALID_PARAMETER;
-        }
-    };
-
-    efi::Status::SUCCESS
 }
 
 #[repr(C)]
@@ -698,6 +579,7 @@ fn get_module_guid_from_handle(
             break 'find_loaded_image_protocol Some(loaded_image_protocol);
         }
 
+        // SAFETY: This is safe because the protocol is not mutated.
         if let Ok(driver_binding_protocol) = unsafe {
             boot_services.open_protocol::<efi::protocols::driver_binding::Protocol>(
                 handle,
@@ -717,6 +599,7 @@ fn get_module_guid_from_handle(
     };
 
     if let Some(loaded_image) = loaded_image_protocol {
+        // SAFETY: File path is a pointer from C that is valid and of type Device Path (efi).
         if let Some(file_path) = unsafe { loaded_image.file_path.as_ref() } {
             if file_path.r#type == TYPE_MEDIA && file_path.sub_type == Media::SUBTYPE_PIWG_FIRMWARE_FILE {
                 guid = unsafe { ptr::read(loaded_image.file_path.add(1) as *const efi::Guid) }
@@ -805,7 +688,7 @@ macro_rules! perf_image_start_begin {
 }
 
 pub fn _perf_image_start_begin(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_START);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, KnownPerfId::ModuleStart.as_u16());
 }
 
 #[macro_export]
@@ -818,7 +701,7 @@ macro_rules! perf_image_start_end {
 }
 
 pub fn _perf_image_start_end(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_END);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, KnownPerfId::ModuleEnd.as_u16());
 }
 
 #[macro_export]
@@ -831,7 +714,7 @@ macro_rules! perf_load_image_begin {
 }
 
 pub fn _perf_load_image_begin(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_START);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, KnownPerfId::ModuleLoadImageStart.as_u16());
 }
 
 #[macro_export]
@@ -844,7 +727,7 @@ macro_rules! perf_load_image_end {
 }
 
 pub fn _perf_load_image_end(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), 0, PerfId::MODULE_LOAD_IMAGE_END);
+    log_perf_measurement(module_handle, None, ptr::null(), 0, KnownPerfId::ModuleLoadImageEnd.as_u16());
 }
 
 #[macro_export]
@@ -857,7 +740,13 @@ macro_rules! perf_driver_binding_support_begin {
 }
 
 pub fn _perf_driver_binding_support_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_SUPPORT_START);
+    log_perf_measurement(
+        module_handle,
+        None,
+        ptr::null(),
+        controller_handle as usize,
+        KnownPerfId::ModuleDbSupportStart.as_u16(),
+    );
 }
 
 #[macro_export]
@@ -870,7 +759,13 @@ macro_rules! perf_driver_binding_support_end {
 }
 
 pub fn _perf_driver_binding_support_end(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_SUPPORT_END);
+    log_perf_measurement(
+        module_handle,
+        None,
+        ptr::null(),
+        controller_handle as usize,
+        KnownPerfId::ModuleDbSupportEnd.as_u16(),
+    );
 }
 
 #[macro_export]
@@ -883,7 +778,13 @@ macro_rules! perf_driver_binding_start_begin {
 }
 
 pub fn _perf_driver_binding_start_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_START);
+    log_perf_measurement(
+        module_handle,
+        None,
+        ptr::null(),
+        controller_handle as usize,
+        KnownPerfId::ModuleDbStart.as_u16(),
+    );
 }
 
 #[macro_export]
@@ -896,7 +797,13 @@ macro_rules! perf_driver_binding_start_end {
 }
 
 pub fn _perf_driver_binding_start_end(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_END);
+    log_perf_measurement(
+        module_handle,
+        None,
+        ptr::null(),
+        controller_handle as usize,
+        KnownPerfId::ModuleDbEnd.as_u16(),
+    );
 }
 
 #[macro_export]
@@ -909,7 +816,13 @@ macro_rules! perf_driver_binding_stop_begin {
 }
 
 pub fn _perf_driver_binding_stop_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_STOP_START);
+    log_perf_measurement(
+        module_handle,
+        None,
+        ptr::null(),
+        controller_handle as usize,
+        KnownPerfId::ModuleDbStopStart.as_u16(),
+    );
 }
 
 #[macro_export]
@@ -922,7 +835,13 @@ macro_rules! perf_driver_binding_stop_end {
 }
 
 pub fn _perf_driver_binding_stop_end(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, ptr::null(), controller_handle as usize, PerfId::MODULE_DB_STOP_END);
+    log_perf_measurement(
+        module_handle,
+        None,
+        ptr::null(),
+        controller_handle as usize,
+        KnownPerfId::ModuleDbStopEnd.as_u16(),
+    );
 }
 
 #[macro_export]
@@ -940,7 +859,7 @@ pub fn _perf_event(event_string: &str, caller_id: &efi::Guid) {
         None,
         c_char_ptr_from_str(event_string),
         0,
-        PerfId::PERF_EVENT,
+        KnownPerfId::PerfEvent.as_u16(),
     );
 }
 
@@ -959,7 +878,7 @@ pub fn _perf_event_signal_begin(event_guid: &efi::Guid, fun_name: &str, caller_i
         Some(event_guid),
         c_char_ptr_from_str(fun_name),
         0,
-        PerfId::PERF_EVENT_SIGNAL_START,
+        KnownPerfId::PerfEventSignalStart.as_u16(),
     );
 }
 
@@ -978,7 +897,7 @@ pub fn _perf_event_signal_end(event_guid: &efi::Guid, fun_name: &str, caller_id:
         Some(event_guid),
         c_char_ptr_from_str(fun_name),
         0,
-        PerfId::PERF_EVENT_SIGNAL_END,
+        KnownPerfId::PerfEventSignalEnd.as_u16(),
     );
 }
 
@@ -997,7 +916,7 @@ pub fn _perf_callback_begin(trigger_guid: &efi::Guid, fun_name: &str, caller_id:
         Some(trigger_guid),
         c_char_ptr_from_str(fun_name),
         0,
-        PerfId::PERF_CALLBACK_START,
+        KnownPerfId::PerfCallbackStart.as_u16(),
     );
 }
 
@@ -1016,7 +935,7 @@ pub fn _perf_callback_end(trigger_guid: &efi::Guid, fun_name: &str, caller_id: &
         Some(trigger_guid),
         c_char_ptr_from_str(fun_name),
         0,
-        PerfId::PERF_CALLBACK_END,
+        KnownPerfId::PerfCallbackEnd.as_u16(),
     );
 }
 
@@ -1035,7 +954,7 @@ pub fn _perf_function_begin(fun_name: &str, caller_id: &efi::Guid) {
         None,
         c_char_ptr_from_str(fun_name),
         0,
-        PerfId::PERF_FUNCTION_START,
+        KnownPerfId::PerfFunctionStart.as_u16(),
     );
 }
 
@@ -1054,7 +973,7 @@ pub fn _perf_function_end(fun_name: &str, caller_id: &efi::Guid) {
         None,
         c_char_ptr_from_str(fun_name),
         0,
-        PerfId::PERF_FUNCTION_END,
+        KnownPerfId::PerfFunctionEnd.as_u16(),
     );
 }
 
@@ -1073,7 +992,7 @@ pub fn _perf_in_module_begin(measurement_str: &str, caller_id: &efi::Guid) {
         None,
         c_char_ptr_from_str(measurement_str),
         0,
-        PerfId::PERF_IN_MODULE_START,
+        KnownPerfId::PerfInModuleStart.as_u16(),
     );
 }
 
@@ -1092,7 +1011,7 @@ pub fn _perf_in_module_end(measurement_str: &str, caller_id: &efi::Guid) {
         None,
         c_char_ptr_from_str(measurement_str),
         0,
-        PerfId::PERF_IN_MODULE_END,
+        KnownPerfId::PerfInModuleEnd.as_u16(),
     );
 }
 
@@ -1111,7 +1030,7 @@ pub fn _perf_in_cross_module_begin(measurement_str: &str, caller_id: &efi::Guid)
         None,
         c_char_ptr_from_str(measurement_str),
         0,
-        PerfId::PERF_CROSS_MODULE_START,
+        KnownPerfId::PerfCrossModuleStart.as_u16(),
     );
 }
 
@@ -1130,7 +1049,7 @@ pub fn _perf_cross_module_end(measurement_str: &str, caller_id: &efi::Guid) {
         None,
         c_char_ptr_from_str(measurement_str),
         0,
-        PerfId::PERF_CROSS_MODULE_END,
+        KnownPerfId::PerfCrossModuleEnd.as_u16(),
     );
 }
 
