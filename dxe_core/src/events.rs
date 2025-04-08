@@ -954,4 +954,345 @@ mod tests {
             SYSTEM_TIME.store(original_time, Ordering::SeqCst);
         });
     }
+
+    // Mock for init_events_support test
+    #[test]
+    fn test_init_events_support() {
+        with_locked_state(|| {
+            // Create dummy function pointers to use for initialization
+            extern "efiapi" fn dummy_raise_tpl(_new_tpl: efi::Tpl) -> efi::Tpl {
+                0
+            }
+            extern "efiapi" fn dummy_restore_tpl(_old_tpl: efi::Tpl) {}
+            extern "efiapi" fn dummy_allocate_pages(
+                _allocation_type: u32,
+                _memory_type: u32,
+                _pages: usize,
+                _memory: *mut u64,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_free_pages(_memory: u64, _pages: usize) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_get_memory_map(
+                _memory_map_size: *mut usize,
+                _memory_map: *mut efi::MemoryDescriptor,
+                _map_key: *mut usize,
+                _descriptor_size: *mut usize,
+                _descriptor_version: *mut u32,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_allocate_pool(
+                _pool_type: u32,
+                _size: usize,
+                _buffer: *mut *mut c_void,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_free_pool(_buffer: *mut c_void) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_create_event(
+                _event_type: u32,
+                _notify_tpl: efi::Tpl,
+                _notify_function: Option<efi::EventNotify>,
+                _notify_context: *mut c_void,
+                _event: *mut efi::Event,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_set_timer(_event: efi::Event, _type: u32, _trigger_time: u64) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_wait_for_event(
+                _number_of_events: usize,
+                _event: *mut efi::Event,
+                _index: *mut usize,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_signal_event(_event: efi::Event) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_close_event(_event: efi::Event) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_check_event(_event: efi::Event) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_install_protocol_interface(
+                _handle: *mut efi::Handle,
+                _protocol: *mut efi::Guid,
+                _interface_type: u32,
+                _interface: *mut c_void,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_reinstall_protocol_interface(
+                _handle: efi::Handle,
+                _protocol: *mut efi::Guid,
+                _old_interface: *mut c_void,
+                _new_interface: *mut c_void,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_uninstall_protocol_interface(
+                _handle: efi::Handle,
+                _protocol: *mut efi::Guid,
+                _interface: *mut c_void,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_handle_protocol(
+                _handle: efi::Handle,
+                _protocol: *mut efi::Guid,
+                _interface: *mut *mut c_void,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_register_protocol_notify(
+                _protocol: *mut efi::Guid,
+                _event: efi::Event,
+                _registration: *mut *mut c_void,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_locate_handle(
+                _search_type: u32,
+                _protocol: *mut efi::Guid,
+                _search_key: *mut c_void,
+                _buffer_size: *mut usize,
+                _buffer: *mut efi::Handle,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_locate_device_path(
+                _protocol: *mut efi::Guid,
+                _device_path: *mut *mut r_efi::protocols::device_path::Protocol,
+                _device: *mut efi::Handle,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_install_configuration_table(
+                _guid: *mut efi::Guid,
+                _table: *mut c_void,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_load_image(
+                _boot_policy: efi::Boolean,
+                _parent_image_handle: efi::Handle,
+                _device_path: *mut r_efi::protocols::device_path::Protocol,
+                _source_buffer: *mut c_void,
+                _source_size: usize,
+                _image_handle: *mut efi::Handle,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_start_image(
+                _image_handle: efi::Handle,
+                _exit_data_size: *mut usize,
+                _exit_data: *mut *mut u16,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_exit(
+                _image_handle: efi::Handle,
+                _exit_status: efi::Status,
+                _exit_data_size: usize,
+                _exit_data: *mut u16,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_unload_image(_image_handle: efi::Handle) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_exit_boot_services(_image_handle: efi::Handle, _map_key: usize) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_get_next_monotonic_count(_count: *mut u64) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_stall(_microseconds: usize) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_set_watchdog_timer(
+                _timeout: usize,
+                _watchdog_code: u64,
+                _data_size: usize,
+                _watchdog_data: *mut u16,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_connect_controller(
+                _controller_handle: efi::Handle,
+                _driver_image_handle: *mut efi::Handle,
+                _remaining_device_path: *mut r_efi::protocols::device_path::Protocol,
+                _recursive: efi::Boolean,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_disconnect_controller(
+                _controller_handle: efi::Handle,
+                _driver_image_handle: efi::Handle,
+                _child_handle: efi::Handle,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_open_protocol(
+                _handle: efi::Handle,
+                _protocol: *mut efi::Guid,
+                _interface: *mut *mut c_void,
+                _agent_handle: efi::Handle,
+                _controller_handle: efi::Handle,
+                _attributes: u32,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_close_protocol(
+                _handle: efi::Handle,
+                _protocol: *mut efi::Guid,
+                _agent_handle: efi::Handle,
+                _controller_handle: efi::Handle,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_open_protocol_information(
+                _handle: efi::Handle,
+                _protocol: *mut efi::Guid,
+                _entry_buffer: *mut *mut efi::OpenProtocolInformationEntry,
+                _entry_count: *mut usize,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_protocols_per_handle(
+                _handle: efi::Handle,
+                _protocol_buffer: *mut *mut *mut efi::Guid,
+                _protocol_buffer_count: *mut usize,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_locate_handle_buffer(
+                _search_type: u32,
+                _protocol: *mut efi::Guid,
+                _search_key: *mut c_void,
+                _no_handles: *mut usize,
+                _buffer: *mut *mut efi::Handle,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_locate_protocol(
+                _protocol: *mut efi::Guid,
+                _registration: *mut c_void,
+                _interface: *mut *mut c_void,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_install_multiple_protocol_interfaces(
+                _handle: *mut efi::Handle,
+                _args: *mut c_void,
+                _more_args: *mut c_void,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_uninstall_multiple_protocol_interfaces(
+                _handle: efi::Handle,
+                _args: *mut c_void,
+                _more_args: *mut c_void,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_calculate_crc32(
+                _data: *mut c_void,
+                _data_size: usize,
+                _crc32: *mut u32,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+            extern "efiapi" fn dummy_copy_mem(_destination: *mut c_void, _source: *mut c_void, _length: usize) {}
+            extern "efiapi" fn dummy_set_mem(_buffer: *mut c_void, _size: usize, _value: u8) {}
+            extern "efiapi" fn dummy_create_event_ex(
+                _event_type: u32,
+                _notify_tpl: efi::Tpl,
+                _notify_function: Option<efi::EventNotify>,
+                _notify_context: *const c_void,
+                _event_group: *const efi::Guid,
+                _event: *mut efi::Event,
+            ) -> efi::Status {
+                efi::Status::SUCCESS
+            }
+
+            // Create a mutable BootServices to pass to init_events_support
+            let mut boot_services = efi::BootServices {
+                hdr: efi::TableHeader { signature: 0, revision: 0, header_size: 0, crc32: 0, reserved: 0 },
+                // Fill with dummy function pointers
+                raise_tpl: dummy_raise_tpl,
+                restore_tpl: dummy_restore_tpl,
+                allocate_pages: dummy_allocate_pages,
+                free_pages: dummy_free_pages,
+                get_memory_map: dummy_get_memory_map,
+                allocate_pool: dummy_allocate_pool,
+                free_pool: dummy_free_pool,
+                create_event: dummy_create_event,
+                set_timer: dummy_set_timer,
+                wait_for_event: dummy_wait_for_event,
+                signal_event: dummy_signal_event,
+                close_event: dummy_close_event,
+                check_event: dummy_check_event,
+                install_protocol_interface: dummy_install_protocol_interface,
+                reinstall_protocol_interface: dummy_reinstall_protocol_interface,
+                uninstall_protocol_interface: dummy_uninstall_protocol_interface,
+                handle_protocol: dummy_handle_protocol,
+                reserved: ptr::null_mut(),
+                register_protocol_notify: dummy_register_protocol_notify,
+                locate_handle: dummy_locate_handle,
+                locate_device_path: dummy_locate_device_path,
+                install_configuration_table: dummy_install_configuration_table,
+                load_image: dummy_load_image,
+                start_image: dummy_start_image,
+                exit: dummy_exit,
+                unload_image: dummy_unload_image,
+                exit_boot_services: dummy_exit_boot_services,
+                get_next_monotonic_count: dummy_get_next_monotonic_count,
+                stall: dummy_stall,
+                set_watchdog_timer: dummy_set_watchdog_timer,
+                connect_controller: dummy_connect_controller,
+                disconnect_controller: dummy_disconnect_controller,
+                open_protocol: dummy_open_protocol,
+                close_protocol: dummy_close_protocol,
+                open_protocol_information: dummy_open_protocol_information,
+                protocols_per_handle: dummy_protocols_per_handle,
+                locate_handle_buffer: dummy_locate_handle_buffer,
+                locate_protocol: dummy_locate_protocol,
+                install_multiple_protocol_interfaces: dummy_install_multiple_protocol_interfaces,
+                uninstall_multiple_protocol_interfaces: dummy_uninstall_multiple_protocol_interfaces,
+                calculate_crc32: dummy_calculate_crc32,
+                copy_mem: dummy_copy_mem,
+                set_mem: dummy_set_mem,
+                create_event_ex: dummy_create_event_ex,
+            };
+
+            // Initialize events support
+            init_events_support(&mut boot_services);
+
+            // Verify function pointers are updated
+            assert!(boot_services.create_event != dummy_create_event);
+            assert!(boot_services.create_event_ex != dummy_create_event_ex);
+            assert!(boot_services.close_event != dummy_close_event);
+            assert!(boot_services.signal_event != dummy_signal_event);
+            assert!(boot_services.wait_for_event != dummy_wait_for_event);
+            assert!(boot_services.check_event != dummy_check_event);
+            assert!(boot_services.set_timer != dummy_set_timer);
+            assert!(boot_services.raise_tpl != dummy_raise_tpl);
+            assert!(boot_services.restore_tpl != dummy_restore_tpl);
+
+            // Verify initialization flag is set
+            assert!(EVENT_DB_INITIALIZED.load(Ordering::SeqCst));
+
+            // Reset the flag for other tests
+            EVENT_DB_INITIALIZED.store(false, Ordering::SeqCst);
+        });
+    }
 }
