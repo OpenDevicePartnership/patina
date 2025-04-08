@@ -423,6 +423,25 @@ mod tests {
     }
 
     #[test]
+    fn test_create_event_exit_boot_services() {
+        with_locked_state(|| {
+            let mut event: efi::Event = ptr::null_mut();
+
+            let notify_fn: Option<efi::EventNotify> = Some(test_notify);
+
+            let result = create_event(
+                efi::EVT_SIGNAL_EXIT_BOOT_SERVICES,
+                efi::TPL_CALLBACK,
+                notify_fn,
+                ptr::null_mut(),
+                &mut event,
+            );
+
+            assert_eq!(result, efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
     fn test_create_event_ex_null_event() {
         with_locked_state(|| {
             let result = create_event_ex(0, efi::TPL_APPLICATION, None, ptr::null(), ptr::null(), ptr::null_mut());
