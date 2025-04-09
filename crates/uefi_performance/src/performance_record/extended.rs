@@ -30,8 +30,8 @@ pub struct GuidEventRecord {
 }
 
 impl GuidEventRecord {
-    const TYPE: u16 = 0x1010;
-    const REVISION: u8 = 1;
+    pub const TYPE: u16 = 0x1010;
+    pub const REVISION: u8 = 1;
 
     pub fn new(progress_id: u16, acpi_id: u32, timestamp: u64, guid: efi::Guid) -> Self {
         Self { progress_id, acpi_id, timestamp, guid }
@@ -94,8 +94,8 @@ pub struct DynamicStringEventRecord<'a> {
 }
 
 impl<'a> DynamicStringEventRecord<'a> {
-    const TYPE: u16 = 0x1011;
-    const REVISION: u8 = 1;
+    pub const TYPE: u16 = 0x1011;
+    pub const REVISION: u8 = 1;
 
     pub fn new(progress_id: u16, acpi_id: u32, timestamp: u64, guid: efi::Guid, string: &'a str) -> Self {
         Self { progress_id, acpi_id, timestamp, guid, string }
@@ -163,8 +163,8 @@ pub struct DualGuidStringEventRecord<'a> {
 }
 
 impl<'a> DualGuidStringEventRecord<'a> {
-    const TYPE: u16 = 0x1012;
-    const REVISION: u8 = 1;
+    pub const TYPE: u16 = 0x1012;
+    pub const REVISION: u8 = 1;
 
     pub fn new(
         progress_id: u16,
@@ -305,8 +305,8 @@ pub struct GuidQwordStringEventRecord<'a> {
 }
 
 impl<'a> GuidQwordStringEventRecord<'a> {
-    const TYPE: u16 = 0x1014;
-    const REVISION: u8 = 1;
+    pub const TYPE: u16 = 0x1014;
+    pub const REVISION: u8 = 1;
 
     pub fn new(progress_id: u16, acpi_id: u32, timestamp: u64, guid: efi::Guid, qword: u64, string: &'a str) -> Self {
         Self { progress_id, acpi_id, timestamp, guid, qword, string }

@@ -217,33 +217,125 @@ impl<'a> Iterator for Iter<'a> {
 
 #[cfg(test)]
 mod test {
+    use core::{assert_eq, slice};
+
+    use crate::performance_record::extended::{
+        DualGuidStringEventRecord, DynamicStringEventRecord, GuidEventRecord, GuidQwordEventRecord,
+        GuidQwordStringEventRecord,
+    };
     use efi::Guid;
-    use extended::DynamicStringEventRecord;
 
     use super::*;
 
     #[test]
-    fn test_adding_performance_report_and_report_the_buffer() {
-        let mut buffer = PerformanceRecordBuffer::new();
-        for n in 1..5 {
-            let r = DynamicStringEventRecord::new(n, n.into(), 0, Guid::from_bytes(&[0xFF; 16]), "wowo");
-            buffer.push_record(r).unwrap();
+    fn test_performance_record_buffer_new() {
+        let performance_record_buffer = PerformanceRecordBuffer::new();
+        assert_eq!(0, performance_record_buffer.size());
+    }
+
+    #[test]
+    fn test_performance_record_buffer_push_record() {
+        let guid = efi::Guid::from_bytes(&[0; 16]);
+        let mut performance_record_buffer = PerformanceRecordBuffer::new();
+        let mut size = 0;
+
+        size += performance_record_buffer.push_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
+        assert_eq!(size, performance_record_buffer.size());
+
+        size += performance_record_buffer.push_record(DynamicStringEventRecord::new(1, 0, 10, guid, "test")).unwrap();
+        assert_eq!(size, performance_record_buffer.size());
+
+        size += performance_record_buffer
+            .push_record(DualGuidStringEventRecord::new(1, 0, 10, guid, guid, "test"))
+            .unwrap();
+        assert_eq!(size, performance_record_buffer.size());
+
+        size += performance_record_buffer.push_record(GuidQwordEventRecord::new(1, 0, 10, guid, 64)).unwrap();
+        assert_eq!(size, performance_record_buffer.size());
+
+        size +=
+            performance_record_buffer.push_record(GuidQwordStringEventRecord::new(1, 0, 10, guid, 64, "test")).unwrap();
+        assert_eq!(size, performance_record_buffer.size());
+    }
+
+    #[test]
+    fn test_performance_record_buffer_iter() {
+        let guid = efi::Guid::from_bytes(&[0; 16]);
+        let mut performance_record_buffer = PerformanceRecordBuffer::new();
+
+        performance_record_buffer.push_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
+        performance_record_buffer.push_record(DynamicStringEventRecord::new(1, 0, 10, guid, "test")).unwrap();
+        performance_record_buffer.push_record(DualGuidStringEventRecord::new(1, 0, 10, guid, guid, "test")).unwrap();
+        performance_record_buffer.push_record(GuidQwordEventRecord::new(1, 0, 10, guid, 64)).unwrap();
+        performance_record_buffer.push_record(GuidQwordStringEventRecord::new(1, 0, 10, guid, 64, "test")).unwrap();
+
+        for (i, record) in performance_record_buffer.iter().enumerate() {
+            match i {
+                _ if i == 0 => assert_eq!(
+                    (GuidEventRecord::TYPE, GuidEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 1 => assert_eq!(
+                    (DynamicStringEventRecord::TYPE, DynamicStringEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 2 => assert_eq!(
+                    (DualGuidStringEventRecord::TYPE, DualGuidStringEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 3 => assert_eq!(
+                    (GuidQwordEventRecord::TYPE, GuidQwordEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 4 => assert_eq!(
+                    (GuidQwordStringEventRecord::TYPE, GuidQwordStringEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ => assert!(false),
+            }
         }
+    }
 
-        let b = vec![0_u8; 10_000_000];
-        let b = b.leak();
+    fn test_performance_record_buffer_reported_table() {
+        let guid = efi::Guid::from_bytes(&[0; 16]);
+        let mut performance_record_buffer = PerformanceRecordBuffer::new();
 
-        buffer.report(b);
+        performance_record_buffer.push_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
+        performance_record_buffer.push_record(DynamicStringEventRecord::new(1, 0, 10, guid, "test")).unwrap();
 
-        for n in 1..5 {
-            let r = DynamicStringEventRecord::new(n, n.into(), 0, Guid::from_bytes(&[0xFF; 16]), "wowo");
-            buffer.push_record(r).unwrap();
+        let mut buffer = vec![0_u8; 1000];
+        let buffer = unsafe { slice::from_raw_parts_mut(buffer.as_mut_ptr(), buffer.len()) };
+
+        performance_record_buffer.report(buffer);
+
+        performance_record_buffer.push_record(DualGuidStringEventRecord::new(1, 0, 10, guid, guid, "test")).unwrap();
+        performance_record_buffer.push_record(GuidQwordEventRecord::new(1, 0, 10, guid, 64)).unwrap();
+        performance_record_buffer.push_record(GuidQwordStringEventRecord::new(1, 0, 10, guid, 64, "test")).unwrap();
+
+        for (i, record) in performance_record_buffer.iter().enumerate() {
+            match i {
+                _ if i == 0 => assert_eq!(
+                    (GuidEventRecord::TYPE, GuidEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 1 => assert_eq!(
+                    (DynamicStringEventRecord::TYPE, DynamicStringEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 2 => assert_eq!(
+                    (DualGuidStringEventRecord::TYPE, DualGuidStringEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 3 => assert_eq!(
+                    (GuidQwordEventRecord::TYPE, GuidQwordEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 4 => assert_eq!(
+                    (GuidQwordStringEventRecord::TYPE, GuidQwordStringEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ => assert!(false),
+            }
         }
-
-        for r in buffer.iter() {
-            println!("{r:#?}");
-        }
-
-        println!("{:#?}", buffer);
     }
 }
