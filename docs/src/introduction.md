@@ -7,13 +7,40 @@ Driver, and guides on further developing the rust DXE Core.
 This book assumes you already have the pre-requisite knowledge in regards to the [EDKII](https://github.com/tianocore/edk2)
 ecosystem, and the necessary tools already installed for building EDKII packages.
 
-Major features or changes are proposed through [RFCs](https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/new?template=rfc.yml).
+Major features are proposed through [RFCs](rfc/template.md). The RFC template should be completed and pushed to a PR.
 
-The RFC template should be completed and included in a GitHub "RFC" issue as the content of the issue submission. It
-can be edited in place and refined over time based on feedback either given in the issue or pull requests. All updates
-must have an entry made in the change log describing what changed. The RFC issue should be linked to all relevant pull
-requests and discussions. The RFC issue should only be closed when the RFC is fully implemented and merged into the
-codebase or abandoned.
+The complete process is:
+
+1. **Create** a new branch for your RFC.
+2. **Copy** the template from `docs/src/rfc/template.md` to a new file in the `docs/src/rfc/text` directory named
+   `0000-<feature-name>.md` where `0000` is a placeholder until the RFC is accepted (so use `0000` in your PR) and
+   `<feature-name>` is a short name for the feature that you create.
+3. **Fill out** the RFC template with your proposal.
+4. Submit a **pull request** (PR) with your RFC.
+5. The PR will be discussed, reviewed, and may be iteratively updated.
+6. Once there is consensus and approval, the RFC will be **merged** and assigned an official number.
+
+## The RFC Life Cycle
+
+Each RFC goes through these stages:
+
+- **Draft**: The initial state when a PR is opened. The community and relevant teams provide feedback.
+  - Note: The RFC PR does not need to be draft. Only make it a draft if you're still working on the PR prior to
+    submitting it for review.
+- **Final Comment Period (FCP)**: Once there is rough consensus, an FCP of 7–10 days starts. During this time, final
+  objections can be raised.
+- **Merged**: After FCP with no blocking concerns, the RFC is merged and becomes official.
+- **Postponed**: RFCs may be deferred due to lack of clarity, priority, or readiness.
+- **Rejected**: With strong reasoning and community consensus, RFCs can be declined.
+
+## Implementing and Maintaining an RFC
+
+Once accepted:
+
+- The implementation is tracked through linked issues or repositories.
+- Any changes during implementation that deviate from the RFC must go through a **follow-up RFC** or an
+  **amendment** process.
+- An RFC can be **revised** in-place via a new RFC that supersedes or modifies the previous one.
 
 ## Tools and Prerequisites
 
