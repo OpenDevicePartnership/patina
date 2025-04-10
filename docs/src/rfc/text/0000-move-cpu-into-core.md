@@ -57,10 +57,79 @@ Switch to a standardized struct instead of trait generics, for initialization.
 
 ## Rust Code Design
 
-Update the Patina Core interface to:
+Before / After example
+
+### Before Example
 
 ```rust
+pub struct Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases, MemoryState>
+where
+    CpuInit: uefi_cpu::cpu::EfiCpuInit + Default + 'static,
+    SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
+    InterruptManager: uefi_cpu::interrupts::InterruptManager + Default + Copy + 'static,
+    InterruptBases: uefi_cpu::interrupts::InterruptBases + Default + Copy + 'static,
+{
+    cpu_init: CpuInit,
+    section_extractor: SectionExtractor,
+    interrupt_manager: InterruptManager,
+    interrupt_bases: InterruptBases,
+    components: Vec<Box<dyn Component>>,
+    storage: Storage,
+    _memory_state: core::marker::PhantomData<MemoryState>,
+}
 
+impl<CpuInit, SectionExtractor, InterruptManager, InterruptBases>
+    Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases, NoAlloc>
+where
+    CpuInit: uefi_cpu::cpu::EfiCpuInit + Default + 'static,
+    SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
+    InterruptManager: uefi_cpu::interrupts::InterruptManager + Default + Copy + 'static,
+    InterruptBases: uefi_cpu::interrupts::InterruptBases + Default + Copy + 'static,
+{
+    /// Registers the CPU Init with it's own configuration.
+    pub fn with_cpu_init(mut self, cpu_init: CpuInit) -> Self {
+        self.cpu_init = cpu_init;
+        self
+    }
+
+    /// Registers the Interrupt Manager with it's own configuration.
+    pub fn with_interrupt_manager(mut self, interrupt_manager: InterruptManager) -> Self {
+        self.interrupt_manager = interrupt_manager;
+        self
+    }
+
+    /// Registers the section extractor with it's own configuration.
+    pub fn with_section_extractor(mut self, section_extractor: SectionExtractor) -> Self {
+        self.section_extractor = section_extractor;
+        self
+    }
+
+    pub fn init_memory(
+        mut self,
+        physical_hob_list: *const c_void,
+    ) -> Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases, Alloc> {
+        let _ = self.cpu_init.initialize();
+        self.interrupt_manager.initialize().expect("Failed to initialize interrupt manager!");
+
+        /* Continue as normal */
+    }
+}
+
+// Platform integration step:
+Core::default()
+    .with_section_exctractor(...)
+    .with_cpu_init(...)
+    .with_interrupt_manager(...)
+    .with_interrupt_bases(...)
+    .init_memory(physical_hob_list)
+    .start()
+    .unwrap();
+```
+
+### After Example
+
+```rust
+// After
 pub struct Core<SectionExtractor, MemoryState>
 where
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static
@@ -104,6 +173,13 @@ where
         /* Continue as normal */
     }
 }
+
+// Platform integration step:
+Core::default()
+    .with_section_exctractor(...)
+    .init_memory(physical_hob_list)
+    .start()
+    .unwrap();
 
 ```
 
