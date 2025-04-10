@@ -5,8 +5,10 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
-use alloc::ffi::CString;
-use alloc::string::{String, ToString};
+use alloc::{
+    ffi::CString,
+    string::{String, ToString},
+};
 use core::ffi::{c_char, CStr};
 
 /// # Safety
@@ -41,10 +43,10 @@ mod test {
 
     #[test]
     fn test_c_char_ptr_from_str() {
-       let s = "this is a string."; 
-       let ptr = c_char_ptr_from_str(s);
-       let byte_str = unsafe { slice::from_raw_parts(ptr as *const u8, s.len() + 1) };
-       let expected = b"this is a string.\0";
-       assert_eq!(expected, byte_str);
+        let s = "this is a string.";
+        let ptr = c_char_ptr_from_str(s);
+        let byte_str = unsafe { slice::from_raw_parts(ptr as *const u8, s.len() + 1) };
+        let expected = b"this is a string.\0";
+        assert_eq!(expected, byte_str);
     }
 }

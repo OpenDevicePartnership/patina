@@ -19,7 +19,7 @@ use crate::_debug::DbgMemory;
 pub const FPDT_MAX_PERF_RECORD_SIZE: usize = u8::MAX as usize;
 
 pub const PERFORMANCE_RECORD_HEADER_SIZE: usize = mem::size_of::<u16>() // Type
-        + mem::size_of::<u8>() // Length 
+        + mem::size_of::<u8>() // Length
         + mem::size_of::<u8>(); // Revision
 
 pub trait PerformanceRecord: Sized + scroll::ctx::TryIntoCtx<scroll::Endian, Error = scroll::Error> {
@@ -223,13 +223,13 @@ mod test {
         DualGuidStringEventRecord, DynamicStringEventRecord, GuidEventRecord, GuidQwordEventRecord,
         GuidQwordStringEventRecord,
     };
-    use efi::Guid;
 
     use super::*;
 
     #[test]
     fn test_performance_record_buffer_new() {
         let performance_record_buffer = PerformanceRecordBuffer::new();
+        println!("{:?}", performance_record_buffer);
         assert_eq!(0, performance_record_buffer.size());
     }
 
@@ -296,6 +296,7 @@ mod test {
         }
     }
 
+    #[test]
     fn test_performance_record_buffer_reported_table() {
         let guid = efi::Guid::from_bytes(&[0; 16]);
         let mut performance_record_buffer = PerformanceRecordBuffer::new();

@@ -7,13 +7,12 @@
 
 use core::fmt::Debug;
 
-use mu_rust_helpers::guid::guid_fmt;
 use r_efi::efi;
 use scroll::Pwrite;
 
 use super::PerformanceRecord;
 
-#[repr(C)]
+#[derive(Debug)]
 pub struct GuidEventRecord {
     /// ProgressID < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and
@@ -61,20 +60,7 @@ impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidEventRecord {
     }
 }
 
-impl Debug for GuidEventRecord {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("GuidEventRecord")
-            .field("type", &self.record_type())
-            .field("revision", &self.revision())
-            .field("progress_id", &self.progress_id)
-            .field("acpi_id", &self.acpi_id)
-            .field("timestamp", &self.timestamp)
-            .field("guid", &guid_fmt!(&self.guid))
-            .finish()
-    }
-}
-
-#[repr(C)]
+#[derive(Debug)]
 pub struct DynamicStringEventRecord<'a> {
     /// ProgressID < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and
@@ -127,21 +113,7 @@ impl PerformanceRecord for DynamicStringEventRecord<'_> {
     }
 }
 
-impl Debug for DynamicStringEventRecord<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("DynamicStringEventRecord")
-            .field("type", &self.record_type())
-            .field("revision", &self.revision())
-            .field("progress_id", &self.progress_id)
-            .field("acpi_id", &self.acpi_id)
-            .field("timestamp", &self.timestamp)
-            .field("guid", &self.guid)
-            .field("string", &self.string)
-            .finish()
-    }
-}
-
-#[repr(C)]
+#[derive(Debug)]
 pub struct DualGuidStringEventRecord<'a> {
     /// ProgressID < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and
@@ -204,22 +176,7 @@ impl PerformanceRecord for DualGuidStringEventRecord<'_> {
     }
 }
 
-impl Debug for DualGuidStringEventRecord<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("DualGuidStringEventRecord")
-            .field("type", &self.record_type())
-            .field("revision", &self.revision())
-            .field("progress_id", &self.progress_id)
-            .field("acpi_id", &self.acpi_id)
-            .field("timestamp", &self.timestamp)
-            .field("guid_1", &guid_fmt!(&self.guid_1))
-            .field("guid_2", &guid_fmt!(&self.guid_2))
-            .field("string", &self.string)
-            .finish()
-    }
-}
-
-#[repr(C)]
+#[derive(Debug)]
 pub struct GuidQwordEventRecord {
     /// ProgressID < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and
@@ -269,22 +226,7 @@ impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidQwordEventRecord {
         Ok(offset)
     }
 }
-
-impl Debug for GuidQwordEventRecord {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("GuidQwordEventRecord")
-            .field("type", &self.record_type())
-            .field("revision", &self.revision())
-            .field("progress_id", &self.progress_id)
-            .field("acpi_id", &self.acpi_id)
-            .field("timestamp", &self.timestamp)
-            .field("guid", &guid_fmt!(&self.guid))
-            .field("qword", &self.qword)
-            .finish()
-    }
-}
-
-#[repr(C)]
+#[derive(Debug)]
 pub struct GuidQwordStringEventRecord<'a> {
     /// ProgressID < 0x10 are reserved for core performance entries.
     /// Start measurement point shall have lowered one nibble set to zero and
@@ -336,20 +278,5 @@ impl PerformanceRecord for GuidQwordStringEventRecord<'_> {
 
     fn revision(&self) -> u8 {
         Self::REVISION
-    }
-}
-
-impl Debug for GuidQwordStringEventRecord<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("GuidQwordStringEventRecord")
-            .field("type", &self.record_type())
-            .field("revision", &self.revision())
-            .field("progress_id", &self.progress_id)
-            .field("acpi_id", &self.acpi_id)
-            .field("timestamp", &self.timestamp)
-            .field("guid", &guid_fmt!(&self.guid))
-            .field("qword", &self.qword)
-            .field("string", &self.string)
-            .finish()
     }
 }

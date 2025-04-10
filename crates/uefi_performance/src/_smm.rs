@@ -2,15 +2,23 @@
 //!
 //! This module also contain smm performance communicate structures that define the communicate buffer data that need to be used to fetch perf records from smm.
 
+<<<<<<< HEAD
 use core::{debug_assert_eq, marker::PhantomPinned, ptr, result::Result::Ok, slice};
+=======
+use core::{debug_assert_eq, marker::PhantomPinned, ops::Deref, ptr, slice};
+>>>>>>> a32b995 (more test and import cleanup)
 
 use r_efi::efi;
-
 use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
     Endian, Pread, Pwrite,
 };
+<<<<<<< HEAD
 use uefi_sdk::{base::UEFI_PAGE_SIZE, protocol::ProtocolInterface};
+=======
+
+use uefi_sdk::{base::UEFI_PAGE_SIZE, protocol::Protocol};
+>>>>>>> a32b995 (more test and import cleanup)
 
 pub const EFI_SMM_COMMUNICATION_PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0xc68ed8e2, 0x9dc6, 0x4cbd, 0x9d, 0x94, &[0xdb, 0x65, 0xac, 0xc5, 0xc3, 0x32]);

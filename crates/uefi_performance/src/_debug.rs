@@ -45,7 +45,7 @@ impl Debug for DbgMemory<'_> {
 mod test {
     use core::assert_eq;
 
-    use alloc::{fmt::format, vec};
+    use alloc::vec;
 
     use super::*;
 
