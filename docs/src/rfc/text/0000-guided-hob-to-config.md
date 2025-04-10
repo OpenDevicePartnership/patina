@@ -8,6 +8,10 @@ registering itself with the core, and instead moves the parsing to the core.
 ## Change Log
 
 - 2025-04-09: Initial RFC created.
+- 2025-04-10: Rename `HobConfig` trait to `HobConfig`, `with_hob_parser` function to `with_hob_config`, `GUID` to
+  `HOB_GUID`.
+- 2025-04-10: Lock Config after registered.
+- 2025-04-10: Add hob parsing implementation.
 
 ## Motivation
 
@@ -34,7 +38,7 @@ This proposal will use the existing `Storage` and `Config` logic from the `uefi_
 
 ## Unresolved Questions
 
-- Should the name of the Trait be `FromGuidedHob` or `IntoConfig`
+N/A
 
 ## Prior Art
 
@@ -61,11 +65,12 @@ registered as a config with Storage.
 use uefi_sdk::component::Storage;
 use refi::efi::Guid
 
-pub trait IntoConfig: Default + 'static {
-    const GUID: Guid;
+pub trait HobConfig: Default + 'static {
+    const HOB_GUID: Guid::from_fields(...);
 
     fn register_config(bytes: &[u8], storage: &mut Storage) {
         storage.add_config(Self::parse(bytes));
+        storage.lock_config::<Self>();
     }
 
     fn parse(bytes: &[u8]) -> Self;
@@ -74,21 +79,36 @@ pub trait IntoConfig: Default + 'static {
 /* ----- In lib.rs ------ */
 
 struct Core {
+    hob_list: HobList<'static>,
     hob_parsers: BTreeMap<Guid, fn(&[u8], &mut Storage)>
 }
 
 // Shortened impl for brevity - But this is for post init_memory()
 impl Core {
 
-    fn with_hob_parser<T: IntoConfig>(&mut self) {
-        self.hob_parsers.insert(T::GUID, T::register_config)
+    fn with_hob_config<T: HobConfig>(&mut self) {
+        self.hob_parsers.insert(T::HOB_GUID, T::register_config)
+    }
+
+    fn parse_hobs_to_config(&mut self) {
+        for hob in self.hob_list.iter() {
+            if let mu_pi::hob::Hob::GuidHob(guid, data) = hob {
+                match self.hob_config_parsers.get(&guid.name) {
+                    Some(parser) => {
+                        parser(data, &mut self.storage);
+                    }
+                    None => {
+                        log::warn!("No parser registered for HOB: {:?}", guid);
+                    }
+                }
+            }
+        }
     }
 
     fn start(mut self) -> Result<()> {
-        // Add Code to do a final parse of the Rust-y hoblist and call:
-       if let Some(parser) = self.hob_parsers(guid) {
-        (*parser)(hob_bytes, &mut self.storage)
-       }
+        self.parse_hobs_to_config();
+
+        /* Continue */
     }
 }
 ```
@@ -99,7 +119,7 @@ impl Core {
     #[derive(Debug)]
     struct MyHobConfig;
 
-    impl IntoConfig for MyHobConfig {
+    impl HobConfig for MyHobConfig {
         const HOB_GUID: Guid = /* guid */
         fn parse(&[u8]) -> Self {
             // Parse bytes into struct however you want
@@ -107,21 +127,21 @@ impl Core {
         }
     }
 
-    #[derive(IntoConfig, Debug, Clone, Copy)]
+    #[derive(HobConfig, Debug, Clone, Copy)]
     #[hob = "8be4df61-93ca-11d2-aa0d-00e098032b8c"]
     struct MyOtherHobConfig;
 
     // In entry point
     Core::default()
         .init_memory(physical_hobList)
-        .with_hob_parser::<MyHobConfig>()
-        .with_hob_parser::<MyOtherHobConfig>()
+        .with_hob_config::<MyHobConfig>()
+        .with_hob_config::<MyOtherHobConfig>()
         .start()
         .unwrap()
 ```
 
 ## Guide-Level Explanation
 
-1. `IntoConfig` The trait responsible for converting a byte array into a specific struct
+1. `HobConfig` The trait responsible for converting a byte array into a specific struct
 2. `Storage` Internal storage that contains all configuration (among other things)
 3. `Core` The DxeCore which is a two phased system - pre_mem and post_mem
