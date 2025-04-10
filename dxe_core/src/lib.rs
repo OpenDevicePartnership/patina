@@ -107,7 +107,7 @@ pub mod test_support;
 
 use core::{ffi::c_void, ptr, str::FromStr};
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use gcd::SpinLockedGcd;
 use mu_pi::{
     fw_fs,
@@ -116,7 +116,7 @@ use mu_pi::{
     status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
 };
 use protocols::PROTOCOL_DB;
-use r_efi::efi;
+use r_efi::efi::{self, Guid};
 use uefi_sdk::{
     boot_services::StandardBootServices,
     component::{Component, IntoComponent, Storage},
@@ -231,10 +231,12 @@ where
     InterruptManager: uefi_cpu::interrupts::InterruptManager + Default + Copy + 'static,
     InterruptBases: uefi_cpu::interrupts::InterruptBases + Default + Copy + 'static,
 {
+    hob_list: HobList<'static>,
     cpu_init: CpuInit,
     section_extractor: SectionExtractor,
     interrupt_manager: InterruptManager,
     interrupt_bases: InterruptBases,
+    hob_config_parsers: BTreeMap<Guid, fn(&[u8], &mut Storage)>,
     components: Vec<Box<dyn Component>>,
     storage: Storage,
     _memory_state: core::marker::PhantomData<MemoryState>,
@@ -250,10 +252,12 @@ where
 {
     fn default() -> Self {
         Core {
+            hob_list: HobList::default(),
             cpu_init: CpuInit::default(),
             section_extractor: SectionExtractor::default(),
             interrupt_manager: InterruptManager::default(),
             interrupt_bases: InterruptBases::default(),
+            hob_config_parsers: BTreeMap::new(),
             components: Vec::new(),
             storage: Storage::new(),
             _memory_state: core::marker::PhantomData,
@@ -321,20 +325,19 @@ where
 
         // After this point Rust Heap usage is permitted (since GCD is initialized with a single known-free region).
         // Relocate the hobs from the input list pointer into a Vec.
-        let mut hob_list = HobList::default();
-        hob_list.discover_hobs(physical_hob_list);
+        self.hob_list.discover_hobs(physical_hob_list);
 
         log::trace!("HOB list discovered is:");
-        log::trace!("{:#x?}", hob_list);
+        log::trace!("{:#x?}", self.hob_list);
 
         //make sure that well-known handles exist.
         PROTOCOL_DB.init_protocol_db();
         // Initialize full allocation support.
-        allocator::init_memory_support(&hob_list);
+        allocator::init_memory_support(&self.hob_list);
         // we have to relocate HOBs after memory services are initialized as we are going to allocate memory and
         // the initial free memory may not be enough to contain the HOB list. We need to relocate the HOBs because
         // the initial HOB list is not in mapped memory as passed from pre-DXE.
-        hob_list.relocate_hobs();
+        self.hob_list.relocate_hobs();
         let hob_list_slice = unsafe {
             core::slice::from_raw_parts(physical_hob_list as *const u8, Self::get_hob_list_len(physical_hob_list))
         };
@@ -352,14 +355,14 @@ where
             let st = st.as_mut().expect("System Table not initialized!");
 
             allocator::install_memory_services(st.boot_services_mut());
-            gcd::init_paging(&hob_list);
+            gcd::init_paging(&self.hob_list);
             events::init_events_support(st.boot_services_mut());
             protocols::init_protocol_support(st.boot_services_mut());
             misc_boot_services::init_misc_boot_services_support(st.boot_services_mut());
             runtime::init_runtime_support(st.runtime_services_mut());
-            image::init_image_support(&hob_list, st);
+            image::init_image_support(&self.hob_list, st);
             dispatcher::init_dispatcher(Box::from(self.section_extractor));
-            fv::init_fv_support(&hob_list, Box::from(self.section_extractor));
+            fv::init_fv_support(&self.hob_list, Box::from(self.section_extractor));
             dxe_services::init_dxe_services(st);
             driver_services::init_driver_services(st.boot_services_mut());
 
@@ -407,7 +410,7 @@ where
         // Other cpu models crash in various other ways. It will be resolved, but is removed now to unblock other
         // development
         _ = uefi_performance::init_performance_lib(
-            &hob_list,
+            &self.hob_list,
             // SAFETY: `system_table_ptr` is a valid pointer that has been initialized earlier.
             unsafe { system_table_ptr.as_ref() }.expect("System Table not initialized!"),
         );
@@ -420,10 +423,12 @@ where
             self.storage.set_runtime_services(StandardRuntimeServices::new(&*runtime_services_ptr));
         }
         Core {
+            hob_list: self.hob_list,
             cpu_init: self.cpu_init,
             section_extractor: self.section_extractor,
             interrupt_manager: self.interrupt_manager,
             interrupt_bases: self.interrupt_bases,
+            hob_config_parsers: self.hob_config_parsers,
             components: self.components,
             storage: self.storage,
             _memory_state: core::marker::PhantomData,
@@ -452,6 +457,22 @@ where
     pub fn with_config<C: Default + 'static>(mut self, config: C) -> Self {
         self.storage.add_config(config);
         self
+    }
+
+    /// Parses the HOB list producing a `Hob\<T\>` struct for each guided HOB found with a registered parser.
+    fn parse_hobs(&mut self) {
+        for hob in self.hob_list.iter() {
+            if let mu_pi::hob::Hob::GuidHob(guid, data) = hob {
+                match self.storage.get_hob_parser(&guid.name) {
+                    Some(parser_func) => {
+                        parser_func(data, &mut self.storage);
+                    }
+                    None => {
+                        log::warn!("No parser registered for HOB: {:?}", guid);
+                    }
+                }
+            }
+        }
     }
 
     /// Attempts to dispatch all components.
@@ -515,6 +536,10 @@ where
 
     /// Starts the core, dispatching all drivers.
     pub fn start(mut self) -> Result<()> {
+        log::info!("Producing Configs from Guid HOBs");
+        self.parse_hobs();
+        log::info!("Finished Producing Configs from Guid HOBs");
+
         log::info!("Dispatching Local Drivers");
         self.dispatch_components();
         self.storage.lock_configs();
