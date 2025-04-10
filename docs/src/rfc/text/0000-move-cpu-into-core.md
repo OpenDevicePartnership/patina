@@ -1,14 +1,14 @@
-# RFC: `Move CPU functionality into Core`
+# RFC: `Move CPU functionality into Patina Core`
 
 Currently, traits generics are used in the Patina Core's struct defintion to support the ability to (1) replace certain
 functionality based off of a platform's requirements and (2) replace cpu architecture specific functionality. As time
-has continued and the core has evolved, we have noted that platforms do not need to customize this functionality; all
-platforms of a certain architecture will always use the same underlying architecture support code. Exposing this to the
-consumer only works to complicate the core initialization and has been deemed unecessary.
+has continued and the Patina Core has evolved, we have noted that platforms do not need to customize this
+functionality; all platforms of a certain architecture will always use the same underlying architecture support code.
+Exposing this to the consumer only works to complicate the Patina Core initialization and has been deemed unecessary.
 
-This proposal is to remove the architecture specific customization from the public core interface, and automatically
-use the appropriate logic for the given architecture. Configuration knobs can be provided to the core to fine tune
-this logic for a given platform.
+This proposal is to remove the architecture specific customization from the public Patina Core interface, and
+automatically use the appropriate logic for the given architecture. Configuration knobs can be provided to the Patina
+Core to fine tune this logic for a given platform.
 
 ## Change Log
 
@@ -24,11 +24,11 @@ adoption.
 The three traits, `EfiCpuInit`, `InterruptManager`, and `InterruptBases` are trait generics that provide an interface
 for initializing many of the low level cpu functionality. This functionality will be the same for each cpu architecture
 supported, but may have some different configuration knobs for different platforms. [uefi_cpu](https://github.com/OpenDevicePartnership/uefi-core/tree/main/uefi_cpu)
-contains the core functionality for all three of these trait interfaces and can be reviewed for specific functionality.
+contains the functionality for all three of these trait interfaces and can be reviewed for specific functionality.
 
 ## Goals
 
-1. Remove as many trait generics from the core as possible
+1. Remove as many trait generics from the Patina Core as possible
 2. Allow configuration for cpu initialization
 
 ## Requirements
@@ -48,7 +48,7 @@ contains the core functionality for all three of these trait interfaces and can 
 
 ## Prior Art (Existing PI C Implementation)
 
-In the current design, each of the three implementations must be registered with the core using the appropriate
+In the current design, each of the three implementations must be registered with the Patina Core using the appropriate
 `.with_*` method, which allows for the registration of a configured initializer
 
 ## Alternatives
