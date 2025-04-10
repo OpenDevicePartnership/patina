@@ -8,8 +8,9 @@ for all externally available memory APIs.
 ## Change Log
 
 - 2024-04-06: Initial RFC created.
-- 2024-04-07: Changes AllocationOptions to not use implementation defined defaults
-- 2024-04-07: Further clarification on the `HeapAllocator` type
+- 2024-04-07: Changes AllocationOptions to not use implementation defined defaults.
+- 2024-04-07: Further clarification on the `HeapAllocator` type.
+- 2024-04-09: Removed HeapAllocator, added more details on other types.
 
 ## Motivation
 
@@ -202,11 +203,42 @@ impl AllocationOptions {
 }
 ```
 
+### Memory Attribute Types
+
+The following enums were created to represent the Access and Caching attributes
+of memory exposed to the caller.
+
+```rust
+pub enum AccessType {
+    NoAccess,
+    ReadOnly,
+    ReadWrite,
+    ReadExecute,
+    ReadWriteExecute,
+}
+
+pub enum CachingType {
+    Uncached,
+    WriteCombining,
+    WriteBack,
+    WriteThrough,
+}
+```
+
+These definitions were chosen to more accurate reflect hardware then the definitions
+currently used in the UEFI specification. Notable, there is no current notion of
+what memory is "capable" of, but only what is actually configured. Additionally,
+There is no concept of "read-protect" as this does not accurate reflect what hardware
+supports. Instead `NoAccess` was chosen as the implementation will treat this as
+unmapped and so it does not make sense to allow this in conjuction with other
+protections.
+
 ## Guide-Level Explanation
 
 ### Memory Manager
 
-Memory Management is done through the `MemoryManager` trait. For Components, this trait should be used through a service wrapper to acquire the memory manager implementation from the core.
+Memory Management is done through the `MemoryManager` trait. For Components, this trait
+should be used through a service wrapper to acquire the memory manager implementation from the core.
 
 ```rust
 pub fn component (memory_manager: Service<dyn MememoryManager>) ->Result<()> {
@@ -243,7 +275,7 @@ as memory type or alignment. Additional constraints may be specified through the
 `AllocationOptions` parameter using the `.with_` routine to override default values.
 
 ```rust
-let options = AllocationOptions::default().with_memory_type(EfiMemoryType::BootServicesData).with_aligntment(0x2000);
+let options = AllocationOptions::default().with_memory_type(EfiMemoryType::BootServicesData).with_alignment(0x2000);
 let allocation = memory_manager.allocate_pages(1, options)?;
 ```
 
@@ -271,7 +303,7 @@ routines.
 
 ```rust
 // Change a page to be inaccessible, leaving the caching unchanged.
-memory_manager.set_page_attributes(address, 1, AccesType::NoAccess, None)?;
+memory_manager.set_page_attributes(address, 1, AccessType::NoAccess, None)?;
 
 // Check that the access type was changes
 let (access, caching) = memory_manager.get_page_attributes(address, 1)?;
