@@ -63,7 +63,7 @@ Update the Patina Core interface to:
 
 pub struct Core<SectionExtractor, MemoryState>
 where
-    SectionExtractor: fw_fs::SectionExtrator + Default + Copy + 'static
+    SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static
 {
     section_extractor: SectionExtractor,
     components: Vec<Box<dyn Component>>,
