@@ -39,6 +39,8 @@ contains the functionality for all three of these trait interfaces and can be re
 4. Automatically select and use the given `EfiCpuInit`, `InterruptManager`, and `InterruptBases` code based off the
    compilation target architecture.
 5. Provide generic configuration knob support for platforms to fine-tune these initializations where necessary.
+6. Provide a way for a platform (and possibly a component) to register an exception handler.
+7. Continue supporting cpu timer interrupt hook.
 
 ## Unresolved Questions
 
