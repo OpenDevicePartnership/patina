@@ -1,6 +1,9 @@
 # RFC: `Guided Hob to Config<T>`
 
-This is a request for comments for a design to allow a platform to register functionality with the core that will parse a guided hob into a specific struct and register that struct instance with the Core to be accessible as a `Config<T>` or `ConfigMut<T>`. This implementation will remove the need for a Component to parse the hoblist manually before registering itself with the core, and instead moves the parsing to the core.
+This is a request for comments for a design to allow a platform to register functionality with the core that will parse
+a guided hob into a specific struct and register that struct instance with the Core to be accessible as a `Config<T>`
+or `ConfigMut<T>`. This implementation will remove the need for a Component to parse the hoblist manually before
+registering itself with the core, and instead moves the parsing to the core.
 
 ## Change Log
 
@@ -20,7 +23,8 @@ This proposal will use the existing `Storage` and `Config` logic from the `uefi_
 
 ## Goals
 
-1. Enable a simple interface for component dependency injectable configuration to be produced via a guided hob in the hoblist
+1. Enable a simple interface for component dependency injectable configuration to be produced via a guided hob in the
+   hoblist
 2. Create core / uefi-sdk `T`'s for standard spec-defined guided hobs that are available to component that wants it.
 
 ## Requirements
@@ -34,7 +38,8 @@ This proposal will use the existing `Storage` and `Config` logic from the `uefi_
 
 ## Prior Art
 
-Currently, each component that requires a HOB configuration parses the hoblist and configures itself prior to the `Core` being initialized. The configured and initialized component is then registered with the core.
+Currently, each component that requires a HOB configuration parses the hoblist and configures itself prior to the
+`Core` being initialized. The configured and initialized component is then registered with the core.
 
 ## Alternatives
 
@@ -42,7 +47,11 @@ N/A
 
 ## Rust Code Design
 
-Current design is that a struct that can be generated from a guided hob will implement a single trait. This trait allows the struct to specify the guid that should trigger this parse and provides one overridable method for generating `Self` from the byte slice. As `Config<T>` requires that `T` implement `Default`, this trait has a supertrait of `Default + 'static` to ensure that the generated `Self` meets the requirements to allow it to be registered as a config with Storage.
+Current design is that a struct that can be generated from a guided hob will implement a single trait. This trait
+allows the struct to specify the guid that should trigger this parse and provides one overridable method for
+generating `Self` from the byte slice. As `Config<T>` requires that `T` implement `Default`, this trait has a
+supertrait of `Default + 'static` to ensure that the generated `Self` meets the requirements to allow it to be
+registered as a config with Storage.
 
 ```rust
 // Current Design implementation
