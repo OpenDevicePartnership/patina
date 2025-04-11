@@ -587,6 +587,13 @@ fn core_load_pe_image(
     let alignment = pe_info.section_alignment as usize; // Need to align the base address with section alignment via overallocation
     let size = pe_info.size_of_image as usize;
 
+    // the section alignment must be at least the size of a page
+    if alignment % UEFI_PAGE_SIZE != 0 || alignment == 0 {
+        log::error!("core_load_pe_image_failed: section alignment of {:#x?} is not a positive multiple of page size {:#x?}", alignment, UEFI_PAGE_SIZE);
+        debug_assert!(false);
+        return Err(EfiError::LoadError);
+    }
+
     // the size of the image must be a multiple of the section alignment per PE/COFF spec
     if size % alignment != 0 {
         log::error!("core_load_pe_image_failed: size of image is not a multiple of the section alignment");
