@@ -442,7 +442,7 @@ where
         let guid = get_module_guid_from_handle(boot_services, caller_identifier as efi::Handle)
             .unwrap_or_else(|_| unsafe { *(caller_identifier as *const Guid) });
         let module_name = string.as_ref().map(String::as_str).unwrap_or("unkown name");
-        fbpt.lock().add_record(DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, &module_name))?;
+        fbpt.lock().add_record(DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, module_name))?;
         return Ok(());
     };
 
@@ -517,7 +517,7 @@ where
             // SAFETY: On these usecases, caller identifier is actually a guid. See macro for more detailed.
             // This strange behavior need to be kept for backward compatibility.
             let module_guid = unsafe { *(caller_identifier as *const efi::Guid) };
-            let string = string.as_ref().map(String::as_str).unwrap_or("unkown name");
+            let string = string.as_deref().unwrap_or("unkown name");
             let record = DynamicStringEventRecord::new(perf_id, 0, timestamp, module_guid, string);
             fbpt.lock().add_record(record)?;
         }
@@ -1182,11 +1182,6 @@ mod test {
         report_fpdt_record_buffer(ptr::null_mut(), Box::new((&boot_services, &runtime_services, &fbpt)));
 
         assert_eq!(memory_address, fbpt.lock().fbpt_address());
-    }
-
-    #[test]
-    fn test_fetch_and_add_smm_performance_records() {
-        // todo!()
     }
 
     #[test]
