@@ -589,7 +589,11 @@ fn core_load_pe_image(
 
     // the section alignment must be at least the size of a page
     if alignment % UEFI_PAGE_SIZE != 0 || alignment == 0 {
-        log::error!("core_load_pe_image_failed: section alignment of {:#x?} is not a positive multiple of page size {:#x?}", alignment, UEFI_PAGE_SIZE);
+        log::error!(
+            "core_load_pe_image_failed: section alignment of {:#x?} is not a (non-zero) multiple of page size {:#x?}",
+            alignment,
+            UEFI_PAGE_SIZE
+        );
         debug_assert!(false);
         return Err(EfiError::LoadError);
     }
