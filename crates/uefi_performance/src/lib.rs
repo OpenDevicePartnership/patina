@@ -47,9 +47,7 @@ use performance_record::{
 
 use mu_pi::hob::{Hob, HobList};
 
-use performance_measurement_protocol::{
-    EdkiiPerformanceMeasurement, EdkiiPerformanceMeasurementInterface, PerfAttribute, PerfId,
-};
+use performance_measurement_protocol::{EdkiiPerformanceMeasurement, PerfAttribute, PerfId};
 use performance_table::FBPT;
 
 use r_efi::system::EVENT_GROUP_READY_TO_BOOT;
@@ -67,7 +65,6 @@ use uefi_device_path::DevicePathWalker;
 use uefi_sdk::{
     boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
     guid,
-    protocol::{DevicePath, DriverBinding, LoadedImage},
     runtime_services::StandardRuntimeServices,
     tpl_mutex::TplMutex,
 };
@@ -114,12 +111,7 @@ pub fn init_performance_lib(
 
     // Install the protocol interfaces for DXE performance library instance.
     BOOT_SERVICES
-        .install_protocol_interface(
-            None,
-            &EdkiiPerformanceMeasurement,
-            Box::new(EdkiiPerformanceMeasurementInterface { create_performance_measurement }),
-        )
-        .map_err(|(_, err)| err)?;
+        .install_protocol_interface(None, Box::new(EdkiiPerformanceMeasurement { create_performance_measurement }))?;
 
     // Register EndOfDxe event to allocate the boot performance table and report the table address through status code.
     BOOT_SERVICES.create_event_ex(
@@ -140,10 +132,12 @@ pub fn init_performance_lib(
     )?;
 
     // Install configuration table for performance property.
-    BOOT_SERVICES.install_configuration_table(
-        &guid::PERFORMANCE_PROTOCOL,
-        Box::new(PerformanceProperty::new(Arch::perf_frequency(), Arch::cpu_count_start(), Arch::cpu_count_end())),
-    )?;
+    unsafe {
+        BOOT_SERVICES.install_configuration_table(
+            &guid::PERFORMANCE_PROTOCOL,
+            Box::new(PerformanceProperty::new(Arch::perf_frequency(), Arch::cpu_count_start(), Arch::cpu_count_end())),
+        )?
+    };
     Ok(())
 }
 
@@ -459,7 +453,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, sys
     }
 
     // SAFETY: This is safe because the reference returned by locate_protocol is never mutated after installation.
-    let Ok(communication) = (unsafe { BOOT_SERVICES.locate_protocol(&CommunicateProtocol, None) }) else {
+    let Ok(communication) = (unsafe { BOOT_SERVICES.locate_protocol::<CommunicateProtocol>(None) }) else {
         log::error!("Could not locate communicate protocol interface.");
         return;
     };
@@ -552,21 +546,23 @@ fn get_module_info_from_handle(
     let mut guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
 
     let loaded_image_protocol = 'find_loaded_image_protocol: {
-        if let Ok(loaded_image_protocol) = unsafe { boot_services.handle_protocol(handle, &LoadedImage) } {
+        if let Ok(loaded_image_protocol) =
+            unsafe { boot_services.handle_protocol::<efi::protocols::loaded_image::Protocol>(handle) }
+        {
             break 'find_loaded_image_protocol Some(loaded_image_protocol);
         }
         if let Ok(driver_binding_protocol) = unsafe {
-            boot_services.open_protocol(
+            boot_services.open_protocol::<efi::protocols::driver_binding::Protocol>(
                 handle,
-                &DriverBinding,
                 ptr::null_mut(),
                 ptr::null_mut(),
                 efi::OPEN_PROTOCOL_GET_PROTOCOL,
             )
         } {
-            if let Ok(loaded_image_protocol) =
-                unsafe { boot_services.handle_protocol(driver_binding_protocol.image_handle, &LoadedImage) }
-            {
+            if let Ok(loaded_image_protocol) = unsafe {
+                boot_services
+                    .handle_protocol::<efi::protocols::loaded_image::Protocol>(driver_binding_protocol.image_handle)
+            } {
                 break 'find_loaded_image_protocol Some(loaded_image_protocol);
             }
         }
@@ -586,7 +582,8 @@ fn get_module_info_from_handle(
             || perf_id == PerfId::MODULE_DB_SUPPORT_END
             || perf_id == PerfId::MODULE_DB_STOP_END
         {
-            let device_path_protocol = unsafe { boot_services.handle_protocol(controller_handle, &DevicePath) };
+            let device_path_protocol =
+                unsafe { boot_services.handle_protocol::<efi::protocols::device_path::Protocol>(controller_handle) };
             if let Ok(device_path_protocol) = device_path_protocol {
                 let device_path_string: String = unsafe { DevicePathWalker::new(device_path_protocol) }.into();
                 return Ok((Some(device_path_string), guid));

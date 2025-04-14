@@ -8,6 +8,7 @@
 //!
 
 use r_efi::efi;
+use uefi_sdk::protocol::ProtocolInterface;
 
 /// C struct for the Advanced Logger protocol version 2.
 #[repr(C)]
@@ -23,27 +24,12 @@ pub struct AdvancedLoggerProtocol {
     pub(crate) log_info: efi::PhysicalAddress,
 }
 
-/// Structure for registering and locating the Advanced Logger protocol.
-pub struct AdvancedLoggerProtocolRegister;
-
 /// Function definition for writing a log message to the Advanced Logger through
 /// the protocol.
 type AdvancedLoggerWrite = extern "efiapi" fn(*const AdvancedLoggerProtocol, usize, *const u8, usize) -> efi::Status;
 
-unsafe impl uefi_sdk::protocol::Protocol for AdvancedLoggerProtocolRegister {
-    type Interface = AdvancedLoggerProtocol;
-
-    fn protocol_guid(&self) -> &'static efi::Guid {
-        &AdvancedLoggerProtocol::GUID
-    }
-}
-
-impl core::ops::Deref for AdvancedLoggerProtocolRegister {
-    type Target = efi::Guid;
-
-    fn deref(&self) -> &Self::Target {
-        &AdvancedLoggerProtocol::GUID
-    }
+unsafe impl ProtocolInterface for AdvancedLoggerProtocol {
+    const PROTOCOL_GUID: efi::Guid = AdvancedLoggerProtocol::GUID;
 }
 
 impl AdvancedLoggerProtocol {
