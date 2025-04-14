@@ -8,7 +8,7 @@ registering itself with the core, and instead moves the parsing to the core.
 ## Change Log
 
 - 2025-04-09: Initial RFC created.
-- 2025-04-10: Rename `HobConfig` trait to `HobConfig`, `with_hob_parser` function to `with_hob_config`, `GUID` to
+- 2025-04-10: Rename `IntoConfig` trait to `HobConfig`, `with_hob_parser` function to `with_hob_config`, `GUID` to
   `HOB_GUID`.
 - 2025-04-10: Lock Config after registered.
 - 2025-04-10: Add hob parsing implementation.
