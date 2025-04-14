@@ -13,6 +13,7 @@ use core::{
     ffi::c_void,
     fmt::Debug,
     mem,
+    ops::Range,
     slice::{self, from_raw_parts_mut},
 };
 
@@ -223,6 +224,22 @@ impl Debug for MemoryDescriptorSlice<'_> {
     }
 }
 
+#[allow(dead_code)]
+/// Return a vector of the memory ranges owned by a particular allocator
+/// Returns an empty vector if the memory type is not found
+/// This function is used for compatibility mode code to set RWX attributes on memory ranges for Loader Code/Data,
+/// but it is not specific to compatibility mode, which is why it is marked as allow(dead_code) as opposed to behind
+/// the compatibility_mode_allowed feature flag. It is valid for other code to use this API in the absence of
+/// compatibility mode.
+pub(crate) fn get_memory_ranges_for_memory_type(memory_type: efi::MemoryType) -> Vec<Range<efi::PhysicalAddress>> {
+    for allocator in ALLOCATORS.lock().iter() {
+        if allocator.memory_type() == memory_type {
+            return allocator.get_memory_ranges().collect();
+        }
+    }
+    Vec::new()
+}
+
 // The following structure is used to track additional allocators that are created in response to allocation requests
 // that are not satisfied by the static allocators.
 static ALLOCATORS: tpl_lock::TplMutex<AllocatorMap> = AllocatorMap::new();
@@ -429,7 +446,7 @@ pub fn core_allocate_pages(
 
     let handle = AllocatorMap::handle_for_memory_type(memory_type)?;
 
-    match ALLOCATORS.lock().get_or_create_allocator(memory_type, handle) {
+    let res = match ALLOCATORS.lock().get_or_create_allocator(memory_type, handle) {
         Ok(allocator) => {
             let result = match allocation_type {
                 efi::ALLOCATE_ANY_PAGES => allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages),
@@ -452,7 +469,20 @@ pub fn core_allocate_pages(
             }
         }
         Err(err) => Err(err),
+    };
+
+    // If the memory type is runtime services code or data, we need to install the memory attributes table to reflect
+    // the update. The MAT logic will decide if it is a proper time to install the MAT or not.
+    match memory_type {
+        efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA => {
+            if res.is_ok() {
+                MemoryAttributesTable::install();
+            }
+        }
+        _ => {}
     }
+
+    res
 }
 
 extern "efiapi" fn free_pages(memory: efi::PhysicalAddress, pages: usize) -> efi::Status {
@@ -478,13 +508,31 @@ pub fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(),
 
     let allocators = ALLOCATORS.lock();
 
-    unsafe {
-        if allocators.iter().any(|allocator| allocator.free_pages(memory as usize, pages).is_ok()) {
+    let mut memory_type = efi::CONVENTIONAL_MEMORY;
+
+    let res = unsafe {
+        if allocators.iter().any(|allocator| {
+            memory_type = allocator.memory_type();
+            allocator.free_pages(memory as usize, pages).is_ok()
+        }) {
             Ok(())
         } else {
             Err(EfiError::NotFound)
         }
+    };
+
+    // If the memory type is runtime services code or data, we need to install the memory attributes table to reflect
+    // the update. The MAT logic will decide if it is a proper time to install the MAT or not.
+    match memory_type {
+        efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA => {
+            if res.is_ok() {
+                MemoryAttributesTable::install();
+            }
+        }
+        _ => {}
     }
+
+    res
 }
 
 extern "efiapi" fn copy_mem(destination: *mut c_void, source: *mut c_void, length: usize) {
@@ -676,48 +724,6 @@ pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
     }
 }
 
-// This is temporarily dead code, but will be used by mu-paging. This API just needs to be in place before we
-// can move in the mu-paging crate.
-#[allow(dead_code)]
-pub(crate) fn ensure_capacity(memory_type: efi::MemoryType, size: usize, align: usize) -> Result<(), EfiError> {
-    // get a handle, in case we have to create a new allocator
-    let handle = match AllocatorMap::handle_for_memory_type(memory_type) {
-        Ok(handle) => handle,
-        Err(err) => {
-            log::error!("[{}] failed to get a handle for memory type {:#x?}: {:#x?}", function!(), memory_type, err);
-            return Err(err);
-        }
-    };
-
-    // find the associated allocator and call the ensure_capacity method
-    match ALLOCATORS.lock().get_or_create_allocator(memory_type, handle) {
-        Ok(allocator) => {
-            if let Err(err) = allocator.ensure_capacity(size, align) {
-                log::error!(
-                    "[{}] failed to ensure {:#x?} bytes with alignment {:#x?} in memory_type {:#x?} with status {:#x?}",
-                    function!(),
-                    size,
-                    align,
-                    memory_type,
-                    err
-                );
-                return Err(err);
-            }
-        }
-        Err(err) => {
-            log::error!(
-                "[{}] failed to get an allocator for memory type {:#x?} with status {:#x?}",
-                function!(),
-                memory_type,
-                err
-            );
-            return Err(err);
-        }
-    }
-
-    Ok(())
-}
-
 static mut MEMORY_TYPE_INFO_TABLE: [EFiMemoryTypeInformation; 17] = [
     EFiMemoryTypeInformation { memory_type: efi::RESERVED_MEMORY_TYPE, number_of_pages: 0 },
     EFiMemoryTypeInformation { memory_type: efi::LOADER_CODE, number_of_pages: 0 },
@@ -754,11 +760,6 @@ static mut MEMORY_TYPE_INFO_TABLE: [EFiMemoryTypeInformation; 17] = [
 // Generally - be very cautious about any allocations performed with this callback. There be dragons.
 //
 fn page_change_callback(allocator: &mut FixedSizeBlockAllocator) {
-    match allocator.memory_type() {
-        efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA => MemoryAttributesTable::install(allocator),
-        _ => (),
-    }
-
     // Update MEMORY_TYPE_INFO_TABLE.
     unsafe {
         // Custom Memory types (higher than EfiMaxMemoryType) are not tracked.

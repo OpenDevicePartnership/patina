@@ -1,8 +1,11 @@
 #![allow(unused)]
 /// Architecture independent public C EFI Memory Attributes Protocol definition.
-use crate::{dxe_services, protocols::PROTOCOL_DB};
+use crate::{dxe_services, protocol_db, protocols::PROTOCOL_DB};
 use alloc::boxed::Box;
-use core::ffi::c_void;
+use core::{
+    ffi::c_void,
+    sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
+};
 use mu_rust_helpers::function;
 use r_efi::efi;
 use uefi_sdk::{base::UEFI_PAGE_MASK, error::EfiError};
@@ -189,6 +192,9 @@ impl EfiMemoryAttributesProtocolImpl {
     }
 }
 
+static MEMORY_ATTRIBUTES_PROTOCOL_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+static MEMORY_ATTRIBUTES_PROTOCOL_INTERFACE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+
 /// This function is called by the DXE Core to install the protocol.
 pub(crate) fn install_memory_attributes_protocol() {
     let protocol = EfiMemoryAttributesProtocolImpl::new();
@@ -196,7 +202,43 @@ pub(crate) fn install_memory_attributes_protocol() {
     // Convert the protocol to a raw pointer and store it in to protocol DB
     let interface = Box::into_raw(Box::new(protocol));
     let interface = interface as *mut c_void;
+    MEMORY_ATTRIBUTES_PROTOCOL_INTERFACE.store(interface, Ordering::SeqCst);
 
-    let _ = PROTOCOL_DB.install_protocol_interface(None, efi::protocols::memory_attribute::PROTOCOL_GUID, interface);
-    log::info!("installed MEMORY_ATTRIBUTES_PROTOCOL_GUID");
+    match PROTOCOL_DB.install_protocol_interface(None, efi::protocols::memory_attribute::PROTOCOL_GUID, interface) {
+        Ok((handle, _)) => unsafe {
+            MEMORY_ATTRIBUTES_PROTOCOL_HANDLE.store(handle, Ordering::SeqCst);
+        },
+        Err(e) => {
+            log::error!("Failed to install MEMORY_ATTRIBUTES_PROTOCOL_GUID: {:?}", e);
+        }
+    }
+}
+
+#[cfg(feature = "compatibility_mode_allowed")]
+/// This function is called in compatibility mode to uninstall the protocol.
+pub(crate) fn uninstall_memory_attributes_protocol() {
+    unsafe {
+        match (
+            MEMORY_ATTRIBUTES_PROTOCOL_HANDLE.load(Ordering::SeqCst),
+            MEMORY_ATTRIBUTES_PROTOCOL_INTERFACE.load(Ordering::SeqCst),
+        ) {
+            (handle, interface) if handle != protocol_db::INVALID_HANDLE && !interface.is_null() => {
+                match PROTOCOL_DB.uninstall_protocol_interface(
+                    handle,
+                    efi::protocols::memory_attribute::PROTOCOL_GUID,
+                    interface,
+                ) {
+                    Ok(_) => {
+                        log::info!("uninstalled MEMORY_ATTRIBUTES_PROTOCOL_GUID");
+                    }
+                    Err(e) => {
+                        log::error!("Failed to uninstall MEMORY_ATTRIBUTES_PROTOCOL_GUID: {:?}", e);
+                    }
+                }
+            }
+            _ => {
+                log::error!("MEMORY_ATTRIBUTES_PROTOCOL_GUID was not installed");
+            }
+        }
+    }
 }

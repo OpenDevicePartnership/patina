@@ -20,6 +20,7 @@
 - [Formatting](dev/formatting.md)
 - [Documenting](dev/documenting.md)
   - [Quick Reference](dev/documenting/reference.md)
+- [RFC Template](rfc/template.md)
 - [Other Resources](dev/other.md)
 
 # Integrating the Rust DXE Core

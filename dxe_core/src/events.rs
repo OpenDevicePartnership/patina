@@ -344,6 +344,7 @@ pub fn init_events_support(bs: &mut efi::BootServices) {
 mod tests {
     use super::*;
     use crate::test_support;
+    use std::ptr;
     use std::sync::atomic::Ordering;
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
@@ -351,6 +352,195 @@ mod tests {
             f();
         })
         .unwrap();
+    }
+
+    extern "efiapi" fn test_notify(_event: efi::Event, _context: *mut c_void) {}
+
+    #[test]
+    fn test_create_event_null_event_pointer() {
+        with_locked_state(|| {
+            let result = create_event(0, efi::TPL_APPLICATION, None, ptr::null_mut(), ptr::null_mut());
+
+            assert_eq!(result, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_create_event_success() {
+        with_locked_state(|| {
+            let mut event: efi::Event = ptr::null_mut();
+            let result = create_event(0, efi::TPL_APPLICATION, None, ptr::null_mut(), &mut event);
+
+            assert_eq!(result, efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn test_create_event_with_notify_context() {
+        with_locked_state(|| {
+            let mut event: efi::Event = ptr::null_mut();
+            let context = Box::into_raw(Box::new(42)) as *mut c_void;
+            let result = create_event(0, efi::TPL_APPLICATION, None, context, &mut event);
+
+            assert_eq!(result, efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn test_create_event_with_notify_function() {
+        with_locked_state(|| {
+            let mut event: efi::Event = ptr::null_mut();
+            let notify_fn: Option<efi::EventNotify> = Some(test_notify);
+            let result = create_event(efi::EVT_NOTIFY_WAIT, efi::TPL_CALLBACK, notify_fn, ptr::null_mut(), &mut event);
+
+            assert_eq!(result, efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn test_create_event_virtual_address_change() {
+        with_locked_state(|| {
+            let mut event: efi::Event = ptr::null_mut();
+
+            let notify_fn: Option<efi::EventNotify> = Some(test_notify);
+
+            let result = create_event(
+                efi::EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
+                efi::TPL_CALLBACK,
+                notify_fn,
+                ptr::null_mut(),
+                &mut event,
+            );
+
+            assert_eq!(result, efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn test_create_event_ex_null_event() {
+        with_locked_state(|| {
+            let result = create_event_ex(0, efi::TPL_APPLICATION, None, ptr::null(), ptr::null(), ptr::null_mut());
+
+            assert_eq!(result, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_create_event_ex_with_event_group() {
+        with_locked_state(|| {
+            let mut event: efi::Event = ptr::null_mut();
+            let event_guid: efi::Guid =
+                efi::Guid::from_fields(0x87a2e5d9, 0xc34f, 0x4b21, 0x8e, 0x57, &[0x1a, 0xf9, 0x3c, 0x82, 0xd7, 0x6b]);
+            let notify_fn: Option<efi::EventNotify> = Some(test_notify);
+            let result = create_event_ex(
+                efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_CALLBACK,
+                notify_fn,
+                ptr::null(),
+                &event_guid,
+                &mut event,
+            );
+
+            assert_eq!(result, efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn test_close_event() {
+        with_locked_state(|| {
+            let mut event: efi::Event = ptr::null_mut();
+            let notify_fn: Option<efi::EventNotify> = Some(test_notify);
+            let _ = create_event(
+                efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_NOTIFY,
+                notify_fn,
+                ptr::null_mut(),
+                &mut event,
+            );
+
+            let result = EVENT_DB.close_event(event);
+
+            assert!(result.is_ok());
+            assert!(!EVENT_DB.is_valid(event));
+        });
+    }
+
+    #[test]
+    fn test_signal_event() {
+        with_locked_state(|| {
+            let mut event: efi::Event = ptr::null_mut();
+            let notify_fn: Option<efi::EventNotify> = Some(test_notify);
+            let _ = create_event(
+                efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_NOTIFY,
+                notify_fn,
+                ptr::null_mut(),
+                &mut event,
+            );
+            let result = signal_event(event);
+
+            assert_eq!(result, efi::Status::SUCCESS);
+            assert!(EVENT_DB.read_and_clear_signaled(event).is_ok());
+        });
+    }
+
+    #[test]
+    fn test_timer_delay_relative_basic() {
+        with_locked_state(|| {
+            let mut event: efi::Event = ptr::null_mut();
+            let notify_fn: Option<efi::EventNotify> = Some(test_notify);
+
+            let result = create_event(
+                efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_NOTIFY,
+                notify_fn,
+                ptr::null_mut(),
+                &mut event,
+            );
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            let initial_time = 1000u64;
+            SYSTEM_TIME.store(initial_time, Ordering::SeqCst);
+
+            let wait_time = 500u64;
+            let result = set_timer(event, 1 /* TimerDelay::Relative */, wait_time);
+            assert_eq!(result, efi::Status::SUCCESS);
+        })
+    }
+
+    #[test]
+    fn test_timer_delay_error_handling() {
+        with_locked_state(|| {
+            // Test with invalid event
+            let invalid_event: efi::Event = ptr::null_mut();
+            let result = set_timer(invalid_event, 1 /* TimerDelay::Relative */, 100);
+
+            // Should return an error status
+            assert_ne!(result, efi::Status::SUCCESS);
+
+            // Test with invalid timer time
+            let mut event: efi::Event = ptr::null_mut();
+            let notify_fn: Option<efi::EventNotify> = Some(test_notify);
+
+            // Create timer event
+            let result = create_event(
+                efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_NOTIFY,
+                notify_fn,
+                ptr::null_mut(),
+                &mut event,
+            );
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            // Set timer with an invalid timer type
+            let invalid_timer_type = 10; // Any value not defined in TimerDelay enum
+            let result = set_timer(event, invalid_timer_type, 100);
+
+            // Should return an error status
+            assert_ne!(result, efi::Status::SUCCESS);
+
+            let _ = EVENT_DB.close_event(event);
+        });
     }
 
     #[test]
