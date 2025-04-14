@@ -1,9 +1,9 @@
-# RFC: `Guided Hob to Config<T>`
+# RFC: `Guided Hob to Hob<T>`
 
 This is a request for comments for a design to allow a platform to register functionality with the core that will parse
-a guided hob into a specific struct and register that struct instance with the Core to be accessible as a `Config<T>`
-or `ConfigMut<T>`. This implementation will remove the need for a Component to parse the hoblist manually before
-registering itself with the core, and instead moves the parsing to the core.
+a guided hob into a specific struct and register that struct instance with the Core to be accessible as a `Hob<T>`
+struct. This implementation will remove the need for a Component to parse the hoblist manually before registering
+itself with the core, and instead moves the parsing to the core.
 
 ## Change Log
 
@@ -13,6 +13,8 @@ registering itself with the core, and instead moves the parsing to the core.
 - 2025-04-10: Lock Config after registered.
 - 2025-04-10: Add hob parsing implementation.
 - 2025-04-14: Add function to allow core to register a default list of hob parsers
+- 2025-04-14: Move from conversion from `Config<T>` to a new Param `Hob<T>` to support multiple instances of the same
+  guided HOB, and to be able to remove the need to register HOBs with the core.
 
 ## Motivation
 
@@ -31,12 +33,10 @@ This proposal will use the existing `Storage` and `Config` logic from the `uefi_
 1. Enable a simple interface for component dependency injectable configuration to be produced via a guided hob in the
    hoblist
 2. Create core / uefi-sdk `T`'s for standard spec-defined guided hobs that are available to component that wants it.
-3. Have a default set of hob parsers added by the core.
 
 ## Requirements
 
-1. One line registration with the core of expected guided HOBs and their generated struct
-2. Should the Trait `parse` method return a result, an option, or just Self?
+1. Automatic parsing of guided hobs to be used by components.
 
 ## Unresolved Questions
 
@@ -55,9 +55,12 @@ N/A
 
 Current design is that a struct that can be generated from a guided hob will implement a single trait. This trait
 allows the struct to specify the guid that should trigger this parse and provides one overridable method for
-generating `Self` from the byte slice. As `Config<T>` requires that `T` implement `Default`, this trait has a
-supertrait of `Default + 'static` to ensure that the generated `Self` meets the requirements to allow it to be
-registered as a config with Storage.
+generating `Self` from the byte slice. This `Self` is added to the storage. These values will be accessable to
+components via the `Hob<T>` struct, which is a dependency injectable param. The `Hob<T>` holds `1..N` instances of
+the guided hob value, depending on how many were passed via the hob list. Users can access the first value by
+dereferencing the provided instance or they can iterate through all instances using the `IntoIterator` trait
+implementation. `Hob<T>` parser implementations are registered automatically with `Storage` when a component that has
+a `Hob<T>` in it's param list is registered, so there is no need for users to manually register any hob parsers.
 
 ```rust
 // Current Design implementation
@@ -67,55 +70,79 @@ registered as a config with Storage.
 use uefi_sdk::component::Storage;
 use refi::efi::Guid
 
-pub trait HobConfig: Default + 'static {
+pub trait FromHob: Sized + 'static {
     const HOB_GUID: Guid::from_fields(...);
 
-    fn register_config(bytes: &[u8], storage: &mut Storage) {
-        storage.add_config(Self::parse(bytes));
-        storage.lock_config::<Self>();
+    fn register(bytes: &[u8], storage: &mut Storage) {
+        storage.add_hob(Self::parse(bytes))
     }
 
     fn parse(bytes: &[u8]) -> Self;
 }
 
-/* ----- In lib.rs ------ */
-
-struct Core {
-    hob_list: HobList<'static>,
-    hob_parsers: BTreeMap<Guid, fn(&[u8], &mut Storage)>
+pub struct Hob<'h, T: FromHob + 'static> {
+    value: &'h [Box<dyn Any>]
+    _marker: core::marker::PhantomData<T>
 }
+
+impl<'h, H: FromHob + 'static> Hob<'h, T> {
+    pub fn mock(value: Vec<T>) -> Self {}
+    pub fn iter(&self) => HobIter<'h, T> {}
+}
+
+impl<'h, H: FromHob + 'static> From<&'h [Box<dyn Any>]> {
+    fn from(value: &'h [Box<dyn Any>]) -> Self { }
+}
+
+// Access the first entry
+impl<'h H: FromHob + 'static> Deref for Hob<'h, H> {
+    type Target = H;
+
+    fn deref(&self) -> &Self::Target {}
+}
+
+impl <'h, H: FromHob + 'static> IntoIterator for &Hob<'h, H> {
+    type Item = &'h T;
+    type IntoIter = HobIter<'h, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+pub struct HobIter<'h, H> {
+    inner: core::slice::Iter<'h, Box<dyn Any>>,
+    _marker: core::marker::PhantomData<H>,
+}
+
+impl<'h, H: FromHob + 'static> Iterator for HobIter<'h, H> {
+    type Item = &'h H;
+
+    fn next(&mut self) -> Option<Self::Item> {}
+}
+
+struct Storage {
+    hob_parsers: BTreeMap<Guid, fn(&[u8], &mut Storage)>,
+    hobs: SparseVec<Vec<Box<dyn Any>>>,
+    hob_indicies: BTreeMap<TypeId, usize>,
+}
+
+impl Storage {
+    pub fn parse_hobs(&mut self, hobs: &HobList) {}
+    pub(crate) fn add_hob_parser<H: FromHob>(&mut self) {}
+    pub(crate) fn register_hob<H: FromHob>(&mut self) {}
+    pub(crate) fn get_or_register_hob(&mut self, id: TypeId) -> usize {}
+    pub(crate) fn add_hob<H: FromHob>(&mut self, hob: H) {}
+    pub fn get_hob<'a, H: FromHob>(&self) -> Hob<'a, T> {}
+}
+
+/* ----- In lib.rs ------ */
 
 // Shortened impl for brevity - But this is for post init_memory()
 impl Core {
 
-    pub fn with_hob_config<T: HobConfig>(&mut self) {
-        self.hob_parsers.insert(T::HOB_GUID, T::register_config)
-    }
-
-    fn add_default_hob_configs(&mut self)  {
-        self.with_hob_config::<A>();
-        self.with_hob_config::<B>();
-        self.with_hob_config::<C>();
-    }
-
-    fn parse_hobs_to_config(&mut self) {
-        for hob in self.hob_list.iter() {
-            if let mu_pi::hob::Hob::GuidHob(guid, data) = hob {
-                match self.hob_config_parsers.get(&guid.name) {
-                    Some(parser) => {
-                        parser(data, &mut self.storage);
-                    }
-                    None => {
-                        log::warn!("No parser registered for HOB: {:?}", guid);
-                    }
-                }
-            }
-        }
-    }
-
     pub fn start(mut self) -> Result<()> {
-        self.add_default_hob_configs();
-        self.parse_hobs_to_config();
+        self.storage.parse_hobs(self.hob_list)
 
         /* Continue */
     }
@@ -128,7 +155,7 @@ impl Core {
     #[derive(Debug)]
     struct MyHobConfig;
 
-    impl HobConfig for MyHobConfig {
+    impl FromHob for MyHobConfig {
         const HOB_GUID: Guid = /* guid */
         fn parse(&[u8]) -> Self {
             // Parse bytes into struct however you want
@@ -140,11 +167,14 @@ impl Core {
     #[hob = "8be4df61-93ca-11d2-aa0d-00e098032b8c"]
     struct MyOtherHobConfig;
 
+    fn my_component(hob: Hob<MyOtherHobConfig>) -> Result<()> {
+
+    }
+
     // In entry point
     Core::default()
         .init_memory(physical_hobList)
-        .with_hob_config::<MyHobConfig>()
-        .with_hob_config::<MyOtherHobConfig>()
+        .with_component(my_component) // Storage registers the hob parser for `MyOtherHobConfig`, which will run
         .start()
         .unwrap()
 ```
