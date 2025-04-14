@@ -1,6 +1,6 @@
-# RFC: Create Stable Memory Management API/Service
+# RFC: Memory Management Interface
 
-To support scaling both within the core and with the create of Components, stable APIs
+To support scaling both within the core and throughout Components, stable APIs
 must be created for all functionality provided by the core. This RFC proposes the
 creation of a `MemoryManager` trait within uefi-sdk to act as the common interface
 for all externally available memory APIs.
@@ -11,6 +11,7 @@ for all externally available memory APIs.
 - 2024-04-07: Changes AllocationOptions to not use implementation defined defaults.
 - 2024-04-07: Further clarification on the `HeapAllocator` type.
 - 2024-04-09: Removed HeapAllocator, added more details on other types.
+- 2024-04-14: Removed panic wrappers for PageAllocation, added slice wrappers.
 
 ## Motivation
 
@@ -54,7 +55,7 @@ and the UEFI Memory attributes protocol. These are used to establish existing us
 cases but should be improved upon by taking advantage of rust to create a safer and
 more extensible API.
 
-For allocation management, use [Allocator trait](https://doc.rust-lang.org/std/alloc/trait.Allocator.html)
+For allocation management, the [Allocator trait](https://doc.rust-lang.org/std/alloc/trait.Allocator.html)
 can be referenced for prior art on abstracting arbitrary allocations.
 
 ## Alternatives
@@ -62,7 +63,7 @@ can be referenced for prior art on abstracting arbitrary allocations.
 There are a large number of possible ways the specific interface could be implemented,
 but the most significant alternative evaluated is related to the services paradigm
 for core services such as memory management. The alternative to this would be using
-statis routines.
+static routines.
 
 ### Static Routines
 
@@ -74,7 +75,7 @@ on the implementation. These static routines could be implemented in the core or
 in the SDK wrapping a global dyn reference.
 
 Exposing this from the core would additionally mean that the components must take
-dependency on a specific implementation would only further complicate the testing
+dependency on a specific implementation that would only further complicate the testing
 story and makes it difficult for the core to refactor this logic in the future
 without breaking components.
 
@@ -174,9 +175,9 @@ impl PageAllocation {
     pub fn into_raw_ptr<T>(self) -> *mut T { ... }
     pub fn page_count(&self) -> usize { ... }
     pub fn try_into_box<T>(self, value: T) -> Option<Box<T, PageFree>> { ... }
-    pub fn into_box<T>(self, value: T) -> Box<T, PageFree> { ... }
+    pub fn into_boxed_slice<T: Default>(self) -> Box<[T], PageFree> { ... }
     pub fn try_leak_as<T>(self, value: T) -> Option<&'static T> { ... }
-    pub fn leak_as<T>(self, value: T) -> &'static T { ... }
+    pub fn leak_as_slice<T: Default>(self) -> &'static [T] { ... }
 }
 
 ```
@@ -248,13 +249,13 @@ pub fn component (memory_manager: Service<dyn MememoryManager>) ->Result<()> {
 
 ### Page Allocations
 
-with the memory manager, the component can allocate typed memory, pages, and otherwise
+With the memory manager, a component can allocate typed memory, pages, and otherwise
 alter/inspect memory state. A common use case of this would be allocate memory pages.
-Allocations can be initialized as several different types; smart pointers, static types,
+Allocations can be initialized as several different types: smart pointers, static types,
 or raw pointers.
 
 ```rust
-// Create a boxed type, this will be free'd automatically.
+// Create a boxed type, this will be freed automatically.
 let allocation = memory_manager.allocate_pages(1, AllocationOptions::default())?;
 let boxed_u32 = allocation.into_box(42_u32);
 
@@ -275,15 +276,19 @@ as memory type or alignment. Additional constraints may be specified through the
 `AllocationOptions` parameter using the `.with_` routine to override default values.
 
 ```rust
-let options = AllocationOptions::default().with_memory_type(EfiMemoryType::BootServicesData).with_alignment(0x2000);
+let options = AllocationOptions::default()
+    .with_memory_type(EfiMemoryType::BootServicesData)
+    .with_alignment(0x2000);
+
 let allocation = memory_manager.allocate_pages(1, options)?;
 ```
 
 ### Heap Allocations
 
 Another use case of the memory manager is to make heap allocations within a specific memory
-type. This is done by first acquiring the `Allocator` then using the heap allocator to
-create object.
+type. For allocation occuring with the bootServicesData, the global allocator can be used
+through the default allocations like `Box::new(T)` This is done by first acquiring the `Allocator`
+then using the heap allocator to create object.
 
 ```rust
 let allocator = memory_manager.get_allocator(EfiMemoryType::EfiBootServicesData)?;
@@ -305,7 +310,7 @@ routines.
 // Change a page to be inaccessible, leaving the caching unchanged.
 memory_manager.set_page_attributes(address, 1, AccessType::NoAccess, None)?;
 
-// Check that the access type was changes
+// Check that the access type was changed
 let (access, caching) = memory_manager.get_page_attributes(address, 1)?;
 assert!(access = AccessType::NoAccess);
 ```
