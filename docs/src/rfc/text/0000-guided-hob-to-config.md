@@ -88,7 +88,7 @@ struct Core {
 // Shortened impl for brevity - But this is for post init_memory()
 impl Core {
 
-    fn with_hob_config<T: HobConfig>(&mut self) {
+    pub fn with_hob_config<T: HobConfig>(&mut self) {
         self.hob_parsers.insert(T::HOB_GUID, T::register_config)
     }
 
@@ -113,7 +113,7 @@ impl Core {
         }
     }
 
-    fn start(mut self) -> Result<()> {
+    pub fn start(mut self) -> Result<()> {
         self.add_default_hob_configs();
         self.parse_hobs_to_config();
 
