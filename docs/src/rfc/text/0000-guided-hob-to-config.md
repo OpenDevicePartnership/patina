@@ -12,6 +12,7 @@ registering itself with the core, and instead moves the parsing to the core.
   `HOB_GUID`.
 - 2025-04-10: Lock Config after registered.
 - 2025-04-10: Add hob parsing implementation.
+- 2025-04-14: Add function to allow core to register a default list of hob parsers
 
 ## Motivation
 
@@ -30,6 +31,7 @@ This proposal will use the existing `Storage` and `Config` logic from the `uefi_
 1. Enable a simple interface for component dependency injectable configuration to be produced via a guided hob in the
    hoblist
 2. Create core / uefi-sdk `T`'s for standard spec-defined guided hobs that are available to component that wants it.
+3. Have a default set of hob parsers added by the core.
 
 ## Requirements
 
@@ -90,6 +92,12 @@ impl Core {
         self.hob_parsers.insert(T::HOB_GUID, T::register_config)
     }
 
+    fn add_default_hob_configs(&mut self)  {
+        self.with_hob_config::<A>();
+        self.with_hob_config::<B>();
+        self.with_hob_config::<C>();
+    }
+
     fn parse_hobs_to_config(&mut self) {
         for hob in self.hob_list.iter() {
             if let mu_pi::hob::Hob::GuidHob(guid, data) = hob {
@@ -106,6 +114,7 @@ impl Core {
     }
 
     fn start(mut self) -> Result<()> {
+        self.add_default_hob_configs();
         self.parse_hobs_to_config();
 
         /* Continue */
