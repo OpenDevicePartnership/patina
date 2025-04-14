@@ -173,6 +173,8 @@ pub struct PageAllocation {
 
 impl PageAllocation {
     pub fn into_raw_ptr<T>(self) -> *mut T { ... }
+    pub fn into_raw_slice<T>(self) -> *mut [T] { ... }
+    pub fn byte_length(&self) -> usize { ... }
     pub fn page_count(&self) -> usize { ... }
     pub fn try_into_box<T>(self, value: T) -> Option<Box<T, PageFree>> { ... }
     pub fn into_boxed_slice<T: Default>(self) -> Box<[T], PageFree> { ... }
@@ -227,11 +229,11 @@ pub enum CachingType {
 ```
 
 These definitions were chosen to more accurate reflect hardware then the definitions
-currently used in the UEFI specification. Notable, there is no current notion of
+currently used in the UEFI specification. Notably, there is no current notion of
 what memory is "capable" of, but only what is actually configured. Additionally,
 There is no concept of "read-protect" as this does not accurate reflect what hardware
 supports. Instead `NoAccess` was chosen as the implementation will treat this as
-unmapped and so it does not make sense to allow this in conjuction with other
+unmapped and so it does not make sense to allow this in conjunction with other
 protections.
 
 ## Guide-Level Explanation
