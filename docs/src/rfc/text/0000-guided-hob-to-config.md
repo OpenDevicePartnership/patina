@@ -175,7 +175,7 @@ impl Core {
     // In entry point
     Core::default()
         .init_memory(physical_hobList)
-        .with_component(my_component) // Storage registers the hob parser for `MyOtherHobConfig`, which will run
+        .with_component(my_component) // This automatically registers the hob parser for `MyOtherHobConfig`
         .start()
         .unwrap()
 ```
