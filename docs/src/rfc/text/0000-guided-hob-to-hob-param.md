@@ -16,6 +16,7 @@ itself with the core, and instead moves the parsing to the core.
 - 2025-04-14: Move from conversion from `Config<T>` to a new Param `Hob<T>` to support multiple instances of the same
   guided HOB, and to be able to remove the need to register HOBs with the core. Update `HobConfig` to `FromHob`.
   Remove `with_hob_config`.
+- 2025-04-14: Move `parse_hobs` logic into core, to callers with access to `Storage` from using `parse_hobs`
 
 ## Motivation
 
@@ -129,13 +130,13 @@ struct Storage {
 }
 
 impl Storage {
-    pub fn parse_hobs(&mut self, hobs: &HobList) {}
     pub(crate) fn add_hob_parser<H: FromHob>(&mut self) {}
     pub(crate) fn register_hob<H: FromHob>(&mut self) {}
     pub(crate) fn get_or_register_hob(&mut self, id: TypeId) -> usize {}
     pub(crate) fn add_hob<H: FromHob>(&mut self, hob: H) {}
     pub(crate) fn get_raw_hob(&self, id: usize) -> &[Box<dyn Any>] {}
-    pub fn get_hob<'a, T: FromHob>(&self) -> Hob<'a, T> {}
+    pub fn get_hob<'a, T: FromHob>(&self) -> Option<Hob<'a, T>> {}
+    pub fn get_hob_parser(&self, guid: &Guid) -> Option<fn(&[u8], &mut Storage)>
 }
 
 /* ----- In lib.rs ------ */
@@ -143,8 +144,10 @@ impl Storage {
 // Shortened impl for brevity - But this is for post init_memory()
 impl Core {
 
+    pub fn parse_hobs(&mut self) -> Result<()> {}
+
     pub fn start(mut self) -> Result<()> {
-        self.storage.parse_hobs(self.hob_list)
+        self.parse_hobs(self.hob_list)
 
         /* Continue */
     }
