@@ -133,7 +133,8 @@ impl Storage {
     pub(crate) fn register_hob<H: FromHob>(&mut self) {}
     pub(crate) fn get_or_register_hob(&mut self, id: TypeId) -> usize {}
     pub(crate) fn add_hob<H: FromHob>(&mut self, hob: H) {}
-    pub fn get_hob<'a, H: FromHob>(&self) -> Hob<'a, T> {}
+    pub(crate) fn get_raw_hob(&self, id: usize) -> &[Box<dyn Any>] {}
+    pub fn get_hob<'a, T: FromHob>(&self) -> Hob<'a, T> {}
 }
 
 /* ----- In lib.rs ------ */
