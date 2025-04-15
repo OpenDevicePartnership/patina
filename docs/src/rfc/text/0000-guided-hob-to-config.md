@@ -14,7 +14,8 @@ itself with the core, and instead moves the parsing to the core.
 - 2025-04-10: Add hob parsing implementation.
 - 2025-04-14: Add function to allow core to register a default list of hob parsers
 - 2025-04-14: Move from conversion from `Config<T>` to a new Param `Hob<T>` to support multiple instances of the same
-  guided HOB, and to be able to remove the need to register HOBs with the core.
+  guided HOB, and to be able to remove the need to register HOBs with the core. Update `HobConfig` to `FromHob`.
+  Remove `with_hob_config`.
 
 ## Motivation
 
@@ -164,7 +165,7 @@ impl Core {
         }
     }
 
-    #[derive(HobConfig, Debug, Clone, Copy)]
+    #[derive(FromHob, Debug, Clone, Copy)]
     #[hob = "8be4df61-93ca-11d2-aa0d-00e098032b8c"]
     struct MyOtherHobConfig;
 
@@ -182,6 +183,6 @@ impl Core {
 
 ## Guide-Level Explanation
 
-1. `HobConfig` The trait responsible for converting a byte array into a specific struct
+1. `FromHob` The trait responsible for converting a byte array into a specific struct
 2. `Storage` Internal storage that contains all configuration (among other things)
 3. `Core` The DxeCore which is a two phased system - pre_mem and post_mem
