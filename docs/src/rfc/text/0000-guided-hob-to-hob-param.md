@@ -16,7 +16,7 @@ itself with the core, and instead moves the parsing to the core.
 - 2025-04-14: Move from conversion from `Config<T>` to a new Param `Hob<T>` to support multiple instances of the same
   guided HOB, and to be able to remove the need to register HOBs with the core. Update `HobConfig` to `FromHob`.
   Remove `with_hob_config`.
-- 2025-04-14: Move `parse_hobs` logic into core, to callers with access to `Storage` from using `parse_hobs`
+- 2025-04-15: Move `parse_hobs` logic into core, to callers with access to `Storage` from using `parse_hobs`
 
 ## Motivation
 
