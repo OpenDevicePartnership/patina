@@ -392,10 +392,10 @@ where
         let system_table_ptr;
         {
             let mut st = systemtables::SYSTEM_TABLE.lock();
-            boot_services_ptr = st.as_mut().unwrap().boot_services_mut() as *mut efi::BootServices;
-            runtime_services_ptr = st.as_mut().unwrap().runtime_services_mut() as *mut efi::RuntimeServices;
-            system_table_ptr =
-                st.as_ref().expect("System Table not initialized!").system_table() as *const efi::SystemTable;
+            let st = st.as_mut().expect("System Table is not initialized!");
+            boot_services_ptr = st.boot_services_mut() as *mut efi::BootServices;
+            runtime_services_ptr = st.runtime_services_mut() as *mut efi::RuntimeServices;
+            system_table_ptr = st.system_table() as *const efi::SystemTable;
         }
 
         tpl_lock::init_boot_services(boot_services_ptr);
@@ -412,13 +412,13 @@ where
             unsafe { system_table_ptr.as_ref() }.expect("System Table not initialized!"),
         );
 
-        self.storage.boot_services = Some(unsafe {
-            StandardBootServices::new(boot_services_ptr.as_ref().expect("Boot Services not initialized!"))
-        });
-        self.storage.runtime_services = Some(unsafe {
-            StandardRuntimeServices::new(runtime_services_ptr.as_ref().expect("Runtime Services not initialized!"))
-        });
-
+        // Add Boot Services and Runtime Services to storage.
+        // SAFETY: This is valid because these pointer live thoughout the boot.
+        // Note: I had to use the ptr instead of locking the table which event though is static does not seems to return static refs. Need to investigate.
+        unsafe {
+            self.storage.set_boot_services(StandardBootServices::new(&*boot_services_ptr));
+            self.storage.set_runtime_services(StandardRuntimeServices::new(&*runtime_services_ptr));
+        }
         Core {
             cpu_init: self.cpu_init,
             section_extractor: self.section_extractor,
