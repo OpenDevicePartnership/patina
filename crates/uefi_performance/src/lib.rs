@@ -258,9 +258,12 @@ extern "efiapi" fn create_performance_measurement(
 
     match perf_id {
         PerfId::MODULE_START | PerfId::MODULE_END => {
-            if let Ok((_, guid)) =
-                get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void, controller_handle, perf_id)
-            {
+            if let Ok((_, guid)) = get_module_info_from_handle(
+                &BOOT_SERVICES,
+                caller_identifier as *mut c_void,
+                controller_handle,
+                perf_id,
+            ) {
                 let record = GuidEventRecord::new(perf_id, 0, timestamp, guid);
                 _ = FBPT.lock().add_record(record);
             }
@@ -269,9 +272,12 @@ extern "efiapi" fn create_performance_measurement(
             if perf_id == PerfId::MODULE_LOAD_IMAGE_START {
                 LOAD_IMAGE_COUNT.fetch_add(1, Ordering::Relaxed);
             }
-            if let Ok((_, guid)) =
-                get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void, controller_handle, perf_id)
-            {
+            if let Ok((_, guid)) = get_module_info_from_handle(
+                &BOOT_SERVICES,
+                caller_identifier as *mut c_void,
+                controller_handle,
+                perf_id,
+            ) {
                 let record = GuidQwordEventRecord::new(
                     perf_id,
                     timestamp,
@@ -286,17 +292,23 @@ extern "efiapi" fn create_performance_measurement(
         | PerfId::MODULE_DB_STOP_START
         | PerfId::MODULE_DB_STOP_END
         | PerfId::MODULE_DB_START => {
-            if let Ok((_, guid)) =
-                get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void, controller_handle, perf_id)
-            {
+            if let Ok((_, guid)) = get_module_info_from_handle(
+                &BOOT_SERVICES,
+                caller_identifier as *mut c_void,
+                controller_handle,
+                perf_id,
+            ) {
                 let record = GuidQwordEventRecord::new(perf_id, timestamp, guid, address as u64);
                 _ = FBPT.lock().add_record(record);
             }
         }
         PerfId::MODULE_DB_END => {
-            if let Ok((Some(module_name), guid)) =
-                get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void, controller_handle, perf_id)
-            {
+            if let Ok((Some(module_name), guid)) = get_module_info_from_handle(
+                &BOOT_SERVICES,
+                caller_identifier as *mut c_void,
+                controller_handle,
+                perf_id,
+            ) {
                 let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, &module_name);
                 _ = FBPT.lock().add_record(record);
             }
@@ -326,9 +338,12 @@ extern "efiapi" fn create_performance_measurement(
             _ = FBPT.lock().add_record(record);
         }
         _ if attribute != PerfAttribute::PerfEntry => {
-            let (module_name, guid) = if let Ok((Some(module_name), guid)) =
-                get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void, controller_handle, perf_id)
-            {
+            let (module_name, guid) = if let Ok((Some(module_name), guid)) = get_module_info_from_handle(
+                &BOOT_SERVICES,
+                caller_identifier as *mut c_void,
+                controller_handle,
+                perf_id,
+            ) {
                 (module_name, guid)
             } else if let Some(string) = string {
                 let guid = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
