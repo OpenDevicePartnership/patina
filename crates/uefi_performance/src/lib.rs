@@ -24,7 +24,6 @@ pub mod performance_table;
 use alloc::vec::Vec;
 use core::{
     ffi::{c_char, c_void},
-    mem::MaybeUninit,
     ptr, slice,
     sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
@@ -70,9 +69,9 @@ use uefi_sdk::{
     tpl_mutex::TplMutex,
 };
 
-static mut BOOT_SERVICES: Option<&'static StandardBootServices> = None;
-static mut RUNTIME_SERVICES: Option<&'static StandardRuntimeServices> = None;
-static mut FBPT: MaybeUninit<TplMutex<FBPT>> = MaybeUninit::zeroed();
+static BOOT_SERVICES: StandardBootServices = StandardBootServices::new_uninit();
+static RUNTIME_SERVICES: StandardRuntimeServices = StandardRuntimeServices::new_uninit();
+static FBPT: TplMutex<FBPT> = TplMutex::new(&BOOT_SERVICES, Tpl::NOTIFY, FBPT::new());
 
 static LOAD_IMAGE_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -83,32 +82,21 @@ pub fn init_performance_lib(
     hob_list: &HobList,
     efi_system_table: &'static efi::SystemTable,
 ) -> Result<(), efi::Status> {
-    let boot_services;
-    let runtime_services;
     unsafe {
-        boot_services = StandardBootServices::new(efi_system_table.boot_services.as_ref().unwrap());
-        runtime_services = StandardRuntimeServices::new(efi_system_table.runtime_services.as_ref().unwrap());
-    }
-    let fbpt;
-
-    // SAFETY: Static are not read at this moment.
-    #[allow(static_mut_refs)]
-    unsafe {
-        _ = BOOT_SERVICES.insert(boot_services);
-        _ = RUNTIME_SERVICES.insert(runtime_services);
-        fbpt = FBPT.write(TplMutex::new(boot_services, Tpl::NOTIFY, FBPT::new()));
+        BOOT_SERVICES.init(efi_system_table.boot_services.as_ref().unwrap());
+        RUNTIME_SERVICES.init(efi_system_table.runtime_services.as_ref().unwrap());
     }
 
     let (pei_records, pei_load_image_count) = extract_pei_performance_records(hob_list)?;
     LOAD_IMAGE_COUNT.store(pei_load_image_count, Ordering::Relaxed);
-    fbpt.lock().set_records(pei_records);
+    FBPT.lock().set_records(pei_records);
 
     // Install the protocol interfaces for DXE performance library instance.
-    boot_services
+    BOOT_SERVICES
         .install_protocol_interface(None, Box::new(EdkiiPerformanceMeasurement { create_performance_measurement }))?;
 
     // Register EndOfDxe event to allocate the boot performance table and report the table address through status code.
-    boot_services.create_event_ex(
+    BOOT_SERVICES.create_event_ex(
         EventType::NOTIFY_SIGNAL,
         Tpl::CALLBACK,
         Some(report_fpdt_record_buffer),
@@ -117,7 +105,7 @@ pub fn init_performance_lib(
     )?;
 
     // Register ReadyToBoot event to update the boot performance table for SMM performance data.
-    boot_services.create_event_ex(
+    BOOT_SERVICES.create_event_ex(
         EventType::NOTIFY_SIGNAL,
         Tpl::CALLBACK,
         Some(fetch_and_add_smm_performance_records),
@@ -127,7 +115,7 @@ pub fn init_performance_lib(
 
     // Install configuration table for performance property.
     unsafe {
-        boot_services.install_configuration_table(
+        BOOT_SERVICES.install_configuration_table(
             &guid::PERFORMANCE_PROTOCOL,
             Box::new(PerformanceProperty::new(Arch::perf_frequency(), Arch::cpu_count_start(), Arch::cpu_count_end())),
         )?
@@ -166,12 +154,6 @@ extern "efiapi" fn create_performance_measurement(
     identifier: u32,
     attribute: PerfAttribute,
 ) -> efi::Status {
-    // SAFETY: init at this point.
-    let boot_services = unsafe { BOOT_SERVICES.unwrap() };
-    // SAFETY: init at this point.
-    #[allow(static_mut_refs)]
-    let fbpt = unsafe { FBPT.assume_init_ref() };
-
     fn is_known_token(token: Option<&String>) -> bool {
         let Some(token) = token else {
             return false;
@@ -277,10 +259,10 @@ extern "efiapi" fn create_performance_measurement(
     match perf_id {
         PerfId::MODULE_START | PerfId::MODULE_END => {
             if let Ok((_, guid)) =
-                get_module_info_from_handle(boot_services, caller_identifier as *mut c_void, controller_handle, perf_id)
+                get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void, controller_handle, perf_id)
             {
                 let record = GuidEventRecord::new(perf_id, 0, timestamp, guid);
-                _ = fbpt.lock().add_record(record);
+                _ = FBPT.lock().add_record(record);
             }
         }
         PerfId::MODULE_LOAD_IMAGE_START | PerfId::MODULE_LOAD_IMAGE_END => {
@@ -288,7 +270,7 @@ extern "efiapi" fn create_performance_measurement(
                 LOAD_IMAGE_COUNT.fetch_add(1, Ordering::Relaxed);
             }
             if let Ok((_, guid)) =
-                get_module_info_from_handle(boot_services, caller_identifier as *mut c_void, controller_handle, perf_id)
+                get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void, controller_handle, perf_id)
             {
                 let record = GuidQwordEventRecord::new(
                     perf_id,
@@ -296,7 +278,7 @@ extern "efiapi" fn create_performance_measurement(
                     guid,
                     LOAD_IMAGE_COUNT.load(Ordering::Relaxed) as u64,
                 );
-                _ = fbpt.lock().add_record(record);
+                _ = FBPT.lock().add_record(record);
             }
         }
         PerfId::MODULE_DB_SUPPORT_START
@@ -305,18 +287,18 @@ extern "efiapi" fn create_performance_measurement(
         | PerfId::MODULE_DB_STOP_END
         | PerfId::MODULE_DB_START => {
             if let Ok((_, guid)) =
-                get_module_info_from_handle(boot_services, caller_identifier as *mut c_void, controller_handle, perf_id)
+                get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void, controller_handle, perf_id)
             {
                 let record = GuidQwordEventRecord::new(perf_id, timestamp, guid, address as u64);
-                _ = fbpt.lock().add_record(record);
+                _ = FBPT.lock().add_record(record);
             }
         }
         PerfId::MODULE_DB_END => {
             if let Ok((Some(module_name), guid)) =
-                get_module_info_from_handle(boot_services, caller_identifier as *mut c_void, controller_handle, perf_id)
+                get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void, controller_handle, perf_id)
             {
                 let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, &module_name);
-                _ = fbpt.lock().add_record(record);
+                _ = FBPT.lock().add_record(record);
             }
             // TODO something to do if address is not 0 need example to continue development. (https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/194)
         }
@@ -329,7 +311,7 @@ extern "efiapi" fn create_performance_measurement(
             };
             let guid_1 = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
             let record = DualGuidStringEventRecord::new(perf_id, 0, timestamp, guid_1, *guid_2, string.as_str());
-            _ = fbpt.lock().add_record(record);
+            _ = FBPT.lock().add_record(record);
         }
         PerfId::PERF_EVENT
         | PerfId::PERF_FUNCTION_START
@@ -341,11 +323,11 @@ extern "efiapi" fn create_performance_measurement(
             let guid = *unsafe { (caller_identifier as *const efi::Guid).as_ref() }.unwrap();
             let record =
                 DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, string.as_deref().unwrap_or("unknown name"));
-            _ = fbpt.lock().add_record(record);
+            _ = FBPT.lock().add_record(record);
         }
         _ if attribute != PerfAttribute::PerfEntry => {
             let (module_name, guid) = if let Ok((Some(module_name), guid)) =
-                get_module_info_from_handle(boot_services, caller_identifier as *mut c_void, controller_handle, perf_id)
+                get_module_info_from_handle(&BOOT_SERVICES, caller_identifier as *mut c_void, controller_handle, perf_id)
             {
                 (module_name, guid)
             } else if let Some(string) = string {
@@ -356,7 +338,7 @@ extern "efiapi" fn create_performance_measurement(
                 (String::from("unknown name"), guid)
             };
             let record = DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, &module_name);
-            _ = fbpt.lock().add_record(record);
+            _ = FBPT.lock().add_record(record);
         }
         _ => {
             return efi::Status::INVALID_PARAMETER;
@@ -367,15 +349,7 @@ extern "efiapi" fn create_performance_measurement(
 }
 
 extern "efiapi" fn report_fpdt_record_buffer(_event: efi::Event, _ctx: &()) {
-    // SAFETY: init at this point.
-    let boot_services = unsafe { BOOT_SERVICES.unwrap() };
-    // SAFETY: init at this point.
-    let runtime_services = unsafe { RUNTIME_SERVICES.unwrap() };
-    // SAFETY: init at this point.
-    #[allow(static_mut_refs)]
-    let mut fbpt = unsafe { FBPT.assume_init_ref().lock() };
-
-    if fbpt.report_table(boot_services, runtime_services).is_err() {
+    if FBPT.lock().report_table(&BOOT_SERVICES, &RUNTIME_SERVICES).is_err() {
         log::error!("Fail to report FPDT.");
         return;
     }
@@ -385,13 +359,13 @@ extern "efiapi" fn report_fpdt_record_buffer(_event: efi::Event, _ctx: &()) {
     const EFI_SOFTWARE_DXE_BS_DRIVER: u32 = EFI_SOFTWARE | 0x00050000;
 
     let status = StatusCodeRuntimeProtocol::report_status_code(
-        boot_services,
+        &BOOT_SERVICES,
         EFI_PROGRESS_CODE,
         EFI_SOFTWARE_DXE_BS_DRIVER,
         0,
         None,
         efi::Guid::clone(&guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE),
-        fbpt.fbpt_address(),
+        FBPT.lock().fbpt_address(),
     );
     if status.is_err() {
         log::error!("Fail to report FBPT status code.");
@@ -399,9 +373,9 @@ extern "efiapi" fn report_fpdt_record_buffer(_event: efi::Event, _ctx: &()) {
 
     // SAFETY: This operation is safe because the expected configuration type of a entry with guid `EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE` is a usize.
     let status = unsafe {
-        boot_services.install_configuration_table_unchecked(
+        BOOT_SERVICES.install_configuration_table_unchecked(
             &guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
-            fbpt.fbpt_address() as *mut c_void,
+            FBPT.lock().fbpt_address() as *mut c_void,
         )
     };
     if status.is_err() {
@@ -445,7 +419,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, sys
     }
 
     // SAFETY: This is safe because the reference returned by locate_protocol is never mutated after installation.
-    let Ok(communication) = (unsafe { BOOT_SERVICES.unwrap().locate_protocol::<CommunicateProtocol>(None) }) else {
+    let Ok(communication) = (unsafe { BOOT_SERVICES.locate_protocol::<CommunicateProtocol>(None) }) else {
         log::error!("Could not locate communicate protocol interface.");
         return;
     };
@@ -506,9 +480,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records(_event: efi::Event, sys
     // Write found perf records in the fbpt table.
     let mut n = 0;
     for r in Iter::new(&smm_boot_records_data) {
-        // SAFETY: init at this point.
-        #[allow(static_mut_refs)]
-        unsafe { FBPT.assume_init_ref() }.lock().add_record(r).unwrap();
+        FBPT.lock().add_record(r).unwrap();
         n += 1;
     }
 
