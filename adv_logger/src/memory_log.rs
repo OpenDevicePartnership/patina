@@ -11,8 +11,8 @@
 //!
 use core::{
     ffi::c_void,
-    mem::size_of,
-    ptr,
+    mem::{self, size_of},
+    ptr::{self, write_volatile},
     sync::atomic::{AtomicU32, Ordering},
 };
 use r_efi::efi;
@@ -273,7 +273,9 @@ impl AdvLoggerMessageEntry {
 
         // write the data.
         let message = adv_entry.offset(1) as *mut u8;
-        ptr::copy(log_entry.data.as_ptr(), message, log_entry.data.len());
+        for byte_index in 0..log_entry.data.len() {
+            ptr::write_volatile(message.wrapping_add(byte_index), log_entry.data[byte_index]);
+        }
 
         adv_entry.as_ref()
     }
