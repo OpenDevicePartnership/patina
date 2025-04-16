@@ -2,7 +2,5 @@
 
 ## Paging Implementation
 
-TBD
-
-Note: if renaming this section, please check for links in the documentation to
-[this](cpu.md#paging-implementation) and fix them up as well.
+See the [paging documentation](https://github.com/OpenDevicePartnership/paging/blob/main/docs/paging.md) for paging
+internals and [memory protection documentation](./memory_management.md#memory-protections) for memory protections.
