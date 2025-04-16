@@ -1,9 +1,9 @@
 # RFC: `Guided Hob to Hob<T>`
 
 This is a request for comments for a design to allow a platform to register functionality with the core that will parse
-a guided hob into a specific struct and register that struct instance with the Core to be accessible as a `Hob<T>`
-struct. This implementation will remove the need for a Component to parse the hoblist manually before registering
-itself with the core, and instead moves the parsing to the core.
+a guided HOB (Hand-Off Block) into a specific struct and register that struct instance with the Core to be accessible
+as a `Hob<T>` struct. This implementation will remove the need for a Component to parse the HOB list manually before
+registering itself with the core, and instead moves the parsing to the core.
 
 ## Change Log
 
@@ -16,29 +16,30 @@ itself with the core, and instead moves the parsing to the core.
 - 2025-04-14: Move from conversion from `Config<T>` to a new Param `Hob<T>` to support multiple instances of the same
   guided HOB, and to be able to remove the need to register HOBs with the core. Update `HobConfig` to `FromHob`.
   Remove `with_hob_config`.
-- 2025-04-15: Move `parse_hobs` logic into core, to callers with access to `Storage` from using `parse_hobs`
+- 2025-04-15: Move `parse_hobs` logic into core, so components with access to `Storage` from using `parse_hobs`
 
 ## Motivation
 
 These are the main benefits to this RFC:
 
-1. Allows the hoblist to only be parsed once instead of once per component
+1. Allows the HOB list to only be parsed once instead of once per component
 2. Separates and compartmentalizes the parsing logic
 3. Moves all parsing prior to component execution, reducing confusion if parsing fails
 
 ## Technology Background
 
-This proposal will use the existing `Storage` and `Config` logic from the `uefi_sdk` to allow for untyped storage of configuration.
+This proposal will use the existing `Storage` logic from the `uefi_sdk` to store the new `Hob<T>` datums and parsers.
 
 ## Goals
 
-1. Enable a simple interface for component dependency injectable configuration to be produced via a guided hob in the
-   hoblist
-2. Create core / uefi-sdk `T`'s for standard spec-defined guided hobs that are available to component that wants it.
+1. Enable a simple interface for component dependency injectable configuration to be produced via a guided HOB in the
+   HOB list
+2. Create core / uefi-sdk `T`'s for standard spec-defined guided HOBs that are available to component that wants it.
 
 ## Requirements
 
-1. Automatic parsing of guided hobs to be used by components.
+1. Dependency injectable Hob datums for component
+2. Automatic parsing of guided HOBs to be used by components.
 
 ## Unresolved Questions
 
@@ -46,7 +47,7 @@ N/A
 
 ## Prior Art
 
-Currently, each component that requires a HOB configuration parses the hoblist and configures itself prior to the
+Currently, each component that requires a HOB configuration parses the HOB list and configures itself prior to the
 `Core` being initialized. The configured and initialized component is then registered with the core.
 
 ## Alternatives
@@ -55,14 +56,14 @@ N/A
 
 ## Rust Code Design
 
-Current design is that a struct that can be generated from a guided hob will implement a single trait. This trait
+Current design is that a struct that can be generated from a guided HOB will implement a single trait. This trait
 allows the struct to specify the guid that should trigger this parse and provides one overridable method for
 generating `Self` from the byte slice. This `Self` is added to the storage. These values will be accessable to
 components via the `Hob<T>` struct, which is a dependency injectable param. The `Hob<T>` holds `1..N` instances of
-the guided hob value, depending on how many were passed via the hob list. Users can access the first value by
+the guided HOB value, depending on how many were passed via the HOB list. Users can access the first value by
 dereferencing the provided instance or they can iterate through all instances using the `IntoIterator` trait
 implementation. `Hob<T>` parser implementations are registered automatically with `Storage` when a component that has
-a `Hob<T>` in it's param list is registered, so there is no need for users to manually register any hob parsers.
+a `Hob<T>` in it's param list is registered, so there is no need for users to manually register any HOB parsers.
 
 ```rust
 // Current Design implementation
