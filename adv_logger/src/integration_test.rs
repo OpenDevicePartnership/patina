@@ -17,7 +17,7 @@ use uefi_test::{u_assert, u_assert_eq, uefi_test};
 use crate::{memory_log, protocol::AdvancedLoggerProtocol};
 
 #[uefi_test]
-fn adv_logger_test(bs: StandardBootServices) -> uefi_test::Result {
+fn adv_logger_test(bs: &'static StandardBootServices) -> uefi_test::Result {
     const DIRECT_STR: &str = "adv_logger_test: Direct log message!!!";
     const PROTOCOL_STR: &str = "adv_logger_test: Logged through the protocol!!!\n";
 

@@ -112,7 +112,7 @@ where
     ///
     /// Installs the Advanced Logger Protocol for use by non-local components.
     ///
-    fn entry_point(self, bs: StandardBootServices) -> Result<()> {
+    fn entry_point(self, bs: &'static StandardBootServices) -> Result<()> {
         let log_info = match self.adv_logger.get_log_info() {
             Some(log_info) => log_info,
             None => {
