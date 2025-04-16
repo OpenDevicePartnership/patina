@@ -25,8 +25,7 @@ use alloc::vec::Vec;
 use core::{
     ffi::{c_char, c_void},
     mem::MaybeUninit,
-    ptr,
-    slice,
+    ptr, slice,
     sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
