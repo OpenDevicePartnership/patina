@@ -107,7 +107,7 @@ pub mod test_support;
 
 use core::{ffi::c_void, ptr, str::FromStr};
 
-use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
+use alloc::{boxed::Box, vec::Vec};
 use gcd::SpinLockedGcd;
 use mu_pi::{
     fw_fs,
@@ -116,7 +116,7 @@ use mu_pi::{
     status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
 };
 use protocols::PROTOCOL_DB;
-use r_efi::efi::{self, Guid};
+use r_efi::efi;
 use uefi_sdk::{
     boot_services::StandardBootServices,
     component::{Component, IntoComponent, Storage},
