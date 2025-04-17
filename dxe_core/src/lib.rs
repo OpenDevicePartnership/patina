@@ -533,7 +533,7 @@ where
 
     /// Starts the core, dispatching all drivers.
     pub fn start(mut self) -> Result<()> {
-        log::info!("Parsing HOBs for Guided HOBs.");
+        log::info!("Parsing HOB list for Guided HOBs.");
         self.parse_hobs();
         log::info!("Finished.");
 
