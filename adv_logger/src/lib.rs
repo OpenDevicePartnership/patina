@@ -50,13 +50,16 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
 
 pub mod component;
 pub mod logger;
 pub mod protocol;
+
+#[cfg(feature = "std")]
+pub mod parser;
 
 mod integration_test;
 mod memory_log;

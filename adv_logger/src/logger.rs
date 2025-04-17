@@ -12,6 +12,7 @@
 use crate::memory_log::{self, AdvLoggerInfo, LogEntry};
 use core::marker::Send;
 use log::Level;
+use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 use r_efi::efi;
 use spin::Once;
 use uefi_sdk::{log::Format, serial::SerialIO};
@@ -49,10 +50,11 @@ where
         let mut hw_write = true;
         if let Some(memory_log) = self.get_log_info() {
             hw_write = memory_log.hardware_write_enabled(error_level);
+            let timestamp = Arch::cpu_count();
             let _ = memory_log.add_log_entry(LogEntry {
                 phase: memory_log::ADVANCED_LOGGER_PHASE_DXE,
                 level: error_level,
-                timestamp: 0, // TODO - Lacking mu_perf_timer support for Q35.
+                timestamp,
                 data,
             });
         }
@@ -67,6 +69,12 @@ where
         if let Some(log_info) = unsafe { AdvLoggerInfo::adopt_memory_log(address) } {
             self.memory_log.call_once(|| log_info);
             log::info!("Advanced logger buffer initialized. Address = {:#p}", log_info);
+
+            // The frequency may not be initialized, if not do so now.
+            if log_info.get_frequency() == 0 {
+                let frequency = Arch::perf_frequency();
+                log_info.set_frequency(frequency);
+            }
 
             // SAFETY: This is only set for discoverability while debugging.
             unsafe {

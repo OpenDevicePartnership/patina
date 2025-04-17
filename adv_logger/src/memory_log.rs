@@ -13,7 +13,7 @@ use core::{
     ffi::c_void,
     mem::size_of,
     ptr, slice,
-    sync::atomic::{AtomicU32, Ordering},
+    sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
 use r_efi::efi;
 use uefi_sdk::error::{EfiError, Result};
@@ -190,6 +190,18 @@ impl AdvLoggerInfo {
 
     pub fn iter(&self) -> AdvLogIterator {
         AdvLogIterator::new(self)
+    }
+
+    pub fn get_frequency(&self) -> u64 {
+        self.timer_frequency
+    }
+
+    pub fn set_frequency(&self, frequency: u64) {
+        // SAFETY: We usually treat the entire header as immutable, but the frequency
+        //         must be updated. Do so atomically to avoid contention.
+        let atomic = unsafe { AtomicU64::from_ptr(&self.timer_frequency as *const u64 as *mut u64) };
+        // try to swap, assuming the value it initially 0. If this fails, just continue.
+        let _ = atomic.compare_exchange(0, frequency, Ordering::Relaxed, Ordering::Relaxed);
     }
 }
 
