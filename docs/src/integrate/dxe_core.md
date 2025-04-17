@@ -226,3 +226,20 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     loop {}
 }
 ```
+
+## DXE Core Features
+
+### Compatibility Mode
+
+The Rust DXE Core supports Compatibility Mode, the ability to launch bootloaders that do not support memory protections,
+most notably most shipping versions of Linux distros. By default the `compatibility_mode_allowed` feature flag is
+disabled. If a platform wishes to build with it, they must include it in their Cargo.toml as such:
+
+```rust
+[dependencies]
+dxe_core = { version = "9", features = ["compatibility_mode_allowed"] }
+```
+
+With the flag disabled, the Rust DXE Core will not launch any EFI_APPLICATIONs that do not have the NX_COMPAT
+DLL Characteristics set. With the flag enabled, the Rust DXE Core will enable
+[compatibility mode](../dxe_core/memory_management.md).

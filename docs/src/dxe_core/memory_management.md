@@ -106,9 +106,6 @@ instantiated to track memory for the new memory type.
 be of this type.
 * Reserving pages for the allocator. This is used to seed the allocator with an initial [bucket](memory_management.md#allocation-buckets)
 of memory.
-* Ensuring that the allocator has capacity for satisfying a request (or set of requests) of a given size. This allows a
-caller to prime the allocator with a single large GCD call if it knows in advance that it is going to be doing a lot of
-allocations to avoid multiple potentially costly searches from the GCD (and avoid memory map fragmentation).
 * APIs for allocate and free operations of arbitrary sizes, including `impl` for [`Allocator`](https://doc.rust-lang.org/std/alloc/trait.Allocator.html)
 and [`GloballAlloc`](https://doc.rust-lang.org/std/alloc/trait.GlobalAlloc.html)
 traits. See [Rust `Allocator` and `GlobalAlloc` Implementations](memory_management.md#rust-allocator-and-globalalloc-implementations)

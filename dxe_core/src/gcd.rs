@@ -267,6 +267,53 @@ fn remove_range_overlap<T: PartialOrd + Copy>(a: &Range<T>, b: &Range<T>) -> [Op
     }
 }
 
+#[cfg(feature = "compatibility_mode_allowed")]
+/// This activates compatibility mode for the GCD.
+/// This will:
+/// - Activate compatibility mode for the GCD lower layers
+/// - Set the memory space attributes for all memory ranges in the loader code and data allocators to be RWX
+/// - Uninstall the memory attributes protocol
+pub(crate) fn activate_compatibility_mode() {
+    GCD.activate_compatibility_mode();
+    // if the allocator doesn't have any memory, then when it is used next it will allocate from the GCD
+    // and the GCD will be in compatibility mode, so we don't care here
+    let mut loader_mem_ranges = crate::allocator::get_memory_ranges_for_memory_type(efi::LOADER_CODE);
+    loader_mem_ranges.extend(crate::allocator::get_memory_ranges_for_memory_type(efi::LOADER_DATA));
+    for range in loader_mem_ranges.iter() {
+        let mut addr = range.start;
+        while addr < range.end {
+            let mut len = uefi_sdk::base::UEFI_PAGE_SIZE;
+            match GCD.get_memory_descriptor_for_address(addr) {
+                Ok(descriptor) => {
+                    let attributes = descriptor.attributes & !efi::MEMORY_XP;
+                    len = match descriptor.base_address + descriptor.length {
+                        end if end > range.end => (range.end - addr) as usize,
+                        _ => descriptor.length as usize,
+                    };
+                    if GCD.set_memory_space_attributes(addr as usize, len, attributes).is_err() {
+                        log::error!(
+                                        "Failed to set memory space attributes for range {:#x?} - {:#x?}, compatibility mode may fail",
+                                        range.start,
+                                        range.end,
+                                    );
+                        debug_assert!(false);
+                    }
+                }
+                _ => {
+                    log::error!(
+                        "Failed to get memory space descriptor for range {:#x?} - {:#x?}, compatibility mode may fail",
+                        range.start,
+                        range.end,
+                    );
+                    debug_assert!(false);
+                }
+            }
+            addr += len as u64;
+        }
+    }
+    crate::memory_attributes_protocol::uninstall_memory_attributes_protocol();
+}
+
 #[cfg(test)]
 mod tests {
     use core::ffi::c_void;

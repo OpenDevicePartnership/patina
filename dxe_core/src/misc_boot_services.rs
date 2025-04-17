@@ -314,6 +314,8 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
         Err(err) => log::error!("Unable to locate runtime architectural protocol: {:?}", err),
     };
 
+    log::info!("EBS completed successfully.");
+
     efi::Status::SUCCESS
 }
 
