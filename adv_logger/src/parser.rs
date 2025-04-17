@@ -1,4 +1,4 @@
-//! Parsing logic for the Advanced Logger
+//! Parsing logic for the Advanced Logger to be used in the standard environment.
 //!
 //! ## License
 //!
@@ -39,6 +39,9 @@ impl<'a> Parser<'a> {
             return Err("Data is too small to contain a valid memory log");
         }
 
+        // SAFETY: We confirmed the byte array is at least large enough to hold
+        //         the `AdvLoggerInfo` struct, we will confirm the total size
+        //         afterwards.
         let log = unsafe {
             let address = self.data.as_ptr() as u64;
             match AdvLoggerInfo::adopt_memory_log(address) {
@@ -46,6 +49,12 @@ impl<'a> Parser<'a> {
                 None => return Err("Failed to parse memory log"),
             }
         };
+
+        // Check that the entire log described is present to make sure we don't
+        // read past the end of the buffer.
+        if self.data.len() < log.get_log_buffer_size() {
+            return Err("Buffer size is smaller than the log size");
+        }
 
         Ok(log)
     }

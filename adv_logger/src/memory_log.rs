@@ -203,6 +203,10 @@ impl AdvLoggerInfo {
         // try to swap, assuming the value it initially 0. If this fails, just continue.
         let _ = atomic.compare_exchange(0, frequency, Ordering::Relaxed, Ordering::Relaxed);
     }
+
+    pub fn get_log_buffer_size(&self) -> usize {
+        self.log_buffer_size as usize
+    }
 }
 
 /// Implementation of the C struct ADVANCED_LOGGER_MESSAGE_ENTRY_V2 for heading

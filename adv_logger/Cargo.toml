@@ -16,7 +16,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "advlog_parser"
 path = "bin/bin.rs"
-features = ['std']
+required-features = ['std']
 
 [dependencies]
 log = { workspace = true }
