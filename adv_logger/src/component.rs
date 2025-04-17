@@ -23,7 +23,7 @@ use uefi_sdk::{
 use crate::{
     logger::AdvancedLogger,
     memory_log::{self, AdvLoggerInfo},
-    protocol::{AdvancedLoggerProtocol, AdvancedLoggerProtocolRegister},
+    protocol::AdvancedLoggerProtocol,
 };
 
 /// C struct for the internal Advanced Logger protocol for the component.
@@ -128,8 +128,8 @@ where
         };
 
         let protocol = Box::leak(Box::new(protocol));
-        match bs.install_protocol_interface(None, &AdvancedLoggerProtocolRegister, &mut protocol.protocol) {
-            Err((_, status)) => {
+        match bs.install_protocol_interface(None, &mut protocol.protocol) {
+            Err(status) => {
                 log::error!("Failed to install Advanced Logger protocol! Status = {:#x?}", status);
                 Err(EfiError::ProtocolError)
             }

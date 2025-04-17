@@ -118,8 +118,10 @@ use mu_pi::{
 use protocols::PROTOCOL_DB;
 use r_efi::efi;
 use uefi_sdk::{
+    boot_services::StandardBootServices,
     component::{Component, IntoComponent, Storage},
     error::{self, Result},
+    runtime_services::StandardRuntimeServices,
 };
 
 #[macro_export]
@@ -386,12 +388,14 @@ where
         }
 
         let boot_services_ptr;
+        let runtime_services_ptr;
         let system_table_ptr;
         {
             let mut st = systemtables::SYSTEM_TABLE.lock();
-            boot_services_ptr = st.as_mut().unwrap().boot_services_mut() as *mut efi::BootServices;
-            let system_table = st.as_ref().expect("System Table not initialized!").system_table();
-            system_table_ptr = system_table as *const efi::SystemTable;
+            let st = st.as_mut().expect("System Table is not initialized!");
+            boot_services_ptr = st.boot_services_mut() as *mut efi::BootServices;
+            runtime_services_ptr = st.runtime_services_mut() as *mut efi::RuntimeServices;
+            system_table_ptr = st.system_table() as *const efi::SystemTable;
         }
 
         tpl_lock::init_boot_services(boot_services_ptr);
@@ -408,7 +412,13 @@ where
             unsafe { system_table_ptr.as_ref() }.expect("System Table not initialized!"),
         );
 
-        self.storage.set_boot_services(boot_services_ptr);
+        // Add Boot Services and Runtime Services to storage.
+        // SAFETY: This is valid because these pointer live thoughout the boot.
+        // Note: I had to use the ptr instead of locking the table which event though is static does not seems to return static refs. Need to investigate.
+        unsafe {
+            self.storage.set_boot_services(StandardBootServices::new(&*boot_services_ptr));
+            self.storage.set_runtime_services(StandardRuntimeServices::new(&*runtime_services_ptr));
+        }
         Core {
             cpu_init: self.cpu_init,
             section_extractor: self.section_extractor,

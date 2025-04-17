@@ -16,24 +16,23 @@ use mu_pi::protocols::{
     status_code::{EfiStatusCodeData, EfiStatusCodeType, EfiStatusCodeValue},
 };
 use r_efi::efi;
-use uefi_sdk::{boot_services::BootServices, protocol::Protocol};
+use uefi_sdk::{boot_services::BootServices, protocol::ProtocolInterface};
 
-pub struct StatusCodeRuntimeProtocol;
+#[repr(transparent)]
+pub struct StatusCodeRuntimeProtocol {
+    protocol: status_code::Protocol,
+}
 
 impl Deref for StatusCodeRuntimeProtocol {
-    type Target = efi::Guid;
+    type Target = status_code::Protocol;
 
     fn deref(&self) -> &Self::Target {
-        self.protocol_guid()
+        &self.protocol
     }
 }
 
-unsafe impl Protocol for StatusCodeRuntimeProtocol {
-    type Interface = status_code::Protocol;
-
-    fn protocol_guid(&self) -> &'static efi::Guid {
-        &status_code::PROTOCOL_GUID
-    }
+unsafe impl ProtocolInterface for StatusCodeRuntimeProtocol {
+    const PROTOCOL_GUID: efi::Guid = status_code::PROTOCOL_GUID;
 }
 
 fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
@@ -64,7 +63,7 @@ impl ReportStatusCode for StatusCodeRuntimeProtocol {
         data_type: efi::Guid,
         data: T,
     ) -> Result<(), efi::Status> {
-        let protocol = unsafe { boot_services.locate_protocol(&StatusCodeRuntimeProtocol, None)? };
+        let protocol = unsafe { boot_services.locate_protocol::<StatusCodeRuntimeProtocol>(None)? };
 
         let header_size = mem::size_of::<EfiStatusCodeData>();
         let data_size = mem::size_of::<T>();
