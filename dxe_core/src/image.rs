@@ -367,9 +367,7 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
         }
 
         if section.characteristics & section_table::IMAGE_SCN_MEM_WRITE == 0
-            && ((section.characteristics & section_table::IMAGE_SCN_CNT_INITIALIZED_DATA
-                | section_table::IMAGE_SCN_MEM_READ)
-                == INIT_READ_DATA)
+            && ((section.characteristics & INIT_READ_DATA) == INIT_READ_DATA)
         {
             attributes |= efi::MEMORY_RO;
         }
