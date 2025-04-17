@@ -306,7 +306,7 @@ impl AdvLoggerMessageEntry {
         for (byte_index, byte) in suffix.iter_mut().enumerate() {
             ptr::write_volatile::<u8>(
                 byte as *mut u8,
-                *log_entry.data.as_ptr().add(byte_index + (size_of::<u64>() * aligned.len())),
+                *log_entry.data.as_ptr().add(core::mem::size_of_val(aligned) + byte_index),
             );
         }
 
