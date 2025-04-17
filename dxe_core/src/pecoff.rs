@@ -79,6 +79,8 @@ pub struct UefiPeInfo {
     pub filename: Option<String>,
     /// The relocation directory, if present.
     pub reloc_dir: Option<goblin::pe::data_directories::DataDirectory>,
+    /// Whether the NX_COMPAT DLL Characteristic flag is set
+    pub nx_compat: bool,
 }
 
 impl UefiPeInfo {
@@ -103,6 +105,8 @@ impl UefiPeInfo {
         pe.section_alignment = 0;
         pe.size_of_headers = parsed_te.header.base_of_code as usize;
         pe.sections = parsed_te.sections;
+        // TE doesn't have the optional header with DLL Characteristics, so we have to assume the image is NX_COMPAT
+        pe.nx_compat = true;
 
         // TE headers always have a reloc dir, even if it's empty
         // unlike PE32 headers.
@@ -142,6 +146,9 @@ impl UefiPeInfo {
         pe.size_of_image = optional_header.windows_fields.size_of_image;
         pe.sections = parsed_pe.sections.into_iter().collect();
         pe.size_of_headers = optional_header.windows_fields.size_of_headers as usize;
+        pe.nx_compat = optional_header.windows_fields.dll_characteristics
+            & goblin::pe::dll_characteristic::IMAGE_DLLCHARACTERISTICS_NX_COMPAT
+            != 0;
 
         // Set the relocation diretory if it exists
         if let Some(reloc_section) = optional_header.data_directories.get_base_relocation_table() {
