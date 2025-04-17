@@ -112,16 +112,16 @@ impl<T: ?Sized + fmt::Display> fmt::Display for TplGuard<'_, T> {
     }
 }
 
-impl<T: ?Sized> Deref for TplGuard<'_, T> {
+impl<'a, T: ?Sized> Deref for TplGuard<'a, T> {
     type Target = T;
-    fn deref(&self) -> &T {
+    fn deref(&self) -> &'a T {
         //Safety: data is only accessible through the lock, which can only be obtained at the specified TPL.
         unsafe { &*self.data }
     }
 }
 
-impl<T: ?Sized> DerefMut for TplGuard<'_, T> {
-    fn deref_mut(&mut self) -> &mut T {
+impl<'a, T: ?Sized> DerefMut for TplGuard<'a, T> {
+    fn deref_mut(&mut self) -> &'a mut T {
         //Safety: data is only accessible through the lock, which can only be obtained at the specified TPL.
         unsafe { &mut *self.data }
     }

@@ -259,3 +259,129 @@ they do not change the memory map. This means allocating and freeing are disallo
 In the Rust DXE core in release mode, allocating and freeing within the GCD (which changes the memory map and its key)
 will return an error that can be handled by the corresponding driver.
 In debug builds, any changes to the memory map following `exit_boot_services` will panic due to an assertion.
+
+## Memory Protections
+
+Patina (here called Patina or the core interchangeably) applies strict memory protections while still allowing for PI
+and UEFI spec APIs to adjust them. Protections are applied categorically with the only customization currently supported
+being [Compatibility Mode](#compatibility-mode).
+
+> **Note:** This section primarily deals with access attributes. Caching attributes are platform and driver driven and
+> outside the scope of this document. The core gets the initial platform specified caching attributes via the Resource
+> Descriptor HOB v2 and persists whatever the GCD entry has on every other call. After this point, drivers (such as
+> the PCI Host Bridge driver) may update memory regions with different caching attributes.
+
+### General Flow
+
+#### Page Table Initialization
+
+When Patina is given control at its entry point, typically all memory is mapped as Read/Write/Execute (RWX). This is up
+to the entity that launches Patina and Patina takes no dependencies on the initial memory state (other than the
+fundamentals of its code regions being executable, etc.).
+
+As soon as the GCD is initialized and memory allocations are possible, the core sets up a new page table using
+the [paging crate](https://github.com/OpenDevicePartnership/paging/blob/main/README.md). Memory allocations are
+required to back the page tables themselves. In this initial Patina owned page table, which is not installed yet, all
+currently allocated memory is set to be non-executable, as the majority of memory is expected not to be executable
+code.
+
+Next, the Patina image location is discovered via the `MemoryAllocationModule` associated with it. The core needs
+to ensure its own image code sections are read only (RO) and executable or else we will immediately fault after
+installing this page table. See [Image Memory Protections](#image-memory-protections) for the rationale behind RO + X
+for image code sections. All of the core's data sections are left as non-executable, as is done for other images.
+
+> **Note:** All Rust components are monolithically compiled into the Patina image, so all of their image protections
+> are applied at this point, as well.
+
+Finally, all MMIO and reserved regions (as reported by resource descriptor HOBs) are mapped as non-executable. Patina
+must map all of these regions because existing C drivers expect to be able to directly access this memory without going
+through an API to allocate it.
+
+After this, the page table is installed; all other pages are unmapped and access to them will generate a page fault.
+Early platform integration will involve describing all MMIO and reserved regions in resource descriptor HOBs so they
+will be mapped for use.
+
+#### Allocations
+
+All page allocations, regardless of source, will cause Patina to map the page as non-executable. If the allocating
+entity requires different attributes, they will need to use PI spec, UEFI spec, or Patina APIs to update them. Most
+allocations do not need different attributes.
+
+Pool allocations, as described in the [UefiAllocator](#uefiallocator) section, are simply managed memory on top of
+pages, so all pool memory allocated will be non-executable. No entity should attempt to set attributes on pool owned
+memory, as many other entities may own memory from the same underlying page and attributes must be set at page
+granularity per HW requirements. If an entity requires different attributes, they must instead allocate pages and
+update the attributes.
+
+When pages are freed, Patina will unmap the pages in the page table so that any further accesses to them cause page
+faults. This helps to catch use-after-free bugs as well as meeting the cleanliness requirements of Patina.
+
+### Image Memory Protections
+
+Patina follows industry standards for image protection: making code sections RO + X and data sections non-executable. It
+also ensures the stack for each image is non-executable.
+
+#### Rust Component Memory Protection
+
+As noted in the [page table initialization flow](#page-table-initialization), Rust components get their image memory
+protections applied when Patina protects its own image, as they are monolithically compiled into it.
+
+#### PI Dispatched Driver Memory Protection
+
+When PI compliant drivers are [dispatched](./dispatcher.md) by Patina, it will read through the PE/COFF headers and
+apply the appropriate memory attributes depending on the section type.
+
+### Compatibility Mode
+
+Compatibility Mode is the state used to describe a deprecated set of memory protections required to boot current
+versions of Linux. The most common Linux bootloaders, shim and grub, currently crash with memory protections enabled.
+Booting Linux is a critical scenario for platforms, so compatibility mode is implemented to support that case. Old
+versions of Windows bootmgr are also susceptible to some of the issues listed below.
+
+The [integration steps](../integrate/dxe_core.md#compatibility-mode) for Patina describe the single platform
+configurable knob for compatibility mode, which is simply the ability for a platform to allow compatibility mode to
+be entered. By default, this is false and compatibility will not be entered and any EFI_APPLICATION that is not marked
+as NX_COMPAT will not be loaded.
+
+The only way Patina will enter Compatibility Mode is by attempting to load an EFI_APPLICATION (chosen because this is
+what bootloaders are) that does not have the NX_COMPAT DLL Characteristic set in its PE/COFF header.
+
+Entering Compatibility Mode causes the following to occur:
+
+* Map all memory in the legacy BIOS write back range (0x0 - 0xA000) as RWX if it is part of system memory. This is done
+  as Linux both can have null pointer dereferences and attempts to access structures in that range.
+* Map all newly allocated pages as RWX. This is done as non-NX_COMPAT bootloaders will attempt to allocate pages and
+  execute from them without updating attributes.
+* Map the current image that triggered Compatibility Mode as RWX. This is done as Linux will try to execute out of data
+  regions.
+* Map all memory owned by the `EFI_LOADER_CODE` and `EFI_LOADER_DATA` `UefiAllocators` as RWX. This supports Linux
+  allocating pool memory and attempting to execute from it.
+* The `EFI_MEMORY_ATTRIBUTE_PROTOCOL` is uninstalled. This is done because versions of Linux bootloaders in the wild
+  will use the protocol to map their entire image as non-executable, then attempt to map each section as executable, but
+  the subsequent calls aren't page aligned, causing the protocol to return an error, which is unchecked. The bootloader
+  then attempts to execute out of non-executable memory and crashes.
+
+Patina implements Compatibility Mode as a one time event that causes actions; it is not a global state that is
+checked on each invocation of memory allocation or image loading. This design pattern was deliberately chosen. It
+simplifies hot code paths and reduces the complexity of the feature. The only state that is tracked related to
+Compatibility Mode is what default attributes are applied to new memory allocations. As stated above, this is
+`efi::MEMORY_XP` when Compatibility Mode is not active and `0` (i.e. memory is mapped RWX) when Compatibility Mode is
+active. This state is tracked in the GCD itself and does not exist as conditionals in the code.
+
+### Future Work
+
+Patina does not currently support the complete set of protections it will.
+
+#### Heap Guard
+
+C based FW implementations rely on guard pages around pages and pools to ensure buffer overflow is not occurring,
+typically only in debug scenarios, at least for pool guard, due to the memory requirements it has. Rust has more built
+in buffer safety guarantees than C does, but buffer overflows are still possible when interacting with raw pointers.
+C drivers are also still executed by Patina, so there does remain value for them to have Heap Guard enabled.
+
+#### Validation
+
+The [C based UEFI shell apps](https://github.com/microsoft/mu_plus/blob/HEAD/UefiTestingPkg/Readme.md) that are used to
+validate memory protections on a C codebase are not all valid to use in Patina; they rely on internal C DXE Core state.
+These need to be ported to Rust or new tests designed. The other test apps also need to be run and confirmed that the
+final memory state is as expected.

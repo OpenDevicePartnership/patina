@@ -8,13 +8,12 @@
 use core::{
     ffi::{c_char, c_void},
     fmt::Debug,
-    ops::Deref,
     option::Option,
 };
 
 use r_efi::efi;
 
-use uefi_sdk::protocol::Protocol;
+use uefi_sdk::protocol::ProtocolInterface;
 
 pub const EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0xc85d06be, 0x5f75, 0x48ce, 0xa8, 0x0f, &[0x12, 0x36, 0xba, 0x3b, 0x87, 0xb1]);
@@ -92,24 +91,10 @@ pub type CreateMeasurementProtocol = extern "efiapi" fn(
     attribute: PerfAttribute,
 ) -> efi::Status;
 
-pub struct EdkiiPerformanceMeasurementInterface {
+pub struct EdkiiPerformanceMeasurement {
     pub create_performance_measurement: CreateMeasurementProtocol,
 }
 
-pub struct EdkiiPerformanceMeasurement;
-
-unsafe impl Protocol for EdkiiPerformanceMeasurement {
-    type Interface = EdkiiPerformanceMeasurementInterface;
-
-    fn protocol_guid(&self) -> &'static efi::Guid {
-        &EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID
-    }
-}
-
-impl Deref for EdkiiPerformanceMeasurement {
-    type Target = efi::Guid;
-
-    fn deref(&self) -> &Self::Target {
-        self.protocol_guid()
-    }
+unsafe impl ProtocolInterface for EdkiiPerformanceMeasurement {
+    const PROTOCOL_GUID: efi::Guid = EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID;
 }
