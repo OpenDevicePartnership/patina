@@ -11,8 +11,8 @@
 //!
 use core::{
     ffi::c_void,
-    mem::{self, size_of},
-    ptr::{self, write_volatile},
+    mem::size_of,
+    ptr, slice,
     sync::atomic::{AtomicU32, Ordering},
 };
 use r_efi::efi;
@@ -255,29 +255,62 @@ impl AdvLoggerMessageEntry {
     /// range is valid.
     ///
     pub unsafe fn init_from_memory(address: *const c_void, length: u32, log_entry: LogEntry) -> Option<&'static Self> {
+        // Ensure the entry fits.
         debug_assert!(
             size_of::<Self>() + log_entry.data.len() <= length as usize,
             "Advanced logger entry initialized in an insufficiently sized buffer!"
         );
-
         if size_of::<Self>() + log_entry.data.len() > length as usize {
             return None;
         }
 
+        // Ensure the address and length are aligned.
+        assert!((address as *const u64).is_aligned(), "address must be aligned to 8 bytes");
+        if !(address as *const u64).is_aligned() {
+            return None;
+        }
+
+        // Ensure the address is not null.
+        debug_assert!(!address.is_null());
+        if address.is_null() {
+            return None;
+        }
+
         // Write the header.
-        let adv_entry = address as *mut AdvLoggerMessageEntry;
-        ptr::write_volatile(
-            adv_entry,
+        ptr::write_volatile::<Self>(
+            address as *mut Self,
             Self::new(log_entry.phase, log_entry.level, log_entry.timestamp, log_entry.data.len() as u16),
         );
 
-        // write the data.
-        let message = adv_entry.offset(1) as *mut u8;
-        for byte_index in 0..log_entry.data.len() {
-            ptr::write_volatile(message.wrapping_add(byte_index), log_entry.data[byte_index]);
+        const _: () = assert!(
+            size_of::<AdvLoggerMessageEntry>() % size_of::<u64>() == 0,
+            "AdvLoggerMessageEntry must be a multiple of 8 bytes in length"
+        );
+
+        let message_slice: &mut [u8] =
+            slice::from_raw_parts_mut((address as *mut u8).byte_add(size_of::<Self>()), log_entry.data.len());
+
+        // Since address must be aligned to 8 bytes and AdvLoggerMessageEntry is a multiple of 8 bytes in length,
+        // there is guaranteed to be no prefix when using align_to_mut.
+        let (_, aligned, suffix) = message_slice.align_to_mut::<u64>();
+
+        // Write alligned QWORDs of the message 8 characters at a time.
+        for (qword_index, qword) in aligned.iter_mut().enumerate() {
+            ptr::write_volatile::<u64>(
+                qword as *mut u64,
+                ptr::read_unaligned(log_entry.data.as_ptr().add(size_of::<u64>() * qword_index) as *const u64),
+            );
         }
 
-        adv_entry.as_ref()
+        // Write all remaining characters in the message 1 character at a time.
+        for (byte_index, byte) in suffix.iter_mut().enumerate() {
+            ptr::write_volatile::<u8>(
+                byte as *mut u8,
+                *log_entry.data.as_ptr().add(byte_index + (size_of::<u64>() * aligned.len())),
+            );
+        }
+
+        unsafe { Some(&*(address as *const Self)) }
     }
 
     /// Returns the data array of the message entry.
