@@ -533,9 +533,9 @@ where
 
     /// Starts the core, dispatching all drivers.
     pub fn start(mut self) -> Result<()> {
-        log::info!("Producing Configs from Guid HOBs");
+        log::info!("Parsing HOBs for Guided HOBs.");
         self.parse_hobs();
-        log::info!("Finished Producing Configs from Guid HOBs");
+        log::info!("Finished.");
 
         log::info!("Dispatching Local Drivers");
         self.dispatch_components();
