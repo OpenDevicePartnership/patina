@@ -41,6 +41,8 @@ pub const EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER: u16 = 12;
 
 pub const ENTRY_POINT_STACK_SIZE: usize = 0x100000;
 
+const INIT_READ_DATA: u32 = section_table::IMAGE_SCN_CNT_INITIALIZED_DATA | section_table::IMAGE_SCN_MEM_READ;
+
 // dummy function used to initialize PrivateImageData.entry_point.
 #[cfg(not(tarpaulin_include))]
 extern "efiapi" fn unimplemented_entry_point(
@@ -364,10 +366,10 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
             attributes = efi::MEMORY_RO;
         }
 
-        if section.characteristics & (pecoff::IMAGE_SCN_CNT_CODE | section_table::IMAGE_SCN_MEM_WRITE) == 0
-            && (section.characteristics & section_table::IMAGE_SCN_CNT_INITIALIZED_DATA
+        if section.characteristics & section_table::IMAGE_SCN_MEM_WRITE == 0
+            && ((section.characteristics & section_table::IMAGE_SCN_CNT_INITIALIZED_DATA
                 | section_table::IMAGE_SCN_MEM_READ)
-                == (section_table::IMAGE_SCN_CNT_INITIALIZED_DATA | section_table::IMAGE_SCN_MEM_READ)
+                == INIT_READ_DATA)
         {
             attributes |= efi::MEMORY_RO;
         }
