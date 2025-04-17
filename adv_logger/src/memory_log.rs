@@ -265,7 +265,7 @@ impl AdvLoggerMessageEntry {
         }
 
         // Ensure the address and length are aligned.
-        assert!((address as *const u64).is_aligned(), "address must be aligned to 8 bytes");
+        debug_assert!((address as *const u64).is_aligned(), "address must be aligned to 8 bytes");
         if !(address as *const u64).is_aligned() {
             return None;
         }
