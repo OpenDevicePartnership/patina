@@ -387,14 +387,14 @@ mod tests {
             let entry = LogEntry { level: 0, phase: 0, timestamp: 0, data: &data };
             let log_entry = log.unwrap().add_log_entry(entry);
             match log_entry {
-                Ok => {}
+                Ok(_) => {}
                 Err(EfiError::OutOfResources) => {
                     assert!(log.unwrap().discarded_size > 0);
                     assert!(entries > 0);
                     break;
                 }
                 Err(status) => {
-                    assert!(false, "Unexpected add_log_entry returned unexpected status {:#x?}.", status)
+                    panic!("Unexpected add_log_entry returned unexpected status {:#x?}.", status)
                 }
             }
             entries += 1;
