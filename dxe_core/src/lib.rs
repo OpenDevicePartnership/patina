@@ -307,6 +307,8 @@ where
         mut self,
         physical_hob_list: *const c_void,
     ) -> Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases, Alloc> {
+        log::info!("DXE Core Crate v{}", env!("CARGO_PKG_VERSION"));
+
         let _ = self.cpu_init.initialize();
         self.interrupt_manager.initialize().expect("Failed to initialize interrupt manager!");
 
