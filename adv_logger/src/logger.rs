@@ -49,7 +49,7 @@ where
         let mut hw_write = true;
         if let Some(memory_log) = self.get_log_info() {
             hw_write = memory_log.hardware_write_enabled(error_level);
-            memory_log.add_log_entry(LogEntry {
+            let _ = memory_log.add_log_entry(LogEntry {
                 phase: memory_log::ADVANCED_LOGGER_PHASE_DXE,
                 level: error_level,
                 timestamp: 0, // TODO - Lacking mu_perf_timer support for Q35.
