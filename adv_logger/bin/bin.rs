@@ -7,44 +7,56 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
-use std::env;
-use std::fs::File;
-use std::io::{self, Read};
-use std::path::Path;
+use clap::Parser;
+use std::{
+    fs::File,
+    io::{self, Read},
+    path::{Path, PathBuf},
+};
 
-use adv_logger::parser::Parser;
+#[derive(Parser, Debug)]
+struct Args {
+    input_path: PathBuf,
+    #[arg(short, long)]
+    output_path: Option<PathBuf>,
+    #[arg(short, long, default_value_t = false)]
+    entry_metadata: bool,
+    #[arg(long, default_value_t = false)]
+    header: bool,
+}
 
 fn main() -> io::Result<()> {
-    // Collect the command line arguments
-    let args: Vec<String> = env::args().collect();
-
-    // Check if the correct number of arguments are provided
-    if args.len() != 2 {
-        eprintln!("Usage: {} <input binary file path>", args[0]);
-        std::process::exit(1);
-    }
-
-    // Get the file path from the arguments
-    let input_path = &args[1];
+    let args = Args::parse();
 
     // Open the input file
-    let mut file = File::open(Path::new(input_path))?;
+    let mut file = File::open(Path::new(&args.input_path))?;
 
     // Read the file contents into a buffer
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
 
+    let parser = adv_logger::parser::Parser::new(&buffer).with_entry_metadata(args.entry_metadata);
     // Write to standard if no output file is specified.
-    let mut out: io::Stdout = io::stdout();
+    match args.output_path {
+        Some(path) => {
+            let mut out = File::create(path)?;
+            parse_log(args.header, &parser, &mut out)?;
+        }
+        None => parse_log(args.header, &parser, &mut io::stdout())?,
+    };
 
-    let parser = Parser::new(&buffer);
+    Ok(())
+}
 
-    parser.write_header(&mut out).map_err(|e| {
-        eprintln!("Error writing log: {}", e);
-        io::Error::new(io::ErrorKind::Other, e)
-    })?;
+fn parse_log<W: std::io::Write>(header: bool, parser: &adv_logger::parser::Parser, out: &mut W) -> io::Result<()> {
+    if header {
+        parser.write_header(out).map_err(|e| {
+            eprintln!("Error writing log: {}", e);
+            io::Error::new(io::ErrorKind::Other, e)
+        })?;
+    }
 
-    parser.write_log(&mut out).map_err(|e| {
+    parser.write_log(out).map_err(|e| {
         eprintln!("Error writing log: {}", e);
         io::Error::new(io::ErrorKind::Other, e)
     })?;
