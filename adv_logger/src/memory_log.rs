@@ -16,6 +16,7 @@ use core::{
     sync::atomic::{AtomicU32, Ordering},
 };
 use r_efi::efi;
+use uefi_sdk::error::{Result, EfiError};
 
 // { 0x4d60cfb5, 0xf481, 0x4a98, {0x9c, 0x81, 0xbf, 0xf8, 0x64, 0x60, 0xc4, 0x3e }}
 pub const ADV_LOGGER_HOB_GUID: efi::Guid =
@@ -140,7 +141,7 @@ impl AdvLoggerInfo {
         }
     }
 
-    pub fn add_log_entry(&self, log_entry: LogEntry) -> Option<&AdvLoggerMessageEntry> {
+    pub fn add_log_entry(&self, log_entry: LogEntry) -> Result<&AdvLoggerMessageEntry> {
         let data_offset = size_of::<AdvLoggerMessageEntry>() as u16;
         let message_size = data_offset as u32 + log_entry.data.len() as u32;
         // Align up to the next 8 byte.
@@ -175,7 +176,7 @@ impl AdvLoggerInfo {
             // Add the discarded value. No ordering needed as this is a single
             // operation.
             discarded_size.fetch_add(message_size, Ordering::Relaxed);
-            return None;
+            return Err(EfiError::OutOfResources);
         }
 
         // Convert the newly allocated to usable data.
@@ -254,23 +255,23 @@ impl AdvLoggerMessageEntry {
     /// the provided length. The caller is responsible for ensuring this memory
     /// range is valid.
     ///
-    pub unsafe fn init_from_memory(address: *const c_void, length: u32, log_entry: LogEntry) -> Option<&'static Self> {
+    pub unsafe fn init_from_memory(address: *const c_void, length: u32, log_entry: LogEntry) -> Result<&'static Self> {
         // Ensure the entry fits.
         if size_of::<Self>() + log_entry.data.len() > length as usize {
             debug_assert!(false, "Advanced logger entry initialized in an insufficiently sized buffer!");
-            return None;
+            return Err(EfiError::BufferTooSmall);
         }
 
         // Ensure the address and length are aligned.
         if address.align_offset(size_of::<u64>()) != 0 {
             debug_assert!(false, "Advanced logger entry must be aligned to 8 bytes.");
-            return None;
+            return Err(EfiError::InvalidParameter);
         }
 
         // Ensure the address is not null.
         if address.is_null() {
             debug_assert!(false, "Advanced logger entry address is null.");
-            return None;
+            return Err(EfiError::InvalidParameter);
         }
 
         // Write the header.
@@ -307,7 +308,7 @@ impl AdvLoggerMessageEntry {
             );
         }
 
-        unsafe { Some(&*(address as *const Self)) }
+        unsafe { Ok(&*(address as *const Self)) }
     }
 
     /// Returns the data array of the message entry.
@@ -385,10 +386,16 @@ mod tests {
             let data = entries.to_be_bytes();
             let entry = LogEntry { level: 0, phase: 0, timestamp: 0, data: &data };
             let log_entry = log.unwrap().add_log_entry(entry);
-            if log_entry.is_none() {
-                assert!(log.unwrap().discarded_size > 0);
-                assert!(entries > 0);
-                break;
+            match log_entry {
+                Ok => {},
+                Err(EfiError::OutOfResources) => {
+                    assert!(log.unwrap().discarded_size > 0);
+                    assert!(entries > 0);
+                    break;
+                },
+                Err(status) => {
+                    assert!(false, "Unexpected add_log_entry returned unexpected status {:#x?}.", status)
+                }
             }
             entries += 1;
             let log_entry = log_entry.unwrap();
