@@ -16,7 +16,7 @@ use core::{
     sync::atomic::{AtomicU32, Ordering},
 };
 use r_efi::efi;
-use uefi_sdk::error::{EfiError, Result};
+use uefi_sdk::error::{Result, EfiError};
 
 // { 0x4d60cfb5, 0xf481, 0x4a98, {0x9c, 0x81, 0xbf, 0xf8, 0x64, 0x60, 0xc4, 0x3e }}
 pub const ADV_LOGGER_HOB_GUID: efi::Guid =
