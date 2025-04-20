@@ -294,7 +294,7 @@ impl AdvLoggerMessageEntry {
         // there is guaranteed to be no prefix when using align_to_mut.
         let (_, aligned, suffix) = message_slice.align_to_mut::<u64>();
 
-        // Write aligned QWORDs of the message 8 characters at a time.
+        // Write alligned QWORDs of the message 8 characters at a time.
         for (qword_index, qword) in aligned.iter_mut().enumerate() {
             ptr::write_volatile::<u64>(
                 qword as *mut u64,
