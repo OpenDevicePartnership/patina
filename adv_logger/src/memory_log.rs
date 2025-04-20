@@ -256,20 +256,23 @@ impl AdvLoggerMessageEntry {
     ///
     pub unsafe fn init_from_memory(address: *const c_void, length: u32, log_entry: LogEntry) -> Option<&'static Self> {
         // Ensure the entry fits.
+        debug_assert!(
+            size_of::<Self>() + log_entry.data.len() <= length as usize,
+            "Advanced logger entry initialized in an insufficiently sized buffer!"
+        );
         if size_of::<Self>() + log_entry.data.len() > length as usize {
-            debug_assert!(false, "Advanced logger entry initialized in an insufficiently sized buffer!");
             return None;
         }
 
         // Ensure the address and length are aligned.
-        if address.align_offset(size_of::<u64>()) != 0 {
-            debug_assert!(false, "Advanced logger entry must be aligned to 8 bytes.");
+        debug_assert!((address as *const u64).is_aligned(), "address must be aligned to 8 bytes");
+        if !(address as *const u64).is_aligned() {
             return None;
         }
 
         // Ensure the address is not null.
+        debug_assert!(!address.is_null());
         if address.is_null() {
-            debug_assert!(false, "Advanced logger entry address is null.");
             return None;
         }
 
