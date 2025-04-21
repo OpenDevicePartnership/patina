@@ -137,10 +137,10 @@ impl ConcreteService {
 ```
 
 ```admonish important
-Each Service type is static and immutable. What this means is that only the &self methods methods are available,
-forcing the implementor to manage their own interior mutability. This means that each each consumer receives their own
-instance and can do what they will with the service, including stashing it when producing their own service or
-callback.
+Each service references the same underlying static and immutable type. This means is that only the &self methods are
+available and forces the implementor to manage their own interior mutability via some sort of locking mechanism. Each
+component receives their own Service instance (All of which point back to the same underlying implementation), which
+allows them stash it for their own service implementations or callbacks.
 ```
 
 This type comes with a `mock(...)` method to make unit testing simple.
