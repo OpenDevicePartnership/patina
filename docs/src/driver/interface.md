@@ -59,10 +59,10 @@ does matter!
 
 ### Option\<P\>
 
-Some parameter, discussed below, are not *always* available. When a parameter is not available, the component will
-not be executed. There may be a situation where your component may be able to execute even if a particular parameter
-is not available. This is where the `Option<P>` parameter can be used. Instead of *never* executing because a parameter
-is missing, instead it will be executed, but the `Option` will be `None`.
+Some parameters are not *always* available. When a parameter is not available, the component will not be executed.
+There may be a situation where your component may be able to execute even if a particular parameter is not available.
+This is where the `Option<P>` parameter can be used. Instead of *never* executing because a parameter is missing,
+instead it will be executed, but the `Option` will be `None`.
 
 ### Config\<T\> / ConfigMut\<T\>
 
