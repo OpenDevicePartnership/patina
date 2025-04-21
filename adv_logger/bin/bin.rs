@@ -16,11 +16,15 @@ use std::{
 
 #[derive(Parser, Debug)]
 struct Args {
+    /// Path for the input file containing the raw advanced logger buffer.
     input_path: PathBuf,
+    /// Optional path for the output file. If not specified, the output will be printed to stdout.
     #[arg(short, long)]
     output_path: Option<PathBuf>,
+    /// Flag to include entry metadata (level, phase, timestamp) in the output.
     #[arg(short, long, default_value_t = false)]
     entry_metadata: bool,
+    /// Flag to include the header in the output.
     #[arg(long, default_value_t = false)]
     header: bool,
 }
