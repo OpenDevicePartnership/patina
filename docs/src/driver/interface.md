@@ -66,7 +66,7 @@ instead it will be executed, but the `Option` will be `None`.
 
 ### Config\<T\> / ConfigMut\<T\>
 
-`Config<T>` and `ConfigMut<T>` paremters are available for a platform or a component to produce a generic configuration
+`Config<T>` and `ConfigMut<T>` parameters are available for a platform or a component to produce a generic configuration
 value that can be consumed by any other component. A platform can produce its own values by using the `Core`'s
 `.with_config` method.
 
