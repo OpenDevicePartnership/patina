@@ -31,15 +31,11 @@ Due to this, developing a component is as simple as writing a function whose par
 supported parameters (which is subject to change). Always reference the trait's [Type Implementations](todo/docs.rs)
 for a complete list, however the below list should be up to date:
 
-<!-- markdownlint-disable -->
-| Param                        | Description                                                                                                                                                |
-|------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Option\<P\>                  | An Option, where P implements `Param`. Allows components to run even when the underlying parameter is unavailable. See the [params] module for more info.  |
-| (P1, P2, ...)                | A Tuple where each entry implements `Param`. Useful when you need more parameters than the current parameter limit. See the [params] module for more info. |
-| Config\<T\>                  | An immutable config value that will only be available once the underlying data has been locked. See The [params] module for more info.                     |
-| ConfigMut\<T\>               | A mutable config value that will only be available while the underlying data is unlocked. See the [params] module for more info.                           |
-| StandardBootServices         | Rust implementation of Boot Services                                                                                                                       |
-<!-- markdownlint-enable -->
+## Component Params
+
+Writing a component is as simple as writing a function whose parameters are a part of the below list of suppported
+parameters (which is subject ot change). Always reference the trait's [Type Implementations](todo/docs.rs) for a
+complete list, however the below list should be up to date. We will discuss each parameter type in more detail below.
 
 ```admonish warning
 unfortunately, the compile-time error you get when trying to register a function whose parameters do not all implement
@@ -50,7 +46,104 @@ does matter!
     error[E0277]: the trait `function_component::ComponentParamFunction<_>` is not implemented for fn item `<fn_interface>`
 ```
 
-Please reference the documentation in `uefi_sdk::component` for more information regarding these parameters.
+<!-- markdownlint-disable -->
+| Param                        | Description                                                                                                                       |
+|------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
+| Hob\<T\>                     | A parsed, immutable, guid HOB (Hand-Off Block) that is automatically parsed and registered.                                       |
+| Option\<P\>                  | An Option, where P implements `Param`. Allows components to run even when the underlying parameter is unavailable.                |
+| (P1, P2, ...)                | A Tuple where each entry implements `Param`. Useful when you need more parameters than the current parameter limit.               |
+| Config\<T\>                  | An immutable config value that will only be available once the underlying data has been locked.                                   |
+| ConfigMut\<T\>               | A mutable config value that will only be available while the underlying data is unlocked.                                         |
+| Service\<T\>                 | A wrapper for producing and consuming services of a particular interface, `T`, that is agnostic to the underlying implementation. |
+<!-- markdownlint-enable -->
+
+### Option\<P\>
+
+Some parameter, discussed below, are not *always* available. When a parameter is not available, the component will
+not be executed. There may be a situation where your component may be able to execute even if a particular parameter
+is not available. This is where the `Option<P>` parameter can be used. Instead of *never* executing because a parameter
+is missing, instead it will be executed, but the `Option` will be `None`.
+
+### Config\<T\> / ConfigMut\<T\>
+
+`Config<T>` and `ConfigMut<T>` paremters are available for a platform or a component to produce a generic configuration
+value that can be consumed by any other component. A platform can produce it's own values by using the `Core`'s
+`.with_config` method.
+
+As mentioned above, a component can also produce a configuration value, but the flow is slightly more complex. A
+component is able to set or modify a configuration value using the `ConfigMut<T>` parameter. These components are able
+to then lock the configuration value via the `lock()` method. As you would guess, locking a configuration value makes
+the value immutable. What this means is that from the moment `lock()` is called, no other component with a `ConfigMut<T>`
+parameter (of the same `T`) will be executed.
+
+From this point on, it also allows for any component with a `Config<T>` to be executed. What this means is that no
+component with `Config<T>` parameters will be executed until the configuration is locked.
+
+``` admonish note
+Executing components currently happens in two phases. We execute all components until there are no components executed
+in that iteration. At that point, we lock all Configs and restart component execution.
+```
+
+By default, all `Config<T>` values are locked. However if a component is registered with the Core that requests
+`ConfigMut<T>`, the value will be unlocked at that time. This is to allow components to execute immediately if it is
+known that the configuration value will never be updated.
+
+This type comes with a `mock(...)` method to make unit testing simple.
+
+### Hob\<T\>
+
+The `Hob<T>` parameter type is used to access a guided hob value, which is automatically parsed from the HOB list
+provided to the Core during initialization. Unlike `Config<T>` and `ConfigMut<T>`, these types are **not** always
+available. This means a component that has this parameter implemented will only be executed if the guided HOB is
+found in the HOB list. Due to how HOBs work, the same guided HOB can be provided multiple times to the platform.
+Due to this, `Hob<T>` implements both `Deref` to access the first found value, or `IntoIterator` to iterate through
+all HOB values.
+
+This type comes with a `mock(...)` method to make unit testing simple.
+
+### Service\<T\>
+
+A `Service` exists as a way to share functionality across components. Some components may consume a service while
+others may produce said service. This abstracts how consumers of said `Service` receive it. The platform can easily
+swap implementation producers with no consumer being affected. A service can come in two flavors, a concrete struct
+(`Service<MyStruct`) or a zero-sized trait object (`Service<dyn MyInterface>`). The preferred implementation is the
+latter as it simplifies mocking functionality for host-based unit tests, however it does come with some drawbacks. The
+two main drawbacks are (1) functionality is accessed via a v-table, causing some performance degradation, and (2) dyn
+trait objects do not support generics in their function interfaces.
+
+In this scenario, it is suggested that most functionality be provided via a typical, mockable trait object service, with
+a lightweight concrete struct Service Wrapper to support generics. This allows for easy mocking of the underlying
+functionality, but provides an easy to use interface as seen below:
+
+``` rust
+use uefi_sdk::{
+    error::Result,
+    component::service::Service,
+};
+
+trait TraitService {
+    fn write_bytes(&self, bytes: Vec<u8>) -> Result<()>
+}
+
+struct ConcreteService {
+    inner: Service<dyn TraitService>
+}
+
+impl ConcreteService {
+    fn write(&self, object: impl Into<Vec<u8>>) -> Result<()> {
+        self.inner.write_bytes(object.into())
+    }
+}
+```
+
+```admonish important
+Each Service type is static and immutable. What this means is that only the &self methods methods are available,
+forcing the implementor to manage their own interior mutability. This means that each each consumer receives their own
+instance and can do what they will with the service, including stashing it when producing their own service or
+callback.
+```
+
+This type comes with a `mock(...)` method to make unit testing simple.
 
 ## Examples
 
