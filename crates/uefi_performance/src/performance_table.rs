@@ -71,13 +71,13 @@ impl FBPT {
         Ok(())
     }
 
-    /// Report table allocate new space of memory and move the table to a specific place so it can be found later.
+    /// Report table allocate new space of memory and move the table to a specific place so it can be found later, the address where the table is allocated is returned.
     /// Additional memory is allocated so the table can still grow in the future step.
     pub fn report_table(
         &mut self,
         boot_services: &impl BootServices,
         runtime_services: &impl RuntimeServices,
-    ) -> Result<(), efi::Status> {
+    ) -> Result<usize, efi::Status> {
         let allocation_size = Self::size_of_empty_table() + self.other_records.size() + PUBLISHED_FBPT_EXTRA_SPACE;
         let allocation_nb_page = allocation_size.div_ceil(UEFI_PAGE_SIZE);
         let allocation_size = allocation_nb_page * UEFI_PAGE_SIZE;
@@ -113,7 +113,7 @@ impl FBPT {
         self.other_records.report(&mut fbpt_buffer[offset..]);
 
         self._length.1.store(length_ptr, Ordering::Relaxed);
-        Ok(())
+        Ok(self.fbpt_address)
     }
 
     pub fn find_previous_table_address(runtime_services: &impl RuntimeServices) -> Option<usize> {

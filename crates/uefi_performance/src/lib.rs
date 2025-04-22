@@ -17,6 +17,7 @@ pub mod _debug;
 mod _smm;
 pub mod _status_code_runtime_protocol;
 pub mod _utils;
+pub mod pei;
 pub mod performance_measurement_protocol;
 pub mod performance_record;
 pub mod performance_table;
@@ -27,11 +28,15 @@ use core::{
     convert::TryFrom,
     ffi::{c_char, c_void},
     mem::{self, MaybeUninit},
-    ptr, slice,
+    option::Option::Some,
+    ptr,
+    result::Result::Ok,
+    slice,
     sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
+use pei::PeiPerformanceRecordBuffer;
 
-use mu_pi::hob::{Hob, HobList};
+use mu_pi::hob::HobList;
 use r_efi::{
     efi::{self, Guid},
     protocols::device_path::{Media, TYPE_MEDIA},
@@ -40,18 +45,15 @@ use r_efi::{
 use scroll::Pread;
 
 use _utils::c_char_ptr_from_str;
-use performance_measurement_protocol::{
-    EdkiiPerformanceMeasurement, EdkiiPerformanceMeasurementInterface, PerfAttribute,
-};
+use performance_measurement_protocol::{EdkiiPerformanceMeasurement, PerfAttribute};
 
 pub use mu_rust_helpers::function;
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 use uefi_sdk::{
     boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
-    component::IntoComponent,
+    component::{hob::Hob, IntoComponent},
     error::EfiError,
     guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
-    protocol::{DriverBinding, LoadedImage},
     runtime_services::{RuntimeServices, StandardRuntimeServices},
     tpl_mutex::TplMutex,
 };
@@ -67,19 +69,17 @@ use performance_record::{
 use performance_table::FBPT;
 
 use _smm::{
-    CommunicateProtocol, SmmCommunicationRegionTable, SmmFpdtGetRecordDataByOffset, SmmFpdtGetRecordSize,
+    CommunicateProtocol, MmCommRegion, SmmFpdtGetRecordDataByOffset, SmmFpdtGetRecordSize,
     EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID,
 };
 
 #[doc(hidden)]
 pub const PERF_ENABLED: bool = cfg!(feature = "instrument_performance");
 
-static IS_PERF_READY: AtomicBool = AtomicBool::new(false);
-
 static LOAD_IMAGE_COUNT: AtomicU32 = AtomicU32::new(0);
 
-static BOOT_SERVICES: MaybeUninit<&'static StandardBootServices> = MaybeUninit::zeroed();
-static FBPT: MaybeUninit<TplMutex<FBPT>> = MaybeUninit::zeroed();
+static mut BOOT_SERVICES: Option<StandardBootServices> = None;
+static mut FBPT: Option<TplMutex<FBPT>> = None;
 
 #[derive(IntoComponent)]
 pub struct PerformanceLibComponent;
@@ -87,41 +87,49 @@ pub struct PerformanceLibComponent;
 impl PerformanceLibComponent {
     pub fn entry_point(
         self,
-        boot_services: &'static StandardBootServices,
-        runtime_services: &'static StandardRuntimeServices,
-        system_table: &'static efi::SystemTable,
-        hob_list: &'static HobList,
+        boot_services: StandardBootServices,
+        runtime_services: StandardRuntimeServices,
+        pei_records_buffers_hobs: Hob<PeiPerformanceRecordBuffer>,
+        mm_comm_region_hobs: Hob<MmCommRegion>,
     ) -> Result<(), EfiError> {
         // SAFETY: This is safe because it is the entry point and no one is reading these value yet.
         unsafe {
-            ptr::write(BOOT_SERVICES.as_ptr() as *mut &'static StandardBootServices, boot_services);
-            ptr::write(FBPT.as_ptr() as *mut TplMutex<FBPT>, TplMutex::new(boot_services, Tpl::NOTIFY, FBPT::new()));
+            BOOT_SERVICES = Some(StandardBootServices::clone(&boot_services));
+            FBPT = Some(TplMutex::new(BOOT_SERVICES.as_ref().unwrap(), Tpl::NOTIFY, FBPT::new()));
         }
-        // SAFETY: This is safe because FBPT is initialize before the creation of this event.
-        let fbpt = unsafe { FBPT.assume_init_ref() };
 
-        self._entry_point(boot_services, runtime_services, system_table, hob_list, fbpt)?;
+        let Some(mm_comm_region) = mm_comm_region_hobs.iter().find(|r| r.is_user_type()) else {
+            log::error!("[12345] :(");
+            return Ok(());
+        };
 
-        IS_PERF_READY.store(true, Ordering::Relaxed);
+        self._entry_point(
+            boot_services,
+            runtime_services,
+            pei_records_buffers_hobs,
+            *mm_comm_region,
+            unsafe { FBPT.as_ref() }.unwrap(),
+        )?;
         Ok(())
     }
 
     pub fn _entry_point<B, R>(
         self,
-        boot_services: &'static B,
-        runtime_services: &'static R,
-        system_table: &'static efi::SystemTable,
-        hob_list: &'static HobList,
+        boot_services: B,
+        runtime_services: R,
+        pei_records_buffers_hobs: Hob<PeiPerformanceRecordBuffer>,
+        mm_comm_region: MmCommRegion,
         fbpt: &'static TplMutex<'static, FBPT, B>,
     ) -> Result<(), EfiError>
     where
-        B: BootServices,
-        R: RuntimeServices,
+        B: BootServices + Clone + 'static,
+        R: RuntimeServices + Clone + 'static,
     {
-        let (pei_perf_records, pei_load_image_count) = extract_pei_performance_records(hob_list).unwrap_or_else(|_| {
-            log::error!("Performance Lib: Error while trying to extract pei performance records");
-            (PerformanceRecordBuffer::new(), 0)
-        });
+        let (pei_load_image_count, pei_perf_records) = pei::extract_pei_performance_info(pei_records_buffers_hobs)
+            .unwrap_or_else(|_| {
+                log::error!("Performance Lib: Error while trying to insert pei performance records");
+                return (0, PerformanceRecordBuffer::new());
+            });
 
         LOAD_IMAGE_COUNT.store(pei_load_image_count, Ordering::Relaxed);
         log::info!("Performance Lib: {} PEI performance records found.", pei_perf_records.iter().count());
@@ -129,20 +137,17 @@ impl PerformanceLibComponent {
         fbpt.lock().set_records(pei_perf_records);
 
         // Install the protocol interfaces for DXE performance library instance.
-        boot_services
-            .install_protocol_interface(
-                None,
-                &EdkiiPerformanceMeasurement,
-                Box::new(EdkiiPerformanceMeasurementInterface { create_performance_measurement }),
-            )
-            .map_err(|(_, err)| err)?;
+        boot_services.install_protocol_interface(
+            None,
+            Box::new(EdkiiPerformanceMeasurement { create_performance_measurement }),
+        )?;
 
         // Register EndOfDxe event to allocate the boot performance table and report the table address through status code.
         boot_services.create_event_ex(
             EventType::NOTIFY_SIGNAL,
             Tpl::CALLBACK,
             Some(report_fpdt_record_buffer),
-            Box::new((boot_services, runtime_services, fbpt)),
+            Box::new((boot_services.clone(), runtime_services.clone(), fbpt)),
             &EVENT_GROUP_END_OF_DXE,
         )?;
 
@@ -151,68 +156,50 @@ impl PerformanceLibComponent {
             EventType::NOTIFY_SIGNAL,
             Tpl::CALLBACK,
             Some(fetch_and_add_smm_performance_records),
-            Box::new((boot_services, system_table)),
+            Box::new((boot_services.clone(), mm_comm_region, fbpt)),
             &EVENT_GROUP_READY_TO_BOOT,
         )?;
 
         // Install configuration table for performance property.
-        boot_services.install_configuration_table(
-            &PERFORMANCE_PROTOCOL,
-            Box::new(PerformanceProperty::new(Arch::perf_frequency(), Arch::cpu_count_start(), Arch::cpu_count_end())),
-        )?;
+        unsafe {
+            boot_services.install_configuration_table(
+                &PERFORMANCE_PROTOCOL,
+                Box::new(PerformanceProperty::new(
+                    Arch::perf_frequency(),
+                    Arch::cpu_count_start(),
+                    Arch::cpu_count_end(),
+                )),
+            )?
+        };
 
         Ok(())
     }
 }
 
-fn extract_pei_performance_records(hob_list: &HobList) -> Result<(PerformanceRecordBuffer, u32), efi::Status> {
-    let mut pei_records = PerformanceRecordBuffer::new();
-    let mut pei_load_image_count = 0;
-
-    for hob in hob_list.iter() {
-        match hob {
-            Hob::GuidHob(hob, data) if hob.name == EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE => {
-                let mut offset = 0;
-                let Ok([size_of_all_entries, load_image_count, _hob_is_full]) = data.gread::<[u32; 3]>(&mut offset)
-                else {
-                    continue;
-                };
-                let records_data_buffer = &data[offset..offset + size_of_all_entries as usize];
-                pei_load_image_count += load_image_count;
-                for r in Iter::new(records_data_buffer) {
-                    pei_records.push_record(r)?;
-                }
-            }
-            _ => continue,
-        };
-    }
-    Ok((pei_records, pei_load_image_count))
-}
-
-extern "efiapi" fn report_fpdt_record_buffer<B, R>(_event: efi::Event, ctx: Box<(&B, &R, &TplMutex<'static, FBPT, B>)>)
+extern "efiapi" fn report_fpdt_record_buffer<B, R>(_event: efi::Event, ctx: Box<(B, R, &TplMutex<'static, FBPT, B>)>)
 where
-    B: BootServices,
-    R: RuntimeServices,
+    B: BootServices + 'static,
+    R: RuntimeServices + 'static,
 {
     let (boot_services, runtime_services, fbpt) = *ctx;
-    let mut fbpt = fbpt.lock();
-    if fbpt.report_table(boot_services, runtime_services).is_err() {
+
+    let Ok(fbpt_address) = fbpt.lock().report_table(&boot_services, &runtime_services) else {
         log::error!("Performance Lib: Fail to report FPDT.");
         return;
-    }
+    };
 
     const EFI_SOFTWARE: u32 = 0x03000000;
     const EFI_PROGRESS_CODE: u32 = 0x00000001;
     const EFI_SOFTWARE_DXE_BS_DRIVER: u32 = EFI_SOFTWARE | 0x00050000;
 
     let status = StatusCodeRuntimeProtocol::report_status_code(
-        boot_services,
+        &boot_services,
         EFI_PROGRESS_CODE,
         EFI_SOFTWARE_DXE_BS_DRIVER,
         0,
         None,
         efi::Guid::clone(&EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE),
-        fbpt.fbpt_address(),
+        fbpt_address,
     );
     if status.is_err() {
         log::error!("Fail to report FBPT status code.");
@@ -223,7 +210,7 @@ where
     let status = unsafe {
         boot_services.install_configuration_table_unchecked(
             &EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
-            fbpt.fbpt_address() as *mut c_void,
+            fbpt_address as *mut c_void,
         )
     };
     if status.is_err() {
@@ -231,8 +218,10 @@ where
     }
 }
 
-extern "efiapi" fn fetch_and_add_smm_performance_records<B>(_event: efi::Event, ctx: Box<(&B, &efi::SystemTable)>)
-where
+extern "efiapi" fn fetch_and_add_smm_performance_records<B>(
+    _event: efi::Event,
+    ctx: Box<(B, MmCommRegion, &TplMutex<'static, FBPT, B>)>,
+) where
     B: BootServices,
 {
     // Make sure that this event only run once.
@@ -242,38 +231,10 @@ where
         return;
     };
 
-    let (boot_services, system_table) = *ctx;
-
-    let configuration_tables =
-        unsafe { slice::from_raw_parts(system_table.configuration_table, system_table.number_of_table_entries) };
-
-    let Some(smm_comm_region_table) = configuration_tables
-        .iter()
-        .find(|config_table| config_table.vendor_guid == EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID)
-        .and_then(|config_table| {
-            // SAFETY: The cast of vendor_table to `SmmCommunicationRegionTable` is valid
-            // because the configuration table vendor guid is `EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID`
-            // and the expected value of this configuration is a `SmmCommunicationRegionTable`.
-            unsafe { (config_table.vendor_table as *const SmmCommunicationRegionTable).as_ref() }
-        })
-    else {
-        log::error!("Performance Lib: Could not find any smm communication region table.");
-        return;
-    };
-
-    let Some(smm_communication_memory_region) =
-        smm_comm_region_table.iter().find(|r| r.r#type == efi::CONVENTIONAL_MEMORY)
-    else {
-        log::error!("Performance Lib: Could not find an available memory region to communication with smm.");
-        return;
-    };
-    if smm_communication_memory_region.physical_start == 0 || smm_communication_memory_region.number_of_pages == 0 {
-        log::error!("Performance Lib: Something is wrong with the smm communication memory region.");
-        return;
-    }
+    let (boot_services, mm_comm_region, fbpt) = *ctx;
 
     // SAFETY: This is safe because the reference returned by locate_protocol is never mutated after installation.
-    let Ok(communication) = (unsafe { boot_services.locate_protocol(&CommunicateProtocol, None) }) else {
+    let Ok(communication) = (unsafe { boot_services.locate_protocol::<CommunicateProtocol>(None) }) else {
         log::error!("Performance Lib: Could not locate communicate protocol interface.");
         return;
     };
@@ -281,7 +242,7 @@ where
     // SAFETY: Is safe to use because the memory region comes for a trusted source and can be considered valid.
     let boot_record_size = match unsafe {
         // Ask smm for the total size of the perf records.
-        communication.communicate(SmmFpdtGetRecordSize::new(), smm_communication_memory_region)
+        communication.communicate(SmmFpdtGetRecordSize::new(), mm_comm_region)
     } {
         Ok(SmmFpdtGetRecordSize { return_status, boot_record_size }) if return_status == efi::Status::SUCCESS => {
             boot_record_size
@@ -310,7 +271,7 @@ where
             // Ask smm to return us the next bytes in its buffer.
             communication.communicate(
                 SmmFpdtGetRecordDataByOffset::<1024>::new(smm_boot_records_data.len()),
-                smm_communication_memory_region,
+                mm_comm_region,
             )
         } {
             Ok(record_data) if record_data.return_status == efi::Status::SUCCESS => {
@@ -335,7 +296,7 @@ where
     }
 
     // Write found perf records in the fbpt table.
-    let mut fbpt = unsafe { FBPT.assume_init_ref() }.lock();
+    let mut fbpt = fbpt.lock();
     let mut n = 0;
     for r in Iter::new(&smm_boot_records_data) {
         fbpt.add_record(r).unwrap();
@@ -354,16 +315,13 @@ extern "efiapi" fn create_performance_measurement(
     identifier: u32,
     attribute: PerfAttribute,
 ) -> efi::Status {
-    if !IS_PERF_READY.load(Ordering::Relaxed) || !PERF_ENABLED {
+    if !PERF_ENABLED {
         return efi::Status::SUCCESS;
     }
-    let fbpt;
-    let boot_services;
-    // SAFETY: This is safe because FBPT and BOOTSERVCES are initialize if IS_PERF_READY is true.
-    unsafe {
-        fbpt = FBPT.assume_init_ref();
-        boot_services = BOOT_SERVICES.assume_init();
-    }
+
+    let Some((boot_services, fbpt)) = (unsafe { BOOT_SERVICES.as_ref().zip(FBPT.as_ref()) }) else {
+        return efi::Status::ABORTED;
+    };
 
     let string = unsafe { _utils::string_from_c_char_ptr(string) };
 
@@ -1065,10 +1023,7 @@ mod test {
     use core::{assert_eq, ffi::c_void, ptr};
 
     use uefi_sdk::{
-        boot_services::{
-            c_ptr::CPtr,
-            MockBootServices,
-        },
+        boot_services::{c_ptr::CPtr, MockBootServices},
         protocol::Protocol,
         runtime_services::MockRuntimeServices,
     };
@@ -1117,12 +1072,10 @@ mod test {
             },
         );
 
-        boot_services.expect_install_configuration_table::<Box<PerformanceProperty>>().once().returning(
-            |guid, _| {
-                assert_eq!(&PERFORMANCE_PROTOCOL, guid);
-                Ok(())
-            },
-        );
+        boot_services.expect_install_configuration_table::<Box<PerformanceProperty>>().once().returning(|guid, _| {
+            assert_eq!(&PERFORMANCE_PROTOCOL, guid);
+            Ok(())
+        });
 
         PerformanceLibComponent
             ._entry_point(

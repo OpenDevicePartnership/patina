@@ -2,78 +2,47 @@
 //!
 //! This module also contain smm performance communicate structures that define the communicate buffer data that need to be used to fetch perf records from smm.
 
-<<<<<<< HEAD
-use core::{debug_assert_eq, marker::PhantomPinned, ptr, result::Result::Ok, slice};
-=======
-use core::{debug_assert_eq, marker::PhantomPinned, ops::Deref, ptr, slice};
->>>>>>> a32b995 (more test and import cleanup)
+use core::{debug_assert_eq, marker::PhantomPinned, ptr, slice};
 
 use r_efi::efi;
 use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
     Endian, Pread, Pwrite,
 };
-<<<<<<< HEAD
-use uefi_sdk::{base::UEFI_PAGE_SIZE, protocol::ProtocolInterface};
-=======
 
-use uefi_sdk::{base::UEFI_PAGE_SIZE, protocol::Protocol};
->>>>>>> a32b995 (more test and import cleanup)
+use uefi_sdk::{base::UEFI_PAGE_SIZE, component::hob::FromHob, protocol::ProtocolInterface};
 
 pub const EFI_SMM_COMMUNICATION_PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0xc68ed8e2, 0x9dc6, 0x4cbd, 0x9d, 0x94, &[0xdb, 0x65, 0xac, 0xc5, 0xc3, 0x32]);
 pub const EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID: efi::Guid =
     efi::Guid::from_fields(0x4e28ca50, 0xd582, 0x44ac, 0xa1, 0x1f, &[0xe3, 0xd5, 0x65, 0x26, 0xdb, 0x34]);
 
-#[derive(Debug)]
+// GLOBAL_REMOVE_IF_UNREFERENCED EFI_GUID gMmCommonRegionHobGuid = { 0xd4ffc718, 0xfb82, 0x4274, { 0x9a, 0xfc, 0xaa, 0x8b, 0x1e, 0xef, 0x52, 0x93 } };
+
+#[derive(Debug, Clone, Copy, FromHob)]
+#[hob = "18C7FFD4-82FB-7442-9AFC-AA8B1EEF5293"]
 #[repr(C)]
-/// Memory layout of a smm communication region table.
-///
-/// Memory descriptor of this struct are stored after in memory. To access those use the [`Self::iter`] function.
-/// # Note
-/// This struct is not sized, should never be used as an own type.
-pub struct SmmCommunicationRegionTable {
-    /// Version of the smm communication region table.
-    pub version: u32,
-    /// Number of memory descriptor present in the region table
-    pub number_of_entries: u32,
-    /// Size in byte of one memory descriptor
-    pub descriptor_size: u32,
-    _reserved: u32,
-    /// Used to prevent the move because memory descriptors lives at the end of this struct
-    _pin: PhantomPinned,
-    memory_descriptors: [efi::MemoryDescriptor; 0],
+pub struct MmCommRegion {
+    pub region_type: u64,
+    pub region_address: u64,
+    pub region_nb_pages: u64,
 }
 
-impl SmmCommunicationRegionTable {
-    // Iterate over memory descriptors at the end of the struct.
-    pub fn iter(&self) -> SmmCommunicationRegionTableIter<'_> {
-        SmmCommunicationRegionTableIter { index: 0, region_table: self }
+impl MmCommRegion {
+    pub fn is_supervisor_type(&self) -> bool {
+        self.region_type == 0
     }
-}
 
-/// Memrory descriptor interation given by [`SmmCommunicationRegionTable::iter`].
-pub struct SmmCommunicationRegionTableIter<'a> {
-    index: usize,
-    region_table: &'a SmmCommunicationRegionTable,
-}
+    pub fn is_user_type(&self) -> bool {
+        self.region_type == 1
+    }
 
-impl<'a> Iterator for SmmCommunicationRegionTableIter<'a> {
-    type Item = &'a efi::MemoryDescriptor;
+    pub fn size(&self) -> usize {
+        self.region_nb_pages as usize * UEFI_PAGE_SIZE
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.region_table.number_of_entries as usize {
-            return None;
-        }
-
-        let memory_descriptor_ptr = unsafe {
-            self.region_table
-                .memory_descriptors
-                .as_ptr()
-                .byte_add(self.index * self.region_table.descriptor_size as usize)
-        };
-        self.index += 1;
-        unsafe { memory_descriptor_ptr.as_ref() }
+    pub unsafe fn as_buffer(&self) -> &'static mut [u8] {
+        slice::from_raw_parts_mut(self.region_address as usize as *mut u8, self.size())
     }
 }
 
@@ -111,18 +80,15 @@ impl CommunicateProtocol {
     pub unsafe fn communicate<T>(
         &mut self,
         data: T,
-        communication_memory_region: &efi::MemoryDescriptor,
+        communication_memory_region: MmCommRegion,
     ) -> Result<T, efi::Status>
     where
         T: CommunicateData,
     {
-        assert_eq!(efi::CONVENTIONAL_MEMORY, communication_memory_region.r#type);
-        assert_ne!(0, communication_memory_region.physical_start);
-        assert_ne!(0, communication_memory_region.number_of_pages);
+        assert_ne!(0, communication_memory_region.region_address);
+        assert_ne!(0, communication_memory_region.region_nb_pages);
 
-        let mut comm_size = communication_memory_region.number_of_pages as usize * UEFI_PAGE_SIZE;
-
-        let comm_buffer = slice::from_raw_parts_mut(communication_memory_region.physical_start as *mut u8, comm_size);
+        let comm_buffer = communication_memory_region.as_buffer();
         let mut offset = 0;
 
         comm_buffer.gwrite_with(T::GUID.as_bytes().as_slice(), &mut offset, ()).unwrap();
@@ -137,6 +103,7 @@ impl CommunicateProtocol {
         // Write the data actual size.
         comm_buffer.pwrite(offset as u64, size_offset).unwrap();
 
+        let mut comm_size = comm_buffer.len();
         let status = (self.communicate)(self, comm_buffer.as_mut_ptr(), ptr::addr_of_mut!(comm_size));
 
         if status.is_error() {
