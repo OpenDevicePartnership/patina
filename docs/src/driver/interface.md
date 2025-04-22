@@ -29,13 +29,23 @@ for examples of basic components using these two methods.
 
 Due to this, developing a component is as simple as writing a function whose parameters are a part of the below list of
 supported parameters (which is subject to change). Always reference the trait's [Type Implementations](todo/docs.rs)
-for a complete list, however the below list should be up to date:
+for a complete list, however the below information should be up to date.
+
+## Component Execution
+
+Components are executed by validating each individual parameter (See [Params](#component-params) below) in the
+component. If all paramters are validated, then the component is executed and removed from the list of components to
+execute. If any paramter fails to validate, then that parameter is registered as the failed param and the dispatcher
+will attempt to validate and execute the component in the next iteration. The dispatcher stops executing when no
+components have been dispatched in a single iteration.
 
 ## Component Params
 
 Writing a component is as simple as writing a function whose parameters are a part of the below list of suppported
-parameters (which is subject ot change). Always reference the trait's [Type Implementations](todo/docs.rs) for a
-complete list, however the below list should be up to date. We will discuss each parameter type in more detail below.
+types (which is subject ot change). The `Param` trait is the interface that the dispatcher uses to (1) validate that a
+parameter is available, (2) retrieve the datum from storage, and (3) pass it to the component when executing it. Always
+reference the `Param` trait's [Type Implementations](todo/docs.rs) for a complete list of parameters that can be used
+in the function interface of a component.
 
 ```admonish warning
 unfortunately, the compile-time error you get when trying to register a function whose parameters do not all implement
@@ -49,20 +59,13 @@ does matter!
 <!-- markdownlint-disable -->
 | Param                        | Description                                                                                                                       |
 |------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| Option\<P\>                  | An Option, where P implements `Param`. Allows components to run even when the underlying parameter is unavailable.                |
 | Config\<T\>                  | An immutable config value that will only be available once the underlying data has been locked.                                   |
 | ConfigMut\<T\>               | A mutable config value that will only be available while the underlying data is unlocked.                                         |
 | Hob\<T\>                     | A parsed, immutable, guid HOB (Hand-Off Block) that is automatically parsed and registered.                                       |
 | Service\<T\>                 | A wrapper for producing and consuming services of a particular interface, `T`, that is agnostic to the underlying implementation. |
 | (P1, P2, ...)                | A Tuple where each entry implements `Param`. Useful when you need more parameters than the current parameter limit.               |
+| Option\<P\>                  | An Option, where P implements `Param`. Affects each param type differently See [Option](#optionp) section for more details.       |
 <!-- markdownlint-enable -->
-
-### Option\<P\>
-
-Some parameters are not *always* available. When a parameter is not available, the component will not be executed.
-There may be a situation where your component may be able to execute even if a particular parameter is not available.
-This is where the `Option<P>` parameter can be used. Instead of *never* executing because a parameter is missing,
-instead it will be executed, but the `Option` will be `None`.
 
 ### Config\<T\> / ConfigMut\<T\>
 
@@ -144,6 +147,26 @@ allows them stash it for their own needs post component execution.
 ```
 
 This type comes with a `mock(...)` method to make unit testing simple.
+
+### Option\<P\>
+
+Some parameters are not *always* available. When a parameter is not available, the component will not be executed,
+either in this iteration, or overall, if the parameter is never made available. There may be a situation where your
+component may be able to execute even if a particular parameter is not available. This is where the `Option<P>`
+parameter can be used. Instead of *never* executing because a parameter is missing, instead it will be executed
+immediately, but the `Option` will be `None`. Here is how Option affects each particular parameter type.
+
+In all scenarios, the parameter is marked as `available` immediately, which may result in a component executing before
+the given parameter is actually available, even if it would have been made available later in component dispatching.
+
+<!-- markdownlint-disable -->
+| Param                        | Description                                                                                            |
+|------------------------------|--------------------------------------------------------------------------------------------------------|
+| Option\<Config\<T\>\>        | The Option will return `None` if the Config value is currently unlocked. Use with caution.             |
+| Option\<ConfigMut\<T\>\>     | The Option will return `None` if the Config value is currently locked. Use with caution.               |
+| Option\<Hob\<T\>\>           | The Option will return `None` if no guided HOB was passed to the Core. This is a good use of `Option`. |
+| Option\<Service\<T\>\>       | The Option will return `None` if the service has not yet been produced. Use with caution.              |
+<!-- markdownlint-enable -->
 
 ## Examples
 
