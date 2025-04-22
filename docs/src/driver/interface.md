@@ -34,8 +34,8 @@ for a complete list, however the below information should be up to date.
 ## Component Execution
 
 Components are executed by validating each individual parameter (See [Params](#component-params) below) in the
-component. If all paramters are validated, then the component is executed and removed from the list of components to
-execute. If any paramter fails to validate, then that parameter is registered as the failed param and the dispatcher
+component. If all parameters are validated, then the component is executed and removed from the list of components to
+execute. If any parameters fails to validate, then that parameter is registered as the failed param and the dispatcher
 will attempt to validate and execute the component in the next iteration. The dispatcher stops executing when no
 components have been dispatched in a single iteration.
 
