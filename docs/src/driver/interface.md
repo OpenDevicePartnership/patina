@@ -49,12 +49,12 @@ does matter!
 <!-- markdownlint-disable -->
 | Param                        | Description                                                                                                                       |
 |------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| Hob\<T\>                     | A parsed, immutable, guid HOB (Hand-Off Block) that is automatically parsed and registered.                                       |
 | Option\<P\>                  | An Option, where P implements `Param`. Allows components to run even when the underlying parameter is unavailable.                |
-| (P1, P2, ...)                | A Tuple where each entry implements `Param`. Useful when you need more parameters than the current parameter limit.               |
 | Config\<T\>                  | An immutable config value that will only be available once the underlying data has been locked.                                   |
 | ConfigMut\<T\>               | A mutable config value that will only be available while the underlying data is unlocked.                                         |
+| Hob\<T\>                     | A parsed, immutable, guid HOB (Hand-Off Block) that is automatically parsed and registered.                                       |
 | Service\<T\>                 | A wrapper for producing and consuming services of a particular interface, `T`, that is agnostic to the underlying implementation. |
+| (P1, P2, ...)                | A Tuple where each entry implements `Param`. Useful when you need more parameters than the current parameter limit.               |
 <!-- markdownlint-enable -->
 
 ### Option\<P\>
@@ -106,14 +106,14 @@ This type comes with a `mock(...)` method to make unit testing simple.
 A `Service` exists as a way to share functionality across components. Some components may consume a service while
 others may produce said service. This abstracts how consumers of said `Service` receive it. The platform can easily
 swap implementation producers with no consumer being affected. A service can come in two flavors, a concrete struct
-(`Service<MyStruct`) or a zero-sized trait object (`Service<dyn MyInterface>`). The preferred implementation is the
+(`Service<MyStruct>`) or a zero-sized trait object (`Service<dyn MyInterface>`). The preferred implementation is the
 latter as it simplifies mocking functionality for host-based unit tests, however it does come with some drawbacks. The
 two main drawbacks are (1) functionality is accessed via a v-table, causing some performance degradation, and (2) dyn
 trait objects do not support generics in their function interfaces.
 
-In this scenario, it is suggested that most functionality be provided via a typical, mockable trait object service, with
-a lightweight concrete struct Service Wrapper to support generics. This allows for easy mocking of the underlying
-functionality, but provides an easy to use interface as seen below:
+If function generics are needed / wanted, it is suggested that most functionality be provided via a typical, mockable
+trait object service, with a lightweight concrete struct Service Wrapper to support generics. This allows for easy
+mocking of the underlying functionality, but provides an easy to use interface as seen below:
 
 ``` rust
 use uefi_sdk::{
@@ -137,10 +137,10 @@ impl ConcreteService {
 ```
 
 ```admonish important
-Each service references the same underlying static and immutable type. This means is that only the &self methods are
+Each service references the same underlying static and immutable type. This means that only the &self methods are
 available and forces the implementor to manage their own interior mutability via some sort of locking mechanism. Each
-component receives their own Service instance (All of which point back to the same underlying implementation), which
-allows them stash it for their own service implementations or callbacks.
+component receives their own service instance (all of which point back to the same underlying implementation), which
+allows them stash it for their own needs post component execution.
 ```
 
 This type comes with a `mock(...)` method to make unit testing simple.
