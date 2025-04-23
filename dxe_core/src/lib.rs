@@ -467,7 +467,13 @@ where
                         parser_func(data, &mut self.storage);
                     }
                     None => {
-                        log::warn!("No parser registered for HOB: {:?}", guid);
+                        let (f0, f1, f2, f3, f4, &[f5,f6, f7, f8, f9, f10])
+                            = guid.name.as_fields();
+                        let name = alloc::format!(
+                            "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+                            f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10
+                        );
+                        log::warn!("No parser registered for HOB: GuidHob {{ {:?}, name: Guid {{ {} }} }}", guid.header, name);
                     }
                 }
             }
