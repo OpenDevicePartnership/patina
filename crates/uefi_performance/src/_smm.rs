@@ -2,7 +2,7 @@
 //!
 //! This module also contain smm performance communicate structures that define the communicate buffer data that need to be used to fetch perf records from smm.
 
-use core::{debug_assert_eq, marker::PhantomPinned, ptr, slice};
+use core::{debug_assert_eq, ptr, slice};
 
 use r_efi::efi;
 use scroll::{
@@ -14,10 +14,9 @@ use uefi_sdk::{base::UEFI_PAGE_SIZE, component::hob::FromHob, protocol::Protocol
 
 pub const EFI_SMM_COMMUNICATION_PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0xc68ed8e2, 0x9dc6, 0x4cbd, 0x9d, 0x94, &[0xdb, 0x65, 0xac, 0xc5, 0xc3, 0x32]);
-pub const EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID: efi::Guid =
-    efi::Guid::from_fields(0x4e28ca50, 0xd582, 0x44ac, 0xa1, 0x1f, &[0xe3, 0xd5, 0x65, 0x26, 0xdb, 0x34]);
 
-// GLOBAL_REMOVE_IF_UNREFERENCED EFI_GUID gMmCommonRegionHobGuid = { 0xd4ffc718, 0xfb82, 0x4274, { 0x9a, 0xfc, 0xaa, 0x8b, 0x1e, 0xef, 0x52, 0x93 } };
+// pub const EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID: efi::Guid =
+//     efi::Guid::from_fields(0x4e28ca50, 0xd582, 0x44ac, 0xa1, 0x1f, &[0xe3, 0xd5, 0x65, 0x26, 0xdb, 0x34]);
 
 #[derive(Debug, Clone, Copy, FromHob)]
 #[hob = "18C7FFD4-82FB-7442-9AFC-AA8B1EEF5293"]

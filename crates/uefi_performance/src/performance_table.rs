@@ -8,7 +8,9 @@
 use alloc::vec::Vec;
 use core::{
     fmt::Debug,
-    mem, ptr, slice,
+    mem, ptr,
+    result::Result,
+    slice,
     sync::atomic::{AtomicPtr, Ordering},
 };
 
@@ -28,11 +30,17 @@ use crate::performance_record::{self, PerformanceRecord, PerformanceRecordBuffer
 
 const PUBLISHED_FBPT_EXTRA_SPACE: usize = 0x10_000;
 
-#[derive(Debug, Clone, Pwrite)]
-#[repr(C)]
-pub struct PerformanceTableHeader {
-    pub signature: u32,
-    pub length: u32,
+/// ...
+pub trait FirmwareBasicBootPerfTable {
+    fn fbpt_address(&self) -> usize;
+    fn perf_records(&self) -> &PerformanceRecordBuffer;
+    fn set_perf_records(&mut self, perf_records: PerformanceRecordBuffer);
+    fn add_record(&mut self, record: impl PerformanceRecord) -> Result<(), efi::Status>;
+
+    /// Report table allocate new space of memory and move the table to a specific place so it can be found later, the address where the table is allocated is returned.
+    /// Additional memory is allocated so the table can still grow in the future step.
+    fn report_table(&mut self, address: Option<usize>, boot_services: &impl BootServices)
+        -> Result<usize, efi::Status>;
 }
 
 /// Firmware Basic Boot Performance Table (FBPT)
@@ -49,9 +57,6 @@ pub struct FBPT {
 impl FBPT {
     pub const SIGNATURE: u32 = u32::from_le_bytes([b'F', b'B', b'P', b'T']);
 
-    const ADDRESS_VARIABLE_GUID: efi::Guid =
-        efi::Guid::from_fields(0xc095791a, 0x3001, 0x47b2, 0x80, 0xc9, &[0xea, 0xc7, 0x31, 0x9f, 0x2f, 0xa4]);
-
     pub const fn new() -> Self {
         Self {
             fbpt_address: 0,
@@ -60,30 +65,53 @@ impl FBPT {
         }
     }
 
-    pub fn set_records(&mut self, records: PerformanceRecordBuffer) {
-        *self.length_mut() += records.size() as u32;
-        self.other_records = records;
+    pub fn length(&self) -> &u32 {
+        unsafe { self._length.1.load(Ordering::Relaxed).as_ref() }.unwrap_or(&self._length.0)
     }
 
-    pub fn add_record(&mut self, record: impl PerformanceRecord) -> Result<(), efi::Status> {
+    fn length_mut(&mut self) -> &mut u32 {
+        unsafe { self._length.1.load(Ordering::Relaxed).as_mut() }.unwrap_or(&mut self._length.0)
+    }
+
+    pub const fn size_of_empty_table() -> usize {
+        mem::size_of::<u32>() // Header signature
+        + mem::size_of::<u32>() // Header length
+        + performance_record::PERFORMANCE_RECORD_HEADER_SIZE
+        + FirmwareBasicBootPerfDataRecord::data_size()
+    }
+}
+
+impl FirmwareBasicBootPerfTable for FBPT {
+    fn fbpt_address(&self) -> usize {
+        self.fbpt_address
+    }
+
+    fn perf_records(&self) -> &PerformanceRecordBuffer {
+        &self.other_records
+    }
+
+    fn set_perf_records(&mut self, perf_records: PerformanceRecordBuffer) {
+        *self.length_mut() += perf_records.size() as u32;
+        self.other_records = perf_records;
+    }
+
+    fn add_record(&mut self, record: impl PerformanceRecord) -> Result<(), efi::Status> {
         let record_size = self.other_records.push_record(record)?;
         *self.length_mut() += record_size as u32;
         Ok(())
     }
 
-    /// Report table allocate new space of memory and move the table to a specific place so it can be found later, the address where the table is allocated is returned.
-    /// Additional memory is allocated so the table can still grow in the future step.
-    pub fn report_table(
+    fn report_table(
         &mut self,
+        address: Option<usize>,
         boot_services: &impl BootServices,
-        runtime_services: &impl RuntimeServices,
     ) -> Result<usize, efi::Status> {
         let allocation_size = Self::size_of_empty_table() + self.other_records.size() + PUBLISHED_FBPT_EXTRA_SPACE;
         let allocation_nb_page = allocation_size.div_ceil(UEFI_PAGE_SIZE);
         let allocation_size = allocation_nb_page * UEFI_PAGE_SIZE;
 
         self.fbpt_address = 'find_address: {
-            if let Some(prev_address) = { Self::find_previous_table_address(runtime_services) } {
+            if let Some(prev_address) = address {
                 if let Ok(prev_address) = boot_services.allocate_pages(
                     AllocType::Address(prev_address),
                     MemoryType::RESERVED_MEMORY_TYPE,
@@ -115,40 +143,6 @@ impl FBPT {
         self._length.1.store(length_ptr, Ordering::Relaxed);
         Ok(self.fbpt_address)
     }
-
-    pub fn find_previous_table_address(runtime_services: &impl RuntimeServices) -> Option<usize> {
-        runtime_services
-            .get_variable::<FirmwarePerformanceVariable>(
-                &[0],
-                &Self::ADDRESS_VARIABLE_GUID,
-                Some(mem::size_of::<FirmwarePerformanceVariable>()),
-            )
-            .map(|(v, _)| v.boot_performance_table_pointer)
-            .ok()
-    }
-
-    pub fn length(&self) -> &u32 {
-        unsafe { self._length.1.load(Ordering::Relaxed).as_ref() }.unwrap_or(&self._length.0)
-    }
-
-    pub fn length_mut(&mut self) -> &mut u32 {
-        unsafe { self._length.1.load(Ordering::Relaxed).as_mut() }.unwrap_or(&mut self._length.0)
-    }
-
-    pub fn other_records(&self) -> &PerformanceRecordBuffer {
-        &self.other_records
-    }
-
-    pub fn fbpt_address(&self) -> usize {
-        self.fbpt_address
-    }
-
-    pub const fn size_of_empty_table() -> usize {
-        mem::size_of::<u32>() // Header signature
-        + mem::size_of::<u32>() // Header length
-        + performance_record::PERFORMANCE_RECORD_HEADER_SIZE
-        + FirmwareBasicBootPerfDataRecord::data_size()
-    }
 }
 
 impl Default for FBPT {
@@ -171,10 +165,26 @@ impl Debug for FBPT {
     }
 }
 
+pub fn find_previous_table_address(runtime_services: &impl RuntimeServices) -> Option<usize> {
+    runtime_services
+        .get_variable::<FirmwarePerformanceVariable>(
+            &[0],
+            &FirmwarePerformanceVariable::ADDRESS_VARIABLE_GUID,
+            Some(mem::size_of::<FirmwarePerformanceVariable>()),
+        )
+        .map(|(v, _)| v.boot_performance_table_pointer)
+        .ok()
+}
+
 #[repr(C)]
 pub struct FirmwarePerformanceVariable {
     boot_performance_table_pointer: usize,
     _s3_performance_table_pointer: usize,
+}
+
+impl FirmwarePerformanceVariable {
+    const ADDRESS_VARIABLE_GUID: efi::Guid =
+        efi::Guid::from_fields(0xc095791a, 0x3001, 0x47b2, 0x80, 0xc9, &[0xea, 0xc7, 0x31, 0x9f, 0x2f, 0xa4]);
 }
 impl TryFrom<Vec<u8>> for FirmwarePerformanceVariable {
     type Error = ();

@@ -14,8 +14,6 @@ use core::{fmt::Debug, mem, ops::Deref};
 use r_efi::efi;
 use scroll::{self, Pread, Pwrite};
 
-use crate::_debug::DbgMemory;
-
 pub const FPDT_MAX_PERF_RECORD_SIZE: usize = u8::MAX as usize;
 
 pub const PERFORMANCE_RECORD_HEADER_SIZE: usize = mem::size_of::<u16>() // Type
@@ -86,7 +84,7 @@ impl<T: Deref<Target = [u8]>> Debug for GenericPerformanceRecord<T> {
             .field("record_type", &self.record_type)
             .field("length", &self.length)
             .field("revision", &self.revision)
-            .field("data", &DbgMemory(&self.data))
+            .field("data", &self.data.deref())
             .finish()
     }
 }

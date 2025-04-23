@@ -1,4 +1,4 @@
-use core::debug_assert;
+use core::{debug_assert, result::Result};
 
 use alloc::vec::Vec;
 use r_efi::efi;
@@ -9,6 +9,12 @@ use uefi_sdk::{
 };
 
 use crate::performance_record::{Iter, PerformanceRecordBuffer};
+
+/// ...
+pub trait PeiPerformanceDataExtractor {
+    /// ...
+    fn extract_pei_perf_data(&self) -> Result<(u32, PerformanceRecordBuffer), efi::Status>;
+}
 
 #[derive(Debug, Default)]
 pub struct PeiPerformanceRecordBuffer {
@@ -32,15 +38,17 @@ impl FromHob for PeiPerformanceRecordBuffer {
     }
 }
 
-pub fn extract_pei_performance_info(hobs: Hob<PeiPerformanceRecordBuffer>) -> Result<(u32, PerformanceRecordBuffer), efi::Status> {
-    let mut pei_load_image_count = 0;
-    let mut pei_records = PerformanceRecordBuffer::new();
+impl PeiPerformanceDataExtractor for Hob<'_, PeiPerformanceRecordBuffer> {
+    fn extract_pei_perf_data(&self) -> Result<(u32, PerformanceRecordBuffer), efi::Status> {
+        let mut pei_load_image_count = 0;
+        let mut pei_records = PerformanceRecordBuffer::new();
 
-    for pei_performance_record_buffer in hobs.iter() {
-        pei_load_image_count += pei_performance_record_buffer.load_image_count;
-        for r in Iter::new(&pei_performance_record_buffer.records_data_buffer) {
-            pei_records.push_record(r)?;
+        for pei_performance_record_buffer in self.iter() {
+            pei_load_image_count += pei_performance_record_buffer.load_image_count;
+            for r in Iter::new(&pei_performance_record_buffer.records_data_buffer) {
+                pei_records.push_record(r)?;
+            }
         }
+        Ok((pei_load_image_count, pei_records))
     }
-    Ok((pei_load_image_count, pei_records))
 }
