@@ -9,7 +9,7 @@ pub mod extended;
 pub mod known_records;
 
 use alloc::vec::Vec;
-use core::{fmt::Debug, mem, ops::Deref, result::Result};
+use core::{fmt::Debug, mem};
 
 use r_efi::efi;
 use scroll::{self, Pread, Pwrite};
@@ -48,7 +48,8 @@ pub trait PerformanceRecord {
     }
 }
 
-pub struct GenericPerformanceRecord<T: Deref<Target = [u8]>> {
+#[derive(Debug)]
+pub struct GenericPerformanceRecord<T: AsRef<[u8]>> {
     // This value depicts the format and contents of the performance record.
     pub record_type: u16,
     /// This value depicts the length of the performance record, in bytes.
@@ -59,10 +60,10 @@ pub struct GenericPerformanceRecord<T: Deref<Target = [u8]>> {
     /// but newly defined fields allow the length of the performance record to be increased.
     /// Previously defined record fields must not be redefined, but are permitted to be deprecated.
     pub revision: u8,
-    data: T,
+    pub data: T,
 }
 
-impl<T: Deref<Target = [u8]>> PerformanceRecord for GenericPerformanceRecord<T> {
+impl<T: AsRef<[u8]>> PerformanceRecord for GenericPerformanceRecord<T> {
     fn record_type(&self) -> u16 {
         self.record_type
     }
@@ -72,19 +73,8 @@ impl<T: Deref<Target = [u8]>> PerformanceRecord for GenericPerformanceRecord<T> 
     }
 
     fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error> {
-        buff.gwrite_with(self.data.deref(), offset, ())?;
+        buff.gwrite_with(self.data.as_ref(), offset, ())?;
         Ok(())
-    }
-}
-
-impl<T: Deref<Target = [u8]>> Debug for GenericPerformanceRecord<T> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("GenericPerformanceRecord")
-            .field("record_type", &self.record_type)
-            .field("length", &self.length)
-            .field("revision", &self.revision)
-            .field("data", &self.data.deref())
-            .finish()
     }
 }
 

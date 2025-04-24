@@ -15,6 +15,7 @@ extern crate alloc;
 
 // pub mod _debug;
 mod _smm;
+pub mod log_perf_measurement_macros;
 pub mod pei;
 pub mod performance_measurement_protocol;
 pub mod performance_record;
@@ -22,7 +23,6 @@ pub mod performance_table;
 
 use alloc::{
     boxed::Box,
-    ffi::CString,
     string::{String, ToString},
     vec::Vec,
 };
@@ -69,6 +69,8 @@ use performance_table::{FirmwareBasicBootPerfTable, FBPT};
 
 use _smm::{CommunicateProtocol, MmCommRegion, SmmFpdtGetRecordDataByOffset, SmmFpdtGetRecordSize};
 
+pub use log_perf_measurement_macros::*;
+
 #[doc(hidden)]
 pub const PERF_ENABLED: bool = cfg!(feature = "instrument_performance");
 
@@ -106,6 +108,7 @@ fn get_static_state() -> Option<(&'static StandardBootServices, &'static TplMute
 pub struct PerformanceLib;
 
 impl PerformanceLib {
+    #[cfg(not(tarpaulin_include))]
     pub fn entry_point(
         self,
         boot_services: StandardBootServices,
@@ -329,6 +332,8 @@ extern "efiapi" fn fetch_and_add_smm_performance_records<BB, B, F>(
     log::info!("Performance Lib: {} smm performance records found.", n);
 }
 
+
+#[cfg(not(tarpaulin_include))]
 extern "efiapi" fn create_performance_measurement(
     caller_identifier: *const c_void,
     guid: Option<&efi::Guid>,
@@ -373,18 +378,11 @@ extern "efiapi" fn create_performance_measurement(
         }
     }
 
-    let cpu_count = Arch::cpu_count();
-    let timestamp = match ticker {
-        0 => (cpu_count as f64 / Arch::perf_frequency() as f64 * 1_000_000_000_f64) as u64,
-        1 => 0,
-        ticker => (ticker as f64 / Arch::perf_frequency() as f64 * 1_000_000_000_f64) as u64,
-    };
-
     match _create_performance_measurement(
         caller_identifier,
         guid,
         string,
-        timestamp,
+        ticker,
         address,
         perf_id,
         attribute,
@@ -406,7 +404,7 @@ fn _create_performance_measurement<B, F>(
     caller_identifier: *const c_void,
     guid: Option<&efi::Guid>,
     string: Option<String>,
-    timestamp: u64,
+    ticker: u64,
     address: usize,
     perf_id: u16,
     attribute: PerfAttribute,
@@ -417,6 +415,13 @@ where
     B: BootServices,
     F: FirmwareBasicBootPerfTable,
 {
+    let cpu_count = Arch::cpu_count();
+    let timestamp = match ticker {
+        0 => (cpu_count as f64 / Arch::perf_frequency() as f64 * 1_000_000_000_f64) as u64,
+        1 => 0,
+        ticker => (ticker as f64 / Arch::perf_frequency() as f64 * 1_000_000_000_f64) as u64,
+    };
+
     let Ok(known_perf_id) = KnownPerfId::try_from(perf_id) else {
         if attribute == PerfAttribute::PerfEntry {
             return Err(efi::Status::INVALID_PARAMETER);
@@ -575,455 +580,6 @@ pub struct MediaFwVolFilepathDevicePath {
     fv_file_name: efi::Guid,
 }
 
-macro_rules! __log_perf_measurement {
-    (
-        $caller_identifier:expr,
-        $guid:expr,
-        $string:literal,
-        $ticker:expr,
-        $identifier:expr,
-        $perf_id:expr
-    ) => {{
-        if $crate::PERF_ENABLED {
-            let string = concat!($string, "\0").as_ptr() as *const c_char;
-            create_performance_measurement(caller_identifier, guid, string, ticker, 0, identifier, perf_id);
-        }
-    }};
-}
-
-fn log_perf_measurement(
-    caller_identifier: *const c_void,
-    guid: Option<&efi::Guid>,
-    string: Option<&str>,
-    address: usize,
-    identifier: u16,
-) {
-    create_performance_measurement(
-        caller_identifier,
-        guid,
-        string
-            .map(|s| CString::new(s).map_or(core::ptr::null(), |c_string| c_string.into_raw()))
-            .unwrap_or(ptr::null()),
-        0,
-        address,
-        identifier as u32,
-        PerfAttribute::PerfEntry,
-    );
-}
-
-fn start_perf_measurement(
-    handle: efi::Handle,
-    token: *const c_char,
-    module: *const c_char,
-    timestamp: u64,
-    identifier: u32,
-) {
-    let string = if !token.is_null() {
-        token
-    } else if !module.is_null() {
-        module
-    } else {
-        ptr::null()
-    };
-    create_performance_measurement(handle, None, string, timestamp, 0, identifier, PerfAttribute::PerfStartEntry);
-}
-
-fn end_perf_measurement(
-    handle: efi::Handle,
-    token: *const c_char,
-    module: *const c_char,
-    timestamp: u64,
-    identifier: u32,
-) {
-    let string = if !token.is_null() {
-        token
-    } else if !module.is_null() {
-        module
-    } else {
-        ptr::null()
-    };
-    create_performance_measurement(handle, None, string, timestamp, 0, identifier, PerfAttribute::PerfEndEntry);
-}
-
-#[macro_export]
-macro_rules! perf_image_start_begin {
-    ($caller_id:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_image_start_begin($caller_id);
-        }
-    };
-}
-
-pub fn _perf_image_start_begin(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, None, 0, KnownPerfId::ModuleStart.as_u16());
-}
-
-#[macro_export]
-macro_rules! perf_image_start_end {
-    ($caller_id:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_image_start_end($caller_id);
-        }
-    };
-}
-
-pub fn _perf_image_start_end(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, None, 0, KnownPerfId::ModuleEnd.as_u16());
-}
-
-#[macro_export]
-macro_rules! perf_load_image_begin {
-    ($caller_id:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_load_image_begin($caller_id);
-        }
-    };
-}
-
-pub fn _perf_load_image_begin(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, None, 0, KnownPerfId::ModuleLoadImageStart.as_u16());
-}
-
-#[macro_export]
-macro_rules! perf_load_image_end {
-    ($caller_id:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_load_image_end($caller_id);
-        }
-    };
-}
-
-pub fn _perf_load_image_end(module_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, None, 0, KnownPerfId::ModuleLoadImageEnd.as_u16());
-}
-
-#[macro_export]
-macro_rules! perf_driver_binding_support_begin {
-    ($caller_id:expr, $address:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_driver_binding_support_begin($caller_id, $address);
-        }
-    };
-}
-
-pub fn _perf_driver_binding_support_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    log_perf_measurement(
-        module_handle,
-        None,
-        None,
-        controller_handle as usize,
-        KnownPerfId::ModuleDbSupportStart.as_u16(),
-    );
-}
-
-#[macro_export]
-macro_rules! perf_driver_binding_support_end {
-    ($caller_id:expr, $address:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_driver_binding_support_end($caller_id, $address);
-        }
-    };
-}
-
-pub fn _perf_driver_binding_support_end(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    log_perf_measurement(
-        module_handle,
-        None,
-        None,
-        controller_handle as usize,
-        KnownPerfId::ModuleDbSupportEnd.as_u16(),
-    );
-}
-
-#[macro_export]
-macro_rules! perf_driver_binding_start_begin {
-    ($caller_id:expr, $address:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_driver_binding_start_begin($caller_id, $address);
-        }
-    };
-}
-
-pub fn _perf_driver_binding_start_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, None, controller_handle as usize, KnownPerfId::ModuleDbStart.as_u16());
-}
-
-#[macro_export]
-macro_rules! perf_driver_binding_start_end {
-    ($caller_id:expr, $address:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_driver_binding_start_end($caller_id, $address);
-        }
-    };
-}
-
-pub fn _perf_driver_binding_start_end(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, None, controller_handle as usize, KnownPerfId::ModuleDbEnd.as_u16());
-}
-
-#[macro_export]
-macro_rules! perf_driver_binding_stop_begin {
-    ($caller_id:expr, $address:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_driver_binding_stop_begin($caller_id, $address);
-        }
-    };
-}
-
-pub fn _perf_driver_binding_stop_begin(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    log_perf_measurement(
-        module_handle,
-        None,
-        None,
-        controller_handle as usize,
-        KnownPerfId::ModuleDbStopStart.as_u16(),
-    );
-}
-
-#[macro_export]
-macro_rules! perf_driver_binding_stop_end {
-    ($caller_id:expr, $address:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_driver_binding_stop_end($caller_id, $address);
-        }
-    };
-}
-
-pub fn _perf_driver_binding_stop_end(module_handle: efi::Handle, controller_handle: efi::Handle) {
-    log_perf_measurement(module_handle, None, None, controller_handle as usize, KnownPerfId::ModuleDbStopEnd.as_u16());
-}
-
-#[macro_export]
-macro_rules! perf_event {
-    ($event_guid:expr, $caller_id:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_event($event_guid, $crate::function!(), $caller_id)
-        }
-    };
-}
-
-pub fn _perf_event(event_string: &str, caller_id: &efi::Guid) {
-    log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
-        None,
-        Some(event_string),
-        0,
-        KnownPerfId::PerfEvent.as_u16(),
-    );
-}
-
-#[macro_export]
-macro_rules! perf_event_signal_begin {
-    ($event_guid:expr, $caller_id:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_event_signal_begin($event_guid, $crate::function!(), $caller_id)
-        }
-    };
-}
-
-pub fn _perf_event_signal_begin(event_guid: &efi::Guid, fun_name: &str, caller_id: &efi::Guid) {
-    log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
-        Some(event_guid),
-        Some(fun_name),
-        0,
-        KnownPerfId::PerfEventSignalStart.as_u16(),
-    );
-}
-
-#[macro_export]
-macro_rules! perf_event_signal_end {
-    ($event_guid:expr, $caller_id:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_event_signal_end($event_guid, $crate::function!(), $caller_id)
-        }
-    };
-}
-
-pub fn _perf_event_signal_end(event_guid: &efi::Guid, fun_name: &str, caller_id: &efi::Guid) {
-    log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
-        Some(event_guid),
-        Some(fun_name),
-        0,
-        KnownPerfId::PerfEventSignalEnd.as_u16(),
-    );
-}
-
-#[macro_export]
-macro_rules! perf_callback_begin {
-    ($trigger_guid:expr, $caller_id:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_callback_begin($trigger_guid, $crate::function!(), $caller_id)
-        }
-    };
-}
-
-pub fn _perf_callback_begin(trigger_guid: &efi::Guid, fun_name: &str, caller_id: &efi::Guid) {
-    log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
-        Some(trigger_guid),
-        Some(fun_name),
-        0,
-        KnownPerfId::PerfCallbackStart.as_u16(),
-    );
-}
-
-#[macro_export]
-macro_rules! perf_callback_end {
-    ($trigger_guid:expr, $caller_id:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_callback_end($trigger_guid, $crate::function!(), $caller_id)
-        }
-    };
-}
-
-pub fn _perf_callback_end(trigger_guid: &efi::Guid, fun_name: &str, caller_id: &efi::Guid) {
-    log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
-        Some(trigger_guid),
-        Some(fun_name),
-        0,
-        KnownPerfId::PerfCallbackEnd.as_u16(),
-    );
-}
-
-#[macro_export]
-macro_rules! perf_function_begin {
-    ($caller_id:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_function_begin($crate::function!(), $caller_id)
-        }
-    };
-}
-
-pub fn _perf_function_begin(fun_name: &str, caller_id: &efi::Guid) {
-    log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
-        None,
-        Some(fun_name),
-        0,
-        KnownPerfId::PerfFunctionStart.as_u16(),
-    );
-}
-
-#[macro_export]
-macro_rules! perf_function_end {
-    ($caller_id:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_function_end($crate::function!(), $caller_id)
-        }
-    };
-}
-
-pub fn _perf_function_end(fun_name: &str, caller_id: &efi::Guid) {
-    log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
-        None,
-        Some(fun_name),
-        0,
-        KnownPerfId::PerfFunctionEnd.as_u16(),
-    );
-}
-
-#[macro_export]
-macro_rules! perf_in_module_begin {
-    ($measurement_str:expr, $caller_id:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_in_module_begin($measurement_str, $caller_id)
-        }
-    };
-}
-
-pub fn _perf_in_module_begin(measurement_str: &str, caller_id: &efi::Guid) {
-    log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
-        None,
-        Some(measurement_str),
-        0,
-        KnownPerfId::PerfInModuleStart.as_u16(),
-    );
-}
-
-#[macro_export]
-macro_rules! perf_in_module_end {
-    ($measurement_str:expr, $caller_id:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_in_module_end($measurement_str, $caller_id)
-        }
-    };
-}
-
-pub fn _perf_in_module_end(measurement_str: &str, caller_id: &efi::Guid) {
-    log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
-        None,
-        Some(measurement_str),
-        0,
-        KnownPerfId::PerfInModuleEnd.as_u16(),
-    );
-}
-
-#[macro_export]
-macro_rules! perf_in_cross_module_begin {
-    ($measurement_str:expr, $caller_id:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_in_cross_module_begin($measurement_str, $caller_id)
-        }
-    };
-}
-
-pub fn _perf_in_cross_module_begin(measurement_str: &str, caller_id: &efi::Guid) {
-    log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
-        None,
-        Some(measurement_str),
-        0,
-        KnownPerfId::PerfCrossModuleStart.as_u16(),
-    );
-}
-
-#[macro_export]
-macro_rules! perf_cross_module_end {
-    ($measurement_str:expr, $caller_id:expr) => {
-        if $crate::PERF_ENABLED {
-            $crate::_perf_cross_module_end($measurement_str, $caller_id)
-        }
-    };
-}
-
-pub fn _perf_cross_module_end(measurement_str: &str, caller_id: &efi::Guid) {
-    log_perf_measurement(
-        caller_id as *const efi::Guid as *mut c_void,
-        None,
-        Some(measurement_str),
-        0,
-        KnownPerfId::PerfCrossModuleEnd.as_u16(),
-    );
-}
-
-pub fn perf_start(handle: efi::Handle, token: *const c_char, module: *const c_char, timestamp: u64) {
-    start_perf_measurement(handle, token, module, timestamp, 0);
-}
-
-pub fn perf_end(handle: efi::Handle, token: *const c_char, module: *const c_char, timestamp: u64) {
-    end_perf_measurement(handle, token, module, timestamp, 0);
-}
-
-pub fn perf_start_ex(
-    handle: efi::Handle,
-    token: *const c_char,
-    module: *const c_char,
-    timestamp: u64,
-    identifier: u32,
-) {
-    start_perf_measurement(handle, token, module, timestamp, identifier);
-}
-
-pub fn perf_end_ex(handle: efi::Handle, token: *const c_char, module: *const c_char, timestamp: u64, identifier: u32) {
-    end_perf_measurement(handle, token, module, timestamp, identifier);
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1052,6 +608,20 @@ mod test {
         performance_record::PerformanceRecordBuffer,
         performance_table::{FirmwarePerformanceVariable, MockFirmwareBasicBootPerfTable},
     };
+
+    #[test]
+    fn test_get_set_static_state() {
+        STATIC_STATE_IS_INIT.store(false, Ordering::Relaxed);
+        unsafe {
+            BOOT_SERVICES = MaybeUninit::zeroed();
+            FBPT = MaybeUninit::zeroed();
+        }
+
+        assert!(get_static_state().is_none());
+        assert!(set_static_state(StandardBootServices::new_uninit()).is_some());
+        assert!(get_static_state().is_some());
+        assert!(set_static_state(StandardBootServices::new_uninit()).is_none());
+    }
 
     #[test]
     fn test_entry_point() {
@@ -1214,13 +784,15 @@ mod test {
         let caller_identifier_guid = ptr::addr_of!(caller_identifier_guid_value) as *const c_void;
         let guid = efi::Guid::from_bytes(&[2; 16]);
         let string = String::from("This is a string.");
-        let timestamp = 10;
+        let ticker = 10;
         let address = 0;
         let attribute = PerfAttribute::PerfEntry;
 
         let mut boot_services = MockBootServices::new();
-        let boot_services_static = unsafe { ptr::addr_of!(boot_services).as_ref().unwrap() };
-        let fbpt = TplMutex::new(boot_services_static, Tpl::NOTIFY, FBPT::new());
+
+        let mut fbpt = MockFirmwareBasicBootPerfTable::new();
+        fbpt.expect_add_record().return_const(Ok(()));
+
 
         let mut loaded_image_protocol = MaybeUninit::<efi::protocols::loaded_image::Protocol>::zeroed();
         let mut media_fw_vol_file_path_device_path = MaybeUninit::<MediaFwVolFilepathDevicePath>::zeroed();
@@ -1247,11 +819,11 @@ mod test {
             caller_identifier_handle,
             Some(&guid),
             Some(string),
-            timestamp,
+            ticker,
             address,
             KnownPerfId::ModuleLoadImageStart.as_u16(),
             attribute,
-            &fbpt,
+            &TplMutex::new(unsafe { &*ptr::addr_of!(boot_services) }, Tpl::NOTIFY, fbpt),
             &boot_services,
         )
         .unwrap();
