@@ -330,22 +330,11 @@ mod test {
         assert_eq!(Some(0x12341234), address);
     }
 
-    // reporting
     #[test]
     fn test_reporting_fbpt_with_previous_address() {
         let memory_buffer = Vec::<u8>::with_capacity(1000);
         let address = memory_buffer.as_ptr() as usize;
 
-        let mut runtime_services = MockRuntimeServices::new();
-        runtime_services.expect_get_variable::<FirmwarePerformanceVariable>().once().returning(move |_, _, _| {
-            Ok((
-                FirmwarePerformanceVariable {
-                    boot_performance_table_pointer: address,
-                    _s3_performance_table_pointer: 0,
-                },
-                16,
-            ))
-        });
         let mut boot_services = MockBootServices::new();
         boot_services
             .expect_allocate_pages()
@@ -362,7 +351,7 @@ mod test {
         fbpt.add_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
         fbpt.add_record(DynamicStringEventRecord::new(1, 0, 10, guid, "test")).unwrap();
 
-        fbpt.report_table(None, &boot_services).unwrap();
+        fbpt.report_table(Some(address), &boot_services).unwrap();
         assert_eq!(address, fbpt.fbpt_address);
 
         fbpt.add_record(DualGuidStringEventRecord::new(1, 0, 10, guid, guid, "test")).unwrap();
@@ -402,12 +391,7 @@ mod test {
     fn test_reporting_fbpt_without_previous_address() {
         let memory_buffer = Vec::<u8>::with_capacity(1000);
         let address = memory_buffer.as_ptr() as usize;
-
-        // let mut runtime_services = MockRuntimeServices::new();
-        // runtime_services
-        //     .expect_get_variable::<FirmwarePerformanceVariable>()
-        //     .once()
-        //     .returning(move |_, _, _| Err(efi::Status::NOT_FOUND));
+ 
         let mut boot_services = MockBootServices::new();
         boot_services
             .expect_allocate_pages()
@@ -437,18 +421,11 @@ mod test {
         let memory_buffer = Vec::<u8>::with_capacity(1000);
         let address = memory_buffer.as_ptr() as usize;
 
-        // let mut runtime_services = MockRuntimeServices::new();
-        // runtime_services
-        //     .expect_get_variable::<FirmwarePerformanceVariable>()
-        //     .once()
-        //     .returning(move |_, _, _| Err(efi::Status::NOT_FOUND));
-
         let mut boot_services = MockBootServices::new();
         boot_services
             .expect_allocate_pages()
             .once()
             .withf(move |alloc_type, memory_type, _| {
-                assert_eq!(&AllocType::MaxAddress(u32::MAX as usize), alloc_type);
                 assert_eq!(&MemoryType::RESERVED_MEMORY_TYPE, memory_type);
                 true
             })
@@ -459,7 +436,7 @@ mod test {
         fbpt.add_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
         fbpt.add_record(DynamicStringEventRecord::new(1, 0, 10, guid, "test")).unwrap();
 
-        fbpt.report_table(None, &boot_services).unwrap();
+        fbpt.report_table(Some(address), &boot_services).unwrap();
         assert_eq!(address, fbpt.fbpt_address);
 
         fbpt.add_record(DualGuidStringEventRecord::new(1, 0, 10, guid, guid, "test")).unwrap();

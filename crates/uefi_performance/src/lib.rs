@@ -52,6 +52,7 @@ use uefi_sdk::{
     component::{hob::Hob, IntoComponent},
     error::EfiError,
     guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
+    protocol::status_code::StatusCodeRuntimeProtocol,
     runtime_services::{RuntimeServices, StandardRuntimeServices},
     tpl_mutex::TplMutex,
 };
@@ -219,11 +220,7 @@ extern "efiapi" fn report_fpdt_record_buffer<BB, B, RR, R, F>(
     const EFI_PROGRESS_CODE: u32 = 0x00000001;
     const EFI_SOFTWARE_DXE_BS_DRIVER: u32 = EFI_SOFTWARE | 0x00050000;
 
-    let Ok(p) = (unsafe {
-        boot_services.as_ref().locate_protocol::<uefi_sdk::protocol::status_code::StatusCodeRuntimeProtocol>(None)
-    }) else {
-        todo!()
-    };
+    let Ok(p) = (unsafe { boot_services.as_ref().locate_protocol::<StatusCodeRuntimeProtocol>(None) }) else { todo!() };
     let status = p.report_status_code(
         EFI_PROGRESS_CODE,
         EFI_SOFTWARE_DXE_BS_DRIVER,
@@ -1037,12 +1034,12 @@ mod test {
     use mu_pi::protocols::status_code;
     use r_efi::efi::RuntimeServices;
 
-    use core::{assert_eq, ffi::c_void, ptr, result::Result::Ok};
+    use core::{assert_eq, convert::AsMut, ffi::c_void, ptr, result::Result::Ok};
 
     use uefi_sdk::{
         boot_services::{
             self,
-            c_ptr::{CPtr, PtrMetadata},
+            c_ptr::{CMutPtr, CMutRef, CPtr, CRef, PtrMetadata},
             MockBootServices,
         },
         protocol::ProtocolInterface,
@@ -1157,99 +1154,109 @@ mod test {
 
     #[test]
     fn test_report_fpdt_record_buffer() {
-        // let mut boot_services = MockBootServices::new();
-        // let mut runtime_services = MockRuntimeServices::new();
+        static REPORT_STATUS_CODE_CALLED: AtomicBool = AtomicBool::new(false);
 
-        // boot_services.expect_raise_tpl().returning(|tpl| tpl);
-        // boot_services.expect_restore_tpl().return_const(());
+        extern "efiapi" fn report_status_code(
+            _a: u32,
+            _b: u32,
+            _c: u32,
+            _d: *const efi::Guid,
+            _e: *const mu_pi::protocols::status_code::EfiStatusCodeData,
+        ) -> efi::Status {
+            REPORT_STATUS_CODE_CALLED.store(true, Ordering::Relaxed);
+            efi::Status::SUCCESS
+        }
+        let mut status_code_runtime_protocol = Box::new(StatusCodeRuntimeProtocol::new(report_status_code));
+        let mut status_code_runtime_protocol_ptr = status_code_runtime_protocol.as_mut_ptr();
 
-        // runtime_services
-        //     .expect_get_variable::<FirmwarePerformanceVariable>()
-        //     .once()
-        //     .returning(|_, _, _| Err(efi::Status::NOT_FOUND));
+        let mut boot_services = MockBootServices::new();
+        boot_services.expect_raise_tpl().returning(|tpl| tpl);
+        boot_services.expect_restore_tpl().return_const(());
 
-        // let memory = vec![0; 1000];
-        // let memory_address = memory.as_ptr() as usize;
-        // boot_services.expect_allocate_pages().once().returning(move |_, _, _| Ok(memory_address));
+        // Test that the event is close so it run only one time.
+        boot_services.expect_close_event().once().return_const(Ok(()));
 
-        // extern "efiapi" fn report_status_code(
-        //     _a: u32,
-        //     _b: u32,
-        //     _c: u32,
-        //     _d: *const efi::Guid,
-        //     _e: *const mu_pi::protocols::status_code::EfiStatusCodeData,
-        // ) -> efi::Status {
-        //     efi::Status::SUCCESS
-        // }
-        // let mut protocol = mu_pi::protocols::status_code::Protocol { report_status_code };
-        // let protocol_address = ptr::addr_of_mut!(protocol) as usize;
-        // boot_services.expect_locate_protocol::<StatusCodeRuntimeProtocol>().once().returning(move |_, _| {
-        //     Ok(unsafe { (protocol_address as *mut mu_pi::protocols::status_code::Protocol).as_mut().unwrap() })
-        // });
+        boot_services
+            .expect_install_configuration_table_unchecked()
+            .once()
+            .with(predicate::eq(&EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE), predicate::always())
+            .return_const(Ok(()));
 
-        // boot_services.expect_install_configuration_table_unchecked().once().returning(move |guid, value| {
-        //     assert_eq!(&EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, guid);
-        //     assert_eq!(memory_address, value as usize);
-        //     Ok(())
-        // });
+        boot_services
+            .expect_locate_protocol()
+            .once()
+            .returning_st(move |_| Ok(unsafe { &mut *status_code_runtime_protocol_ptr }));
 
-        // let boot_services_static = unsafe { ptr::addr_of!(boot_services).as_ref().unwrap() };
-        // let fbpt = TplMutex::new(boot_services_static, Tpl::NOTIFY, FBPT::new());
+        let mut runtime_services = MockRuntimeServices::new();
+        runtime_services
+            .expect_get_variable::<FirmwarePerformanceVariable>()
+            .once()
+            .returning(|_, _, _| Err(efi::Status::NOT_FOUND));
 
-        // report_fpdt_record_buffer(ptr::null_mut(), Box::new((boot_services, runtime_services, &fbpt)));
+        let mut fbpt = MockFirmwareBasicBootPerfTable::new();
+        fbpt.expect_report_table::<MockBootServices>().once().return_const(Ok(1));
 
-        // assert_eq!(memory_address, fbpt.lock().fbpt_address());
-        todo!()
+        let fbpt = TplMutex::new(unsafe { &*ptr::addr_of!(boot_services) }, Tpl::NOTIFY, fbpt);
+        let fbpt = unsafe { &*ptr::addr_of!(fbpt) };
+
+        report_fpdt_record_buffer(
+            1_usize as efi::Event,
+            Box::new((Rc::new(boot_services), Rc::new(runtime_services), fbpt)),
+        );
+
+        assert!(REPORT_STATUS_CODE_CALLED.load(Ordering::Relaxed));
     }
 
     #[test]
     fn test_create_performance_measurement() {
-        // let caller_identifier_guid_value = efi::Guid::from_bytes(&[1; 16]);
-        // let caller_identifier_handle = 1 as *const c_void;
-        // let caller_identifier_guid = ptr::addr_of!(caller_identifier_guid_value) as *const c_void;
-        // let guid = efi::Guid::from_bytes(&[2; 16]);
-        // let string = String::from("This is a string.");
-        // let timestamp = 10;
-        // let address = 0;
-        // let attribute = PerfAttribute::PerfEntry;
+        let caller_identifier_guid_value = efi::Guid::from_bytes(&[1; 16]);
+        let caller_identifier_handle = 1 as *const c_void;
+        let caller_identifier_guid = ptr::addr_of!(caller_identifier_guid_value) as *const c_void;
+        let guid = efi::Guid::from_bytes(&[2; 16]);
+        let string = String::from("This is a string.");
+        let timestamp = 10;
+        let address = 0;
+        let attribute = PerfAttribute::PerfEntry;
 
-        // let mut boot_services = MockBootServices::new();
-        // let boot_services_static = unsafe { ptr::addr_of!(boot_services).as_ref().unwrap() };
-        // let fbpt = TplMutex::new(boot_services_static, Tpl::NOTIFY, FBPT::new());
+        let mut boot_services = MockBootServices::new();
+        let boot_services_static = unsafe { ptr::addr_of!(boot_services).as_ref().unwrap() };
+        let fbpt = TplMutex::new(boot_services_static, Tpl::NOTIFY, FBPT::new());
 
-        // let mut loaded_image_protocol = MaybeUninit::<efi::protocols::loaded_image::Protocol>::zeroed();
-        // let mut media_fw_vol_file_path_device_path = MaybeUninit::<MediaFwVolFilepathDevicePath>::zeroed();
-        // unsafe {
-        //     media_fw_vol_file_path_device_path.assume_init_mut().header.r#type = TYPE_MEDIA;
-        //     media_fw_vol_file_path_device_path.assume_init_mut().header.sub_type = Media::SUBTYPE_PIWG_FIRMWARE_FILE;
-        //     media_fw_vol_file_path_device_path.assume_init_mut().fv_file_name = efi::Guid::from_bytes(&[3; 16]);
+        let mut loaded_image_protocol = MaybeUninit::<efi::protocols::loaded_image::Protocol>::zeroed();
+        let mut media_fw_vol_file_path_device_path = MaybeUninit::<MediaFwVolFilepathDevicePath>::zeroed();
+        unsafe {
+            media_fw_vol_file_path_device_path.assume_init_mut().header.r#type = TYPE_MEDIA;
+            media_fw_vol_file_path_device_path.assume_init_mut().header.sub_type = Media::SUBTYPE_PIWG_FIRMWARE_FILE;
+            media_fw_vol_file_path_device_path.assume_init_mut().fv_file_name = efi::Guid::from_bytes(&[3; 16]);
 
-        //     loaded_image_protocol.assume_init_mut().file_path =
-        //         media_fw_vol_file_path_device_path.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;
-        // };
-        // let loaded_image_protocol_address = loaded_image_protocol.as_mut_ptr() as usize;
+            loaded_image_protocol.assume_init_mut().file_path =
+                media_fw_vol_file_path_device_path.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;
+        };
+        let loaded_image_protocol_address = loaded_image_protocol.as_mut_ptr() as usize;
 
-        // boot_services.expect_handle_protocol::<LoadedImage>().once().returning(move |_, _| unsafe {
-        //     Ok((loaded_image_protocol_address as *mut efi::protocols::loaded_image::Protocol).as_mut().unwrap())
-        // });
-        // boot_services.expect_raise_tpl().returning(|tpl| tpl);
-        // boot_services.expect_restore_tpl().return_const(());
+        boot_services.expect_handle_protocol::<efi::protocols::loaded_image::Protocol>().once().returning(
+            move |_| unsafe {
+                Ok((loaded_image_protocol_address as *mut efi::protocols::loaded_image::Protocol).as_mut().unwrap())
+            },
+        );
+        boot_services.expect_raise_tpl().returning(|tpl| tpl);
+        boot_services.expect_restore_tpl().return_const(());
 
-        // // perf_start_image_begin
-        // _create_performance_measurement(
-        //     caller_identifier_handle,
-        //     Some(&guid),
-        //     Some(string),
-        //     timestamp,
-        //     address,
-        //     KnownPerfId::ModuleLoadImageStart.as_u16(),
-        //     attribute,
-        //     &fbpt,
-        //     &boot_services,
-        // )
-        // .unwrap();
-        // // todo verify entry in fbpt
+        // perf_start_image_begin
+        _create_performance_measurement(
+            caller_identifier_handle,
+            Some(&guid),
+            Some(string),
+            timestamp,
+            address,
+            KnownPerfId::ModuleLoadImageStart.as_u16(),
+            attribute,
+            &fbpt,
+            &boot_services,
+        )
+        .unwrap();
 
-        // // do this for more than one type.
+        // todo verify entry in fbpt
+        // do this for more than one type.
     }
 }
