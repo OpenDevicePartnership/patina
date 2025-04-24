@@ -25,6 +25,7 @@ uefi_device_path = { workspace = true }
 
 [dev-dependencies]
 uefi_sdk = { workspace = true, features = ["mockall"] }
+mockall = { workspace = true }
 
 [features]
 instrument_performance = []

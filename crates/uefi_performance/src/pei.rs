@@ -1,4 +1,7 @@
-use core::{debug_assert, result::Result};
+#[cfg(test)]
+use mockall::automock;
+
+use core::debug_assert;
 
 use alloc::vec::Vec;
 use r_efi::efi;
@@ -11,6 +14,7 @@ use uefi_sdk::{
 use crate::performance_record::{Iter, PerformanceRecordBuffer};
 
 /// ...
+#[cfg_attr(test, automock)]
 pub trait PeiPerformanceDataExtractor {
     /// ...
     fn extract_pei_perf_data(&self) -> Result<(u32, PerformanceRecordBuffer), efi::Status>;

@@ -5,7 +5,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
-use core::fmt::Debug;
+use core::{fmt::Debug, result::Result::Ok};
 
 use r_efi::efi;
 use scroll::Pwrite;
@@ -45,18 +45,13 @@ impl PerformanceRecord for GuidEventRecord {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
-}
 
-impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidEventRecord {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        let mut offset = 0;
-        dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
-        dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
-        dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
-        dest.gwrite_with(self.guid.as_bytes().as_slice(), &mut offset, ())?;
-        Ok(offset)
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error> {
+        buff.gwrite_with(self.progress_id, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.acpi_id, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.timestamp, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.guid.as_bytes().as_slice(), offset, ())?;
+        Ok(())
     }
 }
 
@@ -98,7 +93,7 @@ impl scroll::ctx::TryIntoCtx<scroll::Endian> for DynamicStringEventRecord<'_> {
         dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
         dest.gwrite_with(self.guid.as_bytes().as_slice(), &mut offset, ())?;
         dest.gwrite_with(self.string.as_bytes(), &mut offset, ())?;
-        dest.gwrite_with(0_u8, &mut offset, ctx)?;
+        dest.gwrite_with(0_u8, &mut offset, ctx)?; // End of the string.
         Ok(offset)
     }
 }
@@ -110,6 +105,16 @@ impl PerformanceRecord for DynamicStringEventRecord<'_> {
 
     fn revision(&self) -> u8 {
         Self::REVISION
+    }
+
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error> {
+        buff.gwrite_with(self.progress_id, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.acpi_id, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.timestamp, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.guid.as_bytes().as_slice(), offset, ())?;
+        buff.gwrite_with(self.string.as_bytes(), offset, ())?;
+        buff.gwrite_with(0_u8, offset, scroll::NATIVE)?; // End of the string.
+        Ok(())
     }
 }
 
@@ -150,22 +155,6 @@ impl<'a> DualGuidStringEventRecord<'a> {
     }
 }
 
-impl scroll::ctx::TryIntoCtx<scroll::Endian> for DualGuidStringEventRecord<'_> {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        let mut offset = 0;
-        dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
-        dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
-        dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
-        dest.gwrite_with(self.guid_1.as_bytes().as_slice(), &mut offset, ())?;
-        dest.gwrite_with(self.guid_2.as_bytes().as_slice(), &mut offset, ())?;
-        dest.gwrite_with(self.string.as_bytes(), &mut offset, ())?;
-        dest.gwrite_with(0_u8, &mut offset, ctx)?;
-        Ok(offset)
-    }
-}
-
 impl PerformanceRecord for DualGuidStringEventRecord<'_> {
     fn record_type(&self) -> u16 {
         Self::TYPE
@@ -173,6 +162,17 @@ impl PerformanceRecord for DualGuidStringEventRecord<'_> {
 
     fn revision(&self) -> u8 {
         Self::REVISION
+    }
+    
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> core::result::Result<(), scroll::Error> {
+        buff.gwrite_with(self.progress_id, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.acpi_id, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.timestamp, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.guid_1.as_bytes().as_slice(), offset, ())?;
+        buff.gwrite_with(self.guid_2.as_bytes().as_slice(), offset, ())?;
+        buff.gwrite_with(self.string.as_bytes(), offset, ())?;
+        buff.gwrite_with(0_u8, offset, scroll::NATIVE)?; // End of the string.
+        Ok(())
     }
 }
 
@@ -211,21 +211,17 @@ impl PerformanceRecord for GuidQwordEventRecord {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
-}
-
-impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidQwordEventRecord {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        let mut offset = 0;
-        dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
-        dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
-        dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
-        dest.gwrite_with(*self.guid.as_bytes(), &mut offset, ctx)?;
-        dest.gwrite_with(self.qword, &mut offset, ctx)?;
-        Ok(offset)
+    
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error> {
+        buff.gwrite_with(self.progress_id, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.acpi_id, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.timestamp, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.guid.as_bytes().as_slice(), offset, ())?;
+        buff.gwrite_with(self.qword, offset, scroll::NATIVE)?;
+        Ok(())
     }
 }
+
 #[derive(Debug)]
 pub struct GuidQwordStringEventRecord<'a> {
     /// ProgressID < 0x10 are reserved for core performance entries.
@@ -255,22 +251,6 @@ impl<'a> GuidQwordStringEventRecord<'a> {
     }
 }
 
-impl scroll::ctx::TryIntoCtx<scroll::Endian> for GuidQwordStringEventRecord<'_> {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        let mut offset = 0;
-        dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
-        dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
-        dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
-        dest.gwrite_with(*self.guid.as_bytes(), &mut offset, ctx)?;
-        dest.gwrite_with(self.qword, &mut offset, ctx)?;
-        dest.gwrite_with(self.string, &mut offset, ())?;
-        dest.gwrite_with(0_u8, &mut offset, ctx)?;
-        Ok(offset)
-    }
-}
-
 impl PerformanceRecord for GuidQwordStringEventRecord<'_> {
     fn record_type(&self) -> u16 {
         Self::TYPE
@@ -278,5 +258,16 @@ impl PerformanceRecord for GuidQwordStringEventRecord<'_> {
 
     fn revision(&self) -> u8 {
         Self::REVISION
+    }
+    
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> core::result::Result<(), scroll::Error> {
+        buff.gwrite_with(self.progress_id, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.acpi_id, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.timestamp, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.guid.as_bytes().as_slice(), offset, ())?;
+        buff.gwrite_with(self.qword, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.string.as_bytes(), offset, ())?;
+        buff.gwrite_with(0_u8, offset, scroll::NATIVE)?; // End of the string.
+        Ok(())
     }
 }

@@ -9,7 +9,7 @@ pub mod extended;
 pub mod known_records;
 
 use alloc::vec::Vec;
-use core::{fmt::Debug, mem, ops::Deref};
+use core::{fmt::Debug, mem, ops::Deref, result::Result};
 
 use r_efi::efi;
 use scroll::{self, Pread, Pwrite};
@@ -20,22 +20,26 @@ pub const PERFORMANCE_RECORD_HEADER_SIZE: usize = mem::size_of::<u16>() // Type
         + mem::size_of::<u8>() // Length
         + mem::size_of::<u8>(); // Revision
 
-pub trait PerformanceRecord: Sized + scroll::ctx::TryIntoCtx<scroll::Endian, Error = scroll::Error> {
+pub trait PerformanceRecord {
     fn record_type(&self) -> u16;
 
     fn revision(&self) -> u8;
 
-    fn write_into(self, buff: &mut [u8], offset: &mut usize) -> Result<usize, scroll::Error> {
-        let mut record_size = 0;
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error>;
+
+    fn write_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<usize, scroll::Error> {
+        let offset_start = *offset;
 
         // Write performance record header.
-        record_size += buff.gwrite(self.record_type(), offset)?;
+        buff.gwrite(self.record_type(), offset)?;
         let mut record_size_offset = *offset;
-        record_size += buff.gwrite(0_u8, offset)?;
-        record_size += buff.gwrite(self.revision(), offset)?;
+        buff.gwrite(0_u8, offset)?;
+        buff.gwrite(self.revision(), offset)?;
 
         // Write data.
-        record_size += buff.gwrite(self, offset)?;
+        self.write_data_into(buff, offset)?;
+
+        let record_size = *offset - offset_start;
 
         // Write record size
         buff.gwrite(record_size as u8, &mut record_size_offset)?;
@@ -58,16 +62,6 @@ pub struct GenericPerformanceRecord<T: Deref<Target = [u8]>> {
     data: T,
 }
 
-impl<T: Deref<Target = [u8]>> scroll::ctx::TryIntoCtx<scroll::Endian> for GenericPerformanceRecord<T> {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], _ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        let mut offset = 0;
-        dest.gwrite_with(self.data.deref(), &mut offset, ())?;
-        Ok(offset)
-    }
-}
-
 impl<T: Deref<Target = [u8]>> PerformanceRecord for GenericPerformanceRecord<T> {
     fn record_type(&self) -> u16 {
         self.record_type
@@ -75,6 +69,11 @@ impl<T: Deref<Target = [u8]>> PerformanceRecord for GenericPerformanceRecord<T> 
 
     fn revision(&self) -> u8 {
         self.revision
+    }
+
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error> {
+        buff.gwrite_with(self.data.deref(), offset, ())?;
+        Ok(())
     }
 }
 

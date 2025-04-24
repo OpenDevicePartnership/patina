@@ -15,9 +15,6 @@ use uefi_sdk::{base::UEFI_PAGE_SIZE, component::hob::FromHob, protocol::Protocol
 pub const EFI_SMM_COMMUNICATION_PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0xc68ed8e2, 0x9dc6, 0x4cbd, 0x9d, 0x94, &[0xdb, 0x65, 0xac, 0xc5, 0xc3, 0x32]);
 
-// pub const EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID: efi::Guid =
-//     efi::Guid::from_fields(0x4e28ca50, 0xd582, 0x44ac, 0xa1, 0x1f, &[0xe3, 0xd5, 0x65, 0x26, 0xdb, 0x34]);
-
 #[derive(Debug, Clone, Copy, FromHob)]
 #[hob = "18C7FFD4-82FB-7442-9AFC-AA8B1EEF5293"]
 #[repr(C)]
@@ -28,6 +25,7 @@ pub struct MmCommRegion {
 }
 
 impl MmCommRegion {
+    
     pub fn is_supervisor_type(&self) -> bool {
         self.region_type == 0
     }
