@@ -66,6 +66,3 @@ opt-level = 3
 
 [profile.test]
 opt-level = 0
-
-[patch.crates-io]
-uefi_cpu = { path = "C:\\src\\uefi-core\\uefi_cpu"}
