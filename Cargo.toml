@@ -18,10 +18,10 @@ edition = "2021"
 rust-version = "1.83.0"
 
 [workspace.dependencies]
-section_extractor = { version = "12" }
+section_extractor = { version = "13" }
 uefi_sdk = { version = "5" }
-uefi_cpu = { version = "12" }
-uefi_debugger = { version = "12" }
+uefi_cpu = { version = "13" }
+uefi_debugger = { version = "13" }
 uefi_corosensei = { version = "0.1", default-features = false }
 
 adv_logger = { path = "adv_logger", version = "10" }
@@ -66,3 +66,6 @@ opt-level = 3
 
 [profile.test]
 opt-level = 0
+
+[patch.crates-io]
+uefi_cpu = { path = "C:\\src\\uefi-core\\uefi_cpu"}
