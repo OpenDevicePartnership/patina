@@ -160,6 +160,13 @@ graph LR
 
 See [Component Interface](../driver/interface.md) for the list of default `Param` implementations.
 
+### Naming Conventions
+
+It is recommended to avoid including "Config", "Component", or "Service" directly in the names of your types unless
+it adds value for clarity (such as some of the example names in this document). Otherwise, the fully qualified name
+and other code context has been observed to be sufficient for understanding what the type represents while reducing
+the amount of repetitive naming across the codebase. This is not a rule, but a recommendation.
+
 ### Advantages
 
 - **Non-breaking interface**: `Param` implementations can be added at any time without directly breaking existing
