@@ -1,10 +1,11 @@
 # RFC: `Move CPU functionality into Patina Core`
 
-Currently, traits generics are used in the Patina Core's struct defintion to support the ability to (1) replace certain
-functionality based off of a platform's requirements and (2) replace cpu architecture specific functionality. As time
-has continued and the Patina Core has evolved, we have noted that platforms do not need to customize this
-functionality; all platforms of a certain architecture will always use the same underlying architecture support code.
-Exposing this to the consumer only works to complicate the Patina Core initialization and has been deemed unecessary.
+The struct(s) for configuring CPU specific functionality are currently exposed external to the uefi-dxe-core via the
+`.with_cpu_init` and `.with_interrupt_manager` methods in the `Core` object to support the ability to (1) replace
+certain functionality based off of a platform's requirements and (2) replace cpu architecture specific functionality.
+As the Patina Core has evolved, we have noted that platforms do not need to customize this functionality; all platforms
+of a certain architecture will always use the same underlying architecture support code. Exposing this configuration to
+the consumer only works to complicate the Patina Core initialization and has been deemed unecessary.
 
 This proposal is to remove the architecture specific customization from the public Patina Core interface, and
 automatically use the appropriate logic for the given architecture. Configuration knobs can be provided to the Patina
@@ -13,40 +14,40 @@ Core to fine tune this logic for a given platform.
 ## Change Log
 
 - 2025-04-10: Initial RFC created.
+- 2025-04-25: General update after a commit that removed some of the generics
 
 ## Motivation
 
 The main motivation of this RFC is to simplify the consumption of the Patina Core to improve ease of use and increase
-adoption.
+adoption. By allowing the platform to pass in a struct that is always the same based off the CPU architecture, it
+increases the chance of compilation errors due to crate version mismatches.
 
 ## Technology Background
 
-The three traits, `EfiCpuInit`, `InterruptManager`, and `InterruptBases` are trait generics that provide an interface
-for initializing many of the low level cpu functionality. This functionality will be the same for each cpu architecture
-supported, but may have some different configuration knobs for different platforms. [uefi_cpu](https://github.com/OpenDevicePartnership/uefi-core/tree/main/uefi_cpu)
+The two traits, `Cpu` and `InterruptManager` are trait generics that provide an interface for initializing and
+utilizing the low level cpu functionality. This functionality has been noted to always be the same for each cpu
+architecture supported, but may have some different configuration knobs for different platforms. [uefi_cpu](https://github.com/OpenDevicePartnership/uefi-core/tree/main/uefi_cpu)
 contains the functionality for all three of these trait interfaces and can be reviewed for specific functionality.
 
 ## Goals
 
-1. Remove as many trait generics from the Patina Core as possible
+1. Remove trait generic consumption from the `Core` interface and only expose config knobs where necessary
 2. Allow configuration for cpu initialization
 
 ## Requirements
 
 1. remove `.with_cpu_init` method and `EfiCpuInit` trait from the `Core`'s public interface.
 2. remove `.with_interrupt_manager` method and `InterruptManager` trait from the `Core`'s public interface.
-3. remove `.with_interrupt_bases` method and `InterruptBases` trait from the `Core`'s public interface.
-4. Automatically select and use the given `EfiCpuInit`, `InterruptManager`, and `InterruptBases` code based off the
-   compilation target architecture.
-5. Provide generic configuration knob support for platforms to fine-tune these initializations where necessary.
-6. Provide a way for a platform (and possibly a component) to register an exception handler.
-7. Continue supporting cpu timer interrupt hook.
+3. update `.with_interrupt_bases` method to consume gicd_base and gicr_base directly instead of through a trait
+6. Expose `Cpu` trait as a service (`Service<dyn Cpu>`) which has the interface `flush_data_cache`, `init`, `get_timer_value`
+7. Expose `InterruptManager` trait as a service (`Service<dyn InterruptManager>`) which has the interface
+   `register_exception_handler` and `unregister_exception_handler`.
+8. Update cpu_arch protocol and hw_interrupt protocol to use Services instead of references to the trait object.
 
 ## Unresolved Questions
 
-- A proper way to add config knob support for the initialization of these
-- Do we want to expand the interface to provide a generic pre-mem initialization routine that anyone can call, but we
-  have a few hardcoded initializers for cpu initialization?
+1. Do we want to update the `Cpu` or `InterruptManager` trait interfaces
+2. Do we want to move the `Cpu` or `InterruptManager` traits to another location (uefi-sdk)?
 
 ## Prior Art (Existing PI C Implementation)
 
@@ -114,6 +115,8 @@ where
         self.interrupt_manager.initialize().expect("Failed to initialize interrupt manager!");
 
         /* Continue as normal */
+
+        
     }
 }
 
@@ -146,31 +149,32 @@ impl<SectionExtractor> Core<SectionExtractor, NoAlloc>
 where
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static
 {
-    #[cfg(all(arch = "x64", target_os = "uefi"))]
-    fn cpu_init(&self) -> Result<(), EfiError> {
-        EfiCpuInitX64::default().initialize()?;
-        InterruptManagerX64::default().initialize()?;
-    }
-
-    #[cfg(all(arch = "aarch64", target_os = "uefi"))]
-    fn cpu_init(&self) -> Result<(), EfiError> {
-        // These `default` implementation is where we probably need to add configuration support
-        EfiCpuInitAArch64::default().initialize()?;
-        InterruptManagerAarch64::default().initialize()?;
-        InterruptBasesAArch64::default().initialize()?;
+    #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
+    pub fn with_interrupt_bases(self, gicd_base: u64, gicr_base: u64) -> Self {
+        self.interrupt_bases = (gicd_base, gicr_base)
+        self
     }
 
     pub fn init_memory(
         mut self,
         physical_hob_list: *const c_void,
     ) -> Core<SectionExtractor, Alloc> {
-        #[cfg(target_os = "uefi")]
-        self.cpu_init()
+        let mut cpu = Cpu::default();
+        cpu.initialize().unwrap();
+        let mut im = InteruptManager::default();
+        im.initialize().unwrap();
 
         /* Continue as normal */
 
+        storage.add_service(cpu);
+        storage.add_service(im);
+        let cpu: Service<dyn Cpu> = storage.get_service().unwrap();
+        let im: Service<dyn InterruptManager> = storage.get_service.unwrap();
+
+        cpu_arch_protocol::install_cpu_arch_protocol(cpu, im);
+
         #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
-        hw_interrupt_protocol::install_hw_interrupt_protocol(&mut InterruptManagerAarch64::default(), &self.interrupt_bases);
+        hw_interrupt_protocol::install_hw_interrupt_protocol(im, &self.interrupt_bases);
 
         /* Continue as normal */
     }
