@@ -39,10 +39,10 @@ contains the functionality for all three of these trait interfaces and can be re
 1. remove `.with_cpu_init` method and `EfiCpuInit` trait from the `Core`'s public interface.
 2. remove `.with_interrupt_manager` method and `InterruptManager` trait from the `Core`'s public interface.
 3. update `.with_interrupt_bases` method to consume gicd_base and gicr_base directly instead of through a trait
-6. Expose `Cpu` trait as a service (`Service<dyn Cpu>`) which has the interface `flush_data_cache`, `init`, `get_timer_value`
-7. Expose `InterruptManager` trait as a service (`Service<dyn InterruptManager>`) which has the interface
+4. Expose `Cpu` trait as a service (`Service<dyn Cpu>`) which has the interface `flush_data_cache`, `init`, `get_timer_value`
+5. Expose `InterruptManager` trait as a service (`Service<dyn InterruptManager>`) which has the interface
    `register_exception_handler` and `unregister_exception_handler`.
-8. Update cpu_arch protocol and hw_interrupt protocol to use Services instead of references to the trait object.
+6. Update cpu_arch protocol and hw_interrupt protocol to use Services instead of references to the trait object.
 
 ## Unresolved Questions
 
@@ -116,7 +116,6 @@ where
 
         /* Continue as normal */
 
-        
     }
 }
 
