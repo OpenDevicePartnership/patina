@@ -1,3 +1,12 @@
+//! This module contains every perf token and perf id known by this library.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
+
 use alloc::string::String;
 use core::convert::TryFrom;
 

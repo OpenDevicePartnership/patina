@@ -1,11 +1,13 @@
+//! This module contains every implementation of [`PerformanceRecord`] that are produce by this library.
+//! 
 //! ## License
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
-//!
+//! 
 
-use core::{fmt::Debug, result::Result::Ok};
+use core::fmt::Debug;
 
 use r_efi::efi;
 use scroll::Pwrite;

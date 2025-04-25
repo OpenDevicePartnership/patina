@@ -1,11 +1,21 @@
+//! This module defines everything used to extract performance records from the PEI phase.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
+
 #[cfg(test)]
 use mockall::automock;
 
-use core::{debug_assert, iter::Iterator};
-
 use alloc::vec::Vec;
+use core::iter::Iterator;
+
 use r_efi::efi;
 use scroll::Pread;
+
 use uefi_sdk::{
     component::hob::{FromHob, Hob},
     guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
@@ -13,23 +23,26 @@ use uefi_sdk::{
 
 use crate::performance_record::{Iter, PerformanceRecordBuffer};
 
-/// ...
+/// API to extract the performance data from the PEI phase.
 #[cfg_attr(test, automock)]
 pub trait PeiPerformanceDataExtractor {
-    /// ...
+    /// Extract the number of image loaded and the performance records from the PEI phase.
     fn extract_pei_perf_data(&self) -> Result<(u32, PerformanceRecordBuffer), efi::Status>;
 }
 
+/// Data inside an [`EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE`] guid hob.
 #[derive(Debug, Default)]
-pub struct PeiPerformanceRecordBuffer {
+pub struct PeiPerformanceData {
+    /// Number of images loaded.
     pub load_image_count: u32,
+    /// Buffer containing performance records.
     pub records_data_buffer: Vec<u8>,
 }
 
-impl FromHob for PeiPerformanceRecordBuffer {
+impl FromHob for PeiPerformanceData {
     const HOB_GUID: r_efi::efi::Guid = EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE;
 
-    fn parse(bytes: &[u8]) -> PeiPerformanceRecordBuffer {
+    fn parse(bytes: &[u8]) -> PeiPerformanceData {
         let mut offset = 0;
 
         let Ok([size_of_all_entries, load_image_count, _hob_is_full]) = bytes.gread::<[u32; 3]>(&mut offset) else {
@@ -42,16 +55,16 @@ impl FromHob for PeiPerformanceRecordBuffer {
     }
 }
 
-impl PeiPerformanceDataExtractor for Hob<'_, PeiPerformanceRecordBuffer> {
+impl PeiPerformanceDataExtractor for Hob<'_, PeiPerformanceData> {
     #[cfg(not(tarpaulin_include))]
     fn extract_pei_perf_data(&self) -> Result<(u32, PerformanceRecordBuffer), efi::Status> {
         merge_pei_performance_buffer(self.iter())
     }
 }
 
-pub fn merge_pei_performance_buffer<'a, T>(iter: T) -> Result<(u32, PerformanceRecordBuffer), efi::Status>
+fn merge_pei_performance_buffer<'a, T>(iter: T) -> Result<(u32, PerformanceRecordBuffer), efi::Status>
 where
-    T: Iterator<Item = &'a PeiPerformanceRecordBuffer>,
+    T: Iterator<Item = &'a PeiPerformanceData>,
 {
     let mut pei_load_image_count = 0;
     let mut pei_records = PerformanceRecordBuffer::new();
@@ -74,7 +87,7 @@ pub mod test {
 
     use crate::performance_record::{GenericPerformanceRecord, PerformanceRecordBuffer};
 
-    use super::{merge_pei_performance_buffer, PeiPerformanceRecordBuffer};
+    use super::{merge_pei_performance_buffer, PeiPerformanceData};
 
     #[test]
     fn test_pei_performance_record_buffer_parse_from_hob() {
@@ -95,7 +108,7 @@ pub mod test {
         buffer.gwrite(hob_is_full, &mut offset).unwrap();
         buffer.gwrite(perf_record_buffer.buffer(), &mut offset).unwrap();
 
-        let pei_perf_record_buffer = PeiPerformanceRecordBuffer::parse(&buffer);
+        let pei_perf_record_buffer = PeiPerformanceData::parse(&buffer);
 
         assert_eq!(load_image_count, pei_perf_record_buffer.load_image_count);
         assert_eq!(perf_record_buffer.buffer(), pei_perf_record_buffer.records_data_buffer.as_slice());
@@ -105,7 +118,7 @@ pub mod test {
     fn test_pei_performance_record_buffer_parse_from_hob_invalid() {
         let mut buffer = [0_u8; 1];
 
-        let pei_perf_record_buffer = PeiPerformanceRecordBuffer::parse(&buffer);
+        let pei_perf_record_buffer = PeiPerformanceData::parse(&buffer);
 
         assert_eq!(0, pei_perf_record_buffer.load_image_count);
         assert!(pei_perf_record_buffer.records_data_buffer.is_empty());
@@ -129,14 +142,8 @@ pub mod test {
             .unwrap();
 
         let buffer = [
-            PeiPerformanceRecordBuffer {
-                load_image_count: 1,
-                records_data_buffer: perf_record_buffer_1.buffer().to_vec(),
-            },
-            PeiPerformanceRecordBuffer {
-                load_image_count: 1,
-                records_data_buffer: perf_record_buffer_2.buffer().to_vec(),
-            },
+            PeiPerformanceData { load_image_count: 1, records_data_buffer: perf_record_buffer_1.buffer().to_vec() },
+            PeiPerformanceData { load_image_count: 1, records_data_buffer: perf_record_buffer_2.buffer().to_vec() },
         ];
 
         let (loaded_image_count, perf_record_buffer) = merge_pei_performance_buffer(buffer.iter()).unwrap();

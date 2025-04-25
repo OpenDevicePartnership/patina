@@ -1,3 +1,5 @@
+//! This module contains definition of performance records and performance records buffer.
+//!
 //! ## License
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
@@ -14,19 +16,24 @@ use core::{fmt::Debug, mem};
 use r_efi::efi;
 use scroll::{self, Pread, Pwrite};
 
+/// Maximum size in byte that a performance record can have.
 pub const FPDT_MAX_PERF_RECORD_SIZE: usize = u8::MAX as usize;
 
+/// Size in byte of the reader of a performance record.
 pub const PERFORMANCE_RECORD_HEADER_SIZE: usize = mem::size_of::<u16>() // Type
         + mem::size_of::<u8>() // Length
         + mem::size_of::<u8>(); // Revision
 
+/// Common behavior of every performance records.
 pub trait PerformanceRecord {
     fn record_type(&self) -> u16;
 
     fn revision(&self) -> u8;
 
+    /// Write the record data into the buffer.
     fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error>;
 
+    /// Write the record data and the header into the buffer.
     fn write_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<usize, scroll::Error> {
         let offset_start = *offset;
 
@@ -78,6 +85,9 @@ impl<T: AsRef<[u8]>> PerformanceRecord for GenericPerformanceRecord<T> {
     }
 }
 
+/// This struct is a list of performance records stored in a buffer.
+///
+/// The unpublished state can be reallocated and grow but not in the published state.
 pub enum PerformanceRecordBuffer {
     Unpublished(Vec<u8>),
     Published(&'static mut [u8], usize),
@@ -88,6 +98,7 @@ impl PerformanceRecordBuffer {
         Self::Unpublished(Vec::new())
     }
 
+    /// Add a performance records to the buffer.
     pub fn push_record<T: PerformanceRecord>(&mut self, record: T) -> Result<usize, efi::Status> {
         match self {
             Self::Unpublished(buffer) => {
@@ -105,6 +116,7 @@ impl PerformanceRecordBuffer {
         }
     }
 
+    /// Move the performance buffer into the memory buffer given as an argument and put itself in a publish state.
     pub fn report(&mut self, buffer: &'static mut [u8]) {
         let current_buffer = match self {
             PerformanceRecordBuffer::Unpublished(b) => b.as_slice(),
@@ -115,6 +127,7 @@ impl PerformanceRecordBuffer {
         *self = Self::Published(buffer, size);
     }
 
+    /// Return a reference to the performance buffer in bytes.
     pub fn buffer(&self) -> &[u8] {
         match &self {
             Self::Unpublished(b) => b.as_slice(),
@@ -122,10 +135,12 @@ impl PerformanceRecordBuffer {
         }
     }
 
+    /// Return a performance record iterator.
     pub fn iter(&self) -> Iter {
         Iter::new(self.buffer())
     }
 
+    /// Return the size in bytes of the buffer.
     pub fn size(&self) -> usize {
         match &self {
             Self::Unpublished(b) => b.len(),
@@ -133,6 +148,7 @@ impl PerformanceRecordBuffer {
         }
     }
 
+    /// Return the capacity in bytes of the buffer.
     pub fn capacity(&self) -> usize {
         match &self {
             Self::Unpublished(b) => b.capacity(),
@@ -174,6 +190,7 @@ impl Debug for PerformanceRecordBuffer {
     }
 }
 
+/// Performance record iterator.
 pub struct Iter<'a> {
     buffer: &'a [u8],
 }

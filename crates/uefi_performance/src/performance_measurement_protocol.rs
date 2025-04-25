@@ -1,3 +1,5 @@
+//! Definition of [`CreateMeasurementProtocol`]
+//! 
 //! ## License
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.

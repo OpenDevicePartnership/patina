@@ -1,6 +1,13 @@
 //! This module is a temporary module that has for goal to make communication protocol work in perf. It will eventually be replaced by another communicate abstraction.
 //!
 //! This module also contain smm performance communicate structures that define the communicate buffer data that need to be used to fetch perf records from smm.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
 
 use core::{debug_assert_eq, ptr, slice};
 
@@ -25,7 +32,6 @@ pub struct MmCommRegion {
 }
 
 impl MmCommRegion {
-    
     pub fn is_supervisor_type(&self) -> bool {
         self.region_type == 0
     }

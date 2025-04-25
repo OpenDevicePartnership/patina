@@ -1,3 +1,5 @@
+//! This module define the API and default implementation of the Firmware Basic Boot Performance Table (FBPT).
+//!
 //! ## License
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
@@ -12,9 +14,7 @@ use alloc::vec::Vec;
 use core::{
     fmt::Debug,
     marker::Sized,
-    mem, ptr,
-    result::Result::{self, Ok},
-    slice,
+    mem, ptr, slice,
     sync::atomic::{AtomicPtr, Ordering},
 };
 
@@ -32,21 +32,23 @@ use uefi_sdk::{
 
 use crate::performance_record::{self, PerformanceRecord, PerformanceRecordBuffer};
 
+/// The number of extra space in byte that will be allocated when publishing the performance buffer.
+/// This is used for every performance records that will be added to the table after it is published.
 const PUBLISHED_FBPT_EXTRA_SPACE: usize = 0x10_000;
 
-/// ...
+/// API for a Firmance Basic Boot Performance Table.
 #[cfg_attr(test, automock)]
 pub trait FirmwareBasicBootPerfTable: Sized {
-    /// ...
+    /// Return the address where the table is.
     fn fbpt_address(&self) -> usize;
 
-    /// ...
+    /// Return every perfomance records that has been added to the table.
     fn perf_records(&self) -> &PerformanceRecordBuffer;
 
-    /// ...
+    /// Initialize the perfomrnace records.
     fn set_perf_records(&mut self, perf_records: PerformanceRecordBuffer);
 
-    ///...
+    /// Add a perfomance record to the table.
     #[cfg_attr(test, mockall::concretize)]
     fn add_record<T: PerformanceRecord>(&mut self, record: T) -> Result<(), efi::Status>;
 
@@ -74,6 +76,7 @@ pub struct FBPT {
 impl FBPT {
     pub const SIGNATURE: u32 = u32::from_le_bytes([b'F', b'B', b'P', b'T']);
 
+    /// Create an new empty FBPT.
     pub const fn new() -> Self {
         Self {
             fbpt_address: 0,
@@ -82,6 +85,7 @@ impl FBPT {
         }
     }
 
+    /// Return the size in bytes of the FBPT table.
     pub fn length(&self) -> &u32 {
         unsafe { self._length.1.load(Ordering::Relaxed).as_ref() }.unwrap_or(&self._length.0)
     }
@@ -90,7 +94,7 @@ impl FBPT {
         unsafe { self._length.1.load(Ordering::Relaxed).as_mut() }.unwrap_or(&mut self._length.0)
     }
 
-    pub const fn size_of_empty_table() -> usize {
+    const fn size_of_empty_table() -> usize {
         mem::size_of::<u32>() // Header signature
         + mem::size_of::<u32>() // Header length
         + performance_record::PERFORMANCE_RECORD_HEADER_SIZE
@@ -129,6 +133,7 @@ impl FirmwareBasicBootPerfTable for FBPT {
 
         self.fbpt_address = 'find_address: {
             if let Some(prev_address) = address {
+                // Try to allocate at the previous address.
                 if let Ok(prev_address) = boot_services.allocate_pages(
                     AllocType::Address(prev_address),
                     MemoryType::RESERVED_MEMORY_TYPE,
@@ -137,7 +142,7 @@ impl FirmwareBasicBootPerfTable for FBPT {
                     break 'find_address prev_address;
                 }
             }
-            // Allocate at a new address if no address found or if the allocation failed.
+            // Allocate at a new address if no address found or if the previous address allocation failed.
             boot_services.allocate_pages(
                 AllocType::MaxAddress(u32::MAX as usize),
                 MemoryType::RESERVED_MEMORY_TYPE,
@@ -162,6 +167,7 @@ impl FirmwareBasicBootPerfTable for FBPT {
     }
 }
 
+/// Return the address where the FBPT has been allocated during the previous boot.
 pub fn find_previous_table_address(runtime_services: &impl RuntimeServices) -> Option<usize> {
     runtime_services
         .get_variable::<FirmwarePerformanceVariable>(
@@ -173,6 +179,7 @@ pub fn find_previous_table_address(runtime_services: &impl RuntimeServices) -> O
         .ok()
 }
 
+/// Struct used to get the value from the FirmwarePerformanceVariable
 #[repr(C)]
 pub struct FirmwarePerformanceVariable {
     boot_performance_table_pointer: usize,
@@ -198,6 +205,7 @@ impl TryFrom<Vec<u8>> for FirmwarePerformanceVariable {
 
 #[derive(Clone)]
 #[repr(C)]
+/// Firmware Basic Boot Performance Record
 pub struct FirmwareBasicBootPerfDataRecord {
     /// Timer value logged at the beginning of firmware image execution. This may not always be zero or near zero.
     pub reset_end: u64,
@@ -228,8 +236,8 @@ impl FirmwareBasicBootPerfDataRecord {
             exit_boot_services_exit: 0,
         }
     }
-
-    pub const fn data_size() -> usize {
+    
+    const fn data_size() -> usize {
         4 // Reserved bytes
         + mem::size_of::<Self>()
     }
