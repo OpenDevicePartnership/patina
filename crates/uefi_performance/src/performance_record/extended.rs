@@ -1,11 +1,11 @@
 //! This module contains every implementation of [`PerformanceRecord`] that are produce by this library.
-//! 
+//!
 //! ## License
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
-//! 
+//!
 
 use core::fmt::Debug;
 
@@ -165,7 +165,7 @@ impl PerformanceRecord for DualGuidStringEventRecord<'_> {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
-    
+
     fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> core::result::Result<(), scroll::Error> {
         buff.gwrite_with(self.progress_id, offset, scroll::NATIVE)?;
         buff.gwrite_with(self.acpi_id, offset, scroll::NATIVE)?;
@@ -213,7 +213,7 @@ impl PerformanceRecord for GuidQwordEventRecord {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
-    
+
     fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error> {
         buff.gwrite_with(self.progress_id, offset, scroll::NATIVE)?;
         buff.gwrite_with(self.acpi_id, offset, scroll::NATIVE)?;
@@ -261,7 +261,7 @@ impl PerformanceRecord for GuidQwordStringEventRecord<'_> {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
-    
+
     fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> core::result::Result<(), scroll::Error> {
         buff.gwrite_with(self.progress_id, offset, scroll::NATIVE)?;
         buff.gwrite_with(self.acpi_id, offset, scroll::NATIVE)?;

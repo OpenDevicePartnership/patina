@@ -236,7 +236,7 @@ impl FirmwareBasicBootPerfDataRecord {
             exit_boot_services_exit: 0,
         }
     }
-    
+
     const fn data_size() -> usize {
         4 // Reserved bytes
         + mem::size_of::<Self>()
