@@ -2,10 +2,10 @@
 
 ## Overview
 
-Firmware and UEFI firmware in particular has long been written in C. Firmware operates in a unique environment to other
-system software. It is written to bootstrap a system often at the host CPU reset vector and as part of a chain of
-trust established by a hardware rooted immutable root of trust. Modern PC firmware is extraordinarily complex with
-little room for error.
+Firmware and UEFI firmware in particular has long been written in C. Firmware operates in a unique environment compared
+to other system software. It is written to bootstrap a system often at the host CPU reset vector and as part of a chain
+of trust established by a hardware rooted immutable root of trust. Modern PC and server firmware is extraordinarily
+complex with little room for error.
 
 We call the effort to evolve and modernize UEFI firmware in the Open Device Partnership (ODP) project "Patina". The
 remainder of this document will discuss the motivation for this effort, a high-level overview of the current state of
@@ -14,16 +14,16 @@ Patina, and the current state of Rust in UEFI firmware.
 ### Firmware Evolution
 
 From a functional perspective, firmware must initialize the operating environment of a device. To do so involves
-integrating vendor code for dedicated microcontrollers, security engines, individual peripherals, SOC initialization,
-and so on. Individual firmware blobs may be located on a number of non-volatile media with very limited capacity. The
-firmware must perform its functional tasks successfully or risk difficult to diagnose errors in higher levels of the
-software stack that may impede overall device usability and debuggability.
+integrating vendor code for dedicated microcontrollers, security engines, individual peripherals, System-on-Chip (SOC)
+initialization, and so on. Individual firmware blobs may be located on a number of non-volatile media with very limited
+capacity. The firmware must perform its functional tasks successfully or risk difficult to diagnose errors in higher
+levels of the software stack that may impede overall device usability and debuggability.
 
 These properties have led to slow but incremental expansion of host firmware advancements over time.
 
 ![Host FW Evolution](./media/uefi_evolution.png)
 
-### Safety Without Garbage Collection Overhead
+### Firmware Security
 
 From a security perspective, firmware is an important component in the overall system Trusted Computing Base (TCB).
 Fundamental security features taken for granted in later system software such as kernels and hypervisors are often
@@ -33,17 +33,17 @@ While operating systems are attractive targets due to their ubiquity across devi
 beginning to shift more focus to firmware as an attack surface in response to increasingly effective security measures
 being applied in modern operating systems. Securing the early boot process revolves around key inflection points and
 protections applied between those points. The earliest point is the device "root of trust", where the system needs to
-ensure it begins operating in a trusted state. This is often performed by code in immutable ROMs located in a SOC.
-Since size is extremely limited, this logic typically hands off quickly to code of larger size on some mutable storage
-such as SPI flash that is first verified by a key stored in the SOC. In general, this handoff process continues
-throughout the boot process as hardware capabilities come online enabling larger and more complex code to be loaded
-forming what is referred to as a "chain of trust". Eventually some code must execute on the host CPU, that code is
-often UEFI based firmware. While significant research has been devoted across the entire boot process, UEFI firmware
-on the host CPU presents a unique opportunity to gain more visibility into early code execution details and intercept
-the boot process before essential activities take place such as application of important security register locks,
-cache/memory/DMA protections, isolated memory regions, etc. The result is code executed in this timeframe must carry
-forward proper verification and measurement of future code while also ensuring it does not introduce a vulnerability
-in its own execution.
+ensure it begins operating in a trusted state. This is often performed by code in immutable Read-Only Memory ROM
+located in a SOC. Since size is extremely limited, this logic typically hands off quickly to code of larger size on
+some mutable storage such as SPI flash that is first verified by a key stored in the SOC. In general, this handoff
+process continues throughout the boot process as hardware capabilities come online enabling larger and more complex
+code to be loaded forming what is referred to as a "chain of trust". Eventually some code must execute on the host CPU,
+that code is often UEFI based firmware. While significant research has been devoted across the entire boot process,
+UEFI firmware on the host CPU presents a unique opportunity to gain more visibility into early code execution details
+and intercept the boot process before essential activities take place such as application of important security
+register locks, cache/memory/DMA protections, isolated memory regions, etc. The result is code executed in this
+timeframe must carry forward proper verification and measurement of future code while also ensuring it does not
+introduce a vulnerability in its own execution.
 
 ### Performant and Reliable
 
@@ -62,7 +62,7 @@ lines of code written in a language developed over 50 years ago requires a uniqu
 
 ## Rust and Firmware
 
-As previously stated, modern PC firmware necessitates a powerful language that can support low-level programming with
+As previously stated, modern systems necessitate a powerful language that can support low-level programming with
 maximum performance, reliability, and safety. While C has provided the flexibility needed to implement relatively
 efficient firmware code, it has failed to prevent recurring problems around memory safety.
 
@@ -173,10 +173,10 @@ definition but many of the services are still implemented in C so it is orange.
 - AARCH64 and x86/64 support.
   - Support for QEMU (Q35 and SBSA).
   - Tested and developed on physical Intel and Arm hardware.
-  - Boots to Windows on these platforms.
+  - Boots to Windows and Linux on these platforms.
 - Performance record (FPDT) support.
 - Page table management.
-- A pure Rust dispatch system in addition to support for PI compatible FV/FFS dispatch.
+- A pure Rust dispatch system in addition to support for [PI compatible FV/FFS dispatch](./dxe_core/dispatcher.md).
 - Parity with the C DXE Core in UEFI Self-Certification Test (SCT) results.
 - ~70% unit test coverage in the Rust DXE Core (with a goal of >80% coverage).
 - Support for [Enhanced Memory Protections](https://microsoft.github.io/mu/WhatAndWhy/enhancedmemoryprotection/).
@@ -206,9 +206,9 @@ While more detailed design documents will be available in the Rust DXE Core code
 now is support to transition to a larger share of Rust code in DXE. To best take advantage of Rust's static safety
 guarantees and to avoid the need for unsafe code in interfacing between components (e.g. protocol database), we have
 implemented the ability for the Rust DXE Core dispatch process to dispatch platform defined static components called
-"components". Components are selected for dispatch by the platform and can share data and services with each other
-but through Rust interfaces that are safe and statically checked versus the dynamic and disjoint nature of the
-protocol database in the C DXE Core.
+["components"](./dxe_core/component_model.md). Components are selected for dispatch by the platform and can share data
+and services with each other but through Rust interfaces that are safe and statically checked versus the dynamic and
+disjoint nature of the protocol database in the C DXE Core.
 
 This snippet shows a simple example of how the Rust DXE core is instantiated and customized in a simple platform
 binary crate:
@@ -223,9 +223,6 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     uefi_debugger::set_debugger(&DEBUGGER);
 
     Core::default()
-        .with_cpu_init(uefi_cpu::cpu::EfiCpuInitX64::default())                          // CPU init can be customized or use default
-        .with_interrupt_manager(uefi_cpu::interrupts::InterruptManagerX64::default())    // Interrupt manager can be customized or use default
-        .with_interrupt_bases(uefi_cpu::interrupts::InterruptBasesNull::default())       // Interrupts can be customized or use default
         .with_section_extractor(section_extractor::CompositeSectionExtractor::default()) // Section extractor can be customized or use default
         .init_memory(physical_hob_list)                                                  // DXE Core initializes GCD with the HOB list
         .with_component(adv_logger_component)                                            // The "advanced logger" Rust component is added for dispatch
@@ -244,6 +241,12 @@ Rust is an exciting new next step and there is more to share about the Rust DXE 
 This section is not meant to be a comprehensive guide to integrating Rust into UEFI firmware and more detailed
 information is available. This section is meant to share a high-level sense of how the Rust DXE Core is integrated
 into a platform.
+
+The following integration documents might be helpful if you're beginning to work with the Rust DXE Core:
+
+- [Rust DXE Core vs Tianocore DXE Core Key Differences](./integrate/rust_vs_edk2.md)
+- [How to Setup a Platform-Specific Rust DXE Core Build](./integrate/dxe_core.md)
+- [Platform Integration of a Rust DXE Core Binary](./integrate/platform.md)
 
 ##### `uefi_dxe_core` as a Library Crate
 
@@ -266,9 +269,10 @@ components to dispatch in the Rust DXE Core as well.
 
 ##### Transition Tooling
 
-We plan to provide a tool that will help test the input data (e.g. HOBs) and other system state to determine any
-compatibility issues and provide guidance where possible. We're hoping this will make the Rust DXE Core onboarding
-experience easier but also provide more visibility into the DXE Core's requirements and operating state in general.
+We plan to provide a "DXE Readiness" tool that will help test the input data (e.g. HOBs) and other system state to
+determine any compatibility issues and provide guidance where possible. We're hoping this will make the Rust DXE Core
+onboarding experience easier but also provide more visibility into the DXE Core's requirements and operating state in
+general.
 
 #### Testing
 
@@ -299,6 +303,8 @@ The main areas at this time that are not supported are:
 
 The Rust DXE Core also sets up memory protections and requires a more accurately and comprehensively defined memory
 map. The platform will likely need to describe more resources than before (via resource descriptor HOBs) so pages
-can be mapped correctly and UEFI code that violates memory protections will need to be fixed. For example, heap and
-stack guard are active so code (C DXE driver or a third-party option ROM) cannot overflow and hit guard pages without
-causing a page fault.
+can be mapped correctly and UEFI code that violates memory protections will need to be fixed. For example, null pointer
+dereference detection and stack guard are active so code (C DXE driver or a third-party option ROM) will have memory
+protection violations caught at runtime.
+
+For more details about mememory management in Patina see [Memory Management](./dxe_core/memory_management.md).
