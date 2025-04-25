@@ -36,19 +36,19 @@ use crate::performance_record::{self, PerformanceRecord, PerformanceRecordBuffer
 /// This is used for every performance records that will be added to the table after it is published.
 const PUBLISHED_FBPT_EXTRA_SPACE: usize = 0x10_000;
 
-/// API for a Firmance Basic Boot Performance Table.
+/// API for a Firmware Basic Boot Performance Table.
 #[cfg_attr(test, automock)]
 pub trait FirmwareBasicBootPerfTable: Sized {
     /// Return the address where the table is.
     fn fbpt_address(&self) -> usize;
 
-    /// Return every perfomance records that has been added to the table.
+    /// Return every performance records that has been added to the table.
     fn perf_records(&self) -> &PerformanceRecordBuffer;
 
-    /// Initialize the perfomrnace records.
+    /// Initialize the performance records.
     fn set_perf_records(&mut self, perf_records: PerformanceRecordBuffer);
 
-    /// Add a perfomance record to the table.
+    /// Add a performance record to the table.
     #[cfg_attr(test, mockall::concretize)]
     fn add_record<T: PerformanceRecord>(&mut self, record: T) -> Result<(), efi::Status>;
 
