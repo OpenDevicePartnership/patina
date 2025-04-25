@@ -38,12 +38,11 @@ contains the functionality for all three of these trait interfaces and can be re
 
 1. remove `.with_cpu_init` method and `EfiCpuInit` trait from the `Core`'s public interface.
 2. remove `.with_interrupt_manager` method and `InterruptManager` trait from the `Core`'s public interface.
-3. update `.with_interrupt_bases` method to consume gicd_base and gicr_base directly instead of through a trait
-4. Expose `Cpu` trait as a service (`Service<dyn Cpu>`) which has the interface `flush_data_cache`, `init`,
+3. Expose `Cpu` trait as a service (`Service<dyn Cpu>`) which has the interface `flush_data_cache`, `init`,
    `get_timer_value`
-5. Expose `InterruptManager` trait as a service (`Service<dyn InterruptManager>`) which has the interface
+4. Expose `InterruptManager` trait as a service (`Service<dyn InterruptManager>`) which has the interface
    `register_exception_handler` and `unregister_exception_handler`.
-. Update cpu_arch protocol and hw_interrupt protocol to use Services instead of references to the trait object.
+5. Update cpu_arch protocol and hw_interrupt protocol to use Services instead of references to the trait object.
 
 ## Unresolved Questions
 
@@ -66,29 +65,22 @@ Before / After example
 ### Before Example
 
 ```rust
-pub struct Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases, MemoryState>
+pub struct Core<SectionExtractor, MemoryState>
 where
-    CpuInit: uefi_cpu::cpu::EfiCpuInit + Default + 'static,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
-    InterruptManager: uefi_cpu::interrupts::InterruptManager + Default + Copy + 'static,
-    InterruptBases: uefi_cpu::interrupts::InterruptBases + Default + Copy + 'static,
 {
-    cpu_init: CpuInit,
+    cpu_init: EfiCpu,
     section_extractor: SectionExtractor,
     interrupt_manager: InterruptManager,
-    interrupt_bases: InterruptBases,
+    interrupt_bases: Interrupts,
     components: Vec<Box<dyn Component>>,
     storage: Storage,
     _memory_state: core::marker::PhantomData<MemoryState>,
 }
 
-impl<CpuInit, SectionExtractor, InterruptManager, InterruptBases>
-    Core<CpuInit, SectionExtractor, InterruptManager, InterruptBases, NoAlloc>
+impl<SectionExtractor> Core<SectionExtractor, NoAlloc>
 where
-    CpuInit: uefi_cpu::cpu::EfiCpuInit + Default + 'static,
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
-    InterruptManager: uefi_cpu::interrupts::InterruptManager + Default + Copy + 'static,
-    InterruptBases: uefi_cpu::interrupts::InterruptBases + Default + Copy + 'static,
 {
     /// Registers the CPU Init with it's own configuration.
     pub fn with_cpu_init(mut self, cpu_init: CpuInit) -> Self {
@@ -99,12 +91,6 @@ where
     /// Registers the Interrupt Manager with it's own configuration.
     pub fn with_interrupt_manager(mut self, interrupt_manager: InterruptManager) -> Self {
         self.interrupt_manager = interrupt_manager;
-        self
-    }
-
-    /// Registers the section extractor with it's own configuration.
-    pub fn with_section_extractor(mut self, section_extractor: SectionExtractor) -> Self {
-        self.section_extractor = section_extractor;
         self
     }
 
@@ -149,12 +135,6 @@ impl<SectionExtractor> Core<SectionExtractor, NoAlloc>
 where
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static
 {
-    #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
-    pub fn with_interrupt_bases(self, gicd_base: u64, gicr_base: u64) -> Self {
-        self.interrupt_bases = (gicd_base, gicr_base)
-        self
-    }
-
     pub fn init_memory(
         mut self,
         physical_hob_list: *const c_void,
