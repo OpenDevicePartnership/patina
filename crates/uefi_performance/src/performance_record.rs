@@ -221,7 +221,7 @@ impl<'a> Iterator for Iter<'a> {
 
 #[cfg(test)]
 mod test {
-    use core::{assert_eq, slice};
+    use core::{assert_eq, slice, unreachable};
 
     use crate::performance_record::extended::{
         DualGuidStringEventRecord, DynamicStringEventRecord, GuidEventRecord, GuidQwordEventRecord,
@@ -295,7 +295,7 @@ mod test {
                     (GuidQwordStringEventRecord::TYPE, GuidQwordStringEventRecord::REVISION),
                     (record.record_type, record.revision)
                 ),
-                _ => assert!(false),
+                _ => unreachable!(),
             }
         }
     }
@@ -339,7 +339,7 @@ mod test {
                     (GuidQwordStringEventRecord::TYPE, GuidQwordStringEventRecord::REVISION),
                     (record.record_type, record.revision)
                 ),
-                _ => assert!(false),
+                _ => unreachable!()
             }
         }
     }

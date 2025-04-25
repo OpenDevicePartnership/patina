@@ -167,6 +167,12 @@ impl FirmwareBasicBootPerfTable for FBPT {
     }
 }
 
+impl Default for FBPT {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Return the address where the FBPT has been allocated during the previous boot.
 pub fn find_previous_table_address(runtime_services: &impl RuntimeServices) -> Option<usize> {
     runtime_services
@@ -263,11 +269,16 @@ impl PerformanceRecord for FirmwareBasicBootPerfDataRecord {
     }
 }
 
+impl Default for FirmwareBasicBootPerfDataRecord {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use core::{assert_eq, slice};
+    use core::{assert_eq, slice, unreachable};
 
-    use alloc::vec;
     use scroll::Pread;
     use uefi_sdk::{boot_services::MockBootServices, runtime_services::MockRuntimeServices};
 
@@ -314,12 +325,9 @@ mod test {
     #[test]
     fn test_set_perf_records() {
         let mut performance_record_buffer = PerformanceRecordBuffer::new();
-        performance_record_buffer.push_record(GenericPerformanceRecord {
-            record_type: 1,
-            length: 20,
-            revision: 1,
-            data: [0_u8; 16],
-        });
+        performance_record_buffer
+            .push_record(GenericPerformanceRecord { record_type: 1, length: 20, revision: 1, data: [0_u8; 16] })
+            .unwrap();
 
         let mut fbpt = FBPT::new();
         assert_eq!(&56, fbpt.length());
@@ -378,7 +386,7 @@ mod test {
                     (GuidQwordStringEventRecord::TYPE, GuidQwordStringEventRecord::REVISION),
                     (record.record_type, record.revision)
                 ),
-                _ => assert!(false),
+                _ => unreachable!(),
             }
         }
 
@@ -423,7 +431,7 @@ mod test {
         boot_services
             .expect_allocate_pages()
             .once()
-            .withf(move |alloc_type, memory_type, _| {
+            .withf(move |_, memory_type, _| {
                 assert_eq!(&MemoryType::RESERVED_MEMORY_TYPE, memory_type);
                 true
             })

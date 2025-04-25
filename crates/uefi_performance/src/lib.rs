@@ -23,7 +23,7 @@ pub mod performance_table;
 
 use alloc::{
     boxed::Box,
-    string::{String, ToString},
+    string::ToString,
     vec::Vec,
 };
 use core::{
@@ -367,7 +367,7 @@ extern "efiapi" fn create_performance_measurement(
     // - If input ID doesn't follow the rule, we will adjust it.
     let mut perf_id = identifier as u16;
     let is_known_id = KnownPerfId::try_from(perf_id).is_ok();
-    let is_known_token = string.as_ref().map_or(false, |s| KnownPerfToken::try_from(s.as_str()).is_ok());
+    let is_known_token = string.as_ref().is_some_and(|s| KnownPerfToken::try_from(s.as_str()).is_ok());
     if attribute != PerfAttribute::PerfEntry {
         if perf_id != 0 && is_known_id && is_known_token {
             return efi::Status::INVALID_PARAMETER;
@@ -388,7 +388,7 @@ extern "efiapi" fn create_performance_measurement(
     match _create_performance_measurement(
         caller_identifier,
         guid,
-        string.as_ref().map(String::as_str),
+        string.as_deref(),
         ticker,
         address,
         perf_id,
@@ -408,6 +408,7 @@ extern "efiapi" fn create_performance_measurement(
 }
 
 /// Crate a performance measurement and add it the the FBPT.
+#[allow(clippy::too_many_arguments)]
 fn _create_performance_measurement<B, F>(
     caller_identifier: *const c_void,
     guid: Option<&efi::Guid>,
@@ -512,7 +513,7 @@ where
             // SAFETY: On these usecases, caller identifier is actually a guid. See macro for more detailed.
             // This strange behavior need to be kept for backward compatibility.
             let module_guid = unsafe { *(caller_identifier as *const efi::Guid) };
-            let string = string.as_deref().unwrap_or("unkown name");
+            let string = string.unwrap_or("unkown name");
             let record = DynamicStringEventRecord::new(perf_id, 0, timestamp, module_guid, string);
             fbpt.lock().add_record(record)?;
         }
@@ -591,18 +592,14 @@ pub struct MediaFwVolFilepathDevicePath {
 mod test {
     use super::*;
 
-    use mockall::predicate::{self, *};
-
     use alloc::rc::Rc;
-    use mu_pi::protocols::status_code;
-    use r_efi::efi::RuntimeServices;
+    use core::{assert_eq, ptr};
 
-    use core::{assert_eq, convert::AsMut, ffi::c_void, ptr, result::Result::Ok};
+    use mockall::predicate;
 
     use uefi_sdk::{
         boot_services::{
-            self,
-            c_ptr::{CMutPtr, CMutRef, CPtr, CRef, PtrMetadata},
+            c_ptr::{CMutPtr, CPtr},
             MockBootServices,
         },
         protocol::ProtocolInterface,
@@ -655,7 +652,7 @@ mod test {
                 &TplMutex<'static, MockFirmwareBasicBootPerfTable, MockBootServices>,
             )>>()
             .once()
-            .withf_st(|event_type, notify_tpl, notify_function, notify_context, event_group| {
+            .withf_st(|event_type, notify_tpl, notify_function, _notify_context, event_group| {
                 assert_eq!(&EventType::NOTIFY_SIGNAL, event_type);
                 assert_eq!(&Tpl::CALLBACK, notify_tpl);
                 assert_eq!(
@@ -681,7 +678,7 @@ mod test {
                 &TplMutex<'static, MockFirmwareBasicBootPerfTable, MockBootServices>,
             )>>()
             .once()
-            .withf_st(|event_type, notify_tpl, notify_function, notify_context, event_group| {
+            .withf_st(|event_type, notify_tpl, notify_function, _notify_context, event_group| {
                 assert_eq!(&EventType::NOTIFY_SIGNAL, event_type);
                 assert_eq!(&Tpl::CALLBACK, notify_tpl);
                 assert_eq!(
@@ -704,7 +701,7 @@ mod test {
             })
             .return_const(Ok(()));
 
-        let mut runtime_services = MockRuntimeServices::new();
+        let runtime_services = MockRuntimeServices::new();
 
         let mut pei_perf_data_extractor = MockPeiPerformanceDataExtractor::new();
         pei_perf_data_extractor
@@ -744,7 +741,7 @@ mod test {
             efi::Status::SUCCESS
         }
         let mut status_code_runtime_protocol = Box::new(StatusCodeRuntimeProtocol::new(report_status_code));
-        let mut status_code_runtime_protocol_ptr = status_code_runtime_protocol.as_mut_ptr();
+        let status_code_runtime_protocol_ptr = status_code_runtime_protocol.as_mut_ptr();
 
         let mut boot_services = MockBootServices::new();
         boot_services.expect_raise_tpl().returning(|tpl| tpl);

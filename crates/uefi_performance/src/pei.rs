@@ -80,7 +80,7 @@ where
 
 #[cfg(test)]
 pub mod test {
-    use core::{assert_eq, hint::black_box};
+    use core::assert_eq;
 
     use scroll::Pwrite;
     use uefi_sdk::component::hob::FromHob;
@@ -116,7 +116,7 @@ pub mod test {
 
     #[test]
     fn test_pei_performance_record_buffer_parse_from_hob_invalid() {
-        let mut buffer = [0_u8; 1];
+        let buffer = [0_u8; 1];
 
         let pei_perf_record_buffer = PeiPerformanceData::parse(&buffer);
 
