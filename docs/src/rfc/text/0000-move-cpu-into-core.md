@@ -5,7 +5,7 @@ The struct(s) for configuring CPU specific functionality are currently exposed e
 certain functionality based off of a platform's requirements and (2) replace cpu architecture specific functionality.
 As the Patina Core has evolved, we have noted that platforms do not need to customize this functionality; all platforms
 of a certain architecture will always use the same underlying architecture support code. Exposing this configuration to
-the consumer only works to complicate the Patina Core initialization and has been deemed unecessary.
+the consumer only works to complicate the Patina Core initialization and has been deemed unnecessary.
 
 This proposal is to remove the architecture specific customization from the public Patina Core interface, and
 automatically use the appropriate logic for the given architecture. Configuration knobs can be provided to the Patina
