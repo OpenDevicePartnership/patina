@@ -21,11 +21,7 @@ pub mod performance_measurement_protocol;
 pub mod performance_record;
 pub mod performance_table;
 
-use alloc::{
-    boxed::Box,
-    string::ToString,
-    vec::Vec,
-};
+use alloc::{boxed::Box, string::ToString, vec::Vec};
 use core::{
     clone::Clone,
     convert::{AsRef, TryFrom},

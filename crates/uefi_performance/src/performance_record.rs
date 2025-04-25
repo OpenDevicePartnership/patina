@@ -339,7 +339,7 @@ mod test {
                     (GuidQwordStringEventRecord::TYPE, GuidQwordStringEventRecord::REVISION),
                     (record.record_type, record.revision)
                 ),
-                _ => unreachable!()
+                _ => unreachable!(),
             }
         }
     }
