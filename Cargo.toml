@@ -18,10 +18,10 @@ edition = "2021"
 rust-version = "1.83.0"
 
 [workspace.dependencies]
-section_extractor = { version = "13" }
-uefi_sdk = { version = "5" }
-uefi_cpu = { version = "13" }
-uefi_debugger = { version = "13" }
+section_extractor = { version = "14" }
+uefi_sdk = { version = "6" }
+uefi_cpu = { version = "14" }
+uefi_debugger = { version = "14" }
 uefi_corosensei = { version = "0.1", default-features = false }
 
 adv_logger = { path = "adv_logger", version = "10" }
