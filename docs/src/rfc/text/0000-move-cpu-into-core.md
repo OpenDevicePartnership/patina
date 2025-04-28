@@ -15,6 +15,8 @@ Core to fine tune this logic for a given platform.
 
 - 2025-04-10: Initial RFC created.
 - 2025-04-25: General update after a commit that removed some of the generics
+- 2025-04-28: Use `Config` for gic configuration
+- 2025-04-28: Split efi system table initialization into post-memory-init
 
 ## Motivation
 
@@ -120,6 +122,21 @@ Core::default()
 ### After Example
 
 ```rust
+
+pub struct GicBases(u64, u64);
+
+impl GicBases {
+    pub fn new(gicd_base: u64, gicr_base) -> Self {
+        GicBases(gicd_base, gicr_base)
+    }
+}
+
+impl Default for GicBases {
+    fn default() -> Self {
+        panic!("GicBases `Config` must be provided directly to the core with `.with_config(...)`.")
+    }
+}
+
 // After
 pub struct Core<SectionExtractor, MemoryState>
 where
@@ -148,15 +165,36 @@ where
 
         storage.add_service(cpu);
         storage.add_service(im);
+
+        /* immediately before `systemtables::init_system_table, return from init_memory */
+        Core { ... }
+    }
+}
+
+impl<SectionExtractor> Core<SectionExtractor, Alloc>
+where
+    SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static
+{
+    fn initialize_system_table(&self) -> Result<()> { 
+
         let cpu: Service<dyn Cpu> = storage.get_service().unwrap();
         let im: Service<dyn InterruptManager> = storage.get_service.unwrap();
+
+        /* Continue from `systemtables::init_system_table();` */
 
         cpu_arch_protocol::install_cpu_arch_protocol(cpu, im);
 
         #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
-        hw_interrupt_protocol::install_hw_interrupt_protocol(im, &self.interrupt_bases);
+        hw_interrupt_protocol::install_hw_interrupt_protocol(im, self.storage.get_config().unwrap());
 
-        /* Continue as normal */
+        /* Continue */
+        Ok(())
+    }
+
+    fn start(mut self) -> Result<()> {
+        log::info!("Initiliazing System Table");
+        self.initialize_system_table()?;
+        log::info!("System Table Initialized");
     }
 }
 
@@ -164,6 +202,7 @@ where
 Core::default()
     .with_section_exctractor(...)
     .init_memory(physical_hob_list)
+    .with_config(GicBases::new(0x40060000, 0x40080000))
     .start()
     .unwrap();
 
