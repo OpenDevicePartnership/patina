@@ -442,7 +442,8 @@ where
         Ok(())
     }
 
-    fn add_default_components(&mut self) {
+    /// Registers core provided components
+    fn add_core_components(&mut self) {
         self.add_component(cpu_arch_protocol::install_cpu_arch_protocol);
         #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
         self.add_component(hw_interrupt_protocol::install_hw_interrupt_protocol);
@@ -451,7 +452,7 @@ where
     /// Starts the core, dispatching all drivers.
     pub fn start(mut self) -> Result<()> {
         log::info!("Registering default components");
-        self.add_default_components();
+        self.add_core_components();
         log::info!("Finished.");
 
         log::info!("Initializing System Table");
