@@ -1,5 +1,5 @@
-use crate::protocols::PROTOCOL_DB;
 use crate::tpl_lock::TplMutex;
+use crate::GicBases;
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -10,6 +10,10 @@ use uefi_cpu::interrupts::{ExceptionContext, InterruptHandler, InterruptManager}
 
 use arm_gic::gicv3::{GicV3, Trigger};
 use uefi_sdk::guid::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2};
+use uefi_sdk::component::{params::Config, service::Service};
+use uefi_sdk::boot_services::{BootServices, StandardBootServices};
+use uefi_sdk::protocol::ProtocolInterface;
+use uefi_sdk::error::Result;
 
 pub type HwInterruptHandler = extern "efiapi" fn(u64, &mut ExceptionContext);
 
@@ -40,11 +44,11 @@ pub struct EfiHardwareInterruptProtocol<'a> {
     end_of_interrupt: HardwareInterruptEnd,
 
     // Internal rust access only! Does not exist in C definition.
-    hw_interrupt_handler: &'a mut HwInterruptProtocolHandler,
+    hw_interrupt_handler: &'a HwInterruptProtocolHandler,
 }
 
 impl<'a> EfiHardwareInterruptProtocol<'a> {
-    fn new(hw_interrupt_handler: &'a mut HwInterruptProtocolHandler) -> Self {
+    fn new(hw_interrupt_handler: &'a HwInterruptProtocolHandler) -> Self {
         Self {
             register_interrupt_source: Self::register_interrupt_source,
             enable_interrupt_source: Self::enable_interrupt_source,
@@ -119,6 +123,10 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
     }
 }
 
+unsafe impl ProtocolInterface for EfiHardwareInterruptProtocol<'_> {
+    const PROTOCOL_GUID: efi::Guid = HARDWARE_INTERRUPT_PROTOCOL;
+}
+
 type HardwareInterruptRegisterV2 =
     unsafe extern "efiapi" fn(*mut EfiHardwareInterruptV2Protocol, u64, HwInterruptHandler) -> efi::Status;
 type HardwareInterruptEnableV2 = unsafe extern "efiapi" fn(*mut EfiHardwareInterruptV2Protocol, u64) -> efi::Status;
@@ -148,11 +156,11 @@ pub struct EfiHardwareInterruptV2Protocol<'a> {
     set_trigger_type: HardwareInterruptSetTriggerTypeV2,
 
     // One off for the HwInterruptProtocolHandler
-    hw_interrupt_handler: &'a mut HwInterruptProtocolHandler,
+    hw_interrupt_handler: &'a HwInterruptProtocolHandler,
 }
 
 impl<'a> EfiHardwareInterruptV2Protocol<'a> {
-    fn new(hw_interrupt_handler: &'a mut HwInterruptProtocolHandler) -> Self {
+    fn new(hw_interrupt_handler: &'a HwInterruptProtocolHandler) -> Self {
         Self {
             register_interrupt_source: Self::register_interrupt_source,
             enable_interrupt_source: Self::enable_interrupt_source,
@@ -270,6 +278,10 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
     }
 }
 
+unsafe impl ProtocolInterface for EfiHardwareInterruptV2Protocol<'_> {
+    const PROTOCOL_GUID: efi::Guid = HARDWARE_INTERRUPT_PROTOCOL_V2;
+}
+
 impl From<Trigger> for HardwareInterrupt2TriggerType {
     fn from(a: Trigger) -> HardwareInterrupt2TriggerType {
         // convert A to B
@@ -326,7 +338,7 @@ impl HwInterruptProtocolHandler {
     }
 
     /// Internal implementation of interrupt related functions.
-    pub fn register_interrupt_source(&mut self, interrupt_source: usize, handler: HwInterruptHandler) -> efi::Status {
+    pub fn register_interrupt_source(&self, interrupt_source: usize, handler: HwInterruptHandler) -> efi::Status {
         if interrupt_source >= self.handlers.lock().len() {
             return efi::Status::INVALID_PARAMETER;
         }
@@ -353,58 +365,47 @@ impl HwInterruptProtocolHandler {
     }
 }
 
-/// This function is called by the DXE Core to install the protocol.
-pub(crate) fn install_hw_interrupt_protocol<'a>(
-    interrupt_manager: &'a mut dyn InterruptManager,
-    interrupt_bases: (u64, u64),
-) {
-    let res = unsafe { gic_initialize(interrupt_bases.0 as _, interrupt_bases.1 as _) };
-
-    if res.is_err() {
-        log::error!("Failed to initialize GICv3");
-        return;
-    } else {
-        log::info!("GICv3 initialized");
+/// This component installs the two hardware interrupt protocols.
+pub(crate) fn install_hw_interrupt_protocol(
+    interrupt_manager: Service<dyn InterruptManager>,
+    gic_bases: Config<GicBases>,
+    bs: StandardBootServices,
+) -> Result<()> {
+    if *gic_bases == GicBases::default() {
+        log::error!("GicBases `Config` must be manually initialized and registered with the Core using `with_config`.");
+        return Err(uefi_sdk::error::EfiError::InvalidParameter);
     }
 
-    let mut gic_v3 = res.unwrap();
+    let mut gic_v3 = unsafe {
+        gic_initialize(gic_bases.0 as _, gic_bases.1 as _)
+            .inspect_err(|_| log::error!("Failed to initialize GICv3"))?
+    };
+    log::info!("GICv3 initialized");
 
     let max_int = unsafe { get_max_interrupt_number(gic_v3.gicd_ptr()) as usize };
     let handlers = vec![None; max_int];
     let aarch64_int = AArch64InterruptInitializer::new(gic_v3);
 
     // Prepare context for the v1 interrupt handler
-    let mut hw_int_protocol_handler = Box::leak(Box::new(HwInterruptProtocolHandler::new(handlers, aarch64_int)));
+    let hw_int_protocol_handler = Box::leak(Box::new(HwInterruptProtocolHandler::new(handlers, aarch64_int)));
     // Produce Interrupt Protocol with the initialized GIC
-    let interrupt_protocol = Box::into_raw(Box::new(EfiHardwareInterruptProtocol::new(&mut hw_int_protocol_handler)));
-    let interrupt_protocol = interrupt_protocol as *mut c_void;
+    let interrupt_protocol = Box::leak(Box::new(EfiHardwareInterruptProtocol::new(hw_int_protocol_handler)));
 
-    let result = PROTOCOL_DB.install_protocol_interface(None, HARDWARE_INTERRUPT_PROTOCOL, interrupt_protocol);
-    if result.is_err() {
-        log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL with result: {:?}", result);
-    } else {
-        log::info!("installed HARDWARE_INTERRUPT_PROTOCOL");
-    }
+    bs.install_protocol_interface(None, interrupt_protocol,)
+        .inspect_err(|_| log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL"))?;
 
     // Produce Interrupt Protocol with the initialized GIC
     let interrupt_protocol_v2 =
-        Box::into_raw(Box::new(EfiHardwareInterruptV2Protocol::new(&mut hw_int_protocol_handler)));
-    let interrupt_protocol_v2 = interrupt_protocol_v2 as *mut c_void;
+        Box::leak(Box::new(EfiHardwareInterruptV2Protocol::new(hw_int_protocol_handler)));
 
-    let _ = PROTOCOL_DB.install_protocol_interface(None, HARDWARE_INTERRUPT_PROTOCOL_V2, interrupt_protocol_v2);
-    if result.is_err() {
-        log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL_V2 with result: {:?}", result);
-    } else {
-        log::info!("installed HARDWARE_INTERRUPT_PROTOCOL_V2");
-    }
-
-    let hw_int_protocol_handler_exp = hw_int_protocol_handler;
+    bs.install_protocol_interface(None, interrupt_protocol_v2)
+        .inspect_err(|_| log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL_V2"))?;
+    log::info!("installed HARDWARE_INTERRUPT_PROTOCOL_V2");
 
     // Register the interrupt handlers for IRQs after CPU arch protocol is installed
-    let result = interrupt_manager
-        .register_exception_handler(1, uefi_cpu::interrupts::HandlerType::Handler(hw_int_protocol_handler_exp));
+    interrupt_manager
+        .register_exception_handler(1, uefi_cpu::interrupts::HandlerType::Handler(hw_int_protocol_handler))
+        .inspect_err(|_| log::error!("Failed to register exception handler for hardware interrupts"))?;
 
-    if result.is_err() {
-        log::error!("Failed to register exception handler for hardware interrupts");
-    }
+    Ok(())
 }

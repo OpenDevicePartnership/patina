@@ -8,34 +8,34 @@ use uefi_cpu::{
     cpu::Cpu,
     interrupts::{self, ExceptionType, HandlerType, InterruptManager},
 };
-use uefi_sdk::error::EfiError;
+use uefi_sdk::{component::service::Service, error::EfiError};
 
 use mu_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandler, Protocol, PROTOCOL_GUID};
 
 #[repr(C)]
-pub struct EfiCpuArchProtocolImpl<'a> {
+pub struct EfiCpuArchProtocolImpl {
     protocol: Protocol,
 
     // Crate accessible fields
-    pub(crate) cpu_init: &'a mut dyn Cpu,
-    pub(crate) interrupt_manager: &'a mut dyn InterruptManager,
+    pub(crate) cpu: Service<dyn Cpu>,
+    pub(crate) interrupt_manager: Service<dyn InterruptManager>,
 }
 
 // Helper function to convert a raw mutable pointer to a mutable reference.
-fn get_impl_ref<'a>(this: *const Protocol) -> &'a EfiCpuArchProtocolImpl<'a> {
+fn get_impl_ref<'a>(this: *const Protocol) -> &'a EfiCpuArchProtocolImpl {
     if this.is_null() {
         panic!("Null pointer passed to get_impl_ref()");
     }
 
-    unsafe { &*(this as *const EfiCpuArchProtocolImpl<'a>) }
+    unsafe { &*(this as *const EfiCpuArchProtocolImpl) }
 }
 
-fn get_impl_ref_mut<'a>(this: *mut Protocol) -> &'a mut EfiCpuArchProtocolImpl<'a> {
+fn get_impl_ref_mut<'a>(this: *mut Protocol) -> &'a mut EfiCpuArchProtocolImpl {
     if this.is_null() {
         panic!("Null pointer passed to get_impl_ref_mut()");
     }
 
-    unsafe { &mut *(this as *mut EfiCpuArchProtocolImpl<'a>) }
+    unsafe { &mut *(this as *mut EfiCpuArchProtocolImpl) }
 }
 
 // EfiCpuArchProtocolImpl function pointers implementations.
@@ -46,9 +46,9 @@ extern "efiapi" fn flush_data_cache(
     length: u64,
     flush_type: CpuFlushType,
 ) -> efi::Status {
-    let cpu_init = &get_impl_ref(this).cpu_init;
+    let cpu = get_impl_ref(this).cpu;
 
-    let result = cpu_init.flush_data_cache(start, length, flush_type);
+    let result = cpu.flush_data_cache(start, length, flush_type);
 
     result.map(|_| efi::Status::SUCCESS).unwrap_or_else(|err| err.into())
 }
@@ -77,9 +77,9 @@ extern "efiapi" fn get_interrupt_state(this: *const Protocol, state: *mut bool) 
 }
 
 extern "efiapi" fn init(this: *const Protocol, init_type: CpuInitType) -> efi::Status {
-    let cpu_init = &get_impl_ref(this).cpu_init;
+    let cpu = get_impl_ref(this).cpu;
 
-    let result = cpu_init.init(init_type);
+    let result = cpu.init(init_type);
 
     result.map(|_| efi::Status::SUCCESS).unwrap_or_else(|err| err.into())
 }
@@ -111,9 +111,9 @@ extern "efiapi" fn get_timer_value(
     timer_value: *mut u64,
     timer_period: *mut u64,
 ) -> efi::Status {
-    let cpu_init = &get_impl_ref(this).cpu_init;
+    let cpu = get_impl_ref(this).cpu;
 
-    let result = cpu_init.get_timer_value(timer_index);
+    let result = cpu.get_timer_value(timer_index);
 
     match result {
         Ok((value, period)) => {
@@ -139,8 +139,8 @@ extern "efiapi" fn set_memory_attributes(
     }
 }
 
-impl<'a> EfiCpuArchProtocolImpl<'a> {
-    fn new(cpu_init: &'a mut dyn Cpu, interrupt_manager: &'a mut dyn InterruptManager) -> Self {
+impl<'a> EfiCpuArchProtocolImpl {
+    fn new(cpu: Service<dyn Cpu>, interrupt_manager: Service<dyn InterruptManager>) -> Self {
         Self {
             protocol: Protocol {
                 flush_data_cache,
@@ -156,7 +156,7 @@ impl<'a> EfiCpuArchProtocolImpl<'a> {
             },
 
             // private data
-            cpu_init,
+            cpu,
             interrupt_manager,
         }
     }
@@ -164,10 +164,10 @@ impl<'a> EfiCpuArchProtocolImpl<'a> {
 
 /// This function is called by the DXE Core to install the protocol.
 pub(crate) fn install_cpu_arch_protocol<'a>(
-    cpu_init: &'a mut dyn Cpu,
-    interrupt_manager: &'a mut dyn InterruptManager,
+    cpu: Service<dyn Cpu>,
+    interrupt_manager: Service<dyn InterruptManager>,
 ) {
-    let protocol = EfiCpuArchProtocolImpl::new(cpu_init, interrupt_manager);
+    let protocol = EfiCpuArchProtocolImpl::new(cpu, interrupt_manager);
 
     // Convert the protocol to a raw pointer and store it in to protocol DB
     let interface = Box::into_raw(Box::new(protocol));

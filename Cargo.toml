@@ -61,6 +61,9 @@ linkme = "^0.3.29"
 quote = "^1"
 proc-macro2 = "^1"
 
+[patch.crates-io]
+uefi_cpu = { path = "../uefi-core/uefi_cpu"}
+
 [profile.dev]
 opt-level = 3
 

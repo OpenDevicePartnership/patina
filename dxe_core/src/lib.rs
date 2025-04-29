@@ -6,8 +6,6 @@
 //! ## Examples
 //!
 //! ``` rust,no_run
-//! use uefi_cpu::interrupts::Interrupts;
-//! use uefi_cpu::cpu::EfiCpu;
 //! use uefi_sdk::error::EfiError;
 //! # fn example_component() -> uefi_sdk::error::Result<()> { Ok(()) }
 //! # #[derive(Default, Clone, Copy)]
@@ -17,8 +15,6 @@
 //! # }
 //! # let physical_hob_list = core::ptr::null();
 //! dxe_core::Core::default()
-//!   .with_cpu_init(EfiCpu::default())
-//!   .with_interrupt_manager(Interrupts::default())
 //!   .with_section_extractor(SectionExtractExample::default())
 //!   .init_memory(physical_hob_list)
 //!   .with_component(example_component)
@@ -106,6 +102,15 @@ macro_rules! error {
 
 pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
 
+#[derive(Default, Debug, PartialEq)]
+pub struct GicBases(pub u64, pub u64);
+
+impl GicBases {
+    pub fn new(gicd_base: u64, gicr_base: u64) -> Self {
+        GicBases(gicd_base, gicr_base)
+    }
+}
+
 #[doc(hidden)]
 /// A zero-sized type to gate allocation functions in the [Core].
 pub struct Alloc;
@@ -133,8 +138,6 @@ pub struct NoAlloc;
 /// ## Examples
 ///
 /// ``` rust,no_run
-/// use uefi_cpu::cpu::EfiCpu;
-/// use uefi_cpu::interrupts::Interrupts;
 /// use uefi_sdk::error::EfiError;
 /// # fn example_component() -> uefi_sdk::error::Result<()> { Ok(()) }
 /// # #[derive(Default, Clone, Copy)]
@@ -144,8 +147,6 @@ pub struct NoAlloc;
 /// # }
 /// # let physical_hob_list = core::ptr::null();
 /// dxe_core::Core::default()
-///   .with_cpu_init(EfiCpu::default())
-///   .with_interrupt_manager(Interrupts::default())
 ///   .with_section_extractor(SectionExtractExample::default())
 ///   .init_memory(physical_hob_list)
 ///   .with_component(example_component)
@@ -156,11 +157,9 @@ pub struct Core<SectionExtractor, MemoryState>
 where
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
 {
+    physical_hob_list: *const c_void,
     hob_list: HobList<'static>,
-    cpu_init: EfiCpu,
     section_extractor: SectionExtractor,
-    interrupt_manager: Interrupts,
-    interrupt_bases: (u64, u64),
     components: Vec<Box<dyn Component>>,
     storage: Storage,
     _memory_state: core::marker::PhantomData<MemoryState>,
@@ -172,11 +171,9 @@ where
 {
     fn default() -> Self {
         Core {
+            physical_hob_list: core::ptr::null(),
             hob_list: HobList::default(),
-            cpu_init: EfiCpu::default(),
             section_extractor: SectionExtractor::default(),
-            interrupt_manager: Interrupts::default(),
-            interrupt_bases: (0, 0),
             components: Vec::new(),
             storage: Storage::new(),
             _memory_state: core::marker::PhantomData,
@@ -188,35 +185,9 @@ impl<SectionExtractor> Core<SectionExtractor, NoAlloc>
 where
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
 {
-    /// Registers the CPU Init with it's own configuration.
-    pub fn with_cpu_init(mut self, cpu_init: EfiCpu) -> Self {
-        self.cpu_init = cpu_init;
-        self
-    }
-
-    /// Registers the Interrupt Manager with it's own configuration.
-    pub fn with_interrupt_manager(mut self, interrupt_manager: Interrupts) -> Self {
-        self.interrupt_manager = interrupt_manager;
-        self
-    }
-
     /// Registers the section extractor with it's own configuration.
     pub fn with_section_extractor(mut self, section_extractor: SectionExtractor) -> Self {
         self.section_extractor = section_extractor;
-        self
-    }
-
-    /// Returns the length of the HOB list.
-    /// Clippy gets unhappy if we call get_c_hob_list_size directly, because it gets confused, thinking
-    /// get_c_hob_list_size is not marked unsafe, but it is
-    fn get_hob_list_len(hob_list: *const c_void) -> usize {
-        unsafe { get_c_hob_list_size(hob_list) }
-    }
-
-    #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
-    /// Registers the interrupt bases with it's own configuration.
-    pub fn with_interrupt_bases(mut self, gicd_base: u64, gicr_base: u64) -> Self {
-        self.interrupt_bases = (gicd_base, gicr_base);
         self
     }
 
@@ -224,11 +195,13 @@ where
     pub fn init_memory(mut self, physical_hob_list: *const c_void) -> Core<SectionExtractor, Alloc> {
         log::info!("DXE Core Crate v{}", env!("CARGO_PKG_VERSION"));
 
-        let _ = self.cpu_init.initialize();
-        self.interrupt_manager.initialize().expect("Failed to initialize interrupt manager!");
+        let mut cpu = EfiCpu::default();
+        cpu.initialize().expect("Failed to initialize CPU!");
+        let mut im = Interrupts::default();
+        im.initialize().expect("Failed to initialize Interrupts!");
 
         // For early debugging, the "no_alloc" feature must be enabled in the debugger crate.
-        // uefi_debugger::initialize(&mut self.interrupt_manager);
+        // uefi_debugger::initialize(&mut im);
 
         if physical_hob_list.is_null() {
             panic!("HOB list pointer is null!");
@@ -253,96 +226,19 @@ where
         // the initial free memory may not be enough to contain the HOB list. We need to relocate the HOBs because
         // the initial HOB list is not in mapped memory as passed from pre-DXE.
         self.hob_list.relocate_hobs();
-        let hob_list_slice = unsafe {
-            core::slice::from_raw_parts(physical_hob_list as *const u8, Self::get_hob_list_len(physical_hob_list))
-        };
-        let relocated_c_hob_list = hob_list_slice.to_vec().into_boxed_slice();
 
         // Initialize the debugger if it is enabled.
-        uefi_debugger::initialize(&mut self.interrupt_manager);
+        uefi_debugger::initialize(&mut im);
 
         log::info!("GCD - After memory init:\n{}", GCD);
 
-        // Instantiate system table.
-        systemtables::init_system_table();
-        {
-            let mut st = systemtables::SYSTEM_TABLE.lock();
-            let st = st.as_mut().expect("System Table not initialized!");
+        self.storage.add_service(cpu);
+        self.storage.add_service(im);
 
-            allocator::install_memory_services(st.boot_services_mut());
-            gcd::init_paging(&self.hob_list);
-            events::init_events_support(st.boot_services_mut());
-            protocols::init_protocol_support(st.boot_services_mut());
-            misc_boot_services::init_misc_boot_services_support(st.boot_services_mut());
-            runtime::init_runtime_support(st.runtime_services_mut());
-            image::init_image_support(&self.hob_list, st);
-            dispatcher::init_dispatcher(Box::from(self.section_extractor));
-            fv::init_fv_support(&self.hob_list, Box::from(self.section_extractor));
-            dxe_services::init_dxe_services(st);
-            driver_services::init_driver_services(st.boot_services_mut());
-
-            cpu_arch_protocol::install_cpu_arch_protocol(&mut self.cpu_init, &mut self.interrupt_manager);
-            memory_attributes_protocol::install_memory_attributes_protocol();
-            #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
-            hw_interrupt_protocol::install_hw_interrupt_protocol(&mut self.interrupt_manager, self.interrupt_bases);
-
-            // re-checksum the system tables after above initialization.
-            st.checksum_all();
-
-            // Install HobList configuration table
-            let (a, b, c, &[d0, d1, d2, d3, d4, d5, d6, d7]) =
-                uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").expect("Invalid UUID format.").as_fields();
-            let hob_list_guid: efi::Guid = efi::Guid::from_fields(a, b, c, d0, d1, &[d2, d3, d4, d5, d6, d7]);
-
-            misc_boot_services::core_install_configuration_table(
-                hob_list_guid,
-                Some(unsafe { &mut *(Box::leak(relocated_c_hob_list).as_mut_ptr() as *mut c_void) }),
-                st,
-            )
-            .expect("Unable to create configuration table due to invalid table entry.");
-
-            // Install Memory Type Info configuration table.
-            allocator::install_memory_type_info_table(st).expect("Unable to create Memory Type Info Table");
-        }
-
-        let boot_services_ptr;
-        let runtime_services_ptr;
-        let system_table_ptr;
-        {
-            let mut st = systemtables::SYSTEM_TABLE.lock();
-            let st = st.as_mut().expect("System Table is not initialized!");
-            boot_services_ptr = st.boot_services_mut() as *mut efi::BootServices;
-            runtime_services_ptr = st.runtime_services_mut() as *mut efi::RuntimeServices;
-            system_table_ptr = st.system_table() as *const efi::SystemTable;
-        }
-
-        tpl_lock::init_boot_services(boot_services_ptr);
-
-        memory_attributes_table::init_memory_attributes_table_support();
-
-        // This is currently commented out as it is breaking top of tree booting Q35 as qemu64 does not support
-        // reading the time stamp counter in the way done in this code and results in a divide by zero exception.
-        // Other cpu models crash in various other ways. It will be resolved, but is removed now to unblock other
-        // development
-        _ = uefi_performance::init_performance_lib(
-            &self.hob_list,
-            // SAFETY: `system_table_ptr` is a valid pointer that has been initialized earlier.
-            unsafe { system_table_ptr.as_ref() }.expect("System Table not initialized!"),
-        );
-
-        // Add Boot Services and Runtime Services to storage.
-        // SAFETY: This is valid because these pointer live thoughout the boot.
-        // Note: I had to use the ptr instead of locking the table which event though is static does not seems to return static refs. Need to investigate.
-        unsafe {
-            self.storage.set_boot_services(StandardBootServices::new(&*boot_services_ptr));
-            self.storage.set_runtime_services(StandardRuntimeServices::new(&*runtime_services_ptr));
-        }
         Core {
+            physical_hob_list,
             hob_list: self.hob_list,
-            cpu_init: self.cpu_init,
             section_extractor: self.section_extractor,
-            interrupt_manager: self.interrupt_manager,
-            interrupt_bases: self.interrupt_bases,
             components: self.components,
             storage: self.storage,
             _memory_state: core::marker::PhantomData,
@@ -356,10 +252,14 @@ where
 {
     /// Registers a component with the core, that will be dispatched during the driver execution phase.
     pub fn with_component<I>(mut self, component: impl IntoComponent<I>) -> Self {
+        self.add_component(component);
+        self
+    }
+
+    pub fn add_component<I>(&mut self, component: impl IntoComponent<I>) {
         let mut component = component.into_component();
         component.initialize(&mut self.storage);
         self.components.push(component);
-        self
     }
 
     /// Adds a configuration value to the Core's storage. All configuration is locked by default. If a component is
@@ -450,8 +350,111 @@ where
         }
     }
 
+    /// Returns the length of the HOB list.
+    /// Clippy gets unhappy if we call get_c_hob_list_size directly, because it gets confused, thinking
+    /// get_c_hob_list_size is not marked unsafe, but it is
+    fn get_hob_list_len(hob_list: *const c_void) -> usize {
+        unsafe { get_c_hob_list_size(hob_list) }
+    }
+
+    fn initialize_system_tables(&mut self) -> Result<()> {
+        let hob_list_slice = unsafe {
+            core::slice::from_raw_parts(self.physical_hob_list as *const u8, Self::get_hob_list_len(self.physical_hob_list))
+        };
+        let relocated_c_hob_list = hob_list_slice.to_vec().into_boxed_slice();
+
+        let im = self.storage.get_service().expect("InterruptManager Service registered in `init_memory` phase");
+        let cpu = self.storage.get_service().expect("Cpu Service registered in `init_memory` phase");
+
+        // Instantiate system table.
+        systemtables::init_system_table();
+        {
+            let mut st = systemtables::SYSTEM_TABLE.lock();
+            let st = st.as_mut().expect("System Table not initialized!");
+
+            allocator::install_memory_services(st.boot_services_mut());
+            gcd::init_paging(&self.hob_list);
+            events::init_events_support(st.boot_services_mut());
+            protocols::init_protocol_support(st.boot_services_mut());
+            misc_boot_services::init_misc_boot_services_support(st.boot_services_mut());
+            runtime::init_runtime_support(st.runtime_services_mut());
+            image::init_image_support(&self.hob_list, st);
+            dispatcher::init_dispatcher(Box::from(self.section_extractor));
+            fv::init_fv_support(&self.hob_list, Box::from(self.section_extractor));
+            dxe_services::init_dxe_services(st);
+            driver_services::init_driver_services(st.boot_services_mut());
+
+            cpu_arch_protocol::install_cpu_arch_protocol(cpu, im);
+            memory_attributes_protocol::install_memory_attributes_protocol();
+            #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
+            self.add_component(hw_interrupt_protocol::install_hw_interrupt_protocol);
+            // hw_interrupt_protocol::install_hw_interrupt_protocol(
+            //     im,
+            //     self.storage.get_config().expect("GicBases should be registered with the core via `.with_config`."),
+            //     self.storage.boot_services(),
+            // );
+
+            // re-checksum the system tables after above initialization.
+            st.checksum_all();
+
+            // Install HobList configuration table
+            let (a, b, c, &[d0, d1, d2, d3, d4, d5, d6, d7]) =
+                uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").expect("Invalid UUID format.").as_fields();
+            let hob_list_guid: efi::Guid = efi::Guid::from_fields(a, b, c, d0, d1, &[d2, d3, d4, d5, d6, d7]);
+
+            misc_boot_services::core_install_configuration_table(
+                hob_list_guid,
+                Some(unsafe { &mut *(Box::leak(relocated_c_hob_list).as_mut_ptr() as *mut c_void) }),
+                st,
+            )
+            .expect("Unable to create configuration table due to invalid table entry.");
+
+            // Install Memory Type Info configuration table.
+            allocator::install_memory_type_info_table(st).expect("Unable to create Memory Type Info Table");
+        }
+
+        let boot_services_ptr;
+        let runtime_services_ptr;
+        let system_table_ptr;
+        {
+            let mut st = systemtables::SYSTEM_TABLE.lock();
+            let st = st.as_mut().expect("System Table is not initialized!");
+            boot_services_ptr = st.boot_services_mut() as *mut efi::BootServices;
+            runtime_services_ptr = st.runtime_services_mut() as *mut efi::RuntimeServices;
+            system_table_ptr = st.system_table() as *const efi::SystemTable;
+        }
+
+        tpl_lock::init_boot_services(boot_services_ptr);
+
+        memory_attributes_table::init_memory_attributes_table_support();
+
+        // This is currently commented out as it is breaking top of tree booting Q35 as qemu64 does not support
+        // reading the time stamp counter in the way done in this code and results in a divide by zero exception.
+        // Other cpu models crash in various other ways. It will be resolved, but is removed now to unblock other
+        // development
+        _ = uefi_performance::init_performance_lib(
+            &self.hob_list,
+            // SAFETY: `system_table_ptr` is a valid pointer that has been initialized earlier.
+            unsafe { system_table_ptr.as_ref() }.expect("System Table not initialized!"),
+        );
+
+        // Add Boot Services and Runtime Services to storage.
+        // SAFETY: This is valid because these pointer live thoughout the boot.
+        // Note: I had to use the ptr instead of locking the table which event though is static does not seems to return static refs. Need to investigate.
+        unsafe {
+            self.storage.set_boot_services(StandardBootServices::new(&*boot_services_ptr));
+            self.storage.set_runtime_services(StandardRuntimeServices::new(&*runtime_services_ptr));
+        }
+
+        Ok(())
+    }
+
     /// Starts the core, dispatching all drivers.
     pub fn start(mut self) -> Result<()> {
+        log::info!("Initializing System Tables");
+        self.initialize_system_tables()?;
+        log::info!("Finished.");
+
         log::info!("Parsing HOB list for Guided HOBs.");
         self.parse_hobs();
         log::info!("Finished.");
