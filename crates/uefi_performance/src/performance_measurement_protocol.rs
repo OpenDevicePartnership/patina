@@ -8,9 +8,7 @@
 //!
 
 use core::{
-    ffi::{c_char, c_void},
-    fmt::Debug,
-    option::Option,
+    ffi::{c_char, c_void}, fmt::Debug, option::Option
 };
 
 use r_efi::efi;
@@ -30,7 +28,7 @@ pub enum PerfAttribute {
     PerfEntry,
 }
 
-pub type CreateMeasurementProtocol = extern "efiapi" fn(
+pub type CreateMeasurement = extern "efiapi" fn(
     caller_identifier: *const c_void,
     guid: Option<&efi::Guid>,
     string: *const c_char,
@@ -41,7 +39,7 @@ pub type CreateMeasurementProtocol = extern "efiapi" fn(
 ) -> efi::Status;
 
 pub struct EdkiiPerformanceMeasurement {
-    pub create_performance_measurement: CreateMeasurementProtocol,
+    pub create_performance_measurement: CreateMeasurement,
 }
 
 unsafe impl ProtocolInterface for EdkiiPerformanceMeasurement {

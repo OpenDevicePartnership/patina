@@ -28,7 +28,7 @@ use core::{
     ffi::{c_char, c_void, CStr},
     mem::MaybeUninit,
     ptr,
-    sync::atomic::{AtomicBool, AtomicU32, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, Ordering}, todo,
 };
 
 use r_efi::{
@@ -67,8 +67,7 @@ use _smm::{CommunicateProtocol, MmCommRegion, SmmFpdtGetRecordDataByOffset, SmmF
 
 pub use log_perf_measurement::*;
 
-#[doc(hidden)]
-pub const PERF_ENABLED: bool = cfg!(feature = "instrument_performance");
+pub static PERF_ENABLED: bool = true;
 
 static LOAD_IMAGE_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -226,7 +225,10 @@ extern "efiapi" fn report_fpdt_record_buffer<BB, B, RR, R, F>(
     const EFI_PROGRESS_CODE: u32 = 0x00000001;
     const EFI_SOFTWARE_DXE_BS_DRIVER: u32 = EFI_SOFTWARE | 0x00050000;
 
-    let Ok(p) = (unsafe { boot_services.as_ref().locate_protocol::<StatusCodeRuntimeProtocol>(None) }) else { todo!() };
+    let Ok(p) = (unsafe { boot_services.as_ref().locate_protocol::<StatusCodeRuntimeProtocol>(None) }) else { 
+        log::error!("Performance Lib: Fail to find status code protocol.");
+        todo!()
+    };
     let status = p.report_status_code(
         EFI_PROGRESS_CODE,
         EFI_SOFTWARE_DXE_BS_DRIVER,
@@ -237,7 +239,7 @@ extern "efiapi" fn report_fpdt_record_buffer<BB, B, RR, R, F>(
     );
 
     if status.is_err() {
-        log::error!("Fail to report FBPT status code.");
+        log::error!("Performance Lib: Fail to report FBPT status code.");
     }
 
     // SAFETY: This operation is valid because the expected configuration type of a entry with guid `EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE`
@@ -249,7 +251,7 @@ extern "efiapi" fn report_fpdt_record_buffer<BB, B, RR, R, F>(
         )
     };
     if status.is_err() {
-        log::error!("Fail to install configuration table for FPDT firmware performance.");
+        log::error!("Performance Lib: Fail to install configuration table for FPDT firmware performance.");
     }
 }
 
@@ -329,6 +331,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records<BB, B, F>(
     let mut fbpt = fbpt.lock();
     let mut n = 0;
     for r in Iter::new(&smm_boot_records_data) {
+        // todo do not crash plz.
         fbpt.add_record(r).unwrap();
         n += 1;
     }
@@ -337,7 +340,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records<BB, B, F>(
 }
 
 #[cfg(not(tarpaulin_include))] // Tested via the generic version, see _create_performance_measurement. This one is using the static state which makes it not mockable.
-extern "efiapi" fn create_performance_measurement(
+pub extern "efiapi" fn create_performance_measurement(
     caller_identifier: *const c_void,
     guid: Option<&efi::Guid>,
     string: *const c_char,
@@ -346,12 +349,11 @@ extern "efiapi" fn create_performance_measurement(
     identifier: u32,
     attribute: PerfAttribute,
 ) -> efi::Status {
-    if !PERF_ENABLED {
-        return efi::Status::SUCCESS;
-    }
+    log::info!("[12345] perf");
 
     let Some((boot_services, fbpt)) = get_static_state() else {
-        return efi::Status::ABORTED;
+        // If the state is not initialized, it is because perf in not enabled.
+        return efi::Status::SUCCESS;
     };
 
     let string = unsafe { string.as_ref().map(|s| CStr::from_ptr(s).to_str().unwrap().to_string()) };
@@ -800,7 +802,7 @@ mod test {
         boot_services.expect_restore_tpl().return_const(());
 
         let mut fbpt = MockFirmwareBasicBootPerfTable::new();
-        fbpt.expect_add_record().times(21).return_const(Ok(()));
+        fbpt.expect_add_record().times(EXPECTED_NUMBER_OF_RECORD).return_const(Ok(()));
         let fbpt = TplMutex::new(unsafe { &*ptr::addr_of!(boot_services) }, Tpl::NOTIFY, fbpt);
 
         // These functions call create_performance_measurement with the right arguments.
@@ -810,36 +812,75 @@ mod test {
         let trigger_guid = efi::Guid::from_bytes(&[2; 16]);
         let event_guid = efi::Guid::from_bytes(&[3; 16]);
 
-        _perf_image_start_begin(module_handle, &boot_services, &fbpt);
-        _perf_image_start_end(module_handle, &boot_services, &fbpt);
+        static mut BOOT_SERVICES: Option<&MockBootServices> = None;
+        static mut FBPT: Option<&TplMutex<'static, MockFirmwareBasicBootPerfTable, MockBootServices>> = None;
 
-        _perf_load_image_begin(module_handle, &boot_services, &fbpt);
-        _perf_load_image_end(module_handle, &boot_services, &fbpt);
+        unsafe {
+            BOOT_SERVICES = Some(unsafe { &*ptr::addr_of!(boot_services) });
+            FBPT = Some(unsafe { &*ptr::addr_of!(fbpt) });
+        }
 
-        _perf_driver_binding_support_begin(module_handle, controller_handle, &boot_services, &fbpt);
-        _perf_driver_binding_support_end(module_handle, controller_handle, &boot_services, &fbpt);
+        extern "efiapi" fn test_create_performance_measurement(
+            caller_identifier: *const c_void,
+            guid: Option<&efi::Guid>,
+            string: *const c_char,
+            ticker: u64,
+            address: usize,
+            identifier: u32,
+            attribute: PerfAttribute,
+        ) -> efi::Status {
+            let string = unsafe { string.as_ref().map(|s| CStr::from_ptr(s).to_str().unwrap().to_string()) };
+            let perf_id = identifier as u16;
+            _create_performance_measurement::<MockBootServices, MockFirmwareBasicBootPerfTable>(
+                caller_identifier,
+                guid,
+                string.as_deref(),
+                ticker,
+                address,
+                perf_id,
+                attribute,
+                unsafe { BOOT_SERVICES.unwrap() },
+                unsafe { FBPT.unwrap() },
+            )
+            .unwrap();
+            efi::Status::SUCCESS
+        }
 
-        _perf_driver_binding_start_begin(module_handle, controller_handle, &boot_services, &fbpt);
-        _perf_driver_binding_start_end(module_handle, controller_handle, &boot_services, &fbpt);
+        const EXPECTED_NUMBER_OF_RECORD: usize = 23;
 
-        _perf_driver_binding_stop_begin(module_handle, controller_handle, &boot_services, &fbpt);
-        _perf_driver_binding_stop_begin(module_handle, controller_handle, &boot_services, &fbpt);
+        perf_image_start_begin(module_handle, test_create_performance_measurement);
+        perf_image_start_end(module_handle, test_create_performance_measurement);
 
-        _perf_event("event_string", &caller_id, &boot_services, &fbpt);
+        perf_load_image_begin(module_handle, test_create_performance_measurement);
+        perf_load_image_end(module_handle, test_create_performance_measurement);
 
-        _perf_event_signal_begin(&event_guid, "fun_name", &caller_id, &boot_services, &fbpt);
-        _perf_event_signal_end(&event_guid, "fun_name", &caller_id, &boot_services, &fbpt);
+        perf_driver_binding_support_begin(module_handle, controller_handle, test_create_performance_measurement);
+        perf_driver_binding_support_end(module_handle, controller_handle, test_create_performance_measurement);
 
-        _perf_callback_begin(&trigger_guid, "fun_name", &caller_id, &boot_services, &fbpt);
-        _perf_callback_end(&trigger_guid, "fun_name", &caller_id, &boot_services, &fbpt);
+        perf_driver_binding_start_begin(module_handle, controller_handle, test_create_performance_measurement);
+        perf_driver_binding_start_end(module_handle, controller_handle, test_create_performance_measurement);
 
-        _perf_function_begin("fun_name", &caller_id, &boot_services, &fbpt);
-        _perf_function_end("fun_name", &caller_id, &boot_services, &fbpt);
+        perf_driver_binding_stop_begin(module_handle, controller_handle, test_create_performance_measurement);
+        perf_driver_binding_stop_end(module_handle, controller_handle, test_create_performance_measurement);
 
-        _perf_in_module_begin("measurement_str", &caller_id, &boot_services, &fbpt);
-        _perf_in_module_end("measurement_str", &caller_id, &boot_services, &fbpt);
+        perf_event("event_string", &caller_id, test_create_performance_measurement);
 
-        _perf_in_cross_module_begin("measurement_str", &caller_id, &boot_services, &fbpt);
-        _perf_cross_module_end("measurement_str", &caller_id, &boot_services, &fbpt);
+        perf_event_signal_begin(&event_guid, "fun_name", &caller_id, test_create_performance_measurement);
+        perf_event_signal_end(&event_guid, "fun_name", &caller_id, test_create_performance_measurement);
+         
+        perf_callback_begin(&trigger_guid, "fun_name", &caller_id, test_create_performance_measurement);
+        perf_callback_end(&trigger_guid, "fun_name", &caller_id, test_create_performance_measurement);
+
+        perf_function_begin("fun_name", &caller_id, test_create_performance_measurement);
+        perf_function_end("fun_name", &caller_id, test_create_performance_measurement);
+
+        perf_in_module_begin("measurement_str", &caller_id, test_create_performance_measurement);
+        perf_in_module_end("measurement_str", &caller_id, test_create_performance_measurement);
+
+        perf_in_cross_module_begin("measurement_str", &caller_id, test_create_performance_measurement);
+        perf_in_cross_module_end("measurement_str", &caller_id, test_create_performance_measurement);
+
+        perf_cross_module_begin("measurement_str", &caller_id, test_create_performance_measurement); 
+        perf_cross_module_end("measurement_str", &caller_id, test_create_performance_measurement);
     }
 }

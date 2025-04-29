@@ -16,7 +16,7 @@ use uefi_sdk::base::{align_up, UEFI_PAGE_SIZE};
 use uefi_sdk::error::EfiError;
 use uefi_sdk::{guid, uefi_size_to_pages};
 
-use uefi_performance::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end};
+use uefi_performance::{create_performance_measurement, perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end};
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
@@ -924,7 +924,7 @@ pub fn core_load_image(
     file_path: *mut efi::protocols::device_path::Protocol,
     image: Option<&[u8]>,
 ) -> Result<(efi::Handle, Result<(), EfiError>), EfiError> {
-    perf_load_image_begin!(core::ptr::null_mut());
+    perf_load_image_begin(core::ptr::null_mut(), uefi_performance::create_performance_measurement);
 
     if image.is_none() && file_path.is_null() {
         log::error!("failed to load image: image is none or device path is null.");
@@ -1046,7 +1046,7 @@ pub fn core_load_image(
     // save the private image data for this image in the private image data map.
     PRIVATE_IMAGE_DATA.lock().private_image_data.insert(handle, private_info);
 
-    perf_load_image_end!(handle);
+    perf_load_image_end(handle, create_performance_measurement);
 
     // return the new handle.
     Ok((handle, security_status))
@@ -1152,7 +1152,7 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
     // allocate a buffer for the entry point stack.
     let stack = ImageStack::new(ENTRY_POINT_STACK_SIZE)?;
 
-    perf_image_start_begin!(image_handle);
+    perf_image_start_begin(image_handle, uefi_performance::create_performance_measurement);
 
     // define a co-routine that wraps the entry point execution. this doesn't
     // run until the coroutine.resume() call below.
@@ -1219,7 +1219,7 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
 
     PRIVATE_IMAGE_DATA.lock().current_running_image = previous_image;
 
-    perf_image_start_end!(image_handle);
+    perf_image_start_end(image_handle, uefi_performance::create_performance_measurement);
 
     match status {
         efi::Status::SUCCESS => Ok(()),

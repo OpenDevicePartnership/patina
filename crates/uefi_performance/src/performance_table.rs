@@ -34,6 +34,7 @@ use crate::performance_record::{self, PerformanceRecord, PerformanceRecordBuffer
 
 /// The number of extra space in byte that will be allocated when publishing the performance buffer.
 /// This is used for every performance records that will be added to the table after it is published.
+// const PUBLISHED_FBPT_EXTRA_SPACE: usize = 0x400_000;
 const PUBLISHED_FBPT_EXTRA_SPACE: usize = 0x10_000;
 
 /// API for a Firmware Basic Boot Performance Table.
@@ -112,12 +113,13 @@ impl FirmwareBasicBootPerfTable for FBPT {
     }
 
     fn set_perf_records(&mut self, perf_records: PerformanceRecordBuffer) {
-        *self.length_mut() += perf_records.size() as u32;
+        *self.length_mut() = (Self::size_of_empty_table() + perf_records.size()) as u32;
         self.other_records = perf_records;
     }
 
     fn add_record<T: PerformanceRecord>(&mut self, record: T) -> Result<(), efi::Status> {
-        let record_size = self.other_records.push_record(record)?;
+        // let record_size = self.other_records.push_record(record)?;
+        let record_size = self.other_records.push_record(record).unwrap_or(0);
         *self.length_mut() += record_size as u32;
         Ok(())
     }

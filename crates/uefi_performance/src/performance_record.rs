@@ -11,7 +11,7 @@ pub mod extended;
 pub mod known_records;
 
 use alloc::vec::Vec;
-use core::{fmt::Debug, mem};
+use core::{fmt::Debug, mem, ops::AddAssign};
 
 use r_efi::efi;
 use scroll::{self, Pread, Pwrite};
@@ -35,21 +35,23 @@ pub trait PerformanceRecord {
 
     /// Write the record data and the header into the buffer.
     fn write_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<usize, scroll::Error> {
-        let offset_start = *offset;
+        let mut writing_offset = *offset;
 
         // Write performance record header.
-        buff.gwrite(self.record_type(), offset)?;
-        let mut record_size_offset = *offset;
-        buff.gwrite(0_u8, offset)?;
-        buff.gwrite(self.revision(), offset)?;
+        buff.gwrite(self.record_type(), &mut writing_offset)?;
+        let record_size_offset = writing_offset;
+        buff.gwrite(0_u8, &mut writing_offset)?;
+        buff.gwrite(self.revision(), &mut writing_offset)?;
 
         // Write data.
-        self.write_data_into(buff, offset)?;
+        self.write_data_into(buff, &mut writing_offset)?;
 
-        let record_size = *offset - offset_start;
+        let record_size = writing_offset - *offset;
 
         // Write record size
-        buff.gwrite(record_size as u8, &mut record_size_offset)?;
+        buff.pwrite(record_size as u8, record_size_offset)?;
+
+        offset.add_assign(record_size);
 
         Ok(record_size)
     }
