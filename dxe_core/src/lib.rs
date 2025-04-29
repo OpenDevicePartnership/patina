@@ -256,7 +256,8 @@ where
         self
     }
 
-    pub fn add_component<I>(&mut self, component: impl IntoComponent<I>) {
+    /// Adds a component to the core.
+    fn add_component<I>(&mut self, component: impl IntoComponent<I>) {
         let mut component = component.into_component();
         component.initialize(&mut self.storage);
         self.components.push(component);
@@ -363,9 +364,6 @@ where
         };
         let relocated_c_hob_list = hob_list_slice.to_vec().into_boxed_slice();
 
-        let im = self.storage.get_service().expect("InterruptManager Service registered in `init_memory` phase");
-        let cpu = self.storage.get_service().expect("Cpu Service registered in `init_memory` phase");
-
         // Instantiate system table.
         systemtables::init_system_table();
         {
@@ -384,15 +382,7 @@ where
             dxe_services::init_dxe_services(st);
             driver_services::init_driver_services(st.boot_services_mut());
 
-            cpu_arch_protocol::install_cpu_arch_protocol(cpu, im);
             memory_attributes_protocol::install_memory_attributes_protocol();
-            #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
-            self.add_component(hw_interrupt_protocol::install_hw_interrupt_protocol);
-            // hw_interrupt_protocol::install_hw_interrupt_protocol(
-            //     im,
-            //     self.storage.get_config().expect("GicBases should be registered with the core via `.with_config`."),
-            //     self.storage.boot_services(),
-            // );
 
             // re-checksum the system tables after above initialization.
             st.checksum_all();
@@ -449,8 +439,18 @@ where
         Ok(())
     }
 
+    fn add_default_components(&mut self) {
+        self.add_component(cpu_arch_protocol::install_cpu_arch_protocol);
+        #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
+        self.add_component(hw_interrupt_protocol::install_hw_interrupt_protocol);
+    }
+
     /// Starts the core, dispatching all drivers.
     pub fn start(mut self) -> Result<()> {
+        log::info!("Registering default components");
+        self.add_default_components();
+        log::info!("Finished.");
+
         log::info!("Initializing System Tables");
         self.initialize_system_tables()?;
         log::info!("Finished.");

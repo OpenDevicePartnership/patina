@@ -8,7 +8,12 @@ use uefi_cpu::{
     cpu::Cpu,
     interrupts::{self, ExceptionType, HandlerType, InterruptManager},
 };
-use uefi_sdk::{component::service::Service, error::EfiError};
+use uefi_sdk::{
+    error::{EfiError, Result},
+    boot_services::{BootServices, StandardBootServices},
+    component::service::Service,
+    protocol::ProtocolInterface
+};
 
 use mu_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandler, Protocol, PROTOCOL_GUID};
 
@@ -19,6 +24,10 @@ pub struct EfiCpuArchProtocolImpl {
     // Crate accessible fields
     pub(crate) cpu: Service<dyn Cpu>,
     pub(crate) interrupt_manager: Service<dyn InterruptManager>,
+}
+
+unsafe impl ProtocolInterface for EfiCpuArchProtocolImpl {
+    const PROTOCOL_GUID: efi::Guid = PROTOCOL_GUID;
 }
 
 // Helper function to convert a raw mutable pointer to a mutable reference.
@@ -162,19 +171,22 @@ impl<'a> EfiCpuArchProtocolImpl {
     }
 }
 
-/// This function is called by the DXE Core to install the protocol.
-pub(crate) fn install_cpu_arch_protocol<'a>(
+/// This component installs the cpu arch protocol 
+pub(crate) fn install_cpu_arch_protocol(
     cpu: Service<dyn Cpu>,
     interrupt_manager: Service<dyn InterruptManager>,
-) {
+    bs: StandardBootServices,
+) -> Result<()> {
     let protocol = EfiCpuArchProtocolImpl::new(cpu, interrupt_manager);
 
     // Convert the protocol to a raw pointer and store it in to protocol DB
-    let interface = Box::into_raw(Box::new(protocol));
-    let interface = interface as *mut c_void;
+    let interface = Box::leak(Box::new(protocol));
 
-    let _ = PROTOCOL_DB.install_protocol_interface(None, PROTOCOL_GUID, interface);
+    bs.install_protocol_interface(None, interface)
+        .inspect_err(|_| log::error!("Failed to install EFI_CPU_ARCH_PROTOCOL"))?;
     log::info!("installed EFI_CPU_ARCH_PROTOCOL_GUID");
+
+    Ok(())
 }
 
 #[cfg(test)]
