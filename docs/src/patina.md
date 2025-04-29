@@ -110,6 +110,9 @@ fragmented across vendors today and lends more time to firmware development. Exa
 
 - Useful compilation messages and excellent documentation that can assist during code development.
 
+- A modern testing framework that allows for unit, integration, and on-platform tests to be written in a consistent
+  way. Code coverage tools that are readily available and integrate seamlessly with modern IDEs.
+
 Rust's interoperability with C code is also useful. This enables a phased adoption pathway where codebases can start
 incorporating Rust while still relying upon its extensive pre-existing code. At the same time, Rust has been conscious
 of low-level needs and can precisely structure data for C compatibility.
@@ -182,6 +185,7 @@ definition but many of the services are still implemented in C so it is orange.
 - Support for [Enhanced Memory Protections](https://microsoft.github.io/mu/WhatAndWhy/enhancedmemoryprotection/).
 - Source-level debugging support.
 - Built-in Brotli and EFI decompression support.
+- Infrastructure (in the `uefi_test` crate) for on-platform execution of unit tests.
 
 ``` admonish important
 The Rust DXE Core otherwise supports the normal responsibilities of a DXE Core except for the design restrictions
