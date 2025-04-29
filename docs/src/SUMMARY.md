@@ -2,7 +2,8 @@
 
 [Introduction](introduction.md)
 [Core Concepts](concepts.md)
-[Code Organization](code_organization.md)
+[Code Organization](dev/code_organization.md)
+[Patina Background](patina.md)
 
 # Rust Development for UEFI
 
