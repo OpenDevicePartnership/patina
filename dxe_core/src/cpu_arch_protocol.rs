@@ -9,10 +9,10 @@ use uefi_cpu::{
     interrupts::{self, ExceptionType, HandlerType, InterruptManager},
 };
 use uefi_sdk::{
-    error::{EfiError, Result},
     boot_services::{BootServices, StandardBootServices},
     component::service::Service,
-    protocol::ProtocolInterface
+    error::{EfiError, Result},
+    protocol::ProtocolInterface,
 };
 
 use mu_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandler, Protocol, PROTOCOL_GUID};
@@ -148,7 +148,7 @@ extern "efiapi" fn set_memory_attributes(
     }
 }
 
-impl<'a> EfiCpuArchProtocolImpl {
+impl EfiCpuArchProtocolImpl {
     fn new(cpu: Service<dyn Cpu>, interrupt_manager: Service<dyn InterruptManager>) -> Self {
         Self {
             protocol: Protocol {
@@ -171,7 +171,7 @@ impl<'a> EfiCpuArchProtocolImpl {
     }
 }
 
-/// This component installs the cpu arch protocol 
+/// This component installs the cpu arch protocol
 pub(crate) fn install_cpu_arch_protocol(
     cpu: Service<dyn Cpu>,
     interrupt_manager: Service<dyn InterruptManager>,
@@ -204,9 +204,9 @@ mod tests {
                 start: efi::PhysicalAddress,
                 length: u64,
                 flush_type: CpuFlushType,
-            ) -> Result<(), EfiError>;
-            fn init(&self, init_type: CpuInitType) -> Result<(), EfiError>;
-            fn get_timer_value(&self, timer_index: u32) -> Result<(u64, u64), EfiError>;
+            ) -> Result<()>;
+            fn init(&self, init_type: CpuInitType) -> Result<()>;
+            fn get_timer_value(&self, timer_index: u32) -> Result<(u64, u64)>;
         }
     }
 
@@ -217,8 +217,8 @@ mod tests {
                 &self,
                 interrupt_type: ExceptionType,
                 handler: HandlerType,
-            ) -> Result<(), EfiError>;
-            fn unregister_exception_handler(&self, interrupt_type: ExceptionType) -> Result<(), EfiError>;
+            ) -> Result<()>;
+            fn unregister_exception_handler(&self, interrupt_type: ExceptionType) -> Result<()>;
         }
     }
 
@@ -232,9 +232,12 @@ mod tests {
     #[test]
     fn test_flush_data_cache() {
         let mut cpu_init = MockEfiCpuInit::new();
-        let mut interrupt_manager = MockInterruptManager::new();
         cpu_init.expect_flush_data_cache().with(eq(0), eq(0), always()).returning(|_, _, _| Ok(()));
-        let protocol = EfiCpuArchProtocolImpl::new(&mut cpu_init, &mut interrupt_manager);
+        let cpu: Service<dyn Cpu> = Service::mock(Box::new(cpu_init));
+
+        let im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
+
+        let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
 
         let status = flush_data_cache(&protocol.protocol, 0, 0, CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate);
         assert_eq!(status, efi::Status::SUCCESS);
@@ -242,9 +245,9 @@ mod tests {
 
     #[test]
     fn test_enable_interrupt() {
-        let mut cpu_init = MockEfiCpuInit::new();
-        let mut interrupt_manager = MockInterruptManager::new();
-        let protocol = EfiCpuArchProtocolImpl::new(&mut cpu_init, &mut interrupt_manager);
+        let cpu: Service<dyn Cpu> = Service::mock(Box::new(MockEfiCpuInit::new()));
+        let im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
+        let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
 
         let status = enable_interrupt(&protocol.protocol);
         assert_eq!(status, efi::Status::SUCCESS);
@@ -252,9 +255,9 @@ mod tests {
 
     #[test]
     fn test_disable_interrupt() {
-        let mut cpu_init = MockEfiCpuInit::new();
-        let mut interrupt_manager = MockInterruptManager::new();
-        let protocol = EfiCpuArchProtocolImpl::new(&mut cpu_init, &mut interrupt_manager);
+        let cpu: Service<dyn Cpu> = Service::mock(Box::new(MockEfiCpuInit::new()));
+        let im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
+        let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
 
         let status = disable_interrupt(&protocol.protocol);
         assert_eq!(status, efi::Status::SUCCESS);
@@ -262,9 +265,9 @@ mod tests {
 
     #[test]
     fn test_get_interrupt_state() {
-        let mut cpu_init = MockEfiCpuInit::new();
-        let mut interrupt_manager = MockInterruptManager::new();
-        let protocol = EfiCpuArchProtocolImpl::new(&mut cpu_init, &mut interrupt_manager);
+        let cpu: Service<dyn Cpu> = Service::mock(Box::new(MockEfiCpuInit::new()));
+        let im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
+        let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
 
         let mut state = false;
         let status = get_interrupt_state(&protocol.protocol, &mut state as *mut bool);
@@ -274,9 +277,12 @@ mod tests {
     #[test]
     fn test_init() {
         let mut cpu_init = MockEfiCpuInit::new();
-        let mut interrupt_manager = MockInterruptManager::new();
         cpu_init.expect_init().with(always()).returning(|_| Ok(()));
-        let protocol = EfiCpuArchProtocolImpl::new(&mut cpu_init, &mut interrupt_manager);
+        let cpu: Service<dyn Cpu> = Service::mock(Box::new(cpu_init));
+
+        let mut im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
+
+        let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
 
         let status = init(&protocol.protocol, CpuInitType::EfiCpuInit);
         assert_eq!(status, efi::Status::SUCCESS);
@@ -286,13 +292,16 @@ mod tests {
 
     #[test]
     fn test_register_interrupt_handler() {
-        let mut cpu_init = MockEfiCpuInit::new();
+        let cpu: Service<dyn Cpu> = Service::mock(Box::new(MockEfiCpuInit::new()));
+
         let mut interrupt_manager = MockInterruptManager::new();
         interrupt_manager
             .expect_register_exception_handler()
             .with(eq(ExceptionType::from(0_usize)), always())
             .returning(|_, _| Ok(()));
-        let protocol = EfiCpuArchProtocolImpl::new(&mut cpu_init, &mut interrupt_manager);
+        let im: Service<dyn InterruptManager> = Service::mock(Box::new(interrupt_manager));
+
+        let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
 
         let status = register_interrupt_handler(&protocol.protocol, 0, mock_interrupt_handler);
         assert_eq!(status, efi::Status::SUCCESS);
@@ -301,9 +310,12 @@ mod tests {
     #[test]
     fn test_get_timer_value() {
         let mut cpu_init = MockEfiCpuInit::new();
-        let mut interrupt_manager = MockInterruptManager::new();
         cpu_init.expect_get_timer_value().with(eq(0)).returning(|_| Ok((0, 0)));
-        let protocol = EfiCpuArchProtocolImpl::new(&mut cpu_init, &mut interrupt_manager);
+        let cpu: Service<dyn Cpu> = Service::mock(Box::new(cpu_init));
+
+        let im: Service<dyn InterruptManager> = Service::mock(Box::new(MockInterruptManager::new()));
+
+        let protocol = EfiCpuArchProtocolImpl::new(cpu, im);
 
         let mut timer_value: u64 = 0;
         let mut timer_period: u64 = 0;

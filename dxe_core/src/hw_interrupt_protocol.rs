@@ -9,11 +9,11 @@ use uefi_cpu::interrupts::gic_manager::{get_max_interrupt_number, gic_initialize
 use uefi_cpu::interrupts::{ExceptionContext, InterruptHandler, InterruptManager};
 
 use arm_gic::gicv3::{GicV3, Trigger};
-use uefi_sdk::guid::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2};
-use uefi_sdk::component::{params::Config, service::Service};
 use uefi_sdk::boot_services::{BootServices, StandardBootServices};
-use uefi_sdk::protocol::ProtocolInterface;
+use uefi_sdk::component::{params::Config, service::Service};
 use uefi_sdk::error::Result;
+use uefi_sdk::guid::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2};
+use uefi_sdk::protocol::ProtocolInterface;
 
 pub type HwInterruptHandler = extern "efiapi" fn(u64, &mut ExceptionContext);
 
@@ -377,8 +377,7 @@ pub(crate) fn install_hw_interrupt_protocol(
     }
 
     let mut gic_v3 = unsafe {
-        gic_initialize(gic_bases.0 as _, gic_bases.1 as _)
-            .inspect_err(|_| log::error!("Failed to initialize GICv3"))?
+        gic_initialize(gic_bases.0 as _, gic_bases.1 as _).inspect_err(|_| log::error!("Failed to initialize GICv3"))?
     };
     log::info!("GICv3 initialized");
 
@@ -391,12 +390,11 @@ pub(crate) fn install_hw_interrupt_protocol(
     // Produce Interrupt Protocol with the initialized GIC
     let interrupt_protocol = Box::leak(Box::new(EfiHardwareInterruptProtocol::new(hw_int_protocol_handler)));
 
-    bs.install_protocol_interface(None, interrupt_protocol,)
+    bs.install_protocol_interface(None, interrupt_protocol)
         .inspect_err(|_| log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL"))?;
 
     // Produce Interrupt Protocol with the initialized GIC
-    let interrupt_protocol_v2 =
-        Box::leak(Box::new(EfiHardwareInterruptV2Protocol::new(hw_int_protocol_handler)));
+    let interrupt_protocol_v2 = Box::leak(Box::new(EfiHardwareInterruptV2Protocol::new(hw_int_protocol_handler)));
 
     bs.install_protocol_interface(None, interrupt_protocol_v2)
         .inspect_err(|_| log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL_V2"))?;

@@ -360,7 +360,10 @@ where
 
     fn initialize_system_table(&mut self) -> Result<()> {
         let hob_list_slice = unsafe {
-            core::slice::from_raw_parts(self.physical_hob_list as *const u8, Self::get_hob_list_len(self.physical_hob_list))
+            core::slice::from_raw_parts(
+                self.physical_hob_list as *const u8,
+                Self::get_hob_list_len(self.physical_hob_list),
+            )
         };
         let relocated_c_hob_list = hob_list_slice.to_vec().into_boxed_slice();
 
