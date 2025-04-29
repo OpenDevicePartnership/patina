@@ -358,7 +358,7 @@ where
         unsafe { get_c_hob_list_size(hob_list) }
     }
 
-    fn initialize_system_tables(&mut self) -> Result<()> {
+    fn initialize_system_table(&mut self) -> Result<()> {
         let hob_list_slice = unsafe {
             core::slice::from_raw_parts(self.physical_hob_list as *const u8, Self::get_hob_list_len(self.physical_hob_list))
         };
@@ -451,8 +451,8 @@ where
         self.add_default_components();
         log::info!("Finished.");
 
-        log::info!("Initializing System Tables");
-        self.initialize_system_tables()?;
+        log::info!("Initializing System Table");
+        self.initialize_system_table()?;
         log::info!("Finished.");
 
         log::info!("Parsing HOB list for Guided HOBs.");
