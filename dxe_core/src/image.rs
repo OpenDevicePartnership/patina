@@ -8,7 +8,6 @@
 //!
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
-use goblin::pe::section_table;
 use mu_pi::hob::{Hob, HobList};
 use r_efi::efi;
 use uefi_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
@@ -364,11 +363,12 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
             attributes = efi::MEMORY_RO;
         }
 
-        if section.characteristics & section_table::IMAGE_SCN_MEM_WRITE == 0
-            && ((section.characteristics & section_table::IMAGE_SCN_MEM_READ) == section_table::IMAGE_SCN_MEM_READ)
-        {
-            attributes |= efi::MEMORY_RO;
-        }
+        // TODO: Reenable after https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/365 is resolved
+        // if section.characteristics & section_table::IMAGE_SCN_MEM_WRITE == 0
+        //     && ((section.characteristics & section_table::IMAGE_SCN_MEM_READ) == section_table::IMAGE_SCN_MEM_READ)
+        // {
+        //     attributes |= efi::MEMORY_RO;
+        // }
 
         // each section starts at image_base + virtual_address, per PE/COFF spec.
         let section_base_addr = (private_info.image_info.image_base as u64) + (section.virtual_address as u64);
