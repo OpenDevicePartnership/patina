@@ -67,6 +67,11 @@ considered independent repositories.
    - Crate-specific documentation should generally be maintained in the crate itself.
    - Crates may also be described in common rep0-level documentation.
 
+Note: At this time, some Rust code is maintained by the Patina team that is already public while most of the Patina
+code is not public. This RFC proposes that code remains public and once Patina is public, those public repositories are
+archived with their code moved into the Patina repository. This RFC does not track which repositories may be moved
+to Patina specifically.
+
 ## Unresolved Questions
 
 - **Repo Location** - Rename the `uefi-dxe-core` repository to `patina` and move all Patina crates into the repository.
