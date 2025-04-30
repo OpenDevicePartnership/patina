@@ -25,7 +25,7 @@ The initial focus for UEFI Rust work was to:
 1. Create something meaningful that would add real world value to platforms by leveraging Rust's memory safety
    capabilities.
 2. Create something that could be used in production with a reasonable time frame.
-3. Create something that could be used by the larger firmware community with code paterns, documentation, libraries,
+3. Create something that could be used by the larger firmware community with code patterns, documentation, libraries,
    methodologies, and tools that could be reused in future work.
 4. Identify areas to improve language agnostic firmware design while maintaining a high degree of compatibility with
    existing PI and UEFI firmware.
