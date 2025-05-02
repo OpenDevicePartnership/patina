@@ -91,13 +91,13 @@ This section describes the pre-existing code organization model in place at the 
 To allow better separation of maintainership, documentation, release tracking to the GitHub repository, and higher
 cohesion among repo contents, the code was organized as follows:
 
-- DXE Core Specific Crate
+- DXE Core Specific Crates
   - Independent functionality exclusively used by the DXE Core.
   - Examples: DXE Core, Event infrastructure, GCD, memory allocator
-- Core Specific Crate
+- Core Specific Crates
   - Code that is specific to creating core environments, like the PEI, DXE, and MM  environments.
   - Examples: Protocol DB, Common PE/COFF (goblin) wrappers, common section extraction code
-- Module Development (SDK) Crate
+- Module Development (SDK) Crates
   - Functionality necessary to build UEFI modules.
     - Can be used by core or individual driver components.
   - Examples:
