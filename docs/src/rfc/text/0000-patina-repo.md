@@ -74,8 +74,10 @@ to Patina specifically.
 
 ## Unresolved Questions
 
-- **Repo Location** - Rename the `uefi-dxe-core` repository to `patina` and move all Patina crates into the repository.
+- **Repo Location** - Rename the existing DXE Core repository to `patina` and move all Patina crates into the
+  repository.
   - This is suggested to keep issue and pull request history in the repository.
+  - Source history from other repositories should be retained where possible.
 
 - Exactly how to refactor existing crates into this new organization model. This is considered out of scope for this
   RFC which defines the new model not the logistics of moving existing code into it.
@@ -89,13 +91,13 @@ This section describes the pre-existing code organization model in place at the 
 To allow better separation of maintainership, documentation, release tracking to the GitHub repository, and higher
 cohesion among repo contents, the code was organized as follows:
 
-- DXE Core Specific Crate (`uefi-dxe-core` repository)
+- DXE Core Specific Crate
   - Independent functionality exclusively used by the DXE Core.
   - Examples: DXE Core, Event infrastructure, GCD, memory allocator
-- Core Specific Crate (`uefi-core` repository)
+- Core Specific Crate
   - Code that is specific to creating core environments, like the PEI, DXE, and MM  environments.
   - Examples: Protocol DB, Common PE/COFF (goblin) wrappers, common section extraction code
-- Module Development (SDK) Crate (`uefi-sdk` repository)
+- Module Development (SDK) Crate
   - Functionality necessary to build UEFI modules.
     - Can be used by core or individual driver components.
   - Examples:
