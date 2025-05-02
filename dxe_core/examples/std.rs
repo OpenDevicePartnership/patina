@@ -36,10 +36,9 @@ fn main() -> uefi_sdk::error::Result<()> {
 
     let hob_list = build_hob_list();
     Core::default()
-        .with_cpu_init(uefi_cpu::cpu::EfiCpuInitNull::default())
-        .with_interrupt_manager(uefi_cpu::interrupts::InterruptManagerNull::default())
+        .with_cpu_init(uefi_cpu::cpu::EfiCpu::default())
+        .with_interrupt_manager(uefi_cpu::interrupts::Interrupts::default())
         .with_section_extractor(section_extractor::CompositeSectionExtractor::default())
-        .with_interrupt_bases(uefi_cpu::interrupts::InterruptBasesNull::default())
         // Add any config knob functions for pre-gcd-init Core
         // .with_some_config(true)
         .init_memory(hob_list) // We can make allocations now!

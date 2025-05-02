@@ -4,6 +4,9 @@ This book is a getting started guide for developing UEFI firmware in a `no_std` 
 integrating the rust implementation of the DXE Core to a platform, developing a pure-rust DXE
 Driver, and guides on further developing the rust DXE Core.
 
+Before getting started, take time to read about the [Patina](patina.md) project and it's high-level background and
+goals.
+
 This book assumes you already have the pre-requisite knowledge in regards to the [EDKII](https://github.com/tianocore/edk2)
 ecosystem, and the necessary tools already installed for building EDKII packages.
 

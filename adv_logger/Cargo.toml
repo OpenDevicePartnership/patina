@@ -10,6 +10,14 @@ description = "Advanced logger support."
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "advlog_parser"
+path = "bin/bin.rs"
+required-features = ['std']
+
 [dependencies]
 log = { workspace = true }
 uefi_sdk = { workspace = true }
@@ -18,3 +26,10 @@ r-efi = { workspace = true }
 spin = { workspace = true }
 mu_rust_helpers = { workspace = true }
 uefi_test = { workspace = true }
+
+# Only used for CLI
+clap = { version = '4.5.36', features = ['derive'], optional = true }
+
+[features]
+default = []
+std = ['clap']

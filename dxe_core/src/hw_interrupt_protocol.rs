@@ -5,10 +5,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ffi::c_void;
 use r_efi::efi;
-use uefi_cpu::interrupts::aarch64::gic_manager::{
-    get_max_interrupt_number, gic_initialize, AArch64InterruptInitializer,
-};
-use uefi_cpu::interrupts::{ExceptionContext, InterruptBases, InterruptHandler, InterruptManager};
+use uefi_cpu::interrupts::gic_manager::{get_max_interrupt_number, gic_initialize, AArch64InterruptInitializer};
+use uefi_cpu::interrupts::{ExceptionContext, InterruptHandler, InterruptManager};
 
 use arm_gic::gicv3::{GicV3, Trigger};
 use uefi_sdk::guid::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2};
@@ -358,11 +356,9 @@ impl HwInterruptProtocolHandler {
 /// This function is called by the DXE Core to install the protocol.
 pub(crate) fn install_hw_interrupt_protocol<'a>(
     interrupt_manager: &'a mut dyn InterruptManager,
-    interrupt_bases: &'a dyn InterruptBases,
+    interrupt_bases: (u64, u64),
 ) {
-    let res = unsafe {
-        gic_initialize(interrupt_bases.get_interrupt_base_d() as _, interrupt_bases.get_interrupt_base_r() as _)
-    };
+    let res = unsafe { gic_initialize(interrupt_bases.0 as _, interrupt_bases.1 as _) };
 
     if res.is_err() {
         log::error!("Failed to initialize GICv3");

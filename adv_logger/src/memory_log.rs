@@ -12,10 +12,11 @@
 use core::{
     ffi::c_void,
     mem::size_of,
-    ptr,
-    sync::atomic::{AtomicU32, Ordering},
+    ptr, slice,
+    sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
 use r_efi::efi;
+use uefi_sdk::error::{EfiError, Result};
 
 // { 0x4d60cfb5, 0xf481, 0x4a98, {0x9c, 0x81, 0xbf, 0xf8, 0x64, 0x60, 0xc4, 0x3e }}
 pub const ADV_LOGGER_HOB_GUID: efi::Guid =
@@ -140,7 +141,7 @@ impl AdvLoggerInfo {
         }
     }
 
-    pub fn add_log_entry(&self, log_entry: LogEntry) -> Option<&AdvLoggerMessageEntry> {
+    pub fn add_log_entry(&self, log_entry: LogEntry) -> Result<&AdvLoggerMessageEntry> {
         let data_offset = size_of::<AdvLoggerMessageEntry>() as u16;
         let message_size = data_offset as u32 + log_entry.data.len() as u32;
         // Align up to the next 8 byte.
@@ -175,7 +176,7 @@ impl AdvLoggerInfo {
             // Add the discarded value. No ordering needed as this is a single
             // operation.
             discarded_size.fetch_add(message_size, Ordering::Relaxed);
-            return None;
+            return Err(EfiError::OutOfResources);
         }
 
         // Convert the newly allocated to usable data.
@@ -189,6 +190,22 @@ impl AdvLoggerInfo {
 
     pub fn iter(&self) -> AdvLogIterator {
         AdvLogIterator::new(self)
+    }
+
+    pub fn get_frequency(&self) -> u64 {
+        self.timer_frequency
+    }
+
+    pub fn set_frequency(&self, frequency: u64) {
+        // SAFETY: We usually treat the entire header as immutable, but the frequency
+        //         must be updated. Do so atomically to avoid contention.
+        let atomic = unsafe { AtomicU64::from_ptr(&self.timer_frequency as *const u64 as *mut u64) };
+        // try to swap, assuming the value it initially 0. If this fails, just continue.
+        let _ = atomic.compare_exchange(0, frequency, Ordering::Relaxed, Ordering::Relaxed);
+    }
+
+    pub fn get_log_buffer_size(&self) -> usize {
+        self.log_buffer_size as usize
     }
 }
 
@@ -254,28 +271,60 @@ impl AdvLoggerMessageEntry {
     /// the provided length. The caller is responsible for ensuring this memory
     /// range is valid.
     ///
-    pub unsafe fn init_from_memory(address: *const c_void, length: u32, log_entry: LogEntry) -> Option<&'static Self> {
-        debug_assert!(
-            size_of::<Self>() + log_entry.data.len() <= length as usize,
-            "Advanced logger entry initialized in an insufficiently sized buffer!"
-        );
-
+    pub unsafe fn init_from_memory(address: *const c_void, length: u32, log_entry: LogEntry) -> Result<&'static Self> {
+        // Ensure the entry fits.
         if size_of::<Self>() + log_entry.data.len() > length as usize {
-            return None;
+            debug_assert!(false, "Advanced logger entry initialized in an insufficiently sized buffer!");
+            return Err(EfiError::BufferTooSmall);
+        }
+
+        // Ensure the address and length are aligned.
+        if address.align_offset(size_of::<u64>()) != 0 {
+            debug_assert!(false, "Advanced logger entry must be aligned to 8 bytes.");
+            return Err(EfiError::InvalidParameter);
+        }
+
+        // Ensure the address is not null.
+        if address.is_null() {
+            debug_assert!(false, "Advanced logger entry address is null.");
+            return Err(EfiError::InvalidParameter);
         }
 
         // Write the header.
-        let adv_entry = address as *mut AdvLoggerMessageEntry;
-        ptr::write_volatile(
-            adv_entry,
+        ptr::write_volatile::<Self>(
+            address as *mut Self,
             Self::new(log_entry.phase, log_entry.level, log_entry.timestamp, log_entry.data.len() as u16),
         );
 
-        // write the data.
-        let message = adv_entry.offset(1) as *mut u8;
-        ptr::copy(log_entry.data.as_ptr(), message, log_entry.data.len());
+        const _: () = assert!(
+            size_of::<AdvLoggerMessageEntry>() % size_of::<u64>() == 0,
+            "AdvLoggerMessageEntry must be a multiple of 8 bytes in length"
+        );
 
-        adv_entry.as_ref()
+        let message_slice: &mut [u8] =
+            slice::from_raw_parts_mut((address as *mut u8).byte_add(size_of::<Self>()), log_entry.data.len());
+
+        // Since address must be aligned to 8 bytes and AdvLoggerMessageEntry is a multiple of 8 bytes in length,
+        // there is guaranteed to be no prefix when using align_to_mut.
+        let (_, aligned, suffix) = message_slice.align_to_mut::<u64>();
+
+        // Write aligned QWORDs of the message 8 characters at a time.
+        for (qword_index, qword) in aligned.iter_mut().enumerate() {
+            ptr::write_volatile::<u64>(
+                qword as *mut u64,
+                ptr::read_unaligned(log_entry.data.as_ptr().add(size_of::<u64>() * qword_index) as *const u64),
+            );
+        }
+
+        // Write all remaining characters in the message 1 character at a time.
+        for (byte_index, byte) in suffix.iter_mut().enumerate() {
+            ptr::write_volatile::<u8>(
+                byte as *mut u8,
+                *log_entry.data.as_ptr().add(core::mem::size_of_val(aligned) + byte_index),
+            );
+        }
+
+        unsafe { Ok(&*(address as *const Self)) }
     }
 
     /// Returns the data array of the message entry.
@@ -353,10 +402,16 @@ mod tests {
             let data = entries.to_be_bytes();
             let entry = LogEntry { level: 0, phase: 0, timestamp: 0, data: &data };
             let log_entry = log.unwrap().add_log_entry(entry);
-            if log_entry.is_none() {
-                assert!(log.unwrap().discarded_size > 0);
-                assert!(entries > 0);
-                break;
+            match log_entry {
+                Ok(_) => {}
+                Err(EfiError::OutOfResources) => {
+                    assert!(log.unwrap().discarded_size > 0);
+                    assert!(entries > 0);
+                    break;
+                }
+                Err(status) => {
+                    panic!("Unexpected add_log_entry returned unexpected status {:#x?}.", status)
+                }
             }
             entries += 1;
             let log_entry = log_entry.unwrap();

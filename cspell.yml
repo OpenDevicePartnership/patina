@@ -19,6 +19,7 @@ dictionaries:
 ignorePaths:
   - "**/target/**"
   - "**/book/**"
+  - "**/resources/**"
   - "**/contributors.md"
   - "docs/mermaid.min.js"
 ignoreRegExpList: ["/0x[0-9a-fA-F]+/"]
@@ -40,10 +41,12 @@ words:
   - "keccak"
   - "linkme"
   - "mdbook"
+  - "mmram"
   - "morerelia"
   - "nestedfv"
   - "Oppermann"
   - "rustc"
+  - "smram"
   - "structs"
   - "Unaccepte"
   - "uncacheable"
