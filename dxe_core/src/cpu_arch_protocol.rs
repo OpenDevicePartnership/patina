@@ -5,7 +5,7 @@ use alloc::boxed::Box;
 use core::ffi::c_void;
 use r_efi::efi;
 use uefi_cpu::{
-    cpu::EfiCpuInit,
+    cpu::Cpu,
     interrupts::{self, ExceptionType, HandlerType, InterruptManager},
 };
 use uefi_sdk::error::EfiError;
@@ -17,7 +17,7 @@ pub struct EfiCpuArchProtocolImpl<'a> {
     protocol: Protocol,
 
     // Crate accessible fields
-    pub(crate) cpu_init: &'a mut dyn EfiCpuInit,
+    pub(crate) cpu_init: &'a mut dyn Cpu,
     pub(crate) interrupt_manager: &'a mut dyn InterruptManager,
 }
 
@@ -140,7 +140,7 @@ extern "efiapi" fn set_memory_attributes(
 }
 
 impl<'a> EfiCpuArchProtocolImpl<'a> {
-    fn new(cpu_init: &'a mut dyn EfiCpuInit, interrupt_manager: &'a mut dyn InterruptManager) -> Self {
+    fn new(cpu_init: &'a mut dyn Cpu, interrupt_manager: &'a mut dyn InterruptManager) -> Self {
         Self {
             protocol: Protocol {
                 flush_data_cache,
@@ -164,7 +164,7 @@ impl<'a> EfiCpuArchProtocolImpl<'a> {
 
 /// This function is called by the DXE Core to install the protocol.
 pub(crate) fn install_cpu_arch_protocol<'a>(
-    cpu_init: &'a mut dyn EfiCpuInit,
+    cpu_init: &'a mut dyn Cpu,
     interrupt_manager: &'a mut dyn InterruptManager,
 ) {
     let protocol = EfiCpuArchProtocolImpl::new(cpu_init, interrupt_manager);
@@ -186,8 +186,7 @@ mod tests {
 
     mock! {
         EfiCpuInit {}
-        impl EfiCpuInit for EfiCpuInit {
-            fn initialize(&mut self) -> Result<(), EfiError>;
+        impl Cpu for EfiCpuInit {
             fn flush_data_cache(
                 &self,
                 start: efi::PhysicalAddress,
@@ -202,7 +201,6 @@ mod tests {
     mock! {
         InterruptManager {}
         impl InterruptManager for InterruptManager {
-            fn initialize(&mut self) -> Result<(), EfiError>;
             fn register_exception_handler(
                 &self,
                 interrupt_type: ExceptionType,
