@@ -30,7 +30,7 @@ pub enum PerfAttribute {
     PerfEntry,
 }
 
-pub type CreateMeasurement = extern "efiapi" fn(
+pub type CreateMeasurement = unsafe extern "efiapi" fn(
     caller_identifier: *const c_void,
     guid: Option<&efi::Guid>,
     string: *const c_char,

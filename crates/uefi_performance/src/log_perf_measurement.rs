@@ -29,20 +29,23 @@ fn log_perf_measurement(
     create_performance_measurement: CreateMeasurement,
 ) {
     let s = string
-        .map(|s| CString::new(s))
+        .map(CString::new)
         .transpose()
         .expect("String should not contain 0 bytes.")
         .map_or(ptr::null(), |s| s.into_raw());
 
-    _ = (create_performance_measurement)(
-        caller_identifier,
-        guid,
-        s,
-        0,
-        address,
-        identifier as u32,
-        PerfAttribute::PerfEntry,
-    );
+    // Safety: string parameter is expected to be a valid C string.
+    _ = unsafe {
+        (create_performance_measurement)(
+            caller_identifier,
+            guid,
+            s,
+            0,
+            address,
+            identifier as u32,
+            PerfAttribute::PerfEntry,
+        )
+    };
 }
 
 fn start_perf_measurement(
@@ -60,7 +63,10 @@ fn start_perf_measurement(
     } else {
         ptr::null()
     };
-    (create_performance_measurement)(handle, None, string, timestamp, 0, identifier, PerfAttribute::PerfStartEntry);
+    // Safety: string parameter is expected to be a valid C string.
+    unsafe {
+        (create_performance_measurement)(handle, None, string, timestamp, 0, identifier, PerfAttribute::PerfStartEntry);
+    }
 }
 
 fn end_perf_measurement(
@@ -78,7 +84,10 @@ fn end_perf_measurement(
     } else {
         ptr::null()
     };
-    (create_performance_measurement)(handle, None, string, timestamp, 0, identifier, PerfAttribute::PerfEndEntry);
+    // Safety: string parameter is expected to be a valid C string.
+    unsafe {
+        (create_performance_measurement)(handle, None, string, timestamp, 0, identifier, PerfAttribute::PerfEndEntry)
+    };
 }
 
 pub fn perf_image_start_begin(module_handle: efi::Handle, create_performance_measurement: CreateMeasurement) {

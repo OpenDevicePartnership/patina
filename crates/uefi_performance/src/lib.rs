@@ -340,8 +340,11 @@ extern "efiapi" fn fetch_and_add_smm_performance_records<BB, B, F>(
     log::info!("Performance Lib: {} smm performance records found.", n);
 }
 
-#[cfg(not(tarpaulin_include))] // Tested via the generic version, see _create_performance_measurement. This one is using the static state which makes it not mockable.
-pub extern "efiapi" fn create_performance_measurement(
+#[cfg(not(tarpaulin_include))]
+// Tested via the generic version, see _create_performance_measurement. This one is using the static state which makes it not mockable.
+/// # Safety
+/// string must be a valid C string pointer.
+pub unsafe extern "efiapi" fn create_performance_measurement(
     caller_identifier: *const c_void,
     guid: Option<&efi::Guid>,
     string: *const c_char,
@@ -350,8 +353,6 @@ pub extern "efiapi" fn create_performance_measurement(
     identifier: u32,
     attribute: PerfAttribute,
 ) -> efi::Status {
-    log::info!("[12345] perf");
-
     let Some((boot_services, fbpt)) = get_static_state() else {
         // If the state is not initialized, it is because perf in not enabled.
         return efi::Status::SUCCESS;
@@ -817,8 +818,8 @@ mod test {
         static mut FBPT: Option<&TplMutex<'static, MockFirmwareBasicBootPerfTable, MockBootServices>> = None;
 
         unsafe {
-            BOOT_SERVICES = Some(unsafe { &*ptr::addr_of!(boot_services) });
-            FBPT = Some(unsafe { &*ptr::addr_of!(fbpt) });
+            BOOT_SERVICES = Some(&*ptr::addr_of!(boot_services));
+            FBPT = Some(&*ptr::addr_of!(fbpt));
         }
 
         extern "efiapi" fn test_create_performance_measurement(
