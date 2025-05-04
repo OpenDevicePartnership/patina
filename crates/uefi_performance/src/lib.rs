@@ -28,6 +28,7 @@ use core::{
     ffi::{c_char, c_void, CStr},
     mem::MaybeUninit,
     ptr,
+    result::Result::Ok,
     sync::atomic::{AtomicBool, AtomicU32, Ordering},
     todo,
 };
@@ -42,7 +43,7 @@ pub use mu_rust_helpers::function;
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 use uefi_sdk::{
     boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
-    component::{hob::Hob, IntoComponent},
+    component::{hob::Hob, params::Config, IntoComponent},
     error::EfiError,
     guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
     protocol::status_code::StatusCodeRuntimeProtocol,
@@ -68,7 +69,7 @@ use _smm::{CommunicateProtocol, MmCommRegion, SmmFpdtGetRecordDataByOffset, SmmF
 
 pub use log_perf_measurement::*;
 
-pub static PERF_ENABLED: bool = true;
+static PERF_MEASUREMENT_ENABLED: AtomicBool = AtomicBool::new(true);
 
 static LOAD_IMAGE_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -102,6 +103,10 @@ pub fn get_static_state() -> Option<(&'static StandardBootServices, &'static Tpl
     }
 }
 
+#[derive(Debug, Default)]
+// Config used to endable or disable the performance measuremnt. (Disabled by default)
+pub struct PerformanceMeasurementEnabled(pub bool);
+
 /// Performance Lib Component.
 #[derive(IntoComponent)]
 
@@ -112,6 +117,7 @@ impl PerformanceLib {
     #[cfg(not(tarpaulin_include))] // This is tested via the generic version, see _entry_point.
     pub fn entry_point(
         self,
+        measurement_enabled: Config<PerformanceMeasurementEnabled>,
         boot_services: StandardBootServices,
         runtime_services: StandardRuntimeServices,
         pei_records_buffers_hobs: Hob<PeiPerformanceData>,
@@ -123,6 +129,8 @@ impl PerformanceLib {
         let Some(mm_comm_region) = mm_comm_region_hobs.iter().find(|r| r.is_user_type()) else {
             return Ok(());
         };
+
+        PERF_MEASUREMENT_ENABLED.store(measurement_enabled.0, Ordering::Relaxed);
 
         self._entry_point(boot_services, runtime_services, pei_records_buffers_hobs, *mm_comm_region, fbpt)
     }
@@ -144,6 +152,20 @@ impl PerformanceLib {
         P: PeiPerformanceDataExtractor,
         F: FirmwareBasicBootPerfTable,
     {
+        // Register EndOfDxe event to allocate the boot performance table and report the table address through status code.
+        boot_services.as_ref().create_event_ex(
+            EventType::NOTIFY_SIGNAL,
+            Tpl::CALLBACK,
+            Some(report_fpdt_record_buffer),
+            Box::new((BB::clone(&boot_services), RR::clone(&runtime_services), fbpt)),
+            &EVENT_GROUP_END_OF_DXE,
+        )?;
+
+        if !PERF_MEASUREMENT_ENABLED.load(Ordering::Relaxed) {
+            log::info!("Performance Lib: Measuremnt is not enable, only FBPT table will be published.");
+            return Ok(());
+        }
+
         let (pei_load_image_count, pei_perf_records) = pei_records_buffers_hobs
             .extract_pei_perf_data()
             .inspect(|(_, perf_buf)| {
@@ -164,15 +186,6 @@ impl PerformanceLib {
         boot_services.as_ref().install_protocol_interface(
             None,
             Box::new(EdkiiPerformanceMeasurement { create_performance_measurement }),
-        )?;
-
-        // Register EndOfDxe event to allocate the boot performance table and report the table address through status code.
-        boot_services.as_ref().create_event_ex(
-            EventType::NOTIFY_SIGNAL,
-            Tpl::CALLBACK,
-            Some(report_fpdt_record_buffer),
-            Box::new((BB::clone(&boot_services), RR::clone(&runtime_services), fbpt)),
-            &EVENT_GROUP_END_OF_DXE,
         )?;
 
         // Register ReadyToBoot event to update the boot performance table for SMM performance data.
@@ -353,6 +366,10 @@ pub unsafe extern "efiapi" fn create_performance_measurement(
     identifier: u32,
     attribute: PerfAttribute,
 ) -> efi::Status {
+    if !PERF_MEASUREMENT_ENABLED.load(Ordering::Relaxed) {
+        return efi::Status::SUCCESS;
+    }
+
     let Some((boot_services, fbpt)) = get_static_state() else {
         // If the state is not initialized, it is because perf in not enabled.
         return efi::Status::SUCCESS;
