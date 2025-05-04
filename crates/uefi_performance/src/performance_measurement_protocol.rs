@@ -8,7 +8,9 @@
 //!
 
 use core::{
-    ffi::{c_char, c_void}, fmt::Debug, option::Option
+    ffi::{c_char, c_void},
+    fmt::Debug,
+    option::Option,
 };
 
 use r_efi::efi;

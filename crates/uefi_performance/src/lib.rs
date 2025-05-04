@@ -28,7 +28,8 @@ use core::{
     ffi::{c_char, c_void, CStr},
     mem::MaybeUninit,
     ptr,
-    sync::atomic::{AtomicBool, AtomicU32, Ordering}, todo,
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
+    todo,
 };
 
 use r_efi::{
@@ -225,7 +226,7 @@ extern "efiapi" fn report_fpdt_record_buffer<BB, B, RR, R, F>(
     const EFI_PROGRESS_CODE: u32 = 0x00000001;
     const EFI_SOFTWARE_DXE_BS_DRIVER: u32 = EFI_SOFTWARE | 0x00050000;
 
-    let Ok(p) = (unsafe { boot_services.as_ref().locate_protocol::<StatusCodeRuntimeProtocol>(None) }) else { 
+    let Ok(p) = (unsafe { boot_services.as_ref().locate_protocol::<StatusCodeRuntimeProtocol>(None) }) else {
         log::error!("Performance Lib: Fail to find status code protocol.");
         todo!()
     };
@@ -867,7 +868,7 @@ mod test {
 
         perf_event_signal_begin(&event_guid, "fun_name", &caller_id, test_create_performance_measurement);
         perf_event_signal_end(&event_guid, "fun_name", &caller_id, test_create_performance_measurement);
-         
+
         perf_callback_begin(&trigger_guid, "fun_name", &caller_id, test_create_performance_measurement);
         perf_callback_end(&trigger_guid, "fun_name", &caller_id, test_create_performance_measurement);
 
@@ -880,7 +881,7 @@ mod test {
         perf_in_cross_module_begin("measurement_str", &caller_id, test_create_performance_measurement);
         perf_in_cross_module_end("measurement_str", &caller_id, test_create_performance_measurement);
 
-        perf_cross_module_begin("measurement_str", &caller_id, test_create_performance_measurement); 
+        perf_cross_module_begin("measurement_str", &caller_id, test_create_performance_measurement);
         perf_cross_module_end("measurement_str", &caller_id, test_create_performance_measurement);
     }
 }

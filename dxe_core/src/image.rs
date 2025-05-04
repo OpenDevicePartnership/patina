@@ -16,7 +16,10 @@ use uefi_sdk::base::{align_up, UEFI_PAGE_SIZE};
 use uefi_sdk::error::EfiError;
 use uefi_sdk::{guid, uefi_size_to_pages};
 
-use uefi_performance::{create_performance_measurement, perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end};
+use uefi_performance::{
+    create_performance_measurement, perf_image_start_begin, perf_image_start_end, perf_load_image_begin,
+    perf_load_image_end,
+};
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},

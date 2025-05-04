@@ -15,10 +15,9 @@ use core::{
 use alloc::ffi::CString;
 use r_efi::efi;
 
-
 use crate::{
-    KnownPerfId,
     performance_measurement_protocol::{CreateMeasurement, PerfAttribute},
+    KnownPerfId,
 };
 
 fn log_perf_measurement(
@@ -94,14 +93,7 @@ pub fn perf_image_start_begin(module_handle: efi::Handle, create_performance_mea
 }
 
 pub fn perf_image_start_end(module_handle: efi::Handle, create_performance_measurement: CreateMeasurement) {
-    log_perf_measurement(
-        module_handle,
-        None,
-        None,
-        0,
-        KnownPerfId::ModuleEnd.as_u16(),
-        create_performance_measurement,
-    );
+    log_perf_measurement(module_handle, None, None, 0, KnownPerfId::ModuleEnd.as_u16(), create_performance_measurement);
 }
 
 pub fn perf_load_image_begin(module_handle: efi::Handle, create_performance_measurement: CreateMeasurement) {
@@ -369,7 +361,7 @@ pub fn perf_in_cross_module_end(
         Some(measurement_str),
         0,
         KnownPerfId::PerfCrossModuleEnd.as_u16(),
-        create_performance_measurement
+        create_performance_measurement,
     );
 }
 
