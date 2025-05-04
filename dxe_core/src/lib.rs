@@ -81,7 +81,6 @@ use uefi_sdk::{
     boot_services::StandardBootServices,
     component::{Component, IntoComponent, Storage},
     error::{self, Result}, runtime_services::StandardRuntimeServices,
-    runtime_services::StandardRuntimeServices,
 };
 
 pub use uefi_performance;
