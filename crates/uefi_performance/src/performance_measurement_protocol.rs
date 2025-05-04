@@ -1,4 +1,6 @@
-//! Definition of [`CreateMeasurementProtocol`]
+//! Definition of [`EdkiiPerformanceMeasurement`].
+//! 
+//! This Protocol is use to log performance measurement records.
 //!
 //! ## License
 //!
