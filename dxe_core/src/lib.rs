@@ -1,6 +1,6 @@
 //! DXE Core
 //!
-//! A pure rust implementation of the UEFI DXE Core. Please review the getting started documentation at
+//! A popre rust implementation of the UEFI DXE Core. Please review the getting started documentation at
 //! <https://OpenDevicePartnership.github.io/uefi-dxe-core/> for more information.
 //!
 //! ## Examples
