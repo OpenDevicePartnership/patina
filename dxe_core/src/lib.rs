@@ -203,11 +203,11 @@ where
 
         let mut cpu = EfiCpu::default();
         cpu.initialize().expect("Failed to initialize CPU!");
-        let mut im = Interrupts::default();
-        im.initialize().expect("Failed to initialize Interrupts!");
+        let mut interrupt_manager = Interrupts::default();
+        interrupt_manager.initialize().expect("Failed to initialize Interrupts!");
 
         // For early debugging, the "no_alloc" feature must be enabled in the debugger crate.
-        // uefi_debugger::initialize(&mut im);
+        // uefi_debugger::initialize(&mut interrupt_manager);
 
         if physical_hob_list.is_null() {
             panic!("HOB list pointer is null!");
@@ -234,12 +234,12 @@ where
         self.hob_list.relocate_hobs();
 
         // Initialize the debugger if it is enabled.
-        uefi_debugger::initialize(&mut im);
+        uefi_debugger::initialize(&mut interrupt_manager);
 
         log::info!("GCD - After memory init:\n{}", GCD);
 
         self.storage.add_service(cpu);
-        self.storage.add_service(im);
+        self.storage.add_service(interrupt_manager);
 
         Core {
             physical_hob_list,

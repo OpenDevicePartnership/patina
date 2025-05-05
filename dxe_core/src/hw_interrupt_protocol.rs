@@ -369,7 +369,7 @@ impl HwInterruptProtocolHandler {
 pub(crate) fn install_hw_interrupt_protocol(
     interrupt_manager: Service<dyn InterruptManager>,
     gic_bases: Config<GicBases>,
-    bs: StandardBootServices,
+    boot_services: StandardBootServices,
 ) -> Result<()> {
     let mut gic_v3 = unsafe {
         gic_initialize(gic_bases.0 as _, gic_bases.1 as _).inspect_err(|_| log::error!("Failed to initialize GICv3"))?
@@ -385,13 +385,13 @@ pub(crate) fn install_hw_interrupt_protocol(
     // Produce Interrupt Protocol with the initialized GIC
     let interrupt_protocol = Box::leak(Box::new(EfiHardwareInterruptProtocol::new(hw_int_protocol_handler)));
 
-    bs.install_protocol_interface(None, interrupt_protocol)
+    boot_services.install_protocol_interface(None, interrupt_protocol)
         .inspect_err(|_| log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL"))?;
 
     // Produce Interrupt Protocol with the initialized GIC
     let interrupt_protocol_v2 = Box::leak(Box::new(EfiHardwareInterruptV2Protocol::new(hw_int_protocol_handler)));
 
-    bs.install_protocol_interface(None, interrupt_protocol_v2)
+    boot_services.install_protocol_interface(None, interrupt_protocol_v2)
         .inspect_err(|_| log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL_V2"))?;
     log::info!("installed HARDWARE_INTERRUPT_PROTOCOL_V2");
 
