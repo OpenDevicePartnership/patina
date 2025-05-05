@@ -371,11 +371,6 @@ pub(crate) fn install_hw_interrupt_protocol(
     gic_bases: Config<GicBases>,
     bs: StandardBootServices,
 ) -> Result<()> {
-    if *gic_bases == GicBases::default() {
-        log::error!("GicBases `Config` must be manually initialized and registered with the Core using `with_config`.");
-        return Err(uefi_sdk::error::EfiError::InvalidParameter);
-    }
-
     let mut gic_v3 = unsafe {
         gic_initialize(gic_bases.0 as _, gic_bases.1 as _).inspect_err(|_| log::error!("Failed to initialize GICv3"))?
     };

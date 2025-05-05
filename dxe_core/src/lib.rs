@@ -102,12 +102,18 @@ macro_rules! error {
 
 pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
 
-#[derive(Default, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct GicBases(pub u64, pub u64);
 
 impl GicBases {
     pub fn new(gicd_base: u64, gicr_base: u64) -> Self {
         GicBases(gicd_base, gicr_base)
+    }
+}
+
+impl Default for GicBases {
+    fn default() -> Self {
+        panic!("GicBases `Config` must be manually initialized and registered with the Core using `with_config`.");
     }
 }
 
@@ -251,16 +257,16 @@ where
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
 {
     /// Registers a component with the core, that will be dispatched during the driver execution phase.
+    #[inline(always)]
     pub fn with_component<I>(mut self, component: impl IntoComponent<I>) -> Self {
-        self.add_component(component);
+        self.insert_component(self.components.len(), component.into_component());
         self
     }
 
-    /// Adds a component to the core.
-    fn add_component<I>(&mut self, component: impl IntoComponent<I>) {
-        let mut component = component.into_component();
+    /// Inserts a component at the given index. If no index is provided, the component is added to the end of the list.
+    fn insert_component(&mut self, idx: usize, mut component: Box<dyn Component>) {
         component.initialize(&mut self.storage);
-        self.components.push(component);
+        self.components.insert(idx, component);
     }
 
     /// Adds a configuration value to the Core's storage. All configuration is locked by default. If a component is
@@ -444,9 +450,9 @@ where
 
     /// Registers core provided components
     fn add_core_components(&mut self) {
-        self.add_component(cpu_arch_protocol::install_cpu_arch_protocol);
+        self.insert_component(0, cpu_arch_protocol::install_cpu_arch_protocol.into_component());
         #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
-        self.add_component(hw_interrupt_protocol::install_hw_interrupt_protocol);
+        self.insert_component(0, hw_interrupt_protocol::install_hw_interrupt_protocol.into_component());
     }
 
     /// Starts the core, dispatching all drivers.

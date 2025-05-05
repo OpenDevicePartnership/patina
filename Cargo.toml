@@ -61,9 +61,6 @@ linkme = "^0.3.29"
 quote = "^1"
 proc-macro2 = "^1"
 
-[patch.crates-io]
-uefi_cpu = { git = "https://github.com/OpenDevicePartnership/uefi-core", branch = "personal/joeyvagedes/rfc/cpu-into-core"}
-
 [profile.dev]
 opt-level = 3
 
