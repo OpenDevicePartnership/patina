@@ -22,6 +22,7 @@
 - [Documenting](dev/documenting.md)
   - [Quick Reference](dev/documenting/reference.md)
 - [RFC Template](rfc/template.md)
+- [Process for Unstable Features](dev/unstable.md)
 - [Other Resources](dev/other.md)
 
 # Integrating the Rust DXE Core
