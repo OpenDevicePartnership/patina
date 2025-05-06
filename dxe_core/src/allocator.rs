@@ -567,7 +567,15 @@ fn merge_blocks(
     previous_blocks
 }
 
-pub(crate) fn get_memory_map_descriptors() -> Result<Vec<efi::MemoryDescriptor>, EfiError> {
+/// Get the memory map descriptors from the GCD.
+///
+/// ## Arguments
+///
+/// * `attributes_mask` - Optional mask to filter the attributes of the memory descriptors
+///                       prior to them being consolidated. This mask will be ANDed with the
+///                       attributes of the memory descriptors.
+///
+pub(crate) fn get_memory_map_descriptors(attributes_mask: Option<u64>) -> Result<Vec<efi::MemoryDescriptor>, EfiError> {
     let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
 
     // the fold operation would allocate boot services data, which we cannot do because we cannot change the memory map
@@ -622,19 +630,23 @@ pub(crate) fn get_memory_map_descriptors() -> Result<Vec<efi::MemoryDescriptor>,
                 return None; //skip entries not page aligned.
             }
 
-            //TODO: update/mask attributes.
+            // Add the runtime attribute for runtime services code and data as
+            // higher level code will expect this but it is not explicitly tracked.
+            let mut attributes = match memory_type {
+                efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA => descriptor.attributes | efi::MEMORY_RUNTIME,
+                _ => descriptor.attributes,
+            };
+
+            if let Some(mask) = attributes_mask {
+                attributes &= mask;
+            }
 
             Some(efi::MemoryDescriptor {
                 r#type: memory_type,
                 physical_start: descriptor.base_address,
                 virtual_start: 0,
                 number_of_pages,
-                attribute: match memory_type {
-                    efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA => {
-                        descriptor.attributes | efi::MEMORY_RUNTIME
-                    }
-                    _ => descriptor.attributes,
-                },
+                attribute: attributes,
             })
         })
         .fold(merged_descriptors, merge_blocks))
@@ -661,7 +673,7 @@ extern "efiapi" fn get_memory_map(
 
     let map_size = unsafe { *memory_map_size };
 
-    let mut efi_descriptors = match get_memory_map_descriptors() {
+    let efi_descriptors = match get_memory_map_descriptors(Some(!efi::MEMORY_ACCESS_MASK)) {
         Ok(descriptors) => descriptors,
         Err(status) => return status.into(),
     };
@@ -678,15 +690,6 @@ extern "efiapi" fn get_memory_map(
 
     if memory_map.is_null() {
         return efi::Status::INVALID_PARAMETER;
-    }
-
-    // scrub all of the access attributes from the EFI_MEMORY_MAP. They are just capabilities anyway and all
-    // memory is capable of supporting the access attributes. Some older OSes would take these as attributes to
-    // set and crash.
-    // TODO: This needs to be moved into get_memory_map_descriptors so that we can merge the memory map as much
-    // as possible
-    for descriptor in efi_descriptors.iter_mut() {
-        descriptor.attribute &= !efi::MEMORY_ACCESS_MASK;
     }
 
     // Rust will try to prevent an unaligned copy, given no one checks whether their points are aligned
@@ -708,11 +711,7 @@ extern "efiapi" fn get_memory_map(
 }
 
 pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
-    let mut mm_desc = get_memory_map_descriptors()?;
-
-    for descriptor in mm_desc.iter_mut() {
-        descriptor.attribute &= !efi::MEMORY_ACCESS_MASK;
-    }
+    let mm_desc = get_memory_map_descriptors(Some(!efi::MEMORY_ACCESS_MASK))?;
     let mm_desc_size = mm_desc.len() * mem::size_of::<efi::MemoryDescriptor>();
     let mm_desc_bytes: &[u8] = unsafe { slice::from_raw_parts(mm_desc.as_ptr() as *const u8, mm_desc_size) };
 
@@ -1514,14 +1513,21 @@ mod tests {
                 })
                 .expect("Failed to find custom allocation.");
 
-            //make sure that the runtime "allocate_pages" shows up in the map somewhere.
+            // make sure that the runtime "allocate_pages" shows up in the map somewhere.
+            // This may be folded into oth ranges or the bucket.
             memory_map_buffer
                 .iter()
                 .find(|x| {
                     x.physical_start <= runtime_buffer_ptr as efi::PhysicalAddress
                         && x.physical_start.checked_add(x.number_of_pages * UEFI_PAGE_SIZE as u64).unwrap()
                             > runtime_buffer_ptr as efi::PhysicalAddress
-                        && x.number_of_pages == 0x10
+                        && x.number_of_pages
+                            >= (runtime_buffer_ptr as efi::PhysicalAddress)
+                                .checked_sub(x.physical_start)
+                                .unwrap()
+                                .checked_div(UEFI_PAGE_SIZE as u64)
+                                .unwrap()
+                                + 0x10
                         && x.r#type == efi::RUNTIME_SERVICES_DATA
                         && (x.attribute & efi::MEMORY_RUNTIME) != 0
                 })
