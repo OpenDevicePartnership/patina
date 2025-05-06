@@ -1924,12 +1924,14 @@ impl SpinLockedGcd {
 
     // Take control of our own destiny and create a page table that the GCD controls
     // This must be done after the GCD is initialized and memory services are available,
-    // as we need to allocate memory for the page table structure
+    // as we need to allocate memory for the page table structure.
+    // This function always uses the GCD functions to map the page table so that the GCD remains in sync with the
+    // changes here (setting XP)
     pub(crate) fn init_paging(&self, hob_list: &HobList) {
         log::info!("Initializing paging for the GCD");
 
         let page_allocator = PagingAllocator::new(&GCD);
-        let mut page_table = create_cpu_paging(page_allocator).expect("Failed to create CPU page table");
+        *self.page_table.lock() = Some(create_cpu_paging(page_allocator).expect("Failed to create CPU page table"));
 
         // this is before we get allocated descriptors, so we don't need to preallocate memory here
         let mut mmio_res_descs: Vec<dxe_services::MemorySpaceDescriptor> = Vec::new();
@@ -1960,11 +1962,10 @@ impl SpinLockedGcd {
                 desc.attributes
             );
 
-            if let Err(err) = page_table.map_memory_region(
-                desc.base_address,
-                desc.length,
-                (MemoryAttributes::from_bits_truncate(desc.attributes) & MemoryAttributes::CacheAttributesMask)
-                    | MemoryAttributes::ExecuteProtect,
+            if let Err(err) = self.set_memory_space_attributes(
+                desc.base_address as usize,
+                desc.length as usize,
+                (desc.attributes & efi::CACHE_ATTRIBUTE_MASK) | efi::MEMORY_XP,
             ) {
                 // if we fail to set these attributes (which should just be XP at this point), we should try to
                 // continue
@@ -1998,10 +1999,6 @@ impl SpinLockedGcd {
                 Ok(desc) => desc.attributes & efi::CACHE_ATTRIBUTE_MASK,
                 Err(e) => panic!("DXE Core not mapped in GCD {e:?}"),
             };
-
-        // at this point we need to add the page table to the GCD so that we can use some GCD APIs that
-        // expect this
-        *self.page_table.lock() = Some(page_table);
 
         // map the entire image as RW, as the PE headers don't live in the sections
         self.set_memory_space_attributes(
@@ -2065,11 +2062,9 @@ impl SpinLockedGcd {
         for desc in mmio_res_descs {
             // MMIO is not necessarily described at page granularity, but needs to be mapped as such in the page
             // table
-            let base_address = desc.base_address & !UEFI_PAGE_MASK as u64;
-            let len = (desc.length + UEFI_PAGE_MASK as u64) & !UEFI_PAGE_MASK as u64;
-            let new_attributes = (MemoryAttributes::from_bits_truncate(desc.attributes)
-                & MemoryAttributes::CacheAttributesMask)
-                | MemoryAttributes::ExecuteProtect;
+            let base_address = desc.base_address as usize & !UEFI_PAGE_MASK;
+            let len = (desc.length as usize + UEFI_PAGE_MASK) & !UEFI_PAGE_MASK;
+            let new_attributes = (desc.attributes & efi::CACHE_ATTRIBUTE_MASK) | efi::MEMORY_XP;
 
             log::trace!(
                 target: "paging",
@@ -2080,9 +2075,7 @@ impl SpinLockedGcd {
                 new_attributes
             );
 
-            if let Err(err) =
-                self.page_table.lock().as_mut().unwrap().map_memory_region(base_address, len, new_attributes)
-            {
+            if let Err(err) = self.set_memory_space_attributes(base_address, len, new_attributes) {
                 // if we fail to set these attributes we may or may not be able to continue to boot. It depends on
                 // if a driver attempts to touch this MMIO region
                 log::error!(
