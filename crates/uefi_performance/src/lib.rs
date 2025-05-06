@@ -225,8 +225,9 @@ extern "efiapi" fn report_fpdt_record_buffer<BB, B, RR, R, F>(
 
     let Ok(p) = (unsafe { boot_services.as_ref().locate_protocol::<StatusCodeRuntimeProtocol>(None) }) else {
         log::error!("Performance: Fail to find status code protocol.");
-        todo!()
+        return;
     };
+
     let status = p.report_status_code(
         EFI_PROGRESS_CODE,
         EFI_SOFTWARE_DXE_BS_DRIVER,
@@ -329,8 +330,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records<BB, B, F>(
     let mut fbpt = fbpt.lock();
     let mut n = 0;
     for r in Iter::new(&smm_boot_records_data) {
-        // todo do not crash plz.
-        fbpt.add_record(r).unwrap();
+        _ = fbpt.add_record(r);
         n += 1;
     }
 
@@ -478,7 +478,7 @@ where
         KnownPerfId::ModuleDbStopEnd => {
             let module_handle = caller_identifier as efi::Handle;
             let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance: Could not find the guid for module handle: {:?}", module_handle);
+                log::error!("Performance Lib: Could not find the guid for module handle: {:?}", module_handle);
                 return Err(efi::Status::INVALID_PARAMETER);
             };
             // TODO: use of commponent 2 protocol, need usecase to test further. https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/192
