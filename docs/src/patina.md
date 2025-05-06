@@ -167,7 +167,7 @@ Right now, those include:
 
 In the above high-level diagram, the Rust DXE Core takes system data input in the form of HOBs in the same way as the
 C DXE Core. The green box indicates that the core is written in Rust, while purple indicates that DXE drivers may be
-written either in C or Rust. Organge indicates code that is still written in C. For example, the UEFI Boot Services
+written either in C or Rust. Orange indicates code that is still written in C. For example, the UEFI Boot Services
 table and services themselves are largely written in pure Rust. The UEFI Runtime Services table itself has a Rust
 definition but many of the services are still implemented in C so it is orange.
 

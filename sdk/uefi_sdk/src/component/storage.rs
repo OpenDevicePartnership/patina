@@ -206,7 +206,7 @@ pub struct Storage {
     /// A container for all [Hob](super::hob::Hob) datums.
     hobs: SparseVec<Vec<Box<dyn Any>>>,
     /// a map to convert from TypeId to a hob index.
-    hob_indicies: BTreeMap<TypeId, usize>,
+    hob_indices: BTreeMap<TypeId, usize>,
     // Standard Boot Services.
     boot_services: StandardBootServices,
     // Standard Runtime Services.
@@ -229,7 +229,7 @@ impl Storage {
             service_indices: BTreeMap::new(),
             hob_parsers: BTreeMap::new(),
             hobs: SparseVec::new(),
-            hob_indicies: BTreeMap::new(),
+            hob_indices: BTreeMap::new(),
             boot_services: StandardBootServices::new_uninit(),
             runtime_services: StandardRuntimeServices::new_uninit(),
         }
@@ -377,8 +377,8 @@ impl Storage {
 
     /// Gets the global id of a service, registering it if it does not exist.
     pub(crate) fn get_or_register_hob(&mut self, id: TypeId) -> usize {
-        let idx = self.hob_indicies.len();
-        let idx = self.hob_indicies.entry(id).or_insert(idx);
+        let idx = self.hob_indices.len();
+        let idx = self.hob_indices.entry(id).or_insert(idx);
         if self.hobs.get(*idx).is_none() {
             self.hobs.insert(*idx, Vec::new());
         }
@@ -400,7 +400,7 @@ impl Storage {
 
     /// Attempts to retrieve a HOB datum from the storage.
     pub fn get_hob<T: FromHob>(&self) -> Option<Hob<T>> {
-        let id = self.hob_indicies.get(&TypeId::of::<T>())?;
+        let id = self.hob_indices.get(&TypeId::of::<T>())?;
         self.hobs.get(*id).and_then(|hob| {
             if hob.is_empty() {
                 return None;

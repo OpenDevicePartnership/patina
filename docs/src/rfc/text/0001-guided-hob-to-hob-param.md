@@ -127,7 +127,7 @@ impl<'h, H: FromHob + 'static> Iterator for HobIter<'h, H> {
 struct Storage {
     hob_parsers: BTreeMap<Guid, fn(&[u8], &mut Storage)>,
     hobs: SparseVec<Vec<Box<dyn Any>>>,
-    hob_indicies: BTreeMap<TypeId, usize>,
+    hob_indices: BTreeMap<TypeId, usize>,
 }
 
 impl Storage {

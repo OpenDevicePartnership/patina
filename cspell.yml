@@ -10,8 +10,6 @@ version: "0.2"
 language: en
 dictionaries:
   - "companies"
-  - "cpp"
-  - "cpp-legacy"
   - "java"
   - "makefile"
   - "python"
@@ -31,17 +29,21 @@ caseSensitive: false
 allowCompoundWords: true
 words:
   - aarch
-  - BASECORE
+  - acpibase
+  - addrs
+  - armasm
+  - basecore
   - bitfield
   - bitor
   - bitvec
-  - BNDLDX
-  - BNDSTX
+  - bndldx
+  - bndstx
   - brotli
+  - cdecl
   - cdrom
   - cforce
   - civac
-  - CLFLUSH
+  - clflush
   - clfsh
   - cntfrq
   - cntpct
@@ -57,6 +59,8 @@ words:
   - depex
   - dereferenceable
   - descs
+  - distros
+  - dllcharacteristics
   - dnested
   - docsrs
   - dxecore
@@ -65,11 +69,18 @@ words:
   - edkii
   - efiapi
   - eficall
+  - efierror
+  - eflags
+  - entrancy
   - fnent
   - fvmain
-  - FXRSTOR
-  - FXSAVE
-  - GIGANTOR
+  - fxrstor
+  - fxsave
+  - gdbstub
+  - getsp
+  - gigantor
+  - gread
+  - gwrite
   - guids
   - hlength
   - hresult
@@ -83,95 +94,106 @@ words:
   - keccak
   - keyid
   - linkme
+  - longjmp
   - lshift
   - mawau
-  - MAWAU
   - maxnp
   - mdbook
   - mdscr
   - mfence
-  - MKTME
+  - mktme
   - mmram
-  - MMTRR
+  - mmtrr
   - morerelia
   - mpidr
   - msdia
   - mtrr
-  - Mtrr
-  - MTRR
-  - MTRRCAP
+  - mtrr
+  - mtrrcap
   - mtrrlib
   - mtrrs
-  - Mtrrs
-  - MTRRs
   - mult
   - nanos
   - nestedfv
   - nologo
+  - nomem
   - nshst
   - ntdll
   - oleaut
   - opinfo
-  - Oppermann
+  - oppermann
   - oprom
   - oslar
   - oslsr
   - ospke
   - pacibsp
-  - PCIEXBAR
+  - pccard
+  - pciexbar
   - pdata
-  - Physbase
-  - PHYSBASE
-  - Physmask
-  - PHYSMASK
+  - philipp
+  - pemfile
+  - physbase
+  - physmask
   - pointee
+  - pread
   - prefetchwt
-  - PREFETCHWT
   - psapi
   - ptable
   - pterror
+  - pwrite
   - pytool
   - qwords
   - rdmsr
-  - RDPKRU
+  - rdpkru
   - rdtsc
   - rebox
+  - reentrancy
+  - regsvr
+  - reloc
   - repr
   - retval
   - rshift
   - rustc
   - rustfmt
+  - rustls
+  - rwlock
   - sbsa
   - sctlr
   - smbus
   - smcport
-  - SMRAM
+  - smiport
+  - smram
   - stosq
   - structs
-  - SWMMIs
-  - TESTCODE
+  - swmmis
+  - testcode
   - tiano
+  - tianocore
   - tttracer
   - typer
   - uefi
   - uefi's
-  - Unaccepte
+  - uintn
+  - unaccepte
   - uncacheable
-  - Uncacheable
   - uncontained
   - unrecovered
+  - unregisters
+  - unspec
   - upvote
   - vcvarsamd
   - vcvarsarm
   - vmalle
   - vpopcntdq
-  - VPOPCNTDQ
+  - vpopcntdq
   - wakeup
   - wbinvd
+  - webpki
+  - windbg
   - windbgx
   - withf
-  - WRMSR
-  - WRPKRU
+  - wrmsr
+  - wrpkru
   - x'xxxzzzzz
   - x'xxzzzzzz
   - xdata

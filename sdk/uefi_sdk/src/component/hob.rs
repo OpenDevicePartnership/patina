@@ -34,7 +34,7 @@
 //!
 //! impl FromHob for MyComplexHobStruct {
 //!     const HOB_GUID: r_efi::efi::Guid = r_efi::efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
-//!     
+//!
 //!    fn parse(bytes: &[u8]) -> Self {
 //!        Self::default() // Simple for example
 //!    }
@@ -124,7 +124,7 @@ pub use uefi_sdk_macro::FromHob;
 /// An immutable Hob value registered with [Storage] via the [FromHob] trait.
 ///
 /// The underlying datum of this type is a slice. The first element of the slice can be directly accessed by
-/// derefencing the struct. The entire slice can be iterated over using the [Hob::iter] method or the [IntoIterator]
+/// dereferencing the struct. The entire slice can be iterated over using the [Hob::iter] method or the [IntoIterator]
 /// trait.
 ///
 /// ## Example

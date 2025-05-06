@@ -255,7 +255,7 @@ pub trait MemoryManager {
 }
 
 /// The `AllocationOptions` structure allows for the caller to  specify
-/// additional contraints on the allocation. This can be used to specify the type
+/// additional constraints on the allocation. This can be used to specify the type
 /// of memory to allocate, alignment requirements, and allocation strategy. Users
 /// should always start with `AllocationOptions::new()` and then call the `.with_`
 /// functions to set the options they wish to use. see [`AllocationOptions::new()`]

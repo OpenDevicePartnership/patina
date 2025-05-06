@@ -2472,7 +2472,7 @@ impl SpinLockedGcd {
                         _ => descriptor.length as usize,
                     };
 
-                    // set_memory_space_attributes will set both the GCD and paging atrributes
+                    // set_memory_space_attributes will set both the GCD and paging attributes
                     match self.set_memory_space_attributes(
                         address,
                         size,
