@@ -14,7 +14,7 @@ extern crate alloc;
 use super::{AllocationStrategy, DEFAULT_ALLOCATION_STRATEGY};
 
 use crate::{gcd::SpinLockedGcd, tpl_lock};
-use uefi_sdk::error::EfiError;
+use uefi_sdk::{base::UEFI_PAGE_SIZE, error::EfiError};
 
 use core::{
     alloc::{AllocError, Allocator, GlobalAlloc, Layout},
@@ -48,6 +48,16 @@ const BLOCK_SIZES: &[usize] = &[8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
 fn list_index(layout: &Layout) -> Option<usize> {
     let required_block_size = layout.size().max(layout.align());
     BLOCK_SIZES.iter().position(|&s| s >= required_block_size)
+}
+
+/// Converts the given alignment to a shift value.
+fn page_shift_from_alignment(alignment: usize) -> Result<usize, EfiError> {
+    let shift = alignment.trailing_zeros() as usize;
+    if !alignment.is_power_of_two() || shift < UEFI_PAGE_SHIFT {
+        return Err(EfiError::InvalidParameter);
+    }
+
+    Ok(shift)
 }
 
 struct BlockListNode {
@@ -374,14 +384,17 @@ impl FixedSizeBlockAllocator {
         &mut self,
         allocation_strategy: AllocationStrategy,
         pages: usize,
+        alignment: usize,
     ) -> Result<core::ptr::NonNull<[u8]>, EfiError> {
         self.stats.page_allocation_calls += 1;
+
+        let align_shift = page_shift_from_alignment(alignment)?;
 
         if let AllocationStrategy::Address(address) = allocation_strategy {
             // validate allocation strategy addresses for direct address allocation is properly aligned.
             // for BottomUp and TopDown strategies, the address parameter doesn't have to be page-aligned, but
             // the resulting allocation will be page-aligned.
-            if address % ALIGNMENT != 0 {
+            if address % alignment != 0 {
                 return Err(EfiError::InvalidParameter);
             }
         }
@@ -393,8 +406,8 @@ impl FixedSizeBlockAllocator {
             .allocate_memory_space(
                 allocation_strategy,
                 GcdMemoryType::SystemMemory,
-                UEFI_PAGE_SHIFT,
-                pages * ALIGNMENT,
+                align_shift,
+                pages << UEFI_PAGE_SHIFT,
                 self.handle,
                 None,
             )
@@ -488,7 +501,7 @@ impl FixedSizeBlockAllocator {
         // any general allocations are serviced; that way all "owned" memory is in prime position before any "unowned"
         // memory.
         //
-        let preferred_block = self.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages)?;
+        let preferred_block = self.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages, UEFI_PAGE_SIZE)?;
         let preferred_block_address = preferred_block.as_ptr() as *mut u8 as efi::PhysicalAddress;
 
         // this will fail if called more than once, but check at start of function should guarantee that doesn't happen.
@@ -618,8 +631,9 @@ impl SpinLockedFixedSizeBlockAllocator {
         &self,
         allocation_strategy: AllocationStrategy,
         pages: usize,
+        alignment: usize,
     ) -> Result<core::ptr::NonNull<[u8]>, EfiError> {
-        self.lock().allocate_pages(allocation_strategy, pages)
+        self.lock().allocate_pages(allocation_strategy, pages, alignment)
     }
 
     /// Frees the block of pages at the given address of the given size.
@@ -1036,7 +1050,8 @@ mod tests {
 
             let pages = 4;
 
-            let allocation = fsb.allocate_pages(gcd::AllocateType::BottomUp(None), pages).unwrap().as_non_null_ptr();
+            let allocation =
+                fsb.allocate_pages(gcd::AllocateType::BottomUp(None), pages, UEFI_PAGE_SIZE).unwrap().as_non_null_ptr();
 
             assert!(allocation.as_ptr() as u64 >= address);
             assert!((allocation.as_ptr() as u64) < address + 0x1000000);
@@ -1071,7 +1086,7 @@ mod tests {
             let pages = 4;
 
             let allocation = fsb
-                .allocate_pages(gcd::AllocateType::Address(target_address as usize), pages)
+                .allocate_pages(gcd::AllocateType::Address(target_address as usize), pages, UEFI_PAGE_SIZE)
                 .unwrap()
                 .as_non_null_ptr();
 
@@ -1100,7 +1115,7 @@ mod tests {
             let pages = 4;
 
             let allocation = fsb
-                .allocate_pages(gcd::AllocateType::BottomUp(Some(target_address as usize)), pages)
+                .allocate_pages(gcd::AllocateType::BottomUp(Some(target_address as usize)), pages, UEFI_PAGE_SIZE)
                 .unwrap()
                 .as_non_null_ptr();
             assert!((allocation.as_ptr() as u64) < target_address);
@@ -1128,7 +1143,7 @@ mod tests {
             let pages = 4;
 
             let allocation = fsb
-                .allocate_pages(gcd::AllocateType::TopDown(Some(target_address as usize)), pages)
+                .allocate_pages(gcd::AllocateType::TopDown(Some(target_address as usize)), pages, UEFI_PAGE_SIZE)
                 .unwrap()
                 .as_non_null_ptr();
             assert!((allocation.as_ptr() as u64) > target_address);
@@ -1152,7 +1167,7 @@ mod tests {
             // Test commands with bad handle.
             let fsb =
                 SpinLockedFixedSizeBlockAllocator::new(&GCD, 0 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
-            match fsb.allocate_pages(AllocationStrategy::Address(0x1000), 5) {
+            match fsb.allocate_pages(AllocationStrategy::Address(0x1000), 5, UEFI_PAGE_SIZE) {
                 Err(EfiError::InvalidParameter) => {}
                 _ => panic!("Expected INVALID_PARAMETER"),
             }
@@ -1161,13 +1176,13 @@ mod tests {
                 SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let allocation_strategy = AllocationStrategy::Address(0x1000);
-            match fsb.allocate_pages(allocation_strategy, 5) {
+            match fsb.allocate_pages(allocation_strategy, 5, UEFI_PAGE_SIZE) {
                 Err(EfiError::NotFound) => {}
                 _ => panic!("Expected NOT_FOUND"),
             }
             // Test invalid alignment
             let allocation_strategy = AllocationStrategy::Address(0x1001);
-            match fsb.allocate_pages(allocation_strategy, 5) {
+            match fsb.allocate_pages(allocation_strategy, 5, UEFI_PAGE_SIZE) {
                 Err(EfiError::InvalidParameter) => {}
                 _ => panic!("Expected INVALID_PARAMETER"),
             }
@@ -1192,7 +1207,7 @@ mod tests {
             let _ = init_gcd(&GCD, 0x400000);
 
             let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
-            fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 5).unwrap();
+            fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 5, UEFI_PAGE_SIZE).unwrap();
 
             let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
             fsb.expand(layout).unwrap();
@@ -1299,7 +1314,7 @@ mod tests {
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
 
             // test that a small page allocation fits in the 1MB free reserved region.
-            let ptr = fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 0x4).unwrap().as_ptr();
+            let ptr = fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 0x4, UEFI_PAGE_SIZE).unwrap().as_ptr();
 
             //after this allocate_pages, the basic memory map of the FSB should look like:
             //1MB range as a result of previous pool allocation expand - available for pool allocation.
@@ -1337,7 +1352,7 @@ mod tests {
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
 
             //test that a lage page allocation results in more claimed pages.
-            let ptr = fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 0x104).unwrap().as_ptr();
+            let ptr = fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 0x104, UEFI_PAGE_SIZE).unwrap().as_ptr();
 
             //after this allocate_pages, the basic memory map of the FSB should look like:
             //1MB range as a result of previous pool allocation expand - available for pool allocation.
@@ -1356,7 +1371,7 @@ mod tests {
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1 + 0x104);
 
             // test that a small page allocation fits in the 1MB free reserved region.
-            let ptr1 = fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 0x4).unwrap().as_ptr();
+            let ptr1 = fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 0x4, UEFI_PAGE_SIZE).unwrap().as_ptr();
 
             //after this allocate_pages, the basic memory map of the FSB should look like:
             //1MB range as a result of previous pool allocation expand - available for pool allocation.
@@ -1438,5 +1453,28 @@ mod tests {
                 }
             }
         });
+    }
+
+    #[test]
+    fn test_alignment_page_to_shift() {
+        #[derive(Debug)]
+        struct TestConfig {
+            alignment: usize,
+            expected: Result<usize, EfiError>,
+        }
+
+        let configs = [
+            TestConfig { alignment: 0x1000, expected: Ok(12) },
+            TestConfig { alignment: 0x2000, expected: Ok(13) },
+            TestConfig { alignment: 0x400000, expected: Ok(22) },
+            TestConfig { alignment: 0x6000, expected: Err(EfiError::InvalidParameter) },
+            TestConfig { alignment: 0x800, expected: Err(EfiError::InvalidParameter) },
+            TestConfig { alignment: 0, expected: Err(EfiError::InvalidParameter) },
+        ];
+
+        for config in configs {
+            let result = page_shift_from_alignment(config.alignment);
+            assert_eq!(result, config.expected, "Test config: {:?}", config);
+        }
     }
 }

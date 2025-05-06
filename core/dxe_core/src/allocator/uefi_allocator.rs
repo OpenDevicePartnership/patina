@@ -187,8 +187,9 @@ impl UefiAllocator {
         &self,
         allocation_strategy: AllocationStrategy,
         pages: usize,
+        alignment: usize,
     ) -> Result<core::ptr::NonNull<[u8]>, EfiError> {
-        self.allocator.allocate_pages(allocation_strategy, pages)
+        self.allocator.allocate_pages(allocation_strategy, pages, alignment)
     }
 
     /// Frees the block of pages at the given address of the given size.
@@ -381,7 +382,7 @@ mod tests {
 
             let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
 
-            let buffer = ua.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 4).unwrap();
+            let buffer = ua.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 4, UEFI_PAGE_SIZE).unwrap();
             let buffer_address = buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
             assert_eq!(buffer_address & 0xFFF, 0); // must be page aligned.
             assert_eq!(buffer.len(), 0x1000 * 4); //should be 4 pages in size.
@@ -392,7 +393,8 @@ mod tests {
                 ua.free_pages(buffer_address as usize, 4).unwrap();
             }
 
-            let buffer = ua.allocate_pages(AllocationStrategy::Address(buffer_address as usize), 4).unwrap();
+            let buffer =
+                ua.allocate_pages(AllocationStrategy::Address(buffer_address as usize), 4, UEFI_PAGE_SIZE).unwrap();
             let buffer_address2 = buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
             assert_eq!(buffer_address, buffer_address2);
             assert_eq!(buffer.len(), 0x1000 * 4); //should be 4 pages in size.
@@ -414,8 +416,8 @@ mod tests {
             let bs_allocator = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, page_change_callback);
             let bc_allocator = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_CODE, 2 as _, page_change_callback);
 
-            let bs_buffer = bs_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 4).unwrap();
-            let bc_buffer = bc_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 4).unwrap();
+            let bs_buffer = bs_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 4, UEFI_PAGE_SIZE).unwrap();
+            let bc_buffer = bc_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 4, UEFI_PAGE_SIZE).unwrap();
 
             let bs_buffer_address = bs_buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
             let bc_buffer_address = bc_buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
@@ -548,13 +550,15 @@ mod tests {
             //from the unreserved allocator at the same time doesn't allocate from the preferred range or cause the reserved
             //allocator to fail in any way.
             for _page in 0..0x100 {
-                let reserved_page = reserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1).unwrap();
+                let reserved_page =
+                    reserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE).unwrap();
                 let reserved_page_addr = reserved_page.as_ptr() as *mut u8 as u64;
                 println!("reserved page address: {:#x?}", reserved_page_addr);
                 assert!(preferred_range.contains(&(reserved_page_addr)));
                 assert!(preferred_range.contains(&(reserved_page_addr + 0xFFF)));
 
-                let unreserved_page = unreserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1).unwrap();
+                let unreserved_page =
+                    unreserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE).unwrap();
                 let unreserved_page_addr = unreserved_page.as_ptr() as *mut u8 as u64;
                 println!("unreserved page address: {:#x?}", unreserved_page_addr);
                 assert!(!preferred_range.contains(&(unreserved_page_addr)));
@@ -562,7 +566,8 @@ mod tests {
             }
 
             //verify that further page allocations from the reserved allocator are outside the preferred range but succeed.
-            let reserved_page = reserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1).unwrap();
+            let reserved_page =
+                reserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE).unwrap();
             let reserved_page_addr = reserved_page.as_ptr() as *mut u8 as u64;
             println!("reserved page address: {:#x?}", reserved_page_addr);
             assert!(!preferred_range.contains(&(reserved_page_addr)));
@@ -573,7 +578,8 @@ mod tests {
             unsafe {
                 reserved_allocator.free_pages(reserved_page_addr as usize, 1).unwrap();
             }
-            let unreserved_page = unreserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1).unwrap();
+            let unreserved_page =
+                unreserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE).unwrap();
             let unreserved_page_addr = unreserved_page.as_ptr() as *mut u8 as u64;
             assert_eq!(
                 reserved_page_addr, unreserved_page_addr,
@@ -585,14 +591,16 @@ mod tests {
             unsafe {
                 reserved_allocator.free_pages(preferred_range.start as usize, 0x10).unwrap();
             }
-            let unreserved_page = unreserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1).unwrap();
+            let unreserved_page =
+                unreserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE).unwrap();
             let unreserved_page_addr = unreserved_page.as_ptr() as *mut u8 as u64;
             assert!(!preferred_range.contains(&(unreserved_page_addr)));
             assert!(!preferred_range.contains(&(unreserved_page_addr + 0xFFF)));
 
             //verify that previously freed pags within the preferred range can be reused by the reserving allocator.
             for _page in 0..0x10 {
-                let reserved_page = reserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1).unwrap();
+                let reserved_page =
+                    reserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE).unwrap();
                 let reserved_page_addr = reserved_page.as_ptr() as *mut u8 as u64;
                 println!("reserved page address: {:#x?}", reserved_page_addr);
                 assert!(preferred_range.contains(&(reserved_page_addr)));

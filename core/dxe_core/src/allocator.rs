@@ -59,7 +59,7 @@ const PRIVATE_ALLOCATOR_TRACKING_GUID: efi::Guid =
 // to a different allocator. This allocator does not need to be public since all dynamic allocations will implicitly
 // allocate from it.
 #[cfg_attr(target_os = "uefi", global_allocator)]
-static EFI_BOOT_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocator::new(
+pub(crate) static EFI_BOOT_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
     efi::BOOT_SERVICES_DATA,
     protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
@@ -420,7 +420,7 @@ extern "efiapi" fn allocate_pages(
     pages: usize,
     memory: *mut efi::PhysicalAddress,
 ) -> efi::Status {
-    match core_allocate_pages(allocation_type, memory_type, pages, memory) {
+    match core_allocate_pages(allocation_type, memory_type, pages, memory, None) {
         Ok(_) => efi::Status::SUCCESS,
         Err(status) => status.into(),
     }
@@ -431,6 +431,7 @@ pub fn core_allocate_pages(
     memory_type: efi::MemoryType,
     pages: usize,
     memory: *mut efi::PhysicalAddress,
+    alignment: Option<usize>,
 ) -> Result<(), EfiError> {
     if memory.is_null() {
         return Err(EfiError::InvalidParameter);
@@ -445,18 +446,19 @@ pub fn core_allocate_pages(
     }
 
     let handle = AllocatorMap::handle_for_memory_type(memory_type)?;
+    let alignment = alignment.unwrap_or(UEFI_PAGE_SIZE);
 
     let res = match ALLOCATORS.lock().get_or_create_allocator(memory_type, handle) {
         Ok(allocator) => {
             let result = match allocation_type {
-                efi::ALLOCATE_ANY_PAGES => allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages),
+                efi::ALLOCATE_ANY_PAGES => allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages, alignment),
                 efi::ALLOCATE_MAX_ADDRESS => {
                     let address = unsafe { memory.as_ref().expect("checked non-null is null") };
-                    allocator.allocate_pages(AllocationStrategy::BottomUp(Some(*address as usize)), pages)
+                    allocator.allocate_pages(AllocationStrategy::BottomUp(Some(*address as usize)), pages, alignment)
                 }
                 efi::ALLOCATE_ADDRESS => {
                     let address = unsafe { memory.as_ref().expect("checked non-null is null") };
-                    allocator.allocate_pages(AllocationStrategy::Address(*address as usize), pages)
+                    allocator.allocate_pages(AllocationStrategy::Address(*address as usize), pages, alignment)
                 }
                 _ => Err(EfiError::InvalidParameter),
             };
@@ -824,7 +826,8 @@ fn process_hob_allocations(hob_list: &HobList) {
                     efi::ALLOCATE_ADDRESS,
                     desc.memory_type,
                     uefi_size_to_pages!(desc.memory_length as usize),
-                    &mut address as *mut efi::PhysicalAddress)
+                    &mut address as *mut efi::PhysicalAddress,
+                    None)
                     .inspect_err(|err|{
                         if *err == EfiError::NotFound && desc.name != guid::ZERO {
                             //Guided Memory Allocation Hobs are typically MemoryAllocationModule or MemoryAllocationStack HOBs

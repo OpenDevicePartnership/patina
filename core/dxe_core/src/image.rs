@@ -72,7 +72,7 @@ impl ImageStack {
 
         // allocate the stack, newly allocated memory will have efi::MEMORY_XP already set, so we don't need to set it
         // here
-        core_allocate_pages(efi::ALLOCATE_ANY_PAGES, efi::BOOT_SERVICES_DATA, allocated_pages, &mut stack)?;
+        core_allocate_pages(efi::ALLOCATE_ANY_PAGES, efi::BOOT_SERVICES_DATA, allocated_pages, &mut stack, None)?;
 
         // attempt to set the memory space attributes for the stack guard page.
         // if we fail, we should still try to continue to boot
@@ -188,7 +188,13 @@ impl PrivateImageData {
             }
         };
 
-        core_allocate_pages(efi::ALLOCATE_ANY_PAGES, image_info.image_code_type, num_pages, &mut image_base_page)?;
+        core_allocate_pages(
+            efi::ALLOCATE_ANY_PAGES,
+            image_info.image_code_type,
+            num_pages,
+            &mut image_base_page,
+            None,
+        )?;
 
         if image_base_page == 0 {
             return Err(EfiError::OutOfResources);
@@ -257,7 +263,7 @@ impl PrivateImageData {
         // if we have a unique alignment requirement, we need to overallocate the buffer to ensure we can align the base
         let num_pages: usize =
             if alignment > UEFI_PAGE_SIZE { uefi_size_to_pages!(size + alignment) } else { uefi_size_to_pages!(size) };
-        core_allocate_pages(efi::ALLOCATE_ANY_PAGES, code_type, num_pages, &mut hii_base_page)?;
+        core_allocate_pages(efi::ALLOCATE_ANY_PAGES, code_type, num_pages, &mut hii_base_page, None)?;
 
         if hii_base_page == 0 {
             return Err(EfiError::OutOfResources);

@@ -314,6 +314,7 @@ mod tests {
                     page_type.0,
                     entry_count + 0x1,
                     core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress,
+                    None,
                 ) {
                     // because we allocate top down, we need to insert at the front of the vector
                     Ok(_) if page_type.0 != efi::BOOT_SERVICES_DATA => {
