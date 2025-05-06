@@ -1,4 +1,4 @@
-//! Module that define every performance functions used to log performance records.
+//! Module that defines all performance functions used to log performance records.
 //!
 //! ## License
 //!

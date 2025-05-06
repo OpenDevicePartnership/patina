@@ -22,8 +22,6 @@ use uefi_sdk::{base::UEFI_PAGE_SIZE, component::hob::FromHob, protocol::Protocol
 pub const EFI_SMM_COMMUNICATION_PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0xc68ed8e2, 0x9dc6, 0x4cbd, 0x9d, 0x94, &[0xdb, 0x65, 0xac, 0xc5, 0xc3, 0x32]);
 
-// GLOBAL_REMOVE_IF_UNREFERENCED EFI_GUID gMmCommonRegionHobGuid = { 0xd4ffc718, 0xfb82, 0x4274, { 0x9a, 0xfc, 0xaa, 0x8b, 0x1e, 0xef, 0x52, 0x93 } };
-
 #[derive(Debug, Clone, Copy, Pread)]
 #[repr(C)]
 pub struct MmCommRegion {
