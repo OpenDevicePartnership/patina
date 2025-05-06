@@ -1,4 +1,4 @@
-//! This module defines everything used to extract performance records from the PEI phase.
+//! This module defines everything used to extract performance records from HOBs.
 //!
 //! ## License
 //!
@@ -23,30 +23,30 @@ use uefi_sdk::{
 
 use crate::performance_record::{Iter, PerformanceRecordBuffer};
 
-/// API to extract the performance data from the PEI phase.
+/// API to extract the performance data from HOB.
 #[cfg_attr(test, automock)]
-pub trait PeiPerformanceDataExtractor {
-    /// Extract the number of image loaded and the performance records from the PEI phase.
-    fn extract_pei_perf_data(&self) -> Result<(u32, PerformanceRecordBuffer), efi::Status>;
+pub trait HobPerformanceDataExtractor {
+    /// Extract the number of image loaded and the performance records from performance HOB.
+    fn extract_hob_perf_data(&self) -> Result<(u32, PerformanceRecordBuffer), efi::Status>;
 }
 
 /// Data inside an [`EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE`] guid hob.
 #[derive(Debug, Default)]
-pub struct PeiPerformanceData {
+pub struct HobPerformanceData {
     /// Number of images loaded.
     pub load_image_count: u32,
     /// Buffer containing performance records.
     pub records_data_buffer: Vec<u8>,
 }
 
-impl FromHob for PeiPerformanceData {
+impl FromHob for HobPerformanceData {
     const HOB_GUID: r_efi::efi::Guid = EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE;
 
-    fn parse(bytes: &[u8]) -> PeiPerformanceData {
+    fn parse(bytes: &[u8]) -> HobPerformanceData {
         let mut offset = 0;
 
         let Ok([size_of_all_entries, load_image_count, _hob_is_full]) = bytes.gread::<[u32; 3]>(&mut offset) else {
-            log::error!("Performance: error while parsing PeiPerformanceRecordBuffer, return default value.");
+            log::error!("Performance: error while parsing HobPerformanceRecordBuffer, return default value.");
             return Self::default();
         };
         let records_data_buffer = bytes[offset..offset + size_of_all_entries as usize].to_vec();
@@ -55,27 +55,27 @@ impl FromHob for PeiPerformanceData {
     }
 }
 
-impl PeiPerformanceDataExtractor for Hob<'_, PeiPerformanceData> {
+impl HobPerformanceDataExtractor for Hob<'_, HobPerformanceData> {
     #[cfg(not(tarpaulin_include))]
-    fn extract_pei_perf_data(&self) -> Result<(u32, PerformanceRecordBuffer), efi::Status> {
-        merge_pei_performance_buffer(self.iter())
+    fn extract_hob_perf_data(&self) -> Result<(u32, PerformanceRecordBuffer), efi::Status> {
+        merge_hob_performance_buffer(self.iter())
     }
 }
 
-fn merge_pei_performance_buffer<'a, T>(iter: T) -> Result<(u32, PerformanceRecordBuffer), efi::Status>
+fn merge_hob_performance_buffer<'a, T>(iter: T) -> Result<(u32, PerformanceRecordBuffer), efi::Status>
 where
-    T: Iterator<Item = &'a PeiPerformanceData>,
+    T: Iterator<Item = &'a HobPerformanceData>,
 {
-    let mut pei_load_image_count = 0;
-    let mut pei_records = PerformanceRecordBuffer::new();
+    let mut load_image_count = 0;
+    let mut records = PerformanceRecordBuffer::new();
 
-    for pei_performance_record_buffer in iter {
-        pei_load_image_count += pei_performance_record_buffer.load_image_count;
-        for r in Iter::new(&pei_performance_record_buffer.records_data_buffer) {
-            pei_records.push_record(r)?;
+    for hob_performance_record_buffer in iter {
+        load_image_count += hob_performance_record_buffer.load_image_count;
+        for r in Iter::new(&hob_performance_record_buffer.records_data_buffer) {
+            records.push_record(r)?;
         }
     }
-    Ok((pei_load_image_count, pei_records))
+    Ok((load_image_count, records))
 }
 
 #[cfg(test)]
@@ -87,10 +87,10 @@ pub mod test {
 
     use crate::performance_record::{GenericPerformanceRecord, PerformanceRecordBuffer};
 
-    use super::{merge_pei_performance_buffer, PeiPerformanceData};
+    use super::{merge_hob_performance_buffer, HobPerformanceData};
 
     #[test]
-    fn test_pei_performance_record_buffer_parse_from_hob() {
+    fn test_hob_performance_record_buffer_parse_from_hob() {
         let mut buffer = [0_u8; 32];
         let mut offset = 0;
 
@@ -108,24 +108,24 @@ pub mod test {
         buffer.gwrite(hob_is_full, &mut offset).unwrap();
         buffer.gwrite(perf_record_buffer.buffer(), &mut offset).unwrap();
 
-        let pei_perf_record_buffer = PeiPerformanceData::parse(&buffer);
+        let hob_perf_record_buffer = HobPerformanceData::parse(&buffer);
 
-        assert_eq!(load_image_count, pei_perf_record_buffer.load_image_count);
-        assert_eq!(perf_record_buffer.buffer(), pei_perf_record_buffer.records_data_buffer.as_slice());
+        assert_eq!(load_image_count, hob_perf_record_buffer.load_image_count);
+        assert_eq!(perf_record_buffer.buffer(), hob_perf_record_buffer.records_data_buffer.as_slice());
     }
 
     #[test]
-    fn test_pei_performance_record_buffer_parse_from_hob_invalid() {
+    fn test_hob_performance_record_buffer_parse_from_hob_invalid() {
         let buffer = [0_u8; 1];
 
-        let pei_perf_record_buffer = PeiPerformanceData::parse(&buffer);
+        let hob_perf_record_buffer = HobPerformanceData::parse(&buffer);
 
-        assert_eq!(0, pei_perf_record_buffer.load_image_count);
-        assert!(pei_perf_record_buffer.records_data_buffer.is_empty());
+        assert_eq!(0, hob_perf_record_buffer.load_image_count);
+        assert!(hob_perf_record_buffer.records_data_buffer.is_empty());
     }
 
     #[test]
-    fn test_merge_pei_performance_buffer() {
+    fn test_merge_hob_performance_buffer() {
         let mut perf_record_buffer_1 = PerformanceRecordBuffer::new();
         perf_record_buffer_1
             .push_record(GenericPerformanceRecord { record_type: 1, length: 5, revision: 1, data: [1_u8, 2, 3, 4, 5] })
@@ -142,11 +142,11 @@ pub mod test {
             .unwrap();
 
         let buffer = [
-            PeiPerformanceData { load_image_count: 1, records_data_buffer: perf_record_buffer_1.buffer().to_vec() },
-            PeiPerformanceData { load_image_count: 1, records_data_buffer: perf_record_buffer_2.buffer().to_vec() },
+            HobPerformanceData { load_image_count: 1, records_data_buffer: perf_record_buffer_1.buffer().to_vec() },
+            HobPerformanceData { load_image_count: 1, records_data_buffer: perf_record_buffer_2.buffer().to_vec() },
         ];
 
-        let (loaded_image_count, perf_record_buffer) = merge_pei_performance_buffer(buffer.iter()).unwrap();
+        let (loaded_image_count, perf_record_buffer) = merge_hob_performance_buffer(buffer.iter()).unwrap();
 
         let mut expected_perf_record_buffer = PerformanceRecordBuffer::new();
         expected_perf_record_buffer

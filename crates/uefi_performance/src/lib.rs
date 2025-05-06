@@ -16,7 +16,6 @@ extern crate alloc;
 
 mod _smm;
 pub mod log_perf_measurement;
-pub mod pei;
 pub mod performance_measurement_protocol;
 pub mod performance_record;
 pub mod performance_table;
@@ -50,13 +49,13 @@ use uefi_sdk::{
 };
 
 use crate::{
-    pei::{PeiPerformanceData, PeiPerformanceDataExtractor},
     performance_measurement_protocol::{EdkiiPerformanceMeasurement, PerfAttribute},
     performance_record::{
         extended::{
             DualGuidStringEventRecord, DynamicStringEventRecord, GuidEventRecord, GuidQwordEventRecord,
             GuidQwordStringEventRecord,
         },
+        hob_records::{HobPerformanceData, HobPerformanceDataExtractor},
         known_records::{KnownPerfId, KnownPerfToken},
         Iter,
     },
@@ -111,7 +110,7 @@ impl Performance {
         self,
         boot_services: StandardBootServices,
         runtime_services: StandardRuntimeServices,
-        pei_records_buffers_hobs: Hob<PeiPerformanceData>,
+        records_buffers_hobs: Hob<HobPerformanceData>,
         mm_comm_region_hobs: Hob<MmCommRegion>,
     ) -> Result<(), EfiError> {
         let fbpt = set_static_state(StandardBootServices::clone(&boot_services))
@@ -121,7 +120,7 @@ impl Performance {
             return Ok(());
         };
 
-        self._entry_point(boot_services, runtime_services, pei_records_buffers_hobs, *mm_comm_region, fbpt)
+        self._entry_point(boot_services, runtime_services, records_buffers_hobs, *mm_comm_region, fbpt)
     }
 
     /// Entry point that have generic parameter.
@@ -129,7 +128,7 @@ impl Performance {
         self,
         boot_services: BB,
         runtime_services: RR,
-        pei_records_buffers_hobs: P,
+        records_buffers_hobs: P,
         mm_comm_region: MmCommRegion,
         fbpt: &'static TplMutex<'static, F, B>,
     ) -> Result<(), EfiError>
@@ -138,7 +137,7 @@ impl Performance {
         B: BootServices + 'static,
         RR: AsRef<R> + Clone + 'static,
         R: RuntimeServices + 'static,
-        P: PeiPerformanceDataExtractor,
+        P: HobPerformanceDataExtractor,
         F: FirmwareBasicBootPerfTable,
     {
         // Register EndOfDxe event to allocate the boot performance table and report the table address through status code.
@@ -150,21 +149,19 @@ impl Performance {
             &EVENT_GROUP_END_OF_DXE,
         )?;
 
-        let (pei_load_image_count, pei_perf_records) = pei_records_buffers_hobs
-            .extract_pei_perf_data()
+        let (hob_load_image_count, hob_perf_records) = records_buffers_hobs
+            .extract_hob_perf_data()
             .inspect(|(_, perf_buf)| {
-                log::info!("Performance: {} PEI performance records found.", perf_buf.iter().count());
+                log::info!("Performance: {} Hob performance records found.", perf_buf.iter().count());
             })
             .inspect_err(|_| {
-                log::error!(
-                    "Performance: Error while trying to insert pei performance records, using default values"
-                )
+                log::error!("Performance: Error while trying to insert hob performance records, using default values")
             })
             .unwrap_or_default();
 
-        // Initialize perf data form PEI values.
-        LOAD_IMAGE_COUNT.store(pei_load_image_count, Ordering::Relaxed);
-        fbpt.lock().set_perf_records(pei_perf_records);
+        // Initialize perf data form hob values.
+        LOAD_IMAGE_COUNT.store(hob_load_image_count, Ordering::Relaxed);
+        fbpt.lock().set_perf_records(hob_perf_records);
 
         // Install the protocol interfaces for DXE performance.
         boot_services.as_ref().install_protocol_interface(
@@ -604,7 +601,7 @@ mod test {
     };
 
     use crate::{
-        pei::MockPeiPerformanceDataExtractor,
+        hob_records::MockHobPerformanceDataExtractor,
         performance_measurement_protocol::EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID,
         performance_record::PerformanceRecordBuffer,
         performance_table::{FirmwarePerformanceVariable, MockFirmwareBasicBootPerfTable},
@@ -700,9 +697,9 @@ mod test {
 
         let runtime_services = MockRuntimeServices::new();
 
-        let mut pei_perf_data_extractor = MockPeiPerformanceDataExtractor::new();
-        pei_perf_data_extractor
-            .expect_extract_pei_perf_data()
+        let mut hob_perf_data_extractor = MockHobPerformanceDataExtractor::new();
+        hob_perf_data_extractor
+            .expect_extract_hob_perf_data()
             .once()
             .returning(|| Ok((10, PerformanceRecordBuffer::new())));
 
@@ -717,7 +714,7 @@ mod test {
         let _ = Performance._entry_point(
             Rc::new(boot_services),
             Rc::new(runtime_services),
-            pei_perf_data_extractor,
+            hob_perf_data_extractor,
             mm_comm_region,
             fbpt,
         );

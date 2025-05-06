@@ -8,6 +8,7 @@
 //!
 
 pub mod extended;
+pub mod hob_records;
 pub mod known_records;
 
 use alloc::vec::Vec;
