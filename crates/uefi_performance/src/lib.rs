@@ -601,9 +601,8 @@ mod test {
     };
 
     use crate::{
-        hob_records::MockHobPerformanceDataExtractor,
         performance_measurement_protocol::EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID,
-        performance_record::PerformanceRecordBuffer,
+        performance_record::{hob_records::MockHobPerformanceDataExtractor, PerformanceRecordBuffer},
         performance_table::{FirmwarePerformanceVariable, MockFirmwareBasicBootPerfTable},
     };
 
