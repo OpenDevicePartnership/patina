@@ -48,6 +48,7 @@ uefi_debugger = { workspace = true }
 uefi_device_path = { workspace = true }
 uefi_depex = { workspace = true}
 uefi_performance = { workspace = true }
+uefi_test = { workspace = true }
 
 [dev-dependencies]
 # To avoid circular dependencies, cargo-release skips dev dependencies when evaluating the release order for

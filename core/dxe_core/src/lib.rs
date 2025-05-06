@@ -52,6 +52,7 @@ mod hw_interrupt_protocol;
 mod image;
 mod memory_attributes_protocol;
 mod memory_attributes_table;
+mod memory_manager;
 mod misc_boot_services;
 mod pecoff;
 mod protocol_db;
@@ -68,6 +69,7 @@ use core::{ffi::c_void, ptr, str::FromStr};
 
 use alloc::{boxed::Box, vec::Vec};
 use gcd::SpinLockedGcd;
+use memory_manager::CoreMemoryManager;
 use mu_pi::{
     fw_fs,
     hob::{get_c_hob_list_size, HobList},
@@ -240,6 +242,7 @@ where
 
         self.storage.add_service(cpu);
         self.storage.add_service(interrupt_manager);
+        self.storage.add_service(CoreMemoryManager);
 
         Core {
             physical_hob_list,
