@@ -110,9 +110,9 @@ pub struct PerformanceMeasurementEnabled(pub bool);
 /// Performance Lib Component.
 #[derive(IntoComponent)]
 
-pub struct PerformanceLib;
+pub struct Performance;
 
-impl PerformanceLib {
+impl Performance {
     /// Entry point of [`PerformanceLib`]
     #[cfg(not(tarpaulin_include))] // This is tested via the generic version, see _entry_point.
     pub fn entry_point(
@@ -734,7 +734,7 @@ mod test {
         let fbpt = TplMutex::new(unsafe { &*ptr::addr_of!(boot_services) }, Tpl::NOTIFY, fbpt);
         let fbpt = unsafe { &*ptr::addr_of!(fbpt) };
 
-        let _ = PerformanceLib._entry_point(
+        let _ = Performance._entry_point(
             Rc::new(boot_services),
             Rc::new(runtime_services),
             pei_perf_data_extractor,
