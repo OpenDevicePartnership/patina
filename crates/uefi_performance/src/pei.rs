@@ -46,7 +46,7 @@ impl FromHob for PeiPerformanceData {
         let mut offset = 0;
 
         let Ok([size_of_all_entries, load_image_count, _hob_is_full]) = bytes.gread::<[u32; 3]>(&mut offset) else {
-            log::error!("Performance Lib: error while parsing PeiPerformanceRecordBuffer, return default value.");
+            log::error!("Performance: error while parsing PeiPerformanceRecordBuffer, return default value.");
             return Self::default();
         };
         let records_data_buffer = bytes[offset..offset + size_of_all_entries as usize].to_vec();

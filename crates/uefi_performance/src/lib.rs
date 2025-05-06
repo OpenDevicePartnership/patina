@@ -1,5 +1,5 @@
 //! A library that enables performance analysis of every step of the UEFI boot process.
-//! The Performance library exports a protocol that can be used by other libraries or drivers to publish performance reports.
+//! The Performance component install a protocol that can be used by other libraries or drivers to publish performance reports.
 //! These reports are saved in the Firmware Basic Boot Performance Table (FBPT), so they can be extracted later from the operating system.
 //!
 //! ## License
@@ -28,9 +28,7 @@ use core::{
     ffi::{c_char, c_void, CStr},
     mem::MaybeUninit,
     ptr,
-    result::Result::Ok,
     sync::atomic::{AtomicBool, AtomicU32, Ordering},
-    todo,
 };
 
 use r_efi::{
@@ -43,7 +41,7 @@ pub use mu_rust_helpers::function;
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 use uefi_sdk::{
     boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
-    component::{hob::Hob, params::Config, IntoComponent},
+    component::{hob::Hob, IntoComponent},
     error::EfiError,
     guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
     protocol::status_code::StatusCodeRuntimeProtocol,
@@ -69,15 +67,13 @@ use _smm::{CommunicateProtocol, MmCommRegion, SmmFpdtGetRecordDataByOffset, SmmF
 
 pub use log_perf_measurement::*;
 
-static PERF_MEASUREMENT_ENABLED: AtomicBool = AtomicBool::new(true);
-
 static LOAD_IMAGE_COUNT: AtomicU32 = AtomicU32::new(0);
 
 static STATIC_STATE_IS_INIT: AtomicBool = AtomicBool::new(false);
 static mut BOOT_SERVICES: MaybeUninit<StandardBootServices> = MaybeUninit::uninit();
 static mut FBPT: MaybeUninit<TplMutex<FBPT>> = MaybeUninit::uninit();
 
-/// Set performance lib static state.
+/// Set performance component static state.
 #[allow(static_mut_refs)]
 pub fn set_static_state(boot_services: StandardBootServices) -> Option<&'static TplMutex<'static, FBPT>> {
     // Return Ok if STATIC_STATE_INIT is false and set it to true. Make this run only once.
@@ -92,7 +88,7 @@ pub fn set_static_state(boot_services: StandardBootServices) -> Option<&'static 
     }
 }
 
-/// Get performance lib static state.
+/// Get performance component static state.
 #[allow(static_mut_refs)]
 pub fn get_static_state() -> Option<(&'static StandardBootServices, &'static TplMutex<'static, FBPT>)> {
     if STATIC_STATE_IS_INIT.load(Ordering::Relaxed) {
@@ -103,11 +99,7 @@ pub fn get_static_state() -> Option<(&'static StandardBootServices, &'static Tpl
     }
 }
 
-#[derive(Debug, Default)]
-// Config used to endable or disable the performance measuremnt. (Disabled by default)
-pub struct PerformanceMeasurementEnabled(pub bool);
-
-/// Performance Lib Component.
+/// Performance Component.
 #[derive(IntoComponent)]
 
 pub struct Performance;
@@ -117,7 +109,6 @@ impl Performance {
     #[cfg(not(tarpaulin_include))] // This is tested via the generic version, see _entry_point.
     pub fn entry_point(
         self,
-        measurement_enabled: Config<PerformanceMeasurementEnabled>,
         boot_services: StandardBootServices,
         runtime_services: StandardRuntimeServices,
         pei_records_buffers_hobs: Hob<PeiPerformanceData>,
@@ -129,8 +120,6 @@ impl Performance {
         let Some(mm_comm_region) = mm_comm_region_hobs.iter().find(|r| r.is_user_type()) else {
             return Ok(());
         };
-
-        PERF_MEASUREMENT_ENABLED.store(measurement_enabled.0, Ordering::Relaxed);
 
         self._entry_point(boot_services, runtime_services, pei_records_buffers_hobs, *mm_comm_region, fbpt)
     }
@@ -161,19 +150,14 @@ impl Performance {
             &EVENT_GROUP_END_OF_DXE,
         )?;
 
-        if !PERF_MEASUREMENT_ENABLED.load(Ordering::Relaxed) {
-            log::info!("Performance Lib: Measuremnt is not enable, only FBPT table will be published.");
-            return Ok(());
-        }
-
         let (pei_load_image_count, pei_perf_records) = pei_records_buffers_hobs
             .extract_pei_perf_data()
             .inspect(|(_, perf_buf)| {
-                log::info!("Performance Lib: {} PEI performance records found.", perf_buf.iter().count());
+                log::info!("Performance: {} PEI performance records found.", perf_buf.iter().count());
             })
             .inspect_err(|_| {
                 log::error!(
-                    "Performance Lib: Error while trying to insert pei performance records, using default values"
+                    "Performance: Error while trying to insert pei performance records, using default values"
                 )
             })
             .unwrap_or_default();
@@ -182,7 +166,7 @@ impl Performance {
         LOAD_IMAGE_COUNT.store(pei_load_image_count, Ordering::Relaxed);
         fbpt.lock().set_perf_records(pei_perf_records);
 
-        // Install the protocol interfaces for DXE performance library instance.
+        // Install the protocol interfaces for DXE performance.
         boot_services.as_ref().install_protocol_interface(
             None,
             Box::new(EdkiiPerformanceMeasurement { create_performance_measurement }),
@@ -231,7 +215,7 @@ extern "efiapi" fn report_fpdt_record_buffer<BB, B, RR, R, F>(
         performance_table::find_previous_table_address(runtime_services.as_ref()),
         boot_services.as_ref(),
     ) else {
-        log::error!("Performance Lib: Fail to report FPDT.");
+        log::error!("Performance: Fail to report FPDT.");
         return;
     };
 
@@ -240,7 +224,7 @@ extern "efiapi" fn report_fpdt_record_buffer<BB, B, RR, R, F>(
     const EFI_SOFTWARE_DXE_BS_DRIVER: u32 = EFI_SOFTWARE | 0x00050000;
 
     let Ok(p) = (unsafe { boot_services.as_ref().locate_protocol::<StatusCodeRuntimeProtocol>(None) }) else {
-        log::error!("Performance Lib: Fail to find status code protocol.");
+        log::error!("Performance: Fail to find status code protocol.");
         todo!()
     };
     let status = p.report_status_code(
@@ -253,7 +237,7 @@ extern "efiapi" fn report_fpdt_record_buffer<BB, B, RR, R, F>(
     );
 
     if status.is_err() {
-        log::error!("Performance Lib: Fail to report FBPT status code.");
+        log::error!("Performance: Fail to report FBPT status code.");
     }
 
     // SAFETY: This operation is valid because the expected configuration type of a entry with guid `EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE`
@@ -265,7 +249,7 @@ extern "efiapi" fn report_fpdt_record_buffer<BB, B, RR, R, F>(
         )
     };
     if status.is_err() {
-        log::error!("Performance Lib: Fail to install configuration table for FPDT firmware performance.");
+        log::error!("Performance: Fail to install configuration table for FPDT firmware performance.");
     }
 }
 
@@ -283,7 +267,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records<BB, B, F>(
 
     // SAFETY: This is safe because the reference returned by locate_protocol is never mutated after installation.
     let Ok(communication) = (unsafe { boot_services.as_ref().locate_protocol::<CommunicateProtocol>(None) }) else {
-        log::error!("Performance Lib: Could not locate communicate protocol interface.");
+        log::error!("Performance: Could not locate communicate protocol interface.");
         return;
     };
 
@@ -297,14 +281,14 @@ extern "efiapi" fn fetch_and_add_smm_performance_records<BB, B, F>(
         }
         Ok(SmmFpdtGetRecordSize { return_status, .. }) => {
             log::error!(
-                "Performance Lib: Asking for the smm perf records size result in an error with return status of: {:?}",
+                "Performance: Asking for the smm perf records size result in an error with return status of: {:?}",
                 return_status
             );
             return;
         }
         Err(status) => {
             log::error!(
-                "Performance Lib: Error while trying to communicate with communicate protocol with error code: {:?}",
+                "Performance: Error while trying to communicate with communicate protocol with error code: {:?}",
                 status
             );
             return;
@@ -326,14 +310,14 @@ extern "efiapi" fn fetch_and_add_smm_performance_records<BB, B, F>(
             }
             Ok(SmmFpdtGetRecordDataByOffset { return_status, .. }) => {
                 log::error!(
-                    "Performance Lib: Asking for smm perf records data result in an error with return status of: {:?}",
+                    "Performance: Asking for smm perf records data result in an error with return status of: {:?}",
                     return_status
                 );
                 return;
             }
             Err(status) => {
                 log::error!(
-                    "Performance Lib: Error while trying to communicate with communicate protocol with error status code: {:?}",
+                    "Performance: Error while trying to communicate with communicate protocol with error status code: {:?}",
                     status
                 );
                 return;
@@ -350,7 +334,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records<BB, B, F>(
         n += 1;
     }
 
-    log::info!("Performance Lib: {} smm performance records found.", n);
+    log::info!("Performance: {} smm performance records found.", n);
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -366,10 +350,6 @@ pub unsafe extern "efiapi" fn create_performance_measurement(
     identifier: u32,
     attribute: PerfAttribute,
 ) -> efi::Status {
-    if !PERF_MEASUREMENT_ENABLED.load(Ordering::Relaxed) {
-        return efi::Status::SUCCESS;
-    }
-
     let Some((boot_services, fbpt)) = get_static_state() else {
         // If the state is not initialized, it is because perf in not enabled.
         return efi::Status::SUCCESS;
@@ -416,7 +396,7 @@ pub unsafe extern "efiapi" fn create_performance_measurement(
         Ok(_) => efi::Status::SUCCESS,
         Err(status) => {
             log::error!(
-                "Performance Lib: Something went wrong in create_performance_measurement. Status code: {:?}",
+                "Performance: Something went wrong in create_performance_measurement. Status code: {:?}",
                 status
             );
             status
@@ -463,7 +443,7 @@ where
         KnownPerfId::ModuleStart | KnownPerfId::ModuleEnd => {
             let module_handle = caller_identifier as efi::Handle;
             let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance Lib: Could not find the guid for module handle: {:?}", module_handle);
+                log::error!("Performance: Could not find the guid for module handle: {:?}", module_handle);
                 return Err(efi::Status::INVALID_PARAMETER);
             };
             let record = GuidEventRecord::new(perf_id, 0, timestamp, guid);
@@ -475,7 +455,7 @@ where
             }
             let module_handle = caller_identifier as efi::Handle;
             let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance Lib: Could not find the guid for module handle: {:?}", module_handle);
+                log::error!("Performance: Could not find the guid for module handle: {:?}", module_handle);
                 return Err(efi::Status::INVALID_PARAMETER);
             };
             let record =
@@ -489,7 +469,7 @@ where
         | KnownPerfId::ModuleDbStopStart => {
             let module_handle = caller_identifier as efi::Handle;
             let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance Lib: Could not find the guid for module handle: {:?}", module_handle);
+                log::error!("Performance: Could not find the guid for module handle: {:?}", module_handle);
                 return Err(efi::Status::INVALID_PARAMETER);
             };
             let record = GuidQwordEventRecord::new(perf_id, 0, timestamp, guid, address as u64);
@@ -498,7 +478,7 @@ where
         KnownPerfId::ModuleDbStopEnd => {
             let module_handle = caller_identifier as efi::Handle;
             let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance Lib: Could not find the guid for module handle: {:?}", module_handle);
+                log::error!("Performance: Could not find the guid for module handle: {:?}", module_handle);
                 return Err(efi::Status::INVALID_PARAMETER);
             };
             // TODO: use of commponent 2 protocol, need usecase to test further. https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/192
