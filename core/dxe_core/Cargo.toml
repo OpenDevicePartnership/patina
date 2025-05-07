@@ -6,6 +6,7 @@ repository.workspace = true
 license.workspace = true
 edition.workspace = true
 publish.workspace = true
+readme = "README.md"
 description = "A pure rust implementation of the UEFI DXE Core."
 
 [lib]
@@ -53,9 +54,9 @@ uefi_performance = { workspace = true }
 # cargo-release, however they are still used when verifying the package is compileable. Any dev-dependency that is
 # local to the workspace should be added via `path` instead of `workspace = true` so that that it does not fail to
 # compile due to the dev-dependency not being published yet.
-sample_components = { workspace = true }
-section_extractor = { workspace = true }
-uefi_collections = { workspace = true }
+sample_components = { path = "../../components/sample_components" }
+section_extractor = { path = "../../core/section_extractor" }
+uefi_collections = { path = "../../core/uefi_collections" }
 mockall = { workspace = true }
 
 [target.'cfg(all(target_arch="aarch64"))'.dependencies]

@@ -22,6 +22,9 @@ log = { workspace = true }
 mockall = { workspace = true, optional = true }
 
 [dev-dependencies]
+# To avoid circular dependencies, cargo-release skips dev dependencies when evaluating the release order for
+# cargo-release, however they are still used when verifying the package is compileable. Any dev-dependency that is
+# local to the workspace should be added via `path` instead of `workspace = true` so that that it does not fail to
+# compile due to the dev-dependency not being published yet.
+boot_services = { path="../../sdk/boot_services", features = ["mockall"] }
 mockall = { workspace = true }
-
-boot_services = { workspace = true, features = ["mockall"] }
