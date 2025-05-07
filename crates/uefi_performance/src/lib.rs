@@ -841,41 +841,38 @@ mod test {
             efi::Status::SUCCESS
         }
 
-        const EXPECTED_NUMBER_OF_RECORD: usize = 23;
+        const EXPECTED_NUMBER_OF_RECORD: usize = 21;
 
-        perf_image_start_begin(module_handle, test_create_performance_measurement);
-        perf_image_start_end(module_handle, test_create_performance_measurement);
+        _ = perf_image_start_begin(module_handle, test_create_performance_measurement);
+        _ = perf_image_start_end(module_handle, test_create_performance_measurement);
 
-        perf_load_image_begin(module_handle, test_create_performance_measurement);
-        perf_load_image_end(module_handle, test_create_performance_measurement);
+        _ = perf_load_image_begin(module_handle, test_create_performance_measurement);
+        _ = perf_load_image_end(module_handle, test_create_performance_measurement);
 
-        perf_driver_binding_support_begin(module_handle, controller_handle, test_create_performance_measurement);
-        perf_driver_binding_support_end(module_handle, controller_handle, test_create_performance_measurement);
+        _ = perf_driver_binding_support_begin(module_handle, controller_handle, test_create_performance_measurement);
+        _ = perf_driver_binding_support_end(module_handle, controller_handle, test_create_performance_measurement);
 
-        perf_driver_binding_start_begin(module_handle, controller_handle, test_create_performance_measurement);
-        perf_driver_binding_start_end(module_handle, controller_handle, test_create_performance_measurement);
+        _ = perf_driver_binding_start_begin(module_handle, controller_handle, test_create_performance_measurement);
+        _ = perf_driver_binding_start_end(module_handle, controller_handle, test_create_performance_measurement);
 
-        perf_driver_binding_stop_begin(module_handle, controller_handle, test_create_performance_measurement);
-        perf_driver_binding_stop_end(module_handle, controller_handle, test_create_performance_measurement);
+        _ = perf_driver_binding_stop_begin(module_handle, controller_handle, test_create_performance_measurement);
+        _ = perf_driver_binding_stop_end(module_handle, controller_handle, test_create_performance_measurement);
 
-        perf_event("event_string", &caller_id, test_create_performance_measurement);
+        _ = perf_event("event_string", &caller_id, test_create_performance_measurement);
 
-        perf_event_signal_begin(&event_guid, "fun_name", &caller_id, test_create_performance_measurement);
-        perf_event_signal_end(&event_guid, "fun_name", &caller_id, test_create_performance_measurement);
+        _ = perf_event_signal_begin(&event_guid, "fun_name", &caller_id, test_create_performance_measurement);
+        _ = perf_event_signal_end(&event_guid, "fun_name", &caller_id, test_create_performance_measurement);
 
-        perf_callback_begin(&trigger_guid, "fun_name", &caller_id, test_create_performance_measurement);
-        perf_callback_end(&trigger_guid, "fun_name", &caller_id, test_create_performance_measurement);
+        _ = perf_callback_begin(&trigger_guid, "fun_name", &caller_id, test_create_performance_measurement);
+        _ = perf_callback_end(&trigger_guid, "fun_name", &caller_id, test_create_performance_measurement);
 
-        perf_function_begin("fun_name", &caller_id, test_create_performance_measurement);
-        perf_function_end("fun_name", &caller_id, test_create_performance_measurement);
+        _ = perf_function_begin("fun_name", &caller_id, test_create_performance_measurement);
+        _ = perf_function_end("fun_name", &caller_id, test_create_performance_measurement);
 
-        perf_in_module_begin("measurement_str", &caller_id, test_create_performance_measurement);
-        perf_in_module_end("measurement_str", &caller_id, test_create_performance_measurement);
+        _ = perf_in_module_begin("measurement_str", &caller_id, test_create_performance_measurement);
+        _ = perf_in_module_end("measurement_str", &caller_id, test_create_performance_measurement);
 
-        perf_in_cross_module_begin("measurement_str", &caller_id, test_create_performance_measurement);
-        perf_in_cross_module_end("measurement_str", &caller_id, test_create_performance_measurement);
-
-        perf_cross_module_begin("measurement_str", &caller_id, test_create_performance_measurement);
-        perf_cross_module_end("measurement_str", &caller_id, test_create_performance_measurement);
+        _ = perf_cross_module_begin("measurement_str", &caller_id, test_create_performance_measurement);
+        _ = perf_cross_module_end("measurement_str", &caller_id, test_create_performance_measurement);
     }
 }

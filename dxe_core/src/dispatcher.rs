@@ -494,14 +494,14 @@ pub fn core_dispatcher() -> Result<(), EfiError> {
         return Err(EfiError::AlreadyStarted);
     }
 
-    perf_function_begin(function!(), &CALLER_ID, uefi_performance::create_performance_measurement);
+    _ = perf_function_begin(function!(), &CALLER_ID, uefi_performance::create_performance_measurement);
 
     let mut something_dispatched = false;
     while dispatch()? {
         something_dispatched = true;
     }
 
-    perf_function_end(function!(), &CALLER_ID, uefi_performance::create_performance_measurement);
+    _ = perf_function_end(function!(), &CALLER_ID, uefi_performance::create_performance_measurement);
 
     if something_dispatched {
         Ok(())
