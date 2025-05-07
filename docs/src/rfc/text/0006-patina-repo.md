@@ -5,6 +5,8 @@ This RFC proposes a single Patina repository that contains all code and document
 ## Change Log
 
 - 2025-04-29: Initial draft of RFC.
+- 2025-04-30: Added a proposal for existing public repositories to eventually be archived and moved into the Patina
+  repository.
 
 ## Motivation
 
