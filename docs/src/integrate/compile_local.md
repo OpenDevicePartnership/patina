@@ -1,7 +1,7 @@
-# Compiling through EDKII
+# Compiling through EDK II
 
 This section will walk you through adding a rust crate to your existing platform repository so
-that it can be compiled via the existing EDKII build system.
+that it can be compiled via the existing EDK II build system.
 
 ## Create the crate
 

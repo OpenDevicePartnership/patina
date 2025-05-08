@@ -312,7 +312,7 @@ extern "efiapi" fn create_performance_measurement(
                 let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, &module_name);
                 _ = FBPT.lock().add_record(record);
             }
-            // TODO something to do if address is not 0 need example to continue development. (https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/194)
+            // TODO something to do if address is not 0 need example to continue development. (https://github.com/OpenDevicePartnership/patina/issues/194)
         }
         PerfId::PERF_EVENT_SIGNAL_START
         | PerfId::PERF_EVENT_SIGNAL_END
@@ -573,16 +573,16 @@ fn get_module_info_from_handle(
         let _image_bytes = unsafe {
             slice::from_raw_parts(loaded_image.image_base as *const _ as *const u8, loaded_image.image_size as usize)
         };
-        // TODO: Find Module name in handle (image_bytes) (https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/187).
+        // TODO: Find Module name in handle (image_bytes) (https://github.com/OpenDevicePartnership/patina/issues/187).
 
         return Ok((None, guid));
     }
 
     // Method 2 - Get the name string from ComponentName2
-    // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/192
+    // TODO: https://github.com/OpenDevicePartnership/patina/issues/192
 
     // Method 3 - Get the name string from FFS UI Section.
-    // TODO: https://github.com/OpenDevicePartnership/uefi-dxe-core/issues/193
+    // TODO: https://github.com/OpenDevicePartnership/patina/issues/193
 
     Ok((None, guid))
 }

@@ -14,12 +14,11 @@ Below is a currated list of resources to help get you started with rust developm
 
 ## Repositories
 
-Other repositories related to the uefi-dxe-core project.
+Other repositories related to the patina project.
 
 | Repository | Description |
 |------------|-------------|
-| [uefi-dxe-core](https://github.com/OpenDevicePartnership/uefi-dxe-core) | The pure-rust implementation of the UEFI DXE Core. |
-| [uefi-core](https://github.com/OpenDevicePartnership/uefi-core) | Abstraction point implementations, such as for CPU initialization, serial writing, logging, etc. |
+| [patina](https://github.com/OpenDevicePartnership/patina) | The pure-rust implementation of the UEFI DXE Core. |
 | [mtrr](https://github.com/OpenDevicePartnership/mtrr) | Memory Type Range Registers for x86_64. |
 | [paging](https://github.com/OpenDevicePartnership/paging) | Paging implementation. |
 | [r-efi](https://github.com/r-efi/r-efi) | UEFI reference specification protocol constants and definitions. |

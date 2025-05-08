@@ -26,7 +26,7 @@ silicon vendor specific reasons.
 in the rust implementation, we split the `LibraryClasses` concept into two distinct concepts -
 [Traits](https://blog.rust-lang.org/2015/05/11/traits.html) for abstractions and [Crates](https://doc.rust-lang.org/book/ch07-01-packages-and-crates.html)
 for code reuse. To learn how to effectively use Traits and Crates to represent EDKII
-LibraryClasses, Please review the [Abstractions](dev/abstractions.md) and [Code reuse](dev/reuse.md)
+LibraryClasses, Please review the [Abstractions](dev/principles/abstractions.md) and [Code reuse](dev/principles/reuse.md)
 sections of the Best Practices Chapter.
 
 ``` admonish important

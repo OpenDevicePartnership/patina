@@ -24,7 +24,7 @@ expects that a `Self::entry_point(self, ...) -> uefi_sdk::error::Result<()> { ..
 function definition can be any number of parameters twho support dependency injection as shown below. The function
 name can be overwritten with the attribute macro `#[entry_point(path = path::to::func)]` on the same struct.
 
-See [Samples](https://github.com/OpenDevicePartnership/uefi-dxe-core/tree/main/sample_components) or [Examples](#examples)
+See [Samples](https://github.com/OpenDevicePartnership/patina/tree/main/sample_components) or [Examples](#examples)
 for examples of basic components using these two methods.
 
 Due to this, developing a component is as simple as writing a function whose parameters are a part of the below list of

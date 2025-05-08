@@ -17,6 +17,7 @@ registering itself with the core, and instead moves the parsing to the core.
   guided HOB, and to be able to remove the need to register HOBs with the core. Update `HobConfig` to `FromHob`.
   Remove `with_hob_config`.
 - 2025-04-15: Move `parse_hobs` logic into core, so components with access to `Storage` from using `parse_hobs`
+- 2025-05-08 - Amendment: Remove references to the now deprecated `uefi-sdk` repo
 
 ## Motivation
 
@@ -34,7 +35,7 @@ This proposal will use the existing `Storage` logic from the `uefi_sdk` to store
 
 1. Enable a simple interface for component dependency injectable configuration to be produced via a guided HOB in the
    HOB list
-2. Create core / uefi-sdk `T`'s for standard spec-defined guided HOBs that are available to component that wants it.
+2. Create `T`'s for standard spec-defined guided HOBs that are available to component that wants it.
 
 ## Requirements
 

@@ -1,18 +1,18 @@
 # Code Organization
 
-The Rust DXE Core is a complex system with many constituent parts. This document describes the organization of the
-overall codebase, including the key dependencies that are shared between the Rust DXE Core and other components. The
-goal is to provide a high-level overview of these relationships.
+Patina contains many constituent parts. This document describes the organization of the overall codebase, including the
+key dependencies that are shared between the Rust DXE Core and other components. The goal is to provide a high-level
+overview of these relationships.
 
 This is meant to be a living document, and as the code base evolves, this document should be updated to reflect the
 current state.
 
 ## General Principles
 
-As we build the elements necessary for a functional DXE Core, many supporting systems must necessarily be created along
-the way. In the end, a set of largely independent software entities are integrated to ultimately fulfill the
-dependencies necessary for a functional DXE Core. The fact code was conceived to support the DXE Core does not mean it
-is intrinsically coupled with DXE Core.
+As we build the elements necessary for a functional UEFI firmware, many supporting systems must necessarily be created
+along the way. In the end, a set of largely independent software entities are integrated to ultimately fulfill the
+dependencies necessary for a functional firmware. The fact code was conceived to support the UEFI firmware does not
+always mean it is intrinsically coupled with UEFI firmware.
 
 The principles described here are not meant to be more detailed or complex than necessary. Their goal is to support
 the organization of Rust code developed in this project in a consistent manner. It is not a goal to describe anything
@@ -89,7 +89,7 @@ code, when possible, to make the code more portable, testable, and maintainable.
 A package is a bundle of one or more crates. A crate is the smallest amount of code the Rust compiler considers at a
 time. Code is organized in crates with modules. All of these serve a purpose and must be considered.
 
-For example, modules allow similar code to be grouped, control the visibility of code, and the path of items in th
+For example, modules allow similar code to be grouped, control the visibility of code, and the path of items in the
 module hierarchy. Crates support code reuse across projects – ours and others. Crates can be independently versioned.
 Crates are published as standalone entities to crates.io. Crates allow us to clearly see external dependencies for
 the code in the crate. Packages can be used to build multiple crates in a repo where that makes sense like a library
@@ -99,7 +99,7 @@ When we think about code organization at a high-level, we generally think about 
 reusability across projects. That’s the level where we can clearly see what functionality is being produced and
 consumed by a specific set of code. Modules can fall into place within crates as needed.
 
-Therefore, it is recommended to start thinking about organization at the crate level.
+Therefore, it is recommended to think about organization at the crate level.
 
 - What is the cohesion of the code within this reusable unit of software?
 - If a project depends upon this crate for one interface it exposes, is it likely that project will need the other
@@ -111,28 +111,8 @@ Therefore, it is recommended to start thinking about organization at the crate l
 
 ### Repo and Packages
 
-There are a lot of strategies for assigning crates to repositories.
-
-- Administrative – Largely non-technical. Artificial limits imposed on the number of repos or some organization cost
-  associated with repos that influences their creation and constrains their number.
-- Ergonomics – Developer efficiency. Not having to switch repositories often between crate dependencies.
-- Logistical – Management and consistency. Coordinating work scales in complexity across the number of repos involved.
-- Technical – Repos are created solely considering the role they serve in hosting the content placed there.
-
-The administrative category is largely illusory and caters more to GitHub administrators rather than developers.
-Logistics are a concern, particularly early in code development. Fortunately, in Rust, crate development can occur
-mostly independent of repository assignment. Therefore, all of the software development principles previously discussed
-can be applied to crate and module separation and then repo creation fall into place when the code is ready to be
-shared with a wider audience. As a public project, the technical reasons will ultimately serve the long-term interests
-of the project best. Allowing code to be managed at the proper scope for all its contributors and users.
-
-Also consider that the repo defines focus for its content and purpose - the revision history, versioning, documentation,
-crate-specific workflows, maintainers, policies, etc. In some cases, it might make sense for a crate to share a repo
-with other crates. That might be the case if what binds the two crates being in a single repo is beneficial to their
-management – a single revision history, a single repo version, a single repo issue list, and so on.
-
-Note that this section is not meant to be prescriptive about how to manage repos. The guidance is to consider the
-various factors for repo assignment and then make the best decision for the long term interests of the project.
+All Patina code is placed into the `patina` repo unless it has been carefully designed to be independent of Patina and
+serve a Rust audience beyond UEFI.
 
 ## Code Organization Guidelines
 
@@ -143,13 +123,10 @@ wider community.
 Note: These categories are an initial proposal based on code trends that have developed over time in our work and
 subject to change based on review.
 
-- DXE Core Specific Crate (`uefi-dxe-core` repository)
-  - Independent functionality exclusively used by the DXE Core.
+- Core Specific Crate (`core`)
+  - Functionality exclusively used in core environment like DXE Core, MM Core, and PEI Core.
   - Examples: DXE Core, Event infrastructure, GCD, memory allocator
-- Core Specific Crate (`uefi-core` repository)
-  - Code that is specific to creating core environments, like the PEI, DXE, and MM  environments.
-  - Examples: Protocol DB, Common PE/COFF (goblin) wrappers, common section extraction code
-- Module Development (SDK) Crate (`uefi-sdk` repository)
+- Module Development (SDK) Crate (`sdk`)
   - Functionality necessary to build UEFI modules.
     - Can be used by core or individual driver components.
   - Examples:
@@ -159,19 +136,14 @@ subject to change based on review.
     - GUID services
     - Performance services
     - TPL services
-- Utility Crates
-  - Code that is helpful to build UEFI modules but less common and/or has a strong need for independence.
+- Utility Crates (`util`)
+  - Code that is helpful to build UEFI modules but less common and/or has a strong need for independence. These are
+    generally self-contained optional sets of functionality.
   - Examples:
     - Code to draw to the screen
     - Crypto
-- Feature Crates
-  - Well-defined features with focused interfaces and documentation.
-  - Examples:
-    - DFCI
-- Generic Crates
-  - Code that is completely independent of UEFI and solves general problems that occur in other software.
-  - Example:
-    - HID report descriptor parsing, LZMA (bare metal), paging, MTRRs, red-black tree code
+
+If a more generic location for crates is needed, a `misc` directory made be created in the `patina` workspace.
 
 This document does not intend to define exact mappings of current code to crates, that is out of scope. Its goal is to
 define the guidelines for managing crates.
@@ -180,14 +152,11 @@ define the guidelines for managing crates.
 
 The matrix below shows allowed dependencies for each class of crate defined in the previous section.
 
-|           | DXE Core | Core      | SDK       | Utility   | Feature   | Generic   |
-|-----------|----------|-----------|-----------|-----------|-----------|-----------|
-| DXE Core  | x        | Y         | Y         | N         | N         | Y         |
-| Core      | N        | x         | Y         | N         | N         | Y         |
-| SDK       | N        | N         | x         | N         | N         | Y         |
-| Utility   | N        | N         | Y         | N         | N         | Y         |
-| Feature   | N        | N         | Y         | N         | N         | Y         |
-| Generic   | N        | N         | N         | N         | N         | Y         |
+|           | Core      | SDK       | Utility   | Feature   | Generic   |
+|-----------|-----------|-----------|-----------|-----------|-----------|
+| Core      | x         | Y         | N         | N         | Y         |
+| SDK       | N         | x         | N         | N         | Y         |
+| Utility   | N         | Y         | N         | N         | Y         |
 
 Separating out generic code is beneficial because it allows the code to be reused in the greatest number of places
 including outside the UEFI environment in host unit tests.

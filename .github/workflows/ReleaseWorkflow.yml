@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🛠️ Download Rust Tools 🛠️
-        uses: OpenDevicePartnership/uefi-dxe-core/.github/actions/rust-tool-cache@main
+        uses: OpenDevicePartnership/patina/.github/actions/rust-tool-cache@main
 
       - name: Get Release Tag
         id: release_tag

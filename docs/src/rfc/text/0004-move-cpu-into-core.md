@@ -1,6 +1,6 @@
 # RFC: `Move CPU functionality into Patina Core`
 
-The struct(s) for configuring CPU specific functionality are currently exposed external to the uefi-dxe-core via the
+The struct(s) for configuring CPU specific functionality are currently exposed external to the patina via the
 `.with_cpu_init` and `.with_interrupt_manager` methods in the `Core` object to support the ability to (1) replace
 certain functionality based off of a platform's requirements and (2) replace cpu architecture specific functionality.
 As the Patina Core has evolved, we have noted that platforms do not need to customize this functionality; all platforms
@@ -17,6 +17,7 @@ Core to fine tune this logic for a given platform.
 - 2025-04-25: General update after a commit that removed some of the generics
 - 2025-04-28: Use `Config` for gic configuration
 - 2025-04-28: Split efi system table initialization into post-memory-init
+- 2025-05-08 - Amendment: Remove references to the now deprecated `uefi-sdk` repo
 
 ## Motivation
 
@@ -49,7 +50,7 @@ contains the functionality for all three of these trait interfaces and can be re
 ## Unresolved Questions
 
 1. Do we want to update the `Cpu` or `InterruptManager` trait interfaces?
-2. Do we want to move the `Cpu` or `InterruptManager` traits to another location (uefi-sdk)?
+2. Do we want to move the `Cpu` or `InterruptManager` traits to another location (the SDK)?
 
 ## Prior Art (Existing PI C Implementation)
 
@@ -145,7 +146,7 @@ where
     section_extractor: SectionExtractor,
     components: Vec<Box<dyn Component>>,
     storage: Storage,
-    _memory_state: core::marker::PhantomData<MemoryState>    
+    _memory_state: core::marker::PhantomData<MemoryState>
 }
 
 impl<SectionExtractor> Core<SectionExtractor, NoAlloc>
@@ -175,7 +176,7 @@ impl<SectionExtractor> Core<SectionExtractor, Alloc>
 where
     SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static
 {
-    fn initialize_system_table(&self) -> Result<()> { 
+    fn initialize_system_table(&self) -> Result<()> {
 
         let cpu: Service<dyn Cpu> = storage.get_service().unwrap();
         let im: Service<dyn InterruptManager> = storage.get_service.unwrap();
