@@ -17,7 +17,7 @@ global_allocator = []
 mockall = ["dep:mockall"]
 
 [dependencies]
-uefi_protocol = { workspace=true }
+uefi_protocol = { workspace = true}
 r-efi = { workspace = true }
 mockall = { workspace = true, optional = true }
 

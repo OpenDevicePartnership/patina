@@ -27,7 +27,7 @@ Before making pull requests at a minimum, run:
 
 ## Performing a Release
 
-Below is the information required to perform a release to the external registry.
+Below is the information required to perform a release that publishes to the registry feed:
 
 1. Review the current draft release on the github repo: [Releases](https://github.com/OpenDevicePartnership/patina/releases)
    a. If something is incorrect, update it in the draft release

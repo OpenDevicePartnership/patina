@@ -17,8 +17,8 @@ on:
         default: ""
         type: string
     secrets:
-      CRATES_IO_TOKEN:
-        description: "Token to access the UefiRust registry"
+      PATINA_FW_TOKEN:
+        description: "Token to access the patina-fw registry"
         required: true
 
 jobs:
@@ -89,7 +89,7 @@ jobs:
           'global-credential-providers = ["cargo:token"]' | Out-File -Append -FilePath $path
 
       - name: Login to Registry
-        run: cargo login "${{ secrets.CRATES_IO_TOKEN }}" --registry UefiRust
+        run: cargo login "${{ secrets.PATINA_FW_TOKEN }}" --registry patina-fw
 
       - name: Run cargo-fmt
         run: cargo fmt --all --check
@@ -105,7 +105,7 @@ jobs:
           RUSTC_BOOTSTRAP: 1
 
       - name: Crate Release Dry Run
-        run: cargo release --no-tag --workspace --no-push --allow-branch '*' --registry UefiRust
+        run: cargo release --no-tag --workspace --no-push --allow-branch '*' --registry patina-fw
         env:
           RUSTC_BOOTSTRAP: 1
 

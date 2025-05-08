@@ -100,7 +100,7 @@ ignore = false
 # is only published to private registries, and ignore is true, the crate will
 # not have its license(s) checked
 registries = [
-    "sparse+https://pkgs.dev.azure.com/microsoft/MsUEFI/_packaging/UefiRust/Cargo/index/",
+    "sparse+https://pkgs.dev.azure.com/patina-fw/artifacts/_packaging/temporary/Cargo/index/",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -194,6 +194,10 @@ unknown-git = "deny"
 # allow-registry = ["registry+https://github.com/rust-lang/crates.io-index"]
 # List of URLs for allowed Git repositories
 allow-git = []
+allow-registry = [
+    "registry+https://github.com/rust-lang/crates.io-index",
+    "sparse+https://pkgs.dev.azure.com/patina-fw/artifacts/_packaging/temporary/Cargo/index/",
+]
 
 [sources.allow-org]
 # github.com organizations to allow git sources for

@@ -11,8 +11,8 @@ name: Publish
 on:
   workflow_call:
     secrets:
-      CRATES_IO_TOKEN:
-        description: 'The token to use for authenticating with crates.io'
+      PATINA_FW_TOKEN:
+        description: 'The token to use for authenticating with the registry feed'
         required: true
 
 jobs:
@@ -63,15 +63,15 @@ jobs:
           git push origin "github-actions/release-${{ steps.release_tag.outputs.tag }}"
 
       - name: Login to Registry
-        run: cargo login "${{ secrets.CRATES_IO_TOKEN }}" --registry UefiRust
+        run: cargo login "${{ secrets.PATINA_FW_TOKEN }}" --registry patina-fw
 
       - name: Cargo Release Dry Run
-        run: cargo release ${{ steps.release_tag.outputs.tag }} --no-tag --workspace --registry UefiRust
+        run: cargo release ${{ steps.release_tag.outputs.tag }} --no-tag --workspace --registry patina-fw
         env:
           RUSTC_BOOTSTRAP: 1
 
       - name: Cargo Release
-        run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace --registry UefiRust
+        run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace --registry patina-fw
         env:
           RUSTC_BOOTSTRAP: 1
 
