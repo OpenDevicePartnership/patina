@@ -11,3 +11,5 @@ description = "A device path parsing implementation for the DXE Core."
 
 [dependencies]
 r-efi = { workspace = true }
+scroll = { workspace = true }
+log = { workspace = true }

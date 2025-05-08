@@ -6,9 +6,14 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
+#![cfg_attr(not(test), no_std)]
+
+pub mod device_path;
 pub mod status_code;
 
-use r_efi::efi::{self, protocols::*};
+extern crate alloc;
+
+use r_efi::efi;
 
 /// Define a binding between an Interface and the corresponding Guid
 ///
@@ -22,8 +27,8 @@ pub unsafe trait ProtocolInterface {
 
 macro_rules! impl_r_efi_protocol {
     ($protocol:ident) => {
-        unsafe impl ProtocolInterface for $protocol::Protocol {
-            const PROTOCOL_GUID: efi::Guid = $protocol::PROTOCOL_GUID;
+        unsafe impl ProtocolInterface for r_efi::efi::protocols::$protocol::Protocol {
+            const PROTOCOL_GUID: r_efi::efi::Guid = r_efi::efi::protocols::$protocol::PROTOCOL_GUID;
         }
     };
 }
