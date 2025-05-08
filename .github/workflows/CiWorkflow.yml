@@ -104,11 +104,10 @@ jobs:
         env:
           RUSTC_BOOTSTRAP: 1
 
-      # Commenting below to allow the Patina monorepo PR to pass CI.
-      # - name: Crate Release Dry Run
-      #   run: cargo release --no-tag --workspace --no-push --allow-branch '*' --registry UefiRust
-      #   env:
-      #     RUSTC_BOOTSTRAP: 1
+      - name: Crate Release Dry Run
+        run: cargo release --no-tag --workspace --no-push --allow-branch '*' --registry UefiRust
+        env:
+          RUSTC_BOOTSTRAP: 1
 
       - name: 🧪 Run Tests 🧪
         run: cargo make coverage

@@ -65,11 +65,10 @@ jobs:
       - name: Login to Registry
         run: cargo login "${{ secrets.CRATES_IO_TOKEN }}" --registry UefiRust
 
-      # Commenting below to allow the Patina monorepo PR to skip below dry run for one off release.
-      # - name: Cargo Release Dry Run
-      #   run: cargo release ${{ steps.release_tag.outputs.tag }} --no-tag --workspace --registry UefiRust
-      #   env:
-      #     RUSTC_BOOTSTRAP: 1
+      - name: Cargo Release Dry Run
+        run: cargo release ${{ steps.release_tag.outputs.tag }} --no-tag --workspace --registry UefiRust
+        env:
+          RUSTC_BOOTSTRAP: 1
 
       - name: Cargo Release
         run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace --registry UefiRust
