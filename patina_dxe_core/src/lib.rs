@@ -419,13 +419,11 @@ where
 
         let boot_services_ptr;
         let runtime_services_ptr;
-        let system_table_ptr;
         {
             let mut st = systemtables::SYSTEM_TABLE.lock();
             let st = st.as_mut().expect("System Table is not initialized!");
             boot_services_ptr = st.boot_services_mut() as *mut efi::BootServices;
             runtime_services_ptr = st.runtime_services_mut() as *mut efi::RuntimeServices;
-            system_table_ptr = st.system_table() as *const efi::SystemTable;
         }
 
         tpl_lock::init_boot_services(boot_services_ptr);

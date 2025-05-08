@@ -217,16 +217,28 @@ fn core_connect_single_controller(
             let driver_binding = unsafe { &mut *(driver_binding_interface) };
             let device_path = remaining_device_path.or(Some(core::ptr::null_mut())).expect("must be some");
 
-            perf_driver_binding_support_begin!(driver_binding.driver_binding_handle, controller_handle);
+            _ = perf_driver_binding_support_begin(
+                driver_binding.driver_binding_handle,
+                controller_handle,
+                create_performance_measurement,
+            );
 
             //driver claims support; attempt to start it.
             match (driver_binding.supported)(driver_binding_interface, controller_handle, device_path) {
                 efi::Status::SUCCESS => {
-                    perf_driver_binding_support_end!(driver_binding.driver_binding_handle, controller_handle);
+                    _ = perf_driver_binding_support_end(
+                        driver_binding.driver_binding_handle,
+                        controller_handle,
+                        create_performance_measurement,
+                    );
 
                     started_drivers.push(driver_binding_interface);
 
-                    perf_driver_binding_start_begin!(driver_binding.driver_binding_handle, controller_handle);
+                    _ = perf_driver_binding_start_begin(
+                        driver_binding.driver_binding_handle,
+                        controller_handle,
+                        create_performance_measurement,
+                    );
 
                     if (driver_binding.start)(driver_binding_interface, controller_handle, device_path)
                         == efi::Status::SUCCESS
@@ -234,10 +246,18 @@ fn core_connect_single_controller(
                         one_started = true;
                     }
 
-                    perf_driver_binding_start_end!(driver_binding.driver_binding_handle, controller_handle);
+                    _ = perf_driver_binding_start_end(
+                        driver_binding.driver_binding_handle,
+                        controller_handle,
+                        create_performance_measurement,
+                    );
                 }
                 _ => {
-                    perf_driver_binding_support_end!(driver_binding.driver_binding_handle, controller_handle);
+                    _ = perf_driver_binding_support_end(
+                        driver_binding.driver_binding_handle,
+                        controller_handle,
+                        create_performance_measurement,
+                    );
                     continue;
                 }
             }

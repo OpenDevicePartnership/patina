@@ -1,3 +1,5 @@
+//! This module define the API and default implementation of the Firmware Basic Boot Performance Table (FBPT).
+//!
 //! ## License
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
@@ -5,9 +7,13 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
+#[cfg(test)]
+use mockall::automock;
+
 use alloc::vec::Vec;
 use core::{
     fmt::Debug,
+    marker::Sized,
     mem, ptr, slice,
     sync::atomic::{AtomicPtr, Ordering},
 };
@@ -26,16 +32,38 @@ use patina_sdk::{
 
 use crate::performance_record::{self, PerformanceRecord, PerformanceRecordBuffer};
 
+/// The number of extra space in byte that will be allocated when publishing the performance buffer.
+/// This is used for every performance records that will be added to the table after it is published.
+// const PUBLISHED_FBPT_EXTRA_SPACE: usize = 0x400_000;
 const PUBLISHED_FBPT_EXTRA_SPACE: usize = 0x10_000;
 
-#[derive(Debug, Clone, Pwrite)]
-#[repr(C)]
-pub struct PerformanceTableHeader {
-    pub signature: u32,
-    pub length: u32,
+/// API for a Firmware Basic Boot Performance Table.
+#[cfg_attr(test, automock)]
+pub trait FirmwareBasicBootPerfTable: Sized {
+    /// Return the address where the table is.
+    fn fbpt_address(&self) -> usize;
+
+    /// Return every performance records that has been added to the table.
+    fn perf_records(&self) -> &PerformanceRecordBuffer;
+
+    /// Initialize the performance records.
+    fn set_perf_records(&mut self, perf_records: PerformanceRecordBuffer);
+
+    /// Add a performance record to the table.
+    #[cfg_attr(test, mockall::concretize)]
+    fn add_record<T: PerformanceRecord>(&mut self, record: T) -> Result<(), efi::Status>;
+
+    /// Report table allocate new space of memory and move the table to a specific place so it can be found later, the address where the table is allocated is returned.
+    /// Additional memory is allocated so the table can still grow in the future step.
+    fn report_table<B: BootServices + 'static>(
+        &mut self,
+        address: Option<usize>,
+        boot_services: &B,
+    ) -> Result<usize, efi::Status>;
 }
 
 /// Firmware Basic Boot Performance Table (FBPT)
+#[derive(Debug)]
 pub struct FBPT {
     /// When the table will be reported, this will be the address where the fbpt table is.
     fbpt_address: usize,
@@ -49,6 +77,7 @@ pub struct FBPT {
 impl FBPT {
     pub const SIGNATURE: u32 = u32::from_le_bytes([b'F', b'B', b'P', b'T']);
 
+    /// Create an new empty FBPT.
     pub const fn new() -> Self {
         Self {
             fbpt_address: 0,
@@ -57,57 +86,56 @@ impl FBPT {
         }
     }
 
-    pub fn set_records(&mut self, records: PerformanceRecordBuffer) {
-        *self.length_mut() += records.size() as u32;
-        self.other_records = records;
+    /// Return the size in bytes of the FBPT table.
+    pub fn length(&self) -> &u32 {
+        unsafe { self._length.1.load(Ordering::Relaxed).as_ref() }.unwrap_or(&self._length.0)
     }
 
-    pub fn add_record(&mut self, record: impl PerformanceRecord) -> Result<(), efi::Status> {
-        let record_size = self.other_records.push_record(record)?;
+    fn length_mut(&mut self) -> &mut u32 {
+        unsafe { self._length.1.load(Ordering::Relaxed).as_mut() }.unwrap_or(&mut self._length.0)
+    }
+
+    const fn size_of_empty_table() -> usize {
+        mem::size_of::<u32>() // Header signature
+        + mem::size_of::<u32>() // Header length
+        + performance_record::PERFORMANCE_RECORD_HEADER_SIZE
+        + FirmwareBasicBootPerfDataRecord::data_size()
+    }
+}
+
+impl FirmwareBasicBootPerfTable for FBPT {
+    fn fbpt_address(&self) -> usize {
+        self.fbpt_address
+    }
+
+    fn perf_records(&self) -> &PerformanceRecordBuffer {
+        &self.other_records
+    }
+
+    fn set_perf_records(&mut self, perf_records: PerformanceRecordBuffer) {
+        *self.length_mut() = (Self::size_of_empty_table() + perf_records.size()) as u32;
+        self.other_records = perf_records;
+    }
+
+    fn add_record<T: PerformanceRecord>(&mut self, record: T) -> Result<(), efi::Status> {
+        // let record_size = self.other_records.push_record(record)?;
+        let record_size = self.other_records.push_record(record).unwrap_or(0);
         *self.length_mut() += record_size as u32;
         Ok(())
     }
 
-    /// Report table allocate new space of memory and move the table to a specific place so it can be found later.
-    /// Additional memory is allocated so the table can still grow in the future step.
-    pub fn report_table(
+    fn report_table<B: BootServices + 'static>(
         &mut self,
-        boot_services: &impl BootServices,
-        runtime_services: &impl RuntimeServices,
-    ) -> Result<(), efi::Status> {
-        const ADDRESS_VARIABLE_GUID: efi::Guid =
-            efi::Guid::from_fields(0xc095791a, 0x3001, 0x47b2, 0x80, 0xc9, &[0xea, 0xc7, 0x31, 0x9f, 0x2f, 0xa4]);
-
+        address: Option<usize>,
+        boot_services: &B,
+    ) -> Result<usize, efi::Status> {
         let allocation_size = Self::size_of_empty_table() + self.other_records.size() + PUBLISHED_FBPT_EXTRA_SPACE;
         let allocation_nb_page = allocation_size.div_ceil(UEFI_PAGE_SIZE);
         let allocation_size = allocation_nb_page * UEFI_PAGE_SIZE;
 
         self.fbpt_address = 'find_address: {
-            if let Ok(prev_address) = {
-                struct FirmwarePerformanceVariable {
-                    boot_performance_table_pointer: usize,
-                    _s3_performance_table_pointer: usize,
-                }
-                impl TryFrom<Vec<u8>> for FirmwarePerformanceVariable {
-                    type Error = ();
-
-                    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
-                        if value.len() == mem::size_of::<Self>() {
-                            Ok(unsafe { ptr::read_unaligned(value.as_ptr() as *const FirmwarePerformanceVariable) })
-                        } else {
-                            Err(())
-                        }
-                    }
-                }
-
-                runtime_services
-                    .get_variable::<FirmwarePerformanceVariable>(
-                        &[0],
-                        &ADDRESS_VARIABLE_GUID,
-                        Some(mem::size_of::<FirmwarePerformanceVariable>()),
-                    )
-                    .map(|(v, _)| v.boot_performance_table_pointer)
-            } {
+            if let Some(prev_address) = address {
+                // Try to allocate at the previous address.
                 if let Ok(prev_address) = boot_services.allocate_pages(
                     AllocType::Address(prev_address),
                     MemoryType::RESERVED_MEMORY_TYPE,
@@ -116,6 +144,7 @@ impl FBPT {
                     break 'find_address prev_address;
                 }
             }
+            // Allocate at a new address if no address found or if the previous address allocation failed.
             boot_services.allocate_pages(
                 AllocType::MaxAddress(u32::MAX as usize),
                 MemoryType::RESERVED_MEMORY_TYPE,
@@ -136,30 +165,7 @@ impl FBPT {
         self.other_records.report(&mut fbpt_buffer[offset..]);
 
         self._length.1.store(length_ptr, Ordering::Relaxed);
-        Ok(())
-    }
-
-    pub fn length(&self) -> &u32 {
-        unsafe { self._length.1.load(Ordering::Relaxed).as_ref() }.unwrap_or(&self._length.0)
-    }
-
-    pub fn length_mut(&mut self) -> &mut u32 {
-        unsafe { self._length.1.load(Ordering::Relaxed).as_mut() }.unwrap_or(&mut self._length.0)
-    }
-
-    pub fn other_records(&self) -> &PerformanceRecordBuffer {
-        &self.other_records
-    }
-
-    pub fn fbpt_address(&self) -> usize {
-        self.fbpt_address
-    }
-
-    pub const fn size_of_empty_table() -> usize {
-        mem::size_of::<u32>() // Header signature
-        + mem::size_of::<u32>() // Header length
-        + performance_record::PERFORMANCE_RECORD_HEADER_SIZE
-        + FirmwareBasicBootPerfDataRecord::data_size()
+        Ok(self.fbpt_address)
     }
 }
 
@@ -169,22 +175,45 @@ impl Default for FBPT {
     }
 }
 
-impl Debug for FBPT {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let record_count = self.other_records.iter().count();
-        f.debug_struct("FBPT")
-            .field("fbpt_address", &(self.fbpt_address as *const u8))
-            .field("length", self.length())
-            .field("other_records::size", &self.other_records.size())
-            .field("other_records::capacity", &self.other_records.capacity())
-            .field("other_records::count", &record_count)
-            .field("other_records", &self.other_records)
-            .finish()
+/// Return the address where the FBPT has been allocated during the previous boot.
+pub fn find_previous_table_address(runtime_services: &impl RuntimeServices) -> Option<usize> {
+    runtime_services
+        .get_variable::<FirmwarePerformanceVariable>(
+            &[0],
+            &FirmwarePerformanceVariable::ADDRESS_VARIABLE_GUID,
+            Some(mem::size_of::<FirmwarePerformanceVariable>()),
+        )
+        .map(|(v, _)| v.boot_performance_table_pointer)
+        .ok()
+}
+
+/// Struct used to get the value from the FirmwarePerformanceVariable
+#[repr(C)]
+pub struct FirmwarePerformanceVariable {
+    boot_performance_table_pointer: usize,
+    _s3_performance_table_pointer: usize,
+}
+
+impl FirmwarePerformanceVariable {
+    const ADDRESS_VARIABLE_GUID: efi::Guid =
+        efi::Guid::from_fields(0xc095791a, 0x3001, 0x47b2, 0x80, 0xc9, &[0xea, 0xc7, 0x31, 0x9f, 0x2f, 0xa4]);
+}
+impl TryFrom<Vec<u8>> for FirmwarePerformanceVariable {
+    type Error = ();
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        if value.len() == mem::size_of::<Self>() {
+            // SAFETY: This is safe because the value for ADDRESS_VARIABLE_GUID is an address where a FirmwarePerformanceVariable is.
+            Ok(unsafe { ptr::read_unaligned(value.as_ptr() as *const FirmwarePerformanceVariable) })
+        } else {
+            Err(())
+        }
     }
 }
 
 #[derive(Clone)]
 #[repr(C)]
+/// Firmware Basic Boot Performance Record
 pub struct FirmwareBasicBootPerfDataRecord {
     /// Timer value logged at the beginning of firmware image execution. This may not always be zero or near zero.
     pub reset_end: u64,
@@ -216,24 +245,9 @@ impl FirmwareBasicBootPerfDataRecord {
         }
     }
 
-    pub const fn data_size() -> usize {
+    const fn data_size() -> usize {
         4 // Reserved bytes
         + mem::size_of::<Self>()
-    }
-}
-
-impl scroll::ctx::TryIntoCtx<scroll::Endian> for FirmwareBasicBootPerfDataRecord {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        let mut offset = 0;
-        dest.gwrite_with([0_u8; 4], &mut offset, ctx)?; // Reserved bytes
-        dest.gwrite_with(self.reset_end, &mut offset, ctx)?;
-        dest.gwrite_with(self.os_loader_load_image_start, &mut offset, ctx)?;
-        dest.gwrite_with(self.os_loader_start_image_start, &mut offset, ctx)?;
-        dest.gwrite_with(self.exit_boot_services_entry, &mut offset, ctx)?;
-        dest.gwrite_with(self.exit_boot_services_exit, &mut offset, ctx)?;
-        Ok(offset)
     }
 }
 
@@ -245,10 +259,215 @@ impl PerformanceRecord for FirmwareBasicBootPerfDataRecord {
     fn revision(&self) -> u8 {
         Self::REVISION
     }
+
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error> {
+        buff.gwrite_with([0_u8; 4], offset, scroll::NATIVE)?; // Reserved bytes
+        buff.gwrite_with(self.reset_end, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.os_loader_load_image_start, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.os_loader_start_image_start, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.exit_boot_services_entry, offset, scroll::NATIVE)?;
+        buff.gwrite_with(self.exit_boot_services_exit, offset, scroll::NATIVE)?;
+        Ok(())
+    }
 }
 
 impl Default for FirmwareBasicBootPerfDataRecord {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use core::{assert_eq, slice, unreachable};
+
+    use scroll::Pread;
+    use uefi_sdk::{boot_services::MockBootServices, runtime_services::MockRuntimeServices};
+
+    use super::*;
+    use crate::{
+        performance_record::{
+            extended::{
+                DualGuidStringEventRecord, DynamicStringEventRecord, GuidEventRecord, GuidQwordEventRecord,
+                GuidQwordStringEventRecord,
+            },
+            GenericPerformanceRecord, PERFORMANCE_RECORD_HEADER_SIZE,
+        },
+        performance_table::FirmwareBasicBootPerfDataRecord,
+    };
+
+    #[test]
+    fn test_find_previous_address() {
+        let mut runtime_services = MockRuntimeServices::new();
+
+        runtime_services
+            .expect_get_variable::<FirmwarePerformanceVariable>()
+            .once()
+            .withf(|name, namespace, size_hint| {
+                assert_eq!(&[0], name);
+                assert_eq!(&FirmwarePerformanceVariable::ADDRESS_VARIABLE_GUID, namespace);
+                assert_eq!(&Some(16), size_hint);
+                true
+            })
+            .returning(|_, _, _| {
+                Ok((
+                    FirmwarePerformanceVariable {
+                        boot_performance_table_pointer: 0x12341234,
+                        _s3_performance_table_pointer: 0,
+                    },
+                    16,
+                ))
+            });
+
+        let address = find_previous_table_address(&runtime_services);
+
+        assert_eq!(Some(0x12341234), address);
+    }
+
+    #[test]
+    fn test_set_perf_records() {
+        let mut performance_record_buffer = PerformanceRecordBuffer::new();
+        performance_record_buffer
+            .push_record(GenericPerformanceRecord { record_type: 1, length: 20, revision: 1, data: [0_u8; 16] })
+            .unwrap();
+
+        let mut fbpt = FBPT::new();
+        assert_eq!(&56, fbpt.length());
+
+        fbpt.set_perf_records(performance_record_buffer);
+        assert_eq!(&76, fbpt.length());
+    }
+
+    #[test]
+    fn test_reporting_fbpt_with_previous_address() {
+        let memory_buffer = Vec::<u8>::with_capacity(1000);
+        let address = memory_buffer.as_ptr() as usize;
+
+        let mut boot_services = MockBootServices::new();
+        boot_services
+            .expect_allocate_pages()
+            .once()
+            .withf(move |alloc_type, memory_type, _| {
+                assert_eq!(&AllocType::Address(address), alloc_type);
+                assert_eq!(&MemoryType::RESERVED_MEMORY_TYPE, memory_type);
+                true
+            })
+            .returning(move |_, _, _| Ok(address));
+
+        let mut fbpt = FBPT::new();
+        let guid = efi::Guid::from_bytes(&[0; 16]);
+        fbpt.add_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
+        fbpt.add_record(DynamicStringEventRecord::new(1, 0, 10, guid, "test")).unwrap();
+
+        fbpt.report_table(Some(address), &boot_services).unwrap();
+        assert_eq!(address, fbpt.fbpt_address);
+
+        fbpt.add_record(DualGuidStringEventRecord::new(1, 0, 10, guid, guid, "test")).unwrap();
+        fbpt.add_record(GuidQwordEventRecord::new(1, 0, 10, guid, 64)).unwrap();
+        fbpt.add_record(GuidQwordStringEventRecord::new(1, 0, 10, guid, 64, "test")).unwrap();
+
+        for (i, record) in fbpt.perf_records().iter().enumerate() {
+            match i {
+                _ if i == 0 => assert_eq!(
+                    (GuidEventRecord::TYPE, GuidEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 1 => assert_eq!(
+                    (DynamicStringEventRecord::TYPE, DynamicStringEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 2 => assert_eq!(
+                    (DualGuidStringEventRecord::TYPE, DualGuidStringEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 3 => assert_eq!(
+                    (GuidQwordEventRecord::TYPE, GuidQwordEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 4 => assert_eq!(
+                    (GuidQwordStringEventRecord::TYPE, GuidQwordStringEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ => unreachable!(),
+            }
+        }
+
+        assert_eq!(&273, fbpt.length());
+    }
+
+    #[test]
+    fn test_reporting_fbpt_without_previous_address() {
+        let memory_buffer = Vec::<u8>::with_capacity(1000);
+        let address = memory_buffer.as_ptr() as usize;
+
+        let mut boot_services = MockBootServices::new();
+        boot_services
+            .expect_allocate_pages()
+            .once()
+            .withf(move |alloc_type, memory_type, _| {
+                assert_eq!(&AllocType::MaxAddress(u32::MAX as usize), alloc_type);
+                assert_eq!(&MemoryType::RESERVED_MEMORY_TYPE, memory_type);
+                true
+            })
+            .returning(move |_, _, _| Ok(address));
+
+        let mut fbpt = FBPT::new();
+        let guid = efi::Guid::from_bytes(&[0; 16]);
+        fbpt.add_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
+        fbpt.add_record(DynamicStringEventRecord::new(1, 0, 10, guid, "test")).unwrap();
+
+        fbpt.report_table(None, &boot_services).unwrap();
+        assert_eq!(address, fbpt.fbpt_address());
+
+        fbpt.add_record(DualGuidStringEventRecord::new(1, 0, 10, guid, guid, "test")).unwrap();
+        fbpt.add_record(GuidQwordEventRecord::new(1, 0, 10, guid, 64)).unwrap();
+        fbpt.add_record(GuidQwordStringEventRecord::new(1, 0, 10, guid, 64, "test")).unwrap();
+    }
+
+    #[test]
+    fn test_performance_table_well_written_in_memory() {
+        let memory_buffer = Vec::<u8>::with_capacity(1000);
+        let address = memory_buffer.as_ptr() as usize;
+
+        let mut boot_services = MockBootServices::new();
+        boot_services
+            .expect_allocate_pages()
+            .once()
+            .withf(move |_, memory_type, _| {
+                assert_eq!(&MemoryType::RESERVED_MEMORY_TYPE, memory_type);
+                true
+            })
+            .returning(move |_, _, _| Ok(address));
+
+        let mut fbpt = FBPT::new();
+        let guid = efi::Guid::from_bytes(&[0; 16]);
+        fbpt.add_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
+        fbpt.add_record(DynamicStringEventRecord::new(1, 0, 10, guid, "test")).unwrap();
+
+        fbpt.report_table(Some(address), &boot_services).unwrap();
+        assert_eq!(address, fbpt.fbpt_address());
+
+        fbpt.add_record(DualGuidStringEventRecord::new(1, 0, 10, guid, guid, "test")).unwrap();
+        fbpt.add_record(GuidQwordEventRecord::new(1, 0, 10, guid, 64)).unwrap();
+        fbpt.add_record(GuidQwordStringEventRecord::new(1, 0, 10, guid, 64, "test")).unwrap();
+
+        let buffer = unsafe { slice::from_raw_parts(fbpt.fbpt_address() as *const u8, 1000) };
+
+        let mut offset = 0;
+        let signature = buffer.gread_with::<u32>(&mut offset, scroll::NATIVE).unwrap();
+        assert_eq!(FBPT::SIGNATURE, signature);
+        let length = buffer.gread_with::<u32>(&mut offset, scroll::NATIVE).unwrap();
+        assert_eq!(fbpt.length(), &length);
+        let record_type = buffer.gread_with::<u16>(&mut offset, scroll::NATIVE).unwrap();
+        let record_length = buffer.gread_with::<u8>(&mut offset, scroll::NATIVE).unwrap();
+        let record_revision = buffer.gread_with::<u8>(&mut offset, scroll::NATIVE).unwrap();
+        assert_eq!(FirmwareBasicBootPerfDataRecord::TYPE, record_type);
+        assert_eq!(
+            PERFORMANCE_RECORD_HEADER_SIZE + FirmwareBasicBootPerfDataRecord::data_size(),
+            record_length as usize
+        );
+        assert_eq!(FirmwareBasicBootPerfDataRecord::REVISION, record_revision);
+        offset += FirmwareBasicBootPerfDataRecord::data_size();
+        assert_eq!(fbpt.perf_records().buffer().as_ptr() as usize, address + offset);
     }
 }

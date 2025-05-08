@@ -1,3 +1,5 @@
+//! This module contains definition of performance records and performance records buffer.
+//!
 //! ## License
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
@@ -6,46 +8,58 @@
 //!
 
 pub mod extended;
+pub mod hob_records;
+pub mod known_records;
 
 use alloc::vec::Vec;
-use core::{fmt::Debug, mem, ops::Deref};
+use core::{fmt::Debug, mem, ops::AddAssign};
 
 use r_efi::efi;
 use scroll::{self, Pread, Pwrite};
 
-use crate::_debug::DbgMemory;
-
+/// Maximum size in byte that a performance record can have.
 pub const FPDT_MAX_PERF_RECORD_SIZE: usize = u8::MAX as usize;
 
+/// Size in byte of the reader of a performance record.
 pub const PERFORMANCE_RECORD_HEADER_SIZE: usize = mem::size_of::<u16>() // Type
-        + mem::size_of::<u8>() // Length 
+        + mem::size_of::<u8>() // Length
         + mem::size_of::<u8>(); // Revision
 
-pub trait PerformanceRecord: Sized + scroll::ctx::TryIntoCtx<scroll::Endian, Error = scroll::Error> {
+/// Common behavior of every performance records.
+pub trait PerformanceRecord {
     fn record_type(&self) -> u16;
 
     fn revision(&self) -> u8;
 
-    fn write_into(self, buff: &mut [u8], offset: &mut usize) -> Result<usize, scroll::Error> {
-        let mut record_size = 0;
+    /// Write the record data into the buffer.
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error>;
+
+    /// Write the record data and the header into the buffer.
+    fn write_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<usize, scroll::Error> {
+        let mut writing_offset = *offset;
 
         // Write performance record header.
-        record_size += buff.gwrite(self.record_type(), offset)?;
-        let mut record_size_offset = *offset;
-        record_size += buff.gwrite(0_u8, offset)?;
-        record_size += buff.gwrite(self.revision(), offset)?;
+        buff.gwrite(self.record_type(), &mut writing_offset)?;
+        let record_size_offset = writing_offset;
+        buff.gwrite(0_u8, &mut writing_offset)?;
+        buff.gwrite(self.revision(), &mut writing_offset)?;
 
         // Write data.
-        record_size += buff.gwrite(self, offset)?;
+        self.write_data_into(buff, &mut writing_offset)?;
+
+        let record_size = writing_offset - *offset;
 
         // Write record size
-        buff.gwrite(record_size as u8, &mut record_size_offset)?;
+        buff.pwrite(record_size as u8, record_size_offset)?;
+
+        offset.add_assign(record_size);
 
         Ok(record_size)
     }
 }
 
-pub struct GenericPerformanceRecord<T: Deref<Target = [u8]>> {
+#[derive(Debug)]
+pub struct GenericPerformanceRecord<T: AsRef<[u8]>> {
     // This value depicts the format and contents of the performance record.
     pub record_type: u16,
     /// This value depicts the length of the performance record, in bytes.
@@ -56,20 +70,10 @@ pub struct GenericPerformanceRecord<T: Deref<Target = [u8]>> {
     /// but newly defined fields allow the length of the performance record to be increased.
     /// Previously defined record fields must not be redefined, but are permitted to be deprecated.
     pub revision: u8,
-    data: T,
+    pub data: T,
 }
 
-impl<T: Deref<Target = [u8]>> scroll::ctx::TryIntoCtx<scroll::Endian> for GenericPerformanceRecord<T> {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], _ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        let mut offset = 0;
-        dest.gwrite_with(self.data.deref(), &mut offset, ())?;
-        Ok(offset)
-    }
-}
-
-impl<T: Deref<Target = [u8]>> PerformanceRecord for GenericPerformanceRecord<T> {
+impl<T: AsRef<[u8]>> PerformanceRecord for GenericPerformanceRecord<T> {
     fn record_type(&self) -> u16 {
         self.record_type
     }
@@ -77,19 +81,16 @@ impl<T: Deref<Target = [u8]>> PerformanceRecord for GenericPerformanceRecord<T> 
     fn revision(&self) -> u8 {
         self.revision
     }
-}
 
-impl<T: Deref<Target = [u8]>> Debug for GenericPerformanceRecord<T> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("GenericPerformanceRecord")
-            .field("record_type", &self.record_type)
-            .field("length", &self.length)
-            .field("revision", &self.revision)
-            .field("data", &DbgMemory(&self.data))
-            .finish()
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error> {
+        buff.gwrite_with(self.data.as_ref(), offset, ())?;
+        Ok(())
     }
 }
 
+/// This struct is a list of performance records stored in a buffer.
+///
+/// The unpublished state can be reallocated and grow but not in the published state.
 pub enum PerformanceRecordBuffer {
     Unpublished(Vec<u8>),
     Published(&'static mut [u8], usize),
@@ -100,6 +101,7 @@ impl PerformanceRecordBuffer {
         Self::Unpublished(Vec::new())
     }
 
+    /// Add a performance records to the buffer.
     pub fn push_record<T: PerformanceRecord>(&mut self, record: T) -> Result<usize, efi::Status> {
         match self {
             Self::Unpublished(buffer) => {
@@ -117,6 +119,7 @@ impl PerformanceRecordBuffer {
         }
     }
 
+    /// Move the performance buffer into the memory buffer given as an argument and put itself in a publish state.
     pub fn report(&mut self, buffer: &'static mut [u8]) {
         let current_buffer = match self {
             PerformanceRecordBuffer::Unpublished(b) => b.as_slice(),
@@ -127,6 +130,7 @@ impl PerformanceRecordBuffer {
         *self = Self::Published(buffer, size);
     }
 
+    /// Return a reference to the performance buffer in bytes.
     pub fn buffer(&self) -> &[u8] {
         match &self {
             Self::Unpublished(b) => b.as_slice(),
@@ -134,10 +138,12 @@ impl PerformanceRecordBuffer {
         }
     }
 
+    /// Return a performance record iterator.
     pub fn iter(&self) -> Iter {
         Iter::new(self.buffer())
     }
 
+    /// Return the size in bytes of the buffer.
     pub fn size(&self) -> usize {
         match &self {
             Self::Unpublished(b) => b.len(),
@@ -145,6 +151,7 @@ impl PerformanceRecordBuffer {
         }
     }
 
+    /// Return the capacity in bytes of the buffer.
     pub fn capacity(&self) -> usize {
         match &self {
             Self::Unpublished(b) => b.capacity(),
@@ -186,6 +193,7 @@ impl Debug for PerformanceRecordBuffer {
     }
 }
 
+/// Performance record iterator.
 pub struct Iter<'a> {
     buffer: &'a [u8],
 }
@@ -216,33 +224,126 @@ impl<'a> Iterator for Iter<'a> {
 
 #[cfg(test)]
 mod test {
-    use efi::Guid;
-    use extended::DynamicStringEventRecord;
+    use core::{assert_eq, slice, unreachable};
+
+    use crate::performance_record::extended::{
+        DualGuidStringEventRecord, DynamicStringEventRecord, GuidEventRecord, GuidQwordEventRecord,
+        GuidQwordStringEventRecord,
+    };
 
     use super::*;
 
     #[test]
-    fn test_adding_performance_report_and_report_the_buffer() {
-        let mut buffer = PerformanceRecordBuffer::new();
-        for n in 1..5 {
-            let r = DynamicStringEventRecord::new(n, n.into(), 0, Guid::from_bytes(&[0xFF; 16]), "wowo");
-            buffer.push_record(r).unwrap();
+    fn test_performance_record_buffer_new() {
+        let performance_record_buffer = PerformanceRecordBuffer::new();
+        println!("{:?}", performance_record_buffer);
+        assert_eq!(0, performance_record_buffer.size());
+    }
+
+    #[test]
+    fn test_performance_record_buffer_push_record() {
+        let guid = efi::Guid::from_bytes(&[0; 16]);
+        let mut performance_record_buffer = PerformanceRecordBuffer::new();
+        let mut size = 0;
+
+        size += performance_record_buffer.push_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
+        assert_eq!(size, performance_record_buffer.size());
+
+        size += performance_record_buffer.push_record(DynamicStringEventRecord::new(1, 0, 10, guid, "test")).unwrap();
+        assert_eq!(size, performance_record_buffer.size());
+
+        size += performance_record_buffer
+            .push_record(DualGuidStringEventRecord::new(1, 0, 10, guid, guid, "test"))
+            .unwrap();
+        assert_eq!(size, performance_record_buffer.size());
+
+        size += performance_record_buffer.push_record(GuidQwordEventRecord::new(1, 0, 10, guid, 64)).unwrap();
+        assert_eq!(size, performance_record_buffer.size());
+
+        size +=
+            performance_record_buffer.push_record(GuidQwordStringEventRecord::new(1, 0, 10, guid, 64, "test")).unwrap();
+        assert_eq!(size, performance_record_buffer.size());
+    }
+
+    #[test]
+    fn test_performance_record_buffer_iter() {
+        let guid = efi::Guid::from_bytes(&[0; 16]);
+        let mut performance_record_buffer = PerformanceRecordBuffer::new();
+
+        performance_record_buffer.push_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
+        performance_record_buffer.push_record(DynamicStringEventRecord::new(1, 0, 10, guid, "test")).unwrap();
+        performance_record_buffer.push_record(DualGuidStringEventRecord::new(1, 0, 10, guid, guid, "test")).unwrap();
+        performance_record_buffer.push_record(GuidQwordEventRecord::new(1, 0, 10, guid, 64)).unwrap();
+        performance_record_buffer.push_record(GuidQwordStringEventRecord::new(1, 0, 10, guid, 64, "test")).unwrap();
+
+        for (i, record) in performance_record_buffer.iter().enumerate() {
+            match i {
+                _ if i == 0 => assert_eq!(
+                    (GuidEventRecord::TYPE, GuidEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 1 => assert_eq!(
+                    (DynamicStringEventRecord::TYPE, DynamicStringEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 2 => assert_eq!(
+                    (DualGuidStringEventRecord::TYPE, DualGuidStringEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 3 => assert_eq!(
+                    (GuidQwordEventRecord::TYPE, GuidQwordEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 4 => assert_eq!(
+                    (GuidQwordStringEventRecord::TYPE, GuidQwordStringEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ => unreachable!(),
+            }
         }
+    }
 
-        let b = vec![0_u8; 10_000_000];
-        let b = b.leak();
+    #[test]
+    fn test_performance_record_buffer_reported_table() {
+        let guid = efi::Guid::from_bytes(&[0; 16]);
+        let mut performance_record_buffer = PerformanceRecordBuffer::new();
 
-        buffer.report(b);
+        performance_record_buffer.push_record(GuidEventRecord::new(1, 0, 10, guid)).unwrap();
+        performance_record_buffer.push_record(DynamicStringEventRecord::new(1, 0, 10, guid, "test")).unwrap();
 
-        for n in 1..5 {
-            let r = DynamicStringEventRecord::new(n, n.into(), 0, Guid::from_bytes(&[0xFF; 16]), "wowo");
-            buffer.push_record(r).unwrap();
+        let mut buffer = vec![0_u8; 1000];
+        let buffer = unsafe { slice::from_raw_parts_mut(buffer.as_mut_ptr(), buffer.len()) };
+
+        performance_record_buffer.report(buffer);
+
+        performance_record_buffer.push_record(DualGuidStringEventRecord::new(1, 0, 10, guid, guid, "test")).unwrap();
+        performance_record_buffer.push_record(GuidQwordEventRecord::new(1, 0, 10, guid, 64)).unwrap();
+        performance_record_buffer.push_record(GuidQwordStringEventRecord::new(1, 0, 10, guid, 64, "test")).unwrap();
+
+        for (i, record) in performance_record_buffer.iter().enumerate() {
+            match i {
+                _ if i == 0 => assert_eq!(
+                    (GuidEventRecord::TYPE, GuidEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 1 => assert_eq!(
+                    (DynamicStringEventRecord::TYPE, DynamicStringEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 2 => assert_eq!(
+                    (DualGuidStringEventRecord::TYPE, DualGuidStringEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 3 => assert_eq!(
+                    (GuidQwordEventRecord::TYPE, GuidQwordEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ if i == 4 => assert_eq!(
+                    (GuidQwordStringEventRecord::TYPE, GuidQwordStringEventRecord::REVISION),
+                    (record.record_type, record.revision)
+                ),
+                _ => unreachable!(),
+            }
         }
-
-        for r in buffer.iter() {
-            println!("{r:#?}");
-        }
-
-        println!("{:#?}", buffer);
     }
 }
