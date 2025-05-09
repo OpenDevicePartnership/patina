@@ -94,9 +94,9 @@ impl Service {
 
         for service in &self.config.services {
             tokens.extend(quote! {
-                let boxed: #alloc_name::boxed::Box<#service> = unsafe { #alloc_name::boxed::Box::from_raw(ptr) };
-                let leaked: &'static dyn core::any::Any = #alloc_name::boxed::Box::leak(#alloc_name::boxed::Box::new(boxed));
-                Self::register_service::<#service>(storage, leaked);
+                let ref_service: &'static #service = leaked;
+                let any: &'static dyn core::any::Any = #alloc_name::boxed::Box::leak(#alloc_name::boxed::Box::new(ref_service));
+                Self::register_service::<#service>(storage, any);
             })
         }
         tokens
@@ -179,8 +179,7 @@ pub(crate) fn service2(item: proc_macro2::TokenStream) -> proc_macro2::TokenStre
         impl #lhs uefi_sdk::component::service::IntoService for #name #rhs #where_clause {
 
             fn register(self, storage: &mut uefi_sdk::component::Storage) {
-                let boxed: #alloc_name::boxed::Box<Self> = #alloc_name::boxed::Box::new(self);
-                let ptr = #alloc_name::boxed::Box::into_raw(boxed);
+                let leaked: &'static Self = #alloc_name::boxed::Box::leak(#alloc_name::boxed::Box::new(self));
                 #service_register
             }
         }
@@ -203,11 +202,10 @@ mod tests {
             extern crate alloc as __alloc_service_MyStruct;
             impl uefi_sdk::component::service::IntoService for MyStruct {
                 fn register(self, storage: &mut uefi_sdk::component::Storage) {
-                    let boxed: __alloc_service_MyStruct::boxed::Box<Self> = __alloc_service_MyStruct::boxed::Box::new(self);
-                    let ptr = __alloc_service_MyStruct::boxed::Box::into_raw(boxed);
-                    let boxed: __alloc_service_MyStruct::boxed::Box<dyn MyService> = unsafe { __alloc_service_MyStruct::boxed::Box::from_raw(ptr) };
-                    let leaked: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(boxed));
-                    Self::register_service::<dyn MyService>(storage, leaked);
+                    let leaked: &'static Self = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(self));
+                    let ref_service: &'static dyn MyService = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService>(storage, any);
                 }
             }
         };
@@ -226,14 +224,13 @@ mod tests {
             extern crate alloc as __alloc_service_MyStruct;
             impl uefi_sdk::component::service::IntoService for MyStruct {
                 fn register(self, storage: &mut uefi_sdk::component::Storage) {
-                    let boxed: __alloc_service_MyStruct::boxed::Box<Self> = __alloc_service_MyStruct::boxed::Box::new(self);
-                    let ptr = __alloc_service_MyStruct::boxed::Box::into_raw(boxed);
-                    let boxed: __alloc_service_MyStruct::boxed::Box<dyn MyService> = unsafe { __alloc_service_MyStruct::boxed::Box::from_raw(ptr) };
-                    let leaked: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(boxed));
-                    Self::register_service::<dyn MyService>(storage, leaked);
-                    let boxed: __alloc_service_MyStruct::boxed::Box<dyn MyService2> = unsafe { __alloc_service_MyStruct::boxed::Box::from_raw(ptr) };
-                    let leaked: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(boxed));
-                    Self::register_service::<dyn MyService2>(storage, leaked);
+                    let leaked: &'static Self = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(self));
+                    let ref_service: &'static dyn MyService = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService>(storage, any);
+                    let ref_service: &'static dyn MyService2 = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService2>(storage, any);
                 }
             }
         };
@@ -252,11 +249,10 @@ mod tests {
             extern crate alloc as __alloc_service_MyStruct;
             impl<T: Debug> uefi_sdk::component::service::IntoService for MyStruct<T> where T: Clone {
                 fn register(self, storage: &mut uefi_sdk::component::Storage) {
-                    let boxed: __alloc_service_MyStruct::boxed::Box<Self> = __alloc_service_MyStruct::boxed::Box::new(self);
-                    let ptr = __alloc_service_MyStruct::boxed::Box::into_raw(boxed);
-                    let boxed: __alloc_service_MyStruct::boxed::Box<dyn MyService> = unsafe { __alloc_service_MyStruct::boxed::Box::from_raw(ptr) };
-                    let leaked: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(boxed));
-                    Self::register_service::<dyn MyService>(storage, leaked);
+                    let leaked: &'static Self = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(self));
+                    let ref_service: &'static dyn MyService = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService>(storage, any);
                 }
             }
         };

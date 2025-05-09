@@ -228,7 +228,8 @@ impl<T: ?Sized + 'static> Service<T> {
     /// ```
     #[allow(clippy::test_attr_in_doctest)]
     pub fn mock(value: Box<T>) -> Self {
-        let leaked: &'static dyn core::any::Any = Box::leak(Box::new(value));
+        let v: &'static T = Box::leak(value);
+        let leaked: &'static dyn core::any::Any = Box::leak(Box::new(v));
         Self { value: leaked, _marker: PhantomData }
     }
 }
@@ -240,7 +241,7 @@ impl<T: ?Sized + 'static> From<&'static dyn Any> for Service<T> {
 }
 
 impl<T: ?Sized + 'static> Deref for Service<T> {
-    type Target = Box<T>;
+    type Target = &'static T;
 
     fn deref(&self) -> &Self::Target {
         self.value.downcast_ref().unwrap_or_else(|| panic!("Config should be of type {}", core::any::type_name::<T>()))
@@ -409,8 +410,7 @@ mod tests {
                 42
             }
         }
-
-        let service = Service::mock(Box::new(MockService));
+        let service: Service<dyn MyService> = Service::mock(Box::new(MockService));
         assert_eq!(42, service.do_something());
     }
 
