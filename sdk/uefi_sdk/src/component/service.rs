@@ -120,13 +120,10 @@ extern crate alloc;
 use alloc::boxed::Box;
 use core::{any::Any, marker::PhantomData, ops::Deref};
 
-use crate::{
-    boot_services::BootServices,
-    component::{
-        metadata::MetaData,
-        params::Param,
-        storage::{Storage, UnsafeStorageCell},
-    },
+use crate::component::{
+    metadata::MetaData,
+    params::Param,
+    storage::{Storage, UnsafeStorageCell},
 };
 
 pub mod memory;
@@ -176,51 +173,6 @@ pub trait IntoService {
     fn register_service<S: ?Sized + 'static>(storage: &mut Storage, service: &'static dyn Any) {
         let id = storage.register_service::<S>();
         storage.insert_service(id, service);
-    }
-    /// Helper function to register the service as an EDKII protocol.
-    ///
-    /// ## Safety
-    ///
-    /// - The caller must ensure the struct is C compatible and is the expected layout for the protocol.
-    /// - The caller must ensure the struct is a static lifetime
-    ///
-    /// ## Example
-    ///
-    /// ``` rust
-    /// extern crate alloc;
-    ///
-    /// use alloc::boxed::Box;
-    /// use uefi_sdk::component::{Storage, service::IntoService};
-    ///
-    /// struct MyStruct;
-    ///
-    /// impl IntoService for MyStruct {
-    ///     fn register(self, storage: &mut Storage) {
-    ///       let boxed: Box<Self> = Box::new(self);
-    ///       let ptr: *mut MyStruct = Box::into_raw(boxed);
-    ///       const GUID: r_efi::efi::Guid = r_efi::efi::Guid::from_fields(0x12345678, 0x1234, 0x1234, 0x12, 0x34, &[
-    ///            0x56, 0x78, 0x12, 0x34, 0x56, 0x78]);
-    ///       unsafe { Self::register_protocol(storage, &GUID, ptr as *mut core::ffi::c_void) };
-    ///     }
-    /// }
-    /// ```
-    unsafe fn register_protocol(
-        storage: &mut Storage,
-        guid: &'static r_efi::efi::Guid,
-        interface: *mut core::ffi::c_void,
-    ) {
-        if !<boot_services::StandardBootServices>::validate(&(), UnsafeStorageCell::new_readonly(storage)) {
-            log::error!("Failed to register protocol {:?}, boot services are not available.", guid);
-            return;
-        }
-
-        // SAFETY: Boot services contains interior mutability and is read-only, so we can safely get the boot services.
-        let bs =
-            unsafe { <boot_services::StandardBootServices>::get_param(&(), UnsafeStorageCell::new_readonly(storage)) };
-
-        if let Err(e) = bs.install_protocol_interface_unchecked(None, guid, interface) {
-            log::error!("Failed to register protocol {:?}, error: {:?}", guid, e);
-        };
     }
 }
 
