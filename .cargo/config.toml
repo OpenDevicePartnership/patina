@@ -1,12 +1,12 @@
-[net]
-git-fetch-with-cli = true
-
 [registries]
 UefiRust = { index = "sparse+https://pkgs.dev.azure.com/microsoft/MsUEFI/_packaging/UefiRust/Cargo/index/" }
 
 [source.crates-io]
 replace-with = "UefiRust"
 
-# This tells cargo to consider the MSV of rust for our crate vs our depencencies
+[net]
+git-fetch-with-cli = true
+
+# This tells cargo to consider the MSV of rust for our crate vs our dependencies.
 [resolver]
 incompatible-rust-versions = "fallback"

@@ -7,5 +7,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: 📃 Documentation
-    url: https://OpenDevicePartnership.github.io/uefi-dxe-core/
+    url: https://OpenDevicePartnership.github.io/patina/
     about: Goals, principles, repo layout, build instructions, and more.

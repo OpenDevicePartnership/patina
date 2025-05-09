@@ -1,6 +1,6 @@
 # Config in Code
 
-In EDKII, configuration of libraries and components was managed through PCDs due to the fact that
+In EDK II, configuration of libraries and components was managed through PCDs due to the fact that
 all modules were compiled separately, making it difficult to share configuration. With the pure
 rust dxe core, drivers and the dxe core are being compiled together in a monolithic nature. This
 allows for configuration to be done in code, during the instantiation process of each individual

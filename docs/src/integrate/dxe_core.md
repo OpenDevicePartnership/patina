@@ -18,7 +18,7 @@ dxe_core = "$(VERSION)"
 If you want the latest and greatest, you can use the `main` branch from our github repository:
 
 ``` toml
-dxe_core = { git = "https://github.com/OpenDevicePartnership/uefi-dxe-core", branch = "main" }
+dxe_core = { git = "https://github.com/OpenDevicePartnership/patina", branch = "main" }
 ```
 ````
 
@@ -67,20 +67,14 @@ which is the definition for the DXE Core. If we were making a DXE Driver, it wou
 Now that we are to the point where you can compile a binary that the `PEI` phase can locate and
 execute, lets actually add the DXE Core logic. In this section, you will also need to make some
 decisions on trait implementations, which are used as abstraction points for the platform to add
-architecture or platform specific logic. At the point of writing this example, `DxeCore` has two
-points of abstraction, `SectionExtractor` and `EfiCpuInit`.
+architecture or platform specific logic.
 
 `SectionExtractor` is an abstraction point that allows a platform specify the specific section
 extraction methods it supports. As an example, a platform may only compress it's sections with
 brotli, so it only needs to support brotli extractions. A platform may create their own extractor,
 it only needs implement the [SectionExtractor](https://github.com/microsoft/mu_rust_pi/blob/c8dd7f990d87746cfae9a5e821ad69501c46f346/src/fw_fs.rs#L77)
-trait. However multiple implementations are provided via [section_extractor](https://github.com/OpenDevicePartnership/uefi-core/tree/main/section_extractor),
+trait. However multiple implementations are provided via [section_extractor](https://github.com/OpenDevicePartnership/patina/tree/main/core/section_extractor),
 such as brotli, crc32, uefi_decompress, etc.
-
-`EfiCpuInit` is an abstraction point for architecture specific initialization steps.
-Implementations are provided via [uefi_cpu](https://github.com/OpenDevicePartnership/uefi-core/tree/main/uefi_cpu),
-however if necessary, a platform can create their own implementation via the [EfiCpuInit](https://github.com/OpenDevicePartnership/uefi-core/blob/main/uefi_core/src/interface.rs)
-trait.
 
 ```admonish note
 If there are any new traits added, please submit a PR to update this documentation.
@@ -91,14 +85,12 @@ in this example with your platform specific implementations:
 
 ```rust
 use dxe_core::Core;
-use uefi_cpu::X64EfiCpuInit;
 use section_extractor::BrotliSectionExtractor;
 
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     Core::default()
         .with_section_extractor(BrotliSectionExtractor::default())
-        .with_cpu_init(X64EfiCpuInit::default())
         .init_memory(physical_hob_list)
         .start()
         .unwrap()
