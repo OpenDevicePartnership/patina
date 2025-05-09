@@ -330,7 +330,7 @@ mod tests {
         storage.add_service(MyServiceImpl);
 
         #[derive(IntoService)]
-        #[service(Self)]
+        #[service(SomeStruct)]
         struct SomeStruct {
             x: u32,
         }
@@ -435,5 +435,39 @@ mod tests {
         let service: Service<dyn MyService> = Service::mock(Box::new(MockService));
         consume_service(service);
         consume_service(service); // This should work as well, since Service is Copy
+    }
+
+    #[test]
+    fn test_basic_static_support() {
+        use crate as uefi_sdk;
+        trait MyService {
+            fn do_something(&self) -> u32;
+        }
+
+        #[derive(IntoService)]
+        #[service(dyn MyService)]
+        struct MockService {
+            a: u32,
+        }
+
+        impl MockService {
+            const fn new(a: u32) -> Self {
+                Self { a }
+            }
+        }
+
+        impl MyService for MockService {
+            fn do_something(&self) -> u32 {
+                self.a
+            }
+        }
+
+        static MY_SERVICE: MockService = MockService::new(42);
+
+        let mut storage = Storage::default();
+        storage.add_service(&MY_SERVICE);
+
+        let service = storage.get_service::<dyn MyService>().unwrap();
+        assert_eq!(42, service.do_something());
     }
 }

@@ -61,12 +61,7 @@ impl Service {
 
         let mut services = Vec::new();
         for s in Self::split_by_comma(meta_list.tokens.clone()) {
-            let s = quote!(#s);
-            if s.to_string().starts_with("dyn") || s.to_string() == "Self" {
-                services.push(s);
-            } else {
-                return Err(syn::Error::new(s.span(), "Expected 'dyn <Trait>' or 'Self'"));
-            }
+            services.push(quote!(#s));
         }
 
         Ok(services)
@@ -183,6 +178,14 @@ pub(crate) fn service2(item: proc_macro2::TokenStream) -> proc_macro2::TokenStre
                 #service_register
             }
         }
+
+        impl #lhs uefi_sdk::component::service::IntoService for &'static #name #rhs #where_clause {
+
+            fn register(self, storage: &mut uefi_sdk::component::Storage) {
+                let leaked: Self = self;
+                #service_register
+            }
+        }
     }
 }
 
@@ -203,6 +206,15 @@ mod tests {
             impl uefi_sdk::component::service::IntoService for MyStruct {
                 fn register(self, storage: &mut uefi_sdk::component::Storage) {
                     let leaked: &'static Self = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(self));
+                    let ref_service: &'static dyn MyService = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService>(storage, any);
+                }
+            }
+
+            impl uefi_sdk::component::service::IntoService for &'static MyStruct {
+                fn register(self, storage: &mut uefi_sdk::component::Storage) {
+                    let leaked: Self = self;
                     let ref_service: &'static dyn MyService = leaked;
                     let any: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(ref_service));
                     Self::register_service::<dyn MyService>(storage, any);
@@ -233,6 +245,18 @@ mod tests {
                     Self::register_service::<dyn MyService2>(storage, any);
                 }
             }
+
+            impl uefi_sdk::component::service::IntoService for &'static MyStruct {
+                fn register(self, storage: &mut uefi_sdk::component::Storage) {
+                    let leaked: Self = self;
+                    let ref_service: &'static dyn MyService = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService>(storage, any);
+                    let ref_service: &'static dyn MyService2 = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService2>(storage, any);
+                }
+            }
         };
 
         assert_eq!(expected.to_string(), service2(input).to_string());
@@ -250,6 +274,15 @@ mod tests {
             impl<T: Debug> uefi_sdk::component::service::IntoService for MyStruct<T> where T: Clone {
                 fn register(self, storage: &mut uefi_sdk::component::Storage) {
                     let leaked: &'static Self = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(self));
+                    let ref_service: &'static dyn MyService = leaked;
+                    let any: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(ref_service));
+                    Self::register_service::<dyn MyService>(storage, any);
+                }
+            }
+
+            impl<T: Debug> uefi_sdk::component::service::IntoService for &'static MyStruct<T> where T: Clone {
+                fn register(self, storage: &mut uefi_sdk::component::Storage) {
+                    let leaked: Self = self;
                     let ref_service: &'static dyn MyService = leaked;
                     let any: &'static dyn core::any::Any = __alloc_service_MyStruct::boxed::Box::leak(__alloc_service_MyStruct::boxed::Box::new(ref_service));
                     Self::register_service::<dyn MyService>(storage, any);
@@ -289,34 +322,6 @@ mod tests {
 
         let expected = quote! {
             :: core :: compile_error ! { "Union types are not currently supported." }
-        };
-
-        assert_eq!(expected.to_string(), service2(input).to_string());
-    }
-
-    #[test]
-    fn test_bad_service_input_gives_good_error() {
-        let input = quote! {
-            #[service(MyService)]
-            struct MyStruct;
-        };
-
-        let expected = quote! {
-            :: core :: compile_error ! { "Expected 'dyn <Trait>' or 'Self'" }
-        };
-
-        assert_eq!(expected.to_string(), service2(input).to_string());
-
-        let input = quote! {
-            #[service(dyn MyService, MyService)]
-            struct MyStruct;
-        };
-
-        assert_eq!(expected.to_string(), service2(input).to_string());
-
-        let input = quote! {
-            #[service(MyStruct)]
-            struct MyStruct;
         };
 
         assert_eq!(expected.to_string(), service2(input).to_string());
