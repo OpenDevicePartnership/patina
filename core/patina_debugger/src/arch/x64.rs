@@ -65,6 +65,16 @@ impl DebuggerArch for X64Arch {
                 exception_info.context.rip += 1;
             }
         }
+
+        // Always invalidate the TLB in case mappings were changed. The instruction
+        // cache doesn't need to be flushed since it should already be invalidated
+        // by the write according to the Intel SDM Vol 3 section 11.6. The CR3
+        // write is also serializing so no barriers are needed.
+        unsafe {
+            let cr3: usize;
+            asm!("mov {}, cr3", out(reg) cr3);
+            asm!("mov cr3, {}", in(reg) cr3);
+        }
     }
 
     fn set_single_step(exception_info: &mut ExceptionInfo) {
