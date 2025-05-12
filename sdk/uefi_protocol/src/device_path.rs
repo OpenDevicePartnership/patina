@@ -89,7 +89,7 @@ impl DevicePathBuf {
 
     /// Convert the device path to a boxed [`DevicePath`].
     pub fn into_box_device_path(self) -> Box<DevicePath> {
-        // SAFETY: DevciePath has the same memory layout as [u8].
+        // SAFETY: DevicePath has the same memory layout as [u8].
         unsafe { mem::transmute(self.buffer.into_boxed_slice()) }
     }
 }
@@ -129,7 +129,7 @@ impl PartialEq for DevicePathBuf {
 impl Eq for DevicePathBuf {}
 
 /// DevicePath is the borrowed version of a [`DevicePathBuf`].
-/// Only imutable opperation are possible on this type.
+/// Only immutable opperation are possible on this type.
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct DevicePath {
@@ -143,7 +143,7 @@ impl DevicePath {
         unsafe { &*(device_path_buff.buffer.as_slice() as *const [u8] as *const Self) }
     }
 
-    /// Create a &DevciePath from a pointer to a byte buffer.
+    /// Create a &DevicePath from a pointer to a byte buffer.
     /// This is used to use device path from C.
     ///
     /// # Safety

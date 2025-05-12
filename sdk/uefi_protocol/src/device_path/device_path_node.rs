@@ -76,7 +76,7 @@ pub trait DevicePathNode: Debug + Display {
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, ()>;
 }
 
-/// UnknowDevicePathNode are device path nodes that have not been cast to a more specific associated type or that are undefined in the spec.
+/// UnknownDevicePathNode are device path nodes that have not been cast to a more specific associated type or that are undefined in the spec.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct UnknownDevicePathNode<'a> {
     /// Header of the device path node.
@@ -86,7 +86,7 @@ pub struct UnknownDevicePathNode<'a> {
 }
 
 impl<'a> UnknownDevicePathNode<'a> {
-    /// Cast the Unknow device path to a dyn DevicePathNode of the right type.
+    /// Cast the Unknown device path to a dyn DevicePathNode of the right type.
     pub fn cast_to_dyn_device_path_node(self) -> Box<dyn DevicePathNode + 'a> {
         nodes::cast_to_dyn_device_path_node(self)
     }

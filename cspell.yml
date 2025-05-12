@@ -90,6 +90,7 @@ words:
   - inproc
   - intid
   - irouter
+  - ISCSI
   - isenabler
   - kbyte
   - keccak
@@ -120,6 +121,7 @@ words:
   - nomem
   - nshst
   - ntdll
+  - NVDIMM
   - oleaut
   - opinfo
   - oppermann
