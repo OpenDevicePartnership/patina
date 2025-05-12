@@ -118,8 +118,7 @@ impl FirmwareBasicBootPerfTable for FBPT {
     }
 
     fn add_record<T: PerformanceRecord>(&mut self, record: T) -> Result<(), efi::Status> {
-        // let record_size = self.other_records.push_record(record)?;
-        let record_size = self.other_records.push_record(record).unwrap_or(0);
+        let record_size = self.other_records.push_record(record)?;
         *self.length_mut() += record_size as u32;
         Ok(())
     }
