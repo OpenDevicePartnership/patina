@@ -157,7 +157,7 @@ pub fn cast_to_dyn_device_path_node(unknown: UnknownDevicePathNode<'_>) -> Box<d
 }
 
 device_path_node! {
-    /// https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#pci-device-path
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#pci-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::PCI)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pwrite, Pread, Clone)]
@@ -170,7 +170,7 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#pci-device-path
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#pci-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::PCCARD)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pwrite, Pread, Clone)]
@@ -181,7 +181,7 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#memory-mapped-device-path
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#memory-mapped-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::MemoryMapped)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pwrite, Pread, Clone)]
@@ -196,7 +196,7 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#controller-device-path
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#controller-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Controller)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pwrite, Pread, Clone)]
@@ -207,7 +207,7 @@ device_path_node! {
 }
 
 device_path_node! {
-    /// https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#controller-device-path
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#controller-device-path>
     @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::BMC)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pwrite, Pread, Clone)]
@@ -221,7 +221,7 @@ device_path_node! {
     @[DevicePathNode(DevicePathType::ACPI, AcpiSubType::ACPI)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pwrite, Pread, Clone)]
-    /// https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-device-path
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-device-path>
     pub struct Acpi {
         /// _HID
         pub hid: u32,
@@ -239,7 +239,7 @@ impl Acpi {
     }
 
     /// Converts and compresses the 7-character text argument into its corresponding 4-byte numeric EISA ID encoding.
-    /// https://uefi.org/specs/ACPI/6.5_A/19_ASL_Reference.html#asl-macros
+    /// <https://uefi.org/specs/ACPI/6.5_A/19_ASL_Reference.html#asl-macros>
     pub const fn eisa_id(hid: &str) -> u32 {
         let bytes = hid.as_bytes();
 
@@ -271,9 +271,9 @@ impl Display for Acpi {
 }
 
 device_path_node! {
+    /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#bios-boot-specification-device-path>
     @[DevicePathNode(DevicePathType::BIOS, BiosSubType::BiosBootSpecification)]
     @[DevicePathNodeDerive(Debug, Display)]
-    /// https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#bios-boot-specification-device-path
     pub struct Bios {
         pub device_type: u16,
         pub status_flag: u16,
