@@ -120,7 +120,7 @@ pub fn get_static_state() -> Option<(&'static StandardBootServices, &'static Tpl
 pub struct Performance;
 
 impl Performance {
-    /// Entry point of [`PerformanceLib`]
+    /// Entry point of [`Performance`]
     #[cfg(not(tarpaulin_include))] // This is tested via the generic version, see _entry_point.
     pub fn entry_point(
         self,
