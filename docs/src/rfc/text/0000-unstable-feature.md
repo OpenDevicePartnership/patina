@@ -1,6 +1,6 @@
 # RFC: `Unstable Feature`
 
-This RFC is to add a way for feature gating new features that we consider unstable. 
+This RFC is to add a way for feature gating new features that we consider unstable.
 This would include an issue template and a way of feature gating the unstable feature.
 
 ## Change Log
@@ -14,8 +14,8 @@ This would include an issue template and a way of feature gating the unstable fe
 - Create an issue to track the stabilization of the feature.
 
 Example of issue template for unstable feature stabilization:
-```yml
 
+```yml
 # GitHub issue form for tracking unstable features.
 #
 ##
@@ -48,11 +48,11 @@ body:
 
 ## Motivation
 
-The motivation to have this feature is to be able to merge features that are mostly working but have 
-some unresolved questions that could lead to an API change. Marking something unstable allows a user 
-of the unstable feature to not rely heavily on that feature and participate in the stabilization of 
-this one. Another pro of feature gating unstable features is that we wouldn't need to increment the 
-version each time such a feature changes, but only when something considered stable changes. That 
+The motivation to have this feature is to be able to merge features that are mostly working but have
+some unresolved questions that could lead to an API change. Marking something unstable allows a user
+of the unstable feature to not rely heavily on that feature and participate in the stabilization of
+this one. Another pro of feature gating unstable features is that we wouldn't need to increment the
+version each time such a feature changes, but only when something considered stable changes. That
 would result in less version bumping.
 
 ## Goals
