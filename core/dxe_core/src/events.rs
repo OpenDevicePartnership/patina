@@ -260,6 +260,10 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
                 None => core::ptr::null_mut(),
             };
 
+            if EVENT_DB.get_event_type(event.event).unwrap().is_notify_signal() {
+                let _ = EVENT_DB.clear_signal(event.event);
+            }
+
             //Caution: this is calling function pointer supplied by code outside DXE Rust.
             //The notify_function is not "unsafe" per the signature, even though it's
             //supplied by code outside the core module. If it were marked 'unsafe'

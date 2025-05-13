@@ -324,6 +324,11 @@ impl EventDb {
         let id = event as usize;
         let current_event = self.events.get_mut(&id).ok_or(EfiError::InvalidParameter)?;
 
+        //explicitly match the Tianocore C implementation by not queueing an additional notify.
+        if current_event.signaled {
+            return Ok(());
+        }
+
         //signal all the members of the same event group (including the current one), if present.
         if let Some(target_group) = current_event.event_group {
             self.signal_group(target_group);
@@ -339,8 +344,9 @@ impl EventDb {
     }
 
     fn signal_group(&mut self, group: efi::Guid) {
-        for member_event in self.events.values_mut().filter(|e| e.event_group == Some(group)) {
+        for member_event in self.events.values_mut().filter(|e| e.event_group == Some(group) && !e.signaled) {
             member_event.signaled = true;
+
             if member_event.event_type.is_notify_signal() {
                 Self::queue_notify_event(&mut self.pending_notifies, member_event, self.notify_tags);
                 self.notify_tags += 1;
@@ -481,7 +487,6 @@ impl EventDb {
             if item.0.notify_tpl <= tpl_level {
                 return None;
             } else if let Some(item) = self.pending_notifies.pop_first() {
-                self.events.get_mut(&(item.0.event as usize))?.signaled = false;
                 return Some(item.0);
             } else {
                 log::error!("Pending_notifies was empty, but it should have at least one item.");
@@ -870,6 +875,41 @@ mod tests {
     }
 
     #[test]
+    fn signal_event_should_not_double_queue() {
+        with_locked_state(|| {
+            static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
+
+            let event = SPIN_LOCKED_EVENT_DB
+                .create_event(
+                    efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
+                    efi::TPL_NOTIFY,
+                    Some(test_notify_function),
+                    None,
+                    None,
+                )
+                .unwrap();
+
+            for _ in 0..2 {
+                assert!(SPIN_LOCKED_EVENT_DB.signal_event(event).is_ok());
+            }
+
+            //ensure only one notify was queued
+            assert!(SPIN_LOCKED_EVENT_DB.lock().pending_notifies.len() == 1);
+
+            //ensure the mere act of collecting the events doesn't allow another notification to be queued
+            let _ =
+                SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
+            assert!(SPIN_LOCKED_EVENT_DB.signal_event(event).is_ok());
+            assert!(SPIN_LOCKED_EVENT_DB.lock().pending_notifies.is_empty());
+
+            //ensure the event can be re-queued after it's signal state has been cleared
+            assert!(SPIN_LOCKED_EVENT_DB.clear_signal(event).is_ok());
+            assert!(SPIN_LOCKED_EVENT_DB.signal_event(event).is_ok());
+            assert!(SPIN_LOCKED_EVENT_DB.lock().pending_notifies.len() == 1);
+        });
+    }
+
+    #[test]
     fn signal_event_on_an_event_group_should_put_all_members_in_signaled_state() {
         with_locked_state(|| {
             let uuid = Uuid::from_str("aefcf33c-ce02-47b4-89f6-4bacdeda3377").unwrap();
@@ -1217,7 +1257,8 @@ mod tests {
                 SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_NOTIFY).zip(vec![high_evt1, high_evt2])
             {
                 assert_eq!(event_notification.event, expected_event);
-                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
+                let _ = SPIN_LOCKED_EVENT_DB.clear_signal(expected_event);
             }
 
             //re-signal the consumed events
@@ -1229,7 +1270,8 @@ mod tests {
                 .zip(vec![high_evt1, high_evt2, notify_evt1, notify_evt2])
             {
                 assert_eq!(event_notification.event, expected_event);
-                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
+                let _ = SPIN_LOCKED_EVENT_DB.clear_signal(expected_event);
             }
 
             //re-signal the consumed events
@@ -1243,7 +1285,8 @@ mod tests {
                 .zip(vec![high_evt1, high_evt2, notify_evt1, notify_evt2, callback_evt1, callback_evt2])
             {
                 assert_eq!(event_notification.event, expected_event);
-                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
+                let _ = SPIN_LOCKED_EVENT_DB.clear_signal(expected_event);
             }
 
             //re-signal the consumed events
@@ -1264,7 +1307,8 @@ mod tests {
                 .zip(vec![high_evt2, notify_evt2, callback_evt2])
             {
                 assert_eq!(event_notification.event, expected_event);
-                assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
+                let _ = SPIN_LOCKED_EVENT_DB.clear_signal(expected_event);
             }
         });
     }
@@ -1653,6 +1697,7 @@ mod tests {
                 SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
             assert_eq!(events.len(), 1);
             assert_eq!(events[0].event, event);
+            let _ = SPIN_LOCKED_EVENT_DB.clear_signal(events[0].event);
 
             //tick just prior to re-armed first timer
             SPIN_LOCKED_EVENT_DB.timer_tick(0x1FF);
@@ -1666,6 +1711,7 @@ mod tests {
                 SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
             assert_eq!(events.len(), 1);
             assert_eq!(events[0].event, event);
+            let _ = SPIN_LOCKED_EVENT_DB.clear_signal(events[0].event);
 
             //tick past the second timer.
             SPIN_LOCKED_EVENT_DB.timer_tick(0x500);
@@ -1674,6 +1720,8 @@ mod tests {
             assert_eq!(events.len(), 2);
             assert_eq!(events[0].event, event);
             assert_eq!(events[1].event, event2);
+            let _ = SPIN_LOCKED_EVENT_DB.clear_signal(events[0].event);
+            let _ = SPIN_LOCKED_EVENT_DB.clear_signal(events[1].event);
 
             //tick past the rearmed first timer
             SPIN_LOCKED_EVENT_DB.timer_tick(0x600);
@@ -1681,6 +1729,7 @@ mod tests {
                 SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
             assert_eq!(events.len(), 1);
             assert_eq!(events[0].event, event);
+            let _ = SPIN_LOCKED_EVENT_DB.clear_signal(events[0].event);
 
             //cancel the first timer
             SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Cancel, None, None).unwrap();
