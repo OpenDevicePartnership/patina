@@ -23,15 +23,17 @@ is very welcome.
 
 Before making pull requests at a minimum, run:
 
-- `cargo make all`
+```
+cargo make all
+```
 
 ## Performing a Release
 
 Below is the information required to perform a release to the external registry.
 
 1. Review the current draft release on the github repo: [Releases](https://github.com/OpenDevicePartnership/patina/releases)
-   a. If something is incorrect, update it in the draft release
-   b. If you need to manually change the version, make sure you update the associated git tag value in the draft release
+   - If something is incorrect, update it in the draft release
+   - If you need to manually change the version, make sure you update the associated git tag value in the draft release
 2. Publish the release
 3. Monitor the publish release workflow that is automatically triggered on the release being published:
    [Publish Release Workflow](https://github.com/OpenDevicePartnership/patina/actions/workflows/publish-release.yml)
@@ -52,41 +54,39 @@ docs.rs once we begin uploading to crates.io.
 
 The following instructions install Rust.
 
-1. Download and install rust/cargo from [Getting Started - Rust Programming Language (rust-lang.org)](https://www.rust-lang.org/learn/get-started).
-   > `rustup-init` installs the toolchain and utilities.
+1. Follow the steps from [Getting Started - Rust Programming Language (rust-lang.org)](https://www.rust-lang.org/learn/get-started)
+to install, update (if needed), and test cargo/rust.
 
-2. Make sure it's working - restart a shell after install and make sure the tools are in your path:
+2. Install the toolchain specified in the [toolchain] section of the rust-toolchain.toml file.
+   ```
+   rustup toolchain install
+   ```
 
-   \>`cargo --version`
-
-3. Install toolchain specified in `rust-toolchain.toml`
-
-   \>`rustup toolchain install`
-
-4. While the specific toolchains and components specified in `[toolchain]` section of the `rust-toolchain.toml` are
-automatically installed with `rustup toolchain install`, the tools in the `[tools]` section, such as `cargo-make`
-are not. At a minimum, you should download `cargo-make` and `cargo-tarpaulin`, however it is suggested that you
-download all tools in the `[tools]` section of the `rust-toolchain.toml`.
-
-   XXXX  [RG] Example command line?
-
+3. The tools listed in the [tools] section of the rust-toolchain.toml file must be manually installed.  At a minimum, cargo-make and cargo-tarpaulin should be installed.
+   ```
+   cargo install cargo-make
+   cargo install cargo-tarpaulin
+   ```
 
 ## Build
 
-**The order of arguments is important in these commands.**
+Cargo make will build a development compilation of all crates in the project in one of the 3 supported targets (aarch64, x64, or native):
+```
+cargo make build-aarch64
+   - or -
+cargo make build-x64
+   - or -
+cargo make build
+```
 
-### Building Crates
-
-The following commands build all crates with one of our three supported targets: `x86_64-unknown-uefi`,
-`aarch64-unknown-uefi`, and your host system target triple. The default compilation mode is `development`, but you can
-easily switch modes with the `-p` flag.
-
-- Development Compilation (aarch64-unknown-uefi): `cargo make build-aarch64`
-- Development Compilation (x86_64-unknown-uefi): `cargo make build-x64`
-- Development Compilation (host system): `cargo make build`
-- Release Compilation (aarch64-unknown-uefi): `cargo make -p release build-aarch64`
-- Release Compilation (x86_64-unknown-uefi): `cargo make -p release build-x64`
-- Release Compilation (host system): `cargo make -p release build`
+Cargo make will also support release compilations by using the "-p release" flag
+```
+cargo make -p release build-aarch64
+   - or -
+cargo make -p release build-x64
+   - or -
+cargo make -p release build
+```
 
 ## Test
 
