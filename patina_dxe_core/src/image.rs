@@ -930,7 +930,7 @@ pub fn core_load_image(
     file_path: *mut efi::protocols::device_path::Protocol,
     image: Option<&[u8]>,
 ) -> Result<(efi::Handle, Result<(), EfiError>), EfiError> {
-    _ = perf_load_image_begin(core::ptr::null_mut(), create_performance_measurement);
+    perf_load_image_begin(core::ptr::null_mut(), create_performance_measurement);
 
     if image.is_none() && file_path.is_null() {
         log::error!("failed to load image: image is none or device path is null.");
@@ -1062,7 +1062,7 @@ pub fn core_load_image(
     // save the private image data for this image in the private image data map.
     PRIVATE_IMAGE_DATA.lock().private_image_data.insert(handle, private_info);
 
-    _ = perf_load_image_end(handle, create_performance_measurement);
+    perf_load_image_end(handle, create_performance_measurement);
 
     // return the new handle.
     Ok((handle, security_status))
@@ -1168,7 +1168,7 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
     // allocate a buffer for the entry point stack.
     let stack = ImageStack::new(ENTRY_POINT_STACK_SIZE)?;
 
-    _ = perf_image_start_begin(image_handle, create_performance_measurement);
+    perf_image_start_begin(image_handle, create_performance_measurement);
 
     // define a co-routine that wraps the entry point execution. this doesn't
     // run until the coroutine.resume() call below.
@@ -1235,7 +1235,7 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
 
     PRIVATE_IMAGE_DATA.lock().current_running_image = previous_image;
 
-    _ = perf_image_start_end(image_handle, create_performance_measurement);
+    perf_image_start_end(image_handle, create_performance_measurement);
 
     match status {
         efi::Status::SUCCESS => Ok(()),

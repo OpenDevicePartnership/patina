@@ -1,11 +1,7 @@
 [workspace]
 resolver = "2"
 
-members = [
-  "components/*",
-  "core/*",
-  "sdk/*",
-]
+members = ["components/*", "core/*", "sdk/*"]
 
 [workspace.package]
 version = "0.0.1"

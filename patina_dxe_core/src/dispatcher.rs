@@ -494,14 +494,14 @@ pub fn core_dispatcher() -> Result<(), EfiError> {
         return Err(EfiError::AlreadyStarted);
     }
 
-    _ = perf_function_begin(function!(), &CALLER_ID, create_performance_measurement);
+    perf_function_begin(function!(), &CALLER_ID, create_performance_measurement);
 
     let mut something_dispatched = false;
     while dispatch()? {
         something_dispatched = true;
     }
 
-    _ = perf_function_end(function!(), &CALLER_ID, create_performance_measurement);
+    perf_function_end(function!(), &CALLER_ID, create_performance_measurement);
 
     if something_dispatched {
         Ok(())
