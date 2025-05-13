@@ -68,6 +68,9 @@ automatically installed with `rustup toolchain install`, the tools in the `[tool
 are not. At a minimum, you should download `cargo-make` and `cargo-tarpaulin`, however it is suggested that you
 download all tools in the `[tools]` section of the `rust-toolchain.toml`.
 
+   XXXX  [RG] Example command line?
+
+
 ## Build
 
 **The order of arguments is important in these commands.**
