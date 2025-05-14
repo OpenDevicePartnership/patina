@@ -18,7 +18,7 @@ use alloc::{
 };
 use core::{cmp::Ordering, ffi::c_void, fmt};
 use r_efi::efi;
-use uefi_sdk::error::EfiError;
+use uefi_sdk::{error::EfiError, guid::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP};
 
 use crate::tpl_lock;
 
@@ -277,11 +277,21 @@ struct EventDb {
     //impact real-world usage.
     pending_notifies: BTreeSet<TaggedEventNotification>,
     notify_tags: u64, //used to ensure that each notify gets a unique tag in increasing order
+
+    num_cache_attribute_changed_events: usize,
+    cache_attribute_changed_pending_notifies: Vec<TaggedEventNotification>,
 }
 
 impl EventDb {
     const fn new() -> Self {
-        EventDb { events: BTreeMap::new(), next_event_id: 1, pending_notifies: BTreeSet::new(), notify_tags: 0 }
+        EventDb {
+            events: BTreeMap::new(),
+            next_event_id: 1,
+            pending_notifies: BTreeSet::new(),
+            notify_tags: 0,
+            num_cache_attribute_changed_events: 0,
+            cache_attribute_changed_pending_notifies: Vec::new(),
+        }
     }
 
     fn create_event(
@@ -296,19 +306,51 @@ impl EventDb {
         self.next_event_id += 1;
         let event = Event::new(id, event_type, notify_tpl, notify_function, notify_context, event_group)?;
         self.events.insert(id, event);
+
+        //keep track of the number events in the CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP to pre-allocate space for queueing them
+        //as the global allocator will signal this group.
+        if event_group.is_some() && event_group.unwrap() == CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP {
+            self.num_cache_attribute_changed_events += 1;
+
+            //make sure cache_attributes_changed_queued_events can hold num_cache_attribute_changed_events elements
+            if self.num_cache_attribute_changed_events > self.cache_attribute_changed_pending_notifies.len() {
+                self.cache_attribute_changed_pending_notifies.reserve(
+                    self.num_cache_attribute_changed_events - self.cache_attribute_changed_pending_notifies.len(),
+                );
+            }
+        }
+
         Ok(id as efi::Event)
     }
 
     fn close_event(&mut self, event: efi::Event) -> Result<(), EfiError> {
         let id = event as usize;
-        self.events.remove(&id).ok_or(EfiError::InvalidParameter)?;
-        Ok(())
+
+        if let Some(event) = self.events.remove(&id) {
+            //keep track of the number of events in the CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP to pre-allocate space for queueing them
+            //as the global allocator will signal this group.
+            if self.num_cache_attribute_changed_events > 0
+                && event.event_group.is_some()
+                && event.event_group.unwrap() == CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP
+            {
+                self.num_cache_attribute_changed_events -= 1;
+            }
+
+            Ok(())
+        } else {
+            Err(EfiError::InvalidParameter)
+        }
     }
 
     //private helper function for signal_event.
-    fn queue_notify_event(pending_notifies: &mut BTreeSet<TaggedEventNotification>, event: &mut Event, tag: u64) {
+    fn queue_notify_event(
+        pending_notifies: &mut BTreeSet<TaggedEventNotification>,
+        cache_attribute_changed_pending_notifies: &mut Vec<TaggedEventNotification>,
+        event: &Event,
+        tag: u64,
+    ) {
         if event.event_type.is_notify_signal() || event.event_type.is_notify_wait() {
-            pending_notifies.insert(TaggedEventNotification(
+            let tagged_event_notification = TaggedEventNotification(
                 EventNotification {
                     event: event.event_id as efi::Event,
                     notify_tpl: event.notify_tpl,
@@ -316,7 +358,14 @@ impl EventDb {
                     notify_context: event.notify_context,
                 },
                 tag,
-            ));
+            );
+
+            //keep track of CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP events in separate pre-allocated list
+            if event.event_group.is_some() && event.event_group.unwrap() == CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP {
+                cache_attribute_changed_pending_notifies.push(tagged_event_notification);
+            } else {
+                pending_notifies.insert(tagged_event_notification);
+            }
         }
     }
 
@@ -336,7 +385,12 @@ impl EventDb {
             // if no group, signal the event by itself.
             current_event.signaled = true;
             if current_event.event_type.is_notify_signal() {
-                Self::queue_notify_event(&mut self.pending_notifies, current_event, self.notify_tags);
+                Self::queue_notify_event(
+                    &mut self.pending_notifies,
+                    &mut self.cache_attribute_changed_pending_notifies,
+                    current_event,
+                    self.notify_tags,
+                );
                 self.notify_tags += 1;
             }
         }
@@ -348,7 +402,12 @@ impl EventDb {
             member_event.signaled = true;
 
             if member_event.event_type.is_notify_signal() {
-                Self::queue_notify_event(&mut self.pending_notifies, member_event, self.notify_tags);
+                Self::queue_notify_event(
+                    &mut self.pending_notifies,
+                    &mut self.cache_attribute_changed_pending_notifies,
+                    member_event,
+                    self.notify_tags,
+                );
                 self.notify_tags += 1;
             }
         }
@@ -374,7 +433,12 @@ impl EventDb {
         let id = event as usize;
         let current_event = self.events.get_mut(&id).ok_or(EfiError::InvalidParameter)?;
 
-        Self::queue_notify_event(&mut self.pending_notifies, current_event, self.notify_tags);
+        Self::queue_notify_event(
+            &mut self.pending_notifies,
+            &mut self.cache_attribute_changed_pending_notifies,
+            current_event,
+            self.notify_tags,
+        );
         self.notify_tags += 1;
 
         Ok(())
@@ -473,6 +537,12 @@ impl EventDb {
     }
 
     fn consume_next_event_notify(&mut self, tpl_level: efi::Tpl) -> Option<EventNotification> {
+        //add separately-tracked tagged event notifications to the list of pending notifies now that we can assume
+        //we're in a non-global-allocator-FSB-locked region.
+        while let Some(tagged_event_notification) = self.cache_attribute_changed_pending_notifies.pop() {
+            self.pending_notifies.insert(tagged_event_notification);
+        }
+
         //if items at front of queue don't exist (e.g. due to close_event), silently pop them off.
         while let Some(item) = self.pending_notifies.first() {
             if !self.events.contains_key(&(item.0.event as usize)) {
@@ -871,6 +941,50 @@ mod tests {
                 assert!(result.is_ok());
                 assert!(SPIN_LOCKED_EVENT_DB.is_signaled(event));
             }
+        });
+    }
+
+    #[test]
+    fn signal_cache_attributes_changed_event_should_not_allocate() {
+        with_locked_state(|| {
+            static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
+
+            let _ = SPIN_LOCKED_EVENT_DB
+                .create_event(
+                    efi::EVT_NOTIFY_SIGNAL,
+                    efi::TPL_NOTIFY,
+                    Some(test_notify_function),
+                    None,
+                    Some(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP),
+                )
+                .unwrap();
+
+            let _ = SPIN_LOCKED_EVENT_DB
+                .create_event(
+                    efi::EVT_NOTIFY_WAIT,
+                    efi::TPL_NOTIFY,
+                    Some(test_notify_function),
+                    None,
+                    Some(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP),
+                )
+                .unwrap();
+
+            assert!(SPIN_LOCKED_EVENT_DB.lock().num_cache_attribute_changed_events == 2);
+            assert!(SPIN_LOCKED_EVENT_DB.lock().cache_attribute_changed_pending_notifies.capacity() >= 2);
+
+            //ensure the event was added to the list of cache attribute changed events
+            assert!(SPIN_LOCKED_EVENT_DB.lock().cache_attribute_changed_pending_notifies.is_empty());
+
+            SPIN_LOCKED_EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
+
+            assert!(SPIN_LOCKED_EVENT_DB.lock().cache_attribute_changed_pending_notifies.len() == 1);
+
+            //ensure the event is collected when iterating through events
+            let collected_events =
+                SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
+
+            //ensure that the collected events only contains one event (the notify_signal)
+            assert!(collected_events.len() == 1);
         });
     }
 
