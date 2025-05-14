@@ -62,7 +62,7 @@ impl StandardBootServices {
         self.efi_boot_services.store(efi_boot_services as *const _ as *mut _, Ordering::Relaxed);
     }
 
-    /// Return true if StandardBootServices is not initialized.
+    /// Return true if StandardBootServices is initialized.
     pub fn is_init(&self) -> bool {
         !self.efi_boot_services.load(Ordering::Relaxed).is_null()
     }
@@ -88,6 +88,10 @@ impl Clone for StandardBootServices {
 
 impl Debug for StandardBootServices {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if !self.is_init() {
+            return f.debug_struct("StandardBootServices").field("efi_boot_services", &"Not Initialized").finish();
+        }
+
         f.debug_struct("StandardBootServices")
             .field("create_event", &(self.efi_boot_services().create_event))
             .field("create_event_ex", &(self.efi_boot_services().create_event_ex))
@@ -1623,6 +1627,13 @@ mod test {
     fn test_that_accessing_uninit_boot_services_should_panic() {
         let bs = StandardBootServices::new_uninit();
         bs.efi_boot_services();
+    }
+
+    #[test]
+    fn test_debug_print_works_before_init() {
+        let bs = StandardBootServices::new_uninit();
+        let output = format!("{:?}", bs);
+        assert!(output.contains("Not Initialized"));
     }
 
     #[test]

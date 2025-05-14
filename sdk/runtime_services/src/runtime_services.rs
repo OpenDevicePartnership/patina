@@ -57,7 +57,7 @@ impl StandardRuntimeServices {
         self.efi_runtime_services.store(efi_runtime_services as *const _ as *mut _, Ordering::Relaxed);
     }
 
-    /// Return true if StandardRuntimeServices is not initialized.
+    /// Return true if StandardRuntimeServices is initialized.
     pub fn is_init(&self) -> bool {
         !self.efi_runtime_services.load(Ordering::Relaxed).is_null()
     }
@@ -83,6 +83,13 @@ impl Clone for StandardRuntimeServices {
 
 impl Debug for StandardRuntimeServices {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if !self.is_init() {
+            return f
+                .debug_struct("StandardRuntimeServices")
+                .field("efi_runtime_services", &"Not Initialized")
+                .finish();
+        }
+
         f.debug_struct("StandardRuntimeServices")
             .field("get_variable", &(self.efi_runtime_services().get_variable))
             .field("get_next_variable_name", &(self.efi_runtime_services().get_next_variable_name))
@@ -680,10 +687,17 @@ pub(crate) mod test {
     }
 
     #[test]
+    fn test_debug_print_works_before_init() {
+        let rs: StandardRuntimeServices = StandardRuntimeServices::new_uninit();
+        let output = format!("{:?}", rs);
+        assert!(output.contains("Not Initialized"));
+    }
+
+    #[test]
     #[should_panic(expected = "Standard Runtime Services is not initialized!")]
     fn test_that_accessing_uninit_runtime_services_should_panic() {
-        let bs = StandardRuntimeServices::new_uninit();
-        bs.efi_runtime_services();
+        let rs = StandardRuntimeServices::new_uninit();
+        rs.efi_runtime_services();
     }
 
     #[test]
