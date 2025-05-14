@@ -66,8 +66,6 @@ x86_64 = { version = "=0.15.2", default-features = false }
 criterion = { version = "^0.5" }
 mockall = { version = "0.13.0" }
 rand = { version = "0.8" }
-sample_components = { version = "15.0.0", path = "components/sample_components", registry = "patina-fw" }
-section_extractor = { version = "15.0.0", path = "core/section_extractor", registry = "patina-fw" }
 uint = { version = "^0.10" }
 winapi = { version = "0.3" }
 
