@@ -283,18 +283,20 @@ where
     fn parse_hobs(&mut self) {
         for hob in self.hob_list.iter() {
             if let mu_pi::hob::Hob::GuidHob(guid, data) = hob {
-                match self.storage.get_hob_parser(&guid.name) {
-                    Some(parser_func) => {
+                let parser_funcs = self.storage.get_hob_parsers(&guid.name);
+                if parser_funcs.is_empty() {
+                    let (f0, f1, f2, f3, f4, &[f5, f6, f7, f8, f9, f10]) = guid.name.as_fields();
+                    let name = alloc::format!(
+                        "{f0:08x}-{f1:04x}-{f2:04x}-{f3:02x}{f4:02x}-{f5:02x}{f6:02x}{f7:02x}{f8:02x}{f9:02x}{f10:02x}"
+                    );
+                    log::warn!(
+                        "No parser registered for HOB: GuidHob {{ {:?}, name: Guid {{ {} }} }}",
+                        guid.header,
+                        name
+                    );
+                } else {
+                    for parser_func in parser_funcs {
                         parser_func(data, &mut self.storage);
-                    }
-                    None => {
-                        let (f0, f1, f2, f3, f4, &[f5, f6, f7, f8, f9, f10]) = guid.name.as_fields();
-                        let name = alloc::format!("{f0:08x}-{f1:04x}-{f2:04x}-{f3:02x}{f4:02x}-{f5:02x}{f6:02x}{f7:02x}{f8:02x}{f9:02x}{f10:02x}");
-                        log::warn!(
-                            "No parser registered for HOB: GuidHob {{ {:?}, name: Guid {{ {} }} }}",
-                            guid.header,
-                            name
-                        );
                     }
                 }
             }

@@ -203,21 +203,25 @@ pub trait IntoComponent<Input> {
 mod tests {
     extern crate std;
 
+    use super::*;
+    use crate as uefi_sdk;
     use crate::{
-        component::params::ConfigMut,
+        component::{
+            hob::{FromHob, Hob},
+            params::ConfigMut,
+        },
         error::{EfiError, Result},
     };
-
-    use super::*;
+    use r_efi::base::Guid;
 
     // This component should run no problem.
     fn example_component_success() -> Result<()> {
         Ok(())
     }
 
-    // HobList should be empty, so `validate_param` should fail and the component
+    // Config list should be empty, so `validate_param` should fail and the component
     // should not run.
-    fn example_component_not_dispatched(_cfg: ConfigMut<u32>) -> Result<()> {
+    fn example_component_not_dispatched_config(_cfg: ConfigMut<u32>) -> Result<()> {
         Ok(())
     }
 
@@ -225,8 +229,33 @@ mod tests {
         Err(EfiError::Aborted)
     }
 
+    #[derive(FromHob, Default, Clone, Copy)]
+    #[hob = "d4ffc718-fb82-4274-9afc-aa8b1eef5293"]
+    #[repr(C)]
+    pub struct TestHob;
+
+    fn example_component_hob_dep_1(_hob: Hob<TestHob>) -> Result<()> {
+        Ok(())
+    }
+
+    #[derive(FromHob, Default, Clone, Copy)]
+    #[hob = "d4ffc718-fb82-4274-9afc-aa8b1eef5293"]
+    #[repr(C)]
+    pub struct TestHob2;
+
+    fn example_component_hob_dep_2(_hob: Hob<TestHob2>) -> Result<()> {
+        Ok(())
+    }
+
+    fn example_component_hob_dep_3(_hob: Hob<TestHob2>) -> Result<()> {
+        Ok(())
+    }
+
     #[test]
     fn test_component_run_return_handling() {
+        const HOB_GUID: Guid =
+            Guid::from_fields(0xd4ffc718, 0xfb82, 0x4274, 0x9a, 0xfc, &[0xaa, 0x8b, 0x1e, 0xef, 0x52, 0x93]);
+
         let mut storage = storage::Storage::new();
 
         // Test component dispatched and succeeds does not panic does not panic and returns Ok(true)
@@ -235,7 +264,7 @@ mod tests {
         assert!(component1.run(&mut storage).is_ok_and(|res| res));
 
         // Test component not dispatched does not panic and returns Ok(false)
-        let mut component2 = example_component_not_dispatched.into_component();
+        let mut component2 = example_component_not_dispatched_config.into_component();
         component2.initialize(&mut storage);
         storage.lock_configs(); // Lock the config so the component cannot run
         assert!(component2.run(&mut storage).is_ok_and(|res| !res));
@@ -244,5 +273,37 @@ mod tests {
         let mut component3 = example_component_fail.into_component();
         component3.initialize(&mut storage);
         assert!(component3.run(&mut storage).is_err_and(|res| res == EfiError::Aborted));
+
+        let mut component4 = example_component_hob_dep_1.into_component();
+        component4.initialize(&mut storage);
+        assert!(component4.run(&mut storage).is_ok_and(|res| !res));
+
+        let mut component5 = example_component_hob_dep_2.into_component();
+        component5.initialize(&mut storage);
+        assert!(component5.run(&mut storage).is_ok_and(|res| !res));
+
+        let mut component6 = example_component_hob_dep_3.into_component();
+        component6.initialize(&mut storage);
+        assert!(component6.run(&mut storage).is_ok_and(|res| !res));
+
+        storage.register_hob::<TestHob>();
+        assert!(storage.get_hob::<TestHob>().is_none());
+
+        // Two parsers should be registered for this HOB GUID since the HOBs are two unique types
+        // (`TestHob` and `TestHob2`)
+        assert!(storage.get_hob_parsers(&HOB_GUID).len() == 2);
+
+        storage.add_hob(TestHob);
+        assert!(storage.get_hob::<TestHob>().is_some());
+        assert_eq!(storage.get_hob::<TestHob>().unwrap().iter().count(), 1);
+
+        storage.add_hob(TestHob2);
+        assert!(storage.get_hob::<TestHob2>().is_some());
+        assert_eq!(storage.get_hob::<TestHob2>().unwrap().iter().count(), 1);
+
+        // Both components should have there HOB dependencies satisfied
+        assert!(component4.run(&mut storage).is_ok_and(|res| res));
+        assert!(component5.run(&mut storage).is_ok_and(|res| res));
+        assert!(component6.run(&mut storage).is_ok_and(|res| res));
     }
 }

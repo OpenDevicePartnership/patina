@@ -28,6 +28,8 @@ use super::{
     service::{IntoService, Service},
 };
 
+type HobParsers = BTreeMap<Guid, BTreeMap<TypeId, fn(&[u8], &mut Storage)>>;
+
 /// A vector whose elements are sparsely populated.
 #[derive(Debug)]
 pub(crate) struct SparseVec<V> {
@@ -202,7 +204,7 @@ pub struct Storage {
     /// A map to convert a Service type to a concrete service index.
     service_indices: BTreeMap<TypeId, usize>,
     /// HOB parsers for converting guided HOBs into `Hob<T>` datums.
-    hob_parsers: BTreeMap<Guid, fn(&[u8], &mut Storage)>,
+    hob_parsers: HobParsers,
     /// A container for all [Hob](super::hob::Hob) datums.
     hobs: SparseVec<Vec<Box<dyn Any>>>,
     /// a map to convert from TypeId to a hob index.
@@ -367,15 +369,15 @@ impl Storage {
     }
 
     pub(crate) fn add_hob_parser<T: FromHob>(&mut self) {
-        self.hob_parsers.insert(T::HOB_GUID, T::register);
+        self.hob_parsers.entry(T::HOB_GUID).or_default().insert(TypeId::of::<T>(), T::register);
     }
 
-    /// Registers a service type with the storage and returns its global id.
+    /// Registers a HOB with the storage and returns its global id.
     pub(crate) fn register_hob<T: FromHob>(&mut self) -> usize {
         self.get_or_register_hob(TypeId::of::<T>())
     }
 
-    /// Gets the global id of a service, registering it if it does not exist.
+    /// Gets the global id of a HOB, registering it if it does not exist.
     pub(crate) fn get_or_register_hob(&mut self, id: TypeId) -> usize {
         let idx = self.hob_indices.len();
         let idx = self.hob_indices.entry(id).or_insert(idx);
@@ -385,7 +387,7 @@ impl Storage {
         *idx
     }
 
-    /// Adds a hob datum to the storage, overwriting an existing value if it exists.
+    /// Adds a HOB datum to the storage, overwriting an existing value if it exists.
     pub(crate) fn add_hob<H: FromHob>(&mut self, hob: H) {
         let id = self.register_hob::<H>(); // This creates the index if it does not exist.
         self.hobs.get_mut(id).expect("Hob Index should always exist.").push(Box::new(hob));
@@ -410,8 +412,8 @@ impl Storage {
     }
 
     /// Attempts to retrieve a HOB parser from the storage.
-    pub fn get_hob_parser(&self, guid: &Guid) -> Option<fn(&[u8], &mut Storage)> {
-        self.hob_parsers.get(guid).copied()
+    pub fn get_hob_parsers(&self, guid: &Guid) -> Vec<fn(&[u8], &mut Storage)> {
+        self.hob_parsers.get(guid).map(|type_map| type_map.values().copied().collect()).unwrap_or_default()
     }
 }
 
@@ -603,7 +605,7 @@ mod tests {
 
         storage.register_hob::<MyStruct>();
         assert!(storage.get_hob::<MyStruct>().is_none());
-        assert!(storage.get_hob_parser(&MyStruct::HOB_GUID).is_none());
+        assert!(storage.get_hob_parsers(&MyStruct::HOB_GUID).is_empty());
 
         storage.add_hob(MyStruct);
         assert!(storage.get_hob::<MyStruct>().is_some());
@@ -613,7 +615,7 @@ mod tests {
         assert_eq!(storage.get_hob::<MyStruct>().unwrap().iter().count(), 2);
 
         storage.add_hob_parser::<MyStruct>();
-        assert!(storage.get_hob_parser(&MyStruct::HOB_GUID).is_some());
+        assert!(!storage.get_hob_parsers(&MyStruct::HOB_GUID).is_empty());
     }
 
     #[test]
