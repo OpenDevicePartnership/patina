@@ -1,9 +1,5 @@
 [package]
-<<<<<<<< HEAD:core/patina_internal_performance/Cargo.toml
-name = "patina_internal_performance"
-========
-name = "performance"
->>>>>>>> 6ee84e4 (add errors and move to component folder.):components/performance/Cargo.toml
+name = "patina_performance"
 resolver = "2"
 version.workspace = true
 repository.workspace = true
@@ -12,13 +8,6 @@ edition.workspace = true
 publish.workspace = true
 description = "Performance support for the DXE Core."
 
-<<<<<<<< HEAD:core/patina_internal_performance/Cargo.toml
-========
-[lib]
-name = "performance"
-path = "src/lib.rs"
-
->>>>>>>> 6ee84e4 (add errors and move to component folder.):components/performance/Cargo.toml
 [dependencies]
 r-efi = { workspace = true }
 scroll = { workspace = true }
