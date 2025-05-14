@@ -4,7 +4,7 @@ use gdbstub::{
     arch::{RegId, Registers},
     target::ext::breakpoints::WatchKind,
 };
-use paging::PagingType;
+use patina_paging::PagingType;
 use uefi_cpu::interrupts::ExceptionContext;
 
 use super::{DebuggerArch, UefiArchRegs};
@@ -29,7 +29,7 @@ impl DebuggerArch for X64Arch {
     const GDB_TARGET_XML: &'static str = r#"<?xml version="1.0"?><!DOCTYPE target SYSTEM "gdb-target.dtd"><target><architecture>i386:x86-64</architecture><xi:include href="registers.xml"/></target>"#;
     const GDB_REGISTERS_XML: &'static str = include_str!("xml/x64_registers.xml");
 
-    type PageTable = paging::x64::X64PageTable<memory::DebugPageAllocator>;
+    type PageTable = patina_paging::x64::X64PageTable<memory::DebugPageAllocator>;
 
     #[inline(always)]
     fn breakpoint() {
@@ -142,7 +142,8 @@ impl DebuggerArch for X64Arch {
         // SAFETY: The CR3 is currently being should be identity mapped and so
         // should point to a valid page table.
         unsafe {
-            paging::x64::X64PageTable::from_existing(cr3, memory::DebugPageAllocator {}, paging_type).map_err(|_| ())
+            patina_paging::x64::X64PageTable::from_existing(cr3, memory::DebugPageAllocator {}, paging_type)
+                .map_err(|_| ())
         }
     }
 

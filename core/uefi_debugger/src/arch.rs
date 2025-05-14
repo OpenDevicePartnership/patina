@@ -14,7 +14,7 @@
 //!
 
 use gdbstub::target::ext::breakpoints;
-use paging::PageTable;
+use patina_paging::PageTable;
 use uefi_cpu::interrupts::ExceptionContext;
 
 use crate::ExceptionInfo;

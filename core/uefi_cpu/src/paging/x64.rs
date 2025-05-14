@@ -9,16 +9,16 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::boxed::Box;
-use mtrr::create_mtrr_lib;
-use mtrr::error::MtrrError;
-use mtrr::structs::MtrrMemoryCacheType;
-use mtrr::Mtrr;
-use paging::page_allocator::PageAllocator;
-use paging::x64::X64PageTable;
-use paging::MemoryAttributes;
-use paging::PageTable;
-use paging::PagingType;
-use paging::PtError;
+use patina_mtrr::create_mtrr_lib;
+use patina_mtrr::error::MtrrError;
+use patina_mtrr::structs::MtrrMemoryCacheType;
+use patina_mtrr::Mtrr;
+use patina_paging::page_allocator::PageAllocator;
+use patina_paging::x64::X64PageTable;
+use patina_paging::MemoryAttributes;
+use patina_paging::PageTable;
+use patina_paging::PagingType;
+use patina_paging::PtError;
 use r_efi::efi;
 use uefi_sdk::error::EfiError;
 
@@ -173,7 +173,7 @@ fn mtrr_err_to_efi_status(err: MtrrError) -> EfiError {
 mod tests {
     use super::*;
     use mockall::mock;
-    use mtrr::{
+    use patina_mtrr::{
         error::MtrrResult,
         structs::{MtrrMemoryRange, MtrrSettings},
     };

@@ -9,7 +9,7 @@
 
 use core::ptr;
 
-use paging::{page_allocator::PageAllocator, MemoryAttributes, PageTable};
+use patina_paging::{page_allocator::PageAllocator, MemoryAttributes, PageTable};
 
 use crate::arch::DebuggerArch;
 
@@ -139,7 +139,7 @@ fn check_range_accessibility<P: PageTable>(page_table: &P, start_address: u64, l
 pub struct DebugPageAllocator {}
 
 impl PageAllocator for DebugPageAllocator {
-    fn allocate_page(&mut self, _align: u64, _size: u64, _is_root: bool) -> paging::PtResult<u64> {
+    fn allocate_page(&mut self, _align: u64, _size: u64, _is_root: bool) -> patina_paging::PtResult<u64> {
         panic!("Should not allocate page tables from the debugger!");
     }
 }
@@ -153,7 +153,7 @@ mod tests {
     use gdbstub::target::ext::breakpoints;
     use mockall::predicate::*;
     use mockall::*;
-    use paging::{MemoryAttributes, PtResult};
+    use patina_paging::{MemoryAttributes, PtResult};
 
     mock! {
         pub MemPageTable {}
@@ -208,7 +208,7 @@ mod tests {
         mock_page_table
             .expect_query_memory_region()
             .times(2)
-            .returning(|_, _| Err(paging::PtError::InvalidMemoryRange));
+            .returning(|_, _| Err(patina_paging::PtError::InvalidMemoryRange));
 
         let result = check_range_accessibility(&mock_page_table, 0, 0x1000);
         result.expect_err("Should have return a failure.");
@@ -232,7 +232,7 @@ mod tests {
         mock_page_table
             .expect_query_memory_region()
             .times(1)
-            .returning(|_, _| Err(paging::PtError::InvalidMemoryRange));
+            .returning(|_, _| Err(patina_paging::PtError::InvalidMemoryRange));
 
         let result = check_range_accessibility(&mock_page_table, 0x800, 0x3000);
         assert!(result.expect("Failed to check range access.") == 0x1800);
@@ -269,7 +269,9 @@ mod tests {
         let ctx = MockMemDebuggerArch::get_page_table_context();
         ctx.expect().returning(|| {
             let mut mock_page_table = MockMemPageTable::new();
-            mock_page_table.expect_query_memory_region().returning(|_, _| Err(paging::PtError::InvalidMemoryRange));
+            mock_page_table
+                .expect_query_memory_region()
+                .returning(|_, _| Err(patina_paging::PtError::InvalidMemoryRange));
             Ok(mock_page_table)
         });
 

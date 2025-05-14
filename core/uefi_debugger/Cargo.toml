@@ -19,7 +19,7 @@ uefi_sdk = { workspace = true }
 uefi_cpu = { workspace = true }
 log = { workspace = true }
 spin = { workspace = true }
-paging = { workspace = true  }
+patina-paging = { workspace = true  }
 bitfield-struct = { workspace = true  }
 
 [dev-dependencies]

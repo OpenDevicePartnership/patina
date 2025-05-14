@@ -9,9 +9,9 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::boxed::Box;
-use paging::{MemoryAttributes, PageTable, PtError};
+use patina_paging::{MemoryAttributes, PageTable, PtError};
 
-use paging::page_allocator::PageAllocator;
+use patina_paging::page_allocator::PageAllocator;
 use r_efi::efi;
 
 #[derive(Default)]

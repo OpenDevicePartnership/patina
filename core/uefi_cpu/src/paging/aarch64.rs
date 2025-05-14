@@ -9,11 +9,11 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::boxed::Box;
-use paging::aarch64::AArch64PageTable;
-use paging::PagingType;
-use paging::{MemoryAttributes, PageTable, PtError};
+use patina_paging::aarch64::AArch64PageTable;
+use patina_paging::PagingType;
+use patina_paging::{MemoryAttributes, PageTable, PtError};
 
-use paging::page_allocator::PageAllocator;
+use patina_paging::page_allocator::PageAllocator;
 use r_efi::efi;
 
 #[cfg(test)]
@@ -68,7 +68,7 @@ pub fn create_cpu_aarch64_paging<A: PageAllocator + 'static>(
     page_allocator: A,
 ) -> Result<Box<dyn PageTable<ALLOCATOR = A>>, efi::Status> {
     Ok(Box::new(EfiCpuPagingAArch64 {
-        paging: AArch64PageTable::new(page_allocator, PagingType::AArch64PageTable4KB).unwrap(),
+        paging: AArch64PageTable::new(page_allocator, PagingType::Paging4Level).unwrap(),
     }))
 }
 

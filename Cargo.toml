@@ -33,10 +33,10 @@ lazy_static = { version = "^1" }
 linked_list_allocator = { version = "^0.10" }
 linkme = { version = "^0.3.29" }
 log = { version = "0.4", default-features = false }
-mtrr = { version = "0.1.1", registry = "patina-fw" }
 mu_pi = { version = "5.2.3" }
 mu_rust_helpers = { version = "3.0.1" }
-paging = { version = "4.0.1", registry = "patina-fw" }
+patina-paging = { version = "5.0.0", registry = "patina-fw" }
+patina-mtrr = { version = "0.1.2", registry = "patina-fw" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
 r-efi = { version = "5.0.0", default-features = false }

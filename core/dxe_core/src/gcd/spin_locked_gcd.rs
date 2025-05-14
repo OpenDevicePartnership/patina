@@ -25,7 +25,7 @@ use crate::{
     allocator::DEFAULT_ALLOCATION_STRATEGY, ensure, error, events::EVENT_DB, protocol_db, protocol_db::INVALID_HANDLE,
     tpl_lock, GCD,
 };
-use paging::{page_allocator::PageAllocator, MemoryAttributes, PageTable, PtError, PtResult};
+use patina_paging::{page_allocator::PageAllocator, MemoryAttributes, PageTable, PtError, PtResult};
 use uefi_cpu::paging::create_cpu_paging;
 
 use mu_pi::hob::{Hob, HobList};
