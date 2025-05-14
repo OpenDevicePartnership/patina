@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "15.0.0"
+version = "15.1.0"
 license = "BSD-2-Clause-Patent"
 edition = "2021"
 repository = "https://github.com/OpenDevicePartnership/patina"
@@ -18,13 +18,13 @@ publish = ["patina-fw"]
 alloc-no-stdlib = { version = "~2.0" }
 arm-gic = { version = "^0.1.2" }
 bitfield-struct = { version = "0.10" }
-boot_services = { version = "15.0.0", path = "sdk/boot_services", registry = "patina-fw" }
+boot_services = { version = "15.1.0", path = "sdk/boot_services", registry = "patina-fw" }
 brotli-decompressor = { version = "4.0.0", default-features = false }
 cfg-if = { version = "1" }
 clap = { version = '4.5.36' }
 compile-time = { version = "0.2" }
 crc32fast = { version = "1.4", default-features = false }
-driver_binding = { version = "15.0.0", path = "sdk/driver_binding", registry = "patina-fw" }
+driver_binding = { version = "15.1.0", path = "sdk/driver_binding", registry = "patina-fw" }
 fallible-streaming-iterator = { version = "0.1.9" }
 fixedbitset = { version = "^0.5", default-features = false }
 gdbstub = { version = "0.7.3", default-features = false }
@@ -40,25 +40,25 @@ paging = { version = "4.0.1", registry = "patina-fw" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
 r-efi = { version = "5.0.0", default-features = false }
-runtime_services = { version = "15.0.0", path = "sdk/runtime_services", registry = "patina-fw" }
+runtime_services = { version = "15.1.0", path = "sdk/runtime_services", registry = "patina-fw" }
 scroll = { version = "^0.12", default-features = false }
 spin = { version = "^0.9" }
-stacktrace = { version = "15.0.0", path = "core/stacktrace", registry = "patina-fw" }
+stacktrace = { version = "15.1.0", path = "core/stacktrace", registry = "patina-fw" }
 syn = { version = "2" }
-tpl_mutex = { version = "15.0.0", path = "sdk/tpl_mutex", registry = "patina-fw" }
+tpl_mutex = { version = "15.1.0", path = "sdk/tpl_mutex", registry = "patina-fw" }
 uart_16550 = { version = "^0.3.2" }
-uefi_collections = { version = "15.0.0", path = "core/uefi_collections", default-features = false, registry = "patina-fw" }
+uefi_collections = { version = "15.1.0", path = "core/uefi_collections", default-features = false, registry = "patina-fw" }
 uefi_corosensei = { version = "0.1.3", default-features = false, registry = "patina-fw" }
-uefi_cpu = { version = "15.0.0", path = "core/uefi_cpu", registry = "patina-fw" }
-uefi_debugger = { version = "15.0.0", path = "core/uefi_debugger", registry = "patina-fw" }
-uefi_depex = { version = "15.0.0", path = "core/uefi_depex", registry = "patina-fw" }
-uefi_device_path = { version = "15.0.0", path = "core/uefi_device_path", registry = "patina-fw" }
-uefi_performance = { version = "15.0.0", path = "core/uefi_performance", registry = "patina-fw" }
-uefi_protocol = { version = "15.0.0", path = "sdk/uefi_protocol", registry = "patina-fw" }
-uefi_sdk = { version = "15.0.0", path = "sdk/uefi_sdk", registry = "patina-fw" }
-uefi_sdk_macro = { version = "15.0.0", path = "sdk/uefi_sdk_macro", registry = "patina-fw" }
-uefi_test = { version = "15.0.0", path = "sdk/uefi_test", registry = "patina-fw" }
-uefi_test_macro = { version = "15.0.0", path = "sdk/uefi_test_macro", registry = "patina-fw" }
+uefi_cpu = { version = "15.1.0", path = "core/uefi_cpu", registry = "patina-fw" }
+uefi_debugger = { version = "15.1.0", path = "core/uefi_debugger", registry = "patina-fw" }
+uefi_depex = { version = "15.1.0", path = "core/uefi_depex", registry = "patina-fw" }
+uefi_device_path = { version = "15.1.0", path = "core/uefi_device_path", registry = "patina-fw" }
+uefi_performance = { version = "15.1.0", path = "core/uefi_performance", registry = "patina-fw" }
+uefi_protocol = { version = "15.1.0", path = "sdk/uefi_protocol", registry = "patina-fw" }
+uefi_sdk = { version = "15.1.0", path = "sdk/uefi_sdk", registry = "patina-fw" }
+uefi_sdk_macro = { version = "15.1.0", path = "sdk/uefi_sdk_macro", registry = "patina-fw" }
+uefi_test = { version = "15.1.0", path = "sdk/uefi_test", registry = "patina-fw" }
+uefi_test_macro = { version = "15.1.0", path = "sdk/uefi_test_macro", registry = "patina-fw" }
 uuid = { version = "1.8", default-features = false }
 x86_64 = { version = "=0.15.2", default-features = false }
 
