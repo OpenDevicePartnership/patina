@@ -35,7 +35,7 @@ linked_list_allocator = { workspace = true }
 log = { workspace = true }
 mu_pi = { workspace = true }
 mu_rust_helpers = { workspace = true }
-patina-paging = { workspace = true }
+patina_paging = { workspace = true }
 r-efi = { workspace = true }
 scroll = {workspace = true, features = ["derive"]}
 spin = { workspace = true }
