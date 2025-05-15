@@ -22,6 +22,13 @@ RFC](https://github.com/OpenDevicePartnership/patina/blob/main/docs/src/rfc/text
     - `stacktrace`         -> `patina_stacktrace`
     - `debugger`           -> `patina_debugger`
   - Rename `patina_internal_sample_components` to `/components/patina_samples`.
+- 2025-05-14: Incorporate feedback from iteration 2
+  - Remove `patina_` from the directory names
+  - Move `dxe-core` to the root of the repository as `dxe_core`.
+  - The following crates should be made external without `patina_` prefix:
+    - `section_extractor`
+    - `stacktrace`
+    - `debugger`
 
 ## Motivation
 
@@ -51,7 +58,7 @@ the new naming conventions.
 2. Internal-only crates must be prefixed with `patina_internal_`.
 3. In addition to the above guidelines, any inconsistent crate names should be
    renamed to improve clarity.
-4. The crate's directory must match its name.
+4. The crate's directory name must match its crate name without the `patina_` prefix.
 5. Renaming crates will require updating all references in the code to reflect the new names.
 
 - **Public vs. Internal** - Deciding whether a crate should be internal-only or
@@ -106,30 +113,30 @@ classification.
 
 ```text
   Existing                             New
-                                 ├── patina_core
+                                 ├── dxe_core
 ├── components                   ├── components
-│   ├── adv_logger               │   ├── patina_adv_logger
-│   └── sample_components        │   └── patina_samples
+│   ├── adv_logger               │   ├── adv_logger
+│   └── sample_components        │   └── samples
 ├── core                         ├── core
 │   ├── dxe_core                 │   │
-│   ├── section_extractor        │   ├── patina_section_extractor
-│   ├── stacktrace               │   ├── patina_stacktrace
-│   ├── uefi_collections         │   ├── patina_internal_collections
-│   ├── uefi_cpu                 │   ├── patina_internal_cpu
-│   ├── uefi_debugger            │   ├── patina_debugger
-│   ├── uefi_depex               │   ├── patina_internal_depex
-│   ├── uefi_device_path         │   ├── patina_internal_device_path
-│   └── uefi_performance         │   └── patina_internal_performance
+│   ├── section_extractor        │   ├── section_extractor
+│   ├── stacktrace               │   ├── stacktrace
+│   ├── uefi_collections         │   ├── internal_collections
+│   ├── uefi_cpu                 │   ├── internal_cpu
+│   ├── uefi_debugger            │   ├── debugger
+│   ├── uefi_depex               │   ├── internal_depex
+│   ├── uefi_device_path         │   ├── internal_device_path
+│   └── uefi_performance         │   └── internal_performance
 └── sdk                          └── sdk
-    ├── boot_services                ├── patina_boot_services
-    ├── driver_binding               ├── patina_driver_binding
-    ├── runtime_services             ├── patina_runtime_services
-    ├── tpl_mutex                    ├── patina_tpl_mutex
-    ├── uefi_protocol                ├── patina_protocol
-    ├── uefi_sdk                     ├── patina_sdk
-    ├── uefi_sdk_macro               ├── patina_sdk_macro
-    ├── uefi_test                    ├── patina_test
-    └── uefi_test_macro              └── patina_test_macro
+    ├── boot_services                ├── boot_services
+    ├── driver_binding               ├── driver_binding
+    ├── runtime_services             ├── runtime_services
+    ├── tpl_mutex                    ├── tpl_mutex
+    ├── uefi_protocol                ├── protocol
+    ├── uefi_sdk                     ├── sdk
+    ├── uefi_sdk_macro               ├── sdk_macro
+    ├── uefi_test                    ├── test
+    └── uefi_test_macro              └── test_macro
 ```
 
 ## Alternatives
