@@ -1,5 +1,5 @@
 //! A library that enables performance analysis of every step of the UEFI boot process.
-//! The Performance component install a protocol that can be used by other libraries or drivers to publish performance reports.
+//! The Performance component installs a protocol that can be used by other libraries or drivers to publish performance reports.
 //! These reports are saved in the Firmware Basic Boot Performance Table (FBPT), so they can be extracted later from the operating system.
 //!
 //! ## License
