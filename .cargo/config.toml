@@ -3,8 +3,8 @@ patina-fw = { index = "sparse+https://pkgs.dev.azure.com/patina-fw/artifacts/_pa
 
 [patch.crates-io]
 dxe_core = { path = "core/dxe_core" }
-patina-mtrr = { registry = "patina-fw", version = "0" }
-patina-paging = { registry = "patina-fw", version = "5" }
+patina_mtrr = { registry = "patina-fw", version = "1" }
+patina_paging = { registry = "patina-fw", version = "6" }
 section_extractor = { path = "core/section_extractor" }
 stacktrace = { path = "core/stacktrace" }
 uefi_collections = { path = "core/uefi_collections" }

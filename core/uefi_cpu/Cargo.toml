@@ -22,7 +22,7 @@ log = { workspace = true }
 r-efi = { workspace = true }
 uefi_sdk = { workspace = true }
 spin = { workspace = true, features = ["rwlock"] }
-patina-paging = { workspace = true }
+patina_paging = { workspace = true }
 mu_pi = { workspace = true }
 cfg-if = { workspace = true }
 stacktrace = { workspace = true }
@@ -32,7 +32,7 @@ x86_64 = { workspace = true, features = [
     "instructions",
     "abi_x86_interrupt",
 ] }
-patina-mtrr = { workspace = true }
+patina_mtrr = { workspace = true }
 
 [target.'cfg(all(target_arch="aarch64"))'.dependencies]
 arm-gic = { workspace = true }
