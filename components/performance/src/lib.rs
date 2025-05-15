@@ -22,6 +22,7 @@ pub mod performance_record;
 pub mod performance_table;
 
 use alloc::{boxed::Box, string::ToString, vec::Vec};
+use mu_pi::status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_BS_DRIVER};
 use core::{
     clone::Clone,
     convert::{AsRef, TryFrom},
@@ -232,10 +233,6 @@ extern "efiapi" fn report_fpdt_record_buffer<BB, B, RR, R, F>(
         log::error!("Performance: Fail to report FPDT.");
         return;
     };
-
-    const EFI_SOFTWARE: u32 = 0x03000000;
-    const EFI_PROGRESS_CODE: u32 = 0x00000001;
-    const EFI_SOFTWARE_DXE_BS_DRIVER: u32 = EFI_SOFTWARE | 0x00050000;
 
     let Ok(p) = (unsafe { boot_services.as_ref().locate_protocol::<StatusCodeRuntimeProtocol>(None) }) else {
         log::error!("Performance: Fail to find status code protocol.");
