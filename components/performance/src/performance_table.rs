@@ -134,7 +134,7 @@ impl FBPT {
                         allocation_nb_page,
                     )
                 },
-                Result::Ok,
+                |addr| Ok(addr),
             )? as *mut u8;
 
         // SAFETY: the allocation at this addres was of size `allocation_size`
