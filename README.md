@@ -52,18 +52,18 @@ docs.rs once we begin uploading to crates.io.
 
 ## First-Time Tool Setup Instructions
 
-The following instructions install Rust.
-
-1. Follow the steps from [Getting Started - Rust Programming Language (rust-lang.org)](https://www.rust-lang.org/learn/get-started)
+1. Follow the steps outlined by [Getting Started - Rust Programming Language (rust-lang.org)](https://www.rust-lang.org/learn/get-started)
 to install, update (if needed), and test cargo/rust.
 
-2. Install the toolchain specified in the [toolchain] section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/personal/rogurr/md/rust-toolchain.toml) file.
+2. The [toolchain] section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/personal/rogurr/md/rust-toolchain.toml)
+file contains the tools necessary to compile and can be installed through rustup.
    ```
    rustup toolchain install
    ```
 
-3. The tools listed in the [tools] section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/personal/rogurr/md/rust-toolchain.toml)
-file must be manually installed.  At a minimum, cargo-make and cargo-tarpaulin should be installed.
+3. The [tools] section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/personal/rogurr/md/rust-toolchain.toml)
+file contains items to support the pipeline and must be installed manually.  A local build does not need them all, but at a minimum, cargo-make
+and cargo-tarpaulin should be installed.
    ```
    cargo install cargo-make
    cargo install cargo-tarpaulin
@@ -71,7 +71,7 @@ file must be manually installed.  At a minimum, cargo-make and cargo-tarpaulin s
 
 ## Build
 
-Cargo make will build a development compilation of all crates in the project in one of the 3 supported targets (aarch64, x64, or native):
+All of the patina crates can be compiled in one of 3 supported targets; aarch64, x64, or native.
 ```
 cargo make build-aarch64
    - or -
@@ -80,23 +80,21 @@ cargo make build-x64
 cargo make build
 ```
 
-Cargo make will also support release compilations by using the "-p release" flag
+By default, the make compiles a developer build, but development or release can be indicated by using the "-p" flag
 ```
+cargo make -p development build-aarch64
+   - or -
 cargo make -p release build-aarch64
-   - or -
-cargo make -p release build-x64
-   - or -
-cargo make -p release build
 ```
 
 ## Test
-Cargo make test will invoke a test build and execute all unit tests.
+Use the test command to invoke a test build and execute all unit tests.
 ```
 cargo make test
 ```
 
 ## Coverage
-Cargo make coverage will generate test coverage data for all crates in the project.  To target a single crate, the name can be added to the command line.
+The coverage command will generate test coverage data for all crates in the project.  To target a single crate, the name can be added to the command line.
 ```
 cargo make coverage
    - or -
