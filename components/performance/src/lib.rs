@@ -190,7 +190,7 @@ impl Performance {
         boot_services.as_ref().create_event_ex(
             EventType::NOTIFY_SIGNAL,
             Tpl::CALLBACK,
-            Some(fetch_and_add_smm_performance_records),
+            Some(fetch_and_add_mm_performance_records),
             Box::new((BB::clone(&boot_services), mm_comm_region, fbpt)),
             &EVENT_GROUP_READY_TO_BOOT,
         )?;
@@ -269,7 +269,7 @@ extern "efiapi" fn report_fpdt_record_buffer<BB, B, RR, R, F>(
 }
 
 /// Event callback that add the SMM performance record to the FBPT.
-extern "efiapi" fn fetch_and_add_smm_performance_records<BB, B, F>(
+extern "efiapi" fn fetch_and_add_mm_performance_records<BB, B, F>(
     event: efi::Event,
     ctx: Box<(BB, MmCommRegion, &TplMutex<'static, F, B>)>,
 ) where
@@ -702,7 +702,7 @@ mod test {
                 assert_eq!(&EventType::NOTIFY_SIGNAL, event_type);
                 assert_eq!(&Tpl::CALLBACK, notify_tpl);
                 assert_eq!(
-                    fetch_and_add_smm_performance_records::<Rc<_>, MockBootServices, MockFirmwareBasicBootPerfTable>
+                    fetch_and_add_mm_performance_records::<Rc<_>, MockBootServices, MockFirmwareBasicBootPerfTable>
                         as usize,
                     notify_function.unwrap() as usize
                 );
