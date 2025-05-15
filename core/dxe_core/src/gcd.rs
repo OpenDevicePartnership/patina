@@ -15,7 +15,7 @@ use mu_pi::{
     dxe_services::{GcdIoType, GcdMemoryType},
     hob::{self, Hob, HobList, PhaseHandoffInformationTable, ResourceDescriptorV2},
 };
-use paging::MemoryAttributes;
+use patina_paging::MemoryAttributes;
 use r_efi::efi;
 use uefi_sdk::base::{align_down, align_up};
 use uefi_sdk::error::EfiError;

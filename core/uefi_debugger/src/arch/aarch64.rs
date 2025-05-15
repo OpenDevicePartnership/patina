@@ -64,7 +64,7 @@ impl DebuggerArch for Aarch64Arch {
     const GDB_TARGET_XML: &'static str = r#"<?xml version="1.0"?><!DOCTYPE target SYSTEM "gdb-target.dtd"><target><architecture>aarch64</architecture><xi:include href="registers.xml"/></target>"#;
     const GDB_REGISTERS_XML: &'static str = include_str!("xml/aarch64_registers.xml");
 
-    type PageTable = paging::aarch64::AArch64PageTable<memory::DebugPageAllocator>;
+    type PageTable = patina_paging::aarch64::AArch64PageTable<memory::DebugPageAllocator>;
 
     #[inline(always)]
     fn breakpoint() {
@@ -221,10 +221,10 @@ impl DebuggerArch for Aarch64Arch {
         // TODO: Check for EL1?
         let ttbr0_el2 = read_sysreg!("ttbr0_el2");
         unsafe {
-            paging::aarch64::AArch64PageTable::from_existing(
+            patina_paging::aarch64::AArch64PageTable::from_existing(
                 ttbr0_el2,
                 memory::DebugPageAllocator {},
-                paging::PagingType::AArch64PageTable4KB,
+                patina_paging::PagingType::Paging4Level,
             )
             .map_err(|_| ())
         }

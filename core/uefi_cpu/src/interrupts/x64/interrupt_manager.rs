@@ -10,8 +10,8 @@
 use core::arch::global_asm;
 use lazy_static::lazy_static;
 use mu_pi::protocols::cpu_arch::EfiSystemContext;
-use paging::page_allocator::PageAllocator;
-use paging::{MemoryAttributes, PageTable, PagingType};
+use patina_paging::page_allocator::PageAllocator;
+use patina_paging::{MemoryAttributes, PageTable, PagingType};
 use stacktrace::StackTrace;
 use uefi_sdk::base::SIZE_4GB;
 use uefi_sdk::base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE};
@@ -308,14 +308,14 @@ fn interpret_gp_fault_exception_data(exception_data: u64) {
 }
 
 fn get_fault_attributes(cr2: u64, cr3: u64, paging_type: PagingType) -> Option<MemoryAttributes> {
-    let pt = unsafe { paging::x64::X64PageTable::from_existing(cr3, FaultAllocator {}, paging_type).ok()? };
+    let pt = unsafe { patina_paging::x64::X64PageTable::from_existing(cr3, FaultAllocator {}, paging_type).ok()? };
     pt.query_memory_region(cr2 & !(UEFI_PAGE_MASK as u64), UEFI_PAGE_SIZE as u64).ok()
 }
 
 pub struct FaultAllocator {}
 
 impl PageAllocator for FaultAllocator {
-    fn allocate_page(&mut self, _align: u64, _size: u64, _contiguous: bool) -> paging::PtResult<u64> {
+    fn allocate_page(&mut self, _align: u64, _size: u64, _contiguous: bool) -> patina_paging::PtResult<u64> {
         unimplemented!()
     }
 }
