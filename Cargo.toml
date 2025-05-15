@@ -8,7 +8,7 @@ version = "0.0.1"
 license = "BSD-2-Clause-Patent"
 edition = "2021"
 repository = "https://github.com/OpenDevicePartnership/patina"
-publish = true
+publish = ["patina-fw"]
 
 [workspace.dependencies]
 patina_performance = { version = "15.1.0", path = "components/performance", registry = "patina-fw" }
@@ -63,8 +63,6 @@ x86_64 = { version = "=0.15.2", default-features = false }
 criterion = { version = "^0.5" }
 mockall = { version = "0.13.0" }
 rand = { version = "0.8" }
-sample_components = { version = "15.0.0", path = "components/sample_components" }
-section_extractor = { version = "15.0.0", path = "core/section_extractor" }
 uint = { version = "^0.10" }
 winapi = { version = "0.3" }
 

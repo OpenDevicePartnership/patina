@@ -118,7 +118,6 @@ pub fn get_static_state() -> Option<(&'static StandardBootServices, &'static Tpl
 
 /// Performance Component.
 #[derive(IntoComponent)]
-
 pub struct Performance;
 
 impl Performance {
