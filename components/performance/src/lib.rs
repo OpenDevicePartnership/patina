@@ -313,7 +313,7 @@ extern "efiapi" fn fetch_and_add_smm_performance_records<BB, B, F>(
     let mut smm_boot_records_data = Vec::with_capacity(boot_record_size);
 
     while smm_boot_records_data.len() < boot_record_size {
-        // SAFETY: Is safe to use because the memroy region commes for a thrusted source and can be considered valid.
+        // SAFETY: Is safe to use because the memory region commes for a thrusted source and can be considered valid.
         match unsafe {
             // Ask smm to return us the next bytes in its buffer.
             communication
