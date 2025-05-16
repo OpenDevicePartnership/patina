@@ -55,7 +55,7 @@ docs.rs once we begin uploading to crates.io.
 1. Follow the steps outlined by [Getting Started - Rust Programming Language (rust-lang.org)](https://www.rust-lang.org/learn/get-started)
 to install, update (if needed), and test cargo/rust.
 
-2. The [toolchain] section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/personal/rogurr/md/rust-toolchain.toml)
+2. The [toolchain] section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/HEAD/rust-toolchain.toml)
 file contains the tools necessary to compile and can be installed through rustup.
    ```
    rustup toolchain install
