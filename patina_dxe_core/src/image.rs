@@ -971,9 +971,10 @@ pub fn core_load_image(
     image_info.system_table = PRIVATE_IMAGE_DATA.lock().system_table;
     image_info.parent_handle = parent_image_handle;
     image_info.device_handle = device_handle;
+    let mut fixed_file_path = None;
 
     if device_handle == protocol_db::INVALID_HANDLE {
-        image_info.file_path = file_path;
+        fixed_file_path = Some(file_path);
     } else if !file_path.is_null() {
         // Get the device path for the parent device
         if let Ok(device_path) =
@@ -986,10 +987,18 @@ pub fn core_load_image(
             let device_path_size_minus_end_node: usize =
                 device_path_size.saturating_sub(core::mem::size_of::<efi::protocols::device_path::Protocol>());
             let file_path = unsafe { (file_path as *const u8).add(device_path_size_minus_end_node) };
-            image_info.file_path = file_path as *mut efi::protocols::device_path::Protocol;
+            fixed_file_path = Some(file_path as *mut efi::protocols::device_path::Protocol);
         } else {
-            image_info.file_path = file_path;
+            fixed_file_path = Some(file_path);
         }
+    }
+
+    if let Some(path) = fixed_file_path {
+        let copy = Box::into_raw(
+            copy_device_path_to_boxed_slice(path).map_err(|status| EfiError::status_to_result(status).unwrap_err())?,
+        ) as *mut efi::protocols::device_path::Protocol;
+
+        image_info.file_path = copy;
     }
 
     let mut private_info = core_load_pe_image(image_to_load.as_ref(), image_info)
