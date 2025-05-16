@@ -994,11 +994,12 @@ pub fn core_load_image(
     }
 
     if let Some(path) = fixed_file_path {
-        let copy = Box::into_raw(
-            copy_device_path_to_boxed_slice(path).map_err(|status| EfiError::status_to_result(status).unwrap_err())?,
-        ) as *mut efi::protocols::device_path::Protocol;
-
-        image_info.file_path = copy;
+        if !path.is_null() {
+            image_info.file_path = Box::into_raw(
+                copy_device_path_to_boxed_slice(path)
+                    .map_err(|status| EfiError::status_to_result(status).unwrap_err())?,
+            ) as *mut efi::protocols::device_path::Protocol;
+        }
     }
 
     let mut private_info = core_load_pe_image(image_to_load.as_ref(), image_info)
