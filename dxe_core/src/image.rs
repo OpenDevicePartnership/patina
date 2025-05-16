@@ -18,6 +18,10 @@ use uefi_sdk::{guid, uefi_size_to_pages};
 
 use uefi_performance::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end};
 
+use crate::debug_image_info_table::{
+    core_new_debug_image_info_entry, core_remove_debug_image_info_entry, initialize_debug_image_info_table,
+    EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
+};
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
     dxe_services,
@@ -494,7 +498,7 @@ fn remove_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateI
 
 // retrieves the dxe core image info from the hob list, and installs the
 // loaded_image protocol on it to create the dxe_core image handle.
-fn install_dxe_core_image(hob_list: &HobList) {
+fn install_dxe_core_image(hob_list: &HobList, system_table: &mut EfiSystemTable) {
     // Retrieve the MemoryAllocationModule hob corresponding to the DXE core
     // (i.e. this driver).
     let dxe_core_hob = hob_list
@@ -562,6 +566,15 @@ fn install_dxe_core_image(hob_list: &HobList) {
         Ok(handle) => handle,
     };
     assert_eq!(handle, protocol_db::DXE_CORE_HANDLE);
+
+    // register the core image with the debug image info configuration table
+    initialize_debug_image_info_table(system_table);
+    core_new_debug_image_info_entry(
+        EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
+        image_info_ptr as *const efi::protocols::loaded_image::Protocol,
+        handle,
+    );
+
     // record this handle as the new dxe_core handle.
     private_data.dxe_core_image_handle = handle;
 
@@ -1039,6 +1052,13 @@ pub fn core_load_image(
         .inspect_err(|err| log::error!("failed to load image: install HII package list failed: {:#x?}", err))?;
     }
 
+    // register the loaded image with the debug image info configuration table
+    core_new_debug_image_info_entry(
+        EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
+        image_info_ptr as *const efi::protocols::loaded_image::Protocol,
+        handle,
+    );
+
     // Store the interface pointers for unload to use when uninstalling these protocol interfaces.
     private_info.image_info_ptr = image_info_ptr;
     private_info.image_device_path_ptr = file_path as *mut c_void;
@@ -1258,6 +1278,8 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
     }
     let handles = PROTOCOL_DB.locate_handles(None).unwrap_or_default();
 
+    core_remove_debug_image_info_entry(image_handle);
+
     // close any protocols opened by this image.
     for handle in handles {
         let protocols = match PROTOCOL_DB.get_protocols_on_handle(handle) {
@@ -1385,7 +1407,7 @@ pub fn init_image_support(hob_list: &HobList, system_table: &mut EfiSystemTable)
     drop(private_data);
 
     // install the image protocol for the dxe_core.
-    install_dxe_core_image(hob_list);
+    install_dxe_core_image(hob_list, system_table);
 
     //set up imaging services
     system_table.boot_services_mut().load_image = load_image;
