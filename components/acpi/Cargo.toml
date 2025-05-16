@@ -1,0 +1,19 @@
+[package]
+name = "patina_acpi"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "UEFI Software Development Kit (SDK) that provides common types and functionality used in UEFI development."
+
+[dependencies]
+uefi_sdk_macro = { workspace = true }
+bitflags = "2.9.0"
+uefi_sdk = { workspace = true}
+spin = "0.10.0"
+scroll = { version = "0.11", default-features = false, features = ["derive"] }
+memoffset = "0.9.1"
+r-efi = { workspace = true }
+downcast-rs = { version = "1.2", default-features = false }
