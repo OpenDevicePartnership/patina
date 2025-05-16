@@ -14,15 +14,18 @@ extern crate alloc;
 use super::{AllocationStrategy, DEFAULT_ALLOCATION_STRATEGY};
 
 use crate::{gcd::SpinLockedGcd, tpl_lock};
-use patina_sdk::{base::UEFI_PAGE_SIZE, error::EfiError};
+
+use patina_sdk::{base::UEFI_PAGE_SIZE, patina_boot_services::c_ptr::CMutPtr, error::EfiError};
 
 use core::{
     alloc::{AllocError, Allocator, GlobalAlloc, Layout},
-    cmp::max,
+    cmp::{max, PartialOrd},
+    debug_assert,
     fmt::{self, Display},
     mem::{align_of, size_of},
     ops::Range,
     ptr::{self, slice_from_raw_parts_mut, NonNull},
+    result::Result,
 };
 use linked_list_allocator::{align_down_size, align_up_size};
 use mu_pi::dxe_services::GcdMemoryType;
@@ -33,7 +36,11 @@ use r_efi::efi;
 #[derive(Debug, PartialEq)]
 pub enum FixedSizeBlockAllocatorError {
     /// Could not satisfy allocation request, and expansion failed.
-    OutOfMemory,
+    OutOfMemory(usize),
+    /// The provided layout was invalid.
+    InvalidLayout,
+    /// The memory region provided to extend the allocator was invalid.
+    InvalidExpansion,
 }
 
 /// Minimum expansion size - allocator will request at least this much memory
@@ -135,12 +142,10 @@ pub type PageChangeCallback = fn(&mut FixedSizeBlockAllocator);
 ///
 /// Implements an expandable memory allocator using fixed-sized blocks for speed backed by a linked-list allocator
 /// implementation when an appropriate sized free block is not available. If more memory is required than can be
-/// satisfied by either the block list or the linked-list, more memory is requested from the GCD supplied at
-/// instantiation and a new backing linked-list is created.
+/// satisfied by either the block list or the linked-list, more memory is is allocated externally, then passed into
+/// the allocator where a new backing linked-list is created.
 ///
 pub struct FixedSizeBlockAllocator {
-    gcd: &'static SpinLockedGcd,
-    handle: efi::Handle,
     memory_type: efi::MemoryType,
     list_heads: [Option<&'static mut BlockListNode>; BLOCK_SIZES.len()],
     allocators: Option<*mut AllocatorListNode>,
@@ -150,18 +155,10 @@ pub struct FixedSizeBlockAllocator {
 }
 
 impl FixedSizeBlockAllocator {
-    /// Creates a new empty FixedSizeBlockAllocator that will request memory from `gcd` as needed to satisfy
-    /// requests.
-    pub const fn new(
-        gcd: &'static SpinLockedGcd,
-        allocator_handle: efi::Handle,
-        memory_type: efi::MemoryType,
-        page_change_callback: PageChangeCallback,
-    ) -> Self {
+    /// Creates a new empty FixedSizeBlockAllocator
+    pub const fn new(memory_type: efi::MemoryType, page_change_callback: PageChangeCallback) -> Self {
         const EMPTY: Option<&'static mut BlockListNode> = None;
         FixedSizeBlockAllocator {
-            gcd,
-            handle: allocator_handle,
             memory_type,
             list_heads: [EMPTY; BLOCK_SIZES.len()],
             allocators: None,
@@ -172,7 +169,7 @@ impl FixedSizeBlockAllocator {
     }
 
     // This routine resets some aspects of allocator state for testing purposes.
-    // Note: this does not reset the GCD nor change the page_change_callback.
+    // Note: this does not change the page_change_callback.
     #[cfg(test)]
     pub fn reset(&mut self) {
         const EMPTY: Option<&'static mut BlockListNode> = None;
@@ -182,48 +179,44 @@ impl FixedSizeBlockAllocator {
         self.stats = AllocationStatistics::new();
     }
 
-    // Expand the memory available to this allocator by requesting a new contiguous region of memory from the gcd setting
-    // up a new allocator node to manage this range
-    fn expand(&mut self, layout: Layout) -> Result<(), FixedSizeBlockAllocatorError> {
-        let size = layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size();
-        let size = max(size, MIN_EXPANSION);
-        //ensure size is a multiple of alignment to avoid fragmentation.
-        let size = align_up_size(size, ALIGNMENT);
-        //Allocate memory from the gcd.
-        let start_address = self
-            .gcd
-            .allocate_memory_space(
-                DEFAULT_ALLOCATION_STRATEGY,
-                GcdMemoryType::SystemMemory,
-                UEFI_PAGE_SHIFT,
-                size,
-                self.handle,
-                None,
-            )
-            .map_err(|_| FixedSizeBlockAllocatorError::OutOfMemory)?;
+    // Expand the memory available to this allocator with a new contiguous region of memory, setting up a new allocator
+    // node to manage this range.
+    pub fn expand(&mut self, new_region: NonNull<[u8]>) -> core::result::Result<(), FixedSizeBlockAllocatorError> {
+        // Ensure we're expanding enough to fit a new allocator list node
+        if new_region.len() <= size_of::<AllocatorListNode>() {
+            debug_assert!(false, "FSB expanded with insufficiently sized memory region to fit AllocatorListNode");
+            return Err(FixedSizeBlockAllocatorError::InvalidExpansion);
+        }
 
-        //set up the new allocator, reserving space at the beginning of the range for the AllocatorListNode structure.
+        // Interpret the first part of the provided region as an AllocatorListNode
+        let alloc_node_ptr = new_region.as_ptr() as *mut AllocatorListNode;
 
-        let heap_bottom = start_address + size_of::<AllocatorListNode>();
-        let heap_size = size - (heap_bottom - start_address);
+        if !alloc_node_ptr.is_aligned() {
+            debug_assert!(false, "FSB expanded with region that has not been aligned with AllocatorListNode");
+            return Err(FixedSizeBlockAllocatorError::InvalidExpansion);
+        }
 
-        let alloc_node_ptr = start_address as *mut AllocatorListNode;
-        let node = AllocatorListNode { next: None, allocator: linked_list_allocator::Heap::empty() };
+        let heap_region: NonNull<[u8]> = NonNull::slice_from_raw_parts(
+            NonNull::new(unsafe { alloc_node_ptr.add(1) }.as_mut_ptr()).unwrap().cast(),
+            new_region.len() - size_of::<AllocatorListNode>(),
+        );
 
         //write the allocator node structure into the start of the range, initialize its heap with the remainder of
         //the range, and add the new allocator to the front of the allocator list.
+        let node = AllocatorListNode { next: None, allocator: linked_list_allocator::Heap::empty() };
         unsafe {
             alloc_node_ptr.write(node);
-            (*alloc_node_ptr).allocator.init(heap_bottom as *mut u8, heap_size);
+            (*alloc_node_ptr).allocator.init(heap_region.as_mut_ptr(), heap_region.len());
             (*alloc_node_ptr).next = self.allocators;
         }
 
         self.allocators = Some(alloc_node_ptr);
 
-        if self.preferred_range.as_ref().is_some_and(|range| range.contains(&(start_address as efi::PhysicalAddress))) {
-            self.stats.reserved_used += size;
+        if self.preferred_range.as_ref().is_some_and(|range| range.contains(&(alloc_node_ptr as efi::PhysicalAddress)))
+        {
+            self.stats.reserved_used += new_region.len();
         } else {
-            self.stats.claimed_pages += uefi_size_to_pages!(size);
+            self.stats.claimed_pages += uefi_size_to_pages!(new_region.len());
         }
 
         // if we managed to allocate pages, call into the page change callback to update stats
@@ -234,40 +227,43 @@ impl FixedSizeBlockAllocator {
 
     // allocates from the linked-list backing allocator if a free block of the
     // appropriate size is not available.
-    fn fallback_alloc(&mut self, layout: Layout) -> *mut u8 {
+    fn fallback_alloc(&mut self, layout: Layout) -> Result<NonNull<[u8]>, FixedSizeBlockAllocatorError> {
         for node in AllocatorIterator::new(self.allocators) {
             let allocator = unsafe { &mut (*node).allocator };
             if let Ok(ptr) = allocator.allocate_first_fit(layout) {
-                return ptr.as_ptr();
+                return Ok(NonNull::slice_from_raw_parts(ptr, layout.size()));
             }
         }
-        //if we get here, then allocation failed in all current allocation ranges.
-        //attempt to expand and then allocate again
-        if self.expand(layout).is_err() {
-            return ptr::null_mut();
-        }
-        self.fallback_alloc(layout)
+
+        // Determine how much additional memory is requrired
+        let additional_mem_required =
+            layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size();
+        let additional_mem_required = max(additional_mem_required, MIN_EXPANSION);
+        let additional_mem_required = align_up_size(additional_mem_required, ALIGNMENT);
+
+        return Err(FixedSizeBlockAllocatorError::OutOfMemory(additional_mem_required));
     }
 
     /// Allocates and returns a pointer to a memory buffer for the given layout.
     ///
-    /// This routine is designed to satisfy the [`GlobalAlloc`] trait, except that it requires a mutable self.
-    /// [`SpinLockedFixedSizeBlockAllocator`] provides a [`GlobalAlloc`] trait impl by wrapping this routine.
     ///
     /// Memory allocated by this routine should be deallocated with
     /// [`Self::dealloc`]
     ///
     /// ## Errors
     ///
-    /// Returns [`core::ptr::null_mut()`] on failure to allocate.
-    pub fn alloc(&mut self, layout: Layout) -> *mut u8 {
+    /// Returns [`FixedSizeBlockAllocatorError::OutOfMemory`] when the allocator doesn't have enough memory.
+    /// Returns [`FixedSizeBlockAllocatorError::InvalidLayout`] when the layout provided is invalid.
+    pub fn alloc(&mut self, layout: Layout) -> Result<NonNull<[u8]>, FixedSizeBlockAllocatorError> {
         self.stats.pool_allocation_calls += 1;
+
         match list_index(&layout) {
             Some(index) => {
                 match self.list_heads[index].take() {
                     Some(node) => {
                         self.list_heads[index] = node.next.take();
-                        node as *mut BlockListNode as *mut u8
+                        let ptr: NonNull<u8> = NonNull::from(node).cast();
+                        Ok(NonNull::slice_from_raw_parts(ptr, layout.size()))
                     }
                     None => {
                         // no block exists in list => allocate new block
@@ -276,7 +272,7 @@ impl FixedSizeBlockAllocator {
                         let block_align = block_size;
                         let layout = match Layout::from_size_align(block_size, block_align) {
                             Ok(layout) => layout,
-                            Err(_) => return core::ptr::null_mut(),
+                            Err(_) => return Err(FixedSizeBlockAllocatorError::InvalidLayout),
                         };
                         self.fallback_alloc(layout)
                     }
@@ -286,46 +282,23 @@ impl FixedSizeBlockAllocator {
         }
     }
 
-    /// Allocates and returns a NonNull byte slice for the given layout.
-    ///
-    /// This routine is designed to satisfy the [`Allocator`] trait, except that it  requires a mutable self.
-    /// [`SpinLockedFixedSizeBlockAllocator`] provides an [`Allocator`] trait impl by wrapping this routine.
-    ///
-    /// Memory allocated by this routine should be deallocated with
-    /// [`Self::deallocate`]
-    ///
-    /// ## Errors
-    ///
-    /// returns AllocError on failure to allocate.
-    pub fn allocate(&mut self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        let allocation = self.alloc(layout);
-        let allocation = slice_from_raw_parts_mut(allocation, layout.size());
-        let allocation = NonNull::new(allocation).ok_or(AllocError)?;
-        Ok(allocation)
-    }
-
     // deallocates back to the linked-list backing allocator if the size of
     // layout being freed is too big to be tracked as a fixed-size free block.
-    fn fallback_dealloc(&mut self, ptr: *mut u8, layout: Layout) {
-        if let Some(ptr) = NonNull::new(ptr) {
-            for node in AllocatorIterator::new(self.allocators) {
-                let allocator = unsafe { &mut (*node).allocator };
-                if (allocator.bottom() <= ptr.as_ptr()) && (ptr.as_ptr() < allocator.top()) {
-                    unsafe { allocator.deallocate(ptr, layout) };
-                }
+    fn fallback_dealloc(&mut self, ptr: NonNull<u8>, layout: Layout) {
+        for node in AllocatorIterator::new(self.allocators) {
+            let allocator = unsafe { &mut (*node).allocator };
+            if (allocator.bottom() <= ptr.as_ptr()) && (ptr.as_ptr() < allocator.top()) {
+                unsafe { allocator.deallocate(ptr, layout) };
             }
         }
     }
 
     /// Deallocates a buffer allocated by [`Self::alloc`].
     ///
-    /// This routine is designed to satisfy the [`GlobalAlloc`] trait, except  that it requires a mutable self.
-    /// [`SpinLockedFixedSizeBlockAllocator`] provides a [`GlobalAlloc`] trait impl by wrapping this routine.
-    ///
     /// ## Safety
     ///
     /// Caller must ensure that `ptr` was created by a call to [`Self::alloc`] with the same `layout`.
-    pub unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
+    pub unsafe fn dealloc(&mut self, ptr: NonNull<u8>, layout: Layout) {
         self.stats.pool_free_calls += 1;
         match list_index(&layout) {
             Some(index) => {
@@ -333,7 +306,7 @@ impl FixedSizeBlockAllocator {
                 // verify that block has size and alignment required for storing node
                 assert!(size_of::<BlockListNode>() <= BLOCK_SIZES[index]);
                 assert!(align_of::<BlockListNode>() <= BLOCK_SIZES[index]);
-                let new_node_ptr = ptr as *mut BlockListNode;
+                let new_node_ptr = ptr.as_ptr() as *mut BlockListNode;
                 unsafe {
                     new_node_ptr.write(new_node);
                     self.list_heads[index] = Some(&mut *new_node_ptr);
@@ -343,18 +316,6 @@ impl FixedSizeBlockAllocator {
                 self.fallback_dealloc(ptr, layout);
             }
         }
-    }
-
-    /// Deallocates a buffer allocated by [`Self::allocate`] .
-    ///
-    /// This routine is designed to satisfy the [`Allocator`] trait, except that it requires a mutable self.
-    /// [`SpinLockedFixedSizeBlockAllocator`] provides an [`Allocator`] trait impl by wrapping this routine.
-    ///
-    /// ## Safety
-    ///
-    /// Caller must ensure that `ptr` was created by a call to [`Self::allocate`] with the same `layout`.
-    pub unsafe fn deallocate(&mut self, ptr: NonNull<u8>, layout: Layout) {
-        self.dealloc(ptr.as_ptr(), layout)
     }
 
     /// Indicates whether the given pointer falls within a memory region managed by this allocator.
@@ -572,8 +533,11 @@ impl Display for FixedSizeBlockAllocator {
 
 /// Spin Locked Fixed Size Block Allocator
 ///
-/// A wrapper for [`FixedSizeBlockAllocator`] that provides Sync/Send via means of a spin mutex.
+/// A wrapper for [`FixedSizeBlockAllocator`] that allocated additional memory as needed from a GCD
+/// and provides Sync/Send via means of a spin mutex.
 pub struct SpinLockedFixedSizeBlockAllocator {
+    gcd: &'static SpinLockedGcd,
+    handle: efi::Handle,
     inner: tpl_lock::TplMutex<FixedSizeBlockAllocator>,
 }
 
@@ -587,9 +551,11 @@ impl SpinLockedFixedSizeBlockAllocator {
         callback: fn(allocator: &mut FixedSizeBlockAllocator),
     ) -> Self {
         SpinLockedFixedSizeBlockAllocator {
+            gcd,
+            handle: allocator_handle,
             inner: tpl_lock::TplMutex::new(
                 efi::TPL_HIGH_LEVEL,
-                FixedSizeBlockAllocator::new(gcd, allocator_handle, memory_type, callback),
+                FixedSizeBlockAllocator::new(memory_type, callback),
                 "FsbLock",
             ),
         }
@@ -692,19 +658,60 @@ impl SpinLockedFixedSizeBlockAllocator {
 
 unsafe impl GlobalAlloc for SpinLockedFixedSizeBlockAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        self.lock().alloc(layout)
+        match self.allocate(layout) {
+            Ok(alloc) => alloc.as_ptr() as *mut u8,
+            Err(_) => core::ptr::null_mut(),
+        }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        self.lock().dealloc(ptr, layout)
+        if let Some(ptr) = NonNull::new(ptr) {
+            self.deallocate(ptr, layout)
+        }
     }
 }
 
 unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
-    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        self.lock().allocate(layout)
+    fn allocate(&self, layout: Layout) -> core::result::Result<NonNull<[u8]>, AllocError> {
+        match self.lock().alloc(layout) {
+            Ok(alloc) => Ok(alloc),
+            Err(fsb_err) => {
+                match fsb_err {
+                    FixedSizeBlockAllocatorError::OutOfMemory(additional_mem_required) => {
+                        // Allocate additional memory through the GCD, returning AllocError
+                        // if the GCD returns an error
+                        let start_address: usize = self
+                            .gcd
+                            .allocate_memory_space(
+                                DEFAULT_ALLOCATION_STRATEGY,
+                                GcdMemoryType::SystemMemory,
+                                UEFI_PAGE_SHIFT,
+                                additional_mem_required,
+                                self.handle,
+                                None,
+                            )
+                            .map_err(|_| AllocError)?;
+
+                        // Expand the FSB using the allocated memory region
+                        let allocated_ptr = NonNull::new(start_address as *mut u8).ok_or(AllocError)?;
+                        if let Err(_) =
+                            self.lock().expand(NonNull::slice_from_raw_parts(allocated_ptr, additional_mem_required))
+                        {
+                            return Err(AllocError);
+                        }
+
+                        // Try the allocation one more time
+                        match self.lock().alloc(layout) {
+                            Ok(alloc) => Ok(alloc),
+                            Err(_) => Err(AllocError),
+                        }
+                    }
+                    _ => Err(AllocError),
+                }
+            }
+        }
     }
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        self.lock().deallocate(ptr, layout)
+        self.lock().dealloc(ptr, layout)
     }
 }
 
