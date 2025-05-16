@@ -42,9 +42,9 @@ jobs:
         id: release_tag
         run: |
           tag_name="${{ github.event.release.tag_name }}"
-          prefix="${{ inputs.tag-prefix }}"
+          prefix="${{ inputs.ignore-prefix}}"
 
-          # Remove leading "patina-" if it exists
+          # remove leading prefix if it exists
           release_tag="${tag_name#"$prefix"}"
 
           echo "Release Tag: $release_tag"
