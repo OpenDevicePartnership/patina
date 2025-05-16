@@ -124,12 +124,13 @@ memory to satisfy a request.
 The GCD tracks memory allocations at the system level to provide a global view of the memory map. In addition, this is
 level at which memory attributes (such as `Execute Protect` or `Read Protect`) are tracked.
 
-The Rust DXE core implements the GCD using a Red-Black Tree to track the memory regions within the GCD. This gives the
-best expected performance when the number of elements in the GCD is expected to be large. There are alternative storage
-implementations in the `uefi_collections` crate within the core that implement the same interface that provide different
-performance characteristics (which may be desirable if different assumptions are used - for example if the number of map
-entries is expected to be small), but the RBT-based implementation is expected to give the best performance in the
-general case.
+The Rust DXE core implements the GCD using a Red-Black Tree to track the memory regions within the
+GCD. This gives the best expected performance when the number of elements in the GCD is expected to
+be large. There are alternative storage implementations in the `patina_internal_collections` crate
+within the core that implement the same interface that provide different performance characteristics
+(which may be desirable if different assumptions are used - for example if the number of map entries
+is expected to be small), but the RBT-based implementation is expected to give the best performance
+in the general case.
 
 ### GCD Data Model
 

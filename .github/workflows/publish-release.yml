@@ -17,6 +17,8 @@ jobs:
   release:
     name: Release
     uses: ./.github/workflows/ReleaseWorkflow.yml
+    with:
+      ignore-prefix: 'patina-v'
     secrets: inherit
     permissions:
       contents: write

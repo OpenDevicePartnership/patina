@@ -1,0 +1,13 @@
+[package]
+name = "patina_internal_device_path"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+readme = "README.md"
+description = "A device path parsing implementation for the DXE Core."
+
+[dependencies]
+r-efi = { workspace = true }

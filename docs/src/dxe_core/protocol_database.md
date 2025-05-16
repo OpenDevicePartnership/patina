@@ -6,7 +6,7 @@ specification. This section assumes basic familiarity with the protocol services
 focuses on how they are implemented in the Rust DXE Core.
 
 The main implementation for protocol services in the Rust DXE Core resides in the protocol database object implemented
-by the uefi_protocol crate. The protocol database implemented by that crate is used to implement the UEFI protocol
+by the patina_uefi_protocol crate. The protocol database implemented by that crate is used to implement the UEFI protocol
 handler services by the main Rust DXE Core protocol.rs module.
 
 ## High-level Architectural Elements in the Protocol Database

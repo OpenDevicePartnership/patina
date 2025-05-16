@@ -29,7 +29,7 @@ cargo make all
 
 ## Performing a Release
 
-Below is the information required to perform a release to the external registry.
+Below is the information required to perform a release that publishes to the registry feed:
 
 1. Review the current draft release on the github repo: [Releases](https://github.com/OpenDevicePartnership/patina/releases)
    1. If something is incorrect, update it in the draft release

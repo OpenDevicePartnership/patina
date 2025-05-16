@@ -185,7 +185,7 @@ definition but many of the services are still implemented in C so it is orange.
 - Support for [Enhanced Memory Protections](https://microsoft.github.io/mu/WhatAndWhy/enhancedmemoryprotection/).
 - Source-level debugging support.
 - Built-in Brotli and EFI decompression support.
-- Infrastructure (in the `uefi_test` crate) for on-platform execution of unit tests.
+- Infrastructure (in the `patina_test` crate) for on-platform execution of unit tests.
 
 ``` admonish important
 The Rust DXE Core otherwise supports the normal responsibilities of a DXE Core except for the design restrictions
@@ -224,10 +224,10 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     let adv_logger_component = AdvancedLoggerComponent::<Uart16550>::new(&LOGGER);
     adv_logger_component.init_advanced_logger(physical_hob_list).unwrap();
 
-    uefi_debugger::set_debugger(&DEBUGGER);
+    patina_debugger::set_debugger(&DEBUGGER);
 
     Core::default()
-        .with_section_extractor(section_extractor::CompositeSectionExtractor::default()) // Section extractor can be customized or use default
+        .with_section_extractor(patina_section_extractor::CompositeSectionExtractor::default()) // Section extractor can be customized or use default
         .init_memory(physical_hob_list)                                                  // DXE Core initializes GCD with the HOB list
         .with_component(adv_logger_component)                                            // The "advanced logger" Rust component is added for dispatch
         .start()
@@ -252,7 +252,7 @@ The following integration documents might be helpful if you're beginning to work
 - [How to Setup a Platform-Specific Rust DXE Core Build](./integrate/dxe_core.md)
 - [Platform Integration of a Rust DXE Core Binary](./integrate/platform.md)
 
-##### `uefi_dxe_core` as a Library Crate
+##### `patina_dxe_core` as a Library Crate
 
 The Rust DXE Core itself is a library crate. This means a single set of common DXE Core is provided that can be linked
 into a binary crate. The binary crate is owned by the platform. The purpose of this separation is to allow the DXE Core
@@ -288,10 +288,10 @@ Three main types of testing are currently supported.
   state of the module. Only the external interfaces are being tested. Cargo will detect and run these tests with the
   same command as for unit tests. More information about integration tests are available in the
   [cargo book entry](https://doc.rust-lang.org/rust-by-example/testing/integration_testing.html).
-- **On-platform tests** are supported with code in a crate called `uefi_test` that provides a testing framework similar
+- **On-platform tests** are supported with code in a crate called `patina_test` that provides a testing framework similar
   to the typical rust testing framework. The key difference is that instead of tests being collected and executed on
-  the host system, they are instead collected and executed via a component (`uefi_test::TestRunner`) provided by
-  the same crate. The platform must register this component with the `dxe_core`. The dxe_core will then dispatch this
+  the host system, they are instead collected and executed via a component (`patina_test::TestRunner`) provided by
+  the same crate. The platform must register this component with the `DXE core`. The DXE core will then dispatch this
   component, which will run all registered tests.
 
 #### Compatibility

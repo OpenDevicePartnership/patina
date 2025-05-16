@@ -22,7 +22,7 @@ ignorePaths:
   - "**/docs/mermaid.min.js"
   - "**/*.asm"
   - "Makefile.toml"
-  - "**/uefi_debugger/src/arch/xml/**"
+  - "**/patina_debugger/src/arch/xml/**"
 ignoreRegExpList: ["/0x[0-9a-fA-F]+/"]
 minWordLength: 5
 caseSensitive: false

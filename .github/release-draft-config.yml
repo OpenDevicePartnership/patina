@@ -11,8 +11,8 @@
 # Copyright (c) Microsoft Corporation.
 # SPDX-License-Identifier: BSD-2-Clause-Patent
 ##
-name-template: 'v$RESOLVED_VERSION'
-tag-template: 'v$RESOLVED_VERSION'
+name-template: 'patina-v$RESOLVED_VERSION'
+tag-template: 'patina-v$RESOLVED_VERSION'
 
 commitish: refs/heads/main
 filter-by-commitish: true

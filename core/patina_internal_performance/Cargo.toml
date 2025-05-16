@@ -1,0 +1,24 @@
+[package]
+name = "patina_internal_performance"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Performance support for the DXE Core."
+
+[dependencies]
+r-efi = { workspace = true }
+scroll = { workspace = true, features = ["derive"] }
+log = { workspace = true }
+uuid = { workspace = true }
+
+mu_pi = { workspace = true }
+mu_rust_helpers = { workspace = true }
+patina_sdk = { workspace = true }
+patina_internal_device_path = { workspace = true }
+
+
+[features]
+instrument_performance = []
