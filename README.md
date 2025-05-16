@@ -55,13 +55,13 @@ docs.rs once we begin uploading to crates.io.
 1. Follow the steps outlined by [Getting Started - Rust Programming Language (rust-lang.org)](https://www.rust-lang.org/learn/get-started)
 to install, update (if needed), and test cargo/rust.
 
-2. The [toolchain] section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/HEAD/rust-toolchain.toml)
+2. The `[toolchain]` section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/HEAD/rust-toolchain.toml)
 file contains the tools necessary to compile and can be installed through rustup.
    ```
    rustup toolchain install
    ```
 
-3. The [tools] section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/personal/rogurr/md/rust-toolchain.toml)
+3. The `[tools]` section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/personal/rogurr/md/rust-toolchain.toml)
 file contains items to support the pipeline and must be installed manually.  A local build does not need them all, but at a minimum, cargo-make
 and cargo-tarpaulin should be installed.
    ```
@@ -88,12 +88,14 @@ cargo make -p release build-aarch64
 ```
 
 ## Test
+
 Use the test command to invoke a test build and execute all unit tests.
 ```
 cargo make test
 ```
 
 ## Coverage
+
 The coverage command will generate test coverage data for all crates in the project.  To target a single crate, the name can be added to the command line.
 ```
 cargo make coverage
@@ -102,9 +104,11 @@ cargo make coverage dxe_core
 ```
 
 ## Notes
+
 - This project uses the "RUSTC_BOOSTRAP=1" environment variable due to internal requirements which puts us in parity with the
 nightly features that exist on the toolchain targeted.  The "nightly" toolchain may be used in place of this.
 
 ## Contributing
+
 - Review Rust Documentation in the [/docs](https://github.com/OpenDevicePartnership/patina/tree/personal/rogurr/md/docs) directory.
 - Run unit tests and ensure all pass.
