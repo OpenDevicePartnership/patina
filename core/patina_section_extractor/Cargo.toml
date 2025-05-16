@@ -1,0 +1,29 @@
+[package]
+name = "patina_section_extractor"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+readme = "README.md"
+description = "UEFI section extractor implementations."
+
+[dependencies]
+log = { workspace = true }
+patina_sdk = { workspace = true }
+mu_pi = { workspace = true }
+r-efi = { workspace = true }
+brotli-decompressor = { workspace = true, optional = true }
+alloc-no-stdlib = { workspace = true, optional = true }
+mu_rust_helpers = { workspace = true, optional = true, features = [
+    "uefi_decompress",
+] }
+crc32fast = { workspace = true, optional = true }
+
+[features]
+default = ["brotli", "uefi_decompress", "crc32"]
+std = []
+brotli = ["dep:brotli-decompressor", "dep:alloc-no-stdlib"]
+uefi_decompress = ["dep:mu_rust_helpers"]
+crc32 = ["dep:crc32fast"]

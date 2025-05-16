@@ -1,0 +1,30 @@
+[package]
+name = "patina_adv_logger"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Advanced logger support."
+
+[[bin]]
+name = "advlog_parser"
+path = "bin/bin.rs"
+required-features = ['std']
+
+[dependencies]
+log = { workspace = true }
+patina_sdk = { workspace = true }
+mu_pi = { workspace = true }
+r-efi = { workspace = true }
+spin = { workspace = true }
+mu_rust_helpers = { workspace = true }
+patina_test = { workspace = true }
+
+# Only used for CLI
+clap = { workspace = true, features = ['derive'], optional = true }
+
+[features]
+default = []
+std = ['clap']

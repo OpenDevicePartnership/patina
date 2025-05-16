@@ -55,7 +55,7 @@ format as required by the UEFI spec. In addition, the Rust DXE Core also support
 format as specified in the UEFI Platform Initialization Spec.
 
 To parse these image formats, the Rust DXE Core uses the [goblin](https://docs.rs/goblin/latest/goblin/) crate which
-supports parsing both formats. Interactions with Goblin to support image parsing are implemented in the `uefi_pecoff`
+supports parsing both formats. Interactions with Goblin to support image parsing are implemented in the `patina_dxe_core`
 crate.
 
 To load an image, the Rust DXE core does the following:

@@ -1,0 +1,69 @@
+[package]
+name = "patina_dxe_core"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+readme = "README.md"
+description = "A pure rust implementation of the UEFI DXE Core."
+
+# Metadata to tell docs.rs how to build the documentation when uploading
+[package.metadata.docs.rs]
+features = ["doc"]
+
+[[example]]
+name = "dxe_core_std"
+path = "examples/std.rs"
+required-features = ["std"]
+
+[dependencies]
+compile-time = { workspace = true }
+crc32fast = { workspace = true  }
+goblin = {workspace = true, features = [
+    "pe32",
+    "pe64",
+    "te",
+] }
+lazy_static = { workspace = true, features = ["spin_no_std"] }
+linked_list_allocator = { workspace = true }
+log = { workspace = true }
+mu_pi = { workspace = true }
+mu_rust_helpers = { workspace = true }
+patina_paging = { workspace = true }
+r-efi = { workspace = true }
+scroll = {workspace = true, features = ["derive"]}
+spin = { workspace = true }
+uefi_corosensei = { workspace = true  }
+uuid = { workspace = true  }
+patina_sdk = { workspace = true, features = ["core"] }
+patina_internal_collections = { workspace = true  }
+patina_internal_cpu = { workspace = true }
+patina_debugger = { workspace = true }
+patina_internal_device_path = { workspace = true }
+patina_internal_depex = { workspace = true}
+patina_internal_performance = { workspace = true }
+patina_test = { workspace = true }
+
+[dev-dependencies]
+# To avoid circular dependencies, cargo-release skips dev dependencies when evaluating the release order for
+# cargo-release, however they are still used when verifying the package is compileable. Any dev-dependency that is
+# local to the workspace should be added via `path` instead of `workspace = true` so that that it does not fail to
+# compile due to the dev-dependency not being published yet.
+patina_samples = { path = "../components/patina_samples" }
+patina_section_extractor = { path = "../core/patina_section_extractor" }
+patina_internal_collections = { path = "../core/patina_internal_collections" }
+mockall = { workspace = true }
+
+[target.'cfg(all(target_arch="aarch64"))'.dependencies]
+arm-gic = { workspace = true }
+
+[features]
+default = []
+std = ["patina_sdk/std"]
+doc = ["patina_internal_cpu/doc"]
+compatibility_mode_allowed = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }

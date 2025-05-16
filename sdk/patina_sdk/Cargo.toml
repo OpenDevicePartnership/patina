@@ -1,0 +1,49 @@
+[package]
+name = "patina_sdk"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "UEFI Software Development Kit (SDK) that provides common types and functionality used in UEFI development."
+
+[[bench]]
+name = "bench_component"
+harness = false
+
+[dependencies]
+patina_sdk_macro = { workspace = true }
+patina_boot_services = { workspace = true }
+patina_driver_binding = { workspace = true }
+fixedbitset = { workspace = true }
+mu_pi = { workspace = true }
+patina_uefi_protocol = { workspace = true }
+patina_runtime_services = { workspace = true }
+patina_tpl_mutex = { workspace = true }
+
+cfg-if = { workspace = true }
+log = { workspace = true }
+r-efi = { workspace = true }
+mockall = { workspace = true, optional = true }
+
+[target.'cfg(target_arch="x86_64")'.dependencies]
+x86_64 = { workspace = true, features = [
+  "instructions",
+] }
+uart_16550 = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+mockall = { workspace = true }
+
+[features]
+core = ['alloc']
+std = []
+doc = ['alloc']
+alloc = []
+boot_services_global_allocator = ["patina_boot_services/global_allocator"]
+mockall = ["dep:mockall"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }

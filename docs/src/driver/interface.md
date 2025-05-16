@@ -11,7 +11,7 @@ attempts to fetch all requested parameters defined in the function interface. If
 component is executed, if not, it will not be dispatched, and another attempt will be made in the next iteration.
 
 In the Rust DXE Core, a component is simply a trait implementation. So long as a struct implements [Component](todo/docs.rs)
-and [IntoComponent](todo/docs.rs), it can be consumed and executed by the pure rust DXE core. [uefi_sdk](todo/docs.rs)
+and [IntoComponent](todo/docs.rs), it can be consumed and executed by the pure rust DXE core. [patina_sdk](todo/docs.rs)
 currently provides two implementations for `Component`:
 
 The first is [FunctionComponent](todo/docs.rs). This type cannot be instantiated manually, but a blanket implementation
@@ -20,11 +20,11 @@ of the `IntoComponent` trait allows any function whose parameters support depend
 
 The second is [StructComponent](todo/docs.rs). This type cannot be instantiated manually, but a derive proc-macro of
 `IntoComponent` is provided that will allow any struct or enum to be used as a component. This derive proc-macro
-expects that a `Self::entry_point(self, ...) -> uefi_sdk::error::Result<()> { ... }` exists, where the `...` in the
+expects that a `Self::entry_point(self, ...) -> patina_sdk::error::Result<()> { ... }` exists, where the `...` in the
 function definition can be any number of parameters twho support dependency injection as shown below. The function
 name can be overwritten with the attribute macro `#[entry_point(path = path::to::func)]` on the same struct.
 
-See [Samples](https://github.com/OpenDevicePartnership/patina/tree/main/sample_components) or [Examples](#examples)
+See [Samples](https://github.com/OpenDevicePartnership/patina/tree/main/components/patina_samples) or [Examples](#examples)
 for examples of basic components using these two methods.
 
 Due to this, developing a component is as simple as writing a function whose parameters are a part of the below list of
@@ -119,7 +119,7 @@ trait object service, with a lightweight concrete struct Service Wrapper to supp
 mocking of the underlying functionality, but provides an easy to use interface as seen below:
 
 ``` rust
-use uefi_sdk::{
+use patina_sdk::{
     error::Result,
     component::service::Service,
 };
@@ -173,8 +173,8 @@ the given parameter is actually available, even if it would have been made avail
 ### FunctionComponent Examples
 
 ```rust
-use uefi_sdk::{
-    boot_services::BootServices,
+use patina_sdk::{
+    patina_boot_services::BootServices,
     component::params::{Config, ConfigMut},
     error::Result,
 };
@@ -193,7 +193,7 @@ fn validate_random_data_driver<T: Default>(bs: impl BootServices, data: Config<T
 
 #[cfg(test)]
 mod tests {
-    use uefi_sdk::component::IntoComponent;
+    use patina_sdk::component::IntoComponent;
     use super::validate_random_data_driver;
 
     #[test]
@@ -209,8 +209,8 @@ mod tests {
 ### StructComponent Examples
 
 ```rust
-use uefi_sdk::{
-    boot_services::StandardBootServices,
+use patina_sdk::{
+    patina_boot_services::StandardBootServices,
     component::{
         IntoComponent,
         params::{Config, ConfigMut},
@@ -224,7 +224,7 @@ struct MyComponent {
     private_config: u32,
 }
 
-fn entry_point(c: MyComponent, public_config: Config<u32>) -> uefi_sdk::error::Result<()> {
+fn entry_point(c: MyComponent, public_config: Config<u32>) -> patina_sdk::error::Result<()> {
     if *public_config != c.private_config {
         return Err(EfiError::Unsupported)
     }
@@ -237,7 +237,7 @@ struct MyComponent2 {
 }
 
 impl MyComponent2 {
-    fn entry_point(self, mut public_config: ConfigMut<u32>) -> uefi_sdk::error::Result<()> {
+    fn entry_point(self, mut public_config: ConfigMut<u32>) -> patina_sdk::error::Result<()> {
         *public_config += self.private_config;
         Ok(())
     }

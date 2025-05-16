@@ -12,7 +12,7 @@ implementation details to support a specific platform, architecture, or silicon.
 implementations and the sharing of certain settings across multiple implementations or components.
 
 The following sections will talk about these two functionalities, and the options available through
-the pure rust dxe core.
+the pure rust DXE Core.
 
 ### LibraryClasses
 
@@ -44,6 +44,6 @@ types of PCDs with both static and dynamic values.
 
 Due to the monolithic nature of the pure rust DXE Core, this complex system for platform
 configuration is no longer necessary. Instead, we can perform configuration in code, and share
-configuration values between the dxe_core and any driver being compiled as a part of the dxe_core.
+configuration values between the DXE Core and any driver being compiled as a part of the DXE Core.
 To learn how to effectively do configuration in code, please review the [Configuration in Code](dev/principles/config.md)
 section of the Best practices Chapter.

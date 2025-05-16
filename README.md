@@ -95,14 +95,14 @@ A developer can easily generate coverage data with the below commands. A develop
 to generate coverage for by adding the package name after the command.
 
 - `cargo make coverage`
-- `cargo make coverage dxe_core`
+- `cargo make coverage patina_dxe_core`
 
 Another set of commands are available that can  generate coverage data, but is generally only used for CI.
 This command runs coverage on each package individually, filtering out any results outside of the package,
 and will fail if the code coverage percentage is less than 75%.
 
 - `cargo make coverage-fail`
-- `cargo make coverage-fail dxe_core`
+- `cargo make coverage-fail patina_dxe_core`
 
 ## Notes
 

@@ -2,11 +2,11 @@
 
 In EDK II, configuration of libraries and components was managed through PCDs due to the fact that
 all modules were compiled separately, making it difficult to share configuration. With the pure
-rust dxe core, drivers and the dxe core are being compiled together in a monolithic nature. This
+rust DXE Core, drivers and the DXE Core are being compiled together in a monolithic nature. This
 allows for configuration to be done in code, during the instantiation process of each individual
 driver.
 
-The expectation is that inside the start function of the dxe_core, you will instantiate each
+The expectation is that inside the start function of the DXE Core, you will instantiate each
 driver, and you can share configuration values between them.
 
 ## Example
