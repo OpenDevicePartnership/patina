@@ -42,7 +42,7 @@ jobs:
         id: release_tag
         run: |
           tag_name="${{ github.event.release.tag_name }}"
-          prefix="${{ inputs.ignore-prefix}}"
+          prefix="${{ inputs.ignore-prefix }}"
 
           # remove leading prefix if it exists
           release_tag="${tag_name#"$prefix"}"
