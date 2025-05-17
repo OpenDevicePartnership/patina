@@ -61,9 +61,9 @@ file contains the tools necessary to compile and can be installed through rustup
    rustup toolchain install
    ```
 
-3. The `[tools]` section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/personal/rogurr/md/rust-toolchain.toml)
-file contains items to support the pipeline and must be installed manually.  A local build does not need them all, but at a minimum, cargo-make
-and cargo-tarpaulin should be installed.
+3. The `[tools]` section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/HEAD/rust-toolchain.toml)
+file contains tools to support commands such as `cargo make coverage` and must be installed manually.  A local build does not need
+them all, but at a minimum, cargo-make and cargo-tarpaulin should be installed.
    ```
    cargo install cargo-make
    cargo install cargo-tarpaulin
@@ -110,5 +110,5 @@ nightly features that exist on the toolchain targeted.  The "nightly" toolchain 
 
 ## Contributing
 
-- Review Rust Documentation in the [/docs](https://github.com/OpenDevicePartnership/patina/tree/personal/rogurr/md/docs) directory.
+- Review Rust Documentation in the [/docs](https://github.com/OpenDevicePartnership/patina/blob/HEAD/docs/src/introduction.md) directory.
 - Run unit tests and ensure all pass.
