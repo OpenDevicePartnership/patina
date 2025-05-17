@@ -62,7 +62,7 @@ pub struct StandardAcpiProvider {
     pub version: AtomicU32,
     pub signature: u32,
     pub should_reclaim_memory: AtomicBool,
-    pub(crate) system_tables: TplMutex<'static, SystemTables>,
+    pub(crate) system_tables: Mutex<SystemTables>,
     acpi_tables: RwLock<Vec<NonNull<AcpiTable>>>,
     next_table_key: AtomicUsize,
     notify_list: RwLock<Vec<AcpiNotifyFn>>,
