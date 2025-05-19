@@ -22,15 +22,15 @@ pub mod performance_record;
 pub mod performance_table;
 
 use alloc::{boxed::Box, string::ToString, vec::Vec};
-use mu_pi::status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_BS_DRIVER};
 use core::{
     clone::Clone,
     convert::{AsRef, TryFrom},
     ffi::{c_char, c_void, CStr},
     mem::MaybeUninit,
     ptr,
-    sync::atomic::{AtomicBool, AtomicU32, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, Ordering}, u32,
 };
+use mu_pi::status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_BS_DRIVER};
 
 use r_efi::{
     efi::{self, Guid},
@@ -57,7 +57,7 @@ use patina_sdk::{
 =======
 use uefi_sdk::{
     boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
-    component::{hob::Hob, IntoComponent},
+    component::{hob::Hob, params::Config, IntoComponent},
     error::EfiError,
     guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
     protocol::status_code::StatusCodeRuntimeProtocol,
@@ -85,6 +85,7 @@ use _smm::{CommunicateProtocol, MmCommRegion, SmmFpdtGetRecordDataByOffset, SmmF
 
 pub use log_perf_measurement::*;
 
+static PERF_MEASUREMENT_MASK: AtomicU32 = AtomicU32::new(0);
 static LOAD_IMAGE_COUNT: AtomicU32 = AtomicU32::new(0);
 
 static STATIC_STATE_IS_INIT: AtomicBool = AtomicBool::new(false);
@@ -117,6 +118,37 @@ pub fn get_static_state() -> Option<(&'static StandardBootServices, &'static Tpl
     }
 }
 
+#[derive(Debug, Default)]
+pub struct EnabledMeasurement(pub &'static [Measurement]);
+
+impl EnabledMeasurement {
+    pub fn mask(&self) -> u32 {
+        self.0.into_iter().fold(0, |mask, m| mask | m.as_u32())
+    }
+}
+
+#[derive(Debug)]
+#[repr(u32)]
+pub enum Measurement {
+    StartImage = 1,
+    LoadImage = 1 << 1,
+    DriverBindingSupport = 1 << 2,
+    DriverBindingStart = 1 << 3,
+    DriverBindingStop = 1 << 4,
+}
+
+impl Measurement {
+    pub fn as_u32(&self) -> u32 {
+        match self {
+            Measurement::StartImage => Measurement::StartImage as u32,
+            Measurement::LoadImage => Measurement::LoadImage as u32,
+            Measurement::DriverBindingSupport => Measurement::DriverBindingSupport as u32,
+            Measurement::DriverBindingStart => Measurement::DriverBindingStart as u32,
+            Measurement::DriverBindingStop => Measurement::DriverBindingStop as u32,
+        }
+    }
+}
+
 /// Performance Component.
 #[derive(IntoComponent)]
 pub struct Performance;
@@ -126,11 +158,14 @@ impl Performance {
     #[cfg(not(tarpaulin_include))] // This is tested via the generic version, see _entry_point.
     pub fn entry_point(
         self,
+        enabled_measurements: Config<EnabledMeasurement>,
         boot_services: StandardBootServices,
         runtime_services: StandardRuntimeServices,
         records_buffers_hobs: Hob<HobPerformanceData>,
         mm_comm_region_hobs: Hob<MmCommRegion>,
     ) -> Result<(), EfiError> {
+        PERF_MEASUREMENT_MASK.store(enabled_measurements.mask(), Ordering::Relaxed);
+
         let fbpt = set_static_state(StandardBootServices::clone(&boot_services))
             .expect("Static state should only be initialized here!");
 
@@ -611,7 +646,7 @@ mod test {
     use super::*;
 
     use alloc::rc::Rc;
-    use core::{assert_eq, ptr};
+    use core::{assert_eq, ptr, u32};
 
     use mockall::predicate;
 
@@ -800,6 +835,7 @@ mod test {
 
     #[test]
     fn test_create_performance_measurement() {
+        PERF_MEASUREMENT_MASK.store(u32::MAX, Ordering::Relaxed);
         let mut boot_services = MockBootServices::new();
 
         let mut loaded_image_protocol = MaybeUninit::<efi::protocols::loaded_image::Protocol>::zeroed();

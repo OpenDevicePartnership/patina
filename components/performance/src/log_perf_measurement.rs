@@ -10,6 +10,7 @@
 use core::{
     ffi::{c_char, c_void},
     ptr,
+    sync::atomic::Ordering,
 };
 
 use alloc::ffi::CString;
@@ -17,7 +18,7 @@ use r_efi::efi;
 
 use crate::{
     performance_measurement_protocol::{CreateMeasurement, PerfAttribute},
-    KnownPerfId,
+    KnownPerfId, Measurement, PERF_MEASUREMENT_MASK,
 };
 
 /// Create performance record
@@ -97,6 +98,9 @@ fn end_perf_measurement(
 
 /// Begins performance measurement of start image in core.
 pub fn perf_image_start_begin(module_handle: efi::Handle, create_performance_measurement: CreateMeasurement) {
+    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::StartImage as u32 == 0 {
+        return;
+    }
     log_perf_measurement(
         module_handle,
         None,
@@ -109,11 +113,17 @@ pub fn perf_image_start_begin(module_handle: efi::Handle, create_performance_mea
 
 /// Ends performance measurement of start image in core.
 pub fn perf_image_start_end(image_handle: efi::Handle, create_performance_measurement: CreateMeasurement) {
+    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::StartImage as u32 == 0 {
+        return;
+    }
     log_perf_measurement(image_handle, None, None, 0, KnownPerfId::ModuleEnd.as_u16(), create_performance_measurement)
 }
 
 /// Begins performance measurement of load image in core.
 pub fn perf_load_image_begin(module_handle: efi::Handle, create_performance_measurement: CreateMeasurement) {
+    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::LoadImage as u32 == 0 {
+        return;
+    }
     log_perf_measurement(
         module_handle,
         None,
@@ -126,6 +136,9 @@ pub fn perf_load_image_begin(module_handle: efi::Handle, create_performance_meas
 
 /// Ends performance measurement of load image in core.
 pub fn perf_load_image_end(module_handle: efi::Handle, create_performance_measurement: CreateMeasurement) {
+    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::LoadImage as u32 == 0 {
+        return;
+    }
     log_perf_measurement(
         module_handle,
         None,
@@ -142,6 +155,9 @@ pub fn perf_driver_binding_support_begin(
     controller_handle: efi::Handle,
     create_performance_measurement: CreateMeasurement,
 ) {
+    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::DriverBindingSupport as u32 == 0 {
+        return;
+    }
     log_perf_measurement(
         driver_binding_handle,
         None,
@@ -158,6 +174,9 @@ pub fn perf_driver_binding_support_end(
     controller_handle: efi::Handle,
     create_performance_measurement: CreateMeasurement,
 ) {
+    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::DriverBindingSupport as u32 == 0 {
+        return;
+    }
     log_perf_measurement(
         driver_binding_handle,
         None,
@@ -174,6 +193,9 @@ pub fn perf_driver_binding_start_begin(
     controller_handle: efi::Handle,
     create_performance_measurement: CreateMeasurement,
 ) {
+    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::DriverBindingStart as u32 == 0 {
+        return;
+    }
     log_perf_measurement(
         driver_binding_handle,
         None,
@@ -190,6 +212,9 @@ pub fn perf_driver_binding_start_end(
     controller_handle: efi::Handle,
     create_performance_measurement: CreateMeasurement,
 ) {
+    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::DriverBindingStart as u32 == 0 {
+        return;
+    }
     log_perf_measurement(
         driver_binding_handle,
         None,
@@ -206,6 +231,9 @@ pub fn perf_driver_binding_stop_begin(
     controller_handle: efi::Handle,
     create_performance_measurement: CreateMeasurement,
 ) {
+    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::DriverBindingStop as u32 == 0 {
+        return;
+    }
     log_perf_measurement(
         module_handle,
         None,
@@ -222,6 +250,9 @@ pub fn perf_driver_binding_stop_end(
     controller_handle: efi::Handle,
     create_performance_measurement: CreateMeasurement,
 ) {
+    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::DriverBindingStop as u32 == 0 {
+        return;
+    }
     log_perf_measurement(
         module_handle,
         None,

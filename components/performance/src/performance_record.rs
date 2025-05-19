@@ -201,6 +201,7 @@ pub struct Iter<'a> {
 }
 
 impl<'a> Iter<'a> {
+    /// Iterate through performance records in a memory buffer. The buffer must contains valid records.
     pub fn new(buffer: &'a [u8]) -> Self {
         Self { buffer }
     }
