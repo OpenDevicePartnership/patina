@@ -1,16 +1,18 @@
 use core::mem;
 use uefi_sdk::component::hob::{FromHob, Hob};
 use uefi_sdk::component::params::Commands;
+use uefi_sdk::component::service::memory::{AllocationOptions, MemoryManager, PageAllocationStrategy};
+use uefi_sdk::component::service::Service;
+use uefi_sdk::component::IntoComponent;
 use uefi_sdk::{
     boot_services::{allocation::AllocType, BootServices, StandardBootServices},
     component::params::Config,
     uefi_size_to_pages,
 };
-use uefi_sdk_macro::IntoComponent;
 
 use crate::acpi_protocol::{AcpiSdtProtocol, AcpiTableProtocol};
 use crate::acpi_table::AcpiXsdt;
-use crate::signature;
+use crate::signature::{self, XSDT};
 use crate::signature::{
     ACPI_HEADER_LEN, ACPI_RESERVED_BYTE, ACPI_RSDP_REVISION, ACPI_RSDP_TABLE, ACPI_XSDT_REVISION, MAX_INITIAL_ENTRIES,
 };
@@ -46,24 +48,29 @@ impl AcpiProviderManager {
         mut commands: Commands,
         config: Config<AcpiProviderInit>,
         acpi_hob: Option<Hob<AcpiMemoryHob>>,
+        memory_manager: Service<dyn MemoryManager>,
     ) -> uefi_sdk::error::Result<()> {
-        ACPI_TABLE_INFO.initialize(config.version, config.should_reclaim_memory, boot_services);
+        ACPI_TABLE_INFO.initialize(config.version, config.should_reclaim_memory, boot_services, memory_manager);
 
         // Create and set the RSDP
-        let rsdp_addr = ACPI_TABLE_INFO.boot_services.get().expect("Boot services not initialized").allocate_pages(
-            AllocType::AnyPage,
-            ACPI_TABLE_INFO.memory_type(),
+        let rsdp_alloc = memory_manager.allocate_zero_pages(
             uefi_size_to_pages!(mem::size_of::<AcpiRsdp>()),
-        )? as *mut u8;
-        let rsdp = unsafe { &mut *(rsdp_addr as *mut AcpiRsdp) };
+            AllocationOptions::new()
+                .with_memory_type(ACPI_TABLE_INFO.memory_type())
+                .with_strategy(PageAllocationStrategy::Any),
+        )?;
+        let rsdp = unsafe { &mut *(rsdp_alloc.into_raw_ptr::<u8>() as *mut AcpiRsdp) };
         ACPI_TABLE_INFO.set_rsdp(rsdp);
 
         // Create and set the XSDT with an initial number of entries
-        let xsdt_addr = ACPI_TABLE_INFO.boot_services.get().expect("Boot services not initialized").allocate_pages(
-            AllocType::AnyPage,
-            ACPI_TABLE_INFO.memory_type(),
+        let xsdt_alloc = memory_manager.allocate_zero_pages(
             uefi_size_to_pages!(ACPI_HEADER_LEN + mem::size_of::<u64>() * MAX_INITIAL_ENTRIES),
-        )? as *mut u8;
+            AllocationOptions::new()
+                .with_memory_type(ACPI_TABLE_INFO.memory_type())
+                .with_strategy(PageAllocationStrategy::Any),
+        )?;
+        let xsdt_addr = xsdt_alloc.into_raw_ptr::<u8>();
+
         let xsdt = unsafe { &mut *(xsdt_addr as *mut AcpiXsdt) };
         ACPI_TABLE_INFO.set_xsdt(xsdt);
 

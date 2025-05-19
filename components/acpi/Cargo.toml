@@ -9,11 +9,10 @@ publish.workspace = true
 description = "UEFI Software Development Kit (SDK) that provides common types and functionality used in UEFI development."
 
 [dependencies]
-uefi_sdk_macro = { workspace = true }
-bitflags = "2.9.0"
-uefi_sdk = { workspace = true}
-spin = "0.10.0"
-scroll = { version = "0.11", default-features = false, features = ["derive"] }
-memoffset = "0.9.1"
+bitflags = { workspace = true }
+uefi_sdk = { workspace = true }
+spin = { workspace = true }
+scroll = { workspace = true }
+memoffset = { workspace = true }
 r-efi = { workspace = true }
-downcast-rs = { version = "1.2", default-features = false }
+downcast-rs =  { workspace = true }

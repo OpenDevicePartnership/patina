@@ -18,6 +18,7 @@ publish = ["patina-fw"]
 alloc-no-stdlib = { version = "~2.0" }
 arm-gic = { version = "^0.1.2" }
 bitfield-struct = { version = "0.10" }
+bitflags = {version = "2.9.0" }
 boot_services = { version = "15.1.0", path = "sdk/boot_services", registry = "patina-fw" }
 brotli-decompressor = { version = "4.0.0", default-features = false }
 cfg-if = { version = "1" }
@@ -25,6 +26,7 @@ clap = { version = '4.5.36' }
 compile-time = { version = "0.2" }
 crc32fast = { version = "1.4", default-features = false }
 driver_binding = { version = "15.1.0", path = "sdk/driver_binding", registry = "patina-fw" }
+downcast-rs = { version = "1.2", default-features = false }
 fallible-streaming-iterator = { version = "0.1.9" }
 fixedbitset = { version = "^0.5", default-features = false }
 gdbstub = { version = "0.7.3", default-features = false }
@@ -33,6 +35,7 @@ lazy_static = { version = "^1" }
 linked_list_allocator = { version = "^0.10" }
 linkme = { version = "^0.3.29" }
 log = { version = "0.4", default-features = false }
+memoffset = {version = "0.9.1" }
 mu_pi = { version = "5.2.3" }
 mu_rust_helpers = { version = "3.0.1" }
 patina_paging = { version = "6.0.0", registry = "patina-fw" }
@@ -41,7 +44,7 @@ proc-macro2 = { version = "1" }
 quote = { version = "1" }
 r-efi = { version = "5.0.0", default-features = false }
 runtime_services = { version = "15.1.0", path = "sdk/runtime_services", registry = "patina-fw" }
-scroll = { version = "^0.12", default-features = false }
+scroll = { version = "^0.12", default-features = false, features = ["derive"] }
 spin = { version = "^0.9" }
 stacktrace = { version = "15.1.0", path = "core/stacktrace", registry = "patina-fw" }
 syn = { version = "2" }

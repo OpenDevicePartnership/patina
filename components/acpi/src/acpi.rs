@@ -2,11 +2,16 @@ use core::ptr::NonNull;
 use core::{mem, ptr};
 
 use core::cell::OnceCell;
+use core::ptr::copy_nonoverlapping;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering};
-use spin::{Mutex, RwLock};
-use std::ptr::copy_nonoverlapping;
+use spin::{Mutex, Once, RwLock};
 use uefi_sdk::boot_services::tpl::Tpl;
 use uefi_sdk::component::hob::Hob;
+use uefi_sdk::component::service::memory::{
+    self, AllocationOptions, MemoryManager, PageAllocation, PageAllocationStrategy,
+};
+use uefi_sdk::component::service::{IntoService, Service};
+use uefi_sdk::efi_types::EfiMemoryType;
 use uefi_sdk::tpl_mutex::TplMutex;
 
 use alloc::vec;
@@ -19,7 +24,6 @@ use uefi_sdk::{
     },
     uefi_size_to_pages,
 };
-use uefi_sdk_macro::IntoService;
 
 use crate::acpi_init::AcpiMemoryHob;
 use crate::acpi_table::{AcpiDsdt, AcpiFacs, AcpiFadt, AcpiInstallable, AcpiRsdp, AcpiTable, AcpiXsdt};
@@ -67,6 +71,7 @@ pub struct StandardAcpiProvider {
     next_table_key: AtomicUsize,
     notify_list: RwLock<Vec<AcpiNotifyFn>>,
     pub(crate) boot_services: OnceCell<StandardBootServices>,
+    memory_manager: OnceCell<Service<dyn MemoryManager>>,
 }
 
 pub(crate) struct SystemTables {
@@ -151,13 +156,21 @@ impl StandardAcpiProvider {
             next_table_key: AtomicUsize::new(1),
             notify_list: RwLock::new(vec![]),
             boot_services: OnceCell::new(),
+            memory_manager: OnceCell::new(),
         }
     }
 
-    pub fn initialize(&self, version: u32, should_reclaim_memory: bool, bs: StandardBootServices) {
+    pub fn initialize(
+        &self,
+        version: u32,
+        should_reclaim_memory: bool,
+        bs: StandardBootServices,
+        memory_manager: Service<dyn MemoryManager>,
+    ) {
         self.version.store(version, Ordering::Release);
         self.should_reclaim_memory.store(should_reclaim_memory, Ordering::Release);
         self.boot_services.set(bs).expect("Cannot initialize boot services twice.");
+        self.memory_manager.set(memory_manager);
     }
 
     pub fn version(&self) -> u32 {
@@ -343,7 +356,7 @@ impl StandardAcpiProvider {
             }
         }
 
-        let table_addr = table_addr.unwrap();
+        let table_addr = table_addr.expect("Table should be installed in ACPI memory.");
 
         let mut memory_type = self.memory_type();
 
@@ -360,17 +373,19 @@ impl StandardAcpiProvider {
             }
 
             // FACS and UEFI table must be allocated in NVS, even if reclaim is enabled
-            memory_type = MemoryType::ACPI_MEMORY_NVS;
+            memory_type = EfiMemoryType::ACPIMemoryNVS;
         }
 
-        let physical_addr = self
-            .boot_services
+        let alloc_options =
+            AllocationOptions::new().with_memory_type(memory_type).with_strategy(PageAllocationStrategy::Any);
+        let page_alloc = self
+            .memory_manager
             .get()
-            .expect("Boot services not initialized")
-            .allocate_pages(AllocType::AnyPage, memory_type, npages)
+            .expect("Memory manager not initialized")
+            .allocate_zero_pages(npages, alloc_options)
             .map_err(|_e| AcpiError::AllocationFailed)?;
 
-        Ok(physical_addr)
+        Ok(page_alloc.into_raw_ptr::<u8>() as usize)
     }
 
     fn add_table_to_list(&self, table: &AcpiTable, is_from_hob: bool) -> Result<TableKey, AcpiError> {
@@ -410,11 +425,12 @@ impl StandardAcpiProvider {
 
                 if !(self.system_tables.lock().fadt.load(Ordering::Acquire).is_null()) {
                     // FADT already installed, abort
-                    self.boot_services
-                        .get()
-                        .expect("Boot services not initialized")
-                        .free_pages(dst_ptr as usize, uefi_size_to_pages!(table.length as usize))
-                        .map_err(|_e| AcpiError::AllocationFailed)?;
+                    unsafe {
+                        self.memory_manager
+                            .get()
+                            .expect("Memory manager not initialized")
+                            .free_pages(dst_ptr as usize, uefi_size_to_pages!(table.length as usize))
+                    };
                     return Err(AcpiError::FadtAlreadyInstalled);
                 }
 
@@ -466,11 +482,11 @@ impl StandardAcpiProvider {
         Ok(self.next_table_key.load(Ordering::Acquire) as TableKey)
     }
 
-    pub(crate) fn memory_type(&self) -> MemoryType {
+    pub(crate) fn memory_type(&self) -> EfiMemoryType {
         if self.should_reclaim_memory.load(Ordering::Acquire) {
-            MemoryType::ACPI_RECLAIM_MEMORY
+            EfiMemoryType::ACPIReclaimMemory
         } else {
-            MemoryType::ACPI_MEMORY_NVS
+            EfiMemoryType::ACPIMemoryNVS
         }
     }
 
@@ -507,12 +523,15 @@ impl StandardAcpiProvider {
         // Geometrically resize the number of entries in the XSDT
         let new_size = curr_entries * 2 * mem::size_of::<u64>() + ACPI_HEADER_LEN;
 
-        let physical_addr = self
-            .boot_services
+        let alloc_options =
+            AllocationOptions::new().with_memory_type(self.memory_type()).with_strategy(PageAllocationStrategy::Any);
+        let page_alloc = self
+            .memory_manager
             .get()
-            .expect("Boot services not initialized")
-            .allocate_pages(AllocType::AnyPage, self.memory_type(), uefi_size_to_pages!(new_size))
+            .expect("Memory manager not initialized")
+            .allocate_zero_pages(uefi_size_to_pages!(new_size), alloc_options)
             .map_err(|_e| AcpiError::AllocationFailed)?;
+        let physical_addr = page_alloc.into_raw_ptr::<u8>();
 
         let system_tables = self.system_tables.lock();
         let old_addr = system_tables.xsdt.load(Ordering::Acquire) as usize;
@@ -523,15 +542,16 @@ impl StandardAcpiProvider {
         }
 
         // Copy over old data to the new XSDT address
-        unsafe { copy_nonoverlapping(old_addr as *const u8, physical_addr as *mut u8, curr_size) };
+        unsafe { copy_nonoverlapping(old_addr as *const u8, physical_addr, curr_size) };
         system_tables.xsdt.store(physical_addr as *mut AcpiXsdt, Ordering::Release);
 
         // Free the old XSDT
-        self.boot_services
-            .get()
-            .expect("Boot services not initialized")
-            .free_pages(old_addr, uefi_size_to_pages!(curr_size))
-            .map_err(|_e| AcpiError::FreeFailed)?;
+        unsafe {
+            self.memory_manager
+                .get()
+                .expect("Memory manager not initialized.")
+                .free_pages(old_addr, uefi_size_to_pages!(curr_size))
+        };
 
         Ok(())
     }
@@ -612,11 +632,12 @@ impl StandardAcpiProvider {
     }
 
     fn free_table_memory(&self, table: &AcpiTable) -> Result<(), AcpiError> {
-        self.boot_services
-            .get()
-            .expect("Boot services not initialized.")
-            .free_pages((table as *const AcpiTable) as usize, uefi_size_to_pages!(table.length as usize))
-            .map_err(|_| AcpiError::FreeFailed)?;
+        unsafe {
+            self.memory_manager
+                .get()
+                .expect("Memory manager not initialized")
+                .free_pages((table as *const AcpiTable) as usize, uefi_size_to_pages!(table.length as usize))
+        };
 
         Ok(())
     }

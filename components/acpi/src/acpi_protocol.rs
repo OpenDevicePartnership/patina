@@ -165,7 +165,7 @@ impl AcpiSdtProtocol {
     extern "efiapi" fn register_notify_ext(register: bool, notify_fn: *const AcpiNotifyFnExt) -> efi::Status {
         // SAFETY: the caller must pass in a valid pointer to a notify function
         let rust_fn: AcpiNotifyFn = match unsafe { notify_fn.as_ref() } {
-            Some(ptr) => unsafe { std::mem::transmute::<*const AcpiNotifyFnExt, AcpiNotifyFn>(ptr) },
+            Some(ptr) => unsafe { core::mem::transmute::<*const AcpiNotifyFnExt, AcpiNotifyFn>(ptr) },
             None => return efi::Status::INVALID_PARAMETER,
         };
 
