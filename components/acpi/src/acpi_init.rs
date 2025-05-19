@@ -18,7 +18,7 @@ use crate::signature::{
 };
 use crate::{acpi::ACPI_TABLE_INFO, acpi_table::AcpiRsdp};
 
-#[derive(IntoComponent)]
+#[derive(IntoComponent, Default)]
 struct AcpiProviderManager {}
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -110,8 +110,8 @@ struct AcpiSystemTableManager {}
 
 impl AcpiSystemTableManager {
     fn entry_point(self, boot_services: StandardBootServices) -> uefi_sdk::error::Result<()> {
-        boot_services.as_ref().install_protocol_interface(None, Box::new(AcpiTableProtocol::new()))?;
-        boot_services.as_ref().install_protocol_interface(None, Box::new(AcpiSdtProtocol::new()))?;
+        boot_services.install_protocol_interface(None, Box::new(AcpiTableProtocol::new()))?;
+        boot_services.install_protocol_interface(None, Box::new(AcpiSdtProtocol::new()))?;
         Ok(())
     }
 }

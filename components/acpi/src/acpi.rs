@@ -4,6 +4,7 @@ use core::{mem, ptr};
 use core::cell::OnceCell;
 use core::ptr::copy_nonoverlapping;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering};
+use spin::RwLockReadGuard;
 use spin::{Mutex, Once, RwLock};
 use uefi_sdk::boot_services::tpl::Tpl;
 use uefi_sdk::component::hob::Hob;
@@ -170,7 +171,9 @@ impl StandardAcpiProvider {
         self.version.store(version, Ordering::Release);
         self.should_reclaim_memory.store(should_reclaim_memory, Ordering::Release);
         self.boot_services.set(bs).expect("Cannot initialize boot services twice.");
-        self.memory_manager.set(memory_manager);
+        if self.memory_manager.set(memory_manager).is_err() {
+            panic!("Cannot initialize memory manager twice.");
+        }
     }
 
     pub fn version(&self) -> u32 {
@@ -231,33 +234,26 @@ impl AcpiProvider for StandardAcpiProvider {
     fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a AcpiTable> + 'a> {
         // grab the read-lock now and store it inside the iterator
         let guard = self.acpi_tables.read();
-        Box::new(acpi_iter::TableIter { guard, index: 0 })
+        Box::new(TableIter { guard, index: 0 })
     }
 }
 
-mod acpi_iter {
-    use core::ptr::NonNull;
-    use spin::RwLockReadGuard;
+pub struct TableIter<'a> {
+    pub guard: RwLockReadGuard<'a, Vec<NonNull<AcpiTable>>>,
+    pub index: usize,
+}
 
-    use super::AcpiTable;
+impl<'a> Iterator for TableIter<'a> {
+    type Item = &'a AcpiTable;
 
-    pub struct TableIter<'a> {
-        pub guard: RwLockReadGuard<'a, Vec<NonNull<AcpiTable>>>,
-        pub index: usize,
-    }
-
-    impl<'a> Iterator for TableIter<'a> {
-        type Item = &'a AcpiTable;
-
-        fn next(&mut self) -> Option<Self::Item> {
-            if self.index >= self.guard.len() {
-                return None;
-            }
-            let ptr = self.guard[self.index];
-            self.index += 1;
-            // SAFETY: NonNull<AcpiTable> points at a valid AcpiTable
-            Some(unsafe { ptr.as_ref() })
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.guard.len() {
+            return None;
         }
+        let ptr = self.guard[self.index];
+        self.index += 1;
+        // SAFETY: NonNull<AcpiTable> points at a valid AcpiTable
+        Some(unsafe { ptr.as_ref() })
     }
 }
 
@@ -551,6 +547,7 @@ impl StandardAcpiProvider {
                 .get()
                 .expect("Memory manager not initialized.")
                 .free_pages(old_addr, uefi_size_to_pages!(curr_size))
+                .map_err(|_e| AcpiError::FreeFailed)?
         };
 
         Ok(())
@@ -581,17 +578,17 @@ impl StandardAcpiProvider {
     }
 
     fn delete_table(&self, table: &mut AcpiTable) -> Result<(), AcpiError> {
-        let mut remove_from_rsdt = true;
+        let mut remove_from_xsdt = true;
         let current_signature = table.signature;
         if current_signature == signature::FACS
             || current_signature == signature::DSDT
             || current_signature == signature::FACP
         {
-            remove_from_rsdt = false;
+            remove_from_xsdt = false;
         }
 
-        if remove_from_rsdt {
-            self.remove_table_from_rsdt(table);
+        if remove_from_xsdt {
+            self.remove_table_from_xsdt(table);
         }
 
         match table.signature {
@@ -642,7 +639,7 @@ impl StandardAcpiProvider {
         Ok(())
     }
 
-    fn remove_table_from_rsdt(&self, table: &AcpiTable) {
+    fn remove_table_from_xsdt(&self, table: &AcpiTable) {
         if self.system_tables.lock().xsdt.load(Ordering::Acquire).is_null() {
             return;
         }
