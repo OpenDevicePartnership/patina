@@ -299,7 +299,7 @@ extern "efiapi" fn fetch_and_add_mm_performance_records<BB, B, F>(
         return;
     };
 
-    // SAFETY: Is safe to use because the memory region comes for a trusted source and can be considered valid.
+    // SAFETY: Is safe to use because the memory region comes from a trusted source and can be considered valid.
     let boot_record_size = match unsafe {
         // Ask smm for the total size of the perf records.
         communication.communicate(SmmFpdtGetRecordSize::new(), mm_comm_region)
@@ -326,11 +326,12 @@ extern "efiapi" fn fetch_and_add_mm_performance_records<BB, B, F>(
     let mut smm_boot_records_data = Vec::with_capacity(boot_record_size);
 
     while smm_boot_records_data.len() < boot_record_size {
-        // SAFETY: Is safe to use because the memory region commes for a thrusted source and can be considered valid.
+        // SAFETY: Is safe to use because the memory region commes from a thrusted source and can be considered valid.
         match unsafe {
             // Ask smm to return us the next bytes in its buffer.
+            const BUFFER_SIZE: usize = 1024;
             communication
-                .communicate(SmmFpdtGetRecordDataByOffset::<1024>::new(smm_boot_records_data.len()), mm_comm_region)
+                .communicate(SmmFpdtGetRecordDataByOffset::<BUFFER_SIZE>::new(smm_boot_records_data.len()), mm_comm_region)
         } {
             Ok(record_data) if record_data.return_status == efi::Status::SUCCESS => {
                 // Append the byte to the total smm performance record data.
@@ -381,8 +382,8 @@ pub unsafe extern "efiapi" fn create_performance_measurement(
         // If the state is not initialized, it is because perf in not enabled.
         return efi::Status::SUCCESS;
     };
-
-    let string = unsafe { string.as_ref().map(|s| CStr::from_ptr(s).to_str().unwrap().to_string()) };
+ 
+    let string = unsafe { string.as_ref().map(|s| CStr::from_ptr(s).to_string_lossy().to_string()) };
 
     // NOTE: If the Perf is not the known Token used in the core but have same ID with the core Token, this case will not be supported.
     // And in current usage mode, for the unknown ID, there is a general rule:
@@ -518,7 +519,6 @@ where
                 log::error!("Performance Lib: Could not find the guid for module handle: {:?}", module_handle);
                 return Err(EfiError::InvalidParameter.into());
             };
-            // TODO: use of component 2 protocol, need usecase to test further. https://github.com/OpenDevicePartnership/pantina/issues/192
             let module_name = "";
             let record = GuidQwordStringEventRecord::new(perf_id, 0, timestamp, guid, address as u64, module_name);
             fbpt.lock().add_record(record)?;
@@ -606,6 +606,7 @@ fn get_module_guid_from_handle(
         // SAFETY: File path is a pointer from C that is valid and of type Device Path (efi).
         if let Some(file_path) = unsafe { loaded_image.file_path.as_ref() } {
             if file_path.r#type == TYPE_MEDIA && file_path.sub_type == Media::SUBTYPE_PIWG_FIRMWARE_FILE {
+                // Guid is stored after the device path in memory. 
                 guid = unsafe { ptr::read(loaded_image.file_path.add(1) as *const efi::Guid) }
             }
         };

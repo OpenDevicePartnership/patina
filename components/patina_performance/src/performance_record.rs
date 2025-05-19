@@ -99,7 +99,7 @@ impl PerformanceRecordBuffer {
         Self::Unpublished(Vec::new())
     }
 
-    /// Add a performance records to the buffer.
+    /// Add a performance record to the buffer.
     pub fn push_record<T: PerformanceRecord>(&mut self, record: T) -> Result<usize, Error> {
         match self {
             Self::Unpublished(buffer) => {
@@ -178,10 +178,6 @@ impl Default for PerformanceRecordBuffer {
 
 impl Debug for PerformanceRecordBuffer {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let _is_published = match self {
-            Self::Unpublished(_) => true,
-            Self::Published(_, _) => false,
-        };
         let size = self.size();
         let capacity = self.capacity();
         let nb_report = self.iter().count();
