@@ -177,7 +177,7 @@ definition but many of the services are still implemented in C so it is orange.
   - Support for QEMU (Q35 and SBSA).
   - Tested and developed on physical Intel and Arm hardware.
   - Boots to Windows and Linux on these platforms.
-- Performance record (FPDT) support.
+- Performance record (FBPT) support.
 - Page table management.
 - A pure Rust dispatch system in addition to support for [PI compatible FV/FFS dispatch](./dxe_core/dispatcher.md).
 - Parity with the C DXE Core in UEFI Self-Certification Test (SCT) results.

@@ -42,10 +42,16 @@ use r_efi::{
 pub use mu_rust_helpers::function;
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 
-use _smm::{CommunicateProtocol, MmCommRegion, SmmFpdtGetRecordDataByOffset, SmmFpdtGetRecordSize};
+use _smm::{CommunicateProtocol, MmCommRegion, SmmGetRecordDataByOffset, SmmGetRecordSize};
 
 use patina_sdk::{
-    component::{hob::Hob, params::Config, IntoComponent}, error::EfiError, guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL}, patina_boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices}, patina_runtime_services::{RuntimeServices, StandardRuntimeServices}, patina_tpl_mutex::TplMutex, protocol::status_code::StatusCodeRuntimeProtocol
+    component::{hob::Hob, params::Config, IntoComponent},
+    error::EfiError,
+    guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
+    patina_boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
+    patina_runtime_services::{RuntimeServices, StandardRuntimeServices},
+    patina_tpl_mutex::TplMutex,
+    protocol::status_code::StatusCodeRuntimeProtocol,
 };
 
 use crate::{
@@ -144,7 +150,6 @@ impl Performance {
         records_buffers_hobs: Hob<HobPerformanceData>,
         mm_comm_region_hobs: Hob<MmCommRegion>,
     ) -> Result<(), EfiError> {
-
         PERF_MEASUREMENT_MASK.store(enabled_measurements.mask(), Ordering::Relaxed);
 
         let fbpt = set_static_state(StandardBootServices::clone(&boot_services))
@@ -178,7 +183,7 @@ impl Performance {
         boot_services.as_ref().create_event_ex(
             EventType::NOTIFY_SIGNAL,
             Tpl::CALLBACK,
-            Some(report_fpdt_record_buffer),
+            Some(report_fbpt_record_buffer),
             Box::new((BB::clone(&boot_services), RR::clone(&runtime_services), fbpt)),
             &EVENT_GROUP_END_OF_DXE,
         )?;
@@ -228,8 +233,8 @@ impl Performance {
     }
 }
 
-/// Event callback that report the fpdt.
-extern "efiapi" fn report_fpdt_record_buffer<BB, B, RR, R, F>(
+/// Event callback that report the fbpt.
+extern "efiapi" fn report_fbpt_record_buffer<BB, B, RR, R, F>(
     event: efi::Event,
     ctx: Box<(BB, RR, &TplMutex<'static, F, B>)>,
 ) where
@@ -246,7 +251,7 @@ extern "efiapi" fn report_fpdt_record_buffer<BB, B, RR, R, F>(
         performance_table::find_previous_table_address(runtime_services.as_ref()),
         boot_services.as_ref(),
     ) else {
-        log::error!("Performance: Fail to report FPDT.");
+        log::error!("Performance: Fail to report FBPT.");
         return;
     };
 
@@ -277,7 +282,7 @@ extern "efiapi" fn report_fpdt_record_buffer<BB, B, RR, R, F>(
         )
     };
     if status.is_err() {
-        log::error!("Performance: Fail to install configuration table for FPDT firmware performance.");
+        log::error!("Performance: Fail to install configuration table for FBPT firmware performance.");
     }
 }
 
@@ -302,12 +307,12 @@ extern "efiapi" fn fetch_and_add_mm_performance_records<BB, B, F>(
     // SAFETY: Is safe to use because the memory region comes from a trusted source and can be considered valid.
     let boot_record_size = match unsafe {
         // Ask smm for the total size of the perf records.
-        communication.communicate(SmmFpdtGetRecordSize::new(), mm_comm_region)
+        communication.communicate(SmmGetRecordSize::new(), mm_comm_region)
     } {
-        Ok(SmmFpdtGetRecordSize { return_status, boot_record_size }) if return_status == efi::Status::SUCCESS => {
+        Ok(SmmGetRecordSize { return_status, boot_record_size }) if return_status == efi::Status::SUCCESS => {
             boot_record_size
         }
-        Ok(SmmFpdtGetRecordSize { return_status, .. }) => {
+        Ok(SmmGetRecordSize { return_status, .. }) => {
             log::error!(
                 "Performance: Asking for the smm perf records size result in an error with return status of: {:?}",
                 return_status
@@ -330,14 +335,16 @@ extern "efiapi" fn fetch_and_add_mm_performance_records<BB, B, F>(
         match unsafe {
             // Ask smm to return us the next bytes in its buffer.
             const BUFFER_SIZE: usize = 1024;
-            communication
-                .communicate(SmmFpdtGetRecordDataByOffset::<BUFFER_SIZE>::new(smm_boot_records_data.len()), mm_comm_region)
+            communication.communicate(
+                SmmGetRecordDataByOffset::<BUFFER_SIZE>::new(smm_boot_records_data.len()),
+                mm_comm_region,
+            )
         } {
             Ok(record_data) if record_data.return_status == efi::Status::SUCCESS => {
                 // Append the byte to the total smm performance record data.
                 smm_boot_records_data.extend_from_slice(record_data.boot_record_data());
             }
-            Ok(SmmFpdtGetRecordDataByOffset { return_status, .. }) => {
+            Ok(SmmGetRecordDataByOffset { return_status, .. }) => {
                 log::error!(
                     "Performance: Asking for smm perf records data result in an error with return status of: {:?}",
                     return_status
@@ -382,7 +389,7 @@ pub unsafe extern "efiapi" fn create_performance_measurement(
         // If the state is not initialized, it is because perf in not enabled.
         return efi::Status::SUCCESS;
     };
- 
+
     let string = unsafe { string.as_ref().map(|s| CStr::from_ptr(s).to_string_lossy().to_string()) };
 
     // NOTE: If the Perf is not the known Token used in the core but have same ID with the core Token, this case will not be supported.
@@ -606,7 +613,7 @@ fn get_module_guid_from_handle(
         // SAFETY: File path is a pointer from C that is valid and of type Device Path (efi).
         if let Some(file_path) = unsafe { loaded_image.file_path.as_ref() } {
             if file_path.r#type == TYPE_MEDIA && file_path.sub_type == Media::SUBTYPE_PIWG_FIRMWARE_FILE {
-                // Guid is stored after the device path in memory. 
+                // Guid is stored after the device path in memory.
                 guid = unsafe { ptr::read(loaded_image.file_path.add(1) as *const efi::Guid) }
             }
         };
@@ -637,8 +644,8 @@ mod test {
             c_ptr::{CMutPtr, CPtr},
             MockBootServices,
         },
-        protocol::ProtocolInterface,
         patina_runtime_services::MockRuntimeServices,
+        protocol::ProtocolInterface,
     };
 
     use crate::{
@@ -690,7 +697,7 @@ mod test {
                 assert_eq!(&EventType::NOTIFY_SIGNAL, event_type);
                 assert_eq!(&Tpl::CALLBACK, notify_tpl);
                 assert_eq!(
-                    report_fpdt_record_buffer::<
+                    report_fbpt_record_buffer::<
                         Rc<_>,
                         MockBootServices,
                         Rc<_>,
@@ -761,7 +768,7 @@ mod test {
     }
 
     #[test]
-    fn test_report_fpdt_record_buffer() {
+    fn test_report_fbpt_record_buffer() {
         static REPORT_STATUS_CODE_CALLED: AtomicBool = AtomicBool::new(false);
 
         extern "efiapi" fn report_status_code(
@@ -807,7 +814,7 @@ mod test {
         let fbpt = TplMutex::new(unsafe { &*ptr::addr_of!(boot_services) }, Tpl::NOTIFY, fbpt);
         let fbpt = unsafe { &*ptr::addr_of!(fbpt) };
 
-        report_fpdt_record_buffer(
+        report_fbpt_record_buffer(
             1_usize as efi::Event,
             Box::new((Rc::new(boot_services), Rc::new(runtime_services), fbpt)),
         );

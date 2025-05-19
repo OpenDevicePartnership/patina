@@ -23,12 +23,12 @@ use scroll::Pwrite;
 
 use patina_sdk::{
     base::UEFI_PAGE_SIZE,
+    error::EfiError,
     patina_boot_services::{
         allocation::{AllocType, MemoryType},
         BootServices,
     },
     patina_runtime_services::RuntimeServices,
-    error::EfiError,
 };
 
 use crate::{
@@ -168,10 +168,12 @@ impl FirmwareBasicBootPerfTable for FBPT {
         self.fbpt_address = fbpt_buffer.as_ptr() as usize;
 
         let mut offset = 0;
-        fbpt_buffer.gwrite(Self::SIGNATURE, &mut offset).unwrap();
+        fbpt_buffer.gwrite(Self::SIGNATURE, &mut offset).map_err(|_| Error::BufferTooSmall)?;
         let length_ptr = unsafe { fbpt_buffer.as_ptr().byte_add(offset) } as *mut u32;
-        fbpt_buffer.gwrite(*self.length(), &mut offset).unwrap();
-        FirmwareBasicBootPerfDataRecord::new().write_into(fbpt_buffer, &mut offset).unwrap();
+        fbpt_buffer.gwrite(*self.length(), &mut offset).map_err(|_| Error::BufferTooSmall)?;
+        FirmwareBasicBootPerfDataRecord::new()
+            .write_into(fbpt_buffer, &mut offset)
+            .map_err(|_| Error::BufferTooSmall)?;
 
         debug_assert_eq!(Self::size_of_empty_table(), offset);
         self.other_records.report(&mut fbpt_buffer[offset..])?;
@@ -294,8 +296,8 @@ impl Default for FirmwareBasicBootPerfDataRecord {
 mod test {
     use core::{assert_eq, slice, unreachable};
 
-    use scroll::Pread;
     use patina_sdk::{patina_boot_services::MockBootServices, patina_runtime_services::MockRuntimeServices};
+    use scroll::Pread;
 
     use super::*;
     use crate::{

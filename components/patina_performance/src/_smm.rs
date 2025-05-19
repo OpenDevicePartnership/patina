@@ -130,12 +130,12 @@ pub const EFI_FIRMWARE_PERFORMANCE_GUID: efi::Guid =
 
 // Communicate protocol data to ask smm the size of its performance records.
 #[derive(Debug, Default)]
-pub struct SmmFpdtGetRecordSize {
+pub struct SmmGetRecordSize {
     pub return_status: efi::Status,
     pub boot_record_size: usize,
 }
 
-impl SmmFpdtGetRecordSize {
+impl SmmGetRecordSize {
     pub const SMM_FPDT_FUNCTION_GET_BOOT_RECORD_SIZE: u64 = 1;
 
     pub fn new() -> Self {
@@ -143,11 +143,11 @@ impl SmmFpdtGetRecordSize {
     }
 }
 
-unsafe impl CommunicateData for SmmFpdtGetRecordSize {
+unsafe impl CommunicateData for SmmGetRecordSize {
     const GUID: efi::Guid = EFI_FIRMWARE_PERFORMANCE_GUID;
 }
 
-impl TryIntoCtx<Endian> for SmmFpdtGetRecordSize {
+impl TryIntoCtx<Endian> for SmmGetRecordSize {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: Endian) -> Result<usize, Self::Error> {
@@ -161,7 +161,7 @@ impl TryIntoCtx<Endian> for SmmFpdtGetRecordSize {
     }
 }
 
-impl TryFromCtx<'_, Endian> for SmmFpdtGetRecordSize {
+impl TryFromCtx<'_, Endian> for SmmGetRecordSize {
     type Error = scroll::Error;
 
     fn try_from_ctx(from: &'_ [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
@@ -179,17 +179,17 @@ impl TryFromCtx<'_, Endian> for SmmFpdtGetRecordSize {
 
 // Communicate protocol data to ask smm to return a BUFFER_SIZE about of byte at an offset.
 #[derive(Debug)]
-pub struct SmmFpdtGetRecordDataByOffset<const BUFFER_SIZE: usize> {
+pub struct SmmGetRecordDataByOffset<const BUFFER_SIZE: usize> {
     pub return_status: efi::Status,
     pub boot_record_data: [u8; BUFFER_SIZE],
     pub boot_record_data_size: usize,
     pub boot_record_offset: usize,
 }
 
-impl<const BUFFER_SIZE: usize> SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
+impl<const BUFFER_SIZE: usize> SmmGetRecordDataByOffset<BUFFER_SIZE> {
     pub const SMM_FPDT_FUNCTION_GET_BOOT_RECORD_DATA_BY_OFFSET: u64 = 3;
 
-    pub fn new(boot_record_offset: usize) -> SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
+    pub fn new(boot_record_offset: usize) -> SmmGetRecordDataByOffset<BUFFER_SIZE> {
         Self {
             return_status: efi::Status::SUCCESS,
             boot_record_data: [0; BUFFER_SIZE],
@@ -203,11 +203,11 @@ impl<const BUFFER_SIZE: usize> SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
     }
 }
 
-unsafe impl<const BUFFER_SIZE: usize> CommunicateData for SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
+unsafe impl<const BUFFER_SIZE: usize> CommunicateData for SmmGetRecordDataByOffset<BUFFER_SIZE> {
     const GUID: efi::Guid = EFI_FIRMWARE_PERFORMANCE_GUID;
 }
 
-impl<const BUFFER_SIZE: usize> TryIntoCtx<Endian> for SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
+impl<const BUFFER_SIZE: usize> TryIntoCtx<Endian> for SmmGetRecordDataByOffset<BUFFER_SIZE> {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: Endian) -> Result<usize, Self::Error> {
@@ -221,7 +221,7 @@ impl<const BUFFER_SIZE: usize> TryIntoCtx<Endian> for SmmFpdtGetRecordDataByOffs
     }
 }
 
-impl<const BUFFER_SIZE: usize> TryFromCtx<'_, Endian> for SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
+impl<const BUFFER_SIZE: usize> TryFromCtx<'_, Endian> for SmmGetRecordDataByOffset<BUFFER_SIZE> {
     type Error = scroll::Error;
 
     fn try_from_ctx(from: &'_ [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
