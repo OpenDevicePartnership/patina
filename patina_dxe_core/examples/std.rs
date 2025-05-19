@@ -10,11 +10,11 @@
 
 extern crate alloc;
 
-use patina_dxe_core::Core;
 use mu_pi::{
     hob::{self, header},
     BootMode,
 };
+use patina_dxe_core::Core;
 use r_efi::efi;
 use std::ffi::c_void;
 

@@ -10,11 +10,15 @@ use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
 use goblin::pe::section_table;
 use mu_pi::hob::{Hob, HobList};
-use r_efi::efi;
 use patina_internal_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
+use patina_performance::{
+    create_performance_measurement, perf_image_start_begin, perf_image_start_end, perf_load_image_begin,
+    perf_load_image_end,
+};
 use patina_sdk::base::{align_up, UEFI_PAGE_SIZE};
 use patina_sdk::error::EfiError;
 use patina_sdk::{guid, uefi_size_to_pages};
+use r_efi::efi;
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
@@ -1420,9 +1424,9 @@ mod tests {
         test_collateral, test_support,
     };
     use core::{ffi::c_void, sync::atomic::AtomicBool};
+    use patina_sdk::error::EfiError;
     use r_efi::efi;
     use std::{fs::File, io::Read};
-    use patina_sdk::error::EfiError;
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| unsafe {

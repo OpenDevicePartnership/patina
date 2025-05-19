@@ -1,5 +1,4 @@
 use alloc::boxed::Box;
-use r_efi::efi;
 use patina_sdk::{
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     component::service::{
@@ -14,6 +13,7 @@ use patina_sdk::{
     uefi_pages_to_size,
 };
 use patina_test::{u_assert, u_assert_eq, uefi_test};
+use r_efi::efi;
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},

@@ -10,10 +10,10 @@ use core::{ffi::c_void, mem::size_of};
 
 use alloc::{slice, vec, vec::Vec};
 use mu_rust_helpers::guid::guid_fmt;
-use r_efi::efi;
-use tpl_lock::TplMutex;
 use patina_internal_device_path::{is_device_path_end, remaining_device_path};
 use patina_sdk::error::EfiError;
+use r_efi::efi;
+use tpl_lock::TplMutex;
 
 use crate::{
     allocator::core_allocate_pool,

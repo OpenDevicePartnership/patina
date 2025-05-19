@@ -9,6 +9,10 @@
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::{ptr::NonNull, slice::from_raw_parts_mut};
 use patina_internal_device_path::{concat_device_path_to_boxed_slice, copy_device_path_to_boxed_slice};
+use patina_performance::{
+    create_performance_measurement, perf_driver_binding_start_begin, perf_driver_binding_start_end,
+    perf_driver_binding_support_begin, perf_driver_binding_support_end,
+};
 use patina_sdk::error::EfiError;
 
 use r_efi::efi;

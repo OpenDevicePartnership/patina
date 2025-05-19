@@ -76,15 +76,15 @@ use mu_pi::{
     protocols::{bds, status_code},
     status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
 };
-use protocols::PROTOCOL_DB;
-use r_efi::efi;
 use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
 use patina_sdk::{
-    patina_boot_services::StandardBootServices,
     component::{Component, IntoComponent, Storage},
     error::{self, Result},
+    patina_boot_services::StandardBootServices,
     patina_runtime_services::StandardRuntimeServices,
 };
+use protocols::PROTOCOL_DB;
+use r_efi::efi;
 
 #[macro_export]
 macro_rules! ensure {

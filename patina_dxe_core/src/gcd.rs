@@ -16,9 +16,9 @@ use mu_pi::{
     hob::{self, Hob, HobList, PhaseHandoffInformationTable, ResourceDescriptorV2},
 };
 use patina_paging::MemoryAttributes;
-use r_efi::efi;
 use patina_sdk::base::{align_down, align_up};
 use patina_sdk::error::EfiError;
+use r_efi::efi;
 
 use crate::GCD;
 

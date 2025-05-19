@@ -13,9 +13,9 @@ use core::{
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
 use mu_pi::{protocols, status_code};
-use r_efi::efi;
 use patina_internal_cpu::interrupts;
 use patina_sdk::{error::EfiError, guid};
+use r_efi::efi;
 
 use crate::{
     allocator::{terminate_memory_map, EFI_RUNTIME_SERVICES_DATA_ALLOCATOR},
