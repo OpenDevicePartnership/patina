@@ -16,8 +16,6 @@ use patina_sdk::base::{align_up, UEFI_PAGE_SIZE};
 use patina_sdk::error::EfiError;
 use patina_sdk::{guid, uefi_size_to_pages};
 
-use patina_internal_performance::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end};
-
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
     dxe_services,

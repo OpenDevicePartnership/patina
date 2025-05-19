@@ -24,7 +24,6 @@ use patina_internal_device_path::concat_device_path_to_boxed_slice;
 use patina_sdk::error::EfiError;
 
 use mu_rust_helpers::guid::CALLER_ID;
-use patina_internal_performance::{perf_function_begin, perf_function_end};
 
 use crate::{
     events::EVENT_DB,

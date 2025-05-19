@@ -27,12 +27,8 @@ use patina_sdk::{
         allocation::{AllocType, MemoryType},
         BootServices,
     },
-<<<<<<<< HEAD:core/patina_internal_performance/src/performance_table.rs
     patina_runtime_services::RuntimeServices,
-========
     error::EfiError,
-    runtime_services::RuntimeServices,
->>>>>>>> 6ee84e4 (add errors and move to component folder.):components/performance/src/performance_table.rs
 };
 
 use crate::{
@@ -299,7 +295,7 @@ mod test {
     use core::{assert_eq, slice, unreachable};
 
     use scroll::Pread;
-    use uefi_sdk::{boot_services::MockBootServices, runtime_services::MockRuntimeServices};
+    use patina_sdk::{patina_boot_services::MockBootServices, patina_runtime_services::MockRuntimeServices};
 
     use super::*;
     use crate::{

@@ -15,7 +15,7 @@ use core::iter::Iterator;
 
 use scroll::Pread;
 
-use uefi_sdk::{
+use patina_sdk::{
     component::hob::{FromHob, Hob},
     guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
 };
@@ -85,7 +85,7 @@ pub mod test {
     use core::assert_eq;
 
     use scroll::Pwrite;
-    use uefi_sdk::component::hob::FromHob;
+    use patina_sdk::component::hob::FromHob;
 
     use crate::performance_record::{GenericPerformanceRecord, PerformanceRecordBuffer};
 

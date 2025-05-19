@@ -1,6 +1,6 @@
 use core::fmt::Display;
 
-use uefi_sdk::error::EfiError;
+use patina_sdk::error::EfiError;
 
 #[macro_export]
 macro_rules! error_debug_assert {

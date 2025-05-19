@@ -28,7 +28,8 @@ use core::{
     ffi::{c_char, c_void, CStr},
     mem::MaybeUninit,
     ptr,
-    sync::atomic::{AtomicBool, AtomicU32, Ordering}, u32,
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
+    u32,
 };
 use mu_pi::status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_BS_DRIVER};
 
@@ -40,30 +41,11 @@ use r_efi::{
 
 pub use mu_rust_helpers::function;
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
-<<<<<<< HEAD:core/patina_internal_performance/src/lib.rs
 
-use _smm::{
-    CommunicateProtocol, SmmCommunicationRegionTable, SmmFpdtGetRecordDataByOffset, SmmFpdtGetRecordSize,
-    EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID,
-};
-use scroll::Pread;
+use _smm::{CommunicateProtocol, MmCommRegion, SmmFpdtGetRecordDataByOffset, SmmFpdtGetRecordSize};
 
-use patina_internal_device_path::DevicePathWalker;
 use patina_sdk::{
-    guid,
-    patina_boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
-    patina_runtime_services::StandardRuntimeServices,
-    patina_tpl_mutex::TplMutex,
-=======
-use uefi_sdk::{
-    boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
-    component::{hob::Hob, params::Config, IntoComponent},
-    error::EfiError,
-    guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
-    protocol::status_code::StatusCodeRuntimeProtocol,
-    runtime_services::{RuntimeServices, StandardRuntimeServices},
-    tpl_mutex::TplMutex,
->>>>>>> 839cecf (Make performance lib into a component.):core/uefi_performance/src/lib.rs
+    component::{hob::Hob, params::Config, IntoComponent}, error::EfiError, guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL}, patina_boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices}, patina_runtime_services::{RuntimeServices, StandardRuntimeServices}, patina_tpl_mutex::TplMutex, protocol::status_code::StatusCodeRuntimeProtocol
 };
 
 use crate::{
@@ -80,8 +62,6 @@ use crate::{
     },
     performance_table::{FirmwareBasicBootPerfTable, FBPT},
 };
-
-use _smm::{CommunicateProtocol, MmCommRegion, SmmFpdtGetRecordDataByOffset, SmmFpdtGetRecordSize};
 
 pub use log_perf_measurement::*;
 
@@ -164,6 +144,7 @@ impl Performance {
         records_buffers_hobs: Hob<HobPerformanceData>,
         mm_comm_region_hobs: Hob<MmCommRegion>,
     ) -> Result<(), EfiError> {
+
         PERF_MEASUREMENT_MASK.store(enabled_measurements.mask(), Ordering::Relaxed);
 
         let fbpt = set_static_state(StandardBootServices::clone(&boot_services))
@@ -650,13 +631,13 @@ mod test {
 
     use mockall::predicate;
 
-    use uefi_sdk::{
-        boot_services::{
+    use patina_sdk::{
+        patina_boot_services::{
             c_ptr::{CMutPtr, CPtr},
             MockBootServices,
         },
         protocol::ProtocolInterface,
-        runtime_services::MockRuntimeServices,
+        patina_runtime_services::MockRuntimeServices,
     };
 
     use crate::{

@@ -12,20 +12,12 @@
 use core::{debug_assert_eq, ptr, slice};
 
 use r_efi::efi;
-<<<<<<< HEAD:core/patina_internal_performance/src/_smm.rs
 
-use patina_sdk::{base::UEFI_PAGE_SIZE, protocol::ProtocolInterface};
-=======
->>>>>>> 839cecf (Make performance lib into a component.):core/uefi_performance/src/_smm.rs
+use patina_sdk::{base::UEFI_PAGE_SIZE, component::hob::FromHob, protocol::ProtocolInterface};
 use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
     Endian, Pread, Pwrite,
 };
-<<<<<<< HEAD:core/patina_internal_performance/src/_smm.rs
-=======
-
-use uefi_sdk::{base::UEFI_PAGE_SIZE, component::hob::FromHob, protocol::ProtocolInterface};
->>>>>>> 839cecf (Make performance lib into a component.):core/uefi_performance/src/_smm.rs
 
 pub const EFI_SMM_COMMUNICATION_PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0xc68ed8e2, 0x9dc6, 0x4cbd, 0x9d, 0x94, &[0xdb, 0x65, 0xac, 0xc5, 0xc3, 0x32]);

@@ -20,5 +20,5 @@ patina_sdk = { workspace = true }
 patina_internal_device_path = { workspace = true }
 
 [dev-dependencies]
-uefi_sdk = { path = "../../sdk/uefi_sdk", features = ["mockall"] }
+patina_sdk = { path = "../../sdk/patina_sdk", features = ["mockall"] }
 mockall = { workspace = true }
