@@ -335,10 +335,8 @@ extern "efiapi" fn fetch_and_add_mm_performance_records<BB, B, F>(
         match unsafe {
             // Ask smm to return us the next bytes in its buffer.
             const BUFFER_SIZE: usize = 1024;
-            communication.communicate(
-                SmmGetRecordDataByOffset::<BUFFER_SIZE>::new(smm_boot_records_data.len()),
-                mm_comm_region,
-            )
+            communication
+                .communicate(SmmGetRecordDataByOffset::<BUFFER_SIZE>::new(smm_boot_records_data.len()), mm_comm_region)
         } {
             Ok(record_data) if record_data.return_status == efi::Status::SUCCESS => {
                 // Append the byte to the total smm performance record data.

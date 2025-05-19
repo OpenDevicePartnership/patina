@@ -84,8 +84,8 @@ where
 pub mod test {
     use core::assert_eq;
 
-    use scroll::Pwrite;
     use patina_sdk::component::hob::FromHob;
+    use scroll::Pwrite;
 
     use crate::performance_record::{GenericPerformanceRecord, PerformanceRecordBuffer};
 
