@@ -753,7 +753,7 @@ unsafe impl Send for SpinLockedFixedSizeBlockAllocator {}
 mod tests {
     extern crate std;
     use crate::{gcd, test_support};
-    use core::alloc::GlobalAlloc;
+    use core::{alloc::GlobalAlloc, ffi::c_void, panic};
     use std::alloc::System;
 
     use patina_sdk::{base::UEFI_PAGE_SIZE, uefi_pages_to_size};
@@ -777,6 +777,8 @@ mod tests {
     }
 
     fn page_change_callback(_allocator: &mut FixedSizeBlockAllocator) {}
+
+    const DUMMY_HANDLE: *mut c_void = 0xDEADBEEF as *mut c_void;
 
     #[test]
     fn allocate_deallocate_test() {
@@ -827,10 +829,7 @@ mod tests {
     #[test]
     fn test_construct_empty_fixed_size_block_allocator() {
         with_locked_state(|| {
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
-            let fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
-            assert!(core::ptr::eq(fsb.gcd, &GCD));
+            let fsb = FixedSizeBlockAllocator::new(efi::BOOT_SERVICES_DATA, page_change_callback);
             assert!(fsb.list_heads.iter().all(|x| x.is_none()));
             assert!(fsb.allocators.is_none());
         });
@@ -847,21 +846,59 @@ mod tests {
             let base = init_gcd(&GCD, 0x400000);
 
             //verify no allocators exist before expand.
-            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+            let mut fsb = FixedSizeBlockAllocator::new(efi::BOOT_SERVICES_DATA, page_change_callback);
             assert!(fsb.allocators.is_none());
 
-            //expand by a page. This will round up to MIN_EXPANSION.
-            let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-            fsb.expand(layout).unwrap();
+            let allocation_size = MIN_EXPANSION;
+
+            // Allocate one page to expand by
+            let allocated_address = GCD
+                .allocate_memory_space(
+                    DEFAULT_ALLOCATION_STRATEGY,
+                    GcdMemoryType::SystemMemory,
+                    UEFI_PAGE_SHIFT,
+                    allocation_size,
+                    DUMMY_HANDLE,
+                    None,
+                )
+                .unwrap();
+
+            fsb.expand(NonNull::slice_from_raw_parts(
+                NonNull::new(allocated_address as *mut u8).unwrap(),
+                allocation_size,
+            ))
+            .unwrap();
+
             assert!(fsb.allocators.is_some());
             unsafe {
                 assert!((*fsb.allocators.unwrap()).next.is_none());
                 assert!((*fsb.allocators.unwrap()).allocator.bottom() as usize > base as usize);
-                assert_eq!((*fsb.allocators.unwrap()).allocator.free(), MIN_EXPANSION - size_of::<AllocatorListNode>());
+                assert_eq!(
+                    (*fsb.allocators.unwrap()).allocator.free(),
+                    allocation_size - size_of::<AllocatorListNode>()
+                );
             }
+
             //expand by larger than MIN_EXPANSION.
-            let layout = Layout::from_size_align(MIN_EXPANSION + 0x1000, 0x10).unwrap();
-            fsb.expand(layout).unwrap();
+            let allocation_size = MIN_EXPANSION + 0x1000;
+
+            // Allocate one page to expand by
+            let allocated_address = GCD
+                .allocate_memory_space(
+                    DEFAULT_ALLOCATION_STRATEGY,
+                    GcdMemoryType::SystemMemory,
+                    UEFI_PAGE_SHIFT,
+                    allocation_size,
+                    DUMMY_HANDLE,
+                    None,
+                )
+                .unwrap();
+
+            fsb.expand(NonNull::slice_from_raw_parts(
+                NonNull::new(allocated_address as *mut u8).unwrap(),
+                allocation_size,
+            ))
+            .unwrap();
             assert!(fsb.allocators.is_some());
             unsafe {
                 assert!((*fsb.allocators.unwrap()).next.is_some());
@@ -870,7 +907,7 @@ mod tests {
                 assert_eq!(
                     (*fsb.allocators.unwrap()).allocator.free(),
                     //expected free: size + a page to hold allocator node - size of allocator node.
-                    layout.pad_to_align().size() + 0x1000 - size_of::<AllocatorListNode>()
+                    allocation_size - size_of::<AllocatorListNode>()
                 );
             }
         });
@@ -886,15 +923,31 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             init_gcd(&GCD, 0x800000);
 
-            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
-            let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-            fsb.expand(layout).unwrap();
-            fsb.expand(layout).unwrap();
-            fsb.expand(layout).unwrap();
-            fsb.expand(layout).unwrap();
-            fsb.expand(layout).unwrap();
+            let mut fsb = FixedSizeBlockAllocator::new(efi::BOOT_SERVICES_DATA, page_change_callback);
 
-            assert_eq!(5, AllocatorIterator::new(fsb.allocators).count());
+            const NUM_ALLOCATIONS: usize = 5;
+
+            let allocation_size = MIN_EXPANSION;
+            for _ in 0..NUM_ALLOCATIONS {
+                fsb.expand(NonNull::slice_from_raw_parts(
+                    NonNull::new(
+                        GCD.allocate_memory_space(
+                            DEFAULT_ALLOCATION_STRATEGY,
+                            GcdMemoryType::SystemMemory,
+                            UEFI_PAGE_SHIFT,
+                            allocation_size,
+                            DUMMY_HANDLE,
+                            None,
+                        )
+                        .unwrap() as *mut u8,
+                    )
+                    .unwrap(),
+                    allocation_size,
+                ))
+                .unwrap();
+            }
+
+            assert_eq!(NUM_ALLOCATIONS, AllocatorIterator::new(fsb.allocators).count());
             assert!(AllocatorIterator::new(fsb.allocators)
                 .all(|node| unsafe { (*node).allocator.free() == MIN_EXPANSION - size_of::<AllocatorListNode>() }));
         });
@@ -908,15 +961,40 @@ mod tests {
             GCD.init(48, 16);
 
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
-            let base = init_gcd(&GCD, 0x400000);
+            let _ = init_gcd(&GCD, 0x400000);
 
-            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+            let mut fsb = FixedSizeBlockAllocator::new(efi::BOOT_SERVICES_DATA, page_change_callback);
 
-            let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-            let allocation = fsb.fallback_alloc(layout);
-            assert!(fsb.allocators.is_some());
-            assert!((allocation as u64) > base);
-            assert!((allocation as u64) < base + 0x400000);
+            // Test fallback_alloc with size < MIN_EXPANSION
+            let allocation_size = MIN_EXPANSION / 2;
+            let layout = Layout::from_size_align(allocation_size, 0x10).unwrap();
+            match fsb.fallback_alloc(layout) {
+                Err(FixedSizeBlockAllocatorError::OutOfMemory(mem_req)) => {
+                    assert!(mem_req == MIN_EXPANSION);
+                }
+                _ => {
+                    panic!("fallback_alloc with no allocators should return FixedSizeBlockAllocatorError::OutOfMemory")
+                }
+            }
+            assert!(fsb.allocators.is_none());
+
+            // Test fallback_alloc with size > MIN_EXPANSION
+            let allocation_size = MIN_EXPANSION + ALIGNMENT / 2;
+            let layout = Layout::from_size_align(allocation_size, 0x10).unwrap();
+            match fsb.fallback_alloc(layout) {
+                Err(FixedSizeBlockAllocatorError::OutOfMemory(mem_req)) => {
+                    assert!(
+                        mem_req % ALIGNMENT == 0,
+                        "fallback_alloc should request memory size aligned to ALIGNMENT."
+                    );
+                    assert!(mem_req >= layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size(),
+                        "fallback_alloc should request enough memory to fit aligned layout and an aligned AllocatorListNode");
+                }
+                _ => {
+                    panic!("fallback_alloc with no allocators should return FixedSizeBlockAllocatorError::OutOfMemory")
+                }
+            }
+            assert!(fsb.allocators.is_none());
         });
     }
 
@@ -972,15 +1050,47 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             init_gcd(&GCD, 0x400000);
 
-            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+            let mut fsb = FixedSizeBlockAllocator::new(efi::BOOT_SERVICES_DATA, page_change_callback);
 
             let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-            let allocation = fsb.fallback_alloc(layout);
 
-            fsb.fallback_dealloc(allocation, layout);
-            unsafe {
-                assert_eq!((*fsb.allocators.unwrap()).allocator.free(), MIN_EXPANSION - size_of::<AllocatorListNode>());
-            }
+            // Make an initial fallback_alloc, expecting it to fail due to a lack of memory
+            match fsb.fallback_alloc(layout) {
+                Err(FixedSizeBlockAllocatorError::OutOfMemory(mem_requested)) => {
+                    // Make requested allocation and expansion
+                    fsb.expand(NonNull::slice_from_raw_parts(
+                        NonNull::new(
+                            GCD.allocate_memory_space(
+                                DEFAULT_ALLOCATION_STRATEGY,
+                                GcdMemoryType::SystemMemory,
+                                UEFI_PAGE_SHIFT,
+                                mem_requested,
+                                DUMMY_HANDLE,
+                                None,
+                            )
+                            .unwrap() as *mut u8,
+                        )
+                        .unwrap(),
+                        mem_requested,
+                    ))
+                    .unwrap();
+
+                    // The next attempt at fallback_alloc should succeed
+                    let allocation = fsb.fallback_alloc(layout).unwrap();
+
+                    // Finally, we can test fallback_dealloc
+                    fsb.fallback_dealloc(allocation.cast(), layout);
+                    unsafe {
+                        assert_eq!(
+                            (*fsb.allocators.unwrap()).allocator.free(),
+                            MIN_EXPANSION - size_of::<AllocatorListNode>()
+                        );
+                    }
+                }
+                _ => {
+                    panic!("fallback_alloc with no allocators should return FixedSizeBlockAllocatorError::OutOfMemory")
+                }
+            };
         });
     }
 
@@ -1229,7 +1339,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_display_impl_does_not_panic() {
+    fn validate_fsb_display_impl_does_not_panic() {
         with_locked_state(|| {
             // Create a static GCD
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
@@ -1238,13 +1348,15 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             let _ = init_gcd(&GCD, 0x400000);
 
-            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+            let fsb =
+                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
             fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 5, UEFI_PAGE_SIZE).unwrap();
 
             let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-            fsb.expand(layout).unwrap();
+            let _ = fsb.allocate(layout); // Triggers expansion + allocation
 
-            let _ = std::format!("{}", fsb);
+            // Call format on the inner FixedSizeBlockAllocator
+            let _ = std::format!("{}", fsb.lock());
         });
     }
 
@@ -1277,8 +1389,8 @@ mod tests {
             let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 0);
             assert_eq!(stats.pool_free_calls, 0);
-            assert_eq!(stats.page_allocation_calls, 1);
-            assert_eq!(stats.page_free_calls, 1);
+            assert_eq!(stats.page_allocation_calls, 0);
+            assert_eq!(stats.page_free_calls, 0);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
             assert_eq!(stats.reserved_used, 0);
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 2));
@@ -1289,8 +1401,8 @@ mod tests {
             let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 1);
             assert_eq!(stats.pool_free_calls, 0);
-            assert_eq!(stats.page_allocation_calls, 1);
-            assert_eq!(stats.page_free_calls, 1);
+            assert_eq!(stats.page_allocation_calls, 0);
+            assert_eq!(stats.page_free_calls, 0);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
             assert_eq!(stats.reserved_used, MIN_EXPANSION);
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 2));
@@ -1302,8 +1414,8 @@ mod tests {
             let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 1);
             assert_eq!(stats.pool_free_calls, 1);
-            assert_eq!(stats.page_allocation_calls, 1);
-            assert_eq!(stats.page_free_calls, 1);
+            assert_eq!(stats.page_allocation_calls, 0);
+            assert_eq!(stats.page_free_calls, 0);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
             assert_eq!(stats.reserved_used, MIN_EXPANSION);
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 2));
@@ -1320,8 +1432,8 @@ mod tests {
             let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 1);
-            assert_eq!(stats.page_allocation_calls, 1);
-            assert_eq!(stats.page_free_calls, 1);
+            assert_eq!(stats.page_allocation_calls, 0);
+            assert_eq!(stats.page_free_calls, 0);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
             assert_eq!(stats.reserved_used, MIN_EXPANSION);
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
@@ -1339,8 +1451,8 @@ mod tests {
             let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
-            assert_eq!(stats.page_allocation_calls, 1);
-            assert_eq!(stats.page_free_calls, 1);
+            assert_eq!(stats.page_allocation_calls, 0);
+            assert_eq!(stats.page_free_calls, 0);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
             assert_eq!(stats.reserved_used, MIN_EXPANSION);
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
@@ -1358,8 +1470,8 @@ mod tests {
             let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
-            assert_eq!(stats.page_allocation_calls, 2);
-            assert_eq!(stats.page_free_calls, 1);
+            assert_eq!(stats.page_allocation_calls, 1);
+            assert_eq!(stats.page_free_calls, 0);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
             assert_eq!(stats.reserved_used, MIN_EXPANSION + uefi_pages_to_size!(4));
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
@@ -1377,8 +1489,8 @@ mod tests {
             let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
-            assert_eq!(stats.page_allocation_calls, 2);
-            assert_eq!(stats.page_free_calls, 2);
+            assert_eq!(stats.page_allocation_calls, 1);
+            assert_eq!(stats.page_free_calls, 1);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
             assert_eq!(stats.reserved_used, MIN_EXPANSION);
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
@@ -1396,8 +1508,8 @@ mod tests {
             let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
-            assert_eq!(stats.page_allocation_calls, 3);
-            assert_eq!(stats.page_free_calls, 2);
+            assert_eq!(stats.page_allocation_calls, 2);
+            assert_eq!(stats.page_free_calls, 1);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
             assert_eq!(stats.reserved_used, MIN_EXPANSION);
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1 + 0x104);
@@ -1416,8 +1528,8 @@ mod tests {
             let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
-            assert_eq!(stats.page_allocation_calls, 4);
-            assert_eq!(stats.page_free_calls, 2);
+            assert_eq!(stats.page_allocation_calls, 3);
+            assert_eq!(stats.page_free_calls, 1);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
             assert_eq!(stats.reserved_used, MIN_EXPANSION + uefi_pages_to_size!(4));
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1 + 0x104);
@@ -1438,8 +1550,8 @@ mod tests {
             let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 2);
-            assert_eq!(stats.page_allocation_calls, 4);
-            assert_eq!(stats.page_free_calls, 4);
+            assert_eq!(stats.page_allocation_calls, 3);
+            assert_eq!(stats.page_free_calls, 3);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
             assert_eq!(stats.reserved_used, MIN_EXPANSION);
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
@@ -1456,19 +1568,35 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             let base = init_gcd(&GCD, 0x400000);
 
-            let mut fsb = FixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+            let mut fsb = FixedSizeBlockAllocator::new(efi::BOOT_SERVICES_DATA, page_change_callback);
 
-            // Expand the allocator multiple times to add memory ranges
-            let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-            fsb.expand(layout).unwrap();
-            fsb.expand(layout).unwrap();
-            fsb.expand(layout).unwrap();
+            const NUM_ALLOCATIONS: usize = 3;
+
+            // Expand the FSB multiple times
+            for _ in 0..NUM_ALLOCATIONS {
+                fsb.expand(NonNull::slice_from_raw_parts(
+                    NonNull::new(
+                        GCD.allocate_memory_space(
+                            DEFAULT_ALLOCATION_STRATEGY,
+                            GcdMemoryType::SystemMemory,
+                            UEFI_PAGE_SHIFT,
+                            MIN_EXPANSION,
+                            DUMMY_HANDLE,
+                            None,
+                        )
+                        .unwrap() as *mut u8,
+                    )
+                    .unwrap(),
+                    MIN_EXPANSION,
+                ))
+                .unwrap();
+            }
 
             // Collect the memory ranges reported by the allocator
             let memory_ranges: Vec<_> = fsb.get_memory_ranges().collect();
 
             // Verify that the reported ranges match the expected ranges
-            assert_eq!(memory_ranges.len(), 3);
+            assert_eq!(memory_ranges.len(), NUM_ALLOCATIONS);
             for range in &memory_ranges {
                 assert!(range.start >= base as usize);
                 assert!(range.end <= (base + 0x400000) as usize);
