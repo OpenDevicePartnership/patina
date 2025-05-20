@@ -179,22 +179,22 @@ impl FixedSizeBlockAllocator {
         self.stats = AllocationStatistics::new();
     }
 
-    // Expand the memory available to this allocator with a new contiguous region of memory, setting up a new allocator
-    // node to manage this range.
+    /// Expand the memory available to this allocator with a new contiguous region of memory, setting up a new allocator
+    /// node to manage this range.
     pub fn expand(&mut self, new_region: NonNull<[u8]>) -> core::result::Result<(), FixedSizeBlockAllocatorError> {
         // Ensure we're expanding enough to fit a new allocator list node
-        if new_region.len() <= size_of::<AllocatorListNode>() {
-            debug_assert!(false, "FSB expanded with insufficiently sized memory region to fit AllocatorListNode");
+        if new_region.len() <= max(MIN_EXPANSION, size_of::<AllocatorListNode>()) {
+            debug_assert!(false, "FSB expanded with insufficiently sized memory region.");
+            return Err(FixedSizeBlockAllocatorError::InvalidExpansion);
+        }
+
+        if new_region.addr().get() % ALIGNMENT != 0 || new_region.len() % ALIGNMENT != 0 {
+            debug_assert!(false, "FSB expanded with unaligned memory region.");
             return Err(FixedSizeBlockAllocatorError::InvalidExpansion);
         }
 
         // Interpret the first part of the provided region as an AllocatorListNode
         let alloc_node_ptr = new_region.as_ptr() as *mut AllocatorListNode;
-
-        if !alloc_node_ptr.is_aligned() {
-            debug_assert!(false, "FSB expanded with region that has not been aligned with AllocatorListNode");
-            return Err(FixedSizeBlockAllocatorError::InvalidExpansion);
-        }
 
         let heap_region: NonNull<[u8]> = NonNull::slice_from_raw_parts(
             NonNull::new(unsafe { alloc_node_ptr.add(1) }.as_mut_ptr()).unwrap().cast(),
