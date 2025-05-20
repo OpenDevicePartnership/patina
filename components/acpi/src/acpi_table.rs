@@ -4,7 +4,7 @@ use crate::signature;
 use core::any::Any;
 use downcast_rs::{impl_downcast, DowncastSync};
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Default, Clone, Copy)]
 pub struct AcpiFadt {
     pub signature: u32,
@@ -70,7 +70,7 @@ pub struct AcpiFadt {
     pub x_gpe1_blk: GenericAddressStructure,
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GenericAddressStructure {
     _address_space_id: u8,
@@ -126,6 +126,7 @@ impl TryFrom<AcpiTable> for AcpiFadt {
     }
 }
 
+#[repr(C, packed)]
 pub struct AcpiFacs {
     pub signature: u32,
     pub length: u32,
@@ -138,6 +139,7 @@ pub struct AcpiFacs {
     pub reserved: [u8; 31],
 }
 
+#[repr(C, packed)]
 pub struct AcpiDsdt {
     pub signature: u32,
     pub length: u32,
@@ -150,6 +152,7 @@ pub struct AcpiDsdt {
     pub creator_revision: u32,
 }
 
+#[repr(C, packed)]
 pub struct AcpiRsdp {
     pub signature: u64,
     pub(crate) checksum: u8,
@@ -162,6 +165,7 @@ pub struct AcpiRsdp {
     pub(crate) reserved: [u8; 3],
 }
 
+#[repr(C)]
 pub struct AcpiXsdt {
     pub signature: u32,
     pub length: u32,

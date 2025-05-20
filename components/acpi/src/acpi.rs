@@ -255,7 +255,7 @@ impl StandardAcpiProvider {
             // Find the address of the next XSDT entry, and read the value
             let offset = ACPI_HEADER_LEN + i * core::mem::size_of::<u64>();
             let entry_addr = unsafe {
-                let entry_ptr = xsdt_ptr.add(offset) as *const u64;
+                let entry_ptr = (xsdt_ptr as *const u8).add(offset) as *const u64;
                 core::ptr::read_unaligned(entry_ptr)
             };
 
