@@ -118,7 +118,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use core::{any::Any, marker::PhantomData, ops::Deref};
+use core::{any::Any, cell::OnceCell, marker::PhantomData, ops::Deref};
 
 use crate::component::{
     metadata::MetaData,
@@ -188,11 +188,42 @@ pub trait IntoService {
 /// While implementing [IntoService] is possible, it is advised to use the [IntoService](patina_sdk_macro::IntoService)
 /// derive macro, which also provides more information.
 pub struct Service<T: ?Sized + 'static> {
-    value: &'static dyn Any,
+    value: OnceCell<&'static dyn Any>,
     _marker: core::marker::PhantomData<T>,
 }
 
 impl<T: ?Sized + 'static> Service<T> {
+    /// Creates a new instance of a service with an uninitialized value.
+    ///
+    /// Useful for const instantiation of a service, such as for static references or other types that require a
+    /// static lifetime that is executed during compilation.
+    ///
+    /// ## Example
+    ///
+    /// ```rust
+    /// # use patina_sdk::{error::Result, component::service::Service};
+    /// # trait MyService {}
+    /// static MY_SERVICE: Service<dyn MyService> = Service::new_uninit();
+    ///
+    /// fn my_component(service: Service<dyn MyService>) -> Result<()> {
+    ///     MY_SERVICE.replace(&service);
+    ///     Ok(())
+    /// }
+    /// ```
+    pub const fn new_uninit() -> Self {
+        Self { value: OnceCell::new(), _marker: PhantomData }
+    }
+
+    /// Replaces the uninitialized service with the provided, initialized, service.
+    ///
+    /// ## Panics
+    ///
+    /// Panics if the service is already initialized or if the provided service is not initialized.
+    pub fn replace(&self, service: &Service<T>) {
+        let v = service.value.get().expect("Provided Service was not initialized!");
+        self.value.set(*v).expect("Service was already initialized!");
+    }
+
     /// Creates an instance of Service by creating a Box\<dyn T\> and then leaking it to a static lifetime.
     ///
     /// This function is intended for testing purposes only. Dropping the returned value will cause a memory leak as
@@ -229,14 +260,18 @@ impl<T: ?Sized + 'static> Service<T> {
     #[allow(clippy::test_attr_in_doctest)]
     pub fn mock(value: Box<T>) -> Self {
         let v: &'static T = Box::leak(value);
+        let value = OnceCell::new();
         let leaked: &'static dyn core::any::Any = Box::leak(Box::new(v));
-        Self { value: leaked, _marker: PhantomData }
+        value.set(leaked).expect("Once Cell was just created");
+        Self { value, _marker: PhantomData }
     }
 }
 
 impl<T: ?Sized + 'static> From<&'static dyn Any> for Service<T> {
     fn from(value: &'static dyn Any) -> Self {
-        Self { value, _marker: PhantomData }
+        let s = Self::new_uninit();
+        s.value.set(value).expect("Once Cell was just created");
+        s
     }
 }
 
@@ -244,17 +279,48 @@ impl<T: ?Sized + 'static> Deref for Service<T> {
     type Target = &'static T;
 
     fn deref(&self) -> &Self::Target {
-        self.value.downcast_ref().unwrap_or_else(|| panic!("Config should be of type {}", core::any::type_name::<T>()))
+        if let Some(service) = self.value.get() {
+            if let Some(service) = service.downcast_ref() {
+                service
+            } else {
+                // Using core::hint::unreachable_unchecked() here results in the compiler optimizing away this entire
+                // code path, and will result in UB if the path is reached. This code path truly is unreachable as we
+                // (as patina developers) control all ways of instantiating a Service type.
+                //
+                // The performance impact of using this over unreachable! or panic! is about 25% improved performance
+                // in benchmarks.
+                //
+                // # SAFETY
+                // - The `Service` type tightly couples the underlying type to the `dyn Any` type for downcasting.
+                // - All ways of instantiating a `Service` type are tightly controlled to ensure that this downcast is
+                //   valid and will never fail including:
+                //   - The `mock` function, which requires a `Box<dyn T>` which is then manually leaked, ensuring the
+                //     underlying type is always available and the correct type.
+                //   - The `from` function, which is passed data from `Storage`, that is guaranteed to be the correct
+                //     type as it is generated via the `IntoService` macro and out of the hands of the user.
+                //   - The `initialize` function, which consumes another `Service` type, which has the same guarantees
+                //     as above.
+                // - If the Service is uninitialized, it will panic at the normal unreachable! macro call below.
+                unsafe { core::hint::unreachable_unchecked() }
+            }
+        } else {
+            // We use unreachable! here instead of panic! as this provides compiler hints to the optimizer. We cannot
+            // use core::hint::unreachable_unchecked() here as we cannot guarantee that the service is initialized
+            unreachable!("Service should be initialized first!");
+        }
     }
 }
 
 impl<T: ?Sized + 'static> Clone for Service<T> {
     fn clone(&self) -> Self {
-        *self
+        Service { value: self.value.clone(), _marker: PhantomData }
     }
 }
 
-impl<T: ?Sized + 'static> Copy for Service<T> {}
+// SAFETY: The Service type is Send and Sync as the underlying type is a static, and all access methods to the
+//   underlying implementation are via immutable references (The Deref trait).
+unsafe impl<T: ?Sized + 'static> Send for Service<T> {}
+unsafe impl<T: ?Sized + 'static> Sync for Service<T> {}
 
 unsafe impl<T: ?Sized + 'static> Param for Service<T> {
     type State = usize;
@@ -433,7 +499,7 @@ mod tests {
         }
 
         let service: Service<dyn MyService> = Service::mock(Box::new(MockService));
-        consume_service(service);
+        consume_service(service.clone());
         consume_service(service); // This should work as well, since Service is Copy
     }
 
@@ -469,5 +535,37 @@ mod tests {
 
         let service = storage.get_service::<dyn MyService>().unwrap();
         assert_eq!(42, service.do_something());
+    }
+
+    #[test]
+    fn test_replace_service_works() {
+        trait MyService {
+            fn do_something(&self) -> u32;
+        }
+        struct MockService;
+        impl MyService for MockService {
+            fn do_something(&self) -> u32 {
+                42
+            }
+        }
+
+        let service1: Service<dyn MyService> = Service::mock(Box::new(MockService));
+        let service2: Service<dyn MyService> = Service::new_uninit();
+
+        assert_eq!(42, service1.do_something());
+        service2.replace(&service1);
+        assert_eq!(42, service2.do_something());
+        assert_eq!(42, service1.do_something()); // service1 should still work
+    }
+
+    #[test]
+    #[should_panic = "Service should be initialized first!"]
+    fn test_uninitialized_service_panics_instead_of_ub() {
+        trait MyService {
+            fn do_something(&self) -> u32;
+        }
+
+        let service: Service<dyn MyService> = Service::new_uninit();
+        service.do_something(); // This should panic
     }
 }
