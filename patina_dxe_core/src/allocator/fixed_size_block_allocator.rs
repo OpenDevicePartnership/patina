@@ -19,12 +19,12 @@ use patina_sdk::{base::UEFI_PAGE_SIZE, patina_boot_services::c_ptr::CMutPtr, err
 
 use core::{
     alloc::{AllocError, Allocator, GlobalAlloc, Layout},
-    cmp::{max, PartialOrd},
+    cmp::max,
     debug_assert,
     fmt::{self, Display},
     mem::{align_of, size_of},
     ops::Range,
-    ptr::{self, slice_from_raw_parts_mut, NonNull},
+    ptr::{slice_from_raw_parts_mut, NonNull},
     result::Result,
 };
 use linked_list_allocator::{align_down_size, align_up_size};
@@ -149,7 +149,7 @@ pub struct FixedSizeBlockAllocator {
     memory_type: efi::MemoryType,
     list_heads: [Option<&'static mut BlockListNode>; BLOCK_SIZES.len()],
     allocators: Option<*mut AllocatorListNode>,
-    pub(crate) preferred_range: Option<Range<efi::PhysicalAddress>>,
+    pub(crate) reserved_range: Option<Range<efi::PhysicalAddress>>,
     stats: AllocationStatistics,
     page_change_callback: PageChangeCallback,
 }
@@ -162,7 +162,7 @@ impl FixedSizeBlockAllocator {
             memory_type,
             list_heads: [EMPTY; BLOCK_SIZES.len()],
             allocators: None,
-            preferred_range: None,
+            reserved_range: None,
             stats: AllocationStatistics::new(),
             page_change_callback,
         }
@@ -175,7 +175,7 @@ impl FixedSizeBlockAllocator {
         const EMPTY: Option<&'static mut BlockListNode> = None;
         self.list_heads = [EMPTY; BLOCK_SIZES.len()];
         self.allocators = None;
-        self.preferred_range = None;
+        self.reserved_range = None;
         self.stats = AllocationStatistics::new();
     }
 
@@ -212,8 +212,7 @@ impl FixedSizeBlockAllocator {
 
         self.allocators = Some(alloc_node_ptr);
 
-        if self.preferred_range.as_ref().is_some_and(|range| range.contains(&(alloc_node_ptr as efi::PhysicalAddress)))
-        {
+        if self.in_reserved_range(alloc_node_ptr.addr() as efi::PhysicalAddress) {
             self.stats.reserved_used += new_region.len();
         } else {
             self.stats.claimed_pages += uefi_size_to_pages!(new_region.len());
@@ -318,6 +317,42 @@ impl FixedSizeBlockAllocator {
         }
     }
 
+    /// Returns whether the provided address is in the FSB's reserved range
+    pub fn in_reserved_range(&self, address: efi::PhysicalAddress) -> bool {
+        match &self.reserved_range {
+            Some(reserved_range) => reserved_range.contains(&address),
+            _ => false,
+        }
+    }
+
+    /// Informs the allocator of it's reserved memory range.
+    ///
+    /// This function is intended to be called on a region of memory that has been marked with a backing memory allocator
+    /// as reserved for this allocator. Calling this funcion does not itself reserve the region of memory.
+    ///
+    /// ## Safety
+    ///
+    /// The range must not overlap with any existing allocations.
+    pub fn set_reserved_range(&mut self, range: NonNull<[u8]>) -> Result<(), EfiError> {
+        if self.reserved_range.is_some() {
+            Err(EfiError::AlreadyStarted)?;
+        }
+
+        self.reserved_range = Some(
+            range.addr().get() as efi::PhysicalAddress
+                ..range.addr().get() as efi::PhysicalAddress + range.len() as efi::PhysicalAddress,
+        );
+
+        self.stats.reserved_size = range.len();
+        self.stats.reserved_used = 0;
+
+        // call into the page change callback to keep track of the updated reserved stats and
+        // any memory map changes made when reserving the range.
+        (self.page_change_callback)(self);
+
+        Ok(())
+    }
+
     /// Indicates whether the given pointer falls within a memory region managed by this allocator.
     ///
     /// Note: `true` does not indicate that the pointer corresponds to an active allocation - it may be in either
@@ -330,153 +365,28 @@ impl FixedSizeBlockAllocator {
         })
     }
 
-    /// Attempts to allocate the given number of pages according to the given allocation strategy.
-    /// Valid allocation strategies are:
-    /// - BottomUp(None): Allocate the block of pages from the lowest available free memory.
-    /// - BottomUp(Some(address)): Allocate the block of pages from the lowest available free memory. Fail if memory
-    ///     cannot be found below `address`.
-    /// - TopDown(None): Allocate the block of pages from the highest available free memory.
-    /// - TopDown(Some(address)): Allocate the block of pages from the highest available free memory. Fail if memory
-    ///      cannot be found above `address`.
-    /// - Address(address): Allocate the block of pages at exactly the given address (or fail).
-    ///
-    /// If an address is specified as part of a strategy, it must be page-aligned.
-    pub fn allocate_pages(
-        &mut self,
-        allocation_strategy: AllocationStrategy,
-        pages: usize,
-        alignment: usize,
-    ) -> Result<core::ptr::NonNull<[u8]>, EfiError> {
-        self.stats.page_allocation_calls += 1;
-
-        let align_shift = page_shift_from_alignment(alignment)?;
-
-        if let AllocationStrategy::Address(address) = allocation_strategy {
-            // validate allocation strategy addresses for direct address allocation is properly aligned.
-            // for BottomUp and TopDown strategies, the address parameter doesn't have to be page-aligned, but
-            // the resulting allocation will be page-aligned.
-            if address % alignment != 0 {
-                return Err(EfiError::InvalidParameter);
-            }
-        }
-
-        // Page allocations and pool allocations are disjoint; page allocations are allocated directly from the GCD and are
-        // freed straight back to GCD. As such, a tracking allocator structure is not required.
-        let start_address = self
-            .gcd
-            .allocate_memory_space(
-                allocation_strategy,
-                GcdMemoryType::SystemMemory,
-                align_shift,
-                pages << UEFI_PAGE_SHIFT,
-                self.handle,
-                None,
-            )
-            .map_err(|err| match err {
-                EfiError::InvalidParameter | EfiError::NotFound => err,
-                _ => EfiError::OutOfResources,
-            })?;
-
-        let allocation = slice_from_raw_parts_mut(start_address as *mut u8, pages * ALIGNMENT);
-        let allocation = NonNull::new(allocation).ok_or(EfiError::OutOfResources)?;
-
-        if self.preferred_range.as_ref().is_some_and(|range| range.contains(&(start_address as efi::PhysicalAddress))) {
-            self.stats.reserved_used += pages * ALIGNMENT;
+    /// Tracks page allocations for record keeping
+    pub fn notify_page_allocation(&mut self, allocation: NonNull<[u8]>) {
+        if self.in_reserved_range(allocation.addr().get() as efi::PhysicalAddress) {
+            self.stats.reserved_used += allocation.len();
         } else {
-            self.stats.claimed_pages += pages;
+            self.stats.claimed_pages += uefi_size_to_pages!(allocation.len());
         }
 
         // if we managed to allocate pages, call into the page change callback to update stats
         (self.page_change_callback)(self);
-
-        Ok(allocation)
     }
 
-    /// Frees the block of pages at the given address of the given size.
-    /// ## Safety
-    /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
-    /// [Self::allocate_pages]
-    pub unsafe fn free_pages(&mut self, address: usize, pages: usize) -> Result<(), EfiError> {
-        self.stats.page_free_calls += 1;
-        if address % ALIGNMENT != 0 {
-            return Err(EfiError::InvalidParameter);
-        }
-
-        let descriptor =
-            self.gcd.get_memory_descriptor_for_address(address as efi::PhysicalAddress).map_err(|err| match err {
-                EfiError::NotFound => err,
-                _ => EfiError::InvalidParameter,
-            })?;
-
-        if descriptor.image_handle != self.handle {
-            Err(EfiError::NotFound)?;
-        }
-
-        if self.preferred_range.as_ref().is_some_and(|range| range.contains(&(address as efi::PhysicalAddress))) {
-            self.gcd.free_memory_space_preserving_ownership(address, pages * ALIGNMENT).map_err(|err| match err {
-                EfiError::NotFound => err,
-                _ => EfiError::InvalidParameter,
-            })?;
-            self.stats.reserved_used -= pages * ALIGNMENT;
-            // don't update claimed_pages stats here, because they are never actually "released".
+    /// Tracks page freeing for record keeping
+    pub fn notify_pages_freed(&mut self, address: efi::PhysicalAddress, pages: usize) {
+        if self.in_reserved_range(address) {
+            self.stats.reserved_size = self.stats.reserved_size.saturating_sub(pages * ALIGNMENT);
         } else {
-            self.gcd.free_memory_space(address, pages * ALIGNMENT).map_err(|err| match err {
-                EfiError::NotFound => err,
-                _ => EfiError::InvalidParameter,
-            })?;
-            self.stats.claimed_pages -= pages;
+            self.stats.claimed_pages = self.stats.claimed_pages.saturating_sub(pages);
         }
 
-        // if we managed to allocate pages, call into the page change callback to update stats
+        // call into the page change callback to update stats
         (self.page_change_callback)(self);
-
-        Ok(())
-    }
-
-    /// Reserves a range of memory to be used by this allocator of the given size in pages.
-    ///
-    /// The caller specifies a maximum number of pages this allocator is expected to require, and as long as the number
-    /// of pages actually used by the allocator is less than that amount, then all the allocations for this allocator
-    /// will be in a single contiguous block. This capability can be used to ensure that the memory map presented to the
-    /// OS is stable from boot-to-boot despite small boot-to-boot variations in actual page usage.
-    ///
-    /// For best memory stability, this routine should be called only during the initialization of the memory subsystem;
-    /// calling it after other allocations/frees have occurred will not cause allocation errors, but may cause the
-    /// memory map to vary from boot-to-boot.
-    ///
-    /// This routine will return Err(efi::Status::ALREADY_STARTED) if it is called more than once.
-    pub fn reserve_memory_pages(&mut self, pages: usize) -> Result<(), EfiError> {
-        if self.preferred_range.is_some() {
-            Err(EfiError::AlreadyStarted)?;
-        }
-
-        // Set up the preferred range of memory for this allocator by allocating a block of the given size, and then
-        // freeing them back with preserved ownership to the GCD.
-        //
-        // Note: using this for memory map stability is predicated on the assumption that the GCD returns allocations
-        // in a consistent order such that memory that is allocated and freed preserving ownership will be encountered
-        // before "non-owned" free memory. If memory is allocated before this call and then later freed back to the GCD
-        // without ownership, then this assumption may not hold, and memory may be allocated outside the preferred range
-        // even if there is space in the preferred range. This will not break memory allocation, but may result in
-        // an unstable memory map. To avoid this, memory ranges should be reserved during memory subsystem init before
-        // any general allocations are serviced; that way all "owned" memory is in prime position before any "unowned"
-        // memory.
-        //
-        let preferred_block = self.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages, UEFI_PAGE_SIZE)?;
-        let preferred_block_address = preferred_block.as_ptr() as *mut u8 as efi::PhysicalAddress;
-
-        // this will fail if called more than once, but check at start of function should guarantee that doesn't happen.
-        self.preferred_range =
-            Some(preferred_block_address..preferred_block_address + (pages * ALIGNMENT) as efi::PhysicalAddress);
-
-        // update reserved stat here, since allocate_pages was not yet aware of preferred range to properly track.
-        self.stats.reserved_size = pages * ALIGNMENT;
-        self.stats.reserved_used += pages * ALIGNMENT;
-        unsafe {
-            self.free_pages(preferred_block_address as usize, pages).unwrap();
-        };
-
-        Ok(())
     }
 
     /// Get the ranges of the memory owned by this allocator
@@ -518,7 +428,7 @@ impl Display for FixedSizeBlockAllocator {
                 allocator.free(),
             )?;
         }
-        writeln!(f, "Bucket Range: {:x?}", self.preferred_range)?;
+        writeln!(f, "Bucket Range: {:x?}", self.reserved_range)?;
         writeln!(f, "Allocation Stats:")?;
         writeln!(f, "  pool_allocation_calls: {}", self.stats.pool_allocation_calls)?;
         writeln!(f, "  pool_free_calls: {}", self.stats.pool_free_calls)?;
@@ -548,14 +458,14 @@ impl SpinLockedFixedSizeBlockAllocator {
         gcd: &'static SpinLockedGcd,
         allocator_handle: efi::Handle,
         memory_type: efi::MemoryType,
-        callback: fn(allocator: &mut FixedSizeBlockAllocator),
+        page_change_callback: PageChangeCallback,
     ) -> Self {
         SpinLockedFixedSizeBlockAllocator {
             gcd,
             handle: allocator_handle,
             inner: tpl_lock::TplMutex::new(
                 efi::TPL_HIGH_LEVEL,
-                FixedSizeBlockAllocator::new(memory_type, callback),
+                FixedSizeBlockAllocator::new(memory_type, page_change_callback),
                 "FsbLock",
             ),
         }
@@ -598,8 +508,45 @@ impl SpinLockedFixedSizeBlockAllocator {
         allocation_strategy: AllocationStrategy,
         pages: usize,
         alignment: usize,
-    ) -> Result<core::ptr::NonNull<[u8]>, EfiError> {
-        self.lock().allocate_pages(allocation_strategy, pages, alignment)
+    ) -> Result<NonNull<[u8]>, EfiError> {
+        // Record this call in the FSB's stats
+        self.lock().stats.page_allocation_calls += 1;
+
+        let align_shift = page_shift_from_alignment(alignment)?;
+
+        if let AllocationStrategy::Address(address) = allocation_strategy {
+            // validate allocation strategy addresses for direct address allocation is properly aligned.
+            // for BottomUp and TopDown strategies, the address parameter doesn't have to be page-aligned, but
+            // the resulting allocation will be page-aligned.
+            if address % alignment != 0 {
+                return Err(EfiError::InvalidParameter);
+            }
+        }
+
+        // Page allocations and pool allocations are disjoint; page allocations are allocated directly from the GCD and are
+        // freed straight back to GCD. As such, a tracking allocator structure is not required.
+        let start_address = self
+            .gcd
+            .allocate_memory_space(
+                allocation_strategy,
+                GcdMemoryType::SystemMemory,
+                align_shift,
+                pages << UEFI_PAGE_SHIFT,
+                self.handle,
+                None,
+            )
+            .map_err(|err| match err {
+                EfiError::InvalidParameter | EfiError::NotFound => err,
+                _ => EfiError::OutOfResources,
+            })?;
+
+        let allocation = slice_from_raw_parts_mut(start_address as *mut u8, pages * ALIGNMENT);
+        let allocation = NonNull::new(allocation).ok_or(EfiError::OutOfResources)?;
+
+        // Notify the FSB that additional pages were allocated for record keeping
+        self.lock().notify_page_allocation(allocation);
+
+        Ok(allocation)
     }
 
     /// Frees the block of pages at the given address of the given size.
@@ -607,7 +554,38 @@ impl SpinLockedFixedSizeBlockAllocator {
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
     /// [Self::allocate_pages]
     pub unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), EfiError> {
-        self.lock().free_pages(address, pages)
+        self.lock().stats.page_free_calls += 1;
+
+        if address % ALIGNMENT != 0 {
+            return Err(EfiError::InvalidParameter);
+        }
+
+        let descriptor =
+            self.gcd.get_memory_descriptor_for_address(address as efi::PhysicalAddress).map_err(|err| match err {
+                EfiError::NotFound => err,
+                _ => EfiError::InvalidParameter,
+            })?;
+
+        if descriptor.image_handle != self.handle {
+            Err(EfiError::NotFound)?;
+        }
+
+        if self.lock().in_reserved_range(address as efi::PhysicalAddress) {
+            self.gcd.free_memory_space_preserving_ownership(address, pages * ALIGNMENT).map_err(|err| match err {
+                EfiError::NotFound => err,
+                _ => EfiError::InvalidParameter,
+            })?;
+        } else {
+            self.gcd.free_memory_space(address, pages * ALIGNMENT).map_err(|err| match err {
+                EfiError::NotFound => err,
+                _ => EfiError::InvalidParameter,
+            })?;
+        }
+
+        // Notify the FSB that pages were freed for record keeping
+        self.lock().notify_pages_freed(address as efi::PhysicalAddress, pages);
+
+        Ok(())
     }
 
     /// Reserves a range of memory to be used by this allocator of the given size in pages.
@@ -624,7 +602,28 @@ impl SpinLockedFixedSizeBlockAllocator {
     /// This routine will return Err(efi::Status::ALREADY_STARTED) if it is called more than once.
     ///
     pub fn reserve_memory_pages(&self, pages: usize) -> Result<(), EfiError> {
-        self.lock().reserve_memory_pages(pages)
+        if self.lock().reserved_range.is_some() {
+            Err(EfiError::AlreadyStarted)?;
+        }
+
+        let reserved_block_len = pages << UEFI_PAGE_SHIFT;
+
+        // Allocate then free a block of the requested length in the GCD while preserving ownership.
+        // This, in effect, reserves this region in the GCD for use by this allocator.
+        let reserved_block_addr = self.gcd.allocate_memory_space(
+            DEFAULT_ALLOCATION_STRATEGY,
+            GcdMemoryType::SystemMemory,
+            UEFI_PAGE_SIZE,
+            reserved_block_len,
+            self.handle,
+            None,
+        )?;
+        self.gcd.free_memory_space_preserving_ownership(reserved_block_addr, reserved_block_len)?;
+
+        self.lock().set_reserved_range(NonNull::slice_from_raw_parts(
+            NonNull::new(reserved_block_addr as *mut u8).unwrap(),
+            reserved_block_len,
+        ))
     }
 
     /// Returns an iterator of the ranges of memory owned by this allocator
@@ -635,12 +634,12 @@ impl SpinLockedFixedSizeBlockAllocator {
 
     /// Returns the allocator handle associated with this allocator.
     pub fn handle(&self) -> efi::Handle {
-        self.inner.lock().handle
+        self.handle
     }
 
-    /// Returns the preferred memory range, if any.
-    pub fn preferred_range(&self) -> Option<Range<efi::PhysicalAddress>> {
-        self.inner.lock().preferred_range.clone()
+    /// Returns the reserved memory range, if any.
+    pub fn reserved_range(&self) -> Option<Range<efi::PhysicalAddress>> {
+        self.inner.lock().reserved_range.clone()
     }
 
     /// Returns the memory type for this allocator.
@@ -672,7 +671,8 @@ unsafe impl GlobalAlloc for SpinLockedFixedSizeBlockAllocator {
 
 unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
     fn allocate(&self, layout: Layout) -> core::result::Result<NonNull<[u8]>, AllocError> {
-        match self.lock().alloc(layout) {
+        let allocation  = self.lock().alloc(layout);
+        match allocation {
             Ok(alloc) => Ok(alloc),
             Err(fsb_err) => {
                 match fsb_err {
