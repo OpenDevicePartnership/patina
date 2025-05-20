@@ -232,28 +232,10 @@ impl AcpiProvider for StandardAcpiProvider {
     }
 
     fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a AcpiTable> + 'a> {
-        // grab the read-lock now and store it inside the iterator
         let guard = self.acpi_tables.read();
-        Box::new(TableIter { guard, index: 0 })
-    }
-}
-
-pub struct TableIter<'a> {
-    pub guard: RwLockReadGuard<'a, Vec<NonNull<AcpiTable>>>,
-    pub index: usize,
-}
-
-impl<'a> Iterator for TableIter<'a> {
-    type Item = &'a AcpiTable;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.guard.len() {
-            return None;
-        }
-        let ptr = self.guard[self.index];
-        self.index += 1;
-        // SAFETY: NonNull<AcpiTable> points at a valid AcpiTable
-        Some(unsafe { ptr.as_ref() })
+        let snapshot: Vec<&AcpiTable> = guard.iter().map(|ptr| unsafe { ptr.as_ref() }).collect();
+        drop(guard);
+        Box::new(snapshot.into_iter())
     }
 }
 
