@@ -699,40 +699,36 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
         let allocation = self.lock().alloc(layout);
         match allocation {
             Ok(alloc) => Ok(alloc),
-            Err(fsb_err) => {
-                match fsb_err {
-                    FixedSizeBlockAllocatorError::OutOfMemory(additional_mem_required) => {
-                        // Allocate additional memory through the GCD, returning AllocError
-                        // if the GCD returns an error
-                        let start_address: usize = self
-                            .gcd
-                            .allocate_memory_space(
-                                DEFAULT_ALLOCATION_STRATEGY,
-                                GcdMemoryType::SystemMemory,
-                                UEFI_PAGE_SHIFT,
-                                additional_mem_required,
-                                self.handle,
-                                None,
-                            )
-                            .map_err(|_| AllocError)?;
+            Err(FixedSizeBlockAllocatorError::OutOfMemory(additional_mem_required)) => {
+                // Allocate additional memory through the GCD, returning AllocError
+                // if the GCD returns an error
+                let start_address: usize = self
+                    .gcd
+                    .allocate_memory_space(
+                        DEFAULT_ALLOCATION_STRATEGY,
+                        GcdMemoryType::SystemMemory,
+                        UEFI_PAGE_SHIFT,
+                        additional_mem_required,
+                        self.handle,
+                        None,
+                    )
+                    .map_err(|_| AllocError)?;
 
-                        // Expand the FSB using the allocated memory region
-                        let allocated_ptr = NonNull::new(start_address as *mut u8).ok_or(AllocError)?;
-                        if let Err(_) =
-                            self.lock().expand(NonNull::slice_from_raw_parts(allocated_ptr, additional_mem_required))
-                        {
-                            return Err(AllocError);
-                        }
+                // Expand the FSB using the allocated memory region
+                let allocated_ptr = NonNull::new(start_address as *mut u8).ok_or(AllocError)?;
+                if let Err(_) =
+                    self.lock().expand(NonNull::slice_from_raw_parts(allocated_ptr, additional_mem_required))
+                {
+                    return Err(AllocError);
+                }
 
-                        // Try the allocation one more time
-                        match self.lock().alloc(layout) {
-                            Ok(alloc) => Ok(alloc),
-                            Err(_) => Err(AllocError),
-                        }
-                    }
-                    _ => Err(AllocError),
+                // Try the allocation one more time
+                match self.lock().alloc(layout) {
+                    Ok(alloc) => Ok(alloc),
+                    Err(_) => Err(AllocError),
                 }
             }
+            Err(_) => Err(AllocError),
         }
     }
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
