@@ -72,7 +72,7 @@ does not need them all, but at a minimum, cargo-make and cargo-tarpaulin should 
    ```
 
 4. Another optional tool that has proven useful for speeding up the build process is 'cargo-binstall', located on
-[GitHub](https://github.com/cargo-bins/cargo-binstall).  See the readme.md file in that repository for intallation and
+[GitHub](https://github.com/cargo-bins/cargo-binstall).  See the readme.md file in that repository for installation and
 usage instructions.
 
 ## Build
