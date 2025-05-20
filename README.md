@@ -23,7 +23,7 @@ is very welcome.
 
 Before making pull requests at a minimum, run:
 
-```
+```shell
 cargo make all
 ```
 
@@ -57,14 +57,16 @@ to install, update (if needed), and test cargo/rust.
 
 2. The `[toolchain]` section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/HEAD/rust-toolchain.toml)
 file contains the tools necessary to compile and can be installed through rustup.
-   ```
+
+   ```shell
    rustup toolchain install
    ```
 
 3. The `[tools]` section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/HEAD/rust-toolchain.toml)
-file contains tools to support commands such as `cargo make coverage` and must be installed manually.  A local build does not need
-them all, but at a minimum, cargo-make and cargo-tarpaulin should be installed.
-   ```
+file contains tools to support commands such as `cargo make coverage` and must be installed manually.  A local build
+does not need them all, but at a minimum, cargo-make and cargo-tarpaulin should be installed.
+
+   ```shell
    cargo install cargo-make
    cargo install cargo-tarpaulin
    ```
@@ -72,7 +74,8 @@ them all, but at a minimum, cargo-make and cargo-tarpaulin should be installed.
 ## Build
 
 All of the patina crates can be compiled in one of 3 supported targets; aarch64, x64, or native.
-```
+
+```shell
 cargo make build-aarch64
    - or -
 cargo make build-x64
@@ -81,7 +84,8 @@ cargo make build
 ```
 
 By default, the make compiles a developer build, but development or release can be indicated by using the "-p" flag
-```
+
+```shell
 cargo make -p development build-aarch64
    - or -
 cargo make -p release build-aarch64
@@ -90,14 +94,17 @@ cargo make -p release build-aarch64
 ## Test
 
 Use the test command to invoke a test build and execute all unit tests.
-```
+
+```shell
 cargo make test
 ```
 
 ## Coverage
 
-The coverage command will generate test coverage data for all crates in the project.  To target a single crate, the name can be added to the command line.
-```
+The coverage command will generate test coverage data for all crates in the project.  To target a single crate, the
+name can be added to the command line.
+
+```shell
 cargo make coverage
    - or -
 cargo make coverage dxe_core
@@ -105,10 +112,11 @@ cargo make coverage dxe_core
 
 ## Notes
 
-- This project uses the "RUSTC_BOOSTRAP=1" environment variable due to internal requirements which puts us in parity with the
-nightly features that exist on the toolchain targeted.  The "nightly" toolchain may be used in place of this.
+- This project uses the "RUSTC_BOOSTRAP=1" environment variable due to internal requirements which puts us in parity
+with the nightly features that exist on the toolchain targeted.  The "nightly" toolchain may be used in place of this.
 
 ## Contributing
 
-- Review Rust Documentation in the [/docs](https://github.com/OpenDevicePartnership/patina/blob/HEAD/docs/src/introduction.md) directory.
+- Review Rust Documentation in the [/docs](https://github.com/OpenDevicePartnership/patina/blob/HEAD/docs/src/introduction.md)
+directory.
 - Run unit tests and ensure all pass.
