@@ -15,7 +15,7 @@ use super::{AllocationStrategy, DEFAULT_ALLOCATION_STRATEGY};
 
 use crate::{gcd::SpinLockedGcd, tpl_lock};
 
-use patina_sdk::{base::UEFI_PAGE_SIZE, patina_boot_services::c_ptr::CMutPtr, error::EfiError};
+use patina_sdk::{patina_boot_services::c_ptr::CMutPtr, error::EfiError};
 
 use core::{
     alloc::{AllocError, Allocator, GlobalAlloc, Layout},
@@ -99,12 +99,28 @@ impl Iterator for AllocatorIterator {
 
 #[derive(Debug, Clone, Copy)]
 pub struct AllocationStatistics {
+    /// The number of calls to `alloc()`.
+    ///
+    /// Note: [SpinLockedFixedSizeBlockAllocator::alloc()] and [SpinLockedFixedSizeBlockAllocator::allocate()] will call alloc() twice when
+    /// additional memory is required.
     pub pool_allocation_calls: usize,
+
+    /// The number of calls to `dealloc()`.
     pub pool_free_calls: usize,
+
+    /// The number of calls to allocate pages.
     pub page_allocation_calls: usize,
+
+    /// The number of calls to free pages.
     pub page_free_calls: usize,
+
+    /// The amount of memory set aside in the backing allocator for use by this allocator.
     pub reserved_size: usize,
+
+    /// The amount of the memory used in the pool of memory set aside in the backing allocator for use by this allocator.
     pub reserved_used: usize,
+
+    /// The number of pages claimed for use by this allocator.
     pub claimed_pages: usize,
 }
 
@@ -183,7 +199,7 @@ impl FixedSizeBlockAllocator {
     /// node to manage this range.
     pub fn expand(&mut self, new_region: NonNull<[u8]>) -> core::result::Result<(), FixedSizeBlockAllocatorError> {
         // Ensure we're expanding enough to fit a new allocator list node
-        if new_region.len() <= max(MIN_EXPANSION, size_of::<AllocatorListNode>()) {
+        if new_region.len() < MIN_EXPANSION || new_region.len() <= size_of::<AllocatorListNode>() {
             debug_assert!(false, "FSB expanded with insufficiently sized memory region.");
             return Err(FixedSizeBlockAllocatorError::InvalidExpansion);
         }
@@ -256,7 +272,7 @@ impl FixedSizeBlockAllocator {
     pub fn alloc(&mut self, layout: Layout) -> Result<NonNull<[u8]>, FixedSizeBlockAllocatorError> {
         self.stats.pool_allocation_calls += 1;
 
-        match list_index(&layout) {
+        let allocation = match list_index(&layout) {
             Some(index) => {
                 match self.list_heads[index].take() {
                     Some(node) => {
@@ -278,7 +294,15 @@ impl FixedSizeBlockAllocator {
                 }
             }
             None => self.fallback_alloc(layout),
+        };
+
+        if let Err(FixedSizeBlockAllocatorError::OutOfMemory(_)) = allocation {
+            // The spin-locked FSB will try again. Decrement the page_allocation_calls so that these two calls
+            // only reflect the one allocation.
+            self.stats.pool_allocation_calls -= 1;
         }
+
+        allocation
     }
 
     // deallocates back to the linked-list backing allocator if the size of
@@ -345,6 +369,7 @@ impl FixedSizeBlockAllocator {
 
         self.stats.reserved_size = range.len();
         self.stats.reserved_used = 0;
+        self.stats.claimed_pages += uefi_size_to_pages!(range.len());
 
         // call into the page change callback to keep track of the updated reserved stats and
         // any memory map changes made when reserving the range.
@@ -380,7 +405,7 @@ impl FixedSizeBlockAllocator {
     /// Tracks page freeing for record keeping
     pub fn notify_pages_freed(&mut self, address: efi::PhysicalAddress, pages: usize) {
         if self.in_reserved_range(address) {
-            self.stats.reserved_size = self.stats.reserved_size.saturating_sub(pages * ALIGNMENT);
+            self.stats.reserved_used = self.stats.reserved_used.saturating_sub(pages * ALIGNMENT);
         } else {
             self.stats.claimed_pages = self.stats.claimed_pages.saturating_sub(pages);
         }
@@ -671,7 +696,7 @@ unsafe impl GlobalAlloc for SpinLockedFixedSizeBlockAllocator {
 
 unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
     fn allocate(&self, layout: Layout) -> core::result::Result<NonNull<[u8]>, AllocError> {
-        let allocation  = self.lock().alloc(layout);
+        let allocation = self.lock().alloc(layout);
         match allocation {
             Ok(alloc) => Ok(alloc),
             Err(fsb_err) => {
