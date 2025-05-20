@@ -79,7 +79,6 @@ impl SwMmiManager {
         }
 
         self.inner_config = config.clone();
-        log::info!("SwMmiManager initialized with config: {:?}", self.inner_config);
 
         commands.add_service(self);
 
