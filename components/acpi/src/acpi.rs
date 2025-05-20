@@ -26,38 +26,12 @@ use uefi_sdk::{
     uefi_size_to_pages,
 };
 
-use crate::acpi_init::AcpiMemoryHob;
 use crate::acpi_table::{AcpiDsdt, AcpiFacs, AcpiFadt, AcpiInstallable, AcpiRsdp, AcpiTable, AcpiXsdt};
+use crate::component::AcpiMemoryHob;
+use crate::error::AcpiError;
+use crate::service::{AcpiNotifyFn, AcpiProvider, TableKey};
 use crate::signature::ACPI_HEADER_LEN;
 use crate::signature::{self};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcpiError {
-    AllocationFailed,
-    FacsUefiNot64BAligned,
-    InvalidSignature,
-    FadtAlreadyInstalled,
-    InstallTableFailed,
-    InvalidTableKey,
-    InvalidTableIndex,
-    InvalidNotifyUnregister,
-    FreeFailed,
-    XsdtNotInitialized,
-    InvalidTableFormat,
-    HobTableNotInstalled,
-    InvalidTableLength,
-}
-
-pub(crate) type AcpiNotifyFn = fn(&AcpiTable, u32, TableKey) -> Result<(), AcpiError>;
-
-pub trait AcpiProvider {
-    fn install_acpi_table(&self, acpi_table: &dyn AcpiInstallable) -> Result<TableKey, AcpiError>;
-    fn uninstall_acpi_table(&self, table_key: TableKey) -> Result<(), AcpiError>;
-    fn get_acpi_table(&self, index: usize) -> Result<&AcpiTable, AcpiError>;
-    fn register_notify(&self, should_register: bool, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError>;
-
-    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a AcpiTable> + 'a>;
-}
 
 pub static ACPI_TABLE_INFO: StandardAcpiProvider = StandardAcpiProvider::new_uninit();
 
@@ -724,5 +698,3 @@ impl AcpiVersion {
         self.intersects(Self::ACPI_2_0 | Self::ACPI_3_0 | Self::ACPI_4_0 | Self::ACPI_5_0)
     }
 }
-
-pub type TableKey = usize;

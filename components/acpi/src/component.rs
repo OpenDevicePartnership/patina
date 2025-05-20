@@ -12,6 +12,7 @@ use uefi_sdk::{
 
 use crate::acpi_protocol::{AcpiSdtProtocol, AcpiTableProtocol};
 use crate::acpi_table::AcpiXsdt;
+use crate::config::AcpiProviderInit;
 use crate::signature::{self, XSDT};
 use crate::signature::{
     ACPI_HEADER_LEN, ACPI_RESERVED_BYTE, ACPI_RSDP_REVISION, ACPI_RSDP_TABLE, ACPI_XSDT_REVISION, MAX_INITIAL_ENTRIES,
@@ -19,17 +20,7 @@ use crate::signature::{
 use crate::{acpi::ACPI_TABLE_INFO, acpi_table::AcpiRsdp};
 
 #[derive(IntoComponent, Default)]
-struct AcpiProviderManager {}
-
-#[derive(Debug, Clone, Copy, Default)]
-struct AcpiProviderInit {
-    version: u32,
-    should_reclaim_memory: bool,
-    oem_id: [u8; 6],
-    oem_table_id: [u8; 8],
-    creator_id: u32,
-    creator_revision: u32,
-}
+pub struct AcpiProviderManager {}
 
 #[derive(Copy, Clone, FromHob)]
 #[hob = "9f9a9506-5597-4515-bab6-8bcde784ba87"]
@@ -106,7 +97,7 @@ impl AcpiProviderManager {
 }
 
 #[derive(IntoComponent)]
-struct AcpiSystemTableManager {}
+pub struct AcpiSystemTableManager {}
 
 impl AcpiSystemTableManager {
     fn entry_point(self, boot_services: StandardBootServices) -> uefi_sdk::error::Result<()> {

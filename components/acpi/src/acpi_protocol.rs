@@ -2,9 +2,11 @@ use core::{ffi::c_void, ptr};
 use r_efi::efi;
 use uefi_sdk::protocol::ProtocolInterface;
 
+use crate::service::{AcpiNotifyFn, AcpiProvider};
 use crate::{
-    acpi::{AcpiError, AcpiNotifyFn, AcpiProvider, ACPI_TABLE_INFO},
+    acpi::ACPI_TABLE_INFO,
     acpi_table::{AcpiFacs, AcpiTable},
+    error::AcpiError,
     signature::{self, ACPI_HEADER_LEN},
 };
 

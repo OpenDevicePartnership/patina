@@ -1,5 +1,6 @@
-use crate::acpi::{AcpiError, AcpiVersion, TableKey};
+use crate::acpi::AcpiVersion;
 use crate::signature;
+use crate::{error::AcpiError, service::TableKey};
 
 use core::any::Any;
 use downcast_rs::{impl_downcast, DowncastSync};

@@ -1,6 +1,6 @@
 use r_efi::efi;
 
-use crate::acpi::AcpiError;
+use crate::error::AcpiError;
 
 /// Helpers for handling ACPI signatures
 
