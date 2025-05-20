@@ -71,6 +71,10 @@ does not need them all, but at a minimum, cargo-make and cargo-tarpaulin should 
    cargo install cargo-tarpaulin
    ```
 
+4. Another optional tool that has proven useful for speeding up the build process is 'cargo-binstall', located on
+[GitHub](https://github.com/cargo-bins/cargo-binstall).  See the readme.md file in that repository for intallation and
+usage instructions.
+
 ## Build
 
 All of the patina crates can be compiled in one of 3 supported targets; aarch64, x64, or native.
@@ -112,8 +116,9 @@ cargo make coverage dxe_core
 
 ## Notes
 
-- This project uses the "RUSTC_BOOSTRAP=1" environment variable due to internal requirements which puts us in parity
-with the nightly features that exist on the toolchain targeted.  The "nightly" toolchain may be used in place of this.
+- This project uses a makefile that sets the "RUSTC_BOOTSTRAP=1" environment variable due to internal requirements which
+puts us in parity with the nightly features that exist on the toolchain targeted.  The "nightly" toolchain may be used
+in place of this.
 
 ## Contributing
 
