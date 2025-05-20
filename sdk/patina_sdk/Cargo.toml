@@ -12,6 +12,10 @@ description = "UEFI Software Development Kit (SDK) that provides common types an
 name = "bench_component"
 harness = false
 
+[[bench]]
+name = "bench_service"
+harness = false
+
 [dependencies]
 patina_sdk_macro = { workspace = true }
 patina_boot_services = { workspace = true }
