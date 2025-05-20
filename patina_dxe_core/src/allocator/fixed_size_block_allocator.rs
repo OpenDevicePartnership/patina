@@ -613,7 +613,7 @@ impl SpinLockedFixedSizeBlockAllocator {
         let reserved_block_addr = self.gcd.allocate_memory_space(
             DEFAULT_ALLOCATION_STRATEGY,
             GcdMemoryType::SystemMemory,
-            UEFI_PAGE_SIZE,
+            UEFI_PAGE_SHIFT,
             reserved_block_len,
             self.handle,
             None,
