@@ -76,15 +76,15 @@ use mu_pi::{
     protocols::{bds, status_code},
     status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
 };
-use protocols::PROTOCOL_DB;
-use r_efi::efi;
 use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
 use patina_sdk::{
-    patina_boot_services::StandardBootServices,
     component::{Component, IntoComponent, Storage},
     error::{self, Result},
+    patina_boot_services::StandardBootServices,
     patina_runtime_services::StandardRuntimeServices,
 };
+use protocols::PROTOCOL_DB;
+use r_efi::efi;
 
 #[macro_export]
 macro_rules! ensure {
@@ -419,28 +419,16 @@ where
 
         let boot_services_ptr;
         let runtime_services_ptr;
-        let system_table_ptr;
         {
             let mut st = systemtables::SYSTEM_TABLE.lock();
             let st = st.as_mut().expect("System Table is not initialized!");
             boot_services_ptr = st.boot_services_mut() as *mut efi::BootServices;
             runtime_services_ptr = st.runtime_services_mut() as *mut efi::RuntimeServices;
-            system_table_ptr = st.system_table() as *const efi::SystemTable;
         }
 
         tpl_lock::init_boot_services(boot_services_ptr);
 
         memory_attributes_table::init_memory_attributes_table_support();
-
-        // This is currently commented out as it is breaking top of tree booting Q35 as qemu64 does not support
-        // reading the time stamp counter in the way done in this code and results in a divide by zero exception.
-        // Other cpu models crash in various other ways. It will be resolved, but is removed now to unblock other
-        // development
-        _ = patina_internal_performance::init_performance_lib(
-            &self.hob_list,
-            // SAFETY: `system_table_ptr` is a valid pointer that has been initialized earlier.
-            unsafe { system_table_ptr.as_ref() }.expect("System Table not initialized!"),
-        );
 
         // Add Boot Services and Runtime Services to storage.
         // SAFETY: This is valid because these pointer live thoughout the boot.

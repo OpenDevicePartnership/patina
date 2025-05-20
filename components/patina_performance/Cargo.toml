@@ -1,5 +1,5 @@
 [package]
-name = "patina_internal_performance"
+name = "patina_performance"
 resolver = "2"
 version.workspace = true
 repository.workspace = true
@@ -10,7 +10,7 @@ description = "Performance support for the DXE Core."
 
 [dependencies]
 r-efi = { workspace = true }
-scroll = { workspace = true, features = ["derive"] }
+scroll = { workspace = true }
 log = { workspace = true }
 uuid = { workspace = true }
 
@@ -19,6 +19,6 @@ mu_rust_helpers = { workspace = true }
 patina_sdk = { workspace = true }
 patina_internal_device_path = { workspace = true }
 
-
-[features]
-instrument_performance = []
+[dev-dependencies]
+patina_sdk = { path = "../../sdk/patina_sdk", features = ["mockall"] }
+mockall = { workspace = true }

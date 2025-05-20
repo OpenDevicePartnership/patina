@@ -1,12 +1,19 @@
 //! This module is a temporary module that has for goal to make communication protocol work in perf. It will eventually be replaced by another communicate abstraction.
 //!
 //! This module also contain smm performance communicate structures that define the communicate buffer data that need to be used to fetch perf records from smm.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
 
-use core::{debug_assert_eq, marker::PhantomPinned, ptr, result::Result::Ok, slice};
+use core::{debug_assert_eq, ptr, slice};
 
 use r_efi::efi;
 
-use patina_sdk::{base::UEFI_PAGE_SIZE, protocol::ProtocolInterface};
+use patina_sdk::{base::UEFI_PAGE_SIZE, component::hob::FromHob, protocol::ProtocolInterface};
 use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
     Endian, Pread, Pwrite,
@@ -14,58 +21,39 @@ use scroll::{
 
 pub const EFI_SMM_COMMUNICATION_PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0xc68ed8e2, 0x9dc6, 0x4cbd, 0x9d, 0x94, &[0xdb, 0x65, 0xac, 0xc5, 0xc3, 0x32]);
-pub const EDKII_PI_SMM_COMMUNICATION_REGION_TABLE_GUID: efi::Guid =
-    efi::Guid::from_fields(0x4e28ca50, 0xd582, 0x44ac, 0xa1, 0x1f, &[0xe3, 0xd5, 0x65, 0x26, 0xdb, 0x34]);
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, Pread)]
 #[repr(C)]
-/// Memory layout of a smm communication region table.
-///
-/// Memory descriptor of this struct are stored after in memory. To access those use the [`Self::iter`] function.
-/// # Note
-/// This struct is not sized, should never be used as an own type.
-pub struct SmmCommunicationRegionTable {
-    /// Version of the smm communication region table.
-    pub version: u32,
-    /// Number of memory descriptor present in the region table
-    pub number_of_entries: u32,
-    /// Size in byte of one memory descriptor
-    pub descriptor_size: u32,
-    _reserved: u32,
-    /// Used to prevent the move because memory descriptors lives at the end of this struct
-    _pin: PhantomPinned,
-    memory_descriptors: [efi::MemoryDescriptor; 0],
+pub struct MmCommRegion {
+    pub region_type: u64,
+    pub region_address: u64,
+    pub region_nb_pages: u64,
 }
 
-impl SmmCommunicationRegionTable {
-    // Iterate over memory descriptors at the end of the struct.
-    pub fn iter(&self) -> SmmCommunicationRegionTableIter<'_> {
-        SmmCommunicationRegionTableIter { index: 0, region_table: self }
+impl FromHob for MmCommRegion {
+    const HOB_GUID: efi::Guid =
+        efi::Guid::from_fields(0xd4ffc718, 0xfb82, 0x4274, 0x9a, 0xfc, &[0xaa, 0x8b, 0x1e, 0xef, 0x52, 0x93]);
+
+    fn parse(bytes: &[u8]) -> Self {
+        bytes.pread(0).unwrap()
     }
 }
 
-/// Memrory descriptor interation given by [`SmmCommunicationRegionTable::iter`].
-pub struct SmmCommunicationRegionTableIter<'a> {
-    index: usize,
-    region_table: &'a SmmCommunicationRegionTable,
-}
+impl MmCommRegion {
+    pub fn is_supervisor_type(&self) -> bool {
+        self.region_type == 0
+    }
 
-impl<'a> Iterator for SmmCommunicationRegionTableIter<'a> {
-    type Item = &'a efi::MemoryDescriptor;
+    pub fn is_user_type(&self) -> bool {
+        self.region_type == 1
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.region_table.number_of_entries as usize {
-            return None;
-        }
+    pub fn size(&self) -> usize {
+        self.region_nb_pages as usize * UEFI_PAGE_SIZE
+    }
 
-        let memory_descriptor_ptr = unsafe {
-            self.region_table
-                .memory_descriptors
-                .as_ptr()
-                .byte_add(self.index * self.region_table.descriptor_size as usize)
-        };
-        self.index += 1;
-        unsafe { memory_descriptor_ptr.as_ref() }
+    pub unsafe fn as_buffer(&self) -> &'static mut [u8] {
+        slice::from_raw_parts_mut(self.region_address as usize as *mut u8, self.size())
     }
 }
 
@@ -103,18 +91,15 @@ impl CommunicateProtocol {
     pub unsafe fn communicate<T>(
         &mut self,
         data: T,
-        communication_memory_region: &efi::MemoryDescriptor,
+        communication_memory_region: MmCommRegion,
     ) -> Result<T, efi::Status>
     where
         T: CommunicateData,
     {
-        assert_eq!(efi::CONVENTIONAL_MEMORY, communication_memory_region.r#type);
-        assert_ne!(0, communication_memory_region.physical_start);
-        assert_ne!(0, communication_memory_region.number_of_pages);
+        assert_ne!(0, communication_memory_region.region_address);
+        assert_ne!(0, communication_memory_region.region_nb_pages);
 
-        let mut comm_size = communication_memory_region.number_of_pages as usize * UEFI_PAGE_SIZE;
-
-        let comm_buffer = slice::from_raw_parts_mut(communication_memory_region.physical_start as *mut u8, comm_size);
+        let comm_buffer = communication_memory_region.as_buffer();
         let mut offset = 0;
 
         comm_buffer.gwrite_with(T::GUID.as_bytes().as_slice(), &mut offset, ()).unwrap();
@@ -129,6 +114,7 @@ impl CommunicateProtocol {
         // Write the data actual size.
         comm_buffer.pwrite(offset as u64, size_offset).unwrap();
 
+        let mut comm_size = comm_buffer.len();
         let status = (self.communicate)(self, comm_buffer.as_mut_ptr(), ptr::addr_of_mut!(comm_size));
 
         if status.is_error() {
@@ -144,12 +130,12 @@ pub const EFI_FIRMWARE_PERFORMANCE_GUID: efi::Guid =
 
 // Communicate protocol data to ask smm the size of its performance records.
 #[derive(Debug, Default)]
-pub struct SmmFpdtGetRecordSize {
+pub struct SmmGetRecordSize {
     pub return_status: efi::Status,
     pub boot_record_size: usize,
 }
 
-impl SmmFpdtGetRecordSize {
+impl SmmGetRecordSize {
     pub const SMM_FPDT_FUNCTION_GET_BOOT_RECORD_SIZE: u64 = 1;
 
     pub fn new() -> Self {
@@ -157,11 +143,11 @@ impl SmmFpdtGetRecordSize {
     }
 }
 
-unsafe impl CommunicateData for SmmFpdtGetRecordSize {
+unsafe impl CommunicateData for SmmGetRecordSize {
     const GUID: efi::Guid = EFI_FIRMWARE_PERFORMANCE_GUID;
 }
 
-impl TryIntoCtx<Endian> for SmmFpdtGetRecordSize {
+impl TryIntoCtx<Endian> for SmmGetRecordSize {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: Endian) -> Result<usize, Self::Error> {
@@ -175,7 +161,7 @@ impl TryIntoCtx<Endian> for SmmFpdtGetRecordSize {
     }
 }
 
-impl TryFromCtx<'_, Endian> for SmmFpdtGetRecordSize {
+impl TryFromCtx<'_, Endian> for SmmGetRecordSize {
     type Error = scroll::Error;
 
     fn try_from_ctx(from: &'_ [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {
@@ -193,17 +179,17 @@ impl TryFromCtx<'_, Endian> for SmmFpdtGetRecordSize {
 
 // Communicate protocol data to ask smm to return a BUFFER_SIZE about of byte at an offset.
 #[derive(Debug)]
-pub struct SmmFpdtGetRecordDataByOffset<const BUFFER_SIZE: usize> {
+pub struct SmmGetRecordDataByOffset<const BUFFER_SIZE: usize> {
     pub return_status: efi::Status,
     pub boot_record_data: [u8; BUFFER_SIZE],
     pub boot_record_data_size: usize,
     pub boot_record_offset: usize,
 }
 
-impl<const BUFFER_SIZE: usize> SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
+impl<const BUFFER_SIZE: usize> SmmGetRecordDataByOffset<BUFFER_SIZE> {
     pub const SMM_FPDT_FUNCTION_GET_BOOT_RECORD_DATA_BY_OFFSET: u64 = 3;
 
-    pub fn new(boot_record_offset: usize) -> SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
+    pub fn new(boot_record_offset: usize) -> SmmGetRecordDataByOffset<BUFFER_SIZE> {
         Self {
             return_status: efi::Status::SUCCESS,
             boot_record_data: [0; BUFFER_SIZE],
@@ -217,11 +203,11 @@ impl<const BUFFER_SIZE: usize> SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
     }
 }
 
-unsafe impl<const BUFFER_SIZE: usize> CommunicateData for SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
+unsafe impl<const BUFFER_SIZE: usize> CommunicateData for SmmGetRecordDataByOffset<BUFFER_SIZE> {
     const GUID: efi::Guid = EFI_FIRMWARE_PERFORMANCE_GUID;
 }
 
-impl<const BUFFER_SIZE: usize> TryIntoCtx<Endian> for SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
+impl<const BUFFER_SIZE: usize> TryIntoCtx<Endian> for SmmGetRecordDataByOffset<BUFFER_SIZE> {
     type Error = scroll::Error;
 
     fn try_into_ctx(self, dest: &mut [u8], ctx: Endian) -> Result<usize, Self::Error> {
@@ -235,7 +221,7 @@ impl<const BUFFER_SIZE: usize> TryIntoCtx<Endian> for SmmFpdtGetRecordDataByOffs
     }
 }
 
-impl<const BUFFER_SIZE: usize> TryFromCtx<'_, Endian> for SmmFpdtGetRecordDataByOffset<BUFFER_SIZE> {
+impl<const BUFFER_SIZE: usize> TryFromCtx<'_, Endian> for SmmGetRecordDataByOffset<BUFFER_SIZE> {
     type Error = scroll::Error;
 
     fn try_from_ctx(from: &'_ [u8], ctx: Endian) -> Result<(Self, usize), Self::Error> {

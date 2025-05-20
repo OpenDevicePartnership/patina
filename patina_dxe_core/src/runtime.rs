@@ -12,9 +12,9 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use mu_pi::{list_entry, protocols::runtime};
+use patina_sdk::base::UEFI_PAGE_SIZE;
 use r_efi::efi;
 use spin::Mutex;
-use patina_sdk::base::UEFI_PAGE_SIZE;
 
 use crate::{
     allocator::core_allocate_pool, events::EVENT_DB, image::core_relocate_runtime_images,

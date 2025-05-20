@@ -43,7 +43,7 @@ std = []
 doc = ['alloc']
 alloc = []
 boot_services_global_allocator = ["patina_boot_services/global_allocator"]
-mockall = ["dep:mockall"]
+mockall = ["dep:mockall", "std", "patina_boot_services/mockall", "patina_runtime_services/mockall"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }

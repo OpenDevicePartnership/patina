@@ -9,8 +9,8 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use crate::gcd::SpinLockedGcd;
-use r_efi::efi;
 use patina_sdk::error::EfiError;
+use r_efi::efi;
 
 use super::{
     fixed_size_block_allocator::{AllocationStatistics, PageChangeCallback, SpinLockedFixedSizeBlockAllocator},

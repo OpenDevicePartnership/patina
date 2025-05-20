@@ -1,11 +1,7 @@
 [workspace]
 resolver = "2"
 
-members = [
-  "components/*",
-  "core/*",
-  "sdk/*",
-]
+members = ["components/*", "core/*", "sdk/*", "patina_dxe_core"]
 
 [workspace.package]
 version = "0.0.1"
@@ -40,9 +36,9 @@ patina_internal_collections = { version = "0.0.1", path = "core/patina_internal_
 patina_internal_cpu = { version = "0.0.1", path = "core/patina_internal_cpu", registry = "patina-fw" }
 patina_internal_depex = { version = "0.0.1", path = "core/patina_internal_depex", registry = "patina-fw" }
 patina_internal_device_path = { version = "0.0.1", path = "core/patina_internal_device_path", registry = "patina-fw" }
-patina_internal_performance = { version = "0.0.1", path = "core/patina_internal_performance", registry = "patina-fw" }
 patina_mtrr = { version = "1.0.0", registry = "patina-fw" }
 patina_paging = { version = "6.0.0", registry = "patina-fw" }
+patina_performance = { version = "0.0.1", path = "components/patina_performance", registry = "patina-fw" }
 patina_runtime_services = { version = "0.0.1", path = "sdk/patina_runtime_services", registry = "patina-fw" }
 patina_sdk = { version = "0.0.1", path = "sdk/patina_sdk", registry = "patina-fw" }
 patina_sdk_macro = { version = "0.0.1", path = "sdk/patina_sdk_macro", registry = "patina-fw" }
@@ -54,7 +50,7 @@ patina_uefi_protocol = { version = "0.0.1", path = "sdk/patina_uefi_protocol", r
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
 r-efi = { version = "5.0.0", default-features = false }
-scroll = { version = "^0.12", default-features = false }
+scroll = { version = "^0.12", default-features = false, features = ["derive"]}
 spin = { version = "^0.9" }
 syn = { version = "2" }
 uart_16550 = { version = "^0.3.2" }

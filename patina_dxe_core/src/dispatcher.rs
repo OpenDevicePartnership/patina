@@ -16,15 +16,15 @@ use mu_pi::{
     fw_fs::{FfsFileRawType, FfsSectionType, FirmwareVolume, Section, SectionExtractor},
     protocols::firmware_volume_block,
 };
-use mu_rust_helpers::guid::guid_fmt;
-use r_efi::efi;
-use tpl_lock::TplMutex;
+use mu_rust_helpers::{function, guid::guid_fmt};
 use patina_internal_depex::{AssociatedDependency, Depex, Opcode};
 use patina_internal_device_path::concat_device_path_to_boxed_slice;
+use patina_performance::{create_performance_measurement, perf_function_begin, perf_function_end};
 use patina_sdk::error::EfiError;
+use r_efi::efi;
+use tpl_lock::TplMutex;
 
 use mu_rust_helpers::guid::CALLER_ID;
-use patina_internal_performance::{perf_function_begin, perf_function_end};
 
 use crate::{
     events::EVENT_DB,
@@ -494,14 +494,14 @@ pub fn core_dispatcher() -> Result<(), EfiError> {
         return Err(EfiError::AlreadyStarted);
     }
 
-    perf_function_begin!(&CALLER_ID);
+    perf_function_begin(function!(), &CALLER_ID, create_performance_measurement);
 
     let mut something_dispatched = false;
     while dispatch()? {
         something_dispatched = true;
     }
 
-    perf_function_end!(&CALLER_ID);
+    perf_function_end(function!(), &CALLER_ID, create_performance_measurement);
 
     if something_dispatched {
         Ok(())

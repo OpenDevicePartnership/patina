@@ -7,8 +7,8 @@ use core::{
     sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
 use mu_rust_helpers::function;
-use r_efi::efi;
 use patina_sdk::{base::UEFI_PAGE_MASK, error::EfiError};
+use r_efi::efi;
 
 #[repr(C)]
 pub struct EfiMemoryAttributesProtocolImpl {

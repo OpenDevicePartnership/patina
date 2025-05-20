@@ -10,13 +10,15 @@ use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
 use goblin::pe::section_table;
 use mu_pi::hob::{Hob, HobList};
-use r_efi::efi;
 use patina_internal_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
+use patina_performance::{
+    create_performance_measurement, perf_image_start_begin, perf_image_start_end, perf_load_image_begin,
+    perf_load_image_end,
+};
 use patina_sdk::base::{align_up, UEFI_PAGE_SIZE};
 use patina_sdk::error::EfiError;
 use patina_sdk::{guid, uefi_size_to_pages};
-
-use patina_internal_performance::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end};
+use r_efi::efi;
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
@@ -930,7 +932,7 @@ pub fn core_load_image(
     file_path: *mut efi::protocols::device_path::Protocol,
     image: Option<&[u8]>,
 ) -> Result<(efi::Handle, Result<(), EfiError>), EfiError> {
-    perf_load_image_begin!(core::ptr::null_mut());
+    perf_load_image_begin(core::ptr::null_mut(), create_performance_measurement);
 
     if image.is_none() && file_path.is_null() {
         log::error!("failed to load image: image is none or device path is null.");
@@ -1062,7 +1064,7 @@ pub fn core_load_image(
     // save the private image data for this image in the private image data map.
     PRIVATE_IMAGE_DATA.lock().private_image_data.insert(handle, private_info);
 
-    perf_load_image_end!(handle);
+    perf_load_image_end(handle, create_performance_measurement);
 
     // return the new handle.
     Ok((handle, security_status))
@@ -1168,7 +1170,7 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
     // allocate a buffer for the entry point stack.
     let stack = ImageStack::new(ENTRY_POINT_STACK_SIZE)?;
 
-    perf_image_start_begin!(image_handle);
+    perf_image_start_begin(image_handle, create_performance_measurement);
 
     // define a co-routine that wraps the entry point execution. this doesn't
     // run until the coroutine.resume() call below.
@@ -1235,7 +1237,7 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
 
     PRIVATE_IMAGE_DATA.lock().current_running_image = previous_image;
 
-    perf_image_start_end!(image_handle);
+    perf_image_start_end(image_handle, create_performance_measurement);
 
     match status {
         efi::Status::SUCCESS => Ok(()),
@@ -1422,9 +1424,9 @@ mod tests {
         test_collateral, test_support,
     };
     use core::{ffi::c_void, sync::atomic::AtomicBool};
+    use patina_sdk::error::EfiError;
     use r_efi::efi;
     use std::{fs::File, io::Read};
-    use patina_sdk::error::EfiError;
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| unsafe {

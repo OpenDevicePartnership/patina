@@ -13,20 +13,20 @@ use patina_sdk::error::EfiError;
 
 use mu_pi::{dxe_services, hob};
 use mu_rust_helpers::function;
-use r_efi::efi;
 use patina_internal_collections::{node_size, Error as SliceError, Rbt, SliceKey};
 use patina_sdk::{
     base::{align_up, SIZE_4GB, UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE},
     guid::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP,
     uefi_pages_to_size,
 };
+use r_efi::efi;
 
 use crate::{
     allocator::DEFAULT_ALLOCATION_STRATEGY, ensure, error, events::EVENT_DB, protocol_db, protocol_db::INVALID_HANDLE,
     tpl_lock, GCD,
 };
-use patina_paging::{page_allocator::PageAllocator, MemoryAttributes, PageTable, PtError, PtResult};
 use patina_internal_cpu::paging::create_cpu_paging;
+use patina_paging::{page_allocator::PageAllocator, MemoryAttributes, PageTable, PtError, PtResult};
 
 use mu_pi::hob::{Hob, HobList};
 

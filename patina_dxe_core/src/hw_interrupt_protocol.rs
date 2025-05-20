@@ -4,15 +4,17 @@ use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ffi::c_void;
-use r_efi::efi;
-use patina_internal_cpu::interrupts::gic_manager::{get_max_interrupt_number, gic_initialize, AArch64InterruptInitializer};
+use patina_internal_cpu::interrupts::gic_manager::{
+    get_max_interrupt_number, gic_initialize, AArch64InterruptInitializer,
+};
 use patina_internal_cpu::interrupts::{ExceptionContext, InterruptHandler, InterruptManager};
+use r_efi::efi;
 
 use arm_gic::gicv3::{GicV3, Trigger};
-use patina_sdk::patina_boot_services::{BootServices, StandardBootServices};
 use patina_sdk::component::{params::Config, service::Service};
 use patina_sdk::error::Result;
 use patina_sdk::guid::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2};
+use patina_sdk::patina_boot_services::{BootServices, StandardBootServices};
 use patina_sdk::protocol::ProtocolInterface;
 
 pub type HwInterruptHandler = extern "efiapi" fn(u64, &mut ExceptionContext);

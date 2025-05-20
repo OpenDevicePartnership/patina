@@ -3,17 +3,17 @@
 use crate::{dxe_services, protocols::PROTOCOL_DB};
 use alloc::boxed::Box;
 use core::ffi::c_void;
-use r_efi::efi;
 use patina_internal_cpu::{
     cpu::Cpu,
     interrupts::{self, ExceptionType, HandlerType, InterruptManager},
 };
 use patina_sdk::{
-    patina_boot_services::{BootServices, StandardBootServices},
     component::service::Service,
     error::{EfiError, Result},
+    patina_boot_services::{BootServices, StandardBootServices},
     protocol::ProtocolInterface,
 };
+use r_efi::efi;
 
 use mu_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandler, Protocol, PROTOCOL_GUID};
 

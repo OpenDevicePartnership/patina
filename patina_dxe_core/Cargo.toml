@@ -20,12 +20,8 @@ required-features = ["std"]
 
 [dependencies]
 compile-time = { workspace = true }
-crc32fast = { workspace = true  }
-goblin = {workspace = true, features = [
-    "pe32",
-    "pe64",
-    "te",
-] }
+crc32fast = { workspace = true }
+goblin = { workspace = true, features = ["pe32", "pe64", "te"] }
 lazy_static = { workspace = true, features = ["spin_no_std"] }
 linked_list_allocator = { workspace = true }
 log = { workspace = true }
@@ -33,7 +29,7 @@ mu_pi = { workspace = true }
 mu_rust_helpers = { workspace = true }
 patina_paging = { workspace = true }
 r-efi = { workspace = true }
-scroll = {workspace = true, features = ["derive"]}
+scroll = { workspace = true, features = ["derive"] }
 spin = { workspace = true }
 uefi_corosensei = { workspace = true  }
 uuid = { workspace = true  }
@@ -43,8 +39,8 @@ patina_internal_cpu = { workspace = true }
 patina_debugger = { workspace = true }
 patina_internal_device_path = { workspace = true }
 patina_internal_depex = { workspace = true}
-patina_internal_performance = { workspace = true }
 patina_test = { workspace = true }
+patina_performance = { workspace = true }
 
 [dev-dependencies]
 # To avoid circular dependencies, cargo-release skips dev dependencies when evaluating the release order for

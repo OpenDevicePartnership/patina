@@ -10,7 +10,6 @@ patina_internal_collections = { path = "core/patina_internal_collections" }
 patina_internal_cpu = { path = "core/patina_internal_cpu" }
 patina_internal_depex = { path = "core/patina_internal_depex" }
 patina_internal_device_path = { path = "core/patina_internal_device_path" }
-patina_internal_performance = { path = "core/patina_internal_performance" }
 patina_mtrr = { registry = "patina-fw", version = "1" }
 patina_paging = { registry = "patina-fw", version = "6" }
 patina_runtime_services = { path = "sdk/patina_runtime_services" }

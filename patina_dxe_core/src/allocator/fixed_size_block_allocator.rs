@@ -26,8 +26,8 @@ use core::{
 };
 use linked_list_allocator::{align_down_size, align_up_size};
 use mu_pi::dxe_services::GcdMemoryType;
-use r_efi::efi;
 use patina_sdk::{base::UEFI_PAGE_SHIFT, uefi_size_to_pages};
+use r_efi::efi;
 
 /// Type for describing errors that this implementation can produce.
 #[derive(Debug, PartialEq)]
