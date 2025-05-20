@@ -29,7 +29,6 @@ use core::{
     mem::MaybeUninit,
     ptr,
     sync::atomic::{AtomicBool, AtomicU32, Ordering},
-    u32,
 };
 use mu_pi::status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_BS_DRIVER};
 
@@ -109,7 +108,7 @@ pub struct EnabledMeasurement(pub &'static [Measurement]);
 
 impl EnabledMeasurement {
     pub fn mask(&self) -> u32 {
-        self.0.into_iter().fold(0, |mask, m| mask | m.as_u32())
+        self.0.iter().fold(0, |mask, m| mask | m.as_u32())
     }
 }
 
@@ -633,7 +632,7 @@ mod test {
     use super::*;
 
     use alloc::rc::Rc;
-    use core::{assert_eq, ptr, u32};
+    use core::{assert_eq, ptr};
 
     use mockall::predicate;
 
