@@ -22,7 +22,6 @@ log = { workspace = true }
 r-efi = { workspace = true }
 mockall = { workspace = true, optional = true }
 fallible-streaming-iterator = { workspace = true }
-patina_test_macro = { workspace = true }
 linkme = { workspace = true}
 
 [target.'cfg(target_arch="x86_64")'.dependencies]
@@ -43,7 +42,7 @@ alloc = []
 mockall = ["dep:mockall", "std"]
 global_allocator = []
 default = []
-off = ["patina_test_macro/off"]
+off = ["patina_sdk_macro/off"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }

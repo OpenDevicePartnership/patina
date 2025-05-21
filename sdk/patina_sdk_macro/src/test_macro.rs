@@ -18,12 +18,7 @@ const KEY_SHOULD_FAIL: &str = "should_fail";
 const KEY_FAIL_MSG: &str = "fail_msg";
 const KEY_SKIP: &str = "skip";
 
-#[proc_macro_attribute]
-pub fn uefi_test(_: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    uefi_test2(item.into()).into()
-}
-
-fn uefi_test2(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+pub fn uefi_test2(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     let mut item = syn::parse2::<ItemFn>(stream).expect("The #[uefi_test] attribute can only be applied to functions");
     let test_case_config = process_attributes(&mut item);
 

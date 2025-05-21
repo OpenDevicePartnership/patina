@@ -136,7 +136,7 @@ pub type Result = core::result::Result<(), &'static str>;
 ///   todo!()
 /// }
 /// ```
-pub use patina_test_macro::uefi_test;
+pub use patina_sdk_macro::uefi_test;
 
 /// A macro similar to [`core::assert!`] that returns an error message instead of panicking.
 #[macro_export]
