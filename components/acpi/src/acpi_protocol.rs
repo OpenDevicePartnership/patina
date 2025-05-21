@@ -178,6 +178,7 @@ impl AcpiSdtProtocol {
     }
 }
 
+#[repr(C, packed)]
 struct AcpiSdtHeader {
     signature: u32,
     length: u32,

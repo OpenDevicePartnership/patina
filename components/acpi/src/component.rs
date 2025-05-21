@@ -10,6 +10,7 @@ use uefi_sdk::{
     uefi_size_to_pages,
 };
 
+use crate::acpi::AcpiHelper;
 use crate::acpi_protocol::{AcpiSdtProtocol, AcpiTableProtocol};
 use crate::acpi_table::AcpiXsdt;
 use crate::config::AcpiProviderInit;

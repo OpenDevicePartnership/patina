@@ -16,3 +16,6 @@ scroll = { workspace = true }
 memoffset = { workspace = true }
 r-efi = { workspace = true }
 downcast-rs =  { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }

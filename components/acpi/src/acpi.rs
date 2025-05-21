@@ -213,8 +213,8 @@ impl AcpiProvider for StandardAcpiProvider {
     }
 }
 
-impl StandardAcpiProvider {
-    pub fn install_tables_from_hob(&self, acpi_hob: Hob<AcpiMemoryHob>) -> Result<(), AcpiError> {
+impl AcpiHelper for StandardAcpiProvider {
+    fn install_tables_from_hob(&self, acpi_hob: Hob<AcpiMemoryHob>) -> Result<(), AcpiError> {
         let acpi_table_addr = acpi_hob.rsdp_address;
         let rsdp = unsafe { &*(acpi_table_addr as *const AcpiRsdp) };
         let xsdt_ptr = rsdp.xsdt_address as *const AcpiXsdt;
@@ -241,6 +241,9 @@ impl StandardAcpiProvider {
 
             // If this table points to other system tables, install them too
             if table.signature == signature::FACP {
+                // Note that because we clone here, this AcpiFadt is a a local (Rust stack) variable
+                // And does not actually point to an AcpiFadt in ACPI memory
+                // However, this is safe because we only care about the fields of the FADT, not the struct itself
                 let fadt = AcpiFadt::try_from(table.clone())?;
                 // SAFETY: we assume the FADT set up in the HOB points to a valid FACS if the pointer is non-null
                 if fadt.x_firmware_ctrl != 0 {
@@ -270,7 +273,9 @@ impl StandardAcpiProvider {
         self.publish_tables()?;
         Ok(())
     }
+}
 
+impl StandardAcpiProvider {
     /// Adds the FACS to the list of installed tables
     /// Due to the unique format of the FACS, it has different installation requirements than other tables
     pub(crate) fn add_facs_to_list(&self, facs_addr: Option<usize>, facs_len: u32) -> Result<TableKey, AcpiError> {
@@ -340,7 +345,7 @@ impl StandardAcpiProvider {
         Ok(page_alloc.into_raw_ptr::<u8>() as usize)
     }
 
-    fn add_table_to_list(&self, table: &AcpiTable, is_from_hob: bool) -> Result<TableKey, AcpiError> {
+    pub(crate) fn add_table_to_list(&self, table: &AcpiTable, is_from_hob: bool) -> Result<TableKey, AcpiError> {
         let table_addr = table.phys_addr();
 
         let physical_addr = self.allocate_table_addr(
@@ -382,6 +387,7 @@ impl StandardAcpiProvider {
                             .get()
                             .expect("Memory manager not initialized")
                             .free_pages(dst_ptr as usize, uefi_size_to_pages!(table.length as usize))
+                            .map_err(|_e| AcpiError::FreeFailed)?
                     };
                     return Err(AcpiError::FadtAlreadyInstalled);
                 }
@@ -590,6 +596,7 @@ impl StandardAcpiProvider {
                 .get()
                 .expect("Memory manager not initialized")
                 .free_pages((table as *const AcpiTable) as usize, uefi_size_to_pages!(table.length as usize))
+                .map_err(|_e| AcpiError::FreeFailed)?
         };
 
         Ok(())
@@ -696,5 +703,76 @@ bitflags! {
 impl AcpiVersion {
     pub fn is_gte_2_0(self) -> bool {
         self.intersects(Self::ACPI_2_0 | Self::ACPI_3_0 | Self::ACPI_4_0 | Self::ACPI_5_0)
+    }
+}
+
+// Trait mostly for mocking helper methods for testing
+#[cfg_attr(test, mockall::automock)]
+pub trait AcpiHelper {
+    fn install_tables_from_hob<'h>(&self, acpi_hob: Hob<'h, AcpiMemoryHob>) -> Result<(), AcpiError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockall::{mock, predicate::*};
+    use std::boxed::Box;
+    use std::ptr;
+
+    // mock! {
+    //     pub StandardAcpiProvider {}
+
+    //     impl StandardAcpiProvider {
+    //         fn add_table_to_list(&self, _table: &AcpiTable, _override: bool) -> Result<TableKey, AcpiError>;
+    //         fn add_facs_to_list(&self, _addr: Option<usize>, _length: u32) -> Result<TableKey, AcpiError>;
+    //         fn publish_tables(&self) -> Result<(), AcpiError>;
+    //         fn notify_acpi_list(&self, key: TableKey) -> Result<(), AcpiError>;
+    //         fn install_tables_from_hob(&self, acpi_hob: Hob<AcpiMemoryHob>) -> Result<(), AcpiError>;
+    //     }
+    // }
+
+    #[test]
+    fn test_install_tables_from_hob_xsdt_too_short() {
+        // Create a dummy XSDT with invalid length (smaller than ACPI_HEADER_LEN)
+        let xsdt = Box::new(AcpiXsdt {
+            signature: signature::XSDT,
+            length: (ACPI_HEADER_LEN - 4) as u32, // deliberately too small
+            ..Default::default()
+        });
+
+        let xsdt_ptr = Box::into_raw(xsdt) as u64;
+
+        // Create a dummy RSDP that points to the dummy XSDT
+        let rsdp = Box::new(AcpiRsdp {
+            signature: signature::ACPI_RSDP_TABLE,
+            checksum: 0,
+            oem_id: [0; 6],
+            revision: 2,
+            rsdt_address: 0,
+            length: 36,
+            xsdt_address: xsdt_ptr,
+            extended_checksum: 0,
+            reserved: [0; 3],
+        });
+
+        let rsdp_ptr = Box::into_raw(rsdp);
+
+        // Create the Hob with the address of the dummy RSDP
+        let hob = Hob::mock(vec![AcpiMemoryHob { rsdp_address: rsdp_ptr as u64 }]);
+
+        let mock_acpi = MockAcpiHelper::new();
+
+        mock_acpi
+            .expect_install_tables_from_hob()
+            // call original install, but mock other helpers called inside it?
+
+        let err = mock_acpi.install_tables_from_hob(hob).unwrap_err();
+        assert_eq!(err, AcpiError::XsdtNotInitialized);
+
+        // SAFETY: We're manually deallocating heap memory created with Box::into_raw.
+        unsafe {
+            drop(Box::from_raw(rsdp_ptr));
+            drop(Box::from_raw(xsdt_ptr as *mut AcpiXsdt));
+        }
     }
 }

@@ -120,6 +120,9 @@ impl TryFrom<AcpiTable> for AcpiFadt {
         // Copy into FADT struct
         let mut fadt = AcpiFadt::default();
         let dest_ptr = &mut fadt as *mut AcpiFadt as *mut u8;
+        // SAFETY: dest_ptr has the right size and is valid (allocated above)
+        // `raw` gets its data directly from the passed in AcpiTable, so as long as the caller passes in a valid AcpiTable, this is safe
+        // and `raw` points to a valid Vec on the Rust heap, which we have just allocated
         unsafe {
             core::ptr::copy_nonoverlapping(raw.as_ptr(), dest_ptr, total_len);
         }
@@ -159,7 +162,7 @@ pub struct AcpiRsdp {
     pub(crate) checksum: u8,
     pub oem_id: [u8; 6],
     pub(crate) revision: u8,
-    _rsdt_address: u32,
+    pub(crate) rsdt_address: u32,
     pub(crate) length: u32,
     pub xsdt_address: u64,
     pub(crate) extended_checksum: u8,
@@ -167,6 +170,7 @@ pub struct AcpiRsdp {
 }
 
 #[repr(C)]
+#[derive(Default)]
 pub struct AcpiXsdt {
     pub signature: u32,
     pub length: u32,
@@ -239,5 +243,89 @@ impl AcpiInstallable for AcpiFacs {
 
     fn signature(&self) -> u32 {
         signature::FACS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::signature::ACPI_HEADER_LEN;
+
+    use super::*;
+    use core::mem;
+
+    #[test]
+    fn try_from_succeeds_with_valid_fadt() {
+        // Header bytes
+        let sig = u32::from_le_bytes(*b"FACP");
+        let rev = 2;
+        let chksum = 0xAB;
+        let oem_id = *b"OEMID_";
+        let oem_table_id = *b"TBLID123";
+        let oem_rev = 0xCAFEBABE;
+        let creator_id = 0x1234_5678;
+        let creator_rev = 0xDEAD_BEEF;
+
+        // Size of rest of FADT (excluding header)
+        let body_len = mem::size_of::<AcpiFadt>() - ACPI_HEADER_LEN;
+
+        // This corresponds to the table.data field of AcpiTable
+        // The contents are not important
+        let payload = vec![0xFE; body_len];
+
+        let table = AcpiTable {
+            signature: sig,
+            length: mem::size_of::<AcpiFadt>() as u32,
+            revision: rev,
+            checksum: chksum,
+            oem_id,
+            oem_table_id,
+            oem_revision: oem_rev,
+            creator_id,
+            creator_revision: creator_rev,
+            data: payload.clone(),
+            table_key: TableKey::default(),
+            versions: AcpiVersion::default(),
+            physical_address: Some(0),
+        };
+
+        let fadt = AcpiFadt::try_from(table).expect("Valid FADT table should parse");
+
+        // Check some header fields
+        assert_eq!(fadt.revision, rev);
+        assert_eq!(fadt.checksum, chksum);
+        assert_eq!(fadt.oem_id, oem_id);
+        assert_eq!(fadt.oem_table_id, oem_table_id);
+
+        // Verify the rest of the FADT fields are 0xFE (dummy byte)
+        const XDS_OFFSET: usize = memoffset::offset_of!(AcpiFadt, x_dsdt);
+        let raw_bytes =
+            unsafe { core::slice::from_raw_parts((&fadt as *const AcpiFadt as *const u8).add(XDS_OFFSET), 8) };
+        // Should equal the first 8 bytes of our payload (0xFE)
+        assert_eq!(raw_bytes, &[0xFE; 8]);
+    }
+
+    #[test]
+    fn try_from_fails_with_bad_signature() {
+        // Build a table with a wrong signature
+        let bad_signature_table = AcpiTable {
+            signature: 0xDEAD_BEEF,
+            length: mem::size_of::<AcpiFadt>() as u32,
+            revision: 0,
+            checksum: 0,
+            oem_id: [0; 6],
+            oem_table_id: [0; 8],
+            oem_revision: 0,
+            creator_id: 0,
+            creator_revision: 0,
+            data: vec![0; mem::size_of::<AcpiFadt>() - ACPI_HEADER_LEN],
+            table_key: TableKey::default(),
+            versions: AcpiVersion::default(),
+            physical_address: Some(0),
+        };
+
+        match AcpiFadt::try_from(bad_signature_table) {
+            Err(AcpiError::InvalidSignature) => (),
+            _ => panic!("Expected InvalidSignature error"),
+        }
     }
 }
