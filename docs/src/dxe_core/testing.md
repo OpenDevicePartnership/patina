@@ -8,7 +8,7 @@ they should provide the generic implementation details that the core uses to fun
 coverage, and the future possibility of extracting functionality to be used in additional cores (such as PEI, MM, etc).
 
 The DXE Core supports all 4 types of testing mentioned in the Testing chapter; this includes on-platform unit tests.
-Any function with the `patina_test` attribute will be consolidated and executed on any platform that uses the
+Any function with the `uefi_test` attribute will be consolidated and executed on any platform that uses the
 `TestRunnerComponent` (unless specifically filtered out by the platform).
 
 ## Testing with Global State
