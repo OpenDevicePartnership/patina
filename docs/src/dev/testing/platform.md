@@ -36,7 +36,7 @@ Similar to `test` attribute, there are a few additional attribute customizations
 based tests. The first is the `skip` attribute, which paired with `cfg_attr` can be used to skip certain tests.
 
 ``` rust
-use patina_sdk::patina_boot_services::StandardBootServices;
+use patina_sdk::boot_services::StandardBootServices;
 
 #[uefi_test]
 #[cfg_attr(target_arch = "aarch64", skip)]

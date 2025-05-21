@@ -10,7 +10,7 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use patina_sdk::patina_boot_services::{BootServices, StandardBootServices};
+use patina_sdk::boot_services::{BootServices, StandardBootServices};
 use patina_test::{u_assert, u_assert_eq, uefi_test};
 use r_efi::efi;
 

@@ -5,7 +5,7 @@ use core::{
     ptr,
 };
 
-use crate::{allocation::MemoryType, BootServices};
+use super::{allocation::MemoryType, BootServices};
 
 #[derive(Debug)]
 pub struct BootServicesBox<'a, T: ?Sized, B: BootServices + ?Sized> {

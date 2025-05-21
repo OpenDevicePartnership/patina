@@ -22,7 +22,7 @@ use core::{
     ops::{Deref, DerefMut},
     ptr,
 };
-use patina_boot_services::StandardBootServices;
+use crate::boot_services::StandardBootServices;
 use r_efi::efi::Guid;
 
 use super::{

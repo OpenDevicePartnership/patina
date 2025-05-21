@@ -110,7 +110,7 @@ use crate::{
         service::IntoService,
         storage::{Deferred, Storage, UnsafeStorageCell},
     },
-    patina_boot_services::StandardBootServices,
+    boot_services::StandardBootServices,
     runtime_services::StandardRuntimeServices,
 };
 
@@ -879,7 +879,7 @@ mod tests {
 
         <StandardBootServices as Param>::init_state(&mut storage, &mut mock_metadata);
         assert_eq!(
-            Err("patina_boot_services::StandardBootServices"),
+            Err("boot_services::StandardBootServices"),
             <StandardBootServices as Param>::try_validate(&(), (&storage).into())
         );
     }
@@ -922,7 +922,7 @@ mod tests {
         let mut mock_meadata = MetaData::new::<i32>();
         <(StandardBootServices, Config<i32>) as Param>::init_state(&mut storage, &mut mock_meadata);
         assert_eq!(
-            Err("patina_boot_services::StandardBootServices"),
+            Err("boot_services::StandardBootServices"),
             <(StandardBootServices, Config<i32>) as Param>::try_validate(&((), 1), (&storage).into())
         );
     }

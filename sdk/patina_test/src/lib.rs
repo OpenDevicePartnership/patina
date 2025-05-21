@@ -18,7 +18,7 @@
 //!
 //! ```rust
 //! use patina_test::*;
-//! use patina_sdk::patina_boot_services::StandardBootServices;
+//! use patina_sdk::boot_services::StandardBootServices;
 //!
 //! let component = patina_test::TestRunner::default()
 //!   .with_filter("aarch64") // Only run tests with "aarch64" in their name & path (my_crate::aarch64::test)
@@ -103,7 +103,7 @@ pub type Result = core::result::Result<(), &'static str>;
 ///
 /// ```rust
 /// use patina_test::*;
-/// use patina_sdk::patina_boot_services::StandardBootServices;
+/// use patina_sdk::boot_services::StandardBootServices;
 ///
 /// #[uefi_test]
 /// fn test_case() -> Result {

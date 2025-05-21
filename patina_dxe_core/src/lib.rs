@@ -80,7 +80,7 @@ use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
 use patina_sdk::{
     component::{Component, IntoComponent, Storage},
     error::{self, Result},
-    patina_boot_services::StandardBootServices,
+    boot_services::StandardBootServices,
     runtime_services::StandardRuntimeServices,
 };
 use protocols::PROTOCOL_DB;

@@ -7,7 +7,7 @@
 //!
 //! use r_efi::efi::{self, protocols::device_path::Protocol as EfiDevicePathProtocol};
 //!
-//! use patina_boot_services::{BootServices, StandardBootServices};
+//! use boot_services::{BootServices, StandardBootServices};
 //! use driver_binding::{DriverBinding, UefiDriverBinding};
 //!
 //! struct MockDriverBinding {/* ... */}
@@ -70,8 +70,7 @@ use r_efi::{
     protocols::{device_path::Protocol as EfiDevicePathProtocol, driver_binding::Protocol as EfiDriverBindingProtocol},
 };
 
-use patina_boot_services::{
-    self,
+use crate::boot_services::{
     c_ptr::{CPtr, PtrMetadata},
     BootServices,
 };
@@ -298,7 +297,7 @@ mod test {
         sync::atomic::{AtomicBool, Ordering},
     };
 
-    use patina_boot_services::MockBootServices;
+    use boot_services::MockBootServices;
 
     use super::*;
 

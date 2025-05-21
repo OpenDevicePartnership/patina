@@ -31,7 +31,7 @@ pub mod guid;
 pub mod log;
 pub mod serial;
 
-pub use patina_boot_services;
+pub mod boot_services;
 pub mod driver_binding;
 pub mod runtime_services;
 pub mod tpl_mutex;

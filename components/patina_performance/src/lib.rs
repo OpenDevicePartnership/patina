@@ -47,7 +47,8 @@ use patina_sdk::{
     component::{hob::Hob, params::Config, IntoComponent},
     error::EfiError,
     guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
-    patina_boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
+    boot_services
+::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
     runtime_services::{RuntimeServices, StandardRuntimeServices},
     tpl_mutex::TplMutex,
     protocol::status_code::StatusCodeRuntimeProtocol,
@@ -637,7 +638,8 @@ mod test {
     use mockall::predicate;
 
     use patina_sdk::{
-        patina_boot_services::{
+        boot_services
+::{
             c_ptr::{CMutPtr, CPtr},
             MockBootServices,
         },

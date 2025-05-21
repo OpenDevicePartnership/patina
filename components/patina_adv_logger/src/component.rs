@@ -15,7 +15,7 @@ use mu_pi::hob::{Hob, PhaseHandoffInformationTable};
 use patina_sdk::{
     component::IntoComponent,
     error::{EfiError, Result},
-    patina_boot_services::{BootServices, StandardBootServices},
+    boot_services::{BootServices, StandardBootServices},
     serial::SerialIO,
 };
 use r_efi::efi;

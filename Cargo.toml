@@ -29,7 +29,6 @@ linkme = { version = "^0.3.29" }
 log = { version = "0.4", default-features = false }
 mu_pi = { version = "5.2.3" }
 mu_rust_helpers = { version = "3.0.1" }
-patina_boot_services = { version = "0.1.0", path = "sdk/patina_boot_services", registry = "patina-fw" }
 patina_debugger = { version = "0.1.0", path = "core/patina_debugger", registry = "patina-fw" }
 patina_internal_collections = { version = "0.1.0", path = "core/patina_internal_collections", default-features = false, registry = "patina-fw" }
 patina_internal_cpu = { version = "0.1.0", path = "core/patina_internal_cpu", registry = "patina-fw" }

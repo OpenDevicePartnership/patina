@@ -10,7 +10,7 @@ use patina_internal_cpu::{
 use patina_sdk::{
     component::service::Service,
     error::{EfiError, Result},
-    patina_boot_services::{BootServices, StandardBootServices},
+    boot_services::{BootServices, StandardBootServices},
     protocol::ProtocolInterface,
 };
 use r_efi::efi;

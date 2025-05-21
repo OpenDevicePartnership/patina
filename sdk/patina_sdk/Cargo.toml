@@ -14,7 +14,6 @@ harness = false
 
 [dependencies]
 patina_sdk_macro = { workspace = true }
-patina_boot_services = { workspace = true }
 fixedbitset = { workspace = true }
 mu_pi = { workspace = true }
 patina_uefi_protocol = { workspace = true }
@@ -40,8 +39,7 @@ core = ['alloc']
 std = []
 doc = ['alloc']
 alloc = []
-boot_services_global_allocator = ["patina_boot_services/global_allocator"]
-mockall = ["dep:mockall", "std", "patina_boot_services/mockall"]
+mockall = ["dep:mockall", "std"]
 global_allocator = []
 default = []
 

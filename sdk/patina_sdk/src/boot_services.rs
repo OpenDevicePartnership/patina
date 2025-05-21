@@ -1,5 +1,3 @@
-#![cfg_attr(all(not(test), not(feature = "mockall")), no_std)]
-
 #[cfg(feature = "global_allocator")]
 pub mod global_allocator;
 
