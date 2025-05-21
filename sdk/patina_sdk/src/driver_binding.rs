@@ -8,7 +8,7 @@
 //! use r_efi::efi::{self, protocols::device_path::Protocol as EfiDevicePathProtocol};
 //!
 //! use patina_boot_services::{BootServices, StandardBootServices};
-//! use patina_driver_binding::{DriverBinding, UefiDriverBinding};
+//! use driver_binding::{DriverBinding, UefiDriverBinding};
 //!
 //! struct MockDriverBinding {/* ... */}
 //!
@@ -54,8 +54,6 @@
 //!
 //! ```
 
-#![cfg_attr(all(not(test), not(feature = "mockall")), no_std)]
-#![allow(static_mut_refs)]
 #[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
 

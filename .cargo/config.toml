@@ -4,7 +4,6 @@ patina-fw = { index = "sparse+https://pkgs.dev.azure.com/patina-fw/artifacts/_pa
 [patch.crates-io]
 patina_boot_services = { path = "sdk/patina_boot_services" }
 patina_debugger = { path = "core/patina_debugger" }
-patina_driver_binding = { path = "sdk/patina_driver_binding" }
 patina_dxe_core = { path = "patina_dxe_core" }
 patina_internal_collections = { path = "core/patina_internal_collections" }
 patina_internal_cpu = { path = "core/patina_internal_cpu" }
