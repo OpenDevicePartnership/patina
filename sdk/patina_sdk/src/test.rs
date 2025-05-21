@@ -1,13 +1,13 @@
 //! An UEFI testing framework for on-system unit testing
 //!
-//! This crate provides a UEFI component that can be registered with the pure rust DXE core that discovers and runs all
+//! This module provides a UEFI component that can be registered with the pure rust DXE core that discovers and runs all
 //! test cases marked with the `#[uefi_test]` attribute. The component provides multiple configuration options as
 //! documented in [TestRunner] object. The `#[uefi_test]` attribute provides multiple configuration attributes
 //! as documented in [`uefi_test`]. All tests are discovered across all crates used to compile the pure-rust DXE
 //! core, so it is important that test providers use the `cfg_attr` attribute to only compile tests in scenarios where
 //! they are expected to run.
 //!
-//! Additionally, this crate provides a set of macros for writing test cases that are similar to the ones provided by
+//! Additionally, this module provides a set of macros for writing test cases that are similar to the ones provided by
 //! the `core` crate, but return an error message instead of panicking.
 //!
 //! ## Feature Flags

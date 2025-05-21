@@ -1,4 +1,4 @@
-//! Internal API for the patina_test crate.
+//! Internal API for the test module.
 //!
 //! This module must be public so that the macros can access it, but it is not intended for use by consumers of the
 //! crate.

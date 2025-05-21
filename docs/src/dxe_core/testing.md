@@ -18,7 +18,7 @@ static pieces of data that are referenced throughout the codebase. Since unit te
 that multiple tests may be manipulating this static data at the same time. This will lead to either dead-locks, panics,
 or the static data being in an unexpected state for the test.
 
-To help with this issue in the patina_dxe_core crate, a [test_support](https://github.com/OpenDevicePartnership/patina/blob/main/dxe_core/src/test_support.rs)
+To help with this issue in the `patina_dxe_core` crate, a [test_support](https://github.com/OpenDevicePartnership/patina/blob/main/dxe_core/src/test_support.rs)
 module was added to make writing tests more convenient. The most important functionality in the module is the
 `with_global_lock` function which takes your test closure / function as a parameter. This function locks a private
 global mutex, ensuring you have exclusive access to all statics within the DXE Core.
