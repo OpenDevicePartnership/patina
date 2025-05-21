@@ -34,7 +34,7 @@ The easiest way we have found to control test execution to allow parallel execut
 do not require global state, while forcing all other tests that do to run one-by-one is to create
 a global state lock. The flow is that that the global state lock is acquired, global state is
 reset, then the test is run. It is ultimately up to the test writer to reset the state for the
-test. Here is a typical example that is used in the dxe_core itself:
+test. Here is a typical example that is used in the DXE Core itself:
 
 ```rust
 mod test_support {

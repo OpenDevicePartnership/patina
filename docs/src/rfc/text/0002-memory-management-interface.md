@@ -2,16 +2,17 @@
 
 To support scaling both within the core and throughout Components, stable APIs
 must be created for all functionality provided by the core. This RFC proposes the
-creation of a `MemoryManager` trait within uefi-sdk to act as the common interface
-for all externally available memory APIs.
+creation of a `MemoryManager` trait to act as the common interface for all externally
+available memory APIs.
 
 ## Change Log
 
-- 2024-04-06: Initial RFC created.
-- 2024-04-07: Changes AllocationOptions to not use implementation defined defaults.
-- 2024-04-07: Further clarification on the `HeapAllocator` type.
-- 2024-04-09: Removed HeapAllocator, added more details on other types.
-- 2024-04-14: Removed panic wrappers for PageAllocation, added slice wrappers.
+- 2025-04-06: Initial RFC created.
+- 2025-04-07: Changes AllocationOptions to not use implementation defined defaults.
+- 2025-04-07: Further clarification on the `HeapAllocator` type.
+- 2025-04-09: Removed HeapAllocator, added more details on other types.
+- 2025-04-14: Removed panic wrappers for PageAllocation, added slice wrappers.
+- 2025-05-08 - Amendment: Remove references to the now deprecated `uefi-sdk` repo
 
 ## Motivation
 
@@ -23,7 +24,7 @@ can used as an initial testbed for these services.
 
 This design assumes the presence and use of the Component and Service model within the
 dependency injection-based dispatch of rust-based extensions to the core binary. More
-details on this model can be found in the [Component Model](https://github.com/OpenDevicePartnership/uefi-dxe-core/blob/main/docs/src/dxe_core/component_model.md)
+details on this model can be found in the [Component Model](https://github.com/OpenDevicePartnership/patina/blob/main/docs/src/dxe_core/component_model.md)
 document.
 
 ## Goals
@@ -87,9 +88,9 @@ consistency.
 
 ### Memory Manager Service
 
-The design proposal is to create a new trait definition in the uefi-sdk to implement
+The design proposal is to create a new trait definition in the SDK crate to implement
 core memory functionality called the `MemoryManager` trait. This RFC will not go into
-the details of the Service model, but information can be found in the [Component Model](https://github.com/OpenDevicePartnership/uefi-dxe-core/blob/main/docs/src/dxe_core/component_model.md)
+the details of the Service model, but information can be found in the [Component Model](https://github.com/OpenDevicePartnership/patina/blob/main/docs/src/dxe_core/component_model.md)
 document. This trait will be accessed through a `Service<dyn MemoryManager>` from external
 components and directly against the implementor within dxe-core itself. This trait will
 define functions for

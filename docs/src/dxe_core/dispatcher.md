@@ -3,7 +3,7 @@
 This portion of the core deals with discovering and executing drivers found in firmware volumes as ordered by their
 dependencies. The Rust DXE Core dispatcher generally aligns with the requirements laid out in the UEFI Platform
 Initialization Spec for the [DXE Dispatcher](https://uefi.org/specs/PI/1.8A/V2_DXE_Dispatcher.html), with the exception
-of APRIORI file support.
+of a priori file support.
 
 ## Dispatcher Initialization
 
@@ -166,13 +166,14 @@ firmware volume file is discovered while processing the files in a firmware volu
 file also has a DEPEX section, then then associated DEPEX must evaluate to TRUE before the modules within the nested
 firmware volume will be processed.
 
-The core dispatcher uses the `uefi_depex` library crate to support DEPEX parsing and evaluation, which implements all of
-the DEPEX operators and capabilities specified in the UEFI Platform Initialization Spec.
+The core dispatcher uses the `patina_internal_depex` library crate to support DEPEX parsing and
+evaluation, which implements all of the DEPEX operators and capabilities specified in the UEFI
+Platform Initialization Spec.
 
 ## A Priori File
 
-```admonish warning title="No APRIORI Support"
-The Rust DXE Core does not presently provide support for APRIORI file control of dispatch order for drivers.
+```admonish warning title="No A Priori Support"
+The Rust DXE Core does not presently provide support for a priori file control of dispatch order for drivers.
 ```
 
 The *a priori* file was introduced in the Platform Initialization (PI) Specification to provide additional flexibility

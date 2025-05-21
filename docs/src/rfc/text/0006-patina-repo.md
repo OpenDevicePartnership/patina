@@ -147,7 +147,7 @@ There are a lot of strategies for assigning crates to repositories.
 
 In particular, the repo defines focus for its content and purpose - the revision history, versioning, documentation,
 crate-specific workflows, maintainers, policies, etc. This RFC proposes that Patina encompass more of the content into
-a single location improving developer ergonomics and simplifying logistics of managing code withiin the project.
+a single location improving developer ergonomics and simplifying logistics of managing code within the project.
 
 ## Alternatives
 

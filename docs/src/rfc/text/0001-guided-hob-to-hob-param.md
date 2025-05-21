@@ -17,6 +17,7 @@ registering itself with the core, and instead moves the parsing to the core.
   guided HOB, and to be able to remove the need to register HOBs with the core. Update `HobConfig` to `FromHob`.
   Remove `with_hob_config`.
 - 2025-04-15: Move `parse_hobs` logic into core, so components with access to `Storage` from using `parse_hobs`
+- 2025-05-08 - Amendment: Remove references to the now deprecated `uefi-sdk` repo
 
 ## Motivation
 
@@ -28,13 +29,13 @@ These are the main benefits to this RFC:
 
 ## Technology Background
 
-This proposal will use the existing `Storage` logic from the `uefi_sdk` to store the new `Hob<T>` datums and parsers.
+This proposal will use the existing `Storage` logic from the `patina_sdk` to store the new `Hob<T>` datums and parsers.
 
 ## Goals
 
 1. Enable a simple interface for component dependency injectable configuration to be produced via a guided HOB in the
    HOB list
-2. Create core / uefi-sdk `T`'s for standard spec-defined guided HOBs that are available to component that wants it.
+2. Create `T`'s for standard spec-defined guided HOBs that are available to component that wants it.
 
 ## Requirements
 
@@ -68,9 +69,9 @@ a `Hob<T>` in it's param list is registered, so there is no need for users to ma
 ```rust
 // Current Design implementation
 
-/* -------- in uefi_sdk ------- */
+/* -------- in patina_sdk ------- */
 
-use uefi_sdk::component::Storage;
+use patina_sdk::component::Storage;
 use refi::efi::Guid
 
 pub trait FromHob: Sized + 'static {
@@ -127,7 +128,7 @@ impl<'h, H: FromHob + 'static> Iterator for HobIter<'h, H> {
 struct Storage {
     hob_parsers: BTreeMap<Guid, fn(&[u8], &mut Storage)>,
     hobs: SparseVec<Vec<Box<dyn Any>>>,
-    hob_indicies: BTreeMap<TypeId, usize>,
+    hob_indices: BTreeMap<TypeId, usize>,
 }
 
 impl Storage {

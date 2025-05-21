@@ -1,6 +1,6 @@
 # Code Reuse
 
-In EDKII, code re-use was done using the `LibraryClasses` build concept. In rust, we do **not** use
+In EDK II, code re-use was done using the `LibraryClasses` build concept. In rust, we do **not** use
 rust `Traits` for code-reuse. Instead we use rust `Crates`. See some of the generic reading here:
 
 - [Packages and Crates](https://doc.rust-lang.org/book/ch07-00-managing-growing-projects-with-packages-crates-and-modules.html)

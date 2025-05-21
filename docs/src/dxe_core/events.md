@@ -7,7 +7,7 @@ basic familiarity with UEFI event, timer and task priority services and focuses 
 DXE Core.
 
 The main implementation for Event, Timer and Task Priority features resides in the Event Database object implemented by
-the uefi_event crate. The event database is then used to implement the UEFI spec boot services for event, timer and
+the `patina_dxe_core` crate. The event database is then used to implement the UEFI spec boot services for event, timer and
 task priority by the main Rust DXE Core event.rs module.
 
 ## Event Database

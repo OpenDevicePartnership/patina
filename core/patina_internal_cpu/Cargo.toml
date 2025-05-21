@@ -1,0 +1,45 @@
+[package]
+name = "patina_internal_cpu"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "CPU support."
+
+[package.metadata.docs.rs]
+features = ["doc", "std"]
+
+[dependencies]
+lazy_static = { workspace = true, features = ["spin_no_std"] }
+log = { workspace = true }
+r-efi = { workspace = true }
+patina_sdk = { workspace = true }
+spin = { workspace = true, features = ["rwlock"] }
+patina_paging = { workspace = true }
+mu_pi = { workspace = true }
+cfg-if = { workspace = true }
+patina_stacktrace = { workspace = true }
+
+[target.'cfg(all(target_arch="x86_64"))'.dependencies]
+x86_64 = { workspace = true, features = [
+    "instructions",
+    "abi_x86_interrupt",
+] }
+patina_mtrr = { workspace = true }
+
+[target.'cfg(all(target_arch="aarch64"))'.dependencies]
+arm-gic = { workspace = true }
+
+[dev-dependencies]
+x86_64 = { workspace = true, features = [
+    "instructions",
+    "abi_x86_interrupt",
+] }
+mockall = { workspace = true }
+
+[features]
+default = []
+std = []
+doc = []
