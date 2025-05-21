@@ -42,7 +42,6 @@ patina_sdk_macro = { version = "0.1.0", path = "sdk/patina_sdk_macro", registry 
 patina_stacktrace = { version = "0.1.0", path = "core/patina_stacktrace", registry = "patina-fw" }
 patina_test = { version = "0.1.0", path = "sdk/patina_test", registry = "patina-fw" }
 patina_test_macro = { version = "0.1.0", path = "sdk/patina_test_macro", registry = "patina-fw" }
-patina_uefi_protocol = { version = "0.1.0", path = "sdk/patina_uefi_protocol", registry = "patina-fw" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
 r-efi = { version = "5.0.0", default-features = false }

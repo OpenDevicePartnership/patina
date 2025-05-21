@@ -35,4 +35,4 @@ pub mod boot_services;
 pub mod driver_binding;
 pub mod runtime_services;
 pub mod tpl_mutex;
-pub use patina_uefi_protocol as protocol;
+pub mod uefi_protocol;

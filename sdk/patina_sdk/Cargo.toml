@@ -16,7 +16,6 @@ harness = false
 patina_sdk_macro = { workspace = true }
 fixedbitset = { workspace = true }
 mu_pi = { workspace = true }
-patina_uefi_protocol = { workspace = true }
 
 cfg-if = { workspace = true }
 log = { workspace = true }

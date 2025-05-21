@@ -28,10 +28,10 @@ use core::{
 
 use r_efi::efi;
 
+use crate::uefi_protocol::ProtocolInterface;
 use allocation::{AllocType, MemoryMap, MemoryType};
 use boxed::BootServicesBox;
 use event::{EventNotifyCallback, EventTimerType, EventType};
-use patina_uefi_protocol::ProtocolInterface;
 use protocol_handler::{HandleSearchType, Registration};
 use tpl::{Tpl, TplGuard};
 

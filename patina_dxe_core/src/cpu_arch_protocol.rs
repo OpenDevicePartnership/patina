@@ -11,7 +11,7 @@ use patina_sdk::{
     component::service::Service,
     error::{EfiError, Result},
     boot_services::{BootServices, StandardBootServices},
-    protocol::ProtocolInterface,
+    uefi_protocol::ProtocolInterface,
 };
 use r_efi::efi;
 
