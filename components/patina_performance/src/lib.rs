@@ -44,13 +44,13 @@ use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 use _smm::{CommunicateProtocol, MmCommRegion, SmmGetRecordDataByOffset, SmmGetRecordSize};
 
 use patina_sdk::{
+    boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
     component::{hob::Hob, params::Config, IntoComponent},
     error::EfiError,
     guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
-    patina_boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
-    patina_runtime_services::{RuntimeServices, StandardRuntimeServices},
-    patina_tpl_mutex::TplMutex,
-    protocol::status_code::StatusCodeRuntimeProtocol,
+    runtime_services::{RuntimeServices, StandardRuntimeServices},
+    tpl_mutex::TplMutex,
+    uefi_protocol::status_code::StatusCodeRuntimeProtocol,
 };
 
 use crate::{
@@ -637,12 +637,12 @@ mod test {
     use mockall::predicate;
 
     use patina_sdk::{
-        patina_boot_services::{
+        boot_services::{
             c_ptr::{CMutPtr, CPtr},
             MockBootServices,
         },
-        patina_runtime_services::MockRuntimeServices,
-        protocol::ProtocolInterface,
+        runtime_services::MockRuntimeServices,
+        uefi_protocol::ProtocolInterface,
     };
 
     use crate::{

@@ -1,5 +1,3 @@
-#![cfg_attr(all(not(test), not(feature = "mockall")), no_std)]
-
 #[cfg(feature = "global_allocator")]
 pub mod global_allocator;
 
@@ -30,10 +28,10 @@ use core::{
 
 use r_efi::efi;
 
+use crate::uefi_protocol::ProtocolInterface;
 use allocation::{AllocType, MemoryMap, MemoryType};
 use boxed::BootServicesBox;
 use event::{EventNotifyCallback, EventTimerType, EventType};
-use patina_uefi_protocol::ProtocolInterface;
 use protocol_handler::{HandleSearchType, Registration};
 use tpl::{Tpl, TplGuard};
 

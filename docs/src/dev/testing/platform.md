@@ -1,13 +1,13 @@
 # Platform Testing
 
-Platform testing is supported through the `patina_test` crate, which provides a testing framework similar to the typical
+Platform testing is supported through the `patina_sdk::test` module, which provides a testing framework similar to the typical
 rust testing framework. The key difference is that instead of tests being collected and executed on the host based
-system, they are instead collected and executed via a component (`patina_test::TestRunner`) provided by the same crate.
+system, they are instead collected and executed via a component (`patina_sdk::test::TestRunner`) provided by the same crate.
 The platform must register this component with the DXE Core. The DXE Core will then dispatch this component, which will
 run all registered tests.
 
 ``` admonish note
-The most up to date documentation on the `patina_test` crate can be found on crates.io. It is suggested that you review
+The most up to date documentation on the `patina_sdk::test` module can be found on crates.io. It is suggested that you review
 the documentation in that crate. However, for ease of access, some high level concepts can be read about below.
 ```
 
@@ -17,9 +17,9 @@ Writing a test to be run on-platform is as simple as setting the `patina_test` a
 interface where `...` can be any number of parameters that implement the `Param` trait from `patina_sdk::component::*`:
 
 ``` rust
-use patina_test::{Result, uefi_test};
+use patina_sdk::test::{Result, patina_test};
 
-#[uefi_test]
+#[patina_test]
 fn my_test(...) -> Result { todo!() }
 ```
 
@@ -29,16 +29,16 @@ ability to filter out tests, but you should also be conscious of when tests shou
 `skip` attribute is a great way to have tests ignored for reasons like host architecture, or through feature flags!
 
 ``` admonish note
-patina_test::Result is simply `core::result::Result<(), &'static str>`, and you could use that instead.
+patina_sdk::test::Result is simply `core::result::Result<(), &'static str>`, and you could use that instead.
 ```
 
 Similar to `test` attribute, there are a few additional attribute customizations to help with writing tests platform
 based tests. The first is the `skip` attribute, which paired with `cfg_attr` can be used to skip certain tests.
 
 ``` rust
-use patina_sdk::patina_boot_services::StandardBootServices;
+use patina_sdk::boot_services::StandardBootServices;
 
-#[uefi_test]
+#[patina_test]
 #[cfg_attr(target_arch = "aarch64", skip)]
 fn my_test(bs: StandardBootServices) -> Result { todo!() }
 ```
@@ -47,11 +47,11 @@ Next is the `should_fail` attribute which allows you to specify that this test s
 customization that allows you to specify the expected failure message.
 
 ``` rust
-#[uefi_test]
+#[patina_test]
 #[should_fail]
 fn my_test1() -> Result { todo!() }
 
-#[uefi_test]
+#[patina_test]
 #[should_fail = "Failed for this reason"]
 fn my_test2() -> Result { todo!() }
 ```

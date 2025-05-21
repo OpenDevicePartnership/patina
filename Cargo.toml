@@ -29,9 +29,7 @@ linkme = { version = "^0.3.29" }
 log = { version = "0.4", default-features = false }
 mu_pi = { version = "5.2.3" }
 mu_rust_helpers = { version = "3.0.1" }
-patina_boot_services = { version = "0.1.1", path = "sdk/patina_boot_services", registry = "patina-fw" }
 patina_debugger = { version = "0.1.1", path = "core/patina_debugger", registry = "patina-fw" }
-patina_driver_binding = { version = "0.1.1", path = "sdk/patina_driver_binding", registry = "patina-fw" }
 patina_internal_collections = { version = "0.1.1", path = "core/patina_internal_collections", default-features = false, registry = "patina-fw" }
 patina_internal_cpu = { version = "0.1.1", path = "core/patina_internal_cpu", registry = "patina-fw" }
 patina_internal_depex = { version = "0.1.1", path = "core/patina_internal_depex", registry = "patina-fw" }
@@ -39,14 +37,9 @@ patina_internal_device_path = { version = "0.1.1", path = "core/patina_internal_
 patina_mtrr = { version = "1.0.0", registry = "patina-fw" }
 patina_paging = { version = "6.0.0", registry = "patina-fw" }
 patina_performance = { version = "0.1.1", path = "components/patina_performance", registry = "patina-fw" }
-patina_runtime_services = { version = "0.1.1", path = "sdk/patina_runtime_services", registry = "patina-fw" }
 patina_sdk = { version = "0.1.1", path = "sdk/patina_sdk", registry = "patina-fw" }
 patina_sdk_macro = { version = "0.1.1", path = "sdk/patina_sdk_macro", registry = "patina-fw" }
 patina_stacktrace = { version = "0.1.1", path = "core/patina_stacktrace", registry = "patina-fw" }
-patina_test = { version = "0.1.1", path = "sdk/patina_test", registry = "patina-fw" }
-patina_test_macro = { version = "0.1.1", path = "sdk/patina_test_macro", registry = "patina-fw" }
-patina_tpl_mutex = { version = "0.1.1", path = "sdk/patina_tpl_mutex", registry = "patina-fw" }
-patina_uefi_protocol = { version = "0.1.1", path = "sdk/patina_uefi_protocol", registry = "patina-fw" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
 r-efi = { version = "5.0.0", default-features = false }

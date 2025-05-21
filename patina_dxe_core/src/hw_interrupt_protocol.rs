@@ -11,11 +11,11 @@ use patina_internal_cpu::interrupts::{ExceptionContext, InterruptHandler, Interr
 use r_efi::efi;
 
 use arm_gic::gicv3::{GicV3, Trigger};
+use patina_sdk::boot_services::{BootServices, StandardBootServices};
 use patina_sdk::component::{params::Config, service::Service};
 use patina_sdk::error::Result;
 use patina_sdk::guid::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2};
-use patina_sdk::patina_boot_services::{BootServices, StandardBootServices};
-use patina_sdk::protocol::ProtocolInterface;
+use patina_sdk::uefi_protocol::ProtocolInterface;
 
 pub type HwInterruptHandler = extern "efiapi" fn(u64, &mut ExceptionContext);
 

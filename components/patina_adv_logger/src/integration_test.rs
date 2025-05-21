@@ -10,14 +10,15 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use patina_sdk::patina_boot_services::{BootServices, StandardBootServices};
-use patina_test::{u_assert, u_assert_eq, uefi_test};
+use patina_sdk::boot_services::{BootServices, StandardBootServices};
+use patina_sdk::test::patina_test;
+use patina_sdk::{u_assert, u_assert_eq};
 use r_efi::efi;
 
 use crate::{memory_log, protocol::AdvancedLoggerProtocol};
 
-#[uefi_test]
-fn adv_logger_test(bs: StandardBootServices) -> patina_test::Result {
+#[patina_test]
+fn adv_logger_test(bs: StandardBootServices) -> patina_sdk::test::Result {
     const DIRECT_STR: &str = "adv_logger_test: Direct log message!!!";
     const PROTOCOL_STR: &str = "adv_logger_test: Logged through the protocol!!!\n";
 

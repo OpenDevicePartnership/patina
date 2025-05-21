@@ -14,8 +14,9 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-#![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
+#![cfg_attr(all(not(feature = "std"), not(test), not(feature = "mockall")), no_std)]
 #![cfg_attr(feature = "alloc", feature(allocator_api))]
+#![allow(static_mut_refs)]
 
 extern crate alloc;
 
@@ -30,8 +31,10 @@ pub mod guid;
 pub mod log;
 pub mod serial;
 
-pub use patina_boot_services;
-pub use patina_driver_binding;
-pub use patina_runtime_services;
-pub use patina_tpl_mutex;
-pub use patina_uefi_protocol as protocol;
+pub mod boot_services;
+pub mod driver_binding;
+pub mod runtime_services;
+pub mod tpl_mutex;
+pub mod uefi_protocol;
+
+pub mod test;

@@ -39,7 +39,6 @@ patina_internal_cpu = { workspace = true }
 patina_debugger = { workspace = true }
 patina_internal_device_path = { workspace = true }
 patina_internal_depex = { workspace = true}
-patina_test = { workspace = true }
 patina_performance = { workspace = true }
 
 [dev-dependencies]

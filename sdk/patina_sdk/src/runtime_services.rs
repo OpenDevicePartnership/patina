@@ -10,8 +10,6 @@
 //! ```
 //!
 
-#![cfg_attr(all(not(test), not(feature = "mockall")), no_std)]
-
 extern crate alloc;
 
 /// Variable-services-specific structs and utilities

@@ -13,9 +13,9 @@ use alloc::boxed::Box;
 use core::{ffi::c_void, ptr};
 use mu_pi::hob::{Hob, PhaseHandoffInformationTable};
 use patina_sdk::{
+    boot_services::{BootServices, StandardBootServices},
     component::IntoComponent,
     error::{EfiError, Result},
-    patina_boot_services::{BootServices, StandardBootServices},
     serial::SerialIO,
 };
 use r_efi::efi;
