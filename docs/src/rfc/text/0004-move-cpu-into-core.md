@@ -29,7 +29,7 @@ increases the chance of compilation errors due to crate version mismatches.
 
 The two traits, `Cpu` and `InterruptManager` are trait generics that provide an interface for initializing and
 utilizing the low level cpu functionality. This functionality has been noted to always be the same for each cpu
-architecture supported, but may have some different configuration knobs for different platforms. [uefi_cpu](https://github.com/OpenDevicePartnership/uefi-core/tree/main/uefi_cpu)
+architecture supported, but may have some different configuration knobs for different platforms. [patina_internal_cpu](https://github.com/OpenDevicePartnership/patina/tree/main/core/patina_internal_cpu)
 contains the functionality for all three of these trait interfaces and can be reviewed for specific functionality.
 
 ## Goals

@@ -32,6 +32,6 @@ Great books to read to get started with developing bare metal code using rust!
 |    Book    | Description |
 |------------|-------------|
 | [Rust Book](https://doc.rust-lang.org/stable/book/) | The Rust maintained Book for beginners. |
-| [Writing an OS in rust](https://os.phil-opp.com/)              | A great example and tutorial for bare-metal programming. The rust UEFI dxe core project got started following this book. |
+| [Writing an OS in rust](https://os.phil-opp.com/)              | A great example and tutorial for bare-metal programming. The rust UEFI DXE Core project got started following this book. |
 | [The embedded rust book](https://docs.rust-embedded.org/book/) | General Getting started guide for embedded rust development. |
 | [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/about.html) | Recommendations on how to design and present APIs. |

@@ -292,7 +292,7 @@ pub unsafe trait SwMmiTrigger {
     ///
     /// This function is unsafe because it may cause the system to enter a state where MMIs are not handled correctly.
     /// It is the caller's responsibility to ensure that the system is in a safe state before calling this function.
-    unsafe fn trigger_sw_mmi(&self, cmd_port_value: u8, data_port_value: u8) -> uefi_sdk::error::Result<()>;
+    unsafe fn trigger_sw_mmi(&self, cmd_port_value: u8, data_port_value: u8) -> patina_sdk::error::Result<()>;
 }
 ```
 

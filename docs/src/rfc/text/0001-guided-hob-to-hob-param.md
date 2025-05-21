@@ -29,7 +29,7 @@ These are the main benefits to this RFC:
 
 ## Technology Background
 
-This proposal will use the existing `Storage` logic from the `uefi_sdk` to store the new `Hob<T>` datums and parsers.
+This proposal will use the existing `Storage` logic from the `patina_sdk` to store the new `Hob<T>` datums and parsers.
 
 ## Goals
 
@@ -69,9 +69,9 @@ a `Hob<T>` in it's param list is registered, so there is no need for users to ma
 ```rust
 // Current Design implementation
 
-/* -------- in uefi_sdk ------- */
+/* -------- in patina_sdk ------- */
 
-use uefi_sdk::component::Storage;
+use patina_sdk::component::Storage;
 use refi::efi::Guid
 
 pub trait FromHob: Sized + 'static {

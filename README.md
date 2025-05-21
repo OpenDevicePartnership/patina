@@ -23,15 +23,17 @@ is very welcome.
 
 Before making pull requests at a minimum, run:
 
-- `cargo make all`
+```shell
+cargo make all
+```
 
 ## Performing a Release
 
-Below is the information required to perform a release to the external registry.
+Below is the information required to perform a release that publishes to the registry feed:
 
 1. Review the current draft release on the github repo: [Releases](https://github.com/OpenDevicePartnership/patina/releases)
-   a. If something is incorrect, update it in the draft release
-   b. If you need to manually change the version, make sure you update the associated git tag value in the draft release
+   1. If something is incorrect, update it in the draft release
+   2. If you need to manually change the version, make sure you update the associated git tag value in the draft release
 2. Publish the release
 3. Monitor the publish release workflow that is automatically triggered on the release being published:
    [Publish Release Workflow](https://github.com/OpenDevicePartnership/patina/actions/workflows/publish-release.yml)
@@ -50,67 +52,76 @@ docs.rs once we begin uploading to crates.io.
 
 ## First-Time Tool Setup Instructions
 
-The following instructions install Rust.
+1. Follow the steps outlined by [Getting Started - Rust Programming Language (rust-lang.org)](https://www.rust-lang.org/learn/get-started)
+to install, update (if needed), and test cargo/rust.
 
-1. Download and install rust/cargo from [Getting Started - Rust Programming Language (rust-lang.org)](https://www.rust-lang.org/learn/get-started).
-   > `rustup-init` installs the toolchain and utilities.
+2. The `[toolchain]` section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/HEAD/rust-toolchain.toml)
+file contains the tools necessary to compile and can be installed through rustup.
 
-2. Make sure it's working - restart a shell after install and make sure the tools are in your path:
+   ```shell
+   rustup toolchain install
+   ```
 
-   \>`cargo --version`
+3. The `[tools]` section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/HEAD/rust-toolchain.toml)
+file contains tools to support commands such as `cargo make coverage` and must be installed manually.  A local build
+does not need them all, but at a minimum, cargo-make and cargo-tarpaulin should be installed.
 
-3. Install toolchain specified in `rust-toolchain.toml`
+   ```shell
+   cargo install cargo-make
+   cargo install cargo-tarpaulin
+   ```
 
-   \>`rustup toolchain install`
-
-4. While the specific toolchains and components specified in `[toolchain]` section of the `rust-toolchain.toml` are
-automatically installed with `rustup toolchain install`, the tools in the `[tools]` section, such as `cargo-make`
-are not. At a minimum, you should download `cargo-make` and `cargo-tarpaulin`, however it is suggested that you
-download all tools in the `[tools]` section of the `rust-toolchain.toml`.
+4. Another optional tool that has proven useful for speeding up the build process is 'cargo-binstall', located on
+[GitHub](https://github.com/cargo-bins/cargo-binstall).  See the readme.md file in that repository for installation and
+usage instructions.
 
 ## Build
 
-**The order of arguments is important in these commands.**
+All of the patina crates can be compiled in one of 3 supported targets; aarch64, x64, or native.
 
-### Building Crates
+```shell
+cargo make build-aarch64
+   - or -
+cargo make build-x64
+   - or -
+cargo make build
+```
 
-The following commands build all crates with one of our three supported targets: `x86_64-unknown-uefi`,
-`aarch64-unknown-uefi`, and your host system target triple. The default compilation mode is `development`, but you can
-easily switch modes with the `-p` flag.
+By default, the make compiles a developer build, but development or release can be indicated by using the "-p" flag
 
-- Development Compilation (aarch64-unknown-uefi): `cargo make build-aarch64`
-- Development Compilation (x86_64-unknown-uefi): `cargo make build-x64`
-- Development Compilation (host system): `cargo make build`
-- Release Compilation (aarch64-unknown-uefi): `cargo make -p release build-aarch64`
-- Release Compilation (x86_64-unknown-uefi): `cargo make -p release build-x64`
-- Release Compilation (host system): `cargo make -p release build`
+```shell
+cargo make -p development build-aarch64
+   - or -
+cargo make -p release build-aarch64
+```
 
 ## Test
 
-- `cargo make test`
+Use the test command to invoke a test build and execute all unit tests.
+
+```shell
+cargo make test
+```
 
 ## Coverage
 
-A developer can easily generate coverage data with the below commands. A developer can specify a single package
-to generate coverage for by adding the package name after the command.
+The coverage command will generate test coverage data for all crates in the project.  To target a single crate, the
+name can be added to the command line.
 
-- `cargo make coverage`
-- `cargo make coverage dxe_core`
-
-Another set of commands are available that can  generate coverage data, but is generally only used for CI.
-This command runs coverage on each package individually, filtering out any results outside of the package,
-and will fail if the code coverage percentage is less than 75%.
-
-- `cargo make coverage-fail`
-- `cargo make coverage-fail dxe_core`
+```shell
+cargo make coverage
+   - or -
+cargo make coverage dxe_core
+```
 
 ## Notes
 
-1. This project uses `RUSTC_BOOSTRAP=1` environment variable due to internal requirements
-   1. This puts us in parity with the nightly features that exist on the toolchain targeted
-   2. The `nightly` toolchain may be used in place of this
+- This project uses a makefile that sets the "RUSTC_BOOTSTRAP=1" environment variable due to internal requirements which
+puts us in parity with the nightly features that exist on the toolchain targeted.  The "nightly" toolchain may be used
+in place of this.
 
 ## Contributing
 
-- Review Rust Documentation in the `docs` directory.
+- Review Rust Documentation in the [/docs](https://github.com/OpenDevicePartnership/patina/blob/HEAD/docs/src/introduction.md)
+directory.
 - Run unit tests and ensure all pass.

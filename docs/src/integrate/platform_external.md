@@ -34,7 +34,7 @@ it, so the build system does not need to know that this is a rust module. The se
 added `DEFINE DXE_CORE_BASE_PATH =`; This is what allows you to provide a path change to the target
 binary while building. By adding this define on the command line of the build command, you can
 easily switch the targeted binary. The third and final change is that we added a `Binaries`
-section, with paths to the dxe_core depending on the build target (DEBUG, RELEASE, NOOPT).
+section, with paths to the DXE Core depending on the build target (DEBUG, RELEASE, NOOPT).
 
 As mentioned above, other than changing the INF file, you can follow the [Local to the Platform](./platform_local.md)
 documentation for all additional steps.
