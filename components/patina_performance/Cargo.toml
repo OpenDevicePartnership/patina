@@ -21,4 +21,5 @@ patina_internal_device_path = { workspace = true }
 
 [dev-dependencies]
 patina_sdk = { path = "../../sdk/patina_sdk", features = ["mockall"] }
+patina_internal_test_logger = { path = "../../core/patina_internal_test_logger"}
 mockall = { workspace = true }

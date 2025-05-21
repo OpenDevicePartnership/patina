@@ -1,0 +1,12 @@
+[package]
+name = "patina_internal_test_logger"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+log = { workspace = true }
+ctor = "0.4.2"
+
