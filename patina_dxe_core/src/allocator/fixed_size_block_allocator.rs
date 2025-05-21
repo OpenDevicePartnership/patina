@@ -15,7 +15,7 @@ use super::{AllocationStrategy, DEFAULT_ALLOCATION_STRATEGY};
 
 use crate::{gcd::SpinLockedGcd, tpl_lock};
 
-use patina_sdk::{patina_boot_services::c_ptr::CMutPtr, error::EfiError};
+use patina_sdk::{error::EfiError, patina_boot_services::c_ptr::CMutPtr};
 
 use core::{
     alloc::{AllocError, Allocator, GlobalAlloc, Layout},
