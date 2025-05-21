@@ -29,7 +29,10 @@ use core::{
 };
 use linked_list_allocator::{align_down_size, align_up_size};
 use mu_pi::dxe_services::GcdMemoryType;
-use patina_sdk::{base::UEFI_PAGE_SHIFT, uefi_size_to_pages};
+use patina_sdk::{
+    base::{UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE},
+    uefi_pages_to_size, uefi_size_to_pages,
+};
 use r_efi::efi;
 
 /// Type for describing errors that this implementation can produce.
@@ -58,7 +61,7 @@ fn list_index(layout: &Layout) -> Option<usize> {
 }
 
 /// Converts the given alignment to a shift value.
-fn page_shift_from_alignment(alignment: usize) -> Result<usize, EfiError> {
+const fn page_shift_from_alignment(alignment: usize) -> Result<usize, EfiError> {
     let shift = alignment.trailing_zeros() as usize;
     if !alignment.is_power_of_two() || shift < UEFI_PAGE_SHIFT {
         return Err(EfiError::InvalidParameter);
@@ -196,21 +199,27 @@ impl FixedSizeBlockAllocator {
     }
 
     /// Expand the memory available to this allocator with a new contiguous region of memory, setting up a new allocator
-    /// node to manage this range.
+    /// node to manage this range. `new_region.len() - size_of::<AllocatorListNode>()` additional memory will be available
+    /// to the allocator.
+    ///
+    /// ## Errors
+    ///
+    /// Returns [`FixedSizeBlockAllocatorError::InvalidExpansion`] if the new region is not larger than and aligned to
+    /// AllocatorListNode.
     pub fn expand(&mut self, new_region: NonNull<[u8]>) -> core::result::Result<(), FixedSizeBlockAllocatorError> {
         // Ensure we're expanding enough to fit a new allocator list node
-        if new_region.len() < MIN_EXPANSION || new_region.len() <= size_of::<AllocatorListNode>() {
+        if new_region.len() <= size_of::<AllocatorListNode>() {
             debug_assert!(false, "FSB expanded with insufficiently sized memory region.");
-            return Err(FixedSizeBlockAllocatorError::InvalidExpansion);
-        }
-
-        if new_region.addr().get() % ALIGNMENT != 0 || new_region.len() % ALIGNMENT != 0 {
-            debug_assert!(false, "FSB expanded with unaligned memory region.");
             return Err(FixedSizeBlockAllocatorError::InvalidExpansion);
         }
 
         // Interpret the first part of the provided region as an AllocatorListNode
         let alloc_node_ptr = new_region.as_ptr() as *mut AllocatorListNode;
+
+        if !alloc_node_ptr.is_aligned() {
+            debug_assert!(false, "FSB expanded with memory region unaligned to AllocatorListNode.");
+            return Err(FixedSizeBlockAllocatorError::InvalidExpansion);
+        }
 
         let heap_region: NonNull<[u8]> = NonNull::slice_from_raw_parts(
             NonNull::new(unsafe { alloc_node_ptr.add(1) }.as_mut_ptr()).unwrap().cast(),
@@ -253,8 +262,7 @@ impl FixedSizeBlockAllocator {
         // Determine how much additional memory is required
         let additional_mem_required =
             layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size();
-        let additional_mem_required = max(additional_mem_required, MIN_EXPANSION);
-        let additional_mem_required = align_up_size(additional_mem_required, ALIGNMENT);
+        let additional_mem_required = align_up_size(additional_mem_required, align_of::<AllocatorListNode>());
 
         Err(FixedSizeBlockAllocatorError::OutOfMemory(additional_mem_required))
     }
@@ -272,7 +280,7 @@ impl FixedSizeBlockAllocator {
     pub fn alloc(&mut self, layout: Layout) -> Result<NonNull<[u8]>, FixedSizeBlockAllocatorError> {
         self.stats.pool_allocation_calls += 1;
 
-        let allocation = match list_index(&layout) {
+        match list_index(&layout) {
             Some(index) => {
                 match self.list_heads[index].take() {
                     Some(node) => {
@@ -294,15 +302,7 @@ impl FixedSizeBlockAllocator {
                 }
             }
             None => self.fallback_alloc(layout),
-        };
-
-        if let Err(FixedSizeBlockAllocatorError::OutOfMemory(_)) = allocation {
-            // The spin-locked FSB will try again. Decrement the page_allocation_calls so that these two calls
-            // only reflect the one allocation.
-            self.stats.pool_allocation_calls -= 1;
         }
-
-        allocation
     }
 
     // deallocates back to the linked-list backing allocator if the size of
@@ -468,7 +468,7 @@ impl Display for FixedSizeBlockAllocator {
 
 /// Spin Locked Fixed Size Block Allocator
 ///
-/// A wrapper for [`FixedSizeBlockAllocator`] that allocated additional memory as needed from a GCD
+/// A wrapper for [`FixedSizeBlockAllocator`] that allocates additional memory as needed from a GCD
 /// and provides Sync/Send via means of a spin mutex.
 pub struct SpinLockedFixedSizeBlockAllocator {
     gcd: &'static SpinLockedGcd,
@@ -631,7 +631,7 @@ impl SpinLockedFixedSizeBlockAllocator {
             Err(EfiError::AlreadyStarted)?;
         }
 
-        let reserved_block_len = pages << UEFI_PAGE_SHIFT;
+        let reserved_block_len = uefi_pages_to_size!(pages);
 
         // Allocate then free a block of the requested length in the GCD while preserving ownership.
         // This, in effect, reserves this region in the GCD for use by this allocator.
@@ -700,6 +700,16 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
         match allocation {
             Ok(alloc) => Ok(alloc),
             Err(FixedSizeBlockAllocatorError::OutOfMemory(additional_mem_required)) => {
+                // As a matter of policy, allocate at least `MIN_EXPANSION` memory and ensure the size is
+                // aligned to `ALIGNMENT`.
+                let allocation_size = max(additional_mem_required, MIN_EXPANSION);
+                let allocation_size = align_up_size(allocation_size, ALIGNMENT);
+
+                // Compile-time check to ensure ALIGNMENT is compatible with the alignment requirements
+                // of `expand()` and `page_shift_from_alignment()`
+                const _: () = assert!(ALIGNMENT % align_of::<AllocatorListNode>() == 0);
+                const _: () = assert!(ALIGNMENT % UEFI_PAGE_SIZE == 0 && ALIGNMENT > 0);
+
                 // Allocate additional memory through the GCD, returning AllocError
                 // if the GCD returns an error
                 let start_address: usize = self
@@ -707,8 +717,8 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                     .allocate_memory_space(
                         DEFAULT_ALLOCATION_STRATEGY,
                         GcdMemoryType::SystemMemory,
-                        UEFI_PAGE_SHIFT,
-                        additional_mem_required,
+                        page_shift_from_alignment(ALIGNMENT).unwrap(),
+                        allocation_size,
                         self.handle,
                         None,
                     )
@@ -716,7 +726,7 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
 
                 // Expand the FSB using the allocated memory region
                 let allocated_ptr = NonNull::new(start_address as *mut u8).ok_or(AllocError)?;
-                if self.lock().expand(NonNull::slice_from_raw_parts(allocated_ptr, additional_mem_required)).is_err() {
+                if self.lock().expand(NonNull::slice_from_raw_parts(allocated_ptr, allocation_size)).is_err() {
                     return Err(AllocError);
                 }
 
@@ -959,12 +969,13 @@ mod tests {
 
             let mut fsb = FixedSizeBlockAllocator::new(efi::BOOT_SERVICES_DATA, page_change_callback);
 
-            // Test fallback_alloc with size < MIN_EXPANSION
-            let allocation_size = MIN_EXPANSION / 2;
+            // Test fallback_alloc with size < size_of::<AllocatorListNode>()
+            let allocation_size = size_of::<AllocatorListNode>() / 2;
             let layout = Layout::from_size_align(allocation_size, 0x10).unwrap();
             match fsb.fallback_alloc(layout) {
                 Err(FixedSizeBlockAllocatorError::OutOfMemory(mem_req)) => {
-                    assert!(mem_req == MIN_EXPANSION);
+                    assert!(mem_req >= layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size(),
+                        "fallback_alloc should request enough memory to fit aligned layout and an aligned AllocatorListNode");
                 }
                 _ => {
                     panic!("fallback_alloc with no allocators should return FixedSizeBlockAllocatorError::OutOfMemory")
@@ -972,15 +983,11 @@ mod tests {
             }
             assert!(fsb.allocators.is_none());
 
-            // Test fallback_alloc with size > MIN_EXPANSION
-            let allocation_size = MIN_EXPANSION + ALIGNMENT / 2;
+            // Test fallback_alloc with size > size_of::<AllocatorListNode>(), but unaligned to AllocatorListNode
+            let allocation_size = size_of::<AllocatorListNode>() + align_of::<AllocatorListNode>() / 2;
             let layout = Layout::from_size_align(allocation_size, 0x10).unwrap();
             match fsb.fallback_alloc(layout) {
                 Err(FixedSizeBlockAllocatorError::OutOfMemory(mem_req)) => {
-                    assert!(
-                        mem_req % ALIGNMENT == 0,
-                        "fallback_alloc should request memory size aligned to ALIGNMENT."
-                    );
                     assert!(mem_req >= layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size(),
                         "fallback_alloc should request enough memory to fit aligned layout and an aligned AllocatorListNode");
                 }
@@ -1048,43 +1055,31 @@ mod tests {
 
             let layout = Layout::from_size_align(0x8, 0x8).unwrap();
 
-            // Make an initial fallback_alloc, expecting it to fail due to a lack of memory
-            match fsb.fallback_alloc(layout) {
-                Err(FixedSizeBlockAllocatorError::OutOfMemory(mem_requested)) => {
-                    // Make requested allocation and expansion
-                    fsb.expand(NonNull::slice_from_raw_parts(
-                        NonNull::new(
-                            GCD.allocate_memory_space(
-                                DEFAULT_ALLOCATION_STRATEGY,
-                                GcdMemoryType::SystemMemory,
-                                UEFI_PAGE_SHIFT,
-                                mem_requested,
-                                DUMMY_HANDLE,
-                                None,
-                            )
-                            .unwrap() as *mut u8,
-                        )
-                        .unwrap(),
-                        mem_requested,
-                    ))
-                    .unwrap();
+            // Expand the FSB by `MIN_EXPANSION` to fit the allocation
+            fsb.expand(NonNull::slice_from_raw_parts(
+                NonNull::new(
+                    GCD.allocate_memory_space(
+                        DEFAULT_ALLOCATION_STRATEGY,
+                        GcdMemoryType::SystemMemory,
+                        UEFI_PAGE_SHIFT,
+                        MIN_EXPANSION,
+                        DUMMY_HANDLE,
+                        None,
+                    )
+                    .unwrap() as *mut u8,
+                )
+                .unwrap(),
+                MIN_EXPANSION,
+            ))
+            .unwrap();
 
-                    // The next attempt at fallback_alloc should succeed
-                    let allocation = fsb.fallback_alloc(layout).unwrap();
+            let allocation = fsb.fallback_alloc(layout).unwrap();
 
-                    // Finally, we can test fallback_dealloc
-                    fsb.fallback_dealloc(allocation.cast(), layout);
-                    unsafe {
-                        assert_eq!(
-                            (*fsb.allocators.unwrap()).allocator.free(),
-                            MIN_EXPANSION - size_of::<AllocatorListNode>()
-                        );
-                    }
-                }
-                _ => {
-                    panic!("fallback_alloc with no allocators should return FixedSizeBlockAllocatorError::OutOfMemory")
-                }
-            };
+            // Finally, we can test fallback_dealloc
+            fsb.fallback_dealloc(allocation.cast(), layout);
+            unsafe {
+                assert_eq!((*fsb.allocators.unwrap()).allocator.free(), MIN_EXPANSION - size_of::<AllocatorListNode>());
+            }
         });
     }
 
@@ -1390,10 +1385,13 @@ mod tests {
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 2));
 
             //test alloc/deallocate and stats within the bucket
-            let ptr = unsafe { fsb.alloc(Layout::from_size_align(0x100, 0x8).unwrap()) };
+            let ptr = unsafe {
+                fsb.alloc(Layout::from_size_align(MIN_EXPANSION - size_of::<AllocatorListNode>(), 0x8).unwrap())
+            };
 
             let stats = fsb.stats();
-            assert_eq!(stats.pool_allocation_calls, 1);
+            //an additional allocation call will be made as the first one will fail due to a lack of memory
+            assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 0);
             assert_eq!(stats.page_allocation_calls, 0);
             assert_eq!(stats.page_free_calls, 0);
@@ -1406,7 +1404,8 @@ mod tests {
             }
 
             let stats = fsb.stats();
-            assert_eq!(stats.pool_allocation_calls, 1);
+            //an additional allocation call will be made as the first one will fail due to a lack of memory
+            assert_eq!(stats.pool_allocation_calls, 2);
             assert_eq!(stats.pool_free_calls, 1);
             assert_eq!(stats.page_allocation_calls, 0);
             assert_eq!(stats.page_free_calls, 0);
@@ -1424,7 +1423,8 @@ mod tests {
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node.
 
             let stats = fsb.stats();
-            assert_eq!(stats.pool_allocation_calls, 2);
+            //an additional allocation call will be made as the first one will fail due to a lack of memory
+            assert_eq!(stats.pool_allocation_calls, 4);
             assert_eq!(stats.pool_free_calls, 1);
             assert_eq!(stats.page_allocation_calls, 0);
             assert_eq!(stats.page_free_calls, 0);
@@ -1443,7 +1443,7 @@ mod tests {
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
 
             let stats = fsb.stats();
-            assert_eq!(stats.pool_allocation_calls, 2);
+            assert_eq!(stats.pool_allocation_calls, 4);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 0);
             assert_eq!(stats.page_free_calls, 0);
@@ -1462,7 +1462,7 @@ mod tests {
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
 
             let stats = fsb.stats();
-            assert_eq!(stats.pool_allocation_calls, 2);
+            assert_eq!(stats.pool_allocation_calls, 4);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 1);
             assert_eq!(stats.page_free_calls, 0);
@@ -1481,7 +1481,7 @@ mod tests {
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
 
             let stats = fsb.stats();
-            assert_eq!(stats.pool_allocation_calls, 2);
+            assert_eq!(stats.pool_allocation_calls, 4);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 1);
             assert_eq!(stats.page_free_calls, 1);
@@ -1500,7 +1500,7 @@ mod tests {
             //104 pages (1MB+16K) page as a result of allocation.
 
             let stats = fsb.stats();
-            assert_eq!(stats.pool_allocation_calls, 2);
+            assert_eq!(stats.pool_allocation_calls, 4);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 2);
             assert_eq!(stats.page_free_calls, 1);
@@ -1520,7 +1520,7 @@ mod tests {
             //104 pages (1MB+16K) page as a result of allocation.
 
             let stats = fsb.stats();
-            assert_eq!(stats.pool_allocation_calls, 2);
+            assert_eq!(stats.pool_allocation_calls, 4);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 3);
             assert_eq!(stats.page_free_calls, 1);
@@ -1542,7 +1542,7 @@ mod tests {
             //3MB+1 page range as a result of 3MB allocation + 1 page to hold allocator node - available for pool allocation.
 
             let stats = fsb.stats();
-            assert_eq!(stats.pool_allocation_calls, 2);
+            assert_eq!(stats.pool_allocation_calls, 4);
             assert_eq!(stats.pool_free_calls, 2);
             assert_eq!(stats.page_allocation_calls, 3);
             assert_eq!(stats.page_free_calls, 3);
@@ -1610,7 +1610,7 @@ mod tests {
     }
 
     #[test]
-    fn test_alignment_page_to_shift() {
+    fn test_page_shift_from_alignment() {
         #[derive(Debug)]
         struct TestConfig {
             alignment: usize,
