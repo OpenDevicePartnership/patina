@@ -250,7 +250,7 @@ impl FixedSizeBlockAllocator {
             }
         }
 
-        // Determine how much additional memory is requrired
+        // Determine how much additional memory is required
         let additional_mem_required =
             layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size();
         let additional_mem_required = max(additional_mem_required, MIN_EXPANSION);
