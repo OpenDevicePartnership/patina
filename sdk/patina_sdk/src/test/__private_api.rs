@@ -12,7 +12,7 @@
 
 use core::marker::PhantomData;
 
-use patina_sdk::component::{
+use crate::component::{
     params::{Param, ParamFunction},
     MetaData, Storage, UnsafeStorageCell,
 };

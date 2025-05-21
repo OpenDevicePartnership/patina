@@ -17,10 +17,10 @@
 //! ## Example
 //!
 //! ```rust
-//! use patina_test::*;
+//! use patina_sdk::test::*;
 //! use patina_sdk::boot_services::StandardBootServices;
 //!
-//! let component = patina_test::TestRunner::default()
+//! let component = patina_sdk::test::TestRunner::default()
 //!   .with_filter("aarch64") // Only run tests with "aarch64" in their name & path (my_crate::aarch64::test)
 //!   .debug_mode(true)
 //!   .fail_fast(true);
@@ -70,11 +70,11 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-#![cfg_attr(not(test), no_std)]
 extern crate alloc;
 use alloc::vec::Vec;
 
-use patina_sdk::component::{IntoComponent, Storage};
+use crate as patina_sdk;
+use crate::component::{IntoComponent, Storage};
 
 #[doc(hidden)]
 pub use linkme;
@@ -102,7 +102,7 @@ pub type Result = core::result::Result<(), &'static str>;
 /// ## Example
 ///
 /// ```rust
-/// use patina_test::*;
+/// use patina_sdk::test::*;
 /// use patina_sdk::boot_services::StandardBootServices;
 ///
 /// #[uefi_test]

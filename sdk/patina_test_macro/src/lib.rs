@@ -110,16 +110,16 @@ fn generate_expanded_test_case(
     let skip = test_case_config.get(KEY_SKIP).expect("All configuration should have a default value set.");
 
     let expanded = quote! {
-        #[patina_test::linkme::distributed_slice(patina_test::__private_api::TEST_CASES)]
-        #[linkme(crate = patina_test::linkme)]
+        #[patina_sdk::test::linkme::distributed_slice(patina_sdk::test::__private_api::TEST_CASES)]
+        #[linkme(crate = patina_sdk::test::linkme)]
         #[allow(non_upper_case_globals)]
-        static #struct_name: patina_test::__private_api::TestCase =
-        patina_test::__private_api::TestCase {
+        static #struct_name: patina_sdk::test::__private_api::TestCase =
+        patina_sdk::test::__private_api::TestCase {
             name: concat!(module_path!(), "::", stringify!(#fn_name)),
             skip: #skip,
             should_fail: #should_fail,
             fail_msg: #fail_msg,
-            func: |storage| patina_test::__private_api::FunctionTest::new(#fn_name).run(storage.into()),
+            func: |storage| patina_sdk::test::__private_api::FunctionTest::new(#fn_name).run(storage.into()),
         };
         #item
     };
@@ -152,15 +152,15 @@ mod tests {
         let expanded = uefi_test2(stream);
 
         let expected = quote! {
-            #[patina_test::linkme::distributed_slice(patina_test::__private_api::TEST_CASES)]
-            #[linkme(crate = patina_test::linkme)]
+            #[patina_sdk::test::linkme::distributed_slice(patina_sdk::test::__private_api::TEST_CASES)]
+            #[linkme(crate = patina_sdk::test::linkme)]
             #[allow(non_upper_case_globals)]
-            static __my_test_case_TestCase: patina_test::__private_api::TestCase = patina_test::__private_api::TestCase {
+            static __my_test_case_TestCase: patina_sdk::test::__private_api::TestCase = patina_sdk::test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
                 skip: false,
                 should_fail: false,
                 fail_msg: None,
-                func: |storage| patina_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                func: |storage| patina_sdk::test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
             };
             fn my_test_case() -> Result {
                 assert!(true);
@@ -183,16 +183,16 @@ mod tests {
         let expanded = uefi_test2(stream);
 
         let expected = quote! {
-            #[patina_test::linkme::distributed_slice(patina_test::__private_api::TEST_CASES)]
-            #[linkme(crate = patina_test::linkme)]
+            #[patina_sdk::test::linkme::distributed_slice(patina_sdk::test::__private_api::TEST_CASES)]
+            #[linkme(crate = patina_sdk::test::linkme)]
             #[allow(non_upper_case_globals)]
-            static __my_test_case_TestCase: patina_test::__private_api::TestCase =
-            patina_test::__private_api::TestCase {
+            static __my_test_case_TestCase: patina_sdk::test::__private_api::TestCase =
+            patina_sdk::test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
                 skip: true,
                 should_fail: false,
                 fail_msg: None,
-                func: |storage| patina_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                func: |storage| patina_sdk::test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
             };
             fn my_test_case() -> Result {
                 assert!(true);

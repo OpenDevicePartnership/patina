@@ -14,7 +14,6 @@ patina_sdk = { path = "sdk/patina_sdk" }
 patina_sdk_macro = { path = "sdk/patina_sdk_macro" }
 patina_section_extractor = { path = "core/patina_section_extractor" }
 patina_stacktrace = { path = "core/patina_stacktrace" }
-patina_test = { path = "sdk/patina_test" }
 patina_test_macro = { path = "sdk/patina_test_macro" }
 
 [net]

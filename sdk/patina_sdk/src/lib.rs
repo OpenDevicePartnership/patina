@@ -36,3 +36,5 @@ pub mod driver_binding;
 pub mod runtime_services;
 pub mod tpl_mutex;
 pub mod uefi_protocol;
+
+pub mod test;

@@ -40,7 +40,6 @@ patina_performance = { version = "0.1.0", path = "components/patina_performance"
 patina_sdk = { version = "0.1.0", path = "sdk/patina_sdk", registry = "patina-fw" }
 patina_sdk_macro = { version = "0.1.0", path = "sdk/patina_sdk_macro", registry = "patina-fw" }
 patina_stacktrace = { version = "0.1.0", path = "core/patina_stacktrace", registry = "patina-fw" }
-patina_test = { version = "0.1.0", path = "sdk/patina_test", registry = "patina-fw" }
 patina_test_macro = { version = "0.1.0", path = "sdk/patina_test_macro", registry = "patina-fw" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
