@@ -205,7 +205,7 @@ impl UefiAllocator {
         self.allocator.handle()
     }
 
-    /// Returns the preferred memory range, if any.
+    /// Returns the reserved memory range, if any.
     #[allow(dead_code)]
     pub fn reserved_range(&self) -> Option<Range<efi::PhysicalAddress>> {
         self.allocator.reserved_range()
@@ -545,9 +545,9 @@ mod tests {
             assert!(allocator.reserved_range.is_none());
             drop(allocator);
 
-            println!("preferred range: {:#x?}", reserved_range);
+            println!("reserved range: {:#x?}", reserved_range);
             //verify that the first 0x100 pages from the reserved allocator are in the reserved_range, and that allocating
-            //from the unreserved allocator at the same time doesn't allocate from the preferred range or cause the reserved
+            //from the unreserved allocator at the same time doesn't allocate from the reserved range or cause the reserved
             //allocator to fail in any way.
             for _page in 0..0x100 {
                 let reserved_page =
@@ -565,7 +565,7 @@ mod tests {
                 assert!(!reserved_range.contains(&(unreserved_page_addr + 0xFFF)));
             }
 
-            //verify that further page allocations from the reserved allocator are outside the preferred range but succeed.
+            //verify that further page allocations from the reserved allocator are outside the reserved range but succeed.
             let reserved_page =
                 reserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE).unwrap();
             let reserved_page_addr = reserved_page.as_ptr() as *mut u8 as u64;
@@ -573,7 +573,7 @@ mod tests {
             assert!(!reserved_range.contains(&(reserved_page_addr)));
             assert!(!reserved_range.contains(&(reserved_page_addr + 0xFFF)));
 
-            //verify that if the reserved allocation that is not in the preferred range is freed, other allocators can
+            //verify that if the reserved allocation that is not in the reserved range is freed, other allocators can
             //use it.
             unsafe {
                 reserved_allocator.free_pages(reserved_page_addr as usize, 1).unwrap();
@@ -587,7 +587,7 @@ mod tests {
                 reserved_page_addr, unreserved_page_addr
             );
 
-            //verify that if pages are freed within the preferred range, that other allocators cannot use them.
+            //verify that if pages are freed within the reserved range, that other allocators cannot use them.
             unsafe {
                 reserved_allocator.free_pages(reserved_range.start as usize, 0x10).unwrap();
             }
@@ -597,7 +597,7 @@ mod tests {
             assert!(!reserved_range.contains(&(unreserved_page_addr)));
             assert!(!reserved_range.contains(&(unreserved_page_addr + 0xFFF)));
 
-            //verify that previously freed pags within the preferred range can be reused by the reserving allocator.
+            //verify that previously freed pags within the reserved range can be reused by the reserving allocator.
             for _page in 0..0x10 {
                 let reserved_page =
                     reserved_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 1, UEFI_PAGE_SIZE).unwrap();

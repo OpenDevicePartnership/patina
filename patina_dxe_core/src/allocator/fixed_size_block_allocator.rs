@@ -15,8 +15,6 @@ use super::{AllocationStrategy, DEFAULT_ALLOCATION_STRATEGY};
 
 use crate::{gcd::SpinLockedGcd, tpl_lock};
 
-use patina_sdk::{error::EfiError, patina_boot_services::c_ptr::CMutPtr};
-
 use core::{
     alloc::{AllocError, Allocator, GlobalAlloc, Layout},
     cmp::max,
@@ -31,6 +29,7 @@ use linked_list_allocator::{align_down_size, align_up_size};
 use mu_pi::dxe_services::GcdMemoryType;
 use patina_sdk::{
     base::{UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE},
+    error::EfiError,
     uefi_pages_to_size, uefi_size_to_pages,
 };
 use r_efi::efi;
@@ -39,6 +38,9 @@ use r_efi::efi;
 #[derive(Debug, PartialEq)]
 pub enum FixedSizeBlockAllocatorError {
     /// Could not satisfy allocation request, and expansion failed.
+    ///
+    /// Specifies how much additional memory is required to be added to the allocator through
+    /// [FixedSizeBlockAllocator::expand()] in order to fulfill the attempted allocation.
     OutOfMemory(usize),
     /// The provided layout was invalid.
     InvalidLayout,
@@ -222,7 +224,7 @@ impl FixedSizeBlockAllocator {
         }
 
         let heap_region: NonNull<[u8]> = NonNull::slice_from_raw_parts(
-            NonNull::new(unsafe { alloc_node_ptr.add(1) }.as_mut_ptr()).unwrap().cast(),
+            NonNull::new(unsafe { alloc_node_ptr.add(1) }).unwrap().cast(),
             new_region.len() - size_of::<AllocatorListNode>(),
         );
 
