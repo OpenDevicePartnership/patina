@@ -256,7 +256,7 @@ impl FixedSizeBlockAllocator {
         let additional_mem_required = max(additional_mem_required, MIN_EXPANSION);
         let additional_mem_required = align_up_size(additional_mem_required, ALIGNMENT);
 
-        return Err(FixedSizeBlockAllocatorError::OutOfMemory(additional_mem_required));
+        Err(FixedSizeBlockAllocatorError::OutOfMemory(additional_mem_required))
     }
 
     /// Allocates and returns a pointer to a memory buffer for the given layout.
@@ -716,9 +716,7 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
 
                 // Expand the FSB using the allocated memory region
                 let allocated_ptr = NonNull::new(start_address as *mut u8).ok_or(AllocError)?;
-                if let Err(_) =
-                    self.lock().expand(NonNull::slice_from_raw_parts(allocated_ptr, additional_mem_required))
-                {
+                if self.lock().expand(NonNull::slice_from_raw_parts(allocated_ptr, additional_mem_required)).is_err() {
                     return Err(AllocError);
                 }
 
