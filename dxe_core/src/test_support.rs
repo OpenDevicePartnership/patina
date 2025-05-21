@@ -321,6 +321,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
     mem.as_ptr() as *const c_void
 }
 
+#[cfg(test)]
 /*  Compact Hoblist with DXE core Alloction hob */
 pub(crate) fn build_test_hob_list_compact(mem_size: u64) -> *const c_void {
     let mem = unsafe { get_memory(mem_size as usize) };
@@ -432,6 +433,7 @@ pub(crate) fn build_test_hob_list_compact(mem_size: u64) -> *const c_void {
     mem.as_ptr() as *const c_void
 }
 
+#[cfg(test)]
 /*
  * Fill in Dxe Image in to hoblist.
  * Usage - fill_file_buffer_in_memory_allocation_module(&hob_list).unwrap();
