@@ -18,7 +18,6 @@ patina_boot_services = { workspace = true }
 fixedbitset = { workspace = true }
 mu_pi = { workspace = true }
 patina_uefi_protocol = { workspace = true }
-patina_tpl_mutex = { workspace = true }
 
 cfg-if = { workspace = true }
 log = { workspace = true }

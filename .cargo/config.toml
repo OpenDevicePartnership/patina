@@ -17,7 +17,6 @@ patina_section_extractor = { path = "core/patina_section_extractor" }
 patina_stacktrace = { path = "core/patina_stacktrace" }
 patina_test = { path = "sdk/patina_test" }
 patina_test_macro = { path = "sdk/patina_test_macro" }
-patina_tpl_mutex = { path = "sdk/patina_tpl_mutex" }
 patina_uefi_protocol = { path = "sdk/patina_uefi_protocol" }
 
 [net]

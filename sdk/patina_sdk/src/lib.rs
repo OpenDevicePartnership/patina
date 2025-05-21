@@ -34,5 +34,5 @@ pub mod serial;
 pub use patina_boot_services;
 pub mod driver_binding;
 pub mod runtime_services;
-pub use patina_tpl_mutex;
+pub mod tpl_mutex;
 pub use patina_uefi_protocol as protocol;

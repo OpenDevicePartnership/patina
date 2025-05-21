@@ -49,7 +49,7 @@ use patina_sdk::{
     guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
     patina_boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
     runtime_services::{RuntimeServices, StandardRuntimeServices},
-    patina_tpl_mutex::TplMutex,
+    tpl_mutex::TplMutex,
     protocol::status_code::StatusCodeRuntimeProtocol,
 };
 
