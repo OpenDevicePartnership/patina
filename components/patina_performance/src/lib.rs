@@ -48,7 +48,7 @@ use patina_sdk::{
     error::EfiError,
     guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
     patina_boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
-    patina_runtime_services::{RuntimeServices, StandardRuntimeServices},
+    runtime_services::{RuntimeServices, StandardRuntimeServices},
     patina_tpl_mutex::TplMutex,
     protocol::status_code::StatusCodeRuntimeProtocol,
 };
@@ -641,7 +641,7 @@ mod test {
             c_ptr::{CMutPtr, CPtr},
             MockBootServices,
         },
-        patina_runtime_services::MockRuntimeServices,
+        runtime_services::MockRuntimeServices,
         protocol::ProtocolInterface,
     };
 

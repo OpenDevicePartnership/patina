@@ -4,7 +4,7 @@ use alloc::{vec, vec::Vec};
 use fallible_streaming_iterator::FallibleStreamingIterator;
 use r_efi::efi::{self, Guid};
 
-use crate::RuntimeServices;
+use super::RuntimeServices;
 
 /// Status information returned by [`RuntimeServices::get_variable_unchecked`]
 #[derive(Debug)]

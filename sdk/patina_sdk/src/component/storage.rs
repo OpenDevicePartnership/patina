@@ -8,7 +8,10 @@
 //!
 extern crate alloc;
 
-use crate::component::{metadata::MetaData, params::Param};
+use crate::{
+    component::{metadata::MetaData, params::Param},
+    runtime_services::StandardRuntimeServices,
+};
 
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{
@@ -20,7 +23,6 @@ use core::{
     ptr,
 };
 use patina_boot_services::StandardBootServices;
-use patina_runtime_services::StandardRuntimeServices;
 use r_efi::efi::Guid;
 
 use super::{

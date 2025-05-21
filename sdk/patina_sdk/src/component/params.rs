@@ -103,7 +103,6 @@ use core::{
 };
 
 use alloc::boxed::Box;
-use patina_runtime_services::StandardRuntimeServices;
 
 use crate::{
     component::{
@@ -112,6 +111,7 @@ use crate::{
         storage::{Deferred, Storage, UnsafeStorageCell},
     },
     patina_boot_services::StandardBootServices,
+    runtime_services::StandardRuntimeServices,
 };
 
 use super::storage::ConfigRaw;

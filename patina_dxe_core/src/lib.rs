@@ -81,7 +81,7 @@ use patina_sdk::{
     component::{Component, IntoComponent, Storage},
     error::{self, Result},
     patina_boot_services::StandardBootServices,
-    patina_runtime_services::StandardRuntimeServices,
+    runtime_services::StandardRuntimeServices,
 };
 use protocols::PROTOCOL_DB;
 use r_efi::efi;

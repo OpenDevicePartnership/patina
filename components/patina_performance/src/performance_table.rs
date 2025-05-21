@@ -28,7 +28,7 @@ use patina_sdk::{
         allocation::{AllocType, MemoryType},
         BootServices,
     },
-    patina_runtime_services::RuntimeServices,
+    runtime_services::RuntimeServices,
 };
 
 use crate::{
@@ -296,7 +296,7 @@ impl Default for FirmwareBasicBootPerfDataRecord {
 mod test {
     use core::{assert_eq, slice, unreachable};
 
-    use patina_sdk::{patina_boot_services::MockBootServices, patina_runtime_services::MockRuntimeServices};
+    use patina_sdk::{patina_boot_services::MockBootServices, runtime_services::MockRuntimeServices};
     use scroll::Pread;
 
     use super::*;
