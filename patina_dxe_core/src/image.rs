@@ -15,14 +15,16 @@ use patina_performance::{
     create_performance_measurement, perf_image_start_begin, perf_image_start_end, perf_load_image_begin,
     perf_load_image_end,
 };
-use patina_sdk::base::{align_up, UEFI_PAGE_SIZE};
+use patina_sdk::base::{align_up, DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE};
 use patina_sdk::error::EfiError;
-use patina_sdk::{guid, uefi_size_to_pages};
+use patina_sdk::{guid, uefi_pages_to_size, uefi_size_to_pages};
 use r_efi::efi;
 
+use crate::dxe_services::core_set_memory_space_attributes;
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
     dxe_services,
+    events::EVENT_DB,
     filesystems::SimpleFile,
     pecoff::{self, relocation::RelocationBlock, UefiPeInfo},
     protocol_db,
@@ -701,7 +703,7 @@ fn activate_compatibility_mode(private_info: &PrivateImageData) -> Result<(), Ef
     // for this image map all mem RWX preserving cache attributes if we find them
     let stripped_attrs = dxe_services::core_get_memory_space_descriptor(private_info.image_base_page)
         .map(|desc| desc.attributes & efi::CACHE_ATTRIBUTE_MASK)
-        .unwrap_or(0);
+        .unwrap_or(DEFAULT_CACHE_ATTR);
     if dxe_services::core_set_memory_space_attributes(
         private_info.image_base_page,
         patina_sdk::uefi_pages_to_size!(private_info.image_num_pages) as u64,
@@ -726,6 +728,40 @@ fn activate_compatibility_mode(private_info: &PrivateImageData) -> Result<(), Ef
     log::error!("Attempting to load {} that is not NX compatible. Compatibility mode is not allowed in this build, not loading image.",
                 private_info.pe_info.filename.clone().unwrap_or(String::from("Unknown")));
     Err(EfiError::LoadError)
+}
+
+extern "efiapi" fn runtime_image_protection_fixup_ebs(event: efi::Event, _context: *mut c_void) {
+    let mut private_data = PRIVATE_IMAGE_DATA.lock();
+
+    for image in private_data.private_image_data.values_mut() {
+        if image.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
+            let cache_attrs = dxe_services::core_get_memory_space_descriptor(image.image_base_page)
+                .map(|desc| desc.attributes & efi::CACHE_ATTRIBUTE_MASK)
+                .unwrap_or(DEFAULT_CACHE_ATTR);
+
+            match core_set_memory_space_attributes(
+                image.image_base_page,
+                uefi_pages_to_size!(image.image_num_pages) as u64,
+                cache_attrs,
+            ) {
+                Ok(_) => {
+                    // success, keep going
+                }
+                Err(status) => {
+                    log::error!(
+                        "Failed to set GCD attributes for runtime image {:#X?} with Status {:#X?}, may fail to relocate",
+                        image.image_base_page,
+                        status
+                    );
+                    debug_assert!(false);
+                }
+            };
+        }
+    }
+
+    if let Err(status) = EVENT_DB.close_event(event) {
+        log::error!("Failed to close image EBS event with status {:#X?}. This should be okay.", status);
+    }
 }
 
 // Reads an image buffer using simple file system or load file protocols.
@@ -1404,6 +1440,17 @@ pub fn init_image_support(hob_list: &HobList, system_table: &mut EfiSystemTable)
 
     // install the image protocol for the dxe core.
     install_dxe_core_image(hob_list);
+
+    // set up exit boot services callback
+    let _ = EVENT_DB
+        .create_event(
+            efi::EVT_NOTIFY_SIGNAL,
+            efi::TPL_CALLBACK,
+            Some(runtime_image_protection_fixup_ebs),
+            None,
+            Some(efi::EVENT_GROUP_EXIT_BOOT_SERVICES),
+        )
+        .expect("Failed to create callback for runtime image memory protection fixups.");
 
     //set up imaging services
     system_table.boot_services_mut().load_image = load_image;
