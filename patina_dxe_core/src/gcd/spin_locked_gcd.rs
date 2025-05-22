@@ -1847,7 +1847,7 @@ impl SpinLockedGcd {
                             if paging_attrs & MemoryAttributes::CacheAttributesMask != MemoryAttributes::empty() {
                                 log::trace!(
                                     target: "paging",
-                                    "Memory region {:#x?} of length {:#x?} added with attrs {:#x?}, sending cache attributes changed event",
+                                    "Memory region {:#x?} of length {:#x?} mapped with attrs {:#x?}, sending cache attributes changed event",
                                     base_address,
                                     len,
                                     paging_attrs
