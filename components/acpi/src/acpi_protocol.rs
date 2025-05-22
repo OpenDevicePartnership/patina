@@ -121,6 +121,7 @@ fn acpi_error_to_efi_error(error: AcpiError) -> efi::Status {
         AcpiError::HobTableNotInstalled => efi::Status::UNSUPPORTED,
         AcpiError::InvalidTableLength => efi::Status::INVALID_PARAMETER,
         AcpiError::InvalidXsdtEntry => efi::Status::INVALID_PARAMETER,
+        AcpiError::TableNotifyFailed => efi::Status::INVALID_PARAMETER,
     }
 }
 

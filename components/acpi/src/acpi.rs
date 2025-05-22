@@ -4,8 +4,9 @@ use core::{mem, ptr};
 use core::cell::OnceCell;
 use core::ptr::copy_nonoverlapping;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering};
+use spin::rwlock::RwLock;
 use spin::RwLockReadGuard;
-use spin::{Mutex, Once, RwLock};
+use spin::{Mutex, Once};
 use uefi_sdk::boot_services::tpl::Tpl;
 use uefi_sdk::component::hob::Hob;
 use uefi_sdk::component::service::memory::{
@@ -30,8 +31,8 @@ use crate::acpi_table::{AcpiDsdt, AcpiFacs, AcpiFadt, AcpiInstallable, AcpiRsdp,
 use crate::component::AcpiMemoryHob;
 use crate::error::AcpiError;
 use crate::service::{AcpiNotifyFn, AcpiProvider, TableKey};
-use crate::signature::ACPI_HEADER_LEN;
 use crate::signature::{self};
+use crate::signature::{ACPI_HEADER_LEN, MAX_INITIAL_ENTRIES};
 
 pub static ACPI_TABLE_INFO: StandardAcpiProvider<StandardBootServices> = StandardAcpiProvider::new_uninit();
 
@@ -47,6 +48,8 @@ pub struct StandardAcpiProvider<B: BootServices + 'static> {
     notify_list: RwLock<Vec<AcpiNotifyFn>>,
     pub(crate) boot_services: OnceCell<B>,
     memory_manager: OnceCell<Service<dyn MemoryManager>>,
+    entries: RwLock<Vec<u64>>,
+    max_entries: AtomicUsize,
 }
 
 pub(crate) struct SystemTables {
@@ -136,6 +139,8 @@ where
             notify_list: RwLock::new(vec![]),
             boot_services: OnceCell::new(),
             memory_manager: OnceCell::new(),
+            entries: RwLock::new(vec![]),
+            max_entries: AtomicUsize::new(MAX_INITIAL_ENTRIES),
         }
     }
 
@@ -476,12 +481,12 @@ where
 
         let checksum_offset = memoffset::offset_of!(AcpiTable, checksum);
         Self::acpi_table_update_checksum(dst_ptr, table.length as usize, checksum_offset);
-        self.checksum_common_tables()?;
 
         if add_to_xsdt {
-            self.add_entry_to_xsdt(physical_addr as u64, table);
+            self.add_entry_to_xsdt(physical_addr as u64, table)?;
         }
 
+        self.checksum_common_tables()?;
         Ok(self.next_table_key.load(Ordering::Acquire) as TableKey)
     }
 
@@ -499,23 +504,22 @@ where
 
         if let Some(xsdt) = xsdt_ptr {
             // We need to reallocate the XSDT if the buffer exceeds the maximum allocated size
-            if xsdt.entries.len() == xsdt.max_entries {
-                self.reallocate_xsdt(xsdt.entries.len(), xsdt.length as usize)?;
+            if self.entries.read().len() == self.max_entries.load(Ordering::Acquire) {
+                self.reallocate_xsdt(self.entries.read().len(), xsdt.length as usize)?;
+                self.max_entries.store(self.max_entries.load(Ordering::Acquire) * 2, Ordering::Release);
             }
 
             // Calculate the memory location for the new entry (end of XSDT)
-            let entry_offset = ACPI_HEADER_LEN + (xsdt.entries.len() - 1) * core::mem::size_of::<u64>();
-            let dst = unsafe { system_tables.xsdt.load(Ordering::Acquire).add(entry_offset) as *mut u64 };
+            let entry_offset = ACPI_HEADER_LEN + self.entries.read().len() * core::mem::size_of::<u64>();
+            let base = system_tables.xsdt.load(Ordering::Acquire) as *mut u8;
+            let dst = unsafe { base.add(entry_offset) as *mut u64 };
             // Write entry to ACPI memory
             unsafe {
                 core::ptr::write(dst, new_table_addr);
             }
 
             // Fix up XSDT struct fields
-            xsdt.oem_id = table.oem_id;
-            xsdt.oem_table_id = table.oem_table_id;
-            xsdt.oem_revision = table.oem_revision;
-            xsdt.entries.push(new_table_addr as u64);
+            self.entries.write().push(new_table_addr as u64);
             xsdt.length += mem::size_of::<u64>() as u32;
         }
 
@@ -655,8 +659,9 @@ where
         let table_address = table as *const AcpiTable as usize;
         let system_tables = self.system_tables.lock();
         if let Some(xsdt) = system_tables.xsdt_mut() {
-            if let Some(index) = xsdt.entries.iter().position(|&entry| entry == (table_address as u64)) {
-                xsdt.entries.remove(index);
+            let xsdt_pos = self.entries.read().iter().position(|&entry| entry == (table_address as u64));
+            if let Some(index) = xsdt_pos {
+                self.entries.write().remove(index);
             }
 
             Self::acpi_table_update_checksum(
@@ -718,15 +723,14 @@ where
     }
 
     fn notify_acpi_list(&self, table_key: TableKey) -> Result<(), AcpiError> {
-        if let Some(index) =
-            self.acpi_tables.read().iter().position(|&table| unsafe { table.as_ref().table_key } == table_key)
-        {
-            let table = unsafe { self.acpi_tables.read()[index].as_ref() };
+        let acpi_tables = self.acpi_tables.read();
+        if let Some(index) = acpi_tables.iter().position(|&table| unsafe { table.as_ref().table_key } == table_key) {
+            let table = unsafe { acpi_tables[index].as_ref() };
             for notify_fn in self.notify_list.read().iter() {
                 (*notify_fn)(table, self.version.load(Ordering::Acquire), table_key)?;
             }
         } else {
-            return Err(AcpiError::AllocationFailed);
+            return Err(AcpiError::TableNotifyFailed);
         }
 
         Ok(())
@@ -764,10 +768,34 @@ mod tests {
     use std::boxed::Box;
     use std::ptr;
     use uefi_sdk::boot_services::MockBootServices;
+    use uefi_sdk::component::service::memory::AccessType;
+    use uefi_sdk::component::service::memory::CachingType;
+    use uefi_sdk::component::service::memory::MemoryError;
     use uefi_sdk::component::service::memory::MockMemoryManager;
 
-    unsafe impl Send for MockMemoryManager {}
-    unsafe impl Sync for MockMemoryManager {}
+    // mock! {
+    //     pub MemoryManager {}
+
+    //     impl MemoryManager for MemoryManager {
+    //         fn allocate_pages(&self, page_count: usize, options: AllocationOptions) -> Result<PageAllocation, MemoryError>;
+    //         fn allocate_zero_pages(
+    //             &self,
+    //             page_count: usize,
+    //             options: AllocationOptions,
+    //         ) -> Result<PageAllocation, MemoryError>;
+    //         unsafe fn free_pages(&self, address: usize, page_count: usize) -> Result<(), MemoryError>;
+    //         #[cfg(feature = "alloc")]
+    //         fn get_allocator(&self, memory_type: EfiMemoryType) -> Result<&'static dyn Allocator, MemoryError> { unimplemented!() }
+    //         unsafe fn set_page_attributes(
+    //             &self,
+    //             address: usize,
+    //             page_count: usize,
+    //             access: AccessType,
+    //             caching: Option<CachingType>,
+    //         ) -> Result<(), MemoryError>;
+    //             fn get_page_attributes(&self, address: usize, page_count: usize) -> Result<(AccessType, CachingType), MemoryError>;
+    //     }
+    // }
 
     #[test]
     fn test_get_table() {
@@ -940,7 +968,7 @@ mod tests {
     //     let mut mock_memory_manager = MockMemoryManager::new();
     //     // This is just a dummy variable to fill out the PageAllocation
     //     let mock_memory_manager2 = MockMemoryManager::new();
-    //     let mock_page_alloc = unsafe { PageAllocation::new(0x12341234, 1, &mock_memory_manager2) }.unwrap();
+    //     let mock_page_alloc = unsafe { PageAllocation::new(0x12341234, 1) }.unwrap();
     //     mock_memory_manager.expect_allocate_zero_pages().returning(|_, _| Ok(mock_page_alloc));
     //     let provider = StandardAcpiProvider::new_uninit();
     //     provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(mock_memory_manager)));
@@ -952,4 +980,144 @@ mod tests {
     //     // When not from a HOB, `allocate_table_addr` should return the value allocated by the memory manager
     //     assert_eq!(returned, 0x12341234);
     // }
+
+    #[test]
+    fn test_add_fadt_to_list() {
+        let provider = StandardAcpiProvider::new_uninit();
+        provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
+
+        let fadt_table = AcpiTable {
+            signature: signature::FACP,
+            length: 128,
+            revision: 1,
+            checksum: 0,
+            oem_id: [0x0, 0x1, 0x2, 0x3, 0x4, 0x5],
+            oem_table_id: [0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7],
+            oem_revision: 1,
+            creator_id: 0,
+            creator_revision: 0,
+            ..Default::default()
+        };
+        let boxed_table = Box::new(fadt_table.clone());
+        // Treat heap-allocated FADT as if it were in ACPI memory
+        let raw_ptr = Box::into_raw(boxed_table);
+
+        let result = provider.add_fadt_to_list(raw_ptr as usize, &fadt_table);
+        assert!(result.is_ok());
+
+        // FADT should have been added to list
+        let system_tables = provider.system_tables.lock();
+        assert_eq!(system_tables.fadt.load(std::sync::atomic::Ordering::Acquire) as usize, raw_ptr as usize);
+
+        // Clean up
+        unsafe { drop(Box::from_raw(raw_ptr)) };
+    }
+
+    #[test]
+    fn test_add_and_remove_xsdt() {
+        let xsdt_table = AcpiXsdt {
+            signature: signature::XSDT,
+            length: ACPI_HEADER_LEN as u32, // XSDT currently has no entries
+            revision: 1,
+            checksum: 0,
+            oem_id: *b"OEMID ",
+            oem_table_id: *b"TABLEID ",
+            oem_revision: 1,
+            creator_id: 0,
+            creator_revision: 0,
+        };
+
+        // Calculate the total memory needed (XSDT header + 1 entry written during the test)
+        let total_bytes = ACPI_HEADER_LEN + 2 * size_of::<u64>();
+
+        // Get XSDT as pointer
+        let mut boxed_buf = vec![0u8; total_bytes].into_boxed_slice();
+        let buf_ptr = boxed_buf.as_mut_ptr();
+        let xsdt_ptr = buf_ptr as *mut AcpiXsdt;
+        unsafe {
+            // Fill in exiting XSDT data
+            ptr::write(xsdt_ptr, xsdt_table);
+        }
+
+        // Initialize XSDT
+        let provider = StandardAcpiProvider::new_uninit();
+        provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
+        {
+            let system_tables = provider.system_tables.lock();
+            system_tables.xsdt.store(xsdt_ptr, Ordering::Relaxed);
+        }
+
+        let table_to_add = AcpiTable {
+            signature: 0x1234,
+            length: 36,
+            revision: 1,
+            checksum: 0,
+            oem_id: *b"MYOEM ",
+            oem_table_id: *b"MYTABL  ",
+            oem_revision: 2,
+            creator_id: 0xDEADBEEF,
+            creator_revision: 1,
+            ..Default::default()
+        };
+
+        let result = provider.add_entry_to_xsdt(0xCAFEBABE, &table_to_add);
+        assert!(result.is_ok());
+
+        // we should now have 2 entries, the second of which is 0xCAFEBABE
+        {
+            let new_entries = provider.entries.read();
+            assert_eq!(new_entries.len(), 1);
+            assert_eq!(new_entries[0], 0xCAFEBABE);
+        }
+
+        // Verify the memory write of XSDT entry too
+        let entry_offset = ACPI_HEADER_LEN;
+        let raw_ptr = provider.system_tables.lock().xsdt.load(Ordering::Acquire) as *const u8;
+        let written = unsafe {
+            // read the 8 bytes at that offset
+            let ptr64 = raw_ptr.add(entry_offset) as *const u64;
+            ptr64.read_unaligned()
+        };
+        assert_eq!(written, 0xCAFEBABE, "entry was not written correctly to memory");
+
+        // Try removing the table
+        let removal_addr = unsafe { &*(0xCAFEBABE as *const AcpiTable) };
+        provider.remove_table_from_xsdt(removal_addr);
+        {
+            let new_entries = provider.entries.read();
+            assert_eq!(new_entries.len(), 0);
+        }
+        // XSDT doesn't have to zero entries, but should reduce length to mark the removed entry as invalid
+        let system_tables = provider.system_tables.lock();
+        assert_eq!(system_tables.xsdt_mut().unwrap().length, ACPI_HEADER_LEN as u32);
+    }
+
+    fn test_reallocate_xsdt() {}
+
+    fn test_delete_table() { // test for DSDT and FACS and FADT
+    }
+
+    fn test_remove_table_from_xsdt() {}
+
+    #[test]
+    fn test_acpi_table_update_checksum() {
+        // Create a fake table of length 16
+        let table_length = 16;
+        let checksum_offset = 4; // arbitrary offset within [0..16)
+
+        // Fill with a known pattern
+        // e.g. bytes = [1,2,3,4,5,...]
+        let mut table = (1u8..).take(table_length).collect::<Vec<u8>>();
+
+        // Call the checksum updater
+        StandardAcpiProvider::<MockBootServices>::acpi_table_update_checksum(
+            table.as_mut_ptr(),
+            table_length,
+            checksum_offset,
+        );
+
+        // Verify that the sum of all bytes modulo 256 is zero
+        let total: u8 = table.iter().fold(0u8, |sum, &b| sum.wrapping_add(b));
+        assert_eq!(total, 0, "ACPI checksum failed: table sum = {}", total);
+    }
 }

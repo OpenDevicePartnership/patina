@@ -199,11 +199,6 @@ pub struct AcpiXsdt {
     pub oem_revision: u32,
     pub creator_id: u32,
     pub creator_revision: u32,
-
-    // For Rust implentation conveinence: current XSDT entries
-    pub entries: Vec<u64>,
-    // For Rust implentation conveinence: max entries the currently allocated XSDT can hold
-    pub(crate) max_entries: usize,
 }
 
 pub trait AcpiInstallable: Any + DowncastSync {
