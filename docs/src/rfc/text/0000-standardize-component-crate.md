@@ -12,7 +12,6 @@ Service, Config, Hob, etc. definitions are located and accessed from.
 - 2025-05-22: Add Test Name requirements.
 - 2025-05-22: Add Documentation requirements.
 
-
 ## Motivation
 
 With more components being individually developed and packaged into separate crates, it becomes important to
@@ -37,7 +36,6 @@ Define a standard layout for a crate that produces a component(s).
 - Predictable Crate naming to easily find and identify available components for the core.
 - Documented Public API
 - Standardized on-platform test naming, for easy filtering of tests via the Test Component
-
 
 ## Unresolved Questions
 
@@ -100,18 +98,18 @@ All public modules, types, traits, etc. must be documented as specified in the e
 The below is a list of requirements for the crate, but it does not prevent additional modules from existing
 
 1. Type re-exports are allowed, and can be re-exported in the same locations as would a public new type for your crate.
-1. No public definitions are accessible via the top level lib.rs (or equivalent) module, only public modules.
-2. `component` module: This module must always exist, and contain the publicly importable component(s) for the crate.
-3. `config` module: This module may optionally exist if the component consumes configuration data that is registered
+2. No public definitions are accessible via the top level lib.rs (or equivalent) module, only public modules.
+3. `component` module: This module must always exist, and contain the publicly importable component(s) for the crate.
+4. `config` module: This module may optionally exist if the component consumes configuration data that is registered
    with the platform via `.with_config` and this config is not publically accessible via `patina_sdk` or elsewhere.
-4. `error` module: This module may optionally exist if a `service` module is present and the public Service's interface
+5. `error` module: This module may optionally exist if a `service` module is present and the public Service's interface
    contains custom errors.
-5. `hob` module: This module may optionally exist if a new guided hob type has been created for this component. The
+6. `hob` module: This module may optionally exist if a new guided hob type has been created for this component. The
    hob module and associated guided HOB(s) should be made public such that it can be consumed by others if the need
-   arise. Any common or spec defined HOBs should be added to the associated crates (such as `mu_rust_pi`, `patina_sdk`, 
+   arise. Any common or spec defined HOBs should be added to the associated crates (such as `mu_rust_pi`, `patina_sdk`,
    etc.) rather than this crate. HOBs may become a common interface and should thus be moved to the appropriate crate.
    If the HOB type already exists elsewhere, the crate should consume that definition instead of making their own.
-6. `service` module: This module may optionally exist if the component produces a service that is not publically
+7. `service` module: This module may optionally exist if the component produces a service that is not publically
    accessible via `patina_sdk` or another crate.
 
 Below is an example repository that contains all modules defined above, and also contain submodules for each module.
