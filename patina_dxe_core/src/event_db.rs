@@ -500,24 +500,6 @@ impl EventDb {
     }
 }
 
-struct EventNotificationIterator {
-    event_db: &'static SpinLockedEventDb,
-    tpl_level: efi::Tpl,
-}
-
-impl EventNotificationIterator {
-    fn new(event_db: &'static SpinLockedEventDb, tpl_level: efi::Tpl) -> Self {
-        EventNotificationIterator { event_db, tpl_level }
-    }
-}
-
-impl Iterator for EventNotificationIterator {
-    type Item = EventNotification;
-    fn next(&mut self) -> Option<EventNotification> {
-        self.event_db.lock().consume_next_event_notify(self.tpl_level)
-    }
-}
-
 /// Spin-Locked event database instance.
 ///
 /// This is the main access point for interaction with the event database.
@@ -639,7 +621,7 @@ impl SpinLockedEventDb {
 
     /// Queues the notify for the given event.
     ///
-    /// Queued events can be retrieved via [`event_notification_iter`](SpinLockedEventDb::event_notification_iter).
+    /// Queued events can be retrieved via [`consume_next_event_notify`](SpinLockedEventDb::consume_next_event_notify).
     ///
     /// ## Errors
     ///
@@ -661,7 +643,7 @@ impl SpinLockedEventDb {
     /// Sets a timer on the specified event
     ///
     /// [`timer_tick`](SpinLockedEventDb::timer_tick) is used to advanced time; when a timer expires, the corresponding
-    /// event is queued and can be retrieved via [`event_notification_iter`](SpinLockedEventDb::event_notification_iter).
+    /// event is queued and can be retrieved via [`consume_next_event_notify`](SpinLockedEventDb::consume_next_event_notify).
     ///
     /// ## Errors
     ///
@@ -686,23 +668,9 @@ impl SpinLockedEventDb {
     /// time that has passed per this call. If any timers are expired, the corresponding events will be signaled.
     ///
     /// signaled events with notifications are queued and can be retrieved via
-    /// [`event_notification_iter`](SpinLockedEventDb::event_notification_iter).
+    /// [`consume_next_event_notify`](SpinLockedEventDb::consume_next_event_notify).
     pub fn timer_tick(&self, current_time: u64) {
         self.lock().timer_tick(current_time);
-    }
-
-    /// Returns an iterator over pending event notifications that should be dispatched at or above the given efi::TPL level.
-    ///
-    /// Events can be added to the pending queue directly via
-    /// [`queue_event_notify`](SpinLockedEventDb::queue_event_notify) or via timer expiration configured via
-    /// [`set_timer`](SpinLockedEventDb::set_timer) followed by a [`timer_tick`](SpinLockedEventDb::timer_tick) that
-    /// causes the timer to expire.
-    ///
-    /// Any new events added to the dispatch queue between calls to next() on the iterator will also be returned by the
-    /// iterator - the iterator will only stop if there are no pending dispatches at or above the given efi::TPL on a call to
-    /// next().
-    pub fn event_notification_iter(&'static self, tpl_level: efi::Tpl) -> impl Iterator<Item = EventNotification> {
-        EventNotificationIterator::new(self, tpl_level)
     }
 
     /// Returns the next pending event notification (if any) that should be dispatched at or above the given TPL level.
@@ -728,6 +696,7 @@ unsafe impl Sync for SpinLockedEventDb {}
 #[cfg(test)]
 mod tests {
     extern crate std;
+    use core::iter;
     use core::str::FromStr;
 
     use alloc::{vec, vec::Vec};
@@ -908,8 +877,7 @@ mod tests {
             assert!(SPIN_LOCKED_EVENT_DB.lock().pending_notifies.len() == 1);
 
             //ensure the mere act of collecting the events doesn't allow another notification to be queued
-            let _ =
-                SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
+            let _ = SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION);
             assert!(SPIN_LOCKED_EVENT_DB.signal_event(event).is_ok());
             assert!(SPIN_LOCKED_EVENT_DB.lock().pending_notifies.is_empty());
 
@@ -1194,13 +1162,7 @@ mod tests {
         with_locked_state(|| {
             static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
 
-            assert_eq!(
-                SPIN_LOCKED_EVENT_DB
-                    .event_notification_iter(efi::TPL_APPLICATION)
-                    .collect::<Vec<EventNotification>>()
-                    .len(),
-                0
-            );
+            assert!(SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION).is_none());
 
             let callback_evt1 = SPIN_LOCKED_EVENT_DB
                 .create_event(
@@ -1264,9 +1226,8 @@ mod tests {
             SPIN_LOCKED_EVENT_DB.signal_event(notify_evt2).unwrap();
             SPIN_LOCKED_EVENT_DB.signal_event(high_evt2).unwrap();
 
-            for (event_notification, expected_event) in
-                SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_NOTIFY).zip(vec![high_evt1, high_evt2])
-            {
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_NOTIFY));
+            for (event_notification, expected_event) in event_iter.zip(vec![high_evt1, high_evt2]) {
                 assert_eq!(event_notification.event, expected_event);
                 assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
                 let _ = SPIN_LOCKED_EVENT_DB.clear_signal(expected_event);
@@ -1276,9 +1237,9 @@ mod tests {
             SPIN_LOCKED_EVENT_DB.signal_event(high_evt1).unwrap();
             SPIN_LOCKED_EVENT_DB.signal_event(high_evt2).unwrap();
 
-            for (event_notification, expected_event) in SPIN_LOCKED_EVENT_DB
-                .event_notification_iter(efi::TPL_CALLBACK)
-                .zip(vec![high_evt1, high_evt2, notify_evt1, notify_evt2])
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_CALLBACK));
+            for (event_notification, expected_event) in
+                event_iter.zip(vec![high_evt1, high_evt2, notify_evt1, notify_evt2])
             {
                 assert_eq!(event_notification.event, expected_event);
                 assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
@@ -1291,9 +1252,9 @@ mod tests {
             SPIN_LOCKED_EVENT_DB.signal_event(notify_evt1).unwrap();
             SPIN_LOCKED_EVENT_DB.signal_event(notify_evt2).unwrap();
 
-            for (event_notification, expected_event) in SPIN_LOCKED_EVENT_DB
-                .event_notification_iter(efi::TPL_APPLICATION)
-                .zip(vec![high_evt1, high_evt2, notify_evt1, notify_evt2, callback_evt1, callback_evt2])
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_CALLBACK));
+            for (event_notification, expected_event) in
+                event_iter.zip(vec![high_evt1, high_evt2, notify_evt1, notify_evt2, callback_evt1, callback_evt2])
             {
                 assert_eq!(event_notification.event, expected_event);
                 assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
@@ -1313,10 +1274,8 @@ mod tests {
             SPIN_LOCKED_EVENT_DB.close_event(notify_evt1).unwrap();
             SPIN_LOCKED_EVENT_DB.close_event(callback_evt1).unwrap();
 
-            for (event_notification, expected_event) in SPIN_LOCKED_EVENT_DB
-                .event_notification_iter(efi::TPL_APPLICATION)
-                .zip(vec![high_evt2, notify_evt2, callback_evt2])
-            {
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_CALLBACK));
+            for (event_notification, expected_event) in event_iter.zip(vec![high_evt2, notify_evt2, callback_evt2]) {
                 assert_eq!(event_notification.event, expected_event);
                 assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
                 let _ = SPIN_LOCKED_EVENT_DB.clear_signal(expected_event);
@@ -1349,13 +1308,8 @@ mod tests {
                 let db = SPIN_LOCKED_EVENT_DB.lock();
                 assert_eq!(db.pending_notifies.len(), 1);
             }
-            assert_eq!(
-                SPIN_LOCKED_EVENT_DB
-                    .event_notification_iter(efi::TPL_APPLICATION)
-                    .collect::<Vec<EventNotification>>()
-                    .len(),
-                1
-            );
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            assert_eq!(event_iter.count(), 1);
         });
     }
 
@@ -1403,13 +1357,8 @@ mod tests {
 
             SPIN_LOCKED_EVENT_DB.signal_event(callback_evt1).unwrap();
 
-            assert_eq!(
-                SPIN_LOCKED_EVENT_DB
-                    .event_notification_iter(efi::TPL_APPLICATION)
-                    .collect::<Vec<EventNotification>>()
-                    .len(),
-                0
-            );
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            assert_eq!(event_iter.count(), 0);
         });
     }
 
@@ -1434,13 +1383,8 @@ mod tests {
             SPIN_LOCKED_EVENT_DB.queue_event_notify(callback_evt1).unwrap();
             SPIN_LOCKED_EVENT_DB.queue_event_notify(callback_evt1).unwrap();
 
-            assert_eq!(
-                SPIN_LOCKED_EVENT_DB
-                    .event_notification_iter(efi::TPL_APPLICATION)
-                    .collect::<Vec<EventNotification>>()
-                    .len(),
-                1
-            );
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            assert_eq!(event_iter.count(), 1);
         });
     }
 
@@ -1460,13 +1404,8 @@ mod tests {
             SPIN_LOCKED_EVENT_DB.queue_event_notify(callback_evt1).unwrap();
             SPIN_LOCKED_EVENT_DB.queue_event_notify(callback_evt2).unwrap();
 
-            assert_eq!(
-                SPIN_LOCKED_EVENT_DB
-                    .event_notification_iter(efi::TPL_APPLICATION)
-                    .collect::<Vec<EventNotification>>()
-                    .len(),
-                2
-            );
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            assert_eq!(event_iter.count(), 2);
         });
     }
 
@@ -1634,34 +1573,29 @@ mod tests {
 
             SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Relative, Some(0x100), None).unwrap();
             SPIN_LOCKED_EVENT_DB.set_timer(event2, TimerDelay::Relative, Some(0x400), None).unwrap();
-            assert_eq!(
-                SPIN_LOCKED_EVENT_DB
-                    .event_notification_iter(efi::TPL_APPLICATION)
-                    .collect::<Vec<EventNotification>>()
-                    .len(),
-                0
-            );
+
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            assert_eq!(event_iter.count(), 0);
 
             //tick past the first timer
             SPIN_LOCKED_EVENT_DB.timer_tick(0x200);
 
-            let events =
-                SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            let events = event_iter.collect::<Vec<EventNotification>>();
             assert_eq!(events.len(), 1);
             assert_eq!(events[0].event, event);
 
             //tick again, but not enough to trigger second timer.
             SPIN_LOCKED_EVENT_DB.timer_tick(0x300);
 
-            let events =
-                SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
-            assert_eq!(events.len(), 0);
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            assert_eq!(event_iter.count(), 0);
 
             //tick past the second timer.
             SPIN_LOCKED_EVENT_DB.timer_tick(0x400);
 
-            let events =
-                SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            let events = event_iter.collect::<Vec<EventNotification>>();
             assert_eq!(events.len(), 1);
             assert_eq!(events[0].event, event2);
         });
@@ -1694,40 +1628,34 @@ mod tests {
             SPIN_LOCKED_EVENT_DB.set_timer(event, TimerDelay::Periodic, Some(0x100), Some(0x100)).unwrap();
             SPIN_LOCKED_EVENT_DB.set_timer(event2, TimerDelay::Periodic, Some(0x500), Some(0x500)).unwrap();
 
-            assert_eq!(
-                SPIN_LOCKED_EVENT_DB
-                    .event_notification_iter(efi::TPL_APPLICATION)
-                    .collect::<Vec<EventNotification>>()
-                    .len(),
-                0
-            );
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            assert_eq!(event_iter.count(), 0);
 
             //tick past the first timer
             SPIN_LOCKED_EVENT_DB.timer_tick(0x100);
-            let events =
-                SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            let events = event_iter.collect::<Vec<EventNotification>>();
             assert_eq!(events.len(), 1);
             assert_eq!(events[0].event, event);
             let _ = SPIN_LOCKED_EVENT_DB.clear_signal(events[0].event);
 
             //tick just prior to re-armed first timer
             SPIN_LOCKED_EVENT_DB.timer_tick(0x1FF);
-            let events =
-                SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
-            assert_eq!(events.len(), 0);
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            assert_eq!(event_iter.count(), 0);
 
             //tick past the re-armed first timer
             SPIN_LOCKED_EVENT_DB.timer_tick(0x210);
-            let events =
-                SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            let events = event_iter.collect::<Vec<EventNotification>>();
             assert_eq!(events.len(), 1);
             assert_eq!(events[0].event, event);
             let _ = SPIN_LOCKED_EVENT_DB.clear_signal(events[0].event);
 
             //tick past the second timer.
             SPIN_LOCKED_EVENT_DB.timer_tick(0x500);
-            let events =
-                SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            let events = event_iter.collect::<Vec<EventNotification>>();
             assert_eq!(events.len(), 2);
             assert_eq!(events[0].event, event);
             assert_eq!(events[1].event, event2);
@@ -1736,8 +1664,8 @@ mod tests {
 
             //tick past the rearmed first timer
             SPIN_LOCKED_EVENT_DB.timer_tick(0x600);
-            let events =
-                SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            let events = event_iter.collect::<Vec<EventNotification>>();
             assert_eq!(events.len(), 1);
             assert_eq!(events[0].event, event);
             let _ = SPIN_LOCKED_EVENT_DB.clear_signal(events[0].event);
@@ -1747,18 +1675,16 @@ mod tests {
 
             //tick past where it would have been.
             SPIN_LOCKED_EVENT_DB.timer_tick(0x700);
-            let events =
-                SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
-            assert_eq!(events.len(), 0);
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            assert_eq!(event_iter.count(), 0);
 
             //close the event for the second timer
             SPIN_LOCKED_EVENT_DB.close_event(event2).unwrap();
 
             //tick past where it would have been.
             SPIN_LOCKED_EVENT_DB.timer_tick(0x1000);
-            let events =
-                SPIN_LOCKED_EVENT_DB.event_notification_iter(efi::TPL_APPLICATION).collect::<Vec<EventNotification>>();
-            assert_eq!(events.len(), 0);
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+            assert_eq!(event_iter.count(), 0);
         });
     }
 }
