@@ -3,72 +3,73 @@ use crate::signature;
 use crate::{error::AcpiError, service::TableKey};
 
 use core::any::Any;
+use core::ptr::addr_of;
 use downcast_rs::{impl_downcast, DowncastSync};
 
 #[repr(C, packed)]
 #[derive(Default, Clone, Copy)]
 pub struct AcpiFadt {
-    pub signature: u32,
+    pub(crate) signature: u32,
     pub(crate) length: u32,
-    pub revision: u8,
-    pub checksum: u8,
-    pub oem_id: [u8; 6],
-    pub oem_table_id: [u8; 8],
-    pub oem_revision: u32,
-    pub creator_id: u32,
-    pub creator_revision: u32,
+    pub(crate) revision: u8,
+    pub(crate) checksum: u8,
+    pub(crate) oem_id: [u8; 6],
+    pub(crate) oem_table_id: [u8; 8],
+    pub(crate) oem_revision: u32,
+    pub(crate) creator_id: u32,
+    pub(crate) creator_revision: u32,
 
-    _firmware_ctrl: u32,
-    _dsdt: u32,
-    _reserved0: u8,
-    _preferred_pm_profile: u8,
-    _sci_int: u16,
-    _smi_cmd: u32,
-    _acpi_enable: u8,
-    _acpi_disable: u8,
-    _s4bios_req: u8,
-    _pstate_cnt: u8,
-    _pm1a_evt_blk: u32,
-    _pm1b_evt_blk: u32,
-    _pm1a_cnt_blk: u32,
-    _pm1b_cnt_blk: u32,
-    _pm2_cnt_blk: u32,
-    _pm_tmr_blk: u32,
-    _gpe0_blk: u32,
-    _gpe1_blk: u32,
-    _pm1_evt_len: u8,
-    _pm1_cnt_len: u8,
-    _pm2_cnt_len: u8,
-    _pm_tmr_len: u8,
-    _gpe0_blk_len: u8,
-    _gpe1_blk_len: u8,
-    _gpe1_base: u8,
-    _cst_cnt: u8,
-    _p_lvl2_lat: u16,
-    _p_lvl3_lat: u16,
-    _flush_size: u16,
-    _flush_stride: u16,
-    _duty_offset: u8,
-    _duty_width: u8,
-    _day_alrm: u8,
-    _mon_alrm: u8,
-    _century: u8,
-    _ia_pc_boot_arch: u16,
-    _reserved1: u8,
-    _flags: u32,
-    pub reset_reg: GenericAddressStructure,
-    pub reset_value: u8,
-    _reserved2: [u8; 3],
+    pub(crate) _firmware_ctrl: u32,
+    pub(crate) _dsdt: u32,
+    pub(crate) _reserved0: u8,
+    pub(crate) _preferred_pm_profile: u8,
+    pub(crate) _sci_int: u16,
+    pub(crate) _smi_cmd: u32,
+    pub(crate) _acpi_enable: u8,
+    pub(crate) _acpi_disable: u8,
+    pub(crate) _s4bios_req: u8,
+    pub(crate) _pstate_cnt: u8,
+    pub(crate) _pm1a_evt_blk: u32,
+    pub(crate) _pm1b_evt_blk: u32,
+    pub(crate) _pm1a_cnt_blk: u32,
+    pub(crate) _pm1b_cnt_blk: u32,
+    pub(crate) _pm2_cnt_blk: u32,
+    pub(crate) _pm_tmr_blk: u32,
+    pub(crate) _gpe0_blk: u32,
+    pub(crate) _gpe1_blk: u32,
+    pub(crate) _pm1_evt_len: u8,
+    pub(crate) _pm1_cnt_len: u8,
+    pub(crate) _pm2_cnt_len: u8,
+    pub(crate) _pm_tmr_len: u8,
+    pub(crate) _gpe0_blk_len: u8,
+    pub(crate) _gpe1_blk_len: u8,
+    pub(crate) _gpe1_base: u8,
+    pub(crate) _cst_cnt: u8,
+    pub(crate) _p_lvl2_lat: u16,
+    pub(crate) _p_lvl3_lat: u16,
+    pub(crate) _flush_size: u16,
+    pub(crate) _flush_stride: u16,
+    pub(crate) _duty_offset: u8,
+    pub(crate) _duty_width: u8,
+    pub(crate) _day_alrm: u8,
+    pub(crate) _mon_alrm: u8,
+    pub(crate) _century: u8,
+    pub(crate) _ia_pc_boot_arch: u16,
+    pub(crate) _reserved1: u8,
+    pub(crate) _flags: u32,
+    pub(crate) reset_reg: GenericAddressStructure,
+    pub(crate) reset_value: u8,
+    pub(crate) _reserved2: [u8; 3],
     pub(crate) x_firmware_ctrl: u64,
     pub(crate) x_dsdt: u64,
-    pub x_pm1a_evt_blk: GenericAddressStructure,
-    pub x_pm1b_evt_blk: GenericAddressStructure,
-    pub x_pm1a_cnt_blk: GenericAddressStructure,
-    pub x_pm1b_cnt_blk: GenericAddressStructure,
-    pub x_pm2_cnt_blk: GenericAddressStructure,
-    pub x_pm_tmr_blk: GenericAddressStructure,
-    pub x_gpe0_blk: GenericAddressStructure,
-    pub x_gpe1_blk: GenericAddressStructure,
+    pub(crate) x_pm1a_evt_blk: GenericAddressStructure,
+    pub(crate) x_pm1b_evt_blk: GenericAddressStructure,
+    pub(crate) x_pm1a_cnt_blk: GenericAddressStructure,
+    pub(crate) x_pm1b_cnt_blk: GenericAddressStructure,
+    pub(crate) x_pm2_cnt_blk: GenericAddressStructure,
+    pub(crate) x_pm_tmr_blk: GenericAddressStructure,
+    pub(crate) x_gpe0_blk: GenericAddressStructure,
+    pub(crate) x_gpe1_blk: GenericAddressStructure,
 }
 
 #[repr(C, packed)]
@@ -130,17 +131,33 @@ impl TryFrom<AcpiTable> for AcpiFadt {
     }
 }
 
+/// Helper to read unaligned fields on FADT
+/// SAFETY: `self` is always a valid FADT with `x_firmware_ctrl` at the expected offset
+impl AcpiFadt {
+    pub unsafe fn get_x_firmware_ctrl(&self) -> u64 {
+        let p: *const u64 = addr_of!(self.x_firmware_ctrl);
+        core::ptr::read_unaligned(p)
+    }
+
+    /// SAFETY: This writes `val` into the packed field, even if unaligned.
+    pub unsafe fn set_x_firmware_ctrl(&mut self, val: u64) {
+        let p: *mut u64 = addr_of!(self.x_firmware_ctrl) as *mut u64;
+        core::ptr::write_unaligned(p, val);
+    }
+}
+
 #[repr(C, packed)]
+#[derive(Default)]
 pub struct AcpiFacs {
-    pub signature: u32,
-    pub length: u32,
-    pub hardware_signature: u32,
-    _firmware_waking_vector: u32,
-    pub global_lock: u32,
-    pub flags: u32,
-    pub firmware_waking_vector: u64,
-    pub version: u8,
-    pub reserved: [u8; 31],
+    pub(crate) signature: u32,
+    pub(crate) length: u32,
+    pub(crate) hardware_signature: u32,
+    pub(crate) _firmware_waking_vector: u32,
+    pub(crate) global_lock: u32,
+    pub(crate) flags: u32,
+    pub(crate) firmware_waking_vector: u64,
+    pub(crate) version: u8,
+    pub(crate) reserved: [u8; 31],
 }
 
 #[repr(C, packed)]
@@ -157,6 +174,7 @@ pub struct AcpiDsdt {
 }
 
 #[repr(C, packed)]
+#[derive(Default)]
 pub struct AcpiRsdp {
     pub signature: u64,
     pub(crate) checksum: u8,
@@ -198,7 +216,7 @@ pub trait AcpiInstallable: Any + DowncastSync {
 impl_downcast!(sync AcpiInstallable);
 
 #[repr(C)]
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct AcpiTable {
     pub signature: u32,
     pub length: u32,

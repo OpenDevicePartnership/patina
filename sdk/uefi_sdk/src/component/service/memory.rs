@@ -20,11 +20,15 @@ use r_efi::efi;
 
 use crate::{base::UEFI_PAGE_SIZE, efi_types::EfiMemoryType, error::EfiError};
 
+#[cfg(any(test, feature = "mockall"))]
+use mockall::automock;
+
 /// The `MemoryManager` trait provides an interface for allocating, freeing,
 /// and manipulating access to memory. This trait is intended to be implemented
 /// by the core and serve as the API by which both internal code and external
 /// components can access memory services.
-pub trait MemoryManager {
+#[cfg_attr(any(test, feature = "mockall"), automock)]
+pub trait MemoryManager: Send + Sync {
     /// Allocates pages of memory.
     ///
     /// Allocates the specified number of pages of the memory type requested.

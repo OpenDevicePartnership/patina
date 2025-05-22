@@ -13,4 +13,5 @@ pub enum AcpiError {
     InvalidTableFormat,
     HobTableNotInstalled,
     InvalidTableLength,
+    InvalidXsdtEntry,
 }

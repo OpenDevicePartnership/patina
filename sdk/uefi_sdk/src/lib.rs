@@ -14,7 +14,7 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-#![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
+#![cfg_attr(all(not(test), not(feature = "mockall")), no_std)]
 #![cfg_attr(feature = "alloc", feature(allocator_api))]
 
 extern crate alloc;
