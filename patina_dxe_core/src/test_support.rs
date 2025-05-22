@@ -10,7 +10,6 @@
 //!
 use crate::{protocols::PROTOCOL_DB, GCD};
 use core::ffi::c_void;
-use mu_pi::hob::Hob::MemoryAllocationModule;
 use mu_pi::hob::HobList;
 use mu_pi::{
     dxe_services::GcdMemoryType,
@@ -329,9 +328,10 @@ mod tests {
     use crate::test_support::header;
     use crate::test_support::hob;
     use crate::test_support::BootMode;
+    use mu_pi::hob::Hob::MemoryAllocationModule;
     use patina_sdk::guid;
 
-    /*  Compact Hoblist with DXE core Alloction hob */
+    // Compact Hoblist with DXE core Alloction hob
     pub(crate) fn build_test_hob_list_compact(mem_size: u64) -> *const c_void {
         let mem = unsafe { get_memory(mem_size as usize) };
         let mem_base = mem.as_mut_ptr() as u64;
@@ -403,19 +403,19 @@ mod tests {
         unsafe {
             let mut cursor = mem.as_mut_ptr();
 
-            //PHIT HOB
+            // PHIT HOB
             core::ptr::copy(&phit, cursor as *mut hob::PhaseHandoffInformationTable, 1);
             cursor = cursor.offset(phit.header.length as isize);
 
-            //CPU HOB
+            // CPU HOB
             core::ptr::copy(&cpu, cursor as *mut hob::Cpu, 1);
             cursor = cursor.offset(cpu.header.length as isize);
 
-            //resource descriptor HOBs - see above comment
+            // Resource descriptor HOB
             core::ptr::copy(&resource_descriptor1, cursor as *mut hob::ResourceDescriptor, 1);
             cursor = cursor.offset(resource_descriptor1.header.length as isize);
 
-            //memory allocation HOBs.
+            // Memory allocation HOBs.
             for (idx, memory_type) in [
                 efi::RESERVED_MEMORY_TYPE,
                 efi::LOADER_CODE,
@@ -445,16 +445,16 @@ mod tests {
         mem.as_ptr() as *const c_void
     }
 
-    /*
-     * Fill in Dxe Image in to hoblist.
-     * Usage - fill_file_buffer_in_memory_allocation_module(&hob_list).unwrap();
-     */
+    //
+    // Fill in Dxe Image in to hoblist.
+    // Usage - fill_file_buffer_in_memory_allocation_module(&hob_list).unwrap();
+    //
     pub(crate) fn fill_file_buffer_in_memory_allocation_module(hob_list: &HobList) -> Result<(), &'static str> {
         let mut file = File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
         let mut image: Vec<u8> = Vec::new();
         file.read_to_end(&mut image).expect("failed to read test file");
 
-        /* Locate the MemoryAllocationModule HOB for the DXE Core */
+        // Locate the MemoryAllocationModule HOB for the DXE Core
         let dxe_core_hob = hob_list
             .iter()
             .find_map(|hob| match hob {
@@ -466,14 +466,14 @@ mod tests {
         let memory_base_address = dxe_core_hob.alloc_descriptor.memory_base_address;
         let memory_length = dxe_core_hob.alloc_descriptor.memory_length;
 
-        /* Get the file size */
+        // Get the file size
         let file_size = file.metadata().map_err(|_| "Failed to get file metadata")?.len();
 
         if file_size > (memory_length as usize).try_into().unwrap() {
             return Err("File contents exceed allocated memory length");
         }
 
-        /* Write the file contents into the memory region specified by the HOB */
+        // Write the file contents into the memory region specified by the HOB
         unsafe {
             let memory_slice = slice::from_raw_parts_mut(memory_base_address as *mut u8, memory_length as usize);
             let file_size = file_size as usize; // Convert file_size to usize
