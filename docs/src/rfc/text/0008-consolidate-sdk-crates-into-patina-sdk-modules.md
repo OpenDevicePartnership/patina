@@ -7,6 +7,12 @@ modules. No functional changes to the modules are intended.
 ## Change Log
 
 - 2025-05-20: Initial draft of the RFC.
+- 2025-05-22: Final updates during FCP
+  - `patina_test_macro` will be merged into `patina_sdk_macro`, but
+  `patina_sdk_macro` will remain a separate crate from `patina_sdk` because
+  procedural macros must be defined in a separate crate.
+  - Rename `0000-consolidate-sdk-crates-into-patina-sdk-modules` to
+    `0008-consolidate-sdk-crates-into-patina-sdk-modules`
 
 ## Motivation
 
@@ -53,9 +59,6 @@ the modules.
    reorganization.
 
 ## Unresolved Questions
-
-- Why is `patina_sdk_macro` kept separate from `patina_sdk`? Should it be merged
-  into the `patina_sdk` crate as a `macros` module instead?
 
 ## Prior Art: Crate/Module Hierarchy Before and After Consolidation
 
