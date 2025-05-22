@@ -106,9 +106,11 @@ The below is a list of requirements for the crate, but it does not prevent addit
    with the platform via `.with_config` and this config is not publically accessible via `patina_sdk` or elsewhere.
 4. `error` module: This module may optionally exist if a `service` module is present and the public Service's interface
    contains custom errors.
-5. `hob` module: This module may optionally exist only if the hob is expected to be consumable by other public
-   components and is not publically accessible via `patina_sdk` or elsewhere. If a Hob is only intended for this
-   specific component(s) defined in the crate, then this may be kept private.
+5. `hob` module: This module may optionally exist if a new guided hob type has been created for this component. The
+   hob module and associated guided HOB(s) should be made public such that it can be consumed by others if the need
+   arise. Any common or spec defined HOBs should be added to the associated crates (such as `mu_rust_pi`, `patina_sdk`, 
+   etc.) rather than this crate. HOBs may become a common interface and should thus be moved to the appropriate crate.
+   If the HOB type already exists elsewhere, the crate should consume that definition instead of making their own.
 6. `service` module: This module may optionally exist if the component produces a service that is not publically
    accessible via `patina_sdk` or another crate.
 
