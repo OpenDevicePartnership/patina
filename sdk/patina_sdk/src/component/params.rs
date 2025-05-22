@@ -105,12 +105,12 @@ use core::{
 use alloc::boxed::Box;
 
 use crate::{
+    boot_services::StandardBootServices,
     component::{
         metadata::MetaData,
         service::IntoService,
         storage::{Deferred, Storage, UnsafeStorageCell},
     },
-    boot_services::StandardBootServices,
     runtime_services::StandardRuntimeServices,
 };
 
@@ -879,7 +879,7 @@ mod tests {
 
         <StandardBootServices as Param>::init_state(&mut storage, &mut mock_metadata);
         assert_eq!(
-            Err("boot_services::StandardBootServices"),
+            Err("patina_sdk::boot_services::StandardBootServices"),
             <StandardBootServices as Param>::try_validate(&(), (&storage).into())
         );
     }
@@ -922,7 +922,7 @@ mod tests {
         let mut mock_meadata = MetaData::new::<i32>();
         <(StandardBootServices, Config<i32>) as Param>::init_state(&mut storage, &mut mock_meadata);
         assert_eq!(
-            Err("boot_services::StandardBootServices"),
+            Err("patina_sdk::boot_services::StandardBootServices"),
             <(StandardBootServices, Config<i32>) as Param>::try_validate(&((), 1), (&storage).into())
         );
     }

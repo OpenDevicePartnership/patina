@@ -110,8 +110,8 @@ unsafe impl<T: ?Sized + Sync, B: BootServices> Sync for TplMutexGuard<'_, T, B> 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::boot_services::MockBootServices;
     use mockall::predicate::*;
-    use boot_services::MockBootServices;
 
     #[derive(Debug, Default)]
     struct TestStruct {

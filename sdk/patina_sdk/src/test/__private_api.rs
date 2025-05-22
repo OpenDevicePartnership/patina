@@ -120,7 +120,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use patina_sdk::component::Storage;
+    use crate::component::Storage;
 
     #[test]
     fn test_should_run() {

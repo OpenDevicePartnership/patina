@@ -148,12 +148,9 @@ mod struct_component;
 
 use crate::error::Result;
 
-#[cfg(any(feature = "doc", feature = "core"))]
 pub use metadata::MetaData;
-#[cfg(any(feature = "doc", feature = "core"))]
-pub use storage::UnsafeStorageCell;
-
 pub use storage::Storage;
+pub use storage::UnsafeStorageCell;
 
 /// A part of the private API that must be public for the component macro to work. Users should not use this directly
 /// and it is subject to change at any time.

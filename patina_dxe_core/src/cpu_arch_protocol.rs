@@ -8,9 +8,9 @@ use patina_internal_cpu::{
     interrupts::{self, ExceptionType, HandlerType, InterruptManager},
 };
 use patina_sdk::{
+    boot_services::{BootServices, StandardBootServices},
     component::service::Service,
     error::{EfiError, Result},
-    boot_services::{BootServices, StandardBootServices},
     uefi_protocol::ProtocolInterface,
 };
 use r_efi::efi;

@@ -23,11 +23,11 @@ use scroll::Pwrite;
 
 use patina_sdk::{
     base::UEFI_PAGE_SIZE,
-    error::EfiError,
     boot_services::{
         allocation::{AllocType, MemoryType},
         BootServices,
     },
+    error::EfiError,
     runtime_services::RuntimeServices,
 };
 

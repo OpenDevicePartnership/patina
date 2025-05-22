@@ -156,13 +156,17 @@ impl<R: RuntimeServices> FallibleStreamingIterator for VariableNameIterator<'_, 
 
 #[cfg(test)]
 mod test {
-    use efi;
+    use r_efi::efi;
 
     use super::*;
-    use crate::StandardRuntimeServices;
-    use core::mem;
-
-    use crate::test::*;
+    use crate::runtime_services::{
+        test::{
+            mock_efi_get_next_variable_name, runtime_services, DUMMY_FIRST_NAME, DUMMY_FIRST_NAMESPACE,
+            DUMMY_SECOND_NAME, DUMMY_SECOND_NAMESPACE,
+        },
+        StandardRuntimeServices,
+    };
+    use std::mem;
 
     #[test]
     fn test_variable_name_iterator_from_first() {

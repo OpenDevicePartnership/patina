@@ -11,8 +11,8 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use patina_sdk::boot_services::{BootServices, StandardBootServices};
-use patina_sdk::{u_assert, u_assert_eq};
 use patina_sdk::test::uefi_test;
+use patina_sdk::{u_assert, u_assert_eq};
 use r_efi::efi;
 
 use crate::{memory_log, protocol::AdvancedLoggerProtocol};

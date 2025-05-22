@@ -48,9 +48,9 @@ use patina_sdk::{
     component::{hob::Hob, params::Config, IntoComponent},
     error::EfiError,
     guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
-    uefi_protocol::status_code::StatusCodeRuntimeProtocol,
     runtime_services::{RuntimeServices, StandardRuntimeServices},
     tpl_mutex::TplMutex,
+    uefi_protocol::status_code::StatusCodeRuntimeProtocol,
 };
 
 use crate::{
@@ -641,8 +641,8 @@ mod test {
             c_ptr::{CMutPtr, CPtr},
             MockBootServices,
         },
-        uefi_protocol::ProtocolInterface,
         runtime_services::MockRuntimeServices,
+        uefi_protocol::ProtocolInterface,
     };
 
     use crate::{

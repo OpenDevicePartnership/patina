@@ -13,6 +13,7 @@ use crate::{
     runtime_services::StandardRuntimeServices,
 };
 
+use crate::boot_services::StandardBootServices;
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{
     any::{Any, TypeId},
@@ -22,7 +23,6 @@ use core::{
     ops::{Deref, DerefMut},
     ptr,
 };
-use crate::boot_services::StandardBootServices;
 use r_efi::efi::Guid;
 
 use super::{

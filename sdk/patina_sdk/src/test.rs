@@ -19,6 +19,8 @@
 //! ```rust
 //! use patina_sdk::test::*;
 //! use patina_sdk::boot_services::StandardBootServices;
+//! use patina_sdk::test::uefi_test;
+//! use patina_sdk::{u_assert, u_assert_eq};
 //!
 //! let component = patina_sdk::test::TestRunner::default()
 //!   .with_filter("aarch64") // Only run tests with "aarch64" in their name & path (my_crate::aarch64::test)
@@ -104,6 +106,8 @@ pub type Result = core::result::Result<(), &'static str>;
 /// ```rust
 /// use patina_sdk::test::*;
 /// use patina_sdk::boot_services::StandardBootServices;
+/// use patina_sdk::test::uefi_test;
+/// use patina_sdk::{u_assert, u_assert_eq};
 ///
 /// #[uefi_test]
 /// fn test_case() -> Result {
@@ -251,7 +255,7 @@ impl TestRunner {
 
 #[cfg(test)]
 mod tests {
-    use patina_sdk::component::{params::Config, IntoComponent, Storage};
+    use crate::component::{params::Config, IntoComponent, Storage};
 
     // A test function where we mock DxeComponentInterface to return what we want for the test.
     #[allow(unused)]
@@ -289,7 +293,7 @@ mod tests {
         skip: false,
         should_fail: false,
         fail_msg: None,
-        func: |storage| crate::__private_api::FunctionTest::new(test_function).run(storage.into()),
+        func: |storage| crate::test::__private_api::FunctionTest::new(test_function).run(storage.into()),
     };
 
     #[cfg_attr(not(feature = "off"), linkme::distributed_slice(super::__private_api::TEST_CASES))]
@@ -299,7 +303,7 @@ mod tests {
         skip: true,
         should_fail: false,
         fail_msg: None,
-        func: |storage| crate::__private_api::FunctionTest::new(test_function).run(storage.into()),
+        func: |storage| crate::test::__private_api::FunctionTest::new(test_function).run(storage.into()),
     };
 
     #[test]
