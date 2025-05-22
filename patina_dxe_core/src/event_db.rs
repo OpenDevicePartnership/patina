@@ -705,6 +705,17 @@ impl SpinLockedEventDb {
         EventNotificationIterator::new(self, tpl_level)
     }
 
+    /// Returns the next pending event notification (if any) that should be dispatched at or above the given TPL level.
+    ///
+    /// Events can be added to the pending queue directly via
+    /// [`queue_event_notify`](SpinLockedEventDb::queue_event_notify) or via timer expiration configured via
+    /// [`set_timer`](SpinLockedEventDb::set_timer) followed by a [`timer_tick`](SpinLockedEventDb::timer_tick) that
+    /// causes the timer to expire.
+    ///
+    pub fn consume_next_event_notify(&self, tpl_level: efi::Tpl) -> Option<EventNotification> {
+        self.lock().consume_next_event_notify(tpl_level)
+    }
+
     /// Indicates whether a given event is valid.
     pub fn is_valid(&self, event: efi::Event) -> bool {
         self.lock().is_valid(event)
