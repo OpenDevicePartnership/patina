@@ -482,4 +482,12 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_build_test_hob_list_compact() {
+        let physical_hob_list = build_test_hob_list_compact(0x2000000);
+        let mut hob_list = HobList::default();
+        hob_list.discover_hobs(physical_hob_list);
+        fill_file_buffer_in_memory_allocation_module(&hob_list).unwrap();
+    }
 }
