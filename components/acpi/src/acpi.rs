@@ -5,25 +5,17 @@ use core::cell::OnceCell;
 use core::ptr::copy_nonoverlapping;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering};
 use spin::rwlock::RwLock;
-use spin::RwLockReadGuard;
-use spin::{Mutex, Once};
-use uefi_sdk::boot_services::tpl::Tpl;
+use spin::Mutex;
 use uefi_sdk::component::hob::Hob;
-use uefi_sdk::component::service::memory::{
-    self, AllocationOptions, MemoryManager, PageAllocation, PageAllocationStrategy,
-};
+use uefi_sdk::component::service::memory::{AllocationOptions, MemoryManager, PageAllocation, PageAllocationStrategy};
 use uefi_sdk::component::service::{IntoService, Service};
 use uefi_sdk::efi_types::EfiMemoryType;
-use uefi_sdk::tpl_mutex::TplMutex;
 
 use alloc::vec;
 use bitflags::bitflags;
 use uefi_sdk::{
     base::UEFI_PAGE_SIZE,
-    boot_services::{
-        allocation::{AllocType, MemoryType},
-        BootServices, StandardBootServices,
-    },
+    boot_services::{BootServices, StandardBootServices},
     uefi_size_to_pages,
 };
 
@@ -38,10 +30,10 @@ pub static ACPI_TABLE_INFO: StandardAcpiProvider<StandardBootServices> = Standar
 
 #[derive(IntoService)]
 #[service(dyn AcpiProvider)]
-pub struct StandardAcpiProvider<B: BootServices + 'static> {
-    pub version: AtomicU32,
-    pub signature: u32,
-    pub should_reclaim_memory: AtomicBool,
+pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
+    pub(crate) version: AtomicU32,
+    pub(crate) signature: u32,
+    pub(crate) should_reclaim_memory: AtomicBool,
     pub(crate) system_tables: Mutex<SystemTables>,
     acpi_tables: RwLock<Vec<NonNull<AcpiTable>>>,
     next_table_key: AtomicUsize,
@@ -380,6 +372,7 @@ where
             .expect("Memory manager not initialized")
             .allocate_zero_pages(npages, alloc_options)
             .map_err(|_e| AcpiError::AllocationFailed)?;
+        // println!("{}", page_alloc);
 
         Ok(page_alloc.into_raw_ptr::<u8>() as usize)
     }
@@ -460,7 +453,11 @@ where
         self.next_table_key.store(next_table_key + 1, Ordering::Release);
         // SAFETY: caller must ensure `table` is a valid pointer to an ACPI table
         let dst_table = unsafe { &mut *(physical_addr as *mut AcpiTable) };
+
+        // Fix up ACPI table struct fields
         dst_table.table_key = next_table_key;
+        dst_table.physical_address = Some(physical_addr);
+
         self.acpi_tables
             .write()
             .push(NonNull::new(dst_ptr as *mut AcpiTable).expect("Allocated table must not be null"));
@@ -506,7 +503,6 @@ where
             // We need to reallocate the XSDT if the buffer exceeds the maximum allocated size
             if self.entries.read().len() == self.max_entries.load(Ordering::Acquire) {
                 self.reallocate_xsdt(self.entries.read().len(), xsdt.length as usize)?;
-                self.max_entries.store(self.max_entries.load(Ordering::Acquire) * 2, Ordering::Release);
             }
 
             // Calculate the memory location for the new entry (end of XSDT)
@@ -529,10 +525,11 @@ where
     fn reallocate_xsdt(&self, curr_entries: usize, curr_size: usize) -> Result<(), AcpiError> {
         // Geometrically resize the number of entries in the XSDT
         let new_size = curr_entries * 2 * mem::size_of::<u64>() + ACPI_HEADER_LEN;
+        self.max_entries.store(curr_entries * 2, Ordering::Release);
 
         let alloc_options =
             AllocationOptions::new().with_memory_type(self.memory_type()).with_strategy(PageAllocationStrategy::Any);
-        let page_alloc = self
+        let page_alloc: PageAllocation = self
             .memory_manager
             .get()
             .expect("Memory manager not initialized")
@@ -692,7 +689,7 @@ where
             Self::acpi_table_update_checksum(
                 rsdp as *mut AcpiRsdp as *mut u8,
                 rsdp.length as usize,
-                memoffset::offset_of!(AcpiRsdp, checksum),
+                memoffset::offset_of!(AcpiRsdp, extended_checksum),
             );
         }
 
@@ -772,30 +769,7 @@ mod tests {
     use uefi_sdk::component::service::memory::CachingType;
     use uefi_sdk::component::service::memory::MemoryError;
     use uefi_sdk::component::service::memory::MockMemoryManager;
-
-    // mock! {
-    //     pub MemoryManager {}
-
-    //     impl MemoryManager for MemoryManager {
-    //         fn allocate_pages(&self, page_count: usize, options: AllocationOptions) -> Result<PageAllocation, MemoryError>;
-    //         fn allocate_zero_pages(
-    //             &self,
-    //             page_count: usize,
-    //             options: AllocationOptions,
-    //         ) -> Result<PageAllocation, MemoryError>;
-    //         unsafe fn free_pages(&self, address: usize, page_count: usize) -> Result<(), MemoryError>;
-    //         #[cfg(feature = "alloc")]
-    //         fn get_allocator(&self, memory_type: EfiMemoryType) -> Result<&'static dyn Allocator, MemoryError> { unimplemented!() }
-    //         unsafe fn set_page_attributes(
-    //             &self,
-    //             address: usize,
-    //             page_count: usize,
-    //             access: AccessType,
-    //             caching: Option<CachingType>,
-    //         ) -> Result<(), MemoryError>;
-    //             fn get_page_attributes(&self, address: usize, page_count: usize) -> Result<(AccessType, CachingType), MemoryError>;
-    //     }
-    // }
+    use uefi_sdk::component::service::memory::StdMemoryManager;
 
     #[test]
     fn test_get_table() {
@@ -963,23 +937,24 @@ mod tests {
         assert_eq!(addr_result, fake_addr);
     }
 
-    // #[test]
-    // fn test_allocate_addr() {
-    //     let mut mock_memory_manager = MockMemoryManager::new();
-    //     // This is just a dummy variable to fill out the PageAllocation
-    //     let mock_memory_manager2 = MockMemoryManager::new();
-    //     let mock_page_alloc = unsafe { PageAllocation::new(0x12341234, 1) }.unwrap();
-    //     mock_memory_manager.expect_allocate_zero_pages().returning(|_, _| Ok(mock_page_alloc));
-    //     let provider = StandardAcpiProvider::new_uninit();
-    //     provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(mock_memory_manager)));
+    #[test]
+    fn test_allocate_addr() {
+        let mut mock_memory_manager = MockMemoryManager::new();
+        mock_memory_manager.expect_allocate_zero_pages().return_once(|_, _| {
+            Ok(unsafe {
+                PageAllocation::new(UEFI_PAGE_SIZE, 5, Box::leak(Box::new(MockMemoryManager::new()))).unwrap()
+            })
+        });
+        let provider = StandardAcpiProvider::new_uninit();
+        provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(mock_memory_manager)));
 
-    //     let returned = provider
-    //         .allocate_table_addr(0, Some(0x1234), false, 1)
-    //         .expect("should succeed via our DummyMemManagerSuccess");
+        let returned = provider
+            .allocate_table_addr(0, Some(0x1234), false, 1)
+            .expect("should succeed via our DummyMemManagerSuccess");
 
-    //     // When not from a HOB, `allocate_table_addr` should return the value allocated by the memory manager
-    //     assert_eq!(returned, 0x12341234);
-    // }
+        // When not from a HOB, `allocate_table_addr` use a newly allocated memory address
+        assert_eq!(returned, UEFI_PAGE_SIZE);
+    }
 
     #[test]
     fn test_add_fadt_to_list() {
@@ -1092,12 +1067,91 @@ mod tests {
         assert_eq!(system_tables.xsdt_mut().unwrap().length, ACPI_HEADER_LEN as u32);
     }
 
-    fn test_reallocate_xsdt() {}
+    #[test]
+    fn test_reallocate_xsdt() {
+        let provider = StandardAcpiProvider::new_uninit();
+        provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new())));
 
-    fn test_delete_table() { // test for DSDT and FACS and FADT
+        // Create a dummy XSDT and add it to system tables
+        let mut xsdt_table = AcpiXsdt {
+            signature: signature::XSDT,
+            // The XSDT is currently "full"
+            length: (ACPI_HEADER_LEN + mem::size_of::<u64>() * MAX_INITIAL_ENTRIES) as u32,
+            revision: 1,
+            checksum: 0,
+            oem_id: *b"OEMID ",
+            oem_table_id: *b"TABLEID ",
+            oem_revision: 1,
+            creator_id: 0,
+            creator_revision: 0,
+        };
+
+        // Write the XSDT into "ACPI" memory (really the Rust heap since we're using StdMemoryManager)
+        let page_alloc = provider
+            .memory_manager
+            .get()
+            .unwrap()
+            .allocate_zero_pages(uefi_size_to_pages!(xsdt_table.length as usize), AllocationOptions::new())
+            .unwrap();
+        let old_ptr = page_alloc.into_raw_ptr::<u8>();
+        let total_bytes = xsdt_table.length as usize;
+        let mut old_buf = vec![0u8; total_bytes].into_boxed_slice();
+        let xsdt_ptr = old_ptr as *mut AcpiXsdt;
+        unsafe {
+            ptr::write(xsdt_ptr, xsdt_table);
+        }
+
+        // Add the XSDT to system tables
+        {
+            let system_tables = provider.system_tables.lock();
+            system_tables.xsdt.store(xsdt_ptr, Ordering::Relaxed);
+        }
+
+        provider.reallocate_xsdt(MAX_INITIAL_ENTRIES, xsdt_table.length as usize).expect("reallocation should succeed");
+
+        // The XSDT should be moved to a new address
+        assert_ne!(old_ptr as usize, provider.system_tables.lock().xsdt.load(Ordering::Acquire) as usize);
+        // Max entries should increase
+        assert_eq!(provider.max_entries.load(Ordering::Acquire), MAX_INITIAL_ENTRIES * 2);
     }
 
-    fn test_remove_table_from_xsdt() {}
+    #[test]
+    fn test_delete_table_dsdt() {
+        let mut mock_memory_manager = MockMemoryManager::new();
+        mock_memory_manager.expect_free_pages().return_once(|_addr, _pages| Ok(()));
+
+        let provider = StandardAcpiProvider::new_uninit();
+        provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(mock_memory_manager)));
+
+        // Dummy FADT in system_tables
+        let mut fadt = Box::new(AcpiFadt { signature: signature::FACP, length: 100, ..Default::default() });
+        fadt.x_firmware_ctrl = 0xdead;
+        let fadt_ptr = Box::into_raw(fadt);
+        {
+            let mut st = provider.system_tables.lock();
+            st.fadt.store(fadt_ptr, Ordering::Release);
+        }
+
+        // Dummy DSDT pointed to by FADT
+        let mut real_dsdt = Box::new(AcpiDsdt { signature: signature::DSDT, ..Default::default() });
+        let dsdt_ptr = Box::into_raw(real_dsdt);
+        // Cast and store as AcpiTable pointer
+        {
+            let mut st = provider.system_tables.lock();
+            st.dsdt.store(dsdt_ptr, Ordering::Release);
+        }
+
+        let table_ref: &mut AcpiTable = unsafe { &mut *(dsdt_ptr as *mut AcpiTable) };
+        let result = provider.delete_table(table_ref);
+
+        // Should have cleared DSDT pointer
+        let dsdt_cleared = provider.system_tables.lock().dsdt.load(Ordering::Acquire);
+        assert!(dsdt_cleared.is_null());
+
+        // FADT should no longer point to DSDT
+        let fadt_ref = unsafe { &*fadt_ptr };
+        assert_eq!(unsafe { fadt_ref.get_x_dsdt() }, 0);
+    }
 
     #[test]
     fn test_acpi_table_update_checksum() {

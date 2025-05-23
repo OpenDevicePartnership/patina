@@ -1,3 +1,9 @@
+//! ACPI Table Definitions.
+//!
+//! Defines standard formats for system ACPI tables.
+//! Supports only ACPI version >= 2.0.
+//! Fields corresponding to ACPI 1.0 are preceded with an underscore (`_`) and are not in use.
+
 use crate::acpi::AcpiVersion;
 use crate::signature;
 use crate::{error::AcpiError, service::TableKey};
@@ -9,6 +15,7 @@ use downcast_rs::{impl_downcast, DowncastSync};
 #[repr(C, packed)]
 #[derive(Default, Clone, Copy)]
 pub struct AcpiFadt {
+    // Standard ACPI header.
     pub(crate) signature: u32,
     pub(crate) length: u32,
     pub(crate) revision: u8,
@@ -22,46 +29,50 @@ pub struct AcpiFadt {
     pub(crate) _firmware_ctrl: u32,
     pub(crate) _dsdt: u32,
     pub(crate) _reserved0: u8,
-    pub(crate) _preferred_pm_profile: u8,
-    pub(crate) _sci_int: u16,
-    pub(crate) _smi_cmd: u32,
-    pub(crate) _acpi_enable: u8,
-    pub(crate) _acpi_disable: u8,
-    pub(crate) _s4bios_req: u8,
-    pub(crate) _pstate_cnt: u8,
-    pub(crate) _pm1a_evt_blk: u32,
-    pub(crate) _pm1b_evt_blk: u32,
-    pub(crate) _pm1a_cnt_blk: u32,
-    pub(crate) _pm1b_cnt_blk: u32,
-    pub(crate) _pm2_cnt_blk: u32,
-    pub(crate) _pm_tmr_blk: u32,
-    pub(crate) _gpe0_blk: u32,
-    pub(crate) _gpe1_blk: u32,
-    pub(crate) _pm1_evt_len: u8,
-    pub(crate) _pm1_cnt_len: u8,
-    pub(crate) _pm2_cnt_len: u8,
-    pub(crate) _pm_tmr_len: u8,
-    pub(crate) _gpe0_blk_len: u8,
-    pub(crate) _gpe1_blk_len: u8,
-    pub(crate) _gpe1_base: u8,
-    pub(crate) _cst_cnt: u8,
-    pub(crate) _p_lvl2_lat: u16,
-    pub(crate) _p_lvl3_lat: u16,
-    pub(crate) _flush_size: u16,
-    pub(crate) _flush_stride: u16,
-    pub(crate) _duty_offset: u8,
-    pub(crate) _duty_width: u8,
-    pub(crate) _day_alrm: u8,
-    pub(crate) _mon_alrm: u8,
-    pub(crate) _century: u8,
-    pub(crate) _ia_pc_boot_arch: u16,
-    pub(crate) _reserved1: u8,
-    pub(crate) _flags: u32,
+
+    pub(crate) preferred_pm_profile: u8,
+    pub(crate) sci_int: u16,
+    pub(crate) smi_cmd: u32,
+    pub(crate) acpi_enable: u8,
+    pub(crate) acpi_disable: u8,
+    pub(crate) s4bios_req: u8,
+    pub(crate) pstate_cnt: u8,
+    pub(crate) pm1a_evt_blk: u32,
+    pub(crate) pm1b_evt_blk: u32,
+    pub(crate) pm1a_cnt_blk: u32,
+    pub(crate) pm1b_cnt_blk: u32,
+    pub(crate) pm2_cnt_blk: u32,
+    pub(crate) pm_tmr_blk: u32,
+    pub(crate) gpe0_blk: u32,
+    pub(crate) gpe1_blk: u32,
+    pub(crate) pm1_evt_len: u8,
+    pub(crate) pm1_cnt_len: u8,
+    pub(crate) pm2_cnt_len: u8,
+    pub(crate) pm_tmr_len: u8,
+    pub(crate) gpe0_blk_len: u8,
+    pub(crate) gpe1_blk_len: u8,
+    pub(crate) gpe1_base: u8,
+    pub(crate) cst_cnt: u8,
+    pub(crate) p_lvl2_lat: u16,
+    pub(crate) p_lvl3_lat: u16,
+    pub(crate) flush_size: u16,
+    pub(crate) flush_stride: u16,
+    pub(crate) duty_offset: u8,
+    pub(crate) duty_width: u8,
+    pub(crate) day_alrm: u8,
+    pub(crate) mon_alrm: u8,
+    pub(crate) century: u8,
+    pub(crate) ia_pc_boot_arch: u16,
+    pub(crate) reserved1: u8,
+    pub(crate) flags: u32,
     pub(crate) reset_reg: GenericAddressStructure,
     pub(crate) reset_value: u8,
-    pub(crate) _reserved2: [u8; 3],
+    pub(crate) reserved2: [u8; 3],
+
+    /// Addresses of the FACS and DSDT (64-bit)
     pub(crate) x_firmware_ctrl: u64,
     pub(crate) x_dsdt: u64,
+
     pub(crate) x_pm1a_evt_blk: GenericAddressStructure,
     pub(crate) x_pm1b_evt_blk: GenericAddressStructure,
     pub(crate) x_pm1a_cnt_blk: GenericAddressStructure,
@@ -75,11 +86,31 @@ pub struct AcpiFadt {
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GenericAddressStructure {
-    _address_space_id: u8,
-    _register_bit_width: u8,
-    _register_bit_offset: u8,
-    _access_size: u8,
-    _address: u64,
+    address_space_id: u8,
+    register_bit_width: u8,
+    register_bit_offset: u8,
+    access_size: u8,
+    address: u64,
+}
+
+impl AcpiFadt {
+    /// SAFETY: reads the packed `x_firmware_ctrl` field even if unaligned.
+    pub unsafe fn get_x_firmware_ctrl(&self) -> u64 {
+        // Compute byte offset of packed field
+        let p: *const u64 = addr_of!(self.x_firmware_ctrl);
+
+        // Read 8 bytes
+        core::ptr::read_unaligned(p)
+    }
+
+    /// SAFETY: reads the packed `x_dsdt` field even if unaligned.
+    pub unsafe fn get_x_dsdt(&self) -> u64 {
+        // Compute byte offset of packed field
+        let p: *const u64 = addr_of!(self.x_dsdt);
+
+        // Read 8 bytes
+        core::ptr::read_unaligned(p)
+    }
 }
 
 impl TryFrom<AcpiTable> for AcpiFadt {
@@ -131,28 +162,16 @@ impl TryFrom<AcpiTable> for AcpiFadt {
     }
 }
 
-/// Helper to read unaligned fields on FADT
-/// SAFETY: `self` is always a valid FADT with `x_firmware_ctrl` at the expected offset
-impl AcpiFadt {
-    pub unsafe fn get_x_firmware_ctrl(&self) -> u64 {
-        let p: *const u64 = addr_of!(self.x_firmware_ctrl);
-        core::ptr::read_unaligned(p)
-    }
-
-    /// SAFETY: This writes `val` into the packed field, even if unaligned.
-    pub unsafe fn set_x_firmware_ctrl(&mut self, val: u64) {
-        let p: *mut u64 = addr_of!(self.x_firmware_ctrl) as *mut u64;
-        core::ptr::write_unaligned(p, val);
-    }
-}
-
+// The FACS does not have a standard ACPI header.
 #[repr(C, packed)]
 #[derive(Default)]
 pub struct AcpiFacs {
     pub(crate) signature: u32,
     pub(crate) length: u32,
     pub(crate) hardware_signature: u32,
+
     pub(crate) _firmware_waking_vector: u32,
+
     pub(crate) global_lock: u32,
     pub(crate) flags: u32,
     pub(crate) firmware_waking_vector: u64,
@@ -161,55 +180,68 @@ pub struct AcpiFacs {
 }
 
 #[repr(C, packed)]
+#[derive(Default)]
 pub struct AcpiDsdt {
-    pub signature: u32,
-    pub length: u32,
-    pub revision: u8,
-    pub checksum: u8,
-    pub oem_id: [u8; 6],
-    pub oem_table_id: [u8; 8],
-    pub oem_revision: u32,
-    pub creator_id: u32,
-    pub creator_revision: u32,
+    pub(crate) signature: u32,
+    pub(crate) length: u32,
+    pub(crate) revision: u8,
+    pub(crate) checksum: u8,
+    pub(crate) oem_id: [u8; 6],
+    pub(crate) oem_table_id: [u8; 8],
+    pub(crate) oem_revision: u32,
+    pub(crate) creator_id: u32,
+    pub(crate) creator_revision: u32,
 }
 
+// The RSDP is not a standard ACPI table and does not have a standard header.
 #[repr(C, packed)]
 #[derive(Default)]
 pub struct AcpiRsdp {
-    pub signature: u64,
-    pub(crate) checksum: u8,
-    pub oem_id: [u8; 6],
+    pub(crate) signature: u64,
+
+    pub(crate) _checksum: u8,
+
+    pub(crate) oem_id: [u8; 6],
     pub(crate) revision: u8,
-    pub(crate) rsdt_address: u32,
+
+    pub(crate) _rsdt_address: u32,
+
     pub(crate) length: u32,
-    pub xsdt_address: u64,
+    pub(crate) xsdt_address: u64,
     pub(crate) extended_checksum: u8,
     pub(crate) reserved: [u8; 3],
 }
 
+// The XSDT has a standard header followed by 64-bit addresses of installed tables.
+// The `length` field tells us the number of trailing bytes representing table entries.
 #[repr(C)]
-#[derive(Default)]
+#[derive(Default, Copy, Clone)]
 pub struct AcpiXsdt {
-    pub signature: u32,
-    pub length: u32,
-    pub revision: u8,
-    pub checksum: u8,
-    pub oem_id: [u8; 6],
-    pub oem_table_id: [u8; 8],
-    pub oem_revision: u32,
-    pub creator_id: u32,
-    pub creator_revision: u32,
+    pub(crate) signature: u32,
+    pub(crate) length: u32,
+    pub(crate) revision: u8,
+    pub(crate) checksum: u8,
+    pub(crate) oem_id: [u8; 6],
+    pub(crate) oem_table_id: [u8; 8],
+    pub(crate) oem_revision: u32,
+    pub(crate) creator_id: u32,
+    pub(crate) creator_revision: u32,
 }
 
+/// Represents an installable ACPI table.
+/// This is either a standard format ACPI table (`AcpiTable`) or FACS (`AcpiFACS`).
+/// Callers of `install_acpi_table` can implement `AcpiInstallable` on custom table formats as well.
 pub trait AcpiInstallable: Any + DowncastSync {
-    /// The physical address of the table in memory. This is only valid if the table has been installed
+    /// The physical address of the table in memory. This is only valid if the table has been installed.
     fn phys_addr(&self) -> Option<usize>;
 
     fn length(&self) -> u32;
     fn signature(&self) -> u32;
 }
+// Allows dispatching based on the ACPI table format.
 impl_downcast!(sync AcpiInstallable);
 
+/// Represents a standard ACPI table format: a header followed by trailing data determined by `length`.
 #[repr(C)]
 #[derive(Default, Clone, Debug)]
 pub struct AcpiTable {
@@ -225,8 +257,7 @@ pub struct AcpiTable {
     // Trailing variable-length data that differs between ACPI table types
     pub data: Vec<u8>,
     // Additional fields not present in the original C struct. Included for Rust conveinence
-    pub table_key: TableKey,   // Unique key assigned to ACPI table upon installation
-    pub versions: AcpiVersion, // Bitflag of versions this table is installed for
+    pub table_key: TableKey, // Unique key assigned to ACPI table upon installation
     pub(crate) physical_address: Option<usize>, // Physical address of the table in memory. None if the table is not yet installed in ACPI firmware memory
 }
 
@@ -297,7 +328,6 @@ mod tests {
             creator_revision: creator_rev,
             data: payload.clone(),
             table_key: TableKey::default(),
-            versions: AcpiVersion::default(),
             physical_address: Some(0),
         };
 
@@ -332,7 +362,6 @@ mod tests {
             creator_revision: 0,
             data: vec![0; mem::size_of::<AcpiFadt>() - ACPI_HEADER_LEN],
             table_key: TableKey::default(),
-            versions: AcpiVersion::default(),
             physical_address: Some(0),
         };
 

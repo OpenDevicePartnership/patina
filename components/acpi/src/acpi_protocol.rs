@@ -1,3 +1,7 @@
+//! ACPI C Protocol Definitions.
+//!
+//! Wrappers for the C ACPI protocols to call into Rust ACPI implementations.
+
 use core::{ffi::c_void, ptr};
 use r_efi::efi;
 use uefi_sdk::protocol::ProtocolInterface;
@@ -10,6 +14,7 @@ use crate::{
     signature::{self, ACPI_HEADER_LEN},
 };
 
+/// Corresponds to the ACPI Table Protocol as defined in UEFI spec.
 #[repr(C)]
 pub(crate) struct AcpiTableProtocol {
     install_table: AcpiTableInstall,
@@ -21,6 +26,7 @@ unsafe impl ProtocolInterface for AcpiTableProtocol {
         efi::Guid::from_fields(0xffe06bdd, 0x6107, 0x46a6, 0x7b, 0xb2, &[0x5a, 0x9c, 0x7e, 0xc5, 0x27, 0x5c]);
 }
 
+// C function interfaces for ACPI Table Protocol and ACPI SDT Protocol.
 type AcpiTableInstall = extern "efiapi" fn(*const AcpiTableProtocol, *const c_void, usize, *mut usize) -> efi::Status;
 type AcpiTableUninstall = extern "efiapi" fn(*const AcpiTableProtocol, usize) -> efi::Status;
 type AcpiTableGet = extern "efiapi" fn(usize, *mut *mut AcpiSdtHeader, *mut u32, *mut usize) -> efi::Status;
@@ -105,6 +111,7 @@ impl AcpiTableProtocol {
     }
 }
 
+/// Converts a Rust AcpiError to a standard EFI error.
 fn acpi_error_to_efi_error(error: AcpiError) -> efi::Status {
     match error {
         AcpiError::AllocationFailed => efi::Status::OUT_OF_RESOURCES,
@@ -125,6 +132,7 @@ fn acpi_error_to_efi_error(error: AcpiError) -> efi::Status {
     }
 }
 
+/// Corresponds to the ACPI SDT Protocol as defined in PI spec.
 #[repr(C)]
 pub(crate) struct AcpiSdtProtocol {
     get_table: AcpiTableGet,
@@ -156,7 +164,8 @@ impl AcpiSdtProtocol {
         match ACPI_TABLE_INFO.get_acpi_table(index) {
             Ok(table_info) => {
                 // SAFETY: table_info is valid and output pointers have been checked for null
-                unsafe { *version = table_info.versions.bits() as u32 };
+                // We only support ACPI versions >= 2.0
+                unsafe { *version = ((1 << 2) | (1 << 3) | (1 << 4) | (1 << 5)) as u32 };
                 unsafe { *table_key = table_info.table_key };
                 let sdt_ptr = table_info as *const AcpiTable as *mut AcpiSdtHeader;
                 unsafe { *table = sdt_ptr };
@@ -180,6 +189,8 @@ impl AcpiSdtProtocol {
     }
 }
 
+/// C representation of ACPI table header.
+/// It is roughly equivalent to the Rust `AcpiTable` struct.
 #[repr(C, packed)]
 struct AcpiSdtHeader {
     signature: u32,
