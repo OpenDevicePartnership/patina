@@ -70,24 +70,8 @@ impl SystemTables {
         if ptr.is_null() {
             None
         } else {
-            Some(unsafe { &mut *ptr })
-        }
-    }
-
-    pub fn facs_mut(&self) -> Option<&mut AcpiFacs> {
-        let ptr = self.facs.load(Ordering::Acquire);
-        if ptr.is_null() {
-            None
-        } else {
-            Some(unsafe { &mut *ptr })
-        }
-    }
-
-    pub fn dsdt_mut(&self) -> Option<&mut AcpiDsdt> {
-        let ptr = self.dsdt.load(Ordering::Acquire);
-        if ptr.is_null() {
-            None
-        } else {
+            // SAFETY: the pointer is checked to be non-null
+            // The caller must make sure that, upon construction, this AtomicPointer holds a valid FADT reference
             Some(unsafe { &mut *ptr })
         }
     }
@@ -97,6 +81,9 @@ impl SystemTables {
         if ptr.is_null() {
             None
         } else {
+            // SAFETY: the pointer is checked to be non-null
+            // The caller must make sure that, upon construction, this AtomicPointer holds a valid FADT reference
+
             Some(unsafe { &mut *ptr })
         }
     }
@@ -111,8 +98,11 @@ impl SystemTables {
     }
 }
 
+// SAFETY: `StandardAcpiProvider` does not share any internal references or non-Send types across threads.
+// All fields are `Send` or properly synchronized.
 unsafe impl<B> Sync for StandardAcpiProvider<B> where B: BootServices + Sync {}
 
+// SAFETY: Access to shared state within `StandardAcpiProvider` is synchronized (via mutexes and atomics)
 unsafe impl<B> Send for StandardAcpiProvider<B> where B: BootServices + Send {}
 
 impl<B> StandardAcpiProvider<B>
@@ -196,6 +186,8 @@ where
     fn get_acpi_table(&self, index: usize) -> Result<&AcpiTable, AcpiError> {
         let acpi_tables = self.acpi_tables.read();
         let table = acpi_tables.get(index).ok_or(AcpiError::InvalidTableIndex)?;
+        // SAFETY: the table references in `get` are derived from tables installed in `install_acpi_table`
+        // If successfully installed, they are guaranteed to be valid table references
         Ok(unsafe { table.as_ref() })
     }
 
@@ -216,9 +208,11 @@ where
 
     fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a AcpiTable> + 'a> {
         let guard = self.acpi_tables.read();
-        let snapshot: Vec<&AcpiTable> = guard.iter().map(|ptr| unsafe { ptr.as_ref() }).collect();
+        // SAFETY: the table references in `iter` are derived from tables installed in `install_acpi_table`
+        // If successfully installed, they are guaranteed to be valid table references
+        let acpi_table_refs: Vec<&AcpiTable> = guard.iter().map(|ptr| unsafe { ptr.as_ref() }).collect();
         drop(guard);
-        Box::new(snapshot.into_iter())
+        Box::new(acpi_table_refs.into_iter())
     }
 }
 
@@ -246,7 +240,9 @@ where
 
     pub fn install_tables_from_hob(&self, acpi_hob: Hob<AcpiMemoryHob>) -> Result<(), AcpiError> {
         let acpi_table_addr = acpi_hob.rsdp_address;
-        let rsdp = unsafe { &*(acpi_table_addr as *const AcpiRsdp) };
+        // SAFETY: The caller must ensure the HOB must holds a valid pointer to the RSDP
+        let rsdp: &AcpiRsdp = unsafe { &*(acpi_table_addr as *const AcpiRsdp) };
+        // SAFETY: The caller must ensure the HOB must holds a valid pointer to the XSDT
         let xsdt_ptr = rsdp.xsdt_address as *const AcpiXsdt;
         let xsdt = unsafe { &*(xsdt_ptr) };
 
@@ -274,6 +270,8 @@ where
                 // SAFETY: we assume the FADT set up in the HOB points to a valid FACS if the pointer is non-null
                 if fadt.x_firmware_ctrl != 0 {
                     let facs_ptr = fadt.x_firmware_ctrl as usize as *const AcpiFacs;
+                    // SAFETY: The FACS has been checked to be non-null
+                    // The caller must ensure that the FACS in the HOB is valid
                     let facs_len = unsafe { (*facs_ptr).length };
                     self.install_facs(Some(fadt.x_firmware_ctrl as usize), facs_len)?;
                 }
@@ -383,6 +381,7 @@ where
     fn add_fadt_to_list(&self, physical_addr: usize, table: &AcpiTable) -> Result<(), AcpiError> {
         if !(self.system_tables.lock().fadt.load(Ordering::Acquire).is_null()) {
             // FADT already installed, abort
+            // SAFETY: The caller must ensure that `physical_addr` points to a memory location previously allocated by the same memory manager
             unsafe {
                 self.memory_manager
                     .get()
@@ -508,6 +507,8 @@ where
             // Calculate the memory location for the new entry (end of XSDT)
             let entry_offset = ACPI_HEADER_LEN + self.entries.read().len() * core::mem::size_of::<u64>();
             let base = system_tables.xsdt.load(Ordering::Acquire) as *mut u8;
+            // SAFETY: Post-reallocation, we are guaranteed to have enough memory to write the new entry
+            // SAFETY: All entries in the XSDT are guaranteed to be u64
             let dst = unsafe { base.add(entry_offset) as *mut u64 };
             // Write entry to ACPI memory
             unsafe {
@@ -546,10 +547,13 @@ where
         }
 
         // Copy over old data to the new XSDT address
+        // SAFETY: `physical_addr` is a valid address if allocation succeeds
+        // `old_addr` is a valid XSDT in `system_tables`
         unsafe { copy_nonoverlapping(old_addr as *const u8, physical_addr, curr_size) };
         system_tables.xsdt.store(physical_addr as *mut AcpiXsdt, Ordering::Release);
 
         // Free the old XSDT
+        // SAFETY: `old_addr` is a valid XSDT in `system_tables`, and was previously allocated during installation by the same memory manager
         unsafe {
             self.memory_manager
                 .get()
@@ -566,6 +570,8 @@ where
 
         let mut table_idx = None;
         for (i, ptr) in self.acpi_tables.write().iter_mut().enumerate() {
+            // SAFETY: The tables in `self.acpi_tables` are derived from `install_acpi_table`
+            // If installation suceeds, they must be valid table references
             let table = unsafe { ptr.as_mut() };
             if table.table_key == table_key {
                 table_for_key = Some(table);
@@ -637,6 +643,7 @@ where
     }
 
     fn free_table_memory(&self, table: &AcpiTable) -> Result<(), AcpiError> {
+        // SAFETY: the caller must ensure `table` points to a valid table previously allocated by the same memory manager
         unsafe {
             self.memory_manager
                 .get()
@@ -673,11 +680,14 @@ where
 
     // Sum of all ACPI bytes (should be zero)
     fn acpi_table_update_checksum(table_ptr: *mut u8, table_length: usize, offset: usize) {
+        // SAFETY: the caller must ensure `table_length` corresponds to the length of the ACPI table in memory
         let table_bytes = unsafe { core::slice::from_raw_parts_mut(table_ptr, table_length) };
         table_bytes[offset] = 0;
 
         let total_without_checksum: u32 = table_bytes.iter().map(|&b| b as u32).sum();
-        let new_checksum = (!total_without_checksum as u8).wrapping_add(1); // complement + 1 = negative
+        // Negate through complement
+        let new_checksum = (!total_without_checksum as u8).wrapping_add(1);
+        // SAFETY: The caller must ensure `offset` points to the right checksum offset in the table
         unsafe { ptr::write(table_ptr.add(offset), new_checksum) };
     }
 
@@ -707,7 +717,7 @@ where
     fn publish_tables(&self) -> Result<(), AcpiError> {
         let system_tables = self.system_tables.lock();
         let rsdp_ptr = system_tables.rsdp.load(Ordering::Acquire);
-        // SAFETY: pointer needs to point to a value rsdp
+        // SAFETY: If initialization of AcpiProvider succeeds, the RSDP should always be valid
         unsafe {
             self.boot_services
                 .get()
@@ -721,6 +731,8 @@ where
 
     fn notify_acpi_list(&self, table_key: TableKey) -> Result<(), AcpiError> {
         let acpi_tables = self.acpi_tables.read();
+        // SAFETY: the table references in `iter` are derived from tables installed in `install_acpi_table`
+        // If successfully installed, they are guaranteed to be valid table references
         if let Some(index) = acpi_tables.iter().position(|&table| unsafe { table.as_ref().table_key } == table_key) {
             let table = unsafe { acpi_tables[index].as_ref() };
             for notify_fn in self.notify_list.read().iter() {
@@ -765,9 +777,6 @@ mod tests {
     use std::boxed::Box;
     use std::ptr;
     use uefi_sdk::boot_services::MockBootServices;
-    use uefi_sdk::component::service::memory::AccessType;
-    use uefi_sdk::component::service::memory::CachingType;
-    use uefi_sdk::component::service::memory::MemoryError;
     use uefi_sdk::component::service::memory::MockMemoryManager;
     use uefi_sdk::component::service::memory::StdMemoryManager;
 
@@ -790,11 +799,6 @@ mod tests {
         // Call with an invalid index (should return InvalidTableIndex)
         let err = provider.get_acpi_table(1).unwrap_err();
         assert!(matches!(err, AcpiError::InvalidTableIndex));
-
-        // Clean up heap
-        unsafe {
-            Box::from_raw(table_ptr.as_ptr());
-        }
     }
 
     #[test]

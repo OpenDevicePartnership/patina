@@ -82,6 +82,7 @@ impl AcpiTableProtocol {
             };
 
             // Copy non-header data into the `data` field of AcpiTable
+            // SAFETY: `acpi_table_buffer` has been checked to be non-null and a valid length
             let body_len = acpi_table.length as usize - ACPI_HEADER_LEN;
             let body_src = unsafe { (acpi_table_buffer as *const u8).add(ACPI_HEADER_LEN) };
             let mut body_data = vec![0u8; body_len];
@@ -94,6 +95,8 @@ impl AcpiTableProtocol {
             match ACPI_TABLE_INFO.install_acpi_table(acpi_table) {
                 Ok(key) => {
                     if let Some(key_ptr) = NonNull::new(table_key) {
+                        // SAFETY: `key_ptr` is checked to be non-null
+                        // The caller must ensure the buffer is writeable
                         unsafe { *key_ptr.as_ptr() = key };
                     }
                     efi::Status::SUCCESS
