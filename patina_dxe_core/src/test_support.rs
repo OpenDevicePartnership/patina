@@ -483,7 +483,7 @@ mod tests {
             let file_size = file_size as usize; // Convert file_size to usize
             memory_slice[..file_size].copy_from_slice(&image);
             assert_eq!(
-                &memory_slice[..file_size as usize], // Use file_size as usize
+                &memory_slice[..file_size], // Use file_size as usize
                 &image[..],
                 "File contents were not correctly written to memory."
             );
