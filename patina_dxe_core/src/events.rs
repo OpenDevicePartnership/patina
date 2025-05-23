@@ -703,6 +703,67 @@ mod tests {
     }
 
     #[test]
+    fn test_event_notification_with_tpl_change_fires_lower_events() {
+        with_locked_state(|| {
+            NOTIFY_CALLED.store(false, Ordering::SeqCst);
+
+            // special callback that does TPL manipulation.
+            extern "efiapi" fn test_tpl_switching_notify(_event: efi::Event, _context: *mut c_void) {
+                let old_tpl = raise_tpl(efi::TPL_HIGH_LEVEL);
+                restore_tpl(efi::TPL_APPLICATION);
+
+                if old_tpl > efi::TPL_APPLICATION {
+                    raise_tpl(old_tpl);
+                }
+            }
+
+            let mut event: efi::Event = ptr::null_mut();
+            // Create notification signal event
+            let result = create_event(
+                efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_CALLBACK,
+                Some(tracking_notify),
+                ptr::null_mut(),
+                &mut event,
+            );
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            let mut event2: efi::Event = ptr::null_mut();
+            let result = create_event(
+                efi::EVT_NOTIFY_SIGNAL,
+                efi::TPL_NOTIFY,
+                Some(test_tpl_switching_notify),
+                ptr::null_mut(),
+                &mut event2,
+            );
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            //raise TPL to callback than event
+            let _old_tpl = raise_tpl(efi::TPL_CALLBACK);
+
+            // Signal the event
+            let result = signal_event(event);
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            // notification should not have been called (because current TPL >= notification TPL).
+            assert!(!NOTIFY_CALLED.load(Ordering::SeqCst));
+
+            // Signal the TPL manipulation event. This should fire and lower the TPL so the event1 notification should
+            // signal.
+            let result = signal_event(event2);
+            assert_eq!(result, efi::Status::SUCCESS);
+
+            // notification should have been called (current TPL was briefly lowered to notification TPL).
+            assert!(NOTIFY_CALLED.load(Ordering::SeqCst));
+
+            assert_eq!(CURRENT_TPL.load(Ordering::SeqCst), efi::TPL_CALLBACK);
+
+            // Clean up
+            let _ = close_event(event);
+        });
+    }
+
+    #[test]
     fn test_wait_for_event_null_parameters() {
         with_locked_state(|| {
             let mut index: usize = 0;
