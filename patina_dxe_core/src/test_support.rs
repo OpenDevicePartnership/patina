@@ -10,6 +10,7 @@
 //!
 use crate::{protocols::PROTOCOL_DB, GCD};
 use core::ffi::c_void;
+use mu_pi::hob::HobList;
 use mu_pi::{
     dxe_services::GcdMemoryType,
     hob::{self, header},
@@ -17,6 +18,8 @@ use mu_pi::{
 };
 use r_efi::efi;
 use std::any::Any;
+use std::slice;
+use std::{fs::File, io::Read};
 
 #[macro_export]
 macro_rules! test_collateral {
@@ -315,4 +318,185 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
         core::ptr::copy(&end, cursor as *mut header::Hob, 1);
     }
     mem.as_ptr() as *const c_void
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::c_void;
+    use crate::test_support::get_memory;
+    use crate::test_support::header;
+    use crate::test_support::hob;
+    use crate::test_support::BootMode;
+    use mu_pi::hob::Hob::MemoryAllocationModule;
+    use patina_sdk::guid;
+
+    // Compact Hoblist with DXE core Alloction hob. Use this when DXE core hob is required.
+    pub(crate) fn build_test_hob_list_compact(mem_size: u64) -> *const c_void {
+        let mem = unsafe { get_memory(mem_size as usize) };
+        let mem_base = mem.as_mut_ptr() as u64;
+
+        // Build a test HOB list that describes memory
+
+        let phit = hob::PhaseHandoffInformationTable {
+            header: header::Hob {
+                r#type: hob::HANDOFF,
+                length: core::mem::size_of::<hob::PhaseHandoffInformationTable>() as u16,
+                reserved: 0x00000000,
+            },
+            version: 0x0009,
+            boot_mode: BootMode::BootAssumingNoConfigurationChanges,
+            memory_top: mem_base + mem_size,
+            memory_bottom: mem_base,
+            free_memory_top: mem_base + mem_size,
+            free_memory_bottom: mem_base + 0x100000,
+            end_of_hob_list: mem_base
+                + core::mem::size_of::<hob::PhaseHandoffInformationTable>() as u64
+                + core::mem::size_of::<hob::Cpu>() as u64
+                + (core::mem::size_of::<hob::ResourceDescriptor>() as u64) * 7
+                + core::mem::size_of::<header::Hob>() as u64,
+        };
+
+        let cpu = hob::Cpu {
+            header: header::Hob { r#type: hob::CPU, length: core::mem::size_of::<hob::Cpu>() as u16, reserved: 0 },
+            size_of_memory_space: 48,
+            size_of_io_space: 16,
+            reserved: Default::default(),
+        };
+
+        let resource_descriptor1 = hob::ResourceDescriptor {
+            header: header::Hob {
+                r#type: hob::RESOURCE_DESCRIPTOR,
+                length: core::mem::size_of::<hob::ResourceDescriptor>() as u16,
+                reserved: 0x00000000,
+            },
+            owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+            resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
+            resource_attribute: hob::TESTED_MEMORY_ATTRIBUTES,
+            physical_start: mem_base + 0xE0000,
+            resource_length: 0x10000,
+        };
+
+        let mut allocation_hob_template: hob::MemoryAllocationModule = hob::MemoryAllocationModule {
+            header: header::Hob {
+                r#type: hob::MEMORY_ALLOCATION,
+                length: core::mem::size_of::<hob::MemoryAllocationModule>() as u16,
+                reserved: 0x00000000,
+            },
+            alloc_descriptor: header::MemoryAllocation {
+                name: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+                memory_base_address: 0,
+                memory_length: 0x1000,
+                memory_type: efi::LOADER_CODE,
+                reserved: Default::default(),
+            },
+            module_name: guid::DXE_CORE,
+            entry_point: 0,
+        };
+
+        let end = header::Hob {
+            r#type: hob::END_OF_HOB_LIST,
+            length: core::mem::size_of::<header::Hob>() as u16,
+            reserved: 0,
+        };
+
+        unsafe {
+            let mut cursor = mem.as_mut_ptr();
+
+            // PHIT HOB
+            core::ptr::copy(&phit, cursor as *mut hob::PhaseHandoffInformationTable, 1);
+            cursor = cursor.offset(phit.header.length as isize);
+
+            // CPU HOB
+            core::ptr::copy(&cpu, cursor as *mut hob::Cpu, 1);
+            cursor = cursor.offset(cpu.header.length as isize);
+
+            // Resource descriptor HOB
+            core::ptr::copy(&resource_descriptor1, cursor as *mut hob::ResourceDescriptor, 1);
+            cursor = cursor.offset(resource_descriptor1.header.length as isize);
+
+            // Memory allocation HOBs.
+            for (idx, memory_type) in [
+                efi::RESERVED_MEMORY_TYPE,
+                efi::LOADER_CODE,
+                efi::LOADER_DATA,
+                efi::BOOT_SERVICES_CODE,
+                efi::BOOT_SERVICES_DATA,
+                efi::RUNTIME_SERVICES_CODE,
+                efi::RUNTIME_SERVICES_DATA,
+                efi::ACPI_RECLAIM_MEMORY,
+                efi::ACPI_MEMORY_NVS,
+                efi::PAL_CODE,
+            ]
+            .iter()
+            .enumerate()
+            {
+                allocation_hob_template.alloc_descriptor.memory_base_address =
+                    resource_descriptor1.physical_start + idx as u64 * 0x1000;
+                allocation_hob_template.alloc_descriptor.memory_type = *memory_type;
+                allocation_hob_template.module_name = guid::DXE_CORE;
+
+                core::ptr::copy(&allocation_hob_template, cursor as *mut hob::MemoryAllocationModule, 1);
+                cursor = cursor.offset(allocation_hob_template.header.length as isize);
+            }
+
+            core::ptr::copy(&end, cursor as *mut header::Hob, 1);
+        }
+        mem.as_ptr() as *const c_void
+    }
+
+    //
+    // Fill in Dxe Image in to hoblist.
+    // Usage - fill_file_buffer_in_memory_allocation_module(&hob_list).unwrap();
+    //
+    pub(crate) fn fill_file_buffer_in_memory_allocation_module(hob_list: &HobList) -> Result<(), &'static str> {
+        let mut file = File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+        let mut image: Vec<u8> = Vec::new();
+        file.read_to_end(&mut image).expect("failed to read test file");
+
+        // Locate the MemoryAllocationModule HOB for the DXE Core
+        let dxe_core_hob = hob_list
+            .iter()
+            .find_map(|hob| match hob {
+                MemoryAllocationModule(module) if module.module_name == guid::DXE_CORE => Some(module),
+                _ => None,
+            })
+            .ok_or("DXE Core MemoryAllocationModule HOB not found")?;
+
+        let memory_base_address = dxe_core_hob.alloc_descriptor.memory_base_address;
+        let memory_length = dxe_core_hob.alloc_descriptor.memory_length;
+
+        // Assert that the memory base address and length are valid
+        assert!(memory_base_address > 0, "Memory base address is invalid (0).");
+        assert!(memory_length > 0, "Memory length is invalid (0).");
+
+        // Get the file size
+        let file_size = file.metadata().map_err(|_| "Failed to get file metadata")?.len();
+
+        if file_size > (memory_length as usize).try_into().unwrap() {
+            return Err("File contents exceed allocated memory length");
+        }
+
+        // Write the file contents into the memory region specified by the HOB
+        unsafe {
+            let memory_slice = slice::from_raw_parts_mut(memory_base_address as *mut u8, memory_length as usize);
+            let file_size = file_size as usize; // Convert file_size to usize
+            memory_slice[..file_size].copy_from_slice(&image);
+            assert_eq!(
+                &memory_slice[..file_size], // Use file_size as usize
+                &image[..],
+                "File contents were not correctly written to memory."
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_build_test_hob_list_compact() {
+        let physical_hob_list = build_test_hob_list_compact(0x2000000);
+        let mut hob_list = HobList::default();
+        hob_list.discover_hobs(physical_hob_list);
+        fill_file_buffer_in_memory_allocation_module(&hob_list).unwrap();
+    }
 }
