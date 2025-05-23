@@ -211,6 +211,13 @@ dependencies = ["individual-package-targets"]
 description = "Builds all rust documentation in the workspace. Example `cargo make doc`"
 env = { RUSTDOCFLAGS = "-D warnings"}
 command = "cargo"
+args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc"]
+
+[tasks.doc-open]
+description = "Builds all rust documentation in the workspace and opens the documentation. Example `cargo make doc-open`"
+env = { RUSTDOCFLAGS = "-D warnings"}
+clear = true
+command = "cargo"
 args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc", "--open"]
 
 [tasks.clippy]
