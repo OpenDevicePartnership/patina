@@ -48,7 +48,8 @@ at <https://OpenDevicePartnership.github.io/patina/>, however this documentation
 `mdbook serve docs` to self host the getting started book.
 
 You can also generate API documentation for the project using `cargo make doc`. This will eventually be hosted on
-docs.rs once we begin uploading to crates.io.
+docs.rs once we begin uploading to crates.io. You can have the documentation opened in your browser by running
+`cargo make doc-open`.
 
 ## First-Time Tool Setup Instructions
 
