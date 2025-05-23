@@ -331,7 +331,7 @@ mod tests {
     use mu_pi::hob::Hob::MemoryAllocationModule;
     use patina_sdk::guid;
 
-    // Compact Hoblist with DXE core Alloction hob
+    // Compact Hoblist with DXE core Alloction hob. Use this when DXE core hob is required.
     pub(crate) fn build_test_hob_list_compact(mem_size: u64) -> *const c_void {
         let mem = unsafe { get_memory(mem_size as usize) };
         let mem_base = mem.as_mut_ptr() as u64;
@@ -466,6 +466,10 @@ mod tests {
         let memory_base_address = dxe_core_hob.alloc_descriptor.memory_base_address;
         let memory_length = dxe_core_hob.alloc_descriptor.memory_length;
 
+        // Assert that the memory base address and length are valid
+        assert!(memory_base_address > 0, "Memory base address is invalid (0).");
+        assert!(memory_length > 0, "Memory length is invalid (0).");
+
         // Get the file size
         let file_size = file.metadata().map_err(|_| "Failed to get file metadata")?.len();
 
@@ -478,6 +482,11 @@ mod tests {
             let memory_slice = slice::from_raw_parts_mut(memory_base_address as *mut u8, memory_length as usize);
             let file_size = file_size as usize; // Convert file_size to usize
             memory_slice[..file_size].copy_from_slice(&image);
+            assert_eq!(
+                &memory_slice[..file_size as usize], // Use file_size as usize
+                &image[..],
+                "File contents were not correctly written to memory."
+            );
         }
 
         Ok(())
