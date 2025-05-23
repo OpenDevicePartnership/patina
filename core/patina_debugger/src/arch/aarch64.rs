@@ -115,11 +115,7 @@ impl DebuggerArch for Aarch64Arch {
             // Always clear the ICache and TLB since the debugger may have altered
             // instructions or the page tables.
             unsafe {
-                asm!("dsb sy");
-                asm!("ic iallu");
-                asm!("tlbi alle2");
-                asm!("dsb sy");
-                asm!("isb sy");
+                asm!("dsb sy", "ic iallu", "tlbi alle2", "dsb sy", "isb sy");
             }
         }
     }
