@@ -5,16 +5,15 @@ use uefi_sdk::component::service::memory::{AllocationOptions, MemoryManager, Pag
 use uefi_sdk::component::service::Service;
 use uefi_sdk::component::IntoComponent;
 use uefi_sdk::{
-    boot_services::{allocation::AllocType, BootServices, StandardBootServices},
+    boot_services::{BootServices, StandardBootServices},
     component::params::Config,
     uefi_size_to_pages,
 };
 
-use crate::acpi::AcpiHelper;
 use crate::acpi_protocol::{AcpiSdtProtocol, AcpiTableProtocol};
 use crate::acpi_table::AcpiXsdt;
 use crate::config::AcpiProviderInit;
-use crate::signature::{self, XSDT};
+use crate::signature::{self};
 use crate::signature::{
     ACPI_HEADER_LEN, ACPI_RESERVED_BYTE, ACPI_RSDP_REVISION, ACPI_RSDP_TABLE, ACPI_XSDT_REVISION, MAX_INITIAL_ENTRIES,
 };

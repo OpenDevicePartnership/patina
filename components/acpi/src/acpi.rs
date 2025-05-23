@@ -12,7 +12,6 @@ use uefi_sdk::component::service::{IntoService, Service};
 use uefi_sdk::efi_types::EfiMemoryType;
 
 use alloc::vec;
-use bitflags::bitflags;
 use uefi_sdk::{
     base::UEFI_PAGE_SIZE,
     boot_services::{BootServices, StandardBootServices},
@@ -32,7 +31,6 @@ pub static ACPI_TABLE_INFO: StandardAcpiProvider<StandardBootServices> = Standar
 #[service(dyn AcpiProvider)]
 pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
     pub(crate) version: AtomicU32,
-    pub(crate) signature: u32,
     pub(crate) should_reclaim_memory: AtomicBool,
     pub(crate) system_tables: Mutex<SystemTables>,
     acpi_tables: RwLock<Vec<NonNull<AcpiTable>>>,
@@ -113,7 +111,6 @@ where
         let system_tables = SystemTables::new();
         Self {
             version: AtomicU32::new(0),
-            signature: signature::STAE,
             should_reclaim_memory: AtomicBool::new(false),
             system_tables: Mutex::new(system_tables),
             acpi_tables: RwLock::new(vec![]),
@@ -145,10 +142,6 @@ where
         }
     }
 
-    pub fn version(&self) -> u32 {
-        self.version.load(Ordering::Acquire)
-    }
-
     pub fn set_rsdp(&self, rsdp: &mut AcpiRsdp) {
         self.system_tables.lock().rsdp.store(rsdp as *mut AcpiRsdp, Ordering::Release);
     }
@@ -165,7 +158,7 @@ where
     fn install_acpi_table(&self, acpi_table: &dyn AcpiInstallable) -> Result<TableKey, AcpiError> {
         let table_key = if acpi_table.signature() == signature::FACS {
             // FACS table has a unique structure and installation requirements
-            self.install_facs(acpi_table.phys_addr(), acpi_table.length())?
+            self.install_facs(acpi_table.phys_addr())?
         } else {
             // All other tables must follow the generic ACPI table format
             let acpi_table_generic = acpi_table.downcast_ref::<AcpiTable>().ok_or(AcpiError::InvalidTableFormat)?;
@@ -269,11 +262,9 @@ where
                 let fadt = AcpiFadt::try_from(table.clone())?;
                 // SAFETY: we assume the FADT set up in the HOB points to a valid FACS if the pointer is non-null
                 if fadt.x_firmware_ctrl != 0 {
-                    let facs_ptr = fadt.x_firmware_ctrl as usize as *const AcpiFacs;
                     // SAFETY: The FACS has been checked to be non-null
                     // The caller must ensure that the FACS in the HOB is valid
-                    let facs_len = unsafe { (*facs_ptr).length };
-                    self.install_facs(Some(fadt.x_firmware_ctrl as usize), facs_len)?;
+                    self.install_facs(Some(fadt.x_firmware_ctrl as usize))?;
                 }
                 if fadt.x_dsdt != 0 {
                     let dsdt_ptr = fadt.x_dsdt as *mut AcpiTable;
@@ -305,7 +296,7 @@ where
 {
     /// Adds the FACS to the list of installed tables
     /// Due to the unique format of the FACS, it has different installation requirements than other tables
-    pub(crate) fn install_facs(&self, facs_addr: Option<usize>, facs_len: u32) -> Result<TableKey, AcpiError> {
+    pub(crate) fn install_facs(&self, facs_addr: Option<usize>) -> Result<TableKey, AcpiError> {
         // FACS is a special case -- it must reside in firmware memory to be installed
         if facs_addr.is_none() {
             return Err(AcpiError::HobTableNotInstalled);
@@ -479,7 +470,7 @@ where
         Self::acpi_table_update_checksum(dst_ptr, table.length as usize, checksum_offset);
 
         if add_to_xsdt {
-            self.add_entry_to_xsdt(physical_addr as u64, table)?;
+            self.add_entry_to_xsdt(physical_addr as u64)?;
         }
 
         self.checksum_common_tables()?;
@@ -494,7 +485,7 @@ where
         }
     }
 
-    fn add_entry_to_xsdt(&self, new_table_addr: u64, table: &AcpiTable) -> Result<(), AcpiError> {
+    fn add_entry_to_xsdt(&self, new_table_addr: u64) -> Result<(), AcpiError> {
         let system_tables = self.system_tables.lock();
         let xsdt_ptr = system_tables.xsdt_mut();
 
@@ -746,34 +737,9 @@ where
     }
 }
 
-bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-    pub struct AcpiVersion: u8 {
-        const ACPI_NONE = (1 << 0);
-        const ACPI_1_0B = (1 << 1);
-        const ACPI_2_0  = (1 << 2);
-        const ACPI_3_0  = (1 << 3);
-        const ACPI_4_0  = (1 << 4);
-        const ACPI_5_0  = (1 << 5);
-    }
-}
-
-impl AcpiVersion {
-    pub fn is_gte_2_0(self) -> bool {
-        self.intersects(Self::ACPI_2_0 | Self::ACPI_3_0 | Self::ACPI_4_0 | Self::ACPI_5_0)
-    }
-}
-
-// Trait mostly for mocking helper methods for testing
-#[cfg_attr(test, mockall::automock)]
-pub trait AcpiHelper {
-    fn install_tables_from_hob<'h>(&self, acpi_hob: Hob<'h, AcpiMemoryHob>) -> Result<(), AcpiError>;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockall::{mock, predicate::*};
     use std::boxed::Box;
     use std::ptr;
     use uefi_sdk::boot_services::MockBootServices;
@@ -898,7 +864,7 @@ mod tests {
         provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
 
         // FACS address not initialized
-        let err = provider.install_facs(None, 123).unwrap_err();
+        let err = provider.install_facs(None).unwrap_err();
         assert!(matches!(err, AcpiError::HobTableNotInstalled));
 
         // Dummy FACS and FADT
@@ -913,7 +879,7 @@ mod tests {
         }
 
         // This should not fail, and should return 0 (FACS does not have an associated TableKey)
-        let res = provider.install_facs(Some(facs_ptr), 64);
+        let res = provider.install_facs(Some(facs_ptr));
         assert_eq!(res.unwrap(), 0);
 
         // Make sure FACS was installed into FADT
@@ -1026,20 +992,7 @@ mod tests {
             system_tables.xsdt.store(xsdt_ptr, Ordering::Relaxed);
         }
 
-        let table_to_add = AcpiTable {
-            signature: 0x1234,
-            length: 36,
-            revision: 1,
-            checksum: 0,
-            oem_id: *b"MYOEM ",
-            oem_table_id: *b"MYTABL  ",
-            oem_revision: 2,
-            creator_id: 0xDEADBEEF,
-            creator_revision: 1,
-            ..Default::default()
-        };
-
-        let result = provider.add_entry_to_xsdt(0xCAFEBABE, &table_to_add);
+        let result = provider.add_entry_to_xsdt(0xCAFEBABE);
         assert!(result.is_ok());
 
         // we should now have 2 entries, the second of which is 0xCAFEBABE

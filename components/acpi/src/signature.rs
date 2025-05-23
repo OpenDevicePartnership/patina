@@ -6,7 +6,6 @@ pub const FACS: u32 = 0x53434146;
 pub const UEFI: u32 = 0x49464555;
 pub const FACP: u32 = 0x50434146;
 pub const DSDT: u32 = 0x54582350;
-pub const STAE: u32 = 0x53544145;
 pub const XSDT: u32 = 0x54445358;
 
 pub const ACPI_TABLE_GUID: efi::Guid =
