@@ -771,6 +771,7 @@ mod tests {
 
             // Clean up
             let _ = close_event(event);
+            let _ = close_event(event2);
         });
     }
 

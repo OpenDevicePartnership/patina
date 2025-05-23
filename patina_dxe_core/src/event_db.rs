@@ -1252,7 +1252,7 @@ mod tests {
             SPIN_LOCKED_EVENT_DB.signal_event(notify_evt1).unwrap();
             SPIN_LOCKED_EVENT_DB.signal_event(notify_evt2).unwrap();
 
-            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_CALLBACK));
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
             for (event_notification, expected_event) in
                 event_iter.zip(vec![high_evt1, high_evt2, notify_evt1, notify_evt2, callback_evt1, callback_evt2])
             {
@@ -1274,7 +1274,7 @@ mod tests {
             SPIN_LOCKED_EVENT_DB.close_event(notify_evt1).unwrap();
             SPIN_LOCKED_EVENT_DB.close_event(callback_evt1).unwrap();
 
-            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_CALLBACK));
+            let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
             for (event_notification, expected_event) in event_iter.zip(vec![high_evt2, notify_evt2, callback_evt2]) {
                 assert_eq!(event_notification.event, expected_event);
                 assert!(SPIN_LOCKED_EVENT_DB.is_signaled(expected_event));
