@@ -55,7 +55,7 @@ extern "efiapi" fn flush_data_cache(
     length: u64,
     flush_type: CpuFlushType,
 ) -> efi::Status {
-    let cpu = get_impl_ref(this).cpu;
+    let cpu = &get_impl_ref(this).cpu;
 
     let result = cpu.flush_data_cache(start, length, flush_type);
 
@@ -86,7 +86,7 @@ extern "efiapi" fn get_interrupt_state(this: *const Protocol, state: *mut bool) 
 }
 
 extern "efiapi" fn init(this: *const Protocol, init_type: CpuInitType) -> efi::Status {
-    let cpu = get_impl_ref(this).cpu;
+    let cpu = &get_impl_ref(this).cpu;
 
     let result = cpu.init(init_type);
 
@@ -120,7 +120,7 @@ extern "efiapi" fn get_timer_value(
     timer_value: *mut u64,
     timer_period: *mut u64,
 ) -> efi::Status {
-    let cpu = get_impl_ref(this).cpu;
+    let cpu = &get_impl_ref(this).cpu;
 
     let result = cpu.get_timer_value(timer_index);
 
