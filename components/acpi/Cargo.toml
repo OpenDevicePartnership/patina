@@ -6,21 +6,21 @@ repository.workspace = true
 license.workspace = true
 edition.workspace = true
 publish.workspace = true
-description = "UEFI Software Development Kit (SDK) that provides common types and functionality used in UEFI development."
+description = "UEFI ACPI servicves that provide common types and functionality used in ACPI development."
 
 [dependencies]
-bitflags = { workspace = true }
-uefi_sdk = { workspace = true }
-spin = { workspace = true }
-scroll = { workspace = true }
+downcast-rs = { workspace = true }
 memoffset = { workspace = true }
-r-efi = { workspace = true }
-downcast-rs =  { workspace = true }
 mockall = { workspace = true, optional = true }
+patina_boot_services = { workspace = true }
+patina_sdk = { workspace = true }
+r-efi = { workspace = true }
+scroll = { workspace = true }
+spin = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
 
 [features]
-mockall = ["dep:mockall"]
 alloc = []
+mockall = ["dep:mockall"]

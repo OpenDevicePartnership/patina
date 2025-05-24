@@ -1,42 +1,42 @@
 # Platform Testing
 
-Platform testing is supported through the `uefi_test` crate, which provides a testing framework similar to the typical
+Platform testing is supported through the `patina_test` crate, which provides a testing framework similar to the typical
 rust testing framework. The key difference is that instead of tests being collected and executed on the host based
-system, they are instead collected and executed via a component (`uefi_test::TestRunner`) provided by the same crate.
-The platform must register this component with the dxe_core. The dxe_core will then dispatch this component, which will
+system, they are instead collected and executed via a component (`patina_test::TestRunner`) provided by the same crate.
+The platform must register this component with the DXE Core. The DXE Core will then dispatch this component, which will
 run all registered tests.
 
 ``` admonish note
-The most up to date documentation on the `uefi_test` crate can be found on crates.io. It is suggested that you review
+The most up to date documentation on the `patina_test` crate can be found on crates.io. It is suggested that you review
 the documentation in that crate. However, for ease of access, some high level concepts can be read about below.
 ```
 
 ## Writing On-Platform Tests
 
-Writing a test to be run on-platform is as simple as setting the `uefi_test` attribute on a function with the following
-interface where `...` can be any number of parameters that implement the `Param` trait from `uefi_sdk::component::*`:
+Writing a test to be run on-platform is as simple as setting the `patina_test` attribute on a function with the following
+interface where `...` can be any number of parameters that implement the `Param` trait from `patina_sdk::component::*`:
 
 ``` rust
-use uefi_test::{Result, uefi_test};
+use patina_test::{Result, uefi_test};
 
 #[uefi_test]
 fn my_test(...) -> Result { todo!() }
 ```
 
 Writing on-platform tests is not just for driver testing, it can also be used for testing general purpose code on a
-platform. Any function tagged with `#[uefi_test]` will be collected and executed on a platform. The test runner has the
+platform. Any function tagged with `#[patina_test]` will be collected and executed on a platform. The test runner has the
 ability to filter out tests, but you should also be conscious of when tests should run. using `cfg_attr` paired with
 `skip` attribute is a great way to have tests ignored for reasons like host architecture, or through feature flags!
 
 ``` admonish note
-uefi_test::Result is simply `core::result::Result<(), &'static str>`, and you could use that instead.
+patina_test::Result is simply `core::result::Result<(), &'static str>`, and you could use that instead.
 ```
 
 Similar to `test` attribute, there are a few additional attribute customizations to help with writing tests platform
 based tests. The first is the `skip` attribute, which paired with `cfg_attr` can be used to skip certain tests.
 
 ``` rust
-use uefi_sdk::boot_services::StandardBootServices;
+use patina_sdk::patina_boot_services::StandardBootServices;
 
 #[uefi_test]
 #[cfg_attr(target_arch = "aarch64", skip)]
@@ -59,7 +59,7 @@ fn my_test2() -> Result { todo!() }
 ## Running On-Platform Tests
 
 Running all these tests on a platform is as easy as instantiating the test runner component and registering it with the
-dxe core:
+DXE Core:
 
 ``` rust
 
@@ -72,7 +72,7 @@ Core::default()
     .unwrap();
 ```
 
-This will execute all tests marked with the `uefi_test` attribute across all crates used to compile this binary. Due to
+This will execute all tests marked with the `patina_test` attribute across all crates used to compile this binary. Due to
 this fact, we have some configuration options with the test component. The most important customization is the
 `with_filter` function, which allows you to filter down the tests to run. The logic behind this is similar to the
 filtering provided by `cargo test`. That is to say, if you pass it a filter of `X64`, it will only run tests with `X64`

@@ -4,21 +4,21 @@ Now that we have the scaffolding up for our crate, lets actually set up the crat
 rust DXE Core binary. For this section, we will be working out of the crate directory, and all
 steps will be the same, regardless of if you are compiling local or external to the platform.
 
-## Add the dxe_core dependency
+## Add the patina_dxe_core dependency
 
 Inside your crate's Cargo.toml file, add the following, where `$(VERSION)`: is replaced with the
-version of the dxe_core you wish to use.
+version of the patina_dxe_core you wish to use.
 
 ``` toml
 [dependencies]
-dxe_core = "$(VERSION)"
+patina_dxe_core = "$(VERSION)"
 ```
 
 ````admonish note
 If you want the latest and greatest, you can use the `main` branch from our github repository:
 
 ``` toml
-dxe_core = { git = "https://github.com/OpenDevicePartnership/patina", branch = "main" }
+patina_dxe_core = { git = "https://github.com/OpenDevicePartnership/patina", branch = "main" }
 ```
 ````
 
@@ -73,7 +73,7 @@ architecture or platform specific logic.
 extraction methods it supports. As an example, a platform may only compress it's sections with
 brotli, so it only needs to support brotli extractions. A platform may create their own extractor,
 it only needs implement the [SectionExtractor](https://github.com/microsoft/mu_rust_pi/blob/c8dd7f990d87746cfae9a5e821ad69501c46f346/src/fw_fs.rs#L77)
-trait. However multiple implementations are provided via [section_extractor](https://github.com/OpenDevicePartnership/patina/tree/main/core/section_extractor),
+trait. However multiple implementations are provided via [patina_section_extractor](https://github.com/OpenDevicePartnership/patina/tree/main/core/patina_section_extractor),
 such as brotli, crc32, uefi_decompress, etc.
 
 ```admonish note
@@ -84,8 +84,8 @@ With all of that said, you can add the following code to `main.rs`, replacing th
 in this example with your platform specific implementations:
 
 ```rust
-use dxe_core::Core;
-use section_extractor::BrotliSectionExtractor;
+use patina_dxe_core::Core;
+use patina_section_extractor::BrotliSectionExtractor;
 
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
@@ -99,8 +99,8 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
 ```
 
 ``` admonish note
-If you copy + paste this directly, the compiler will not know what `uefi_cpu` or
-`section_extractor` is. You will have to add that to your platform's `Cargo.toml` file.
+If you copy + paste this directly, the compiler will not know what `patina_internal_cpu` or
+`patina_section_extractor` is. You will have to add that to your platform's `Cargo.toml` file.
 Additionally, where the `Default::default()` option is, this is where you would provide and
 configurations to the DXE Core, similar to a PCD value.
 ```
@@ -115,30 +115,30 @@ execution of the DXE Core. If you add any monolithic-ally compiled drivers (we w
 soon), then this same logger will also be used by that too!
 
 The DXE Core uses the same logger interface as [log](https://crates.io/crates/log), so if you wish
-to create your own logger, follow those steps. We currently provide two loggers, an [adv_logger](https://dev.azure.com/microsoft/MsUEFI/_git/DxeRust?path=/adv_logger)
+to create your own logger, follow those steps. We currently provide two loggers, a [patina_adv_logger](https://github.com/OpenDevicePartnership/patina/tree/main/components/patina_adv_logger)
 implementation, which is great for this tutorial as it will also show you how to add a monolithic
-compiled driver to the dxe_core.
+compiled driver to the DXE Core.
 
-First, add `adv_logger to your Cargo.toml file in the crate:
+First, add `patina_adv_logger to your Cargo.toml file in the crate:
 
 ``` toml
-adv_logger = "$(VERSION)
+patina_adv_logger = "$(VERSION)
 ```
 
 Next, update main.rs with the following:
 
 ``` rust
-use adv_logger::{AdvancedLogger, init_advanced_logger};
+use patina_adv_logger::{AdvancedLogger, init_advanced_logger};
 
-static LOGGER: AdvancedLogger<uefi_sdk::serial::Uart16550> = AdvancedLogger::new(
-    uefi_sdk::log::Format::Standard,
+static LOGGER: AdvancedLogger<patina_sdk::serial::Uart16550> = AdvancedLogger::new(
+    patina_sdk::log::Format::Standard,
     &[
         ("goblin", log::LevelFilter::Off),
-        ("uefi_depex_lib", log::LevelFilter::Off),
+        ("patina_internal_depex", log::LevelFilter::Off),
         ("gcd_measure", log::LevelFilter::Off),
     ],
     log::LevelFilter::Trace,
-    uefi_sdk::serial::Uart16550::new(uefi_sdk::serial::Interface::Io(0x402)),
+    patina_sdk::serial::Uart16550::new(patina_sdk::serial::Interface::Io(0x402)),
 );
 
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
@@ -169,7 +169,7 @@ initializes and publishes the advanced logger so that regular EDKII built compon
 access to the advanced logger.
 
 Next, is we set the global logger to our static logger. That is just a `log` crate thing. Finally,
-we initialize the component, and then add it to the list of components that the `dxe_core` will
+we initialize the component, and then add it to the list of components that the DXE Core will
 execute.
 
 ## Final main.rs
@@ -179,9 +179,9 @@ execute.
 #![no_main]
 extern crate alloc;
 
-use adv_logger::{AdvancedLogger, init_advanced_logger};
+use patina_adv_logger::{AdvancedLogger, init_advanced_logger};
 use core::{ffi::c_void, panic::PanicInfo};
-use dxe_core::Core;
+use patina_dxe_core::Core;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -189,15 +189,15 @@ fn panic(info: &PanicInfo) -> ! {
     loop {}
 }
 
-static LOGGER: AdvancedLogger<uefi_sdk::serial::Uart16550> = AdvancedLogger::new(
-    uefi_sdk::log::Format::Standard,
+static LOGGER: AdvancedLogger<patina_sdk::serial::Uart16550> = AdvancedLogger::new(
+    patina_sdk::log::Format::Standard,
     &[
         ("goblin", log::LevelFilter::Off),
-        ("uefi_depex_lib", log::LevelFilter::Off),
+        ("patina_internal_depex", log::LevelFilter::Off),
         ("gcd_measure", log::LevelFilter::Off),
     ],
     log::LevelFilter::Trace,
-    uefi_sdk::serial::Uart16550::new(uefi_sdk::serial::Interface::Io(0x402)),
+    patina_sdk::serial::Uart16550::new(patina_sdk::serial::Interface::Io(0x402)),
 );
 
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
@@ -207,8 +207,8 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     adv_logger.init_advanced_logger(physical_hob_list).unwrap();
 
     Core::default()
-        .with_cpu_init(uefi_cpu::EfiCpuInitX64::default())
-        .with_section_extractor(section_extractor::CompositeSectionExtractor::default())
+        .with_cpu_init(patina_internal_cpu::EfiCpuInitX64::default())
+        .with_section_extractor(patina_section_extractor::CompositeSectionExtractor::default())
         .init_memory(physical_hob_list)
         .with_driver(adv_logger)
         .start()
@@ -229,7 +229,7 @@ disabled. If a platform wishes to build with it, they must include it in their C
 
 ```rust
 [dependencies]
-dxe_core = { version = "9", features = ["compatibility_mode_allowed"] }
+patina_dxe_core = { version = "9", features = ["compatibility_mode_allowed"] }
 ```
 
 With the flag disabled, the Rust DXE Core will not launch any EFI_APPLICATIONs that do not have the NX_COMPAT

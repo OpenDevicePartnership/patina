@@ -1,23 +1,30 @@
 use core::mem;
-use uefi_sdk::component::hob::{FromHob, Hob};
-use uefi_sdk::component::params::Commands;
-use uefi_sdk::component::service::memory::{AllocationOptions, MemoryManager, PageAllocationStrategy};
-use uefi_sdk::component::service::Service;
-use uefi_sdk::component::IntoComponent;
-use uefi_sdk::{
-    boot_services::{BootServices, StandardBootServices},
-    component::params::Config,
+
+use patina_boot_services::{BootServices, StandardBootServices};
+
+use patina_sdk::{
+    component::{
+        hob::{FromHob, Hob},
+        params::{Commands, Config},
+        service::{
+            memory::{AllocationOptions, MemoryManager, PageAllocationStrategy},
+            Service,
+        },
+        IntoComponent,
+    },
     uefi_size_to_pages,
 };
 
-use crate::acpi_protocol::{AcpiSdtProtocol, AcpiTableProtocol};
-use crate::acpi_table::AcpiXsdt;
-use crate::config::AcpiProviderInit;
-use crate::signature::{self};
-use crate::signature::{
-    ACPI_HEADER_LEN, ACPI_RESERVED_BYTE, ACPI_RSDP_REVISION, ACPI_RSDP_TABLE, ACPI_XSDT_REVISION, MAX_INITIAL_ENTRIES,
+use crate::{
+    acpi::ACPI_TABLE_INFO,
+    acpi_protocol::{AcpiSdtProtocol, AcpiTableProtocol},
+    acpi_table::{AcpiRsdp, AcpiXsdt},
+    config::AcpiProviderInit,
+    signature::{
+        self, ACPI_HEADER_LEN, ACPI_RESERVED_BYTE, ACPI_RSDP_REVISION, ACPI_RSDP_TABLE, ACPI_XSDT_REVISION,
+        MAX_INITIAL_ENTRIES,
+    },
 };
-use crate::{acpi::ACPI_TABLE_INFO, acpi_table::AcpiRsdp};
 
 #[derive(IntoComponent, Default)]
 pub struct AcpiProviderManager {}
@@ -40,11 +47,11 @@ impl AcpiProviderManager {
         config: Config<AcpiProviderInit>,
         acpi_hob: Option<Hob<AcpiMemoryHob>>,
         memory_manager: Service<dyn MemoryManager>,
-    ) -> uefi_sdk::error::Result<()> {
+    ) -> patina_sdk::error::Result<()> {
         ACPI_TABLE_INFO.initialize(config.version, config.should_reclaim_memory, boot_services, memory_manager);
 
         // Create and set the RSDP
-        let rsdp_alloc = memory_manager.allocate_zero_pages(
+        let rsdp_alloc = ACPI_TABLE_INFO.memory_manager.get().unwrap().allocate_zero_pages(
             uefi_size_to_pages!(mem::size_of::<AcpiRsdp>()),
             AllocationOptions::new()
                 .with_memory_type(ACPI_TABLE_INFO.memory_type())
@@ -55,7 +62,7 @@ impl AcpiProviderManager {
         ACPI_TABLE_INFO.set_rsdp(rsdp);
 
         // Create and set the XSDT with an initial number of entries
-        let xsdt_alloc = memory_manager.allocate_zero_pages(
+        let xsdt_alloc = ACPI_TABLE_INFO.memory_manager.get().unwrap().allocate_zero_pages(
             uefi_size_to_pages!(ACPI_HEADER_LEN + mem::size_of::<u64>() * MAX_INITIAL_ENTRIES),
             AllocationOptions::new()
                 .with_memory_type(ACPI_TABLE_INFO.memory_type())
@@ -102,7 +109,7 @@ impl AcpiProviderManager {
 pub struct AcpiSystemTableManager {}
 
 impl AcpiSystemTableManager {
-    fn entry_point(self, boot_services: StandardBootServices) -> uefi_sdk::error::Result<()> {
+    fn entry_point(self, boot_services: StandardBootServices) -> patina_sdk::error::Result<()> {
         boot_services.install_protocol_interface(None, Box::new(AcpiTableProtocol::new()))?;
         boot_services.install_protocol_interface(None, Box::new(AcpiSdtProtocol::new()))?;
         Ok(())
