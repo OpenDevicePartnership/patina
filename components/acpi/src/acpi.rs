@@ -1090,6 +1090,9 @@ mod tests {
             st.dsdt.store(dsdt_ptr, Ordering::Release);
         }
 
+        let table_ref: &mut AcpiTable = unsafe { &mut *(dsdt_ptr as *mut AcpiTable) };
+        let result = provider.delete_table(table_ref);
+
         // Should have cleared DSDT pointer
         let dsdt_cleared = provider.system_tables.lock().dsdt.load(Ordering::Acquire);
         assert!(dsdt_cleared.is_null());
