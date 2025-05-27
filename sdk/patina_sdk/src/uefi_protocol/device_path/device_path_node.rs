@@ -9,6 +9,7 @@ use core::{
 };
 
 use scroll::{
+    self,
     ctx::{TryFromCtx, TryIntoCtx},
     Endian, Pread, Pwrite,
 };
@@ -184,13 +185,13 @@ macro_rules! device_path_node {
         device_path_node!(@Derive; $struct_name, $($empty_field),*; $($($derive_trait),*)?);
     };
     (@ImplDevicePathNode; $device_path_type:path, $device_path_sub_type:path, $struct_name:ident) => {
-        impl $crate::device_path::device_path_node::DevicePathNode for $struct_name
+        impl $crate::uefi_protocol::device_path::device_path_node::DevicePathNode for $struct_name
         {
-            fn header(&self) -> $crate::device_path::device_path_node::Header {
-                $crate::device_path::device_path_node::Header {
+            fn header(&self) -> $crate::uefi_protocol::device_path::device_path_node::Header {
+                $crate::uefi_protocol::device_path::device_path_node::Header {
                     r#type: $device_path_type as u8,
                     sub_type: $device_path_sub_type as u8,
-                    length: $crate::device_path::device_path_node::Header::size_of_header() + core::mem::size_of::<$struct_name>()
+                    length: $crate::uefi_protocol::device_path::device_path_node::Header::size_of_header() + core::mem::size_of::<$struct_name>()
 
                 }
             }

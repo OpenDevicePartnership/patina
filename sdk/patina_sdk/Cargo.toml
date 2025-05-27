@@ -27,6 +27,7 @@ r-efi = { workspace = true }
 mockall = { workspace = true, optional = true }
 fallible-streaming-iterator = { workspace = true }
 linkme = { workspace = true}
+scroll = { workspace = true }
 
 [target.'cfg(target_arch="x86_64")'.dependencies]
 x86_64 = { workspace = true, features = [
