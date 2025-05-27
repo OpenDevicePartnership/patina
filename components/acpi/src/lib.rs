@@ -5,7 +5,8 @@ pub mod config;
 pub mod error;
 pub mod service;
 
+mod acpi;
 mod acpi_protocol;
 mod acpi_table;
-mod acpi;
+mod integration_test;
 mod signature;

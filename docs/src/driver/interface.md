@@ -174,7 +174,7 @@ the given parameter is actually available, even if it would have been made avail
 
 ```rust
 use patina_sdk::{
-    patina_boot_services::BootServices,
+    boot_services::BootServices,
     component::params::{Config, ConfigMut},
     error::Result,
 };
@@ -210,7 +210,7 @@ mod tests {
 
 ```rust
 use patina_sdk::{
-    patina_boot_services::StandardBootServices,
+    boot_services::StandardBootServices,
     component::{
         IntoComponent,
         params::{Config, ConfigMut},

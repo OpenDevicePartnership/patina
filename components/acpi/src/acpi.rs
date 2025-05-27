@@ -7,7 +7,7 @@ use core::{
 
 use alloc::vec;
 
-use patina_boot_services::{BootServices, StandardBootServices};
+use patina_sdk::boot_services::{BootServices, StandardBootServices};
 use patina_sdk::{
     base::UEFI_PAGE_SIZE,
     component::{
@@ -660,8 +660,22 @@ where
         let table_address = table as *const AcpiTable as usize;
         let system_tables = self.system_tables.lock();
         if let Some(xsdt) = system_tables.xsdt_mut() {
+            let num_entries = self.entries.read().len();
+            // SAFETY: `xsdt` has been verified to be a valid pointer
+            let xsdt_entries_ptr = unsafe { (xsdt as *mut AcpiXsdt as *mut u8).add(ACPI_HEADER_LEN) as *mut u64 };
+            let xsdt_slice = unsafe { core::slice::from_raw_parts_mut(xsdt_entries_ptr, num_entries) };
+
             let xsdt_pos = self.entries.read().iter().position(|&entry| entry == (table_address as u64));
+
             if let Some(index) = xsdt_pos {
+                // Shift all entries after the one to be remove to the left
+                for i in index..(num_entries - 1) {
+                    xsdt_slice[i] = xsdt_slice[i + 1];
+                }
+
+                // Update XSDT in-memory length
+                xsdt.length -= mem::size_of::<u64>() as u32;
+
                 self.entries.write().remove(index);
             }
 
@@ -670,8 +684,6 @@ where
                 xsdt.length as usize,
                 memoffset::offset_of!(AcpiTable, checksum),
             );
-
-            xsdt.length -= mem::size_of::<u64>() as u32;
         }
     }
 
@@ -746,7 +758,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use patina_boot_services::MockBootServices;
+    use patina_sdk::boot_services::MockBootServices;
     use patina_sdk::component::service::memory::MockMemoryManager;
     use patina_sdk::component::service::memory::StdMemoryManager;
     use std::boxed::Box;
@@ -1092,6 +1104,7 @@ mod tests {
 
         let table_ref: &mut AcpiTable = unsafe { &mut *(dsdt_ptr as *mut AcpiTable) };
         let result = provider.delete_table(table_ref);
+        assert!(result.is_ok());
 
         // Should have cleared DSDT pointer
         let dsdt_cleared = provider.system_tables.lock().dsdt.load(Ordering::Acquire);

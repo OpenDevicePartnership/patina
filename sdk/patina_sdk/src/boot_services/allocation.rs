@@ -2,7 +2,7 @@ use core::ops::{BitOr, BitOrAssign};
 
 use r_efi::efi;
 
-use crate::{boxed::BootServicesBox, BootServices};
+use super::{boxed::BootServicesBox, BootServices};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum AllocType {

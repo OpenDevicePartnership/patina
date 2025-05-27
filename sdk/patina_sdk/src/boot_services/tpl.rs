@@ -2,7 +2,7 @@
 
 use r_efi::efi;
 
-use crate::BootServices;
+use super::BootServices;
 
 /// This is a structure restore the [`Tpl`] at the end of its scope or when dropped.
 ///

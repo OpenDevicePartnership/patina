@@ -3,7 +3,7 @@
 //! Wrappers for the C ACPI protocols to call into Rust ACPI implementations.
 
 use core::{ffi::c_void, ptr};
-use patina_sdk::protocol::ProtocolInterface;
+use patina_sdk::uefi_protocol::ProtocolInterface;
 use r_efi::efi;
 
 use crate::service::{AcpiNotifyFn, AcpiProvider};

@@ -12,9 +12,9 @@
 //!
 use criterion::{criterion_group, criterion_main, Bencher, Criterion};
 use patina_sdk::{
+    boot_services::StandardBootServices,
     component::{params::*, Component, IntoComponent, Storage},
     error::Result,
-    patina_boot_services::StandardBootServices,
 };
 
 fn test_component(_bs: StandardBootServices, _config: Config<i32>) -> Result<()> {

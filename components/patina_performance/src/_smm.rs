@@ -13,7 +13,7 @@ use core::{debug_assert_eq, ptr, slice};
 
 use r_efi::efi;
 
-use patina_sdk::{base::UEFI_PAGE_SIZE, component::hob::FromHob, protocol::ProtocolInterface};
+use patina_sdk::{base::UEFI_PAGE_SIZE, component::hob::FromHob, uefi_protocol::ProtocolInterface};
 use scroll::{
     ctx::{TryFromCtx, TryIntoCtx},
     Endian, Pread, Pwrite,

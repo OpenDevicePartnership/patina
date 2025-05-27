@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), no_std)]
-
 pub mod status_code;
 
 use r_efi::efi::{self, protocols::*};

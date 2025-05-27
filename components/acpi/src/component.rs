@@ -1,6 +1,6 @@
 use core::mem;
 
-use patina_boot_services::{BootServices, StandardBootServices};
+use patina_sdk::boot_services::{BootServices, StandardBootServices};
 
 use patina_sdk::{
     component::{
@@ -26,6 +26,7 @@ use crate::{
     },
 };
 
+// Initializes the ACPI provider service
 #[derive(IntoComponent, Default)]
 pub struct AcpiProviderManager {}
 
@@ -105,10 +106,11 @@ impl AcpiProviderManager {
     }
 }
 
+// Produces EDKII ACPI protocols
 #[derive(IntoComponent)]
-pub struct AcpiSystemTableManager {}
+pub struct AcpiSystemTableProtocolManager {}
 
-impl AcpiSystemTableManager {
+impl AcpiSystemTableProtocolManager {
     fn entry_point(self, boot_services: StandardBootServices) -> patina_sdk::error::Result<()> {
         boot_services.install_protocol_interface(None, Box::new(AcpiTableProtocol::new()))?;
         boot_services.install_protocol_interface(None, Box::new(AcpiSdtProtocol::new()))?;

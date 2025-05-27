@@ -12,7 +12,6 @@ description = "UEFI ACPI servicves that provide common types and functionality u
 downcast-rs = { workspace = true }
 memoffset = { workspace = true }
 mockall = { workspace = true, optional = true }
-patina_boot_services = { workspace = true }
 patina_sdk = { workspace = true }
 r-efi = { workspace = true }
 scroll = { workspace = true }

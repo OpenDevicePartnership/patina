@@ -120,6 +120,6 @@ services, the `TplMutex` operation only uses the [atomic lock](synchronization.m
 to protect the mutex, and the TPL is not used.
 
 Once Boot Services are fully initialized and TPL can be used, invoke the global
-`init_boot_services()` function on the `TplMutex` crate to initialize TPL
-service. Subsequent lock operations will then be protected by TPL raise in
-addition to the atomic locks.
+`init_boot_services()` function on the `TplMutex` to initialize TPL service.
+Subsequent lock operations will then be protected by TPL raise in addition to
+the atomic locks.
