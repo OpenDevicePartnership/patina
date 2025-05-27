@@ -9,7 +9,7 @@ This would include an issue template and a way of feature gating the unstable fe
 
 ## Dev flow example
 
-- Add a feature to the cargo.toml named `unstable-<feature-name>
+- Add a feature to the cargo.toml named `unstable-<feature-name>`
 - Use `#[cfg(feature = "unstable-<feature-name>")]` to feature gate the unstable code.
 - Create an issue to track the stabilization of the feature.
 
