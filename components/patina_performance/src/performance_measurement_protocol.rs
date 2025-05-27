@@ -17,7 +17,7 @@ use core::{
 
 use r_efi::efi;
 
-use patina_sdk::protocol::ProtocolInterface;
+use patina_sdk::uefi_protocol::ProtocolInterface;
 
 pub const EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0xc85d06be, 0x5f75, 0x48ce, 0xa8, 0x0f, &[0x12, 0x36, 0xba, 0x3b, 0x87, 0xb1]);

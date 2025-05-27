@@ -7,7 +7,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
-use patina_sdk::protocol::ProtocolInterface;
+use patina_sdk::uefi_protocol::ProtocolInterface;
 use r_efi::efi;
 
 /// C struct for the Advanced Logger protocol version 2.

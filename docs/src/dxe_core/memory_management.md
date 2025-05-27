@@ -281,10 +281,10 @@ to the entity that launches Patina and Patina takes no dependencies on the initi
 fundamentals of its code regions being executable, etc.).
 
 As soon as the GCD is initialized and memory allocations are possible, the core sets up a new page table using
-the [paging crate](https://github.com/OpenDevicePartnership/paging/blob/main/README.md). Memory allocations are
-required to back the page tables themselves. In this initial Patina owned page table, which is not installed yet, all
-currently allocated memory is set to be non-executable, as the majority of memory is expected not to be executable
-code.
+the [patina_paging crate](https://github.com/OpenDevicePartnership/patina-paging/blob/main/README.md). Memory
+allocations are required to back the page tables themselves. In this initial Patina owned page table, which is not
+installed yet, all currently allocated memory is set to be non-executable, as the majority of memory is expected not to
+be executable code.
 
 Next, the Patina image location is discovered via the `MemoryAllocationModule` associated with it. The core needs
 to ensure its own image code sections are read only (RO) and executable or else we will immediately fault after

@@ -23,12 +23,12 @@ use scroll::Pwrite;
 
 use patina_sdk::{
     base::UEFI_PAGE_SIZE,
-    error::EfiError,
-    patina_boot_services::{
+    boot_services::{
         allocation::{AllocType, MemoryType},
         BootServices,
     },
-    patina_runtime_services::RuntimeServices,
+    error::EfiError,
+    runtime_services::RuntimeServices,
 };
 
 use crate::{
@@ -296,7 +296,7 @@ impl Default for FirmwareBasicBootPerfDataRecord {
 mod test {
     use core::{assert_eq, slice, unreachable};
 
-    use patina_sdk::{patina_boot_services::MockBootServices, patina_runtime_services::MockRuntimeServices};
+    use patina_sdk::{boot_services::MockBootServices, runtime_services::MockRuntimeServices};
     use scroll::Pread;
 
     use super::*;

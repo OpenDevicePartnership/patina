@@ -111,6 +111,12 @@ impl DebuggerArch for Aarch64Arch {
             if unsafe { core::slice::from_raw_parts(elr, instruction_size) } == breakpoint_instruction {
                 exception_info.context.elr += instruction_size as u64;
             }
+
+            // Always clear the ICache and TLB since the debugger may have altered
+            // instructions or the page tables.
+            unsafe {
+                asm!("dsb sy", "ic iallu", "tlbi alle2", "dsb sy", "isb sy");
+            }
         }
     }
 

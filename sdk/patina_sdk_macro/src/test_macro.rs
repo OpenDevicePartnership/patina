@@ -18,13 +18,9 @@ const KEY_SHOULD_FAIL: &str = "should_fail";
 const KEY_FAIL_MSG: &str = "fail_msg";
 const KEY_SKIP: &str = "skip";
 
-#[proc_macro_attribute]
-pub fn uefi_test(_: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    uefi_test2(item.into()).into()
-}
-
-fn uefi_test2(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-    let mut item = syn::parse2::<ItemFn>(stream).expect("The #[uefi_test] attribute can only be applied to functions");
+pub fn patina_test2(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    let mut item =
+        syn::parse2::<ItemFn>(stream).expect("The #[patina_test] attribute can only be applied to functions");
     let test_case_config = process_attributes(&mut item);
 
     // Wait until we filter out or custom attributes so that we don't confuse the compiler
@@ -36,7 +32,7 @@ fn uefi_test2(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     generate_expanded_test_case(&item, &test_case_config)
 }
 
-/// Consumes any attributes owned by `uefi_test` and returns a map of the configuration.
+/// Consumes any attributes owned by `patina_test` and returns a map of the configuration.
 fn process_attributes(item: &mut ItemFn) -> HashMap<&'static str, proc_macro2::TokenStream> {
     let mut map = HashMap::new();
 
@@ -45,7 +41,7 @@ fn process_attributes(item: &mut ItemFn) -> HashMap<&'static str, proc_macro2::T
     map.insert(KEY_SKIP, quote! {false});
 
     item.attrs.retain(|attr| {
-        if attr.path().is_ident("uefi_test") {
+        if attr.path().is_ident("patina_test") {
             return false;
         }
         if attr.path().is_ident("should_fail") {
@@ -110,16 +106,16 @@ fn generate_expanded_test_case(
     let skip = test_case_config.get(KEY_SKIP).expect("All configuration should have a default value set.");
 
     let expanded = quote! {
-        #[patina_test::linkme::distributed_slice(patina_test::__private_api::TEST_CASES)]
-        #[linkme(crate = patina_test::linkme)]
+        #[patina_sdk::test::linkme::distributed_slice(patina_sdk::test::__private_api::TEST_CASES)]
+        #[linkme(crate = patina_sdk::test::linkme)]
         #[allow(non_upper_case_globals)]
-        static #struct_name: patina_test::__private_api::TestCase =
-        patina_test::__private_api::TestCase {
+        static #struct_name: patina_sdk::test::__private_api::TestCase =
+        patina_sdk::test::__private_api::TestCase {
             name: concat!(module_path!(), "::", stringify!(#fn_name)),
             skip: #skip,
             should_fail: #should_fail,
             fail_msg: #fail_msg,
-            func: |storage| patina_test::__private_api::FunctionTest::new(#fn_name).run(storage.into()),
+            func: |storage| patina_sdk::test::__private_api::FunctionTest::new(#fn_name).run(storage.into()),
         };
         #item
     };
@@ -134,33 +130,33 @@ mod tests {
     #[test]
     fn test_attr_on_non_fn() {
         let stream = quote! {
-            #[uefi_test]
+            #[patina_test]
             struct MyStruct;
         };
-        assert!(::std::panic::catch_unwind(|| uefi_test2(stream)).is_err());
+        assert!(::std::panic::catch_unwind(|| patina_test2(stream)).is_err());
     }
 
     #[test]
     fn test_standard_use_case() {
         let stream = quote! {
-            #[uefi_test]
+            #[patina_test]
             fn my_test_case() -> Result {
                 assert!(true);
             }
         };
 
-        let expanded = uefi_test2(stream);
+        let expanded = patina_test2(stream);
 
         let expected = quote! {
-            #[patina_test::linkme::distributed_slice(patina_test::__private_api::TEST_CASES)]
-            #[linkme(crate = patina_test::linkme)]
+            #[patina_sdk::test::linkme::distributed_slice(patina_sdk::test::__private_api::TEST_CASES)]
+            #[linkme(crate = patina_sdk::test::linkme)]
             #[allow(non_upper_case_globals)]
-            static __my_test_case_TestCase: patina_test::__private_api::TestCase = patina_test::__private_api::TestCase {
+            static __my_test_case_TestCase: patina_sdk::test::__private_api::TestCase = patina_sdk::test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
                 skip: false,
                 should_fail: false,
                 fail_msg: None,
-                func: |storage| patina_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                func: |storage| patina_sdk::test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
             };
             fn my_test_case() -> Result {
                 assert!(true);
@@ -173,26 +169,26 @@ mod tests {
     #[test]
     fn test_with_skip_functionality() {
         let stream = quote! {
-            #[uefi_test]
+            #[patina_test]
             #[skip]
             fn my_test_case() -> Result {
                 assert!(true);
             }
         };
 
-        let expanded = uefi_test2(stream);
+        let expanded = patina_test2(stream);
 
         let expected = quote! {
-            #[patina_test::linkme::distributed_slice(patina_test::__private_api::TEST_CASES)]
-            #[linkme(crate = patina_test::linkme)]
+            #[patina_sdk::test::linkme::distributed_slice(patina_sdk::test::__private_api::TEST_CASES)]
+            #[linkme(crate = patina_sdk::test::linkme)]
             #[allow(non_upper_case_globals)]
-            static __my_test_case_TestCase: patina_test::__private_api::TestCase =
-            patina_test::__private_api::TestCase {
+            static __my_test_case_TestCase: patina_sdk::test::__private_api::TestCase =
+            patina_sdk::test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
                 skip: true,
                 should_fail: false,
                 fail_msg: None,
-                func: |storage| patina_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                func: |storage| patina_sdk::test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
             };
             fn my_test_case() -> Result {
                 assert!(true);
@@ -243,7 +239,7 @@ mod tests {
     #[test]
     fn test_process_multiple_attributes() {
         let stream = quote! {
-            #[uefi_test]
+            #[patina_test]
             #[should_fail = "Expected Error"]
             #[skip]
             #[not_our_attr]

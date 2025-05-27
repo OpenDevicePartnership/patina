@@ -160,21 +160,7 @@ impl MmCommunication for MmCommunicator {
         comm_buffer.set_message_info(recipient).map_err(|_| Status::CommBufferInitError)?;
         comm_buffer.set_message(data_buffer).map_err(|_| Status::CommBufferInitError)?;
 
-        log::trace!(
-            "Communicate buffer before MMI trigger => comm buffer [{}] size: {:#X} content:\n{:?}",
-            id,
-            comm_buffer.len(),
-            comm_buffer
-        );
-
         unsafe { sw_smi_trigger_service.trigger_sw_mmi(0xFF, 0).map_err(|_| Status::SwMmiFailed)? };
-
-        log::trace!(
-            "Communicate buffer after MMI trigger => comm buffer [{}] size: {:#X} content:\n{:?}",
-            id,
-            comm_buffer.len(),
-            comm_buffer
-        );
 
         Ok(comm_buffer.get_message())
     }

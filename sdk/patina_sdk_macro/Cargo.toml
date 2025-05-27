@@ -22,3 +22,8 @@ proc-macro2 = { workspace = true }
 # local to the workspace should be added via `path` instead of `workspace = true` so that that it does not fail to
 # compile due to the dev-dependency not being published yet.
 patina_sdk = { path="../../sdk/patina_sdk" }
+
+
+[features]
+default = []
+off = []

@@ -1071,14 +1071,14 @@ mod tests {
 
             init_memory_support(&hob_list);
 
-            let loader_range = ALLOCATORS.lock().get_allocator(efi::LOADER_DATA).unwrap().preferred_range().unwrap();
+            let loader_range = ALLOCATORS.lock().get_allocator(efi::LOADER_DATA).unwrap().reserved_range().unwrap();
             assert_eq!(loader_range.end - loader_range.start, 0x100 * 0x1000);
 
             let reclaim_range =
-                ALLOCATORS.lock().get_allocator(efi::ACPI_RECLAIM_MEMORY).unwrap().preferred_range().unwrap();
+                ALLOCATORS.lock().get_allocator(efi::ACPI_RECLAIM_MEMORY).unwrap().reserved_range().unwrap();
             assert_eq!(reclaim_range.end - reclaim_range.start, 0x200 * 0x1000);
 
-            let nvs_range = ALLOCATORS.lock().get_allocator(efi::ACPI_MEMORY_NVS).unwrap().preferred_range().unwrap();
+            let nvs_range = ALLOCATORS.lock().get_allocator(efi::ACPI_MEMORY_NVS).unwrap().reserved_range().unwrap();
             assert_eq!(nvs_range.end - nvs_range.start, 0x300 * 0x1000);
         })
         .unwrap();

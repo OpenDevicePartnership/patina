@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), no_std)]
-
 extern crate alloc;
 
 use core::{
@@ -9,7 +7,7 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use patina_boot_services::{tpl::Tpl, BootServices, StandardBootServices};
+use crate::boot_services::{tpl::Tpl, BootServices, StandardBootServices};
 
 /// Type use for mutual exclusion of data across Tpl (task priority level)
 pub struct TplMutex<'a, T: ?Sized, B: BootServices = StandardBootServices> {
@@ -112,8 +110,8 @@ unsafe impl<T: ?Sized + Sync, B: BootServices> Sync for TplMutexGuard<'_, T, B> 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::boot_services::MockBootServices;
     use mockall::predicate::*;
-    use patina_boot_services::MockBootServices;
 
     #[derive(Debug, Default)]
     struct TestStruct {

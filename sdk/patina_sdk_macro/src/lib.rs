@@ -6,9 +6,11 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
+
 mod component_macro;
 mod hob_macro;
 mod service_macro;
+mod test_macro;
 
 /// Derive Macro for implementing the `IntoComponent` trait for a type.
 ///
@@ -150,4 +152,9 @@ pub fn service(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 #[proc_macro_derive(FromHob, attributes(hob))]
 pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     hob_macro::hob_config2(item.into()).into()
+}
+
+#[proc_macro_attribute]
+pub fn patina_test(_: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    test_macro::patina_test2(item.into()).into()
 }

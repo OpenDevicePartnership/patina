@@ -23,7 +23,7 @@ ignorePaths:
   - "**/*.asm"
   - "Makefile.toml"
   - "**/patina_debugger/src/arch/xml/**"
-ignoreRegExpList: ["/0x[0-9a-fA-F]+/"]
+ignoreRegExpList: ["/0x[0-9a-fA-F]+/", "asm!\\(.*?\\);"]
 minWordLength: 5
 caseSensitive: false
 allowCompoundWords: true

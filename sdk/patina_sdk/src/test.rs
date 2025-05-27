@@ -1,13 +1,13 @@
 //! An UEFI testing framework for on-system unit testing
 //!
-//! This crate provides a UEFI component that can be registered with the pure rust DXE core that discovers and runs all
-//! test cases marked with the `#[uefi_test]` attribute. The component provides multiple configuration options as
-//! documented in [TestRunner] object. The `#[uefi_test]` attribute provides multiple configuration attributes
-//! as documented in [`uefi_test`]. All tests are discovered across all crates used to compile the pure-rust DXE
+//! This module provides a UEFI component that can be registered with the pure rust DXE core that discovers and runs all
+//! test cases marked with the `#[patina_test]` attribute. The component provides multiple configuration options as
+//! documented in [TestRunner] object. The `#[patina_test]` attribute provides multiple configuration attributes
+//! as documented in [`patina_test`]. All tests are discovered across all crates used to compile the pure-rust DXE
 //! core, so it is important that test providers use the `cfg_attr` attribute to only compile tests in scenarios where
 //! they are expected to run.
 //!
-//! Additionally, this crate provides a set of macros for writing test cases that are similar to the ones provided by
+//! Additionally, this module provides a set of macros for writing test cases that are similar to the ones provided by
 //! the `core` crate, but return an error message instead of panicking.
 //!
 //! ## Feature Flags
@@ -17,47 +17,49 @@
 //! ## Example
 //!
 //! ```rust
-//! use patina_test::*;
-//! use patina_sdk::patina_boot_services::StandardBootServices;
+//! use patina_sdk::test::*;
+//! use patina_sdk::boot_services::StandardBootServices;
+//! use patina_sdk::test::patina_test;
+//! use patina_sdk::{u_assert, u_assert_eq};
 //!
-//! let component = patina_test::TestRunner::default()
+//! let component = patina_sdk::test::TestRunner::default()
 //!   .with_filter("aarch64") // Only run tests with "aarch64" in their name & path (my_crate::aarch64::test)
 //!   .debug_mode(true)
 //!   .fail_fast(true);
 //!
-//! #[cfg_attr(target_arch = "aarch64", uefi_test)]
+//! #[cfg_attr(target_arch = "aarch64", patina_test)]
 //! fn test_case() -> Result {
 //!   u_assert_eq!(1, 1);
 //!   Ok(())
 //! }
 //!
-//! #[uefi_test]
+//! #[patina_test]
 //! fn test_case2() -> Result {
 //!   u_assert_eq!(1, 1);
 //!   Ok(())
 //! }
 //!
-//! #[uefi_test]
+//! #[patina_test]
 //! #[should_fail]
 //! fn failing_test_case() -> Result {
 //!    u_assert_eq!(1, 2);
 //!    Ok(())
 //! }
 //!
-//! #[uefi_test]
+//! #[patina_test]
 //! #[should_fail = "This test failed"]
 //! fn failing_test_case_with_msg() -> Result {
 //!   u_assert_eq!(1, 2, "This test failed");
 //!   Ok(())
 //! }
 //!
-//! #[uefi_test]
+//! #[patina_test]
 //! #[skip]
 //! fn skipped_test_case() -> Result {
 //!    todo!()
 //! }
 //!
-//! #[uefi_test]
+//! #[patina_test]
 //! #[cfg_attr(not(target_arch = "x86_64"), skip)]
 //! fn x86_64_only_test_case(bs: StandardBootServices) -> Result {
 //!   todo!()
@@ -70,11 +72,11 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-#![cfg_attr(not(test), no_std)]
 extern crate alloc;
 use alloc::vec::Vec;
 
-use patina_sdk::component::{IntoComponent, Storage};
+use crate as patina_sdk;
+use crate::component::{IntoComponent, Storage};
 
 #[doc(hidden)]
 pub use linkme;
@@ -85,10 +87,10 @@ pub mod __private_api;
 /// The result type for a test case, an alias for `Result<(), &'static str>`.
 pub type Result = core::result::Result<(), &'static str>;
 
-/// A proc-macro that registers the annotated function as a test case to be run by uefi_test component.
+/// A proc-macro that registers the annotated function as a test case to be run by patina_test component.
 ///
 /// There is a distinct difference between doing a #[cfg_attr(..., skip)] and a
-/// #[cfg_attr(..., uefi_test)]. The first still compiles the test case, but skips it at runtime. The second does not
+/// #[cfg_attr(..., patina_test)]. The first still compiles the test case, but skips it at runtime. The second does not
 /// compile the test case at all.
 ///
 /// ## Attributes
@@ -102,41 +104,43 @@ pub type Result = core::result::Result<(), &'static str>;
 /// ## Example
 ///
 /// ```rust
-/// use patina_test::*;
-/// use patina_sdk::patina_boot_services::StandardBootServices;
+/// use patina_sdk::test::*;
+/// use patina_sdk::boot_services::StandardBootServices;
+/// use patina_sdk::test::patina_test;
+/// use patina_sdk::{u_assert, u_assert_eq};
 ///
-/// #[uefi_test]
+/// #[patina_test]
 /// fn test_case() -> Result {
 ///     todo!()
 /// }
 ///
-/// #[uefi_test]
+/// #[patina_test]
 /// #[should_fail]
 /// fn failing_test_case() -> Result {
 ///     u_assert_eq!(1, 2);
 ///     Ok(())
 /// }
 ///
-/// #[uefi_test]
+/// #[patina_test]
 /// #[should_fail = "This test failed"]
 /// fn failing_test_case_with_msg() -> Result {
 ///    u_assert_eq!(1, 2, "This test failed");
 ///    Ok(())
 /// }
 ///
-/// #[uefi_test]
+/// #[patina_test]
 /// #[skip]
 /// fn skipped_test_case() -> Result {
 ///    todo!()
 /// }
 ///
-/// #[uefi_test]
+/// #[patina_test]
 /// #[cfg_attr(not(target_arch = "x86_64"), skip)]
 /// fn x86_64_only_test_case(bs: StandardBootServices) -> Result {
 ///   todo!()
 /// }
 /// ```
-pub use patina_test_macro::uefi_test;
+pub use patina_sdk_macro::patina_test;
 
 /// A macro similar to [`core::assert!`] that returns an error message instead of panicking.
 #[macro_export]
@@ -177,7 +181,7 @@ macro_rules! u_assert_ne {
     };
 }
 
-/// A component that runs all test cases marked with the `#[uefi_test]` attribute when loaded by the DXE core.
+/// A component that runs all test cases marked with the `#[patina_test]` attribute when loaded by the DXE core.
 #[derive(IntoComponent, Default, Clone)]
 pub struct TestRunner {
     filters: Vec<&'static str>,
@@ -251,7 +255,7 @@ impl TestRunner {
 
 #[cfg(test)]
 mod tests {
-    use patina_sdk::component::{params::Config, IntoComponent, Storage};
+    use crate::component::{params::Config, IntoComponent, Storage};
 
     // A test function where we mock DxeComponentInterface to return what we want for the test.
     #[allow(unused)]
@@ -289,7 +293,7 @@ mod tests {
         skip: false,
         should_fail: false,
         fail_msg: None,
-        func: |storage| crate::__private_api::FunctionTest::new(test_function).run(storage.into()),
+        func: |storage| crate::test::__private_api::FunctionTest::new(test_function).run(storage.into()),
     };
 
     #[cfg_attr(not(feature = "off"), linkme::distributed_slice(super::__private_api::TEST_CASES))]
@@ -299,7 +303,7 @@ mod tests {
         skip: true,
         should_fail: false,
         fail_msg: None,
-        func: |storage| crate::__private_api::FunctionTest::new(test_function).run(storage.into()),
+        func: |storage| crate::test::__private_api::FunctionTest::new(test_function).run(storage.into()),
     };
 
     #[test]

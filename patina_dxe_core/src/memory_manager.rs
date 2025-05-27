@@ -1,4 +1,5 @@
 use alloc::boxed::Box;
+use patina_sdk::test::patina_test;
 use patina_sdk::{
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     component::service::{
@@ -12,7 +13,7 @@ use patina_sdk::{
     error::EfiError,
     uefi_pages_to_size,
 };
-use patina_test::{u_assert, u_assert_eq, uefi_test};
+use patina_sdk::{u_assert, u_assert_eq};
 use r_efi::efi;
 
 use crate::{
@@ -209,8 +210,8 @@ fn allow_allocations_for_type(memory_type: EfiMemoryType) -> Result<(), MemoryEr
     }
 }
 
-#[uefi_test]
-fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_test::Result {
+#[patina_test]
+fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_sdk::test::Result {
     // Allocate a page, and make sure it is accessible.
     let result = mm.allocate_pages(1, AllocationOptions::new());
     u_assert!(result.is_ok(), "Failed to allocate single page.");
@@ -255,8 +256,8 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_tes
     Ok(())
 }
 
-#[uefi_test]
-fn memory_manager_attributes_test(mm: Service<dyn MemoryManager>) -> patina_test::Result {
+#[patina_test]
+fn memory_manager_attributes_test(mm: Service<dyn MemoryManager>) -> patina_sdk::test::Result {
     // The default attributes for memory should be read/write.
     let result = mm.allocate_pages(1, AllocationOptions::new());
     u_assert!(result.is_ok(), "Failed to allocate single page.");

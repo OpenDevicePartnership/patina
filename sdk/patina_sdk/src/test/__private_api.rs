@@ -1,4 +1,4 @@
-//! Internal API for the patina_test crate.
+//! Internal API for the test module.
 //!
 //! This module must be public so that the macros can access it, but it is not intended for use by consumers of the
 //! crate.
@@ -12,12 +12,12 @@
 
 use core::marker::PhantomData;
 
-use patina_sdk::component::{
+use crate::component::{
     params::{Param, ParamFunction},
     MetaData, Storage, UnsafeStorageCell,
 };
 
-/// Where all the test cases marked with `#[uefi_test]` are collated to.
+/// Where all the test cases marked with `#[patina_test]` are collated to.
 #[cfg(not(feature = "off"))]
 #[linkme::distributed_slice]
 pub static TEST_CASES: [TestCase];
@@ -120,7 +120,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use patina_sdk::component::Storage;
+    use crate::component::Storage;
 
     #[test]
     fn test_should_run() {

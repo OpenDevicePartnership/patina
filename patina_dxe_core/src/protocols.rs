@@ -516,10 +516,6 @@ unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::Hand
 }
 
 unsafe extern "C" fn uninstall_multiple_protocol_interfaces(handle: efi::Handle, mut args: ...) -> efi::Status {
-    // See note in install_multiple_protocol_interfaces.
-    let tpl_mutex = TplMutex::new(efi::TPL_NOTIFY, (), "atomic_protocol_uninstall");
-    let _tpl_guard = tpl_mutex.lock();
-
     if handle.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }

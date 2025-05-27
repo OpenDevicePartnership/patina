@@ -3,12 +3,12 @@
 //! This module provides a way to create UEFI components by allowing each component to define its own dependencies. The
 //! component executor will automatically resolve the dependencies and execute the component.
 //!
-//! This crate takes its inspiration from the [Entity Component System](https://en.wikipedia.org/wiki/Entity_component_system)
-//! architectural pattern, while only using a subset of its described characteristics. This crate's implementation is
+//! This module takes its inspiration from the [Entity Component System](https://en.wikipedia.org/wiki/Entity_component_system)
+//! architectural pattern, while only using a subset of its described characteristics. This module's implementation is
 //! heavily inspired by the [bevy_ecs](https://crates.io/crates/bevy_ecs) crate, which was created by the [Bevy](https://bevyengine.org/)
 //! engine team.
 //!
-//! This crate comes from the need to design a highly generic and extensible user interface for UEFI driver
+//! This module comes from the need to design a highly generic and extensible user interface for UEFI driver
 //! development. As such, we only need a subset of the features offered by `bevy_ecs`, and thus we pulled out the core
 //! functionality from `bevy_ecs` that is applicable to our needs, modified it to fit our use case, and expanded on it.
 //!
@@ -53,7 +53,7 @@
 //!
 //! ### `Param` types
 //!
-//! Below is a list of all types that implement the [Param](params::Param) trait, within this crate. Other
+//! Below is a list of all types that implement the [Param](params::Param) trait, within this module. Other
 //! implementations may still exist.
 //!
 //! | Param                        | Description                                                                                                                                                           |
@@ -148,12 +148,9 @@ mod struct_component;
 
 use crate::error::Result;
 
-#[cfg(any(feature = "doc", feature = "core"))]
 pub use metadata::MetaData;
-#[cfg(any(feature = "doc", feature = "core"))]
-pub use storage::UnsafeStorageCell;
-
 pub use storage::Storage;
+pub use storage::UnsafeStorageCell;
 
 /// A part of the private API that must be public for the component macro to work. Users should not use this directly
 /// and it is subject to change at any time.
