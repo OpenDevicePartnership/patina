@@ -35,7 +35,7 @@ impl DevicePathBuf {
     }
 
     /// Append a node to the device path.
-    /// This function do not ensure that the device path is valid, the EndEntire node must be manually added to the device path.
+    /// This function does not ensure that the device path is valid, the EndEntire node must be manually added to the device path.
     pub fn append<T>(&mut self, node: T)
     where
         T: DevicePathNode + Sized,
