@@ -359,9 +359,9 @@ mod test {
             12, // length lower byte
             0,  // length upper byte
             (Acpi::PCI_ROOT_HID & 0xFF) as u8,
-            (Acpi::PCI_ROOT_HID >> 8 & 0xFF) as u8,
-            (Acpi::PCI_ROOT_HID >> 16 & 0xFF) as u8,
-            (Acpi::PCI_ROOT_HID >> 24 & 0xFF) as u8,
+            ((Acpi::PCI_ROOT_HID >> 8) & 0xFF) as u8,
+            ((Acpi::PCI_ROOT_HID >> 16) & 0xFF) as u8,
+            ((Acpi::PCI_ROOT_HID >> 24) & 0xFF) as u8,
             0, // uid byte 0
             0, // uid byte 1
             0, // uid byte 2
