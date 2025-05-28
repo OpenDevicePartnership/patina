@@ -16,6 +16,7 @@ extern crate alloc;
 
 mod _smm;
 pub mod error;
+pub mod firmware_performance;
 pub mod log_perf_measurement;
 pub mod performance_measurement_protocol;
 pub mod performance_record;

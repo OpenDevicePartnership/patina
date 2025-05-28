@@ -12,6 +12,7 @@ description = "Performance support for the DXE Core."
 r-efi = { workspace = true }
 scroll = { workspace = true }
 log = { workspace = true }
+spin = { workspace = true }
 uuid = { workspace = true }
 
 mu_pi = { workspace = true }
