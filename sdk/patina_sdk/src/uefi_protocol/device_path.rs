@@ -194,7 +194,7 @@ impl DevicePath {
         self.buffer.len()
     }
 
-    /// Return the number of node in the device path.
+    /// Return the number of nodes in the device path.
     pub fn node_count(&self) -> usize {
         self.iter().count()
     }
