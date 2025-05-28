@@ -218,8 +218,8 @@ impl DevicePath {
         unsafe { &*(end_buffer as *const [u8] as *const DevicePath) }
     }
 
-    /// Return true if the device path start with an other device path.
-    pub fn start_with(&self, other: &DevicePath) -> bool {
+    /// Return true if the device path starts with the other device path.
+    pub fn starts_with(&self, other: &DevicePath) -> bool {
         let self_iter = self.iter();
         let other_iter = other.iter();
         for (self_node, other_node) in self_iter.zip(other_iter) {
