@@ -189,7 +189,7 @@ impl DevicePath {
         Err("Device path need to end with an end entire node.")
     }
 
-    /// Return the size in byte of the device path.
+    /// Return the size in bytes of the device path.
     pub fn size(&self) -> usize {
         self.buffer.len()
     }
