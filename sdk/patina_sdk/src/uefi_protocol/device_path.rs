@@ -4,8 +4,9 @@
 pub mod device_path_node;
 pub mod nodes;
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, vec::Vec, borrow::ToOwned};
 use core::{
+    borrow::Borrow,
     clone::Clone,
     convert::{AsRef, From},
     debug_assert, debug_assert_eq,
@@ -14,6 +15,7 @@ use core::{
     iter::Iterator,
     mem,
     ops::Deref,
+    
 };
 
 use log;
@@ -136,7 +138,7 @@ pub struct DevicePath {
 
 impl DevicePath {
     /// Create a &DevicePath for a DevicePathBuf.
-    pub fn from(device_path_buf: &DevicePathBuf) -> &Self {
+    pub fn from(device_path_buff: &DevicePathBuf) -> &Self {
         // SAFETY: This is safe because DevicePath have the same memory layout as `[u8]`.
         unsafe { &*(device_path_buff.buffer.as_slice() as *const [u8] as *const Self) }
     }
@@ -251,6 +253,20 @@ impl PartialEq for &DevicePath {
 }
 
 impl Eq for &DevicePath {}
+
+impl ToOwned for DevicePath {
+    type Owned = DevicePathBuf;
+
+    fn to_owned(&self) -> Self::Owned {
+        self.into()
+    }
+}
+
+impl Borrow<DevicePath> for DevicePathBuf {
+    fn borrow(&self) -> &DevicePath {
+        self.as_ref()
+    }
+}
 
 impl Clone for Box<DevicePath> {
     fn clone(&self) -> Self {

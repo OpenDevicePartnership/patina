@@ -2,10 +2,7 @@
 
 use alloc::boxed::Box;
 use core::{
-    clone::Clone,
-    fmt::{Debug, Display, Write},
-    marker::Sized,
-    mem,
+    clone::Clone, fmt::{Debug, Display, Write}, marker::Sized, mem
 };
 
 use scroll::{
@@ -73,8 +70,7 @@ pub trait DevicePathNode: Debug + Display {
         Self: Sized;
 
     /// Write the device path node into that buffer and return the number of byte written.
-    #[allow(clippy::result_unit_err)]
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, ()>;
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error>;
 }
 
 /// UnknownDevicePathNode are device path nodes that have not been cast to a more specific associated type or that are undefined in the spec.
@@ -99,12 +95,13 @@ impl DevicePathNode for UnknownDevicePathNode<'_> {
     }
 
     fn is_type(_type: u8, _sub_type: u8) -> bool {
+        // An unknown device type can represent every type so it always return true.
         true
     }
 
-    fn write_into(self, buffer: &mut [u8]) -> Result<usize, ()> {
+    fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
         let mut offset = 0;
-        buffer.gwrite_with(self, &mut offset, Endian::Little).map_err(|_| ())?;
+        buffer.gwrite_with(self, &mut offset, Endian::Little)?;
         Ok(offset)
     }
 }
@@ -200,13 +197,13 @@ macro_rules! device_path_node {
                 r#type == $device_path_type as u8 && sub_type == $device_path_sub_type as u8
             }
 
-            fn write_into(self, buffer: &mut [u8]) -> Result<usize, ()> {
+            fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error> {
                 let header = self.header();
                 debug_assert!(header.length >= buffer.len(), "Buffer to small, can write the device path node.");
 
                 let mut offset = 0;
-                buffer.gwrite_with(header, &mut offset, scroll::Endian::Little).map_err(|_| ())?;
-                buffer.gwrite_with(self, &mut offset, scroll::Endian::Little).map_err(|_| ())?;
+                buffer.gwrite_with(header, &mut offset, scroll::Endian::Little)?;
+                buffer.gwrite_with(self, &mut offset, scroll::Endian::Little)?;
                 Ok(offset)
             }
         }
