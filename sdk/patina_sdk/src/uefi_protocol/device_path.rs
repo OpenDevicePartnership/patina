@@ -200,7 +200,7 @@ impl DevicePath {
     }
 
     /// Return true if the device path contains more than one instance, otherwise false.
-    pub fn is_multi_instances(&self) -> bool {
+    pub fn is_multi_instance(&self) -> bool {
         self.iter().any(|n| EndInstance::is_type(n.header.r#type, n.header.sub_type))
     }
 
