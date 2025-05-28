@@ -11,12 +11,14 @@ use crate::{
 
 #[patina_test]
 fn acpi_test(
-    _provider_service: Service<dyn AcpiProvider>,
+    // _provider_service: Service<dyn AcpiProvider>,
     memory_manager: Service<dyn MemoryManager>,
     bs: StandardBootServices,
 ) -> patina_sdk::test::Result {
     let provider = StandardAcpiProvider::new_uninit();
     provider.initialize(2, true, bs, memory_manager);
+
+    println!("ACPI TEST");
 
     // Install a regular dummy ACPI table
     let dummy_signature = u32::from_le_bytes(*b"DEMO");
