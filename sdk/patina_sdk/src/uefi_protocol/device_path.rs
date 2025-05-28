@@ -136,7 +136,7 @@ pub struct DevicePath {
 
 impl DevicePath {
     /// Create a &DevicePath for a DevicePathBuf.
-    pub fn from(device_path_buff: &DevicePathBuf) -> &Self {
+    pub fn from(device_path_buf: &DevicePathBuf) -> &Self {
         // SAFETY: This is safe because DevicePath have the same memory layout as `[u8]`.
         unsafe { &*(device_path_buff.buffer.as_slice() as *const [u8] as *const Self) }
     }
