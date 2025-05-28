@@ -72,11 +72,10 @@ jobs:
       - name: Login to Registry
         run: cargo login "${{ secrets.PATINA_FW_TOKEN }}" --registry patina-fw
 
-      # Commenting below to allow the PR# 425 to skip below dry run for one off release.
-      # - name: Cargo Release Dry Run
-      #   run: cargo release ${{ steps.release_tag.outputs.tag }} --no-tag --workspace --registry patina-fw
-      #   env:
-      #     RUSTC_BOOTSTRAP: 1
+      - name: Cargo Release Dry Run
+        run: cargo release ${{ steps.release_tag.outputs.tag }} --no-tag --workspace --registry patina-fw
+        env:
+          RUSTC_BOOTSTRAP: 1
 
       - name: Cargo Release
         run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace --registry patina-fw
