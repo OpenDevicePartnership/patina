@@ -1,3 +1,5 @@
+use crate::alloc::boxed::Box;
+
 use core::mem;
 
 use patina_sdk::boot_services::{BootServices, StandardBootServices};

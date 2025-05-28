@@ -3,6 +3,7 @@ use patina_sdk::component::service::{memory::MemoryManager, Service};
 use patina_sdk::test::patina_test;
 
 use crate::{
+    alloc::vec::Vec,
     acpi::StandardAcpiProvider,
     acpi_table::{AcpiFacs, AcpiTable},
     service::AcpiProvider,
@@ -18,7 +19,7 @@ fn acpi_test(
     let provider = StandardAcpiProvider::new_uninit();
     provider.initialize(2, true, bs, memory_manager);
 
-    println!("ACPI TEST");
+    log::info!("ACPI TEST");
 
     // Install a regular dummy ACPI table
     let dummy_signature = u32::from_le_bytes(*b"DEMO");

@@ -1,6 +1,7 @@
 //! ACPI C Protocol Definitions.
 //!
 //! Wrappers for the C ACPI protocols to call into Rust ACPI implementations.
+use crate::alloc::vec;
 
 use core::{ffi::c_void, ptr};
 use patina_sdk::uefi_protocol::ProtocolInterface;

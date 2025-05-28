@@ -5,7 +5,8 @@ use core::{
     sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering},
 };
 
-use alloc::vec;
+use crate::alloc::{vec::Vec, boxed::Box};
+use crate::alloc::vec;
 
 use patina_sdk::boot_services::{BootServices, StandardBootServices};
 use patina_sdk::{

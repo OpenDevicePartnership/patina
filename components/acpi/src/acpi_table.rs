@@ -4,6 +4,8 @@
 //! Supports only ACPI version >= 2.0.
 //! Fields corresponding to ACPI 1.0 are preceded with an underscore (`_`) and are not in use.
 
+use crate::alloc::vec::Vec;
+
 use crate::signature;
 use crate::{error::AcpiError, service::TableKey};
 

@@ -9,6 +9,7 @@ publish.workspace = true
 description = "UEFI ACPI servicves that provide common types and functionality used in ACPI development."
 
 [dependencies]
+log = { workspace = true }
 downcast-rs = { workspace = true }
 memoffset = { workspace = true }
 mockall = { workspace = true, optional = true }
