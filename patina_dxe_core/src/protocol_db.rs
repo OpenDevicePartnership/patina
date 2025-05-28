@@ -410,31 +410,27 @@ impl ProtocolDb {
         let key = handle as usize;
         let handle_instance = self.handles.get_mut(&key).expect("valid handle, but no entry in self.handles");
         let instance = handle_instance.get_mut(&OrdGuid(protocol)).ok_or(EfiError::Unsupported)?;
-        let mut removed = false;
-        instance.usage.retain(|x| {
-            if (x.agent_handle == agent_handle) && (x.controller_handle == controller_handle) {
-                //if we are removing the usage that had this instance open by driver (there should be only one)
-                //then clear the flag that the instance was opened by driver.
-                if (x.attributes & efi::OPEN_PROTOCOL_BY_DRIVER) != 0 {
-                    instance.opened_by_driver = false;
-                }
-                //if we are removing the usage that had this instance open exclusive (there should be only one)
-                //then clear the flag that the instance was opened exclusive.
-                if (x.attributes & efi::OPEN_PROTOCOL_EXCLUSIVE) != 0 {
-                    instance.opened_by_exclusive = false;
-                }
-                removed = true;
-                false //if agent and controller match, do not retain (i.e. remove).
-            } else {
-                true //if one or the other or both don't match, retain.
+
+        if let Some(idx) = instance
+            .usage
+            .iter()
+            .rposition(|x| (x.agent_handle == agent_handle) && (x.controller_handle == controller_handle))
+        {
+            let usage = instance.usage.remove(idx);
+            //if we are removing the usage that had this instance open by driver (there should be only one)
+            //then clear the flag that the instance was opened by driver.
+            if (usage.attributes & efi::OPEN_PROTOCOL_BY_DRIVER) != 0 {
+                instance.opened_by_driver = false;
             }
-        });
-
-        if !removed {
-            return Err(EfiError::NotFound);
+            //if we are removing the usage that had this instance open exclusive (there should be only one)
+            //then clear the flag that the instance was opened exclusive.
+            if (usage.attributes & efi::OPEN_PROTOCOL_EXCLUSIVE) != 0 {
+                instance.opened_by_exclusive = false;
+            }
+            Ok(())
+        } else {
+            Err(EfiError::NotFound)
         }
-
-        Ok(())
     }
 
     fn get_open_protocol_information_by_protocol(
