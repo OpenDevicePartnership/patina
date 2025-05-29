@@ -1745,7 +1745,7 @@ pub struct SpinLockedGcd {
     memory: tpl_lock::TplMutex<GCD>,
     io: tpl_lock::TplMutex<IoGCD>,
     memory_change_callback: Option<MapChangeCallback>,
-    page_table: tpl_lock::TplMutex<Option<Box<dyn PageTable<ALLOCATOR = PagingAllocator<'static>>>>>,
+    page_table: tpl_lock::TplMutex<Option<Box<dyn PageTable>>>,
 }
 
 impl SpinLockedGcd {

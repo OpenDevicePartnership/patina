@@ -49,10 +49,6 @@ where
     P: PageTable,
     M: Mtrr,
 {
-    type ALLOCATOR = P::ALLOCATOR;
-    fn borrow_allocator(&mut self) -> &mut P::ALLOCATOR {
-        self.paging.borrow_allocator()
-    }
     // Paging related APIs
     fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError> {
         let cache_attributes = attributes & MemoryAttributes::CacheAttributesMask;
@@ -147,9 +143,7 @@ fn apply_caching_attributes<M: Mtrr>(
     Ok(())
 }
 
-pub fn create_cpu_x64_paging<A: PageAllocator + 'static>(
-    page_allocator: A,
-) -> Result<Box<dyn PageTable<ALLOCATOR = A>>, efi::Status> {
+pub fn create_cpu_x64_paging<A: PageAllocator + 'static>(page_allocator: A) -> Result<Box<dyn PageTable>, efi::Status> {
     Ok(Box::new(EfiCpuPagingX64 {
         paging: X64PageTable::new(page_allocator, PagingType::Paging4Level).unwrap(),
         mtrr: create_mtrr_lib(0),
@@ -188,8 +182,6 @@ mod tests {
     mock! {
         PageTable {}
         impl PageTable for PageTable {
-            type ALLOCATOR = MockPageAllocator;
-            fn borrow_allocator(&mut self) -> &mut MockPageAllocator;
             fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
             fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError>;
             fn remap_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
