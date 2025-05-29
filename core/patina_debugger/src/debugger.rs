@@ -23,7 +23,7 @@ use spin::Mutex;
 
 use crate::{
     arch::{DebuggerArch, SystemArch},
-    dbg_target::UefiTarget,
+    dbg_target::PatinaTarget,
     system::SystemState,
     transport::{LoggingSuspender, SerialConnection},
     DebugError, Debugger, ExceptionInfo,
@@ -45,12 +45,12 @@ static MONITOR_BUFFER: [u8; MONITOR_BUFF_LEN] = [0; MONITOR_BUFF_LEN];
 unsafe impl Send for ExceptionInfo {}
 unsafe impl Sync for ExceptionInfo {}
 
-/// UEFI Debugger
+/// Patina Debugger
 ///
-/// This struct implements the Debugger trait for the UEFI debugger. It wraps
+/// This struct implements the Debugger trait for the Patina debugger. It wraps
 /// a SerialIO transport and manages the debugger in an internal struct.
 ///
-pub struct UefiDebugger<T>
+pub struct PatinaDebugger<T>
 where
     T: SerialIO + 'static,
 {
@@ -90,18 +90,18 @@ struct DebuggerInternal<'a, T>
 where
     T: SerialIO,
 {
-    gdb: Option<GdbStubStateMachine<'a, UefiTarget, SerialConnection<'a, T>>>,
+    gdb: Option<GdbStubStateMachine<'a, PatinaTarget, SerialConnection<'a, T>>>,
     gdb_buffer: Option<&'a [u8; GDB_BUFF_LEN]>,
     monitor_buffer: Option<&'a [u8; MONITOR_BUFF_LEN]>,
 }
 
-impl<T: SerialIO> UefiDebugger<T> {
-    /// Create a new UEFI debugger
+impl<T: SerialIO> PatinaDebugger<T> {
+    /// Create a new Patina debugger
     ///
-    /// Creates a new UEFI debugger instance with the provided transport.
+    /// Creates a new Patina debugger instance with the provided transport.
     ///
     pub const fn new(transport: T) -> Self {
-        UefiDebugger {
+        PatinaDebugger {
             transport,
             debugger_log: false,
             no_transport_init: false,
@@ -195,7 +195,7 @@ impl<T: SerialIO> UefiDebugger<T> {
             unsafe { core::slice::from_raw_parts_mut(const_buffer.as_ptr() as *mut u8, const_buffer.len()) }
         };
 
-        let mut target = UefiTarget::new(exception_info, &self.system_state, monitor_buffer);
+        let mut target = PatinaTarget::new(exception_info, &self.system_state, monitor_buffer);
 
         // Either take the existing state machine, or start one if this is the first break.
         let mut gdb = match debug.gdb {
@@ -273,7 +273,7 @@ impl<T: SerialIO> UefiDebugger<T> {
     }
 }
 
-impl<T: SerialIO> Debugger for UefiDebugger<T> {
+impl<T: SerialIO> Debugger for PatinaDebugger<T> {
     fn initialize(&'static self, interrupt_manager: &mut dyn InterruptManager) {
         let config = self.config.read();
         if !config.enabled {
@@ -381,7 +381,7 @@ impl<T: SerialIO> Debugger for UefiDebugger<T> {
     }
 }
 
-impl<T: SerialIO> InterruptHandler for UefiDebugger<T> {
+impl<T: SerialIO> InterruptHandler for PatinaDebugger<T> {
     fn handle_interrupt(
         &'static self,
         exception_type: ExceptionType,
