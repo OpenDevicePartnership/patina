@@ -166,29 +166,7 @@ impl DevicePath {
         }
 
         let device_path = &*(buffer as *const [u8] as *const DevicePath);
-        device_path.is_device_path_valid()?;
         Ok(device_path)
-    }
-
-    /// Return Ok if the device path is valid, otherwise return an Err with the reason why the device path is invalid.
-    pub fn is_device_path_valid(&self) -> Result<(), &'static str> {
-        if self.buffer.is_empty() {
-            return Err("Device path is empty. Need at least the end entire node to be a valid device path.");
-        }
-
-        let mut nodes = self.iter().peekable();
-
-        while let Some(n) = nodes.next() {
-            let header = n.header();
-            if EndEntire::is_type(header.r#type, header.sub_type) {
-                if nodes.peek().is_some() {
-                    return Err("Device path has an end entire in the middle, everything after will be ignored.");
-                } else {
-                    return Ok(());
-                }
-            }
-        }
-        Err("Device path need to end with an end entire node.")
     }
 
     /// Return the size in bytes of the device path.
@@ -210,6 +188,10 @@ impl DevicePath {
     /// This operation does not copy memory since the trailing end of a device path is a valid device path.
     pub fn slice_end(&self, n: usize) -> &DevicePath {
         let count = self.node_count();
+
+        debug_assert!(n > 1, "Device path need to at least have the end node.");
+        debug_assert!(n <= count, "Can't retrun a device path bigger than self.");
+
         let nb_skip = count - n;
         let mut idx = 0;
         for _ in 0..nb_skip {
@@ -505,11 +487,11 @@ mod test {
         device_path_buf_2.append(Pci { function: 1, device: 2 });
         device_path_buf_2.append(EndEntire);
 
-        assert!(!device_path_buf.is_multi_instances());
+        assert!(!device_path_buf.is_multi_instance());
 
         device_path_buf.append_device_path_instances(&device_path_buf_2);
 
-        assert!(device_path_buf.is_multi_instances());
+        assert!(device_path_buf.is_multi_instance());
     }
 
     #[test]
@@ -537,12 +519,12 @@ mod test {
         start.append(Acpi::new_pci_root(0));
         start.append(EndEntire);
 
-        assert!(device_path_buf.start_with(&start));
+        assert!(device_path_buf.starts_with(&start));
 
         let mut start = DevicePathBuf::new_empty();
         start.append(Acpi::new_pci_root(1));
         start.append(EndEntire);
 
-        assert!(!device_path_buf.start_with(&start));
+        assert!(!device_path_buf.starts_with(&start));
     }
 }
