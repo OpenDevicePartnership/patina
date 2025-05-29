@@ -182,8 +182,13 @@ where
             let acpi_table_generic = acpi_table.downcast_ref::<AcpiTable>().ok_or(AcpiError::InvalidTableFormat)?;
             self.add_table_to_list(acpi_table_generic, false)?
         };
+
         self.publish_tables()?;
-        self.notify_acpi_list(table_key)?;
+
+        // The FACS is not part of the list of tables, so no notification occurs.
+        if acpi_table.signature() != signature::FACS {
+            self.notify_acpi_list(table_key)?;
+        }
 
         Ok(table_key)
     }
@@ -360,8 +365,6 @@ where
             }
         }
 
-        let table_addr = table_addr.expect("Table should be installed in ACPI memory.");
-
         let mut memory_type = self.memory_type();
 
         // FACS and UEFI table needs to be aligned to 64B
@@ -373,6 +376,7 @@ where
             // For FACS and UEFI only, reallocation isn't necessary if passed in from the HOB
             // since they are pre-aligned and allocated in NVS memory
             if is_from_hob {
+                let table_addr = table_addr.expect("Table should be installed in ACPI memory.");
                 return Ok(table_addr);
             }
 
@@ -500,7 +504,7 @@ where
         }
 
         self.checksum_common_tables()?;
-        Ok(self.next_table_key.load(Ordering::Acquire) as TableKey)
+        Ok(next_table_key)
     }
 
     pub(crate) fn memory_type(&self) -> EfiMemoryType {
@@ -528,8 +532,9 @@ where
             // SAFETY: All entries in the XSDT are guaranteed to be u64
             let dst = unsafe { base.add(entry_offset) as *mut u64 };
             // Write entry to ACPI memory
+            // This may be unaligned due to the 36B length of the header
             unsafe {
-                core::ptr::write(dst, new_table_addr);
+                core::ptr::write_unaligned(dst, new_table_addr);
             }
 
             // Fix up XSDT struct fields
@@ -584,7 +589,6 @@ where
 
     fn remove_table_from_list(&self, table_key: TableKey) -> Result<(), AcpiError> {
         let mut table_for_key = None;
-
         let mut table_idx = None;
         for (i, ptr) in self.acpi_tables.write().iter_mut().enumerate() {
             // SAFETY: The tables in `self.acpi_tables` are derived from `install_acpi_table`

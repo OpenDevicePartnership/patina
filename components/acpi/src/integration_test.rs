@@ -11,16 +11,7 @@ use crate::{
 };
 
 #[patina_test]
-fn acpi_test(
-    // _provider_service: Service<dyn AcpiProvider>,
-    memory_manager: Service<dyn MemoryManager>,
-    bs: StandardBootServices,
-) -> patina_sdk::test::Result {
-    let provider = StandardAcpiProvider::new_uninit();
-    provider.initialize(2, true, bs, memory_manager);
-
-    log::info!("ACPI TEST");
-
+fn acpi_test(provider: Service<dyn AcpiProvider>) -> patina_sdk::test::Result {
     // Install a regular dummy ACPI table
     let dummy_signature = u32::from_le_bytes(*b"DEMO");
     let mut dummy_table = AcpiTable {
@@ -41,8 +32,8 @@ fn acpi_test(
 
     // Install a FACS table (special case — not iterated over)
     let mut facs = AcpiFacs { signature: signature::FACS, length: 64, ..Default::default() };
-    let key = provider.install_acpi_table(&mut facs).expect("Should install FACS");
-    assert_eq!(key, 0, "Table key should be zero for FACS");
+    let facs_key = provider.install_acpi_table(&mut facs).expect("Should install FACS");
+    assert_eq!(facs_key, 0, "Table key should be zero for FACS");
 
     // Verify only the dummy table is in the iterator
     let tables: Vec<&AcpiTable> = provider.iter().collect();
@@ -50,7 +41,7 @@ fn acpi_test(
     assert_eq!(tables[0].signature, dummy_signature);
 
     // Uninstall the dummy table
-    provider.uninstall_acpi_table(dummy_table.table_key).expect("Delete should succeed");
+    provider.uninstall_acpi_table(key).expect("Delete should succeed");
 
     // get(0) should now fail
     assert!(provider.get_acpi_table(0).is_err(), "Table should no longer be accessible");
