@@ -104,11 +104,10 @@ jobs:
         env:
           RUSTC_BOOTSTRAP: 1
 
-      # Commenting below to allow the PR# 425 to pass CI.
-      # - name: Crate Release Dry Run
-      #   run: cargo release --no-tag --workspace --no-push --allow-branch '*' --registry patina-fw
-      #   env:
-      #     RUSTC_BOOTSTRAP: 1
+      - name: Crate Release Dry Run
+        run: cargo release --no-tag --workspace --no-push --allow-branch '*' --registry patina-fw
+        env:
+          RUSTC_BOOTSTRAP: 1
 
       - name: 🧪 Run Tests 🧪
         run: cargo make coverage

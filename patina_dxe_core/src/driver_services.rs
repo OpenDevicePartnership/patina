@@ -6,7 +6,7 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{collections::BTreeMap, collections::BTreeSet, vec::Vec};
 use core::{ptr::NonNull, slice::from_raw_parts_mut};
 use patina_internal_device_path::{concat_device_path_to_boxed_slice, copy_device_path_to_boxed_slice};
 use patina_performance::{
@@ -409,8 +409,9 @@ pub unsafe fn core_disconnect_controller(
         }
     };
 
-    drivers_managing_controller.sort_unstable();
-    drivers_managing_controller.dedup();
+    // remove duplicates but preserve ordering.
+    let mut driver_set = BTreeSet::new();
+    drivers_managing_controller.retain(|x| driver_set.insert(*x));
 
     // if the driver image was specified, only disconnect that one (if it is actually managing it)
     if let Some(driver) = driver_image_handle {
@@ -420,26 +421,39 @@ pub unsafe fn core_disconnect_controller(
     let mut one_or_more_drivers_disconnected = false;
     let no_drivers = drivers_managing_controller.is_empty();
     for driver_handle in drivers_managing_controller {
-        //determine which child handles should be stopped.
-        let mut child_handles: Vec<_> = match PROTOCOL_DB.get_open_protocol_information(controller_handle) {
-            Ok(info) => info
-                .iter()
-                .flat_map(|(_guid, open_info)| {
-                    open_info.iter().filter_map(|x| {
-                        if (x.agent_handle == Some(driver_handle))
-                            && ((x.attributes & efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER) != 0)
-                        {
-                            Some(x.controller_handle.expect("controller handle required when open by child controller"))
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .collect(),
-            Err(_) => Vec::new(),
+        let controller_info = match PROTOCOL_DB.get_open_protocol_information(controller_handle) {
+            Ok(info) => info,
+            Err(_) => continue,
         };
-        child_handles.sort_unstable();
-        child_handles.dedup();
+
+        // Determine whether this driver still has the controller open by driver, and what child handles it has open (if
+        // any).
+        let mut driver_valid = false;
+        let mut child_handles = Vec::new();
+        for (_guid, open_info) in controller_info.iter() {
+            for info in open_info.iter() {
+                if info.agent_handle == Some(driver_handle) {
+                    if (info.attributes & efi::OPEN_PROTOCOL_BY_DRIVER) != 0 {
+                        driver_valid = true;
+                    }
+                    if (info.attributes & efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER) != 0 {
+                        if let Some(handle) = info.controller_handle {
+                            child_handles.push(handle);
+                        }
+                    }
+                }
+            }
+        }
+
+        // This driver no longer has the controller open by driver (may have been closed a side-effect of processing a
+        // previous driver in the list), so nothing to do.
+        if !driver_valid {
+            continue;
+        }
+
+        // remove duplicates but preserve ordering.
+        let mut child_set = BTreeSet::new();
+        child_handles.retain(|x| child_set.insert(*x));
 
         let total_children = child_handles.len();
         let mut is_only_child = false;

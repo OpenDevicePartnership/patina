@@ -34,11 +34,6 @@ impl<P> PageTable for EfiCpuPagingAArch64<P>
 where
     P: PageTable,
 {
-    type ALLOCATOR = P::ALLOCATOR;
-    fn borrow_allocator(&mut self) -> &mut P::ALLOCATOR {
-        self.paging.borrow_allocator()
-    }
-
     fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError> {
         self.paging.map_memory_region(address, size, attributes)
     }
@@ -66,7 +61,7 @@ where
 
 pub fn create_cpu_aarch64_paging<A: PageAllocator + 'static>(
     page_allocator: A,
-) -> Result<Box<dyn PageTable<ALLOCATOR = A>>, efi::Status> {
+) -> Result<Box<dyn PageTable>, efi::Status> {
     Ok(Box::new(EfiCpuPagingAArch64 {
         paging: AArch64PageTable::new(page_allocator, PagingType::Paging4Level).unwrap(),
     }))
@@ -89,8 +84,6 @@ mod tests {
     mock! {
         PageTable {}
         impl PageTable for PageTable {
-            type ALLOCATOR = MockPageAllocator;
-            fn borrow_allocator(&mut self) -> &mut MockPageAllocator;
             fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
             fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError>;
             fn remap_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
