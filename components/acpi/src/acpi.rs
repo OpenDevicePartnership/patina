@@ -356,7 +356,7 @@ where
         signature: u32,
         table_addr: Option<usize>,
         is_from_hob: bool,
-        npages: usize,
+        n_pages: usize,
     ) -> Result<usize, AcpiError> {
         // If the table is from the HOB, it should already be installed in ACPI memory
         if is_from_hob {
@@ -390,7 +390,7 @@ where
             .memory_manager
             .get()
             .expect("Memory manager not initialized")
-            .allocate_zero_pages(npages, alloc_options)
+            .allocate_zero_pages(n_pages, alloc_options)
             .map_err(|_e| AcpiError::AllocationFailed)?;
 
         Ok(page_alloc.into_raw_ptr::<u8>() as usize)
@@ -1005,8 +1005,8 @@ mod tests {
             length: ACPI_HEADER_LEN as u32, // XSDT currently has no entries
             revision: 1,
             checksum: 0,
-            oem_id: *b"OEMID ",
-            oem_table_id: *b"TABLEID ",
+            oem_id: *b"123456",
+            oem_table_id: *b"12345678",
             oem_revision: 1,
             creator_id: 0,
             creator_revision: 0,

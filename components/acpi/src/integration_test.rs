@@ -1,9 +1,7 @@
-use patina_sdk::boot_services::StandardBootServices;
-use patina_sdk::component::service::{memory::MemoryManager, Service};
+use patina_sdk::component::service::Service;
 use patina_sdk::test::patina_test;
 
 use crate::{
-    acpi::StandardAcpiProvider,
     acpi_table::{AcpiFacs, AcpiTable},
     alloc::vec::Vec,
     service::AcpiProvider,
@@ -19,8 +17,8 @@ fn acpi_test(provider: Service<dyn AcpiProvider>) -> patina_sdk::test::Result {
         length: ACPI_HEADER_LEN as u32,
         revision: 1,
         checksum: 0,
-        oem_id: *b"OEMID ",
-        oem_table_id: *b"TABLID  ",
+        oem_id: *b"123456",
+        oem_table_id: *b"12345678",
         oem_revision: 1,
         creator_id: 0,
         creator_revision: 0,

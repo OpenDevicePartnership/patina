@@ -60,7 +60,7 @@ impl AcpiProviderManager {
                 .with_memory_type(ACPI_TABLE_INFO.memory_type())
                 .with_strategy(PageAllocationStrategy::Any),
         )?;
-        // SAFETY: If allocation suceeds, `rsdp_alloc` is guaranteed to point to valid ACPI memory
+        // SAFETY: If allocation succeeds, `rsdp_alloc` is guaranteed to point to valid ACPI memory
         let rsdp = unsafe { &mut *(rsdp_alloc.into_raw_ptr::<u8>() as *mut AcpiRsdp) };
         ACPI_TABLE_INFO.set_rsdp(rsdp);
 
@@ -73,7 +73,7 @@ impl AcpiProviderManager {
         )?;
         let xsdt_addr = xsdt_alloc.into_raw_ptr::<u8>();
 
-        // SAFETY: If allocation suceeds, `xsdt_addr` is guaranteed to point to valid ACPI memory
+        // SAFETY: If allocation succeeds, `xsdt_addr` is guaranteed to point to valid ACPI memory
         let xsdt = unsafe { &mut *(xsdt_addr as *mut AcpiXsdt) };
         ACPI_TABLE_INFO.set_xsdt(xsdt);
 

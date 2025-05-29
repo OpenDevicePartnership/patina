@@ -257,7 +257,7 @@ pub struct AcpiTable {
     pub creator_revision: u32,
     // Trailing variable-length data that differs between ACPI table types
     pub data: Vec<u8>,
-    // Additional fields not present in the original C struct. Included for Rust conveinence
+    // Additional fields not present in the original C struct. Included for Rust convenience
     pub table_key: TableKey, // Unique key assigned to ACPI table upon installation
     pub(crate) physical_address: Option<usize>, // Physical address of the table in memory. None if the table is not yet installed in ACPI firmware memory
 }
@@ -304,9 +304,9 @@ mod tests {
         // Header bytes
         let sig = u32::from_le_bytes(*b"FACP");
         let rev = 2;
-        let chksum = 0xAB;
-        let oem_id = *b"OEMID_";
-        let oem_table_id = *b"TBLID123";
+        let checksum = 0xAB;
+        let oem_id = *b"123456";
+        let oem_table_id = *b"12345678";
         let oem_rev = 0xCAFEBABE;
         let creator_id = 0x1234_5678;
         let creator_rev = 0xDEAD_BEEF;
@@ -322,7 +322,7 @@ mod tests {
             signature: sig,
             length: mem::size_of::<AcpiFadt>() as u32,
             revision: rev,
-            checksum: chksum,
+            checksum,
             oem_id,
             oem_table_id,
             oem_revision: oem_rev,
@@ -337,7 +337,7 @@ mod tests {
 
         // Check some header fields
         assert_eq!(fadt.revision, rev);
-        assert_eq!(fadt.checksum, chksum);
+        assert_eq!(fadt.checksum, checksum);
         assert_eq!(fadt.oem_id, oem_id);
         assert_eq!(fadt.oem_table_id, oem_table_id);
 
