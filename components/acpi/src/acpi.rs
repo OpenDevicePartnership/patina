@@ -682,21 +682,33 @@ where
         if let Some(xsdt) = system_tables.xsdt_mut() {
             let num_entries = self.entries.read().len();
             // SAFETY: `xsdt` has been verified to be a valid pointer
-            let xsdt_entries_ptr = unsafe { (xsdt as *mut AcpiXsdt as *mut u8).add(ACPI_HEADER_LEN) as *mut u64 };
-            let xsdt_slice = unsafe { core::slice::from_raw_parts_mut(xsdt_entries_ptr, num_entries) };
+            let header_ptr = xsdt as *mut AcpiXsdt as *mut u8;
+            let entries_base = unsafe { header_ptr.add(ACPI_HEADER_LEN) };
 
-            let xsdt_pos = self.entries.read().iter().position(|&entry| entry == (table_address as u64));
+            // Read entries
+            // Entries may be unaligned, since the 36-byte ACPI header only guarantees a 4-byte alignment
+            let mut entries: Vec<u64> = Vec::with_capacity(num_entries);
+            for i in 0..num_entries {
+                let ptr_i = unsafe { entries_base.add(i * core::mem::size_of::<u64>()) } as *const u64;
+                let entry = unsafe { ptr_i.read_unaligned() };
+                entries.push(entry);
+            }
 
-            if let Some(index) = xsdt_pos {
-                // Shift all entries after the one to be remove to the left
-                for i in index..(num_entries - 1) {
-                    xsdt_slice[i] = xsdt_slice[i + 1];
+            // Find and remove the matching entry
+            if let Some(index) = entries.iter().position(|&e| e == table_address as u64) {
+                entries.remove(index);
+
+                // Write the entries back to memory, minus the removed one
+                for (i, &val) in entries.iter().enumerate() {
+                    let ptr_i = unsafe { entries_base.add(i * core::mem::size_of::<u64>()) } as *mut u64;
+                    unsafe { ptr_i.write_unaligned(val) };
                 }
 
-                // Update XSDT in-memory length
-                xsdt.length -= mem::size_of::<u64>() as u32;
+                // Reduce XSDT length by sizeof(entry)
+                xsdt.length = xsdt.length.saturating_sub(core::mem::size_of::<u64>() as u32);
 
-                self.entries.write().remove(index);
+                // Update local (Rust) list of entries
+                self.entries.write().retain(|&e| e != table_address as u64);
             }
 
             Self::acpi_table_update_checksum(
@@ -1016,7 +1028,7 @@ mod tests {
             system_tables.xsdt.store(xsdt_ptr, Ordering::Relaxed);
         }
 
-        const XSDT_ADDR: u64 = 0x1000_0000_0000_0000;
+        const XSDT_ADDR: u64 = 0x1000_0000_0000_0004;
 
         let result = provider.add_entry_to_xsdt(XSDT_ADDR);
         assert!(result.is_ok());
@@ -1045,7 +1057,7 @@ mod tests {
             let new_entries = provider.entries.read();
             assert_eq!(new_entries.len(), 0);
         }
-        // XSDT doesn't have to zero entries, but should reduce length to mark the removed entry as invalid
+        // XSDT doesn't have to zero trailing entries, but should reduce length to mark the removed entry as invalid
         let system_tables = provider.system_tables.lock();
         assert_eq!(system_tables.xsdt_mut().unwrap().length, ACPI_HEADER_LEN as u32);
     }
