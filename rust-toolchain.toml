@@ -9,6 +9,7 @@ cargo-deny = "^0.17"
 cargo-make = "0.37.21"
 cargo-tarpaulin = "0.31.5"
 cargo-release = "0.25.12"
+
 mdbook = "0.4.40"
 mdbook-mermaid = "0.14.0"
 mdbook-admonish = "1.18.0"

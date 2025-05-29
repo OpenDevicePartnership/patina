@@ -8,8 +8,8 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use crate::alloc::boxed::Box;
 use crate::acpi_table::{AcpiInstallable, AcpiTable};
+use crate::alloc::boxed::Box;
 use crate::error::AcpiError;
 
 pub type TableKey = usize;

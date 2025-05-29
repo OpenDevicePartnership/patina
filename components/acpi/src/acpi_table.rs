@@ -296,6 +296,7 @@ mod tests {
     use crate::signature::ACPI_HEADER_LEN;
 
     use super::*;
+    use alloc::vec;
     use core::mem;
 
     #[test]

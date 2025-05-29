@@ -3,9 +3,9 @@ use patina_sdk::component::service::{memory::MemoryManager, Service};
 use patina_sdk::test::patina_test;
 
 use crate::{
-    alloc::vec::Vec,
     acpi::StandardAcpiProvider,
     acpi_table::{AcpiFacs, AcpiTable},
+    alloc::vec::Vec,
     service::AcpiProvider,
     signature::{self, ACPI_HEADER_LEN},
 };

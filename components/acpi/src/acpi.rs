@@ -5,8 +5,8 @@ use core::{
     sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering},
 };
 
-use crate::alloc::{vec::Vec, boxed::Box};
-use crate::alloc::vec;
+use crate::alloc::{boxed::Box, vec::Vec};
+use crate::{alloc::vec, service::AcpiNotifyFn};
 
 use patina_sdk::boot_services::{BootServices, StandardBootServices};
 use patina_sdk::{
@@ -28,7 +28,7 @@ use crate::{
     acpi_table::{AcpiDsdt, AcpiFacs, AcpiFadt, AcpiInstallable, AcpiRsdp, AcpiTable, AcpiXsdt},
     component::AcpiMemoryHob,
     error::AcpiError,
-    service::{AcpiNotifyFn, AcpiProvider, TableKey},
+    service::{AcpiProvider, TableKey},
     signature::{self, ACPI_HEADER_LEN, MAX_INITIAL_ENTRIES},
 };
 
@@ -72,6 +72,17 @@ impl SystemTables {
 impl SystemTables {
     pub fn fadt_mut(&self) -> Option<&mut AcpiFadt> {
         let ptr = self.fadt.load(Ordering::Acquire);
+        if ptr.is_null() {
+            None
+        } else {
+            // SAFETY: the pointer is checked to be non-null
+            // The caller must make sure that, upon construction, this AtomicPointer holds a valid FADT reference
+            Some(unsafe { &mut *ptr })
+        }
+    }
+
+    pub fn facs_mut(&self) -> Option<&mut AcpiFacs> {
+        let ptr = self.facs.load(Ordering::Acquire);
         if ptr.is_null() {
             None
         } else {
@@ -165,7 +176,7 @@ where
     fn install_acpi_table(&self, acpi_table: &dyn AcpiInstallable) -> Result<TableKey, AcpiError> {
         let table_key = if acpi_table.signature() == signature::FACS {
             // FACS table has a unique structure and installation requirements
-            self.install_facs(acpi_table.phys_addr())?
+            self.install_facs(acpi_table.phys_addr(), acpi_table.length() as usize)?
         } else {
             // All other tables must follow the generic ACPI table format
             let acpi_table_generic = acpi_table.downcast_ref::<AcpiTable>().ok_or(AcpiError::InvalidTableFormat)?;
@@ -195,7 +206,7 @@ where
         if should_register {
             self.notify_list.write().push(notify_fn);
         } else {
-            let found_pos = self.notify_list.read().iter().position(|x| *x == notify_fn);
+            let found_pos = self.notify_list.read().iter().position(|x| core::ptr::fn_addr_eq(*x, notify_fn));
             if let Some(pos) = found_pos {
                 self.notify_list.write().remove(pos);
             } else {
@@ -271,7 +282,9 @@ where
                 if fadt.x_firmware_ctrl != 0 {
                     // SAFETY: The FACS has been checked to be non-null
                     // The caller must ensure that the FACS in the HOB is valid
-                    self.install_facs(Some(fadt.x_firmware_ctrl as usize))?;
+                    let facs_ptr = fadt.x_firmware_ctrl as *mut AcpiFacs;
+                    let facs_len = unsafe { (*facs_ptr).length as usize };
+                    self.install_facs(Some(facs_ptr as usize), facs_len)?;
                 }
                 if fadt.x_dsdt != 0 {
                     let dsdt_ptr = fadt.x_dsdt as *mut AcpiTable;
@@ -303,19 +316,26 @@ where
 {
     /// Adds the FACS to the list of installed tables
     /// Due to the unique format of the FACS, it has different installation requirements than other tables
-    pub(crate) fn install_facs(&self, facs_addr: Option<usize>) -> Result<TableKey, AcpiError> {
-        // FACS is a special case -- it must reside in firmware memory to be installed
-        if facs_addr.is_none() {
-            return Err(AcpiError::HobTableNotInstalled);
-        }
+    pub(crate) fn install_facs(&self, facs_addr: Option<usize>, facs_len: usize) -> Result<TableKey, AcpiError> {
+        let facs_install_addr = if facs_addr.is_none() {
+            self.allocate_table_addr(signature::FACS, None, false, uefi_size_to_pages!(facs_len))?
+        } else {
+            facs_addr.unwrap()
+        };
 
         // Point the `x_firmware_ctrl` field of the FADT to the FACS
         {
             let system_tables = self.system_tables.lock();
-            let facs_ptr = facs_addr.unwrap() as u64;
+            let facs_ptr = facs_install_addr as u64;
             system_tables.facs.store(facs_ptr as *mut AcpiFacs, Ordering::Release);
             if let Some(fadt) = system_tables.fadt_mut() {
                 fadt.x_firmware_ctrl = facs_ptr;
+            }
+
+            // Update the new in-memory FACS
+            if let Some(facs) = system_tables.facs_mut() {
+                facs.signature = signature::FACS;
+                facs.length = facs_len as u32;
             }
         }
 
@@ -368,7 +388,6 @@ where
             .expect("Memory manager not initialized")
             .allocate_zero_pages(npages, alloc_options)
             .map_err(|_e| AcpiError::AllocationFailed)?;
-        // println!("{}", page_alloc);
 
         Ok(page_alloc.into_raw_ptr::<u8>() as usize)
     }
@@ -758,6 +777,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
     use patina_sdk::boot_services::MockBootServices;
     use patina_sdk::component::service::memory::MockMemoryManager;
@@ -876,10 +897,6 @@ mod tests {
         let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
 
-        // FACS address not initialized
-        let err = provider.install_facs(None).unwrap_err();
-        assert!(matches!(err, AcpiError::HobTableNotInstalled));
-
         // Dummy FACS and FADT
         let facs = Box::new(AcpiFacs { signature: signature::FACS, length: 64, ..Default::default() });
         let facs_ptr = Box::into_raw(facs) as usize;
@@ -892,7 +909,7 @@ mod tests {
         }
 
         // This should not fail, and should return 0 (FACS does not have an associated TableKey)
-        let res = provider.install_facs(Some(facs_ptr));
+        let res = provider.install_facs(Some(facs_ptr), 64);
         assert_eq!(res.unwrap(), 0);
 
         // Make sure FACS was installed into FADT
@@ -959,7 +976,7 @@ mod tests {
 
         // FADT should have been added to list
         let system_tables = provider.system_tables.lock();
-        assert_eq!(system_tables.fadt.load(std::sync::atomic::Ordering::Acquire) as usize, raw_ptr as usize);
+        assert_eq!(system_tables.fadt.load(Ordering::Acquire) as usize, raw_ptr as usize);
 
         // Clean up
         unsafe { drop(Box::from_raw(raw_ptr)) };
@@ -999,14 +1016,16 @@ mod tests {
             system_tables.xsdt.store(xsdt_ptr, Ordering::Relaxed);
         }
 
-        let result = provider.add_entry_to_xsdt(0xCAFEBABE);
+        const XSDT_ADDR: u64 = 0x1000_0000_0000_0000;
+
+        let result = provider.add_entry_to_xsdt(XSDT_ADDR);
         assert!(result.is_ok());
 
         // we should now have 2 entries, the second of which is 0xCAFEBABE
         {
             let new_entries = provider.entries.read();
             assert_eq!(new_entries.len(), 1);
-            assert_eq!(new_entries[0], 0xCAFEBABE);
+            assert_eq!(new_entries[0], XSDT_ADDR);
         }
 
         // Verify the memory write of XSDT entry too
@@ -1017,10 +1036,10 @@ mod tests {
             let ptr64 = raw_ptr.add(entry_offset) as *const u64;
             ptr64.read_unaligned()
         };
-        assert_eq!(written, 0xCAFEBABE, "entry was not written correctly to memory");
+        assert_eq!(written, XSDT_ADDR, "entry was not written correctly to memory");
 
         // Try removing the table
-        let removal_addr = unsafe { &*(0xCAFEBABE as *const AcpiTable) };
+        let removal_addr = unsafe { &*(XSDT_ADDR as *const AcpiTable) };
         provider.remove_table_from_xsdt(removal_addr);
         {
             let new_entries = provider.entries.read();

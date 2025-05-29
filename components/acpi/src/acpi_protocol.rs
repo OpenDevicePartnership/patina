@@ -3,9 +3,11 @@
 //! Wrappers for the C ACPI protocols to call into Rust ACPI implementations.
 use crate::alloc::vec;
 
+use alloc::collections::btree_map::BTreeMap;
 use core::{ffi::c_void, ptr};
 use patina_sdk::uefi_protocol::ProtocolInterface;
 use r_efi::efi;
+use spin::rwlock::RwLock;
 
 use crate::service::{AcpiNotifyFn, AcpiProvider};
 use crate::{
@@ -141,6 +143,8 @@ fn acpi_error_to_efi_error(error: AcpiError) -> efi::Status {
 pub(crate) struct AcpiSdtProtocol {
     get_table: AcpiTableGet,
     register_notify: AcpiTableRegisterNotify,
+    // Maps between Rust-side function IDs and C-side function pointers
+    id_to_fn: RwLock<BTreeMap<*const AcpiNotifyFnExt, usize>>,
 }
 
 unsafe impl ProtocolInterface for AcpiSdtProtocol {
@@ -150,7 +154,11 @@ unsafe impl ProtocolInterface for AcpiSdtProtocol {
 
 impl AcpiSdtProtocol {
     pub(crate) fn new() -> Self {
-        Self { get_table: Self::get_acpi_table_ext, register_notify: Self::register_notify_ext }
+        Self {
+            get_table: Self::get_acpi_table_ext,
+            register_notify: Self::register_notify_ext,
+            id_to_fn: RwLock::new(BTreeMap::new()),
+        }
     }
 }
 
