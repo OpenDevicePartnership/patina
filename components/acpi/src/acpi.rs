@@ -247,7 +247,7 @@ where
         // SAFETY: the caller must pass in a valid pointer to an XSDT
         // Find the entry at `offset` and read the value (which is a u64 address)
         let entry_addr = unsafe {
-            let entry_ptr = (xsdt_start_ptr as *const u8).add(offset) as *const u64;
+            let entry_ptr = xsdt_start_ptr.add(offset) as *const u64;
             core::ptr::read_unaligned(entry_ptr)
         };
 
@@ -322,10 +322,10 @@ where
     /// Adds the FACS to the list of installed tables
     /// Due to the unique format of the FACS, it has different installation requirements than other tables
     pub(crate) fn install_facs(&self, facs_addr: Option<usize>, facs_len: usize) -> Result<TableKey, AcpiError> {
-        let facs_install_addr = if facs_addr.is_none() {
-            self.allocate_table_addr(signature::FACS, None, false, uefi_size_to_pages!(facs_len))?
+        let facs_install_addr = if let Some(facs_mem_addr) = facs_addr {
+            facs_mem_addr
         } else {
-            facs_addr.unwrap()
+            self.allocate_table_addr(signature::FACS, None, false, uefi_size_to_pages!(facs_len))?
         };
 
         // Point the `x_firmware_ctrl` field of the FADT to the FACS
@@ -359,10 +359,8 @@ where
         n_pages: usize,
     ) -> Result<usize, AcpiError> {
         // If the table is from the HOB, it should already be installed in ACPI memory
-        if is_from_hob {
-            if table_addr.is_none() {
-                return Err(AcpiError::HobTableNotInstalled);
-            }
+        if is_from_hob && table_addr.is_none() {
+            return Err(AcpiError::HobTableNotInstalled);
         }
 
         let mut memory_type = self.memory_type();
@@ -538,7 +536,7 @@ where
             }
 
             // Fix up XSDT struct fields
-            self.entries.write().push(new_table_addr as u64);
+            self.entries.write().push(new_table_addr);
             xsdt.length += mem::size_of::<u64>() as u32;
         }
 

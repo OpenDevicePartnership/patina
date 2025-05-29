@@ -1,6 +1,6 @@
 use r_efi::efi;
 
-/// Helpers for handling ACPI signatures
+// Helpers for handling ACPI signatures
 
 pub const FACS: u32 = 0x53434146;
 pub const UEFI: u32 = 0x49464555;

@@ -96,6 +96,7 @@ pub struct GenericAddressStructure {
 
 impl AcpiFadt {
     /// SAFETY: reads the packed `x_firmware_ctrl` field even if unaligned.
+    #[allow(dead_code)]
     pub unsafe fn get_x_firmware_ctrl(&self) -> u64 {
         // Compute byte offset of packed field
         let p: *const u64 = addr_of!(self.x_firmware_ctrl);
@@ -105,6 +106,7 @@ impl AcpiFadt {
     }
 
     /// SAFETY: reads the packed `x_dsdt` field even if unaligned.
+    #[allow(dead_code)]
     pub unsafe fn get_x_dsdt(&self) -> u64 {
         // Compute byte offset of packed field
         let p: *const u64 = addr_of!(self.x_dsdt);

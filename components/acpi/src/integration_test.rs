@@ -12,7 +12,7 @@ use crate::{
 fn acpi_test(provider: Service<dyn AcpiProvider>) -> patina_sdk::test::Result {
     // Install a regular dummy ACPI table
     let dummy_signature = u32::from_le_bytes(*b"DEMO");
-    let mut dummy_table = AcpiTable {
+    let dummy_table = AcpiTable {
         signature: dummy_signature,
         length: ACPI_HEADER_LEN as u32,
         revision: 1,
@@ -25,12 +25,12 @@ fn acpi_test(provider: Service<dyn AcpiProvider>) -> patina_sdk::test::Result {
         ..Default::default()
     };
 
-    let key = provider.install_acpi_table(&mut dummy_table).expect("Should install dummy table");
+    let key = provider.install_acpi_table(&dummy_table).expect("Should install dummy table");
     assert!(key > 0, "Table key should be greater than zero");
 
     // Install a FACS table (special case — not iterated over)
-    let mut facs = AcpiFacs { signature: signature::FACS, length: 64, ..Default::default() };
-    let facs_key = provider.install_acpi_table(&mut facs).expect("Should install FACS");
+    let facs = AcpiFacs { signature: signature::FACS, length: 64, ..Default::default() };
+    let facs_key = provider.install_acpi_table(&facs).expect("Should install FACS");
     assert_eq!(facs_key, 0, "Table key should be zero for FACS");
 
     // Verify only the dummy table is in the iterator
