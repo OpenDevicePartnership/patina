@@ -592,7 +592,7 @@ where
         let mut table_idx = None;
         for (i, ptr) in self.acpi_tables.write().iter_mut().enumerate() {
             // SAFETY: The tables in `self.acpi_tables` are derived from `install_acpi_table`
-            // If installation suceeds, they must be valid table references
+            // If installation succeeds, they must be valid table references
             let table = unsafe { ptr.as_mut() };
             if table.table_key == table_key {
                 table_for_key = Some(table);
@@ -1078,8 +1078,8 @@ mod tests {
             length: (ACPI_HEADER_LEN + mem::size_of::<u64>() * MAX_INITIAL_ENTRIES) as u32,
             revision: 1,
             checksum: 0,
-            oem_id: *b"OEMID ",
-            oem_table_id: *b"TABLEID ",
+            oem_id: *b"123456",
+            oem_table_id: *b"12345678",
             oem_revision: 1,
             creator_id: 0,
             creator_revision: 0,
