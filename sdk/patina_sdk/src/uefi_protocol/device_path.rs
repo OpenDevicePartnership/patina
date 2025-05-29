@@ -4,7 +4,7 @@
 pub mod device_path_node;
 pub mod nodes;
 
-use alloc::{boxed::Box, vec::Vec, borrow::ToOwned};
+use alloc::{borrow::ToOwned, boxed::Box, vec::Vec};
 use core::{
     borrow::Borrow,
     clone::Clone,
@@ -15,7 +15,6 @@ use core::{
     iter::Iterator,
     mem,
     ops::Deref,
-    
 };
 
 use log;

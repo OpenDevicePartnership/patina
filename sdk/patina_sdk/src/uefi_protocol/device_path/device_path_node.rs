@@ -2,7 +2,10 @@
 
 use alloc::boxed::Box;
 use core::{
-    clone::Clone, fmt::{Debug, Display, Write}, marker::Sized, mem
+    clone::Clone,
+    fmt::{Debug, Display, Write},
+    marker::Sized,
+    mem,
 };
 
 use scroll::{
