@@ -141,8 +141,15 @@ impl Display for UnknownDevicePathNode<'_> {
     }
 }
 
+/// This macro is used to defined a device path node struct. And implement device path node traits for it.
+/// To configure the type and subtype of this node, use a attribute `@[DevicePathNode(DevicePathType::Type, SubType::MySubtype)]`
+/// where the Type and subtype are enum path where the value can be expess as u8.a
+///
+/// Some additional trait can be implemented with `@[DevicePathNodeDerive(...)]`
+/// Currently supported traits are: Debug and Display.
 #[macro_export]
 macro_rules! device_path_node {
+    // match a struct with fields.
     (
         $(#[$struct_attr_1:meta])*
         @[DevicePathNode( $device_path_type:path, $device_path_sub_type:path)]
@@ -167,6 +174,7 @@ macro_rules! device_path_node {
         device_path_node!(@ImplDevicePathNode; $device_path_type, $device_path_sub_type, $struct_name);
         device_path_node!(@Derive; $struct_name, $($field_name),*; $($($derive_trait),*)?);
     };
+    // Match an empty struct.
     (
         $(#[$struct_attr_1:meta])*
         @[DevicePathNode( $device_path_type:path, $device_path_sub_type:path)]
@@ -176,11 +184,12 @@ macro_rules! device_path_node {
     ) => {
         $(#[$struct_attr_1])*
         $(#[$struct_attr_2])*
-        $struct_vis struct $struct_name $($empty_field),*;
+        $struct_vis struct $struct_name; $($empty_field),* // no empty field expected, the variable is there because we need it to be empty.
 
         device_path_node!(@ImplDevicePathNode; $device_path_type, $device_path_sub_type, $struct_name);
         device_path_node!(@Derive; $struct_name, $($empty_field),*; $($($derive_trait),*)?);
     };
+    // Internal Matching to implement the device path node trait.
     (@ImplDevicePathNode; $device_path_type:path, $device_path_sub_type:path, $struct_name:ident) => {
         impl $crate::uefi_protocol::device_path::device_path_node::DevicePathNode for $struct_name
         {
@@ -208,6 +217,7 @@ macro_rules! device_path_node {
             }
         }
     };
+    // Internal Matching to implement the debug trait.
     (@Derive; $struct_name:ident, $($field_name:ident),*; Debug) => {
         impl core::fmt::Debug for $struct_name {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -223,6 +233,7 @@ macro_rules! device_path_node {
             }
         }
     };
+    // Internal Matching to implement the display trait.
     (@Derive; $struct_name:ident, $($field_name:ident),*; Display) => {
         impl core::fmt::Display for $struct_name {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -234,12 +245,15 @@ macro_rules! device_path_node {
             }
         }
     };
+    // Internal matching to add a complite error in case of an unsupported trait in derive.
     (@Derive; $struct_name:ident, $($field_name:ident),*; $trait:ident) => {
         compile_error!("A trait is unsupported derive trait.");
     };
+    // Internal matching to call all the derive to add their impl to the struct.
     (@Derive; $struct_name:ident, $($field_name:ident),*; $head:ident, $($derive_trait:ident),+) => {
         device_path_node!(@Derive; $struct_name, $($field_name),*; $head);
         device_path_node!(@Derive; $struct_name, $($field_name),*; $($derive_trait),+);
     };
+    // Internal matching: do nothing if no derive specified.
     (@Derive; $struct_name:ident, $($field_name:ident),*; ) => {};
 }
