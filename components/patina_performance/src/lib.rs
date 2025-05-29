@@ -20,6 +20,7 @@ pub mod log_perf_measurement;
 pub mod performance_measurement_protocol;
 pub mod performance_record;
 pub mod performance_table;
+pub mod firmware_performance;
 
 use alloc::{boxed::Box, string::ToString, vec::Vec};
 use core::{
