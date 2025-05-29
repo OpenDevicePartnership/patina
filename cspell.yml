@@ -30,6 +30,7 @@ allowCompoundWords: true
 words:
   - aarch
   - acpibase
+  - acpica
   - addrs
   - armasm
   - basecore
@@ -42,7 +43,9 @@ words:
   - cdecl
   - cdrom
   - cforce
+  - choco
   - civac
+  - CLANGPDB
   - clflush
   - clfsh
   - cntfrq
@@ -80,8 +83,8 @@ words:
   - getsp
   - gigantor
   - gread
-  - gwrite
   - guids
+  - gwrite
   - hlength
   - hresult
   - icfgr
@@ -107,6 +110,7 @@ words:
   - morerelia
   - mpidr
   - msdia
+  - mtools
   - mtrr
   - mtrr
   - mtrrcap
@@ -130,8 +134,8 @@ words:
   - pccard
   - pciexbar
   - pdata
-  - philipp
   - pemfile
+  - philipp
   - physbase
   - physmask
   - pointee
@@ -159,6 +163,7 @@ words:
   - rustls
   - rwlock
   - sbsa
+  - sbsaenv
   - sctlr
   - smbus
   - smcport
