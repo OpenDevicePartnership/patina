@@ -236,6 +236,10 @@ args = ["fmt", "--all"]
 description = "Run cspell for spell checking." # npm install -g cspell@latest
 script = "cspell --quiet  --no-progress --no-summary  --dot --gitignore -e \"{.git/**,.github/**,.vscode/**}\" ."
 
+[tasks.markdownlint]
+description = "Run markdownlint for documentation linting." # npm install -g markdownlint-cli@latest
+script = "markdownlint '**/*.md' -c .markdownlint.yml --ignore target"
+
 [tasks.deny]
 description = "Run cargo deny."
 install_crate = false
@@ -249,6 +253,7 @@ dependencies = [
     "deny",
     "clippy",
     "cspell",
+    "markdownlint",
     "build",
     "build-x64",
     "build-aarch64",
