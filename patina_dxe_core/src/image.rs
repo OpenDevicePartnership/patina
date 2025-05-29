@@ -81,7 +81,7 @@ impl ImageStack {
         // the stack grows downwards, so stack here is the guard page
         let attributes = match dxe_services::core_get_memory_space_descriptor(stack) {
             Ok(descriptor) => descriptor.attributes,
-            Err(_) => 0,
+            Err(_) => DEFAULT_CACHE_ATTR,
         };
         if let Err(err) =
             dxe_services::core_set_memory_space_attributes(stack, UEFI_PAGE_SIZE as u64, attributes | efi::MEMORY_RP)
@@ -111,7 +111,7 @@ impl Drop for ImageStack {
             // preserve the caching attributes
             let mut attributes = match dxe_services::core_get_memory_space_descriptor(stack_addr) {
                 Ok(descriptor) => descriptor.attributes & !efi::MEMORY_ATTRIBUTE_MASK,
-                Err(_) => 0,
+                Err(_) => DEFAULT_CACHE_ATTR,
             };
 
             attributes |= efi::MEMORY_XP;

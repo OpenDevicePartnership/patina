@@ -8,6 +8,8 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 
+use r_efi::efi;
+
 /// EFI memory allocation functions work in units of EFI_PAGEs that are 4KB.
 /// This should in no way be confused with the page size of the processor.
 /// An EFI_PAGE is just the quanta of memory in EFI.
@@ -54,6 +56,9 @@ pub const SIZE_32TB: usize = 0x200000000000;
 pub const SIZE_64TB: usize = 0x400000000000;
 pub const SIZE_128TB: usize = 0x800000000000;
 pub const SIZE_256TB: usize = 0x1000000000000;
+
+/// Patina uses write back as the default cache attribute for memory allocations.
+pub const DEFAULT_CACHE_ATTR: u64 = efi::MEMORY_WB;
 
 /// Aligns the given address down to the nearest boundary specified by align.
 ///
