@@ -1,4 +1,5 @@
-//! Implements module related structures and functions.
+//! Implementation related to external system state such as module tracking
+//! and monitor callbacks.
 //!
 //! ## License
 //!
@@ -8,6 +9,22 @@
 //!
 
 use alloc::{string::String, vec::Vec};
+
+use crate::MonitorCommandFn;
+
+pub(crate) struct SystemState {
+    /// Tracks modules state.
+    pub modules: Modules,
+    /// Tracks external monitor commands.
+    pub monitor_commands: Vec<MonitorCallback>,
+}
+
+impl SystemState {
+    /// Create a new system state.
+    pub const fn new() -> Self {
+        SystemState { modules: Modules::new(), monitor_commands: Vec::new() }
+    }
+}
 
 /// Information about a loaded module.
 pub(crate) struct ModuleInfo {
@@ -72,6 +89,11 @@ impl Modules {
     pub fn get_module_breakpoints(&self) -> &Vec<String> {
         &self.module_breakpoints
     }
+}
+
+pub(crate) struct MonitorCallback {
+    pub command: &'static str,
+    pub callback: MonitorCommandFn,
 }
 
 #[cfg(feature = "alloc")]

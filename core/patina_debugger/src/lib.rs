@@ -92,7 +92,7 @@ mod arch;
 mod dbg_target;
 mod debugger;
 mod memory;
-mod modules;
+mod system;
 mod transport;
 
 extern crate alloc;
@@ -113,6 +113,8 @@ use patina_sdk::serial::SerialIO;
 ///
 static DEBUGGER: spin::Once<&dyn Debugger> = spin::Once::new();
 
+type MonitorCommandFn = fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write);
+
 /// Trait for debugger interaction. This is required to allow for a global to the
 /// platform specific debugger implementation. For safety, these routines should
 /// only be invoked on the global instance of the debugger.
@@ -128,6 +130,9 @@ trait Debugger: Sync {
 
     /// Polls the debugger for any pending interrupts.
     fn poll_debugger(&'static self);
+
+    /// Adds a monitor command to the debugger.
+    fn add_monitor_command(&'static self, cmd: &'static str, function: MonitorCommandFn);
 }
 
 #[derive(Debug)]
@@ -187,6 +192,14 @@ pub fn enabled() -> bool {
     match DEBUGGER.get() {
         Some(debugger) => debugger.enabled(),
         None => false,
+    }
+}
+
+/// Adds a monitor command to the debugger. This may be called before initialization,
+/// but should not be called before memory allocations are available.
+pub fn add_monitor_command(cmd: &'static str, function: MonitorCommandFn) {
+    if let Some(debugger) = DEBUGGER.get() {
+        debugger.add_monitor_command(cmd, function);
     }
 }
 

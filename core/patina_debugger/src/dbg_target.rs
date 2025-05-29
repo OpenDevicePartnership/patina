@@ -26,7 +26,7 @@ use spin::Mutex;
 use crate::{
     arch::{DebuggerArch, SystemArch, UefiArchRegs},
     memory,
-    modules::Modules,
+    system::SystemState,
     transport::BufferWriter,
     ExceptionInfo,
 };
@@ -46,8 +46,8 @@ pub struct UefiTarget {
     reboot: bool,
     /// Disables safety checks for the target.
     disable_checks: bool,
-    /// Tracks modules state.
-    modules: &'static Mutex<Modules>,
+    /// Tracks external system state.
+    system_state: &'static Mutex<SystemState>,
     /// Buffer used for monitor calls.
     monitor_buffer: BufferWriter<'static>,
 }
@@ -56,7 +56,7 @@ impl UefiTarget {
     /// Create a new UEFI target.
     pub fn new(
         exception_info: ExceptionInfo,
-        modules: &'static Mutex<Modules>,
+        system_state: &'static Mutex<SystemState>,
         monitor_buffer: &'static mut [u8],
     ) -> Self {
         UefiTarget {
@@ -64,7 +64,7 @@ impl UefiTarget {
             resume: false,
             reboot: false,
             disable_checks: false,
-            modules,
+            system_state,
             monitor_buffer: BufferWriter::new(monitor_buffer),
         }
     }

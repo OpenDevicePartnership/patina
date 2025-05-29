@@ -236,6 +236,10 @@ where
         self.hob_list.relocate_hobs();
 
         // Initialize the debugger if it is enabled.
+        patina_debugger::add_monitor_command("version", |_, out| {
+            let _ = out.write_str(concat!("Patina DXE Core v", env!("CARGO_PKG_VERSION")));
+        });
+
         patina_debugger::initialize(&mut interrupt_manager);
 
         log::info!("GCD - After memory init:\n{}", GCD);
