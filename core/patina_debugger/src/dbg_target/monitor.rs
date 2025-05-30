@@ -73,16 +73,7 @@ impl ext::monitor_cmd::MonitorCmd for UefiTarget {
             }
             Some(cmd) => match self.system_state.try_lock() {
                 Some(state) => {
-                    let mut found = false;
-                    for callback in state.monitor_commands.iter() {
-                        if callback.command == cmd {
-                            (callback.callback)(&mut tokens, &mut self.monitor_buffer);
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    if !found {
+                    if !state.handle_monitor_command(cmd, &mut tokens, &mut self.monitor_buffer) {
                         let _ = self.monitor_buffer.write_str("Unknown command. Use 'help' for a list of commands.");
                     }
                 }

@@ -113,7 +113,17 @@ use patina_sdk::serial::SerialIO;
 ///
 static DEBUGGER: spin::Once<&dyn Debugger> = spin::Once::new();
 
-type MonitorCommandFn = fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write);
+/// Type for monitor command functions. This will be invoked by the debugger when
+/// the associated monitor command is invoked.
+///
+/// The first argument contains the whitespace separated arguments from the command.
+/// For example, if the command is `my_command arg1 arg2`, then `arg1` and `arg2` will\
+/// be the first and second elements of the iterator respectively.
+///
+/// the second argument is a writer that should be used to write the output of the
+/// command. This can be done by directly invoking the [core::fmt::Write] trait methods
+/// or using the `write!` macro.
+pub type MonitorCommandFn = fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write);
 
 /// Trait for debugger interaction. This is required to allow for a global to the
 /// platform specific debugger implementation. For safety, these routines should
@@ -196,7 +206,18 @@ pub fn enabled() -> bool {
 }
 
 /// Adds a monitor command to the debugger. This may be called before initialization,
-/// but should not be called before memory allocations are available.
+/// but should not be called before memory allocations are available. See [MonitorCommandFn]
+/// for more details on the callback function expectations.
+///
+/// ## Example
+///
+/// ```rust
+/// patina_debugger::add_monitor_command("my_command", |args, writer| {
+///     // Parse the arguments from _args, which is a SplitWhitespace iterator.
+///     let _ = write!(writer, "Executed my_command with args: {:?}", args);
+/// });
+/// ```
+///
 pub fn add_monitor_command(cmd: &'static str, function: MonitorCommandFn) {
     if let Some(debugger) = DEBUGGER.get() {
         debugger.add_monitor_command(cmd, function);

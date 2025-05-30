@@ -24,7 +24,7 @@ use spin::Mutex;
 use crate::{
     arch::{DebuggerArch, SystemArch},
     dbg_target::UefiTarget,
-    system::{MonitorCallback, SystemState},
+    system::SystemState,
     transport::{LoggingSuspender, SerialConnection},
     DebugError, Debugger, ExceptionInfo,
 };
@@ -377,17 +377,7 @@ impl<T: SerialIO> Debugger for UefiDebugger<T> {
             return;
         }
 
-        let _monitor = MonitorCallback { command, callback };
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "alloc")] {
-                let mut state = self.system_state.lock();
-                state.monitor_commands.push(_monitor);
-                log::info!("Added debugger monitor command: {}", command);
-            }
-            else {
-                log::warn!("Monitor commands are only supported with the 'alloc' feature enabled. Will not add command: {}", command);
-            }
-        }
+        self.system_state.lock().add_monitor_command(command, callback);
     }
 }
 

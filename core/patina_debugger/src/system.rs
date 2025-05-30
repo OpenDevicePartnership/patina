@@ -24,6 +24,36 @@ impl SystemState {
     pub const fn new() -> Self {
         SystemState { modules: Modules::new(), monitor_commands: Vec::new() }
     }
+
+    pub fn add_monitor_command(&mut self, command: &'static str, callback: MonitorCommandFn) {
+        let _monitor = MonitorCallback { command, callback };
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "alloc")] {
+                self.monitor_commands.push(_monitor);
+                log::info!("Added debugger monitor command: {}", command);
+            }
+            else {
+                log::warn!("Monitor commands are only supported with the 'alloc' feature enabled. Will not add command: {}", command);
+            }
+        }
+    }
+
+    /// Add a monitor command to the system state. Returns `true` if the command
+    /// was recognized, and `false` if it was not found.
+    pub fn handle_monitor_command(
+        &self,
+        command: &str,
+        args: &mut core::str::SplitWhitespace<'_>,
+        out: &mut dyn core::fmt::Write,
+    ) -> bool {
+        for monitor_cmd in &self.monitor_commands {
+            if monitor_cmd.command == command {
+                (monitor_cmd.callback)(args, out);
+                return true;
+            }
+        }
+        false
+    }
 }
 
 /// Information about a loaded module.
@@ -91,8 +121,12 @@ impl Modules {
     }
 }
 
+/// Stores the command and its associated callback function for monitor commands.
 pub(crate) struct MonitorCallback {
+    /// The monitor command string that triggers the callback.
     pub command: &'static str,
+    /// The callback function that will be invoked when the command is executed.
+    /// See [MonitorCommandFn] for more details on the function signature.
     pub callback: MonitorCommandFn,
 }
 
@@ -142,5 +176,22 @@ mod tests {
         modules.add_module_breakpoint("test_module");
         assert_eq!(modules.get_module_breakpoints().len(), 1);
         assert_eq!(modules.get_module_breakpoints()[0], "test_module");
+    }
+
+    #[test]
+    fn test_handle_monitor_command() {
+        let mut system_state = SystemState::new();
+        let command = "test_command";
+        let callback: MonitorCommandFn = |args, out| {
+            let _ = writeln!(out, "Executed with args: {:?}", args.collect::<Vec<_>>());
+        };
+        system_state.add_monitor_command(command, callback);
+
+        let mut out = String::new();
+        let args = &mut "arg1 arg2".split_whitespace();
+        assert!(system_state.handle_monitor_command(command, args, &mut out));
+        assert_eq!(out, "Executed with args: [\"arg1\", \"arg2\"]\n");
+
+        assert!(!system_state.handle_monitor_command("invalid", args, &mut out));
     }
 }
