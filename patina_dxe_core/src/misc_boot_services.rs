@@ -40,7 +40,7 @@ pub const PRE_EBS_GUID: efi::Guid =
     efi::Guid::from_fields(0x5f1d7e16, 0x784a, 0x4da2, 0xb0, 0x84, &[0xf8, 0x12, 0xf2, 0x3a, 0x8d, 0xce]);
 
 // TODO [END]: LOCAL (TEMP) GUID DEFINITIONS (MOVE LATER)
-
+#[cfg(not(tarpaulin_include))]
 extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, crc_32: *mut u32) -> efi::Status {
     if data.is_null() || data_size == 0 || crc_32.is_null() {
         return efi::Status::INVALID_PARAMETER;
@@ -54,6 +54,7 @@ extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, crc_32: 
     efi::Status::SUCCESS
 }
 
+#[cfg(not(tarpaulin_include))]
 pub fn core_install_configuration_table(
     vendor_guid: efi::Guid,
     vendor_table: Option<&mut c_void>,
@@ -137,6 +138,7 @@ pub fn core_install_configuration_table(
     Ok(())
 }
 
+#[cfg(not(tarpaulin_include))]
 extern "efiapi" fn install_configuration_table(table_guid: *mut efi::Guid, table: *mut c_void) -> efi::Status {
     if table_guid.is_null() {
         return efi::Status::INVALID_PARAMETER;
@@ -156,6 +158,7 @@ extern "efiapi" fn install_configuration_table(table_guid: *mut efi::Guid, table
 
 // Induces a fine-grained stall. Stalls execution on the processor for at least the requested number of microseconds.
 // Execution of the processor is not yielded for the duration of the stall.
+#[cfg(not(tarpaulin_include))]
 extern "efiapi" fn stall(microseconds: usize) -> efi::Status {
     let metronome_ptr = METRONOME_ARCH_PTR.load(Ordering::SeqCst);
     if let Some(metronome) = unsafe { metronome_ptr.as_mut() } {
@@ -189,6 +192,7 @@ extern "efiapi" fn stall(microseconds: usize) -> efi::Status {
 //
 // The watchdog timer is only used during boot services. On successful completion of
 // EFI_BOOT_SERVICES.ExitBootServices() the watchdog timer is disabled.
+#[cfg(not(tarpaulin_include))]
 extern "efiapi" fn set_watchdog_timer(
     timeout: usize,
     _watchdog_code: u64,
@@ -211,6 +215,7 @@ extern "efiapi" fn set_watchdog_timer(
 
 // This callback is invoked when the Metronome Architectural protocol is installed. It initializes the
 // METRONOME_ARCH_PTR to point to the Metronome Architectural protocol interface.
+#[cfg(not(tarpaulin_include))]
 extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_void) {
     match PROTOCOL_DB.locate_protocol(protocols::metronome::PROTOCOL_GUID) {
         Ok(metronome_arch_ptr) => {
@@ -225,6 +230,7 @@ extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_
 
 // This callback is invoked when the Watchdog Timer Architectural protocol is installed. It initializes the
 // WATCHDOG_ARCH_PTR to point to the Watchdog Timer Architectural protocol interface.
+#[cfg(not(tarpaulin_include))]
 extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_void) {
     match PROTOCOL_DB.locate_protocol(protocols::watchdog::PROTOCOL_GUID) {
         Ok(watchdog_arch_ptr) => {
@@ -236,7 +242,7 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
         Err(err) => panic!("Unable to retrieve watchdog arch: {:?}", err),
     }
 }
-
+#[cfg(not(tarpaulin_include))]
 pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) -> efi::Status {
     static EXIT_BOOT_SERVICES_CALLED: AtomicBool = AtomicBool::new(false);
 
@@ -343,4 +349,19 @@ pub fn init_misc_boot_services_support(bs: &mut efi::BootServices) {
     PROTOCOL_DB
         .register_protocol_notify(protocols::watchdog::PROTOCOL_GUID, event)
         .expect("Failed to register protocol notify on metronome available.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::misc_boot_services;
+    use crate::systemtables;
+    use r_efi::efi::{BootServices, Status};
+
+    #[test]
+    fn test_init_misc_boot_services_support() {
+        let mut st = systemtables::SYSTEM_TABLE.lock();
+        let st = st.as_mut().expect("System Table not initialized!");
+        init_misc_boot_services_support(st.boot_services_mut());
+    }
 }
