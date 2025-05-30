@@ -1,6 +1,8 @@
-# RFC: `<Title>`
+# RFC: DXE Firmware Performance Component
 
-One paragraph description of the RFC.
+This RFC proposes a Rust-based `FirmwarePerformanceDxe` component that replaces the existing C implementation responsible for installing and managing UEFI firmware performance tables, specifically the FBPT and FPDT. The new component initializes during DXE dispatch and handles tasks such as installing the FPDT, publishing the FBPT, recording ExitBootServices timings, and registering the FPDT status code listener.
+
+This RFC outlines the architecture, data structures, and event handling design needed to eliminate remaining C dependencies in the performance path.
 
 ## Change Log
 
