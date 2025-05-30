@@ -52,7 +52,7 @@ The new `FirmwarePerformanceDxe` component will cover remaining performance func
 
 The Rust `FirmwarePerformanceDxe` component closely follows the design of the `FirmwarePerformanceDxe` driver in C.
 
-The primary functionality of the C `FirmwarePerformancedxe` driver is encapsulated in
+The primary functionality of the C `FirmwarePerformanceDxe` driver is encapsulated in
 the `FirmwarePerformanceDxeEntryPoint`, which registers the necessary FPDT status code listener
 and sets up two event callbacks for `EndOfDxe` and `ExitBootServices`.
 
