@@ -40,19 +40,18 @@ impl ext::monitor_cmd::MonitorCmd for UefiTarget {
         let mut tokens: SplitWhitespace<'_> = cmd_str.split_whitespace();
         self.monitor_buffer.reset();
 
-        let mut token = tokens.next();
-
         // Check for an offset modifier, and configure the monitor buffer accordingly.
-        if let Some(cmd) = token {
-            if cmd.starts_with("O[") && cmd.ends_with("]") {
-                let offset_str = &cmd[2..cmd.len() - 1];
+        let cmd = match tokens.next() {
+            Some(token) if token.starts_with("O[") && token.ends_with("]") => {
+                let offset_str = &token[2..token.len() - 1];
                 let offset: usize = offset_str.parse().ok().unwrap_or(0);
                 self.monitor_buffer.set_start_offset(offset);
-                token = tokens.next();
+                tokens.next()
             }
-        }
+            other => other,
+        };
 
-        match token {
+        match cmd {
             Some("help") | None => {
                 let _ = self.monitor_buffer.write_str(MONITOR_HELP);
                 let _ = self.monitor_buffer.write_str("External commands:\n");
