@@ -22,7 +22,7 @@ use patina_sdk::{
     guid::EVENT_GROUP_END_OF_DXE,
     uefi_size_to_pages,
 };
-use r_efi::efi;
+use r_efi::efi::{self, Status};
 use spin::{rwlock::RwLock, Mutex};
 
 use alloc::boxed::Box;
@@ -221,7 +221,7 @@ where
     let mut fw = fw_mutex.lock();
     let mut bp = bp_mutex.lock();
 
-    install_firmware_performance_data_table(&mut fw, &mut bp, memory_manager, unsafe { &*runtime_services });
+    install_firmware_performance_data_table(&mut fw, &mut bp, memory_manager, unsafe { &*runtime_services }).unwrap();
 
     // copy boot performance table to reserved memory
     // also, the boot performance table get modified during runtime (before end of DXE) - but how?
@@ -265,4 +265,38 @@ where
 
 enum FirmwarePerformanceError {
     GenericError,
+}
+
+type StatusCodeType = u32;
+type StatusCodeValue = u32;
+
+#[repr(C)]
+pub struct StatusCodeData {
+    pub header_size: u16,
+    pub size: u16,
+    pub status_code_type: efi::Guid,
+    // this is a hack. we include some extra data (that won't be seen by the C code)
+    // at least i think it won't be seen by the C code. idk
+    boot_table: *const spin::Mutex<BootPerformanceTable>,
+}
+
+extern "efiapi" fn fpdt_status_code_listener_dxe(
+    code_type: StatusCodeType,
+    value: StatusCodeValue,
+    instance: u32,
+    guid: *const r_efi::efi::Guid,
+    data: *const StatusCodeData,
+) -> efi::Status {
+    // This function is a placeholder for the status code listener.
+    // It can be used to log or handle specific status codes during the DXE phase.
+    // For now, it does nothing.
+    // In a real implementation, you would handle specific codes here.
+    // e.g., if code_type == some_code_type && value == some_value { ... }
+
+    // how to update boot performance table EBS time without a global?
+    let status_code_data: &StatusCodeData = unsafe { &*data };
+    let boot_mutex: &spin::Mutex<BootPerformanceTable> = unsafe { &*status_code_data.boot_table };
+    let mut bp = boot_mutex.lock();
+    bp.basic_boot_record.exit_boot_services_exit = 1; // this is a placeholder, replace with actual time
+    efi::Status::SUCCESS
 }
