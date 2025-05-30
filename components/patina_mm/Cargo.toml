@@ -1,0 +1,33 @@
+[package]
+name = "patina_mm"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Management Mode (MM) support for components."
+
+[dependencies]
+cfg-if = { workspace = true }
+log = { workspace = true }
+mockall = { workspace = true, optional = true }
+r-efi = { workspace = true }
+patina_sdk = { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }
+patina_sdk = { workspace = true, features = ["mockall"] }
+
+[target.'cfg(target_arch="x86_64")'.dependencies]
+x86_64 = { workspace = true, features = [
+  "instructions",
+] }
+
+[features]
+doc = []
+mockall = ["dep:mockall", "std"]
+std = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }
