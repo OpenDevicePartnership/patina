@@ -41,7 +41,7 @@ impl ext::monitor_cmd::MonitorCmd for UefiTarget {
         self.monitor_buffer.reset();
 
         match tokens.next() {
-            Some("help") => {
+            Some("help") | None => {
                 let _ = self.monitor_buffer.write_str(MONITOR_HELP);
                 let _ = self.monitor_buffer.write_str("External commands:\n");
                 if let Some(state) = self.system_state.try_lock() {
@@ -71,12 +71,12 @@ impl ext::monitor_cmd::MonitorCmd for UefiTarget {
             Some("arch") => {
                 SystemArch::monitor_cmd(&mut tokens, &mut self.monitor_buffer);
             }
-            _ => match self.system_state.try_lock() {
+            Some(cmd) => match self.system_state.try_lock() {
                 Some(state) => {
                     let mut found = false;
-                    for cmd in state.monitor_commands.iter() {
-                        if cmd.command == cmd_str {
-                            (cmd.callback)(&mut tokens, &mut self.monitor_buffer);
+                    for callback in state.monitor_commands.iter() {
+                        if callback.command == cmd {
+                            (callback.callback)(&mut tokens, &mut self.monitor_buffer);
                             found = true;
                             break;
                         }
