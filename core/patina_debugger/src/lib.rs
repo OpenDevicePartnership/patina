@@ -41,10 +41,15 @@
 //!     // Set the global debugger instance. This can only be done once.
 //!     patina_debugger::set_debugger(&DEBUGGER);
 //!
+//!     // Setup a custom monitor command for this platform.
+//!     patina_debugger::add_monitor_command("my_command", |args, writer| {
+//!         // Parse the arguments from _args, which is a SplitWhitespace iterator.
+//!         let _ = write!(writer, "Executed my_command with args: {:?}", args);
+//!     });
+//!
 //!     // Call the core entry. The core can then initialize and access the debugger
 //!     // through the static routines.
 //!     start();
-//!
 //! }
 //!
 //! fn start() {
