@@ -1,90 +1,232 @@
-// use core::{cell::OnceCell, iter::Once};
+use core::mem;
+use core::{
+    cell::{OnceCell, RefCell},
+    ffi::c_void,
+    iter::Once,
+};
 
-// use patina_sdk::component::{
-//     hob::{FromHob, Hob},
-//     params::Config,
-//     IntoComponent,
-// };
-// use spin::{rwlock::RwLock, Mutex};
+use patina_sdk::component::service::memory;
+use patina_sdk::{
+    boot_services::{self, event::EventType, tpl::Tpl, BootServices},
+    component::{
+        hob::{FromHob, Hob},
+        params::Config,
+        service::{
+            memory::{AllocationOptions, MemoryManager, PageAllocationStrategy},
+            Service,
+        },
+        IntoComponent,
+    },
+    guid::EVENT_GROUP_END_OF_DXE,
+    uefi_size_to_pages,
+};
+use r_efi::efi;
+use spin::{rwlock::RwLock, Mutex};
 
-// use alloc::string::String;
+use alloc::boxed::Box;
+use alloc::string::String;
 
-// use crate::performance_table::FirmwareBasicBootPerfDataRecord;
+use crate::performance_table::FirmwareBasicBootPerfDataRecord;
 
-// #[derive(Default)]
-// struct FirmwarePerformanceDxeInit {
-//     oem_id: String,
-//     oem_table_id: u64,
-//     oem_revision: u32,
-//     creator_id: u32,
-//     creator_revision: u32,
-// }
+#[derive(Default)]
+struct FirmwarePerformanceDxeInit {
+    oem_id: String,
+    oem_table_id: u64,
+    oem_revision: u32,
+    creator_id: u32,
+    creator_revision: u32,
+}
 
-// #[derive(Copy, Clone, FromHob)]
-// #[hob = "C095791A-3001-47B2-80C9-EAC7319F2FA4"]
-// pub struct FirmwarePerformanceHob {
-//     pub reset_end: u64,
-// }
+#[derive(Copy, Clone, FromHob)]
+#[hob = "C095791A-3001-47B2-80C9-EAC7319F2FA4"]
+pub struct FirmwarePerformanceHob {
+    pub reset_end: u64,
+}
 
-// #[derive(IntoComponent)]
-// pub struct FirmwarePerformanceDxe {
-//     boot_performance_table: Mutex<FirmwarePerformanceAcpiTable>,
-//     acpi_boot_performance_table: OnceCell<FirmwarePerformanceAcpiTable>,
-//     received_acpi_boot_performance_table: OnceCell<FirmwarePerformanceAcpiTable>,
-// }
+#[derive(IntoComponent)]
+pub struct FirmwarePerformanceDxe<B: BootServices + 'static> {
+    boot_performance_table: Mutex<BootPerformanceTable>,
+    firmware_performance_table: Mutex<FirmwarePerformanceTable>,
+    memory_manager: OnceCell<Service<dyn MemoryManager>>,
+    boot_services: OnceCell<B>,
+}
 
-// impl FirmwarePerformanceDxe {
-//     pub const fn new() -> Self {
-//         Self {
-//             boot_performance_table: Mutex::new(FirmwarePerformanceAcpiTable {
-//                 header: AcpiFpdtPerformanceTableHeader::new_boot_performance_table(),
-//                 basic_boot_record: FirmwareBasicBootPerfDataRecord::new(),
-//             }),
-//         }
-//     }
-// }
+impl<B> FirmwarePerformanceDxe<B>
+where
+    B: BootServices,
+{
+    pub const fn new() -> Self {
+        Self {
+            boot_performance_table: Mutex::new(BootPerformanceTable {
+                header: AcpiFpdtPerformanceTableHeader::new_boot_performance_table(),
+                basic_boot_record: FirmwareBasicBootPerfDataRecord::new(),
+            }),
+            firmware_performance_table: Mutex::new(FirmwarePerformanceTable {
+                header: AcpiDescriptionHeader {
+                    signature: 0x54504246, // 'FPDT'
+                    length: mem::size_of::<FirmwarePerformanceTable>() as u32,
+                    revision: 1,
+                    checksum: 0,          // will be calculated later
+                    oem_id: [0; 6],       // to be filled in
+                    oem_table_id: [0; 8], // to be filled in
+                    oem_revision: 0,      // to be filled in
+                    creator_id: 0,        // to be filled in
+                    creator_revision: 0,  // to be filled in
+                },
+                basic_boot_record: AcpiFpdtBootPerformanceTablePointerRecord {
+                    header: AcpiFpdtPerformanceRecordHeader::new_boot_performance_table(),
+                    reserved: 0,
+                    boot_performance_table_header: 0, // to be filled in later
+                },
+            }),
+            memory_manager: OnceCell::new(),
+            boot_services: OnceCell::new(),
+        }
+    }
+}
 
-// impl FirmwarePerformanceDxe {
-//     fn entry_point(
-//         self,
-//         _cfg: Config<FirmwarePerformanceDxeInit>,
-//         firmware_performance_hob: Hob<FirmwarePerformanceHob>,
-//     ) -> patina_sdk::error::Result<()> {
-//         // Get Report Status Code Handler Protocol.
-//         // Register report status code listener for OS Loader load and start.
-//         // Register the notify function to install FPDT at EndOfDxe.
-//         // Register the notify function to update FPDT on ExitBootServices Event.
-//         // Retrieve GUID HOB data that contains the ResetEnd.
+impl<B> FirmwarePerformanceDxe<B>
+where
+    B: BootServices,
+{
+    fn entry_point(
+        self,
+        _cfg: Config<FirmwarePerformanceDxeInit>,
+        firmware_performance_hob: Hob<FirmwarePerformanceHob>,
+        memory_manager: Service<dyn MemoryManager>,
+        // acpi_provider: Service<dyn AcpiProvider>,
+    ) -> patina_sdk::error::Result<()> {
+        // Get Report Status Code Handler Protocol.
+        // Register report status code listener for OS Loader load and start.
+        // Register the notify function to install FPDT at EndOfDxe.
 
-//         // SHERRY: i assume this is the right FBPT to refer to but i could be wrong
-//         // mBootPerformanceTableTemplate is the global in C
-//         self.boot_performance_table.lock().basic_boot_record.reset_end = firmware_performance_hob.reset_end;
-//         Ok(())
-//     }
-// }
+        let ctx = Box::new(FpdtContext {
+            firmware_table: &self.firmware_performance_table,
+            boot_table: &self.boot_performance_table,
+            memory_manager,
+        });
 
-// struct AcpiFpdtPerformanceTableHeader {
-//     signature: u32,
-//     length: u32,
-// }
+        // also need to init any uninited fields
+        self.boot_services.get().unwrap().create_event_ex(
+            EventType::NOTIFY_SIGNAL,
+            Tpl::CALLBACK,
+            Some(fpdt_notify_end_of_dxe),
+            ctx,
+            &EVENT_GROUP_END_OF_DXE,
+        )?;
+        // Register the notify function to update FPDT on ExitBootServices Event.
+        // Retrieve GUID HOB data that contains the ResetEnd.
 
-// impl AcpiFpdtPerformanceTableHeader {
-//     pub const fn new_boot_performance_table() -> Self {
-//         Self { signature: 0x54504246, length: core::mem::size_of::<FirmwarePerformanceAcpiTable>() as u32 }
-//     }
-// }
+        // SHERRY: i assume this is the right FBPT to refer to but i could be wrong
+        // mBootPerformanceTableTemplate is the global in C
+        self.boot_performance_table.lock().basic_boot_record.reset_end = firmware_performance_hob.reset_end;
+        Ok(())
+    }
+}
 
-// struct FirmwarePerformanceAcpiTable {
-//     header: AcpiFpdtPerformanceTableHeader,
-//     basic_boot_record: FirmwareBasicBootPerfDataRecord,
-// }
+// this is because the event callback needs to own the data it receives
+struct FpdtContext {
+    firmware_table: *const spin::Mutex<FirmwarePerformanceTable>,
+    boot_table: *const spin::Mutex<BootPerformanceTable>,
+    memory_manager: Service<dyn MemoryManager>,
+}
 
-// unsafe impl Sync for FirmwarePerformanceAcpiTable {}
-// unsafe impl Send for FirmwarePerformanceAcpiTable {}
+struct AcpiFpdtPerformanceTableHeader {
+    signature: u32,
+    length: u32,
+}
 
-// fn fpdt_end_of_dxe_event_notify() {
-//     // Get AcpiTable Protocol.
-//     // SHERRY: we could probably use ACPI services here
+impl AcpiFpdtPerformanceTableHeader {
+    pub const fn new_boot_performance_table() -> Self {
+        Self { signature: 0x54504246, length: core::mem::size_of::<BootPerformanceTable>() as u32 }
+    }
+}
 
-//     //
-// }
+struct BootPerformanceTable {
+    header: AcpiFpdtPerformanceTableHeader,
+    basic_boot_record: FirmwareBasicBootPerfDataRecord,
+}
+
+struct AcpiDescriptionHeader {
+    signature: u32,
+    length: u32,
+    revision: u8,
+    checksum: u8,
+    oem_id: [u8; 6],
+    oem_table_id: [u8; 8],
+    oem_revision: u32,
+    creator_id: u32,
+    creator_revision: u32,
+}
+
+struct FirmwarePerformanceTable {
+    header: AcpiDescriptionHeader,
+    basic_boot_record: AcpiFpdtBootPerformanceTablePointerRecord,
+}
+
+struct AcpiFpdtBootPerformanceTablePointerRecord {
+    header: AcpiFpdtPerformanceRecordHeader,
+    reserved: u32,
+    boot_performance_table_header: u64,
+}
+
+struct AcpiFpdtPerformanceRecordHeader {
+    record_type: u16,
+    length: u8,
+    revision: u8,
+}
+
+impl AcpiFpdtPerformanceRecordHeader {
+    pub const fn new_boot_performance_table() -> Self {
+        Self {
+            record_type: 0x0000, // FPDT_BOOT_PERFORMANCE_TABLE_POINTER
+            length: mem::size_of::<AcpiFpdtBootPerformanceTablePointerRecord>() as u8,
+            revision: 1,
+        }
+    }
+}
+
+unsafe impl Sync for BootPerformanceTable {}
+unsafe impl Send for BootPerformanceTable {}
+
+static MEMORY_MANAGER: Mutex<Service<dyn MemoryManager>> = Mutex::new(Service::new_uninit());
+
+// This makes me uncomfortable because it'll require the use of lots of statics
+// It is also technically possible to pass in the Service as context (i think????) - this is hard bc of copying Services / lifetimes
+// basically to avoid statics everything needs to be passed in as context
+// i think we could also coalesce everything into one static for a slightly less bad solution
+// events suck bc it forces us to comply by this non-rust-friendly interface
+extern "efiapi" fn fpdt_notify_end_of_dxe(_event: efi::Event, context: Box<FpdtContext>) {
+    let (firmware_performance_table, boot_performance_table, memory_manager) =
+        (context.firmware_table, context.boot_table, context.memory_manager);
+
+    let fw_mutex: &spin::Mutex<FirmwarePerformanceTable> = unsafe { &*firmware_performance_table };
+    let bp_mutex: &spin::Mutex<BootPerformanceTable> = unsafe { &*boot_performance_table };
+
+    let mut fw = fw_mutex.lock();
+    let mut bp = bp_mutex.lock();
+
+    install_firmware_performance_data_table(&mut fw, &mut bp);
+
+    // copy boot performance table to reserved memory
+    // also, the boot performance table get modified during runtime (before end of DXE) - but how?
+    // in c mAcpiBootPerformanceTable and the template are possibly redundant
+    // need to update firmware performance table pointers - i can't access here unless i make it static
+}
+
+fn install_firmware_performance_data_table(
+    firmware_performance_table: &mut FirmwarePerformanceTable,
+    boot_performance_table: &mut BootPerformanceTable,
+) {
+    let options = AllocationOptions::new()
+        .with_memory_type(patina_sdk::efi_types::EfiMemoryType::ReservedMemoryType)
+        .with_strategy(PageAllocationStrategy::Any);
+    let alloc = MEMORY_MANAGER
+        .lock()
+        .allocate_pages(uefi_size_to_pages!(mem::size_of::<BootPerformanceTable>()), options)
+        .unwrap();
+
+    // fill in basic boot performance record
+
+    // fill in the firmware performance table header
+}
