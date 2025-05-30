@@ -46,7 +46,7 @@ impl ext::monitor_cmd::MonitorCmd for UefiTarget {
                 let _ = self.monitor_buffer.write_str("External commands:\n");
                 if let Some(state) = self.system_state.try_lock() {
                     for cmd in state.monitor_commands.iter() {
-                        let _ = writeln!(self.monitor_buffer, "{}\t", cmd.command);
+                        let _ = write!(self.monitor_buffer, "{}\t", cmd.command);
                     }
                 };
             }
