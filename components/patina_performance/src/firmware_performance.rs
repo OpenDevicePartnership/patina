@@ -114,7 +114,7 @@ where
             ctx,
             &EVENT_GROUP_END_OF_DXE,
         )?;
-        // Register the notify function to update FPDT on ExitBootServices Event.
+        // Register the notify function to update FPDT on ExitBootServices Event. (similar to above)
         // Retrieve GUID HOB data that contains the ResetEnd.
 
         // SHERRY: i assume this is the right FBPT to refer to but i could be wrong
@@ -189,8 +189,6 @@ impl AcpiFpdtPerformanceRecordHeader {
 unsafe impl Sync for BootPerformanceTable {}
 unsafe impl Send for BootPerformanceTable {}
 
-static MEMORY_MANAGER: Mutex<Service<dyn MemoryManager>> = Mutex::new(Service::new_uninit());
-
 // This makes me uncomfortable because it'll require the use of lots of statics
 // It is also technically possible to pass in the Service as context (i think????) - this is hard bc of copying Services / lifetimes
 // basically to avoid statics everything needs to be passed in as context
@@ -206,7 +204,7 @@ extern "efiapi" fn fpdt_notify_end_of_dxe(_event: efi::Event, context: Box<FpdtC
     let mut fw = fw_mutex.lock();
     let mut bp = bp_mutex.lock();
 
-    install_firmware_performance_data_table(&mut fw, &mut bp);
+    install_firmware_performance_data_table(&mut fw, &mut bp, memory_manager);
 
     // copy boot performance table to reserved memory
     // also, the boot performance table get modified during runtime (before end of DXE) - but how?
@@ -217,16 +215,19 @@ extern "efiapi" fn fpdt_notify_end_of_dxe(_event: efi::Event, context: Box<FpdtC
 fn install_firmware_performance_data_table(
     firmware_performance_table: &mut FirmwarePerformanceTable,
     boot_performance_table: &mut BootPerformanceTable,
+    memory_manager: Service<dyn MemoryManager>,
 ) {
     let options = AllocationOptions::new()
         .with_memory_type(patina_sdk::efi_types::EfiMemoryType::ReservedMemoryType)
         .with_strategy(PageAllocationStrategy::Any);
-    let alloc = MEMORY_MANAGER
-        .lock()
-        .allocate_pages(uefi_size_to_pages!(mem::size_of::<BootPerformanceTable>()), options)
-        .unwrap();
+    let alloc =
+        memory_manager.allocate_pages(uefi_size_to_pages!(mem::size_of::<BootPerformanceTable>()), options).unwrap();
 
     // fill in basic boot performance record
+    boot_performance_table.basic_boot_record.reset_end = 1;
 
     // fill in the firmware performance table header
+    firmware_performance_table.header.signature = 0x54504246; // 'FPDT'
+
+    // use acpi service (tbd) to install the table
 }
