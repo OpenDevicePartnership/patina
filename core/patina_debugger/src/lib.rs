@@ -122,7 +122,7 @@ static DEBUGGER: spin::Once<&dyn Debugger> = spin::Once::new();
 /// the associated monitor command is invoked.
 ///
 /// The first argument contains the whitespace separated arguments from the command.
-/// For example, if the command is `my_command arg1 arg2`, then `arg1` and `arg2` will\
+/// For example, if the command is `my_command arg1 arg2`, then `arg1` and `arg2` will
 /// be the first and second elements of the iterator respectively.
 ///
 /// the second argument is a writer that should be used to write the output of the
