@@ -203,13 +203,13 @@ pub fn find_previous_table_address(runtime_services: &impl RuntimeServices) -> O
 
 /// Struct used to get the value from the FirmwarePerformanceVariable
 #[repr(C)]
-pub struct FirmwarePerformanceVariable {
-    boot_performance_table_pointer: usize,
+pub(crate) struct FirmwarePerformanceVariable {
+    pub(crate) boot_performance_table_pointer: usize,
     _s3_performance_table_pointer: usize,
 }
 
 impl FirmwarePerformanceVariable {
-    const ADDRESS_VARIABLE_GUID: efi::Guid =
+    pub(crate) const ADDRESS_VARIABLE_GUID: efi::Guid =
         efi::Guid::from_fields(0xc095791a, 0x3001, 0x47b2, 0x80, 0xc9, &[0xea, 0xc7, 0x31, 0x9f, 0x2f, 0xa4]);
 }
 

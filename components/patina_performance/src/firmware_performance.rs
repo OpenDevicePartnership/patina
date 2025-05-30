@@ -5,7 +5,9 @@ use core::{
     iter::Once,
 };
 
+use mu_pi::protocols::runtime;
 use patina_sdk::component::service::memory;
+use patina_sdk::runtime_services::{self, RuntimeServices, StandardRuntimeServices};
 use patina_sdk::{
     boot_services::{self, event::EventType, tpl::Tpl, BootServices},
     component::{
@@ -26,7 +28,7 @@ use spin::{rwlock::RwLock, Mutex};
 use alloc::boxed::Box;
 use alloc::string::String;
 
-use crate::performance_table::FirmwareBasicBootPerfDataRecord;
+use crate::performance_table::{FirmwareBasicBootPerfDataRecord, FirmwarePerformanceVariable};
 
 #[derive(Default)]
 struct FirmwarePerformanceDxeInit {
@@ -44,14 +46,15 @@ pub struct FirmwarePerformanceHob {
 }
 
 #[derive(IntoComponent)]
-pub struct FirmwarePerformanceDxe<B: BootServices + 'static> {
+pub struct FirmwarePerformanceDxe<B: BootServices + 'static, R: RuntimeServices + 'static> {
     boot_performance_table: Mutex<BootPerformanceTable>,
     firmware_performance_table: Mutex<FirmwarePerformanceTable>,
     memory_manager: OnceCell<Service<dyn MemoryManager>>,
     boot_services: OnceCell<B>,
+    runtime_services: OnceCell<R>,
 }
 
-impl<B> FirmwarePerformanceDxe<B>
+impl<B: BootServices, R: RuntimeServices> FirmwarePerformanceDxe<B, R>
 where
     B: BootServices,
 {
@@ -81,19 +84,22 @@ where
             }),
             memory_manager: OnceCell::new(),
             boot_services: OnceCell::new(),
+            runtime_services: OnceCell::new(),
         }
     }
 }
 
-impl<B> FirmwarePerformanceDxe<B>
+impl<B, R> FirmwarePerformanceDxe<B, R>
 where
     B: BootServices,
+    R: RuntimeServices,
 {
     fn entry_point(
         self,
         _cfg: Config<FirmwarePerformanceDxeInit>,
         firmware_performance_hob: Hob<FirmwarePerformanceHob>,
         memory_manager: Service<dyn MemoryManager>,
+        runtime_services: StandardRuntimeServices,
         // acpi_provider: Service<dyn AcpiProvider>,
     ) -> patina_sdk::error::Result<()> {
         // Get Report Status Code Handler Protocol.
@@ -104,6 +110,7 @@ where
             firmware_table: &self.firmware_performance_table,
             boot_table: &self.boot_performance_table,
             memory_manager,
+            runtime_services: &*self.runtime_services.get().unwrap(),
         });
 
         // also need to init any uninited fields
@@ -125,10 +132,17 @@ where
 }
 
 // this is because the event callback needs to own the data it receives
-struct FpdtContext {
+// but we also need to access the tables across multiple callbacks/local code
+// so we pass references instead of letting the callback own the data
+// this is evil evil non-rust-friendly code
+struct FpdtContext<R>
+where
+    R: RuntimeServices,
+{
     firmware_table: *const spin::Mutex<FirmwarePerformanceTable>,
     boot_table: *const spin::Mutex<BootPerformanceTable>,
     memory_manager: Service<dyn MemoryManager>,
+    runtime_services: *const R,
 }
 
 struct AcpiFpdtPerformanceTableHeader {
@@ -194,9 +208,12 @@ unsafe impl Send for BootPerformanceTable {}
 // basically to avoid statics everything needs to be passed in as context
 // i think we could also coalesce everything into one static for a slightly less bad solution
 // events suck bc it forces us to comply by this non-rust-friendly interface
-extern "efiapi" fn fpdt_notify_end_of_dxe(_event: efi::Event, context: Box<FpdtContext>) {
-    let (firmware_performance_table, boot_performance_table, memory_manager) =
-        (context.firmware_table, context.boot_table, context.memory_manager);
+extern "efiapi" fn fpdt_notify_end_of_dxe<R>(_event: efi::Event, context: Box<FpdtContext<R>>)
+where
+    R: RuntimeServices,
+{
+    let (firmware_performance_table, boot_performance_table, memory_manager, runtime_services) =
+        (context.firmware_table, context.boot_table, context.memory_manager, context.runtime_services);
 
     let fw_mutex: &spin::Mutex<FirmwarePerformanceTable> = unsafe { &*firmware_performance_table };
     let bp_mutex: &spin::Mutex<BootPerformanceTable> = unsafe { &*boot_performance_table };
@@ -204,7 +221,7 @@ extern "efiapi" fn fpdt_notify_end_of_dxe(_event: efi::Event, context: Box<FpdtC
     let mut fw = fw_mutex.lock();
     let mut bp = bp_mutex.lock();
 
-    install_firmware_performance_data_table(&mut fw, &mut bp, memory_manager);
+    install_firmware_performance_data_table(&mut fw, &mut bp, memory_manager, unsafe { &*runtime_services });
 
     // copy boot performance table to reserved memory
     // also, the boot performance table get modified during runtime (before end of DXE) - but how?
@@ -212,11 +229,24 @@ extern "efiapi" fn fpdt_notify_end_of_dxe(_event: efi::Event, context: Box<FpdtC
     // need to update firmware performance table pointers - i can't access here unless i make it static
 }
 
-fn install_firmware_performance_data_table(
+fn install_firmware_performance_data_table<R>(
     firmware_performance_table: &mut FirmwarePerformanceTable,
     boot_performance_table: &mut BootPerformanceTable,
     memory_manager: Service<dyn MemoryManager>,
-) {
+    runtime_services: &R,
+) -> Result<(), FirmwarePerformanceError>
+where
+    R: RuntimeServices,
+{
+    let performance_variable = runtime_services
+        .get_variable::<FirmwarePerformanceVariable>(
+            &[0],
+            &FirmwarePerformanceVariable::ADDRESS_VARIABLE_GUID,
+            Some(mem::size_of::<FirmwarePerformanceVariable>()),
+        )
+        .map(|(v, _)| v.boot_performance_table_pointer)
+        .map_err(|_| FirmwarePerformanceError::GenericError)?;
+
     let options = AllocationOptions::new()
         .with_memory_type(patina_sdk::efi_types::EfiMemoryType::ReservedMemoryType)
         .with_strategy(PageAllocationStrategy::Any);
@@ -230,4 +260,9 @@ fn install_firmware_performance_data_table(
     firmware_performance_table.header.signature = 0x54504246; // 'FPDT'
 
     // use acpi service (tbd) to install the table
+    Ok(())
+}
+
+enum FirmwarePerformanceError {
+    GenericError,
 }
