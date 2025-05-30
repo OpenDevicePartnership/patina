@@ -8,6 +8,8 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 
+use r_efi::efi;
+
 /// EFI memory allocation functions work in units of EFI_PAGEs that are 4KB.
 /// This should in no way be confused with the page size of the processor.
 /// An EFI_PAGE is just the quanta of memory in EFI.
@@ -54,6 +56,9 @@ pub const SIZE_32TB: usize = 0x200000000000;
 pub const SIZE_64TB: usize = 0x400000000000;
 pub const SIZE_128TB: usize = 0x800000000000;
 pub const SIZE_256TB: usize = 0x1000000000000;
+
+/// Patina uses write back as the default cache attribute for memory allocations.
+pub const DEFAULT_CACHE_ATTR: u64 = efi::MEMORY_WB;
 
 /// Aligns the given address down to the nearest boundary specified by align.
 ///
@@ -148,4 +153,55 @@ pub const fn align_up(addr: u64, align: u64) -> Result<u64, &'static str> {
             None => Err("attempt to add with overflow"),
         }
     }
+}
+
+/// Aligns the given address down to the nearest boundary specified by align.
+/// Also calculates the aligned length based on the base and length provided.
+///
+/// # Parameters
+/// - `base`: The base address to be aligned.
+/// - `length`: The length to be aligned.
+/// - `align`: The alignment boundary, which must be a power of two.
+///
+/// # Returns
+/// A `Result<(u64, u64), &'static str>` which is:
+/// - `Ok((u64, u64))`: A tuple containing the aligned base address and the aligned length.
+/// - `Err(&'static str)`: An error message indicating that `align` must be a power of two.
+///
+/// /// # Example
+/// ```rust
+/// use patina_sdk::base::align_range;
+/// let base: u64 = 1023;
+/// let length: u64 = 2048;
+/// let align: u64 = 512;
+/// match align_range(base, length, align) {
+///     Ok((aligned_base, aligned_length)) => {
+///         println!("Aligned base: {}, Aligned length: {}", aligned_base, aligned_length);
+///         assert_eq!(aligned_base, 512);
+///         assert_eq!(aligned_length, 2560);
+///     },
+///    Err(e) => println!("Error: {}", e),
+/// }
+/// ```
+///
+/// In this example, the base address `1023` is aligned down to `512`, and the length is adjusted accordingly.
+/// # Errors
+/// The function returns an error if:
+/// - `align` is not a power of two.
+#[inline]
+pub const fn align_range(base: u64, length: u64, align: u64) -> Result<(u64, u64), &'static str> {
+    if !align.is_power_of_two() {
+        return Err("`align` must be a power of two");
+    }
+
+    let aligned_end = match align_up(base + length, align) {
+        Ok(value) => value,
+        Err(e) => return Err(e),
+    };
+    let aligned_base = match align_down(base, align) {
+        Ok(value) => value,
+        Err(e) => return Err(e),
+    };
+    let aligned_length = aligned_end - aligned_base;
+    Ok((aligned_base, aligned_length))
 }

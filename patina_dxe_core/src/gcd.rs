@@ -20,6 +20,9 @@ use patina_sdk::base::{align_down, align_up};
 use patina_sdk::error::EfiError;
 use r_efi::efi;
 
+#[cfg(feature = "compatibility_mode_allowed")]
+use patina_sdk::base::{align_range, UEFI_PAGE_SIZE};
+
 use crate::GCD;
 
 pub use spin_locked_gcd::{AllocateType, MapChangeType, SpinLockedGcd};
@@ -282,19 +285,38 @@ pub(crate) fn activate_compatibility_mode() {
     for range in loader_mem_ranges.iter() {
         let mut addr = range.start;
         while addr < range.end {
-            let mut len = patina_sdk::base::UEFI_PAGE_SIZE;
+            let mut len = UEFI_PAGE_SIZE as u64;
             match GCD.get_memory_descriptor_for_address(addr) {
                 Ok(descriptor) => {
                     let attributes = descriptor.attributes & !efi::MEMORY_XP;
                     len = match descriptor.base_address + descriptor.length {
-                        end if end > range.end => (range.end - addr) as usize,
-                        _ => descriptor.length as usize,
+                        end if end > range.end => range.end - addr,
+                        _ => descriptor.length,
                     };
-                    if GCD.set_memory_space_attributes(addr as usize, len, attributes).is_err() {
+
+                    // We need to ensure we are operating on page aligned addresses and lengths, as the image(s) that
+                    // were allocated here may not be page aligned. We don't share pools across types, so this is safe.
+                    (addr, len) = match align_range(addr, len, UEFI_PAGE_SIZE as u64) {
+                        Ok((aligned_addr, aligned_len)) => (aligned_addr, aligned_len),
+                        Err(_) => {
+                            log::error!(
+                                "Failed to align address {:#x?} + {:#x?} to page size, compatibility mode may fail",
+                                addr,
+                                len
+                            );
+                            debug_assert!(false);
+
+                            // If we can't align the address, we can't set the attributes, so try the next range
+                            addr += len;
+                            continue;
+                        }
+                    };
+
+                    if GCD.set_memory_space_attributes(addr as usize, len as usize, attributes).is_err() {
                         log::error!(
                                         "Failed to set memory space attributes for range {:#x?} - {:#x?}, compatibility mode may fail",
-                                        range.start,
-                                        range.end,
+                                        addr,
+                                        len,
                                     );
                         debug_assert!(false);
                     }
@@ -308,7 +330,7 @@ pub(crate) fn activate_compatibility_mode() {
                     debug_assert!(false);
                 }
             }
-            addr += len as u64;
+            addr += len;
         }
     }
     crate::memory_attributes_protocol::uninstall_memory_attributes_protocol();

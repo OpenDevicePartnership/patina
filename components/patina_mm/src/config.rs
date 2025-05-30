@@ -3,21 +3,6 @@
 //! Defines the configuration necessary for the MM environment to be initialized and used by components
 //! dependent on MM details.
 //!
-//! ## MM Technology Background (x86 Architecture)
-//!
-//! System Management Mode (SMM) or Management Mode (MM) is a special-purpose operating mode in x86 architecture with
-//! high execution privilege that is used to monitor and manage various system resources. MM code executes in a special
-//! region of memory that is isolated from the rest of the system, and it is not directly accessible to the operating
-//! system or other software running on the system. This region is called System Management RAM (SMRAM) or Management
-//! Mode RAM (MMRAM).
-//!
-//! MM is entered by triggering a System Management Interrupt (SMI) also called a Management Mode Interrupt (MMI). The
-//! MMI may be either triggered by software (synchronous) or a hardware (asynchronous) event. A MMI is a high priority,
-//! non-maskable interrupt. On receipt of the interrupt, the processor saves the current state of the system and
-//! switches to MM. Within MM, the code must set up its own execution environment such as applying an interupt
-//! descriptor table (IDT), creating page tables, etc. It must also identify the source of the MMI to determine what
-//! MMI handler to invoke in response.
-//!
 //! ## MM Configuration Usage
 //!
 //! It is expected that the MM configuration will be initialized by the environment that registers services for the
@@ -33,7 +18,6 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-
 extern crate alloc;
 use alloc::vec::Vec;
 use core::fmt;
