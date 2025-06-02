@@ -71,8 +71,6 @@ based on the transport, the debugger will be set to a static variable. Access to
 functions is done through static routines that will internally access the globally
 installed debugger, if it exists. This is a contrasting design to other Patina
 services because of the unique integration of the debugger in core initialization.
-This may be rectified in the future bringing the debugger in closer alignment to
-general service/component design.
 
 ### Debug Transport
 
@@ -99,14 +97,15 @@ and configuration exception handlers.
 
 A number of buffers are required for the debugger to function such as the GDB and
 monitor buffers used for parsing input and preparing responses. These buffers are
-pre-allocated as memory should not be allocated while actively broken into the debugger
+pre-allocated because memory should not be allocated while actively broken into the debugger
 as the state of the system is unknown should be minimally altered by the presence of
-the debugger.
+the debugger. This ensures a consistent view of the system under debug as well as
+prevent debugger instability with reliance on systems in an unknown state.
 
 The exception handlers are where the debugger is "broken-in" and is actively inspecting
 system state and communicating with the debugger application. These are configured during
-initialization such that whenever a exception is taken, such as a breakpoint or
-an access violation, it will cause the debugger to be invoked.
+initialization so whenever an exception is taken, such as a breakpoint or an access
+violation, it will cause the debugger to be invoked.
 
 #### Initial Breakpoint
 
@@ -119,7 +118,6 @@ any further execution takes place.
 
 Support is planned to allow the initial breakpoint to have a timeout such that if
 a connection is not established within a configured time, the system will continue
-
 execution. This will allow scenarios where the debugger is enabled but only used occasionally.
 
 ### Exception Handling
@@ -130,7 +128,6 @@ during the initial exception, storing register state in a struct, before calling
 out to the registered debugger exception handler. At this point, the debugger will
 send a message over the transport to notify the debugger application that a break
 has occurred. From this point forward, the application will dictate all operations that occur.
-
 The following are the primary operations requested by the application.
 
 - Querying system/architecture information
@@ -208,7 +205,7 @@ continue would either take the exception again or leave the instruction stream
 unaltered preventing the breakpoint from functioning in the future. So the the application
 will typically step beyond the broken instruction before setting the breakpoint again.
 
-__Breakpoint Instructions__ - These are permanent and compile time breakpoint instructions
+__Break Instructions__ - These are permanent and compile time breakpoint instructions
 in the underlying code. In Patina this will typically be achieved by calling `patina_debugger::breakpoint()`.
 When resuming from a breakpoint, the debugger will inspect the exception address to
 see if it contains a hardcoded breakpoint, and if so it will increment the program
@@ -220,7 +217,7 @@ of hardware breakpoint, where debug registers are configured to cause an excepti
 on access to a specific address. The hardware is responsible for creating the exception in
 these cases. These are used to capture reads or write to specific memory.
 
-__Module Breakpoints__ - These are simply breakpoint instruction, but can be
+__Module Breakpoints__ - These are simply break instruction, but can be
 conceptually considered their own entity. Module breaks are configured to cause
 the debugger to break in when a specific module is loaded. This is achieved through
 a callout from the core each time a new module is loaded. This is useful for developers
