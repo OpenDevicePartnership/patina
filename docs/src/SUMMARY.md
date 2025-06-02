@@ -41,7 +41,7 @@
 - [Theory and Operation](dxe_core/operation.md)
   - [Advanced Logger]()
   - [CPU](dxe_core/cpu.md)
-  - [Debugging]()
+  - [Debugging](dxe_core/debugging.md)
   - [Event, Timer, and Task Priority](dxe_core/events.md)
   - [Protocol Database](dxe_core/protocol_database.md)
   - [UEFI Driver Model](dxe_core/driver_model.md)
