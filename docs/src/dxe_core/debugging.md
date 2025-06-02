@@ -2,21 +2,25 @@
 
 Source debugging in Patina is implemented as a self-hosted or "kernel" debugger
 that executes within the exception handlers in the system. These exception handlers
-will inspect the state of the system through memory, registers, exception frames to present
+will inspect the state of the system through memory, registers, and exception frames to present
 the debugger application with a snapshot of the system at the moment it took the exception.
 The communication between the exception handlers and the software debugger is implemented
 using the [GDB Remote Protocol](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Remote-Protocol.html)
 which is supported by a number of debugger applications.
 
-The Patina debugger is a software debugger where in contrast to a hardware, or JTAG,
-debugger it is implemented entirely within the patina software stack. This has many
+The Patina debugger is a software debugger which, in contrast to a hardware or JTAG
+debugger, is implemented entirely within the patina software stack. This has many
+
 advantages such as being more flexible, accessible, and available but also means
-that it will have inherit limitations on it's ability to debug all scenarios. Like
-with all debugging tools, it is a powerful tool but may not be the correct implement
+that it will have inherent limitations on its ability to debug all scenarios. Like
+
+with all debugging tools, it is a powerful tool but may not be the correct choice
+
 for all scenarios.
 
 Below is a simplified diagram of the sequence of a debugger interaction, starting
-with the exception, continueing with the debugger operations, and ending with
+with the exception, continuing with the debugger operations, and ending with
+
 resuming from the exception.
 
 ```mermaid
@@ -45,15 +49,18 @@ sequenceDiagram
 
 ## Structures
 
-The debugger consists of 2 high level structures: the debugger struct itself and
+The debugger consists of two high-level structures: the debugger struct itself and
+
 the transport. The debugger implements the debugging logic and exception handling
 while the transport handles the physical communication to the debugger application.
 
 ### Debugger Struct
 
 The debugger is primary implemented through a `'static` struct, `PatinaDebugger`,
-which is instantiated and configured by the platform code, but will be initialized  by the core.
-This allows the platform to setup correct the appropriate transport and configurations prior
+which is instantiated and configured by the platform code, but will be initialized by the core.
+
+This allows the platform to setup the appropriate transport and configurations prior
+
 to Patina. However, as Patina will control the exception handlers framework, the debugger
 cannot be initialized until that is available during early initialization. This struct must
 be `'static` as it will be registered as an exception handler which cannot assume any
@@ -70,8 +77,10 @@ general service/component design.
 ### Debug Transport
 
 For the self-hosted debugger to communicate with the debugging software, such as
-windbg, there needs to be a physical line on communication between the system under
-debug and the host machine. This transport should implement the `SerialIo` trait
+windbg, there needs to be a physical line of communication between the system under
+
+debug and the host machine. This transport should implement the [SerialIO](https://github.com/OpenDevicePartnership/patina/blob/main/sdk/patina_sdk/src/serial.rs) trait
+
 to provide a simple mechanism to read or write to the bus. This transport may be
 the same transport used by the logging console or it may be a dedicated UART or other
 serial connection. Most devices should be able to use a standard UART implementation
@@ -79,7 +88,7 @@ from the SDK as the transport, providing the correct interface configurations.
 
 ## Phases of the Debugger
 
-The debugger has two primary phases of operation. Initialization where it prepares
+The debugger has two primary phases of operation: initialization where it prepares
 the debugging infrastructure, and exception handling where it will inspect system
 state and communicate with the debugger application.
 
@@ -89,7 +98,7 @@ Initialization of the debugger consists of two major operations: allocating reso
 and configuration exception handlers.
 
 A number of buffers are required for the debugger to function such as the GDB and
-Monitor buffers used for parsing input and preparring responses. These buffers are
+monitor buffers used for parsing input and preparing responses. These buffers are
 pre-allocated as memory should not be allocated while actively broken into the debugger
 as the state of the system is unknown should be minimally altered by the presence of
 the debugger.
@@ -105,10 +114,12 @@ If enabled, at the end of initialization the debugger will invoke a hard-coded
 breakpoint instruction, causing the CPU to take an exception invoking the debugger
 exception handlers. This is referred to as the _Initial Breakpoint_. The initial
 breakpoint is intended to give the developer time to connect to the system as early
-as possible in order to setup breakpoints or otherwise continue execution under.
+as possible in order to setup breakpoints or otherwise interact with the debugger before any further execution takes place.
+
 
 Support is planned to allow the initial breakpoint to have a timeout such that if
-the a connection is not established within a configured time, the system will continue
+a connection is not established within a configured time, the system will continue
+
 execution. This will allow scenarios where the debugger is enabled but only used occasionally.
 
 ### Exception Handling
@@ -118,7 +129,8 @@ This will rely on the Patina `InterruptManager` to capture the executing context
 during the initial exception, storing register state in a struct, before calling
 out to the registered debugger exception handler. At this point, the debugger will
 send a message over the transport to notify the debugger application that a break
-has occurred. At this point, the application will dictate all operations that occur.
+has occurred. From this point forward, the application will dictate all operations that occur.
+
 The following are the primary operations requested by the application.
 
 - Querying system/architecture information
@@ -126,18 +138,24 @@ The following are the primary operations requested by the application.
 - Reading/writing memory
 - Executing monitor commands
 - Setting/clearing breakpoints
-- Continueing or stepping
+- Continuing or stepping
 
-The self-hosted debugger, will perform these operations, but does not have the greater
-context that the application does. That is the self-hosted debugger may be asked
-to set memory address to a certain value, but only the application know the
-significance of the memory address be it a variable, stack, or other structure.
-That is, the self-hosted debugger just performs rudimentary inspected/alteration
+
+The self-hosted debugger will perform these operations but does not have the greater
+
+context that the application does. e.g. the self-hosted debugger may be asked
+
+to set memory address to a certain value, but only the application knows the
+
+significance of the memory address - be it a variable, stack, or other structure.
+
+The self-hosted debugger just performs rudimentary inspected/alteration
 of system state and is not responsible for understanding why these things are done.
 
 ## Operations
 
-While borken-in the Patina debugger is responsible for communicating with the application
+While broken-in the Patina debugger is responsible for communicating with the application
+
 and performing various operations to support debugging scenarios. This communication
 and the resulting operations are detailed in this section.
 
@@ -156,20 +174,23 @@ The GDB protocol was selected because it is a robust communication standard that
 is open and supported by many debug applications, including Windbg, GDB, LLDB, etc.
 The GDB protocol is ascii based and so is not as performant as binary protocols
 such as those used by windbg natively. Other protocols may be supported in the future
-to accommodate this and other short-comings.
+to accommodate this and other shortcomings.
+
 
 ### Register Access
 
 During the exception, the Patina exception handler will capture the register state
 into a stack variable and provide this to the Patina debugger exception handler routines.
 This captured state is what will be presented to the application as the current
-state of the system, providing a snap-shot of the registers at the point of the
+state of the system, providing a snapshot of the registers at the point of the
+
 exception. Any change to this structure will be restored faithfully by the Patina
 exception handler code when the exception stack unwinds so that any change to these
 registers while in the debugger will take affect when returning from the exception.
 
 Notably, this does not include most system registers or MSRs. Any alteration to these
-registers will take immediate affect and can impact the debugger is applicable.
+registers will take immediate effect (and may impact the debugger operation).
+
 
 ### Memory Access
 
@@ -178,11 +199,13 @@ this reason, the debugger should attempt to be minimally invasive or reliant on
 other stateful services in the core as it could cause torn state or inconsistent
 debugging results. The debugger currently requires that all memory access be mapped,
 but it will temporarily fix-up write access to memory as needed. Alteration to memory
-used by the debugger while the debugger is broken in may cause unexpected behavior.
+used by the debugger while the debugger is broken-in may cause unexpected behavior.
+
 
 ### Breakpoints
 
-There are several types of breakpoints that are supported to configurable on the
+There are several types of breakpoints that are configurable on the
+
 system.
 
 __Software Breakpoints__ - These are the most common type of dynamic breakpoints
@@ -192,7 +215,8 @@ the debugger will inject into the instruction stream, directly replacing the ori
 instruction. For example, on x64 the debugger will replace the instruction with an
 `int 3` instruction for the address of the breakpoint. When broken in, the application
 will typically temporarily remove the breakpoint so that this behavior is transparent
-to the user. Resuming from a software breakpoint requires some steps are the application
+to the user. Resuming from a software breakpoint requires some steps since the application
+
 will need to step beyond the broken instruction before the instruction stream can
 be altered again or else the exception will just be taken again.
 
@@ -203,12 +227,15 @@ see if it contains a hardcoded breakpoint, and if so it will increment the progr
 counter to skip the instruction. Otherwise the system would never be able to make
 progress from a hard coded breakpoint.
 
-__Data Breakpoints__ - Always known as watchpoints, these are the only supported for
+__Data Breakpoints__ - Also known as watchpoints, these are the only supported for
+
 of hardware breakpoint, where debug registers are configured to cause an exception
-on access to a specific address. These are used to capture reads or write to specific
+on access to a specific address. The hardware is responsible for creating the exception in these cases. These are used to capture reads or write to specific
+
 memory.
 
-__Module Breakpoints__ - These are actually just hardcoded breakpoints, but can be
+__Module Breakpoints__ - These are simply hardcoded breakpoints, but can be
+
 conceptually considered their own entity. Module breaks are configured to cause
 the debugger to break in when a specific module is loaded. This is achieved through
 a callout from the core each time a new module is loaded. This is useful for developers
@@ -217,9 +244,11 @@ prior to the module being executed.
 
 ### Monitor Commands
 
-Monitor commands are implementation interpretted commands in the GDB remote protocol
+Monitor commands are implementation interpreted commands in the GDB remote protocol
+
 through the [`qRcmd` packet](https://sourceware.org/gdb/current/onlinedocs/gdb.html/General-Query-Packets.html#index-qRcmd-packet).
-These locally interpretted commands are useful for operations that do not have standard
+These locally interpreted commands are useful for operations that do not have standard
+
 or well-supported remote protocol functions but require local code execution on the
 system. Some examples for this could be:
 
@@ -233,6 +262,9 @@ The debugger allows for external code to register for monitor callbacks to allow
 for Patina or components to add their own monitor commands through the `add_monitor_command`
 routine. As these commands are executed from the exception handler, special care
 should be taken to avoid memory allocations or other global state alterations.
+It is possible to have commands that alter global state or allocate memory, but
+your mileage may vary depending on system state, e.g. the system may hang.
+
 
 ### Continuing execution
 
@@ -253,7 +285,8 @@ the system doesn't get stuck stepping.
 
 Configuring the debugger is left to the platform as the decision on when and how
 to enable the debugger has environment, security, and other considerations that
-are specific to a platform and it's use case. There are two supported methods for
+are specific to a platform and its use case. There are two supported methods for
+
 enabling the debugger: hard-coded enablement through use of the enablement routines
 in the `PatineDebugger` struct, or through use of the [Debugger Control HOB](https://github.com/microsoft/mu_feature_debugger/blob/main/DebuggerFeaturePkg/Include/DebuggerControlHob.h).
 
@@ -286,8 +319,10 @@ To supplement this support, the [UefiExt extension](https://github.com/microsoft
 has been modified to support the Patina debugger. The extension is critical for
 the developer experience while using windbg.
 
-## Other Debugger Application
+## Other Debugger Applications
 
-While the debugger is designed to be compatible with GDB and other, no investment
+
+While the debugger is designed to be compatible with GDB and other debugger applications that support the GDB protocol, no investment
+
 has currently been made into testing and tooling. Future support here would be welcomed
 as the need arises.
