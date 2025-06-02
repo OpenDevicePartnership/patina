@@ -26,11 +26,6 @@ impl<A> PageTable for EfiCpuPagingNull<A>
 where
     A: PageAllocator,
 {
-    type ALLOCATOR = A;
-    fn borrow_allocator(&mut self) -> &mut A {
-        panic!("NullEfiCpuInit does not have a page allocator");
-    }
-
     fn map_memory_region(&mut self, _address: u64, _size: u64, _attributes: MemoryAttributes) -> Result<(), PtError> {
         Ok(())
     }
@@ -56,6 +51,6 @@ where
 
 pub fn create_cpu_null_paging<A: PageAllocator + 'static>(
     _page_allocator: A,
-) -> Result<Box<dyn PageTable<ALLOCATOR = A>>, efi::Status> {
+) -> Result<Box<dyn PageTable>, efi::Status> {
     Err(efi::Status::UNSUPPORTED)
 }

@@ -235,6 +235,12 @@ where
         // the initial HOB list is not in mapped memory as passed from pre-DXE.
         self.hob_list.relocate_hobs();
 
+        // Add custom monitor commands to the debugger before initializing so that
+        // they are available in the initial breakpoint.
+        patina_debugger::add_monitor_command("version", |_, out| {
+            let _ = out.write_str(concat!("Patina DXE Core v", env!("CARGO_PKG_VERSION")));
+        });
+
         // Initialize the debugger if it is enabled.
         patina_debugger::initialize(&mut interrupt_manager);
 

@@ -8,9 +8,9 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use crate as patina_sdk;
-use crate::component::config::mm::{MmCommunicationConfiguration, MmiPort};
-use crate::component::{
+use crate::config::{MmCommunicationConfiguration, MmiPort};
+use crate::service::platform_mm_control::PlatformMmControl;
+use patina_sdk::component::{
     params::{Commands, Config},
     service::{IntoService, Service},
     IntoComponent,
@@ -18,8 +18,6 @@ use crate::component::{
 
 #[cfg(any(feature = "doc", all(target_os = "uefi", target_arch = "x86_64")))]
 use x86_64::instructions::port;
-
-use super::platform_mm_control::PlatformMmControl;
 
 #[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
@@ -133,9 +131,9 @@ impl Default for SwMmiManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::config::mm::MmCommunicationConfiguration;
-    use crate::component::params::Commands;
-    use crate::component::service::platform_mm_control::{MockPlatformMmControl, PlatformMmControl};
+    use crate::config::MmCommunicationConfiguration;
+    use crate::service::platform_mm_control::{MockPlatformMmControl, PlatformMmControl};
+    use patina_sdk::component::params::Commands;
 
     #[test]
     fn test_sw_mmi_manager_without_platform_mm_control() {

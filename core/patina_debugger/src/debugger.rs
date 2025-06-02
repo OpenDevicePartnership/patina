@@ -24,7 +24,7 @@ use spin::Mutex;
 use crate::{
     arch::{DebuggerArch, SystemArch},
     dbg_target::UefiTarget,
-    modules::Modules,
+    system::SystemState,
     transport::{LoggingSuspender, SerialConnection},
     DebugError, Debugger, ExceptionInfo,
 };
@@ -66,8 +66,8 @@ where
     config: spin::RwLock<DebuggerConfig>,
     /// Internal mutable debugger state.
     internal: Mutex<DebuggerInternal<'static, T>>,
-    /// Tracks modules state.
-    modules: Mutex<Modules>,
+    /// Tracks external system state.
+    system_state: Mutex<SystemState>,
 }
 
 /// Debugger Configuration
@@ -112,7 +112,7 @@ impl<T: SerialIO> UefiDebugger<T> {
                 initial_break_timeout: 0,
             }),
             internal: Mutex::new(DebuggerInternal { gdb_buffer: None, gdb: None, monitor_buffer: None }),
-            modules: Mutex::new(Modules::new()),
+            system_state: Mutex::new(SystemState::new()),
         }
     }
 
@@ -195,7 +195,7 @@ impl<T: SerialIO> UefiDebugger<T> {
             unsafe { core::slice::from_raw_parts_mut(const_buffer.as_ptr() as *mut u8, const_buffer.len()) }
         };
 
-        let mut target = UefiTarget::new(exception_info, &self.modules, monitor_buffer);
+        let mut target = UefiTarget::new(exception_info, &self.system_state, monitor_buffer);
 
         // Either take the existing state machine, or start one if this is the first break.
         let mut gdb = match debug.gdb {
@@ -346,9 +346,9 @@ impl<T: SerialIO> Debugger for UefiDebugger<T> {
         }
 
         let breakpoint = {
-            let mut modules = self.modules.lock();
-            modules.add_module(module_name, address, length);
-            modules.check_module_breakpoints(module_name)
+            let mut state = self.system_state.lock();
+            state.modules.add_module(module_name, address, length);
+            state.modules.check_module_breakpoints(module_name)
         };
 
         if breakpoint {
@@ -370,6 +370,14 @@ impl<T: SerialIO> Debugger for UefiDebugger<T> {
                 SystemArch::breakpoint();
             }
         }
+    }
+
+    fn add_monitor_command(&'static self, command: &'static str, callback: crate::MonitorCommandFn) {
+        if !self.enabled() {
+            return;
+        }
+
+        self.system_state.lock().add_monitor_command(command, callback);
     }
 }
 

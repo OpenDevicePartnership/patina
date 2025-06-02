@@ -143,11 +143,11 @@ impl Depex {
     /// Evaluates a DEPEX expression.
     pub fn eval(&mut self, protocols: &[efi::Guid]) -> bool {
         let mut stack = Vec::with_capacity(DEPEX_STACK_SIZE_INCREMENT);
-        log::info!("Depex:");
+        log::trace!("Depex:");
         for (index, opcode) in self.expression.iter_mut().enumerate() {
             match opcode {
                 Opcode::Before(_) | Opcode::After(_) => {
-                    log::info!("  {:#x?}", opcode);
+                    log::trace!("  {:#x?}", opcode);
                     if index != 0 {
                         debug_assert!(false, "Invalid BEFORE or AFTER not at start of depex {:#x?}", self.expression);
                         return false;
@@ -173,7 +173,7 @@ impl Depex {
                     return false;
                 }
                 Opcode::Sor => {
-                    log::info!("  {:#x?}", opcode);
+                    log::trace!("  {:#x?}", opcode);
                     if index != 0 {
                         debug_assert!(false, "Invalid SOR not at start of depex.");
                         return false;
@@ -193,7 +193,7 @@ impl Depex {
                         }
                         stack.push(false);
                     }
-                    log::info!(
+                    log::trace!(
                         "  {opcode:x?} => {:?}, stack ->{:?}",
                         stack.last(),
                         stack.iter().rev().collect::<Vec<_>>()
@@ -203,7 +203,7 @@ impl Depex {
                     let operator1 = stack.pop().unwrap_or(false);
                     let operator2 = stack.pop().unwrap_or(false);
                     stack.push(operator1 && operator2);
-                    log::info!(
+                    log::trace!(
                         "  {opcode:x?}({operator1:?},{operator2:?}) => {:?}, stack ->{:?}",
                         stack.last(),
                         stack.iter().rev().collect::<Vec<_>>()
@@ -213,7 +213,7 @@ impl Depex {
                     let operator1 = stack.pop().unwrap_or(false);
                     let operator2 = stack.pop().unwrap_or(false);
                     stack.push(operator1 || operator2);
-                    log::info!(
+                    log::trace!(
                         "  {opcode:x?}({operator1:?},{operator2:?}) => {:?}, stack ->{:?}",
                         stack.last(),
                         stack.iter().rev().collect::<Vec<_>>()
@@ -222,7 +222,7 @@ impl Depex {
                 Opcode::Not => {
                     let operator = stack.pop().unwrap_or(false);
                     stack.push(!operator);
-                    log::info!(
+                    log::trace!(
                         "  {opcode:x?}({operator:?}) => {:?}, stack ->{:?}",
                         stack.last(),
                         stack.iter().rev().collect::<Vec<_>>()
@@ -230,7 +230,7 @@ impl Depex {
                 }
                 Opcode::True => {
                     stack.push(true);
-                    log::info!(
+                    log::trace!(
                         "  {opcode:x?} => {:?}, stack ->{:?}",
                         stack.last(),
                         stack.iter().rev().collect::<Vec<_>>()
@@ -238,7 +238,7 @@ impl Depex {
                 }
                 Opcode::False => {
                     stack.push(false);
-                    log::info!(
+                    log::trace!(
                         "  {opcode:x?} => {:?}, stack ->{:?}",
                         stack.last(),
                         stack.iter().rev().collect::<Vec<_>>()
@@ -246,7 +246,7 @@ impl Depex {
                 }
                 Opcode::End => {
                     let operator = stack.pop().unwrap_or(false);
-                    log::info!(
+                    log::trace!(
                         "  {opcode:x?} => final result: {:?}, final stack ->{:?}",
                         operator,
                         stack.iter().rev().collect::<Vec<_>>()

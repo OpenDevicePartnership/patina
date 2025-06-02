@@ -9,7 +9,7 @@
 use crate::pecoff::{self, UefiPeInfo};
 use alloc::{boxed::Box, slice, vec, vec::Vec};
 use core::{fmt::Display, ptr};
-use patina_sdk::error::EfiError;
+use patina_sdk::{base::DEFAULT_CACHE_ATTR, error::EfiError};
 
 use mu_pi::{dxe_services, hob};
 use mu_rust_helpers::function;
@@ -1745,7 +1745,7 @@ pub struct SpinLockedGcd {
     memory: tpl_lock::TplMutex<GCD>,
     io: tpl_lock::TplMutex<IoGCD>,
     memory_change_callback: Option<MapChangeCallback>,
-    page_table: tpl_lock::TplMutex<Option<Box<dyn PageTable<ALLOCATOR = PagingAllocator<'static>>>>>,
+    page_table: tpl_lock::TplMutex<Option<Box<dyn PageTable>>>,
 }
 
 impl SpinLockedGcd {
@@ -1847,7 +1847,7 @@ impl SpinLockedGcd {
                             if paging_attrs & MemoryAttributes::CacheAttributesMask != MemoryAttributes::empty() {
                                 log::trace!(
                                     target: "paging",
-                                    "Memory region {:#x?} of length {:#x?} added with attrs {:#x?}, sending cache attributes changed event",
+                                    "Memory region {:#x?} of length {:#x?} mapped with attrs {:#x?}, sending cache attributes changed event",
                                     base_address,
                                     len,
                                     paging_attrs
@@ -2177,7 +2177,7 @@ impl SpinLockedGcd {
             if let Ok(base_address) = result.as_ref() {
                 let attributes = match self.get_memory_descriptor_for_address(*base_address as efi::PhysicalAddress) {
                     Ok(descriptor) => descriptor.attributes,
-                    Err(_) => 0,
+                    Err(_) => DEFAULT_CACHE_ATTR,
                 };
                 // it is safe to call set_memory_space_attributes without calling set_memory_space_capabilities here
                 // because we set efi::MEMORY_XP as a capability on all memory ranges we add to the GCD. A driver could

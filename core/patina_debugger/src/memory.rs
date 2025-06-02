@@ -159,9 +159,6 @@ mod tests {
         pub MemPageTable {}
 
         impl PageTable for MemPageTable {
-            type ALLOCATOR = DebugPageAllocator;
-
-            fn borrow_allocator(&mut self) -> &mut DebugPageAllocator;
             fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> PtResult<()>;
             fn unmap_memory_region(&mut self, address: u64, size: u64) -> PtResult<()>;
             fn remap_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> PtResult<()>;

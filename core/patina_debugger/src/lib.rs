@@ -41,10 +41,15 @@
 //!     // Set the global debugger instance. This can only be done once.
 //!     patina_debugger::set_debugger(&DEBUGGER);
 //!
+//!     // Setup a custom monitor command for this platform.
+//!     patina_debugger::add_monitor_command("my_command", |args, writer| {
+//!         // Parse the arguments from _args, which is a SplitWhitespace iterator.
+//!         let _ = write!(writer, "Executed my_command with args: {:?}", args);
+//!     });
+//!
 //!     // Call the core entry. The core can then initialize and access the debugger
 //!     // through the static routines.
 //!     start();
-//!
 //! }
 //!
 //! fn start() {
@@ -92,7 +97,7 @@ mod arch;
 mod dbg_target;
 mod debugger;
 mod memory;
-mod modules;
+mod system;
 mod transport;
 
 extern crate alloc;
@@ -113,6 +118,18 @@ use patina_sdk::serial::SerialIO;
 ///
 static DEBUGGER: spin::Once<&dyn Debugger> = spin::Once::new();
 
+/// Type for monitor command functions. This will be invoked by the debugger when
+/// the associated monitor command is invoked.
+///
+/// The first argument contains the whitespace separated arguments from the command.
+/// For example, if the command is `my_command arg1 arg2`, then `arg1` and `arg2` will
+/// be the first and second elements of the iterator respectively.
+///
+/// the second argument is a writer that should be used to write the output of the
+/// command. This can be done by directly invoking the [core::fmt::Write] trait methods
+/// or using the `write!` macro.
+pub type MonitorCommandFn = fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write);
+
 /// Trait for debugger interaction. This is required to allow for a global to the
 /// platform specific debugger implementation. For safety, these routines should
 /// only be invoked on the global instance of the debugger.
@@ -128,6 +145,9 @@ trait Debugger: Sync {
 
     /// Polls the debugger for any pending interrupts.
     fn poll_debugger(&'static self);
+
+    /// Adds a monitor command to the debugger.
+    fn add_monitor_command(&'static self, cmd: &'static str, function: MonitorCommandFn);
 }
 
 #[derive(Debug)]
@@ -187,6 +207,25 @@ pub fn enabled() -> bool {
     match DEBUGGER.get() {
         Some(debugger) => debugger.enabled(),
         None => false,
+    }
+}
+
+/// Adds a monitor command to the debugger. This may be called before initialization,
+/// but should not be called before memory allocations are available. See [MonitorCommandFn]
+/// for more details on the callback function expectations.
+///
+/// ## Example
+///
+/// ```rust
+/// patina_debugger::add_monitor_command("my_command", |args, writer| {
+///     // Parse the arguments from _args, which is a SplitWhitespace iterator.
+///     let _ = write!(writer, "Executed my_command with args: {:?}", args);
+/// });
+/// ```
+///
+pub fn add_monitor_command(cmd: &'static str, function: MonitorCommandFn) {
+    if let Some(debugger) = DEBUGGER.get() {
+        debugger.add_monitor_command(cmd, function);
     }
 }
 

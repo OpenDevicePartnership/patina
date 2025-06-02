@@ -40,9 +40,26 @@ impl ext::monitor_cmd::MonitorCmd for UefiTarget {
         let mut tokens: SplitWhitespace<'_> = cmd_str.split_whitespace();
         self.monitor_buffer.reset();
 
-        match tokens.next() {
-            Some("help") => {
+        // Check for an offset modifier, and configure the monitor buffer accordingly.
+        let cmd = match tokens.next() {
+            Some(token) if token.starts_with("O[") && token.ends_with("]") => {
+                let offset_str = &token[2..token.len() - 1];
+                let offset: usize = offset_str.parse().ok().unwrap_or(0);
+                self.monitor_buffer.set_start_offset(offset);
+                tokens.next()
+            }
+            other => other,
+        };
+
+        match cmd {
+            Some("help") | None => {
                 let _ = self.monitor_buffer.write_str(MONITOR_HELP);
+                let _ = self.monitor_buffer.write_str("External commands:\n");
+                if let Some(state) = self.system_state.try_lock() {
+                    for cmd in state.monitor_commands.iter() {
+                        let _ = write!(self.monitor_buffer, "{}\t", cmd.command);
+                    }
+                };
             }
             Some("mod") => {
                 self.module_cmd(&mut tokens);
@@ -65,9 +82,18 @@ impl ext::monitor_cmd::MonitorCmd for UefiTarget {
             Some("arch") => {
                 SystemArch::monitor_cmd(&mut tokens, &mut self.monitor_buffer);
             }
-            _ => {
-                let _ = self.monitor_buffer.write_str("Unknown command. Use 'help' for a list of commands.");
-            }
+            Some(cmd) => match self.system_state.try_lock() {
+                Some(state) => {
+                    if !state.handle_monitor_command(cmd, &mut tokens, &mut self.monitor_buffer) {
+                        let _ = self.monitor_buffer.write_str("Unknown command. Use 'help' for a list of commands.");
+                    }
+                }
+                None => {
+                    let _ = self
+                        .monitor_buffer
+                        .write_str("ERROR: Failed to acquire system state lock for monitor callbacks!");
+                }
+            },
         }
 
         self.monitor_buffer.flush_to_console(&mut out);
@@ -77,8 +103,8 @@ impl ext::monitor_cmd::MonitorCmd for UefiTarget {
 
 impl UefiTarget {
     fn module_cmd(&mut self, tokens: &mut SplitWhitespace<'_>) {
-        let mut modules = match self.modules.try_lock() {
-            Some(modules) => modules,
+        let mut state = match self.system_state.try_lock() {
+            Some(state) => state,
             None => {
                 let _ = self.monitor_buffer.write_str("ERROR: Failed to acquire modules lock!");
                 return;
@@ -87,16 +113,16 @@ impl UefiTarget {
 
         match tokens.next() {
             Some("breakall") => {
-                modules.break_on_all();
+                state.modules.break_on_all();
                 let _ = self.monitor_buffer.write_str("Will break for all module loads.");
             }
             #[cfg(feature = "alloc")]
             Some("break") => {
                 for module in tokens.by_ref() {
-                    modules.add_module_breakpoint(module);
+                    state.modules.add_module_breakpoint(module);
                 }
                 let _ = self.monitor_buffer.write_str("Module breakpoints:\n");
-                for module in modules.get_module_breakpoints().iter() {
+                for module in state.modules.get_module_breakpoints().iter() {
                     let _ = writeln!(self.monitor_buffer, "\t{}", module);
                 }
             }
@@ -106,14 +132,14 @@ impl UefiTarget {
                     self.monitor_buffer.write_str("Specific Module breakpoints only supported with 'alloc' feature.");
             }
             Some("clear") => {
-                modules.clear_module_breakpoints();
+                state.modules.clear_module_breakpoints();
                 let _ = self.monitor_buffer.write_str("Cleared module breaks!");
             }
             Some("list") => {
                 let count: usize = tokens.next().and_then(|token| token.parse().ok()).unwrap_or(usize::MAX);
                 let start: usize = tokens.next().and_then(|token| token.parse().ok()).unwrap_or(0);
                 let mut printed = 0;
-                for module in modules.get_modules().iter().skip(start) {
+                for module in state.modules.get_modules().iter().skip(start) {
                     let _ = writeln!(self.monitor_buffer, "\t{}: {:#x} : {:#x}", module.name, module.base, module.size);
                     printed += 1;
                     if printed >= count {

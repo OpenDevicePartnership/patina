@@ -9,7 +9,6 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-
 #[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
 
@@ -20,5 +19,5 @@ use mockall::automock;
 #[cfg_attr(any(test, feature = "mockall"), automock)]
 pub trait PlatformMmControl {
     /// Platform-specific initialization of the MM environment.
-    fn init(&self) -> crate::error::Result<()>;
+    fn init(&self) -> patina_sdk::error::Result<()>;
 }

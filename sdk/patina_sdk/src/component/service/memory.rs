@@ -3,6 +3,26 @@
 //! This module contains traits and types for services related memory management
 //! and access for use in services. See [MemoryManager] for the primary interface.
 //!
+//! ## Testing
+//!
+//! This module contains a std implementation of the [MemoryManager] trait called `StdMemoryManager` to enable testing.
+//! It provides a fully working implementation of the [MemoryManager] based off of the std global allocator.
+//!
+//! ```rust
+//! use patina_sdk::component::service::{ Service, memory::*};
+//!
+//! use std::boxed::Box;
+//!
+//! fn test_that_needs_memory_manager() {
+//!     let memory_manager = StdMemoryManager::new();
+//!
+//!     let service: Service<dyn MemoryManager> = Service::mock(Box::new(memory_manager));
+//! }
+//! ```
+//!
+//! As always, if you need a fallable mock for testing your code's ability to handle allocation errors, A `mockall` mock
+//! is available for you to use (`MockMemoryManager`).
+//!
 //! ## License
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
@@ -18,12 +38,16 @@ use core::{alloc::Allocator, ptr::NonNull};
 use alloc::boxed::Box;
 use r_efi::efi;
 
+#[cfg(any(test, feature = "mockall"))]
+use mockall::automock;
+
 use crate::{base::UEFI_PAGE_SIZE, efi_types::EfiMemoryType, error::EfiError};
 
 /// The `MemoryManager` trait provides an interface for allocating, freeing,
 /// and manipulating access to memory. This trait is intended to be implemented
 /// by the core and serve as the API by which both internal code and external
 /// components can access memory services.
+#[cfg_attr(any(test, feature = "mockall"), automock)]
 pub trait MemoryManager {
     /// Allocates pages of memory.
     ///
@@ -756,4 +780,117 @@ pub enum PageAllocationStrategy {
     /// If the memory starting at this address through the requested length is not
     /// available, an error will be returned.
     Address(usize),
+}
+
+#[cfg(any(test, feature = "mockall"))]
+pub use mock::StdMemoryManager;
+
+#[cfg(any(test, feature = "mockall"))]
+mod mock {
+    extern crate std;
+    use std::{
+        alloc::{alloc, dealloc, Layout},
+        collections::HashMap,
+        sync::Mutex,
+    };
+
+    use super::*;
+    /// A fully working mock [MemoryManager] based off of the std global allocator.
+    ///
+    /// This mock [MemoryManager] implementation should be used when you expect allocations to succeed. If you wish to
+    /// create a mock that will fail, use `mockall` to create a mock implementation of [MemoryManager] with functions
+    /// that return errors that you specify.
+    #[derive(Default)]
+    pub struct StdMemoryManager {
+        memory_attributes: Mutex<HashMap<usize, (AccessType, CachingType)>>,
+    }
+
+    impl StdMemoryManager {
+        pub fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    impl MemoryManager for StdMemoryManager {
+        fn allocate_pages(&self, page_count: usize, options: AllocationOptions) -> Result<PageAllocation, MemoryError> {
+            let Ok(layout) = Layout::from_size_align(page_count * UEFI_PAGE_SIZE, options.alignment()) else {
+                return Err(MemoryError::InvalidAlignment);
+            };
+
+            let ptr = unsafe { alloc(layout) };
+            let addr = ptr as usize;
+
+            unsafe { PageAllocation::new(addr, page_count, Box::leak(Box::new(Self::new()))) }
+        }
+
+        unsafe fn free_pages(&self, address: usize, page_count: usize) -> Result<(), MemoryError> {
+            let ptr = address as *mut u8;
+            let layout = Layout::from_size_align(page_count * UEFI_PAGE_SIZE, UEFI_PAGE_SIZE).unwrap();
+            unsafe { dealloc(ptr, layout) };
+            Ok(())
+        }
+
+        unsafe fn set_page_attributes(
+            &self,
+            address: usize,
+            _page_count: usize,
+            access: AccessType,
+            caching: Option<CachingType>,
+        ) -> Result<(), MemoryError> {
+            let caching = caching.unwrap_or(CachingType::WriteBack);
+            self.memory_attributes.lock().expect("This is not actually shared.").insert(address, (access, caching));
+            Ok(())
+        }
+
+        fn get_page_attributes(
+            &self,
+            address: usize,
+            _page_count: usize,
+        ) -> Result<(AccessType, CachingType), MemoryError> {
+            if let Some((access, caching)) =
+                self.memory_attributes.lock().expect("This is not actually shared.").get(&address)
+            {
+                Ok((*access, *caching))
+            } else {
+                Err(MemoryError::InvalidAddress)
+            }
+        }
+
+        #[cfg(feature = "alloc")]
+        fn get_allocator(&self, _memory_type: EfiMemoryType) -> Result<&'static dyn Allocator, MemoryError> {
+            Ok(&std::alloc::System)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::component::service::Service;
+
+    #[test]
+    fn test_custom_mock_with_failing() {
+        let mut mock = MockMemoryManager::new();
+        mock.expect_allocate_pages().returning(|_, _| Err(MemoryError::NoAvailableMemory));
+        mock.expect_free_pages().returning(|_, _| Err(MemoryError::InvalidAddress));
+        mock.expect_set_page_attributes().returning(|_, _, _, _| Err(MemoryError::UnsupportedAttributes));
+        mock.expect_get_page_attributes().returning(|_, _| Err(MemoryError::InvalidAddress));
+        let service = Service::mock(Box::new(mock));
+
+        assert!(service.allocate_pages(5, AllocationOptions::new()).is_err());
+        assert!(unsafe { service.free_pages(0, 5).is_err() });
+        assert!(unsafe { service.set_page_attributes(0, 5, AccessType::ReadOnly, None).is_err() });
+        assert!(service.get_page_attributes(0, 5).is_err());
+    }
+
+    #[test]
+    fn test_page_allocation() {
+        let mock = StdMemoryManager::new();
+
+        let service = Service::mock(Box::new(mock));
+
+        let page = service.allocate_pages(1, AllocationOptions::new()).unwrap();
+        let my_thing = page.try_leak_as(42).unwrap();
+        assert_eq!(*my_thing, 42);
+    }
 }
