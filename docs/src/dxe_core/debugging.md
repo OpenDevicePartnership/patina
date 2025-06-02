@@ -10,17 +10,13 @@ which is supported by a number of debugger applications.
 
 The Patina debugger is a software debugger which, in contrast to a hardware or JTAG
 debugger, is implemented entirely within the patina software stack. This has many
-
 advantages such as being more flexible, accessible, and available but also means
 that it will have inherent limitations on its ability to debug all scenarios. Like
-
 with all debugging tools, it is a powerful tool but may not be the correct choice
-
 for all scenarios.
 
 Below is a simplified diagram of the sequence of a debugger interaction, starting
 with the exception, continuing with the debugger operations, and ending with
-
 resuming from the exception.
 
 ```mermaid
@@ -50,7 +46,6 @@ sequenceDiagram
 ## Structures
 
 The debugger consists of two high-level structures: the debugger struct itself and
-
 the transport. The debugger implements the debugging logic and exception handling
 while the transport handles the physical communication to the debugger application.
 
@@ -58,9 +53,7 @@ while the transport handles the physical communication to the debugger applicati
 
 The debugger is primary implemented through a `'static` struct, `PatinaDebugger`,
 which is instantiated and configured by the platform code, but will be initialized by the core.
-
 This allows the platform to setup the appropriate transport and configurations prior
-
 to Patina. However, as Patina will control the exception handlers framework, the debugger
 cannot be initialized until that is available during early initialization. This struct must
 be `'static` as it will be registered as an exception handler which cannot assume any
@@ -77,9 +70,7 @@ services because of the unique integration of the debugger in core initializatio
 For the self-hosted debugger to communicate with the debugging software, such as
 Windbg, there needs to be a physical line of communication between the system under
 debug and the host machine. This transport should implement the [SerialIO](https://github.com/OpenDevicePartnership/patina/blob/main/sdk/patina_sdk/src/serial.rs)
-trait.
-
-to provide a simple mechanism to read or write to the bus. This transport may be
+trait to provide a simple mechanism to read or write to the bus. This transport may be
 the same transport used by the logging console or it may be a dedicated UART or other
 serial connection. Most devices should be able to use a standard UART implementation
 from the SDK as the transport, providing the correct interface configurations.
