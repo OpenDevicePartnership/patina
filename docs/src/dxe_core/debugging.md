@@ -177,8 +177,12 @@ Unlike register state, memory inspected by the debugger is the actual memory. Fo
 this reason, the debugger should attempt to be minimally invasive or reliant on
 other stateful services in the core as it could cause torn state or inconsistent
 debugging results. The debugger currently requires that all memory access be mapped,
-but it will temporarily fix-up write access to memory as needed. Alteration to memory
-used by the debugger while the debugger is broken-in may cause unexpected behavior.
+but it will temporarily fix-up write access to memory as needed.
+
+```admonish important
+Alteration to memory used by the debugger while the debugger is broken-in may cause
+unexpected behavior.
+```
 
 ### Breakpoints
 
