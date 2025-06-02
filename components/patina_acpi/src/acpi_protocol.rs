@@ -13,7 +13,6 @@ use crate::service::{AcpiNotifyFn, AcpiProvider};
 use crate::{
     acpi::ACPI_TABLE_INFO,
     acpi_table::{AcpiFacs, AcpiTable},
-    error::AcpiError,
     signature::{self, ACPI_HEADER_LEN},
 };
 
@@ -69,7 +68,7 @@ impl AcpiTableProtocol {
             };
 
             if let Err(e) = ACPI_TABLE_INFO.install_acpi_table(facs) {
-                acpi_error_to_efi_error(e)
+                e.into()
             } else {
                 // The FACS doesn't have an associated key
                 efi::Status::SUCCESS
@@ -104,7 +103,7 @@ impl AcpiTableProtocol {
                     }
                     efi::Status::SUCCESS
                 }
-                Err(e) => acpi_error_to_efi_error(e),
+                Err(e) => e.into(),
             }
         }
     }
@@ -112,29 +111,8 @@ impl AcpiTableProtocol {
     extern "efiapi" fn uninstall_acpi_table_ext(_protocol: *const AcpiTableProtocol, table_key: usize) -> efi::Status {
         match ACPI_TABLE_INFO.uninstall_acpi_table(table_key) {
             Ok(_) => efi::Status::SUCCESS,
-            Err(e) => acpi_error_to_efi_error(e),
+            Err(e) => e.into(),
         }
-    }
-}
-
-/// Converts a Rust AcpiError to a standard EFI error.
-fn acpi_error_to_efi_error(error: AcpiError) -> efi::Status {
-    match error {
-        AcpiError::AllocationFailed => efi::Status::OUT_OF_RESOURCES,
-        AcpiError::FacsUefiNot64BAligned => efi::Status::UNSUPPORTED,
-        AcpiError::InvalidSignature => efi::Status::INVALID_PARAMETER,
-        AcpiError::FadtAlreadyInstalled => efi::Status::ALREADY_STARTED,
-        AcpiError::InstallTableFailed => efi::Status::UNSUPPORTED,
-        AcpiError::InvalidTableKey => efi::Status::INVALID_PARAMETER,
-        AcpiError::InvalidTableIndex => efi::Status::INVALID_PARAMETER,
-        AcpiError::InvalidNotifyUnregister => efi::Status::INVALID_PARAMETER,
-        AcpiError::FreeFailed => efi::Status::OUT_OF_RESOURCES,
-        AcpiError::XsdtNotInitialized => efi::Status::UNSUPPORTED,
-        AcpiError::InvalidTableFormat => efi::Status::INVALID_PARAMETER,
-        AcpiError::HobTableNotInstalled => efi::Status::UNSUPPORTED,
-        AcpiError::InvalidTableLength => efi::Status::INVALID_PARAMETER,
-        AcpiError::InvalidXsdtEntry => efi::Status::INVALID_PARAMETER,
-        AcpiError::TableNotifyFailed => efi::Status::INVALID_PARAMETER,
     }
 }
 
@@ -181,10 +159,10 @@ impl AcpiSdtProtocol {
                 unsafe { *table_key = table_info.table_key };
                 let sdt_ptr = table_info as *const AcpiTable as *mut AcpiSdtHeader;
                 unsafe { *table = sdt_ptr };
+                efi::Status::SUCCESS
             }
-            Err(e) => return acpi_error_to_efi_error(e),
+            Err(e) => return e.into(),
         }
-        efi::Status::SUCCESS
     }
 
     extern "efiapi" fn register_notify_ext(register: bool, notify_fn: *const AcpiNotifyFnExt) -> efi::Status {
@@ -196,7 +174,7 @@ impl AcpiSdtProtocol {
 
         match ACPI_TABLE_INFO.register_notify(register, rust_fn) {
             Ok(_) => efi::Status::SUCCESS,
-            Err(err) => acpi_error_to_efi_error(err),
+            Err(err) => err.into(),
         }
     }
 }

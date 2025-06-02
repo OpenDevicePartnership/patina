@@ -5,7 +5,10 @@ use core::{
     sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering},
 };
 
-use crate::alloc::{boxed::Box, vec::Vec};
+use crate::{
+    acpi_table::AcpiHeader,
+    alloc::{boxed::Box, vec::Vec},
+};
 use crate::{alloc::vec, service::AcpiNotifyFn};
 
 use patina_sdk::boot_services::{BootServices, StandardBootServices};
@@ -22,7 +25,7 @@ use patina_sdk::{
     uefi_size_to_pages,
 };
 
-use spin::{rwlock::RwLock, Mutex};
+use spin::rwlock::RwLock;
 
 use crate::{
     acpi_table::{AcpiDsdt, AcpiFacs, AcpiFadt, AcpiInstallable, AcpiRsdp, AcpiTable, AcpiXsdt},
@@ -39,7 +42,7 @@ pub static ACPI_TABLE_INFO: StandardAcpiProvider<StandardBootServices> = Standar
 pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
     pub(crate) version: AtomicU32,
     pub(crate) should_reclaim_memory: AtomicBool,
-    pub(crate) system_tables: Mutex<SystemTables>,
+    pub(crate) system_tables: SystemTables,
     acpi_tables: RwLock<Vec<NonNull<AcpiTable>>>,
     next_table_key: AtomicUsize,
     notify_list: RwLock<Vec<AcpiNotifyFn>>,
@@ -130,7 +133,7 @@ where
         Self {
             version: AtomicU32::new(0),
             should_reclaim_memory: AtomicBool::new(false),
-            system_tables: Mutex::new(system_tables),
+            system_tables: system_tables,
             acpi_tables: RwLock::new(vec![]),
             next_table_key: AtomicUsize::new(1),
             notify_list: RwLock::new(vec![]),
@@ -161,11 +164,11 @@ where
     }
 
     pub fn set_rsdp(&self, rsdp: &mut AcpiRsdp) {
-        self.system_tables.lock().rsdp.store(rsdp as *mut AcpiRsdp, Ordering::Release);
+        self.system_tables.rsdp.store(rsdp as *mut AcpiRsdp, Ordering::Release);
     }
 
     pub fn set_xsdt(&self, xsdt: &mut AcpiXsdt) {
-        self.system_tables.lock().xsdt.store(xsdt as *mut AcpiXsdt, Ordering::Release);
+        self.system_tables.xsdt.store(xsdt as *mut AcpiXsdt, Ordering::Release);
     }
 }
 
@@ -254,22 +257,52 @@ where
         Ok(entry_addr)
     }
 
-    pub fn install_tables_from_hob(&self, acpi_hob: Hob<AcpiMemoryHob>) -> Result<(), AcpiError> {
-        let acpi_table_addr = acpi_hob.rsdp_address;
-        // SAFETY: The caller must ensure the HOB must holds a valid pointer to the RSDP
-        let rsdp: &AcpiRsdp = unsafe { &*(acpi_table_addr as *const AcpiRsdp) };
-        // SAFETY: The caller must ensure the HOB must holds a valid pointer to the XSDT
-        let xsdt_ptr = rsdp.xsdt_address as *const AcpiXsdt;
+    /// Extracts the XSDT address after performing validation on the RSDP and XSDT
+    /// SHERRY: need to test
+    fn get_xsdt_address_from_rsdp(rsdp_address: u64) -> Result<u64, AcpiError> {
+        if rsdp_address == 0 {
+            return Err(AcpiError::NullRsdpFromHob);
+        }
+
+        // SAFETY: The RSDP address has been validated as non-null
+        let rsdp: &AcpiRsdp = unsafe { &*(rsdp_address as *const AcpiRsdp) };
+        if rsdp.signature != signature::ACPI_RSDP_TABLE {
+            return Err(AcpiError::InvalidSignature);
+        }
+
+        if rsdp.xsdt_address == 0 {
+            return Err(AcpiError::XsdtNotInitializedFromHob);
+        }
+
+        // Read the header to validate the XSDT signature is valid
+        // SAFETY: `xsdt_address` has been validated to be non-null
+        let xsdt_header = rsdp.xsdt_address as *const AcpiHeader;
+        if (unsafe { *xsdt_header }).signature != signature::XSDT {
+            return Err(AcpiError::InvalidSignature);
+        }
+
+        // SAFETY: We validate that the XSDT is non-null and contains the right signature.
+        let xsdt_ptr = rsdp.xsdt_address as *mut AcpiXsdt;
         let xsdt = unsafe { &*(xsdt_ptr) };
 
         if xsdt.length < ACPI_HEADER_LEN as u32 {
             return Err(AcpiError::XsdtNotInitialized);
         }
 
-        let entries = (xsdt.length as usize - ACPI_HEADER_LEN) / mem::size_of::<u64>();
+        Ok(rsdp.xsdt_address)
+    }
+
+    pub fn install_tables_from_hob(&self, acpi_hob: Hob<AcpiMemoryHob>) -> Result<(), AcpiError> {
+        let xsdt_address = Self::get_xsdt_address_from_rsdp(acpi_hob.rsdp_address)?;
+        let xsdt_ptr = xsdt_address as *const AcpiXsdt;
+
+        // SAFETY: `get_xsdt_address_from_rsdp` should perform necessary validations on XSDT
+        let xsdt_length = (unsafe { *xsdt_ptr }).length;
+
+        let entries = (xsdt_length as usize - ACPI_HEADER_LEN) / mem::size_of::<u64>();
         for i in 0..entries {
             // Find the address value of the next XSDT entry
-            let entry_addr = Self::get_xsdt_entry(i, xsdt_ptr as *const u8, xsdt.length as usize)?;
+            let entry_addr = Self::get_xsdt_entry(i, xsdt_ptr as *const u8, xsdt_length as usize)?;
 
             // Each entry points to a table
             // SAFETY: we assume that the HOB passed in contains valid ACPI table entries
@@ -329,19 +362,16 @@ where
         };
 
         // Point the `x_firmware_ctrl` field of the FADT to the FACS
-        {
-            let system_tables = self.system_tables.lock();
-            let facs_ptr = facs_install_addr as u64;
-            system_tables.facs.store(facs_ptr as *mut AcpiFacs, Ordering::Release);
-            if let Some(fadt) = system_tables.fadt_mut() {
-                fadt.x_firmware_ctrl = facs_ptr;
-            }
+        let facs_ptr = facs_install_addr as u64;
+        self.system_tables.facs.store(facs_ptr as *mut AcpiFacs, Ordering::Release);
+        if let Some(fadt) = self.system_tables.fadt_mut() {
+            fadt.x_firmware_ctrl = facs_ptr;
+        }
 
-            // Update the new in-memory FACS
-            if let Some(facs) = system_tables.facs_mut() {
-                facs.signature = signature::FACS;
-                facs.length = facs_len as u32;
-            }
+        // Update the new in-memory FACS
+        if let Some(facs) = self.system_tables.facs_mut() {
+            facs.signature = signature::FACS;
+            facs.length = facs_len as u32;
         }
 
         self.checksum_common_tables()?;
@@ -398,7 +428,7 @@ where
     /// `physical_addr`: the address in ACPI memory to install the FADT
     /// `table`: contains data for the FADT
     fn add_fadt_to_list(&self, physical_addr: usize, table: &AcpiTable) -> Result<(), AcpiError> {
-        if !(self.system_tables.lock().fadt.load(Ordering::Acquire).is_null()) {
+        if !(self.system_tables.fadt.load(Ordering::Acquire).is_null()) {
             // FADT already installed, abort
             // SAFETY: The caller must ensure that `physical_addr` points to a memory location previously allocated by the same memory manager
             unsafe {
@@ -411,24 +441,22 @@ where
             return Err(AcpiError::FadtAlreadyInstalled);
         }
 
-        let system_tables = self.system_tables.lock();
+        self.system_tables.fadt.store(physical_addr as *mut AcpiFadt, Ordering::Release);
 
-        system_tables.fadt.store(physical_addr as *mut AcpiFadt, Ordering::Release);
+        let facs_ptr = self.system_tables.facs.load(Ordering::Acquire) as u64;
+        let dsdt_ptr = self.system_tables.dsdt.load(Ordering::Acquire) as u64;
 
-        let facs_ptr = system_tables.facs.load(Ordering::Acquire) as u64;
-        let dsdt_ptr = system_tables.dsdt.load(Ordering::Acquire) as u64;
-
-        if let Some(fadt) = system_tables.fadt_mut() {
+        if let Some(fadt) = self.system_tables.fadt_mut() {
             fadt.x_firmware_ctrl = facs_ptr;
             fadt.x_dsdt = dsdt_ptr;
         }
 
-        if let Some(rsdp) = system_tables.rsdp_mut() {
+        if let Some(rsdp) = self.system_tables.rsdp_mut() {
             rsdp.oem_id = table.oem_id;
         }
 
         // XSDT derives OEM information from FADT, but the FADT does NOT get added to the XSDT entries
-        let xsdt_ptr = system_tables.xsdt_mut();
+        let xsdt_ptr = self.system_tables.xsdt_mut();
         if let Some(xsdt) = xsdt_ptr {
             xsdt.oem_id = table.oem_id;
             xsdt.oem_table_id = table.oem_table_id;
@@ -439,10 +467,8 @@ where
     }
 
     fn add_dsdt_to_list(&self, physical_addr: usize) {
-        let system_tables = self.system_tables.lock();
-
         let dsdt_ptr = physical_addr as u64;
-        if let Some(fadt) = system_tables.fadt_mut() {
+        if let Some(fadt) = self.system_tables.fadt_mut() {
             fadt.x_dsdt = dsdt_ptr;
         }
     }
@@ -514,8 +540,7 @@ where
     }
 
     fn add_entry_to_xsdt(&self, new_table_addr: u64) -> Result<(), AcpiError> {
-        let system_tables = self.system_tables.lock();
-        let xsdt_ptr = system_tables.xsdt_mut();
+        let xsdt_ptr = self.system_tables.xsdt_mut();
 
         if let Some(xsdt) = xsdt_ptr {
             // We need to reallocate the XSDT if the buffer exceeds the maximum allocated size
@@ -525,7 +550,7 @@ where
 
             // Calculate the memory location for the new entry (end of XSDT)
             let entry_offset = ACPI_HEADER_LEN + self.entries.read().len() * core::mem::size_of::<u64>();
-            let base = system_tables.xsdt.load(Ordering::Acquire) as *mut u8;
+            let base = self.system_tables.xsdt.load(Ordering::Acquire) as *mut u8;
             // SAFETY: Post-reallocation, we are guaranteed to have enough memory to write the new entry
             // SAFETY: All entries in the XSDT are guaranteed to be u64
             let dst = unsafe { base.add(entry_offset) as *mut u64 };
@@ -558,11 +583,10 @@ where
             .map_err(|_e| AcpiError::AllocationFailed)?;
         let physical_addr = page_alloc.into_raw_ptr::<u8>();
 
-        let system_tables = self.system_tables.lock();
-        let old_addr = system_tables.xsdt.load(Ordering::Acquire) as usize;
+        let old_addr = self.system_tables.xsdt.load(Ordering::Acquire) as usize;
 
         // Update RSDP with new XSDT address
-        if let Some(rsdp) = system_tables.rsdp_mut() {
+        if let Some(rsdp) = self.system_tables.rsdp_mut() {
             rsdp.xsdt_address = physical_addr as u64;
         }
 
@@ -570,7 +594,7 @@ where
         // SAFETY: `physical_addr` is a valid address if allocation succeeds
         // `old_addr` is a valid XSDT in `system_tables`
         unsafe { copy_nonoverlapping(old_addr as *const u8, physical_addr, curr_size) };
-        system_tables.xsdt.store(physical_addr as *mut AcpiXsdt, Ordering::Release);
+        self.system_tables.xsdt.store(physical_addr as *mut AcpiXsdt, Ordering::Release);
 
         // Free the old XSDT
         // SAFETY: `old_addr` is a valid XSDT in `system_tables`, and was previously allocated during installation by the same memory manager
@@ -626,13 +650,12 @@ where
 
         match table.signature {
             signature::FACP => {
-                self.system_tables.lock().fadt.store(core::ptr::null_mut(), Ordering::Release);
+                self.system_tables.fadt.store(core::ptr::null_mut(), Ordering::Release);
             }
             signature::FACS => {
-                let system_tables = self.system_tables.lock();
-                system_tables.facs.store(core::ptr::null_mut(), Ordering::Release);
+                self.system_tables.facs.store(core::ptr::null_mut(), Ordering::Release);
                 // Update other tables pointing to the FACS
-                if let Some(fadt) = system_tables.fadt_mut() {
+                if let Some(fadt) = self.system_tables.fadt_mut() {
                     fadt.x_firmware_ctrl = 0;
                     Self::acpi_table_update_checksum(
                         fadt as *mut AcpiFadt as *mut u8,
@@ -642,10 +665,9 @@ where
                 }
             }
             signature::DSDT => {
-                let system_tables = self.system_tables.lock();
-                system_tables.dsdt.store(core::ptr::null_mut(), Ordering::Release);
+                self.system_tables.dsdt.store(core::ptr::null_mut(), Ordering::Release);
 
-                if let Some(fadt) = system_tables.fadt_mut() {
+                if let Some(fadt) = self.system_tables.fadt_mut() {
                     fadt.x_dsdt = 0;
                     Self::acpi_table_update_checksum(
                         fadt as *mut AcpiFadt as *mut u8,
@@ -675,13 +697,12 @@ where
     }
 
     fn remove_table_from_xsdt(&self, table: &AcpiTable) {
-        if self.system_tables.lock().xsdt.load(Ordering::Acquire).is_null() {
+        if self.system_tables.xsdt.load(Ordering::Acquire).is_null() {
             return;
         }
 
         let table_address = table as *const AcpiTable as usize;
-        let system_tables = self.system_tables.lock();
-        if let Some(xsdt) = system_tables.xsdt_mut() {
+        if let Some(xsdt) = self.system_tables.xsdt_mut() {
             let num_entries = self.entries.read().len();
             // SAFETY: `xsdt` has been verified to be a valid pointer
             let header_ptr = xsdt as *mut AcpiXsdt as *mut u8;
@@ -736,9 +757,7 @@ where
 
     // checksum RSDP and XSDT
     pub(crate) fn checksum_common_tables(&self) -> Result<(), AcpiError> {
-        let system_tables = self.system_tables.lock();
-
-        if let Some(rsdp) = system_tables.rsdp_mut() {
+        if let Some(rsdp) = self.system_tables.rsdp_mut() {
             Self::acpi_table_update_checksum(
                 rsdp as *mut AcpiRsdp as *mut u8,
                 rsdp.length as usize,
@@ -746,7 +765,7 @@ where
             );
         }
 
-        if let Some(xsdt) = system_tables.xsdt_mut() {
+        if let Some(xsdt) = self.system_tables.xsdt_mut() {
             Self::acpi_table_update_checksum(
                 xsdt as *mut AcpiXsdt as *mut u8,
                 xsdt.length as usize,
@@ -758,8 +777,7 @@ where
     }
 
     fn publish_tables(&self) -> Result<(), AcpiError> {
-        let system_tables = self.system_tables.lock();
-        let rsdp_ptr = system_tables.rsdp.load(Ordering::Acquire);
+        let rsdp_ptr = self.system_tables.rsdp.load(Ordering::Acquire);
         // SAFETY: If initialization of AcpiProvider succeeds, the RSDP should always be valid
         unsafe {
             self.boot_services
@@ -917,10 +935,7 @@ mod tests {
         let fadt =
             Box::new(AcpiFadt { signature: signature::FACP, length: 244, x_firmware_ctrl: 0, ..Default::default() });
         let fadt_ptr = Box::into_raw(fadt);
-        {
-            let sys = provider.system_tables.lock();
-            sys.fadt.store(fadt_ptr, Ordering::Release);
-        }
+        provider.system_tables.fadt.store(fadt_ptr, Ordering::Release);
 
         // This should not fail, and should return 0 (FACS does not have an associated TableKey)
         let res = provider.install_facs(Some(facs_ptr), 64);
@@ -989,8 +1004,7 @@ mod tests {
         assert!(result.is_ok());
 
         // FADT should have been added to list
-        let system_tables = provider.system_tables.lock();
-        assert_eq!(system_tables.fadt.load(Ordering::Acquire) as usize, raw_ptr as usize);
+        assert_eq!(provider.system_tables.fadt.load(Ordering::Acquire) as usize, raw_ptr as usize);
 
         // Clean up
         unsafe { drop(Box::from_raw(raw_ptr)) };
@@ -1025,10 +1039,7 @@ mod tests {
         // Initialize XSDT
         let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
-        {
-            let system_tables = provider.system_tables.lock();
-            system_tables.xsdt.store(xsdt_ptr, Ordering::Relaxed);
-        }
+        provider.system_tables.xsdt.store(xsdt_ptr, Ordering::Relaxed);
 
         const XSDT_ADDR: u64 = 0x1000_0000_0000_0004;
 
@@ -1044,7 +1055,7 @@ mod tests {
 
         // Verify the memory write of XSDT entry too
         let entry_offset = ACPI_HEADER_LEN;
-        let raw_ptr = provider.system_tables.lock().xsdt.load(Ordering::Acquire) as *const u8;
+        let raw_ptr = provider.system_tables.xsdt.load(Ordering::Acquire) as *const u8;
         let written = unsafe {
             // read the 8 bytes at that offset
             let ptr64 = raw_ptr.add(entry_offset) as *const u64;
@@ -1060,8 +1071,7 @@ mod tests {
             assert_eq!(new_entries.len(), 0);
         }
         // XSDT doesn't have to zero trailing entries, but should reduce length to mark the removed entry as invalid
-        let system_tables = provider.system_tables.lock();
-        assert_eq!(system_tables.xsdt_mut().unwrap().length, ACPI_HEADER_LEN as u32);
+        assert_eq!(provider.system_tables.xsdt_mut().unwrap().length, ACPI_HEADER_LEN as u32);
     }
 
     #[test]
@@ -1097,15 +1107,12 @@ mod tests {
         }
 
         // Add the XSDT to system tables
-        {
-            let system_tables = provider.system_tables.lock();
-            system_tables.xsdt.store(xsdt_ptr, Ordering::Relaxed);
-        }
+        provider.system_tables.xsdt.store(xsdt_ptr, Ordering::Relaxed);
 
         provider.reallocate_xsdt(MAX_INITIAL_ENTRIES, xsdt_table.length as usize).expect("reallocation should succeed");
 
         // The XSDT should be moved to a new address
-        assert_ne!(old_ptr as usize, provider.system_tables.lock().xsdt.load(Ordering::Acquire) as usize);
+        assert_ne!(old_ptr as usize, provider.system_tables.xsdt.load(Ordering::Acquire) as usize);
         // Max entries should increase
         assert_eq!(provider.max_entries.load(Ordering::Acquire), MAX_INITIAL_ENTRIES * 2);
     }
@@ -1122,26 +1129,20 @@ mod tests {
         let mut fadt = Box::new(AcpiFadt { signature: signature::FACP, length: 100, ..Default::default() });
         fadt.x_firmware_ctrl = 0xdead;
         let fadt_ptr = Box::into_raw(fadt);
-        {
-            let st = provider.system_tables.lock();
-            st.fadt.store(fadt_ptr, Ordering::Release);
-        }
+        provider.system_tables.fadt.store(fadt_ptr, Ordering::Release);
 
         // Dummy DSDT pointed to by FADT
         let real_dsdt = Box::new(AcpiDsdt { signature: signature::DSDT, ..Default::default() });
         let dsdt_ptr = Box::into_raw(real_dsdt);
         // Cast and store as AcpiTable pointer
-        {
-            let st = provider.system_tables.lock();
-            st.dsdt.store(dsdt_ptr, Ordering::Release);
-        }
+        provider.system_tables.dsdt.store(dsdt_ptr, Ordering::Release);
 
         let table_ref: &mut AcpiTable = unsafe { &mut *(dsdt_ptr as *mut AcpiTable) };
         let result = provider.delete_table(table_ref);
         assert!(result.is_ok());
 
         // Should have cleared DSDT pointer
-        let dsdt_cleared = provider.system_tables.lock().dsdt.load(Ordering::Acquire);
+        let dsdt_cleared = provider.system_tables.dsdt.load(Ordering::Acquire);
         assert!(dsdt_cleared.is_null());
 
         // FADT should no longer point to DSDT
