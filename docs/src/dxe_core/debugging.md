@@ -101,7 +101,7 @@ an access violation, it will cause the debugger to be invoked.
 
 #### Initial Breakpoint
 
-If enabled at the end of initialization, the debugger will invoke a hard-coded
+If enabled, at the end of initialization the debugger will invoke a hard-coded
 breakpoint instruction, causing the CPU to take an exception invoking the debugger
 exception handlers. This is referred to as the _Initial Breakpoint_. The initial
 breakpoint is intended to give the developer time to connect to the system as early
@@ -230,9 +230,9 @@ system. Some examples for this could be:
 - Environment specific extensions.
 
 The debugger allows for external code to register for monitor callbacks to allows
-for Patina or components to add their own monitor commands. As these commands are executed
-from the exception handler, special care should be taken to avoid memory allocations
-or other global state alterations.
+for Patina or components to add their own monitor commands through the `add_monitor_command`
+routine. As these commands are executed from the exception handler, special care
+should be taken to avoid memory allocations or other global state alterations.
 
 ### Continuing execution
 
@@ -251,13 +251,19 @@ the system doesn't get stuck stepping.
 
 ## Configuring the Debugger
 
-> The Debugger Control HOB is planned support that is not yet available.
-
 Configuring the debugger is left to the platform as the decision on when and how
 to enable the debugger has environment, security, and other considerations that
 are specific to a platform and it's use case. There are two supported methods for
 enabling the debugger: hard-coded enablement through use of the enablement routines
 in the `PatineDebugger` struct, or through use of the [Debugger Control HOB](https://github.com/microsoft/mu_feature_debugger/blob/main/DebuggerFeaturePkg/Include/DebuggerControlHob.h).
+
+> The Debugger Control HOB is planned support that is not yet available.
+
+Direct configuration through the `PatinaDebugger` initialization can be useful for
+quick configuration during development or controlled configuration through a platform
+designed mechanism. Thie configuration is done through the `with_default_config`
+routine allowing the caller to set enablement, initial breakpoint, and the initial
+breakpoint timeout.
 
 ```admonish important
 Debugger enablement on release platforms can be dangerous. It is critical that
@@ -276,8 +282,9 @@ support, which patina relies on.
 
 Windbg supports the GDB interface through an EXDI extension. This implementation
 uses a small subset of the full GDB protocol, but is sufficient for most operations.
-To supplement this support, the [UefiExt extension](https://github.com/microsoft/mu_feature_debugger/tree/main/UefiDbgExt)
-has been modified to support the Patina debugger.
+To supplement this support, the [UefiExt extension](https://github.com/microsoft/mu_feature_debugger/tree/main/UefiDbgExt#readme)
+has been modified to support the Patina debugger. The extension is critical for
+the developer experience while using windbg.
 
 ## Other Debugger Application
 
