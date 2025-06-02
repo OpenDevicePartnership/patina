@@ -203,23 +203,24 @@ the debugger will inject into the instruction stream, directly replacing the ori
 instruction. For example, on x64 the debugger will replace the instruction with an
 `int 3` instruction for the address of the breakpoint. When broken in, the application
 will typically temporarily remove the breakpoint so that this behavior is transparent
-to the user. Resuming from a software breakpoint requires some steps since the application
-will need to step beyond the broken instruction before the instruction stream can
-be altered again or else the exception will just be taken again.
+to the user. Resuming from a software breakpoint must be done with care as a simple
+continue would either take the exception again or leave the instruction stream
+unaltered preventing the breakpoint from functioning in the future. So the the application
+will typically step beyond the broken instruction before setting the breakpoint again.
 
-__Hardcoded Breakpoints__ - These are permanent and compile time breakpoint instructions
+__Breakpoint Instructions__ - These are permanent and compile time breakpoint instructions
 in the underlying code. In Patina this will typically be achieved by calling `patina_debugger::breakpoint()`.
 When resuming from a breakpoint, the debugger will inspect the exception address to
 see if it contains a hardcoded breakpoint, and if so it will increment the program
 counter to skip the instruction. Otherwise the system would never be able to make
-progress from a hard coded breakpoint.
+progress from a breakpoint instruction.
 
 __Data Breakpoints__ - Also known as watchpoints, these are the only supported form
 of hardware breakpoint, where debug registers are configured to cause an exception
 on access to a specific address. The hardware is responsible for creating the exception in
 these cases. These are used to capture reads or write to specific memory.
 
-__Module Breakpoints__ - These are simply hardcoded breakpoints, but can be
+__Module Breakpoints__ - These are simply breakpoint instruction, but can be
 conceptually considered their own entity. Module breaks are configured to cause
 the debugger to break in when a specific module is loaded. This is achieved through
 a callout from the core each time a new module is loaded. This is useful for developers
