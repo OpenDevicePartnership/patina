@@ -286,7 +286,7 @@ where
         let xsdt = unsafe { &*(xsdt_ptr) };
 
         if xsdt.length < ACPI_HEADER_LEN as u32 {
-            return Err(AcpiError::XsdtNotInitialized);
+            return Err(AcpiError::XsdtInvalidLengthFromHob);
         }
 
         Ok(rsdp.xsdt_address)
@@ -1170,5 +1170,104 @@ mod tests {
         // Verify that the sum of all bytes modulo 256 is zero
         let total: u8 = table.iter().fold(0u8, |sum, &b| sum.wrapping_add(b));
         assert_eq!(total, 0, "ACPI checksum failed: table sum = {}", total);
+    }
+
+    fn mock_rsdp(rsdp_signature: u64, include_xsdt: bool, xsdt_length: usize, xsdt_signature: u32) -> u64 {
+        let xsdt_ptr = if include_xsdt {
+            // Build a buffer for the fake XSDT
+            let mut xsdt_buf = vec![0u8; xsdt_length];
+
+            // Write the length field of the XSDT
+            let len_bytes = (xsdt_length as u32).to_le_bytes();
+            xsdt_buf[4..8].copy_from_slice(&len_bytes);
+
+            // Write the signature field of the XSDT
+            let xsdt_sig = xsdt_signature.to_le_bytes();
+            xsdt_buf[0..4].copy_from_slice(&xsdt_sig);
+
+            xsdt_buf.into_boxed_slice().as_ptr() as u64
+        } else {
+            0
+        };
+
+        // Build a buffer for the fake RSDP
+        let rsdp_size = size_of::<AcpiRsdp>();
+        let mut rsdp_buf = vec![0u8; rsdp_size];
+
+        // Copy the XSDT address to the RSDP
+        let xsdt_addr_bytes = (xsdt_ptr as u64).to_le_bytes();
+        rsdp_buf[24..32].copy_from_slice(&xsdt_addr_bytes);
+
+        // Copy the desired signature to the signature field of the RSDP
+        let sig_bytes = rsdp_signature.to_le_bytes();
+        rsdp_buf[0..8].copy_from_slice(&sig_bytes);
+
+        rsdp_buf.into_boxed_slice().as_ptr() as u64
+    }
+
+    #[test]
+    fn test_get_xsdt_address() {
+        /*
+        TEST NULL RSDP
+         */
+        assert_eq!(
+            StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(0).unwrap_err(),
+            AcpiError::NullRsdpFromHob
+        );
+
+        /*
+        TEST INVALID RSDP SIGNATURE
+        */
+        // The RSDP has signature 0 (invalid)
+        assert_eq!(
+            StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(mock_rsdp(0, false, 0, 0))
+                .unwrap_err(),
+            AcpiError::InvalidSignature
+        );
+
+        // The RSDP has a valid signature, but the XSDT is null
+        assert_eq!(
+            StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(mock_rsdp(
+                signature::ACPI_RSDP_TABLE,
+                false,
+                0,
+                0,
+            ))
+            .unwrap_err(),
+            AcpiError::XsdtNotInitializedFromHob
+        );
+
+        // The RSDP is valid, but the XSDT has an invalid signature
+        assert_eq!(
+            StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(mock_rsdp(
+                signature::ACPI_RSDP_TABLE,
+                true,
+                ACPI_HEADER_LEN,
+                0,
+            ))
+            .unwrap_err(),
+            AcpiError::InvalidSignature
+        );
+
+        // The RSDP is valid, but the XSDT has an invalid length
+        assert_eq!(
+            StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(mock_rsdp(
+                signature::ACPI_RSDP_TABLE,
+                true,
+                ACPI_HEADER_LEN - 1,
+                signature::XSDT,
+            ))
+            .unwrap_err(),
+            AcpiError::XsdtInvalidLengthFromHob
+        );
+
+        // Both the RSDP and XSDT are valid
+        assert!(StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(mock_rsdp(
+            signature::ACPI_RSDP_TABLE,
+            true,
+            ACPI_HEADER_LEN,
+            signature::XSDT,
+        ))
+        .is_ok());
     }
 }
