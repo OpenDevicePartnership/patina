@@ -167,6 +167,20 @@ enum DebugError {
     RebootFailure,
 }
 
+/// Policy for how the debugger will handle logging on the system.
+pub enum DebuggerLoggingPolicy {
+    /// The debugger will suspend logging while broken in, but will not change the
+    /// logging state outside of the debugger. This may cause instability if the
+    /// debugger and logging share a transport.
+    SuspendLogging,
+    /// The debugger will disable all logging after a connection is made. This is
+    /// the safest option if the debugger and logging share a transport.
+    DisableLogging,
+    /// The debugger will not suspend logging while broken in. This should only
+    /// be used if the debugger and logging transport are separate.
+    DebuggerLogging,
+}
+
 /// Sets the global instance of the debugger.
 pub fn set_debugger<T: SerialIO>(debugger: &'static PatinaDebugger<T>) {
     DEBUGGER.call_once(|| debugger);

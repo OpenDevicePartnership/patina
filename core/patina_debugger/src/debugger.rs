@@ -26,7 +26,7 @@ use crate::{
     dbg_target::PatinaTarget,
     system::SystemState,
     transport::{LoggingSuspender, SerialConnection},
-    DebugError, Debugger, ExceptionInfo,
+    DebugError, Debugger, DebuggerLoggingPolicy, ExceptionInfo,
 };
 
 /// Length of the static buffer used for GDB communication.
@@ -58,8 +58,8 @@ where
     transport: T,
     /// The exception types the debugger will register for.
     exception_types: &'static [usize],
-    /// Whether the debugger can log to the transport while broken in.
-    debugger_log: bool,
+    /// Controls what the debugger does with logging.
+    log_policy: DebuggerLoggingPolicy,
     /// Whether initializing the transport should be skipped.
     no_transport_init: bool,
     /// Internal mutable debugger config.
@@ -103,7 +103,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
     pub const fn new(transport: T) -> Self {
         PatinaDebugger {
             transport,
-            debugger_log: false,
+            log_policy: DebuggerLoggingPolicy::SuspendLogging,
             no_transport_init: false,
             exception_types: SystemArch::DEFAULT_EXCEPTION_TYPES,
             config: spin::RwLock::new(DebuggerConfig {
@@ -116,28 +116,26 @@ impl<T: SerialIO> PatinaDebugger<T> {
         }
     }
 
-    /// Customizes the default configuration of the debugger.
+    /// Forces the debugger to be enabled, regardless of later configuration. This
+    /// is used for development purposes and is not intended for production or
+    /// standard use. If `False` is provided, this routine will not change the configuration.
     ///
-    /// To be used with a new debugger invocation, this routine allows the caller
-    /// to customize the static debugger creation with specific configuration.
+    /// This will also forcible enable the initial breakpoint with no timeout. This
+    /// is intentional to prevent this development feature from being used in production.
     ///
-    /// Enabled - Whether the debugger is enabled, and will install itself into the system.
-    ///
-    /// Initial Break - Whether the debugger should break on initialization.
-    ///
-    /// Initial Break Timeout - A duration in seconds for the debugger to wait for a connection.
-    /// 0 indicates no timeout and will wait indefinitely
-    ///
-    pub const fn with_default_config(mut self, enabled: bool, initial_break: bool, initial_break_timeout: u32) -> Self {
-        // Intentionally ignoring initial_break config until configuration is thought out.
-        self.config = spin::RwLock::new(DebuggerConfig { enabled, initial_break, initial_break_timeout });
+    pub const fn with_force_enable(mut self, enabled: bool) -> Self {
+        if enabled {
+            // Intentionally ignoring initial_break config until configuration is thought out.
+            self.config = spin::RwLock::new(DebuggerConfig { enabled, initial_break: true, initial_break_timeout: 0 });
+        }
         self
     }
 
-    /// Prevents logging from being suspended while broken into the debugger.
-    /// This should only be used if the debugger and logging transport are separate.
-    pub const fn with_debugger_logging(mut self) -> Self {
-        self.debugger_log = true;
+    /// Configures the logging policy for the debugger. See [`DebuggerLoggingPolicy`]
+    /// for more information on the available policies. By default, the debugger
+    /// will suspend logging while broken in.
+    pub const fn with_log_policy(mut self, policy: DebuggerLoggingPolicy) -> Self {
+        self.log_policy = policy;
         self
     }
 
@@ -179,11 +177,15 @@ impl<T: SerialIO> PatinaDebugger<T> {
             None => return Err(DebugError::Reentry),
         };
 
-        // Suspend logging. This will resume logging when the struct is dropped.
-        let _log_suspend;
-        if !self.debugger_log {
-            _log_suspend = LoggingSuspender::suspend();
-        }
+        // Suspend or disable logging. If suspended, logging will resume when the struct is dropped.
+        let _log_suspend = match self.log_policy {
+            DebuggerLoggingPolicy::SuspendLogging => Some(LoggingSuspender::suspend()),
+            DebuggerLoggingPolicy::DisableLogging => {
+                log::set_max_level(log::LevelFilter::Off);
+                None
+            }
+            DebuggerLoggingPolicy::DebuggerLogging => None,
+        };
 
         // Get the stored allocated buffer for the monitor. This needs to be
         // pre-allocated as allocations should not occur during the debugger.
