@@ -1,6 +1,8 @@
 //! ACPI C Protocol Definitions.
 //!
 //! Wrappers for the C ACPI protocols to call into Rust ACPI implementations.
+
+use crate::acpi_table::{AcpiInstallable, AcpiTable};
 use crate::alloc::vec;
 
 use alloc::collections::btree_map::BTreeMap;
@@ -12,7 +14,7 @@ use spin::rwlock::RwLock;
 use crate::service::{AcpiNotifyFn, AcpiProvider};
 use crate::{
     acpi::ACPI_TABLE_INFO,
-    acpi_table::{AcpiFacs, AcpiTable},
+    acpi_table::{AcpiFacs, AcpiTableWrapper},
     signature::{self, ACPI_HEADER_LEN},
 };
 
@@ -31,7 +33,7 @@ unsafe impl ProtocolInterface for AcpiTableProtocol {
 // C function interfaces for ACPI Table Protocol and ACPI SDT Protocol.
 type AcpiTableInstall = extern "efiapi" fn(*const AcpiTableProtocol, *const c_void, usize, *mut usize) -> efi::Status;
 type AcpiTableUninstall = extern "efiapi" fn(*const AcpiTableProtocol, usize) -> efi::Status;
-type AcpiTableGet = extern "efiapi" fn(usize, *mut *mut AcpiSdtHeader, *mut u32, *mut usize) -> efi::Status;
+type AcpiTableGet = extern "efiapi" fn(usize, *mut *mut AcpiTable, *mut u32, *mut usize) -> efi::Status;
 type AcpiTableRegisterNotify = extern "efiapi" fn(bool, *const AcpiNotifyFnExt) -> efi::Status;
 
 impl AcpiTableProtocol {
@@ -39,6 +41,20 @@ impl AcpiTableProtocol {
         Self { install_table: Self::install_acpi_table_ext, uninstall_table: Self::uninstall_acpi_table_ext }
     }
 
+    /// Installs an ACPI table into the XSDT.
+    ///
+    /// This function generally matches the behavior of EFI_ACPI_TABLE_PROTOCOL.InstallAcpiTable() API in the UEFI spec 2.10
+    /// section 20.2. Refer to the UEFI spec description for details on input parameters.
+    ///
+    /// This implementation only supports ACPI 2.0+.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
+    /// Returns [`UNSUPPORTED`](r_efi::efi::Status::UNSUPPORTED) if the system page size is not 64B-aligned (required for FACS in ACPI 2.0+).
+    /// Returns [`UNSUPPORTED`](r_efi::efi::Status::UNSUPPORTED) if boot services cannot install the given table format.
+    /// Returns [`OUT_OF_RESOURCES`](r_efi::efi::Status::OUT_OF_RESOURCES) if allocating memory for the table fails.
+    /// Returns [`ALREADY_STARTED`](r_efi::efi::Status::ALREADY_STARTED) if the FADT already exists and `install` is called on a FADT again.
     extern "efiapi" fn install_acpi_table_ext(
         _protocol: *const AcpiTableProtocol,
         acpi_table_buffer: *const c_void,
@@ -74,18 +90,18 @@ impl AcpiTableProtocol {
                 efi::Status::SUCCESS
             }
         } else {
-            if acpi_table_buffer_size < mem::size_of::<AcpiTable>() {
+            if acpi_table_buffer_size < mem::size_of::<AcpiTableWrapper>() {
                 return efi::Status::INVALID_PARAMETER;
             }
 
             let acpi_table = unsafe {
                 // SAFETY: pointer is valid and large enough for AcpiTable
-                &mut *(acpi_table_buffer as *mut AcpiTable)
+                &mut *(acpi_table_buffer as *mut AcpiTableWrapper)
             };
 
             // Copy non-header data into the `data` field of AcpiTable
             // SAFETY: `acpi_table_buffer` has been checked to be non-null and a valid length
-            let body_len = acpi_table.length as usize - ACPI_HEADER_LEN;
+            let body_len = acpi_table.length() as usize - ACPI_HEADER_LEN;
             let body_src = unsafe { (acpi_table_buffer as *const u8).add(ACPI_HEADER_LEN) };
             let mut body_data = vec![0u8; body_len];
             unsafe {
@@ -108,6 +124,17 @@ impl AcpiTableProtocol {
         }
     }
 
+    /// Removes an ACPI table from the XSDT.
+    ///
+    /// This function generally matches the behavior of EFI_ACPI_TABLE_PROTOCOL.UninstallAcpiTable() API in the UEFI spec 2.10
+    /// section 20.2. Refer to the UEFI spec description for details on input parameters.
+    ///
+    /// This implementation only supports ACPI 2.0+.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if thee table key does not correspond to an installed table.
+    /// Returns [`OUT_OF_RESOURCES`](r_efi::efi::Status::OUT_OF_RESOURCES) if memory operations fail.
     extern "efiapi" fn uninstall_acpi_table_ext(_protocol: *const AcpiTableProtocol, table_key: usize) -> efi::Status {
         match ACPI_TABLE_INFO.uninstall_acpi_table(table_key) {
             Ok(_) => efi::Status::SUCCESS,
@@ -141,9 +168,20 @@ impl AcpiSdtProtocol {
 }
 
 impl AcpiSdtProtocol {
+    /// Removes an ACPI table from the XSDT.
+    ///
+    /// This function generally matches the behavior of EFI_ACPI_SDT_PROTOCOL.GetAcpiTable() API in the PI spec 2.10
+    /// section 9.1. Refer to the UEFI spec description for details on input parameters.
+    ///
+    /// This implementation only supports ACPI 2.0+.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if thee table key does not correspond to an installed table.
+    /// Returns [`OUT_OF_RESOURCES`](r_efi::efi::Status::OUT_OF_RESOURCES) if memory operations fail.
     extern "efiapi" fn get_acpi_table_ext(
         index: usize,
-        table: *mut *mut AcpiSdtHeader,
+        table: *mut *mut AcpiTable,
         version: *mut u32,
         table_key: *mut usize,
     ) -> efi::Status {
@@ -157,7 +195,7 @@ impl AcpiSdtProtocol {
                 // We only support ACPI versions >= 2.0
                 unsafe { *version = ((1 << 2) | (1 << 3) | (1 << 4) | (1 << 5)) as u32 };
                 unsafe { *table_key = table_info.table_key };
-                let sdt_ptr = table_info as *const AcpiTable as *mut AcpiSdtHeader;
+                let sdt_ptr = table_info as *const AcpiTableWrapper as *mut AcpiTable;
                 unsafe { *table = sdt_ptr };
                 efi::Status::SUCCESS
             }
@@ -179,19 +217,4 @@ impl AcpiSdtProtocol {
     }
 }
 
-/// C representation of ACPI table header.
-/// It is roughly equivalent to the Rust `AcpiTable` struct.
-#[repr(C, packed)]
-struct AcpiSdtHeader {
-    signature: u32,
-    length: u32,
-    revision: u8,
-    checksum: u8,
-    oem_id: [u8; 6],
-    oem_table_id: [u8; 8],
-    oem_revision: u32,
-    creator_id: u32,
-    creator_revision: u32,
-}
-
-type AcpiNotifyFnExt = fn(*const AcpiSdtHeader, u32, usize) -> efi::Status;
+type AcpiNotifyFnExt = fn(*const AcpiTable, u32, usize) -> efi::Status;

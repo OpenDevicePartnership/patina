@@ -86,15 +86,15 @@ impl AcpiProviderManager {
         rsdp.reserved = [ACPI_RESERVED_BYTE; 3];
 
         // Initialize XSDT data
-        xsdt.signature = signature::XSDT;
-        xsdt.length = ACPI_HEADER_LEN as u32;
-        xsdt.revision = ACPI_XSDT_REVISION;
-        xsdt.oem_id = config.oem_id;
-        xsdt.oem_table_id = config.oem_table_id;
-        xsdt.creator_id = config.creator_id;
-        xsdt.creator_revision = config.creator_revision;
+        xsdt.header.signature = signature::XSDT;
+        xsdt.header.length = ACPI_HEADER_LEN as u32;
+        xsdt.header.revision = ACPI_XSDT_REVISION;
+        xsdt.header.oem_id = config.oem_id;
+        xsdt.header.oem_table_id = config.oem_table_id;
+        xsdt.header.creator_id = config.creator_id;
+        xsdt.header.creator_revision = config.creator_revision;
         // First entry of XSDT is always the FADT
-        xsdt.length += mem::size_of::<u64>() as u32;
+        xsdt.header.length += mem::size_of::<u64>() as u32;
 
         ACPI_TABLE_INFO.checksum_common_tables().expect("Unable to checksum during ACPI initialization");
 

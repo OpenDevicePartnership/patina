@@ -6,8 +6,9 @@ use core::{
 };
 
 use crate::{
-    acpi_table::AcpiHeader,
+    acpi_table::{AcpiTable, AcpiTableWrapper},
     alloc::{boxed::Box, vec::Vec},
+    signature::ACPI_CHECKSUM_OFFSET,
 };
 use crate::{alloc::vec, service::AcpiNotifyFn};
 
@@ -28,7 +29,7 @@ use patina_sdk::{
 use spin::rwlock::RwLock;
 
 use crate::{
-    acpi_table::{AcpiDsdt, AcpiFacs, AcpiFadt, AcpiInstallable, AcpiRsdp, AcpiTable, AcpiXsdt},
+    acpi_table::{AcpiDsdt, AcpiFacs, AcpiFadt, AcpiInstallable, AcpiRsdp, AcpiXsdt},
     component::AcpiMemoryHob,
     error::AcpiError,
     service::{AcpiProvider, TableKey},
@@ -43,7 +44,7 @@ pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
     pub(crate) version: AtomicU32,
     pub(crate) should_reclaim_memory: AtomicBool,
     pub(crate) system_tables: SystemTables,
-    acpi_tables: RwLock<Vec<NonNull<AcpiTable>>>,
+    acpi_tables: RwLock<Vec<NonNull<AcpiTableWrapper>>>,
     next_table_key: AtomicUsize,
     notify_list: RwLock<Vec<AcpiNotifyFn>>,
     pub(crate) boot_services: OnceCell<B>,
@@ -182,7 +183,8 @@ where
             self.install_facs(acpi_table.phys_addr(), acpi_table.length() as usize)?
         } else {
             // All other tables must follow the generic ACPI table format
-            let acpi_table_generic = acpi_table.downcast_ref::<AcpiTable>().ok_or(AcpiError::InvalidTableFormat)?;
+            let acpi_table_generic =
+                acpi_table.downcast_ref::<AcpiTableWrapper>().ok_or(AcpiError::InvalidTableFormat)?;
             self.add_table_to_list(acpi_table_generic, false)?
         };
 
@@ -202,7 +204,7 @@ where
         Ok(())
     }
 
-    fn get_acpi_table(&self, index: usize) -> Result<&AcpiTable, AcpiError> {
+    fn get_acpi_table(&self, index: usize) -> Result<&AcpiTableWrapper, AcpiError> {
         let acpi_tables = self.acpi_tables.read();
         let table = acpi_tables.get(index).ok_or(AcpiError::InvalidTableIndex)?;
         // SAFETY: the table references in `get` are derived from tables installed in `install_acpi_table`
@@ -225,11 +227,11 @@ where
         Ok(())
     }
 
-    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a AcpiTable> + 'a> {
+    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a AcpiTableWrapper> + 'a> {
         let guard = self.acpi_tables.read();
         // SAFETY: the table references in `iter` are derived from tables installed in `install_acpi_table`
         // If successfully installed, they are guaranteed to be valid table references
-        let acpi_table_refs: Vec<&AcpiTable> = guard.iter().map(|ptr| unsafe { ptr.as_ref() }).collect();
+        let acpi_table_refs: Vec<&AcpiTableWrapper> = guard.iter().map(|ptr| unsafe { ptr.as_ref() }).collect();
         drop(guard);
         Box::new(acpi_table_refs.into_iter())
     }
@@ -276,7 +278,7 @@ where
 
         // Read the header to validate the XSDT signature is valid
         // SAFETY: `xsdt_address` has been validated to be non-null
-        let xsdt_header = rsdp.xsdt_address as *const AcpiHeader;
+        let xsdt_header = rsdp.xsdt_address as *const AcpiTable;
         if (unsafe { *xsdt_header }).signature != signature::XSDT {
             return Err(AcpiError::InvalidSignature);
         }
@@ -285,14 +287,14 @@ where
         let xsdt_ptr = rsdp.xsdt_address as *mut AcpiXsdt;
         let xsdt = unsafe { &*(xsdt_ptr) };
 
-        if xsdt.length < ACPI_HEADER_LEN as u32 {
+        if xsdt.header.length < ACPI_HEADER_LEN as u32 {
             return Err(AcpiError::XsdtInvalidLengthFromHob);
         }
 
         Ok(rsdp.xsdt_address)
     }
 
-    fn install_fadt_tables_from_hob(&self, fadt: AcpiFadt) -> Result<(), AcpiError> {
+    fn install_fadt_tables_from_hob(&self, fadt: &AcpiFadt) -> Result<(), AcpiError> {
         // SAFETY: we assume the FADT set up in the HOB points to a valid FACS if the pointer is non-null
         if fadt.x_firmware_ctrl != 0 {
             // SAFETY: The FACS has been checked to be non-null
@@ -303,7 +305,7 @@ where
         }
 
         if fadt.x_dsdt != 0 {
-            let dsdt_ptr = fadt.x_dsdt as *mut AcpiTable;
+            let dsdt_ptr = fadt.x_dsdt as *mut AcpiTableWrapper;
 
             // SAFETY: The FADT in the HOB must have a valid pointer to the DSDT
             // Set the physical address for installation, since it already exists from the HOB
@@ -323,7 +325,7 @@ where
         let xsdt_ptr = xsdt_address as *const AcpiXsdt;
 
         // SAFETY: `get_xsdt_address_from_rsdp` should perform necessary validations on XSDT
-        let xsdt_length = (unsafe { *xsdt_ptr }).length;
+        let xsdt_length = (unsafe { *xsdt_ptr }).header.length;
 
         let entries = (xsdt_length as usize - ACPI_HEADER_LEN) / mem::size_of::<u64>();
         for i in 0..entries {
@@ -332,21 +334,20 @@ where
 
             // Each entry points to a table
             // SAFETY: we assume that the HOB passed in contains valid ACPI table entries
-            let table = unsafe { &*(entry_addr as *const AcpiTable) };
+            let table = unsafe { &*(entry_addr as *const AcpiTableWrapper) };
 
             self.add_table_to_list(table, true)?;
 
             // If this table points to other system tables, install them too
-            if table.signature == signature::FACP {
-                // Note that because we clone here, this AcpiFadt is a a local (Rust stack) variable
-                // And does not actually point to an AcpiFadt in ACPI memory
-                // However, this is safe because we only care about the fields of the FADT, not the struct itself
-                let fadt = AcpiFadt::try_from(table.clone())?;
+            if table.signature() == signature::FACP {
+                // SAFETY: assuming the XSDT entry is written correctly, this points to a valid ACPI table
+                // and the signature has been verified to match that of the FADT
+                let fadt = unsafe { &*(entry_addr as *const AcpiFadt) };
                 self.install_fadt_tables_from_hob(fadt)?;
             }
 
             let checksum_offset = memoffset::offset_of!(AcpiTable, checksum);
-            Self::acpi_table_update_checksum(entry_addr as *mut u8, table.length as usize, checksum_offset);
+            Self::acpi_table_update_checksum(entry_addr as *mut u8, table.length() as usize, checksum_offset);
             self.add_table_to_list(table, true)?;
         }
         self.publish_tables()?;
@@ -433,7 +434,7 @@ where
     /// Adds the FADT to the list of installed tables
     /// `physical_addr`: the address in ACPI memory to install the FADT
     /// `table`: contains data for the FADT
-    fn add_fadt_to_list(&self, physical_addr: usize, table: &AcpiTable) -> Result<(), AcpiError> {
+    fn add_fadt_to_list(&self, physical_addr: usize, table: &AcpiTableWrapper) -> Result<(), AcpiError> {
         if !(self.system_tables.fadt.load(Ordering::Acquire).is_null()) {
             // FADT already installed, abort
             // SAFETY: The caller must ensure that `physical_addr` points to a memory location previously allocated by the same memory manager
@@ -441,7 +442,7 @@ where
                 self.memory_manager
                     .get()
                     .expect("Memory manager not initialized")
-                    .free_pages(physical_addr, uefi_size_to_pages!(table.length as usize))
+                    .free_pages(physical_addr, uefi_size_to_pages!(table.length() as usize))
                     .map_err(|_e| AcpiError::FreeFailed)?
             };
             return Err(AcpiError::FadtAlreadyInstalled);
@@ -458,15 +459,15 @@ where
         }
 
         if let Some(rsdp) = self.system_tables.rsdp_mut() {
-            rsdp.oem_id = table.oem_id;
+            rsdp.oem_id = table.oem_id();
         }
 
         // XSDT derives OEM information from FADT, but the FADT does NOT get added to the XSDT entries
         let xsdt_ptr = self.system_tables.xsdt_mut();
         if let Some(xsdt) = xsdt_ptr {
-            xsdt.oem_id = table.oem_id;
-            xsdt.oem_table_id = table.oem_table_id;
-            xsdt.oem_revision = table.oem_revision;
+            xsdt.header.oem_id = table.oem_id();
+            xsdt.header.oem_table_id = table.oem_table_id();
+            xsdt.header.oem_revision = table.oem_revision();
         }
 
         Ok(())
@@ -479,7 +480,7 @@ where
         }
     }
 
-    pub(crate) fn add_table_to_list(&self, table: &AcpiTable, is_from_hob: bool) -> Result<TableKey, AcpiError> {
+    pub(crate) fn add_table_to_list(&self, table: &AcpiTableWrapper, is_from_hob: bool) -> Result<TableKey, AcpiError> {
         let table_addr = table.phys_addr();
 
         let physical_addr = self.allocate_table_addr(
@@ -491,18 +492,18 @@ where
 
         // Copy data from table into new memory location
         let dst_ptr = physical_addr as *mut u8;
-        let table_ptr = table as *const AcpiTable as *const u8;
+        let table_ptr = table as *const AcpiTableWrapper as *const u8;
         // SAFETY: caller must ensure `table` is a valid pointer to an ACPI table. `dst_ptr` is always valid assuming memory allocation succeeds
         // Copy the generic AcpiTable data into memory, then the table-specific trailing data
         unsafe {
-            ptr::copy_nonoverlapping(table_ptr, dst_ptr, ACPI_HEADER_LEN + table.length as usize);
+            ptr::copy_nonoverlapping(table_ptr, dst_ptr, ACPI_HEADER_LEN + table.length() as usize);
         }
 
         // Keys must be unique - here we use monotonically increasing
         let next_table_key = self.next_table_key.load(Ordering::Acquire);
         self.next_table_key.store(next_table_key + 1, Ordering::Release);
         // SAFETY: caller must ensure `table` is a valid pointer to an ACPI table
-        let dst_table = unsafe { &mut *(physical_addr as *mut AcpiTable) };
+        let dst_table = unsafe { &mut *(physical_addr as *mut AcpiTableWrapper) };
 
         // Fix up ACPI table struct fields
         dst_table.table_key = next_table_key;
@@ -510,7 +511,7 @@ where
 
         self.acpi_tables
             .write()
-            .push(NonNull::new(dst_ptr as *mut AcpiTable).expect("Allocated table must not be null"));
+            .push(NonNull::new(dst_ptr as *mut AcpiTableWrapper).expect("Allocated table must not be null"));
 
         let mut add_to_xsdt = true;
         // Fix up FADT pointers if this table is the FADT or DSDT
@@ -527,7 +528,7 @@ where
         }
 
         let checksum_offset = memoffset::offset_of!(AcpiTable, checksum);
-        Self::acpi_table_update_checksum(dst_ptr, table.length as usize, checksum_offset);
+        Self::acpi_table_update_checksum(dst_ptr, table.length() as usize, checksum_offset);
 
         if add_to_xsdt {
             self.add_entry_to_xsdt(physical_addr as u64)?;
@@ -551,7 +552,7 @@ where
         if let Some(xsdt) = xsdt_ptr {
             // We need to reallocate the XSDT if the buffer exceeds the maximum allocated size
             if self.entries.read().len() == self.max_entries.load(Ordering::Acquire) {
-                self.reallocate_xsdt(self.entries.read().len(), xsdt.length as usize)?;
+                self.reallocate_xsdt(self.entries.read().len(), xsdt.header.length as usize)?;
             }
 
             // Calculate the memory location for the new entry (end of XSDT)
@@ -568,7 +569,7 @@ where
 
             // Fix up XSDT struct fields
             self.entries.write().push(new_table_addr);
-            xsdt.length += mem::size_of::<u64>() as u32;
+            xsdt.header.length += mem::size_of::<u64>() as u32;
         }
 
         Ok(())
@@ -632,7 +633,7 @@ where
             return Err(AcpiError::InvalidTableKey);
         }
 
-        self.delete_table(table_for_key.unwrap())?;
+        self.delete_table(&mut table_for_key.unwrap().header)?;
 
         if let Some(table_index) = table_idx {
             self.acpi_tables.write().remove(table_index);
@@ -640,9 +641,9 @@ where
         Ok(())
     }
 
-    fn delete_table(&self, table: &mut AcpiTable) -> Result<(), AcpiError> {
+    fn delete_table(&self, header: &mut AcpiTable) -> Result<(), AcpiError> {
         let mut remove_from_xsdt = true;
-        let current_signature = table.signature;
+        let current_signature = header.signature;
         if current_signature == signature::FACS
             || current_signature == signature::DSDT
             || current_signature == signature::FACP
@@ -651,41 +652,41 @@ where
         }
 
         if remove_from_xsdt {
-            self.remove_table_from_xsdt(table);
+            self.remove_table_from_xsdt(header);
         }
 
-        match table.signature {
+        match current_signature {
             signature::FACP => {
                 self.system_tables.fadt.store(core::ptr::null_mut(), Ordering::Release);
             }
             signature::FACS => {
                 self.system_tables.facs.store(core::ptr::null_mut(), Ordering::Release);
-                // Update other tables pointing to the FACS
+                // Clear out the FACS pointer in the FADT
                 if let Some(fadt) = self.system_tables.fadt_mut() {
                     fadt.x_firmware_ctrl = 0;
                     Self::acpi_table_update_checksum(
                         fadt as *mut AcpiFadt as *mut u8,
-                        fadt.length as usize,
-                        memoffset::offset_of!(AcpiTable, checksum),
+                        fadt.header.length as usize,
+                        ACPI_CHECKSUM_OFFSET,
                     );
                 }
             }
             signature::DSDT => {
                 self.system_tables.dsdt.store(core::ptr::null_mut(), Ordering::Release);
-
                 if let Some(fadt) = self.system_tables.fadt_mut() {
+                    // Clear out the xDSDT pointer in the FADT
                     fadt.x_dsdt = 0;
                     Self::acpi_table_update_checksum(
                         fadt as *mut AcpiFadt as *mut u8,
-                        fadt.length as usize,
-                        memoffset::offset_of!(AcpiTable, checksum),
+                        fadt.header.length as usize,
+                        ACPI_CHECKSUM_OFFSET,
                     );
                 }
             }
             _ => {}
         }
 
-        self.free_table_memory(table)?;
+        self.free_table_memory(header)?;
         Ok(())
     }
 
@@ -734,7 +735,7 @@ where
                 }
 
                 // Reduce XSDT length by sizeof(entry)
-                xsdt.length = xsdt.length.saturating_sub(core::mem::size_of::<u64>() as u32);
+                xsdt.header.length = xsdt.header.length.saturating_sub(core::mem::size_of::<u64>() as u32);
 
                 // Update local (Rust) list of entries
                 self.entries.write().retain(|&e| e != table_address as u64);
@@ -742,8 +743,8 @@ where
 
             Self::acpi_table_update_checksum(
                 xsdt as *mut AcpiXsdt as *mut u8,
-                xsdt.length as usize,
-                memoffset::offset_of!(AcpiTable, checksum),
+                xsdt.header.length as usize,
+                ACPI_CHECKSUM_OFFSET,
             );
         }
     }
@@ -774,8 +775,8 @@ where
         if let Some(xsdt) = self.system_tables.xsdt_mut() {
             Self::acpi_table_update_checksum(
                 xsdt as *mut AcpiXsdt as *mut u8,
-                xsdt.length as usize,
-                memoffset::offset_of!(AcpiTable, checksum),
+                xsdt.header.length as usize,
+                ACPI_CHECKSUM_OFFSET,
             );
         }
 
@@ -824,21 +825,34 @@ mod tests {
     use std::boxed::Box;
     use std::ptr;
 
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    fn init_logger() {
+        INIT.call_once(|| {
+            env_logger::builder()
+                .is_test(true) // Ensures logs go to stdout during tests
+                .init();
+        });
+    }
+
     #[test]
     fn test_get_table() {
         let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
 
         // Dummy AcpiTable (on heap, not actually in ACPI memory)
-        let table = Box::new(AcpiTable { signature: 0x1111, length: 123, ..Default::default() });
+        let header = AcpiTable { signature: 0x1111, length: 123, ..Default::default() };
+        let table = Box::new(AcpiTableWrapper { header, ..Default::default() });
         let table_ptr = NonNull::new(Box::into_raw(table)).unwrap();
 
         provider.acpi_tables.write().push(table_ptr);
 
         // Call get_acpi_table(0) (should succeed)
-        let fetched: &AcpiTable = provider.get_acpi_table(0).expect("table 0 should exist");
-        assert_eq!(fetched.signature, 0x1111);
-        assert_eq!(fetched.length, 123);
+        let fetched: &AcpiTableWrapper = provider.get_acpi_table(0).expect("table 0 should exist");
+        assert_eq!(fetched.signature(), 0x1111);
+        assert_eq!(fetched.length(), 123);
 
         // Call with an invalid index (should return InvalidTableIndex)
         let err = provider.get_acpi_table(1).unwrap_err();
@@ -847,7 +861,7 @@ mod tests {
 
     #[test]
     fn test_register_notify() {
-        fn dummy_notify(_table: &AcpiTable, _value: u32, _key: TableKey) -> Result<(), AcpiError> {
+        fn dummy_notify(_table: &AcpiTableWrapper, _value: u32, _key: TableKey) -> Result<(), AcpiError> {
             Ok(())
         }
 
@@ -880,8 +894,10 @@ mod tests {
         let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
 
-        let table1 = Box::new(AcpiTable { signature: 0x1, length: 10, ..Default::default() });
-        let table2 = Box::new(AcpiTable { signature: 0x2, length: 20, ..Default::default() });
+        let header1 = AcpiTable { signature: 0x1, length: 10, ..Default::default() };
+        let table1 = Box::new(AcpiTableWrapper { header: header1, ..Default::default() });
+        let header2 = AcpiTable { signature: 0x2, length: 20, ..Default::default() };
+        let table2 = Box::new(AcpiTableWrapper { header: header2, ..Default::default() });
 
         let ptr1 = NonNull::new(Box::into_raw(table1)).unwrap();
         let ptr2 = NonNull::new(Box::into_raw(table2)).unwrap();
@@ -893,12 +909,12 @@ mod tests {
         }
 
         // Both tables should be in the list and in order
-        let result: Vec<&AcpiTable> = provider.iter().collect();
+        let result: Vec<&AcpiTableWrapper> = provider.iter().collect();
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0].signature, 0x1);
-        assert_eq!(result[0].length, 10);
-        assert_eq!(result[1].signature, 0x2);
-        assert_eq!(result[1].length, 20);
+        assert_eq!(result[0].signature(), 0x1);
+        assert_eq!(result[0].length(), 10);
+        assert_eq!(result[1].signature(), 0x2);
+        assert_eq!(result[1].length(), 20);
     }
 
     #[test]
@@ -938,8 +954,8 @@ mod tests {
         // Dummy FACS and FADT
         let facs = Box::new(AcpiFacs { signature: signature::FACS, length: 64, ..Default::default() });
         let facs_ptr = Box::into_raw(facs) as usize;
-        let fadt =
-            Box::new(AcpiFadt { signature: signature::FACP, length: 244, x_firmware_ctrl: 0, ..Default::default() });
+        let fadt_header = AcpiTable { signature: signature::FACP, length: 244, ..Default::default() };
+        let fadt = Box::new(AcpiFadt { header: fadt_header, x_firmware_ctrl: 0, ..Default::default() });
         let fadt_ptr = Box::into_raw(fadt);
         provider.system_tables.fadt.store(fadt_ptr, Ordering::Release);
 
@@ -990,7 +1006,7 @@ mod tests {
         let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
 
-        let fadt_table = AcpiTable {
+        let fadt_header = AcpiTable {
             signature: signature::FACP,
             length: 128,
             revision: 1,
@@ -1002,6 +1018,7 @@ mod tests {
             creator_revision: 0,
             ..Default::default()
         };
+        let fadt_table = AcpiTableWrapper { header: fadt_header, ..Default::default() };
         let boxed_table = Box::new(fadt_table.clone());
         // Treat heap-allocated FADT as if it were in ACPI memory
         let raw_ptr = Box::into_raw(boxed_table);
@@ -1019,15 +1036,17 @@ mod tests {
     #[test]
     fn test_add_and_remove_xsdt() {
         let xsdt_table = AcpiXsdt {
-            signature: signature::XSDT,
-            length: ACPI_HEADER_LEN as u32, // XSDT currently has no entries
-            revision: 1,
-            checksum: 0,
-            oem_id: *b"123456",
-            oem_table_id: *b"12345678",
-            oem_revision: 1,
-            creator_id: 0,
-            creator_revision: 0,
+            header: AcpiTable {
+                signature: signature::XSDT,
+                length: ACPI_HEADER_LEN as u32, // XSDT currently has no entries
+                revision: 1,
+                checksum: 0,
+                oem_id: *b"123456",
+                oem_table_id: *b"12345678",
+                oem_revision: 1,
+                creator_id: 0,
+                creator_revision: 0,
+            },
         };
 
         // Calculate the total memory needed (XSDT header + 1 entry written during the test)
@@ -1077,7 +1096,7 @@ mod tests {
             assert_eq!(new_entries.len(), 0);
         }
         // XSDT doesn't have to zero trailing entries, but should reduce length to mark the removed entry as invalid
-        assert_eq!(provider.system_tables.xsdt_mut().unwrap().length, ACPI_HEADER_LEN as u32);
+        assert_eq!(provider.system_tables.xsdt_mut().unwrap().header.length, ACPI_HEADER_LEN as u32);
     }
 
     #[test]
@@ -1087,16 +1106,18 @@ mod tests {
 
         // Create a dummy XSDT and add it to system tables
         let xsdt_table = AcpiXsdt {
-            signature: signature::XSDT,
-            // The XSDT is currently "full"
-            length: (ACPI_HEADER_LEN + mem::size_of::<u64>() * MAX_INITIAL_ENTRIES) as u32,
-            revision: 1,
-            checksum: 0,
-            oem_id: *b"123456",
-            oem_table_id: *b"12345678",
-            oem_revision: 1,
-            creator_id: 0,
-            creator_revision: 0,
+            header: AcpiTable {
+                signature: signature::XSDT,
+                // The XSDT is currently "full"
+                length: (ACPI_HEADER_LEN + mem::size_of::<u64>() * MAX_INITIAL_ENTRIES) as u32,
+                revision: 1,
+                checksum: 0,
+                oem_id: *b"123456",
+                oem_table_id: *b"12345678",
+                oem_revision: 1,
+                creator_id: 0,
+                creator_revision: 0,
+            },
         };
 
         // Write the XSDT into "ACPI" memory (really the Rust heap since we're using StdMemoryManager)
@@ -1104,7 +1125,7 @@ mod tests {
             .memory_manager
             .get()
             .unwrap()
-            .allocate_zero_pages(uefi_size_to_pages!(xsdt_table.length as usize), AllocationOptions::new())
+            .allocate_zero_pages(uefi_size_to_pages!(xsdt_table.header.length as usize), AllocationOptions::new())
             .unwrap();
         let old_ptr = page_alloc.into_raw_ptr::<u8>();
         let xsdt_ptr = old_ptr as *mut AcpiXsdt;
@@ -1115,7 +1136,9 @@ mod tests {
         // Add the XSDT to system tables
         provider.system_tables.xsdt.store(xsdt_ptr, Ordering::Relaxed);
 
-        provider.reallocate_xsdt(MAX_INITIAL_ENTRIES, xsdt_table.length as usize).expect("reallocation should succeed");
+        provider
+            .reallocate_xsdt(MAX_INITIAL_ENTRIES, xsdt_table.header.length as usize)
+            .expect("reallocation should succeed");
 
         // The XSDT should be moved to a new address
         assert_ne!(old_ptr as usize, provider.system_tables.xsdt.load(Ordering::Acquire) as usize);
@@ -1125,6 +1148,7 @@ mod tests {
 
     #[test]
     fn test_delete_table_dsdt() {
+        init_logger();
         let mut mock_memory_manager = MockMemoryManager::new();
         mock_memory_manager.expect_free_pages().return_once(|_addr, _pages| Ok(()));
 
@@ -1132,23 +1156,27 @@ mod tests {
         provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(mock_memory_manager)));
 
         // Dummy FADT in system_tables
-        let mut fadt = Box::new(AcpiFadt { signature: signature::FACP, length: 100, ..Default::default() });
+        let fadt_header = AcpiTable { signature: signature::FACP, length: 100, ..Default::default() };
+        let mut fadt = Box::new(AcpiFadt { header: fadt_header, ..Default::default() });
         fadt.x_firmware_ctrl = 0xdead;
         let fadt_ptr = Box::into_raw(fadt);
         provider.system_tables.fadt.store(fadt_ptr, Ordering::Release);
 
         // Dummy DSDT pointed to by FADT
-        let real_dsdt = Box::new(AcpiDsdt { signature: signature::DSDT, ..Default::default() });
-        let dsdt_ptr = Box::into_raw(real_dsdt);
+        let dsdt_header = AcpiTable { signature: signature::DSDT, ..Default::default() };
+        let dsdt = Box::new(AcpiDsdt { header: dsdt_header });
+        let dsdt_ptr = Box::into_raw(dsdt);
         // Cast and store as AcpiTable pointer
         provider.system_tables.dsdt.store(dsdt_ptr, Ordering::Release);
 
         let table_ref: &mut AcpiTable = unsafe { &mut *(dsdt_ptr as *mut AcpiTable) };
+        log::info!("table {:?}", *table_ref);
         let result = provider.delete_table(table_ref);
         assert!(result.is_ok());
 
         // Should have cleared DSDT pointer
         let dsdt_cleared = provider.system_tables.dsdt.load(Ordering::Acquire);
+        log::info!("memememee");
         assert!(dsdt_cleared.is_null());
 
         // FADT should no longer point to DSDT
@@ -1191,7 +1219,9 @@ mod tests {
             let xsdt_sig = xsdt_signature.to_le_bytes();
             xsdt_buf[0..4].copy_from_slice(&xsdt_sig);
 
-            xsdt_buf.into_boxed_slice().as_ptr() as u64
+            // Leak the XSDT memory so that it persists during testing
+            let static_xsdt: &'static [u8] = Box::leak(xsdt_buf.into_boxed_slice());
+            static_xsdt.as_ptr() as u64
         } else {
             0
         };
@@ -1208,22 +1238,19 @@ mod tests {
         let sig_bytes = rsdp_signature.to_le_bytes();
         rsdp_buf[0..8].copy_from_slice(&sig_bytes);
 
-        rsdp_buf.into_boxed_slice().as_ptr() as u64
+        // Leak the RSDP memory so that it persists during testing
+        let static_rsdp: &'static [u8] = Box::leak(rsdp_buf.into_boxed_slice());
+        static_rsdp.as_ptr() as u64
     }
 
     #[test]
     fn test_get_xsdt_address() {
-        /*
-        TEST NULL RSDP
-         */
+        // RSDP is null
         assert_eq!(
             StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(0).unwrap_err(),
             AcpiError::NullRsdpFromHob
         );
 
-        /*
-        TEST INVALID RSDP SIGNATURE
-        */
         // The RSDP has signature 0 (invalid)
         assert_eq!(
             StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(mock_rsdp(0, false, 0, 0))

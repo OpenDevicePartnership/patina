@@ -1,5 +1,7 @@
 use r_efi::efi;
 
+use crate::acpi_table::AcpiTable;
+
 // Helpers for handling ACPI signatures
 
 pub const FACS: u32 = 0x53434146;
@@ -13,6 +15,7 @@ pub const ACPI_TABLE_GUID: efi::Guid =
 
 pub const ACPI_HEADER_LEN: usize = 36;
 pub const MAX_INITIAL_ENTRIES: usize = 32;
+pub const ACPI_CHECKSUM_OFFSET: usize = memoffset::offset_of!(AcpiTable, checksum);
 
 pub const ACPI_RSDP_TABLE: u64 = 0x2052545020445352;
 pub const ACPI_RSDP_REVISION: u8 = 2;

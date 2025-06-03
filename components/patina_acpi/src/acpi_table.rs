@@ -4,10 +4,8 @@
 //! Supports only ACPI version >= 2.0.
 //! Fields corresponding to ACPI 1.0 are preceded with an underscore (`_`) and are not in use.
 
-use crate::alloc::vec::Vec;
-
+use crate::service::TableKey;
 use crate::signature;
-use crate::{error::AcpiError, service::TableKey};
 
 use core::any::Any;
 use core::ptr::addr_of;
@@ -17,15 +15,7 @@ use downcast_rs::{impl_downcast, DowncastSync};
 #[derive(Default, Clone, Copy)]
 pub struct AcpiFadt {
     // Standard ACPI header.
-    pub(crate) signature: u32,
-    pub(crate) length: u32,
-    pub(crate) revision: u8,
-    pub(crate) checksum: u8,
-    pub(crate) oem_id: [u8; 6],
-    pub(crate) oem_table_id: [u8; 8],
-    pub(crate) oem_revision: u32,
-    pub(crate) creator_id: u32,
-    pub(crate) creator_revision: u32,
+    pub(crate) header: AcpiTable,
 
     pub(crate) _firmware_ctrl: u32,
     pub(crate) _dsdt: u32,
@@ -116,55 +106,6 @@ impl AcpiFadt {
     }
 }
 
-impl TryFrom<AcpiTable> for AcpiFadt {
-    type Error = AcpiError;
-
-    fn try_from(table: AcpiTable) -> Result<Self, Self::Error> {
-        // Verify signature is FACP
-        if table.signature != u32::from_le_bytes(*b"FACP") {
-            return Err(AcpiError::InvalidSignature);
-        }
-
-        // Ensure we have enough data to read the relevant FADT fields
-        const XDS_OFFSET: usize = memoffset::offset_of!(AcpiFadt, x_dsdt);
-        if table.data.len() < XDS_OFFSET + 8 {
-            return Err(AcpiError::InvalidTableLength);
-        }
-
-        // Determine total length from header
-        let total_len = table.length as usize;
-
-        // Build a raw byte buffer: header fields followed by table.data
-        let mut raw = Vec::with_capacity(total_len);
-        raw.extend_from_slice(&table.signature.to_le_bytes());
-        raw.extend_from_slice(&table.length.to_le_bytes());
-        raw.push(table.revision);
-        raw.push(table.checksum);
-        raw.extend_from_slice(&table.oem_id);
-        raw.extend_from_slice(&table.oem_table_id);
-        raw.extend_from_slice(&table.oem_revision.to_le_bytes());
-        raw.extend_from_slice(&table.creator_id.to_le_bytes());
-        raw.extend_from_slice(&table.creator_revision.to_le_bytes());
-        // Append the rest of the table body
-        raw.extend_from_slice(&table.data);
-        // Ensure raw matches expected length
-        if raw.len() != total_len {
-            return Err(AcpiError::InvalidTableLength);
-        }
-
-        // Copy into FADT struct
-        let mut fadt = AcpiFadt::default();
-        let dest_ptr = &mut fadt as *mut AcpiFadt as *mut u8;
-        // SAFETY: dest_ptr has the right size and is valid (allocated above)
-        // `raw` gets its data directly from the passed in AcpiTable, so as long as the caller passes in a valid AcpiTable, this is safe
-        // and `raw` points to a valid Vec on the Rust heap, which we have just allocated
-        unsafe {
-            core::ptr::copy_nonoverlapping(raw.as_ptr(), dest_ptr, total_len);
-        }
-        Ok(fadt)
-    }
-}
-
 // The FACS does not have a standard ACPI header.
 #[repr(C, packed)]
 #[derive(Default)]
@@ -185,15 +126,7 @@ pub struct AcpiFacs {
 #[repr(C, packed)]
 #[derive(Default)]
 pub struct AcpiDsdt {
-    pub(crate) signature: u32,
-    pub(crate) length: u32,
-    pub(crate) revision: u8,
-    pub(crate) checksum: u8,
-    pub(crate) oem_id: [u8; 6],
-    pub(crate) oem_table_id: [u8; 8],
-    pub(crate) oem_revision: u32,
-    pub(crate) creator_id: u32,
-    pub(crate) creator_revision: u32,
+    pub(crate) header: AcpiTable,
 }
 
 // The RSDP is not a standard ACPI table and does not have a standard header.
@@ -216,19 +149,11 @@ pub struct AcpiRsdp {
 }
 
 // The XSDT has a standard header followed by 64-bit addresses of installed tables.
-// The `length` field tells us the number of trailing bytes representing table entries.
+// The `length` field of the header tells us the number of trailing bytes representing table entries.
 #[repr(C)]
 #[derive(Default, Copy, Clone)]
 pub struct AcpiXsdt {
-    pub(crate) signature: u32,
-    pub(crate) length: u32,
-    pub(crate) revision: u8,
-    pub(crate) checksum: u8,
-    pub(crate) oem_id: [u8; 6],
-    pub(crate) oem_table_id: [u8; 8],
-    pub(crate) oem_revision: u32,
-    pub(crate) creator_id: u32,
-    pub(crate) creator_revision: u32,
+    pub(crate) header: AcpiTable,
 }
 
 /// Represents an installable ACPI table.
@@ -247,19 +172,6 @@ impl_downcast!(sync AcpiInstallable);
 /// Represents a standard ACPI header
 #[repr(C)]
 #[derive(Default, Clone, Debug, Copy)]
-pub struct AcpiHeader {
-    pub signature: u32,
-    pub length: u32,
-    pub revision: u8,
-    pub checksum: u8,
-    pub oem_id: [u8; 6],
-    pub oem_table_id: [u8; 8],
-    pub oem_revision: u32,
-    pub creator_id: u32,
-    pub creator_revision: u32,
-}
-#[repr(C)]
-#[derive(Default, Clone, Debug)]
 pub struct AcpiTable {
     pub signature: u32,
     pub length: u32,
@@ -270,24 +182,71 @@ pub struct AcpiTable {
     pub oem_revision: u32,
     pub creator_id: u32,
     pub creator_revision: u32,
-    // Trailing variable-length data that differs between ACPI table types
-    pub data: Vec<u8>,
-    // Additional fields not present in the original C struct. Included for Rust convenience
-    pub table_key: TableKey, // Unique key assigned to ACPI table upon installation
-    pub(crate) physical_address: Option<usize>, // Physical address of the table in memory. None if the table is not yet installed in ACPI firmware memory
 }
 
-impl AcpiInstallable for AcpiTable {
+// Wrapper around C AcpiTable with additional fields for Rust implementation convenience
+#[derive(Default, Clone, Debug)]
+pub struct AcpiTableWrapper {
+    /// Standard ACPI header.
+    /// All tables have the standard header except the RSDP and FACS
+    pub header: AcpiTable,
+
+    // The following fields are not present in the ACPI specification,
+    // but are included for implementation convenience.
+    /// Unique key assigned to ACPI table upon installation
+    pub(crate) table_key: TableKey,
+    /// // Physical address of the table in memory. None if the table is not yet installed in ACPI firmware memory
+    pub(crate) physical_address: Option<usize>,
+}
+
+impl AcpiTableWrapper {
+    /// Revision number of the table.
+    pub fn revision(&self) -> u8 {
+        self.header.revision
+    }
+
+    /// Header checksum (all bytes in the table must sum to zero).
+    pub fn checksum(&self) -> u8 {
+        self.header.checksum
+    }
+
+    /// OEM ID (6 ASCII characters, not null-terminated).
+    pub fn oem_id(&self) -> [u8; 6] {
+        self.header.oem_id
+    }
+
+    /// OEM Table ID (8 ASCII characters, not null-terminated).
+    pub fn oem_table_id(&self) -> [u8; 8] {
+        self.header.oem_table_id
+    }
+
+    /// OEM revision number.
+    pub fn oem_revision(&self) -> u32 {
+        self.header.oem_revision
+    }
+
+    /// Creator ID (often the compiler/vendor signature).
+    pub fn creator_id(&self) -> u32 {
+        self.header.creator_id
+    }
+
+    /// Creator revision number.
+    pub fn creator_revision(&self) -> u32 {
+        self.header.creator_revision
+    }
+}
+
+impl AcpiInstallable for AcpiTableWrapper {
     fn phys_addr(&self) -> Option<usize> {
         self.physical_address
     }
 
     fn length(&self) -> u32 {
-        self.length
+        self.header.length
     }
 
     fn signature(&self) -> u32 {
-        self.signature
+        self.header.signature
     }
 }
 
@@ -303,88 +262,5 @@ impl AcpiInstallable for AcpiFacs {
 
     fn signature(&self) -> u32 {
         signature::FACS
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::signature::ACPI_HEADER_LEN;
-
-    use super::*;
-    use alloc::vec;
-    use core::mem;
-
-    #[test]
-    fn try_from_succeeds_with_valid_fadt() {
-        // Header bytes
-        let sig = u32::from_le_bytes(*b"FACP");
-        let rev = 2;
-        let checksum = 0xAB;
-        let oem_id = *b"123456";
-        let oem_table_id = *b"12345678";
-        let oem_rev = 0xCAFEBABE;
-        let creator_id = 0x1234_5678;
-        let creator_rev = 0xDEAD_BEEF;
-
-        // Size of rest of FADT (excluding header)
-        let body_len = mem::size_of::<AcpiFadt>() - ACPI_HEADER_LEN;
-
-        // This corresponds to the table.data field of AcpiTable
-        // The contents are not important
-        let payload = vec![0xFE; body_len];
-
-        let table = AcpiTable {
-            signature: sig,
-            length: mem::size_of::<AcpiFadt>() as u32,
-            revision: rev,
-            checksum,
-            oem_id,
-            oem_table_id,
-            oem_revision: oem_rev,
-            creator_id,
-            creator_revision: creator_rev,
-            data: payload.clone(),
-            table_key: TableKey::default(),
-            physical_address: Some(0),
-        };
-
-        let fadt = AcpiFadt::try_from(table).expect("Valid FADT table should parse");
-
-        // Check some header fields
-        assert_eq!(fadt.revision, rev);
-        assert_eq!(fadt.checksum, checksum);
-        assert_eq!(fadt.oem_id, oem_id);
-        assert_eq!(fadt.oem_table_id, oem_table_id);
-
-        // Verify the rest of the FADT fields are 0xFE (dummy byte)
-        const XDS_OFFSET: usize = memoffset::offset_of!(AcpiFadt, x_dsdt);
-        let raw_bytes =
-            unsafe { core::slice::from_raw_parts((&fadt as *const AcpiFadt as *const u8).add(XDS_OFFSET), 8) };
-        // Should equal the first 8 bytes of our payload (0xFE)
-        assert_eq!(raw_bytes, &[0xFE; 8]);
-    }
-
-    #[test]
-    fn try_from_fails_with_bad_signature() {
-        // Build a table with a wrong signature
-        let bad_signature_table = AcpiTable {
-            signature: 0xDEAD_BEEF,
-            length: mem::size_of::<AcpiFadt>() as u32,
-            revision: 0,
-            checksum: 0,
-            oem_id: [0; 6],
-            oem_table_id: [0; 8],
-            oem_revision: 0,
-            creator_id: 0,
-            creator_revision: 0,
-            data: vec![0; mem::size_of::<AcpiFadt>() - ACPI_HEADER_LEN],
-            table_key: TableKey::default(),
-            physical_address: Some(0),
-        };
-
-        match AcpiFadt::try_from(bad_signature_table) {
-            Err(AcpiError::InvalidSignature) => (),
-            _ => panic!("Expected InvalidSignature error"),
-        }
     }
 }

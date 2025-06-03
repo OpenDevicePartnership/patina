@@ -1,4 +1,4 @@
-//! ACPI Service Defintions.
+//! ACPI Service Definitions.
 //!
 //! Defines the ACPI Provider for use as a service.
 //!
@@ -8,13 +8,13 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use crate::acpi_table::{AcpiInstallable, AcpiTable};
+use crate::acpi_table::{AcpiInstallable, AcpiTableWrapper};
 use crate::alloc::boxed::Box;
 use crate::error::AcpiError;
 
 pub type TableKey = usize;
 
-pub type AcpiNotifyFn = fn(&AcpiTable, u32, TableKey) -> Result<(), AcpiError>;
+pub type AcpiNotifyFn = fn(&AcpiTableWrapper, u32, TableKey) -> Result<(), AcpiError>;
 
 /// The `AcpiProvider` trait provides an interface for installing, uninstalling, and accessing ACPI tables.
 /// This trait serves as the API by which both internal code and external components can access ACPI services.
@@ -55,7 +55,7 @@ pub trait AcpiProvider {
     /// The returned `&AcpiTable` is reference to the table in ACPI memory.
     ///
     /// The RSDP and XSDT cannot be accessed through `get_acpi_table`.
-    fn get_acpi_table(&self, index: usize) -> Result<&AcpiTable, AcpiError>;
+    fn get_acpi_table(&self, index: usize) -> Result<&AcpiTableWrapper, AcpiError>;
 
     /// Registers or unregisters a function which will be called whenever a new ACPI table is installed.
     ///
@@ -68,5 +68,5 @@ pub trait AcpiProvider {
     /// This can be used in place of `get_acpi_table`, or in conjunction with it to retrieve a specific table reference.
     ///
     /// The RSDP and XSDT are not included in the list of iterable ACPI tables.
-    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a AcpiTable> + 'a>;
+    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a AcpiTableWrapper> + 'a>;
 }
