@@ -292,6 +292,32 @@ where
         Ok(rsdp.xsdt_address)
     }
 
+    fn install_fadt_tables_from_hob(&self, fadt: AcpiFadt) -> Result<(), AcpiError> {
+        // SAFETY: we assume the FADT set up in the HOB points to a valid FACS if the pointer is non-null
+        if fadt.x_firmware_ctrl != 0 {
+            // SAFETY: The FACS has been checked to be non-null
+            // The caller must ensure that the FACS in the HOB is valid
+            let facs_ptr = fadt.x_firmware_ctrl as *mut AcpiFacs;
+            let facs_len = unsafe { (*facs_ptr).length as usize };
+            self.install_facs(Some(facs_ptr as usize), facs_len)?;
+        }
+
+        if fadt.x_dsdt != 0 {
+            let dsdt_ptr = fadt.x_dsdt as *mut AcpiTable;
+
+            // SAFETY: The FADT in the HOB must have a valid pointer to the DSDT
+            // Set the physical address for installation, since it already exists from the HOB
+            unsafe {
+                (*dsdt_ptr).physical_address = Some(dsdt_ptr as usize);
+            }
+
+            // SAFETY: The FADT in the HOB must have a valid pointer to the DSDT
+            self.add_table_to_list(unsafe { &*(dsdt_ptr) }, true)?;
+        }
+
+        Ok(())
+    }
+
     pub fn install_tables_from_hob(&self, acpi_hob: Hob<AcpiMemoryHob>) -> Result<(), AcpiError> {
         let xsdt_address = Self::get_xsdt_address_from_rsdp(acpi_hob.rsdp_address)?;
         let xsdt_ptr = xsdt_address as *const AcpiXsdt;
@@ -316,27 +342,7 @@ where
                 // And does not actually point to an AcpiFadt in ACPI memory
                 // However, this is safe because we only care about the fields of the FADT, not the struct itself
                 let fadt = AcpiFadt::try_from(table.clone())?;
-                // SAFETY: we assume the FADT set up in the HOB points to a valid FACS if the pointer is non-null
-                if fadt.x_firmware_ctrl != 0 {
-                    // SAFETY: The FACS has been checked to be non-null
-                    // The caller must ensure that the FACS in the HOB is valid
-                    let facs_ptr = fadt.x_firmware_ctrl as *mut AcpiFacs;
-                    let facs_len = unsafe { (*facs_ptr).length as usize };
-                    self.install_facs(Some(facs_ptr as usize), facs_len)?;
-                }
-                if fadt.x_dsdt != 0 {
-                    let dsdt_ptr = fadt.x_dsdt as *mut AcpiTable;
-
-                    // SAFETY: The FADT in the HOB must have a valid pointer to the DSDT
-                    // Set the physical address for installation, since it already exists from the HOB
-                    unsafe {
-                        (*dsdt_ptr).physical_address = Some(dsdt_ptr as usize);
-                    }
-
-                    // SAFETY: The FADT in the HOB must have a valid pointer to the DSDT
-                    self.add_table_to_list(unsafe { &*(dsdt_ptr) }, true)?;
-                }
-                self.add_table_to_list(table, true)?;
+                self.install_fadt_tables_from_hob(fadt)?;
             }
 
             let checksum_offset = memoffset::offset_of!(AcpiTable, checksum);
