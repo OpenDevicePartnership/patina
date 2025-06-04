@@ -2,11 +2,10 @@
 //!
 //! Wrappers for the C ACPI protocols to call into Rust ACPI implementations.
 
-use crate::acpi_table::{AcpiInstallable, AcpiTable};
-use crate::alloc::vec;
+use crate::acpi_table::AcpiTableHeader;
 
 use alloc::collections::btree_map::BTreeMap;
-use core::{ffi::c_void, ptr};
+use core::ffi::c_void;
 use patina_sdk::uefi_protocol::ProtocolInterface;
 use r_efi::efi;
 use spin::rwlock::RwLock;
@@ -14,8 +13,8 @@ use spin::rwlock::RwLock;
 use crate::service::{AcpiNotifyFn, AcpiProvider};
 use crate::{
     acpi::ACPI_TABLE_INFO,
-    acpi_table::{AcpiFacs, AcpiTableWrapper},
-    signature::{self, ACPI_HEADER_LEN},
+    acpi_table::{AcpiFacs, MemoryAcpiTable},
+    signature::{self},
 };
 
 /// Corresponds to the ACPI Table Protocol as defined in UEFI spec.
@@ -33,7 +32,7 @@ unsafe impl ProtocolInterface for AcpiTableProtocol {
 // C function interfaces for ACPI Table Protocol and ACPI SDT Protocol.
 type AcpiTableInstall = extern "efiapi" fn(*const AcpiTableProtocol, *const c_void, usize, *mut usize) -> efi::Status;
 type AcpiTableUninstall = extern "efiapi" fn(*const AcpiTableProtocol, usize) -> efi::Status;
-type AcpiTableGet = extern "efiapi" fn(usize, *mut *mut AcpiTable, *mut u32, *mut usize) -> efi::Status;
+type AcpiTableGet = extern "efiapi" fn(usize, *mut *mut AcpiTableHeader, *mut u32, *mut usize) -> efi::Status;
 type AcpiTableRegisterNotify = extern "efiapi" fn(bool, *const AcpiNotifyFnExt) -> efi::Status;
 
 impl AcpiTableProtocol {
@@ -83,34 +82,29 @@ impl AcpiTableProtocol {
                 &mut *(acpi_table_buffer as *mut AcpiFacs)
             };
 
-            if let Err(e) = ACPI_TABLE_INFO.install_acpi_table(facs) {
+            if let Err(e) = ACPI_TABLE_INFO.install_facs(facs) {
                 e.into()
             } else {
                 // The FACS doesn't have an associated key
                 efi::Status::SUCCESS
             }
         } else {
-            if acpi_table_buffer_size < mem::size_of::<AcpiTableWrapper>() {
+            if acpi_table_buffer_size < mem::size_of::<AcpiTableHeader>() {
                 return efi::Status::INVALID_PARAMETER;
             }
 
             let acpi_table = unsafe {
                 // SAFETY: pointer is valid and large enough for AcpiTable
-                &mut *(acpi_table_buffer as *mut AcpiTableWrapper)
+                &mut *(acpi_table_buffer as *mut AcpiTableHeader)
             };
 
-            // Copy non-header data into the `data` field of AcpiTable
-            // SAFETY: `acpi_table_buffer` has been checked to be non-null and a valid length
-            let body_len = acpi_table.length() as usize - ACPI_HEADER_LEN;
-            let body_src = unsafe { (acpi_table_buffer as *const u8).add(ACPI_HEADER_LEN) };
-            let mut body_data = vec![0u8; body_len];
-            unsafe {
-                ptr::copy_nonoverlapping(body_src, body_data.as_mut_ptr(), body_len);
-            }
+            // Wrap the raw `acpi_table_buffer` with our Rust `MemoryAcpiTable` struct to preserve the trailing bytes for installation
+            let trailing_data =
+                MemoryAcpiTable::read_data_from_memory(acpi_table_buffer_size, acpi_table_buffer as usize);
+            let acpi_wrapper =
+                MemoryAcpiTable { header: acpi_table.clone(), bytes: trailing_data, ..Default::default() };
 
-            acpi_table.physical_address = Some(acpi_table_buffer as usize);
-
-            match ACPI_TABLE_INFO.install_acpi_table(acpi_table) {
+            match ACPI_TABLE_INFO.install_acpi_table(&acpi_wrapper) {
                 Ok(key) => {
                     if let Some(key_ptr) = NonNull::new(table_key) {
                         // SAFETY: `key_ptr` is checked to be non-null
@@ -180,9 +174,10 @@ impl AcpiSdtProtocol {
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) the index is out of bounds of the list of installed tables.
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) any input or output parameters are null.
     /// Returns [`OUT_OF_RESOURCES`](r_efi::efi::Status::OUT_OF_RESOURCES) if memory operations fail.
+    /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if the retrieve table is not present in ACPI memory.
     extern "efiapi" fn get_acpi_table_ext(
         index: usize,
-        table: *mut *mut AcpiTable,
+        table: *mut *mut AcpiTableHeader,
         version: *mut u32,
         table_key: *mut usize,
     ) -> efi::Status {
@@ -196,7 +191,12 @@ impl AcpiSdtProtocol {
                 // We only support ACPI versions >= 2.0
                 unsafe { *version = ((1 << 2) | (1 << 3) | (1 << 4) | (1 << 5)) as u32 };
                 unsafe { *table_key = table_info.table_key };
-                let sdt_ptr = table_info as *const AcpiTableWrapper as *mut AcpiTable;
+
+                if table_info.physical_address.is_none() {
+                    return efi::Status::NOT_FOUND;
+                }
+
+                let sdt_ptr = table_info.physical_address.unwrap() as *mut AcpiTableHeader;
                 unsafe { *table = sdt_ptr };
                 efi::Status::SUCCESS
             }
@@ -229,4 +229,4 @@ impl AcpiSdtProtocol {
     }
 }
 
-type AcpiNotifyFnExt = fn(*const AcpiTable, u32, usize) -> efi::Status;
+type AcpiNotifyFnExt = fn(*const AcpiTableHeader, u32, usize) -> efi::Status;

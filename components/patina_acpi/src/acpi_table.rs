@@ -4,12 +4,12 @@
 //! Supports only ACPI version >= 2.0.
 //! Fields corresponding to ACPI 1.0 are preceded with an underscore (`_`) and are not in use.
 
-use crate::service::TableKey;
-use crate::signature;
+use crate::{service::TableKey, signature::ACPI_HEADER_LEN};
 
-use core::any::Any;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::ptr;
 use core::ptr::addr_of;
-use downcast_rs::{impl_downcast, DowncastSync};
 
 /// Represents the FADT for ACPI 2.0+.
 /// Equivalent to EFI_ACPI_3_0_FIXED_ACPI_DESCRIPTION_TABLE.
@@ -17,7 +17,7 @@ use downcast_rs::{impl_downcast, DowncastSync};
 #[derive(Default, Clone, Copy)]
 pub struct AcpiFadt {
     // Standard ACPI header.
-    pub(crate) header: AcpiTable,
+    pub(crate) header: AcpiTableHeader,
 
     pub(crate) _firmware_ctrl: u32,
     pub(crate) _dsdt: u32,
@@ -139,7 +139,7 @@ pub struct AcpiFacs {
 #[repr(C, packed)]
 #[derive(Default)]
 pub struct AcpiDsdt {
-    pub(crate) header: AcpiTable,
+    pub(crate) header: AcpiTableHeader,
 }
 
 /// Represents the RSDP for ACPI 2.0+.
@@ -171,27 +171,14 @@ pub struct AcpiRsdp {
 #[repr(C)]
 #[derive(Default, Copy, Clone)]
 pub struct AcpiXsdt {
-    pub(crate) header: AcpiTable,
+    pub(crate) header: AcpiTableHeader,
 }
-
-/// Represents an installable ACPI table.
-/// This is either a standard format ACPI table (`AcpiTable`) or FACS (`AcpiFACS`).
-/// Callers of `install_acpi_table` can implement `AcpiInstallable` on custom table formats as well.
-pub trait AcpiInstallable: Any + DowncastSync {
-    /// The physical address of the table in memory. This is only valid if the table has been installed.
-    fn phys_addr(&self) -> Option<usize>;
-
-    fn length(&self) -> u32;
-    fn signature(&self) -> u32;
-}
-// Allows dispatching based on the ACPI table format.
-impl_downcast!(sync AcpiInstallable);
 
 /// Represents a standard ACPI header.
 /// Equivalent to EFI_ACPI_DESCRIPTION_HEADER.
 #[repr(C)]
 #[derive(Default, Clone, Debug, Copy)]
-pub struct AcpiTable {
+pub struct AcpiTableHeader {
     pub signature: u32,
     pub length: u32,
     pub revision: u8,
@@ -203,21 +190,23 @@ pub struct AcpiTable {
     pub creator_revision: u32,
 }
 
-/// Wrapper around C-based `AcpiTable` with additional fields for Rust implementation convenience
+/// Represents an ACPI table installed in memory, including a header and any trailing bytes.
+/// Here, the trailing bytes are copied to the heap and owned by the struct.
 #[derive(Default, Clone, Debug)]
-pub struct AcpiTableWrapper {
+pub struct MemoryAcpiTable {
     /// Standard ACPI header.
-    /// All tables have the standard header except the RSDP and FACS.
-    pub header: AcpiTable,
+    pub header: AcpiTableHeader,
 
     /* The following fields are not present in the ACPI specification, but are included for implementation convenience. */
-    /// Unique key assigned to ACPI table upon installation.
-    pub(crate) table_key: TableKey,
+    /// Trailing bytes following the header. The number of bytes is determined by the header's `length` field.
+    pub bytes: Vec<u8>,
+    /// Unique key assigned to ACPI table upon installation. Zero if the table does not have an associated key.
+    pub table_key: TableKey,
     /// Physical address of the table in memory. None if the table is not yet installed in ACPI firmware memory.
-    pub(crate) physical_address: Option<usize>,
+    pub physical_address: Option<usize>,
 }
 
-impl AcpiTableWrapper {
+impl MemoryAcpiTable {
     /// Revision number of the table.
     pub fn revision(&self) -> u8 {
         self.header.revision
@@ -252,33 +241,29 @@ impl AcpiTableWrapper {
     pub fn creator_revision(&self) -> u32 {
         self.header.creator_revision
     }
-}
 
-impl AcpiInstallable for AcpiTableWrapper {
-    fn phys_addr(&self) -> Option<usize> {
-        self.physical_address
-    }
-
-    fn length(&self) -> u32 {
+    /// Total table length, including header and any trailing fields.
+    pub fn length(&self) -> u32 {
         self.header.length
     }
 
-    fn signature(&self) -> u32 {
+    /// Table signature, which defines what type of table it is.
+    pub fn signature(&self) -> u32 {
         self.header.signature
     }
 }
 
-// The FACS has a structure that cannot be coerced into a generic AcpiTable, hence the trait implementation
-impl AcpiInstallable for AcpiFacs {
-    fn phys_addr(&self) -> Option<usize> {
-        Some(self as *const _ as usize)
-    }
-
-    fn length(&self) -> u32 {
-        self.length
-    }
-
-    fn signature(&self) -> u32 {
-        signature::FACS
+impl MemoryAcpiTable {
+    /// Reads trailing bytes of an ACPI table (following the header) into a owned Vec<>.
+    /// `current_address` is the address in memory of the ACPI table to read data from.
+    /// SAFETY: The caller must ensure that the address is a valid ACPI table and that the length is correct.
+    pub(crate) fn read_data_from_memory(acpi_table_length: usize, current_address: usize) -> Vec<u8> {
+        let body_len = acpi_table_length - ACPI_HEADER_LEN;
+        let body_src = unsafe { (current_address as *const u8).add(ACPI_HEADER_LEN) };
+        let mut body_data = vec![0u8; body_len];
+        unsafe {
+            ptr::copy_nonoverlapping(body_src, body_data.as_mut_ptr(), body_len);
+        }
+        body_data
     }
 }

@@ -26,8 +26,6 @@ pub enum AcpiError {
     FreeFailed,
     /// The XSDT passed in from the HOB has an invalid length (less than the standard header length).
     XsdtInvalidLengthFromHob,
-    /// i might remove this later tbh so don't worry about it for now
-    InvalidTableFormat,
     /// A table address passed in from the HOB is not actually present in memory.
     HobTableNotInstalled,
     /// There was an attempt to retrieve an out-of-bounds XSDT entry.
@@ -39,6 +37,8 @@ pub enum AcpiError {
     NullRsdpFromHob,
     /// The ACPI HOB is present in the HOB list, but points to a null XSDT.
     XsdtNotInitializedFromHob,
+    /// The table was not installed properly and thus cannot be uninstalled or deleted.
+    TableNotPresentInMemory,
 }
 
 impl Into<efi::Status> for AcpiError {
@@ -54,12 +54,12 @@ impl Into<efi::Status> for AcpiError {
             AcpiError::InvalidNotifyUnregister => efi::Status::INVALID_PARAMETER,
             AcpiError::FreeFailed => efi::Status::OUT_OF_RESOURCES,
             AcpiError::XsdtInvalidLengthFromHob => efi::Status::UNSUPPORTED,
-            AcpiError::InvalidTableFormat => efi::Status::INVALID_PARAMETER,
             AcpiError::HobTableNotInstalled => efi::Status::UNSUPPORTED,
             AcpiError::InvalidXsdtEntry => efi::Status::INVALID_PARAMETER,
             AcpiError::TableNotifyFailed => efi::Status::INVALID_PARAMETER,
             AcpiError::NullRsdpFromHob => efi::Status::NOT_FOUND,
             AcpiError::XsdtNotInitializedFromHob => efi::Status::NOT_FOUND,
+            AcpiError::TableNotPresentInMemory => efi::Status::NOT_FOUND,
         }
     }
 }

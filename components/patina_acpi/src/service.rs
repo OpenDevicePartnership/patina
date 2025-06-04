@@ -8,33 +8,43 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use crate::acpi_table::{AcpiInstallable, AcpiTableWrapper};
-use crate::alloc::boxed::Box;
+use alloc::vec::Vec;
+
+use crate::acpi_table::{AcpiFacs, AcpiTableHeader, MemoryAcpiTable};
 use crate::error::AcpiError;
 
 pub type TableKey = usize;
 
-pub type AcpiNotifyFn = fn(&AcpiTableWrapper, u32, TableKey) -> Result<(), AcpiError>;
+pub type AcpiNotifyFn = fn(&AcpiTableHeader, u32, TableKey) -> Result<(), AcpiError>;
 
 /// The `AcpiProvider` trait provides an interface for installing, uninstalling, and accessing ACPI tables.
 /// This trait serves as the API by which both internal code and external components can access ACPI services.
 pub trait AcpiProvider {
     /// Installs an ACPI table.
     ///
-    /// The `acpi_table` must implement the `AcpiInstallable` trait.
-    /// Of the existing table types, the generic `AcpiTable` type and `AcpiFacs` implement `AcpiInstallable`.
-    /// If using another table type than the two aforementioned tables, the caller must implement `AcpiInstallable`.
+    /// The table can be installed in either NVS or ACPI reclaim memory, depending on its type.
+    /// If the `physical_address` or `table_key` fields of the `MemoryAcpiTable` are filled in, they will not be used,
+    /// since the table is reallocated and assigned a table key during installation.
     ///
-    /// If the table is already present in memory (such as an FACS being installed from a PEI HOB),
-    /// `install_acpi_table` will use the already-allocated ACPI memory.
-    /// Otherwise, it will place the table in ACPI memory as appropriate.
-    ///
-    /// For all types other than the DSDT and FACS (which are pointed to by the FADT),
-    /// the table will be added to the XSDT.
+    /// The table will be added to the list of installed tables in the XSDT.
     ///
     /// The returned `TableKey` can be used to uninstall the table later.
     /// It is an opaque reference to the table and should not be manipulated directly.
-    fn install_acpi_table(&self, acpi_table: &dyn AcpiInstallable) -> Result<TableKey, AcpiError>;
+    fn install_acpi_table(&self, acpi_table: &MemoryAcpiTable) -> Result<TableKey, AcpiError>;
+
+    /// Installs the FACS.
+    ///
+    /// The FACS has a non-standard table format but can be dynamically installed during runtime,
+    /// hence the need for a seperate installation function.
+    ///
+    /// If the table is already present in memory, `install_facs` will use the already-allocated ACPI memory.
+    /// Otherwise, it will place the table in ACPI memory as appropriate.
+    ///
+    /// The FACS is pointed to by the FADT only, and is not present in the list of tables in the XSDT.
+    ///
+    /// Since the FACS is not directly accessible, it does not have an associated table key,
+    /// and cannot be directly uninstalled using `uninstall_acpi_table`.
+    fn install_facs(&self, acpi_table: &AcpiFacs) -> Result<(), AcpiError>;
 
     /// Uninstalls an ACPI table.
     ///
@@ -55,7 +65,7 @@ pub trait AcpiProvider {
     /// The returned `&AcpiTable` is reference to the table in ACPI memory.
     ///
     /// The RSDP and XSDT cannot be accessed through `get_acpi_table`.
-    fn get_acpi_table(&self, index: usize) -> Result<&AcpiTableWrapper, AcpiError>;
+    fn get_acpi_table(&self, index: usize) -> Result<MemoryAcpiTable, AcpiError>;
 
     /// Registers or unregisters a function which will be called whenever a new ACPI table is installed.
     ///
@@ -68,5 +78,5 @@ pub trait AcpiProvider {
     /// This can be used in place of `get_acpi_table`, or in conjunction with it to retrieve a specific table reference.
     ///
     /// The RSDP and XSDT are not included in the list of iterable ACPI tables.
-    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a AcpiTableWrapper> + 'a>;
+    fn iter(&self) -> Vec<MemoryAcpiTable>;
 }
