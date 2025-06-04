@@ -39,6 +39,7 @@ extern crate alloc;
 
 mod allocator;
 mod cpu_arch_protocol;
+mod debug_image_info_table;
 mod dispatcher;
 mod driver_services;
 mod dxe_services;

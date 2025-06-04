@@ -20,10 +20,13 @@ use patina_sdk::error::EfiError;
 use patina_sdk::{guid, uefi_pages_to_size, uefi_size_to_pages};
 use r_efi::efi;
 
-use crate::dxe_services::core_set_memory_space_attributes;
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
-    dxe_services,
+    debug_image_info_table::{
+        core_new_debug_image_info_entry, core_remove_debug_image_info_entry, initialize_debug_image_info_table,
+        EfiDebugImageInfoNormal,
+    },
+    dxe_services::{self, core_set_memory_space_attributes},
     events::EVENT_DB,
     filesystems::SimpleFile,
     pecoff::{self, relocation::RelocationBlock, UefiPeInfo},
@@ -503,8 +506,8 @@ fn remove_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateI
 }
 
 // retrieves the dxe core image info from the hob list, and installs the
-// loaded_image protocol on it to create the dxe core image handle.
-fn install_dxe_core_image(hob_list: &HobList) {
+// loaded_image protocol on it to create the dxe_core image handle.
+fn install_dxe_core_image(hob_list: &HobList, system_table: &mut EfiSystemTable) {
     // Retrieve the MemoryAllocationModule hob corresponding to the DXE core
     // (i.e. this driver).
     let dxe_core_hob = hob_list
@@ -572,7 +575,16 @@ fn install_dxe_core_image(hob_list: &HobList) {
         Ok(handle) => handle,
     };
     assert_eq!(handle, protocol_db::DXE_CORE_HANDLE);
-    // record this handle as the new dxe core handle.
+
+    // register the core image with the debug image info configuration table
+    initialize_debug_image_info_table(system_table);
+    core_new_debug_image_info_entry(
+        EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
+        image_info_ptr as *const efi::protocols::loaded_image::Protocol,
+        handle,
+    );
+
+    // record this handle as the new dxe_core handle.
     private_data.dxe_core_image_handle = handle;
 
     // store the dxe core image private data in the private image data map.
@@ -1053,17 +1065,26 @@ pub fn core_load_image(
         private_info.pe_info.filename.as_ref().unwrap_or(&String::from("<no PDB>"))
     );
 
+    // install the loaded_image protocol for this freshly loaded image on a new
+    // handle.
+    let handle = core_install_protocol_interface(None, efi::protocols::loaded_image::PROTOCOL_GUID, image_info_ptr)
+        .inspect_err(|err| log::error!("failed to load image: install loaded image protocol failed: {:#x?}", err))?;
+
+    // register the loaded image with the debug image info configuration table. This is done before the debugger is
+    // notified so that the debugger can access the loaded image protocol before that point, e.g. so
+    // that symbols can be loaded on module breakpoints.
+    core_new_debug_image_info_entry(
+        EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
+        image_info_ptr as *const efi::protocols::loaded_image::Protocol,
+        handle,
+    );
+
     // Notify the debugger of the image load.
     patina_debugger::notify_module_load(
         private_info.pe_info.filename.as_ref().unwrap_or(&String::from("")),
         private_info.image_info.image_base as usize,
         private_info.image_info.image_size as usize,
     );
-
-    // install the loaded_image protocol for this freshly loaded image on a new
-    // handle.
-    let handle = core_install_protocol_interface(None, efi::protocols::loaded_image::PROTOCOL_GUID, image_info_ptr)
-        .inspect_err(|err| log::error!("failed to load image: install loaded image protocol failed: {:#x?}", err))?;
 
     // install the loaded_image device path protocol for the new image. If input device path is not null, then make a
     // permanent copy on the heap.
@@ -1312,6 +1333,8 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
     }
     let handles = PROTOCOL_DB.locate_handles(None).unwrap_or_default();
 
+    core_remove_debug_image_info_entry(image_handle);
+
     // close any protocols opened by this image.
     for handle in handles {
         let protocols = match PROTOCOL_DB.get_protocols_on_handle(handle) {
@@ -1438,8 +1461,8 @@ pub fn init_image_support(hob_list: &HobList, system_table: &mut EfiSystemTable)
     private_data.system_table = system_table.as_ptr() as *mut efi::SystemTable;
     drop(private_data);
 
-    // install the image protocol for the dxe core.
-    install_dxe_core_image(hob_list);
+    // install the image protocol for the dxe_core.
+    install_dxe_core_image(hob_list, system_table);
 
     // set up exit boot services callback
     let _ = EVENT_DB
