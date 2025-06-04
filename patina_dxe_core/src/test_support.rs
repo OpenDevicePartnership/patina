@@ -77,6 +77,11 @@ pub(crate) unsafe fn init_test_gcd(size: Option<usize>) {
     .unwrap();
 }
 
+/// Resets the ALLOCATOR map to empty and resets the static allocators
+pub(crate) unsafe fn reset_allocators() {
+    crate::allocator::reset_allocators()
+}
+
 /// Reset and re-initialize the protocol database to default empty state.
 pub(crate) unsafe fn init_test_protocol_db() {
     PROTOCOL_DB.reset();
