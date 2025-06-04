@@ -357,7 +357,7 @@ mod tests {
     use crate::misc_boot_services;
     use crate::systemtables;
     use r_efi::efi::{BootServices, Status};
-
+    // Run Test cases with the `cargo test` command.
     #[test]
     fn test_init_misc_boot_services_support() {
         let mut st = systemtables::SYSTEM_TABLE.lock();
