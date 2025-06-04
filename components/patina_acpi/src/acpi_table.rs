@@ -11,6 +11,8 @@ use core::any::Any;
 use core::ptr::addr_of;
 use downcast_rs::{impl_downcast, DowncastSync};
 
+/// Represents the FADT for ACPI 2.0+.
+/// Equivalent to EFI_ACPI_3_0_FIXED_ACPI_DESCRIPTION_TABLE.
 #[repr(C, packed)]
 #[derive(Default, Clone, Copy)]
 pub struct AcpiFadt {
@@ -74,6 +76,8 @@ pub struct AcpiFadt {
     pub(crate) x_gpe1_blk: GenericAddressStructure,
 }
 
+/// Represents an ACPI address space for ACPI 2.0+.
+/// Equivalent to EFI_ACPI_3_0_GENERIC_ADDRESS_STRUCTURE.
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GenericAddressStructure {
@@ -84,6 +88,8 @@ pub struct GenericAddressStructure {
     address: u64,
 }
 
+/// Reads unaligned fields on the FADT.
+/// Fields on the FADT may be unaligned, since by specification the FADT is packed.
 impl AcpiFadt {
     /// SAFETY: reads the packed `x_firmware_ctrl` field even if unaligned.
     #[allow(dead_code)]
@@ -106,7 +112,10 @@ impl AcpiFadt {
     }
 }
 
-// The FACS does not have a standard ACPI header.
+/// Represents the FACS for ACPI 2.0+.
+/// Note that the FACS does not have a standard ACPI header.
+/// The FACS is not present in the list of installed ACPI tables; instead, it is only accessible through the FADT's `x_firmware_ctrl` field.
+/// Equivalent to EFI_ACPI_3_0_FIRMWARE_ACPI_CONTROL_STRUCTURE.
 #[repr(C, packed)]
 #[derive(Default)]
 pub struct AcpiFacs {
@@ -123,13 +132,20 @@ pub struct AcpiFacs {
     pub(crate) reserved: [u8; 31],
 }
 
+/// Represents the DSDT for ACPI 2.0+.
+/// The DSDT is not present in the list of installed ACPI tables; instead, it is only accessible through the FADT's `x_dsdt` field.
+/// The DSDT has a standard header followed by variable-length AML bytecode.
+/// The `length` field of the header tells us the number of trailing bytes representing bytecode.
 #[repr(C, packed)]
 #[derive(Default)]
 pub struct AcpiDsdt {
     pub(crate) header: AcpiTable,
 }
 
-// The RSDP is not a standard ACPI table and does not have a standard header.
+/// Represents the RSDP for ACPI 2.0+.
+/// The RSDP is not a standard ACPI table and does not have a standard header.
+/// It is not present in the list of installed tables and is not directly accessible.
+/// Equivalent to EFI_ACPI_3_0_ROOT_SYSTEM_DESCRIPTION_POINTER.
 #[repr(C, packed)]
 #[derive(Default)]
 pub struct AcpiRsdp {
@@ -148,8 +164,10 @@ pub struct AcpiRsdp {
     pub(crate) reserved: [u8; 3],
 }
 
-// The XSDT has a standard header followed by 64-bit addresses of installed tables.
-// The `length` field of the header tells us the number of trailing bytes representing table entries.
+/// Represents the DSDT for ACPI 2.0+.
+/// The DSDT is not present in the list of installed ACPI tables; instead, it is only accessible through the FADT's `x_dsdt` field.
+/// The XSDT has a standard header followed by 64-bit addresses of installed tables.
+/// The `length` field of the header tells us the number of trailing bytes representing table entries.
 #[repr(C)]
 #[derive(Default, Copy, Clone)]
 pub struct AcpiXsdt {
@@ -169,7 +187,8 @@ pub trait AcpiInstallable: Any + DowncastSync {
 // Allows dispatching based on the ACPI table format.
 impl_downcast!(sync AcpiInstallable);
 
-/// Represents a standard ACPI header
+/// Represents a standard ACPI header.
+/// Equivalent to EFI_ACPI_DESCRIPTION_HEADER.
 #[repr(C)]
 #[derive(Default, Clone, Debug, Copy)]
 pub struct AcpiTable {
@@ -184,18 +203,17 @@ pub struct AcpiTable {
     pub creator_revision: u32,
 }
 
-// Wrapper around C AcpiTable with additional fields for Rust implementation convenience
+/// Wrapper around C-based `AcpiTable` with additional fields for Rust implementation convenience
 #[derive(Default, Clone, Debug)]
 pub struct AcpiTableWrapper {
     /// Standard ACPI header.
-    /// All tables have the standard header except the RSDP and FACS
+    /// All tables have the standard header except the RSDP and FACS.
     pub header: AcpiTable,
 
-    // The following fields are not present in the ACPI specification,
-    // but are included for implementation convenience.
-    /// Unique key assigned to ACPI table upon installation
+    /* The following fields are not present in the ACPI specification, but are included for implementation convenience. */
+    /// Unique key assigned to ACPI table upon installation.
     pub(crate) table_key: TableKey,
-    /// // Physical address of the table in memory. None if the table is not yet installed in ACPI firmware memory
+    /// Physical address of the table in memory. None if the table is not yet installed in ACPI firmware memory.
     pub(crate) physical_address: Option<usize>,
 }
 

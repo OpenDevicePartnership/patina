@@ -1,23 +1,43 @@
 use r_efi::efi;
 
+/// Custom errors for ACPI operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcpiError {
+    /// Memory allocation failed (usually because the system is out of memory).
     AllocationFailed,
+    /// The system page size is not 64B aligned (required for the FACS and UEFI tables in ACPI 2.0+).
+    /// If this error occurs, the service will be unable to install the FACS and UEFI tables.
     FacsUefiNot64BAligned,
+    /// An invalid ACPI signature was passed into a function expecting a specific signature.
     InvalidSignature,
+    /// There was an attempt to install the FADT more than once.
+    /// While most ACPI tables are allowed to be duplicated, the FADT is not.
     FadtAlreadyInstalled,
-    InstallTableFailed,
+    /// Boot services was unable to install the ACPI table using `install_configuration_table`,
+    InstallConfigurationTableFailed,
+    /// An invalid table key was passed into `uninstall_acpi_table`,
+    /// A table key is invalid when it is not a known value returned by `install_acpi_table`,
     InvalidTableKey,
+    /// An out-of-bounds index was passed into `get_acpi_table`,
     InvalidTableIndex,
+    /// There was an attempt to unregister a notify function that was not previously registered.
     InvalidNotifyUnregister,
+    /// Memory free failed.
     FreeFailed,
+    /// The XSDT passed in from the HOB has an invalid length (less than the standard header length).
     XsdtInvalidLengthFromHob,
+    /// i might remove this later tbh so don't worry about it for now
     InvalidTableFormat,
+    /// A table address passed in from the HOB is not actually present in memory.
     HobTableNotInstalled,
-    InvalidTableLength,
+    /// There was an attempt to retrieve an out-of-bounds XSDT entry.
+    /// The `length` field of the XSDT header determines the number of valid address entries.
     InvalidXsdtEntry,
+    /// The notify callback for a newly installed table failed to execute correctly.
     TableNotifyFailed,
+    /// The ACPI HOB is present in the HOB list, but points to a null RSDP.
     NullRsdpFromHob,
+    /// The ACPI HOB is present in the HOB list, but points to a null XSDT.
     XsdtNotInitializedFromHob,
 }
 
@@ -28,7 +48,7 @@ impl Into<efi::Status> for AcpiError {
             AcpiError::FacsUefiNot64BAligned => efi::Status::UNSUPPORTED,
             AcpiError::InvalidSignature => efi::Status::INVALID_PARAMETER,
             AcpiError::FadtAlreadyInstalled => efi::Status::ALREADY_STARTED,
-            AcpiError::InstallTableFailed => efi::Status::UNSUPPORTED,
+            AcpiError::InstallConfigurationTableFailed => efi::Status::UNSUPPORTED,
             AcpiError::InvalidTableKey => efi::Status::INVALID_PARAMETER,
             AcpiError::InvalidTableIndex => efi::Status::INVALID_PARAMETER,
             AcpiError::InvalidNotifyUnregister => efi::Status::INVALID_PARAMETER,
@@ -36,7 +56,6 @@ impl Into<efi::Status> for AcpiError {
             AcpiError::XsdtInvalidLengthFromHob => efi::Status::UNSUPPORTED,
             AcpiError::InvalidTableFormat => efi::Status::INVALID_PARAMETER,
             AcpiError::HobTableNotInstalled => efi::Status::UNSUPPORTED,
-            AcpiError::InvalidTableLength => efi::Status::INVALID_PARAMETER,
             AcpiError::InvalidXsdtEntry => efi::Status::INVALID_PARAMETER,
             AcpiError::TableNotifyFailed => efi::Status::INVALID_PARAMETER,
             AcpiError::NullRsdpFromHob => efi::Status::NOT_FOUND,

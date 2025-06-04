@@ -50,7 +50,7 @@ impl AcpiTableProtocol {
     ///
     /// # Errors
     ///
-    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) the table buffer is null or too small to contain the ACPI table header.
     /// Returns [`UNSUPPORTED`](r_efi::efi::Status::UNSUPPORTED) if the system page size is not 64B-aligned (required for FACS in ACPI 2.0+).
     /// Returns [`UNSUPPORTED`](r_efi::efi::Status::UNSUPPORTED) if boot services cannot install the given table format.
     /// Returns [`OUT_OF_RESOURCES`](r_efi::efi::Status::OUT_OF_RESOURCES) if allocating memory for the table fails.
@@ -133,7 +133,7 @@ impl AcpiTableProtocol {
     ///
     /// # Errors
     ///
-    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if thee table key does not correspond to an installed table.
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if the table key does not correspond to an installed table.
     /// Returns [`OUT_OF_RESOURCES`](r_efi::efi::Status::OUT_OF_RESOURCES) if memory operations fail.
     extern "efiapi" fn uninstall_acpi_table_ext(_protocol: *const AcpiTableProtocol, table_key: usize) -> efi::Status {
         match ACPI_TABLE_INFO.uninstall_acpi_table(table_key) {
@@ -168,16 +168,17 @@ impl AcpiSdtProtocol {
 }
 
 impl AcpiSdtProtocol {
-    /// Removes an ACPI table from the XSDT.
+    /// Returns a requested ACPI table.
     ///
-    /// This function generally matches the behavior of EFI_ACPI_SDT_PROTOCOL.GetAcpiTable() API in the PI spec 2.10
-    /// section 9.1. Refer to the UEFI spec description for details on input parameters.
+    /// This function generally matches the behavior of EFI_ACPI_SDT_PROTOCOL.GetAcpiTable() API in the PI spec 1.8
+    /// section 9.1. Refer to the PI spec description for details on input parameters.
     ///
     /// This implementation only supports ACPI 2.0+.
     ///
     /// # Errors
     ///
-    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if thee table key does not correspond to an installed table.
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) the index is out of bounds of the list of installed tables.
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) any input or output parameters are null.
     /// Returns [`OUT_OF_RESOURCES`](r_efi::efi::Status::OUT_OF_RESOURCES) if memory operations fail.
     extern "efiapi" fn get_acpi_table_ext(
         index: usize,
@@ -203,6 +204,17 @@ impl AcpiSdtProtocol {
         }
     }
 
+    /// Register or unregister a callback when an ACPI table is installed.
+    ///
+    /// This function generally matches the behavior of EFI_ACPI_SDT_PROTOCOL.RegisterNotify() API in the PI spec 1.8
+    /// section 9.1. Refer to the PI spec description for details on input parameters.
+    ///
+    /// This implementation only supports ACPI 2.0+.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if there is an attempt to unregister a notify function that was never registered.
+    /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if the notify function pointer is null or does not match the standard notify function signature.
     extern "efiapi" fn register_notify_ext(register: bool, notify_fn: *const AcpiNotifyFnExt) -> efi::Status {
         // SAFETY: the caller must pass in a valid pointer to a notify function
         let rust_fn: AcpiNotifyFn = match unsafe { notify_fn.as_ref() } {

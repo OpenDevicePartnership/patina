@@ -38,27 +38,45 @@ use crate::{
 
 pub static ACPI_TABLE_INFO: StandardAcpiProvider<StandardBootServices> = StandardAcpiProvider::new_uninit();
 
+/// Standard implementation of ACPI services. The service interface can be found in `service.rs`
 #[derive(IntoService)]
 #[service(dyn AcpiProvider)]
 pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
+    /// Supported ACPI versions.
+    /// This implementation only supports ACPI 2.0+. Setting the ACPI 1.0 field does nothing.
     pub(crate) version: AtomicU32,
+    /// Whether the platform should reclaim freed ACPI memory.
+    /// If true, the ACPI code will try to reclaim unused memory when possible.
+    /// If false, all allocations will be made to NVS.
     pub(crate) should_reclaim_memory: AtomicBool,
+    /// Known ACPI system tables, such as the FADT, DSDT, etc.
     pub(crate) system_tables: SystemTables,
+    /// Platform-installed ACPI tables.
+    /// If installing a non-standard ACPI table, the platform is responsible for writing its own handler and parser.
     acpi_tables: RwLock<Vec<NonNull<AcpiTableWrapper>>>,
+    /// Stores a monotnically increasing unique table key for installation.
     next_table_key: AtomicUsize,
+    /// Stores notify callbacks, which are called upon table installation.
     notify_list: RwLock<Vec<AcpiNotifyFn>>,
+    /// Provides boot services.
     pub(crate) boot_services: OnceCell<B>,
+    /// Provides memory services.
     pub(crate) memory_manager: OnceCell<Service<dyn MemoryManager>>,
+    /// Addresses of currently installed ACPI tables.
     entries: RwLock<Vec<u64>>,
+    /// The maximum number of tables that can be installed with currently-allocated ACPI memory.
+    /// If `max_entries` is exceeded, the entries will have to be reallocated to a new larger memory space.
     max_entries: AtomicUsize,
 }
 
+/// Holds pointers to known system tables used by the ACPI provider.
+/// A table may either be null, indicating it is not yet installed or not present on the platform, or point to a valid table in ACPI memory.
 pub(crate) struct SystemTables {
     fadt: AtomicPtr<AcpiFadt>,
     facs: AtomicPtr<AcpiFacs>,
     dsdt: AtomicPtr<AcpiDsdt>,
     rsdp: AtomicPtr<AcpiRsdp>,
-    pub xsdt: AtomicPtr<AcpiXsdt>,
+    pub(crate) xsdt: AtomicPtr<AcpiXsdt>,
 }
 
 impl SystemTables {
@@ -73,6 +91,7 @@ impl SystemTables {
     }
 }
 
+/// Functions to retrieve system tables from ACPI memory
 impl SystemTables {
     pub fn fadt_mut(&self) -> Option<&mut AcpiFadt> {
         let ptr = self.fadt.load(Ordering::Acquire);
@@ -103,7 +122,6 @@ impl SystemTables {
         } else {
             // SAFETY: the pointer is checked to be non-null
             // The caller must make sure that, upon construction, this AtomicPointer holds a valid FADT reference
-
             Some(unsafe { &mut *ptr })
         }
     }
@@ -113,6 +131,8 @@ impl SystemTables {
         if ptr.is_null() {
             None
         } else {
+            // SAFETY: the pointer is checked to be non-null
+            // The caller must make sure that, upon construction, this AtomicPointer holds a valid FADT reference
             Some(unsafe { &mut *ptr })
         }
     }
@@ -129,6 +149,8 @@ impl<B> StandardAcpiProvider<B>
 where
     B: BootServices,
 {
+    /// Creates a new `StandardAcpiProvider` with uninitialized fields.
+    /// Attempting to use `StandardAcpiProvider` before initialization will cause a panic.
     pub const fn new_uninit() -> Self {
         let system_tables = SystemTables::new();
         Self {
@@ -145,6 +167,9 @@ where
         }
     }
 
+    /// Fills in `StandardAcpiProvider` fields at runtime.
+    /// This function must be called before any attempts to use `StandardAcpiProvider`, or a panic will occur.
+    /// Attempting to initialize a single `StandardAcpiProvider` instance more than once will also cause a panic.
     pub fn initialize(
         &self,
         version: u32,
@@ -164,15 +189,19 @@ where
         }
     }
 
+    /// Sets the pointer for the RSDP.
     pub fn set_rsdp(&self, rsdp: &mut AcpiRsdp) {
         self.system_tables.rsdp.store(rsdp as *mut AcpiRsdp, Ordering::Release);
     }
 
+    /// Sets the pointer for the XSDT.
     pub fn set_xsdt(&self, xsdt: &mut AcpiXsdt) {
         self.system_tables.xsdt.store(xsdt as *mut AcpiXsdt, Ordering::Release);
     }
 }
 
+/// Implementations of ACPI services.
+/// For more information on operation and interfaces, see `service.rs`.
 impl<B> AcpiProvider for StandardAcpiProvider<B>
 where
     B: BootServices,
@@ -241,6 +270,8 @@ impl<B> StandardAcpiProvider<B>
 where
     B: BootServices,
 {
+    /// Retrieves a specific entry from the XSDT.
+    /// The XSDT has a standard ACPI header followed by a variable-length list of entries in ACPI memory.
     fn get_xsdt_entry(idx: usize, xsdt_start_ptr: *const u8, xsdt_len: usize) -> Result<u64, AcpiError> {
         // Offset from the start of the XSDT in memory
         // Entries directly follow the header
@@ -260,7 +291,6 @@ where
     }
 
     /// Extracts the XSDT address after performing validation on the RSDP and XSDT
-    /// SHERRY: need to test
     fn get_xsdt_address_from_rsdp(rsdp_address: u64) -> Result<u64, AcpiError> {
         if rsdp_address == 0 {
             return Err(AcpiError::NullRsdpFromHob);
@@ -294,6 +324,7 @@ where
         Ok(rsdp.xsdt_address)
     }
 
+    /// Installs the FADT if provided in the HOB list.
     fn install_fadt_tables_from_hob(&self, fadt: &AcpiFadt) -> Result<(), AcpiError> {
         // SAFETY: we assume the FADT set up in the HOB points to a valid FACS if the pointer is non-null
         if fadt.x_firmware_ctrl != 0 {
@@ -320,6 +351,7 @@ where
         Ok(())
     }
 
+    /// Installs tables pointed to by the ACPI memory HOB.
     pub fn install_tables_from_hob(&self, acpi_hob: Hob<AcpiMemoryHob>) -> Result<(), AcpiError> {
         let xsdt_address = Self::get_xsdt_address_from_rsdp(acpi_hob.rsdp_address)?;
         let xsdt_ptr = xsdt_address as *const AcpiXsdt;
@@ -473,6 +505,7 @@ where
         Ok(())
     }
 
+    /// Points the FADT to the DSDT when the DSDT is installed.
     fn add_dsdt_to_list(&self, physical_addr: usize) {
         let dsdt_ptr = physical_addr as u64;
         if let Some(fadt) = self.system_tables.fadt_mut() {
@@ -480,6 +513,9 @@ where
         }
     }
 
+    /// Adds a table to the list of installed ACPI tables.
+    /// If `is_from_hob` is true, it uses the existing ACPI memory pointed to by the HOB.
+    /// If `is_from_hob` is false, it allocates new ACPI memory for the table.
     pub(crate) fn add_table_to_list(&self, table: &AcpiTableWrapper, is_from_hob: bool) -> Result<TableKey, AcpiError> {
         let table_addr = table.phys_addr();
 
@@ -538,6 +574,7 @@ where
         Ok(next_table_key)
     }
 
+    /// Determines whether memory allocations should reclaim or store everything in NVS
     pub(crate) fn memory_type(&self) -> EfiMemoryType {
         if self.should_reclaim_memory.load(Ordering::Acquire) {
             EfiMemoryType::ACPIReclaimMemory
@@ -546,6 +583,7 @@ where
         }
     }
 
+    /// Adds an address entry to the XSDT.
     fn add_entry_to_xsdt(&self, new_table_addr: u64) -> Result<(), AcpiError> {
         let xsdt_ptr = self.system_tables.xsdt_mut();
 
@@ -575,6 +613,7 @@ where
         Ok(())
     }
 
+    /// Allocates a new, larger memory space for the XSDT when it is full and relocates all entries to the newly allocated memory.
     fn reallocate_xsdt(&self, curr_entries: usize, curr_size: usize) -> Result<(), AcpiError> {
         // Geometrically resize the number of entries in the XSDT
         let new_size = curr_entries * 2 * mem::size_of::<u64>() + ACPI_HEADER_LEN;
@@ -616,6 +655,7 @@ where
         Ok(())
     }
 
+    /// Removes a table from the list of installed tables.
     fn remove_table_from_list(&self, table_key: TableKey) -> Result<(), AcpiError> {
         let mut table_for_key = None;
         let mut table_idx = None;
@@ -641,6 +681,7 @@ where
         Ok(())
     }
 
+    /// Deletes a table from the list of installed tables and frees its memory.
     fn delete_table(&self, header: &mut AcpiTable) -> Result<(), AcpiError> {
         let mut remove_from_xsdt = true;
         let current_signature = header.signature;
@@ -690,6 +731,7 @@ where
         Ok(())
     }
 
+    /// Frees memory for a table when it is uninstalled.
     fn free_table_memory(&self, table: &AcpiTable) -> Result<(), AcpiError> {
         // SAFETY: the caller must ensure `table` points to a valid table previously allocated by the same memory manager
         unsafe {
@@ -703,6 +745,7 @@ where
         Ok(())
     }
 
+    /// Removes an address entry from the XSDT when a table is uninstalled.
     fn remove_table_from_xsdt(&self, table: &AcpiTable) {
         if self.system_tables.xsdt.load(Ordering::Acquire).is_null() {
             return;
@@ -749,7 +792,8 @@ where
         }
     }
 
-    // Sum of all ACPI bytes (should be zero)
+    /// Recalculates the checksum for an ACPI table.
+    /// According to ACPI spec, all bytes of an ACPI table must sum to zero.
     fn acpi_table_update_checksum(table_ptr: *mut u8, table_length: usize, offset: usize) {
         // SAFETY: the caller must ensure `table_length` corresponds to the length of the ACPI table in memory
         let table_bytes = unsafe { core::slice::from_raw_parts_mut(table_ptr, table_length) };
@@ -762,7 +806,7 @@ where
         unsafe { ptr::write(table_ptr.add(offset), new_checksum) };
     }
 
-    // checksum RSDP and XSDT
+    // Performs checksums on shared ACPI tables (the RSDP and XSDT).
     pub(crate) fn checksum_common_tables(&self) -> Result<(), AcpiError> {
         if let Some(rsdp) = self.system_tables.rsdp_mut() {
             Self::acpi_table_update_checksum(
@@ -783,6 +827,7 @@ where
         Ok(())
     }
 
+    /// Publishes ACPI tables after installation.
     fn publish_tables(&self) -> Result<(), AcpiError> {
         let rsdp_ptr = self.system_tables.rsdp.load(Ordering::Acquire);
         // SAFETY: If initialization of AcpiProvider succeeds, the RSDP should always be valid
@@ -791,12 +836,13 @@ where
                 .get()
                 .expect("Boot services not initialized")
                 .install_configuration_table(&signature::ACPI_TABLE_GUID, rsdp_ptr)
-                .map_err(|_| AcpiError::InstallTableFailed)
+                .map_err(|_| AcpiError::InstallConfigurationTableFailed)
         }?;
 
         Ok(())
     }
 
+    /// Calls the notify functions in `notify_list` upon installation of an ACPI table.
     fn notify_acpi_list(&self, table_key: TableKey) -> Result<(), AcpiError> {
         let acpi_tables = self.acpi_tables.read();
         // SAFETY: the table references in `iter` are derived from tables installed in `install_acpi_table`
