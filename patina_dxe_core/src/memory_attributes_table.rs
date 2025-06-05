@@ -273,6 +273,7 @@ mod tests {
 
             unsafe {
                 test_support::init_test_gcd(None);
+                test_support::reset_allocators();
                 init_system_table();
             }
             f();
@@ -354,26 +355,18 @@ mod tests {
 
                 assert_eq!(mat.version, efi::MEMORY_ATTRIBUTES_TABLE_VERSION);
                 // we have one extra entry here because init_system_table allocates runtime pages
-                // yes, this is annoying, but depending on which tests run first, the system table may or may not be
-                // the first entry in the MAT
-                assert!(mat.number_of_entries == entry_count as u32 + 1 || mat.number_of_entries == entry_count as u32);
+                assert!(mat.number_of_entries == entry_count as u32 + 1);
                 assert_eq!(mat.descriptor_size, size_of::<efi::MemoryDescriptor>() as u32);
 
-                let mut entry_slice = slice::from_raw_parts(mat.entry.as_ptr(), mat.number_of_entries as usize);
+                let entry_slice = slice::from_raw_parts(mat.entry.as_ptr(), mat.number_of_entries as usize);
 
-                // ignore the first entry for the system table, we don't need to randomize this test
-                // by checking it. Annoyingly, the system table is not guaranteed to be the first entry
-                // if other tests run first, so we need to check for it.
-                if entry_slice.len() == entry_count + 1 {
-                    entry_slice = &entry_slice[1..];
-                }
+                for (i, page) in allocated_pages.iter().enumerate() {
+                    let entry = &entry_slice[i];
 
-                for (i, entry) in entry_slice.iter().enumerate() {
-                    let expected_type = allocated_pages[i].1 .0;
-
-                    let expected_physical_start = allocated_pages[i].0 as u64;
-                    let expected_number_of_pages = allocated_pages[i].2 as u64;
-                    let expected_attribute = allocated_pages[i].1 .1;
+                    let expected_type = page.1 .0;
+                    let expected_physical_start = page.0 as u64;
+                    let expected_number_of_pages = page.2 as u64;
+                    let expected_attribute = page.1 .1;
 
                     assert_eq!(entry.r#type, expected_type);
                     assert_eq!(entry.physical_start, expected_physical_start);

@@ -1004,6 +1004,12 @@ pub fn install_memory_services(bs: &mut efi::BootServices) {
     bs.get_memory_map = get_memory_map;
 }
 
+// Resets the ALLOCATOR map to empty and resets the static allocators for test purposes.
+#[cfg(test)]
+pub(crate) unsafe fn reset_allocators() {
+    ALLOCATORS.lock().reset();
+}
+
 #[cfg(test)]
 mod tests {
 

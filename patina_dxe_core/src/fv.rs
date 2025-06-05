@@ -1435,6 +1435,8 @@ mod tests {
             }
             assert!(PRIVATE_FV_DATA.lock().fv_information.is_empty());
 
+            PRIVATE_FV_DATA.lock().section_extractor = Some(Box::new(patina_section_extractor::BrotliSectionExtractor));
+
             let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
                 get_volume_attributes: fv_get_volume_attributes,
                 set_volume_attributes: fv_set_volume_attributes,
