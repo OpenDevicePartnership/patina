@@ -7,6 +7,7 @@ components = ["rust-src", "clippy", "rustfmt", "rust-docs"]
 [tools]
 cargo-deny = "^0.17"
 cargo-make = "0.37.21"
+cargo-nextest = "0.9.97"
 cargo-tarpaulin = "0.31.5"
 cargo-release = "0.25.12"
 mdbook = "0.4.40"

@@ -113,8 +113,7 @@ run_task = [{ name = ["check_no_std", "check_std"], parallel = true }]
 description = "Builds all rust tests in the workspace. Example `cargo make test`"
 clear = true
 command = "cargo"
-args = ["test", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(TEST_FLAGS, )"]
-dependencies = ["individual-package-targets"]
+args = ["nextest", "run", "@@split(TEST_FLAGS, )", "${@}"]
 
 [tasks.coverage]
 description = "Build and run all tests and calculate coverage."
