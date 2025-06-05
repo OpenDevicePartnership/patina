@@ -120,7 +120,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
     /// is used for development purposes and is not intended for production or
     /// standard use. If `False` is provided, this routine will not change the configuration.
     ///
-    /// This will also forcible enable the initial breakpoint with no timeout. This
+    /// This will also forcibly enable the initial breakpoint with no timeout. This
     /// is intentional to prevent this development feature from being used in production.
     ///
     pub const fn with_force_enable(mut self, enabled: bool) -> Self {
@@ -178,14 +178,18 @@ impl<T: SerialIO> PatinaDebugger<T> {
         };
 
         // Suspend or disable logging. If suspended, logging will resume when the struct is dropped.
-        let _log_suspend = match self.log_policy {
-            DebuggerLoggingPolicy::SuspendLogging => Some(LoggingSuspender::suspend()),
+        let _log_suspend;
+        match self.log_policy {
+            DebuggerLoggingPolicy::SuspendLogging => {
+                _log_suspend = LoggingSuspender::suspend();
+            }
             DebuggerLoggingPolicy::DisableLogging => {
                 log::set_max_level(log::LevelFilter::Off);
-                None
             }
-            DebuggerLoggingPolicy::DebuggerLogging => None,
-        };
+            DebuggerLoggingPolicy::FullLogging => {
+                // No action needed.
+            }
+        }
 
         // Get the stored allocated buffer for the monitor. This needs to be
         // pre-allocated as allocations should not occur during the debugger.

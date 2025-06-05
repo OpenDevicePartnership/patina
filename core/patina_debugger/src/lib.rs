@@ -176,9 +176,10 @@ pub enum DebuggerLoggingPolicy {
     /// The debugger will disable all logging after a connection is made. This is
     /// the safest option if the debugger and logging share a transport.
     DisableLogging,
-    /// The debugger will not suspend logging while broken in. This should only
-    /// be used if the debugger and logging transport are separate.
-    DebuggerLogging,
+    /// The debugger will not suspend logging while broken in and will allow log
+    /// messages from the debugger itself. This should only be used if the debugger
+    /// and logging transports are separate.
+    FullLogging,
 }
 
 /// Sets the global instance of the debugger.
@@ -197,7 +198,8 @@ pub fn initialize(interrupt_manager: &mut dyn InterruptManager) {
 
 /// Invokes a debug break instruction. Callers should ensure that the debugger
 /// is enabled before invoking this routine using the [enabled] routine. If this
-/// routine is invoked when the debugger is not enabled, it will cause an exception.
+/// routine is invoked when the debugger is not enabled, it will cause an unhandled
+/// exception.
 pub fn breakpoint() {
     SystemArch::breakpoint();
 }
