@@ -321,7 +321,7 @@ impl InterruptHandler for HwInterruptProtocolHandler {
         let raw_value: u32 = int_id.into();
 
         if raw_value >= self.handlers.lock().len() as u32 {
-            match raw_value & 1024 {
+            match raw_value {
                 1021 | 1022 | 1023 => {
                     // The special interrupt do not need to be acknowledged
                 }
