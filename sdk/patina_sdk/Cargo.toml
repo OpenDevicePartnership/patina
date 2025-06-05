@@ -26,13 +26,11 @@ log = { workspace = true }
 r-efi = { workspace = true }
 mockall = { workspace = true, optional = true }
 fallible-streaming-iterator = { workspace = true }
-linkme = { workspace = true}
+linkme = { workspace = true }
 scroll = { workspace = true }
 
 [target.'cfg(target_arch="x86_64")'.dependencies]
-x86_64 = { workspace = true, features = [
-  "instructions",
-] }
+x86_64 = { workspace = true, features = ["instructions"] }
 uart_16550 = { workspace = true }
 
 [dev-dependencies]
@@ -51,6 +49,9 @@ default = []
 # with the `#[patina_test]` attribute. Otherwise, a linker crash or failure will
 # occur!
 enable_patina_tests = ["patina_sdk_macro/enable_patina_tests"]
+
+unstable = ["unstable-device-path"]
+unstable-device-path = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }
