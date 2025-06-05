@@ -319,6 +319,9 @@ impl InterruptHandler for HwInterruptProtocolHandler {
 
         let int_id = int_id.unwrap();
         let raw_value: u32 = int_id.into();
+        if raw_value >= self.handlers.lock().len() as u32 {
+            return;
+        }
 
         if let Some(handler) = self.handlers.lock()[raw_value as usize] {
             handler(raw_value as u64, context);
