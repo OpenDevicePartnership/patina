@@ -20,7 +20,7 @@ use crate::{
     memory,
 };
 
-use super::UefiTarget;
+use super::PatinaTarget;
 
 const MAX_BREAKPOINTS: usize = 25;
 const BREAKPOINT_LENGTH: usize = SystemArch::BREAKPOINT_INSTRUCTION.len();
@@ -41,7 +41,7 @@ impl Breakpoint {
     }
 }
 
-impl breakpoints::SwBreakpoint for UefiTarget {
+impl breakpoints::SwBreakpoint for PatinaTarget {
     fn add_sw_breakpoint(
         &mut self,
         addr: u64,
@@ -77,7 +77,7 @@ impl breakpoints::SwBreakpoint for UefiTarget {
     }
 }
 
-impl breakpoints::HwWatchpoint for UefiTarget {
+impl breakpoints::HwWatchpoint for PatinaTarget {
     fn add_hw_watchpoint(
         &mut self,
         addr: <Self::Arch as Arch>::Usize,

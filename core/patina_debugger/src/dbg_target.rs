@@ -36,8 +36,8 @@ use crate::{
 #[cfg(feature = "windbg_workarounds")]
 const WINDBG_MOCK_ADDRESSES: [u64; 3] = [0xfffff78000000268, 0, 0x34c00];
 
-/// UEFI target for GDB.
-pub struct UefiTarget {
+/// Patina target for GDB.
+pub struct PatinaTarget {
     /// Exception information for exception context.
     exception_info: ExceptionInfo,
     /// Flag to indicate if the target has been resumed.
@@ -52,14 +52,14 @@ pub struct UefiTarget {
     monitor_buffer: BufferWriter<'static>,
 }
 
-impl UefiTarget {
-    /// Create a new UEFI target.
+impl PatinaTarget {
+    /// Create a new Patina target.
     pub fn new(
         exception_info: ExceptionInfo,
         system_state: &'static Mutex<SystemState>,
         monitor_buffer: &'static mut [u8],
     ) -> Self {
-        UefiTarget {
+        PatinaTarget {
             exception_info,
             resume: false,
             reboot: false,
@@ -85,7 +85,7 @@ impl UefiTarget {
     }
 }
 
-impl Target for UefiTarget {
+impl Target for PatinaTarget {
     type Arch = SystemArch;
     type Error = ();
 
@@ -129,7 +129,7 @@ impl Target for UefiTarget {
     }
 }
 
-impl SingleThreadBase for UefiTarget {
+impl SingleThreadBase for PatinaTarget {
     fn read_registers(&mut self, regs: &mut <Self::Arch as gdbstub::arch::Arch>::Registers) -> TargetResult<(), Self> {
         regs.read_from_context(&self.exception_info.context);
         Ok(())
@@ -182,7 +182,7 @@ impl SingleThreadBase for UefiTarget {
     }
 }
 
-impl SingleThreadResume for UefiTarget {
+impl SingleThreadResume for PatinaTarget {
     fn resume(&mut self, _signal: Option<gdbstub::common::Signal>) -> Result<(), Self::Error> {
         // The resume will happen at the top of the loop in the debugger.
         self.resume = true;
@@ -195,7 +195,7 @@ impl SingleThreadResume for UefiTarget {
     }
 }
 
-impl ext::base::singlethread::SingleThreadSingleStep for UefiTarget {
+impl ext::base::singlethread::SingleThreadSingleStep for PatinaTarget {
     fn step(&mut self, _signal: Option<gdbstub::common::Signal>) -> Result<(), Self::Error> {
         SystemArch::set_single_step(&mut self.exception_info);
         self.resume = true;
@@ -203,7 +203,7 @@ impl ext::base::singlethread::SingleThreadSingleStep for UefiTarget {
     }
 }
 
-impl breakpoints::Breakpoints for UefiTarget {
+impl breakpoints::Breakpoints for PatinaTarget {
     #[inline(always)]
     fn support_sw_breakpoint(&mut self) -> Option<breakpoints::SwBreakpointOps<'_, Self>> {
         Some(self)
@@ -215,7 +215,7 @@ impl breakpoints::Breakpoints for UefiTarget {
     }
 }
 
-impl ext::target_description_xml_override::TargetDescriptionXmlOverride for UefiTarget {
+impl ext::target_description_xml_override::TargetDescriptionXmlOverride for PatinaTarget {
     fn target_description_xml(
         &self,
         annex: &[u8],
