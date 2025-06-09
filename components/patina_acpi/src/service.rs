@@ -22,15 +22,15 @@ pub type AcpiNotifyFn = fn(&AcpiTableHeader, u32, TableKey) -> Result<(), AcpiEr
 pub trait AcpiProvider {
     /// Installs an ACPI table.
     ///
-    /// The table can be installed in either NVS or ACPI reclaim memory, depending on its type.
-    /// If the `physical_address` or `table_key` fields of the `MemoryAcpiTable` are filled in, they will not be used,
-    /// since the table is reallocated and assigned a table key during installation.
+    /// The table can be installed in either NVS or ACPI reclaim memory, depending on platform settings.
+    /// `acpi_table` should point to a valid ACPI table header, followed by any additional trailing bytes specific to the table.
+    /// The `length` field of the `AcpiTableHeader` must be set to the total size of the table, including the header and any trailing bytes.
     ///
     /// The table will be added to the list of installed tables in the XSDT.
     ///
     /// The returned `TableKey` can be used to uninstall the table later.
     /// It is an opaque reference to the table and should not be manipulated directly.
-    fn install_acpi_table(&self, acpi_table: &MemoryAcpiTable) -> Result<TableKey, AcpiError>;
+    fn install_acpi_table(&self, acpi_table: &AcpiTableHeader) -> Result<TableKey, AcpiError>;
 
     /// Installs the FACS.
     ///

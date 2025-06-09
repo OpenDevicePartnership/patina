@@ -39,6 +39,8 @@ pub enum AcpiError {
     XsdtNotInitializedFromHob,
     /// The table was not installed properly and thus cannot be uninstalled or deleted.
     TableNotPresentInMemory,
+    /// There was an attempt to install a null table pointer.
+    NullTablePtr,
 }
 
 impl Into<efi::Status> for AcpiError {
@@ -60,6 +62,7 @@ impl Into<efi::Status> for AcpiError {
             AcpiError::NullRsdpFromHob => efi::Status::NOT_FOUND,
             AcpiError::XsdtNotInitializedFromHob => efi::Status::NOT_FOUND,
             AcpiError::TableNotPresentInMemory => efi::Status::NOT_FOUND,
+            AcpiError::NullTablePtr => efi::Status::INVALID_PARAMETER,
         }
     }
 }

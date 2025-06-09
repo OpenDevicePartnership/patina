@@ -1,14 +1,12 @@
 use core::{
     cell::OnceCell,
     mem,
-    ptr::{self, copy_nonoverlapping},
+    ptr::{self, copy_nonoverlapping, NonNull},
     sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering},
 };
 
 use crate::{
-    acpi_table::{AcpiTableHeader, MemoryAcpiTable},
-    alloc::vec::Vec,
-    signature::ACPI_CHECKSUM_OFFSET,
+    acpi, acpi_table::{AcpiTableHeader, MemoryAcpiTable}, alloc::vec::Vec, signature::ACPI_CHECKSUM_OFFSET
 };
 use crate::{alloc::vec, service::AcpiNotifyFn};
 
@@ -206,7 +204,7 @@ impl<B> AcpiProvider for StandardAcpiProvider<B>
 where
     B: BootServices,
 {
-    fn install_acpi_table(&self, acpi_table: &MemoryAcpiTable) -> Result<TableKey, AcpiError> {
+    fn install_acpi_table(&self, acpi_table: &AcpiTableHeader) -> Result<TableKey, AcpiError> {
         let table_key = self.install_acpi_table_in_memory(acpi_table)?;
 
         self.publish_tables()?;
@@ -345,20 +343,8 @@ where
         if fadt.x_dsdt != 0 {
             // The DSDT has a standard ACPI header. Interpret the first 36 bytes as a header.
             // SAFETY: The DSDT has been checked to be non-null.
-            let dsdt_header = unsafe { *(fadt.x_dsdt as *const AcpiTableHeader) };
-
-            // Read in the DSDT trailing data bytes.
-            // SAFETY: If the DSDT length is accurate, it should be safe to read all trailing bytes.
-            let body_len = dsdt_header.length as usize - ACPI_HEADER_LEN;
-            let body_src = unsafe { (fadt.x_dsdt as *const u8).add(ACPI_HEADER_LEN) };
-            let mut body_data = vec![0u8; body_len];
-            unsafe {
-                ptr::copy_nonoverlapping(body_src, body_data.as_mut_ptr(), body_len);
-            }
-
-            let memory_dsdt = MemoryAcpiTable { header: dsdt_header, bytes: body_data, ..Default::default() };
-
-            self.install_acpi_table_in_memory(&memory_dsdt)?;
+            let dsdt_header = unsafe { &*(fadt.x_dsdt as *mut AcpiTableHeader) };
+            self.install_acpi_table_in_memory(dsdt_header)?;
         }
 
         Ok(())
@@ -378,12 +364,8 @@ where
             let entry_addr = Self::get_xsdt_entry(i, xsdt_ptr as *const u8, xsdt_length as usize)?;
 
             // Each entry points to a table
-            // SAFETY: we assume that the HOB passed in contains valid ACPI table entries
-            let table_header = unsafe { *(entry_addr as *const AcpiTableHeader) };
-            let table_data = MemoryAcpiTable::read_data_from_memory(table_header.length as usize, entry_addr as usize);
-            let memory_table = MemoryAcpiTable { header: table_header, bytes: table_data, ..Default::default() };
-
-            self.install_acpi_table_in_memory(&memory_table)?;
+            let table_header = unsafe { &*(entry_addr as *mut AcpiTableHeader) };
+            self.install_acpi_table_in_memory(table_header)?;
 
             // If this table points to other system tables, install them too
             if table_header.signature == signature::FACP {
@@ -488,20 +470,21 @@ where
     }
 
     /// Allocates ACPI memory for a new table and adds the table to the list of installed ACPI tables.
-    pub(crate) fn install_acpi_table_in_memory(&self, table: &MemoryAcpiTable) -> Result<TableKey, AcpiError> {
+    pub(crate) fn install_acpi_table_in_memory(&self, table_header: &AcpiTableHeader) -> Result<TableKey, AcpiError> {
         let physical_addr =
-            self.allocate_table_addr(table.signature(), uefi_size_to_pages!(table.length() as usize))?;
+            self.allocate_table_addr(table_header.signature, uefi_size_to_pages!(table_header.length as usize))?;
 
         // Copy the desired header into the new memory location
         // SAFETY: If allocation suceeds, `dst_ptr` is non-null and large enough to hold the full table.
         let dst_ptr = physical_addr as *mut u8;
         unsafe {
             // Bitwise copy the desired header into the newly allocated table.
-            let header_src = &table.header as *const AcpiTableHeader as *const u8;
+            let header_src = table_header as *const AcpiTableHeader as *const u8;
             ptr::copy_nonoverlapping(header_src, dst_ptr, ACPI_HEADER_LEN);
             // Bitwise copy the trailing data into the newly allocated table.
-            let payload_dst = dst_ptr.add(size_of::<AcpiTableHeader>());
-            ptr::copy_nonoverlapping(table.bytes.as_ptr(), payload_dst, table.bytes.len());
+            let payload_dst = dst_ptr.add(ACPI_HEADER_LEN);
+            let payload_src = header_src.add(ACPI_HEADER_LEN);
+            ptr::copy_nonoverlapping(payload_src, payload_dst, table_header.length as usize - ACPI_HEADER_LEN);
         }
 
         // Keys must be unique - here we use monotonically increasing
@@ -509,24 +492,22 @@ where
         self.next_table_key.store(next_table_key + 1, Ordering::Release);
 
         // Add the table to the list of installed tables
-        let mut installed_table = table.clone();
-        installed_table.header = table.header;
-        installed_table.bytes = table.bytes.clone();
+        let mut installed_table = MemoryAcpiTable::new_from_ptr(dst_ptr as *mut AcpiTableHeader)?;
         installed_table.table_key = next_table_key;
         installed_table.physical_address = Some(physical_addr);
         self.acpi_tables.write().push(installed_table);
 
         let mut add_to_xsdt = true;
         // Fix up FADT pointers if this table is the FADT or DSDT
-        match table.signature() {
+        match table_header.signature {
             signature::FACP => {
                 add_to_xsdt = false;
                 self.add_fadt_to_list(
                     physical_addr,
-                    table.length() as usize,
-                    table.oem_id(),
-                    table.oem_table_id(),
-                    table.oem_revision(),
+                    table_header.length as usize,
+                    table_header.oem_id,
+                    table_header.oem_table_id,
+                    table_header.oem_revision,
                 )?;
             }
             signature::DSDT => {
@@ -537,7 +518,7 @@ where
         }
 
         let checksum_offset = memoffset::offset_of!(AcpiTableHeader, checksum);
-        Self::acpi_table_update_checksum(dst_ptr, table.length() as usize, checksum_offset);
+        Self::acpi_table_update_checksum(dst_ptr, table_header.length as usize, checksum_offset);
 
         if add_to_xsdt {
             self.add_entry_to_xsdt(physical_addr as u64)?;
@@ -877,8 +858,9 @@ mod tests {
         let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
 
-        let header = AcpiTableHeader { signature: 0x1111, length: 123, ..Default::default() };
-        let table = MemoryAcpiTable { header, ..Default::default() };
+        let mut header = AcpiTableHeader { signature: 0x1111, length: 123, ..Default::default() };
+        let header_ptr = NonNull::new(&mut header as *mut AcpiTableHeader).unwrap();
+        let table = MemoryAcpiTable { header: header_ptr, table_key: 123, physical_address: Some(123) };
 
         provider.acpi_tables.write().push(table);
 

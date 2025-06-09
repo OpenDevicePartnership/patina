@@ -4,12 +4,14 @@
 //! Supports only ACPI version >= 2.0.
 //! Fields corresponding to ACPI 1.0 are preceded with an underscore (`_`) and are not in use.
 
+use crate::error::AcpiError;
 use crate::{service::TableKey, signature::ACPI_HEADER_LEN};
 
 use alloc::vec;
 use alloc::vec::Vec;
-use core::ptr;
+use core::ptr::{self, NonNull};
 use core::ptr::addr_of;
+use core::slice;
 
 /// Represents the FADT for ACPI 2.0+.
 /// Equivalent to EFI_ACPI_3_0_FIXED_ACPI_DESCRIPTION_TABLE.
@@ -192,14 +194,12 @@ pub struct AcpiTableHeader {
 
 /// Represents an ACPI table installed in memory, including a header and any trailing bytes.
 /// Here, the trailing bytes are copied to the heap and owned by the struct.
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct MemoryAcpiTable {
     /// Standard ACPI header.
-    pub header: AcpiTableHeader,
+    pub header: NonNull<AcpiTableHeader>,
 
     /* The following fields are not present in the ACPI specification, but are included for implementation convenience. */
-    /// Trailing bytes following the header. The number of bytes is determined by the header's `length` field.
-    pub bytes: Vec<u8>,
     /// Unique key assigned to ACPI table upon installation. Zero if the table does not have an associated key.
     pub table_key: TableKey,
     /// Physical address of the table in memory. None if the table is not yet installed in ACPI firmware memory.
@@ -207,63 +207,77 @@ pub struct MemoryAcpiTable {
 }
 
 impl MemoryAcpiTable {
+    pub fn new_from_ptr(header: *mut AcpiTableHeader) -> Result<Self, AcpiError> {
+        let nonnull_header = NonNull::new(header).ok_or(AcpiError::NullTablePtr)?;
+        Ok(MemoryAcpiTable { header: nonnull_header, table_key: 0, physical_address: None })
+    }
+}
+
+/// Implementations to access the fields of the ACPI table header.
+/// SAFETY: Pointer has been checked as non-null and can only be a AcpiTable
+impl MemoryAcpiTable {
     /// Revision number of the table.
     pub fn revision(&self) -> u8 {
-        self.header.revision
+        unsafe { self.header.as_ref() }.revision
     }
 
     /// Header checksum (all bytes in the table must sum to zero).
     pub fn checksum(&self) -> u8 {
-        self.header.checksum
+        unsafe { self.header.as_ref() }.checksum
     }
 
     /// OEM ID (6 ASCII characters, not null-terminated).
     pub fn oem_id(&self) -> [u8; 6] {
-        self.header.oem_id
+        unsafe { self.header.as_ref() }.oem_id
     }
 
     /// OEM Table ID (8 ASCII characters, not null-terminated).
     pub fn oem_table_id(&self) -> [u8; 8] {
-        self.header.oem_table_id
+        unsafe { self.header.as_ref() }.oem_table_id
     }
 
     /// OEM revision number.
     pub fn oem_revision(&self) -> u32 {
-        self.header.oem_revision
+        unsafe { self.header.as_ref() }.oem_revision
     }
 
     /// Creator ID (often the compiler/vendor signature).
     pub fn creator_id(&self) -> u32 {
-        self.header.creator_id
+        unsafe { self.header.as_ref() }.creator_id
     }
 
     /// Creator revision number.
     pub fn creator_revision(&self) -> u32 {
-        self.header.creator_revision
+        unsafe { self.header.as_ref() }.creator_revision
     }
 
     /// Total table length, including header and any trailing fields.
     pub fn length(&self) -> u32 {
-        self.header.length
+        unsafe { self.header.as_ref() }.length
     }
 
     /// Table signature, which defines what type of table it is.
     pub fn signature(&self) -> u32 {
-        self.header.signature
+        unsafe { self.header.as_ref() }.signature
+    }
+
+    /// Retrieves the header mutably.
+    pub fn header_mut(&mut self) -> &mut AcpiTableHeader {
+        unsafe { self.header.as_mut() }
+    }
+
+    /// Variable-length trailing bytes of the ACPI table, following the header.
+    fn data(&self) -> &[u8] {
+        let inmemory_header = self.header.as_ptr();
+        let body_len = self.length() as usize - ACPI_HEADER_LEN;
+        unsafe { slice::from_raw_parts(inmemory_header as *const u8, body_len) }
+    }
+
+    /// Retrieves the data as a mutable slice.
+    pub fn data_mut(&mut self) -> &mut [u8] {
+        let inmemory_header =  self.header.as_ptr();
+        let body_len = self.length() as usize - ACPI_HEADER_LEN;
+        unsafe { slice::from_raw_parts_mut(inmemory_header as *mut u8, body_len) }
     }
 }
 
-impl MemoryAcpiTable {
-    /// Reads trailing bytes of an ACPI table (following the header) into a owned Vec<>.
-    /// `current_address` is the address in memory of the ACPI table to read data from.
-    /// SAFETY: The caller must ensure that the address is a valid ACPI table and that the length is correct.
-    pub(crate) fn read_data_from_memory(acpi_table_length: usize, current_address: usize) -> Vec<u8> {
-        let body_len = acpi_table_length - ACPI_HEADER_LEN;
-        let body_src = unsafe { (current_address as *const u8).add(ACPI_HEADER_LEN) };
-        let mut body_data = vec![0u8; body_len];
-        unsafe {
-            ptr::copy_nonoverlapping(body_src, body_data.as_mut_ptr(), body_len);
-        }
-        body_data
-    }
-}

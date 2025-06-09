@@ -2,6 +2,7 @@
 //!
 //! Wrappers for the C ACPI protocols to call into Rust ACPI implementations.
 
+use crate::acpi;
 use crate::acpi_table::AcpiTableHeader;
 
 use alloc::collections::btree_map::BTreeMap;
@@ -93,18 +94,10 @@ impl AcpiTableProtocol {
                 return efi::Status::INVALID_PARAMETER;
             }
 
-            let acpi_table = unsafe {
-                // SAFETY: pointer is valid and large enough for AcpiTable
-                &mut *(acpi_table_buffer as *mut AcpiTableHeader)
-            };
+            // SAFETY: acpi_table_buffer is checked non-null and large enough to read an AcpiTableHeader.
+            let acpi_table = unsafe { &*(acpi_table_buffer as *const AcpiTableHeader) };
 
-            // Wrap the raw `acpi_table_buffer` with our Rust `MemoryAcpiTable` struct to preserve the trailing bytes for installation
-            let trailing_data =
-                MemoryAcpiTable::read_data_from_memory(acpi_table_buffer_size, acpi_table_buffer as usize);
-            let acpi_wrapper =
-                MemoryAcpiTable { header: acpi_table.clone(), bytes: trailing_data, ..Default::default() };
-
-            match ACPI_TABLE_INFO.install_acpi_table(&acpi_wrapper) {
+            match ACPI_TABLE_INFO.install_acpi_table(acpi_table) {
                 Ok(key) => {
                     if let Some(key_ptr) = NonNull::new(table_key) {
                         // SAFETY: `key_ptr` is checked to be non-null
