@@ -1,4 +1,4 @@
-//! UEFI Debugger
+//! Patina Debugger
 //!
 //! This crate provides a debugger implementation that will install itself in the
 //! exception handlers and communicate with debugger software using the GDB Remote
@@ -14,7 +14,7 @@
 //! ## Examples and Usage
 //!
 //! The debugger consists of the static access routines and the underlying debugger
-//! struct. The top level platform code should initialize the statis `UefiDebugger`
+//! struct. The top level platform code should initialize the statis `PatinaDebugger`
 //! struct with the appropriate serial transport and default configuration. The
 //! platform has the option of setting static configuration, or enabling the
 //! debugger in runtime code based on platform policy. During entry, the platform
@@ -29,8 +29,8 @@
 //!
 //! use patina_internal_cpu::interrupts::{Interrupts, InterruptManager};
 //!
-//! static DEBUGGER: patina_debugger::UefiDebugger<patina_sdk::serial::uart::UartNull> =
-//!     patina_debugger::UefiDebugger::new(patina_sdk::serial::uart::UartNull{});
+//! static DEBUGGER: patina_debugger::PatinaDebugger<patina_sdk::serial::uart::UartNull> =
+//!     patina_debugger::PatinaDebugger::new(patina_sdk::serial::uart::UartNull{});
 //!
 //! fn entry() {
 //!
@@ -74,7 +74,7 @@
 //! ```
 //!
 //! The debugger can be further configured by using various functions on the
-//! initialization of the debugger struct. See the definition for [debugger::UefiDebugger]
+//! initialization of the debugger struct. See the definition for [debugger::PatinaDebugger]
 //! for more details. Notably, if the device is using the same transport for
 //! logging and debugger, it is advisable to use `.without_log_init()`.
 //!
@@ -102,7 +102,7 @@ mod transport;
 
 extern crate alloc;
 
-pub use debugger::UefiDebugger;
+pub use debugger::PatinaDebugger;
 
 use arch::{DebuggerArch, SystemArch};
 use patina_internal_cpu::interrupts::{ExceptionContext, InterruptManager};
@@ -167,8 +167,23 @@ enum DebugError {
     RebootFailure,
 }
 
+/// Policy for how the debugger will handle logging on the system.
+pub enum DebuggerLoggingPolicy {
+    /// The debugger will suspend logging while broken in, but will not change the
+    /// logging state outside of the debugger. This may cause instability if the
+    /// debugger and logging share a transport.
+    SuspendLogging,
+    /// The debugger will disable all logging after a connection is made. This is
+    /// the safest option if the debugger and logging share a transport.
+    DisableLogging,
+    /// The debugger will not suspend logging while broken in and will allow log
+    /// messages from the debugger itself. This should only be used if the debugger
+    /// and logging transports are separate.
+    FullLogging,
+}
+
 /// Sets the global instance of the debugger.
-pub fn set_debugger<T: SerialIO>(debugger: &'static UefiDebugger<T>) {
+pub fn set_debugger<T: SerialIO>(debugger: &'static PatinaDebugger<T>) {
     DEBUGGER.call_once(|| debugger);
 }
 
@@ -181,7 +196,10 @@ pub fn initialize(interrupt_manager: &mut dyn InterruptManager) {
     }
 }
 
-/// Invokes a debug break instruction.
+/// Invokes a debug break instruction. Callers should ensure that the debugger
+/// is enabled before invoking this routine using the [enabled] routine. If this
+/// routine is invoked when the debugger is not enabled, it will cause an unhandled
+/// exception.
 pub fn breakpoint() {
     SystemArch::breakpoint();
 }

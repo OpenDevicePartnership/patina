@@ -53,9 +53,10 @@
   - [Synchronization](dxe_core/synchronization.md)
   - [Testing](dxe_core/testing.md)
 
-# Creating a Rust DXE Driver
+# Creating a Patina Component
 
-- [Component Interface](driver/interface.md)
+- [Component Interface](component/interface.md)
+- [Component Crate Requirements](component/requirements.md)
 
 -----------
 [Contributors](misc/contributors.md)

@@ -1,3 +1,4 @@
 /target
 *.profraw
 Cargo.lock
+docs/book/
