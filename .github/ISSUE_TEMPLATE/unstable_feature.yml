@@ -32,6 +32,6 @@ body:
   - type: checkboxes
     attributes:
       label: Unresolved Questions
-      description: List every unresolved questions that need to be answered for the feature to be stable.
+      description: List every unresolved question that needs to be answered for the feature to be stable.
       options:
       - label: <Unresolved Questions>
