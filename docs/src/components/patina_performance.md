@@ -60,7 +60,7 @@ Core::default()
 | `PERF_CROSSMODULE_BEGIN`<br>`PERF_CROSSMODULE_END`                    | `perf_cross_module_begin`<br>`perf_cross_module_end`                     | Measure the performance of a behavior in different modules.     |
 | `PERF_START`<br>`PERF_START_EX`<br>`PERF_END`<br>`PERF_END_EX`        | `perf_start`<br>`perf_start_ex`<br>`perf_end`<br>`perf_end_ex`           | Do a performance measurement.                                   |
 
-### How to log a performance measurement with patina performance
+### How to log a performance measurements
 
 Depending of if you are trying to do a performance measurement from the core or not, some difference apply.
 
