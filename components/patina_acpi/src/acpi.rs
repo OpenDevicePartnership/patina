@@ -228,6 +228,12 @@ where
         if let Some(facs) = self.system_tables.facs_mut() {
             facs.signature = signature::FACS;
             facs.length = facs_info.length;
+            facs.hardware_signature = facs_info.hardware_signature;
+            facs.global_lock = facs_info.global_lock;
+            facs.flags = facs_info.flags;
+            facs.x_firmware_waking_vector = facs.x_firmware_waking_vector;
+            facs.version = facs_info.version;
+            facs.reserved = facs_info.reserved;        
         }
 
         self.checksum_common_tables()?;
@@ -909,10 +915,12 @@ mod tests {
         let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
 
-        let header1 = AcpiTableHeader { signature: 0x1, length: 10, ..Default::default() };
-        let table1 = MemoryAcpiTable { header: header1, ..Default::default() };
-        let header2 = AcpiTableHeader { signature: 0x2, length: 20, ..Default::default() };
-        let table2 = MemoryAcpiTable { header: header2, ..Default::default() };
+        let mut header1 = AcpiTableHeader { signature: 0x1, length: 10, ..Default::default() };
+        let header1_ptr = NonNull::new(&mut header1 as *mut AcpiTableHeader).unwrap();
+        let table1 = MemoryAcpiTable { header: header1_ptr, table_key: 123, physical_address: Some(123) };
+        let mut header2 = AcpiTableHeader { signature: 0x2, length: 20, ..Default::default() };
+        let header2_ptr = NonNull::new(&mut header2 as *mut AcpiTableHeader).unwrap();
+        let table2 = MemoryAcpiTable { header: header2_ptr, table_key: 123, physical_address: Some(123) };
         {
             let mut vec = provider.acpi_tables.write();
             vec.push(table1);
@@ -980,6 +988,10 @@ mod tests {
             let fadt_ref: &AcpiFadt = &*fadt_ptr;
             assert!(fadt_ref.get_x_firmware_ctrl() != 0);
         }
+
+        // Make sure FACS data is preserved
+        assert_eq!(provider.system_tables.facs_mut().unwrap().signature, signature::FACS);
+        assert_eq!(provider.system_tables.facs_mut().unwrap().length, 64);
     }
 
     #[test]
@@ -999,7 +1011,6 @@ mod tests {
             creator_revision: 0,
             ..Default::default()
         };
-        let fadt_table = MemoryAcpiTable { header: fadt_header, ..Default::default() };
         let boxed_table = Box::new(fadt_table.clone());
         // Treat heap-allocated FADT as if it were in ACPI memory
         let raw_ptr = Box::into_raw(boxed_table);
@@ -1015,9 +1026,6 @@ mod tests {
 
         // FADT should have been added to list
         assert_eq!(provider.system_tables.fadt.load(Ordering::Acquire) as usize, raw_ptr as usize);
-
-        // Clean up
-        unsafe { drop(Box::from_raw(raw_ptr)) };
     }
 
     #[test]

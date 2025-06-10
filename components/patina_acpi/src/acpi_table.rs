@@ -129,7 +129,7 @@ pub struct AcpiFacs {
 
     pub(crate) global_lock: u32,
     pub(crate) flags: u32,
-    pub(crate) firmware_waking_vector: u64,
+    pub(crate) x_firmware_waking_vector: u64,
     pub(crate) version: u8,
     pub(crate) reserved: [u8; 31],
 }
