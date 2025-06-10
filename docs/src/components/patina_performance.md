@@ -62,7 +62,7 @@ Core::default()
 
 ### How to log a performance measurements
 
-Depending of if you are trying to do a performance measurement from the core or not, some difference apply.
+The method to record performance measurements varies according to whether it is performed from within the core or an external component.
 
 *Example of measurement from the core:*
 
