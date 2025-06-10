@@ -4,7 +4,7 @@ The patina performance component is a native rust implementation for managing fi
 
 ## How to enable performance measurements
 
-Enabling performance in patina is done by adding the `Performance` component to the build.
+Enabling performance in patina is done by adding the `Performance` component to the patina DXE Core build.
 
 ```rust
 // ...
