@@ -1,6 +1,6 @@
 # Patina Performance
 
-Patina performance component is a native rust implementation of the performance library in edkII.
+The patina performance component is a native rust implementation for managing firmware performance data.
 
 ## How to enable performance measurement with patina performance
 
