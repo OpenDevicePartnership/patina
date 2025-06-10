@@ -21,7 +21,7 @@ Core::default()
 Then enable performance when building. For example, if building in `patina-qemu`,
 this build variable should be set to true: `BLD_*_PERF_TRACE_ENABLE=TRUE`.
 
-Since patina does not support PCDs, performance mask to enable or disable some sort of performance is done via configuration.
+The patina performance component uses a feature mask in its configuration to control how performance is measured.
 
 ```rust
 
