@@ -2,7 +2,7 @@
 
 The patina performance component is a native rust implementation for managing firmware performance data.
 
-## How to enable performance measurement with patina performance
+## How to enable performance measurements
 
 Enabling performance in patina is done by adding the `Performance` component to the build.
 
