@@ -1,0 +1,11 @@
+[package]
+name = "xtask"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+colored = "3.0.0"
+

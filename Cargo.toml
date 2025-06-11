@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 
-members = ["components/*", "core/*", "sdk/*", "patina_dxe_core"]
+members = ["components/*", "core/*", "sdk/*", "patina_dxe_core", "xtask"]
 
 [workspace.package]
 version = "3.0.0"

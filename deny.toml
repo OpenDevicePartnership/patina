@@ -88,6 +88,7 @@ exceptions = [
     { allow = ["0BSD"], crate = "managed" },                # todo: follow up on crate license
     { allow = ["BSD-3-Clause"], crate = "alloc-no-stdlib"}, # todo: follow up on crate license (via brotli-decompressor)
     { allow = ["Unicode-3.0"], crate = "unicode-ident" },   # todo: follow up on crate license
+    { allow = ["MPL-2.0"], crate = "colored" },   # todo: follow up on crate license
 ]
 
 [licenses.private]
