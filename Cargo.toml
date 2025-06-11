@@ -14,6 +14,7 @@ publish = ["patina-fw"]
 [workspace.dependencies]
 alloc-no-stdlib = { version = "~2.0" }
 arm-gic = { version = "^0.1.2" }
+bitflags = "2.9.1"
 bitfield-struct = { version = "0.10" }
 brotli-decompressor = { version = "4.0.0", default-features = false }
 cfg-if = { version = "1" }
@@ -44,6 +45,7 @@ patina_performance = { version = "1.0.1", path = "components/patina_performance"
 patina_sdk = { version = "1.0.1", path = "sdk/patina_sdk", registry = "patina-fw" }
 patina_sdk_macro = { version = "1.0.1", path = "sdk/patina_sdk_macro", registry = "patina-fw" }
 patina_stacktrace = { version = "1.0.1", path = "core/patina_stacktrace", registry = "patina-fw" }
+patina_variables = { version = "1.0.1", path = "components/patina_variables", registry = "patina-fw" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
 r-efi = { version = "5.0.0", default-features = false }

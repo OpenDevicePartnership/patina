@@ -1,8 +1,9 @@
+use alloc::boxed::Box;
 use patina_sdk::component::service::Service;
 use patina_sdk::test::patina_test;
 
 use crate::{
-    acpi_table::{AcpiFacs, AcpiTableHeader, MemoryAcpiTable},
+    acpi_table::{AcpiFacs, AcpiFadt, AcpiTableHeader},
     service::AcpiProvider,
     signature::{self, ACPI_HEADER_LEN},
 };
@@ -14,17 +15,14 @@ fn acpi_test(provider: Service<dyn AcpiProvider>) -> patina_sdk::test::Result {
     let dummy_header = AcpiTableHeader {
         signature: signature::FACP,
         length: ACPI_HEADER_LEN as u32,
-        revision: 1,
-        checksum: 0,
-        oem_id: *b"123456",
-        oem_table_id: *b"12345678",
-        oem_revision: 1,
-        creator_id: 0,
-        creator_revision: 0,
+        ..Default::default()
     };
-    let dummy_table = MemoryAcpiTable { header: dummy_header, ..Default::default() };
+    let dummy_fadt = AcpiFadt {
+        header: dummy_header,
+        ..Default::default()
+    };
 
-    let key = provider.install_acpi_table(&dummy_table).expect("Should install dummy table");
+    let key = provider.install_acpi_table(Box::new(dummy_fadt)).expect("Should install dummy table");
     assert!(key > 0, "Table key should be greater than zero");
 
     // Install a FACS table (special case — not iterated over)

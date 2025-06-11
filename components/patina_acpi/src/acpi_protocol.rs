@@ -2,9 +2,9 @@
 //!
 //! Wrappers for the C ACPI protocols to call into Rust ACPI implementations.
 
-use crate::acpi;
-use crate::acpi_table::AcpiTableHeader;
+use crate::acpi_table::{AcpiTableHeader, StandardAcpiTable};
 
+use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
 use core::ffi::c_void;
 use patina_sdk::uefi_protocol::ProtocolInterface;
@@ -14,7 +14,7 @@ use spin::rwlock::RwLock;
 use crate::service::{AcpiNotifyFn, AcpiProvider};
 use crate::{
     acpi::ACPI_TABLE_INFO,
-    acpi_table::{AcpiFacs, MemoryAcpiTable},
+    acpi_table::AcpiFacs,
     signature::{self},
 };
 
@@ -95,9 +95,9 @@ impl AcpiTableProtocol {
             }
 
             // SAFETY: acpi_table_buffer is checked non-null and large enough to read an AcpiTableHeader.
-            let acpi_table = unsafe { &*(acpi_table_buffer as *const AcpiTableHeader) };
+            let acpi_table = unsafe { CAcpiTable::from_ptr(acpi_table_buffer) };
 
-            match ACPI_TABLE_INFO.install_acpi_table(acpi_table) {
+            match ACPI_TABLE_INFO.install_acpi_table(Box::new(acpi_table)) {
                 Ok(key) => {
                     if let Some(key_ptr) = NonNull::new(table_key) {
                         // SAFETY: `key_ptr` is checked to be non-null
@@ -223,3 +223,27 @@ impl AcpiSdtProtocol {
 }
 
 type AcpiNotifyFnExt = fn(*const AcpiTableHeader, u32, usize) -> efi::Status;
+
+/// Represents a `*const c_void` pointer to an ACPI table in C.
+struct CAcpiTable {
+    table_ptr: *const c_void,
+}
+
+impl CAcpiTable {
+    /// Converts a `*const c_void` pointer to a `CAcpiTable`.
+    ///
+    /// # Safety
+    /// The caller must ensure that the pointer is valid and points to an ACPI table.
+    unsafe fn from_ptr(ptr: *const c_void) -> Self {
+        Self { table_ptr: ptr }
+    }
+}
+
+impl StandardAcpiTable for CAcpiTable {
+    /// # Safety
+    /// The caller must ensure that the pointer is valid and points to an ACPI table.
+    fn header(&self) -> &AcpiTableHeader {
+        // SAFETY: The first field of any ACPI table is the header.
+        unsafe { &*(self.table_ptr as *const AcpiTableHeader) }
+    }
+}

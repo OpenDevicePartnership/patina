@@ -1,15 +1,18 @@
 use core::{
     cell::OnceCell,
     mem,
-    ptr::{self, copy_nonoverlapping, NonNull},
+    ptr::{self, copy_nonoverlapping},
     sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering},
 };
 
 use crate::{
-    acpi, acpi_table::{AcpiTableHeader, MemoryAcpiTable}, alloc::vec::Vec, signature::ACPI_CHECKSUM_OFFSET
+    acpi_table::{AcpiTableHeader, MemoryAcpiTable, StandardAcpiTable},
+    alloc::vec::Vec,
+    signature::ACPI_CHECKSUM_OFFSET,
 };
 use crate::{alloc::vec, service::AcpiNotifyFn};
 
+use alloc::boxed::Box;
 use patina_sdk::boot_services::{BootServices, StandardBootServices};
 use patina_sdk::{
     base::UEFI_PAGE_SIZE,
@@ -204,8 +207,8 @@ impl<B> AcpiProvider for StandardAcpiProvider<B>
 where
     B: BootServices,
 {
-    fn install_acpi_table(&self, acpi_table: &AcpiTableHeader) -> Result<TableKey, AcpiError> {
-        let table_key = self.install_acpi_table_in_memory(acpi_table)?;
+    fn install_acpi_table(&self, acpi_table: Box<dyn StandardAcpiTable>) -> Result<TableKey, AcpiError> {
+        let table_key = self.install_acpi_table_in_memory(acpi_table.header())?;
 
         self.publish_tables()?;
         self.notify_acpi_list(table_key)?;
@@ -221,7 +224,7 @@ where
         let facs_ptr = facs_install_addr as u64;
         self.system_tables.facs.store(facs_ptr as *mut AcpiFacs, Ordering::Release);
         if let Some(fadt) = self.system_tables.fadt_mut() {
-            fadt.x_firmware_ctrl = facs_ptr;
+            fadt.set_x_firmware_ctrl(facs_ptr);
         }
 
         // Update the new in-memory FACS
@@ -233,7 +236,7 @@ where
             facs.flags = facs_info.flags;
             facs.x_firmware_waking_vector = facs.x_firmware_waking_vector;
             facs.version = facs_info.version;
-            facs.reserved = facs_info.reserved;        
+            facs.reserved = facs_info.reserved;
         }
 
         self.checksum_common_tables()?;
@@ -336,20 +339,20 @@ where
     /// Installs the FADT if provided in the HOB list.
     fn install_fadt_tables_from_hob(&self, fadt: &AcpiFadt) -> Result<(), AcpiError> {
         // SAFETY: we assume the FADT set up in the HOB points to a valid FACS if the pointer is non-null
-        if fadt.x_firmware_ctrl != 0 {
+        if fadt.x_firmware_ctrl() != 0 {
             // SAFETY: The FACS has been checked to be non-null.
             // The caller must ensure that the FACS in the HOB is valid
-            let facs_ptr = unsafe { &mut *(fadt.x_firmware_ctrl as *mut AcpiFacs) };
+            let facs_ptr = unsafe { &mut *(fadt.inner.x_firmware_ctrl as *mut AcpiFacs) };
             if facs_ptr.signature != signature::FACS {
                 return Err(AcpiError::InvalidSignature);
             }
             self.install_facs(facs_ptr)?;
         }
 
-        if fadt.x_dsdt != 0 {
+        if fadt.x_dsdt() != 0 {
             // The DSDT has a standard ACPI header. Interpret the first 36 bytes as a header.
             // SAFETY: The DSDT has been checked to be non-null.
-            let dsdt_header = unsafe { &*(fadt.x_dsdt as *mut AcpiTableHeader) };
+            let dsdt_header = unsafe { &*(fadt.x_dsdt() as *mut AcpiTableHeader) };
             self.install_acpi_table_in_memory(dsdt_header)?;
         }
 
@@ -446,8 +449,8 @@ where
         let dsdt_ptr = self.system_tables.dsdt.load(Ordering::Acquire) as u64;
 
         if let Some(fadt) = self.system_tables.fadt_mut() {
-            fadt.x_firmware_ctrl = facs_ptr;
-            fadt.x_dsdt = dsdt_ptr;
+            fadt.inner.x_firmware_ctrl = facs_ptr;
+            fadt.inner.x_dsdt = dsdt_ptr;
         }
 
         if let Some(rsdp) = self.system_tables.rsdp_mut() {
@@ -469,7 +472,7 @@ where
     fn add_dsdt_to_list(&self, physical_addr: usize) {
         let dsdt_ptr = physical_addr as u64;
         if let Some(fadt) = self.system_tables.fadt_mut() {
-            fadt.x_dsdt = dsdt_ptr;
+            fadt.inner.x_dsdt = dsdt_ptr;
         }
 
         self.system_tables.dsdt.store(physical_addr as *mut AcpiDsdt, Ordering::Release);
@@ -671,7 +674,7 @@ where
                 self.system_tables.facs.store(core::ptr::null_mut(), Ordering::Release);
                 // Clear out the FACS pointer in the FADT
                 if let Some(fadt) = self.system_tables.fadt_mut() {
-                    fadt.x_firmware_ctrl = 0;
+                    fadt.set_x_firmware_ctrl(0);
                     Self::acpi_table_update_checksum(
                         fadt as *mut AcpiFadt as *mut u8,
                         fadt.header.length as usize,
@@ -683,7 +686,7 @@ where
                 self.system_tables.dsdt.store(core::ptr::null_mut(), Ordering::Release);
                 if let Some(fadt) = self.system_tables.fadt_mut() {
                     // Clear out the xDSDT pointer in the FADT
-                    fadt.x_dsdt = 0;
+                    fadt.set_x_dsdt(0);
                     Self::acpi_table_update_checksum(
                         fadt as *mut AcpiFadt as *mut u8,
                         fadt.header.length as usize,
@@ -840,7 +843,10 @@ where
 mod tests {
     extern crate std;
 
+    use crate::acpi_table::FadtData;
+
     use super::*;
+    use core::ptr::NonNull;
     use patina_sdk::boot_services::MockBootServices;
     use patina_sdk::component::service::memory::MockMemoryManager;
     use patina_sdk::component::service::memory::StdMemoryManager;
@@ -973,7 +979,7 @@ mod tests {
         // Dummy FACS and FADT
         let facs = AcpiFacs { signature: signature::FACS, length: 64, ..Default::default() };
         let fadt_header = AcpiTableHeader { signature: signature::FACP, length: 244, ..Default::default() };
-        let fadt = AcpiFadt { header: fadt_header, x_firmware_ctrl: 0, ..Default::default() };
+        let fadt = AcpiFadt { header: fadt_header, inner: FadtData::default(), ..Default::default() };
         // Store the dummy FADT so it seems like it's been "installed"
         let fadt_ptr = Box::into_raw(Box::new(fadt));
         provider.system_tables.fadt.store(fadt_ptr, Ordering::Release);
@@ -986,7 +992,7 @@ mod tests {
         // Make sure FACS was installed into FADT
         unsafe {
             let fadt_ref: &AcpiFadt = &*fadt_ptr;
-            assert!(fadt_ref.get_x_firmware_ctrl() != 0);
+            assert!(fadt_ref.x_firmware_ctrl() != 0);
         }
 
         // Make sure FACS data is preserved
@@ -1009,9 +1015,8 @@ mod tests {
             oem_revision: 1,
             creator_id: 0,
             creator_revision: 0,
-            ..Default::default()
         };
-        let boxed_table = Box::new(fadt_table.clone());
+        let boxed_table = Box::new(fadt_header);
         // Treat heap-allocated FADT as if it were in ACPI memory
         let raw_ptr = Box::into_raw(boxed_table);
 
@@ -1152,7 +1157,7 @@ mod tests {
         // Dummy FADT in system_tables
         let fadt_header = AcpiTableHeader { signature: signature::FACP, length: 100, ..Default::default() };
         let mut fadt = Box::new(AcpiFadt { header: fadt_header, ..Default::default() });
-        fadt.x_firmware_ctrl = 0xdead;
+        fadt.set_x_firmware_ctrl(0xDEAD);
         let fadt_ptr = Box::into_raw(fadt);
         provider.system_tables.fadt.store(fadt_ptr, Ordering::Release);
 
@@ -1172,7 +1177,7 @@ mod tests {
 
         // FADT should no longer point to DSDT
         let fadt_ref = unsafe { &*fadt_ptr };
-        assert_eq!(unsafe { fadt_ref.get_x_dsdt() }, 0);
+        assert_eq!(fadt_ref.x_dsdt(), 0);
     }
 
     #[test]

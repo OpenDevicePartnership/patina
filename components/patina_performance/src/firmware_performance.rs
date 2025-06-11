@@ -5,6 +5,8 @@ use core::{
     iter::Once,
 };
 
+use patina_sdk::boot_services::StandardBootServices;
+use patina_sdk::uefi_protocol::status_code::StatusCodeRuntimeProtocol;
 use patina_sdk::{
     boot_services::{self, event::EventType, tpl::Tpl, BootServices},
     component::{
@@ -73,8 +75,10 @@ where
         self,
         _cfg: Config<FirmwarePerformanceDxeInit>,
         firmware_performance_hob: Hob<FirmwarePerformanceHob>,
+        boot_services: StandardBootServices,
     ) -> patina_sdk::error::Result<()> {
         // Get Report Status Code Handler Protocol.
+        let p = unsafe { boot_services.as_ref().locate_protocol::<StatusCodeRuntimeProtocol>(None) };
         // Register report status code listener for OS Loader load and start.
         // Register the notify function to install FPDT at EndOfDxe.
 

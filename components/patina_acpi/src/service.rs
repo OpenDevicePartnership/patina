@@ -8,9 +8,10 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use crate::acpi_table::{AcpiFacs, AcpiTableHeader, MemoryAcpiTable};
+use crate::acpi_table::{AcpiFacs, AcpiTableHeader, MemoryAcpiTable, StandardAcpiTable};
 use crate::error::AcpiError;
 
 pub type TableKey = usize;
@@ -30,7 +31,7 @@ pub trait AcpiProvider {
     ///
     /// The returned `TableKey` can be used to uninstall the table later.
     /// It is an opaque reference to the table and should not be manipulated directly.
-    fn install_acpi_table(&self, acpi_table: &AcpiTableHeader) -> Result<TableKey, AcpiError>;
+    fn install_acpi_table(&self, acpi_table: Box<dyn StandardAcpiTable>) -> Result<TableKey, AcpiError>;
 
     /// Installs the FACS.
     ///

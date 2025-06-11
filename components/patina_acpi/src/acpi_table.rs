@@ -7,20 +7,40 @@
 use crate::error::AcpiError;
 use crate::{service::TableKey, signature::ACPI_HEADER_LEN};
 
-use alloc::vec;
-use alloc::vec::Vec;
-use core::ptr::{self, NonNull};
-use core::ptr::addr_of;
+use core::ptr::NonNull;
 use core::slice;
+
+/// Any ACPI table with the standard ACPI header.
+pub trait StandardAcpiTable {
+    /// The standard 36-byte ACPI header.
+    fn header(&self) -> &AcpiTableHeader;
+
+    /// The full table as a byte slice (length taken from the header).
+    ///
+    /// # Safety
+    /// The table data must be laid out exactly as a contiguous array of bytes, with no padding or gaps.
+    /// The length of the table data must be exactly `header().len - ACPI_HEADER_LEN`.
+    fn data_bytes(&self) -> &[u8] {
+        let table_ptr = self as *const _ as *const u8;
+        let data_ptr = unsafe { table_ptr.add(ACPI_HEADER_LEN) };
+        let data_len = self.header().length as usize - ACPI_HEADER_LEN;
+        unsafe { slice::from_raw_parts(data_ptr, data_len) }
+    }
+}
 
 /// Represents the FADT for ACPI 2.0+.
 /// Equivalent to EFI_ACPI_3_0_FIXED_ACPI_DESCRIPTION_TABLE.
-#[repr(C, packed)]
+#[repr(C)]
 #[derive(Default, Clone, Copy)]
-pub struct AcpiFadt {
+pub(crate) struct AcpiFadt {
     // Standard ACPI header.
     pub(crate) header: AcpiTableHeader,
+    pub(crate) inner: FadtData,
+}
 
+#[repr(C, packed)]
+#[derive(Default, Clone, Copy)]
+pub(crate) struct FadtData {
     pub(crate) _firmware_ctrl: u32,
     pub(crate) _dsdt: u32,
     pub(crate) _reserved0: u8,
@@ -90,27 +110,29 @@ pub struct GenericAddressStructure {
     address: u64,
 }
 
+impl StandardAcpiTable for AcpiFadt {
+    fn header(&self) -> &AcpiTableHeader {
+        &self.header
+    }
+}
+
 /// Reads unaligned fields on the FADT.
 /// Fields on the FADT may be unaligned, since by specification the FADT is packed.
 impl AcpiFadt {
-    /// SAFETY: reads the packed `x_firmware_ctrl` field even if unaligned.
-    #[allow(dead_code)]
-    pub unsafe fn get_x_firmware_ctrl(&self) -> u64 {
-        // Compute byte offset of packed field
-        let p: *const u64 = addr_of!(self.x_firmware_ctrl);
-
-        // Read 8 bytes
-        core::ptr::read_unaligned(p)
+    pub(crate) fn x_firmware_ctrl(&self) -> u64 {
+        self.inner.x_firmware_ctrl
     }
 
-    /// SAFETY: reads the packed `x_dsdt` field even if unaligned.
-    #[allow(dead_code)]
-    pub unsafe fn get_x_dsdt(&self) -> u64 {
-        // Compute byte offset of packed field
-        let p: *const u64 = addr_of!(self.x_dsdt);
+    pub(crate) fn x_dsdt(&self) -> u64 {
+        self.inner.x_dsdt
+    }
 
-        // Read 8 bytes
-        core::ptr::read_unaligned(p)
+    pub(crate) fn set_x_firmware_ctrl(&mut self, address: u64) {
+        self.inner.x_firmware_ctrl = address;
+    }
+
+    pub(crate) fn set_x_dsdt(&mut self, address: u64) {
+        self.inner.x_dsdt = address;
     }
 }
 
@@ -118,7 +140,7 @@ impl AcpiFadt {
 /// Note that the FACS does not have a standard ACPI header.
 /// The FACS is not present in the list of installed ACPI tables; instead, it is only accessible through the FADT's `x_firmware_ctrl` field.
 /// Equivalent to EFI_ACPI_3_0_FIRMWARE_ACPI_CONTROL_STRUCTURE.
-#[repr(C, packed)]
+#[repr(C)]
 #[derive(Default)]
 pub struct AcpiFacs {
     pub(crate) signature: u32,
@@ -138,10 +160,16 @@ pub struct AcpiFacs {
 /// The DSDT is not present in the list of installed ACPI tables; instead, it is only accessible through the FADT's `x_dsdt` field.
 /// The DSDT has a standard header followed by variable-length AML bytecode.
 /// The `length` field of the header tells us the number of trailing bytes representing bytecode.
-#[repr(C, packed)]
+#[repr(C)]
 #[derive(Default)]
 pub struct AcpiDsdt {
     pub(crate) header: AcpiTableHeader,
+}
+
+impl StandardAcpiTable for AcpiDsdt {
+    fn header(&self) -> &AcpiTableHeader {
+        &self.header
+    }
 }
 
 /// Represents the RSDP for ACPI 2.0+.
@@ -174,6 +202,12 @@ pub struct AcpiRsdp {
 #[derive(Default, Copy, Clone)]
 pub struct AcpiXsdt {
     pub(crate) header: AcpiTableHeader,
+}
+
+impl StandardAcpiTable for AcpiXsdt {
+    fn header(&self) -> &AcpiTableHeader {
+        &self.header
+    }
 }
 
 /// Represents a standard ACPI header.
@@ -275,9 +309,8 @@ impl MemoryAcpiTable {
 
     /// Retrieves the data as a mutable slice.
     pub fn data_mut(&mut self) -> &mut [u8] {
-        let inmemory_header =  self.header.as_ptr();
+        let inmemory_header = self.header.as_ptr();
         let body_len = self.length() as usize - ACPI_HEADER_LEN;
         unsafe { slice::from_raw_parts_mut(inmemory_header as *mut u8, body_len) }
     }
 }
-
