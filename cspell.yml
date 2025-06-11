@@ -80,8 +80,8 @@ words:
   - getsp
   - gigantor
   - gread
-  - gwrite
   - guids
+  - gwrite
   - hlength
   - hresult
   - icfgr
@@ -120,6 +120,7 @@ words:
   - nshst
   - ntdll
   - oleaut
+  - openvmm
   - opinfo
   - oppermann
   - oprom
@@ -130,8 +131,8 @@ words:
   - pccard
   - pciexbar
   - pdata
-  - philipp
   - pemfile
+  - philipp
   - physbase
   - physmask
   - pointee
@@ -201,6 +202,7 @@ words:
   - xfff
   - xffff
   - xfffffffffffff
+  - xtask
   - xx'xxzzzzzz
   - xxx'xxxxxxxx
   - xxxxxxxx'xxxxxxxx'xxxxxxxx
