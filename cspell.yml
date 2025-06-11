@@ -80,6 +80,7 @@ words:
   - ntdll
   - nvdimm
   - oleaut
+  - openvmm
   - opinfo
   - oslar
   - oslsr
@@ -118,3 +119,6 @@ words:
   - windbg
   - withf
   - xdata
+  - xtask
+  - zbuild
+  - zunstable
