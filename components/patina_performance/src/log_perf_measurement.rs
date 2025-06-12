@@ -431,7 +431,7 @@ pub fn perf_cross_module_end(
     )
 }
 
-// Adds a record that records the start time of a performance measurement.
+/// Adds a record that records the start time of a performance measurement.
 pub fn perf_start(
     handle: efi::Handle,
     token: *const c_char,
@@ -442,7 +442,7 @@ pub fn perf_start(
     start_perf_measurement(handle, token, module, timestamp, 0, create_performance_measurement)
 }
 
-// Adds a record that records the end time of a performance measurement.
+/// Adds a record that records the end time of a performance measurement.
 pub fn perf_end(
     handle: efi::Handle,
     token: *const c_char,
@@ -453,7 +453,7 @@ pub fn perf_end(
     end_perf_measurement(handle, token, module, timestamp, 0, create_performance_measurement)
 }
 
-// Adds a record that records the start time of a performance measurement.
+/// Adds a record that records the start time of a performance measurement.
 pub fn perf_start_ex(
     handle: efi::Handle,
     token: *const c_char,
@@ -465,7 +465,7 @@ pub fn perf_start_ex(
     start_perf_measurement(handle, token, module, timestamp, identifier, create_performance_measurement)
 }
 
-// Adds a record that records the end time of a performance measurement.
+/// Adds a record that records the end time of a performance measurement.
 pub fn perf_end_ex(
     handle: efi::Handle,
     token: *const c_char,
