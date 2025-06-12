@@ -26,10 +26,12 @@ extern "efiapi" fn install_configuration_table(table_guid: *mut efi::Guid, table
     }
 
     let table_guid = unsafe { *table_guid };
-    let table = unsafe { table.as_mut() };
 
     let mut st_guard = SYSTEM_TABLE.lock();
-    let st = st_guard.as_mut().expect("System table support not initialized");
+    let st = match st_guard.as_mut() {
+        Some(st) => st,
+        None => return efi::Status::NOT_FOUND,
+    };
 
     match core_install_configuration_table(table_guid, table, st) {
         Err(err) => err.into(),
@@ -39,7 +41,7 @@ extern "efiapi" fn install_configuration_table(table_guid: *mut efi::Guid, table
 
 pub fn core_install_configuration_table(
     vendor_guid: efi::Guid,
-    vendor_table: Option<&mut c_void>,
+    vendor_table: *mut c_void,
     efi_system_table: &mut EfiSystemTable,
 ) -> Result<(), EfiError> {
     let system_table = efi_system_table.as_mut();
@@ -63,8 +65,8 @@ pub fn core_install_configuration_table(
             // a configuration table list is already present.
             let mut current_table = cfg_table.to_vec();
             let existing_entry = current_table.iter_mut().find(|x| x.vendor_guid == vendor_guid);
-            if let Some(vendor_table) = vendor_table {
-                //vendor_table is some; we are adding or modifying an entry.
+            if !vendor_table.is_null() {
+                // vendor_table is not null; we are adding or modifying an entry.
                 if let Some(entry) = existing_entry {
                     //entry exists, modify it.
                     entry.vendor_table = vendor_table;
@@ -88,12 +90,12 @@ pub fn core_install_configuration_table(
             current_table
         }
         None => {
-            //config table list doesn't exist.
-            if let Some(table) = vendor_table {
+            // config table list doesn't exist.
+            if !vendor_table.is_null() {
                 // table is some, meaning we should create the list and add this as the new entry.
-                vec![efi::ConfigurationTable { vendor_guid, vendor_table: table }]
+                vec![efi::ConfigurationTable { vendor_guid, vendor_table }]
             } else {
-                //table is none, but can't delete a table entry in a list that doesn't exist.
+                // table is null, but can't delete a table entry in a list that doesn't exist.
                 //since the list doesn't exist, we can leave the (null) pointer in the st alone.
                 return Err(EfiError::NotFound);
             }

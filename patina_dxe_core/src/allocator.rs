@@ -775,11 +775,13 @@ fn page_change_callback(allocator: &mut FixedSizeBlockAllocator) {
 }
 
 pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), EfiError> {
-    //MEMORY_TYPE_INFO_TABLE is static mut, so we know the pointer is good.
+    // SAFETY: This is safe because we are initializing the table with a static array
     #[allow(static_mut_refs)]
-    let memory_table_mut = unsafe { (MEMORY_TYPE_INFO_TABLE.as_mut_ptr() as *mut c_void).as_mut().unwrap() };
-
-    config_tables::core_install_configuration_table(guid::MEMORY_TYPE_INFORMATION, Some(memory_table_mut), system_table)
+    config_tables::core_install_configuration_table(
+        guid::MEMORY_TYPE_INFORMATION,
+        unsafe { MEMORY_TYPE_INFO_TABLE.as_mut_ptr() as *mut c_void },
+        system_table,
+    )
 }
 
 fn process_hob_allocations(hob_list: &HobList) {

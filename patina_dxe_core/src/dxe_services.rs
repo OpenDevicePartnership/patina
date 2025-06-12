@@ -431,7 +431,7 @@ pub fn init_dxe_services(system_table: &mut EfiSystemTable) {
 
     let _ = config_tables::core_install_configuration_table(
         dxe_services::DXE_SERVICES_TABLE_GUID,
-        unsafe { (Box::into_raw(dxe_system_table) as *mut c_void).as_mut() },
+        Box::into_raw(dxe_system_table) as *mut c_void,
         system_table,
     );
 }

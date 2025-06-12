@@ -417,7 +417,7 @@ where
 
             config_tables::core_install_configuration_table(
                 hob_list_guid,
-                Some(unsafe { &mut *(Box::leak(relocated_c_hob_list).as_mut_ptr() as *mut c_void) }),
+                Box::leak(relocated_c_hob_list).as_mut_ptr() as *mut c_void,
                 st,
             )
             .expect("Unable to create configuration table due to invalid table entry.");

@@ -121,14 +121,10 @@ pub(crate) fn initialize_debug_image_info_table(system_table: &mut EfiSystemTabl
     });
 
     let table_ptr = Box::into_raw(debug_image_info_table_header) as *mut c_void;
-    // SAFETY: This is safe because we just allocated the table and we are going to use it immediately
-    unsafe {
-        if core_install_configuration_table(EFI_DEBUG_IMAGE_INFO_TABLE_GUID, table_ptr.as_mut(), system_table).is_err()
-        {
-            log::error!("Failed to install configuration table for EFI_DEBUG_IMAGE_INFO_TABLE_GUID");
-            return;
-        };
-    }
+    if core_install_configuration_table(EFI_DEBUG_IMAGE_INFO_TABLE_GUID, table_ptr, system_table).is_err() {
+        log::error!("Failed to install configuration table for EFI_DEBUG_IMAGE_INFO_TABLE_GUID");
+        return;
+    };
 
     // SAFETY: This is safe because we just allocated the table and we are going to use it immediately
     let table = Box::new(DebugImageInfoTableMetadata {

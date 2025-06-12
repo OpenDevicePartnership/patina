@@ -128,17 +128,11 @@ pub fn core_install_memory_attributes_table() {
                     };
                     MEMORY_ATTRIBUTES_TABLE.store(empty_ptr, Ordering::Relaxed);
 
-                    // it is unsafe to get a mutable reference to the MAT here, but we know that we have a valid ptr
-                    unsafe {
-                        if let Err(status) =
-                            core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, empty_ptr.as_mut(), st)
-                        {
-                            log::error!(
-                                "Failed to create a null MAT table with status {:#X?}, cannot create MAT",
-                                status
-                            );
-                            return;
-                        }
+                    if let Err(status) =
+                        core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, empty_ptr, st)
+                    {
+                        log::error!("Failed to create a null MAT table with status {:#X?}, cannot create MAT", status);
+                        return;
                     }
                 }
             }
@@ -225,7 +219,7 @@ pub fn core_install_memory_attributes_table() {
                     mat_desc_list.len() * size_of::<efi::MemoryDescriptor>(),
                 );
 
-                match core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, void_ptr.as_mut(), st) {
+                match core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, void_ptr, st) {
                     Err(status) => {
                         log::error!("Failed to install MAT table! Status {:#X?}", status);
                         if let Err(err) = core_free_pool(void_ptr) {
