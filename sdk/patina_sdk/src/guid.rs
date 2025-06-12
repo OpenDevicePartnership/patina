@@ -151,6 +151,7 @@ pub const SMM_COMMUNICATION_PROTOCOL: efi::Guid =
 /// ```
 pub const ZERO: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
 
+/// A wrapper type for displaying UEFI GUIDs in a human-readable format.
 pub struct FmtGuid<'a>(pub &'a efi::Guid);
 
 impl core::fmt::Display for FmtGuid<'_> {

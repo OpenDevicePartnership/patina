@@ -154,6 +154,59 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     hob_macro::hob_config2(item.into()).into()
 }
 
+/// A proc-macro that registers the annotated function as a test case to be run by patina_test component.
+///
+/// There is a distinct difference between doing a #[cfg_attr(..., skip)] and a
+/// #[cfg_attr(..., patina_test)]. The first still compiles the test case, but skips it at runtime. The second does not
+/// compile the test case at all.
+///
+/// ## Attributes
+///
+/// - `#[should_fail]`: Indicates that the test is expected to fail. If the test passes, the test runner will log an
+///     error.
+/// - `#[should_fail = "message"]`: Indicates that the test is expected to fail with the given message. If the test
+///     passes or fails with a different message, the test runner will log an error.
+/// - `#[skip]`: Indicates that the test should be skipped.
+///
+/// ## Example
+///
+/// ```rust, skip
+/// use patina_sdk::test::*;
+/// use patina_sdk::boot_services::StandardBootServices;
+/// use patina_sdk::test::patina_test;
+/// use patina_sdk::{u_assert, u_assert_eq};
+///
+/// #[patina_test]
+/// fn test_case() -> Result {
+///     todo!()
+/// }
+///
+/// #[patina_test]
+/// #[should_fail]
+/// fn failing_test_case() -> Result {
+///     u_assert_eq!(1, 2);
+///     Ok(())
+/// }
+///
+/// #[patina_test]
+/// #[should_fail = "This test failed"]
+/// fn failing_test_case_with_msg() -> Result {
+///    u_assert_eq!(1, 2, "This test failed");
+///    Ok(())
+/// }
+///
+/// #[patina_test]
+/// #[skip]
+/// fn skipped_test_case() -> Result {
+///    todo!()
+/// }
+///
+/// #[patina_test]
+/// #[cfg_attr(not(target_arch = "x86_64"), skip)]
+/// fn x86_64_only_test_case(bs: StandardBootServices) -> Result {
+///   todo!()
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn patina_test(_: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     test_macro::patina_test2(item.into()).into()
