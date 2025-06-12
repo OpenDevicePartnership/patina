@@ -31,9 +31,13 @@ use r_efi::efi;
 /// A standardized configuration structure for MM components to use when initializing and using MM services.
 #[derive(Debug, Clone)]
 pub struct MmCommunicationConfiguration {
+    /// ACPI base address used to access the ACPI Fixed hardware register set.
     pub acpi_base: AcpiBase,
+    /// MMI Port for sending commands to the MM handler.
     pub cmd_port: MmiPort,
+    /// MMI Port for receiving data from the MM handler.
     pub data_port: MmiPort,
+    /// List of Management Mode (MM) Communicate Buffers
     pub comm_buffers: Vec<CommunicateBuffer>,
 }
 
@@ -284,7 +288,9 @@ impl fmt::Debug for MmiPort {
 /// register set.
 #[derive(PartialEq, Copy, Clone)]
 pub enum AcpiBase {
+    /// Memory-mapped IO (MMIO) base address for ACPI
     Mmio(usize),
+    /// IO port base address for ACPI
     Io(u16),
 }
 
@@ -324,6 +330,7 @@ impl From<u16> for AcpiBase {
 }
 
 impl AcpiBase {
+    /// Returns the IO port if this is an IO base, otherwise returns 0.
     pub fn get_io_value(&self) -> u16 {
         match self {
             AcpiBase::Mmio(_) => 0,
@@ -331,6 +338,7 @@ impl AcpiBase {
         }
     }
 
+    /// Returns the MMIO address if this is an MMIO base, otherwise returns 0.
     pub fn get_mmio_value(&self) -> usize {
         match self {
             AcpiBase::Mmio(addr) => *addr,
