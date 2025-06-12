@@ -10,15 +10,15 @@ means is that instead of evaluating a dependency expression to determine if a dr
 attempts to fetch all requested parameters defined in the function interface. If all are successfully fetched, then the
 component is executed, if not, it will not be dispatched, and another attempt will be made in the next iteration.
 
-In the Rust DXE Core, a component is simply a trait implementation. So long as a struct implements [Component](todo/docs.rs)
-and [IntoComponent](todo/docs.rs), it can be consumed and executed by the pure rust DXE core. [patina_sdk](todo/docs.rs)
-currently provides two implementations for `Component`:
+In the Rust DXE Core, a component is simply a trait implementation. So long as a struct implements [IntoComponent][patina_sdk],
+it can be consumed and executed by the pure rust DXE core. [patina_sdk][patina_sdk] currently provides two
+implementations for `Component`:
 
-The first is [FunctionComponent](todo/docs.rs). This type cannot be instantiated manually, but a blanket implementation
-of the `IntoComponent` trait allows any function whose parameters support dependency injection to be converted into a
+1. [FunctionComponent][patina_sdk]: this type cannot be instantiated manually, but a blanket implementation of the
+`IntoComponent` trait allows any function whose parameters support dependency injection to be converted into a
 `FunctionComponent`.
 
-The second is [StructComponent](todo/docs.rs). This type cannot be instantiated manually, but a derive proc-macro of
+2. [StructComponent][patina_sdk]: this type cannot be instantiated manually, but a derive proc-macro of
 `IntoComponent` is provided that will allow any struct or enum to be used as a component. This derive proc-macro
 expects that a `Self::entry_point(self, ...) -> patina_sdk::error::Result<()> { ... }` exists, where the `...` in the
 function definition can be any number of parameters twho support dependency injection as shown below. The function
@@ -28,7 +28,7 @@ See [Samples](https://github.com/OpenDevicePartnership/patina/tree/main/componen
 for examples of basic components using these two methods.
 
 Due to this, developing a component is as simple as writing a function whose parameters are a part of the below list of
-supported parameters (which is subject to change). Always reference the trait's [Type Implementations](todo/docs.rs)
+supported parameters (which is subject to change). Always reference the trait's [Type Implementations][patina_sdk]
 for a complete list, however the below information should be up to date.
 
 ## Component Execution
@@ -44,7 +44,7 @@ components have been dispatched in a single iteration.
 Writing a component is as simple as writing a function whose parameters are a part of the below list of suppported
 types (which is subject ot change). The `Param` trait is the interface that the dispatcher uses to (1) validate that a
 parameter is available, (2) retrieve the datum from storage, and (3) pass it to the component when executing it. Always
-reference the `Param` trait's [Type Implementations](todo/docs.rs) for a complete list of parameters that can be used
+reference the `Param` trait's [Type Implementations][patina_sdk] for a complete list of parameters that can be used
 in the function interface of a component.
 
 ```admonish warning
@@ -95,10 +95,10 @@ This type comes with a `mock(...)` method to make unit testing simple.
 
 ### Hob\<T\>
 
-The `Hob<T>` parameter type is used to access a guided hob value, which is automatically parsed from the HOB list
+The `Hob<T>` parameter type is used to access a GUID HOB value, which is automatically parsed from the HOB list
 provided to the Core during initialization. Unlike `Config<T>` and `ConfigMut<T>`, these types are **not** always
 available. This means a component that has this parameter implemented will only be executed if the guided HOB is
-found in the HOB list. Due to how HOBs work, the same guided HOB can be provided multiple times to the platform.
+found in the HOB list. Due to how HOBs work, the same GUID HOB can be provided multiple times to the platform.
 Due to this, `Hob<T>` implements both `Deref` to access the first found value, or `IntoIterator` to iterate through
 all HOB values.
 
@@ -243,3 +243,9 @@ impl MyComponent2 {
     }
 }
 ```
+
+<!--
+    TODO: Replace usage of patina_sdk with links to specific documentation once patina_sdk is available on
+    crates.io docs.rs.
+-->
+[patina_sdk]: https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patina_sdk

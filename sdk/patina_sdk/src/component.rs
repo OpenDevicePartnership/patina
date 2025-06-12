@@ -137,7 +137,6 @@
 //!
 extern crate alloc;
 
-pub mod config;
 mod function_component;
 pub mod hob;
 mod metadata;
