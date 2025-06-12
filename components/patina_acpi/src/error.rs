@@ -41,6 +41,8 @@ pub enum AcpiError {
     TableNotPresentInMemory,
     /// There was an attempt to install a null table pointer.
     NullTablePtr,
+    /// get_acpi_table<T> was provided a type that does not match the type of the table at the given index.
+    InvalidTableType,
 }
 
 impl Into<efi::Status> for AcpiError {
@@ -63,6 +65,7 @@ impl Into<efi::Status> for AcpiError {
             AcpiError::XsdtNotInitializedFromHob => efi::Status::NOT_FOUND,
             AcpiError::TableNotPresentInMemory => efi::Status::NOT_FOUND,
             AcpiError::NullTablePtr => efi::Status::INVALID_PARAMETER,
+            AcpiError::InvalidTableType => efi::Status::INVALID_PARAMETER,
         }
     }
 }

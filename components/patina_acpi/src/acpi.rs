@@ -1,7 +1,7 @@
 use core::{
     cell::OnceCell,
     mem,
-    ptr::{self, copy_nonoverlapping},
+    ptr::{self, copy_nonoverlapping, NonNull},
     sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering},
 };
 
@@ -27,7 +27,7 @@ use patina_sdk::{
     uefi_size_to_pages,
 };
 
-use spin::rwlock::RwLock;
+use spin::{rwlock::RwLock, RwLockReadGuard};
 
 use crate::{
     acpi_table::{AcpiDsdt, AcpiFacs, AcpiFadt, AcpiRsdp, AcpiXsdt},
@@ -207,7 +207,7 @@ impl<B> AcpiProvider for StandardAcpiProvider<B>
 where
     B: BootServices,
 {
-    fn install_acpi_table(&self, acpi_table: Box<dyn StandardAcpiTable>) -> Result<TableKey, AcpiError> {
+    fn install_acpi_table(&self, acpi_table: &dyn StandardAcpiTable) -> Result<TableKey, AcpiError> {
         let table_key = self.install_acpi_table_in_memory(acpi_table.header())?;
 
         self.publish_tables()?;
@@ -252,10 +252,14 @@ where
         Ok(())
     }
 
-    fn get_acpi_table(&self, index: usize) -> Result<MemoryAcpiTable, AcpiError> {
+    fn get_acpi_table(&self, table_key: TableKey) -> Result<MemoryAcpiTable, AcpiError> {
         let acpi_tables = self.acpi_tables.read();
-        let table_at_idx = acpi_tables.get(index).ok_or(AcpiError::InvalidTableIndex)?;
-        Ok(table_at_idx.clone())
+        for memory_table in acpi_tables.iter() {
+            if memory_table.table_key == table_key {
+                return Ok(memory_table.clone());
+            }
+        }
+        Err(AcpiError::InvalidTableKey)
     }
 
     fn register_notify(&self, should_register: bool, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError> {
@@ -273,8 +277,22 @@ where
         Ok(())
     }
 
-    fn iter(&self) -> Vec<MemoryAcpiTable> {
-        self.acpi_tables.read().clone()
+    /// Returns a `Vec<&AcpiTableHeader>` borrowing directly from each `MemoryAcpiTable`’s `NonNull<…>` pointer.
+    fn iter(&self) -> Vec<&AcpiTableHeader> {
+        // Read the list of installed ACPI tables and collect their NonNull pointers
+        let ptrs: Vec<NonNull<AcpiTableHeader>> = {
+            let guard = self.acpi_tables.read();
+            guard.iter().map(|table| table.header).collect()
+        };
+
+        // Guard has been dropped, but the pointers are still valid
+        // Turn each NonNull pointer into a &AcpiTableHeader
+        ptrs.into_iter()
+            .map(|nn| {
+                // SAFETY: ACPI table pointers remain valid as long as they are in the list of installed tables.
+                unsafe { nn.as_ref() }
+            })
+            .collect()
     }
 }
 
@@ -389,12 +407,7 @@ where
         self.publish_tables()?;
         Ok(())
     }
-}
 
-impl<B> StandardAcpiProvider<B>
-where
-    B: BootServices,
-{
     /// Allocates a new memory location for a given ACPI table, if necessary
     fn allocate_table_addr(&self, signature: u32, n_pages: usize) -> Result<usize, AcpiError> {
         let mut memory_type = self.memory_type();
@@ -837,6 +850,17 @@ where
 
         Ok(())
     }
+
+    /// Retrieves a table at a specific index in the list of installed tables.
+    /// This is mostly to assist the C protocol.
+    pub(crate) fn get_table_at_idx(&self, idx: usize) -> Result<MemoryAcpiTable, AcpiError> {
+        let acpi_tables = self.acpi_tables.read();
+        if idx < acpi_tables.len() {
+            Ok(acpi_tables[idx].clone())
+        } else {
+            Err(AcpiError::InvalidTableIndex)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -868,22 +892,19 @@ mod tests {
     #[test]
     fn test_get_table() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
+        provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new())));
 
         let mut header = AcpiTableHeader { signature: 0x1111, length: 123, ..Default::default() };
-        let header_ptr = NonNull::new(&mut header as *mut AcpiTableHeader).unwrap();
-        let table = MemoryAcpiTable { header: header_ptr, table_key: 123, physical_address: Some(123) };
-
-        provider.acpi_tables.write().push(table);
+        let table_key = provider.install_acpi_table_in_memory(&header).unwrap();
 
         // Call get_acpi_table(0) (should succeed)
-        let fetched = provider.get_acpi_table(0).expect("table 0 should exist");
+        let fetched = provider.get_acpi_table(table_key).expect("table should have been installed");
         assert_eq!(fetched.signature(), 0x1111);
         assert_eq!(fetched.length(), 123);
 
-        // Call with an invalid index (should return InvalidTableIndex)
-        let err = provider.get_acpi_table(1).unwrap_err();
-        assert!(matches!(err, AcpiError::InvalidTableIndex));
+        // Call with an invalid key (should return InvalidTableKey)
+        let err = provider.get_acpi_table(19283712837218).unwrap_err();
+        assert!(matches!(err, AcpiError::InvalidTableKey));
     }
 
     #[test]
@@ -923,10 +944,20 @@ mod tests {
 
         let mut header1 = AcpiTableHeader { signature: 0x1, length: 10, ..Default::default() };
         let header1_ptr = NonNull::new(&mut header1 as *mut AcpiTableHeader).unwrap();
-        let table1 = MemoryAcpiTable { header: header1_ptr, table_key: 123, physical_address: Some(123) };
+        let table1 = MemoryAcpiTable {
+            header: header1_ptr,
+            type_id: TypeId::of::<u32>(),
+            table_key: 123,
+            physical_address: Some(123),
+        };
         let mut header2 = AcpiTableHeader { signature: 0x2, length: 20, ..Default::default() };
         let header2_ptr = NonNull::new(&mut header2 as *mut AcpiTableHeader).unwrap();
-        let table2 = MemoryAcpiTable { header: header2_ptr, table_key: 123, physical_address: Some(123) };
+        let table2 = MemoryAcpiTable {
+            header: header2_ptr,
+            type_id: TypeId::of::<u32>(),
+            table_key: 123,
+            physical_address: Some(123),
+        };
         {
             let mut vec = provider.acpi_tables.write();
             vec.push(table1);

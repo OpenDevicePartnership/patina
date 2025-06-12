@@ -7,6 +7,7 @@
 use crate::error::AcpiError;
 use crate::{service::TableKey, signature::ACPI_HEADER_LEN};
 
+use core::any::TypeId;
 use core::ptr::NonNull;
 use core::slice;
 
@@ -26,6 +27,13 @@ pub trait StandardAcpiTable {
         let data_len = self.header().length as usize - ACPI_HEADER_LEN;
         unsafe { slice::from_raw_parts(data_ptr, data_len) }
     }
+}
+
+/// Any ACPI table that is represented as packed bytes in ACPI memory.
+pub trait ByteAcpiTable: Sized {
+    /// Converts the table from a byte slice.
+    /// The byte slice must contain the full table, including the header and any trailing bytes.
+    fn from_bytes(bytes: &[u8]) -> Result<Self, AcpiError>;
 }
 
 /// Represents the FADT for ACPI 2.0+.
@@ -116,6 +124,12 @@ impl StandardAcpiTable for AcpiFadt {
     }
 }
 
+impl ByteAcpiTable for AcpiFadt {
+    fn from_bytes(bytes: &[u8]) -> Result<Self, AcpiError> {
+        todo!();
+    }
+}
+
 /// Reads unaligned fields on the FADT.
 /// Fields on the FADT may be unaligned, since by specification the FADT is packed.
 impl AcpiFadt {
@@ -172,6 +186,12 @@ impl StandardAcpiTable for AcpiDsdt {
     }
 }
 
+impl ByteAcpiTable for AcpiDsdt {
+    fn from_bytes(bytes: &[u8]) -> Result<Self, AcpiError> {
+        todo!();
+    }
+}
+
 /// Represents the RSDP for ACPI 2.0+.
 /// The RSDP is not a standard ACPI table and does not have a standard header.
 /// It is not present in the list of installed tables and is not directly accessible.
@@ -210,6 +230,12 @@ impl StandardAcpiTable for AcpiXsdt {
     }
 }
 
+impl ByteAcpiTable for AcpiXsdt {
+    fn from_bytes(bytes: &[u8]) -> Result<Self, AcpiError> {
+        todo!();
+    }
+}
+
 /// Represents a standard ACPI header.
 /// Equivalent to EFI_ACPI_DESCRIPTION_HEADER.
 #[repr(C)]
@@ -234,6 +260,8 @@ pub struct MemoryAcpiTable {
     pub header: NonNull<AcpiTableHeader>,
 
     /* The following fields are not present in the ACPI specification, but are included for implementation convenience. */
+    /// Type ID of the table, used to identify the specific type of ACPI table.
+    pub type_id: TypeId,
     /// Unique key assigned to ACPI table upon installation. Zero if the table does not have an associated key.
     pub table_key: TableKey,
     /// Physical address of the table in memory. None if the table is not yet installed in ACPI firmware memory.
@@ -243,7 +271,18 @@ pub struct MemoryAcpiTable {
 impl MemoryAcpiTable {
     pub fn new_from_ptr(header: *mut AcpiTableHeader) -> Result<Self, AcpiError> {
         let nonnull_header = NonNull::new(header).ok_or(AcpiError::NullTablePtr)?;
-        Ok(MemoryAcpiTable { header: nonnull_header, table_key: 0, physical_address: None })
+        Ok(MemoryAcpiTable {
+            header: nonnull_header,
+            type_id: TypeId::of::<MemoryAcpiTable>(),
+            table_key: 0,
+            physical_address: None,
+        })
+    }
+}
+
+impl StandardAcpiTable for MemoryAcpiTable {
+    fn header(&self) -> &AcpiTableHeader {
+        unsafe { self.header.as_ref() }
     }
 }
 
@@ -301,16 +340,31 @@ impl MemoryAcpiTable {
     }
 
     /// Variable-length trailing bytes of the ACPI table, following the header.
-    fn data(&self) -> &[u8] {
+    /// # Safety
+    /// During construction, it is assumed that the table is laid out as a contiguous array of bytes following the ACPI specification.
+    pub fn data(&self) -> &[u8] {
         let inmemory_header = self.header.as_ptr();
-        let body_len = self.length() as usize - ACPI_HEADER_LEN;
-        unsafe { slice::from_raw_parts(inmemory_header as *const u8, body_len) }
+        let data_start_ptr = unsafe { (inmemory_header as *const u8).add(ACPI_HEADER_LEN) };
+        let data_len = self.length() as usize - ACPI_HEADER_LEN;
+        unsafe { slice::from_raw_parts(data_start_ptr, data_len) }
     }
 
-    /// Retrieves the data as a mutable slice.
+    /// Variable-length trailing bytes of the ACPI table, following the header.
+    /// # Safety
+    /// During construction, it is assumed that the table is laid out as a contiguous array of bytes following the ACPI specification.
     pub fn data_mut(&mut self) -> &mut [u8] {
         let inmemory_header = self.header.as_ptr();
-        let body_len = self.length() as usize - ACPI_HEADER_LEN;
-        unsafe { slice::from_raw_parts_mut(inmemory_header as *mut u8, body_len) }
+        let data_start_ptr = unsafe { (inmemory_header as *mut u8).add(ACPI_HEADER_LEN) };
+        let data_len = self.length() as usize - ACPI_HEADER_LEN;
+        unsafe { slice::from_raw_parts_mut(data_start_ptr, data_len) }
+    }
+
+    /// The ACPI table as a byte slice, including the header and trailing bytes.
+    /// # Safety
+    /// During construction, it is assumed that the table is laid out as a contiguous array of bytes following the ACPI specification.
+    pub fn as_bytes(&self) -> &[u8] {
+        let inmemory_header = self.header.as_ptr();
+        let data_len = self.length() as usize;
+        unsafe { slice::from_raw_parts(inmemory_header as *const u8, data_len) }
     }
 }

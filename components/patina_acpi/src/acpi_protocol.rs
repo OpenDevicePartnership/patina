@@ -4,7 +4,6 @@
 
 use crate::acpi_table::{AcpiTableHeader, StandardAcpiTable};
 
-use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
 use core::ffi::c_void;
 use patina_sdk::uefi_protocol::ProtocolInterface;
@@ -97,7 +96,7 @@ impl AcpiTableProtocol {
             // SAFETY: acpi_table_buffer is checked non-null and large enough to read an AcpiTableHeader.
             let acpi_table = unsafe { CAcpiTable::from_ptr(acpi_table_buffer) };
 
-            match ACPI_TABLE_INFO.install_acpi_table(Box::new(acpi_table)) {
+            match ACPI_TABLE_INFO.install_acpi_table(&acpi_table) {
                 Ok(key) => {
                     if let Some(key_ptr) = NonNull::new(table_key) {
                         // SAFETY: `key_ptr` is checked to be non-null
@@ -178,7 +177,7 @@ impl AcpiSdtProtocol {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        match ACPI_TABLE_INFO.get_acpi_table(index) {
+        match ACPI_TABLE_INFO.get_table_at_idx(index) {
             Ok(table_info) => {
                 // SAFETY: table_info is valid and output pointers have been checked for null
                 // We only support ACPI versions >= 2.0
