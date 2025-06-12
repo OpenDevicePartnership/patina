@@ -37,7 +37,15 @@ impl<'a, S> AdvancedLogger<'a, S>
 where
     S: SerialIO + Send,
 {
-    /// Creates a new AdvancedLogger instance.
+    /// Creates a new AdvancedLogger.
+    ///
+    /// ## Arguments
+    ///
+    /// * `format` - The format to use for logging.
+    /// * `target_filters` - A list of target filters to apply to the logger.
+    /// * `max_level` - The maximum log level to log.
+    /// * `hardware_port` - The hardware port to write logs to.
+    ///
     pub const fn new(
         format: Format,
         target_filters: &'a [(&'a str, log::LevelFilter)],
@@ -48,7 +56,7 @@ where
     }
 
     /// Writes a log entry to the hardware port and memory log if available.
-    pub fn log_write(&self, error_level: u32, data: &[u8]) {
+    pub(crate) fn log_write(&self, error_level: u32, data: &[u8]) {
         let mut hw_write = true;
         if let Some(memory_log) = self.get_log_info() {
             hw_write = memory_log.hardware_write_enabled(error_level);
@@ -67,7 +75,7 @@ where
     }
 
     /// Sets the address of the advanced logger memory log.
-    pub fn set_log_info_address(&self, address: efi::PhysicalAddress) {
+    pub(crate) fn set_log_info_address(&self, address: efi::PhysicalAddress) {
         assert!(!self.memory_log.is_completed());
         if let Some(log_info) = unsafe { AdvLoggerInfo::adopt_memory_log(address) } {
             self.memory_log.call_once(|| log_info);
@@ -89,7 +97,7 @@ where
     }
 
     /// Returns the underlying logger metadata.
-    pub fn get_log_info(&self) -> Option<&AdvLoggerInfo> {
+    pub(crate) fn get_log_info(&self) -> Option<&AdvLoggerInfo> {
         match self.memory_log.get() {
             Some(log_info) => Some(*log_info),
             None => None,
@@ -140,7 +148,7 @@ const fn log_level_to_debug_level(level: Level) -> u32 {
 const WRITER_BUFFER_SIZE: usize = 128;
 
 /// A wrapper for buffering and redirecting writes from the formatter.
-pub struct BufferedWriter<'a, S>
+struct BufferedWriter<'a, S>
 where
     S: SerialIO + Send,
 {
@@ -155,12 +163,12 @@ where
     S: SerialIO + Send,
 {
     /// Creates a new BufferedWriter with the specified log level and writer.
-    pub const fn new(level: u32, writer: &'a AdvancedLogger<'a, S>) -> Self {
+    const fn new(level: u32, writer: &'a AdvancedLogger<'a, S>) -> Self {
         Self { level, writer, buffer: [0; WRITER_BUFFER_SIZE], buffer_size: 0 }
     }
 
     /// Flushes the current buffer to the underlying writer.
-    pub fn flush(&mut self) {
+    fn flush(&mut self) {
         if self.buffer_size == 0 {
             return;
         }
