@@ -22,7 +22,7 @@ use r_efi::efi;
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
-    debug_image_info_table::{
+    config_tables::debug_image_info_table::{
         core_new_debug_image_info_entry, core_remove_debug_image_info_entry, initialize_debug_image_info_table,
         EfiDebugImageInfoNormal,
     },

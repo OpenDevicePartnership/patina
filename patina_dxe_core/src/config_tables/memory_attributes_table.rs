@@ -19,8 +19,8 @@ use core::{
 
 use crate::{
     allocator::{core_allocate_pool, core_free_pool, get_memory_map_descriptors, MemoryDescriptorSlice},
+    config_tables::core_install_configuration_table,
     events::EVENT_DB,
-    misc_boot_services::core_install_configuration_table,
     systemtables,
 };
 use r_efi::efi;

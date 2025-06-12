@@ -38,8 +38,8 @@
 extern crate alloc;
 
 mod allocator;
+mod config_tables;
 mod cpu_arch_protocol;
-mod debug_image_info_table;
 mod dispatcher;
 mod driver_services;
 mod dxe_services;
@@ -52,7 +52,6 @@ mod gcd;
 mod hw_interrupt_protocol;
 mod image;
 mod memory_attributes_protocol;
-mod memory_attributes_table;
 mod memory_manager;
 mod misc_boot_services;
 mod pecoff;
@@ -86,6 +85,8 @@ use patina_sdk::{
 };
 use protocols::PROTOCOL_DB;
 use r_efi::efi;
+
+use crate::config_tables::memory_attributes_table;
 
 #[macro_export]
 macro_rules! ensure {
@@ -396,6 +397,7 @@ where
             events::init_events_support(st.boot_services_mut());
             protocols::init_protocol_support(st.boot_services_mut());
             misc_boot_services::init_misc_boot_services_support(st.boot_services_mut());
+            config_tables::init_config_tables_support(st.boot_services_mut());
             runtime::init_runtime_support(st.runtime_services_mut());
             image::init_image_support(&self.hob_list, st);
             dispatcher::init_dispatcher(Box::from(self.section_extractor));
@@ -413,7 +415,7 @@ where
                 uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").expect("Invalid UUID format.").as_fields();
             let hob_list_guid: efi::Guid = efi::Guid::from_fields(a, b, c, d0, d1, &[d2, d3, d4, d5, d6, d7]);
 
-            misc_boot_services::core_install_configuration_table(
+            config_tables::core_install_configuration_table(
                 hob_list_guid,
                 Some(unsafe { &mut *(Box::leak(relocated_c_hob_list).as_mut_ptr() as *mut c_void) }),
                 st,

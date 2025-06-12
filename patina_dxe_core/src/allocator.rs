@@ -22,9 +22,9 @@ use alloc::{collections::BTreeMap, vec::Vec};
 use mu_rust_helpers::function;
 
 use crate::{
+    config_tables,
     gcd::{self, AllocateType as AllocationStrategy},
     memory_attributes_table::MemoryAttributesTable,
-    misc_boot_services,
     protocol_db::{self, INVALID_HANDLE},
     protocols::PROTOCOL_DB,
     systemtables::EfiSystemTable,
@@ -779,11 +779,7 @@ pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Resu
     #[allow(static_mut_refs)]
     let memory_table_mut = unsafe { (MEMORY_TYPE_INFO_TABLE.as_mut_ptr() as *mut c_void).as_mut().unwrap() };
 
-    misc_boot_services::core_install_configuration_table(
-        guid::MEMORY_TYPE_INFORMATION,
-        Some(memory_table_mut),
-        system_table,
-    )
+    config_tables::core_install_configuration_table(guid::MEMORY_TYPE_INFORMATION, Some(memory_table_mut), system_table)
 }
 
 fn process_hob_allocations(hob_list: &HobList) {
