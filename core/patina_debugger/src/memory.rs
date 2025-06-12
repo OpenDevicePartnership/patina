@@ -1,4 +1,4 @@
-//! Implements memory operations for the UEFI debugger.
+//! Implements memory operations for the Patina debugger.
 //!
 //! ## License
 //!

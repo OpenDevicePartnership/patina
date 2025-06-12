@@ -8,9 +8,11 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use crate as patina_sdk;
-use crate::component::{
-    config::mm::{CommunicateBuffer, EfiMmCommunicateHeader, MmCommunicationConfiguration},
+use crate::{
+    component::sw_mmi_manager::SwMmiTrigger,
+    config::{CommunicateBuffer, EfiMmCommunicateHeader, MmCommunicationConfiguration},
+};
+use patina_sdk::component::{
     service::{IntoService, Service},
     IntoComponent, Storage,
 };
@@ -18,10 +20,8 @@ use r_efi::efi;
 extern crate alloc;
 use alloc::vec::Vec;
 
-use core::fmt::{self, Debug};
-
-use super::sw_mmi_manager::SwMmiTrigger;
 use core::cell::RefCell;
+use core::fmt::{self, Debug};
 
 #[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
@@ -67,7 +67,8 @@ pub trait MmCommunication {
     ///
     /// ```rust
     /// use r_efi::efi;
-    /// use patina_sdk::component::service::{mm_communicator::MmCommunication, Service};
+    /// use patina_mm::component::communicator::MmCommunication;
+    /// use patina_sdk::component::service::Service;
     ///
     /// fn component(comm_service: Service<dyn MmCommunication>) {
     ///     let data = [0x01, 0x02, 0x03];
@@ -175,11 +176,12 @@ impl Default for MmCommunicator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::config::mm::{
+    use crate::component::communicator::MmCommunicator;
+    use crate::component::sw_mmi_manager::{MockSwMmiTrigger, SwMmiManager};
+    use crate::config::{
         CommunicateBuffer, CommunicateBufferStatus, EfiMmCommunicateHeader, MmCommunicationConfiguration,
     };
-    use crate::component::service::{self, mm_communicator::MmCommunicator};
-    use crate::component::{service::sw_mmi_manager::SwMmiManager, IntoComponent, Storage};
+    use patina_sdk::component::{IntoComponent, Storage};
 
     use core::cell::RefCell;
     use core::pin::Pin;
@@ -188,14 +190,12 @@ mod tests {
     extern crate alloc;
     use alloc::vec::Vec;
 
-    use patina_sdk::component::service::sw_mmi_manager::MockSwMmiTrigger;
-
     static TEST_DATA: [u8; 3] = [0x01, 0x02, 0x03];
     static TEST_RESPONSE: [u8; 4] = [0x04, 0x03, 0x02, 0x1];
     static TEST_RECIPIENT: efi::Guid =
         efi::Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x90, 0xab, 0xcd, 0xef]);
 
-    macro_rules! get_test_mm_communicator {
+    macro_rules! get_test_communicator {
         ($size:expr, $sw_mmi_trigger_instance:expr) => {{
             let buffer: &'static mut [u8; $size] = Box::leak(Box::new([0u8; $size]));
             MmCommunicator {
@@ -206,41 +206,41 @@ mod tests {
     }
 
     #[test]
-    fn mm_communicator_runs_with_deps_satisfied() {
+    fn communicator_runs_with_deps_satisfied() {
         let mut storage = Storage::new();
         storage.add_config(MmCommunicationConfiguration::default());
-        storage.add_service(service::sw_mmi_manager::SwMmiManager::new());
+        storage.add_service(SwMmiManager::new());
 
         // A MmCommunicationConfiguration  instance is required.
-        let mut mm_communicator = MmCommunicator::new().into_component();
+        let mut communicator = MmCommunicator::new().into_component();
 
-        mm_communicator.initialize(&mut storage);
-        assert_eq!(mm_communicator.run(&mut storage), Ok(true));
+        communicator.initialize(&mut storage);
+        assert_eq!(communicator.run(&mut storage), Ok(true));
     }
 
     #[test]
     fn test_communicate_no_comm_buffer() {
-        let mm_communicator: MmCommunicator = MmCommunicator {
+        let communicator: MmCommunicator = MmCommunicator {
             comm_buffers: RefCell::new(vec![]),
             sw_mmi_trigger_service: Some(Service::mock(Box::new(SwMmiManager::new()))),
         };
-        let result = mm_communicator.communicate(0, &TEST_DATA, TEST_RECIPIENT);
+        let result = communicator.communicate(0, &TEST_DATA, TEST_RECIPIENT);
         assert_eq!(result, Err(Status::NoCommBuffer));
     }
 
     #[test]
     fn test_communicate_invalid_data_buffer() {
-        let mm_communicator = get_test_mm_communicator!(0, MockSwMmiTrigger::new());
+        let communicator = get_test_communicator!(0, MockSwMmiTrigger::new());
         let data = [];
-        let result = mm_communicator.communicate(0, &data, TEST_RECIPIENT);
+        let result = communicator.communicate(0, &data, TEST_RECIPIENT);
         assert_eq!(result, Err(Status::InvalidDataBuffer));
     }
 
     #[test]
     fn test_communicate_comm_buffer_too_small() {
-        let mm_communicator = get_test_mm_communicator!(4, MockSwMmiTrigger::new());
+        let communicator = get_test_communicator!(4, MockSwMmiTrigger::new());
         let data = [0x01, 0x02, 0x03, 0x04, 0x05];
-        let result = mm_communicator.communicate(0, &data, TEST_RECIPIENT);
+        let result = communicator.communicate(0, &data, TEST_RECIPIENT);
         assert_eq!(result, Err(Status::CommBufferTooSmall));
     }
 
@@ -251,9 +251,9 @@ mod tests {
         // Verify that a software MMI is only triggered once
         mock_sw_mmi_trigger.expect_trigger_sw_mmi().once().returning(|_, _| Ok(()));
 
-        let mm_communicator = get_test_mm_communicator!(1024, mock_sw_mmi_trigger);
+        let communicator = get_test_communicator!(1024, mock_sw_mmi_trigger);
 
-        let result = mm_communicator.communicate(0, &TEST_DATA, TEST_RECIPIENT);
+        let result = communicator.communicate(0, &TEST_DATA, TEST_RECIPIENT);
         assert!(result.is_ok(), "Expected successful communication, but got: {:?}", result.err());
     }
 
@@ -261,12 +261,15 @@ mod tests {
     fn test_communicate_sw_mmi_is_returns_mmi_error() {
         let mut mock_sw_mmi_trigger = MockSwMmiTrigger::new();
 
-        // Verify that a software MMI that fails returns `patina_sdk::component::service::mm_communicator::StatusSwMmiFailed`
-        mock_sw_mmi_trigger.expect_trigger_sw_mmi().times(1).returning(|_, _| Err(crate::error::EfiError::DeviceError));
+        // Verify that a software MMI that fails returns `patina_mm::communicator::StatusSwMmiFailed`
+        mock_sw_mmi_trigger
+            .expect_trigger_sw_mmi()
+            .times(1)
+            .returning(|_, _| Err(patina_sdk::error::EfiError::DeviceError));
 
-        let mm_communicator = get_test_mm_communicator!(1024, mock_sw_mmi_trigger);
+        let communicator = get_test_communicator!(1024, mock_sw_mmi_trigger);
 
-        let result = mm_communicator.communicate(0, &TEST_DATA, TEST_RECIPIENT);
+        let result = communicator.communicate(0, &TEST_DATA, TEST_RECIPIENT);
         assert_eq!(result, Err(Status::SwMmiFailed), "Expected `Status::SwMmiFailed`, but got: {:?}", result);
     }
 
@@ -279,16 +282,16 @@ mod tests {
 
         mock_sw_mmi_trigger.expect_trigger_sw_mmi().returning(|_, _| Ok(()));
 
-        let mm_communicator = get_test_mm_communicator!(COMM_BUFFER_SIZE, mock_sw_mmi_trigger);
+        let communicator = get_test_communicator!(COMM_BUFFER_SIZE, mock_sw_mmi_trigger);
 
-        let result = mm_communicator.comm_buffers.borrow_mut()[0].set_message(&TEST_RESPONSE);
+        let result = communicator.comm_buffers.borrow_mut()[0].set_message(&TEST_RESPONSE);
         assert_eq!(result, Err(CommunicateBufferStatus::InvalidRecipient));
-        let result = mm_communicator.comm_buffers.borrow_mut()[0].set_message_info(TEST_RECIPIENT);
+        let result = communicator.comm_buffers.borrow_mut()[0].set_message_info(TEST_RECIPIENT);
         assert_eq!(result, Ok(()), "Expected message info to be set successfully, but got: {:?}", result);
-        let result = mm_communicator.comm_buffers.borrow_mut()[0].set_message(&TEST_RESPONSE);
+        let result = communicator.comm_buffers.borrow_mut()[0].set_message(&TEST_RESPONSE);
         assert_eq!(result, Ok(()), "Expected message to be set successfully, but got: {:?}", result);
 
-        let message = mm_communicator.comm_buffers.borrow_mut()[0].get_message();
+        let message = communicator.comm_buffers.borrow_mut()[0].get_message();
         let mut expected_data = vec![0u8; DATA_BUFFFER_SIZE];
         expected_data[..TEST_RESPONSE.len()].copy_from_slice(&TEST_RESPONSE);
         assert!(!message.is_empty(), "Expected message to be set, but got empty message: {:?}", message);
@@ -311,7 +314,7 @@ mod tests {
         mock_sw_mmi_trigger.expect_trigger_sw_mmi().once().returning(|_, _| Ok(()));
 
         // Note: This macro creates a comm buffer of size 0 with ID 0
-        let mm_communicator = get_test_mm_communicator!(64, mock_sw_mmi_trigger);
+        let communicator = get_test_communicator!(64, mock_sw_mmi_trigger);
 
         let comm_buffer_ids = [COMM_BUFFER_1_ID, COMM_BUFFER_2_ID, COMM_BUFFER_3_ID];
         let comm_buffers = [
@@ -327,13 +330,13 @@ mod tests {
         ];
 
         // Cleat the buffer added by the macro and add the new buffers
-        mm_communicator.comm_buffers.borrow_mut().clear();
+        communicator.comm_buffers.borrow_mut().clear();
         comm_buffers.iter().cloned().for_each(|b| {
-            mm_communicator.comm_buffers.borrow_mut().push(b);
+            communicator.comm_buffers.borrow_mut().push(b);
         });
 
         let mut comm_buffer_test_data: Vec<Vec<u8>> = Vec::new();
-        for (i, comm_buffer) in mm_communicator.comm_buffers.borrow_mut().iter_mut().enumerate() {
+        for (i, comm_buffer) in communicator.comm_buffers.borrow_mut().iter_mut().enumerate() {
             let data = &(0..COMM_RESPONSE_TEST_BYTE_LEN).map(|x| (i + x + 1) as u8).collect::<Vec<_>>()[..];
             assert!(
                 comm_buffers.iter().any(|b| b.id() == comm_buffer.id()),
@@ -365,15 +368,15 @@ mod tests {
         }
 
         // Verify that the correct comm buffer is used for the first ID (which matches after the comm data is written)
-        let result = mm_communicator.communicate(comm_buffer_ids[0], &TEST_DATA, TEST_RECIPIENT);
+        let result = communicator.communicate(comm_buffer_ids[0], &TEST_DATA, TEST_RECIPIENT);
         assert_eq!(result, Ok(comm_buffer_test_data[0].clone()), "Comm buffer 1 failed to return the expected data");
     }
 
     #[test]
     fn test_communicate_debug_formatting() {
-        let mm_communicator = get_test_mm_communicator!(64, MockSwMmiTrigger::new());
+        let communicator = get_test_communicator!(64, MockSwMmiTrigger::new());
 
-        let debug_output = format!("{:?}", mm_communicator);
+        let debug_output = format!("{:?}", communicator);
         assert!(
             debug_output.contains("MM Communicator:"),
             "Expected debug output to contain 'MM Communicator', but got: {:?}",

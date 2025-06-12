@@ -290,7 +290,8 @@ mod tests {
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
             unsafe {
-                test_support::init_test_gcd(Some(0x100000));
+                test_support::init_test_gcd(None);
+                test_support::reset_allocators();
                 test_support::init_test_protocol_db();
             }
             f();

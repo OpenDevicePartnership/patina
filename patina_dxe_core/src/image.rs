@@ -15,14 +15,19 @@ use patina_performance::{
     create_performance_measurement, perf_image_start_begin, perf_image_start_end, perf_load_image_begin,
     perf_load_image_end,
 };
-use patina_sdk::base::{align_up, UEFI_PAGE_SIZE};
+use patina_sdk::base::{align_up, DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE};
 use patina_sdk::error::EfiError;
-use patina_sdk::{guid, uefi_size_to_pages};
+use patina_sdk::{guid, uefi_pages_to_size, uefi_size_to_pages};
 use r_efi::efi;
 
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
-    dxe_services,
+    config_tables::debug_image_info_table::{
+        core_new_debug_image_info_entry, core_remove_debug_image_info_entry, initialize_debug_image_info_table,
+        EfiDebugImageInfoNormal,
+    },
+    dxe_services::{self, core_set_memory_space_attributes},
+    events::EVENT_DB,
     filesystems::SimpleFile,
     pecoff::{self, relocation::RelocationBlock, UefiPeInfo},
     protocol_db,
@@ -81,7 +86,7 @@ impl ImageStack {
         // the stack grows downwards, so stack here is the guard page
         let attributes = match dxe_services::core_get_memory_space_descriptor(stack) {
             Ok(descriptor) => descriptor.attributes,
-            Err(_) => 0,
+            Err(_) => DEFAULT_CACHE_ATTR,
         };
         if let Err(err) =
             dxe_services::core_set_memory_space_attributes(stack, UEFI_PAGE_SIZE as u64, attributes | efi::MEMORY_RP)
@@ -111,7 +116,7 @@ impl Drop for ImageStack {
             // preserve the caching attributes
             let mut attributes = match dxe_services::core_get_memory_space_descriptor(stack_addr) {
                 Ok(descriptor) => descriptor.attributes & !efi::MEMORY_ATTRIBUTE_MASK,
-                Err(_) => 0,
+                Err(_) => DEFAULT_CACHE_ATTR,
             };
 
             attributes |= efi::MEMORY_XP;
@@ -501,8 +506,8 @@ fn remove_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateI
 }
 
 // retrieves the dxe core image info from the hob list, and installs the
-// loaded_image protocol on it to create the dxe core image handle.
-fn install_dxe_core_image(hob_list: &HobList) {
+// loaded_image protocol on it to create the dxe_core image handle.
+fn install_dxe_core_image(hob_list: &HobList, system_table: &mut EfiSystemTable) {
     // Retrieve the MemoryAllocationModule hob corresponding to the DXE core
     // (i.e. this driver).
     let dxe_core_hob = hob_list
@@ -570,7 +575,16 @@ fn install_dxe_core_image(hob_list: &HobList) {
         Ok(handle) => handle,
     };
     assert_eq!(handle, protocol_db::DXE_CORE_HANDLE);
-    // record this handle as the new dxe core handle.
+
+    // register the core image with the debug image info configuration table
+    initialize_debug_image_info_table(system_table);
+    core_new_debug_image_info_entry(
+        EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
+        image_info_ptr as *const efi::protocols::loaded_image::Protocol,
+        handle,
+    );
+
+    // record this handle as the new dxe_core handle.
     private_data.dxe_core_image_handle = handle;
 
     // store the dxe core image private data in the private image data map.
@@ -701,7 +715,7 @@ fn activate_compatibility_mode(private_info: &PrivateImageData) -> Result<(), Ef
     // for this image map all mem RWX preserving cache attributes if we find them
     let stripped_attrs = dxe_services::core_get_memory_space_descriptor(private_info.image_base_page)
         .map(|desc| desc.attributes & efi::CACHE_ATTRIBUTE_MASK)
-        .unwrap_or(0);
+        .unwrap_or(DEFAULT_CACHE_ATTR);
     if dxe_services::core_set_memory_space_attributes(
         private_info.image_base_page,
         patina_sdk::uefi_pages_to_size!(private_info.image_num_pages) as u64,
@@ -726,6 +740,40 @@ fn activate_compatibility_mode(private_info: &PrivateImageData) -> Result<(), Ef
     log::error!("Attempting to load {} that is not NX compatible. Compatibility mode is not allowed in this build, not loading image.",
                 private_info.pe_info.filename.clone().unwrap_or(String::from("Unknown")));
     Err(EfiError::LoadError)
+}
+
+extern "efiapi" fn runtime_image_protection_fixup_ebs(event: efi::Event, _context: *mut c_void) {
+    let mut private_data = PRIVATE_IMAGE_DATA.lock();
+
+    for image in private_data.private_image_data.values_mut() {
+        if image.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
+            let cache_attrs = dxe_services::core_get_memory_space_descriptor(image.image_base_page)
+                .map(|desc| desc.attributes & efi::CACHE_ATTRIBUTE_MASK)
+                .unwrap_or(DEFAULT_CACHE_ATTR);
+
+            match core_set_memory_space_attributes(
+                image.image_base_page,
+                uefi_pages_to_size!(image.image_num_pages) as u64,
+                cache_attrs,
+            ) {
+                Ok(_) => {
+                    // success, keep going
+                }
+                Err(status) => {
+                    log::error!(
+                        "Failed to set GCD attributes for runtime image {:#X?} with Status {:#X?}, may fail to relocate",
+                        image.image_base_page,
+                        status
+                    );
+                    debug_assert!(false);
+                }
+            };
+        }
+    }
+
+    if let Err(status) = EVENT_DB.close_event(event) {
+        log::error!("Failed to close image EBS event with status {:#X?}. This should be okay.", status);
+    }
 }
 
 // Reads an image buffer using simple file system or load file protocols.
@@ -1017,17 +1065,26 @@ pub fn core_load_image(
         private_info.pe_info.filename.as_ref().unwrap_or(&String::from("<no PDB>"))
     );
 
+    // install the loaded_image protocol for this freshly loaded image on a new
+    // handle.
+    let handle = core_install_protocol_interface(None, efi::protocols::loaded_image::PROTOCOL_GUID, image_info_ptr)
+        .inspect_err(|err| log::error!("failed to load image: install loaded image protocol failed: {:#x?}", err))?;
+
+    // register the loaded image with the debug image info configuration table. This is done before the debugger is
+    // notified so that the debugger can access the loaded image protocol before that point, e.g. so
+    // that symbols can be loaded on module breakpoints.
+    core_new_debug_image_info_entry(
+        EfiDebugImageInfoNormal::EFI_DEBUG_IMAGE_INFO_TYPE_NORMAL,
+        image_info_ptr as *const efi::protocols::loaded_image::Protocol,
+        handle,
+    );
+
     // Notify the debugger of the image load.
     patina_debugger::notify_module_load(
         private_info.pe_info.filename.as_ref().unwrap_or(&String::from("")),
         private_info.image_info.image_base as usize,
         private_info.image_info.image_size as usize,
     );
-
-    // install the loaded_image protocol for this freshly loaded image on a new
-    // handle.
-    let handle = core_install_protocol_interface(None, efi::protocols::loaded_image::PROTOCOL_GUID, image_info_ptr)
-        .inspect_err(|err| log::error!("failed to load image: install loaded image protocol failed: {:#x?}", err))?;
 
     // install the loaded_image device path protocol for the new image. If input device path is not null, then make a
     // permanent copy on the heap.
@@ -1276,6 +1333,8 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
     }
     let handles = PROTOCOL_DB.locate_handles(None).unwrap_or_default();
 
+    core_remove_debug_image_info_entry(image_handle);
+
     // close any protocols opened by this image.
     for handle in handles {
         let protocols = match PROTOCOL_DB.get_protocols_on_handle(handle) {
@@ -1402,8 +1461,19 @@ pub fn init_image_support(hob_list: &HobList, system_table: &mut EfiSystemTable)
     private_data.system_table = system_table.as_ptr() as *mut efi::SystemTable;
     drop(private_data);
 
-    // install the image protocol for the dxe core.
-    install_dxe_core_image(hob_list);
+    // install the image protocol for the dxe_core.
+    install_dxe_core_image(hob_list, system_table);
+
+    // set up exit boot services callback
+    let _ = EVENT_DB
+        .create_event(
+            efi::EVT_NOTIFY_SIGNAL,
+            efi::TPL_CALLBACK,
+            Some(runtime_image_protection_fixup_ebs),
+            None,
+            Some(efi::EVENT_GROUP_EXIT_BOOT_SERVICES),
+        )
+        .expect("Failed to create callback for runtime image memory protection fixups.");
 
     //set up imaging services
     system_table.boot_services_mut().load_image = load_image;

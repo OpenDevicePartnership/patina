@@ -1,4 +1,4 @@
-//! UEFI Debugger
+//! Patina Debugger
 //!
 //! This crate provides a debugger implementation that will install itself in the
 //! exception handlers and communicate with debugger software using the GDB Remote
@@ -14,7 +14,7 @@
 //! ## Examples and Usage
 //!
 //! The debugger consists of the static access routines and the underlying debugger
-//! struct. The top level platform code should initialize the statis `UefiDebugger`
+//! struct. The top level platform code should initialize the statis `PatinaDebugger`
 //! struct with the appropriate serial transport and default configuration. The
 //! platform has the option of setting static configuration, or enabling the
 //! debugger in runtime code based on platform policy. During entry, the platform
@@ -29,8 +29,8 @@
 //!
 //! use patina_internal_cpu::interrupts::{Interrupts, InterruptManager};
 //!
-//! static DEBUGGER: patina_debugger::UefiDebugger<patina_sdk::serial::uart::UartNull> =
-//!     patina_debugger::UefiDebugger::new(patina_sdk::serial::uart::UartNull{});
+//! static DEBUGGER: patina_debugger::PatinaDebugger<patina_sdk::serial::uart::UartNull> =
+//!     patina_debugger::PatinaDebugger::new(patina_sdk::serial::uart::UartNull{});
 //!
 //! fn entry() {
 //!
@@ -41,10 +41,15 @@
 //!     // Set the global debugger instance. This can only be done once.
 //!     patina_debugger::set_debugger(&DEBUGGER);
 //!
+//!     // Setup a custom monitor command for this platform.
+//!     patina_debugger::add_monitor_command("my_command", |args, writer| {
+//!         // Parse the arguments from _args, which is a SplitWhitespace iterator.
+//!         let _ = write!(writer, "Executed my_command with args: {:?}", args);
+//!     });
+//!
 //!     // Call the core entry. The core can then initialize and access the debugger
 //!     // through the static routines.
 //!     start();
-//!
 //! }
 //!
 //! fn start() {
@@ -69,7 +74,7 @@
 //! ```
 //!
 //! The debugger can be further configured by using various functions on the
-//! initialization of the debugger struct. See the definition for [debugger::UefiDebugger]
+//! initialization of the debugger struct. See the definition for [debugger::PatinaDebugger]
 //! for more details. Notably, if the device is using the same transport for
 //! logging and debugger, it is advisable to use `.without_log_init()`.
 //!
@@ -92,12 +97,12 @@ mod arch;
 mod dbg_target;
 mod debugger;
 mod memory;
-mod modules;
+mod system;
 mod transport;
 
 extern crate alloc;
 
-pub use debugger::UefiDebugger;
+pub use debugger::PatinaDebugger;
 
 use arch::{DebuggerArch, SystemArch};
 use patina_internal_cpu::interrupts::{ExceptionContext, InterruptManager};
@@ -112,6 +117,18 @@ use patina_sdk::serial::SerialIO;
 /// this uses the Once lock to provide these properties.
 ///
 static DEBUGGER: spin::Once<&dyn Debugger> = spin::Once::new();
+
+/// Type for monitor command functions. This will be invoked by the debugger when
+/// the associated monitor command is invoked.
+///
+/// The first argument contains the whitespace separated arguments from the command.
+/// For example, if the command is `my_command arg1 arg2`, then `arg1` and `arg2` will
+/// be the first and second elements of the iterator respectively.
+///
+/// the second argument is a writer that should be used to write the output of the
+/// command. This can be done by directly invoking the [core::fmt::Write] trait methods
+/// or using the `write!` macro.
+pub type MonitorCommandFn = fn(&mut core::str::SplitWhitespace<'_>, &mut dyn core::fmt::Write);
 
 /// Trait for debugger interaction. This is required to allow for a global to the
 /// platform specific debugger implementation. For safety, these routines should
@@ -128,6 +145,9 @@ trait Debugger: Sync {
 
     /// Polls the debugger for any pending interrupts.
     fn poll_debugger(&'static self);
+
+    /// Adds a monitor command to the debugger.
+    fn add_monitor_command(&'static self, cmd: &'static str, function: MonitorCommandFn);
 }
 
 #[derive(Debug)]
@@ -147,8 +167,23 @@ enum DebugError {
     RebootFailure,
 }
 
+/// Policy for how the debugger will handle logging on the system.
+pub enum DebuggerLoggingPolicy {
+    /// The debugger will suspend logging while broken in, but will not change the
+    /// logging state outside of the debugger. This may cause instability if the
+    /// debugger and logging share a transport.
+    SuspendLogging,
+    /// The debugger will disable all logging after a connection is made. This is
+    /// the safest option if the debugger and logging share a transport.
+    DisableLogging,
+    /// The debugger will not suspend logging while broken in and will allow log
+    /// messages from the debugger itself. This should only be used if the debugger
+    /// and logging transports are separate.
+    FullLogging,
+}
+
 /// Sets the global instance of the debugger.
-pub fn set_debugger<T: SerialIO>(debugger: &'static UefiDebugger<T>) {
+pub fn set_debugger<T: SerialIO>(debugger: &'static PatinaDebugger<T>) {
     DEBUGGER.call_once(|| debugger);
 }
 
@@ -161,7 +196,10 @@ pub fn initialize(interrupt_manager: &mut dyn InterruptManager) {
     }
 }
 
-/// Invokes a debug break instruction.
+/// Invokes a debug break instruction. Callers should ensure that the debugger
+/// is enabled before invoking this routine using the [enabled] routine. If this
+/// routine is invoked when the debugger is not enabled, it will cause an unhandled
+/// exception.
 pub fn breakpoint() {
     SystemArch::breakpoint();
 }
@@ -187,6 +225,25 @@ pub fn enabled() -> bool {
     match DEBUGGER.get() {
         Some(debugger) => debugger.enabled(),
         None => false,
+    }
+}
+
+/// Adds a monitor command to the debugger. This may be called before initialization,
+/// but should not be called before memory allocations are available. See [MonitorCommandFn]
+/// for more details on the callback function expectations.
+///
+/// ## Example
+///
+/// ```rust
+/// patina_debugger::add_monitor_command("my_command", |args, writer| {
+///     // Parse the arguments from _args, which is a SplitWhitespace iterator.
+///     let _ = write!(writer, "Executed my_command with args: {:?}", args);
+/// });
+/// ```
+///
+pub fn add_monitor_command(cmd: &'static str, function: MonitorCommandFn) {
+    if let Some(debugger) = DEBUGGER.get() {
+        debugger.add_monitor_command(cmd, function);
     }
 }
 

@@ -313,12 +313,24 @@ impl InterruptHandler for HwInterruptProtocolHandler {
     fn handle_interrupt(&'static self, exception_type: usize, context: &mut ExceptionContext) {
         let int_id = GicV3::get_and_acknowledge_interrupt();
         if int_id.is_none() {
-            // The special interrupt do not need to be acknowledge
+            // The special interrupt do not need to be acknowledged
             return;
         }
 
         let int_id = int_id.unwrap();
         let raw_value: u32 = int_id.into();
+
+        if raw_value >= self.handlers.lock().len() as u32 {
+            match raw_value {
+                1021 | 1022 | 1023 => {
+                    // The special interrupt do not need to be acknowledged
+                }
+                _ => {
+                    log::error!("Invalid interrupt source: 0x{:x}", raw_value);
+                }
+            }
+            return;
+        }
 
         if let Some(handler) = self.handlers.lock()[raw_value as usize] {
             handler(raw_value as u64, context);
