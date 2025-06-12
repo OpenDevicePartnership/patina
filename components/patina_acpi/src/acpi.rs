@@ -870,6 +870,7 @@ mod tests {
     use crate::acpi_table::FadtData;
 
     use super::*;
+    use core::any::TypeId;
     use core::ptr::NonNull;
     use patina_sdk::boot_services::MockBootServices;
     use patina_sdk::component::service::memory::MockMemoryManager;
@@ -967,10 +968,10 @@ mod tests {
         // Both tables should be in the list and in order
         let result = provider.iter();
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0].signature(), 0x1);
-        assert_eq!(result[0].length(), 10);
-        assert_eq!(result[1].signature(), 0x2);
-        assert_eq!(result[1].length(), 20);
+        assert_eq!(result[0].signature, 0x1);
+        assert_eq!(result[0].length, 10);
+        assert_eq!(result[1].signature, 0x2);
+        assert_eq!(result[1].length, 20);
     }
 
     #[test]
