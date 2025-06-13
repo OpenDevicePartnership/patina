@@ -29,6 +29,8 @@ are instead investigating the performance of certain regions of code. Patina use
 crate for benchmarking, so one should follow it's documentation when writing benchmarks. Multiple crates (including
 patina_sdk and patina_internal_collections) also have some benchmark examples to follow.
 
+Benchmark results are shown on the command line, but graphics are available in the `target/criterion` folder.
+
 **Note**: Benchmarks are not run during testing, nor is performance data tracked over time. Benchmarks are there purely
 to help developers track local performance changes when making changes during the development lifecycle.
 
