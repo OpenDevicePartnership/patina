@@ -2,19 +2,19 @@
 //!
 //! This benchmark tests the performance performing random delete operations on the supported data structures in this
 //! crate, including Red-Black Trees (RBT), Binary Search Trees (BST), and Sorted Slices.
-//! 
+//!
 //! ## Benchmark execution
-//! 
+//!
 //! Running this exact benchmark can be done with the following command:
 //!
 //! `> cargo make bench -p patina_internal_collections --bench bench_delete`
-//! 
+//!
 //! If you wish to run a subset of benchmarks in this file, you can filter them by name:
-//! 
+//!
 //! `> cargo make bench -p patina_internal_collections --bench bench_delete -- <filter>`
-//! 
+//!
 //! ## Examples
-//! 
+//!
 //! ```bash
 //! > cargo make bench -p patina_internal_collections --bench bench_delete -- rbt
 //! > cargo make bench -p patina_internal_collections --bench bench_delete -- 32bit

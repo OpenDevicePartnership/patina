@@ -1,19 +1,19 @@
 //! Benchmarks for the component framework.
 //!
 //! This benchmark tests the performance of adding and running components in the Patina SDK.
-//! 
+//!
 //! ## Benchmark execution
-//! 
+//!
 //! Running this exact benchmark can be done with the following command:
 //!
 //! `> cargo make bench -p patina_sdk --bench bench_component`
-//! 
+//!
 //! If you wish to run a subset of benchmarks in this file, you can filter them by name:
-//! 
+//!
 //! `> cargo make bench -p patina_sdk --bench bench_component -- <filter>`
-//! 
+//!
 //! ## Examples
-//! 
+//!
 //! ```bash
 //! > cargo make bench -p patina_sdk --bench bench_component -- with_component
 //! > cargo make bench -p patina_sdk --bench bench_component -- run_component
