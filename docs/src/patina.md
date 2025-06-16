@@ -248,7 +248,7 @@ into a platform.
 
 The following integration documents might be helpful if you're beginning to work with the Rust DXE Core:
 
-- [Rust DXE Core vs Tianocore DXE Core Key Differences](./integrate/rust_vs_edk2.md)
+- [Patina Requirements](./integrate/patina_requirements.md)
 - [How to Setup a Platform-Specific Rust DXE Core Build](./integrate/dxe_core.md)
 - [Platform Integration of a Rust DXE Core Binary](./integrate/platform.md)
 

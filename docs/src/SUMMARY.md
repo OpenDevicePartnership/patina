@@ -34,7 +34,7 @@
 - [Updating the Platform](integrate/platform.md)
   - [Local to the Platform](integrate/platform_local.md)
   - [External to the Platform](integrate/platform_external.md)
-- [Rust DXE Core vs. EDK II](integrate/rust_vs_edk2.md)
+- [Patina Requirements](integrate/patina_requirements.md)
 
 # Contributing to the Rust DXE Core
 
