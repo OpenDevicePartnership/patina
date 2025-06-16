@@ -1,7 +1,7 @@
 # Patina Requirements
 
 The Patina DXE Core has several functional and implementation differences from the
-[Platform Initialization (PI) Spec](https://uefi.org/specifications) and EDK2 DXE Core implementation.
+[Platform Initialization (PI) Spec](https://uefi.org/specifications) and EDK II DXE Core implementation.
 
 The [Patina DXE Readiness Tool](#todo) validates many of these requirements.
 
@@ -41,7 +41,7 @@ DXE drivers and Firmware volumes **will** be dispatched:
 - `EFI_FV_FILETYPE_FIRMWARE_VOLUME_IMAGE` (`0xB`)
 
 Because Traditional SMM is not supported, events such as the `gEfiEventDxeDispatchGuid` defined in the PI spec and used
-in the EDK2 DXE Core to signal the end of a DXE dispatch round so SMM drivers with DXE dependency expressions could be
+in the EDK II DXE Core to signal the end of a DXE dispatch round so SMM drivers with DXE dependency expressions could be
 reevaluated will not be signaled.
 
 Dependency expressions such as `EFI_SECTION_SMM_DEPEX` will not be evaluated on firmware volumes.
@@ -109,7 +109,7 @@ Patina does not allow there to be overlapping Resource Descriptor HOB v2s in the
 fail if that is the case. Patina cannot choose which HOB should be valid for the overlapping region; the platform must
 decide this and correctly build its resource descriptor HOBs to describe system resources.
 
-The EDK2 DXE CORE silently ignores overlapping HOBs, which leads to unexpected behavior when a platform believes both
+The EDK II DXE CORE silently ignores overlapping HOBs, which leads to unexpected behavior when a platform believes both
 HOBs or part of both HOBs, is being taken into account.
 
 > **Guidance:**
@@ -118,9 +118,9 @@ HOBs or part of both HOBs, is being taken into account.
 
 #### No Memory Allocation HOB for Page 0
 
-Patina does not allow there to be a memory allocation HOB for page 0. The EDK2 DXE Core allows page 0 allocates. Page 0
-must be unmapped in the page table to catch null pointer dereferences and this cannot be safely done if a driver has
-allocated this page. The Readiness Tool will fail if a Memory Allocation HOB is discovered that covers page 0.
+Patina does not allow there to be a memory allocation HOB for page 0. The EDK II DXE Core allows page 0 allocates.
+Page 0 must be unmapped in the page table to catch null pointer dereferences and this cannot be safely done if a driver
+has allocated this page. The Readiness Tool will fail if a Memory Allocation HOB is discovered that covers page 0.
 
 > **Guidance:**
 > Platforms must not allocate page 0.
@@ -132,8 +132,8 @@ This section details requirements that do not fit under another category.
 #### Exit Boot Services Memory Allocations Are Not Allowed
 
 When `EXIT_BOOT_SERVICES` is signaled, the memory map is not allowed to change. See
-[Exit Boot Services Handlers](../dxe_core/memory_management.md#exit-boot-services-handlers). The EDK2 DXE Core does not
-prevent memory allocations at this point, which causes hibernate resume failures, among other bugs.
+[Exit Boot Services Handlers](../dxe_core/memory_management.md#exit-boot-services-handlers). The EDK II DXE Core does
+not prevent memory allocations at this point, which causes hibernate resume failures, among other bugs.
 
 The Readiness Tool is not able to detect this anti-pattern because it requires driver dispatching and specific target
 configurations to trigger the memory allocation/free.
