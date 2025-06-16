@@ -68,6 +68,22 @@ the [Dispatcher Documentation](../dxe_core/dispatcher.md) for details and justif
 > A Priori sections must be removed and proper driver dispatch must be ensured using depex statements. Drivers may
 > produce empty protocols solely to ensure that other drivers can use that protocol as a depex statement, if required.
 
+#### Driver Section Alignment Must Be a Positive Multiple of 4 KB
+
+Patina relies on using a 4 KB page size and as a result requires that C based drivers it dispatches have a positive
+multiple of 4KB as a page size in order to apply image memory protections. The EDK II DXE Core cannot apply image
+memory protections on images without this section alignment requirement, but it will dispatch them, depending on
+configuration.
+
+Patina components will have 4 KB section alignment by nature of being compiled into Patina.
+
+The Readiness Tool validates all drivers have a positive multiple of 4 KB section alignment and reports an error if not.
+
+> **Guidance:**
+> All C based drivers must be compiled with a linker flag that enforces a positive multiple of 4 KB section alignment.
+> Commonly, 4 KB is used except for ARM64 runtime drivers, which use 64 KB per UEFI spec requirements. For MSVC, this
+> linker flag is `/ALIGN:4096` for GCC/CLANG, the flag is `-z common-page-size=0x1000`.
+
 ### Hand Off Block (HOB) Requirements
 
 The following are the Patina DXE Core HOB requirements.
@@ -120,10 +136,27 @@ HOBs or part of both HOBs, is being taken into account.
 
 Patina does not allow there to be a memory allocation HOB for page 0. The EDK II DXE Core allows page 0 allocates.
 Page 0 must be unmapped in the page table to catch null pointer dereferences and this cannot be safely done if a driver
-has allocated this page. The Readiness Tool will fail if a Memory Allocation HOB is discovered that covers page 0.
+has allocated this page.
+
+The Readiness Tool will fail if a Memory Allocation HOB is discovered that covers page 0.
 
 > **Guidance:**
 > Platforms must not allocate page 0.
+
+#### MMIO and Reserved Regions Require Resource Descriptor HOB v2s
+
+All memory resources used by the system require Resource Descriptor HOB v2s. Patina needs this information to map MMIO
+and reserved regions as existing EDK II based drivers expect to be able to touch these memory types without allocating
+it first; EDK II does not require Resource Descriptor HOBs for these regions.
+
+This cannot be tested in the Readiness Tool because the tool does not know what regions may be reserved or MMIO without
+the platform telling it and the only mechanism for a platform to do that is through a Resource Descriptor HOB v2.
+Platforms will see page faults if a driver attempts to access an MMIO or reserved region that does not have a
+Resource Descriptor HOB v2 describing it.
+
+> **Guidance:**
+> Platforms must create Resource Descriptor HOB v2s for all memory resources including MMIO and reserved memory with
+> a valid cacheability attribute set.
 
 ### Miscellaneous Requirements
 
