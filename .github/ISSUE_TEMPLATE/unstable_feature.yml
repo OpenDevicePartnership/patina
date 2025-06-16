@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: BSD-2-Clause-Patent
 ##
 name: 📓 Tracking unstable feature issue.
-description: Track an unstable feature.
+description: Track an unstable feature. For more details, see `docs/src/dev/unstable_feature.md`
 title: "[Unstable] Tracking Issue for `<feature gate name>`"
 labels: ["unstable-feature"]
 
