@@ -39,7 +39,7 @@
 # Contributing to the Rust DXE Core
 
 - [Theory and Operation](dxe_core/operation.md)
-  - [Advanced Logger]()
+  - [Advanced Logger](dxe_core/advanced_logger.md)
   - [CPU](dxe_core/cpu.md)
   - [Debugging](dxe_core/debugging.md)
   - [Event, Timer, and Task Priority](dxe_core/events.md)
