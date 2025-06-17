@@ -131,6 +131,8 @@ impl AdvLoggerInfo {
         }
     }
 
+    // Allow unused as it is used in tests and intended for future general use.
+    #[allow(dead_code)]
     pub unsafe fn initialize_memory_log(address: efi::PhysicalAddress, length: u32) -> Option<&'static Self> {
         let log_info = address as *mut Self;
         if log_info.is_null() {
@@ -204,6 +206,8 @@ impl AdvLoggerInfo {
         let _ = atomic.compare_exchange(0, frequency, Ordering::Relaxed, Ordering::Relaxed);
     }
 
+    // Allow unused as it is used in tests and intended for future general use.
+    #[allow(dead_code)]
     pub fn get_log_buffer_size(&self) -> usize {
         self.log_buffer_size as usize
     }

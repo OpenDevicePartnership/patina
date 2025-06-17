@@ -38,9 +38,17 @@ cfg_if::cfg_if! {
         #[derive(Debug)]
         pub enum Uart16550 {
             /// The I/O interface for the Uart16550 serial port.
-            Io { base: u16 },
+            Io {
+                /// The base address of the UART control registers.
+                base: u16
+            },
             /// The Memory Mapped I/O interface for the Uart16550 serial port.
-            Mmio { base: usize, reg_stride: usize },
+            Mmio {
+                /// The base address of the UART control registers.
+                base: usize,
+                /// The number of bytes between consecutive registers.
+                reg_stride: usize
+            },
         }
 
         impl super::SerialIO for Uart16550 {

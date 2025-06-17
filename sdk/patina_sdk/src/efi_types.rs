@@ -16,27 +16,44 @@ use crate::error::EfiError;
 /// A wrapper for the EFI memory types.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum EfiMemoryType {
+    /// Reserved memory for platform uses.
     ReservedMemoryType,
+    /// The code portions of a loaded application, e.g. the entire loaded image (PE).
     LoaderCode,
+    /// The data portions of a loaded application, e.g. data allocations made and used by an application.
     LoaderData,
+    /// The code portions of a loaded Boot Services Driver, e.g. the entire loaded image (PE).
     BootServicesCode,
+    /// The data portions of a loaded Boot Services Driver, e.g. data allocations made and used by a driver.
     BootServicesData,
+    /// The code portions of a loaded Runtime Services Driver, e.g. the entire loaded image (PE).
     RuntimeServicesCode,
+    /// The data portions of a loaded Runtime Services Driver, e.g. data allocations made and used by a driver.
     RuntimeServicesData,
+    /// Free (unallocated) memory.
     ConventionalMemory,
+    /// Memory in which errors have been detected.
     UnusableMemory,
+    /// Memory reserved for runtime ACPI non-volatile storage.
     ACPIReclaimMemory,
+    /// Address space reserved for use by the firmware.
     ACPIMemoryNVS,
+    /// Memory-mapped IO region, mapped by the OS to a virtual address so it can be accessed by EFI runtime services.
     MemoryMappedIO,
+    /// System memory-mapped IO region that is used to translate memory cycles to IO cycles by the processor.
     MemoryMappedIOPortSpace,
+    /// Address space reserved by the firmware for code that is part of the processor.
     PalCode,
+    /// EfiConventionalMemory that supports byte-addressable non-volatility.
     PersistentMemory,
+    /// Present in the system, but not accepted / initalized for use by the system's underlying memory isolation
+    /// technology.
     UnacceptedMemoryType,
-
-    // Custom memory types can only be created through `from_efi` with the custom
-    // memory type value. This is to ensure that the custom memory types cannot
-    // be created with invalid values.
+    /// Custom memory types can only be created through `from_efi` with the custom
+    /// memory type value. This is to ensure that the custom memory types cannot
+    /// be created with invalid values.
     OemMemoryType(CustomMemoryType),
+    /// Custom memory types that are defined by the OS.
     OsMemoryType(CustomMemoryType),
 }
 
@@ -49,6 +66,9 @@ pub struct CustomMemoryType {
 }
 
 impl EfiMemoryType {
+    /// Converts a [efi::MemoryType] to an [EfiMemoryType].
+    ///
+    /// Returns an [EfiError] if the underlying [u32] value does not match any known EFI memory types.
     pub fn from_efi(value: efi::MemoryType) -> Result<Self, EfiError> {
         let memory_type = match value {
             efi::RESERVED_MEMORY_TYPE => EfiMemoryType::ReservedMemoryType,

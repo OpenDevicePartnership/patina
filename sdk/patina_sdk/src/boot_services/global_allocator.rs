@@ -1,3 +1,11 @@
+//! This module provides an implementation of a global allocator using UEFI Boot Services.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
 use core::{
     alloc::{GlobalAlloc, Layout},
     ops::Deref,

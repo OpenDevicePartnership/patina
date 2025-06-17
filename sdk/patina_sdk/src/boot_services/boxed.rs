@@ -1,3 +1,11 @@
+//! This module provides a Box type whose lifetime is tied to the UEFI Boot Services.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
 use alloc::slice;
 use core::{
     mem,
@@ -7,6 +15,7 @@ use core::{
 
 use super::{allocation::MemoryType, BootServices};
 
+/// A boxed type to wrap a [BootServices] implementation
 #[derive(Debug)]
 pub struct BootServicesBox<'a, T: ?Sized, B: BootServices + ?Sized> {
     ptr: *mut T,
@@ -14,6 +23,7 @@ pub struct BootServicesBox<'a, T: ?Sized, B: BootServices + ?Sized> {
 }
 
 impl<'a, T, B: BootServices> BootServicesBox<'a, T, B> {
+    /// Create a new BootServicesBox containing the provided value
     pub fn new(value: T, memory_type: MemoryType, boot_services: &'a B) -> Self {
         let size = mem::size_of_val(&value);
         let ptr = boot_services.allocate_pool(memory_type, size).unwrap() as *mut T;
@@ -30,14 +40,17 @@ impl<'a, T, B: BootServices> BootServicesBox<'a, T, B> {
         Self { boot_services, ptr }
     }
 
+    /// Consumes the `BootServicesBox`, returning a raw pointer to the underlying data.
     pub fn into_raw(self) -> *const T {
         self.ptr as *const T
     }
 
+    /// Consumes the `BootServicesBox`, returning a mutable raw pointer to the underlying data.
     pub fn into_raw_mut(self) -> *mut T {
         self.ptr
     }
 
+    /// Leaks the box, such that the memory will not be freed even if all references to it are dropped.
     pub fn leak(self) -> &'a mut T {
         let leak = unsafe { self.ptr.as_mut() }.unwrap();
         mem::forget(self);

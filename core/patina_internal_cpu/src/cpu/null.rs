@@ -19,6 +19,7 @@ use r_efi::efi;
 pub struct EfiCpuNull;
 
 impl EfiCpuNull {
+    /// Creates a new instance of the null implementation of the CPU.
     pub fn initialize(&mut self) -> Result<(), EfiError> {
         Ok(())
     }

@@ -33,6 +33,7 @@ extern "C" {
 pub struct InterruptsAarch64 {}
 
 impl InterruptsAarch64 {
+    /// Creates a new instance of the AARCH64 implementation of the InterruptManager.
     pub const fn new() -> Self {
         Self {}
     }

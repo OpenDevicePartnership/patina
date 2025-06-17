@@ -7,6 +7,7 @@ NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} -Zbuild-std=core,compiler_builtins,al
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
 TEST_FLAGS = { value = "", condition = { env_not_set = ["TEST_FLAGS"] } }
 COV_FLAGS = { value = "--workspace --out html --out xml --exclude-files **/tests/* --exclude-files **/benches/* --exclude patina_test_macro", condition = { env_not_set = ["COV_FLAGS"] } }
+RUSTDOCFLAGS = "-D warnings -D missing_docs"
 
 [env.development]
 RUSTC_PROFILE = "dev"
@@ -209,13 +210,11 @@ dependencies = ["individual-package-targets"]
 
 [tasks.doc]
 description = "Builds all rust documentation in the workspace. Example `cargo make doc`"
-env = { RUSTDOCFLAGS = "-D warnings"}
 command = "cargo"
 args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc"]
 
 [tasks.doc-open]
 description = "Builds all rust documentation in the workspace and opens the documentation. Example `cargo make doc-open`"
-env = { RUSTDOCFLAGS = "-D warnings"}
 clear = true
 command = "cargo"
 args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc", "--open"]

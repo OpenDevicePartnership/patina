@@ -41,15 +41,16 @@ pub use serial_logger::Logger as SerialLogger;
 
 /// Enum to describe the format of the log message.
 pub enum Format {
-    // Standard text format containing the log level and message.
+    /// Standard text format containing the log level and message.
     Standard,
-    // JSON blob containing the log level and message.
+    /// JSON blob containing the log level and message.
     Json,
-    // Verbose JSON blob containing the log level, message, target, and file path and line number.
+    /// Verbose JSON blob containing the log level, message, target, and file path and line number.
     VerboseJson,
 }
 
 impl Format {
+    /// Formats the log message and writes it to the target.
     pub fn write<T: core::fmt::Write>(&self, target: &mut T, record: &log::Record) {
         // Note: This function may be called before memory allocation is fully initialized. Therefore, it should not
         //       depend on any heap allocation. In particular, the `format!()` macro creates a `String` which is

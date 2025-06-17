@@ -848,22 +848,22 @@ mod tests {
                     let mut node_walker = DevicePathWalker::new(file);
                     //outer FV of NESTEDFV.Fv does not have an extended header so expect MMAP device path.
                     let fv_node = node_walker.next().unwrap();
-                    assert_eq!(fv_node.header.r#type, efi::protocols::device_path::TYPE_HARDWARE);
-                    assert_eq!(fv_node.header.sub_type, efi::protocols::device_path::Hardware::SUBTYPE_MMAP);
+                    assert_eq!(fv_node.header().r#type, efi::protocols::device_path::TYPE_HARDWARE);
+                    assert_eq!(fv_node.header().sub_type, efi::protocols::device_path::Hardware::SUBTYPE_MMAP);
 
                     //Internal nested FV file name is 2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75
                     let file_node = node_walker.next().unwrap();
-                    assert_eq!(file_node.header.r#type, efi::protocols::device_path::TYPE_MEDIA);
+                    assert_eq!(file_node.header().r#type, efi::protocols::device_path::TYPE_MEDIA);
                     assert_eq!(
-                        file_node.header.sub_type,
+                        file_node.header().sub_type,
                         efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE
                     );
-                    assert_eq!(file_node.data, uuid!("2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75").to_bytes_le());
+                    assert_eq!(file_node.data(), uuid!("2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75").to_bytes_le());
 
                     //device path end node
                     let end_node = node_walker.next().unwrap();
-                    assert_eq!(end_node.header.r#type, efi::protocols::device_path::TYPE_END);
-                    assert_eq!(end_node.header.sub_type, efi::protocols::device_path::End::SUBTYPE_ENTIRE);
+                    assert_eq!(end_node.header().r#type, efi::protocols::device_path::TYPE_END);
+                    assert_eq!(end_node.header().sub_type, efi::protocols::device_path::End::SUBTYPE_ENTIRE);
                 }
 
                 SECURITY_CALL_EXECUTED.store(true, core::sync::atomic::Ordering::SeqCst);

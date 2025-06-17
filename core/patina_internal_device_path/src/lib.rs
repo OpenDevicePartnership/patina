@@ -274,8 +274,8 @@ pub fn concat_device_path_to_boxed_slice(
 /// Device Path Node
 #[derive(Debug)]
 pub struct DevicePathNode {
-    pub header: efi::protocols::device_path::Protocol,
-    pub data: Vec<u8>,
+    header: efi::protocols::device_path::Protocol,
+    data: Vec<u8>,
 }
 
 impl PartialEq for DevicePathNode {
@@ -289,7 +289,9 @@ impl Eq for DevicePathNode {}
 
 impl DevicePathNode {
     /// Create a DevicePathNode from raw pointer.
+    ///
     /// ## Safety
+    ///
     /// Caller must ensure that the raw pointer points to a valid device path node structure.
     pub unsafe fn new(node: *const efi::protocols::device_path::Protocol) -> Option<Self> {
         let header = core::ptr::read_unaligned(node);
@@ -298,6 +300,18 @@ impl DevicePathNode {
         let data_ptr = node.byte_offset(size_of_val(&header).try_into().ok()?) as *const u8;
         let data = from_raw_parts(data_ptr, data_len.into()).to_vec();
         Some(Self { header, data })
+    }
+
+    #[inline]
+    /// Returns the header information of the device path node.
+    pub fn header(&self) -> &efi::protocols::device_path::Protocol {
+        &self.header
+    }
+
+    #[inline]
+    /// Returns the raw data of the device path node.
+    pub fn data(&self) -> &[u8] {
+        &self.data
     }
 
     fn len(&self) -> u16 {

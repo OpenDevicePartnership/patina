@@ -87,7 +87,10 @@ pub enum Error {
 
 /// A trait to allow a type to use a different key than `self` for ordering.
 pub trait SliceKey {
+    /// The type used for sorting the elements in the slice.
     type Key: Ord;
+
+    /// Returns the key.
     fn key(&self) -> &Self::Key;
 }
 

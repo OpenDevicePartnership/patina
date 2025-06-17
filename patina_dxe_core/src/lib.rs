@@ -88,6 +88,7 @@ use r_efi::efi;
 
 use crate::config_tables::memory_attributes_table;
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! ensure {
     ($condition:expr, $err:expr) => {{
@@ -97,6 +98,7 @@ macro_rules! ensure {
     }};
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! error {
     ($err:expr) => {{
@@ -106,10 +108,32 @@ macro_rules! error {
 
 pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
 
+/// A configuration struct containing the GIC bases (gic_d, gic_r) for AARCH64 systems.
+///
+/// ## Example
+///
+/// ```rust,no_run
+/// use patina_dxe_core::{Core, GicBases};
+/// # #[derive(Default, Clone, Copy)]
+/// # struct SectionExtractExample;
+/// # impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
+/// #     fn extract(&self, _: &mu_pi::fw_fs::Section) -> Result<Box<[u8]>, r_efi::base::Status> { Ok(Box::new([0])) }
+/// # }
+/// # let physical_hob_list = core::ptr::null();
+///
+/// let gic_bases = GicBases::new(0x1E000000, 0x1E010000);
+/// let core = Core::default()
+///    .with_section_extractor(SectionExtractExample::default())
+///    .init_memory(physical_hob_list)
+///    .with_config(gic_bases)
+///    .start()
+///    .unwrap();
+/// ```
 #[derive(Debug, PartialEq)]
 pub struct GicBases(pub u64, pub u64);
 
 impl GicBases {
+    /// Creates a new instance of the GicBases struct with the provided GIC Distributor and Redistributor base addresses.
     pub fn new(gicd_base: u64, gicr_base: u64) -> Self {
         GicBases(gicd_base, gicr_base)
     }
