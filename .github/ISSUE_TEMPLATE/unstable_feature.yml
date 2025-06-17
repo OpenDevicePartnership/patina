@@ -10,6 +10,12 @@ title: "[Unstable] Tracking Issue for `<feature gate name>`"
 labels: ["unstable-feature"]
 
 body:
+
+  - type: markdown 
+    id: documentation
+    attributes:
+      value: "[unstable_feature.md](docs/src/dev/unstable_feature.md)
+
   - type: markdown 
     id: feature-gate
     attributes:
