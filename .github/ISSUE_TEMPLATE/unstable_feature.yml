@@ -1,0 +1,42 @@
+# GitHub issue form for tracking unstable features.
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+name: 📓 Tracking unstable feature issue.
+description: Track an unstable feature.
+title: "[Unstable] Tracking Issue for `<feature gate name>`"
+labels: ["unstable-feature"]
+
+body:
+  - type: markdown 
+    id: documentation
+    attributes:
+      value: "For more details about unstable feature, see: [unstable_feature.md](../../docs/src/dev/unstable_feature.md)"
+
+  - type: markdown 
+    id: feature-gate
+    attributes:
+      value: "Feature gate: `#![feature(<feature gate name>)]`"
+
+  - type: markdown
+    id: description
+    attributes:
+      value: A concise description of the unstable feature.
+
+  - type: checkboxes
+    attributes:
+      label: Type of unstable feature
+      description: Select what kind of unstable feature this is.
+      options:
+      - label: New feature, this gives time to get additional feedback to apply changes. Having a transition period allows to make API changes without incrementing the major version.
+      - label: Working feature that still has some unresolved questions that has a potential to change the API design.
+      - label: Proof of concept features.
+
+  - type: checkboxes
+    attributes:
+      label: Unresolved Questions
+      description: List every unresolved question that needs to be answered for the feature to be stable.
+      options:
+      - label: <Unresolved Questions>
