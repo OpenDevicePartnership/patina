@@ -1,3 +1,12 @@
+//! UEFI Boot Services trait definition and implementations.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
+
 #[cfg(feature = "global_allocator")]
 pub mod global_allocator;
 

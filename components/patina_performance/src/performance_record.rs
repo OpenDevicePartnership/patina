@@ -28,8 +28,10 @@ pub const PERFORMANCE_RECORD_HEADER_SIZE: usize = mem::size_of::<u16>() // Type
 
 /// Common behavior of every performance records.
 pub trait PerformanceRecord {
+    /// returns the type ID (NOT Rust's `TypeId`) value of the record
     fn record_type(&self) -> u16;
 
+    /// Returns the revision of the record.
     fn revision(&self) -> u8;
 
     /// Write the record data into the buffer.
@@ -59,9 +61,10 @@ pub trait PerformanceRecord {
     }
 }
 
+/// Performance record used to store any specific type of record.
 #[derive(Debug)]
 pub struct GenericPerformanceRecord<T: AsRef<[u8]>> {
-    // This value depicts the format and contents of the performance record.
+    /// This value depicts the format and contents of the performance record.
     pub record_type: u16,
     /// This value depicts the length of the performance record, in bytes.
     pub length: u8,
@@ -71,6 +74,7 @@ pub struct GenericPerformanceRecord<T: AsRef<[u8]>> {
     /// but newly defined fields allow the length of the performance record to be increased.
     /// Previously defined record fields must not be redefined, but are permitted to be deprecated.
     pub revision: u8,
+    /// The underlying data of the specific performance record.
     pub data: T,
 }
 
@@ -89,12 +93,16 @@ impl<T: AsRef<[u8]>> PerformanceRecord for GenericPerformanceRecord<T> {
     }
 }
 
+/// Performance record buffer that can be used to collect performance records
 pub enum PerformanceRecordBuffer {
+    /// Unpublished state, where records can be added and the enum owns the buffer.
     Unpublished(Vec<u8>),
+    /// Published state, where the buffer is leaked to it's final destination.
     Published(&'static mut [u8], usize),
 }
 
 impl PerformanceRecordBuffer {
+    /// Create a new performance record buffer in unpublished state.
     pub const fn new() -> Self {
         Self::Unpublished(Vec::new())
     }

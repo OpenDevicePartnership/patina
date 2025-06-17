@@ -54,12 +54,16 @@ cfg_if::cfg_if! {
 // Declare the architecture specific context structure.
 cfg_if::cfg_if! {
     if #[cfg(test)] {
+        /// The Context structure for the target architecture.
         pub type ExceptionContext = null::ExceptionContextNull;
     } else if #[cfg(target_arch = "x86_64")] {
+        /// The Context structure for the target architecture.
         pub type ExceptionContext = x64::ExceptionContextX64;
     } else if #[cfg(target_arch = "aarch64")] {
+        /// The Context structure for the target architecture.
         pub type ExceptionContext = aarch64::ExceptionContextAArch64;
     } else  {
+        /// The Context structure for the target architecture.
         pub type ExceptionContext = null::ExceptionContextNull;
     }
 }

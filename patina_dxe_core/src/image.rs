@@ -820,15 +820,15 @@ fn get_file_buffer_from_sfs(
     let mut file = SimpleFile::open_volume(handle)?;
 
     for node in unsafe { DevicePathWalker::new(remaining_file_path) } {
-        match node.header.r#type {
+        match node.header().r#type {
             efi::protocols::device_path::TYPE_MEDIA
-                if node.header.sub_type == efi::protocols::device_path::Media::SUBTYPE_FILE_PATH => {} //proceed on valid path node
+                if node.header().sub_type == efi::protocols::device_path::Media::SUBTYPE_FILE_PATH => {} //proceed on valid path node
             efi::protocols::device_path::TYPE_END => break,
             _ => Err(EfiError::Unsupported)?,
         }
         //For MEDIA_FILE_PATH_DP, file name is in the node data, but it needs to be converted to Vec<u16> for call to open.
         let filename: Vec<u16> = node
-            .data
+            .data()
             .chunks_exact(2)
             .map(|x: &[u8]| {
                 if let Ok(x_bytes) = x.try_into() {

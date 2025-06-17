@@ -14,6 +14,7 @@ use r_efi::efi;
 
 use crate::performance_measurement_protocol::PerfAttribute;
 
+/// Performance tokens for well-known performance events.
 #[derive(Debug, Eq, PartialEq)]
 pub enum KnownPerfToken {
     /// SEC Phase
@@ -39,6 +40,7 @@ pub enum KnownPerfToken {
 }
 
 impl KnownPerfToken {
+    /// Returns the string representation of the `KnownPerfToken`.
     pub const fn as_str(&self) -> &'static str {
         match self {
             KnownPerfToken::SEC => "SEC",
@@ -76,33 +78,56 @@ impl TryFrom<&str> for KnownPerfToken {
     }
 }
 
+/// Performance IDs for well-known performance events.
 #[derive(Debug, Eq, PartialEq)]
 #[repr(u16)]
 pub enum KnownPerfId {
+    /// The general perf event ID, used for general performance events.
     PerfEvent = 0x00,
+    /// Core Measurement: The performance ID for when the dispatcher dispatches a module.
     ModuleStart = 0x01,
+    /// Core Measurement: The performance ID for when the dispatched module finishes execution.
     ModuleEnd = 0x02,
+    /// Core Measurement: The performance ID for when the dispatcher begins loading an image.
     ModuleLoadImageStart = 0x03,
+    /// Core Measurement: The performance ID for when the dispatcher finishes loading an image.
     ModuleLoadImageEnd = 0x04,
+    /// Core Measurement: The performance ID for when the driver binding starts.
     ModuleDbStart = 0x05,
+    /// Core Measurement: The performance ID for when the driver binding ends.
     ModuleDbEnd = 0x06,
+    /// Core Measurement: The performance ID for when the driver binding support starts.
     ModuleDbSupportStart = 0x07,
+    /// Core Measurement: The performance ID for when the driver binding support ends.
     ModuleDbSupportEnd = 0x08,
+    /// The performance ID for when the driver binding stop starts.
     ModuleDbStopStart = 0x09,
+    /// The performance ID for when the driver binding stop ends.
     ModuleDbStopEnd = 0x0A,
+    /// The performance ID for the start of event signal behavior.
     PerfEventSignalStart = 0x10,
+    /// The performance ID for the end of event signal behavior.
     PerfEventSignalEnd = 0x11,
+    /// The performance ID for the start of callback behavior.
     PerfCallbackStart = 0x20,
+    /// The performance ID for the end of callback behavior.
     PerfCallbackEnd = 0x21,
+    /// The performance ID for the start of a callback function.
     PerfFunctionStart = 0x30,
+    /// The performance ID for the end of a callback function.
     PerfFunctionEnd = 0x31,
+    /// The performance ID for behavior within a module.
     PerfInModuleStart = 0x40,
+    /// The performance ID for the end of behavior within a module.
     PerfInModuleEnd = 0x41,
+    /// The performance ID for the start of behavior spanning multiple modules.
     PerfCrossModuleStart = 0x50,
+    /// The performance ID for the end of behavior spanning multiple modules.
     PerfCrossModuleEnd = 0x51,
 }
 
 impl KnownPerfId {
+    /// Returns the `u16` representation of the `KnownPerfId`.
     pub const fn as_u16(&self) -> u16 {
         match self {
             Self::PerfEvent => Self::PerfEvent as u16,
@@ -129,6 +154,7 @@ impl KnownPerfId {
         }
     }
 
+    /// Attempts to convert the provided metadata to a `KnownPerfId`.
     pub fn try_from_perf_info(
         handle: efi::Handle,
         string: Option<&String>,

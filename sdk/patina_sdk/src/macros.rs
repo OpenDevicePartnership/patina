@@ -70,6 +70,7 @@ macro_rules! uefi_pages_to_size {
     };
 }
 
+/// Macro definitions for working with PCI devices.
 pub mod pci {
     /// Constructs a PCI library address from the given bus, device, function, and register values.
     ///

@@ -25,6 +25,7 @@ pub struct EfiCpuX64 {
 }
 
 impl EfiCpuX64 {
+    /// Creates a new instance of the x86_64 implementation of the CPU trait.
     pub fn new() -> Self {
         let mut x64_efi_init = EfiCpuX64 { timer_period: 0 };
         x64_efi_init.calculate_timer_period();

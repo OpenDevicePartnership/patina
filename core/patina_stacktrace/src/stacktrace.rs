@@ -11,7 +11,9 @@ cfg_if::cfg_if! {
     }
 }
 
+/// A structure representing a stack trace.
 pub struct StackTrace;
+
 impl StackTrace {
     /// Dumps the stack trace for the given PC and SP values.
     ///

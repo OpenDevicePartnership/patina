@@ -38,6 +38,7 @@ use crate::{
 };
 use core::marker::PhantomData;
 
+/// A [Component] implementation for Structs who specify a function whose parameters implement [Param].
 pub struct StructComponent<Marker, Func>
 where
     Func: ParamFunction<Marker>,
@@ -54,6 +55,7 @@ where
     Marker: 'static,
     Func: ParamFunction<Marker>,
 {
+    /// Creates a new `struct` component with the given function and input.
     pub fn new(func: Func, input: Func::In) -> Self {
         Self {
             func,

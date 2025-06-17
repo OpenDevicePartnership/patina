@@ -49,6 +49,7 @@ where
     fn dump_page_tables(&self, _address: u64, _size: u64) {}
 }
 
+/// Used to specify that this architecture paging implementation is not supported.
 pub fn create_cpu_null_paging<A: PageAllocator + 'static>(
     _page_allocator: A,
 ) -> Result<Box<dyn PageTable>, efi::Status> {
