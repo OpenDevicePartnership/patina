@@ -52,12 +52,6 @@ PI-spec confirmant representations (new functionality)
 
 ## Unresolved Questions
 
-- Crate location?
-
-Initial proposal is `core/patina_ffs` but could perhaps be an entirely separate crate. There
-are good synergies with patina_sdk and patina_section_extractor, but given the expectation of external consumption,
-perhaps a separate repository could be warranted.
-
 - General approach to generation?
 
 Initial proposed approach is to have two separate sets of structures: one for fast, mostly zero-copy* read access
@@ -90,7 +84,7 @@ cohesion of the design, and limit the availability of the generation capability.
 the evolution of Patina was that it makes sense to properly organize and co-locate related code (see: RFC
 0006-patina-repo.md).
 
-2. Develop FFS generation capability at current location in mu_rust_pi. See motivation section above for the conerns
+2. Develop FFS generation capability at current location in mu_rust_pi. See motivation section above for the concerns
 with this approach, but basically, current FFS implementation is the only "implementation" in mu_rust_pi which is
 otherwise concerned with defining spec structures for PI.
 
@@ -131,6 +125,10 @@ serialization APIs (e.g. `to_vec(&self) -> Vec<u8>`) that would produce a byte-a
 Since each level of the data hierarchy in FFS is composed of a collection of sub-elements (i.e. an FFS `Volume` contains
 a collection of FFS `File`s), each of the proposed data structures will provide a method to obtain an iterator over its
 contents.
+
+### Crate Location
+
+The proposed crate will be implemented in the `sdk/patina_ffs` path within the Patina repo.
 
 ## Guide-Level Explanation
 
