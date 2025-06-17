@@ -34,7 +34,7 @@ pub struct VariableInfo {
     pub maximum_variable_storage_size: u64,
     /// The remaining size of the storage space available for EFI variables associated with the attributes specified
     pub remaining_variable_storage_size: u64,
-    // The maximum size of an individual EFI variable associated with the attributes specified
+    /// The maximum size of an individual EFI variable associated with the attributes specified
     pub maximum_variable_size: u64,
 }
 

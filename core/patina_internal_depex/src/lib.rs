@@ -56,7 +56,12 @@ pub enum Opcode {
     /// that should be treated as an error during evaluation.
     Unknown,
     /// A known opcode with an unexpected payload length.
-    Malformed { opcode: u8, len: usize },
+    Malformed {
+        /// The unhandled opcode value.
+        opcode: u8,
+        /// The length of the payload sent with the opcode.
+        len: usize,
+    },
 }
 
 /// Converts a UUID to an EFI GUID.
@@ -108,9 +113,12 @@ impl Opcode {
     }
 }
 
+/// Represents an associated dependency, where one guid must execute before or after another guid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssociatedDependency {
+    /// Indicates that the associated guid must be executed before the guid in the enum.
     Before(efi::Guid),
+    /// Indicates that the associated guid must be executed after the guid in the enum.
     After(efi::Guid),
 }
 
@@ -270,6 +278,7 @@ impl Depex {
         false
     }
 
+    /// If the depex expression is an associated dependency, it returns the associated dependency.
     pub fn is_associated(&self) -> Option<AssociatedDependency> {
         match self.expression.first() {
             Some(Opcode::Before(uid)) => Some(AssociatedDependency::Before(guid_from_uuid(uid)?)),

@@ -103,26 +103,35 @@ pub fn get_static_state() -> Option<(&'static StandardBootServices, &'static Tpl
     }
 }
 
+/// A wrapper to generate a mask of all enabled measurements.
 #[derive(Debug, Default)]
 pub struct EnabledMeasurement(pub &'static [Measurement]);
 
 impl EnabledMeasurement {
+    /// Returns a mask of all enabled measurements.
     pub fn mask(&self) -> u32 {
         self.0.iter().fold(0, |mask, m| mask | m.as_u32())
     }
 }
 
+/// Measurement enum that represents the different performance measurements that can be enabled.
 #[derive(Debug)]
 #[repr(u32)]
 pub enum Measurement {
+    /// Dispatch modules entry point execution
     StartImage = 1,
+    /// Load a dispatched module.
     LoadImage = 1 << 1,
+    /// Diver binding support function call.
     DriverBindingSupport = 1 << 2,
+    /// Diver binding start function call.
     DriverBindingStart = 1 << 3,
+    /// Diver binding stop function call.
     DriverBindingStop = 1 << 4,
 }
 
 impl Measurement {
+    /// [u32] representation of the measurement.
     pub fn as_u32(&self) -> u32 {
         match self {
             Measurement::StartImage => Measurement::StartImage as u32,
