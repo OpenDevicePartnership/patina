@@ -170,7 +170,7 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// ## Example
 ///
-/// ```rust, skip
+/// ```ignore
 /// use patina_sdk::test::*;
 /// use patina_sdk::boot_services::StandardBootServices;
 /// use patina_sdk::test::patina_test;
