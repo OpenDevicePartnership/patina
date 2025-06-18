@@ -72,7 +72,19 @@ jobs:
       - name: Login to Registry
         run: cargo login "${{ secrets.PATINA_FW_TOKEN }}" --registry patina-fw
 
+      - name: Check Skip Cargo Release
+        id: check_skip_dry_run
+        run: |
+          if [[ "${{ github.event.release.body }}" == *"(skip cargo release dry run)"* ]]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Skipping cargo release as requested in release description"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
       - name: Cargo Release Dry Run
+        if: steps.check_skip_dry_run.outputs.skip != 'true'
         run: cargo release ${{ steps.release_tag.outputs.tag }} --no-tag --workspace --registry patina-fw
         env:
           RUSTC_BOOTSTRAP: 1
