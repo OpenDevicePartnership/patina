@@ -25,7 +25,7 @@ pub fn patina_test2(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStrea
 
     // Wait until we filter out or custom attributes so that we don't confuse the compiler
     // with attributes it does not expect.
-    if cfg!(not(feature = "patina_tests")) {
+    if cfg!(not(feature = "enable_patina_tests")) {
         return handle_feature_off(item);
     }
 
@@ -146,7 +146,7 @@ mod tests {
         };
 
         let expanded = patina_test2(stream);
-        let expected = if cfg!(feature = "patina_tests") {
+        let expected = if cfg!(feature = "enable_patina_tests") {
             quote! {
                 #[patina_sdk::test::linkme::distributed_slice(patina_sdk::test::__private_api::TEST_CASES)]
                 #[linkme(crate = patina_sdk::test::linkme)]
@@ -186,7 +186,7 @@ mod tests {
 
         let expanded = patina_test2(stream);
 
-        let expected = if cfg!(feature = "patina_tests") {
+        let expected = if cfg!(feature = "enable_patina_tests") {
             quote! {
                 #[patina_sdk::test::linkme::distributed_slice(patina_sdk::test::__private_api::TEST_CASES)]
                 #[linkme(crate = patina_sdk::test::linkme)]

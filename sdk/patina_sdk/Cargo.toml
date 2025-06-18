@@ -46,10 +46,10 @@ alloc = []
 mockall = ["dep:mockall", "std"]
 global_allocator = []
 default = []
-# Opting in to the `patina_tests` feature requires registering at least one test
+# Opting in to the `enable_patina_tests` feature requires registering at least one test
 # with the `#[patina_test]` attribute. Otherwise, a linker crash or failure will
 # occur!
-patina_tests = ["patina_sdk_macro/patina_tests"]
+enable_patina_tests = ["patina_sdk_macro/enable_patina_tests"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }
