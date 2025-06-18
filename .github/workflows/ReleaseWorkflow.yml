@@ -74,14 +74,16 @@ jobs:
 
       - name: Check Skip Cargo Release
         id: check_skip_dry_run
+        shell: python
         run: |
-          if [[ "${{ github.event.release.body }}" == *"(skip cargo release dry run)"* ]]; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "Skipping cargo release as requested in release description"
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-          fi
-        shell: bash
+          import os
+
+          if "(skip cargo release dry run)" in os.getenv("RELEASE_BODY", ""):
+            with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("skip=true\n")
+            print("Skipping cargo release as requested in release description")
+        env:
+          RELEASE_BODY: ${{ github.event.release.body }}
 
       - name: Cargo Release Dry Run
         if: steps.check_skip_dry_run.outputs.skip != 'true'
