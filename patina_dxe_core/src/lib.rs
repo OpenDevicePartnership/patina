@@ -533,7 +533,7 @@ const ARCH_PROTOCOLS: &[(uuid::Uuid, &str)] = &[
 
 fn core_display_missing_arch_protocols() {
     for (uuid, name) in ARCH_PROTOCOLS {
-        let guid: efi::Guid = unsafe { core::mem::transmute(uuid.to_bytes_le()) };
+        let guid = efi::Guid::from_bytes(&uuid.to_bytes_le());
         if protocols::PROTOCOL_DB.locate_protocol(guid).is_err() {
             log::warn!("Missing architectural protocol: {:?}, {:?}", uuid, name);
         }
