@@ -224,7 +224,7 @@ impl AcpiSdtProtocol {
 type AcpiNotifyFnExt = fn(*const AcpiTableHeader, u32, usize) -> efi::Status;
 
 /// Represents a `*const c_void` pointer to an ACPI table in C.
-struct CAcpiTable {
+pub(crate) struct CAcpiTable {
     table_ptr: *const c_void,
 }
 

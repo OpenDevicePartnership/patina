@@ -7,33 +7,14 @@
 use crate::error::AcpiError;
 use crate::{service::TableKey, signature::ACPI_HEADER_LEN};
 
-use core::any::TypeId;
+use core::any::{Any, TypeId};
 use core::ptr::NonNull;
 use core::slice;
 
 /// Any ACPI table with the standard ACPI header.
-pub trait StandardAcpiTable {
+pub trait StandardAcpiTable: Any {
     /// The standard 36-byte ACPI header.
     fn header(&self) -> &AcpiTableHeader;
-
-    /// The full table as a byte slice (length taken from the header).
-    ///
-    /// # Safety
-    /// The table data must be laid out exactly as a contiguous array of bytes, with no padding or gaps.
-    /// The length of the table data must be exactly `header().len - ACPI_HEADER_LEN`.
-    fn data_bytes(&self) -> &[u8] {
-        let table_ptr = self as *const _ as *const u8;
-        let data_ptr = unsafe { table_ptr.add(ACPI_HEADER_LEN) };
-        let data_len = self.header().length as usize - ACPI_HEADER_LEN;
-        unsafe { slice::from_raw_parts(data_ptr, data_len) }
-    }
-}
-
-/// Any ACPI table that is represented as packed bytes in ACPI memory.
-pub trait ByteAcpiTable: Sized {
-    /// Converts the table from a byte slice.
-    /// The byte slice must contain the full table, including the header and any trailing bytes.
-    fn from_bytes(bytes: &[u8]) -> Result<Self, AcpiError>;
 }
 
 /// Represents the FADT for ACPI 2.0+.
@@ -124,12 +105,6 @@ impl StandardAcpiTable for AcpiFadt {
     }
 }
 
-impl ByteAcpiTable for AcpiFadt {
-    fn from_bytes(bytes: &[u8]) -> Result<Self, AcpiError> {
-        todo!();
-    }
-}
-
 /// Reads unaligned fields on the FADT.
 /// Fields on the FADT may be unaligned, since by specification the FADT is packed.
 impl AcpiFadt {
@@ -186,12 +161,6 @@ impl StandardAcpiTable for AcpiDsdt {
     }
 }
 
-impl ByteAcpiTable for AcpiDsdt {
-    fn from_bytes(bytes: &[u8]) -> Result<Self, AcpiError> {
-        todo!();
-    }
-}
-
 /// Represents the RSDP for ACPI 2.0+.
 /// The RSDP is not a standard ACPI table and does not have a standard header.
 /// It is not present in the list of installed tables and is not directly accessible.
@@ -230,9 +199,28 @@ impl StandardAcpiTable for AcpiXsdt {
     }
 }
 
-impl ByteAcpiTable for AcpiXsdt {
-    fn from_bytes(bytes: &[u8]) -> Result<Self, AcpiError> {
-        todo!();
+/// Represents a raw to an ACPI table in C.
+/// Because the table is abstracted as a pointer, the `type_id` may not be valid.
+pub struct RawAcpiTable {
+    address: u64,
+}
+
+impl RawAcpiTable {
+    /// Converts an address to a `CAcpiTable`.
+    ///
+    /// # Safety
+    /// The caller must ensure that the address is in valid ACPI memory and points to a valid ACPI table.
+    unsafe fn from_address(addr: u64) -> Self {
+        Self { address: addr }
+    }
+}
+
+impl StandardAcpiTable for RawAcpiTable {
+    /// # Safety
+    /// The caller must ensure that the address is in valid ACPI memory and points to a valid ACPI table.
+    fn header(&self) -> &AcpiTableHeader {
+        // SAFETY: The first field of any ACPI table is the header.
+        unsafe { &*(self.address as *const AcpiTableHeader) }
     }
 }
 
@@ -269,6 +257,8 @@ pub struct MemoryAcpiTable {
 }
 
 impl MemoryAcpiTable {
+    /// Creates a new ACPI table from a pointer.
+    /// Since the type is abstracted by the raw pointer, the `type_id` field will not be valid.
     pub fn new_from_ptr(header: *mut AcpiTableHeader) -> Result<Self, AcpiError> {
         let nonnull_header = NonNull::new(header).ok_or(AcpiError::NullTablePtr)?;
         Ok(MemoryAcpiTable {
@@ -277,12 +267,6 @@ impl MemoryAcpiTable {
             table_key: 0,
             physical_address: None,
         })
-    }
-}
-
-impl StandardAcpiTable for MemoryAcpiTable {
-    fn header(&self) -> &AcpiTableHeader {
-        unsafe { self.header.as_ref() }
     }
 }
 
@@ -362,9 +346,12 @@ impl MemoryAcpiTable {
     /// The ACPI table as a byte slice, including the header and trailing bytes.
     /// # Safety
     /// During construction, it is assumed that the table is laid out as a contiguous array of bytes following the ACPI specification.
-    pub fn as_bytes(&self) -> &[u8] {
-        let inmemory_header = self.header.as_ptr();
-        let data_len = self.length() as usize;
-        unsafe { slice::from_raw_parts(inmemory_header as *const u8, data_len) }
+    pub fn as_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        if self.type_id == TypeId::of::<T>() {
+            // SAFETY: The type ID's match, so it is castable to this type.
+            Some(unsafe { self.header.cast::<T>().as_mut() })
+        } else {
+            None
+        }
     }
 }

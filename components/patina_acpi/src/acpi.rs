@@ -1,4 +1,5 @@
 use core::{
+    any::TypeId,
     cell::OnceCell,
     mem,
     ptr::{self, copy_nonoverlapping, NonNull},
@@ -6,13 +7,12 @@ use core::{
 };
 
 use crate::{
-    acpi_table::{AcpiTableHeader, MemoryAcpiTable, StandardAcpiTable},
+    acpi_table::{AcpiTableHeader, MemoryAcpiTable, RawAcpiTable, StandardAcpiTable},
     alloc::vec::Vec,
     signature::ACPI_CHECKSUM_OFFSET,
 };
 use crate::{alloc::vec, service::AcpiNotifyFn};
 
-use alloc::boxed::Box;
 use patina_sdk::boot_services::{BootServices, StandardBootServices};
 use patina_sdk::{
     base::UEFI_PAGE_SIZE,
@@ -27,7 +27,7 @@ use patina_sdk::{
     uefi_size_to_pages,
 };
 
-use spin::{rwlock::RwLock, RwLockReadGuard};
+use spin::rwlock::RwLock;
 
 use crate::{
     acpi_table::{AcpiDsdt, AcpiFacs, AcpiFadt, AcpiRsdp, AcpiXsdt},
@@ -208,7 +208,7 @@ where
     B: BootServices,
 {
     fn install_acpi_table(&self, acpi_table: &dyn StandardAcpiTable) -> Result<TableKey, AcpiError> {
-        let table_key = self.install_acpi_table_in_memory(acpi_table.header())?;
+        let table_key = self.install_acpi_table_in_memory(acpi_table.header(), acpi_table.type_id())?;
 
         self.publish_tables()?;
         self.notify_acpi_list(table_key)?;
@@ -371,7 +371,7 @@ where
             // The DSDT has a standard ACPI header. Interpret the first 36 bytes as a header.
             // SAFETY: The DSDT has been checked to be non-null.
             let dsdt_header = unsafe { &*(fadt.x_dsdt() as *mut AcpiTableHeader) };
-            self.install_acpi_table_in_memory(dsdt_header)?;
+            self.install_acpi_table_in_memory(dsdt_header, TypeId::of::<AcpiDsdt>())?;
         }
 
         Ok(())
@@ -392,7 +392,8 @@ where
 
             // Each entry points to a table
             let table_header = unsafe { &*(entry_addr as *mut AcpiTableHeader) };
-            self.install_acpi_table_in_memory(table_header)?;
+            // Because we are installing from raw pointers, information about the type of the table cannot be extracted.
+            self.install_acpi_table_in_memory(table_header, TypeId::of::<RawAcpiTable>())?;
 
             // If this table points to other system tables, install them too
             if table_header.signature == signature::FACP {
@@ -492,7 +493,11 @@ where
     }
 
     /// Allocates ACPI memory for a new table and adds the table to the list of installed ACPI tables.
-    pub(crate) fn install_acpi_table_in_memory(&self, table_header: &AcpiTableHeader) -> Result<TableKey, AcpiError> {
+    pub(crate) fn install_acpi_table_in_memory(
+        &self,
+        table_header: &AcpiTableHeader,
+        type_id: TypeId,
+    ) -> Result<TableKey, AcpiError> {
         let physical_addr =
             self.allocate_table_addr(table_header.signature, uefi_size_to_pages!(table_header.length as usize))?;
 
@@ -517,6 +522,8 @@ where
         let mut installed_table = MemoryAcpiTable::new_from_ptr(dst_ptr as *mut AcpiTableHeader)?;
         installed_table.table_key = next_table_key;
         installed_table.physical_address = Some(physical_addr);
+        installed_table.type_id = type_id;
+
         self.acpi_tables.write().push(installed_table);
 
         let mut add_to_xsdt = true;
@@ -896,9 +903,9 @@ mod tests {
         provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new())));
 
         let mut header = AcpiTableHeader { signature: 0x1111, length: 123, ..Default::default() };
-        let table_key = provider.install_acpi_table_in_memory(&header).unwrap();
+        let table_key = provider.install_acpi_table_in_memory(&header, TypeId::of::<RawAcpiTable>()).unwrap();
 
-        // Call get_acpi_table(0) (should succeed)
+        // Call get_acpi_table with a valid key
         let fetched = provider.get_acpi_table(table_key).expect("table should have been installed");
         assert_eq!(fetched.signature(), 0x1111);
         assert_eq!(fetched.length(), 123);

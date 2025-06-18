@@ -1,10 +1,9 @@
-use alloc::boxed::Box;
 use patina_sdk::component::service::Service;
 use patina_sdk::test::patina_test;
 
 use crate::{
-    acpi_table::{AcpiFacs, AcpiFadt, AcpiTableHeader},
-    service::{AcpiProvider, AcpiTableManager},
+    acpi_table::{AcpiDsdt, AcpiFacs, AcpiFadt, AcpiTableHeader},
+    service::AcpiTableManager,
     signature::{self, ACPI_HEADER_LEN},
 };
 
@@ -32,6 +31,10 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina_sdk::test::Resu
     let fadt = table_manager.get_acpi_table::<AcpiFadt>(table_key).expect("Should get dummy FADT");
     assert_eq!(fadt.header.signature, signature::FACP, "Signature should match dummy FADT");
     assert!(fadt.x_firmware_ctrl() > 0, "Should have installed FACS");
+
+    // Attempt to get the FADT with the wrong table type (should fail)
+    let bad_fadt = table_manager.get_acpi_table::<AcpiDsdt>(table_key);
+    assert!(bad_fadt.is_err(), "Incorrect type provided. Should fail.");
 
     // Uninstall the dummy table
     table_manager.uninstall_acpi_table(table_key).expect("Delete should succeed");

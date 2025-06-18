@@ -13,7 +13,8 @@ use core::any::TypeId;
 use alloc::vec::Vec;
 use patina_sdk::component::service::{IntoService, Service};
 
-use crate::acpi_table::{AcpiFacs, AcpiTableHeader, ByteAcpiTable, MemoryAcpiTable, StandardAcpiTable};
+use crate::acpi_protocol::CAcpiTable;
+use crate::acpi_table::{AcpiFacs, AcpiTableHeader, MemoryAcpiTable, RawAcpiTable, StandardAcpiTable};
 use crate::error::AcpiError;
 
 pub type TableKey = usize;
@@ -74,14 +75,19 @@ impl AcpiTableManager {
     /// The generic type `T` should be the expected type of the table.
     ///
     /// The RSDP and XSDT cannot be accessed through `get_acpi_table`.
-    pub fn get_acpi_table<T: ByteAcpiTable + 'static>(&self, table_key: TableKey) -> Result<T, AcpiError> {
+    pub fn get_acpi_table<T: 'static>(&self, table_key: TableKey) -> Result<&T, AcpiError> {
         let memory_table = self.provider_service.get_acpi_table(table_key)?;
-        if memory_table.type_id != TypeId::of::<T>() {
+
+        // There may be ACPI tables whose type is unknown at installation, due to installation from the HOB or a C protocol.
+        // In these cases, the `type_id` may not be valid, so we skip checking the type id.
+        if memory_table.type_id != TypeId::of::<RawAcpiTable>()
+            && memory_table.type_id != TypeId::of::<CAcpiTable>()
+            && memory_table.type_id != TypeId::of::<T>()
+        {
             return Err(AcpiError::InvalidTableType);
         }
-        let table_bytes = memory_table.as_bytes();
-        let original_table = T::from_bytes(table_bytes)?;
-        Ok(original_table)
+
+        unsafe { Ok(memory_table.header.cast::<T>().as_ref()) }
     }
 
     /// Registers or unregisters a function which will be called whenever a new ACPI table is installed.
