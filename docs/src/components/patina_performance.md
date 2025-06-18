@@ -30,7 +30,7 @@ The patina performance component uses a feature mask in its configuration to con
 Core::default()
  // ...
  .with_config(patina_performance::EnabledMeasurement(&[
-     patina_performance::Measurement::DriverBindingStart, // Adds driver binding start measurements.
+        patina_performance::Measurement::DriverBindingStart, // Adds driver binding start measurements.
         patina_performance::Measurement::DriverBindingStop, // Adds driver binding stop measurements.
         patina_performance::Measurement::DriverBindingSupport, // Adds driver binding support measurements.
         patina_performance::Measurement::LoadImage, // Adds load image measurements.
