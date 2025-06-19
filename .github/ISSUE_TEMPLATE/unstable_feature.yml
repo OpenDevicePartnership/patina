@@ -38,7 +38,7 @@ body:
       options:
       - label: New feature, this gives time to get additional feedback to apply changes. Having a transition period allows to make API changes without incrementing the major version.
       - label: Working feature that still has some unresolved questions that has a potential to change the API design.
-      - label: Proof of concept features.
+      - label: Proof of concept feature.
 
   - type: textarea
     attributes:
