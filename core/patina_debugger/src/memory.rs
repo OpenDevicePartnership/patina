@@ -164,7 +164,7 @@ mod tests {
             fn remap_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> PtResult<()>;
             fn install_page_table(&mut self) -> PtResult<()>;
             fn query_memory_region(&self, address: u64, size: u64) -> PtResult<MemoryAttributes>;
-            fn dump_page_tables(&self, address: u64, size: u64);
+            fn dump_page_tables(&self, address: u64, size: u64) -> PtResult<()>;
         }
     }
 

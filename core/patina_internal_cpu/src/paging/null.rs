@@ -9,7 +9,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::boxed::Box;
-use patina_paging::{MemoryAttributes, PageTable, PtError};
+use patina_paging::{MemoryAttributes, PageTable, PtError, PtResult};
 
 use patina_paging::page_allocator::PageAllocator;
 use r_efi::efi;
@@ -46,7 +46,9 @@ where
         Ok(MemoryAttributes::empty())
     }
 
-    fn dump_page_tables(&self, _address: u64, _size: u64) {}
+    fn dump_page_tables(&self, _address: u64, _size: u64) -> PtResult<()> {
+        Ok(())
+    }
 }
 
 /// Used to specify that this architecture paging implementation is not supported.
