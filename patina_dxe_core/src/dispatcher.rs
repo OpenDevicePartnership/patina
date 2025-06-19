@@ -890,4 +890,76 @@ mod tests {
             assert!(SECURITY_CALL_EXECUTED.load(core::sync::atomic::Ordering::SeqCst));
         })
     }
+
+    #[test]
+    fn test_ffs_files_dispatched_in_discovery_order() {
+        let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+        let mut fv: Vec<u8> = Vec::new();
+        file.read_to_end(&mut fv).expect("failed to read DXEFV.FV (test collateral file)");
+
+        with_locked_state(|| {
+            // Build the "discovered" list of `DRIVER` files in the FV with PE32 sections
+            let test_fv = unsafe { FirmwareVolume::new_from_address(fv.as_ptr() as u64) }.unwrap();
+            let mut discovered_files = Vec::new();
+            for file in test_fv.file_iter() {
+                let file = file.unwrap();
+                if file.file_type_raw() == FfsFileRawType::DRIVER {
+                    // Check if this file has a PE32 section (same logic as dispatcher)
+                    let sections: Result<Vec<_>, _> = file.section_iter().collect();
+                    if let Ok(sections) = sections {
+                        if sections.iter().any(|s| s.section_type() == Some(FfsSectionType::Pe32)) {
+                            discovered_files.push(file.name());
+                        }
+                    }
+                }
+            }
+
+            // No pending drivers should be present before the FV is installed
+            assert!(
+                DISPATCHER_CONTEXT.lock().pending_drivers.is_empty(),
+                "Pending drivers should be empty before FV installation"
+            );
+
+            // Install the firmware volume and add handles
+            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            add_fv_handles(vec![handle]).expect("Failed to add FV handle");
+
+            // Capture the order of pending drivers after discovery
+            let pending_guids: Vec<efi::Guid> =
+                DISPATCHER_CONTEXT.lock().pending_drivers.iter().map(|driver| driver.file_name).collect();
+
+            assert_eq!(
+                pending_guids.len(),
+                discovered_files.len(),
+                "Number of pending drivers should match discovered files"
+            );
+
+            // Verify order is preserved from discovery to pending drivers list
+            for (i, &expected_guid) in discovered_files.iter().enumerate() {
+                assert_eq!(
+                    pending_guids[i], expected_guid,
+                    "Driver at position {} should be {:?} but found {:?}",
+                    i, expected_guid, pending_guids[i]
+                );
+            }
+
+            println!("{} FFS files have the same discover and pending order.", discovered_files.len());
+
+            // Check that Vec::drain preserves order
+            let mut dispatcher = DISPATCHER_CONTEXT.lock();
+            let driver_candidates: Vec<_> = dispatcher.pending_drivers.drain(..).collect();
+
+            // Verify drain maintains order
+            for (i, driver) in driver_candidates.iter().enumerate() {
+                assert_eq!(
+                    driver.file_name, discovered_files[i],
+                    "Drained driver at position {} should be {:?} but found {:?}",
+                    i, discovered_files[i], driver.file_name
+                );
+            }
+
+            // Restore the drivers for potential further testing
+            dispatcher.pending_drivers = driver_candidates;
+        })
+    }
 }
