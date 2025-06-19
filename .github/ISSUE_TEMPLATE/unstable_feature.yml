@@ -18,7 +18,7 @@ body:
   - type: input 
     id: feature-gate-name
     attributes:
-      label: Name of the rust feature in `Carog.toml` to gate this unstable feature.
+      label: Name of the rust feature in `Cargo.toml` to gate this unstable feature.
       placeholder: "`unstable-<unstable-feature-name>`"
     validations:
       required: true
