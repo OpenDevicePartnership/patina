@@ -13,7 +13,7 @@ body:
   - type: markdown 
     id: documentation
     attributes:
-      value: "For more details about unstable feature, see: [unstable_feature.md](https://github.com/OpenDevicePartnership/patina/blob/main/docs/src/dev/unstable_feature.md)"
+      value: "For more details about unstable features, see: [unstable_feature.md](https://github.com/OpenDevicePartnership/patina/blob/main/docs/src/dev/unstable_feature.md)"
 
   - type: input 
     id: feature-gate-name
