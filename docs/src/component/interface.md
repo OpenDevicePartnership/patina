@@ -1,56 +1,90 @@
 # Monolithically Compiled Components
 
-There is no standard entry point for a monolithically compiled rust component that is dispatched by the rust DXE core.
+There is no standard entry point for a monolithically compiled component that is dispatched by the Patina DXE Core.
 
-Where EDKII Dxe Core dispatcher expects a well defined entry point of
-`EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable`, the pure rust DXE Core uses [Dependency Injection](https://wikipedia.org/wiki/Dependency_injection)
-to allow a component to define an interface that specifies all dependencies needed to properly execute. Due to this,
-dependency expressions are no longer necessary, as the function interface is the dependency expression. What this
-means is that instead of evaluating a dependency expression to determine if a driver can be executed, it instead
-attempts to fetch all requested parameters defined in the function interface. If all are successfully fetched, then the
-component is executed, if not, it will not be dispatched, and another attempt will be made in the next iteration.
+Where the EDK II DXE Core dispatcher expects a well-defined entry point of
+`EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable`, the Patina DXE Core uses
+[Dependency Injection](https://wikipedia.org/wiki/Dependency_injection) to allow a component to define an interface
+that specifies all dependencies needed to properly execute. Due to this, dependency expressions are no longer
+necessary, as the function interface serves as the dependency expression. What this means is that instead of evaluating
+a dependency expression to determine if a driver can be executed, the system attempts to fetch all requested parameters
+defined in the function interface. If all are successfully fetched, then the component is executed. If not, it will not
+be dispatched, and another attempt will be made in the next iteration.
 
-In the Rust DXE Core, a component is simply a trait implementation. So long as a struct implements [IntoComponent][patina_sdk],
-it can be consumed and executed by the pure rust DXE core. [patina_sdk][patina_sdk] currently provides two
-implementations for `Component`:
+```mermaid
+---
+config:
+  layout: elk
+  look: handDrawn
+---
+graph TD
+    A[Component with Dependencies] --> B{All Dependencies Available?}
+    B -->|Yes| C[Execute Component]
+    B -->|No| D[Skip This Iteration]
+    D --> E[Try Again Next Iteration]
+    C --> F[Remove from Dispatch Queue]
+```
+
+In the Patina DXE Core, a component is simply a trait implementation. So long as a struct implements
+[IntoComponent][patina_sdk], it can be consumed and executed by the Patina DXE Core. [patina_sdk][patina_sdk] currently
+provides two implementations for `Component`:
 
 1. [FunctionComponent][patina_sdk]: this type cannot be instantiated manually, but a blanket implementation of the
 `IntoComponent` trait allows any function whose parameters support dependency injection to be converted into a
 `FunctionComponent`.
 
 2. [StructComponent][patina_sdk]: this type cannot be instantiated manually, but a derive proc-macro of
-`IntoComponent` is provided that will allow any struct or enum to be used as a component. This derive proc-macro
+`IntoComponent` is provided that allows any struct or enum to be used as a component. This derive proc-macro
 expects that a `Self::entry_point(self, ...) -> patina_sdk::error::Result<()> { ... }` exists, where the `...` in the
-function definition can be any number of parameters twho support dependency injection as shown below. The function
+function definition can be any number of parameters that support dependency injection as shown below. The function
 name can be overwritten with the attribute macro `#[entry_point(path = path::to::func)]` on the same struct.
 
-See [Samples](https://github.com/OpenDevicePartnership/patina/tree/main/components/patina_samples) or [Examples](#examples)
-for examples of basic components using these two methods.
+See [Samples](https://github.com/OpenDevicePartnership/patina/tree/main/components/patina_samples) or
+[Examples](#examples) for examples of basic components using these two methods.
 
-Due to this, developing a component is as simple as writing a function whose parameters are a part of the below list of
+Due to this, developing a component is as simple as writing a function whose parameters are part of the below list of
 supported parameters (which is subject to change). Always reference the trait's [Type Implementations][patina_sdk]
 for a complete list, however the below information should be up to date.
 
 ## Component Execution
 
+```mermaid
+---
+config:
+  layout: elk
+  look: handDrawn
+---
+graph TD
+    A[Component in Queue] --> B[Validate Parameters]
+    B --> C{All Parameters Available?}
+    C -->|Yes| D[Execute Component]
+    C -->|No| E[Mark Failed Parameter]
+    D --> F[Remove from Queue]
+    E --> G[Try Next Iteration]
+    G --> H{Any Components Executed?}
+    H -->|Yes| I[Continue Dispatching]
+    H -->|No| J[Stop Dispatcher]
+    I --> A
+```
+
 Components are executed by validating each individual parameter (See [Params](#component-params) below) in the
 component. If all parameters are validated, then the component is executed and removed from the list of components to
-execute. If any parameters fails to validate, then that parameter is registered as the failed param and the dispatcher
+execute. If any parameter fails to validate, then that parameter is registered as the failed param and the dispatcher
 will attempt to validate and execute the component in the next iteration. The dispatcher stops executing when no
 components have been dispatched in a single iteration.
 
 ## Component Params
 
-Writing a component is as simple as writing a function whose parameters are a part of the below list of suppported
-types (which is subject ot change). The `Param` trait is the interface that the dispatcher uses to (1) validate that a
+Writing a component is as simple as writing a function whose parameters are a part of the below list of supported
+types (which is subject to change). The `Param` trait is the interface that the dispatcher uses to (1) validate that a
 parameter is available, (2) retrieve the datum from storage, and (3) pass it to the component when executing it. Always
 reference the `Param` trait's [Type Implementations][patina_sdk] for a complete list of parameters that can be used
 in the function interface of a component.
 
 ```admonish warning
-unfortunately, the compile-time error you get when trying to register a function whose parameters do not all implement
+Unfortunately, the compile-time error you get when trying to register a function whose parameters do not all implement
 `ComponentParam` can be long and unclear. If you see an error similar to the below error message, just know that it is
-likely because one of your parameters does not implement `ComponentParam`. Keep in mind, the `&` (or lack there of)
+likely because one of your parameters does not implement `ComponentParam`. Keep in mind, the `&` (or lack thereof)
 does matter!
 
     error[E0277]: the trait `function_component::ComponentParamFunction<_>` is not implemented for fn item `<fn_interface>`
@@ -61,10 +95,10 @@ does matter!
 |------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
 | Config\<T\>                  | An immutable config value that will only be available once the underlying data has been locked.                                   |
 | ConfigMut\<T\>               | A mutable config value that will only be available while the underlying data is unlocked.                                         |
-| Hob\<T\>                     | A parsed, immutable, guid HOB (Hand-Off Block) that is automatically parsed and registered.                                       |
+| Hob\<T\>                     | A parsed, immutable, GUID HOB (Hand-Off Block) that is automatically parsed and registered.                                       |
 | Service\<T\>                 | A wrapper for producing and consuming services of a particular interface, `T`, that is agnostic to the underlying implementation. |
 | (P1, P2, ...)                | A Tuple where each entry implements `Param`. Useful when you need more parameters than the current parameter limit.               |
-| Option\<P\>                  | An Option, where P implements `Param`. Affects each param type differently See [Option](#optionp) section for more details.       |
+| Option\<P\>                  | An Option, where P implements `Param`. Affects each param type differently. See [Option](#optionp) section for more details.       |
 <!-- markdownlint-enable -->
 
 ### Config\<T\> / ConfigMut\<T\>
@@ -82,7 +116,7 @@ parameter (of the same `T`) will be executed.
 From this point on, it also allows for any component with a `Config<T>` to be executed. What this means is that no
 component with `Config<T>` parameters will be executed until the configuration is locked.
 
-``` admonish note
+```admonish note
 Executing components currently happens in two phases. We execute all components until there are no components executed
 in that iteration. At that point, we lock all Configs and restart component execution.
 ```
@@ -98,7 +132,7 @@ This type comes with a `mock(...)` method to make unit testing simple.
 The `Hob<T>` parameter type is used to access a GUID HOB value, which is automatically parsed from the HOB list
 provided to the Core during initialization. Unlike `Config<T>` and `ConfigMut<T>`, these types are **not** always
 available. This means a component that has this parameter implemented will only be executed if the guided HOB is
-found in the HOB list. Due to how HOBs work, the same GUID HOB can be provided multiple times to the platform.
+found in the HOB list. Due to how HOBs work, the same GUID HOB can be provided multiple times by the platform.
 Due to this, `Hob<T>` implements both `Deref` to access the first found value, or `IntoIterator` to iterate through
 all HOB values.
 
@@ -118,7 +152,7 @@ If function generics are needed / wanted, it is suggested that most functionalit
 trait object service, with a lightweight concrete struct Service Wrapper to support generics. This allows for easy
 mocking of the underlying functionality, but provides an easy to use interface as seen below:
 
-``` rust
+```rust
 use patina_sdk::{
     error::Result,
     component::service::Service,
@@ -179,14 +213,20 @@ use patina_sdk::{
     error::Result,
 };
 
-// Note: This uncommented code is valid for demonstraction, but the function will not be registered with the core where
-//       actual implementations must be specified such as the wrapper function shown in the example below.
+// Note: This uncommented code is valid for demonstration, but the function
+// will not be registered with the core where actual implementations must be
+// specified such as the wrapper function shown in the example below.
 //
 // The wrapper function:
-// fn actual_driver(bs: StandardBootServices, data: Config<f32>, expected_crc32: Config<u32>) -> Result<()> {
+// fn actual_driver(bs: StandardBootServices, data: Config<f32>,
+//                  expected_crc32: Config<u32>) -> Result<()> {
 //     validate_random_data_driver(bs, data, expected_crc32)
 // }
-fn validate_random_data_driver<T: Default>(bs: impl BootServices, data: Config<T>, expected_crc32: Config<u32>) -> Result<()> {
+fn validate_random_data_driver<T: Default>(
+    bs: impl BootServices,
+    data: Config<T>,
+    expected_crc32: Config<u32>
+) -> Result<()> {
     assert_eq!(bs.calculate_crc_32(&*data), Ok(*expected_crc32));
     Ok(())
 }

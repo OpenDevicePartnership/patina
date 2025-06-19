@@ -34,6 +34,12 @@ the memory log, depending on configuration. More messages that be sent to the me
 log then the serial port depending on the [message filtering](#message-filtering) used.
 
 ```mermaid
+---
+config:
+  layout: elk
+  look: handDrawn
+displayMode: compact
+---
 flowchart LR
     patina["Patina"]
     log["Log Crate"]
@@ -117,11 +123,17 @@ to create the Advanced Logger Protocol.
 
 The [Advanced Logger Protocol](https://github.com/microsoft/mu_plus/blob/release/202502/AdvLoggerPkg/Include/Protocol/AdvancedLogger.h)
 provides UEFI drivers access to the advanced logger, allowing their logs to be centrally
-controlled and routed to the serial and memory log as appropriate. EDKII-based drivers
+controlled and routed to the serial and memory log as appropriate. EDK II-based drivers
 may use the [Project Mu Advanced Logger DebugLib](https://github.com/microsoft/mu_plus/tree/release/202502/AdvLoggerPkg/Library/BaseDebugLibAdvancedLogger)
 to forward debug messages to the Advanced Logger.
 
 ```mermaid
+---
+config:
+  layout: elk
+  look: handDrawn
+displayMode: compact
+---
 flowchart LR
     driver["DXE Driver"]
     component["AdvLogger Component"]

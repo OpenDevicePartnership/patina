@@ -1,9 +1,9 @@
 # Inline Code Documentation
 
-This chapter lays out the standards of practice for inline rust documentation for generating rust
+This chapter lays out the standards of practice for inline Rust documentation for generating Rust
 docs. It also provides templates that should be followed when creating documentation for these
 items. You can review the [Templates and Quick Reference](./documenting/reference.md), however if
-this is your first time seeing this document, please read it in it's entirety.
+this is your first time seeing this document, please read it in its entirety.
 
 The most important items to document are those marked with the `pub` keyword, as they will have
 automatic documentation generated for them. When adding new code, the developer should always run
@@ -11,18 +11,18 @@ automatic documentation generated for them. When adding new code, the developer 
 
 ## Common Sections
 
-All sections are describing as `## section <section_name>` inside inline doc comments. These are a
-common set of these sections used below, however do not hesitate to create a custom section if it
+All sections are described as `## <section_name>` inside inline doc comments. These are a
+common set of sections used below, however do not hesitate to create a custom section if it
 is appropriate.
 
 ### Examples
 
 The examples section is used to provide example usage to a user using the inline code markdown
-functionality e.g. ```` ``` ````. The great thing about writing examples, is that `cargo test` will
-run these examples and fail if they are incorrect. This ensures your examples are always up date!
+functionality e.g. ```` ``` ````. The great thing about writing examples is that `cargo test` will
+run these examples and fail if they are incorrect. This ensures your examples are always up to date!
 
 There are situations where you may expect the example to not compile, fail, panic, etc. To support
-this, you can pass attributes to the inline code examples, to tell rust what to expect. Some
+this, you can pass attributes to the inline code examples, to tell Rust what to expect. Some
 supported attributes are `should_panic`, `no_run`, `compile_fail`, and `ignore`.
 
 Including `#[doc(html_playground_url = "https://playground.example.com/")]` will allow examples to
@@ -42,7 +42,7 @@ be runnable in the documentation.
 
 The errors section documents the expected error values when the output of a function is a `Result`.
 This section should be an exhaustive list of expected errors, but **not** an exhaustive list of the
-error enum values (unless all are possible).  You should always contain the error type as a linked
+error enum values (unless all are possible). You should always contain the error type as a linked
 reference and the reason why the error would be returned.
 
 ``` rust
@@ -56,7 +56,7 @@ reference and the reason why the error would be returned.
 ### Safety
 
 The safety section must be provided for any function that is marked as `unsafe` and is used to
-document (1) What makes this function unsafe and (2) the expected scenario in which this function
+document (1) what makes this function unsafe and (2) the expected scenario in which this function
 will operate safely and as expected. A safety section should also be bubbled up to the `struct`
 (if applicable) and the `module` if any function is unsafe.
 
@@ -71,7 +71,7 @@ to be aligned and non-null, and the total size of the slice not to exceed `isize
 
 ``` rust
 /// ## Safety
-/// 
+///
 /// <comments>
 ```
 
@@ -86,6 +86,21 @@ Provide a general description and comments on any types that have lifetimes more
 single lifetime (explicit or implicit). Assume that the developer understands lifetimes; focus on
 why the lifetime was modeled a certain way rather than describing why it was needed to make the
 compiler happy! Typically only used when describing types.
+
+```mermaid
+---
+config:
+  layout: elk
+  look: handDrawn
+---
+graph TD
+    A[Complex Lifetimes] --> B[Multiple Parameters]
+    A --> C[Unusual Relationships]
+    A --> D[Design Decisions]
+    B --> E[**Document Why**]
+    C --> E
+    D --> E
+```
 
 ## Style Guides
 
@@ -135,7 +150,7 @@ are documenting the *parent* item (the crate).
 
 Module documentation should be placed at the top of a module, whether that be a mod.rs file or the
 module itself if contained to a single file. If a crate only consists of a single module, the crate
-style guide should be used.Submodules should be avoided if possible, as they cause confusion. The
+style guide should be used. Submodules should be avoided if possible, as they cause confusion. The
 goal is to describe the types found in this module and their interactions with the rest of the
 crate. Doc comments here use `//!` specifying we are documenting the *parent* item (the module).
 
@@ -154,8 +169,8 @@ crate. Doc comments here use `//!` specifying we are documenting the *parent* it
 
 ### Type Style Guide
 
-Type documentation should be available for all public public types such as enums, structs, etc.
-The focus should be on the construction of the type (when / how), Destruction of the type if a
+Type documentation should be available for all public types such as enums, structs, etc.
+The focus should be on the construction of the type (when / how), destruction of the type if a
 custom Drop trait is implemented, and any performance concerns. Doc comments here use `///`
 specifying we are documenting the item directly below it (the type or member of the type).
 

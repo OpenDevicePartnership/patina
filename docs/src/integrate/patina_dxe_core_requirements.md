@@ -3,7 +3,7 @@
 The Patina DXE Core has several functional and implementation differences from the
 [Platform Initialization (PI) Spec](https://uefi.org/specifications) and EDK II DXE Core implementation.
 
-The [Patina DXE Readiness Tool](#todo) validates many of these requirements.
+The Patina DXE Readiness Tool validates many of these requirements.
 
 ## Platform Requirements
 

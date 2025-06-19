@@ -1,29 +1,45 @@
 # Writing Tests
 
-Another benefit of rust is that testing is "baked-in" and made easy. There is plenty of documentation regarding testing
-for rust, so if you don't know much about testing in rust, start with that and come back here. In this documentation,
-we will stick with what is directly applicable to this project.
+One of the benefits of Rust is that testing is "baked-in" and made easy. There is extensive documentation regarding
+testing in Rust, so if you are unfamiliar with Rust testing, start with the official documentation and return here
+for project-specific details.
 
-Testing in rust can be broken up into four core categories: (1) Unit testing, where the developer has access to the
-internal, private state of the module to ensure the internals work as expected. (2) Integration Testing, which is done
-outside of the module and tests the code from an external interface standpoint. (3) Platform Testing - e.g. writing
-tests that run on the platform, physical or virtual. (4) Doc testing, which is a testing type that is covered in
-[Documentation](documenting.md), but suffice it to say that code snippets for inline documentation can be compiled and
-executed.
+Testing in Rust can be broken up into four core categories:
 
-[Rust Book Testing](https://doc.rust-lang.org/rust-by-example/testing.html)
+1. **Unit Testing:** The developer has access to the internal, private state of the module to ensure the internals
+   work as expected.
+2. **Integration Testing:** Tests are written outside of the module and test the code from an external interface
+   standpoint.
+3. **Platform Testing:** Tests that run on the platform, physical or virtual.
+4. **Doc Testing:** Code snippets in inline documentation can be compiled and executed. See
+   [Rust Documentation Tests](https://doc.rust-lang.org/rustdoc/write-documentation.html#doc-tests).
+
+For more, see [Rust Book: Testing](https://doc.rust-lang.org/rust-by-example/testing.html).
 
 ## Development Dependencies
 
-Rust has the concept of `dev-dependencies` that can be specified in a crate's `Cargo.toml` file. These dependencies are
-only used in the writing and running of tests, and thus will only be downloaded and compiled for test execution. One
-common example, as specified in the rust book (linked at the chapter start) is `pretty_assertions` which extends the
-standard assertions to create a colorful diff.
+Rust supports `dev-dependencies` in a crate's `Cargo.toml` file. These dependencies are only used for writing and
+running tests, and are only downloaded and compiled for test execution. One common example is `pretty_assertions`,
+which extends standard assertions to create a colorful diff.
 
 ## Code Coverage
 
-Code coverage is another incredibly important aspect of our project, that was lacking in other projects. Our intent is
-to keep above 80% code coverage for all crates in any given repository. We use [Cargo Tarpaulin](https://crates.io/crates/cargo-tarpaulin)
-as our code coverage reporting tool as it works well with windows and Linux, and can generate different report types.
-Each repository must have CI that fails if any code added to the repository has less than 80% coverage, or the
-repository as a whole is less than 80% coverage.
+Code coverage is an important aspect of our project. Our intent is to keep above 80% code coverage for all crates
+in any given repository. We use [Cargo Tarpaulin](https://crates.io/crates/cargo-tarpaulin) as our code coverage
+reporting tool, as it works well with Windows and Linux, and can generate different report types. Each repository
+must have CI that fails if any code added to the repository has less than 80% coverage, or if the repository as a
+whole is below 80% coverage.
+
+```mermaid
+---
+config:
+  layout: elk
+  look: handDrawn
+---
+graph TD
+    A[Write Tests] --> B[Run Tests]
+    B --> C[Check Coverage]
+    C --> D{Coverage >= 80%?}
+    D -- Yes --> E[Pass CI]
+    D -- No --> F[Fail CI]
+```
