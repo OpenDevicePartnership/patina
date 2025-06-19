@@ -9,7 +9,7 @@ use core::{
 use crate::{
     acpi_table::{AcpiTableHeader, MemoryAcpiTable, RawAcpiTable, StandardAcpiTable},
     alloc::vec::Vec,
-    signature::ACPI_CHECKSUM_OFFSET,
+    signature::{ACPI_CHECKSUM_OFFSET, ACPI_VERSIONS_GTE_2},
 };
 use crate::{alloc::vec, service::AcpiNotifyFn};
 
@@ -19,7 +19,7 @@ use patina_sdk::{
     component::{
         hob::Hob,
         service::{
-            memory::{AllocationOptions, MemoryManager, PageAllocation, PageAllocationStrategy},
+            memory::{AllocationOptions, MemoryManager, PageAllocation},
             IntoService, Service,
         },
     },
@@ -43,9 +43,6 @@ pub static ACPI_TABLE_INFO: StandardAcpiProvider<StandardBootServices> = Standar
 #[derive(IntoService)]
 #[service(dyn AcpiProvider)]
 pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
-    /// Supported ACPI versions.
-    /// This implementation only supports ACPI 2.0+. Setting the ACPI 1.0 field does nothing.
-    pub(crate) version: AtomicU32,
     /// Whether the platform should reclaim freed ACPI memory.
     /// If true, the ACPI code will try to reclaim unused memory when possible.
     /// If false, all allocations will be made to NVS.
@@ -55,7 +52,7 @@ pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
     /// Platform-installed ACPI tables.
     /// If installing a non-standard ACPI table, the platform is responsible for writing its own handler and parser.
     acpi_tables: RwLock<Vec<MemoryAcpiTable>>,
-    /// Stores a monotnically increasing unique table key for installation.
+    /// Stores a monotonically increasing unique table key for installation.
     next_table_key: AtomicUsize,
     /// Stores notify callbacks, which are called upon table installation.
     notify_list: RwLock<Vec<AcpiNotifyFn>>,
@@ -155,7 +152,6 @@ where
     pub const fn new_uninit() -> Self {
         let system_tables = SystemTables::new();
         Self {
-            version: AtomicU32::new(0),
             should_reclaim_memory: AtomicBool::new(false),
             system_tables: system_tables,
             acpi_tables: RwLock::new(vec![]),
@@ -169,25 +165,25 @@ where
     }
 
     /// Fills in `StandardAcpiProvider` fields at runtime.
-    /// This function must be called before any attempts to use `StandardAcpiProvider`, or a panic will occur.
-    /// Attempting to initialize a single `StandardAcpiProvider` instance more than once will also cause a panic.
+    /// This function must be called before any attempts to use `StandardAcpiProvider`, or any usages will fail.
+    /// Attempting to initialize a single `StandardAcpiProvider` instance more than once will also cause a failure.
     pub fn initialize(
         &self,
-        version: u32,
         should_reclaim_memory: bool,
         bs: B,
         memory_manager: Service<dyn MemoryManager>,
-    ) where
+    ) -> Result<(), AcpiError>
+    where
         B: BootServices,
     {
-        self.version.store(version, Ordering::Release);
         self.should_reclaim_memory.store(should_reclaim_memory, Ordering::Release);
         if self.boot_services.set(bs).is_err() {
-            panic!("Cannot initialize boot services twice.");
+            return Err(AcpiError::BootServicesAlreadyInitialized);
         }
         if self.memory_manager.set(memory_manager).is_err() {
-            panic!("Cannot initialize memory manager twice.");
+            return Err(AcpiError::MemoryManagerAlreadyInitialized);
         }
+        Ok(())
     }
 
     /// Sets the pointer for the RSDP.
@@ -202,6 +198,8 @@ where
 }
 
 /// Implementations of ACPI services.
+/// The following functions are called on the Rust side by the `AcpiTableManager` service.
+/// They also provide implementations for the C ACPI protocols.
 /// For more information on operation and interfaces, see `service.rs`.
 impl<B> AcpiProvider for StandardAcpiProvider<B>
 where
@@ -234,7 +232,7 @@ where
             facs.hardware_signature = facs_info.hardware_signature;
             facs.global_lock = facs_info.global_lock;
             facs.flags = facs_info.flags;
-            facs.x_firmware_waking_vector = facs.x_firmware_waking_vector;
+            facs.x_firmware_waking_vector = facs_info.x_firmware_waking_vector;
             facs.version = facs_info.version;
             facs.reserved = facs_info.reserved;
         }
@@ -423,12 +421,11 @@ where
             memory_type = EfiMemoryType::ACPIMemoryNVS;
         }
 
-        let alloc_options =
-            AllocationOptions::new().with_memory_type(memory_type).with_strategy(PageAllocationStrategy::Any);
+        let alloc_options = AllocationOptions::new().with_memory_type(memory_type);
         let page_alloc = self
             .memory_manager
             .get()
-            .expect("Memory manager not initialized")
+            .ok_or(AcpiError::ProviderNotInitialized)?
             .allocate_zero_pages(n_pages, alloc_options)
             .map_err(|_e| AcpiError::AllocationFailed)?;
 
@@ -440,8 +437,8 @@ where
         &self,
         fadt_address: usize,
         fadt_length: usize,
-        oem_id: [u8; 6],
-        oem_table_id: [u8; 8],
+        oem_id: &[u8; 6],
+        oem_table_id: &[u8; 8],
         oem_revision: u32,
     ) -> Result<(), AcpiError> {
         if !(self.system_tables.fadt.load(Ordering::Acquire).is_null()) {
@@ -450,7 +447,7 @@ where
             unsafe {
                 self.memory_manager
                     .get()
-                    .expect("Memory manager not initialized")
+                    .ok_or(AcpiError::ProviderNotInitialized)?
                     .free_pages(fadt_address, uefi_size_to_pages!(fadt_length as usize))
                     .map_err(|_e| AcpiError::FreeFailed)?
             };
@@ -468,14 +465,14 @@ where
         }
 
         if let Some(rsdp) = self.system_tables.rsdp_mut() {
-            rsdp.oem_id = oem_id;
+            rsdp.oem_id = *oem_id;
         }
 
         // XSDT derives OEM information from FADT, but the FADT does NOT get added to the XSDT entries
         let xsdt_ptr = self.system_tables.xsdt_mut();
         if let Some(xsdt) = xsdt_ptr {
-            xsdt.header.oem_id = oem_id;
-            xsdt.header.oem_table_id = oem_table_id;
+            xsdt.header.oem_id = *oem_id;
+            xsdt.header.oem_table_id = *oem_table_id;
             xsdt.header.oem_revision = oem_revision;
         }
 
@@ -534,8 +531,8 @@ where
                 self.add_fadt_to_list(
                     physical_addr,
                     table_header.length as usize,
-                    table_header.oem_id,
-                    table_header.oem_table_id,
+                    &table_header.oem_id,
+                    &table_header.oem_table_id,
                     table_header.oem_revision,
                 )?;
             }
@@ -557,7 +554,7 @@ where
         Ok(next_table_key)
     }
 
-    /// Determines whether memory allocations should reclaim or store everything in NVS
+    /// Determines whether memory allocations should reclaim or store everything in NVS.
     pub(crate) fn memory_type(&self) -> EfiMemoryType {
         if self.should_reclaim_memory.load(Ordering::Acquire) {
             EfiMemoryType::ACPIReclaimMemory
@@ -602,12 +599,11 @@ where
         let new_size = curr_entries * 2 * mem::size_of::<u64>() + ACPI_HEADER_LEN;
         self.max_entries.store(curr_entries * 2, Ordering::Release);
 
-        let alloc_options =
-            AllocationOptions::new().with_memory_type(self.memory_type()).with_strategy(PageAllocationStrategy::Any);
+        let alloc_options = AllocationOptions::new().with_memory_type(self.memory_type());
         let page_alloc: PageAllocation = self
             .memory_manager
             .get()
-            .expect("Memory manager not initialized")
+            .ok_or(AcpiError::ProviderNotInitialized)?
             .allocate_zero_pages(uefi_size_to_pages!(new_size), alloc_options)
             .map_err(|_e| AcpiError::AllocationFailed)?;
         let physical_addr = page_alloc.into_raw_ptr::<u8>();
@@ -630,7 +626,7 @@ where
         unsafe {
             self.memory_manager
                 .get()
-                .expect("Memory manager not initialized.")
+                .ok_or(AcpiError::ProviderNotInitialized)?
                 .free_pages(old_addr, uefi_size_to_pages!(curr_size))
                 .map_err(|_e| AcpiError::FreeFailed)?
         };
@@ -644,15 +640,13 @@ where
         let mut table_idx = None;
 
         // Search ACPI tables for corresponding table.
-        {
-            let acpi_tables = self.acpi_tables.read();
-            for (i, memory_table) in acpi_tables.iter().enumerate() {
-                // SAFETY: The tables in `self.acpi_tables` are derived from `install_acpi_table`
-                // If installation succeeds, they must be valid table references
-                if memory_table.table_key == table_key {
-                    table_for_key = Some(memory_table.clone());
-                    table_idx = Some(i);
-                }
+        let acpi_tables = self.acpi_tables.read();
+        for (i, memory_table) in acpi_tables.iter().enumerate() {
+            // SAFETY: The tables in `self.acpi_tables` are derived from `install_acpi_table`
+            // If installation succeeds, they must be valid table references
+            if memory_table.table_key == table_key {
+                table_for_key = Some(memory_table);
+                table_idx = Some(i);
             }
         }
 
@@ -677,15 +671,6 @@ where
 
     /// Deletes a table from the list of installed tables and frees its memory.
     fn delete_table(&self, physical_addr: usize, signature: u32, table_length: usize) -> Result<(), AcpiError> {
-        let mut remove_from_xsdt = true;
-        if signature == signature::FACS || signature == signature::DSDT || signature == signature::FACP {
-            remove_from_xsdt = false;
-        }
-
-        if remove_from_xsdt {
-            self.remove_table_from_xsdt(physical_addr);
-        }
-
         match signature {
             signature::FACP => {
                 self.system_tables.fadt.store(core::ptr::null_mut(), Ordering::Release);
@@ -714,7 +699,9 @@ where
                     );
                 }
             }
-            _ => {}
+            _ => {
+                self.remove_table_from_xsdt(physical_addr);
+            }
         }
 
         self.free_table_memory(table_length, physical_addr)?;
@@ -727,7 +714,7 @@ where
         unsafe {
             self.memory_manager
                 .get()
-                .expect("Memory manager not initialized")
+                .ok_or(AcpiError::ProviderNotInitialized)?
                 .free_pages(physical_addr, uefi_size_to_pages!(table_length))
                 .map_err(|_e| AcpiError::FreeFailed)?
         };
@@ -823,7 +810,7 @@ where
         unsafe {
             self.boot_services
                 .get()
-                .expect("Boot services not initialized")
+                .ok_or(AcpiError::ProviderNotInitialized)?
                 .install_configuration_table(&signature::ACPI_TABLE_GUID, rsdp_ptr)
                 .map_err(|_| AcpiError::InstallConfigurationTableFailed)
         }?;
@@ -844,7 +831,7 @@ where
                 // If successfully installed, they are guaranteed to be valid table references
                 let table_in_memory = unsafe { &*(physical_address as *const AcpiTableHeader) };
                 for notify_fn in self.notify_list.read().iter() {
-                    (*notify_fn)(table_in_memory, self.version.load(Ordering::Acquire), table_key)?;
+                    (*notify_fn)(table_in_memory, ACPI_VERSIONS_GTE_2, table_key)?;
                 }
             } else {
                 // If the table is not installed, we cannot notify.
@@ -900,7 +887,7 @@ mod tests {
     #[test]
     fn test_get_table() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new())));
+        provider.initialize(true, MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new())));
 
         let mut header = AcpiTableHeader { signature: 0x1111, length: 123, ..Default::default() };
         let table_key = provider.install_acpi_table_in_memory(&header, TypeId::of::<RawAcpiTable>()).unwrap();
@@ -924,7 +911,7 @@ mod tests {
         let notify_fn: AcpiNotifyFn = dummy_notify;
 
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
+        provider.initialize(true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
 
         provider.register_notify(true, notify_fn).expect("should register notify");
         {
@@ -948,7 +935,7 @@ mod tests {
     #[test]
     fn test_iter() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
+        provider.initialize(true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
 
         let mut header1 = AcpiTableHeader { signature: 0x1, length: 10, ..Default::default() };
         let header1_ptr = NonNull::new(&mut header1 as *mut AcpiTableHeader).unwrap();
@@ -1013,7 +1000,7 @@ mod tests {
     #[test]
     fn test_add_facs_to_list() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new())));
+        provider.initialize(true, MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new())));
 
         // Dummy FACS and FADT
         let facs = AcpiFacs { signature: signature::FACS, length: 64, ..Default::default() };
@@ -1042,7 +1029,7 @@ mod tests {
     #[test]
     fn test_add_fadt_to_list() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
+        provider.initialize(true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
 
         let fadt_header = AcpiTableHeader {
             signature: signature::FACP,
@@ -1062,8 +1049,8 @@ mod tests {
         let result = provider.add_fadt_to_list(
             raw_ptr as usize,
             fadt_header.length as usize,
-            fadt_header.oem_id,
-            fadt_header.oem_table_id,
+            &fadt_header.oem_id,
+            &fadt_header.oem_table_id,
             fadt_header.oem_revision,
         );
         assert!(result.is_ok());
@@ -1102,7 +1089,7 @@ mod tests {
 
         // Initialize XSDT
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
+        provider.initialize(true, MockBootServices::new(), Service::mock(Box::new(MockMemoryManager::new())));
         provider.system_tables.xsdt.store(xsdt_ptr, Ordering::Relaxed);
 
         const XSDT_ADDR: u64 = 0x1000_0000_0000_0004;
@@ -1140,7 +1127,7 @@ mod tests {
     #[test]
     fn test_reallocate_xsdt() {
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new())));
+        provider.initialize(true, MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new())));
 
         // Create a dummy XSDT and add it to system tables
         let xsdt_table = AcpiXsdt {
@@ -1191,7 +1178,7 @@ mod tests {
         mock_memory_manager.expect_free_pages().return_once(|_addr, _pages| Ok(()));
 
         let provider = StandardAcpiProvider::new_uninit();
-        provider.initialize(2, true, MockBootServices::new(), Service::mock(Box::new(mock_memory_manager)));
+        provider.initialize(true, MockBootServices::new(), Service::mock(Box::new(mock_memory_manager)));
 
         // Dummy FADT in system_tables
         let fadt_header = AcpiTableHeader { signature: signature::FACP, length: 100, ..Default::default() };

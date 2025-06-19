@@ -43,6 +43,12 @@ pub enum AcpiError {
     NullTablePtr,
     /// get_acpi_table<T> was provided a type that does not match the type of the table at the given index.
     InvalidTableType,
+    /// There was an attempt to initialize the boot services pointer after it has already been set.
+    BootServicesAlreadyInitialized,
+    /// There was an attempt to initialize the memory manager after it has already been set.
+    MemoryManagerAlreadyInitialized,
+    /// The provider instance was not initialized.
+    ProviderNotInitialized,
 }
 
 impl Into<efi::Status> for AcpiError {
@@ -66,6 +72,9 @@ impl Into<efi::Status> for AcpiError {
             AcpiError::TableNotPresentInMemory => efi::Status::NOT_FOUND,
             AcpiError::NullTablePtr => efi::Status::INVALID_PARAMETER,
             AcpiError::InvalidTableType => efi::Status::INVALID_PARAMETER,
+            AcpiError::BootServicesAlreadyInitialized => efi::Status::ALREADY_STARTED,
+            AcpiError::MemoryManagerAlreadyInitialized => efi::Status::ALREADY_STARTED,
+            AcpiError::ProviderNotInitialized => efi::Status::NOT_FOUND,
         }
     }
 }

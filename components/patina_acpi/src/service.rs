@@ -47,7 +47,7 @@ impl AcpiTableManager {
     /// Installs the FACS.
     ///
     /// The FACS has a non-standard table format but can be dynamically installed during runtime,
-    /// hence the need for a seperate installation function.
+    /// hence the need for a separate installation function.
     ///
     /// If the table is already present in memory, `install_facs` will use the already-allocated ACPI memory.
     /// Otherwise, it will place the table in ACPI memory as appropriate.

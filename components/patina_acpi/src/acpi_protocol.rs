@@ -3,6 +3,7 @@
 //! Wrappers for the C ACPI protocols to call into Rust ACPI implementations.
 
 use crate::acpi_table::{AcpiTableHeader, StandardAcpiTable};
+use crate::signature::ACPI_VERSIONS_GTE_2;
 
 use alloc::collections::btree_map::BTreeMap;
 use core::ffi::c_void;
@@ -181,7 +182,7 @@ impl AcpiSdtProtocol {
             Ok(table_info) => {
                 // SAFETY: table_info is valid and output pointers have been checked for null
                 // We only support ACPI versions >= 2.0
-                unsafe { *version = ((1 << 2) | (1 << 3) | (1 << 4) | (1 << 5)) as u32 };
+                unsafe { *version = ACPI_VERSIONS_GTE_2 };
                 unsafe { *table_key = table_info.table_key };
 
                 if table_info.physical_address.is_none() {

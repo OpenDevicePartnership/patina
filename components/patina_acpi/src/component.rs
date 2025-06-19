@@ -4,12 +4,13 @@ use core::mem;
 
 use patina_sdk::boot_services::{BootServices, StandardBootServices};
 
+use patina_sdk::error::EfiError;
 use patina_sdk::{
     component::{
         hob::{FromHob, Hob},
         params::{Commands, Config},
         service::{
-            memory::{AllocationOptions, MemoryManager, PageAllocationStrategy},
+            memory::{AllocationOptions, MemoryManager},
             Service,
         },
         IntoComponent,
@@ -51,25 +52,24 @@ impl AcpiProviderManager {
         acpi_hob: Option<Hob<AcpiMemoryHob>>,
         memory_manager: Service<dyn MemoryManager>,
     ) -> patina_sdk::error::Result<()> {
-        ACPI_TABLE_INFO.initialize(config.version, config.should_reclaim_memory, boot_services, memory_manager);
+        ACPI_TABLE_INFO
+            .initialize(config.should_reclaim_memory, boot_services, memory_manager)
+            .map_err(|_e| EfiError::AlreadyStarted)?;
 
         // Create and set the RSDP
         let rsdp_alloc = ACPI_TABLE_INFO.memory_manager.get().unwrap().allocate_zero_pages(
             uefi_size_to_pages!(mem::size_of::<AcpiRsdp>()),
-            AllocationOptions::new()
-                .with_memory_type(ACPI_TABLE_INFO.memory_type())
-                .with_strategy(PageAllocationStrategy::Any),
+            AllocationOptions::new().with_memory_type(ACPI_TABLE_INFO.memory_type()),
         )?;
         // SAFETY: If allocation succeeds, `rsdp_alloc` is guaranteed to point to valid ACPI memory
+        // SHERRY: try_leak_as mut?
         let rsdp = unsafe { &mut *(rsdp_alloc.into_raw_ptr::<u8>() as *mut AcpiRsdp) };
         ACPI_TABLE_INFO.set_rsdp(rsdp);
 
         // Create and set the XSDT with an initial number of entries
         let xsdt_alloc = ACPI_TABLE_INFO.memory_manager.get().unwrap().allocate_zero_pages(
             uefi_size_to_pages!(ACPI_HEADER_LEN + mem::size_of::<u64>() * MAX_INITIAL_ENTRIES),
-            AllocationOptions::new()
-                .with_memory_type(ACPI_TABLE_INFO.memory_type())
-                .with_strategy(PageAllocationStrategy::Any),
+            AllocationOptions::new().with_memory_type(ACPI_TABLE_INFO.memory_type()),
         )?;
         let xsdt_addr = xsdt_alloc.into_raw_ptr::<u8>();
 
