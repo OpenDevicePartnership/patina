@@ -9,16 +9,10 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::boxed::Box;
-use patina_mtrr::create_mtrr_lib;
-use patina_mtrr::error::MtrrError;
-use patina_mtrr::structs::MtrrMemoryCacheType;
-use patina_mtrr::Mtrr;
-use patina_paging::page_allocator::PageAllocator;
-use patina_paging::x64::X64PageTable;
-use patina_paging::MemoryAttributes;
-use patina_paging::PageTable;
-use patina_paging::PagingType;
-use patina_paging::PtError;
+use patina_mtrr::{create_mtrr_lib, error::MtrrError, structs::MtrrMemoryCacheType, Mtrr};
+use patina_paging::{
+    page_allocator::PageAllocator, x64::X64PageTable, MemoryAttributes, PageTable, PagingType, PtError, PtResult,
+};
 use patina_sdk::error::EfiError;
 use r_efi::efi;
 
@@ -102,7 +96,7 @@ where
         })
     }
 
-    fn dump_page_tables(&self, address: u64, size: u64) {
+    fn dump_page_tables(&self, address: u64, size: u64) -> PtResult<()> {
         self.paging.dump_page_tables(address, size)
     }
 }
