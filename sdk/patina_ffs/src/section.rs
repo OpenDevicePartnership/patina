@@ -127,7 +127,7 @@ impl Section {
 
         Ok(Section {
             meta,
-            data: buffer.to_vec(),
+            data: buffer[..section_size].to_vec(),
             content_offset,
             subsections: Vec::new(),
             composed: true,
@@ -158,10 +158,18 @@ impl Section {
     pub fn is_extracted(&self) -> bool {
         self.extracted
     }
-}
 
-impl<'a> Section {
-    pub fn sections(&'a self) -> Box<dyn Iterator<Item = &'a Section> + 'a> {
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn into_sections(mut self) -> Box<dyn Iterator<Item = Section>> {
+        let subsections = self.subsections;
+        self.subsections = Vec::new();
+        Box::new(iter::once(self).chain(subsections.into_iter().flat_map(|x| x.into_sections())))
+    }
+
+    pub fn sections(&self) -> Box<dyn Iterator<Item = &Section> + '_> {
         Box::new(iter::once(self).chain(self.subsections.iter().flat_map(|x| x.sections())))
     }
 }

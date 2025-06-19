@@ -20,5 +20,7 @@ pub mod volume;
 
 pub enum FirmwareFileSystemError {
     InvalidHeader,
+    InvalidState,
+    DataCorrupt,
     NotComposed,
 }
