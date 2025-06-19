@@ -55,9 +55,9 @@ pub struct AdvLoggerInfo {
     /// Reserved for future
     reserved2: u32,
     /// Offset from LoggerInfo to where to store next log entry.
-    log_current_offset: u32,
+    log_current_offset: AtomicU32,
     /// Number of bytes of messages missed
-    discarded_size: u32,
+    discarded_size: AtomicU32,
     /// Size of allocated buffer
     log_buffer_size: u32,
     /// Log in permanent RAM
@@ -73,7 +73,7 @@ pub struct AdvLoggerInfo {
     /// Reserved for future
     reserved3: [bool; 3],
     /// Ticks per second for log timing
-    timer_frequency: u64,
+    timer_frequency: AtomicU64,
     /// Ticks when Time Acquired
     ticks_at_time: u64,
     /// UEFI Time Field
@@ -103,8 +103,8 @@ impl AdvLoggerInfo {
             reserved1: [0, 0, 0],
             log_buffer_offset: size_of::<AdvLoggerInfo>() as u32,
             reserved2: 0,
-            log_current_offset: size_of::<AdvLoggerInfo>() as u32,
-            discarded_size: 0,
+            log_current_offset: AtomicU32::new(size_of::<AdvLoggerInfo>() as u32),
+            discarded_size: AtomicU32::new(0),
             log_buffer_size,
             in_permanent_ram: true,
             at_runtime: false,
@@ -112,7 +112,7 @@ impl AdvLoggerInfo {
             hw_port_initialized: false,
             hw_port_disabled,
             reserved3: [false, false, false],
-            timer_frequency,
+            timer_frequency: AtomicU64::new(timer_frequency),
             ticks_at_time,
             time,
             hw_print_level,
@@ -149,17 +149,13 @@ impl AdvLoggerInfo {
         // Align up to the next 8 byte.
         let message_size = (message_size + 7) & !7;
 
-        // SAFETY: We know this value is valid, but a atomic is needed for sharing
-        //         across environments. This gives us internal mutability of the log.
-        let atomic_offset = unsafe { AtomicU32::from_ptr(&self.log_current_offset as *const u32 as *mut u32) };
-
         // try to swap in the updated value. if this grows beyond the buffer, fall out.
         // Using relaxed here as we only want the atomic swap and are not concerned
         // with ordering. The loop should still use the atomic swap and update each
         // iteration.
-        let mut current_offset = atomic_offset.load(Ordering::Relaxed);
+        let mut current_offset = self.log_current_offset.load(Ordering::Relaxed);
         while current_offset + message_size <= self.log_buffer_size {
-            match atomic_offset.compare_exchange(
+            match self.log_current_offset.compare_exchange(
                 current_offset,
                 current_offset + message_size,
                 Ordering::Relaxed,
@@ -172,12 +168,9 @@ impl AdvLoggerInfo {
 
         // check if we fell out of bounds.
         if current_offset + message_size > self.log_buffer_size {
-            // SAFETY: We know this value is valid, but a atomic is needed for sharing
-            //         across environments. This gives us internal mutability of the log.
-            let discarded_size = unsafe { AtomicU32::from_ptr(&self.discarded_size as *const u32 as *mut u32) };
             // Add the discarded value. No ordering needed as this is a single
             // operation.
-            discarded_size.fetch_add(message_size, Ordering::Relaxed);
+            self.discarded_size.fetch_add(message_size, Ordering::Relaxed);
             return Err(EfiError::OutOfResources);
         }
 
@@ -195,15 +188,12 @@ impl AdvLoggerInfo {
     }
 
     pub fn get_frequency(&self) -> u64 {
-        self.timer_frequency
+        self.timer_frequency.load(Ordering::Relaxed)
     }
 
     pub fn set_frequency(&self, frequency: u64) {
-        // SAFETY: We usually treat the entire header as immutable, but the frequency
-        //         must be updated. Do so atomically to avoid contention.
-        let atomic = unsafe { AtomicU64::from_ptr(&self.timer_frequency as *const u64 as *mut u64) };
         // try to swap, assuming the value it initially 0. If this fails, just continue.
-        let _ = atomic.compare_exchange(0, frequency, Ordering::Relaxed, Ordering::Relaxed);
+        let _ = self.timer_frequency.compare_exchange(0, frequency, Ordering::Relaxed, Ordering::Relaxed);
     }
 
     // Allow unused as it is used in tests and intended for future general use.
@@ -371,7 +361,9 @@ impl<'a> Iterator for AdvLogIterator<'a> {
 
     /// Provides the next advanced logger entry in the Advanced Logger memory buffer.
     fn next(&mut self) -> Option<Self::Item> {
-        if self.offset + size_of::<AdvLoggerMessageEntry>() > self.log_info.log_current_offset as usize {
+        if self.offset + size_of::<AdvLoggerMessageEntry>()
+            > self.log_info.log_current_offset.load(Ordering::Relaxed) as usize
+        {
             None
         } else {
             let entry = unsafe { (self.log_info as *const AdvLoggerInfo).byte_add(self.offset) }
@@ -409,7 +401,7 @@ mod tests {
             match log_entry {
                 Ok(_) => {}
                 Err(EfiError::OutOfResources) => {
-                    assert!(log.unwrap().discarded_size > 0);
+                    assert!(log.unwrap().discarded_size.load(Ordering::Relaxed) > 0);
                     assert!(entries > 0);
                     break;
                 }
@@ -462,7 +454,7 @@ mod tests {
         }
 
         // check the contents.
-        assert!(log.discarded_size == 0);
+        assert!(log.discarded_size.load(Ordering::Relaxed) == 0);
         let mut iter = log.iter();
         for entry_num in 0..100 {
             let data = (entry_num as u32).to_be_bytes();
