@@ -6,7 +6,6 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-#![cfg_attr(not(test), no_std)]
 
 #[cfg(feature = "unstable-device-path")]
 pub mod device_path;
