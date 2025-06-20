@@ -197,7 +197,7 @@ impl DevicePath {
         self.iter().any(|n| EndInstance::is_type(n.header.r#type, n.header.sub_type))
     }
 
-    /// Return a &DevicePath for the n last node of the device path.
+    /// Return a &DevicePath for the n last nodes of the device path.
     /// This operation does not copy memory since the trailing end of a device path is a valid device path.
     pub fn slice_end(&self, n: usize) -> &DevicePath {
         let count = self.node_count();
