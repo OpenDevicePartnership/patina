@@ -202,7 +202,7 @@ impl DevicePath {
     pub fn slice_end(&self, n: usize) -> &DevicePath {
         let count = self.node_count();
 
-        debug_assert!(n > 1, "Device path need to at least have the end node.");
+        debug_assert!(n >= 1, "Device path needs to have at least the end node.");
         debug_assert!(n <= count, "Can't retrun a device path bigger than self.");
 
         let nb_skip = count - n;
