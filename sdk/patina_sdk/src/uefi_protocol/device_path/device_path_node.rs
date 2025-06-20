@@ -23,7 +23,7 @@ pub struct Header {
     pub r#type: u8,
     /// Subtype of the device path node.
     pub sub_type: u8,
-    /// Total length in byte of the device path node, including the header.
+    /// Total length in bytes of the device path node, including the header.
     pub length: usize,
 }
 
