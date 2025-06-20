@@ -76,7 +76,8 @@ pub trait DevicePathNode: Debug + Display {
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error>;
 }
 
-/// UnknownDevicePathNode are device path nodes that have not been cast to a more specific associated type or that are undefined in the spec.
+/// `UnknownDevicePathNode` represents device path nodes that have not been cast to a more specific associated type
+/// or that are undefined in the spec.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct UnknownDevicePathNode<'a> {
     /// Header of the device path node.
