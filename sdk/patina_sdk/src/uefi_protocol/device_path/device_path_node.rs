@@ -67,7 +67,7 @@ pub trait DevicePathNode: Debug + Display {
     /// Return the header of the device path node.
     fn header(&self) -> Header;
 
-    /// Return true if this device path node has the same type and sub_type/
+    /// Return true if this device path node has the same type and sub_type.
     fn is_type(r#type: u8, sub_type: u8) -> bool
     where
         Self: Sized;
