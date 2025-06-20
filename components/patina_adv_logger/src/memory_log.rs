@@ -385,9 +385,9 @@ mod tests {
 
     #[test]
     fn create_fill_check_test() {
-        let buff_box = Box::new([0_u8; 0x10000]);
-        let buffer = buff_box.as_ref();
-        let address = buffer as *const u8 as PhysicalAddress;
+        let mut buff_box = Box::new([0_u64; 0x2000]);
+        let buffer = buff_box.as_mut();
+        let address = buffer as *mut u64 as PhysicalAddress;
         let len = buffer.len() as u32;
 
         let log = unsafe { AdvLoggerInfo::initialize_memory_log(address, len) };
