@@ -315,7 +315,7 @@ impl<'a> Iterator for Iter<'a> {
         let Ok(unknown_device_path) =
             self.device_path.buffer.gread_with::<UnknownDevicePathNode>(&mut self.offset, scroll::LE)
         else {
-            debug_assert!(false, "The buffer is corrupted, could not read the device path.");
+            debug_assert!(false, "The buffer is corrupted, could not read the device path node.");
             return None;
         };
 
