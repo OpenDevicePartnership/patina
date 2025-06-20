@@ -144,11 +144,11 @@ impl Display for UnknownDevicePathNode<'_> {
     }
 }
 
-/// This macro is used to defined a device path node struct. And implement device path node traits for it.
-/// To configure the type and subtype of this node, use a attribute `@[DevicePathNode(DevicePathType::Type, SubType::MySubtype)]`
-/// where the Type and subtype are enum path where the value can be expess as u8.a
+/// This macro is used to define a device path node struct and implement device path node traits for it.
+/// To configure the type and subtype of this node, use an attribute `@[DevicePathNode(DevicePathType::Type, SubType::MySubtype)]`
+/// where the Type and subtype are enum paths where the value can be expressed as u8.a
 ///
-/// Some additional trait can be implemented with `@[DevicePathNodeDerive(...)]`
+/// Some additional traits can be implemented with `@[DevicePathNodeDerive(...)]`
 /// Currently supported traits are: Debug and Display.
 #[macro_export]
 macro_rules! device_path_node {
