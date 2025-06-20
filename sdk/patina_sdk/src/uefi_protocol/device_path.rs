@@ -151,11 +151,13 @@ impl DevicePath {
     }
 
     /// Create a &DevicePath from a pointer to a byte buffer.
-    /// This is used to use device path from C.
+    /// This is used to interface with device paths from C code.
     ///
     /// # Safety
     ///
-    /// the buffer pointer must point to valid device path data.
+    /// The buffer pointer must point to valid device path data that remains valid
+    /// for the lifetime 'a. The device path must be properly terminated with an
+    /// EndEntire node.
     pub unsafe fn try_from_ptr<'a>(buffer: *const u8) -> Result<&'a DevicePath, &'static str> {
         let mut buffer = core::slice::from_raw_parts(buffer, Header::size_of_header());
         let mut offset = 0;
