@@ -8,7 +8,10 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 
+use num_traits;
 use r_efi::efi;
+
+use crate::error::EfiError;
 
 /// EFI memory allocation functions work in units of EFI_PAGEs that are 4KB.
 /// This should in no way be confused with the page size of the processor.
@@ -141,6 +144,21 @@ pub const SIZE_256TB: usize = 0x1000000000000;
 /// Patina uses write back as the default cache attribute for memory allocations.
 pub const DEFAULT_CACHE_ATTR: u64 = efi::MEMORY_WB;
 
+/// Checks if the given value is a power of two.
+/// This function checks if the value `x` is greater than zero and if it is a power of two.
+/// # Parameters
+/// - `x`: The value to check.
+/// # Returns
+/// - `true`: If `x` is a power of two.
+/// - `false`: If `x` is not a power of two.
+#[inline]
+pub fn is_power_of_two<T>(x: T) -> bool
+where
+    T: num_traits::PrimInt,
+{
+    x > T::zero() && (x & (x - T::one())) == T::zero()
+}
+
 /// Aligns the given address down to the nearest boundary specified by align.
 ///
 /// # Parameters
@@ -150,9 +168,9 @@ pub const DEFAULT_CACHE_ATTR: u64 = efi::MEMORY_WB;
 ///
 /// # Returns
 ///
-/// A `Result<u64, &'static str>` which is:
-/// - `Ok(u64)`: The aligned address if `align` is a power of two.
-/// - `Err(&'static str)`: An error message indicating that `align` must be a power of two.
+/// A `Result<T, EfiError>` which is:
+/// - `Ok(T)`: The aligned address if `align` is a power of two.
+/// - `Err(EfiError)`: An error indicating that `align` must be a power of two.
 ///
 /// # Example
 ///
@@ -166,7 +184,7 @@ pub const DEFAULT_CACHE_ATTR: u64 = efi::MEMORY_WB;
 ///         println!("Aligned address: {}", aligned_addr);
 ///         assert_eq!(aligned_addr, 512);
 ///     },
-///     Err(e) => println!("Error: {}", e),
+///     Err(e) => println!("Error: {:?}", e),
 /// }
 /// ```
 ///
@@ -177,11 +195,14 @@ pub const DEFAULT_CACHE_ATTR: u64 = efi::MEMORY_WB;
 /// The function returns an error if:
 /// - `align` is not a power of two.
 #[inline]
-pub const fn align_down(addr: u64, align: u64) -> Result<u64, &'static str> {
-    if !align.is_power_of_two() {
-        return Err("`align` must be a power of two");
+pub fn align_down<T>(addr: T, align: T) -> Result<T, EfiError>
+where
+    T: num_traits::PrimInt,
+{
+    if !is_power_of_two(align) {
+        return Err(EfiError::InvalidParameter);
     }
-    Ok(addr & !(align - 1))
+    Ok(addr & !(align - T::one()))
 }
 
 /// Aligns the given address up to the nearest boundary specified by align.
@@ -193,14 +214,15 @@ pub const fn align_down(addr: u64, align: u64) -> Result<u64, &'static str> {
 ///
 /// # Returns
 ///
-/// A `Result<u64, &'static str>` which is:
-/// - `Ok(u64)`: The aligned address if `align` is a power of two and no overflow occurs.
-/// - `Err(&'static str)`: An error message indicating the reason for failure (either invalid `align` or overflow).
+/// A `Result<T, EfiError>` which is:
+/// - `Ok(T)`: The aligned address if `align` is a power of two and no overflow occurs.
+/// - `Err(EfiError)`: An error indicating the reason for failure (either invalid `align` or overflow).
 ///
 /// # Example
 ///
 /// ```rust
 /// use patina_sdk::base::align_up;
+/// use patina_sdk::error::EfiError;
 ///
 /// let addr: u64 = 1025;
 /// let align: u64 = 512;
@@ -209,7 +231,8 @@ pub const fn align_down(addr: u64, align: u64) -> Result<u64, &'static str> {
 ///         println!("Aligned address: {}", aligned_addr);
 ///         assert_eq!(aligned_addr, 1536);
 ///     },
-///     Err(e) => println!("Error: {}", e),
+///     Err(EfiError::InvalidParameter) => println!("Invalid alignment parameter"),
+///     Err(_) => println!("Other alignment error"),
 /// }
 /// ```
 ///
@@ -221,18 +244,18 @@ pub const fn align_down(addr: u64, align: u64) -> Result<u64, &'static str> {
 /// - `align` is not a power of two.
 /// - An overflow occurs during the alignment process.
 #[inline]
-pub const fn align_up(addr: u64, align: u64) -> Result<u64, &'static str> {
-    if !align.is_power_of_two() {
-        return Err("`align` must be a power of two");
+pub fn align_up<T>(addr: T, align: T) -> Result<T, EfiError>
+where
+    T: num_traits::PrimInt,
+{
+    if !is_power_of_two(align) {
+        return Err(EfiError::InvalidParameter);
     }
-    let align_mask = align - 1;
-    if addr & align_mask == 0 {
+    let align_mask = align - T::one();
+    if addr & align_mask == T::zero() {
         Ok(addr) // already aligned
     } else {
-        match (addr | align_mask).checked_add(1) {
-            Some(aligned) => Ok(aligned),
-            None => Err("attempt to add with overflow"),
-        }
+        (addr | align_mask).checked_add(&T::one()).ok_or(EfiError::InvalidParameter)
     }
 }
 
@@ -245,11 +268,11 @@ pub const fn align_up(addr: u64, align: u64) -> Result<u64, &'static str> {
 /// - `align`: The alignment boundary, which must be a power of two.
 ///
 /// # Returns
-/// A `Result<(u64, u64), &'static str>` which is:
-/// - `Ok((u64, u64))`: A tuple containing the aligned base address and the aligned length.
-/// - `Err(&'static str)`: An error message indicating that `align` must be a power of two.
+/// A `Result<(T, T), EfiError>` which is:
+/// - `Ok((T, T))`: A tuple containing the aligned base address and the aligned length.
+/// - `Err(EfiError)`: An error indicating that `align` must be a power of two.
 ///
-/// /// # Example
+/// # Example
 /// ```rust
 /// use patina_sdk::base::align_range;
 /// let base: u64 = 1023;
@@ -261,7 +284,7 @@ pub const fn align_up(addr: u64, align: u64) -> Result<u64, &'static str> {
 ///         assert_eq!(aligned_base, 512);
 ///         assert_eq!(aligned_length, 2560);
 ///     },
-///    Err(e) => println!("Error: {}", e),
+///     Err(e) => println!("Error: {:?}", e),
 /// }
 /// ```
 ///
@@ -270,19 +293,72 @@ pub const fn align_up(addr: u64, align: u64) -> Result<u64, &'static str> {
 /// The function returns an error if:
 /// - `align` is not a power of two.
 #[inline]
-pub const fn align_range(base: u64, length: u64, align: u64) -> Result<(u64, u64), &'static str> {
-    if !align.is_power_of_two() {
-        return Err("`align` must be a power of two");
+pub fn align_range<T>(base: T, length: T, align: T) -> Result<(T, T), EfiError>
+where
+    T: num_traits::PrimInt,
+{
+    if !is_power_of_two(align) {
+        return Err(EfiError::InvalidParameter);
     }
 
-    let aligned_end = match align_up(base + length, align) {
-        Ok(value) => value,
-        Err(e) => return Err(e),
-    };
-    let aligned_base = match align_down(base, align) {
-        Ok(value) => value,
-        Err(e) => return Err(e),
-    };
+    let aligned_end = align_up(base + length, align)?;
+    let aligned_base = align_down(base, align)?;
     let aligned_length = aligned_end - aligned_base;
     Ok((aligned_base, aligned_length))
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_power_of_two() {
+        assert!(is_power_of_two(1u64));
+        assert!(is_power_of_two(2u64));
+        assert!(is_power_of_two(4u64));
+        assert!(is_power_of_two(1024u64));
+        assert!(!is_power_of_two(0u64));
+        assert!(!is_power_of_two(3u64));
+        assert!(!is_power_of_two(1023u64));
+    }
+
+    #[test]
+    fn test_align_down() {
+        assert_eq!(align_down(1023u64, 512u64).unwrap(), 512u64);
+        assert_eq!(align_down(1024u64, 512u64).unwrap(), 1024u64);
+        assert_eq!(align_down(0u64, 512u64).unwrap(), 0u64);
+        assert_eq!(align_down(513u64, 512u64).unwrap(), 512u64);
+        assert_eq!(align_down(0xFFFFu64, 0x1000u64).unwrap(), 0xF000u64);
+        assert_eq!(align_down(0x1000u64, 0x1000u64).unwrap(), 0x1000u64);
+        assert!(align_down(100u64, 3u64).is_err()); // not power of two
+    }
+
+    #[test]
+    fn test_align_up() {
+        assert_eq!(align_up(1025u64, 512u64).unwrap(), 1536u64);
+        assert_eq!(align_up(1024u64, 512u64).unwrap(), 1024u64);
+        assert_eq!(align_up(0u64, 512u64).unwrap(), 0u64);
+        assert_eq!(align_up(513u64, 512u64).unwrap(), 1024u64);
+        assert_eq!(align_up(0xFFFFu64, 0x1000u64).unwrap(), 0x10000u64);
+        assert_eq!(align_up(0x1000u64, 0x1000u64).unwrap(), 0x1000u64);
+        assert!(align_up(100u64, 3u64).is_err()); // not power of two
+                                                  // Check for overflow
+        assert!(align_up(u64::MAX, 2u64).is_err());
+    }
+
+    #[test]
+    fn test_align_range() {
+        let (base, len) = align_range(1023u64, 2048u64, 512u64).unwrap();
+        assert_eq!(base, 512u64);
+        assert_eq!(len, 2560u64);
+
+        let (base, len) = align_range(0u64, 100u64, 64u64).unwrap();
+        assert_eq!(base, 0u64);
+        assert_eq!(len, 128u64);
+
+        let (base, len) = align_range(100u64, 100u64, 64u64).unwrap();
+        assert_eq!(base, 64u64);
+        assert_eq!(len, 192u64);
+
+        assert!(align_range(100u64, 100u64, 3u64).is_err()); // not power of two
+    }
 }
