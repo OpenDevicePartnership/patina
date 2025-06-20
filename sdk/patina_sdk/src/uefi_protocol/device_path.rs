@@ -49,15 +49,23 @@ impl DevicePathBuf {
     where
         T: DevicePathNode + Sized,
     {
-        let writing_start = self.buffer.len();
+        let writing_start_offset = self.buffer.len();
         let header = node.header();
-        self.buffer.resize(writing_start + header.length, 0);
-        let writing_buffer = &mut self.buffer.as_mut_slice()[writing_start..];
+
+        let nb_additional_byte = (writing_start_offset + header.length).saturating_sub(self.buffer.capacity());
+
+        if let Err(e) = self.buffer.try_reserve_exact(nb_additional_byte) {
+            debug_assert!(false, "Device Path: Cannot allocate enough memory to append a device path node. {e:?}");
+            return;
+        }
+
+        // No allocation will be done here, handled by the `try_reserve`.
+        self.buffer.resize(writing_start_offset + header.length, 0);
+
+        let writing_buffer = &mut self.buffer.as_mut_slice()[writing_start_offset..];
         match node.write_into(writing_buffer) {
             Ok(nb_byte_written) => debug_assert_eq!(header.length, nb_byte_written),
-            Err(_) => {
-                log::error!("DevicePath: An error occurred when trying to append a device path node.")
-            }
+            Err(_) => debug_assert!(false, "Unexpected error, buffer should be large enough at that point."),
         }
     }
 
