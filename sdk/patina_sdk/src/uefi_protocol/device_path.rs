@@ -203,7 +203,7 @@ impl DevicePath {
         let count = self.node_count();
 
         debug_assert!(n >= 1, "Device path needs to have at least the end node.");
-        debug_assert!(n <= count, "Can't retrun a device path bigger than self.");
+        debug_assert!(n <= count, "Cannot return a device path bigger than self.");
 
         let nb_skip = count - n;
         let mut idx = 0;
