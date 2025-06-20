@@ -159,6 +159,10 @@ impl DevicePath {
     /// for the lifetime 'a. The device path must be properly terminated with an
     /// EndEntire node.
     pub unsafe fn try_from_ptr<'a>(buffer: *const u8) -> Result<&'a DevicePath, &'static str> {
+        if buffer.is_null() {
+            return Err("Null pointer provided");
+        }
+
         let mut buffer = core::slice::from_raw_parts(buffer, Header::size_of_header());
         let mut offset = 0;
         loop {
