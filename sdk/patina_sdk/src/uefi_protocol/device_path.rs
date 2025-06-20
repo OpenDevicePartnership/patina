@@ -136,7 +136,7 @@ impl PartialEq for DevicePathBuf {
 impl Eq for DevicePathBuf {}
 
 /// DevicePath is the borrowed version of a [`DevicePathBuf`].
-/// Only immutable opperation are possible on this type.
+/// Only immutable operations are possible on this type.
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct DevicePath {
