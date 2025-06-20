@@ -91,7 +91,7 @@ words:
   - inproc
   - intid
   - irouter
-  - ISCSI
+  - iscsi
   - isenabler
   - kbyte
   - keccak
