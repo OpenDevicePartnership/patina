@@ -1,10 +1,10 @@
 # Patina Performance
 
-The patina performance component is a native rust implementation for managing firmware performance data.
+The Patina performance component is a native Rust implementation for managing firmware performance data.
 
-## How to enable performance measurements
+## Enabling Performance Measurements
 
-Enabling performance in patina is done by adding the `Performance` component to the patina DXE Core build.
+Enabling performance in Patina is done by adding the `Performance` component to the Patina DXE Core build.
 
 ```rust
 // ...
@@ -14,14 +14,14 @@ Core::default()
  .with_component(patina_performance::Performance)
  .start()
  .unwrap();
- 
+
 // ...
 ```
 
-Then enable performance when building. For example, if building in `patina-qemu`,
-this build variable should be set to true: `BLD_*_PERF_TRACE_ENABLE=TRUE`.
+> **Note:** Performance measurements for a given platform may need to be enabled. For example, if building in
+`patina-qemu`, this build variable should be set to true: `BLD_*_PERF_TRACE_ENABLE=TRUE`.
 
-The patina performance component uses a feature mask in its configuration to control how performance is measured.
+The Patina performance component uses a feature mask in its configuration to control how performance is measured.
 
 ```rust
 
@@ -39,13 +39,13 @@ Core::default()
  .with_component(patina_performance::Performance)
  .start()
  .unwrap();
- 
+
 // ...
 ```
 
 ## API
 
-| Macro name in edkII                                                   | Function name in rust component                                          | Description                                                     |
+| Macro name in EDK II                                                  | Function name in Patina component                                        | Description                                                     |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------- |
 | `PERF_START_IMAGE_BEGIN` <br>`PERF_START_IMAGE_END`                   | `perf_image_start_begin`<br>`perf_image_start_end`                       | Measure the performance of start image in core.                 |
 | `PERF_LOAD_IMAGE_BEGIN`<br>`PERF_LOAD_IMAGE_END`                      | `perf_load_image_begin`<br>`perf_load_image_end`                         | Measure the performance of load image in core.                  |
@@ -58,18 +58,18 @@ Core::default()
 | `PERF_FUNCTION_BEGIN`<br>`PERF_FUNCTION_END`                          | `perf_function_begin`<br>`perf_function_end`                             | Measure the performance of a general function in any module.    |
 | `PERF_INMODULE_BEGIN`<br>`PERF_INMODULE_END`                          | `perf_in_module_begin`<br>`perf_in_module_end`<br>                       | Measure the performance of a behavior within one module.        |
 | `PERF_CROSSMODULE_BEGIN`<br>`PERF_CROSSMODULE_END`                    | `perf_cross_module_begin`<br>`perf_cross_module_end`                     | Measure the performance of a behavior in different modules.     |
-| `PERF_START`<br>`PERF_START_EX`<br>`PERF_END`<br>`PERF_END_EX`        | `perf_start`<br>`perf_start_ex`<br>`perf_end`<br>`perf_end_ex`           | Do a performance measurement.                                   |
+| `PERF_START`<br>`PERF_START_EX`<br>`PERF_END`<br>`PERF_END_EX`        | `perf_start`<br>`perf_start_ex`<br>`perf_end`<br>`perf_end_ex`           | Make a performance measurement.                                 |
 
-### How to log a performance measurements
+### Logging Performance Measurements
 
-The method to record performance measurements varies according to
-whether it is performed from within the core or an external component.
+The method to record performance measurements varies according to whether it is performed from within the core or an
+external component.
 
-*Example of measurement from the core:*
+*Example of measurement from within the core:*
 
 ```rust
 use mu_rust_helpers::guid::CALLER_ID;
-    
+
 perf_function_begin("foo" &CALLER_ID, create_performance_measurement);
 ```
 
@@ -86,13 +86,14 @@ create_performance_measurement.inspect(|f| perf_function_begin("foo", &CALLER_ID
 
 ## Performance Component Overview
 
-The **Performance Component** provides an API for logging performance measurements during firmware execution. This API includes:
+The **Performance Component** provides an API for logging performance measurements during firmware execution. This
+API includes:
 
 - Utility functions to log specific events.
 - A function to create performance measurements.
 
-If the measurement is initiated from the core, use the `create_performance_measurement` function within the utility function.
-Otherwise, use the function returned by the `EdkiiPerformanceMeasurement` protocol.
+If the measurement is initiated from the core, use the `create_performance_measurement` function within the utility
+function. Otherwise, use the function returned by the `EdkiiPerformanceMeasurement` protocol.
 
 ---
 
@@ -100,21 +101,26 @@ Otherwise, use the function returned by the `EdkiiPerformanceMeasurement` protoc
 
 Upon initialization, the component performs the following steps:
 
-1. **Initialize the Firmware Performance Data Table (FBPT)**  
-   Sets up the FBPT data structure to store performance records.
+1. **Initialize the Firmware Performance Data Table (FBPT)**
 
-2. **Populate FBPT with Pre-DXE Data**  
-   Retrieves performance data from Hand-Off Blocks (HOBs) generated during the pre-DXE phase and adds them to the FBPT.
+   - Sets up the FBPT data structure to store performance records.
 
-3. **Install the `EdkiiPerformanceMeasurement` Protocol**  
-   Enables external modules to log performance data using the component API.
+2. **Populate FBPT with Pre-DXE Data**
 
-4. **Register Events**  
-   - One event collects performance records logged in Management Mode (MM).
-   - Another event publishes the FBPT to allocate the table in reserved memory at the end of the DXE phase.
+   - Retrieves performance data from Hand-Off Blocks (HOBs) generated during the pre-DXE phase and adds them to the FBPT.
 
-5. **Install Performance Properties**  
-   Exposes performance-related properties through a configuration table for use by other components.
+3. **Install the `EdkiiPerformanceMeasurement` Protocol**
+
+   - Enables external modules to log performance data using the component API.
+
+4. **Register Events**
+
+   - One event collects performance records logged in Management Mode (MM).
+   - Another event publishes the FBPT to allocate the table in reserved memory at the end of the DXE phase.
+
+5. **Install Performance Properties**
+
+   - Exposes performance-related properties through a configuration table for use by other components.
 
 ---
 
@@ -125,10 +131,9 @@ Other tables, such as the **Firmware Performance Data Table (FPDT)**, are publis
 
 ## References
 
-**ACPI: Firmware Performance Data Table**
-<https://uefi.org/htmlspecs/ACPI_Spec_6_4_html/05_ACPI_Software_Programming_Model/ACPI_Software_Programming_Model.html?highlight=fbpt#firmware-performance-data-table-fpdt>
+[**ACPI: Firmware Performance Data Table**](https://uefi.org/htmlspecs/ACPI_Spec_6_4_html/05_ACPI_Software_Programming_Model/ACPI_Software_Programming_Model.html?highlight=fbpt#firmware-performance-data-table-fpdt)
 
-**Performance file in EDKII repository.**
+**Performance source code in the EDK II repository.**
 
 - <https://github.com/tianocore/edk2/blob/master/MdePkg/Include/Library/PerformanceLib.h>
 - <https://github.com/tianocore/edk2/blob/master/MdeModulePkg/Library/DxeCorePerformanceLib/DxeCorePerformanceLib.c>

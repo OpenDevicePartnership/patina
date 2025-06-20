@@ -1,16 +1,16 @@
 # Synchronization
 
 UEFI does not support true multi-threaded operation; in general, all interaction
-with the Rust DXE Core is expected to take place on a single processor thread.
+with the Patina DXE Core is expected to take place on a single processor thread.
 UEFI does permit that single thread to have multiple "tasks" executing
 simultaneously at different "Task Priority Levels[^events_and_tpl]."
 
 Routines executing at a higher TPL may interrupt routines executing at a lower
-TPL. Both routines may access Rust DXE Core Services, so global state in the
-Rust DXE Core, such such as the protocol database, event database, dispatcher
+TPL. Both routines may access Patina DXE Core Services, so global state in the
+Patina DXE Core, such such as the protocol database, event database, dispatcher
 state, etc. must be protected against simultaneous access.
 
-The primary way this is implemented in the Rust DXE Core is via the `TplMutex`
+The primary way this is implemented in the Patina DXE Core is via the `TplMutex`
 structure.
 
 [^events_and_tpl]: See [Event, Timer, and Task Priority Services](events.md#event-timer-and-task-priority-services) elsewhere in this book, as well as
@@ -18,7 +18,7 @@ the [UEFI Specification Section 7.1](https://uefi.org/specs/UEFI/2.10_A/07_Servi
 
 ## TplMutex
 
-`TplMutex` implements mutual exclusion for the Rust DXE Core using semantics
+`TplMutex` implements mutual exclusion for the Patina DXE Core using semantics
 very similar to the Rust [sync::Mutex](https://doc.rust-lang.org/std/sync/struct.Mutex.html).
 Each `TplMutex` has a type parameter which represents the data that it is
 protecting. The data can only be accessed through the `TplGuard` objects
@@ -113,7 +113,7 @@ assert!(tpl_mutex1.try_lock().is_ok()); //mutex1 unlocked and can be acquired.
 
 ## TplMutex - Early Init
 
-In the Rust DXE Core it is necessary to instantiate many global locked
+In the Patina DXE Core it is necessary to instantiate many global locked
 structures using `TplMutex` to provide safe access before Boot Services (and in
 particular TPL APIs) are fully initialized. Prior to the initialization of boot
 services, the `TplMutex` operation only uses the [atomic lock](synchronization.md#tplmutex---atomic-locking-and-reentrancy)

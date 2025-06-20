@@ -146,7 +146,7 @@ up in pure Rust. When surveying what environment this should be, we noted that P
 architectures and silicon vendors, while DXE operates in a more standardized environment with well defined entry
 criteria and an overall larger share of functionality and drivers. This led to writing a DXE Core entirely in Rust.
 
-In the course of developing the Rust DXE Core, supporting functionality was needed that led to the some new crates
+In the course of developing the Patina DXE Core, supporting functionality was needed that led to the some new crates
 being spun off from the work that will be published individually for reuse in other core environments or drivers. All
 of this work is part of the Patina project.
 
@@ -155,17 +155,17 @@ Right now, those include:
 - An "advanced logger" crate for UEFI debug output.
 - A Platform Initialization (PI) crate that provides a Rust interface and implemention for the UEFI PI specification.
 - A Rust UEFI SDK crate that contains Rust implementation of common interfaces and code needed in both UEFI drivers
-  and core environments like the Rust DXE Core.
+  and core environments like the Patina DXE Core.
 - A generic paging crate that implements the functionality needed to manage page tables and memory mappings in x86/64
   and AArch64 environments.
 - A generic Memory Type Range Register (MTRR) crate that implements the functionality needed to manage memory type
   ranges in x86/64 environments.
 
-### Rust DXE Core
+### Patina DXE Core
 
 ![DXE Architecture](./media/dxe_arch_1.png)
 
-In the above high-level diagram, the Rust DXE Core takes system data input in the form of HOBs in the same way as the
+In the above high-level diagram, the Patina DXE Core takes system data input in the form of HOBs in the same way as the
 C DXE Core. The green box indicates that the core is written in Rust, while purple indicates that DXE drivers may be
 written either in C or Rust. Orange indicates code that is still written in C. For example, the UEFI Boot Services
 table and services themselves are largely written in pure Rust. The UEFI Runtime Services table itself has a Rust
@@ -181,14 +181,14 @@ definition but many of the services are still implemented in C so it is orange.
 - Page table management.
 - A pure Rust dispatch system in addition to support for [PI compatible FV/FFS dispatch](./dxe_core/dispatcher.md).
 - Parity with the C DXE Core in UEFI Self-Certification Test (SCT) results.
-- ~70% unit test coverage in the Rust DXE Core (with a goal of >80% coverage).
+- ~70% unit test coverage in the Patina DXE Core (with a goal of >80% coverage).
 - Support for [Enhanced Memory Protections](https://microsoft.github.io/mu/WhatAndWhy/enhancedmemoryprotection/).
 - Source-level debugging support.
 - Built-in Brotli and EFI decompression support.
 - Infrastructure (in the `patina_sdk::test` module) for on-platform execution of unit tests.
 
 ``` admonish important
-The Rust DXE Core otherwise supports the normal responsibilities of a DXE Core except for the design restrictions
+The Patina DXE Core otherwise supports the normal responsibilities of a DXE Core except for the design restrictions
 described in the "Compatibility" section.
 ```
 
@@ -202,19 +202,19 @@ and depended on by those drivers are written in Rust.
 
 #### Rust DXE Scaling Plan
 
-While the Rust DXE Core is mostly a drop-in replacement for the C DXE Core, it does differ in terms of design to
+While the Patina DXE Core is mostly a drop-in replacement for the C DXE Core, it does differ in terms of design to
 accommodate the Rust language, its safety guarantees, and more modern software practices that contribute to higher
 quality interfaces and testing.
 
-While more detailed design documents will be available in the Rust DXE Core codebase, a key design goal to call out
+While more detailed design documents will be available in the Patina DXE Core codebase, a key design goal to call out
 now is support to transition to a larger share of Rust code in DXE. To best take advantage of Rust's static safety
 guarantees and to avoid the need for unsafe code in interfacing between components (e.g. protocol database), we have
-implemented the ability for the Rust DXE Core dispatch process to dispatch platform defined static components called
+implemented the ability for the Patina DXE Core dispatch process to dispatch platform defined static components called
 ["components"](./dxe_core/component_model.md). Components are selected for dispatch by the platform and can share data
 and services with each other but through Rust interfaces that are safe and statically checked versus the dynamic and
 disjoint nature of the protocol database in the C DXE Core.
 
-This snippet shows a simple example of how the Rust DXE core is instantiated and customized in a simple platform
+This snippet shows a simple example of how the Patina DXE Core is instantiated and customized in a simple platform
 binary crate:
 
 ```rust
@@ -235,7 +235,7 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
 ```
 
 ``` admonish note
-Rust is an exciting new next step and there is more to share about the Rust DXE Core in future documentation.
+Rust is an exciting new next step and there is more to share about the Patina DXE Core in future documentation.
 ```
 
 ---
@@ -243,38 +243,37 @@ Rust is an exciting new next step and there is more to share about the Rust DXE 
 #### Integration
 
 This section is not meant to be a comprehensive guide to integrating Rust into UEFI firmware and more detailed
-information is available. This section is meant to share a high-level sense of how the Rust DXE Core is integrated
+information is available. This section is meant to share a high-level sense of how the Patina DXE Core is integrated
 into a platform.
 
-The following integration documents might be helpful if you're beginning to work with the Rust DXE Core:
+The following integration documents might be helpful if you're beginning to work with the Patina DXE Core:
 
-- [Patina Requirements](./integrate/patina_requirements.md)
-- [How to Setup a Platform-Specific Rust DXE Core Build](./integrate/dxe_core.md)
-- [Platform Integration of a Rust DXE Core Binary](./integrate/platform.md)
+- [Patina Requirements](./integrate/patina_dxe_core_requirements.md)
+- [How to Setup and Integrate a Platform-Specific Patina DXE Core Build](./integrate/dxe_core.md)
 
 ##### `patina_dxe_core` as a Library Crate
 
-The Rust DXE Core itself is a library crate. This means a single set of common DXE Core is provided that can be linked
+The Patina DXE Core itself is a library crate. This means a single set of common DXE Core is provided that can be linked
 into a binary crate. The binary crate is owned by the platform. The purpose of this separation is to allow the DXE Core
 to be reused across multiple platforms and to allow the platform to provide the necessary configuration and platform
 specific code to the DXE Core when it uses the DXE Core interface. The binary crate built by the platform is what
 produces the .efi DXE Core binary.
 
-This separation also means that a Rust DXE Core can simply be swapped with the C DXE Core in an existing platform.
-The Rust DXE Core .efi file produced by the pure Rust platform binary crate can be placed into the flash map of the
+This separation also means that a Patina DXE Core can simply be swapped with the C DXE Core in an existing platform.
+The Patina DXE Core .efi file produced by the pure Rust platform binary crate can be placed into the flash map of the
 firmware volume that contains the DXE Core.
 
 ##### Platform Customization
 
-The platform binary crate is where platform-specific customization is done. For example, the Rust DXE Core depends on
+The platform binary crate is where platform-specific customization is done. For example, the Patina DXE Core depends on
 a UART. However, the platform can configure the UART passed to the DXE Core to be either an I/O or MMIO UART and
 configure the UART base address, baud rate, stride size, and other parameters. The platform can specify pure Rust
-components to dispatch in the Rust DXE Core as well.
+components to dispatch in the Patina DXE Core as well.
 
 ##### Transition Tooling
 
 We plan to provide a "DXE Readiness" tool that will help test the input data (e.g. HOBs) and other system state to
-determine any compatibility issues and provide guidance where possible. We're hoping this will make the Rust DXE Core
+determine any compatibility issues and provide guidance where possible. We're hoping this will make the Patina DXE Core
 onboarding experience easier but also provide more visibility into the DXE Core's requirements and operating state in
 general.
 
@@ -296,8 +295,8 @@ Three main types of testing are currently supported.
 
 #### Compatibility
 
-The Rust DXE Core is not only written in a newer, safer language but it is also designed for modern, more secure
-software practices. This means not everything that worked in the C DXE Core will work in the Rust DXE Core.
+The Patina DXE Core is not only written in a newer, safer language but it is also designed for modern, more secure
+software practices. This means not everything that worked in the C DXE Core will work in the Patina DXE Core.
 
 The main areas at this time that are not supported are:
 
@@ -305,7 +304,7 @@ The main areas at this time that are not supported are:
 - Traditional SMM support.
 - "Dual Mode" drivers. For example, a driver that can run in both PEI and DXE (rarely used).
 
-The Rust DXE Core also sets up memory protections and requires a more accurately and comprehensively defined memory
+The Patina DXE Core also sets up memory protections and requires a more accurately and comprehensively defined memory
 map. The platform will likely need to describe more resources than before (via resource descriptor HOBs) so pages
 can be mapped correctly and UEFI code that violates memory protections will need to be fixed. For example, null pointer
 dereference detection and stack guard are active so code (C DXE driver or a third-party option ROM) will have memory

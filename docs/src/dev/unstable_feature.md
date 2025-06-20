@@ -1,22 +1,25 @@
 # Unstable Feature
 
-Unstable feature are a way of adding new functionality where the API is not guaranteed to be set in stone.
-This include:
+Unstable features are a way of adding new functionality where the API is not guaranteed to be stable. This
+includes:
 
-- A new feature with a transition period to ask for additional feedback.
-- A working feature that still have some unresolved question.
+- A new feature with a transition period to gather additional feedback.
+- A working feature that still has some unresolved questions.
 - A proof of concept.
 
-## How to create an unstable feature
+## How to Create an Unstable Feature
 
-1. Create an issue with the name `Tracking unstable feature issue`.
-2. Link the issue to every PR that is related to this feature.
-3. Add a feature to the `Cargo.toml` to feature gate the new feature
-following the naming convention: `unstable-<feature name>`.
-4. Link the tracking unstable feature issue to every task that adds to its stabilization.
+1. Create a GitHub issue titled `Tracking unstable feature issue` for the new feature.
+2. Link this issue to every pull request (PR) related to the feature.
+3. Add a feature flag to the `Cargo.toml` to gate the new feature, following the naming convention:
+   `unstable-<feature-name>`.
+4. Link the tracking issue to every task that contributes to the feature's stabilization.
 
-## Stabilization of an unstable feature
+> **Note:** Feature gating ensures that unstable features are only enabled when explicitly requested, reducing the
+> risk of accidental use in production.
 
-1. Remove the feature gate from the code and `Cargo.toml`.
-2. Close the tracking unstable feature issue with the pull request that remove the feature gate.
-3. Increment crate minor version.
+## Stabilization of an Unstable Feature
+
+1. Remove the feature gate from the code and `Cargo.toml` once the feature is stable.
+2. Close the tracking issue with the pull request that removes the feature gate.
+3. Increment the crate's minor version to reflect the new stable feature.

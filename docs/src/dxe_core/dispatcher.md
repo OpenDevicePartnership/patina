@@ -1,13 +1,13 @@
 # Dispatcher
 
 This portion of the core deals with discovering and executing drivers found in firmware volumes as ordered by their
-dependencies. The Rust DXE Core dispatcher generally aligns with the requirements laid out in the UEFI Platform
+dependencies. The Patina DXE Core dispatcher generally aligns with the requirements laid out in the UEFI Platform
 Initialization Spec for the [DXE Dispatcher](https://uefi.org/specs/PI/1.8A/V2_DXE_Dispatcher.html), with the exception
 of a priori file support.
 
 ## Dispatcher Initialization
 
-The dispatcher relies on the Rust DXE Core [Event](events.md) and [Protocol](protocol_database.md) services in order to
+The dispatcher relies on the Patina DXE Core [Event](events.md) and [Protocol](protocol_database.md) services in order to
 locate and execute drivers. On initialization, the dispatcher registers an event notify callback on the
 [`EFI_FIRMWARE_VOLUME_BLOCK2_PROTOCOL`](https://uefi.org/specs/PI/1.8A/V3_Code_Definitions.html#firmware-volume-block2-protocol),
 which is produced for each firmware volume. This allows the dispatcher to interrogate the firmware volume and add any
@@ -15,12 +15,12 @@ new drivers within the volume to the dispatcher queue.
 
 The core also provides an instance of the [`section extractor`](tbd) interface, which is used by the dispatcher to
 process compressed and [guided](https://uefi.org/specs/PI/1.8A/V3_Code_Definitions.html#guided-section-extraction-protocol)
-sections. The reference section extractor provided with the Rust DXE Core can extract sections compressed with the
+sections. The reference section extractor provided with the Patina DXE Core can extract sections compressed with the
 [UEFI Compress](https://uefi.org/specs/UEFI/2.10_A/19_Protocols_Compression_Algorithm_Specification.html) algorithm, as
 well as sections compressed with the [Brotli](https://github.com/google/brotli) compression algorithm.
 
 As part of core initialization, any firmware volumes produced by the HOB producer phase (to include at least the
-firmware volume containing the Rust DXE Core itself) are added to the dispatcher prior to initial invocation (otherwise,
+firmware volume containing the Patina DXE Core itself) are added to the dispatcher prior to initial invocation (otherwise,
 there would be nothing to dispatch). See [Firmware Volume Processing](dispatcher.md#firmware-volume-processing)
 below for details.
 
@@ -31,7 +31,7 @@ After initialization, the dispatcher is invoked by the `core_dispatch` function,
 executes the core dispatcher loop, which is described below.
 
 Once the first execution of `core_dispatch` loop processes and executes all available drivers, it returns control to the
-Rust DXE Core, which then transfers control to the "BDS" driver by invoking the
+Patina DXE Core, which then transfers control to the "BDS" driver by invoking the
 [BDS Architectural Protocol](https://uefi.org/specs/PI/1.8A/V2_DXE_Architectural_Protocols.html#boot-device-selection-bds-architectural-protocol).
 
 The dispatcher may be invoked again (for example, if the BDS phase produces additional firmware volumes) by invoking the
@@ -75,6 +75,9 @@ of Firmware Volumes can be processed to add new drivers to the "Pending" queue.
 ```mermaid
 ---
 title: Dispatcher Flow
+config:
+  layout: elk
+displayMode: compact
 ---
 flowchart TB
 
@@ -173,7 +176,7 @@ Platform Initialization Spec.
 ## A Priori File
 
 ```admonish warning title="No A Priori Support"
-The Rust DXE Core does not presently provide support for a priori file control of dispatch order for drivers.
+The Patina DXE Core does not presently provide support for a priori file control of dispatch order for drivers.
 ```
 
 The *a priori* file was introduced in the Platform Initialization (PI) Specification to provide additional flexibility
@@ -221,7 +224,7 @@ engineer that will be responsible for constructing an *a priori* file for a give
 
 ### Alternatives
 
-To foster a more maintainable, robust, and correct DXE environment, the Rust DXE Core does not support *a priori* files
+To foster a more maintainable, robust, and correct DXE environment, the Patina DXE Core does not support *a priori* files
 and requires that code being dispatched declare its dependencies properly. These are alternatives to maintain some of
 the properties in *a priori* without using an *a priori* file:
 
@@ -233,7 +236,7 @@ the properties in *a priori* without using an *a priori* file:
 
 ### Summary
 
-The Rust DXE Core opts to require a programatically accurate evaluation of author-declared dependencies rather than a
+The Patina DXE Core opts to require a programatically accurate evaluation of author-declared dependencies rather than a
 "predictable" order that is more susceptible to error and assumptions built around that order that result in rigid code.
 Libraries and drivers should declare their dependencies correctly so that platforms can quickly and easily integrate
 their code into larger systems.

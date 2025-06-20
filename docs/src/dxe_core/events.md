@@ -8,7 +8,7 @@ DXE Core.
 
 The main implementation for Event, Timer and Task Priority features resides in the Event Database object implemented by
 the `patina_dxe_core` crate. The event database is then used to implement the UEFI spec boot services for event, timer and
-task priority by the main Rust DXE Core event.rs module.
+task priority by the main Patina DXE Core event.rs module.
 
 ## Event Database
 
@@ -18,7 +18,7 @@ There are two main data structures tracked within the event database: events the
 
 An "event" is used to track events of interest to the firmware. See:
 [Section 7.1.1](https://uefi.org/specs/UEFI/2.10_A/07_Services_Boot_Services.html#efi-boot-services-createevent) of the
-UEFI spec for a discussion of what an event is and how it is used in the firmware. In the Rust DXE Core event database,
+UEFI spec for a discussion of what an event is and how it is used in the firmware. In the Patina DXE Core event database,
 an event object contains the following data:
 
 | Data       | Purpose                                                    | Applies to                 |
@@ -37,7 +37,7 @@ fields).
 
 A pending notification is used to track an outstanding notification for an event that has been placed in the 'signaled'
 state but which has not yet been "delivered" by the core (typically because the firmware is running at a TPL equal to or
-higher to the notification TPL of the event). In the Rust DXE Core event database, a pending notify object contains the
+higher to the notification TPL of the event). In the Patina DXE Core event database, a pending notify object contains the
 following data:
 
 | Field           | Purpose                                                 |
@@ -142,6 +142,8 @@ objects at the same `notify tpl`.
 ```mermaid
 ---
 title: Initial Queue
+config:
+  layout: elk
 ---
 flowchart LR
   event1["`event id: 1,
@@ -159,6 +161,8 @@ event1-->event2-->event3-->event4
 ```mermaid
 ---
 title: New Pending Event Notify Added at TPL_NOTIFY
+config:
+  layout: elk
 ---
 flowchart LR
   event1["`event id: 1,
@@ -179,6 +183,8 @@ flowchart LR
 ```mermaid
 ---
 title: New Pending Event Notify Added at TPL_CALLBACK
+config:
+  layout: elk
 ---
 flowchart LR
   event1["`event id: 1,
@@ -225,6 +231,8 @@ objects a the specified TPL even if they were added after the creation of the it
 ```mermaid
 ---
 title: Consuming an Pending Event Notify From The `event_notification_iter`
+config:
+  layout: elk
 ---
 flowchart LR
   event1["`event id: 1,
@@ -248,6 +256,8 @@ flowchart LR
 ```mermaid
 ---
 title: New Pending Event Notify During Iteration
+config:
+  layout: elk
 ---
 flowchart LR
   event1["`event id: 1,
@@ -282,7 +292,7 @@ corresponding event in the database will be marked 'not-signaled'.
 
 The event database implementation is agnostic to the units for time; as long as the units used in `set_timer` and
 `timer_tick` (see following sections) are consistent, the event database will handle timer events as expected. The
-standard unit of time used by the [Rust Dxe Core Event Module](events.md#rust-dxe-core-event-module) is 100ns, but
+standard unit of time used by the [Patina DXE Core Event Module](events.md#rust-dxe-core-event-module) is 100ns, but
 nothing in the event database implementation assumes a particular unit of time.
 
 #### Timer Event Configuration
@@ -302,8 +312,8 @@ after the system time advances by the specified amount of time.
 
 #### Interaction with the System Timer
 
-The event database itself does not directly interact with the system timer hardware. Instead, the Rust DXE Core will
-invoke the `timer_tick` function on the event database to communicate passage of time. The Rust DXE Core will pass the
+The event database itself does not directly interact with the system timer hardware. Instead, the Patina DXE Core will
+invoke the `timer_tick` function on the event database to communicate passage of time. The Patina DXE Core will pass the
 current system time in `ticks` (see [Event Database Time](events.md#event-database-time)) to the call to indicate how
 much time has passed.
 
@@ -311,9 +321,9 @@ When `timer_tick` is called, the event database implementation will inspect each
 configured as a timer event. For events configured with an active periodic or one-shot timer, the event database will
 calculate whether the timer has expired, and if so, will [signal](events.md#signaling-an-event) the event.
 
-## Rust DXE Core Event Module
+## Patina DXE Core Event Module
 
-The event database described above is consumed by the event module of the Rust DXE Core to provide the actual UEFI Spec
+The event database described above is consumed by the event module of the Patina DXE Core to provide the actual UEFI Spec
 compliant event, timer and task priority services.
 
 ```admonish note
@@ -383,7 +393,7 @@ the event state was 'signaled' then `EFI_SUCCESS` is returned.
 
 ### System Time
 
-The events module of the Rust DXE Core maintains a global `SYSTEM_TIME` variable as an `AtomicU64`. This maintains the
+The events module of the Patina DXE Core maintains a global `SYSTEM_TIME` variable as an `AtomicU64`. This maintains the
 current system time tick count. When the Timer Architectural Protocol is made available part way through boot, the event
 module registers a timer handler with the architectural protocol to receive timer ticks callbacks (a tick is 100ns).
 When a timer tick occurs, the following actions are taken:
@@ -404,7 +414,7 @@ This is implemented as a simple call to the `set_timer` function in the event da
 
 ### Task Priority Level (TPL)
 
-The event module of the Rust DXE Core maintains a global `CURRENT_TPL` as an `AtomicUsize`. This maintains the current
+The event module of the Patina DXE Core maintains a global `CURRENT_TPL` as an `AtomicUsize`. This maintains the current
 system Task Priority Level.
 
 Per the UEFI spec,

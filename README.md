@@ -78,7 +78,7 @@ usage instructions.
 
 ## Build
 
-All of the patina crates can be compiled in one of 3 supported targets; aarch64, x64, or native.
+All of the Patina crates can be compiled in one of 3 supported targets; aarch64, x64, or native.
 
 ```shell
 cargo make build-aarch64

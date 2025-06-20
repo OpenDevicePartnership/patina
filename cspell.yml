@@ -76,6 +76,7 @@ words:
   - fvmain
   - fxrstor
   - fxsave
+  - gantt
   - gdbstub
   - getsp
   - gigantor
