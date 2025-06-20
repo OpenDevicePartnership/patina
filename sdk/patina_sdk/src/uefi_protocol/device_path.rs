@@ -25,7 +25,6 @@ use core::{
     ops::Deref,
 };
 
-use log;
 use scroll::Pread;
 
 use device_path_node::{DevicePathNode, Header, UnknownDevicePathNode};
