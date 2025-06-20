@@ -31,7 +31,7 @@ use scroll::Pread;
 use device_path_node::{DevicePathNode, Header, UnknownDevicePathNode};
 use nodes::{DevicePathType, EndEntire, EndInstance};
 
-/// DevicePathBuf is an owned version of device path. This is used to create device paths or when doing mutable operation on them.
+/// DevicePathBuf is an owned version of device path. This is used to create device paths or when performing mutable operations on them.
 #[derive(Debug, Clone)]
 pub struct DevicePathBuf {
     buffer: Vec<u8>,
