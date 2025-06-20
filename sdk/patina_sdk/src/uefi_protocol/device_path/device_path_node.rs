@@ -28,6 +28,11 @@ pub struct Header {
 }
 
 impl Header {
+    /// Creates a new [`Header`].
+    pub const fn new(r#type: u8, sub_type: u8, length: usize) -> Self {
+        Self { r#type, sub_type, length }
+    }
+
     /// Return the size of the header in bytes
     pub const fn size_of_header() -> usize {
         mem::size_of::<u8>() + mem::size_of::<u8>() + mem::size_of::<u16>()

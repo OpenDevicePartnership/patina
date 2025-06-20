@@ -365,8 +365,8 @@ mod test {
         device_path.append(EndEntire);
 
         let expected_data = [
-            DevicePathType::ACPI as u8,
-            AcpiSubType::ACPI as u8,
+            DevicePathType::Acpi as u8,
+            AcpiSubType::Acpi as u8,
             12, // length lower byte
             0,  // length upper byte
             (Acpi::PCI_ROOT_HID & 0xFF) as u8,

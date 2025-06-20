@@ -23,41 +23,41 @@ use crate::device_path_node;
 #[repr(u8)]
 pub enum DevicePathType {
     Hardware = 1,
-    ACPI = 2,
+    Acpi = 2,
     Messaging = 3,
     Media = 4,
-    BIOS = 5,
+    Bios = 5,
     End = 0x7F,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 #[repr(u8)]
 pub enum HardwareSubType {
-    PCI = 1,
-    PCCARD = 2,
+    Pci = 1,
+    Pccard = 2,
     MemoryMapped = 3,
     Vendor = 4,
     Controller = 5,
-    BMC = 6,
+    Bmc = 6,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 #[repr(u8)]
 pub enum AcpiSubType {
-    ACPI = 1,
-    ExtendedACPI = 2,
+    Acpi = 1,
+    ExtendedAcpi = 2,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 #[repr(u8)]
 pub enum MessagingSubType {
-    ATAPI = 1,
-    SCSI = 2,
+    Atapi = 1,
+    Scsi = 2,
     FiberChannel = 3,
     FiberChannelEx = 21,
     _1394 = 4,
-    USB = 5,
-    SATA = 18,
+    Usb = 5,
+    Sata = 18,
     UsbWwid = 16,
     DeviceLogicalUnit = 17,
     UsbClass = 15,
@@ -67,24 +67,24 @@ pub enum MessagingSubType {
     IpV6 = 13,
     Vlan = 20,
     InfiniBand = 9,
-    UART = 14,
+    Uart = 14,
     Vendor = 10,
     SasEx = 22,
-    ISCSI = 19,
+    Iscsi = 19,
     NvmExpress = 23,
-    URI = 24,
-    UFS = 25,
-    SD = 26,
+    Uri = 24,
+    Ufs = 25,
+    Sd = 26,
     Bluetooth = 27,
     WiFi = 28,
     /// Embedded Multi-Media Card
-    EMMC = 29,
+    Emmc = 29,
     BluetoothLE = 30,
-    DNS = 31,
-    NVDIMM = 32,
+    Dns = 31,
+    Nvdimm = 32,
     RestService = 33,
     /// MVMe over Fabric
-    NVMeOF = 34,
+    NvmeOf = 34,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
@@ -140,7 +140,7 @@ pub fn cast_to_dyn_device_path_node(unknown: UnknownDevicePathNode<'_>) -> Box<d
         PcCard,
         MemoryMapped,
         Controller,
-        BMC,
+        Bmc,
         // ACPI nodes.
         Acpi,
         // Messaging nodes.
@@ -158,7 +158,7 @@ pub fn cast_to_dyn_device_path_node(unknown: UnknownDevicePathNode<'_>) -> Box<d
 
 device_path_node! {
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#pci-device-path>
-    @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::PCI)]
+    @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Pci)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pwrite, Pread, Clone)]
     pub struct Pci {
@@ -171,7 +171,7 @@ device_path_node! {
 
 device_path_node! {
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#pci-device-path>
-    @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::PCCARD)]
+    @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Pccard)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pwrite, Pread, Clone)]
     pub struct PcCard {
@@ -208,17 +208,17 @@ device_path_node! {
 
 device_path_node! {
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#controller-device-path>
-    @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::BMC)]
+    @[DevicePathNode(DevicePathType::Hardware, HardwareSubType::Bmc)]
     @[DevicePathNodeDerive(Debug, Display)]
     #[derive(Pwrite, Pread, Clone)]
-    pub struct BMC {
+    pub struct Bmc {
         pub interface_type: u8,
         pub base_address: u64,
     }
 }
 
 device_path_node! {
-    @[DevicePathNode(DevicePathType::ACPI, AcpiSubType::ACPI)]
+    @[DevicePathNode(DevicePathType::Acpi, AcpiSubType::Acpi)]
     @[DevicePathNodeDerive(Debug)]
     #[derive(Pwrite, Pread, Clone)]
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#acpi-device-path>
@@ -272,7 +272,7 @@ impl Display for Acpi {
 
 device_path_node! {
     /// <https://uefi.org/specs/UEFI/2.10/10_Protocols_Device_Path_Protocol.html#bios-boot-specification-device-path>
-    @[DevicePathNode(DevicePathType::BIOS, BiosSubType::BiosBootSpecification)]
+    @[DevicePathNode(DevicePathType::Bios, BiosSubType::BiosBootSpecification)]
     @[DevicePathNodeDerive(Debug, Display)]
     pub struct Bios {
         pub device_type: u16,
