@@ -1,5 +1,13 @@
 //! A Device Path is used to define the programmatic path to a device.
+//!
 //! The primary purpose of a Device Path is to allow an application, such as an OS loader, to determine the physical device that the interfaces are abstracting.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
 
 pub mod device_path_node;
 pub mod nodes;
