@@ -251,7 +251,7 @@ macro_rules! device_path_node {
     };
     // Internal matching to add a compilation error in case of an unsupported derive trait.
     (@Derive; $struct_name:ident, $($field_name:ident),*; $trait:ident) => {
-        compile_error!("A trait is unsupported derive trait.");
+        compile_error!("An unsupported derive trait was specified.");
     };
     // Internal matching to call all the derive to add their impl to the struct.
     (@Derive; $struct_name:ident, $($field_name:ident),*; $head:ident, $($derive_trait:ident),+) => {
