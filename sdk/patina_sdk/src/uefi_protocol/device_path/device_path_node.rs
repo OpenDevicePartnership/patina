@@ -72,7 +72,7 @@ pub trait DevicePathNode: Debug + Display {
     where
         Self: Sized;
 
-    /// Write the device path node into that buffer and return the number of byte written.
+    /// Write the device path node into the buffer and return the number of bytes written.
     fn write_into(self, buffer: &mut [u8]) -> Result<usize, scroll::Error>;
 }
 
