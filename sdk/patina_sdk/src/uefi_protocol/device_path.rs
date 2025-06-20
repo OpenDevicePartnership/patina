@@ -74,7 +74,7 @@ impl DevicePathBuf {
         self.buffer.extend_from_slice(&device_path.buffer[..]);
     }
 
-    /// Create a device path form an iterator of device path nodes.
+    /// Create a device path from an iterator of device path nodes.
     /// If the iterator does not end with an `EndEntire` node, it will be added to the device path.
     pub fn from_device_path_node_iter<I, T>(iter: I) -> DevicePathBuf
     where
