@@ -39,6 +39,7 @@ words:
   - bndldx
   - bndstx
   - brotli
+  - bucketize
   - cdecl
   - cdrom
   - cforce
@@ -80,6 +81,7 @@ words:
   - gdbstub
   - getsp
   - gigantor
+  - granularities
   - gread
   - gwrite
   - guids
