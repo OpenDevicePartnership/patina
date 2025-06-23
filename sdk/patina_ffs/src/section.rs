@@ -11,7 +11,7 @@ pub trait SectionExtractor {
 }
 
 pub trait SectionComposer {
-    fn compose(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError>;
+    fn compose(&self, section: &Section) -> Result<(SectionMetaData, Vec<u8>), FirmwareFileSystemError>;
 }
 
 #[derive(Debug, Clone)]
@@ -175,13 +175,14 @@ impl Section {
             section.compose(composer)?;
         }
 
-        let content = composer.compose(self)?;
+        let (meta, content) = composer.compose(self)?;
         let old_data = mem::replace(&mut self.data, SectionData::None);
 
         self.data = match old_data {
             SectionData::None | SectionData::Composed(_) => unreachable!(), // returned above.
             SectionData::Extracted(sections) | SectionData::Both(_, sections) => SectionData::Both(content, sections),
         };
+        self.meta = meta;
 
         Ok(())
     }
