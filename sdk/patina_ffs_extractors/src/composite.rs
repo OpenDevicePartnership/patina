@@ -6,7 +6,10 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use patina_ffs::{FirmwareFileSystemError, section::{Section, SectionExtractor}};
+use patina_ffs::{
+    section::{Section, SectionExtractor},
+    FirmwareFileSystemError,
+};
 
 use crate::{BrotliSectionExtractor, Crc32SectionExtractor, UefiDecompressSectionExtractor};
 

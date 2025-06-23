@@ -6,8 +6,10 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use alloc::boxed::Box;
-use patina_ffs::{FirmwareFileSystemError, section::SectionExtractor};
+use patina_ffs::{
+    section::{SectionExtractor, SectionMetaData},
+    FirmwareFileSystemError,
+};
 use r_efi::efi;
 
 pub const CRC32_SECTION_GUID: efi::Guid =
@@ -18,24 +20,21 @@ pub const CRC32_SECTION_GUID: efi::Guid =
 pub struct Crc32SectionExtractor {}
 impl SectionExtractor for Crc32SectionExtractor {
     fn extract(&self, section: &patina_ffs::section::Section) -> Result<alloc::vec::Vec<u8>, FirmwareFileSystemError> {
-        todo!()
+        if let SectionMetaData::GuidDefined(guid_header, crc_header, _) = section.metadata() {
+            if guid_header.section_definition_guid == CRC32_SECTION_GUID {
+                if crc_header.len() < 4 {
+                    Err(FirmwareFileSystemError::DataCorrupt)?;
+                }
+                let crc32 = u32::from_le_bytes((**crc_header).try_into().unwrap());
+                let content = section.try_content_as_slice()?;
+                if crc32 != crc32fast::hash(content) {
+                    //TODO: in EDK2 C reference implementation, data is returned along with EFI_AUTH_STATUS_TEST_FAILED.
+                    //For now, just return an error if the CRC fails to check.
+                    Err(FirmwareFileSystemError::DataCorrupt)?;
+                }
+                return Ok(content.to_vec());
+            }
+        }
+        Err(FirmwareFileSystemError::Unsupported)
     }
-
-    // fn extract(&self, section: &mu_pi::fw_fs::Section) -> Result<alloc::boxed::Box<[u8]>, r_efi::efi::Status> {
-    //     if let SectionMetaData::GuidDefined(guid_header, crc_header) = section.meta_data() {
-    //         if guid_header.section_definition_guid == CRC32_SECTION_GUID {
-    //             if crc_header.len() < 4 {
-    //                 Err(efi::Status::VOLUME_CORRUPTED)?;
-    //             }
-    //             let crc32 = u32::from_le_bytes((**crc_header).try_into().unwrap());
-    //             if crc32 != crc32fast::hash(section.section_data()) {
-    //                 //TODO: in EDK2 C reference implementation, data is returned along with EFI_AUTH_STATUS_TEST_FAILED.
-    //                 //For now, just return an error if the CRC fails to check.
-    //                 Err(efi::Status::VOLUME_CORRUPTED)?;
-    //             }
-    //             return Ok(section.section_data().to_vec().into_boxed_slice());
-    //         }
-    //     }
-    //     Ok(Box::new([0u8; 0]))
-    // }
 }

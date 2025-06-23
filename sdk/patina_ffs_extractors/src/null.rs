@@ -6,7 +6,10 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use patina_ffs::{FirmwareFileSystemError, section::{Section, SectionExtractor, SectionComposer}};
+use patina_ffs::{
+    section::{Section, SectionComposer, SectionExtractor},
+    FirmwareFileSystemError,
+};
 
 /// A section extractor implementation that does no decompression.
 #[derive(Default, Clone, Copy)]
