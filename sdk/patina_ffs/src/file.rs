@@ -3,11 +3,13 @@ use mu_pi::fw_fs::{
     FfsRawAttribute::LARGE_FILE,
 };
 
-use crate::{section::Section, FirmwareFileSystemError};
+use crate::{
+    section::{Section, SectionIterator},
+    FirmwareFileSystemError,
+};
 
 use alloc::{vec, vec::Vec};
 use core::mem;
-use patina_sdk::base::align_up;
 use r_efi::efi;
 
 pub struct FileRef<'a> {
@@ -85,7 +87,8 @@ impl<'a> FileRef<'a> {
     }
 
     pub fn sections(&self) -> Result<Vec<Section>, FirmwareFileSystemError> {
-        let sections = FileSectionIterator::new(self).collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
+        let sections = SectionIterator::new(&self.data[self.content_offset..])
+            .collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
         Ok(sections.iter().flat_map(|x| x.sections().cloned().collect::<Vec<_>>()).collect())
     }
 
@@ -95,47 +98,5 @@ impl<'a> FileRef<'a> {
 
     pub fn name(&self) -> efi::Guid {
         self.header.name
-    }
-}
-
-struct FileSectionIterator<'a> {
-    file: &'a FileRef<'a>,
-    next_offset: usize,
-    error: bool,
-}
-
-impl<'a> FileSectionIterator<'a> {
-    pub fn new(file: &'a FileRef<'a>) -> Self {
-        Self { file, next_offset: file.content_offset, error: false }
-    }
-}
-
-impl Iterator for FileSectionIterator<'_> {
-    type Item = Result<Section, FirmwareFileSystemError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.error {
-            return None;
-        }
-
-        if self.next_offset >= self.file.data.len() {
-            return None;
-        }
-
-        let result = Section::new(&self.file.data[self.next_offset..]);
-        match result {
-            Ok(ref section) => {
-                let section_size = section.size().expect("Section must be composed");
-                self.next_offset += match align_up(section_size as u64, 4) {
-                    Ok(addr) => addr as usize,
-                    Err(_) => {
-                        self.error = true;
-                        return Some(Err(FirmwareFileSystemError::DataCorrupt));
-                    }
-                };
-            }
-            Err(_) => self.error = true,
-        }
-        Some(result)
     }
 }

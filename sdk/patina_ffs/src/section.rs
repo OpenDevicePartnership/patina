@@ -1,5 +1,6 @@
 use alloc::{boxed::Box, vec, vec::Vec};
 use mu_pi::fw_fs::{ffs::section, EfiSectionType, FfsSectionHeader, FfsSectionRawType};
+use patina_sdk::base::align_up;
 
 use core::{iter, mem};
 
@@ -49,7 +50,11 @@ pub struct Section {
 }
 
 impl Section {
-    pub fn new(buffer: &[u8]) -> Result<Self, FirmwareFileSystemError> {
+    pub fn new_from_meta(meta: SectionMetaData) -> Self {
+        Self { meta, data: SectionData::None }
+    }
+
+    pub fn new_from_buffer(buffer: &[u8]) -> Result<Self, FirmwareFileSystemError> {
         // Verify that the buffer has enough storage for a section header.
         if buffer.len() < mem::size_of::<section::Header>() {
             Err(FirmwareFileSystemError::InvalidHeader)?;
@@ -144,15 +149,18 @@ impl Section {
         Ok(Section { meta, data: SectionData::Composed(buffer[..section_size].to_vec()) })
     }
 
+    pub fn new_from_meta_with_sections(meta: SectionMetaData, sections: Vec<Section>) -> Self {
+        Self { meta, data: SectionData::Extracted(sections) }
+    }
+
     pub fn metadata(&self) -> &SectionMetaData {
         &self.meta
     }
 
     pub fn size(&self) -> Result<usize, FirmwareFileSystemError> {
         match &self.data {
-            SectionData::None => unreachable!(),
+            SectionData::None | SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
             SectionData::Composed(data) | SectionData::Both(data, _) => Ok(data.len()),
-            SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
         }
     }
 
@@ -171,37 +179,51 @@ impl Section {
         let old_data = mem::replace(&mut self.data, SectionData::None);
 
         self.data = match old_data {
-            SectionData::None | SectionData::Composed(_) => unreachable!(),
+            SectionData::None | SectionData::Composed(_) => unreachable!(), // returned above.
             SectionData::Extracted(sections) | SectionData::Both(_, sections) => SectionData::Both(content, sections),
         };
 
         Ok(())
     }
 
-    pub fn extract(&mut self, _extractor: Box<dyn SectionExtractor>) -> Result<(), FirmwareFileSystemError> {
-        todo!()
+    pub fn extract(&mut self, extractor: &dyn SectionExtractor) -> Result<(), FirmwareFileSystemError> {
+        let extracted_data = match self.data {
+            SectionData::None | SectionData::Extracted(_) => return Ok(()), //nothing to do.
+            SectionData::Composed(_) | SectionData::Both(_, _) => extractor.extract(self)?,
+        };
+
+        let mut sections: Vec<Section> =
+            SectionIterator::new(&extracted_data).collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
+        for section in sections.iter_mut() {
+            section.extract(extractor)?;
+        }
+
+        let old_data = mem::replace(&mut self.data, SectionData::None);
+        self.data = match old_data {
+            SectionData::None | SectionData::Extracted(_) => unreachable!(), // returned above.
+            SectionData::Composed(content) | SectionData::Both(content, _) => SectionData::Both(content, sections),
+        };
+        Ok(())
     }
 
     pub fn try_as_slice(&self) -> Result<&[u8], FirmwareFileSystemError> {
         match &self.data {
-            SectionData::None => unreachable!(),
+            SectionData::None | SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
             SectionData::Composed(data) | SectionData::Both(data, _) => Ok(data),
-            SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
         }
     }
 
     pub fn try_content_as_slice(&self) -> Result<&[u8], FirmwareFileSystemError> {
         let content_offset = self.meta.content_offset();
         match &self.data {
-            SectionData::None => unreachable!(),
+            SectionData::None | SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
             SectionData::Composed(data) | SectionData::Both(data, _) => Ok(&data[content_offset..]),
-            SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
         }
     }
 
     pub fn into_sections(self) -> Box<dyn Iterator<Item = Section>> {
         match self.data {
-            SectionData::None => unreachable!(),
+            SectionData::None => Box::new(iter::empty()),
             SectionData::Composed(_) => Box::new(iter::once(self)),
             SectionData::Extracted(sections) => Box::new(sections.into_iter().flat_map(|x| x.into_sections())),
             SectionData::Both(data, sections) => {
@@ -213,12 +235,54 @@ impl Section {
 
     pub fn sections(&self) -> Box<dyn Iterator<Item = &Section> + '_> {
         match &self.data {
-            SectionData::None => unreachable!(),
+            SectionData::None => Box::new(iter::empty()),
             SectionData::Composed(_) => Box::new(iter::once(self)),
             SectionData::Extracted(sections) => Box::new(sections.iter().flat_map(|x| x.sections())),
             SectionData::Both(_, sections) => {
                 Box::new(iter::once(self).chain(sections.iter().flat_map(|x| x.sections())))
             }
         }
+    }
+}
+
+pub struct SectionIterator<'a> {
+    data: &'a [u8],
+    next_offset: usize,
+    error: bool,
+}
+
+impl<'a> SectionIterator<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Self { data, next_offset: 0, error: false }
+    }
+}
+
+impl Iterator for SectionIterator<'_> {
+    type Item = Result<Section, FirmwareFileSystemError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.error {
+            return None;
+        }
+
+        if self.next_offset >= self.data.len() {
+            return None;
+        }
+
+        let result = Section::new_from_buffer(&self.data[self.next_offset..]);
+        match result {
+            Ok(ref section) => {
+                let section_size = section.size().expect("Section must be composed");
+                self.next_offset += match align_up(section_size as u64, 4) {
+                    Ok(addr) => addr as usize,
+                    Err(_) => {
+                        self.error = true;
+                        return Some(Err(FirmwareFileSystemError::DataCorrupt));
+                    }
+                };
+            }
+            Err(_) => self.error = true,
+        }
+        Some(result)
     }
 }
