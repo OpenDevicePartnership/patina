@@ -6,30 +6,46 @@ use core::{iter, mem};
 use crate::FirmwareFileSystemError;
 
 pub trait SectionExtractor {
-    fn extract(&self, section: &Section) -> Result<Vec<Section>, FirmwareFileSystemError>;
+    fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError>;
 }
 
 pub trait SectionComposer {
-    fn compose(&self, section: &mut Section) -> Result<(), FirmwareFileSystemError>;
+    fn compose(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError>;
 }
 
 #[derive(Debug, Clone)]
 pub enum SectionMetaData {
-    Standard(EfiSectionType),
-    Compression(FfsSectionHeader::Compression),
-    GuidDefined(FfsSectionHeader::GuidDefined, Vec<u8>),
-    Version(FfsSectionHeader::Version),
-    FreeFormSubtypeGuid(FfsSectionHeader::FreeformSubtypeGuid),
+    Standard(EfiSectionType, usize),
+    Compression(FfsSectionHeader::Compression, usize),
+    GuidDefined(FfsSectionHeader::GuidDefined, Vec<u8>, usize),
+    Version(FfsSectionHeader::Version, usize),
+    FreeFormSubtypeGuid(FfsSectionHeader::FreeformSubtypeGuid, usize),
 }
+
+impl SectionMetaData {
+    fn content_offset(&self) -> usize {
+        match self {
+            SectionMetaData::Standard(_, offset)
+            | SectionMetaData::Compression(_, offset)
+            | SectionMetaData::GuidDefined(_, _, offset)
+            | SectionMetaData::Version(_, offset)
+            | SectionMetaData::FreeFormSubtypeGuid(_, offset) => *offset,
+        }
+    }
+}
+
+#[derive(Clone)]
+enum SectionData {
+    None,
+    Composed(Vec<u8>),
+    Extracted(Vec<Section>),
+    Both(Vec<u8>, Vec<Section>),
+}
+
 #[derive(Clone)]
 pub struct Section {
     meta: SectionMetaData,
-    data: Vec<u8>,
-    content_offset: usize,
-
-    subsections: Vec<Section>,
-    composed: bool,
-    extracted: bool,
+    data: SectionData,
 }
 
 impl Section {
@@ -68,7 +84,7 @@ impl Section {
         }
 
         // For spec-defined section types, validate the section-specific headers.
-        let (content_offset, meta) = match section_header.section_type {
+        let meta = match section_header.section_type {
             FfsSectionRawType::encapsulated::COMPRESSION => {
                 let compression_header_size = mem::size_of::<section::header::Compression>();
                 // verify that the buffer is large enough to hold the compresion header.
@@ -78,7 +94,7 @@ impl Section {
                 // Safety: buffer is large enough to hold the compression header.
                 let compression_header =
                     unsafe { *(buffer[section_data_offset..].as_ptr() as *const section::header::Compression) };
-                (section_data_offset + compression_header_size, SectionMetaData::Compression(compression_header))
+                SectionMetaData::Compression(compression_header, section_data_offset + compression_header_size)
             }
             FfsSectionRawType::encapsulated::GUID_DEFINED => {
                 // verify that the buffer is large enough to hold the GuidDefined header.
@@ -98,7 +114,7 @@ impl Section {
 
                 let guid_specific_data = buffer[section_data_offset + guid_header_size..data_offset].to_vec();
 
-                (data_offset, SectionMetaData::GuidDefined(guid_defined_header, guid_specific_data))
+                SectionMetaData::GuidDefined(guid_defined_header, guid_specific_data, data_offset)
             }
             FfsSectionRawType::VERSION => {
                 let version_header_size = mem::size_of::<section::header::Version>();
@@ -109,7 +125,7 @@ impl Section {
                 // Safety: buffer is large enough to hold the version header.
                 let version_header =
                     unsafe { *(buffer[section_data_offset..].as_ptr() as *const section::header::Version) };
-                (section_data_offset + version_header_size, SectionMetaData::Version(version_header))
+                SectionMetaData::Version(version_header, section_data_offset + version_header_size)
             }
             FfsSectionRawType::FREEFORM_SUBTYPE_GUID => {
                 // verify that the buffer is large enough to hold the FreeformSubtypeGuid header.
@@ -120,56 +136,89 @@ impl Section {
                 // Safety: buffer is large enough to hold the freeform header type
                 let freeform_header =
                     unsafe { *(buffer[section_data_offset..].as_ptr() as *const section::header::FreeformSubtypeGuid) };
-                (section_data_offset + freeform_subtype_size, SectionMetaData::FreeFormSubtypeGuid(freeform_header))
+                SectionMetaData::FreeFormSubtypeGuid(freeform_header, section_data_offset + freeform_subtype_size)
             }
-            _ => (section_data_offset, SectionMetaData::Standard(section_header.section_type)), //for all other types, the content immediately follows the standard header.
+            _ => SectionMetaData::Standard(section_header.section_type, section_data_offset), //for all other types, the content immediately follows the standard header.
         };
 
-        Ok(Section {
-            meta,
-            data: buffer[..section_size].to_vec(),
-            content_offset,
-            subsections: Vec::new(),
-            composed: true,
-            extracted: false,
-        })
+        Ok(Section { meta, data: SectionData::Composed(buffer[..section_size].to_vec()) })
     }
 
     pub fn metadata(&self) -> &SectionMetaData {
         &self.meta
     }
 
+    pub fn size(&self) -> Result<usize, FirmwareFileSystemError> {
+        match &self.data {
+            SectionData::None => unreachable!(),
+            SectionData::Composed(data) | SectionData::Both(data, _) => Ok(data.len()),
+            SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
+        }
+    }
+
+    pub fn compose(&mut self, composer: &dyn SectionComposer) -> Result<(), FirmwareFileSystemError> {
+        let sections = match &mut self.data {
+            SectionData::None | SectionData::Composed(_) => return Ok(()), //nothing to do
+            SectionData::Extracted(sections) => sections,
+            SectionData::Both(_, sections) => sections,
+        };
+
+        for section in sections {
+            section.compose(composer)?;
+        }
+
+        let content = composer.compose(self)?;
+        let old_data = mem::replace(&mut self.data, SectionData::None);
+
+        self.data = match old_data {
+            SectionData::None | SectionData::Composed(_) => unreachable!(),
+            SectionData::Extracted(sections) | SectionData::Both(_, sections) => SectionData::Both(content, sections),
+        };
+
+        Ok(())
+    }
+
+    pub fn extract(&mut self, _extractor: Box<dyn SectionExtractor>) -> Result<(), FirmwareFileSystemError> {
+        todo!()
+    }
+
     pub fn try_as_slice(&self) -> Result<&[u8], FirmwareFileSystemError> {
-        if self.composed {
-            Ok(self.data.as_slice())
-        } else {
-            Err(FirmwareFileSystemError::NotComposed)
+        match &self.data {
+            SectionData::None => unreachable!(),
+            SectionData::Composed(data) | SectionData::Both(data, _) => Ok(data),
+            SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
         }
     }
 
     pub fn try_content_as_slice(&self) -> Result<&[u8], FirmwareFileSystemError> {
-        self.try_as_slice().map(|x| &x[self.content_offset..])
+        let content_offset = self.meta.content_offset();
+        match &self.data {
+            SectionData::None => unreachable!(),
+            SectionData::Composed(data) | SectionData::Both(data, _) => Ok(&data[content_offset..]),
+            SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
+        }
     }
 
-    pub fn is_composed(&self) -> bool {
-        self.composed
-    }
-
-    pub fn is_extracted(&self) -> bool {
-        self.extracted
-    }
-
-    pub fn len(&self) -> usize {
-        self.data.len()
-    }
-
-    pub fn into_sections(mut self) -> Box<dyn Iterator<Item = Section>> {
-        let subsections = self.subsections;
-        self.subsections = Vec::new();
-        Box::new(iter::once(self).chain(subsections.into_iter().flat_map(|x| x.into_sections())))
+    pub fn into_sections(self) -> Box<dyn Iterator<Item = Section>> {
+        match self.data {
+            SectionData::None => unreachable!(),
+            SectionData::Composed(_) => Box::new(iter::once(self)),
+            SectionData::Extracted(sections) => Box::new(sections.into_iter().flat_map(|x| x.into_sections())),
+            SectionData::Both(data, sections) => {
+                let current = Self { meta: self.meta, data: SectionData::Composed(data) };
+                Box::new(iter::once(current).chain(sections.into_iter().flat_map(|x| x.clone().into_sections())))
+            }
+        }
     }
 
     pub fn sections(&self) -> Box<dyn Iterator<Item = &Section> + '_> {
-        Box::new(iter::once(self).chain(self.subsections.iter().flat_map(|x| x.sections())))
+        match &self.data {
+            SectionData::None => unreachable!(),
+            SectionData::Composed(_) => Box::new(iter::once(self)),
+            SectionData::Extracted(sections) => Box::new(sections.iter().flat_map(|x| x.sections())),
+            SectionData::Both(_, sections) => {
+                Box::new(iter::once(self).chain(sections.iter().flat_map(|x| x.sections())))
+            }
+        }
     }
 }

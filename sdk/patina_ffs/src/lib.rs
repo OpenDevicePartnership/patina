@@ -18,9 +18,13 @@ pub mod file;
 pub mod section;
 pub mod volume;
 
+#[derive(Debug)]
 pub enum FirmwareFileSystemError {
     InvalidHeader,
+    InvalidBlockMap,
+    Unsupported,
     InvalidState,
     DataCorrupt,
     NotComposed,
+    NotExtracted,
 }

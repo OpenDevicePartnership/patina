@@ -8,6 +8,7 @@ use crate::{section::Section, FirmwareFileSystemError};
 use alloc::{vec, vec::Vec};
 use core::mem;
 use patina_sdk::base::align_up;
+use r_efi::efi;
 
 pub struct FileRef<'a> {
     data: &'a [u8],
@@ -85,8 +86,15 @@ impl<'a> FileRef<'a> {
 
     pub fn sections(&self) -> Result<Vec<Section>, FirmwareFileSystemError> {
         let sections = FileSectionIterator::new(self).collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
-
         Ok(sections.iter().flat_map(|x| x.sections().cloned().collect::<Vec<_>>()).collect())
+    }
+
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    pub fn name(&self) -> efi::Guid {
+        self.header.name
     }
 }
 
@@ -117,7 +125,8 @@ impl Iterator for FileSectionIterator<'_> {
         let result = Section::new(&self.file.data[self.next_offset..]);
         match result {
             Ok(ref section) => {
-                self.next_offset += match align_up(section.len() as u64, 4) {
+                let section_size = section.size().expect("Section must be composed");
+                self.next_offset += match align_up(section_size as u64, 4) {
                     Ok(addr) => addr as usize,
                     Err(_) => {
                         self.error = true;
