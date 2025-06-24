@@ -4,7 +4,7 @@ use patina_sdk::base::align_up;
 
 use mu_pi::fw_fs::{
     ffs::{self, file},
-    fv, Fvb2RawAttributes,
+    fv::{self, BlockMapEntry}, Fvb2RawAttributes,
 };
 
 use crate::{file::FileRef, FirmwareFileSystemError};
@@ -159,8 +159,16 @@ impl<'a> VolumeRef<'a> {
         }
     }
 
+    pub fn ext_header(&self) -> &Option<fv::ExtHeader> {
+        &self.ext_header
+    }
+
+    pub fn block_map(&self) -> &Vec<BlockMapEntry> {
+        &self.block_map
+    }
+
     pub fn files(&self) -> impl Iterator<Item = Result<FileRef<'a>, FirmwareFileSystemError>> {
-        FileRefIter::new(self.data, self.erase_byte())
+        FileRefIter::new(&self.data[self.content_offset..], self.erase_byte())
     }
 }
 
