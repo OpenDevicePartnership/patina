@@ -4,7 +4,8 @@ use patina_sdk::base::align_up;
 
 use mu_pi::fw_fs::{
     ffs::{self, file},
-    fv::{self, BlockMapEntry}, Fvb2RawAttributes,
+    fv::{self, BlockMapEntry},
+    fvb,
 };
 
 use crate::{file::FileRef, FirmwareFileSystemError};
@@ -152,7 +153,7 @@ impl<'a> VolumeRef<'a> {
     }
 
     pub fn erase_byte(&self) -> u8 {
-        if self.fv_header.attributes & Fvb2RawAttributes::ERASE_POLARITY != 0 {
+        if self.fv_header.attributes & fvb::attributes::raw::fvb2::ERASE_POLARITY != 0 {
             0xff
         } else {
             0

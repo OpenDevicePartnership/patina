@@ -1,7 +1,4 @@
-use mu_pi::fw_fs::{
-    ffs::{attributes, file},
-    FfsRawAttribute::LARGE_FILE,
-};
+use mu_pi::fw_fs::ffs::{attributes, file};
 
 use crate::{
     section::{Section, SectionIterator},
@@ -31,7 +28,7 @@ impl<'a> FileRef<'a> {
 
         // determine actual size and content_offset
         let (size, content_offset) = {
-            if (header.attributes & LARGE_FILE) == 0 {
+            if (header.attributes & attributes::raw::LARGE_FILE) == 0 {
                 //standard header with 24-bit size.
                 let mut size = vec![00u8; 4];
                 size[0..2].copy_from_slice(&header.size);

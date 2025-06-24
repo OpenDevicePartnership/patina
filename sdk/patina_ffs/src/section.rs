@@ -1,5 +1,5 @@
 use alloc::{boxed::Box, vec, vec::Vec};
-use mu_pi::fw_fs::{ffs::section, EfiSectionType, FfsSectionHeader, FfsSectionRawType};
+use mu_pi::fw_fs::ffs::section;
 use patina_sdk::base::align_up;
 
 use core::{iter, mem};
@@ -16,11 +16,11 @@ pub trait SectionComposer {
 
 #[derive(Debug, Clone)]
 pub enum SectionMetaData {
-    Standard(EfiSectionType, usize),
-    Compression(FfsSectionHeader::Compression, usize),
-    GuidDefined(FfsSectionHeader::GuidDefined, Vec<u8>, usize),
-    Version(FfsSectionHeader::Version, usize),
-    FreeFormSubtypeGuid(FfsSectionHeader::FreeformSubtypeGuid, usize),
+    Standard(section::EfiSectionType, usize),
+    Compression(section::header::Compression, usize),
+    GuidDefined(section::header::GuidDefined, Vec<u8>, usize),
+    Version(section::header::Version, usize),
+    FreeFormSubtypeGuid(section::header::FreeformSubtypeGuid, usize),
 }
 
 impl SectionMetaData {
@@ -90,7 +90,7 @@ impl Section {
 
         // For spec-defined section types, validate the section-specific headers.
         let meta = match section_header.section_type {
-            FfsSectionRawType::encapsulated::COMPRESSION => {
+            section::raw_type::encapsulated::COMPRESSION => {
                 let compression_header_size = mem::size_of::<section::header::Compression>();
                 // verify that the buffer is large enough to hold the compresion header.
                 if buffer.len() < section_data_offset + compression_header_size {
@@ -101,7 +101,7 @@ impl Section {
                     unsafe { *(buffer[section_data_offset..].as_ptr() as *const section::header::Compression) };
                 SectionMetaData::Compression(compression_header, section_data_offset + compression_header_size)
             }
-            FfsSectionRawType::encapsulated::GUID_DEFINED => {
+            section::raw_type::encapsulated::GUID_DEFINED => {
                 // verify that the buffer is large enough to hold the GuidDefined header.
                 let guid_header_size = mem::size_of::<section::header::GuidDefined>();
                 if buffer.len() < section_data_offset + guid_header_size {
@@ -121,7 +121,7 @@ impl Section {
 
                 SectionMetaData::GuidDefined(guid_defined_header, guid_specific_data, data_offset)
             }
-            FfsSectionRawType::VERSION => {
+            section::raw_type::VERSION => {
                 let version_header_size = mem::size_of::<section::header::Version>();
                 // verify that the buffer is large enough to hold the Version header.
                 if buffer.len() < section_data_offset + version_header_size {
@@ -132,7 +132,7 @@ impl Section {
                     unsafe { *(buffer[section_data_offset..].as_ptr() as *const section::header::Version) };
                 SectionMetaData::Version(version_header, section_data_offset + version_header_size)
             }
-            FfsSectionRawType::FREEFORM_SUBTYPE_GUID => {
+            section::raw_type::FREEFORM_SUBTYPE_GUID => {
                 // verify that the buffer is large enough to hold the FreeformSubtypeGuid header.
                 let freeform_subtype_size = mem::size_of::<section::header::FreeformSubtypeGuid>();
                 if buffer.len() < section_data_offset + freeform_subtype_size {
