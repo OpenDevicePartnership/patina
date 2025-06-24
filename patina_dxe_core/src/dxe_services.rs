@@ -12,9 +12,10 @@ use core::{
     mem,
     slice::{self, from_raw_parts},
 };
+use patina_ffs::volume::VolumeRef;
 use patina_sdk::error::EfiError;
 
-use mu_pi::{dxe_services, fw_fs::FirmwareVolume};
+use mu_pi::dxe_services;
 use r_efi::efi;
 
 use crate::{
@@ -388,11 +389,13 @@ extern "efiapi" fn process_firmware_volume(
 
     // construct a FirmwareVolume to verify sanity
     let fv_slice = unsafe { slice::from_raw_parts(firmware_volume_header as *const u8, size) };
-    if let Err(_err) = FirmwareVolume::new(fv_slice) {
-        return efi::Status::VOLUME_CORRUPTED;
+    if let Err(err) = VolumeRef::new(fv_slice) {
+        return err.into();
     }
-
-    let handle = match core_install_firmware_volume(firmware_volume_header as u64, None) {
+    // Safety: caller must ensure that firmware_volume_header is a valid firmware volume that will not be freed
+    // or moved after being sent to the core for processing.
+    let res = unsafe { core_install_firmware_volume(firmware_volume_header as u64, None) };
+    let handle = match res {
         Ok(handle) => handle,
         Err(err) => return err.into(),
     };

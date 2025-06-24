@@ -227,7 +227,7 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     patina_debugger::set_debugger(&DEBUGGER);
 
     Core::default()
-        .with_section_extractor(patina_section_extractor::CompositeSectionExtractor::default()) // Section extractor can be customized or use default
+        .with_section_extractor(patina_ffs_extractors::CompositeSectionExtractor::default()) // Section extractor can be customized or use default
         .init_memory(physical_hob_list)                                                  // DXE Core initializes GCD with the HOB list
         .with_component(adv_logger_component)                                            // The "advanced logger" Rust component is added for dispatch
         .start()

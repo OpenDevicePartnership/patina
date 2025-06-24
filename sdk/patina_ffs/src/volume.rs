@@ -1,6 +1,7 @@
 use alloc::vec::Vec;
-use core::mem;
+use core::{mem, slice};
 use patina_sdk::base::align_up;
+use r_efi::efi;
 
 use mu_pi::fw_fs::{
     ffs::{self, file},
@@ -152,6 +153,24 @@ impl<'a> VolumeRef<'a> {
         Ok(Self { data: buffer, fv_header, ext_header, block_map, content_offset })
     }
 
+    /// Instantiate a new FirmwareVolume from a base address.
+    ///
+    /// ## Safety
+    /// Caller must ensure that base_address is the address of the start of a firmware volume.
+    /// Caller must ensure that the lifetime of the buffer at base_address is longer than the
+    /// returned VolumeRef.
+    ///
+    pub unsafe fn new_from_address(base_address: u64) -> Result<Self, FirmwareFileSystemError> {
+        let fv_header = &*(base_address as *const fv::Header);
+        if fv_header.signature != u32::from_le_bytes(*b"_FVH") {
+            // base_address is not the start of a firmware volume.
+            return Err(FirmwareFileSystemError::DataCorrupt);
+        }
+
+        let fv_buffer = slice::from_raw_parts(base_address as *const u8, fv_header.fv_length as usize);
+        Self::new(fv_buffer)
+    }
+
     pub fn erase_byte(&self) -> u8 {
         if self.fv_header.attributes & fvb::attributes::raw::fvb2::ERASE_POLARITY != 0 {
             0xff
@@ -160,12 +179,48 @@ impl<'a> VolumeRef<'a> {
         }
     }
 
-    pub fn ext_header(&self) -> &Option<fv::ExtHeader> {
-        &self.ext_header
+    pub fn ext_header(&self) -> Option<fv::ExtHeader> {
+        self.ext_header
+    }
+
+    pub fn fv_name(&self) -> Option<efi::Guid> {
+        self.ext_header().map(|x| x.fv_name)
     }
 
     pub fn block_map(&self) -> &Vec<BlockMapEntry> {
         &self.block_map
+    }
+
+    pub fn lba_info(&self, lba: u32) -> Result<(u32, u32, u32), FirmwareFileSystemError> {
+        let block_map = self.block_map();
+
+        let mut total_blocks = 0;
+        let mut offset = 0;
+        let mut block_size = 0;
+
+        for entry in block_map {
+            total_blocks += entry.num_blocks;
+            block_size = entry.length;
+            if lba < total_blocks {
+                break;
+            }
+            offset += entry.num_blocks * entry.length;
+        }
+
+        if lba >= total_blocks {
+            return Err(FirmwareFileSystemError::InvalidParameter); //lba out of range.
+        }
+
+        let remaining_blocks = total_blocks - lba;
+        Ok((offset + lba * block_size, block_size, remaining_blocks))
+    }
+
+    pub fn attributes(&self) -> fvb::attributes::EfiFvbAttributes2 {
+        self.fv_header.attributes
+    }
+
+    pub fn size(&self) -> u64 {
+        self.data.len() as u64
     }
 
     pub fn files(&self) -> impl Iterator<Item = Result<FileRef<'a>, FirmwareFileSystemError>> {

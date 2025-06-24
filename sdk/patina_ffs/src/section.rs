@@ -1,5 +1,5 @@
 use alloc::{boxed::Box, vec, vec::Vec};
-use mu_pi::fw_fs::ffs::section;
+use mu_pi::fw_fs::ffs::{self, section};
 use patina_sdk::base::align_up;
 
 use core::{iter, mem};
@@ -24,7 +24,7 @@ pub enum SectionMetaData {
 }
 
 impl SectionMetaData {
-    fn content_offset(&self) -> usize {
+    pub fn content_offset(&self) -> usize {
         match self {
             SectionMetaData::Standard(_, offset)
             | SectionMetaData::Compression(_, offset)
@@ -164,6 +164,38 @@ impl Section {
         }
     }
 
+    pub fn section_type_raw(&self) -> u8 {
+        match &self.meta {
+            SectionMetaData::Standard(raw_type, _) => *raw_type,
+            SectionMetaData::Compression(_, _) => ffs::section::raw_type::encapsulated::COMPRESSION,
+            SectionMetaData::GuidDefined(_, _, _) => ffs::section::raw_type::encapsulated::GUID_DEFINED,
+            SectionMetaData::Version(_, _) => ffs::section::raw_type::VERSION,
+            SectionMetaData::FreeFormSubtypeGuid(_, _) => ffs::section::raw_type::FREEFORM_SUBTYPE_GUID,
+        }
+    }
+    pub fn section_type(&self) -> Option<ffs::section::Type> {
+        match &self.meta {
+            SectionMetaData::Standard(section_type_raw, _) => match *section_type_raw {
+                ffs::section::raw_type::encapsulated::DISPOSABLE => Some(ffs::section::Type::Disposable),
+                ffs::section::raw_type::PE32 => Some(ffs::section::Type::Pe32),
+                ffs::section::raw_type::PIC => Some(ffs::section::Type::Pic),
+                ffs::section::raw_type::TE => Some(ffs::section::Type::Te),
+                ffs::section::raw_type::DXE_DEPEX => Some(ffs::section::Type::DxeDepex),
+                ffs::section::raw_type::USER_INTERFACE => Some(ffs::section::Type::UserInterface),
+                ffs::section::raw_type::COMPATIBILITY16 => Some(ffs::section::Type::Compatibility16),
+                ffs::section::raw_type::FIRMWARE_VOLUME_IMAGE => Some(ffs::section::Type::FirmwareVolumeImage),
+                ffs::section::raw_type::RAW => Some(ffs::section::Type::Raw),
+                ffs::section::raw_type::PEI_DEPEX => Some(ffs::section::Type::PeiDepex),
+                ffs::section::raw_type::MM_DEPEX => Some(ffs::section::Type::MmDepex),
+                _ => None,
+            },
+            SectionMetaData::Compression(_, _) => Some(ffs::section::Type::Compression),
+            SectionMetaData::GuidDefined(_, _, _) => Some(ffs::section::Type::GuidDefined),
+            SectionMetaData::Version(_, _) => Some(ffs::section::Type::Version),
+            SectionMetaData::FreeFormSubtypeGuid(_, _) => Some(ffs::section::Type::FreeformSubtypeGuid),
+        }
+    }
+
     pub fn compose(&mut self, composer: &dyn SectionComposer) -> Result<(), FirmwareFileSystemError> {
         let sections = match &mut self.data {
             SectionData::None | SectionData::Composed(_) => return Ok(()), //nothing to do
@@ -219,6 +251,13 @@ impl Section {
         match &self.data {
             SectionData::None | SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
             SectionData::Composed(data) | SectionData::Both(data, _) => Ok(&data[content_offset..]),
+        }
+    }
+
+    pub fn try_into_boxed_slice(self) -> Result<Box<[u8]>, FirmwareFileSystemError> {
+        match self.data {
+            SectionData::None | SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
+            SectionData::Composed(data) | SectionData::Both(data, _) => Ok(data.into_boxed_slice()),
         }
     }
 

@@ -18,13 +18,39 @@ pub mod file;
 pub mod section;
 pub mod volume;
 
+use patina_sdk::error::EfiError;
+use r_efi::efi;
+
 #[derive(Debug)]
 pub enum FirmwareFileSystemError {
     InvalidHeader,
     InvalidBlockMap,
+    InvalidParameter,
     Unsupported,
     InvalidState,
     DataCorrupt,
     NotComposed,
     NotExtracted,
+}
+
+impl From<FirmwareFileSystemError> for EfiError {
+    fn from(value: FirmwareFileSystemError) -> Self {
+        match value {
+            FirmwareFileSystemError::InvalidParameter
+            | FirmwareFileSystemError::NotComposed
+            | FirmwareFileSystemError::NotExtracted => EfiError::InvalidParameter,
+            FirmwareFileSystemError::Unsupported => EfiError::Unsupported,
+            FirmwareFileSystemError::InvalidHeader
+            | FirmwareFileSystemError::InvalidBlockMap
+            | FirmwareFileSystemError::InvalidState
+            | FirmwareFileSystemError::DataCorrupt => EfiError::VolumeCorrupted,
+        }
+    }
+}
+
+impl From<FirmwareFileSystemError> for efi::Status {
+    fn from(value: FirmwareFileSystemError) -> Self {
+        let err: EfiError = value.into();
+        err.into()
+    }
 }

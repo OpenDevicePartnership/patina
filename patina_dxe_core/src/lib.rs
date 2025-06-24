@@ -72,11 +72,11 @@ use alloc::{boxed::Box, vec::Vec};
 use gcd::SpinLockedGcd;
 use memory_manager::CoreMemoryManager;
 use mu_pi::{
-    fw_fs,
     hob::{HobList, get_c_hob_list_size},
     protocols::{bds, status_code},
     status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
 };
+use patina_ffs::section;
 use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
 use patina_sdk::{
     boot_services::StandardBootServices,
@@ -190,7 +190,7 @@ pub struct NoAlloc;
 /// ```
 pub struct Core<SectionExtractor, MemoryState>
 where
-    SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
+    SectionExtractor: section::SectionExtractor + Default + Copy + 'static,
 {
     physical_hob_list: *const c_void,
     hob_list: HobList<'static>,
@@ -202,7 +202,7 @@ where
 
 impl<SectionExtractor> Default for Core<SectionExtractor, NoAlloc>
 where
-    SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
+    SectionExtractor: section::SectionExtractor + Default + Copy + 'static,
 {
     fn default() -> Self {
         Core {
@@ -218,7 +218,7 @@ where
 
 impl<SectionExtractor> Core<SectionExtractor, NoAlloc>
 where
-    SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
+    SectionExtractor: section::SectionExtractor + Default + Copy + 'static,
 {
     /// Registers the section extractor with it's own configuration.
     pub fn with_section_extractor(mut self, section_extractor: SectionExtractor) -> Self {
@@ -290,7 +290,7 @@ where
 
 impl<SectionExtractor> Core<SectionExtractor, Alloc>
 where
-    SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
+    SectionExtractor: section::SectionExtractor + Default + Copy + 'static,
 {
     /// Registers a component with the core, that will be dispatched during the driver execution phase.
     #[inline(always)]

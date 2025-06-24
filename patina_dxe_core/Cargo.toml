@@ -35,6 +35,7 @@ spin = { workspace = true }
 uefi_corosensei = { workspace = true  }
 uuid = { workspace = true  }
 patina_sdk = { workspace = true, features = ["core", "enable_patina_tests"] }
+patina_ffs = { workspace = true }
 patina_internal_collections = { workspace = true  }
 patina_internal_cpu = { workspace = true }
 patina_debugger = { workspace = true }
@@ -48,7 +49,7 @@ patina_performance = { workspace = true }
 # local to the workspace should be added via `path` instead of `workspace = true` so that that it does not fail to
 # compile due to the dev-dependency not being published yet.
 patina_samples = { path = "../components/patina_samples" }
-patina_section_extractor = { path = "../core/patina_section_extractor" }
+patina_ffs_extractors = { path = "../sdk/patina_ffs_extractors" }
 patina_internal_collections = { path = "../core/patina_internal_collections" }
 mockall = { workspace = true }
 

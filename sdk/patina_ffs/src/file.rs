@@ -1,7 +1,10 @@
-use mu_pi::fw_fs::ffs::{attributes, file};
+use mu_pi::fw_fs::{
+    ffs::{self, attributes, file},
+    fv,
+};
 
 use crate::{
-    section::{Section, SectionIterator},
+    section::{Section, SectionExtractor, SectionIterator},
     FirmwareFileSystemError,
 };
 
@@ -9,6 +12,7 @@ use alloc::{vec, vec::Vec};
 use core::mem;
 use r_efi::efi;
 
+#[derive(Clone)]
 pub struct FileRef<'a> {
     data: &'a [u8],
     header: file::Header,
@@ -83,17 +87,69 @@ impl<'a> FileRef<'a> {
         Ok(Self { data: &buffer[..size], header, size, content_offset })
     }
 
-    pub fn sections(&self) -> Result<Vec<Section>, FirmwareFileSystemError> {
-        let sections = SectionIterator::new(&self.data[self.content_offset..])
-            .collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
-        Ok(sections.iter().flat_map(|x| x.sections().cloned().collect::<Vec<_>>()).collect())
-    }
-
     pub fn size(&self) -> usize {
         self.size
     }
 
     pub fn name(&self) -> efi::Guid {
         self.header.name
+    }
+
+    pub fn file_type_raw(&self) -> u8 {
+        self.header.file_type
+    }
+
+    pub fn content(&self) -> &[u8] {
+        &self.data[self.content_offset..]
+    }
+
+    pub fn data(&self) -> &[u8] {
+        self.data
+    }
+
+    pub fn fv_attributes(&self) -> fv::file::EfiFvFileAttributes {
+        let attributes = self.header.attributes;
+        let data_alignment = (attributes & ffs::attributes::raw::DATA_ALIGNMENT) >> 3;
+        // decode alignment per Table 3.3 in PI spec 1.8 Part III.
+        let mut file_attributes: u32 = match (
+            data_alignment,
+            (attributes & ffs::attributes::raw::DATA_ALIGNMENT_2) == ffs::attributes::raw::DATA_ALIGNMENT_2,
+        ) {
+            (0, false) => 0,
+            (1, false) => 4,
+            (2, false) => 7,
+            (3, false) => 9,
+            (4, false) => 10,
+            (5, false) => 12,
+            (6, false) => 15,
+            (7, false) => 16,
+            (x @ 0..=7, true) => (17 + x) as u32,
+            (_, _) => panic!("Invalid data_alignment!"),
+        };
+        if attributes & ffs::attributes::raw::FIXED != 0 {
+            file_attributes |= fv::file::raw::attribute::FIXED;
+        }
+        file_attributes as fv::file::EfiFvFileAttributes
+    }
+
+    pub fn sections(&self) -> Result<Vec<Section>, FirmwareFileSystemError> {
+        let sections = SectionIterator::new(&self.data[self.content_offset..])
+            .collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
+        Ok(sections.iter().flat_map(|x| x.sections().cloned().collect::<Vec<_>>()).collect())
+    }
+
+    pub fn sections_with_extractor(
+        &self,
+        extractor: &dyn SectionExtractor,
+    ) -> Result<Vec<Section>, FirmwareFileSystemError> {
+        let sections = SectionIterator::new(&self.data[self.content_offset..])
+            .map(|mut x| {
+                if let Ok(ref mut section) = x {
+                    section.extract(extractor)?;
+                }
+                x
+            })
+            .collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
+        Ok(sections.iter().flat_map(|x| x.sections().cloned().collect::<Vec<_>>()).collect())
     }
 }

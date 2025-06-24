@@ -12,11 +12,12 @@ use alloc::{
     vec::Vec,
 };
 use core::{cmp::Ordering, ffi::c_void};
-use mu_pi::{
-    fw_fs::{FfsFileRawType, FfsSectionType, FirmwareVolume, Section, SectionExtractor},
-    protocols::firmware_volume_block,
-};
+use mu_pi::{fw_fs::ffs, protocols::firmware_volume_block};
 use mu_rust_helpers::{function, guid::guid_fmt};
+use patina_ffs::{
+    section::{Section, SectionExtractor},
+    volume::VolumeRef,
+};
 use patina_internal_depex::{AssociatedDependency, Depex, Opcode};
 use patina_internal_device_path::concat_device_path_to_boxed_slice;
 use patina_sdk::{
@@ -133,7 +134,6 @@ struct DispatcherContext {
     arch_protocols_available: bool,
     pending_drivers: Vec<PendingDriver>,
     pending_firmware_volume_images: Vec<PendingFirmwareVolumeImage>,
-    loaded_firmware_volume_sections: Vec<Section>,
     associated_before: BTreeMap<OrdGuid, Vec<PendingDriver>>,
     associated_after: BTreeMap<OrdGuid, Vec<PendingDriver>>,
     processed_fvs: BTreeSet<efi::Handle>,
@@ -147,7 +147,6 @@ impl DispatcherContext {
             arch_protocols_available: false,
             pending_drivers: Vec::new(),
             pending_firmware_volume_images: Vec::new(),
-            loaded_firmware_volume_sections: Vec::new(),
             associated_before: BTreeMap::new(),
             associated_after: BTreeMap::new(),
             processed_fvs: BTreeSet::new(),
@@ -211,7 +210,8 @@ fn dispatch() -> Result<bool, EfiError> {
     for mut driver in scheduled {
         if driver.image_handle.is_none() {
             log::info!("Loading file: {:?}", guid_fmt!(driver.file_name));
-            match core_load_image(false, DXE_CORE_HANDLE, driver.device_path, Some(driver.pe32.section_data())) {
+            let data = driver.pe32.try_content_as_slice()?;
+            match core_load_image(false, DXE_CORE_HANDLE, driver.device_path, Some(data)) {
                 Ok((image_handle, security_status)) => {
                     driver.image_handle = Some(image_handle);
                     driver.security_status = match security_status {
@@ -262,11 +262,17 @@ fn dispatch() -> Result<bool, EfiError> {
 
             if depex_satisfied && candidate.evaluate_auth().is_ok() {
                 for section in candidate.fv_sections {
-                    let volume_address: u64 = section.section_data().as_ptr() as u64;
+                    let content_offset = section.metadata().content_offset();
+                    let data = section.try_into_boxed_slice()?;
+                    let data_ptr = Box::leak(data);
 
-                    if core_install_firmware_volume(volume_address, Some(candidate.parent_fv_handle)).is_ok() {
+                    let volume_address: u64 = data_ptr[content_offset..].as_ptr() as u64;
+                    // Safety: explicitly leaked the box containing the FV section data to ensure that the section containing the FV data
+                    // lasts until end of UEFI.
+                    let res = unsafe { core_install_firmware_volume(volume_address, Some(candidate.parent_fv_handle)) };
+
+                    if res.is_ok() {
                         dispatch_attempted = true;
-                        dispatcher.loaded_firmware_volume_sections.push(section);
                     } else {
                         log::warn!("couldn't install firmware volume image {:?}", guid_fmt!(candidate.file_name));
                     }
@@ -316,8 +322,10 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
             let fv_device_path =
                 fv_device_path.unwrap_or(core::ptr::null_mut()) as *mut efi::protocols::device_path::Protocol;
 
-            // Safety: this code assumes that the fv_address from FVB protocol yields a pointer to a real FV.
-            let fv = match unsafe { FirmwareVolume::new_from_address(fv_address) } {
+            // Safety: this code assumes that the fv_address from FVB protocol yields a pointer to a real FV,
+            // and that the memory backing the FVB is essentially permanent while the dispatcher is running (i.e.
+            // that no one uninstalls the FVB protocol and frees the memory).
+            let fv = match unsafe { VolumeRef::new_from_address(fv_address) } {
                 Ok(fv) => fv,
                 Err(err) => {
                     log::error!("Failed to instantiate memory mapped FV for fvb handle {handle:#x?}. Error: {err:#x?}");
@@ -325,35 +333,33 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
                 }
             };
 
-            for file in fv.file_iter() {
-                let file = file.map_err(|status| EfiError::status_to_result(status).unwrap_err())?;
-                if file.file_type_raw() == FfsFileRawType::DRIVER {
+            for file in fv.files() {
+                let file = file?;
+                if file.file_type_raw() == ffs::file::raw::r#type::DRIVER {
                     let file = file.clone();
                     let file_name = file.name();
                     let sections = {
-                        let res = if let Some(extractor) = &dispatcher.section_extractor {
-                            file.section_iter_with_extractor(extractor.as_ref())
-                                .collect::<Result<Vec<_>, efi::Status>>()
+                        if let Some(extractor) = &dispatcher.section_extractor {
+                            file.sections_with_extractor(extractor.as_ref())?
                         } else {
-                            file.section_iter().collect::<Result<Vec<_>, efi::Status>>()
-                        };
-                        res.map_err(|status| EfiError::status_to_result(status).unwrap_err())?
+                            file.sections()?
+                        }
                     };
 
                     let depex = sections
                         .iter()
                         .find_map(|x| {
-                            if x.section_type() == Some(FfsSectionType::DxeDepex) {
-                                let data = x.section_data().to_vec();
-                                Some(data)
+                            if x.section_type() == Some(ffs::section::Type::DxeDepex) {
+                                Some(x.try_content_as_slice())
                             } else {
                                 None
                             }
                         })
+                        .transpose()?
                         .map(Depex::from);
 
                     if let Some(pe32_section) =
-                        sections.into_iter().find(|x| x.section_type() == Some(FfsSectionType::Pe32))
+                        sections.into_iter().find(|x| x.section_type() == Some(ffs::section::Type::Pe32))
                     {
                         // In this case, this is sizeof(guid) + sizeof(protocol) = 20, so it should always fit an u8
                         const FILENAME_NODE_SIZE: usize = core::mem::size_of::<efi::protocols::device_path::Protocol>()
@@ -415,35 +421,33 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
                         );
                     }
                 }
-                if file.file_type_raw() == FfsFileRawType::FIRMWARE_VOLUME_IMAGE {
+                if file.file_type_raw() == ffs::file::raw::r#type::FIRMWARE_VOLUME_IMAGE {
                     let file = file.clone();
                     let file_name = file.name();
 
                     let sections = {
-                        let res = if let Some(extractor) = &dispatcher.section_extractor {
-                            file.section_iter_with_extractor(extractor.as_ref())
-                                .collect::<Result<Vec<_>, efi::Status>>()
+                        if let Some(extractor) = &dispatcher.section_extractor {
+                            file.sections_with_extractor(extractor.as_ref())?
                         } else {
-                            file.section_iter().collect::<Result<Vec<_>, efi::Status>>()
-                        };
-                        res.map_err(|status| EfiError::status_to_result(status).unwrap_err())?
+                            file.sections()?
+                        }
                     };
 
                     let depex = sections
                         .iter()
                         .find_map(|x| {
-                            if x.section_type() == Some(FfsSectionType::DxeDepex) {
-                                let data = x.section_data().to_vec();
-                                Some(data)
+                            if x.section_type() == Some(ffs::section::Type::DxeDepex) {
+                                Some(x.try_content_as_slice())
                             } else {
                                 None
                             }
                         })
+                        .transpose()?
                         .map(Depex::from);
 
                     let fv_sections = sections
                         .into_iter()
-                        .filter(|s| s.section_type() == Some(FfsSectionType::FirmwareVolumeImage))
+                        .filter(|s| s.section_type() == Some(ffs::section::Type::FirmwareVolumeImage))
                         .collect::<Vec<_>>();
 
                     if !fv_sections.is_empty() {
@@ -633,7 +637,7 @@ mod tests {
     #[test]
     fn test_init_dispatcher() {
         with_locked_state(|| {
-            init_dispatcher(Box::new(patina_section_extractor::BrotliSectionExtractor));
+            init_dispatcher(Box::new(patina_ffs_extractors::BrotliSectionExtractor));
         });
     }
 
@@ -644,7 +648,9 @@ mod tests {
         file.read_to_end(&mut fv).expect("failed to read test file");
 
         with_locked_state(|| {
-            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let fv = fv.leak();
+            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
@@ -670,7 +676,9 @@ mod tests {
         file.read_to_end(&mut fv).expect("failed to read test file");
 
         with_locked_state(|| {
-            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let fv = fv.leak();
+            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             // Monkey Patch get_physical_address to one that returns an error.
             let protocol = PROTOCOL_DB
@@ -691,7 +699,9 @@ mod tests {
         file.read_to_end(&mut fv).expect("failed to read test file");
 
         with_locked_state(|| {
-            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let fv = fv.leak();
+            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             // Monkey Patch get_physical_address to set address to 0.
             let protocol = PROTOCOL_DB
@@ -712,7 +722,9 @@ mod tests {
         file.read_to_end(&mut fv).expect("failed to read test file");
 
         with_locked_state(|| {
-            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let fv = fv.leak();
+            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             // Monkey Patch get_physical_address to set to a slightly invalid address.
             let protocol = PROTOCOL_DB
@@ -736,7 +748,9 @@ mod tests {
         file.read_to_end(&mut fv).expect("failed to read test file");
 
         with_locked_state(|| {
-            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let fv = fv.leak();
+            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
             add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
             // 1 child FV should be pending contained in NESTEDFV.Fv
@@ -751,7 +765,9 @@ mod tests {
         file.read_to_end(&mut fv).expect("failed to read test file");
 
         with_locked_state(|| {
-            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let fv = fv.leak();
+            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
@@ -766,7 +782,9 @@ mod tests {
         file.read_to_end(&mut fv).expect("failed to read test file");
 
         with_locked_state(|| {
-            let _ = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let fv = fv.leak();
+            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            let _ = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
             core_fw_vol_event_protocol_notify(std::ptr::null_mut::<c_void>(), std::ptr::null_mut::<c_void>());
 
             const DRIVERS_IN_DXEFV: usize = 130;
@@ -798,7 +816,9 @@ mod tests {
         file.read_to_end(&mut fv).expect("failed to read test file");
 
         with_locked_state(|| {
-            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let fv = fv.leak();
+            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
@@ -815,7 +835,9 @@ mod tests {
         file.read_to_end(&mut fv).expect("failed to read test file");
 
         with_locked_state(|| {
-            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let fv = fv.leak();
+            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
@@ -881,8 +903,9 @@ mod tests {
                     &security_protocol as *const _ as *mut _,
                 )
                 .unwrap();
-
-            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let fv = fv.leak();
+            // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
+            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             add_fv_handles(vec![handle]).expect("Failed to add FV handle");
             core_dispatcher().unwrap();

@@ -36,7 +36,7 @@ fn main() -> patina_sdk::error::Result<()> {
 
     let hob_list = build_hob_list();
     Core::default()
-        .with_section_extractor(patina_section_extractor::CompositeSectionExtractor::default())
+        .with_section_extractor(patina_ffs_extractors::CompositeSectionExtractor::default())
         // Add any config knob functions for pre-gcd-init Core
         // .with_some_config(true)
         .init_memory(hob_list) // We can make allocations now!
