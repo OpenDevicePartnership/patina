@@ -756,7 +756,6 @@ mod tests {
     use mu_pi::hob::Hob;
     extern crate alloc;
     use crate::test_collateral;
-    use mu_pi::fw_fs::FfsFileRawType;
     use mu_pi::hob::HobList;
     use mu_pi::{BootMode, hob};
     use std::alloc::{Layout, alloc, dealloc};
@@ -767,7 +766,7 @@ mod tests {
     //Populate Null References for error cases
     const BUFFER_SIZE_EMPTY: usize = 0;
     const LBA: u64 = 0;
-    const SECTION_TYPE: fw_fs::EfiSectionType = 0;
+    const SECTION_TYPE: ffs::section::EfiSectionType = 0;
     const SECTION_INSTANCE: usize = 0;
 
     pub unsafe fn fv_private_data_reset() {
@@ -851,7 +850,7 @@ mod tests {
     fn test_fv_functionality() {
         test_support::with_global_lock(|| {
             let mut fv_att: u64 = 0x1;
-            let fv_attributes: *mut fw_fs::EfiFvAttributes = &mut fv_att;
+            let fv_attributes: *mut fv::attributes::EfiFvAttributes = &mut fv_att;
             let guid_invalid: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
             let guid_ref_invalid_ref: *const efi::Guid = &guid_invalid;
             let mut auth_valid_status: u32 = 1;
@@ -859,8 +858,8 @@ mod tests {
             let mut guid_valid: efi::Guid =
                 efi::Guid::from_fields(0x1fa1f39e, 0xfeff, 0x4aae, 0xbd, 0x7b, &[0x38, 0xa0, 0x70, 0xa3, 0xb6, 0x09]);
             let guid_valid_ref: *mut efi::Guid = &mut guid_valid;
-            let mut file_rd_attr: u32 = fw_fs::Fvb2RawAttributes::READ_STATUS;
-            let file_attributes: *mut fw_fs::EfiFvFileAttributes = &mut file_rd_attr;
+            let mut file_rd_attr: u32 = fvb::attributes::raw::fvb2::READ_STATUS;
+            let file_attributes: *mut fv::file::EfiFvFileAttributes = &mut file_rd_attr;
 
             let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
             let mut fv: Vec<u8> = Vec::new();
@@ -1146,8 +1145,8 @@ mod tests {
                 };
 
                 let fvb_test_get_attributes = || {
-                    let mut fvb_attributes: fw_fs::EfiFvbAttributes2 = 0x123456;
-                    let fvb_attributes_ref: *mut fw_fs::EfiFvbAttributes2 = &mut fvb_attributes;
+                    let mut fvb_attributes: fvb::attributes::EfiFvbAttributes2 = 0x123456;
+                    let fvb_attributes_ref: *mut fvb::attributes::EfiFvbAttributes2 = &mut fvb_attributes;
 
                     fvb_get_attributes(fvb_ptr_mut_prot, std::ptr::null_mut());
                     fvb_get_attributes(fvb_ptr_mut_prot, fvb_attributes_ref);
@@ -1163,8 +1162,8 @@ mod tests {
                     let buffer_valid_size3: *mut usize = &mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
                     let buffer_valid3 = alloc(layout3) as *mut c_void;
-                    let mut file_type_read: fw_fs::EfiFvFileType = 1;
-                    let file_type_read_ref: *mut fw_fs::EfiFvFileType = &mut file_type_read;
+                    let mut file_type_read: fv::EfiFvFileType = 1;
+                    let file_type_read_ref: *mut fv::EfiFvFileType = &mut file_type_read;
                     let mut n_guid_mut: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
                     let n_guid_ref_mut: *mut efi::Guid = &mut n_guid_mut;
 
@@ -1212,8 +1211,8 @@ mod tests {
                         buffer_valid_size3,
                     );
                     /*handle  fw_fs::FfsFileRawType::FFS_MIN case */
-                    let mut file_type_read: fw_fs::EfiFvFileType = fw_fs::FfsFileRawType::FFS_MIN;
-                    let file_type_read_ref1: *mut fw_fs::EfiFvFileType = &mut file_type_read;
+                    let mut file_type_read: fv::EfiFvFileType = ffs::file::raw::r#type::FFS_MIN;
+                    let file_type_read_ref1: *mut fv::EfiFvFileType = &mut file_type_read;
 
                     fv_get_next_file(
                         fv_ptr1,
@@ -1334,8 +1333,8 @@ mod tests {
                     let buffer_valid_size3: *mut usize = &mut len3;
                     let layout3 = Layout::from_size_align(1001, 8).unwrap();
                     let mut buffer_valid3 = alloc(layout3) as *mut c_void;
-                    let mut found_type: u8 = FfsFileRawType::DRIVER;
-                    let found_type_ref: *mut fw_fs::EfiFvFileType = &mut found_type;
+                    let mut found_type: u8 = ffs::file::raw::r#type::DRIVER;
+                    let found_type_ref: *mut fv::EfiFvFileType = &mut found_type;
 
                     if buffer_valid3.is_null() {
                         panic!("Memory allocation failed!");

@@ -646,9 +646,9 @@ mod tests {
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
+        let fv = fv.leak();
 
         with_locked_state(|| {
-            let fv = fv.leak();
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
@@ -674,9 +674,9 @@ mod tests {
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
+        let fv = fv.leak();
 
         with_locked_state(|| {
-            let fv = fv.leak();
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
@@ -697,9 +697,9 @@ mod tests {
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
+        let fv = fv.leak();
 
         with_locked_state(|| {
-            let fv = fv.leak();
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
@@ -720,9 +720,9 @@ mod tests {
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
+        let fv = fv.leak();
 
         with_locked_state(|| {
-            let fv = fv.leak();
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
@@ -746,9 +746,9 @@ mod tests {
         let mut file = File::open(test_collateral!("NESTEDFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
+        let fv = fv.leak();
 
         with_locked_state(|| {
-            let fv = fv.leak();
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
             add_fv_handles(vec![handle]).expect("Failed to add FV handle");
@@ -763,9 +763,9 @@ mod tests {
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
+        let fv = fv.leak();
 
         with_locked_state(|| {
-            let fv = fv.leak();
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
@@ -780,9 +780,9 @@ mod tests {
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
+        let fv = fv.leak();
 
         with_locked_state(|| {
-            let fv = fv.leak();
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let _ = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
             core_fw_vol_event_protocol_notify(std::ptr::null_mut::<c_void>(), std::ptr::null_mut::<c_void>());
@@ -814,9 +814,9 @@ mod tests {
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
+        let fv = fv.leak();
 
         with_locked_state(|| {
-            let fv = fv.leak();
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
@@ -833,9 +833,9 @@ mod tests {
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
+        let fv = fv.leak();
 
         with_locked_state(|| {
-            let fv = fv.leak();
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
@@ -855,6 +855,8 @@ mod tests {
         let mut file = File::open(test_collateral!("NESTEDFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
+
+        let fv = fv.leak();
 
         with_locked_state(|| {
             static SECURITY_CALL_EXECUTED: AtomicBool = AtomicBool::new(false);
@@ -903,7 +905,6 @@ mod tests {
                     &security_protocol as *const _ as *mut _,
                 )
                 .unwrap();
-            let fv = fv.leak();
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
