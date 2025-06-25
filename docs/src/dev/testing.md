@@ -22,6 +22,18 @@ Rust supports `dev-dependencies` in a crate's `Cargo.toml` file. These dependenc
 running tests, and are only downloaded and compiled for test execution. One common example is `pretty_assertions`,
 which extends standard assertions to create a colorful diff.
 
+## Benchmarks
+
+Benchmarking is another way to write tests. Instead of caring about code passing for failing certain requirements, you
+are instead investigating the performance of certain regions of code. Patina uses the [criterion](https://crates.io/crates/criterion)
+crate for benchmarking, so one should follow it's documentation when writing benchmarks. Multiple crates (including
+patina_sdk and patina_internal_collections) also have some benchmark examples to follow.
+
+Benchmark results are shown on the command line, but graphics are available in the `target/criterion` folder.
+
+**Note**: Benchmarks are not run during testing, nor is performance data tracked over time. Benchmarks are there purely
+to help developers track local performance changes when making changes during the development lifecycle.
+
 ## Code Coverage
 
 Code coverage is an important aspect of our project. Our intent is to keep above 80% code coverage for all crates

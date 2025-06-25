@@ -115,6 +115,21 @@ cargo make coverage
 cargo make coverage dxe_core
 ```
 
+## Benchmarks
+
+Various crates have benchmarks setup that can be executed using the `cargo make bench` command. Any arguments provided
+will be passed along to the bench command:
+
+```cmd
+cargo make bench -p patina_sdk
+cargo make bench -p patina_sdk --bench bench_component
+cargo make bench -p patina_sdk --bench bench_component -- with_component
+```
+
+Benchmarks utilize the [criterion](https://crates.io/crates/criterion) benchmarking library, so if new benchmarks are
+to be added, they should follow that documentation. Benchmarks can be added to any crate to test performance by
+following the same layout as existing benchmarks, and adding the benchmark to the appropriate crate's Cargo.toml file.
+
 ## Notes
 
 - This project uses a makefile that sets the "RUSTC_BOOTSTRAP=1" environment variable due to internal requirements which
