@@ -1,5 +1,5 @@
 use alloc::vec::Vec;
-use core::{mem, slice};
+use core::{mem, ptr, slice};
 use patina_sdk::base::align_up;
 use r_efi::efi;
 
@@ -26,8 +26,8 @@ impl<'a> VolumeRef<'a> {
             Err(FirmwareFileSystemError::InvalidHeader)?;
         }
 
-        // Safety: buffer is large enough to contain the header, so can cast to ref.
-        let fv_header = unsafe { *(buffer.as_ptr() as *const fv::Header).as_ref().unwrap() };
+        // Safety: buffer is large enough to contain the header.
+        let fv_header = unsafe { ptr::read_unaligned(buffer.as_ptr() as *const fv::Header) };
 
         // Signature must be ASCII '_FVH'
         if fv_header.signature != u32::from_le_bytes(*b"_FVH") {
@@ -95,12 +95,12 @@ impl<'a> VolumeRef<'a> {
                 }
 
                 //Safety: previous check ensures that fv_data is large enough to contain the ext_header
-                let ext_header = unsafe { &*(buffer[ext_header_offset..].as_ptr() as *const fv::ExtHeader) };
+                let ext_header = unsafe { ptr::read_unaligned(buffer[ext_header_offset..].as_ptr() as *const fv::ExtHeader) };
                 let ext_header_end = ext_header_offset + ext_header.ext_header_size as usize;
                 if ext_header_end > buffer.len() {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
                 }
-                Some(*ext_header)
+                Some(ext_header)
             } else {
                 None
             }

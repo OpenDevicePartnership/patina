@@ -2,7 +2,7 @@ use alloc::{boxed::Box, vec, vec::Vec};
 use mu_pi::fw_fs::ffs::{self, section};
 use patina_sdk::base::align_up;
 
-use core::{iter, mem};
+use core::{iter, mem, ptr};
 
 use crate::FirmwareFileSystemError;
 
@@ -60,8 +60,8 @@ impl Section {
             Err(FirmwareFileSystemError::InvalidHeader)?;
         }
 
-        // Safety: buffer is large enough to contain the header, so can cast it.
-        let section_header = unsafe { &*(buffer.as_ptr() as *const section::Header) };
+        // Safety: buffer is large enough to contain the header.
+        let section_header = unsafe { ptr::read_unaligned(buffer.as_ptr() as *const section::Header) };
 
         // Determine section size and start of section content
         let (section_size, section_data_offset) = {
@@ -71,8 +71,8 @@ impl Section {
                 if buffer.len() < ext_header_size {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
                 }
-                // Safety: buffer is large enough to contain extended header, so can cast it.
-                let ext_header = unsafe { &*(buffer.as_ptr() as *const section::header::CommonSectionHeaderExtended) };
+                // Safety: buffer is large enough to contain extended header.
+                let ext_header = unsafe { ptr::read_unaligned(buffer.as_ptr() as *const section::header::CommonSectionHeaderExtended) };
                 (ext_header.extended_size as usize, ext_header_size)
             } else {
                 //standard header.
@@ -98,7 +98,7 @@ impl Section {
                 }
                 // Safety: buffer is large enough to hold the compression header.
                 let compression_header =
-                    unsafe { *(buffer[section_data_offset..].as_ptr() as *const section::header::Compression) };
+                    unsafe { ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::Compression) };
                 SectionMetaData::Compression(compression_header, section_data_offset + compression_header_size)
             }
             section::raw_type::encapsulated::GUID_DEFINED => {
@@ -109,7 +109,7 @@ impl Section {
                 }
                 // Safety: buffer is large enough to hold the GuidDefined header.
                 let guid_defined_header =
-                    unsafe { *(buffer[section_data_offset..].as_ptr() as *const section::header::GuidDefined) };
+                    unsafe { ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::GuidDefined) };
 
                 // Verify that buffer has enough storage for guid-specific fields.
                 let data_offset = guid_defined_header.data_offset as usize;
@@ -129,7 +129,7 @@ impl Section {
                 }
                 // Safety: buffer is large enough to hold the version header.
                 let version_header =
-                    unsafe { *(buffer[section_data_offset..].as_ptr() as *const section::header::Version) };
+                    unsafe { ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::Version) };
                 SectionMetaData::Version(version_header, section_data_offset + version_header_size)
             }
             section::raw_type::FREEFORM_SUBTYPE_GUID => {
@@ -140,7 +140,7 @@ impl Section {
                 }
                 // Safety: buffer is large enough to hold the freeform header type
                 let freeform_header =
-                    unsafe { *(buffer[section_data_offset..].as_ptr() as *const section::header::FreeformSubtypeGuid) };
+                    unsafe { ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::FreeformSubtypeGuid) };
                 SectionMetaData::FreeFormSubtypeGuid(freeform_header, section_data_offset + freeform_subtype_size)
             }
             _ => SectionMetaData::Standard(section_header.section_type, section_data_offset), //for all other types, the content immediately follows the standard header.

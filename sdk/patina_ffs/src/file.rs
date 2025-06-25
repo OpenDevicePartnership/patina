@@ -9,7 +9,7 @@ use crate::{
 };
 
 use alloc::{vec, vec::Vec};
-use core::mem;
+use core::{mem, ptr};
 use r_efi::efi;
 
 #[derive(Clone)]
@@ -28,7 +28,7 @@ impl<'a> FileRef<'a> {
         }
 
         // safety: buffer is large enough to contain file header.
-        let header = unsafe { *(buffer.as_ptr() as *const file::Header) };
+        let header = unsafe { ptr::read_unaligned(buffer.as_ptr() as *const file::Header) };
 
         // determine actual size and content_offset
         let (size, content_offset) = {
@@ -44,7 +44,7 @@ impl<'a> FileRef<'a> {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
                 }
                 // safety: buffer is large enough to contain file header.
-                let header = unsafe { *(buffer.as_ptr() as *const file::Header2) };
+                let header = unsafe { ptr::read_unaligned(buffer.as_ptr() as *const file::Header2) };
                 (header.extended_size as usize, mem::size_of::<file::Header2>())
             }
         };
