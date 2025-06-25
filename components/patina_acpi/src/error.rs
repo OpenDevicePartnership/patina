@@ -49,6 +49,8 @@ pub enum AcpiError {
     MemoryManagerAlreadyInitialized,
     /// The provider instance was not initialized.
     ProviderNotInitialized,
+    /// There was an attempt to index an invalid location in the XSDT.
+    XsdtOverflow,
 }
 
 impl Into<efi::Status> for AcpiError {
@@ -75,6 +77,7 @@ impl Into<efi::Status> for AcpiError {
             AcpiError::BootServicesAlreadyInitialized => efi::Status::ALREADY_STARTED,
             AcpiError::MemoryManagerAlreadyInitialized => efi::Status::ALREADY_STARTED,
             AcpiError::ProviderNotInitialized => efi::Status::NOT_FOUND,
+            AcpiError::XsdtOverflow => efi::Status::INVALID_PARAMETER,
         }
     }
 }

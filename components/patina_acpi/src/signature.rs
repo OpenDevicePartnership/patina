@@ -21,6 +21,7 @@ pub const ACPI_RSDP_TABLE: u64 = 0x2052545020445352;
 pub const ACPI_RSDP_REVISION: u8 = 2;
 
 pub const ACPI_XSDT_REVISION: u8 = 1;
+pub const ACPI_XSDT_ENTRY_SIZE: usize = core::mem::size_of::<u64>();
 
 pub const ACPI_RESERVED_BYTE: u8 = 0x00;
 

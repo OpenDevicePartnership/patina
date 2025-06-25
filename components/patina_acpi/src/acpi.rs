@@ -12,7 +12,7 @@ use patina_sdk::{component::service::memory::*, efi_types::*};
 use crate::{
     acpi_table::{AcpiTableHeader, AcpiXsdtMetadata, MemoryAcpiTable, RawAcpiTable, StandardAcpiTable},
     alloc::vec::Vec,
-    signature::{ACPI_CHECKSUM_OFFSET, ACPI_VERSIONS_GTE_2},
+    signature::{ACPI_CHECKSUM_OFFSET, ACPI_VERSIONS_GTE_2, ACPI_XSDT_ENTRY_SIZE},
 };
 use crate::{alloc::vec, service::AcpiNotifyFn};
 
@@ -63,8 +63,12 @@ pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
     pub(crate) boot_services: OnceCell<B>,
     /// Provides memory services.
     pub(crate) memory_manager: OnceCell<Service<dyn MemoryManager>>,
-    /// Stores data about the XSDT.
-    xsdt_data: AcpiXsdtMetadata,
+    /// Addresses of currently installed ACPI tables.
+    entries: RwLock<Vec<u64>>,
+    /// The maximum number of tables that can be installed with currently-allocated ACPI memory.
+    /// If `max_entries` is exceeded, the entries will have to be reallocated to a new larger memory space.
+    max_entries: AtomicUsize,
+    xsdt_metadata: RwLock<Option<AcpiXsdtMetadata>>,
 }
 
 type FadtLock = RwLock<Option<Box<AcpiFadt, &'static dyn alloc::alloc::Allocator>>>;
@@ -178,6 +182,7 @@ where
             memory_manager: OnceCell::new(),
             entries: RwLock::new(vec![]),
             max_entries: AtomicUsize::new(MAX_INITIAL_ENTRIES),
+            xsdt_metadata: RwLock::new(None),
         }
     }
 
@@ -203,16 +208,17 @@ where
         Ok(())
     }
 
-    // /// Sets the pointer for the RSDP.
-    // pub fn set_rsdp(&self, rsdp: &mut AcpiRsdp) {
-    //     let write_guard = self.system_tables.rsdp.write();
-    //     *write_guard = Some(Box::new(rsdp))
-    // }
+    /// Sets the pointer for the RSDP.
+    pub fn set_rsdp(&self, rsdp: Box<AcpiRsdp, &'static dyn alloc::alloc::Allocator>) {
+        let mut write_guard = self.system_tables.rsdp.write();
+        *write_guard = Some(rsdp);
+    }
 
-    // /// Sets the pointer for the XSDT.
-    // pub fn set_xsdt(&self, xsdt: &mut AcpiXsdt) {
-    //     self.system_tables.xsdt.store(xsdt as *mut AcpiXsdt, Ordering::Release);
-    // }
+    /// Sets the pointer for the XSDT.
+    pub fn set_xsdt(&self, xsdt_data: AcpiXsdtMetadata) {
+        let mut write_guard = self.xsdt_metadata.write();
+        *write_guard = Some(xsdt_data);
+    }
 }
 
 /// Implementations of ACPI services.
@@ -627,69 +633,69 @@ where
 
     /// Adds an address entry to the XSDT.
     fn add_entry_to_xsdt(&self, new_table_addr: u64) -> Result<(), AcpiError> {
-        if let Some(ref mut xsdt) = *self.system_tables.xsdt.write() {
-            // We need to reallocate the XSDT if the buffer exceeds the maximum allocated size
-            if self.entries.read().len() == self.max_entries.load(Ordering::Acquire) {
-                self.reallocate_xsdt(self.entries.read().len(), xsdt.header.length as usize)?;
-            }
+        if self.xsdt_metadata.read().is_none() {
+            return Ok(());
+        }
 
-            // Calculate the memory location for the new entry (end of XSDT)
-            let entry_offset = ACPI_HEADER_LEN + self.entries.read().len() * core::mem::size_of::<u64>();
-            let base = self.system_tables.xsdt.load(Ordering::Acquire) as *mut u8;
-            // SAFETY: Post-reallocation, we are guaranteed to have enough memory to write the new entry
-            // SAFETY: All entries in the XSDT are guaranteed to be u64
-            let dst = unsafe { base.add(entry_offset) as *mut u64 };
-            // Write entry to ACPI memory
-            // This may be unaligned due to the 36B length of the header
-            unsafe {
-                core::ptr::write_unaligned(dst, new_table_addr);
-            }
+        let max_capacity = self.xsdt_metadata.read().as_ref().unwrap().max_capacity;
+        let curr_capacity = self.xsdt_metadata.read().as_ref().unwrap().nentries;
+        // XSDT is full. Reallocate buffer.
+        if curr_capacity == max_capacity {
+            self.reallocate_xsdt()?;
+        }
 
-            // Fix up XSDT struct fields
-            self.entries.write().push(new_table_addr);
-            xsdt.header.length += mem::size_of::<u64>() as u32;
+        if let Some(ref mut xsdt_data) = *self.xsdt_metadata.write() {
+            // Next entry goes after header + existing address entries.
+            let entry_offset = ACPI_HEADER_LEN + xsdt_data.nentries * ACPI_XSDT_ENTRY_SIZE;
+            // Fill in the bytes of the new address entry.
+            xsdt_data.slice[entry_offset..entry_offset + ACPI_XSDT_ENTRY_SIZE]
+                .copy_from_slice(&new_table_addr.to_le_bytes());
+
+            // Increase XSDT entries by 1.
+            xsdt_data.nentries += 1;
+            // Increase XSDT length by one entry. XSDT always starts with the header.
+            let length_offset = mem::offset_of!(AcpiTableHeader, length);
+            // Grab the current length from the correct offset in the header.
+            let curr_len = xsdt_data.get_length()?;
+            // Write the new length into the correct offset in the header.
+            xsdt_data.set_length(curr_len + ACPI_XSDT_ENTRY_SIZE as u32);
+
+            // Checksum the XSDT after modifying it.
+            self.checksum_common_tables();
         }
 
         Ok(())
     }
 
     /// Allocates a new, larger memory space for the XSDT when it is full and relocates all entries to the newly allocated memory.
-    fn reallocate_xsdt(&self, curr_entries: usize, curr_size: usize) -> Result<(), AcpiError> {
-        // Geometrically resize the number of entries in the XSDT
-        let new_size = curr_entries * 2 * mem::size_of::<u64>() + ACPI_HEADER_LEN;
-        self.max_entries.store(curr_entries * 2, Ordering::Release);
+    fn reallocate_xsdt(&self) -> Result<(), AcpiError> {
+        if let Some(ref mut xsdt_data) = *self.xsdt_metadata.write() {
+            // Use a geometric resizing strategy.
+            xsdt_data.max_capacity *= 2;
 
-        let alloc_options = AllocationOptions::new().with_memory_type(self.memory_type());
-        let page_alloc: PageAllocation = self
-            .memory_manager
-            .get()
-            .ok_or(AcpiError::ProviderNotInitialized)?
-            .allocate_zero_pages(uefi_size_to_pages!(new_size), alloc_options)
-            .map_err(|_e| AcpiError::AllocationFailed)?;
-        let physical_addr = page_alloc.into_raw_ptr::<u8>();
-
-        let old_addr = self.system_tables.xsdt.load(Ordering::Acquire) as usize;
-
-        // Update RSDP with new XSDT address
-        if let Some(rsdp) = self.system_tables.rsdp_mut() {
-            rsdp.xsdt_address = physical_addr as u64;
-        }
-
-        // Copy over old data to the new XSDT address
-        // SAFETY: `physical_addr` is a valid address if allocation succeeds
-        // `old_addr` is a valid XSDT in `system_tables`
-        unsafe { copy_nonoverlapping(old_addr as *const u8, physical_addr, curr_size) };
-        self.system_tables.xsdt.store(physical_addr as *mut AcpiXsdt, Ordering::Release);
-
-        // Free the old XSDT
-        // SAFETY: `old_addr` is a valid XSDT in `system_tables`, and was previously allocated during installation by the same memory manager
-        unsafe {
-            self.memory_manager
+            // The XSDT is always allocated in reclaim memory.
+            let allocator = ACPI_TABLE_INFO
+                .memory_manager
                 .get()
                 .ok_or(AcpiError::ProviderNotInitialized)?
-                .free_pages(old_addr, uefi_size_to_pages!(curr_size))
-                .map_err(|_e| AcpiError::FreeFailed)?
-        };
+                .get_allocator(EfiMemoryType::ACPIReclaimMemory)
+                .map_err(|_e| AcpiError::AllocationFailed)?;
+            let mut xsdt_allocated_bytes = Vec::with_capacity_in(xsdt_data.max_capacity, allocator);
+            // Copy over existing data.
+            xsdt_allocated_bytes.extend_from_slice(&xsdt_data.slice);
+
+            // Update the RSDP with the new XSDT address.
+            let xsdt_ptr = xsdt_allocated_bytes.as_mut_ptr();
+            let xsdt_addr = xsdt_ptr as u64;
+            if let Some(ref mut rsdp) = *self.system_tables.rsdp.write() {
+                rsdp.xsdt_address = xsdt_addr;
+            }
+
+            // Point to the newly allocated data.
+            let xsdt_header = NonNull::new(xsdt_ptr as *mut AcpiTableHeader).ok_or(AcpiError::AllocationFailed)?;
+            xsdt_data.slice = xsdt_allocated_bytes.into_boxed_slice();
+            xsdt_data.header = xsdt_header;
+        }
 
         Ok(())
     }
@@ -757,7 +763,7 @@ where
                 }
             }
             _ => {
-                self.remove_table_from_xsdt(physical_addr);
+                self.remove_table_from_xsdt(physical_addr as u64);
             }
         }
 
@@ -780,45 +786,38 @@ where
     }
 
     /// Removes an address entry from the XSDT when a table is uninstalled.
-    fn remove_table_from_xsdt(&self, table_address: usize) {
-        if self.system_tables.xsdt.read().is_none() {
-            return;
+    fn remove_table_from_xsdt(&self, table_address: u64) -> Result<(), AcpiError> {
+        if let Some(ref mut xsdt_data) = *self.xsdt_metadata.write() {
+            // Calculate where entries are in the slice.
+            let entries_nbytes = ACPI_XSDT_ENTRY_SIZE * xsdt_data.nentries;
+            let entries_bytes = xsdt_data
+                .slice
+                .get(ACPI_HEADER_LEN..ACPI_HEADER_LEN + entries_nbytes)
+                .ok_or(AcpiError::XsdtOverflow)?;
+            // Look for the corresponding entry.
+            let index_opt: Option<usize> = entries_bytes
+                .chunks_exact(ACPI_XSDT_ENTRY_SIZE)
+                .position(|chunk| u64::from_le_bytes(chunk.try_into().unwrap()) == table_address);
+
+            if let Some(idx) = index_opt {
+                let start_ptr = ACPI_HEADER_LEN + idx * ACPI_XSDT_ENTRY_SIZE; // Find where the target entry starts.
+                let end_ptr = ACPI_HEADER_LEN + xsdt_data.nentries * ACPI_XSDT_ENTRY_SIZE; // Find where the XSDT ends.
+
+                // Shift all entries after the one being removed to the left.
+                // [.. before .. | target | <- .. after .. ]
+                // becomes [.. before .. | .. after.. ]
+                xsdt_data.slice.copy_within(start_ptr + ACPI_XSDT_ENTRY_SIZE..end_ptr, start_ptr);
+
+                // Decrement entries.
+                xsdt_data.nentries -= 1;
+
+                // Decrease XSDT length.
+                xsdt_data.set_length(xsdt_data.get_length()? - ACPI_XSDT_ENTRY_SIZE as u32);
+            }
         }
 
-        if let Some(xsdt) = self.system_tables.xsdt_mut() {
-            let num_entries = self.entries.read().len();
-            // SAFETY: `xsdt` has been verified to be a valid pointer
-            let header_ptr = xsdt as *mut AcpiXsdt as *mut u8;
-            let entries_base = unsafe { header_ptr.add(ACPI_HEADER_LEN) };
-
-            // Read entries
-            // Entries may be unaligned, since the 36-byte ACPI header only guarantees a 4-byte alignment
-            let mut entries: Vec<u64> = Vec::with_capacity(num_entries);
-            for i in 0..num_entries {
-                let ptr_i = unsafe { entries_base.add(i * core::mem::size_of::<u64>()) } as *const u64;
-                let entry = unsafe { ptr_i.read_unaligned() };
-                entries.push(entry);
-            }
-
-            // Find and remove the matching entry
-            if let Some(index) = entries.iter().position(|&e| e == table_address as u64) {
-                entries.remove(index);
-
-                // Write the entries back to memory, minus the removed one
-                for (i, &val) in entries.iter().enumerate() {
-                    let ptr_i = unsafe { entries_base.add(i * core::mem::size_of::<u64>()) } as *mut u64;
-                    unsafe { ptr_i.write_unaligned(val) };
-                }
-
-                // Reduce XSDT length by sizeof(entry)
-                xsdt.header.length = xsdt.header.length.saturating_sub(core::mem::size_of::<u64>() as u32);
-
-                // Update local (Rust) list of entries
-                self.entries.write().retain(|&e| e != table_address as u64);
-            }
-
-            self.checksum_common_tables();
-        }
+        self.checksum_common_tables()?;
+        Ok(())
     }
 
     /// Recalculates the checksum for an ACPI table.
@@ -1211,9 +1210,7 @@ mod tests {
         // Add the XSDT to system tables
         provider.system_tables.xsdt.store(xsdt_ptr, Ordering::Relaxed);
 
-        provider
-            .reallocate_xsdt(MAX_INITIAL_ENTRIES, xsdt_table.header.length as usize)
-            .expect("reallocation should succeed");
+        provider.reallocate_xsdt().expect("reallocation should succeed");
 
         // The XSDT should be moved to a new address
         assert_ne!(old_ptr as usize, provider.system_tables.xsdt.load(Ordering::Acquire) as usize);

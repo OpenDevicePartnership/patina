@@ -12,7 +12,7 @@ use crate::{service::TableKey, signature::ACPI_HEADER_LEN};
 
 use core::any::{Any, TypeId};
 use core::ptr::NonNull;
-use core::slice;
+use core::{mem, slice};
 
 /// Any ACPI table with the standard ACPI header.
 pub trait StandardAcpiTable: Any + Downcast {
@@ -237,6 +237,27 @@ pub(crate) struct AcpiXsdtMetadata {
     pub(crate) nentries: usize,
     pub(crate) max_capacity: usize,
     pub(crate) slice: Box<[u8], &'static dyn alloc::alloc::Allocator>,
+}
+
+impl AcpiXsdtMetadata {
+    pub(crate) fn get_length(&self) -> Result<u32, AcpiError> {
+        // XSDT always starts with header.
+        let length_offset = mem::offset_of!(AcpiTableHeader, length);
+        // Grab the current length from the correct offset in the header.
+        self.slice
+            .get(length_offset..length_offset + mem::size_of::<u32>()) // Length is a u32
+            .and_then(|b| b.try_into().ok())
+            .map(u32::from_le_bytes)
+            .ok_or(AcpiError::XsdtOverflow)
+    }
+
+    pub(crate) fn set_length(&mut self, new_len: u32) {
+        // XSDT always starts with header.
+        let length_offset = mem::offset_of!(AcpiTableHeader, length);
+        // Write the new length into the correct offset in the header.
+        self.slice[length_offset..length_offset + mem::size_of::<u32>()] // Length is a u32
+            .copy_from_slice(&new_len.to_le_bytes());
+    }
 }
 
 /// Represents a raw pointer to an ACPI table in C.
