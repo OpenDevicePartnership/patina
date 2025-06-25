@@ -10,7 +10,7 @@ use core::{
 use patina_sdk::{component::service::memory::*, efi_types::*};
 
 use crate::{
-    acpi_table::{AcpiTableHeader, MemoryAcpiTable, RawAcpiTable, StandardAcpiTable},
+    acpi_table::{AcpiTableHeader, AcpiXsdtMetadata, MemoryAcpiTable, RawAcpiTable, StandardAcpiTable},
     alloc::vec::Vec,
     signature::{ACPI_CHECKSUM_OFFSET, ACPI_VERSIONS_GTE_2},
 };
@@ -63,11 +63,8 @@ pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
     pub(crate) boot_services: OnceCell<B>,
     /// Provides memory services.
     pub(crate) memory_manager: OnceCell<Service<dyn MemoryManager>>,
-    /// Addresses of currently installed ACPI tables.
-    entries: RwLock<Vec<u64>>,
-    /// The maximum number of tables that can be installed with currently-allocated ACPI memory.
-    /// If `max_entries` is exceeded, the entries will have to be reallocated to a new larger memory space.
-    max_entries: AtomicUsize,
+    /// Stores data about the XSDT.
+    xsdt_data: AcpiXsdtMetadata,
 }
 
 type FadtLock = RwLock<Option<Box<AcpiFadt, &'static dyn alloc::alloc::Allocator>>>;

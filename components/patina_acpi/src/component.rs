@@ -1,9 +1,13 @@
+use crate::acpi_table::{AcpiTableHeader, AcpiXsdtMetadata};
 use crate::alloc::boxed::Box;
 
 use core::mem;
+use core::ptr::NonNull;
 
+use alloc::vec::Vec;
 use patina_sdk::boot_services::{BootServices, StandardBootServices};
 
+use patina_sdk::efi_types::EfiMemoryType;
 use patina_sdk::error::EfiError;
 use patina_sdk::{
     component::{
@@ -18,6 +22,7 @@ use patina_sdk::{
     uefi_size_to_pages,
 };
 
+use crate::error::AcpiError;
 use crate::{
     acpi::ACPI_TABLE_INFO,
     acpi_protocol::{AcpiSdtProtocol, AcpiTableProtocol},
@@ -56,47 +61,48 @@ impl AcpiProviderManager {
             .initialize(config.should_reclaim_memory, boot_services, memory_manager)
             .map_err(|_e| EfiError::AlreadyStarted)?;
 
-        // Create and set the RSDP
-        let rsdp_alloc = ACPI_TABLE_INFO.memory_manager.get().unwrap().allocate_zero_pages(
-            uefi_size_to_pages!(mem::size_of::<AcpiRsdp>()),
-            AllocationOptions::new().with_memory_type(ACPI_TABLE_INFO.memory_type()),
-        )?;
-        // SAFETY: If allocation succeeds, `rsdp_alloc` is guaranteed to point to valid ACPI memory
-        // SHERRY: try_leak_as mut?
-        let rsdp = unsafe { &mut *(rsdp_alloc.into_raw_ptr::<u8>() as *mut AcpiRsdp) };
-        ACPI_TABLE_INFO.set_rsdp(rsdp);
+        // Create the RSDP.
+        let allocator = ACPI_TABLE_INFO
+            .memory_manager
+            .get()
+            .ok_or(AcpiError::ProviderNotInitialized)?
+            .get_allocator(EfiMemoryType::ACPIReclaimMemory)
+            .map_err(|_e| EfiError::OutOfResources)?;
+        let rsdp_len = mem::size_of::<AcpiRsdp>(); // Size of RSDP is fixed for version 2.0+.
+        let mut rsdp_allocated_bytes = Vec::with_capacity_in(rsdp_len, allocator);
 
-        // Create and set the XSDT with an initial number of entries
-        let xsdt_alloc = ACPI_TABLE_INFO.memory_manager.get().unwrap().allocate_zero_pages(
-            uefi_size_to_pages!(ACPI_HEADER_LEN + mem::size_of::<u64>() * MAX_INITIAL_ENTRIES),
-            AllocationOptions::new().with_memory_type(ACPI_TABLE_INFO.memory_type()),
-        )?;
-        let xsdt_addr = xsdt_alloc.into_raw_ptr::<u8>();
+        // Create and set the XSDT with an initial number of entries.
+        let xsdt_len = ACPI_HEADER_LEN + MAX_INITIAL_ENTRIES * mem::size_of::<u64>();
+        let mut xsdt_allocated_bytes = Vec::with_capacity_in(xsdt_len, allocator);
+        // Fill in XSDT data.
+        xsdt_allocated_bytes.extend_from_slice(&signature::XSDT.to_le_bytes());
+        xsdt_allocated_bytes.extend_from_slice(&(ACPI_HEADER_LEN as u32).to_le_bytes()); // The XSDT starts off with zero entries.
+        xsdt_allocated_bytes.extend_from_slice(&ACPI_XSDT_REVISION.to_le_bytes());
+        xsdt_allocated_bytes.extend_from_slice(&config.oem_id);
+        xsdt_allocated_bytes.extend_from_slice(&config.oem_table_id);
+        xsdt_allocated_bytes.extend_from_slice(&config.creator_id.to_le_bytes());
+        xsdt_allocated_bytes.extend_from_slice(&config.creator_revision.to_le_bytes());
 
-        // SAFETY: If allocation succeeds, `xsdt_addr` is guaranteed to point to valid ACPI memory
-        let xsdt = unsafe { &mut *(xsdt_addr as *mut AcpiXsdt) };
-        ACPI_TABLE_INFO.set_xsdt(xsdt);
+        // Get pointer to the XSDT in memory for RSDP and metadata.
+        let xsdt_ptr = xsdt_allocated_bytes.as_mut_ptr();
+        let xsdt_addr = xsdt_ptr as u64;
+        let xsdt_header = NonNull::new(xsdt_ptr as *mut AcpiTableHeader).ok_or(EfiError::OutOfResources)?; // Return error if XSDT allocation fails.
+        let xsdt_metadata = AcpiXsdtMetadata {
+            header: xsdt_header,
+            nentries: 0,
+            max_capacity: MAX_INITIAL_ENTRIES,
+            slice: xsdt_allocated_bytes.into_boxed_slice(),
+        };
 
-        // Initialize RSDP data
-        rsdp.signature = ACPI_RSDP_TABLE;
-        rsdp.oem_id = config.oem_id;
-        rsdp.revision = ACPI_RSDP_REVISION;
-        rsdp.length = mem::size_of::<AcpiRsdp>() as u32;
-        rsdp.xsdt_address = xsdt_addr as u64;
-        rsdp.reserved = [ACPI_RESERVED_BYTE; 3];
+        // Initialize RSDP data, including XSDT address.
+        rsdp_allocated_bytes.extend_from_slice(&signature::ACPI_RSDP_TABLE.to_le_bytes());
+        rsdp_allocated_bytes.extend_from_slice(&config.oem_id);
+        rsdp_allocated_bytes.extend_from_slice(&ACPI_RSDP_REVISION.to_le_bytes());
+        rsdp_allocated_bytes.extend_from_slice(&(rsdp_len as u32).to_le_bytes());
+        rsdp_allocated_bytes.extend_from_slice(&xsdt_addr.to_le_bytes());
+        rsdp_allocated_bytes.extend_from_slice(&[ACPI_RESERVED_BYTE; 3]);
 
-        // Initialize XSDT data
-        xsdt.header.signature = signature::XSDT;
-        xsdt.header.length = ACPI_HEADER_LEN as u32;
-        xsdt.header.revision = ACPI_XSDT_REVISION;
-        xsdt.header.oem_id = config.oem_id;
-        xsdt.header.oem_table_id = config.oem_table_id;
-        xsdt.header.creator_id = config.creator_id;
-        xsdt.header.creator_revision = config.creator_revision;
-        // First entry of XSDT is always the FADT
-        xsdt.header.length += mem::size_of::<u64>() as u32;
-
-        ACPI_TABLE_INFO.checksum_common_tables().expect("Unable to checksum during ACPI initialization");
+        ACPI_TABLE_INFO.checksum_common_tables().map_err(|_e| EfiError::NotStarted);
 
         if let Some(acpi_guid_hob) = acpi_hob {
             let _ = ACPI_TABLE_INFO.install_tables_from_hob(acpi_guid_hob);

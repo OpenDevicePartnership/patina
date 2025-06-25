@@ -231,6 +231,14 @@ impl StandardAcpiTable for AcpiXsdt {
     }
 }
 
+/// Stores implementation-specific data about the XSDT.
+pub(crate) struct AcpiXsdtMetadata {
+    pub(crate) header: NonNull<AcpiTableHeader>,
+    pub(crate) nentries: usize,
+    pub(crate) max_capacity: usize,
+    pub(crate) slice: Box<[u8], &'static dyn alloc::alloc::Allocator>,
+}
+
 /// Represents a raw pointer to an ACPI table in C.
 /// Because the table is abstracted as a pointer, the `type_id` may not be valid.
 pub struct RawAcpiTable {
