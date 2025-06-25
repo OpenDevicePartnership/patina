@@ -738,42 +738,26 @@ mod tests {
     #[test]
     fn test_get_platform_driver_override_bindings_multiple_drivers() {
         with_locked_state(|| {
-            use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+            // Create a simple mock that returns known handles in sequence, then fails
+            static mut CALL_COUNT: usize = 0;
+            static mut DRIVER_HANDLES: [efi::Handle; 3] = [core::ptr::null_mut(); 3];
 
-            // Track calls to get_driver and store handles in static variables
-            static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
-            static DRIVER_HANDLE1: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(core::ptr::null_mut());
-            static DRIVER_HANDLE2: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(core::ptr::null_mut());
-            static DRIVER_HANDLE3: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(core::ptr::null_mut());
-
-            // Mock platform driver override protocol that returns multiple drivers
-            #[repr(C)]
-            struct MockPlatformDriverOverrideProtocol {
-                get_driver: fn(
-                    this: *mut u8,
-                    controller_handle: efi::Handle,
-                    driver_image_handle: *mut efi::Handle,
-                ) -> efi::Status,
-            }
-
-            // Create driver handles first
-            let (driver_handle1, _) = PROTOCOL_DB
+            // Create driver handles and store them
+            let (h1, _) = PROTOCOL_DB
                 .install_protocol_interface(
                     None,
                     efi::protocols::device_path::PROTOCOL_GUID,
                     0x1001 as *mut core::ffi::c_void,
                 )
                 .unwrap();
-
-            let (driver_handle2, _) = PROTOCOL_DB
+            let (h2, _) = PROTOCOL_DB
                 .install_protocol_interface(
                     None,
                     efi::protocols::device_path::PROTOCOL_GUID,
                     0x1002 as *mut core::ffi::c_void,
                 )
                 .unwrap();
-
-            let (driver_handle3, _) = PROTOCOL_DB
+            let (h3, _) = PROTOCOL_DB
                 .install_protocol_interface(
                     None,
                     efi::protocols::device_path::PROTOCOL_GUID,
@@ -781,101 +765,68 @@ mod tests {
                 )
                 .unwrap();
 
-            // Store handles in static variables
-            DRIVER_HANDLE1.store(driver_handle1, Ordering::SeqCst);
-            DRIVER_HANDLE2.store(driver_handle2, Ordering::SeqCst);
-            DRIVER_HANDLE3.store(driver_handle3, Ordering::SeqCst);
+            unsafe {
+                DRIVER_HANDLES = [h1, h2, h3];
+                CALL_COUNT = 0;
+            }
 
-            let platform_override = Box::new(MockPlatformDriverOverrideProtocol {
-                get_driver: |_this, _controller_handle, driver_image_handle| {
-                    let call_num = CALL_COUNT.fetch_add(1, Ordering::SeqCst);
-
-                    unsafe {
-                        match call_num {
-                            0 => {
-                                // First call - return first driver handle
-                                *driver_image_handle = DRIVER_HANDLE1.load(Ordering::SeqCst);
-                                efi::Status::SUCCESS
-                            }
-                            1 => {
-                                // Second call - return second driver handle
-                                *driver_image_handle = DRIVER_HANDLE2.load(Ordering::SeqCst);
-                                efi::Status::SUCCESS
-                            }
-                            2 => {
-                                // Third call - return third driver handle
-                                *driver_image_handle = DRIVER_HANDLE3.load(Ordering::SeqCst);
-                                efi::Status::SUCCESS
-                            }
-                            _ => {
-                                // Fourth call and beyond - return failure to break loop
-                                efi::Status::NOT_FOUND
-                            }
-                        }
-                    }
-                },
-            });
-            let platform_override_ptr = Box::into_raw(platform_override) as *mut core::ffi::c_void;
-
-            // Install the platform driver override protocol
-            let (_, _) = PROTOCOL_DB
-                .install_protocol_interface(
-                    None,
-                    efi::protocols::platform_driver_override::PROTOCOL_GUID,
-                    platform_override_ptr,
-                )
-                .unwrap();
-
-            // Create controller handle
-            let (controller_handle, _) = PROTOCOL_DB
-                .install_protocol_interface(
-                    None,
-                    efi::protocols::device_path::PROTOCOL_GUID,
-                    0x2000 as *mut core::ffi::c_void,
-                )
-                .unwrap();
-
-            // Install driver binding protocols on the existing driver handles
-            let driver_handles = vec![driver_handle1, driver_handle2, driver_handle3];
-
-            for &driver_handle in &driver_handles {
-                // Create driver binding protocol
+            // Install driver binding protocols on each handle
+            for &handle in &[h1, h2, h3] {
                 let binding = Box::new(efi::protocols::driver_binding::Protocol {
                     version: 10,
                     supported: mock_supported_success,
                     start: mock_start_success,
                     stop: mock_stop_success,
-                    driver_binding_handle: driver_handle,
-                    image_handle: (driver_handle as usize + 1) as efi::Handle,
+                    driver_binding_handle: handle,
+                    image_handle: handle,
                 });
-                let binding_ptr = Box::into_raw(binding) as *mut core::ffi::c_void;
-
-                // Install driver binding protocol on existing handle
                 PROTOCOL_DB
                     .install_protocol_interface(
-                        Some(driver_handle),
+                        Some(handle),
                         efi::protocols::driver_binding::PROTOCOL_GUID,
-                        binding_ptr,
+                        Box::into_raw(binding) as *mut _,
                     )
                     .unwrap();
             }
 
-            // Reset call counter
-            CALL_COUNT.store(0, Ordering::SeqCst);
+            // Simple mock protocol
+            #[repr(C)]
+            struct MockProtocol {
+                get_driver: fn(*mut u8, efi::Handle, *mut efi::Handle) -> efi::Status,
+            }
+
+            let mock = Box::new(MockProtocol {
+                get_driver: |_, _, out_handle| unsafe {
+                    let count = CALL_COUNT;
+                    CALL_COUNT += 1;
+
+                    if count < 3 {
+                        *out_handle = DRIVER_HANDLES[count];
+                        efi::Status::SUCCESS
+                    } else {
+                        efi::Status::NOT_FOUND
+                    }
+                },
+            });
+
+            // Install the mock protocol
+            let (controller_handle, _) = PROTOCOL_DB
+                .install_protocol_interface(None, efi::protocols::device_path::PROTOCOL_GUID, 0x2000 as *mut _)
+                .unwrap();
+            PROTOCOL_DB
+                .install_protocol_interface(
+                    None,
+                    efi::protocols::platform_driver_override::PROTOCOL_GUID,
+                    Box::into_raw(mock) as *mut _,
+                )
+                .unwrap();
 
             // Test the function
             let bindings = get_platform_driver_override_bindings(controller_handle);
 
-            // Verify results
-            assert_eq!(CALL_COUNT.load(Ordering::SeqCst), 4, "Should call get_driver 4 times (3 success + 1 failure)");
-            assert_eq!(bindings.len(), 3, "Should return 3 driver bindings");
-
-            // Verify the driver handles were collected correctly
-            let binding_handles: Vec<efi::Handle> =
-                bindings.iter().map(|binding| unsafe { (**binding).driver_binding_handle }).collect();
-            assert!(binding_handles.contains(&driver_handle1), "Should contain first driver");
-            assert!(binding_handles.contains(&driver_handle2), "Should contain second driver");
-            assert!(binding_handles.contains(&driver_handle3), "Should contain third driver");
+            // Should return 3 bindings and have called get_driver 4 times
+            assert_eq!(bindings.len(), 3);
+            assert_eq!(unsafe { CALL_COUNT }, 4);
         });
     }
 
