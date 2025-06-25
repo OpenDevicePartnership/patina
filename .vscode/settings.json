@@ -8,5 +8,6 @@
   "vscode-nmake-tools.workspaceBuildDirectories": [
     "."
   ],
-  "editor.formatOnSave": true
+  "editor.formatOnSave": true,
+  "sarif-viewer.connectToGithubCodeScanning": "off"
 }

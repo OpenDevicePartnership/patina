@@ -4,6 +4,9 @@
 //! Supports only ACPI version >= 2.0.
 //! Fields corresponding to ACPI 1.0 are preceded with an underscore (`_`) and are not in use.
 
+use alloc::boxed::Box;
+use downcast_rs::{impl_downcast, Downcast, DowncastSync};
+
 use crate::error::AcpiError;
 use crate::{service::TableKey, signature::ACPI_HEADER_LEN};
 
@@ -12,10 +15,30 @@ use core::ptr::NonNull;
 use core::slice;
 
 /// Any ACPI table with the standard ACPI header.
-pub trait StandardAcpiTable: Any {
+pub trait StandardAcpiTable: Any + Downcast {
     /// The standard 36-byte ACPI header.
     fn header(&self) -> &AcpiTableHeader;
+
+    /// Return the entire table as a &[u8], based on the header.length.
+    fn as_bytes(&self) -> &[u8] {
+        let header = self.header();
+        let length = header.length as usize;
+        let ptr = header as *const AcpiTableHeader as *const u8;
+        // SAFETY: we trust that the ACPI table in memory is valid for `length` bytes
+        unsafe { slice::from_raw_parts(ptr, length) }
+    }
+
+    /// Return the entire table as a mutable &[u8], based on the header.length.
+    fn as_bytes_mut(&self) -> &mut [u8] {
+        let header = self.header();
+        let length = header.length as usize;
+        let ptr = header as *const AcpiTableHeader as *mut u8;
+        // SAFETY: we trust that the ACPI table in memory is valid for `length` bytes
+        unsafe { slice::from_raw_parts_mut(ptr, length) }
+    }
 }
+
+impl_downcast!(StandardAcpiTable);
 
 /// Represents the FADT for ACPI 2.0+.
 /// Equivalent to EFI_ACPI_3_0_FIXED_ACPI_DESCRIPTION_TABLE.
@@ -130,7 +153,7 @@ impl AcpiFadt {
 /// The FACS is not present in the list of installed ACPI tables; instead, it is only accessible through the FADT's `x_firmware_ctrl` field.
 /// Equivalent to EFI_ACPI_3_0_FIRMWARE_ACPI_CONTROL_STRUCTURE.
 #[repr(C)]
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct AcpiFacs {
     pub(crate) signature: u32,
     pub(crate) length: u32,
@@ -150,7 +173,7 @@ pub struct AcpiFacs {
 /// The DSDT has a standard header followed by variable-length AML bytecode.
 /// The `length` field of the header tells us the number of trailing bytes representing bytecode.
 #[repr(C)]
-#[derive(Default)]
+#[derive(Default, Copy, Clone)]
 pub struct AcpiDsdt {
     pub(crate) header: AcpiTableHeader,
 }
@@ -183,6 +206,15 @@ pub struct AcpiRsdp {
     pub(crate) reserved: [u8; 3],
 }
 
+impl AcpiRsdp {
+    /// Borrowed view of the raw bytes.
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        // SAFETY: `&self` is valid for reads of exactly `size` bytes,
+        // and #[repr(C, packed)] guarantees no hidden padding.
+        unsafe { slice::from_raw_parts_mut((self as *mut Self).cast::<u8>(), self.length as usize) }
+    }
+}
+
 /// Represents the DSDT for ACPI 2.0+.
 /// The DSDT is not present in the list of installed ACPI tables; instead, it is only accessible through the FADT's `x_dsdt` field.
 /// The XSDT has a standard header followed by 64-bit addresses of installed tables.
@@ -199,10 +231,10 @@ impl StandardAcpiTable for AcpiXsdt {
     }
 }
 
-/// Represents a raw to an ACPI table in C.
+/// Represents a raw pointer to an ACPI table in C.
 /// Because the table is abstracted as a pointer, the `type_id` may not be valid.
 pub struct RawAcpiTable {
-    address: u64,
+    header: NonNull<AcpiTableHeader>,
 }
 
 impl RawAcpiTable {
@@ -210,8 +242,9 @@ impl RawAcpiTable {
     ///
     /// # Safety
     /// The caller must ensure that the address is in valid ACPI memory and points to a valid ACPI table.
-    unsafe fn from_address(addr: u64) -> Self {
-        Self { address: addr }
+    pub fn new_from_address(addr: u64) -> Result<Self, AcpiError> {
+        let header = addr as *mut AcpiTableHeader;
+        Ok(Self { header: NonNull::new(header).ok_or(AcpiError::NullTablePtr)? })
     }
 }
 
@@ -220,7 +253,7 @@ impl StandardAcpiTable for RawAcpiTable {
     /// The caller must ensure that the address is in valid ACPI memory and points to a valid ACPI table.
     fn header(&self) -> &AcpiTableHeader {
         // SAFETY: The first field of any ACPI table is the header.
-        unsafe { &*(self.address as *const AcpiTableHeader) }
+        unsafe { self.header.as_ref() }
     }
 }
 
