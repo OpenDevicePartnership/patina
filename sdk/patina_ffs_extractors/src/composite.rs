@@ -11,7 +11,12 @@ use patina_ffs::{
     FirmwareFileSystemError,
 };
 
-use crate::{BrotliSectionExtractor, Crc32SectionExtractor, UefiDecompressSectionExtractor};
+#[cfg(feature = "brotli")]
+use crate::BrotliSectionExtractor;
+#[cfg(feature = "crc32")]
+use crate::Crc32SectionExtractor;
+#[cfg(feature = "uefi_decompress")]
+use crate::UefiDecompressSectionExtractor;
 
 /// Provides a composite section extractor that combines all section extractors based on enabled feature flags.
 #[derive(Clone, Copy)]
@@ -38,10 +43,10 @@ impl Default for CompositeSectionExtractor {
 }
 
 impl SectionExtractor for CompositeSectionExtractor {
-    fn extract(&self, section: &Section) -> Result<alloc::vec::Vec<u8>, FirmwareFileSystemError> {
+    fn extract(&self, _section: &Section) -> Result<alloc::vec::Vec<u8>, FirmwareFileSystemError> {
         #[cfg(feature = "uefi_decompress")]
         {
-            match self.uefi_decompress.extract(section) {
+            match self.uefi_decompress.extract(_section) {
                 Err(FirmwareFileSystemError::Unsupported) => (),
                 Err(err) => return Err(err),
                 Ok(buffer) => return Ok(buffer),
@@ -50,7 +55,7 @@ impl SectionExtractor for CompositeSectionExtractor {
 
         #[cfg(feature = "brotli")]
         {
-            match self.brotli.extract(section) {
+            match self.brotli.extract(_section) {
                 Err(FirmwareFileSystemError::Unsupported) => (),
                 Err(err) => return Err(err),
                 Ok(buffer) => return Ok(buffer),
@@ -59,7 +64,7 @@ impl SectionExtractor for CompositeSectionExtractor {
 
         #[cfg(feature = "crc32")]
         {
-            match self.crc32.extract(section) {
+            match self.crc32.extract(_section) {
                 Err(FirmwareFileSystemError::Unsupported) => (),
                 Err(err) => return Err(err),
                 Ok(buffer) => return Ok(buffer),
