@@ -72,12 +72,14 @@ impl Section {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
                 }
                 // Safety: buffer is large enough to contain extended header.
-                let ext_header = unsafe { ptr::read_unaligned(buffer.as_ptr() as *const section::header::CommonSectionHeaderExtended) };
+                let ext_header = unsafe {
+                    ptr::read_unaligned(buffer.as_ptr() as *const section::header::CommonSectionHeaderExtended)
+                };
                 (ext_header.extended_size as usize, ext_header_size)
             } else {
                 //standard header.
                 let mut size = vec![0x00u8; 4];
-                size[0..2].copy_from_slice(&section_header.size);
+                size[0..3].copy_from_slice(&section_header.size);
                 let size = u32::from_le_bytes(size.try_into().unwrap()) as usize;
                 (size, core::mem::size_of::<section::Header>())
             }
@@ -97,8 +99,9 @@ impl Section {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
                 }
                 // Safety: buffer is large enough to hold the compression header.
-                let compression_header =
-                    unsafe { ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::Compression) };
+                let compression_header = unsafe {
+                    ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::Compression)
+                };
                 SectionMetaData::Compression(compression_header, section_data_offset + compression_header_size)
             }
             section::raw_type::encapsulated::GUID_DEFINED => {
@@ -108,8 +111,9 @@ impl Section {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
                 }
                 // Safety: buffer is large enough to hold the GuidDefined header.
-                let guid_defined_header =
-                    unsafe { ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::GuidDefined) };
+                let guid_defined_header = unsafe {
+                    ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::GuidDefined)
+                };
 
                 // Verify that buffer has enough storage for guid-specific fields.
                 let data_offset = guid_defined_header.data_offset as usize;
@@ -128,8 +132,9 @@ impl Section {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
                 }
                 // Safety: buffer is large enough to hold the version header.
-                let version_header =
-                    unsafe { ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::Version) };
+                let version_header = unsafe {
+                    ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::Version)
+                };
                 SectionMetaData::Version(version_header, section_data_offset + version_header_size)
             }
             section::raw_type::FREEFORM_SUBTYPE_GUID => {
@@ -139,8 +144,11 @@ impl Section {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
                 }
                 // Safety: buffer is large enough to hold the freeform header type
-                let freeform_header =
-                    unsafe { ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::FreeformSubtypeGuid) };
+                let freeform_header = unsafe {
+                    ptr::read_unaligned(
+                        buffer[section_data_offset..].as_ptr() as *const section::header::FreeformSubtypeGuid
+                    )
+                };
                 SectionMetaData::FreeFormSubtypeGuid(freeform_header, section_data_offset + freeform_subtype_size)
             }
             _ => SectionMetaData::Standard(section_header.section_type, section_data_offset), //for all other types, the content immediately follows the standard header.

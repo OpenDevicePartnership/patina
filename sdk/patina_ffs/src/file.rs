@@ -35,7 +35,7 @@ impl<'a> FileRef<'a> {
             if (header.attributes & attributes::raw::LARGE_FILE) == 0 {
                 //standard header with 24-bit size.
                 let mut size = vec![00u8; 4];
-                size[0..2].copy_from_slice(&header.size);
+                size[0..3].copy_from_slice(&header.size);
                 let size = u32::from_le_bytes(size.try_into().unwrap()) as usize;
                 (size, mem::size_of::<file::Header>())
             } else {

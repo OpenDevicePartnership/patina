@@ -8,14 +8,9 @@
 //! ``` rust,no_run
 //! use patina_sdk::error::EfiError;
 //! # fn example_component() -> patina_sdk::error::Result<()> { Ok(()) }
-//! # #[derive(Default, Clone, Copy)]
-//! # struct SectionExtractExample;
-//! # impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
-//! #     fn extract(&self, _: &mu_pi::fw_fs::Section) -> Result<Box<[u8]>, r_efi::base::Status> { Ok(Box::new([0])) }
-//! # }
 //! # let physical_hob_list = core::ptr::null();
 //! patina_dxe_core::Core::default()
-//!   .with_section_extractor(SectionExtractExample::default())
+//!   .with_section_extractor(patina_ffs_extractors::NullSectionProcessor)
 //!   .init_memory(physical_hob_list)
 //!   .with_component(example_component)
 //!   .start()
@@ -115,16 +110,11 @@ pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_c
 ///
 /// ```rust,no_run
 /// use patina_dxe_core::{Core, GicBases};
-/// # #[derive(Default, Clone, Copy)]
-/// # struct SectionExtractExample;
-/// # impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
-/// #     fn extract(&self, _: &mu_pi::fw_fs::Section) -> Result<Box<[u8]>, r_efi::base::Status> { Ok(Box::new([0])) }
-/// # }
 /// # let physical_hob_list = core::ptr::null();
 ///
 /// let gic_bases = GicBases::new(0x1E000000, 0x1E010000);
 /// let core = Core::default()
-///    .with_section_extractor(SectionExtractExample::default())
+///    .with_section_extractor(patina_ffs_extractors::NullSectionProcessor)
 ///    .init_memory(physical_hob_list)
 ///    .with_config(gic_bases)
 ///    .start()
@@ -175,14 +165,9 @@ pub struct NoAlloc;
 /// ``` rust,no_run
 /// use patina_sdk::error::EfiError;
 /// # fn example_component() -> patina_sdk::error::Result<()> { Ok(()) }
-/// # #[derive(Default, Clone, Copy)]
-/// # struct SectionExtractExample;
-/// # impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
-/// #     fn extract(&self, _: &mu_pi::fw_fs::Section) -> Result<Box<[u8]>, r_efi::base::Status> { Ok(Box::new([0])) }
-/// # }
 /// # let physical_hob_list = core::ptr::null();
 /// patina_dxe_core::Core::default()
-///   .with_section_extractor(SectionExtractExample::default())
+///   .with_section_extractor(patina_ffs_extractors::NullSectionProcessor)
 ///   .init_memory(physical_hob_list)
 ///   .with_component(example_component)
 ///   .start()

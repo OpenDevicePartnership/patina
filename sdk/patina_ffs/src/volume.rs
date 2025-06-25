@@ -95,7 +95,8 @@ impl<'a> VolumeRef<'a> {
                 }
 
                 //Safety: previous check ensures that fv_data is large enough to contain the ext_header
-                let ext_header = unsafe { ptr::read_unaligned(buffer[ext_header_offset..].as_ptr() as *const fv::ExtHeader) };
+                let ext_header =
+                    unsafe { ptr::read_unaligned(buffer[ext_header_offset..].as_ptr() as *const fv::ExtHeader) };
                 let ext_header_end = ext_header_offset + ext_header.ext_header_size as usize;
                 if ext_header_end > buffer.len() {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
@@ -150,6 +151,11 @@ impl<'a> VolumeRef<'a> {
             }
         };
 
+        // Files must be 8-byte aligned relative to the start of the FV (i.e. relative to start of &data), so align
+        // content_offset to account for this.
+        let content_offset =
+            align_up(content_offset as u64, 8).map_err(|_| FirmwareFileSystemError::InvalidHeader)? as usize;
+
         Ok(Self { data: buffer, fv_header, ext_header, block_map, content_offset })
     }
 
@@ -161,7 +167,7 @@ impl<'a> VolumeRef<'a> {
     /// returned VolumeRef.
     ///
     pub unsafe fn new_from_address(base_address: u64) -> Result<Self, FirmwareFileSystemError> {
-        let fv_header = &*(base_address as *const fv::Header);
+        let fv_header = ptr::read_unaligned(base_address as *const fv::Header);
         if fv_header.signature != u32::from_le_bytes(*b"_FVH") {
             // base_address is not the start of a firmware volume.
             return Err(FirmwareFileSystemError::DataCorrupt);
@@ -265,8 +271,8 @@ impl<'a> Iterator for FileRefIter<'a> {
             // per the PI spec, "Given a file F, the next file FvHeader is located at the next 8-byte aligned firmware volume
             // offset following the last byte the file F"
             match align_up(self.next_offset as u64 + file.size() as u64, 8) {
-                Ok(offset) => {
-                    self.next_offset += offset as usize;
+                Ok(next_offset) => {
+                    self.next_offset = next_offset as usize;
                 }
                 Err(_) => {
                     self.error = true;
