@@ -1,13 +1,12 @@
-use alloc::{alloc::alloc, boxed::Box};
+use alloc::boxed::Box;
 use core::{
-    any::{Any, TypeId},
+    any::TypeId,
     cell::OnceCell,
     ffi::c_void,
     mem::{self, offset_of},
-    ptr::{self, copy_nonoverlapping, NonNull},
-    sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering},
+    ptr::NonNull,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
-use patina_sdk::{component::service::memory::*, efi_types::*};
 
 use crate::{
     acpi_table::{AcpiTableHeader, AcpiXsdtMetadata, MemoryAcpiTable, RawAcpiTable, StandardAcpiTable},
@@ -18,13 +17,9 @@ use crate::{alloc::vec, service::AcpiNotifyFn};
 
 use patina_sdk::boot_services::{BootServices, StandardBootServices};
 use patina_sdk::{
-    base::UEFI_PAGE_SIZE,
     component::{
         hob::Hob,
-        service::{
-            memory::{AllocationOptions, MemoryManager, PageAllocation},
-            IntoService, Service,
-        },
+        service::{memory::MemoryManager, IntoService, Service},
     },
     efi_types::EfiMemoryType,
     uefi_size_to_pages,
@@ -37,7 +32,7 @@ use crate::{
     component::AcpiMemoryHob,
     error::AcpiError,
     service::{AcpiProvider, TableKey},
-    signature::{self, ACPI_HEADER_LEN, MAX_INITIAL_ENTRIES},
+    signature::{self, ACPI_HEADER_LEN},
 };
 
 pub static ACPI_TABLE_INFO: StandardAcpiProvider<StandardBootServices> = StandardAcpiProvider::new_uninit();
@@ -63,11 +58,7 @@ pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
     pub(crate) boot_services: OnceCell<B>,
     /// Provides memory services.
     pub(crate) memory_manager: OnceCell<Service<dyn MemoryManager>>,
-    /// Addresses of currently installed ACPI tables.
-    entries: RwLock<Vec<u64>>,
-    /// The maximum number of tables that can be installed with currently-allocated ACPI memory.
-    /// If `max_entries` is exceeded, the entries will have to be reallocated to a new larger memory space.
-    max_entries: AtomicUsize,
+    /// Stores data about the XSDT and its entries.
     xsdt_metadata: RwLock<Option<AcpiXsdtMetadata>>,
 }
 
@@ -180,8 +171,6 @@ where
             notify_list: RwLock::new(vec![]),
             boot_services: OnceCell::new(),
             memory_manager: OnceCell::new(),
-            entries: RwLock::new(vec![]),
-            max_entries: AtomicUsize::new(MAX_INITIAL_ENTRIES),
             xsdt_metadata: RwLock::new(None),
         }
     }
@@ -455,31 +444,6 @@ where
         return memory_type;
     }
 
-    /// Allocates a new memory location for a given ACPI table, if necessary
-    fn allocate_table_addr(&self, signature: u32, n_pages: usize) -> Result<usize, AcpiError> {
-        let mut memory_type = self.memory_type();
-
-        // FACS and UEFI table needs to be aligned to 64B
-        if signature == signature::FACS || signature == signature::UEFI {
-            if UEFI_PAGE_SIZE % 64 != 0 {
-                return Err(AcpiError::FacsUefiNot64BAligned);
-            }
-
-            // FACS and UEFI table must be allocated in NVS, even if reclaim is enabled
-            memory_type = EfiMemoryType::ACPIMemoryNVS;
-        }
-
-        let alloc_options = AllocationOptions::new().with_memory_type(memory_type);
-        let page_alloc = self
-            .memory_manager
-            .get()
-            .ok_or(AcpiError::ProviderNotInitialized)?
-            .allocate_zero_pages(n_pages, alloc_options)
-            .map_err(|_e| AcpiError::AllocationFailed)?;
-
-        Ok(page_alloc.into_raw_ptr::<u8>() as usize)
-    }
-
     /// Allocates memory for the FADT and adds it  to the list of installed tables
     fn install_fadt_in_memory(&self, fadt_info: &AcpiFadt) -> Result<TableKey, AcpiError> {
         if self.system_tables.fadt.read().is_some() {
@@ -653,15 +617,12 @@ where
 
             // Increase XSDT entries by 1.
             xsdt_data.nentries += 1;
-            // Increase XSDT length by one entry. XSDT always starts with the header.
-            let length_offset = mem::offset_of!(AcpiTableHeader, length);
-            // Grab the current length from the correct offset in the header.
             let curr_len = xsdt_data.get_length()?;
-            // Write the new length into the correct offset in the header.
+            // Write the new length into the header.
             xsdt_data.set_length(curr_len + ACPI_XSDT_ENTRY_SIZE as u32);
 
             // Checksum the XSDT after modifying it.
-            self.checksum_common_tables();
+            self.checksum_common_tables()?;
         }
 
         Ok(())
@@ -763,7 +724,7 @@ where
                 }
             }
             _ => {
-                self.remove_table_from_xsdt(physical_addr as u64);
+                self.remove_table_from_xsdt(physical_addr as u64)?;
             }
         }
 
@@ -1264,11 +1225,7 @@ mod tests {
         let mut table = (1u8..).take(table_length).collect::<Vec<u8>>();
 
         // Call the checksum updater
-        StandardAcpiProvider::<MockBootServices>::acpi_table_update_checksum(
-            table.as_mut_ptr(),
-            table_length,
-            checksum_offset,
-        );
+        StandardAcpiProvider::<MockBootServices>::acpi_table_update_checksum(table.as_slice(), ACPI_CHECKSUM_OFFSET);
 
         // Verify that the sum of all bytes modulo 256 is zero
         let total: u8 = table.iter().fold(0u8, |sum, &b| sum.wrapping_add(b));

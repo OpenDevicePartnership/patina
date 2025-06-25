@@ -5,7 +5,7 @@
 //! Fields corresponding to ACPI 1.0 are preceded with an underscore (`_`) and are not in use.
 
 use alloc::boxed::Box;
-use downcast_rs::{impl_downcast, Downcast, DowncastSync};
+use downcast_rs::{impl_downcast, Downcast};
 
 use crate::error::AcpiError;
 use crate::{service::TableKey, signature::ACPI_HEADER_LEN};

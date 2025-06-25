@@ -4,34 +4,25 @@ use crate::alloc::boxed::Box;
 use core::mem;
 use core::ptr::NonNull;
 
-use alloc::alloc::alloc;
 use alloc::vec::Vec;
 use patina_sdk::boot_services::{BootServices, StandardBootServices};
 
+use patina_sdk::component::{
+    hob::{FromHob, Hob},
+    params::{Commands, Config},
+    service::{memory::MemoryManager, Service},
+    IntoComponent,
+};
 use patina_sdk::efi_types::EfiMemoryType;
 use patina_sdk::error::EfiError;
-use patina_sdk::{
-    component::{
-        hob::{FromHob, Hob},
-        params::{Commands, Config},
-        service::{
-            memory::{AllocationOptions, MemoryManager},
-            Service,
-        },
-        IntoComponent,
-    },
-    uefi_size_to_pages,
-};
 
-use crate::error::AcpiError;
 use crate::{
     acpi::ACPI_TABLE_INFO,
     acpi_protocol::{AcpiSdtProtocol, AcpiTableProtocol},
     acpi_table::{AcpiRsdp, AcpiXsdt},
     config::AcpiProviderInit,
     signature::{
-        self, ACPI_HEADER_LEN, ACPI_RESERVED_BYTE, ACPI_RSDP_REVISION, ACPI_RSDP_TABLE, ACPI_XSDT_REVISION,
-        MAX_INITIAL_ENTRIES,
+        self, ACPI_HEADER_LEN, ACPI_RESERVED_BYTE, ACPI_RSDP_REVISION, ACPI_XSDT_REVISION, MAX_INITIAL_ENTRIES,
     },
 };
 
@@ -117,9 +108,10 @@ impl AcpiProviderManager {
 
         // Allocate memory for the RSDP.
         let rsdp_allocated = Box::new_in(rsdp_data, allocator);
+        ACPI_TABLE_INFO.set_rsdp(rsdp_allocated);
 
         // Checksum the root tables after setting up.
-        ACPI_TABLE_INFO.checksum_common_tables().map_err(|_e| EfiError::NotStarted);
+        ACPI_TABLE_INFO.checksum_common_tables().map_err(|_e| EfiError::NotStarted)?;
 
         if let Some(acpi_guid_hob) = acpi_hob {
             let _ = ACPI_TABLE_INFO.install_tables_from_hob(acpi_guid_hob);
