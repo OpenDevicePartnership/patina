@@ -894,13 +894,21 @@ mod tests {
     //     });
     // }
 
+    struct MockAcpiTable {}
+
+    impl StandardAcpiTable for MockAcpiTable {
+        fn header(&self) -> &AcpiTableHeader {
+            Box::leak(Box::new(AcpiTableHeader { signature: 0x1111, length: 123, ..Default::default() }))
+        }
+    }
+
     #[test]
     fn test_get_table() {
         let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(true, MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new())));
 
-        let mut header = AcpiTableHeader { signature: 0x1111, length: 123, ..Default::default() };
-        let table_key = provider.install_acpi_table_in_memory(&header, TypeId::of::<RawAcpiTable>()).unwrap();
+        let mock_table = MockAcpiTable {};
+        let table_key = provider.install_acpi_table_in_memory(&mock_table, TypeId::of::<MockAcpiTable>()).unwrap();
 
         // Call get_acpi_table with a valid key
         let fetched = provider.get_acpi_table(table_key).expect("table should have been installed");
@@ -1012,28 +1020,28 @@ mod tests {
         let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(true, MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new())));
 
-        // Dummy FACS and FADT
-        let facs = AcpiFacs { signature: signature::FACS, length: 64, ..Default::default() };
+        // Create dummy data for FACS and FADT.
+        let facs_info = AcpiFacs { signature: signature::FACS, length: 64, ..Default::default() };
         let fadt_header = AcpiTableHeader { signature: signature::FACP, length: 244, ..Default::default() };
-        let fadt = AcpiFadt { header: fadt_header, inner: FadtData::default(), ..Default::default() };
-        // Store the dummy FADT so it seems like it's been "installed"
-        let fadt_ptr = Box::into_raw(Box::new(fadt));
-        provider.system_tables.fadt.store(fadt_ptr, Ordering::Release);
-
-        // Make sure FACS pointer was set in `system_tables`
-        let res = provider.install_facs(&facs);
-        assert!(res.is_ok());
-        assert!(!provider.system_tables.facs.load(Ordering::Acquire).is_null());
-
-        // Make sure FACS was installed into FADT
-        unsafe {
-            let fadt_ref: &AcpiFadt = &*fadt_ptr;
-            assert!(fadt_ref.x_firmware_ctrl() != 0);
+        let fadt_info = AcpiFadt { header: fadt_header, inner: FadtData::default(), ..Default::default() };
+        // Store the dummy FADT so it seems like it's been "installed" since the FACS is only accessible through the FADT.
+        let allocator = provider.memory_manager.get().unwrap().get_allocator(EfiMemoryType::BootServicesData).unwrap();
+        let fadt_allocated = Box::new_in(fadt_info, allocator);
+        {
+            let mut write_guard = provider.system_tables.fadt.write();
+            *write_guard = Some(fadt_allocated);
         }
 
-        // Make sure FACS data is preserved
-        assert_eq!(provider.system_tables.facs_mut().unwrap().signature, signature::FACS);
-        assert_eq!(provider.system_tables.facs_mut().unwrap().length, 64);
+        // Install FACS.
+        let res = provider.install_facs(&facs_info);
+
+        // Make sure FACS pointer was set in `system_tables`.
+        assert!(res.is_ok());
+        assert!(provider.system_tables.facs.read().is_some());
+        assert!(provider.system_tables.facs.read().as_ref().unwrap().signature == signature::FACS);
+
+        // Make sure FACS was installed into FADT.
+        assert!(provider.system_tables.fadt.read().as_ref().unwrap().x_firmware_ctrl() != 0);
     }
 
     #[test]
