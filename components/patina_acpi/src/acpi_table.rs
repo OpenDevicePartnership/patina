@@ -233,7 +233,7 @@ impl StandardAcpiTable for AcpiXsdt {
 
 /// Stores implementation-specific data about the XSDT.
 pub(crate) struct AcpiXsdtMetadata {
-    pub(crate) nentries: usize,
+    pub(crate) n_entries: usize,
     pub(crate) max_capacity: usize,
     pub(crate) slice: Box<[u8], &'static dyn alloc::alloc::Allocator>,
 }
@@ -411,8 +411,8 @@ impl MemoryAcpiTable {
     /// # Safety
     /// During construction, it is assumed that the table is laid out as a contiguous array of bytes following the ACPI specification.
     pub fn data(&self) -> &[u8] {
-        let inmemory_header = self.header.as_ptr();
-        let data_start_ptr = unsafe { (inmemory_header as *const u8).add(ACPI_HEADER_LEN) };
+        let in_memory_header = self.header.as_ptr();
+        let data_start_ptr = unsafe { (in_memory_header as *const u8).add(ACPI_HEADER_LEN) };
         let data_len = self.length() as usize - ACPI_HEADER_LEN;
         unsafe { slice::from_raw_parts(data_start_ptr, data_len) }
     }
@@ -421,8 +421,8 @@ impl MemoryAcpiTable {
     /// # Safety
     /// During construction, it is assumed that the table is laid out as a contiguous array of bytes following the ACPI specification.
     pub fn data_mut(&mut self) -> &mut [u8] {
-        let inmemory_header = self.header.as_ptr();
-        let data_start_ptr = unsafe { (inmemory_header as *mut u8).add(ACPI_HEADER_LEN) };
+        let in_memory_header = self.header.as_ptr();
+        let data_start_ptr = unsafe { (in_memory_header as *mut u8).add(ACPI_HEADER_LEN) };
         let data_len = self.length() as usize - ACPI_HEADER_LEN;
         unsafe { slice::from_raw_parts_mut(data_start_ptr, data_len) }
     }

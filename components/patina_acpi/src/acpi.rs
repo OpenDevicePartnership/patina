@@ -553,7 +553,7 @@ where
         }
 
         let max_capacity = self.xsdt_metadata.read().as_ref().unwrap().max_capacity;
-        let curr_capacity = self.xsdt_metadata.read().as_ref().unwrap().nentries;
+        let curr_capacity = self.xsdt_metadata.read().as_ref().unwrap().n_entries;
         // XSDT is full. Reallocate buffer.
         if curr_capacity == max_capacity {
             self.reallocate_xsdt()?;
@@ -561,13 +561,13 @@ where
 
         if let Some(ref mut xsdt_data) = *self.xsdt_metadata.write() {
             // Next entry goes after header + existing address entries.
-            let entry_offset = ACPI_HEADER_LEN + xsdt_data.nentries * ACPI_XSDT_ENTRY_SIZE;
+            let entry_offset = ACPI_HEADER_LEN + xsdt_data.n_entries * ACPI_XSDT_ENTRY_SIZE;
             // Fill in the bytes of the new address entry.
             xsdt_data.slice[entry_offset..entry_offset + ACPI_XSDT_ENTRY_SIZE]
                 .copy_from_slice(&new_table_addr.to_le_bytes());
 
             // Increase XSDT entries by 1.
-            xsdt_data.nentries += 1;
+            xsdt_data.n_entries += 1;
             let curr_len = xsdt_data.get_length()?;
             // Write the new length into the header.
             xsdt_data.set_length(curr_len + ACPI_XSDT_ENTRY_SIZE as u32);
@@ -703,10 +703,10 @@ where
     fn remove_table_from_xsdt(&self, table_address: u64) -> Result<(), AcpiError> {
         if let Some(ref mut xsdt_data) = *self.xsdt_metadata.write() {
             // Calculate where entries are in the slice.
-            let entries_nbytes = ACPI_XSDT_ENTRY_SIZE * xsdt_data.nentries;
+            let entries_n_bytes = ACPI_XSDT_ENTRY_SIZE * xsdt_data.n_entries;
             let entries_bytes = xsdt_data
                 .slice
-                .get(ACPI_HEADER_LEN..ACPI_HEADER_LEN + entries_nbytes)
+                .get(ACPI_HEADER_LEN..ACPI_HEADER_LEN + entries_n_bytes)
                 .ok_or(AcpiError::XsdtOverflow)?;
             // Look for the corresponding entry.
             let index_opt: Option<usize> = entries_bytes
@@ -715,7 +715,7 @@ where
 
             if let Some(idx) = index_opt {
                 let start_ptr = ACPI_HEADER_LEN + idx * ACPI_XSDT_ENTRY_SIZE; // Find where the target entry starts.
-                let end_ptr = ACPI_HEADER_LEN + xsdt_data.nentries * ACPI_XSDT_ENTRY_SIZE; // Find where the XSDT ends.
+                let end_ptr = ACPI_HEADER_LEN + xsdt_data.n_entries * ACPI_XSDT_ENTRY_SIZE; // Find where the XSDT ends.
 
                 // Shift all entries after the one being removed to the left.
                 // [.. before .. | target | <- .. after .. ]
@@ -723,7 +723,7 @@ where
                 xsdt_data.slice.copy_within(start_ptr + ACPI_XSDT_ENTRY_SIZE..end_ptr, start_ptr);
 
                 // Decrement entries.
-                xsdt_data.nentries -= 1;
+                xsdt_data.n_entries -= 1;
 
                 // Decrease XSDT length.
                 xsdt_data.set_length(xsdt_data.get_length()? - ACPI_XSDT_ENTRY_SIZE as u32);
@@ -736,15 +736,15 @@ where
 
     /// Recalculates the checksum for an ACPI table.
     /// According to ACPI spec, all bytes of an ACPI table must sum to zero.
-    fn acpi_table_update_checksum(table: &mut [u8], chksm_offset: usize) {
+    fn acpi_table_update_checksum(table: &mut [u8], acpi_checksum_offset: usize) {
         // Zero the old checksum byte.
-        table[chksm_offset] = 0;
+        table[acpi_checksum_offset] = 0;
 
         // Sum all bytes (wrapping since the checksum is a u8 between 0-255).
         let sum_of_bytes: u8 = table.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
 
         // Write new checksum: equivalent to -1 * `sum_of_bytes` (so the sum is zero modulo 256).
-        table[chksm_offset] = sum_of_bytes.wrapping_neg();
+        table[acpi_checksum_offset] = sum_of_bytes.wrapping_neg();
     }
 
     // Performs checksums on shared ACPI tables (the RSDP and XSDT).
@@ -834,18 +834,6 @@ mod tests {
     use patina_sdk::component::service::memory::MockMemoryManager;
     use patina_sdk::component::service::memory::StdMemoryManager;
     use std::boxed::Box;
-
-    // use std::sync::Once;
-
-    // static INIT: Once = Once::new();
-
-    // fn init_logger() {
-    //     INIT.call_once(|| {
-    //         env_logger::builder()
-    //             .is_test(true) // Ensures logs go to stdout during tests
-    //             .init();
-    //     });
-    // }
 
     struct MockAcpiTable {}
 
@@ -1074,7 +1062,7 @@ mod tests {
         // Fill in trailing space with zeros so it is accessible (Vec length != Vec capacity).
         xsdt_allocated.extend(core::iter::repeat(0u8).take(16));
         let xsdt_data = AcpiXsdtMetadata {
-            nentries: 0,
+            n_entries: 0,
             max_capacity: MAX_INITIAL_ENTRIES,
             slice: xsdt_allocated.into_boxed_slice(),
         };
@@ -1089,7 +1077,7 @@ mod tests {
         assert!(result.is_ok());
 
         // We should now have 1 entry with address 0x1000_0000_0000_0004
-        assert_eq!(provider.xsdt_metadata.read().as_ref().unwrap().nentries, 1);
+        assert_eq!(provider.xsdt_metadata.read().as_ref().unwrap().n_entries, 1);
         assert_eq!(
             u64::from_le_bytes(
                 (provider.xsdt_metadata.read().as_ref().unwrap().slice.get(ACPI_HEADER_LEN..ACPI_HEADER_LEN + 8))
@@ -1104,7 +1092,7 @@ mod tests {
 
         // Try removing the table
         provider.remove_table_from_xsdt(XSDT_ADDR).expect("Removal of entry should succeed.");
-        assert_eq!(provider.xsdt_metadata.read().as_ref().unwrap().nentries, 0);
+        assert_eq!(provider.xsdt_metadata.read().as_ref().unwrap().n_entries, 0);
         // XSDT doesn't have to zero trailing entries, but should reduce length to mark the removed entry as invalid
         assert_eq!(provider.xsdt_metadata.read().as_ref().unwrap().get_length().unwrap(), ACPI_HEADER_LEN as u32);
     }
@@ -1137,7 +1125,7 @@ mod tests {
         // Fill in trailing space with zeros so it is accessible (Vec length != Vec capacity).
         xsdt_allocated.extend(core::iter::repeat(0u8).take(8));
         // Give a small max capacity so the XSDT is forced to reallocate.
-        let xsdt_data = AcpiXsdtMetadata { nentries: 0, max_capacity: 1, slice: xsdt_allocated.into_boxed_slice() };
+        let xsdt_data = AcpiXsdtMetadata { n_entries: 0, max_capacity: 1, slice: xsdt_allocated.into_boxed_slice() };
         {
             let mut write_guard = provider.xsdt_metadata.write();
             *write_guard = Some(xsdt_data);
@@ -1151,8 +1139,8 @@ mod tests {
 
         // Max entries should increase
         assert_eq!(provider.xsdt_metadata.read().as_ref().unwrap().max_capacity, 2);
-        // Existing entries should be preseved
-        assert_eq!(provider.xsdt_metadata.read().as_ref().unwrap().nentries, 1);
+        // Existing entries should be preserved
+        assert_eq!(provider.xsdt_metadata.read().as_ref().unwrap().n_entries, 1);
         assert_eq!(
             u64::from_le_bytes(
                 (provider.xsdt_metadata.read().as_ref().unwrap().slice.get(ACPI_HEADER_LEN..ACPI_HEADER_LEN + 8))
@@ -1166,7 +1154,6 @@ mod tests {
 
     #[test]
     fn test_delete_table_dsdt() {
-        // init_logger();
         let mock_memory_manager = StdMemoryManager::new();
 
         let provider = StandardAcpiProvider::new_uninit();

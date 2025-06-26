@@ -85,7 +85,7 @@ impl AcpiProviderManager {
         let xsdt_ptr = xsdt_allocated_bytes.as_mut_ptr();
         let xsdt_addr = xsdt_ptr as u64;
         let xsdt_metadata = AcpiXsdtMetadata {
-            nentries: 0,
+            n_entries: 0,
             max_capacity: MAX_INITIAL_ENTRIES,
             slice: xsdt_allocated_bytes.into_boxed_slice(),
         };
