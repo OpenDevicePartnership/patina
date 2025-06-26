@@ -301,6 +301,7 @@ impl<'a> Iterator for FileRefIter<'a> {
 #[cfg(test)]
 mod test {
     use core::{mem, sync::atomic::AtomicBool};
+    use log::{self, Level, LevelFilter, Metadata, Record};
     use mu_pi::fw_fs::{self, ffs, fv};
     use r_efi::efi;
     use serde::Deserialize;
@@ -346,6 +347,27 @@ mod test {
         fn extract(&self, _: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
             Err(FirmwareFileSystemError::Unsupported)
         }
+    }
+
+    // Sample logger for log crate to dump stuff in tests
+    struct SimpleLogger;
+    impl log::Log for SimpleLogger {
+        fn enabled(&self, metadata: &Metadata) -> bool {
+            metadata.level() <= Level::Info
+        }
+
+        fn log(&self, record: &Record) {
+            if self.enabled(record.metadata()) {
+                println!("{}", record.args());
+            }
+        }
+
+        fn flush(&self) {}
+    }
+    static LOGGER: SimpleLogger = SimpleLogger;
+
+    fn set_logger() {
+        let _ = log::set_logger(&LOGGER).map(|()| log::set_max_level(LevelFilter::Info));
     }
 
     fn stringify(error: FirmwareFileSystemError) -> String {
@@ -427,6 +449,7 @@ mod test {
 
     #[test]
     fn test_firmware_volume() -> Result<(), Box<dyn Error>> {
+        set_logger();
         let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
 
         let fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
@@ -440,6 +463,7 @@ mod test {
 
     #[test]
     fn test_giant_firmware_volume() -> Result<(), Box<dyn Error>> {
+        set_logger();
         let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
 
         let fv_bytes = fs::read(root.join("GIGANTOR.Fv"))?;
@@ -453,6 +477,7 @@ mod test {
 
     #[test]
     fn test_section_extraction() -> Result<(), Box<dyn Error>> {
+        set_logger();
         let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
 
         let fv_bytes = fs::read(root.join("FVMAIN_COMPACT.Fv"))?;
@@ -489,6 +514,7 @@ mod test {
 
     #[test]
     fn test_malformed_firmware_volume() -> Result<(), Box<dyn Error>> {
+        set_logger();
         let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
 
         // bogus signature.
@@ -552,6 +578,7 @@ mod test {
 
     #[test]
     fn zero_size_block_map_gives_same_offset_as_no_block_map() {
+        set_logger();
         //code in FirmwareVolume::new() assumes that the size of a struct that ends in a zero-size array is the same
         //as an identical struct that doesn't have the array at all. This unit test validates that assumption.
         #[repr(C)]
@@ -589,6 +616,7 @@ mod test {
 
     #[test]
     fn section_extract_should_extract() -> Result<(), Box<dyn Error>> {
+        set_logger();
         let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
         let fv_bytes: Vec<u8> = fs::read(root.join("GIGANTOR.Fv"))?;
         let fv = VolumeRef::new(&fv_bytes).expect("Firmware Volume Corrupt");
@@ -604,6 +632,7 @@ mod test {
 
     #[test]
     fn section_should_have_correct_metadata() -> Result<(), Box<dyn Error>> {
+        set_logger();
         let empty_pe32: [u8; 4] = [0x04, 0x00, 0x00, 0x10];
         let section = Section::new_from_buffer(&empty_pe32).unwrap();
         assert!(matches!(section.metadata(), SectionMetaData::Standard(ffs::section::raw_type::PE32, _)));

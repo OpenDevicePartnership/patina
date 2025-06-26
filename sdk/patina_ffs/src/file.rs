@@ -73,6 +73,14 @@ impl<'a> FileRef<'a> {
             }
         }
 
+        // Verify the file header checksum.
+        let sum = buffer[..content_offset].iter().fold(0u8, |sum, val| sum.wrapping_add(*val));
+        let sum = sum.wrapping_sub(header.state);
+        let sum = sum.wrapping_sub(header.integrity_check_file);
+        if sum != 0 {
+            Err(FirmwareFileSystemError::InvalidHeader)?;
+        }
+
         // Verify the file data checksum.
         if header.attributes & attributes::raw::CHECKSUM == 0 {
             if header.integrity_check_file != 0xAA {
