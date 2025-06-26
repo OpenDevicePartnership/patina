@@ -444,91 +444,57 @@ mod add_memory_space_tests {
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
-            GCD.init(48, 16);
+            unsafe {
+                crate::test_support::init_test_gcd(None);
+            }
             f();
         })
         .unwrap();
     }
 
     #[test]
-    fn test_add_memory_space_basic_functionality() {
+    fn test_add_memory_space_success() {
         with_locked_state(|| {
-            println!("=== Testing add_memory_space basic functionality ===");
+            let result = add_memory_space(GcdMemoryType::SystemMemory, 0x80000000, 0x1000, efi::MEMORY_WB);
 
-            // Since GCD is a global singleton that might already be initialized,
-            // we can't control its state. Let's just test that our wrapper works.
-
-            let result = add_memory_space(
-                GcdMemoryType::SystemMemory,
-                0x80000000, // Use a high address to avoid conflicts
-                0x1000,
-                efi::MEMORY_WB,
-            );
-
-            println!("add_memory_space returned: {:#x} ({})", result.as_usize(), result.as_usize());
-
-            // Decode the status for debugging
-            let status_value = result.as_usize();
-            let status_name = match status_value {
-                0 => "SUCCESS",
-                0x8000000000000002 => "INVALID_PARAMETER",
-                0x8000000000000003 => "UNSUPPORTED",
-                0x8000000000000006 => "NOT_READY",
-                0x8000000000000009 => "OUT_OF_RESOURCES",
-                0x800000000000000F => "ACCESS_DENIED",
-                _ => "UNKNOWN",
-            };
-            println!("Status: {}", status_name);
-
-            // The test succeeds if we get a valid EFI status code
-            // (We can't guarantee success because we don't control GCD state)
-            let is_valid_status = matches!(result.as_usize(), 0 | 0x8000000000000000..=0x80000000000000FF);
-
-            assert!(is_valid_status, "Should return a valid EFI status code");
-
-            // The function works if it returns any valid status
-            println!("✓ add_memory_space function is working and returns valid status codes");
+            assert_eq!(result, efi::Status::SUCCESS);
         });
     }
 
     #[test]
     fn test_add_memory_space_parameter_validation() {
         with_locked_state(|| {
-            println!("=== Testing parameter validation ===");
-
-            let result1 = add_memory_space(
+            // Test: Zero length should return InvalidParameter
+            let result = add_memory_space(
                 GcdMemoryType::SystemMemory,
-                0x8000000000000002,
+                0x80000000,
                 0, // zero length should return InvalidParameter
                 0,
             );
-            assert_eq!(result1, EfiError::InvalidParameter.into());
+            assert_eq!(result, efi::Status::INVALID_PARAMETER);
+        });
+    }
 
-            // Test 2: Very large size that would overflow
-            let result2 = add_memory_space(
+    #[test]
+    fn test_add_memory_space_overflow_returns_error() {
+        with_locked_state(|| {
+            // Test: Very large size that would overflow should return an error
+            let result = add_memory_space(
                 GcdMemoryType::SystemMemory,
                 u64::MAX - 100,
                 1000, // Would cause overflow
                 0,
             );
-            println!("Overflow test: {:#x}", result2.as_usize());
 
-            // Both should return error status codes (not crash)
-            let is_error1 = result1.as_usize() & 0x8000000000000000 != 0;
-            let is_error2 = result2.as_usize() & 0x8000000000000000 != 0;
-
-            // We don't assert specific error codes because GCD state affects the results,
-            // but both should be errors and not crash
-            println!("Zero length is error: {}, Overflow is error: {}", is_error1, is_error2);
-            println!("✓ Parameter validation doesn't crash the function");
+            // Should return an error status, not SUCCESS
+            assert_ne!(result, efi::Status::SUCCESS);
+            assert!(result.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
         });
     }
 
     #[test]
     fn test_add_memory_space_different_memory_types() {
         with_locked_state(|| {
-            println!("=== Testing different memory types ===");
-
             // Test that our wrapper correctly handles different memory types
             let memory_types = [
                 GcdMemoryType::SystemMemory,
@@ -544,92 +510,31 @@ mod add_memory_space_tests {
                     0x1000,
                     0,
                 );
-                println!("{:?}: {:#x}", mem_type, result.as_usize());
 
                 // Should return a valid status code (success or error)
                 let is_valid = matches!(result.as_usize(), 0 | 0x8000000000000000..=0x80000000000000FF);
                 assert!(is_valid, "Memory type {:?} should return valid status", mem_type);
             }
-
-            println!("✓ All memory types handled without crashing");
         });
     }
 
     #[test]
-    fn test_add_memory_space_wrapper_interface() {
+    fn test_add_memory_space_reserved_with_specific_attributes() {
         with_locked_state(|| {
-            println!("=== Testing wrapper interface ===");
-
-            // This test verifies that the add_memory_space wrapper function:
-            // 1. Properly converts Rust types to the underlying C types
-            // 2. Calls the underlying GCD function
-            // 3. Returns the result correctly
-
-            // Test with different capability values
-            let capabilities = [0, efi::MEMORY_WB, efi::MEMORY_UC, efi::MEMORY_WT];
-
-            for (i, &cap) in capabilities.iter().enumerate() {
-                let result = add_memory_space(
-                    GcdMemoryType::MemoryMappedIo, // Use MMIO to be less likely to conflict
-                    0x200000 + (i as u64 * 0x1000),
-                    0x1000,
-                    cap,
-                );
-
-                println!("Capabilities {:#x}: {:#x}", cap, result.as_usize());
-
-                // Function should return without crashing
-                let is_valid = matches!(result.as_usize(), 0 | 0x8000000000000000..=0x80000000000000FF);
-                assert!(is_valid, "Capabilities test {} should return valid status", i);
-            }
-
-            println!("✓ Wrapper interface correctly converts and passes parameters");
-        });
-    }
-
-    #[test]
-    fn test_add_memory_space_demonstrates_correct_usage() {
-        with_locked_state(|| {
-            println!("=== Demonstrating correct add_memory_space usage ===");
-
-            // This test shows how add_memory_space should be used in practice
-            // and verifies that our implementation follows the expected pattern
-
-            // Example 1: Adding system memory
-            let result1 = add_memory_space(
-                GcdMemoryType::SystemMemory,
-                0x1000000,                       // 16MB - reasonable address
-                0x100000,                        // 1MB - reasonable size
-                efi::MEMORY_WB | efi::MEMORY_XP, // Typical capabilities
-            );
-            println!("System memory example: {:#x}", result1.as_usize());
-
-            // Example 2: Adding MMIO space
-            let result2 = add_memory_space(
-                GcdMemoryType::MemoryMappedIo,
-                0xFE000000,     // Typical MMIO address
-                0x1000,         // Single page
-                efi::MEMORY_UC, // Uncacheable for MMIO
-            );
-            println!("MMIO example: {:#x}", result2.as_usize());
-
-            // Example 3: Adding reserved memory
-            let result3 = add_memory_space(
+            // Demonstrate adding a specific reserved memory region with detailed attributes
+            // This example shows a firmware volume region that is:
+            // - Memory-mapped I/O type
+            // - Uncacheable for device access
+            // - Execute-protected (XP) for security
+            // - Read-only (RO) for integrity
+            let result = add_memory_space(
                 GcdMemoryType::Reserved,
-                0x90000000,
-                0x10000, // 64KB
-                0,       // No special capabilities
+                0xF0000000, // Typical firmware region address
+                0x100000,   // 1MB firmware volume
+                efi::MEMORY_UC | efi::MEMORY_XP | efi::MEMORY_RO,
             );
-            println!("Reserved memory example: {:#x}", result3.as_usize());
 
-            // All should return valid status codes
-            let results = [result1, result2, result3];
-            for (i, result) in results.iter().enumerate() {
-                let is_valid = matches!(result.as_usize(), 0 | 0x8000000000000000..=0x80000000000000FF);
-                assert!(is_valid, "Example {} should return valid status", i + 1);
-            }
-
-            println!("✓ add_memory_space can be called with realistic parameters");
+            assert_eq!(result, efi::Status::SUCCESS);
         });
     }
 }
