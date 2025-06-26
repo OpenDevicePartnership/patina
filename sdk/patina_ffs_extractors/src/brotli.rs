@@ -9,11 +9,11 @@
 use alloc::{boxed::Box, vec, vec::Vec};
 use alloc_no_stdlib::{self, define_index_ops_mut, SliceWrapper, SliceWrapperMut};
 use brotli_decompressor::{BrotliDecompressStream, BrotliResult, BrotliState, HuffmanCode};
+use mu_pi::fw_fs;
 use patina_ffs::{
     section::{Section, SectionExtractor, SectionMetaData},
     FirmwareFileSystemError,
 };
-use r_efi::efi;
 
 //Rebox and HeapAllocator exist to satisfy BrotliDecompress custom allocation requirements.
 //They essentially wrap Box for heap allocations.
@@ -50,16 +50,13 @@ impl<T: Clone> alloc_no_stdlib::Allocator<T> for HeapAllocator<T> {
     fn free_cell(self: &mut HeapAllocator<T>, _data: Rebox<T>) {}
 }
 
-pub const BROTLI_SECTION_GUID: efi::Guid =
-    efi::Guid::from_fields(0x3D532050, 0x5CDA, 0x4FD0, 0x87, 0x9E, &[0x0F, 0x7F, 0x63, 0x0D, 0x5A, 0xFB]);
-
 /// Provides decompression for Brotli GUIDed sections.
 #[derive(Default, Clone, Copy)]
 pub struct BrotliSectionExtractor;
 impl SectionExtractor for BrotliSectionExtractor {
     fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
         if let SectionMetaData::GuidDefined(guid_header, __guid_header_fields, _) = section.metadata() {
-            if guid_header.section_definition_guid == BROTLI_SECTION_GUID {
+            if guid_header.section_definition_guid == fw_fs::guid::BROTLI_SECTION {
                 let data = section.try_as_slice()?;
                 let out_size = u64::from_le_bytes(data[0..8].try_into().unwrap());
                 let _scratch_size = u64::from_le_bytes(data[8..16].try_into().unwrap());

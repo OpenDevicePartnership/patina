@@ -7,16 +7,12 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::vec;
-use mu_pi::fw_fs::ffs;
+use mu_pi::fw_fs::{self, ffs};
 use mu_rust_helpers::uefi_decompress::{decompress_into_with_algo, DecompressionAlgorithm};
 use patina_ffs::{
     section::{SectionExtractor, SectionMetaData},
     FirmwareFileSystemError,
 };
-use r_efi::efi;
-
-pub const TIANO_DECOMPRESS_SECTION_GUID: efi::Guid =
-    efi::Guid::from_fields(0xA31280AD, 0x481E, 0x41B6, 0x95, 0xE8, &[0x12, 0x7F, 0x4C, 0x98, 0x47, 0x79]);
 
 /// Provides decompression for sections compressed with UEFI compression algorithm and TianoCompress GUIDed sections.
 #[derive(Default, Clone, Copy)]
@@ -25,7 +21,7 @@ impl SectionExtractor for UefiDecompressSectionExtractor {
     fn extract(&self, section: &patina_ffs::section::Section) -> Result<vec::Vec<u8>, FirmwareFileSystemError> {
         let (src, algo) = match section.metadata() {
             SectionMetaData::GuidDefined(guid_header, _, _)
-                if guid_header.section_definition_guid == TIANO_DECOMPRESS_SECTION_GUID =>
+                if guid_header.section_definition_guid == fw_fs::guid::TIANO_DECOMPRESS_SECTION =>
             {
                 (section.try_content_as_slice()?, DecompressionAlgorithm::TianoDecompress)
             }
