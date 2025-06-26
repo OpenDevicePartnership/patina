@@ -1167,7 +1167,7 @@ mod tests {
     #[test]
     fn test_delete_table_dsdt() {
         // init_logger();
-        let mut mock_memory_manager = StdMemoryManager::new();
+        let mock_memory_manager = StdMemoryManager::new();
 
         let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(true, MockBootServices::new(), Service::mock(Box::new(mock_memory_manager))).unwrap();

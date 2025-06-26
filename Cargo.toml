@@ -14,7 +14,6 @@ publish = ["patina-fw"]
 [workspace.dependencies]
 alloc-no-stdlib = { version = "~2.0" }
 arm-gic = { version = "^0.1.2" }
-bitflags = "2.9.1"
 bitfield-struct = { version = "0.10" }
 brotli-decompressor = { version = "4.0.0", default-features = false }
 cfg-if = { version = "1" }
@@ -33,12 +32,13 @@ log = { version = "0.4", default-features = false }
 memoffset = {version = "0.9.1" }
 mu_pi = { version = "5.2.3" }
 mu_rust_helpers = { version = "3.0.1" }
-patina_acpi = { version = "3.0.0", path = "components/patina_acpi", registry = "patina-fw" }
-patina_debugger = { version = "3.0.0", path = "core/patina_debugger", registry = "patina-fw" }
-patina_internal_collections = { version = "3.0.0", path = "core/patina_internal_collections", default-features = false, registry = "patina-fw" }
-patina_internal_cpu = { version = "3.0.0", path = "core/patina_internal_cpu", registry = "patina-fw" }
-patina_internal_depex = { version = "3.0.0", path = "core/patina_internal_depex", registry = "patina-fw" }
-patina_internal_device_path = { version = "3.0.0", path = "core/patina_internal_device_path", registry = "patina-fw" }
+num-traits = { version = "0.2", default-features = false }
+patina_acpi = {version = "4.0.2", path = "components/patina_acpi", registry = "patina-fw" }
+patina_debugger = { version = "4.0.2", path = "core/patina_debugger", registry = "patina-fw" }
+patina_internal_collections = { version = "4.0.2", path = "core/patina_internal_collections", default-features = false, registry = "patina-fw" }
+patina_internal_cpu = { version = "4.0.2", path = "core/patina_internal_cpu", registry = "patina-fw" }
+patina_internal_depex = { version = "4.0.2", path = "core/patina_internal_depex", registry = "patina-fw" }
+patina_internal_device_path = { version = "4.0.2", path = "core/patina_internal_device_path", registry = "patina-fw" }
 patina_mtrr = { version = "1.0.0", registry = "patina-fw" }
 patina_paging = { version = "8", registry = "patina-fw" }
 patina_performance = { version = "4.0.2", path = "components/patina_performance", registry = "patina-fw" }
