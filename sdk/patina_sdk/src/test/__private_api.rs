@@ -18,20 +18,24 @@ use crate::component::{
 };
 
 /// Where all the test cases marked with `#[patina_test]` are collated to.
-#[cfg(not(feature = "off"))]
+#[cfg(feature = "enable_patina_tests")]
 #[linkme::distributed_slice]
 pub static TEST_CASES: [TestCase];
 
 /// returns the test cases to run.
 ///
-/// [`static@TEST_CASES`] does not exist when the `off` feature is enabled because there must be at least one registered test
-/// case for `linkme` to work, or we get a compile time error. In this scenario, we just return an empty slice.
+/// [`static@TEST_CASES`] exists only when the `enable_patina_tests` feature is
+/// explicitly enabled. This feature is opt-in and explicit because external
+/// consumers of `patina_sdk` who do not register at least one test case with
+/// the `#[patina_test]` attribute may encounter a surprising linker crash (not
+/// just a linker failure), due to the testing infrastructure relying on the
+/// `linkme` crate.
 pub fn test_cases() -> &'static [TestCase] {
-    #[cfg(not(feature = "off"))]
+    #[cfg(feature = "enable_patina_tests")]
     {
         &TEST_CASES
     }
-    #[cfg(feature = "off")]
+    #[cfg(not(feature = "enable_patina_tests"))]
     {
         &[]
     }

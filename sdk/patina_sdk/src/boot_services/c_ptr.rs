@@ -1,3 +1,11 @@
+//! This module provides C pointer abstractions for safe pointer handling in Rust.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
 use alloc::boxed::Box;
 use core::{
     ffi::c_void,
@@ -8,8 +16,9 @@ use core::{
 };
 
 #[derive(Copy)]
-// Ptr metadata is a struct that hold everything to rebuild the original pointer from this metadata.
+/// Ptr metadata is a struct that hold everything to rebuild the original pointer from this metadata.
 pub struct PtrMetadata<'a, T> {
+    /// The pointer value as a usize
     pub ptr_value: usize,
     _container: PhantomData<&'a T>,
 }
@@ -36,15 +45,19 @@ impl<'a, R: CPtr<'a, Type = T>, T> PtrMetadata<'a, R> {
 ///
 /// Implementers must ensure that rust invariants around pointer usage (e.g. no aliasing) are respected.
 pub unsafe trait CPtr<'a>: Sized {
+    /// The type of the pointed-to value.
     type Type: Sized;
 
+    /// Returns a pointer to the underlying data.
     fn as_ptr(&self) -> *const Self::Type;
 
+    /// Consumes the `CPtr`, returning a raw pointer to the underlying data.
     fn into_ptr(self) -> *const Self::Type {
         let this = ManuallyDrop::new(self);
         this.as_ptr()
     }
 
+    /// Returns a [PtrMetadata] that maintains the underlying lifetime and type information.
     fn metadata(&self) -> PtrMetadata<'a, Self> {
         PtrMetadata { ptr_value: self.as_ptr() as usize, _container: PhantomData }
     }
@@ -56,10 +69,12 @@ pub unsafe trait CPtr<'a>: Sized {
 ///
 /// implementers must ensure that rust invariants around pointer usage (e.g. no aliasing) are respected.
 pub unsafe trait CMutPtr<'a>: CPtr<'a> {
+    /// Returns a mutable pointer to the underlying data.
     fn as_mut_ptr(&mut self) -> *mut Self::Type {
         <Self as CPtr>::as_ptr(self) as *mut _
     }
 
+    /// Consumes the `CMutPtr`, returning a mutable raw pointer to the underlying data.
     fn into_mut_ptr(self) -> *mut Self::Type {
         let mut this = ManuallyDrop::new(self);
         this.as_mut_ptr()
@@ -72,6 +87,7 @@ pub unsafe trait CMutPtr<'a>: CPtr<'a> {
 ///
 /// implementers must ensure that rust invariants around pointer usage (e.g. no aliasing) are respected.
 pub unsafe trait CRef<'a>: CPtr<'a> {
+    /// Returns a reference to the pointed-to value.
     fn as_ref(&self) -> &Self::Type {
         unsafe { self.as_ptr().as_ref().unwrap() }
     }
@@ -83,6 +99,7 @@ pub unsafe trait CRef<'a>: CPtr<'a> {
 ///
 /// implementers must ensure that rust invariants around pointer usage (e.g. no aliasing) are respected.
 pub unsafe trait CMutRef<'a>: CRef<'a> + CMutPtr<'a> {
+    /// Returns a mutable reference to the pointed-to value.
     fn as_mut(&mut self) -> &mut Self::Type {
         unsafe { self.as_mut_ptr().as_mut().unwrap() }
     }
@@ -93,6 +110,7 @@ pub unsafe trait CMutRef<'a>: CRef<'a> + CMutPtr<'a> {
 unsafe impl<T> CPtr<'static> for *const T {
     type Type = T;
 
+    /// Returns a pointer to the underlying data.
     fn as_ptr(&self) -> *const Self::Type {
         *self
     }
@@ -103,6 +121,7 @@ unsafe impl<T> CPtr<'static> for *const T {
 unsafe impl<T> CPtr<'static> for *mut T {
     type Type = T;
 
+    /// Returns a pointer to the underlying data.
     fn as_ptr(&self) -> *const Self::Type {
         *self
     }
@@ -115,6 +134,7 @@ unsafe impl<T> CMutPtr<'static> for *mut T {}
 unsafe impl<'a, T> CPtr<'a> for &'a T {
     type Type = T;
 
+    /// Returns a pointer to the underlying data.
     fn as_ptr(&self) -> *const Self::Type {
         *self as *const _
     }
@@ -127,6 +147,7 @@ unsafe impl<'a, T> CRef<'a> for &'a T {}
 unsafe impl<'a, T> CPtr<'a> for &'a mut T {
     type Type = T;
 
+    /// Returns a pointer to the underlying data.
     fn as_ptr(&self) -> *const Self::Type {
         *self as *const _
     }

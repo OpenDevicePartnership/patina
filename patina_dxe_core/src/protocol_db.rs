@@ -584,8 +584,7 @@ impl SpinLockedProtocolDb {
     /// Initialize the protocol database. Installs well-known handles, and then enables hashing to ensure handles are
     /// opaque.
     pub fn init_protocol_db(&self) {
-        let well_known_handle_guid: efi::Guid =
-            unsafe { core::mem::transmute(*WELL_KNOWN_HANDLE_PROTOCOL_GUID.as_bytes()) };
+        let well_known_handle_guid = efi::Guid::from_bytes(WELL_KNOWN_HANDLE_PROTOCOL_GUID.as_bytes());
 
         let well_known_handles = &[
             DXE_CORE_HANDLE,
@@ -891,7 +890,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -917,7 +916,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -936,7 +935,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -971,11 +970,11 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let uuid2 = Uuid::from_str("9c5dca1d-ac0f-46db-9eba-2bc961c711a2").unwrap();
-            let guid2: efi::Guid = unsafe { core::mem::transmute(*uuid2.as_bytes()) };
+            let guid2 = efi::Guid::from_bytes(uuid2.as_bytes());
             let interface2: *mut c_void = 0x4321 as *mut c_void;
 
             let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -994,15 +993,15 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let uuid2 = Uuid::from_str("9c5dca1d-ac0f-46db-9eba-2bc961c711a2").unwrap();
-            let guid2: efi::Guid = unsafe { core::mem::transmute(*uuid2.as_bytes()) };
+            let guid2 = efi::Guid::from_bytes(uuid2.as_bytes());
             let interface2: *mut c_void = 0x4321 as *mut c_void;
 
             let uuid3 = Uuid::from_str("2a32017e-7e6b-4563-890d-fff945530438").unwrap();
-            let guid3: efi::Guid = unsafe { core::mem::transmute(*uuid3.as_bytes()) };
+            let guid3 = efi::Guid::from_bytes(uuid3.as_bytes());
 
             let (handle1, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
             assert_eq!(
@@ -1040,7 +1039,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let (handle1, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -1057,7 +1056,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let (handle1, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -1072,7 +1071,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let (handle1, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -1108,7 +1107,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let (handle1, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -1203,7 +1202,7 @@ mod tests {
         static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
         let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-        let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+        let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
         let interface1: *mut c_void = 0x1234 as *mut c_void;
 
         let (handle1, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -1312,7 +1311,7 @@ mod tests {
         static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
         let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-        let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+        let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
         let interface1: *mut c_void = 0x1234 as *mut c_void;
 
         let (handle1, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -1405,7 +1404,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let (agent, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -1440,7 +1439,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let (handle1, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -1491,7 +1490,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let (handle1, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -1537,7 +1536,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let attributes_list = [
@@ -1579,11 +1578,11 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let uuid2 = Uuid::from_str("98d32ea1-e980-46b5-bb2c-564934c8cce6").unwrap();
-            let guid2: efi::Guid = unsafe { core::mem::transmute(*uuid2.as_bytes()) };
+            let guid2 = efi::Guid::from_bytes(uuid2.as_bytes());
             let interface2: *mut c_void = 0x4321 as *mut c_void;
 
             let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -1609,7 +1608,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -1636,7 +1635,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let attributes_list = [
@@ -1679,7 +1678,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -1695,11 +1694,11 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let uuid2 = Uuid::from_str("98d32ea1-e980-46b5-bb2c-564934c8cce6").unwrap();
-            let guid2: efi::Guid = unsafe { core::mem::transmute(*uuid2.as_bytes()) };
+            let guid2 = efi::Guid::from_bytes(uuid2.as_bytes());
             let interface2: *mut c_void = 0x4321 as *mut c_void;
 
             let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -1718,11 +1717,11 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let uuid2 = Uuid::from_str("98d32ea1-e980-46b5-bb2c-564934c8cce6").unwrap();
-            let guid2: efi::Guid = unsafe { core::mem::transmute(*uuid2.as_bytes()) };
+            let guid2 = efi::Guid::from_bytes(uuid2.as_bytes());
             let interface2: *mut c_void = 0x4321 as *mut c_void;
 
             SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
@@ -1739,7 +1738,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
 
             let event = 0x1234 as *mut c_void;
             let result = SPIN_LOCKED_PROTOCOL_DB.register_protocol_notify(guid1, event);
@@ -1781,7 +1780,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let event = 0x8765 as *mut c_void;
@@ -1812,7 +1811,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let event = 0x8765 as *mut c_void;
@@ -1837,7 +1836,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let event = 0x8765 as *mut c_void;
@@ -1881,7 +1880,7 @@ mod tests {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
             let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
-            let guid1: efi::Guid = unsafe { core::mem::transmute(*uuid1.as_bytes()) };
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
             let interface1: *mut c_void = 0x1234 as *mut c_void;
 
             let (controller, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();

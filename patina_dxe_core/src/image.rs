@@ -67,13 +67,7 @@ struct ImageStack {
 impl ImageStack {
     fn new(size: usize) -> Result<Self, EfiError> {
         let mut stack: efi::PhysicalAddress = 0;
-        let len = match align_up(size.max(MIN_STACK_SIZE) as u64, STACK_ALIGNMENT as u64) {
-            Ok(len) => len,
-            Err(e) => {
-                log::error!("Error occurred aligning the image stack up: {}", e);
-                return Err(EfiError::InvalidParameter);
-            }
-        } as usize;
+        let len = align_up(size.max(MIN_STACK_SIZE), STACK_ALIGNMENT)?;
         // allocate an extra page for the stack guard page.
         let allocated_pages = uefi_size_to_pages!(len) + 1;
 
@@ -208,7 +202,7 @@ impl PrivateImageData {
         }
 
         let aligned_image_start =
-            align_up(image_base_page as u64, pe_info.section_alignment as u64).map_err(|_| EfiError::LoadError)?;
+            align_up(image_base_page, pe_info.section_alignment.into()).map_err(|_| EfiError::LoadError)?;
 
         let mut image_data = PrivateImageData {
             image_buffer: core::ptr::slice_from_raw_parts_mut(
@@ -276,7 +270,7 @@ impl PrivateImageData {
             return Err(EfiError::OutOfResources);
         }
 
-        let aligned_hii_start = align_up(hii_base_page as u64, alignment as u64).map_err(|_| EfiError::LoadError)?;
+        let aligned_hii_start = align_up(hii_base_page, alignment as u64).map_err(|_| EfiError::LoadError)?;
 
         self.hii_resource_section = Some(core::ptr::slice_from_raw_parts_mut(aligned_hii_start as *mut u8, size));
         self.hii_resource_section_base = Some(hii_base_page);
@@ -414,18 +408,17 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
         // We also need to ensure the capabilities are set. We set the capabilities as the old capabilities
         // plus our new attribute, as we need to ensure all existing attributes are supported by the new
         // capabilities.
-        let aligned_virtual_size =
-            if let Ok(virtual_size) = align_up(section.virtual_size as u64, pe_info.section_alignment as u64) {
-                virtual_size
-            } else {
-                log::error!(
-                    "Failed to align up section size {:#X} with alignment {:#X}",
-                    section.virtual_size,
-                    pe_info.section_alignment
-                );
-                debug_assert!(false);
-                continue;
-            };
+        let aligned_virtual_size = if let Ok(virtual_size) = align_up(section.virtual_size, pe_info.section_alignment) {
+            virtual_size as u64
+        } else {
+            log::error!(
+                "Failed to align up section size {:#X} with alignment {:#X}",
+                section.virtual_size,
+                pe_info.section_alignment
+            );
+            debug_assert!(false);
+            continue;
+        };
 
         if let Err(status) =
             dxe_services::core_set_memory_space_capabilities(section_base_addr, aligned_virtual_size, capabilities)
@@ -473,8 +466,8 @@ fn remove_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateI
 
                 // now set the attributes back to only caching attrs.
                 let aligned_virtual_size =
-                    if let Ok(virtual_size) = align_up(section.virtual_size as u64, pe_info.section_alignment as u64) {
-                        virtual_size
+                    if let Ok(virtual_size) = align_up(section.virtual_size, pe_info.section_alignment) {
+                        virtual_size as u64
                     } else {
                         log::error!(
                             "Failed to align up section size {:#X} with alignment {:#X}",
@@ -820,15 +813,15 @@ fn get_file_buffer_from_sfs(
     let mut file = SimpleFile::open_volume(handle)?;
 
     for node in unsafe { DevicePathWalker::new(remaining_file_path) } {
-        match node.header.r#type {
+        match node.header().r#type {
             efi::protocols::device_path::TYPE_MEDIA
-                if node.header.sub_type == efi::protocols::device_path::Media::SUBTYPE_FILE_PATH => {} //proceed on valid path node
+                if node.header().sub_type == efi::protocols::device_path::Media::SUBTYPE_FILE_PATH => {} //proceed on valid path node
             efi::protocols::device_path::TYPE_END => break,
             _ => Err(EfiError::Unsupported)?,
         }
         //For MEDIA_FILE_PATH_DP, file name is in the node data, but it needs to be converted to Vec<u16> for call to open.
         let filename: Vec<u16> = node
-            .data
+            .data()
             .chunks_exact(2)
             .map(|x: &[u8]| {
                 if let Ok(x_bytes) = x.try_into() {

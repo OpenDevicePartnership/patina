@@ -76,6 +76,7 @@ words:
   - fvmain
   - fxrstor
   - fxsave
+  - gantt
   - gdbstub
   - getsp
   - gigantor
@@ -86,9 +87,11 @@ words:
   - hresult
   - icfgr
   - indoc
+  - inmodule
   - inproc
   - intid
   - irouter
+  - iscsi
   - isenabler
   - kbyte
   - keccak
@@ -119,6 +122,7 @@ words:
   - nomem
   - nshst
   - ntdll
+  - nvdimm
   - oleaut
   - opinfo
   - oppermann
@@ -187,6 +191,7 @@ words:
   - vmalle
   - vpopcntdq
   - vpopcntdq
+  - vtable
   - wakeup
   - wbinvd
   - webpki

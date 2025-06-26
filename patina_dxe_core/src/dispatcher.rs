@@ -848,22 +848,22 @@ mod tests {
                     let mut node_walker = DevicePathWalker::new(file);
                     //outer FV of NESTEDFV.Fv does not have an extended header so expect MMAP device path.
                     let fv_node = node_walker.next().unwrap();
-                    assert_eq!(fv_node.header.r#type, efi::protocols::device_path::TYPE_HARDWARE);
-                    assert_eq!(fv_node.header.sub_type, efi::protocols::device_path::Hardware::SUBTYPE_MMAP);
+                    assert_eq!(fv_node.header().r#type, efi::protocols::device_path::TYPE_HARDWARE);
+                    assert_eq!(fv_node.header().sub_type, efi::protocols::device_path::Hardware::SUBTYPE_MMAP);
 
                     //Internal nested FV file name is 2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75
                     let file_node = node_walker.next().unwrap();
-                    assert_eq!(file_node.header.r#type, efi::protocols::device_path::TYPE_MEDIA);
+                    assert_eq!(file_node.header().r#type, efi::protocols::device_path::TYPE_MEDIA);
                     assert_eq!(
-                        file_node.header.sub_type,
+                        file_node.header().sub_type,
                         efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE
                     );
-                    assert_eq!(file_node.data, uuid!("2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75").to_bytes_le());
+                    assert_eq!(file_node.data(), uuid!("2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75").to_bytes_le());
 
                     //device path end node
                     let end_node = node_walker.next().unwrap();
-                    assert_eq!(end_node.header.r#type, efi::protocols::device_path::TYPE_END);
-                    assert_eq!(end_node.header.sub_type, efi::protocols::device_path::End::SUBTYPE_ENTIRE);
+                    assert_eq!(end_node.header().r#type, efi::protocols::device_path::TYPE_END);
+                    assert_eq!(end_node.header().sub_type, efi::protocols::device_path::End::SUBTYPE_ENTIRE);
                 }
 
                 SECURITY_CALL_EXECUTED.store(true, core::sync::atomic::Ordering::SeqCst);
@@ -888,6 +888,78 @@ mod tests {
             core_dispatcher().unwrap();
 
             assert!(SECURITY_CALL_EXECUTED.load(core::sync::atomic::Ordering::SeqCst));
+        })
+    }
+
+    #[test]
+    fn test_ffs_files_dispatched_in_discovery_order() {
+        let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+        let mut fv: Vec<u8> = Vec::new();
+        file.read_to_end(&mut fv).expect("failed to read DXEFV.FV (test collateral file)");
+
+        with_locked_state(|| {
+            // Build the "discovered" list of `DRIVER` files in the FV with PE32 sections
+            let test_fv = unsafe { FirmwareVolume::new_from_address(fv.as_ptr() as u64) }.unwrap();
+            let mut discovered_files = Vec::new();
+            for file in test_fv.file_iter() {
+                let file = file.unwrap();
+                if file.file_type_raw() == FfsFileRawType::DRIVER {
+                    // Check if this file has a PE32 section (same logic as dispatcher)
+                    let sections: Result<Vec<_>, _> = file.section_iter().collect();
+                    if let Ok(sections) = sections {
+                        if sections.iter().any(|s| s.section_type() == Some(FfsSectionType::Pe32)) {
+                            discovered_files.push(file.name());
+                        }
+                    }
+                }
+            }
+
+            // No pending drivers should be present before the FV is installed
+            assert!(
+                DISPATCHER_CONTEXT.lock().pending_drivers.is_empty(),
+                "Pending drivers should be empty before FV installation"
+            );
+
+            // Install the firmware volume and add handles
+            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            add_fv_handles(vec![handle]).expect("Failed to add FV handle");
+
+            // Capture the order of pending drivers after discovery
+            let pending_guids: Vec<efi::Guid> =
+                DISPATCHER_CONTEXT.lock().pending_drivers.iter().map(|driver| driver.file_name).collect();
+
+            assert_eq!(
+                pending_guids.len(),
+                discovered_files.len(),
+                "Number of pending drivers should match discovered files"
+            );
+
+            // Verify order is preserved from discovery to pending drivers list
+            for (i, &expected_guid) in discovered_files.iter().enumerate() {
+                assert_eq!(
+                    pending_guids[i], expected_guid,
+                    "Driver at position {} should be {:?} but found {:?}",
+                    i, expected_guid, pending_guids[i]
+                );
+            }
+
+            println!("{} FFS files have the same discover and pending order.", discovered_files.len());
+
+            // Check that Vec::drain preserves order
+            let mut dispatcher = DISPATCHER_CONTEXT.lock();
+            let driver_candidates: Vec<_> = dispatcher.pending_drivers.drain(..).collect();
+
+            // Verify drain maintains order
+            for (i, driver) in driver_candidates.iter().enumerate() {
+                assert_eq!(
+                    driver.file_name, discovered_files[i],
+                    "Drained driver at position {} should be {:?} but found {:?}",
+                    i, discovered_files[i], driver.file_name
+                );
+            }
+
+            // Restore the drivers for potential further testing
+            dispatcher.pending_drivers = driver_candidates;
         })
     }
 }

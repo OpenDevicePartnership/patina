@@ -1,3 +1,33 @@
+//! Benchmarks for the component framework.
+//!
+//! This benchmark tests the performance of executing services, which can come with some overhead due to either vtable
+//! usage (for dynamic services (Service<dyn Trait>)) or due to the need to downcast from `dyn Any` to a concrete type
+//! or a trait object.
+//!
+//! ## Benchmark execution
+//!
+//! Running this exact benchmark can be done with the following command:
+//!
+//! `> cargo make bench -p patina_sdk --bench bench_service`
+//!
+//! If you wish to run a subset of benchmarks in this file, you can filter them by name:
+//!
+//! `> cargo make bench -p patina_sdk --bench bench_service -- <filter>`
+//!
+//! ## Examples
+//!
+//! ```bash
+//! > cargo make bench -p patina_sdk --bench bench_service -- dyn
+//! > cargo make bench -p patina_sdk --bench bench_service -- concrete
+//! > cargo make bench -p patina_sdk --bench bench_service
+//! ```
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
 use criterion::{criterion_group, criterion_main, Bencher, Criterion};
 use patina_sdk::component::service::Service;
 use patina_sdk_macro::IntoService;

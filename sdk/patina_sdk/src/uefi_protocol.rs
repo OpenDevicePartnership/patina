@@ -1,6 +1,19 @@
+//! A module containing UEFI protocol definitions and their implementations of [ProtocolInterface].
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
+
+#[cfg(feature = "unstable-device-path")]
+pub mod device_path;
 pub mod status_code;
 
-use r_efi::efi::{self, protocols::*};
+extern crate alloc;
+
+use r_efi::efi;
 
 /// Define a binding between an Interface and the corresponding Guid
 ///
@@ -8,13 +21,14 @@ use r_efi::efi::{self, protocols::*};
 ///
 /// Make sure that the Protocol Guid interface had the same layout that the implementer of this struct.
 pub unsafe trait ProtocolInterface {
+    /// The GUID of the UEFI protocol being implemented.
     const PROTOCOL_GUID: efi::Guid;
 }
 
 macro_rules! impl_r_efi_protocol {
     ($protocol:ident) => {
-        unsafe impl ProtocolInterface for $protocol::Protocol {
-            const PROTOCOL_GUID: efi::Guid = $protocol::PROTOCOL_GUID;
+        unsafe impl ProtocolInterface for r_efi::efi::protocols::$protocol::Protocol {
+            const PROTOCOL_GUID: r_efi::efi::Guid = r_efi::efi::protocols::$protocol::PROTOCOL_GUID;
         }
     };
 }

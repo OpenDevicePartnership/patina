@@ -21,6 +21,9 @@ use mu_pi::protocols::status_code::{self, EfiStatusCodeData, EfiStatusCodeType, 
 
 use super::ProtocolInterface;
 
+/// Rust definition of the UEFI Status Code Protocol.
+///
+/// <https://uefi.org/specs/PI/1.9/V2_DXE_Runtime_Protocols.html#status-code-runtime-protocol>
 #[repr(transparent)]
 pub struct StatusCodeRuntimeProtocol {
     protocol: status_code::Protocol,
@@ -31,10 +34,12 @@ unsafe impl ProtocolInterface for StatusCodeRuntimeProtocol {
 }
 
 impl StatusCodeRuntimeProtocol {
+    /// Creates a new instance of the Status Code Runtime Protocol with the given implementation.
     pub fn new(report_status_code: ReportStatusCode) -> Self {
         Self { protocol: status_code::Protocol { report_status_code } }
     }
 
+    /// Reports a status code to the platform firmware.
     pub fn report_status_code<T>(
         &self,
         status_code_type: EfiStatusCodeType,

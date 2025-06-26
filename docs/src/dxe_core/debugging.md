@@ -20,6 +20,12 @@ with the exception, continuing with the debugger operations, and ending with
 resuming from the exception.
 
 ```mermaid
+---
+config:
+  layout: elk
+  look: handDrawn
+displayMode: compact
+---
 sequenceDiagram
   Box blue Patina Platform
   participant Patina

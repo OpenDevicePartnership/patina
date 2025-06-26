@@ -1,20 +1,18 @@
 # Trait Abstractions
 
-Due to the complex nature of modern system firmware, it is important to design components or
-libraries with the necessary abstractions to allow platforms or IHVs the needed customization to
-account for silicon, hardware or even just platform differences. With EDKII, `LibraryClasses` are
-used as that point of abstraction, where the library's header file is the defined interface. With
-rust, `Traits` become that point of abstraction.
+Due to the complex nature of modern system firmware, it is important to design components or libraries with the
+necessary abstractions to allow platforms or IHVs the needed customization to account for silicon, hardware or even
+just platform differences. In EDK II, `LibraryClasses` serve as the abstraction point, with the library's header file
+as the defined interface. In Rust, `Traits` are the primary abstraction mechanism.
 
-Depending on the use case, your library or component may re-use an existing, well-known trait, or
-it may choose to create its own trait.
+Depending on your use case, your library or component may re-use an existing, well-known trait, or define its own trait.
 
 ```admonish important
-Unlike EDKII, we do not use traits for code reuse. Instead, use rust crates as explained in the
+Unlike EDK II, we do not use traits for code reuse. Instead, use Rust crates as explained in the
 [Code Reuse](./reuse.md) section.
 ```
 
-Traits are well documented, so feel free to read up on them before continuing. here are some links:
+Traits are well documented in the Rust ecosystem. Here are some useful links:
 
 - [Traits](https://doc.rust-lang.org/book/ch10-02-traits.html)
 - [Advanced Traits](https://doc.rust-lang.org/book/ch19-03-advanced-traits.html)
@@ -22,12 +20,12 @@ Traits are well documented, so feel free to read up on them before continuing. h
 
 ## Examples
 
-This example will show you have to define a trait, implement a trait, and also create a trait
-that takes a dependency on another trait being implemented for the same type.
+This example will show you how to define a trait, implement a trait, and also create a trait that takes a dependency
+on another trait being implemented for the same type.
 
 ``` rust
     pub trait MyTraitInterface {
-        fn my_function(&self) -> i32;  
+        fn my_function(&self) -> i32;
     }
 
     /// MyOtherTraitInterface requires MyTraitInterface to also be implemented
@@ -129,7 +127,7 @@ impl SerialIO for Terminal {
         std::io::stdin().read_exact(buffer).unwrap();
         buffer[0]
     }
-        
+
     fn try_read(&self) -> Option<u8> {
         let buffer = &mut [0u8; 1];
         match std::io::stdin().read(buffer) {
@@ -156,7 +154,7 @@ impl SerialIO for Uart {
 
     fn write(&self, buffer: &[u8]) {
         let port = unsafe { MmioSerialPort::new(self.0) };
-        
+
         for b in buffer {
             serial_port.send(*b);
         }
@@ -170,7 +168,7 @@ impl SerialIO for Uart {
     fn try_read(&self) -> Option<u8> {
         let port = unsafe { MmioSerialPort::new(self.0) };
         if let Ok(value) = serial_port.try_receive() {
-            Some(value) 
+            Some(value)
         } else {
             None
         }

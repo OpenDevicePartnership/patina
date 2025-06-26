@@ -2025,8 +2025,8 @@ impl SpinLockedGcd {
 
             // We need to use the virtual size for the section length, but
             // we cannot rely on this to be section aligned, as some compilers rely on the loader to align this
-            let aligned_virtual_size = match align_up(section.virtual_size as u64, pe_info.section_alignment as u64) {
-                Ok(size) => size,
+            let aligned_virtual_size = match align_up(section.virtual_size, pe_info.section_alignment) {
+                Ok(size) => size as u64,
                 Err(_) => {
                     panic!(
                         "Failed to align section size {:#x?} with alignment {:#x?}",
@@ -3983,7 +3983,7 @@ mod tests {
             assert_eq!(GCD.memory.lock().maximum_address, 0);
 
             let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 2) };
-            let address = align_up(mem.as_ptr() as u64, 0x1000).unwrap() as usize;
+            let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
             GCD.init(48, 16);
             unsafe {
                 GCD.add_memory_space(

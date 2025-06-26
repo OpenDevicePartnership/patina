@@ -1,5 +1,13 @@
+//! Error codes for the patina_stacktrace crate
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
 use core::fmt;
 
+/// The error type for stacktrace operations.
 #[derive(Debug, PartialEq)]
 pub enum Error {
     /// Error during parsing the PE
@@ -89,4 +97,5 @@ impl fmt::Display for Error {
     }
 }
 
+/// A specialized result type for the patina_stacktrace crate.
 pub type StResult<T> = Result<T, Error>;

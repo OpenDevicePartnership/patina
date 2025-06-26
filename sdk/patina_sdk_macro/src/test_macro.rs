@@ -25,7 +25,7 @@ pub fn patina_test2(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStrea
 
     // Wait until we filter out or custom attributes so that we don't confuse the compiler
     // with attributes it does not expect.
-    if cfg!(feature = "off") {
+    if cfg!(not(feature = "enable_patina_tests")) {
         return handle_feature_off(item);
     }
 
@@ -146,20 +146,28 @@ mod tests {
         };
 
         let expanded = patina_test2(stream);
-
-        let expected = quote! {
-            #[patina_sdk::test::linkme::distributed_slice(patina_sdk::test::__private_api::TEST_CASES)]
-            #[linkme(crate = patina_sdk::test::linkme)]
-            #[allow(non_upper_case_globals)]
-            static __my_test_case_TestCase: patina_sdk::test::__private_api::TestCase = patina_sdk::test::__private_api::TestCase {
-                name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                skip: false,
-                should_fail: false,
-                fail_msg: None,
-                func: |storage| patina_sdk::test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
-            };
-            fn my_test_case() -> Result {
-                assert!(true);
+        let expected = if cfg!(feature = "enable_patina_tests") {
+            quote! {
+                #[patina_sdk::test::linkme::distributed_slice(patina_sdk::test::__private_api::TEST_CASES)]
+                #[linkme(crate = patina_sdk::test::linkme)]
+                #[allow(non_upper_case_globals)]
+                static __my_test_case_TestCase: patina_sdk::test::__private_api::TestCase = patina_sdk::test::__private_api::TestCase {
+                    name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                    skip: false,
+                    should_fail: false,
+                    fail_msg: None,
+                    func: |storage| patina_sdk::test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                };
+                fn my_test_case() -> Result {
+                    assert!(true);
+                }
+            }
+        } else {
+            quote! {
+                #[allow(dead_code)]
+                fn my_test_case() -> Result {
+                    assert!(true);
+                }
             }
         };
 
@@ -178,20 +186,29 @@ mod tests {
 
         let expanded = patina_test2(stream);
 
-        let expected = quote! {
-            #[patina_sdk::test::linkme::distributed_slice(patina_sdk::test::__private_api::TEST_CASES)]
-            #[linkme(crate = patina_sdk::test::linkme)]
-            #[allow(non_upper_case_globals)]
-            static __my_test_case_TestCase: patina_sdk::test::__private_api::TestCase =
-            patina_sdk::test::__private_api::TestCase {
-                name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                skip: true,
-                should_fail: false,
-                fail_msg: None,
-                func: |storage| patina_sdk::test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
-            };
-            fn my_test_case() -> Result {
-                assert!(true);
+        let expected = if cfg!(feature = "enable_patina_tests") {
+            quote! {
+                #[patina_sdk::test::linkme::distributed_slice(patina_sdk::test::__private_api::TEST_CASES)]
+                #[linkme(crate = patina_sdk::test::linkme)]
+                #[allow(non_upper_case_globals)]
+                static __my_test_case_TestCase: patina_sdk::test::__private_api::TestCase =
+                patina_sdk::test::__private_api::TestCase {
+                    name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                    skip: true,
+                    should_fail: false,
+                    fail_msg: None,
+                    func: |storage| patina_sdk::test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                };
+                fn my_test_case() -> Result {
+                    assert!(true);
+                }
+            }
+        } else {
+            quote! {
+                #[allow(dead_code)]
+                fn my_test_case() -> Result {
+                    assert!(true);
+                }
             }
         };
 

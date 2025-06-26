@@ -181,10 +181,14 @@ impl ComponentInput for () {}
 /// A trait that allows the implementor to define a function whose parameters can be automatically retrieved from the
 /// underlying [Storage] before being immediately executed.
 pub trait ParamFunction<Marker>: Send + Sync + 'static {
+    /// All parameters of the function that are retrievable from [Storage].
     type Param: Param;
+    /// The first input type of the function, () if there is no special input type.
     type In: ComponentInput;
+    /// The return type of the function.
     type Out;
 
+    /// Runs the function with the given input and parameter values.
     fn run(&mut self, input: Self::In, param_value: ParamItem<Self::Param>) -> Self::Out;
 }
 

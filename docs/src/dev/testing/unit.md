@@ -1,13 +1,11 @@
 # Unit Testing
 
-As mentioned in [Testing](../testing.md), unit tests are written in the exact file that you
-are working in. Tests are written in a conditionally compiled sub-module and any tests should be
-tagged with `#[test]`.
+As mentioned in [Testing](../testing.md), unit tests are written in the same file as the code being tested. Tests
+are placed in a conditionally compiled sub-module, and each test should be tagged with `#[test]`.
 
-``` rust
+```rust
 #[cfg(test)]
 mod tests {
-
     #[test]
     fn test_my_functionality() {
         assert!(true);
@@ -15,26 +13,23 @@ mod tests {
 }
 ```
 
-Since this conditionally compiled module is a sub-module of the module you are writing, it has
-access to all private data in the module, allowing you to test public and private functions,
-modules, state, etc.
+Since this conditionally compiled module is a sub-module of the module you are writing, it has access to all
+private data in the module, allowing you to test public and private functions, modules, state, etc.
 
 ## Unit Testing and UEFI
 
-Due to the nature of UEFI, there tend to be a large amount of statics that exist for the lifetime
-of the execution (such as the GCD in the DXE_CORE). This can make unit testing somewhat complex as
-unit tests run in parallel, but if there exists some global static, it will be touched and
-manipulated by multiple tests, which can lead to dead locks or the static data in a state that the
-current test is not expecting. You can chose to follow any pattern to combat this, but the most
-common we use is to create a global test lock.
+Due to the nature of UEFI, there tend to be a large number of statics that exist for the lifetime of execution
+(such as the GCD in the Patina DXE Core). This can make unit testing complex, as unit tests run in parallel, but
+if there exists some global static, it will be touched and manipulated by multiple tests, which can lead to
+deadlocks or the static data being in a state that the current test is not expecting. You can choose any pattern
+to combat this, but the most common is to create a global test lock.
 
 ## Global Test Lock
 
-The easiest way we have found to control test execution to allow parallel execution for tests that
-do not require global state, while forcing all other tests that do to run one-by-one is to create
-a global state lock. The flow is that that the global state lock is acquired, global state is
-reset, then the test is run. It is ultimately up to the test writer to reset the state for the
-test. Here is a typical example that is used in the DXE Core itself:
+The easiest way to control test execution—allowing parallel execution for tests that do not require global state,
+while forcing all others to run one-by-one—is to create a global state lock. The flow is: acquire the global state
+lock, reset global state, then run the test. It is up to the test writer to reset the state for the test. Here is
+a typical example used in the Patina DXE Core:
 
 ```rust
 mod test_support {
@@ -59,8 +54,20 @@ mod tests {
     #[test]
     fn run_my_test() {
         with_reset_state(|| {
-            // Run the actual tests
-        })
+            // Test code here
+        });
     }
 }
+```
+
+```mermaid
+---
+config:
+  layout: elk
+  look: handDrawn
+---
+graph TD
+    A[Acquire Global Test Lock] --> B[Reset Global State]
+    B --> C[Run Test]
+    C --> D[Release Lock]
 ```

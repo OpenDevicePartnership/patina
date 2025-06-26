@@ -5,8 +5,14 @@ default_to_workspace = false
 RUSTC_BOOTSTRAP = 1
 NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
+<<<<<<< HEAD
 TEST_FLAGS = "--features mockall"
 COV_FLAGS = { value = "--workspace --out html --out xml --exclude-files **/tests/* --exclude-files **/benches/* --exclude patina_test_macro", condition = { env_not_set = ["COV_FLAGS"] } }
+=======
+TEST_FLAGS = { value = "--features enable_patina_tests", condition = { env_not_set = ["TEST_FLAGS"] } }
+COV_FLAGS = { value = "--features enable_patina_tests --workspace --out html --out xml --exclude-files **/tests/* --exclude-files **/benches/* --exclude patina_test_macro", condition = { env_not_set = ["COV_FLAGS"] } }
+RUSTDOCFLAGS = "-D warnings -D missing_docs"
+>>>>>>> 4d6af758b8d62b174a1f3fe082fb09ba775ae689
 
 [env.development]
 RUSTC_PROFILE = "dev"
@@ -209,13 +215,11 @@ dependencies = ["individual-package-targets"]
 
 [tasks.doc]
 description = "Builds all rust documentation in the workspace. Example `cargo make doc`"
-env = { RUSTDOCFLAGS = "-D warnings"}
 command = "cargo"
 args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc"]
 
 [tasks.doc-open]
 description = "Builds all rust documentation in the workspace and opens the documentation. Example `cargo make doc-open`"
-env = { RUSTDOCFLAGS = "-D warnings"}
 clear = true
 command = "cargo"
 args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc", "--open"]
@@ -242,6 +246,12 @@ install_crate = false
 clear = true
 command = "cargo"
 args = ["deny", "check"]
+
+[tasks.bench]
+description = "Run cargo bench."
+clear = true
+command = "cargo"
+args = ["bench", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
 
 [tasks.all]
 description = "Run all tasks for PR readiness."

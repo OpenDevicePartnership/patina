@@ -50,7 +50,7 @@ impl StandardRuntimeServices {
         Self { efi_runtime_services: AtomicPtr::new(ptr::null_mut()) }
     }
 
-    // Initialized the StandardRuntimeServices.
+    /// Initialized the StandardRuntimeServices.
     pub fn init(&self, efi_runtime_services: &efi::RuntimeServices) {
         self.efi_runtime_services.store(efi_runtime_services as *const _ as *mut _, Ordering::Relaxed);
     }

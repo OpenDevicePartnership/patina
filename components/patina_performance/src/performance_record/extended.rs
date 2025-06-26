@@ -14,6 +14,7 @@ use scroll::Pwrite;
 
 use super::PerformanceRecord;
 
+/// A performance string event record which includes a GUID.
 #[derive(Debug)]
 pub struct GuidEventRecord {
     /// ProgressID < 0x10 are reserved for core performance entries.
@@ -31,9 +32,12 @@ pub struct GuidEventRecord {
 }
 
 impl GuidEventRecord {
+    /// The defined type ID for this record.
     pub const TYPE: u16 = 0x1010;
+    /// The current revision version of this structure.
     pub const REVISION: u8 = 1;
 
+    /// Creates a new `GuidEventRecord`.
     pub fn new(progress_id: u16, acpi_id: u32, timestamp: u64, guid: efi::Guid) -> Self {
         Self { progress_id, acpi_id, timestamp, guid }
     }
@@ -57,6 +61,7 @@ impl PerformanceRecord for GuidEventRecord {
     }
 }
 
+/// A performance string event record which includes an ASCII string.
 #[derive(Debug)]
 pub struct DynamicStringEventRecord<'a> {
     /// ProgressID < 0x10 are reserved for core performance entries.
@@ -77,9 +82,12 @@ pub struct DynamicStringEventRecord<'a> {
 }
 
 impl<'a> DynamicStringEventRecord<'a> {
+    /// The defined type ID for this record.
     pub const TYPE: u16 = 0x1011;
+    /// The current revision version of this structure.
     pub const REVISION: u8 = 1;
 
+    /// Creates a new `DynamicStringEventRecord`.
     pub fn new(progress_id: u16, acpi_id: u32, timestamp: u64, guid: efi::Guid, string: &'a str) -> Self {
         Self { progress_id, acpi_id, timestamp, guid, string }
     }
@@ -120,6 +128,7 @@ impl PerformanceRecord for DynamicStringEventRecord<'_> {
     }
 }
 
+/// A performance string event record which includes a two GUIDs and an ASCII string.
 #[derive(Debug)]
 pub struct DualGuidStringEventRecord<'a> {
     /// ProgressID < 0x10 are reserved for core performance entries.
@@ -142,9 +151,12 @@ pub struct DualGuidStringEventRecord<'a> {
 }
 
 impl<'a> DualGuidStringEventRecord<'a> {
+    /// The defined type ID for this record.
     pub const TYPE: u16 = 0x1012;
+    /// The current revision version of this structure.
     pub const REVISION: u8 = 1;
 
+    /// Creates a new `DualGuidStringEventRecord`.
     pub fn new(
         progress_id: u16,
         acpi_id: u32,
@@ -178,6 +190,7 @@ impl PerformanceRecord for DualGuidStringEventRecord<'_> {
     }
 }
 
+/// A performance string event record which includes a GUID, and a QWORD.
 #[derive(Debug)]
 pub struct GuidQwordEventRecord {
     /// ProgressID < 0x10 are reserved for core performance entries.
@@ -197,9 +210,12 @@ pub struct GuidQwordEventRecord {
 }
 
 impl GuidQwordEventRecord {
+    /// The defined type ID for this record.
     pub const TYPE: u16 = 0x1013;
+    /// The current revision version of this structure.
     pub const REVISION: u8 = 1;
 
+    /// Creates a new `GuidQwordEventRecord`.
     pub fn new(progress_id: u16, acpi_id: u32, timestamp: u64, guid: efi::Guid, qword: u64) -> Self {
         Self { progress_id, acpi_id, timestamp, guid, qword }
     }
@@ -224,6 +240,7 @@ impl PerformanceRecord for GuidQwordEventRecord {
     }
 }
 
+/// A performance string event record which includes a GUID, QWORD, and an ASCII string.
 #[derive(Debug)]
 pub struct GuidQwordStringEventRecord<'a> {
     /// ProgressID < 0x10 are reserved for core performance entries.
@@ -245,9 +262,12 @@ pub struct GuidQwordStringEventRecord<'a> {
 }
 
 impl<'a> GuidQwordStringEventRecord<'a> {
+    /// The defined type ID for this record.
     pub const TYPE: u16 = 0x1014;
+    /// The current revision version of this structure.
     pub const REVISION: u8 = 1;
 
+    /// Creates a new `GuidQwordStringEventRecord`.
     pub fn new(progress_id: u16, acpi_id: u32, timestamp: u64, guid: efi::Guid, qword: u64, string: &'a str) -> Self {
         Self { progress_id, acpi_id, timestamp, guid, qword, string }
     }

@@ -3,11 +3,11 @@
 This portion of the core is concerned with producing UEFI protocol handler services as described in
 [Section 7.3](https://uefi.org/specs/UEFI/2.10_A/07_Services_Boot_Services.html#protocol-handler-services) of the UEFI
 specification. This section assumes basic familiarity with the protocol services as described in the UEFI Spec, and
-focuses on how they are implemented in the Rust DXE Core.
+focuses on how they are implemented in the Patina DXE Core.
 
-The main implementation for protocol services in the Rust DXE Core resides in the protocol database object implemented
+The main implementation for protocol services in the Patina DXE Core resides in the protocol database object implemented
 by the `patina_dxe_core` crate. The protocol database implemented by that crate is used to implement the UEFI protocol
-handler services by the main Rust DXE Core protocol.rs module.
+handler services by the main Patina DXE Core protocol.rs module.
 
 ## High-level Architectural Elements in the Protocol Database
 
@@ -64,10 +64,10 @@ will not simultaneously exist in the database. It is possible, (though very unli
 "re-used" after being deleted.
 
 ```admonish title="Why Hashed?", collapsible=true
-This is primarily done as a debug aid to ensure that no users of the Rust DXE Core are relying on invalid assumptions
+This is primarily done as a debug aid to ensure that no users of the Patina DXE Core are relying on invalid assumptions
 that `EFI_HANDLE` is a pointer. The UEFI specification forbids this, but in the C EDK2 reference implementation,
 `EFI_HANDLE` is internally implemented as a pointer type, so external modules could (in theory) attempt to obtain access
-to the private `EFI_HANDLE` structure. Treating `EFI_HANDLE` from the Rust DXE Core as a pointer and de-referencing
+to the private `EFI_HANDLE` structure. Treating `EFI_HANDLE` from the Patina DXE Core as a pointer and de-referencing
 it would result in a bad memory access, and ensuring that handles are at a wide range of values makes it more likely
 that such behavior would be caught by memory protections and fault. It also makes it more obvious on inspection that
 they are _not_ pointers.
@@ -130,6 +130,8 @@ active `usages` of the protocol:
 ```mermaid
 ---
 title: Protocol Database
+config:
+  layout: elk
 ---
 flowchart TD
   subgraph usage1[" "]
@@ -247,8 +249,8 @@ The behavior of this function closely matches the semantics of
 The EFI 1.10 behavior extension of calling
 [EFI_BOOT_SERVICES.DisconnectController()](https://uefi.org/specs/UEFI/2.10_A/07_Services_Boot_Services.html#efi-boot-services-disconnectcontroller)
 to attempt to remove `usages` that prevent the protocol from being closed is implemented outside the protocol database
-in the Rust DXE Core protocol module (see:
-[Rust Dxe Core Protocol Module::Uninstall Protocol Interface](protocol_database.md#uninstall-protocol-interface)).
+in the Patina DXE Core protocol module (see:
+[Patina DXE Core Protocol Module::Uninstall Protocol Interface](protocol_database.md#uninstall-protocol-interface)).
 ```
 
 ### Retrieving and Validating Handles
@@ -298,8 +300,8 @@ the protocol instance on the given handle if it exists[^close_protocol].
 ```admonish note
 Some of the behavior specified by the UEFI spec for OpenProtocol and CloseProtocol require access to driver model APIs
 that are not available to the protocol database crate. These behaviors are implemented outside the protocol database in
-the Rust DXE Core protocol module (see:
-[Rust Dxe Core Protocol Module::Open Protocol Interface](protocol_database.md#open-protocol-interface)).
+the Patina DXE Core protocol module (see:
+[Patina DXE Core Protocol Module::Open Protocol Interface](protocol_database.md#open-protocol-interface)).
 ```
 
 To query what usages are active on a protocol for a given `handle`, call the `get_open_protocol_information` and specify
@@ -335,7 +337,7 @@ registration. [^register_protocol_notify]
 ```admonish note
 The protocol database implementation does not actually signal the `event` when a protocol installation occurs when a
 registration is matched. Instead, the `event` is returned to the caller. This allows the protocol database to avoid
-taking a direct dependency on the event subsystem. The event will be signaled by the Rust DXE Core
+taking a direct dependency on the event subsystem. The event will be signaled by the Patina DXE Core
 [protocol module](protocol_database.md#protocol-notification) as needed.
 ```
 
@@ -355,12 +357,12 @@ notification functions.[^locate_protocol_notify]
 [^locate_protocol_notify]: [EFI_BOOT_SERVICE.LocateProtocol()](https://uefi.org/specs/UEFI/2.10_A/07_Services_Boot_Services.html#efi-boot-services-locateprotocol),
 in particular, see the description of the `Registration` parameter.
 
-## Rust Dxe Core Protocol Module
+## Patina DXE Core Protocol Module
 
-The protocol database described above is consumed by the protocol module of the Rust DXE Core to provide the actual UEFI
-Spec compliant protocol services. The Rust DXE Core protocol module translates the UEFI Boot Services Protocol
+The protocol database described above is consumed by the protocol module of the Patina DXE Core to provide the actual UEFI
+Spec compliant protocol services. The Patina DXE Core protocol module translates the UEFI Boot Services Protocol
 API[^boot_services_protocol_api] calls into interactions with the protocol database, and handles elements of the
-implementation that require interaction with other Rust DXE Core subsystems such as [eventing](events.md) or
+implementation that require interaction with other Patina DXE Core subsystems such as [eventing](events.md) or
 [driver model](driver_model.md).
 
 [^boot_services_protocol_api]: UEFI Spec [Protocol Handler Services](https://uefi.org/specs/UEFI/2.10_A/07_Services_Boot_Services.html#protocol-handler-services)
@@ -377,7 +379,7 @@ create a Rust-friendly version of the API and prefix the name with `core_` to si
 There are three functions that provide protocol installation services:
 
 * `core_install_protocol_interface` - main business logic, intended to be used as the main interface for any calls
-within the Rust DXE Core.
+within the Patina DXE Core.
 * `install_protocol_interface` - implements the UEFI Spec
 [EFI_BOOT_SERVICES.InstallProtocolInterface()](https://uefi.org/specs/UEFI/2.10_A/07_Services_Boot_Services.html#efi-boot-services-installprotocolinterface)
 API. A simple wrapper around `core_install_protocol_interface`. Not intended for direct usage in the core, call
@@ -569,6 +571,6 @@ In the UEFI spec,
 [EFI_BOOT_SERVICES.ConnectController()](https://uefi.org/specs/UEFI/2.10_A/07_Services_Boot_Services.html#efi-boot-services-connectcontroller)
 and
 [EFI_BOOT_SERVICES.DisconnectController()](https://uefi.org/specs/UEFI/2.10_A/07_Services_Boot_Services.html#efi-boot-services-disconnectcontroller)
-are part of the Protocol Handler Services section of the specification, however, in the Rust DXE Core, these services
+are part of the Protocol Handler Services section of the specification, however, in the Patina DXE Core, these services
 are implemented in the driver_services.rs module, and have their own section in this book on their theory of operation -
 see [UEFI Driver Model](driver_model.md).

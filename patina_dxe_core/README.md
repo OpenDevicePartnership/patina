@@ -1,7 +1,7 @@
 
-# Rust DXE Core
+# Patina DXE Core
 
-This crate contains a Pure Rust DXE Core.
+This crate contains a Pure Patina DXE Core.
 
 ## DXE Core Goals
 
@@ -11,8 +11,8 @@ This crate contains a Pure Rust DXE Core.
    3. Greater than 80% unit test coverage across all code compiled into the DXE Core.
    4. A "monolithic" DXE environment that encapsulates functionality distributed across separate EFI modules today.
       This is accomplished with an internal dispatcher to the binary that executes individual components linked during
-      platform integration and given to the common Rust DXE Core interface when the platform builds its version of
-      Rust DXE Core.
+      platform integration and given to the common Patina DXE Core interface when the platform builds its version of
+      Patina DXE Core.
    5. In addition to internal Rust component dispatch, UEFI driver dispatch - FVs and FFS files in the firmware ROM.
    6. No direct dependencies on PEI except PI abstracted structures.
 
