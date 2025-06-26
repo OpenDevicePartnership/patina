@@ -132,6 +132,10 @@ impl<'a> FileRef<'a> {
         file_attributes as fv::file::EfiFvFileAttributes
     }
 
+    pub fn attributes_raw(&self) -> u8 {
+        self.header.attributes
+    }
+
     pub fn sections(&self) -> Result<Vec<Section>, FirmwareFileSystemError> {
         let sections = SectionIterator::new(&self.data[self.content_offset..])
             .collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;

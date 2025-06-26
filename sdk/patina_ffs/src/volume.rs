@@ -1,5 +1,5 @@
 use alloc::vec::Vec;
-use core::{mem, ptr, slice};
+use core::{fmt, mem, ptr, slice};
 use patina_sdk::base::align_up;
 use r_efi::efi;
 
@@ -234,6 +234,18 @@ impl<'a> VolumeRef<'a> {
     }
 }
 
+impl fmt::Debug for VolumeRef<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VolumeRef")
+            .field("data ({:#x} bytes)", &self.data.len())
+            .field("fv_header", &self.fv_header)
+            .field("ext_header", &self.ext_header)
+            .field("block_map", &self.block_map)
+            .field("content_offset", &self.content_offset)
+            .finish()
+    }
+}
+
 struct FileRefIter<'a> {
     data: &'a [u8],
     next_offset: usize,
@@ -283,5 +295,386 @@ impl<'a> Iterator for FileRefIter<'a> {
             self.error = true;
         }
         Some(result)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use core::{mem, sync::atomic::AtomicBool};
+    use mu_pi::fw_fs::{self, ffs, fv};
+    use r_efi::efi;
+    use serde::Deserialize;
+    use std::{
+        collections::HashMap,
+        env,
+        error::Error,
+        fs::{self, File},
+        path::Path,
+    };
+    use uuid::Uuid;
+
+    use crate::{
+        section::{Section, SectionExtractor, SectionMetaData},
+        volume::VolumeRef,
+        FirmwareFileSystemError,
+    };
+
+    #[derive(Debug, Deserialize)]
+    struct TargetValues {
+        total_number_of_files: u32,
+        files_to_test: HashMap<String, FfsFileTargetValues>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct FfsFileTargetValues {
+        file_type: u8,
+        attributes: u8,
+        size: usize,
+        number_of_sections: usize,
+        sections: HashMap<usize, FfsSectionTargetValues>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct FfsSectionTargetValues {
+        section_type: Option<ffs::section::EfiSectionType>,
+        size: usize,
+        text: Option<String>,
+    }
+
+    struct NullExtractror {}
+    impl SectionExtractor for NullExtractror {
+        fn extract(&self, _: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
+            Err(FirmwareFileSystemError::Unsupported)
+        }
+    }
+
+    fn stringify(error: FirmwareFileSystemError) -> String {
+        format!("efi error: {:x?}", error).to_string()
+    }
+
+    fn extract_text_from_section(section: &Section) -> Option<String> {
+        if section.section_type() == Some(ffs::section::Type::UserInterface) {
+            let display_name_chars: Vec<u16> = section
+                .try_content_as_slice()
+                .unwrap()
+                .chunks(2)
+                .map(|x| u16::from_le_bytes(x.try_into().unwrap()))
+                .collect();
+            Some(String::from_utf16_lossy(&display_name_chars).trim_end_matches(char::from(0)).to_string())
+        } else {
+            None
+        }
+    }
+
+    fn test_firmware_volume_worker(
+        fv: VolumeRef,
+        mut expected_values: TargetValues,
+        extractor: &dyn SectionExtractor,
+    ) -> Result<(), Box<dyn Error>> {
+        let mut count = 0;
+        for ffs_file in fv.files() {
+            let ffs_file = ffs_file.map_err(stringify)?;
+            count += 1;
+            let file_name = Uuid::from_bytes_le(*ffs_file.name().as_bytes()).to_string().to_uppercase();
+            if let Some(mut target) = expected_values.files_to_test.remove(&file_name) {
+                assert_eq!(target.file_type, ffs_file.file_type_raw(), "[{file_name}] Error with the file type.");
+                assert_eq!(
+                    target.attributes,
+                    ffs_file.attributes_raw(),
+                    "[{file_name}] Error with the file attributes."
+                );
+                assert_eq!(target.size, ffs_file.size(), "[{file_name}] Error with the file size (Full size).");
+                let sections = ffs_file.sections_with_extractor(extractor).map_err(stringify)?;
+                for section in sections.iter().enumerate() {
+                    println!("{:x?}", section);
+                }
+                assert_eq!(
+                    target.number_of_sections,
+                    sections.len(),
+                    "[{file_name}] Error with the number of section in the File"
+                );
+
+                for (idx, section) in sections.iter().enumerate() {
+                    if let Some(target) = target.sections.remove(&idx) {
+                        assert_eq!(
+                            target.section_type,
+                            section.section_type().map(|x| x as u8),
+                            "[{file_name}, section: {idx}] Error with the section Type"
+                        );
+                        assert_eq!(
+                            target.size,
+                            section.try_content_as_slice().unwrap().len(),
+                            "[{file_name}, section: {idx}] Error with the section Size"
+                        );
+                        assert_eq!(
+                            target.text,
+                            extract_text_from_section(section),
+                            "[{file_name}, section: {idx}] Error with the section Text"
+                        );
+                    }
+                }
+
+                assert!(target.sections.is_empty(), "Some section use case has not been run.");
+            }
+        }
+        assert_eq!(
+            expected_values.total_number_of_files, count,
+            "The number of file found does not match the expected one."
+        );
+        assert!(expected_values.files_to_test.is_empty(), "Some file use case has not been run.");
+        Ok(())
+    }
+
+    #[test]
+    fn test_firmware_volume() -> Result<(), Box<dyn Error>> {
+        let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
+
+        let fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
+        let fv = VolumeRef::new(&fv_bytes).unwrap();
+
+        let expected_values =
+            serde_yaml::from_reader::<File, TargetValues>(File::open(root.join("DXEFV_expected_values.yml"))?)?;
+
+        test_firmware_volume_worker(fv, expected_values, &NullExtractror {})
+    }
+
+    #[test]
+    fn test_giant_firmware_volume() -> Result<(), Box<dyn Error>> {
+        let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
+
+        let fv_bytes = fs::read(root.join("GIGANTOR.Fv"))?;
+        let fv = VolumeRef::new(&fv_bytes).unwrap();
+
+        let expected_values =
+            serde_yaml::from_reader::<File, TargetValues>(File::open(root.join("GIGANTOR_expected_values.yml"))?)?;
+
+        test_firmware_volume_worker(fv, expected_values, &NullExtractror {})
+    }
+
+    #[test]
+    fn test_section_extraction() -> Result<(), Box<dyn Error>> {
+        let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
+
+        let fv_bytes = fs::read(root.join("FVMAIN_COMPACT.Fv"))?;
+
+        let expected_values = serde_yaml::from_reader::<File, TargetValues>(File::open(
+            root.join("FVMAIN_COMPACT_expected_values.yml"),
+        )?)?;
+
+        struct TestExtractor {
+            invoked: AtomicBool,
+        }
+
+        impl SectionExtractor for TestExtractor {
+            fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
+                let SectionMetaData::GuidDefined(metadata, _, _) = section.metadata() else {
+                    panic!("Unexpected section metadata");
+                };
+                assert_eq!(metadata.section_definition_guid, fw_fs::guid::BROTLI_SECTION);
+                self.invoked.store(true, core::sync::atomic::Ordering::SeqCst);
+                Err(FirmwareFileSystemError::Unsupported)
+            }
+        }
+
+        let test_extractor = TestExtractor { invoked: AtomicBool::new(false) };
+
+        let fv = VolumeRef::new(&fv_bytes).unwrap();
+
+        test_firmware_volume_worker(fv, expected_values, &test_extractor)?;
+
+        assert!(test_extractor.invoked.load(core::sync::atomic::Ordering::SeqCst));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_malformed_firmware_volume() -> Result<(), Box<dyn Error>> {
+        let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
+
+        // bogus signature.
+        let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
+        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        unsafe {
+            (*fv_header).signature ^= 0xdeadbeef;
+        };
+        assert_eq!(VolumeRef::new(&fv_bytes).unwrap_err(), FirmwareFileSystemError::InvalidHeader);
+
+        // bogus header_length.
+        let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
+        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        unsafe {
+            (*fv_header).header_length = 0;
+        };
+        assert_eq!(VolumeRef::new(&fv_bytes).unwrap_err(), FirmwareFileSystemError::InvalidHeader);
+
+        // bogus checksum.
+        let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
+        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        unsafe {
+            (*fv_header).checksum ^= 0xbeef;
+        };
+        assert_eq!(VolumeRef::new(&fv_bytes).unwrap_err(), FirmwareFileSystemError::InvalidHeader);
+
+        // bogus revision.
+        let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
+        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        unsafe {
+            (*fv_header).revision = 1;
+        };
+        assert_eq!(VolumeRef::new(&fv_bytes).unwrap_err(), FirmwareFileSystemError::InvalidHeader);
+
+        // bogus filesystem guid.
+        let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
+        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        unsafe {
+            (*fv_header).file_system_guid = efi::Guid::from_bytes(&[0xa5; 16]);
+        };
+        assert_eq!(VolumeRef::new(&fv_bytes).unwrap_err(), FirmwareFileSystemError::InvalidHeader);
+
+        // bogus fv length.
+        let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
+        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        unsafe {
+            (*fv_header).fv_length = 0;
+        };
+        assert_eq!(VolumeRef::new(&fv_bytes).unwrap_err(), FirmwareFileSystemError::InvalidHeader);
+
+        // bogus ext header offset.
+        let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
+        let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        unsafe {
+            (*fv_header).fv_length = ((*fv_header).ext_header_offset - 1) as u64;
+        };
+        assert_eq!(VolumeRef::new(&fv_bytes).unwrap_err(), FirmwareFileSystemError::InvalidHeader);
+
+        Ok(())
+    }
+
+    #[test]
+    fn zero_size_block_map_gives_same_offset_as_no_block_map() {
+        //code in FirmwareVolume::new() assumes that the size of a struct that ends in a zero-size array is the same
+        //as an identical struct that doesn't have the array at all. This unit test validates that assumption.
+        #[repr(C)]
+        struct A {
+            foo: usize,
+            bar: u32,
+            baz: u32,
+            block_map: [fv::BlockMapEntry; 0],
+        }
+
+        #[repr(C)]
+        struct B {
+            foo: usize,
+            bar: u32,
+            baz: u32,
+        }
+        assert_eq!(mem::size_of::<A>(), mem::size_of::<B>());
+
+        let a = A { foo: 0, bar: 0, baz: 0, block_map: [fv::BlockMapEntry { length: 0, num_blocks: 0 }; 0] };
+
+        let a_ptr = &a as *const A;
+
+        unsafe {
+            assert_eq!((&(*a_ptr).block_map).as_ptr(), a_ptr.offset(1) as *const fv::BlockMapEntry);
+        }
+    }
+
+    struct ExampleSectionExtractor {}
+    impl SectionExtractor for ExampleSectionExtractor {
+        fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
+            println!("Encapsulated section: {:?}", section);
+            Ok(Vec::new()) //A real section extractor would provide the extracted buffer on return.
+        }
+    }
+
+    #[test]
+    fn section_extract_should_extract() -> Result<(), Box<dyn Error>> {
+        let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
+        let fv_bytes: Vec<u8> = fs::read(root.join("GIGANTOR.Fv"))?;
+        let fv = VolumeRef::new(&fv_bytes).expect("Firmware Volume Corrupt");
+        for file in fv.files() {
+            let file = file.map_err(|_| "parse error".to_string())?;
+            let sections = file.sections_with_extractor(&ExampleSectionExtractor {}).map_err(stringify)?;
+            for (idx, section) in sections.iter().enumerate() {
+                println!("file: {:?}, section: {:?} type: {:?}", file.name(), idx, section.section_type());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn section_should_have_correct_metadata() -> Result<(), Box<dyn Error>> {
+        let empty_pe32: [u8; 4] = [0x04, 0x00, 0x00, 0x10];
+        let section = Section::new_from_buffer(&empty_pe32).unwrap();
+        assert!(matches!(section.metadata(), SectionMetaData::Standard(ffs::section::raw_type::PE32, _)));
+
+        let empty_compression: [u8; 0x11] =
+            [0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let section = Section::new_from_buffer(&empty_compression).unwrap();
+        match section.metadata() {
+            SectionMetaData::Compression(header, _) => {
+                let length = header.uncompressed_length;
+                assert_eq!(length, 0);
+                assert_eq!(header.compression_type, 1);
+            }
+            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+        }
+
+        let empty_guid_defined: [u8; 32] = [
+            0x20, 0x00, 0x00, 0x02, //Header
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, //GUID
+            0x1C, 0x00, //Data offset
+            0x12, 0x34, //Attributes
+            0x00, 0x01, 0x02, 0x03, //GUID-specific fields
+            0x04, 0x15, 0x19, 0x80, //Data
+        ];
+        let section = Section::new_from_buffer(&empty_guid_defined).unwrap();
+        match section.metadata() {
+            SectionMetaData::GuidDefined(header, guid_data, _) => {
+                assert_eq!(
+                    header.section_definition_guid,
+                    efi::Guid::from_bytes(&[
+                        0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF
+                    ])
+                );
+                assert_eq!(header.data_offset, 0x1C);
+                assert_eq!(header.attributes, 0x3412);
+                assert_eq!(guid_data.to_vec(), &[0x00u8, 0x01, 0x02, 0x03]);
+                assert_eq!(section.try_content_as_slice().unwrap(), &[0x04, 0x15, 0x19, 0x80]);
+            }
+            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+        }
+
+        let empty_version: [u8; 14] =
+            [0x0E, 0x00, 0x00, 0x14, 0x00, 0x00, 0x31, 0x00, 0x2E, 0x00, 0x30, 0x00, 0x00, 0x00];
+        let section = Section::new_from_buffer(&empty_version).unwrap();
+        match section.metadata() {
+            SectionMetaData::Version(version, _) => {
+                assert_eq!(version.build_number, 0);
+                assert_eq!(section.try_content_as_slice().unwrap(), &[0x31, 0x00, 0x2E, 0x00, 0x30, 0x00, 0x00, 0x00]);
+            }
+            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+        }
+
+        let empty_freeform_subtype: [u8; 024] = [
+            0x18, 0x00, 0x00, 0x18, //Header
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, //GUID
+            0x04, 0x15, 0x19, 0x80, //Data
+        ];
+        let section = Section::new_from_buffer(&empty_freeform_subtype).unwrap();
+        match section.metadata() {
+            SectionMetaData::FreeFormSubtypeGuid(ffst_header, _) => {
+                assert_eq!(
+                    ffst_header.sub_type_guid,
+                    efi::Guid::from_bytes(&[
+                        0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF
+                    ])
+                );
+                assert_eq!(section.try_content_as_slice().unwrap(), &[0x04, 0x15, 0x19, 0x80]);
+            }
+            otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
+        }
+
+        Ok(())
     }
 }

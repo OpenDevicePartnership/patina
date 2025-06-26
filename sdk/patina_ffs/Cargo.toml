@@ -12,3 +12,8 @@ description = "Support for Firmware File System as described in the UEFI Platfor
 patina_sdk = {workspace = true}
 mu_pi = {workspace = true}
 r-efi = {workspace = true}
+
+[dev-dependencies]
+serde = {workspace = true}
+uuid = {workspace = true}
+serde_yaml = {workspace = true}

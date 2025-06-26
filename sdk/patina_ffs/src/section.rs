@@ -1,8 +1,8 @@
-use alloc::{boxed::Box, vec, vec::Vec};
+use alloc::{boxed::Box, format, vec, vec::Vec};
 use mu_pi::fw_fs::ffs::{self, section};
 use patina_sdk::base::align_up;
 
-use core::{iter, mem, ptr};
+use core::{fmt, iter, mem, ptr};
 
 use crate::FirmwareFileSystemError;
 
@@ -43,7 +43,20 @@ enum SectionData {
     Both(Vec<u8>, Vec<Section>),
 }
 
-#[derive(Clone)]
+impl fmt::Debug for SectionData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::None => write!(f, "None"),
+            Self::Composed(arg0) => f.debug_tuple("Composed").field(&format!("{:#x} bytes", arg0.len())).finish(),
+            Self::Extracted(arg0) => f.debug_tuple("Extracted").field(arg0).finish(),
+            Self::Both(arg0, arg1) => {
+                f.debug_tuple("Both").field(&format!("{:#x} bytes", arg0.len())).field(arg1).finish()
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Section {
     meta: SectionMetaData,
     data: SectionData,
@@ -230,7 +243,12 @@ impl Section {
     pub fn extract(&mut self, extractor: &dyn SectionExtractor) -> Result<(), FirmwareFileSystemError> {
         let extracted_data = match self.data {
             SectionData::None | SectionData::Extracted(_) => return Ok(()), //nothing to do.
-            SectionData::Composed(_) | SectionData::Both(_, _) => extractor.extract(self)?,
+            SectionData::Composed(_) | SectionData::Both(_, _) => {
+                match extractor.extract(self) {
+                    Err(FirmwareFileSystemError::Unsupported) => Vec::new(), //unsupported section, so no subsections.
+                    result => result?,
+                }
+            }
         };
 
         let mut sections: Vec<Section> =
@@ -292,7 +310,6 @@ impl Section {
         }
     }
 }
-
 pub struct SectionIterator<'a> {
     data: &'a [u8],
     next_offset: usize,

@@ -21,7 +21,7 @@ pub mod volume;
 use patina_sdk::error::EfiError;
 use r_efi::efi;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FirmwareFileSystemError {
     InvalidHeader,
     InvalidBlockMap,
