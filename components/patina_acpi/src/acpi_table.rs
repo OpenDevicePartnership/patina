@@ -233,13 +233,13 @@ impl StandardAcpiTable for AcpiXsdt {
 
 /// Stores implementation-specific data about the XSDT.
 pub(crate) struct AcpiXsdtMetadata {
-    pub(crate) header: NonNull<AcpiTableHeader>,
     pub(crate) nentries: usize,
     pub(crate) max_capacity: usize,
     pub(crate) slice: Box<[u8], &'static dyn alloc::alloc::Allocator>,
 }
 
 impl AcpiXsdtMetadata {
+    // Get the 4-byte length (bytes 4..8 of the header).
     pub(crate) fn get_length(&self) -> Result<u32, AcpiError> {
         // XSDT always starts with header.
         let length_offset = mem::offset_of!(AcpiTableHeader, length);
@@ -251,12 +251,34 @@ impl AcpiXsdtMetadata {
             .ok_or(AcpiError::XsdtOverflow)
     }
 
+    // Set the 4-byte length (bytes 4..8 of the header).
     pub(crate) fn set_length(&mut self, new_len: u32) {
         // XSDT always starts with header.
         let length_offset = mem::offset_of!(AcpiTableHeader, length);
         // Write the new length into the correct offset in the header.
         self.slice[length_offset..length_offset + mem::size_of::<u32>()] // Length is a u32
             .copy_from_slice(&new_len.to_le_bytes());
+    }
+
+    /// Set the 6-byte OEM ID (bytes 10..16 of the header).
+    pub(crate) fn set_oem_id(&mut self, new_id: [u8; 6]) {
+        let offset = mem::offset_of!(AcpiTableHeader, oem_id);
+        let end = offset + mem::size_of::<[u8; 6]>();
+        self.slice[offset..end].copy_from_slice(&new_id);
+    }
+
+    /// Set the 8-byte OEM Table ID (bytes 16..24 of the header).
+    pub(crate) fn set_oem_table_id(&mut self, new_table_id: [u8; 8]) {
+        let offset = mem::offset_of!(AcpiTableHeader, oem_table_id);
+        let end = offset + mem::size_of::<[u8; 8]>();
+        self.slice[offset..end].copy_from_slice(&new_table_id);
+    }
+
+    /// Set the 4-byte OEM Revision (bytes 24..28 of the header).
+    pub(crate) fn set_oem_revision(&mut self, new_rev: u32) {
+        let offset = mem::offset_of!(AcpiTableHeader, oem_revision);
+        let end = offset + mem::size_of::<u32>();
+        self.slice[offset..end].copy_from_slice(&new_rev.to_le_bytes());
     }
 }
 

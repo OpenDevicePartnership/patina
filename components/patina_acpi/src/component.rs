@@ -2,7 +2,6 @@ use crate::acpi_table::{AcpiTableHeader, AcpiXsdtMetadata, StandardAcpiTable};
 use crate::alloc::boxed::Box;
 
 use core::mem;
-use core::ptr::NonNull;
 
 use alloc::vec::Vec;
 use patina_sdk::boot_services::{BootServices, StandardBootServices};
@@ -79,13 +78,13 @@ impl AcpiProviderManager {
         };
         // Fill in XSDT data.
         xsdt_allocated_bytes.extend_from_slice(xsdt_info.as_bytes());
+        // Fill in trailing space with zeros so it is accessible (Vec length != Vec capacity).
+        xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(xsdt_capacity - ACPI_HEADER_LEN));
 
         // Get pointer to the XSDT in memory for RSDP and metadata.
         let xsdt_ptr = xsdt_allocated_bytes.as_mut_ptr();
         let xsdt_addr = xsdt_ptr as u64;
-        let xsdt_header = NonNull::new(xsdt_ptr as *mut AcpiTableHeader).ok_or(EfiError::OutOfResources)?; // Return error if XSDT allocation fails.
         let xsdt_metadata = AcpiXsdtMetadata {
-            header: xsdt_header,
             nentries: 0,
             max_capacity: MAX_INITIAL_ENTRIES,
             slice: xsdt_allocated_bytes.into_boxed_slice(),
