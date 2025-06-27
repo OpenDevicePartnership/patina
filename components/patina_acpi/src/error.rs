@@ -53,9 +53,9 @@ pub enum AcpiError {
     XsdtOverflow,
 }
 
-impl Into<efi::Status> for AcpiError {
-    fn into(self) -> efi::Status {
-        match self {
+impl From<AcpiError> for efi::Status {
+    fn from(err: AcpiError) -> Self {
+        match err {
             AcpiError::AllocationFailed => efi::Status::OUT_OF_RESOURCES,
             AcpiError::FacsUefiNot64BAligned => efi::Status::UNSUPPORTED,
             AcpiError::InvalidSignature => efi::Status::INVALID_PARAMETER,

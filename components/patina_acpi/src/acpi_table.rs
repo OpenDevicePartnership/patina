@@ -29,7 +29,7 @@ pub trait StandardAcpiTable: Any + Downcast {
     }
 
     /// Return the entire table as a mutable &[u8], based on the header.length.
-    fn as_bytes_mut(&self) -> &mut [u8] {
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
         let header = self.header();
         let length = header.length as usize;
         let ptr = header as *const AcpiTableHeader as *mut u8;

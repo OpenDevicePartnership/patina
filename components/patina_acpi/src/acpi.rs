@@ -113,10 +113,9 @@ where
     /// Creates a new `StandardAcpiProvider` with uninitialized fields.
     /// Attempting to use `StandardAcpiProvider` before initialization will cause a panic.
     pub const fn new_uninit() -> Self {
-        let system_tables = SystemTables::new();
         Self {
             should_reclaim_memory: AtomicBool::new(false),
-            system_tables: system_tables,
+            system_tables: SystemTables::new(),
             acpi_tables: RwLock::new(vec![]),
             next_table_key: AtomicUsize::new(1),
             notify_list: RwLock::new(vec![]),
@@ -364,7 +363,7 @@ where
             let entry_addr = Self::get_xsdt_entry(i, xsdt_ptr as *const u8, xsdt_length as usize)?;
 
             // Each entry points to a table
-            let table_from_addr = RawAcpiTable::new_from_address(entry_addr)?;
+            let mut table_from_addr = RawAcpiTable::new_from_address(entry_addr)?;
             // Because we are installing from raw pointers, information about the type of the table cannot be extracted.
             self.install_acpi_table_in_memory(&table_from_addr, TypeId::of::<RawAcpiTable>())?;
 
@@ -392,7 +391,7 @@ where
             memory_type = EfiMemoryType::ACPIMemoryNVS;
         }
 
-        return memory_type;
+        memory_type
     }
 
     /// Allocates memory for the FADT and adds it  to the list of installed tables
@@ -473,7 +472,7 @@ where
             .ok_or(AcpiError::ProviderNotInitialized)?
             .get_allocator(self.allocation_memory_type(signature::FACS))
             .map_err(|_e| AcpiError::AllocationFailed)?;
-        let dsdt_allocated = Box::new_in(*dsdt_info, allocator);
+        let mut dsdt_allocated = Box::new_in(*dsdt_info, allocator);
 
         // Checksum the newly allocated DSDT
         Self::acpi_table_update_checksum(dsdt_allocated.as_bytes_mut(), ACPI_CHECKSUM_OFFSET);
@@ -507,7 +506,7 @@ where
             .ok_or(AcpiError::ProviderNotInitialized)?
             .get_allocator(self.allocation_memory_type(signature::FACS))
             .map_err(|_e| AcpiError::AllocationFailed)?;
-        let mut table_allocated_bytes = Vec::with_capacity_in(table_len as usize, allocator);
+        let mut table_allocated_bytes = Vec::with_capacity_in(table_len, allocator);
         table_allocated_bytes.extend_from_slice(table_info.as_bytes());
         let mut raw_table = table_allocated_bytes.into_boxed_slice();
 
@@ -964,7 +963,7 @@ mod tests {
         // Create dummy data for FACS and FADT.
         let facs_info = AcpiFacs { signature: signature::FACS, length: 64, ..Default::default() };
         let fadt_header = AcpiTableHeader { signature: signature::FACP, length: 244, ..Default::default() };
-        let fadt_info = AcpiFadt { header: fadt_header, inner: FadtData::default(), ..Default::default() };
+        let fadt_info = AcpiFadt { header: fadt_header, ..Default::default() };
         // Store the dummy FADT so it seems like it's been "installed" since the FACS is only accessible through the FADT.
         let allocator = provider.memory_manager.get().unwrap().get_allocator(EfiMemoryType::BootServicesData).unwrap();
         let fadt_allocated = Box::new_in(fadt_info, allocator);

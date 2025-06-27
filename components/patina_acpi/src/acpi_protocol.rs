@@ -193,7 +193,7 @@ impl AcpiSdtProtocol {
                 unsafe { *table = sdt_ptr };
                 efi::Status::SUCCESS
             }
-            Err(e) => return e.into(),
+            Err(e) => e.into(),
         }
     }
 
