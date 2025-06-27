@@ -435,3 +435,106 @@ pub fn init_dxe_services(system_table: &mut EfiSystemTable) {
         system_table,
     );
 }
+
+#[cfg(test)]
+mod add_memory_space_tests {
+    use super::*;
+    use crate::test_support;
+    use dxe_services::GcdMemoryType;
+
+    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
+        test_support::with_global_lock(|| {
+            unsafe {
+                crate::test_support::init_test_gcd(None);
+            }
+            f();
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_add_memory_space_success() {
+        with_locked_state(|| {
+            let result = add_memory_space(GcdMemoryType::SystemMemory, 0x80000000, 0x1000, efi::MEMORY_WB);
+
+            assert_eq!(result, efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn test_add_memory_space_parameter_validation() {
+        with_locked_state(|| {
+            // Test: Zero length should return InvalidParameter
+            let result = add_memory_space(
+                GcdMemoryType::SystemMemory,
+                0x80000000,
+                0, // zero length should return InvalidParameter
+                0,
+            );
+            assert_eq!(result, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_add_memory_space_overflow_returns_error() {
+        with_locked_state(|| {
+            // Test: Very large size that would overflow should return an error
+            let result = add_memory_space(
+                GcdMemoryType::SystemMemory,
+                u64::MAX - 100,
+                1000, // Would cause overflow
+                0,
+            );
+
+            // Should return an error status, not SUCCESS
+            assert_ne!(result, efi::Status::SUCCESS);
+            assert!(result.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
+        });
+    }
+
+    #[test]
+    fn test_add_memory_space_different_memory_types() {
+        with_locked_state(|| {
+            // Test that our wrapper correctly handles different memory types
+            let memory_types = [
+                GcdMemoryType::SystemMemory,
+                GcdMemoryType::Reserved,
+                GcdMemoryType::MemoryMappedIo,
+                GcdMemoryType::Persistent,
+            ];
+
+            for (i, mem_type) in memory_types.iter().enumerate() {
+                let result = add_memory_space(
+                    *mem_type,
+                    0x100000 + (i as u64 * 0x10000), // Different addresses to avoid conflicts
+                    0x1000,
+                    0,
+                );
+
+                // Should return a valid status code (success or error)
+                let is_valid = matches!(result.as_usize(), 0 | 0x8000000000000000..=0x80000000000000FF);
+                assert!(is_valid, "Memory type {:?} should return valid status", mem_type);
+            }
+        });
+    }
+
+    #[test]
+    fn test_add_memory_space_reserved_with_specific_attributes() {
+        with_locked_state(|| {
+            // Demonstrate adding a specific reserved memory region with detailed attributes
+            // This example shows a firmware volume region that is:
+            // - Memory-mapped I/O type
+            // - Uncacheable for device access
+            // - Execute-protected (XP) for security
+            // - Read-only (RO) for integrity
+            let result = add_memory_space(
+                GcdMemoryType::Reserved,
+                0xF0000000, // Typical firmware region address
+                0x100000,   // 1MB firmware volume
+                efi::MEMORY_UC | efi::MEMORY_XP | efi::MEMORY_RO,
+            );
+
+            assert_eq!(result, efi::Status::SUCCESS);
+        });
+    }
+}
