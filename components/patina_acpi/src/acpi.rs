@@ -649,7 +649,7 @@ where
     }
 
     /// Deletes a table from the list of installed tables and frees its memory.
-    fn delete_table(&self, physical_addr: usize, signature: u32, table_length: usize) -> Result<(), AcpiError> {
+    fn delete_table(&self, physical_addr: usize, signature: u32) -> Result<(), AcpiError> {
         match signature {
             signature::FACP => {
                 let mut write_guard = self.system_tables.fadt.write();
@@ -679,21 +679,6 @@ where
                 self.remove_table_from_xsdt(physical_addr as u64)?;
             }
         }
-
-        self.free_table_memory(table_length, physical_addr)?;
-        Ok(())
-    }
-
-    /// Frees memory for a table when it is uninstalled.
-    fn free_table_memory(&self, table_length: usize, physical_addr: usize) -> Result<(), AcpiError> {
-        // SAFETY: the caller must ensure `table` points to a valid table previously allocated by the same memory manager
-        unsafe {
-            self.memory_manager
-                .get()
-                .ok_or(AcpiError::ProviderNotInitialized)?
-                .free_pages(physical_addr, uefi_size_to_pages!(table_length))
-                .map_err(|_e| AcpiError::FreeFailed)?
-        };
 
         Ok(())
     }
