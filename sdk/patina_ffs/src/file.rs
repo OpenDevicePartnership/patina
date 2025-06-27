@@ -9,13 +9,14 @@ use crate::{
 };
 
 use alloc::{vec, vec::Vec};
-use core::{mem, ptr};
+use core::{mem, ptr, slice::from_raw_parts};
 use r_efi::efi;
 
 #[derive(Clone)]
 pub struct FileRef<'a> {
     data: &'a [u8],
     header: file::Header,
+    erase_polarity: bool,
     size: usize,
     content_offset: usize,
 }
@@ -59,14 +60,17 @@ impl<'a> FileRef<'a> {
         // available here unless the constructor API is modified to specify it. So it is inferred based on the state of
         // the reserved bits in the EFI_FFS_FILE_STATE which spec requires to be set to EFI_FVB_ERASE_POLARITY.
         // This implementation does not support FV modification, so the only valid state is EFI_FILE_DATA_VALID.
+        let erase_polarity;
         if (header.state & 0x80) == 0 {
             //erase polarity = 0. Verify DATA_VALID is set, and no higher-order bits are set.
+            erase_polarity = false;
             if header.state & 0xFC != file::raw::state::DATA_VALID {
                 //file is not in EFI_FILE_DATA_VALID state.
                 Err(FirmwareFileSystemError::InvalidState)?;
             }
         } else {
             //erase polarity = 1. Verify DATA_VALID is clear, and no higher-order bits are clear.
+            erase_polarity = true;
             if (!header.state) & 0xFC != file::raw::state::DATA_VALID {
                 //file is not in EFI_FILE_DATA_VALID state.
                 Err(FirmwareFileSystemError::InvalidState)?;
@@ -92,7 +96,7 @@ impl<'a> FileRef<'a> {
                 Err(FirmwareFileSystemError::DataCorrupt)?;
             }
         }
-        Ok(Self { data: &buffer[..size], header, size, content_offset })
+        Ok(Self { data: &buffer[..size], header, erase_polarity, size, content_offset })
     }
 
     pub fn size(&self) -> usize {
@@ -113,6 +117,10 @@ impl<'a> FileRef<'a> {
 
     pub fn data(&self) -> &[u8] {
         self.data
+    }
+
+    pub fn erase_polarity(&self) -> bool {
+        self.erase_polarity
     }
 
     pub fn fv_attributes(&self) -> fv::file::EfiFvFileAttributes {
@@ -163,5 +171,116 @@ impl<'a> FileRef<'a> {
             })
             .collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
         Ok(sections.iter().flat_map(|x| x.sections().cloned().collect::<Vec<_>>()).collect())
+    }
+}
+
+pub struct File {
+    name: efi::Guid,
+    file_type_raw: u8,
+    attributes: u8,
+    erase_polarity: bool,
+    pub sections: Vec<Section>,
+}
+
+impl File {
+    pub fn new(name: efi::Guid, file_type_raw: u8, attributes: u8, erase_polarity: bool) -> Self {
+        Self { name, file_type_raw, attributes, erase_polarity, sections: Vec::new() }
+    }
+
+    pub fn serialize(&self) -> Result<Vec<u8>, FirmwareFileSystemError> {
+        let mut content = Vec::new();
+        for section in &self.sections {
+            content.extend_from_slice(section.try_as_slice()?);
+        }
+
+        let mut header = {
+            if ((self.attributes & attributes::raw::LARGE_FILE) != 0)
+                || content.len() > 0xffffff - mem::size_of::<ffs::file::Header>()
+            {
+                let mut file_header = ffs::file::Header2 {
+                    header: ffs::file::Header {
+                        name: self.name,
+                        integrity_check_header: 0,
+                        integrity_check_file: 0,
+                        file_type: self.file_type_raw,
+                        attributes: self.attributes | attributes::raw::LARGE_FILE,
+                        size: [0u8; 3],
+                        state: 0,
+                    },
+                    extended_size: 0,
+                };
+                file_header.extended_size = (mem::size_of_val(&file_header) + content.len()) as u64;
+
+                // calculate checksum (excludes state and integrity_check_file, set to zero)
+                // safety: file_header is repr(C), safe to represent as byte slice for checksum
+                let header_slice =
+                    unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
+                let sum = header_slice.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
+                file_header.header.integrity_check_header = 0u8.wrapping_sub(sum);
+
+                // calculate file data check
+                let sum = content.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
+                file_header.header.integrity_check_header = 0u8.wrapping_sub(sum);
+
+                file_header.header.state =
+                    ffs::file::raw::state::HEADER_CONSTRUCTION | ffs::file::raw::state::HEADER_VALID;
+                if self.erase_polarity {
+                    file_header.header.state = !file_header.header.state;
+                }
+
+                let header_slice =
+                    unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
+                header_slice.to_vec()
+            } else {
+                let mut file_header = ffs::file::Header {
+                    name: self.name,
+                    integrity_check_header: 0,
+                    integrity_check_file: 0,
+                    file_type: self.file_type_raw,
+                    attributes: self.attributes,
+                    size: [0u8; 3],
+                    state: 0,
+                };
+                let size = mem::size_of_val(&file_header) + content.len();
+                file_header.size.copy_from_slice(&size.to_le_bytes()[0..3]);
+
+                // calculate checksum (excludes state and integrity_check_file, set to zero)
+                // safety: file_header is repr(C), safe to represent as byte slice for checksum
+                let header_slice =
+                    unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
+                let sum = header_slice.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
+                file_header.integrity_check_header = 0u8.wrapping_sub(sum);
+
+                // calculate file data check
+                let sum = content.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
+                file_header.integrity_check_header = 0u8.wrapping_sub(sum);
+
+                file_header.state = ffs::file::raw::state::HEADER_CONSTRUCTION | ffs::file::raw::state::HEADER_VALID;
+                if self.erase_polarity {
+                    file_header.state = !file_header.state;
+                }
+
+                let header_slice =
+                    unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
+                header_slice.to_vec()
+            }
+        };
+
+        header.extend(content);
+        Ok(header)
+    }
+}
+
+impl TryFrom<FileRef<'_>> for File {
+    type Error = FirmwareFileSystemError;
+
+    fn try_from(src: FileRef<'_>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            name: src.name(),
+            file_type_raw: src.file_type_raw(),
+            attributes: src.attributes_raw(),
+            erase_polarity: src.erase_polarity(),
+            sections: src.sections()?,
+        })
     }
 }
