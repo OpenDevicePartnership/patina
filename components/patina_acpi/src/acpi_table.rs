@@ -325,19 +325,20 @@ pub struct AcpiTableHeader {
 }
 
 /// Represents an ACPI table installed in memory, including a header and any trailing bytes.
-/// Here, the trailing bytes are copied to the heap and owned by the struct.
 #[derive(Clone, Debug)]
 pub struct MemoryAcpiTable {
     /// Standard ACPI header.
     pub header: NonNull<AcpiTableHeader>,
-
-    /* The following fields are not present in the ACPI specification, but are included for implementation convenience. */
     /// Type ID of the table, used to identify the specific type of ACPI table.
     pub type_id: TypeId,
     /// Unique key assigned to ACPI table upon installation. Zero if the table does not have an associated key.
     pub table_key: TableKey,
     /// Physical address of the table in memory. None if the table is not yet installed in ACPI firmware memory.
     pub physical_address: Option<usize>,
+    /// The table as a byte slice.
+    /// Implicitly keeps the table alive until deallocation.
+    /// If this field does is None, we only have a raw pointer to the table and not a owned (boxed) slice.
+    pub table_buf: Option<Box<[u8], &'static dyn alloc::alloc::Allocator>>,
 }
 
 impl MemoryAcpiTable {
@@ -350,58 +351,132 @@ impl MemoryAcpiTable {
             type_id: TypeId::of::<MemoryAcpiTable>(),
             table_key: 0,
             physical_address: None,
+            table_buf: None,
+        })
+    }
+
+    // Creates a new ACPI table from a Box.
+    /// Since the type is abstracted by the raw pointer, the `type_id` field will not be valid.
+    pub fn new_from_boxed(
+        mut allocated_table: Box<[u8], &'static dyn alloc::alloc::Allocator>,
+    ) -> Result<Self, AcpiError> {
+        let allocated_header = allocated_table.as_mut_ptr() as *mut AcpiTableHeader;
+        let nonnull_header = NonNull::new(allocated_header).ok_or(AcpiError::NullTablePtr)?;
+        Ok(MemoryAcpiTable {
+            header: nonnull_header,
+            type_id: TypeId::of::<MemoryAcpiTable>(),
+            table_key: 0,
+            physical_address: None,
+            table_buf: Some(allocated_table),
         })
     }
 }
 
-/// Implementations to access the fields of the ACPI table header.
-/// SAFETY: Pointer has been checked as non-null and can only be a AcpiTable
+/// Implementations for retrieving header fields from slice.
 impl MemoryAcpiTable {
-    /// Revision number of the table.
-    pub fn revision(&self) -> u8 {
-        unsafe { self.header.as_ref() }.revision
-    }
-
-    /// Header checksum (all bytes in the table must sum to zero).
-    pub fn checksum(&self) -> u8 {
-        unsafe { self.header.as_ref() }.checksum
-    }
-
-    /// OEM ID (6 ASCII characters, not null-terminated).
-    pub fn oem_id(&self) -> [u8; 6] {
-        unsafe { self.header.as_ref() }.oem_id
-    }
-
-    /// OEM Table ID (8 ASCII characters, not null-terminated).
-    pub fn oem_table_id(&self) -> [u8; 8] {
-        unsafe { self.header.as_ref() }.oem_table_id
-    }
-
-    /// OEM revision number.
-    pub fn oem_revision(&self) -> u32 {
-        unsafe { self.header.as_ref() }.oem_revision
-    }
-
-    /// Creator ID (often the compiler/vendor signature).
-    pub fn creator_id(&self) -> u32 {
-        unsafe { self.header.as_ref() }.creator_id
-    }
-
-    /// Creator revision number.
-    pub fn creator_revision(&self) -> u32 {
-        unsafe { self.header.as_ref() }.creator_revision
-    }
-
-    /// Total table length, including header and any trailing fields.
-    pub fn length(&self) -> u32 {
-        unsafe { self.header.as_ref() }.length
-    }
-
-    /// Table signature, which defines what type of table it is.
     pub fn signature(&self) -> u32 {
-        unsafe { self.header.as_ref() }.signature
+        if let Some(ref buf) = self.table_buf {
+            let off = mem::offset_of!(AcpiTableHeader, signature);
+            let end = off + size_of::<u32>();
+            let bytes: [u8; 4] = buf[off..end].try_into().unwrap();
+            u32::from_le_bytes(bytes)
+        } else {
+            unsafe { self.header.as_ref() }.signature
+        }
     }
 
+    /// Total table length (header + body)
+    pub fn length(&self) -> u32 {
+        if let Some(ref buf) = self.table_buf {
+            let off = mem::offset_of!(AcpiTableHeader, length);
+            let end = off + size_of::<u32>();
+            let bytes: [u8; 4] = buf[off..end].try_into().unwrap();
+            u32::from_le_bytes(bytes)
+        } else {
+            unsafe { self.header.as_ref() }.length
+        }
+    }
+
+    /// Revision byte of this table’s format
+    pub fn revision(&self) -> u8 {
+        if let Some(ref buf) = self.table_buf {
+            let off = mem::offset_of!(AcpiTableHeader, revision);
+            buf[off]
+        } else {
+            unsafe { self.header.as_ref() }.revision
+        }
+    }
+
+    /// Checksum byte (sum over entire table == 0)
+    pub fn checksum(&self) -> u8 {
+        if let Some(ref buf) = self.table_buf {
+            let off = mem::offset_of!(AcpiTableHeader, checksum);
+            buf[off]
+        } else {
+            unsafe { self.header.as_ref() }.checksum
+        }
+    }
+
+    /// OEM ID (6 ASCII chars)
+    pub fn oem_id(&self) -> [u8; 6] {
+        if let Some(ref buf) = self.table_buf {
+            let off = mem::offset_of!(AcpiTableHeader, oem_id);
+            let end = off + size_of::<[u8; 6]>();
+            buf[off..end].try_into().unwrap()
+        } else {
+            unsafe { self.header.as_ref() }.oem_id
+        }
+    }
+
+    /// OEM Table ID (8 ASCII chars)
+    pub fn oem_table_id(&self) -> [u8; 8] {
+        if let Some(ref buf) = self.table_buf {
+            let off = mem::offset_of!(AcpiTableHeader, oem_table_id);
+            let end = off + size_of::<[u8; 8]>();
+            buf[off..end].try_into().unwrap()
+        } else {
+            unsafe { self.header.as_ref() }.oem_table_id
+        }
+    }
+
+    /// OEM Revision (vendor‐specific version)
+    pub fn oem_revision(&self) -> u32 {
+        if let Some(ref buf) = self.table_buf {
+            let off = mem::offset_of!(AcpiTableHeader, oem_revision);
+            let end = off + size_of::<u32>();
+            let bytes: [u8; 4] = buf[off..end].try_into().unwrap();
+            u32::from_le_bytes(bytes)
+        } else {
+            unsafe { self.header.as_ref() }.oem_revision
+        }
+    }
+
+    /// Creator ID (tool/build identifier)
+    pub fn creator_id(&self) -> u32 {
+        if let Some(ref buf) = self.table_buf {
+            let off = mem::offset_of!(AcpiTableHeader, creator_id);
+            let end = off + size_of::<u32>();
+            let bytes: [u8; 4] = buf[off..end].try_into().unwrap();
+            u32::from_le_bytes(bytes)
+        } else {
+            unsafe { self.header.as_ref() }.creator_id
+        }
+    }
+
+    /// Creator Revision (tool/build version)
+    pub fn creator_revision(&self) -> u32 {
+        if let Some(ref buf) = self.table_buf {
+            let off = mem::offset_of!(AcpiTableHeader, creator_revision);
+            let end = off + size_of::<u32>();
+            let bytes: [u8; 4] = buf[off..end].try_into().unwrap();
+            u32::from_le_bytes(bytes)
+        } else {
+            unsafe { self.header.as_ref() }.creator_revision
+        }
+    }
+}
+
+impl MemoryAcpiTable {
     /// Retrieves the header mutably.
     pub fn header_mut(&mut self) -> &mut AcpiTableHeader {
         unsafe { self.header.as_mut() }

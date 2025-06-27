@@ -291,7 +291,7 @@ where
         Ok(entry_addr)
     }
 
-    /// Extracts the XSDT address after performing validation on the RSDP and XSDT
+    /// Extracts the XSDT address after performing validation on the RSDP and XSDT.
     fn get_xsdt_address_from_rsdp(rsdp_address: u64) -> Result<u64, AcpiError> {
         if rsdp_address == 0 {
             return Err(AcpiError::NullRsdpFromHob);
@@ -342,7 +342,7 @@ where
             // The DSDT has a standard ACPI header. Interpret the first 36 bytes as a header.
             // SAFETY: The DSDT has been checked to be non-null.
             let dsdt_table = unsafe { &*(fadt.x_dsdt() as *mut AcpiDsdt) };
-            self.install_acpi_table_in_memory(dsdt_table, TypeId::of::<AcpiDsdt>())?;
+            self.add_dsdt_to_list(dsdt_table)?;
         }
 
         Ok(())
@@ -513,7 +513,6 @@ where
         Self::acpi_table_update_checksum(&mut raw_table, ACPI_CHECKSUM_OFFSET);
 
         // Store the header. The header is always the first field of any standard ACPI table.
-        let allocated_header = raw_table.as_mut_ptr() as *mut AcpiTableHeader;
         let physical_addr = raw_table.as_ptr() as usize;
 
         // Keys must be unique - here we use monotonically increasing.
@@ -521,7 +520,7 @@ where
         self.next_table_key.store(next_table_key + 1, Ordering::Release);
 
         // Add the table to the list of installed tables.
-        let mut installed_table = MemoryAcpiTable::new_from_ptr(allocated_header)?;
+        let mut installed_table = MemoryAcpiTable::new_from_boxed(raw_table)?;
         installed_table.table_key = next_table_key;
         installed_table.physical_address = Some(physical_addr);
         installed_table.type_id = type_id;
@@ -886,6 +885,7 @@ mod tests {
             type_id: TypeId::of::<u32>(),
             table_key: 123,
             physical_address: Some(123),
+            table_buf: None,
         };
         let mut header2 = AcpiTableHeader { signature: 0x2, length: 20, ..Default::default() };
         let header2_ptr = NonNull::new(&mut header2 as *mut AcpiTableHeader).unwrap();
@@ -894,6 +894,7 @@ mod tests {
             type_id: TypeId::of::<u32>(),
             table_key: 123,
             physical_address: Some(123),
+            table_buf: None,
         };
         {
             let mut vec = provider.acpi_tables.write();
