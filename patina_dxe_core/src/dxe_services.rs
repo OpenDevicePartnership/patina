@@ -746,3 +746,213 @@ mod add_memory_space_tests {
         });
     }
 }
+
+#[cfg(test)]
+mod free_memory_space_tests {
+    use super::*;
+    use crate::test_support;
+    use dxe_services::GcdMemoryType;
+
+    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
+        test_support::with_global_lock(|| {
+            unsafe {
+                crate::test_support::init_test_gcd(None);
+            }
+            f();
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_free_memory_space_success() {
+        with_locked_state(|| {
+            // First add memory space
+            let base = 0x200000;
+            let length = 0x10000;
+            let _ = add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB);
+
+            // Then allocate some memory
+            let mut allocated_address: efi::PhysicalAddress = 0;
+            let allocate_result = allocate_memory_space(
+                dxe_services::GcdAllocateType::AnySearchBottomUp,
+                GcdMemoryType::SystemMemory,
+                12,     // 4KB alignment
+                0x1000, // 4KB length
+                &mut allocated_address,
+                1 as _,
+                core::ptr::null_mut(),
+            );
+
+            // If allocation succeeded, test freeing
+            if allocate_result == efi::Status::SUCCESS {
+                let free_result = free_memory_space(allocated_address, 0x1000);
+                assert_eq!(free_result, efi::Status::SUCCESS, "Should successfully free allocated memory");
+            }
+        });
+    }
+
+    #[test]
+    fn test_free_memory_space_zero_length() {
+        with_locked_state(|| {
+            let result = free_memory_space(0x100000, 0);
+            // Zero length should return an error
+            assert_ne!(result, efi::Status::SUCCESS, "Zero length should fail");
+            assert!(result.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
+        });
+    }
+
+    #[test]
+    fn test_free_memory_space_unallocated_memory() {
+        with_locked_state(|| {
+            // Try to free memory that was never allocated
+            let result = free_memory_space(0x300000, 0x1000);
+            // Should return an error since this memory was never allocated
+            assert_ne!(result, efi::Status::SUCCESS, "Freeing unallocated memory should fail");
+            assert!(result.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
+        });
+    }
+
+    #[test]
+    fn test_free_memory_space_invalid_address() {
+        with_locked_state(|| {
+            // Try to free memory at an invalid/unmanaged address
+            let result = free_memory_space(0, 0x1000);
+            // Should return an error for invalid address
+            assert_ne!(result, efi::Status::SUCCESS, "Freeing at address 0 should fail");
+            assert!(result.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
+        });
+    }
+
+    #[test]
+    fn test_free_memory_space_double_free() {
+        with_locked_state(|| {
+            // Add memory space
+            let base = 0x400000;
+            let length = 0x10000;
+            let _ = add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB);
+
+            // Allocate memory
+            let mut allocated_address: efi::PhysicalAddress = 0;
+            let allocate_result = allocate_memory_space(
+                dxe_services::GcdAllocateType::AnySearchBottomUp,
+                GcdMemoryType::SystemMemory,
+                12,     // 4KB alignment
+                0x1000, // 4KB length
+                &mut allocated_address,
+                1 as _,
+                core::ptr::null_mut(),
+            );
+
+            if allocate_result == efi::Status::SUCCESS {
+                // Free once - should succeed
+                let first_free = free_memory_space(allocated_address, 0x1000);
+                assert_eq!(first_free, efi::Status::SUCCESS, "First free should succeed");
+
+                // Try to free again - should fail
+                let second_free = free_memory_space(allocated_address, 0x1000);
+                assert_ne!(second_free, efi::Status::SUCCESS, "Double free should fail");
+                assert!(second_free.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
+            }
+        });
+    }
+
+    #[test]
+    fn test_free_memory_space_partial_overlap() {
+        with_locked_state(|| {
+            // Add memory space
+            let base = 0x500000;
+            let length = 0x10000;
+            let _ = add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB);
+
+            // Allocate memory
+            let mut allocated_address: efi::PhysicalAddress = 0;
+            let allocate_result = allocate_memory_space(
+                dxe_services::GcdAllocateType::AnySearchBottomUp,
+                GcdMemoryType::SystemMemory,
+                12,     // 4KB alignment
+                0x2000, // 8KB length
+                &mut allocated_address,
+                1 as _,
+                core::ptr::null_mut(),
+            );
+
+            if allocate_result == efi::Status::SUCCESS {
+                let partial_free = free_memory_space(allocated_address, 0x1000); // Only 4KB instead of 8KB
+                assert_eq!(partial_free, efi::Status::SUCCESS);
+            }
+        });
+    }
+
+    #[test]
+    fn test_free_memory_space_wrong_length() {
+        with_locked_state(|| {
+            // Add memory space
+            let base = 0x600000;
+            let length = 0x10000;
+            let _ = add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB);
+
+            // Allocate memory
+            let mut allocated_address: efi::PhysicalAddress = 0;
+            let allocate_result = allocate_memory_space(
+                dxe_services::GcdAllocateType::AnySearchBottomUp,
+                GcdMemoryType::SystemMemory,
+                12,     // 4KB alignment
+                0x1000, // 4KB length
+                &mut allocated_address,
+                1 as _,
+                core::ptr::null_mut(),
+            );
+
+            if allocate_result == efi::Status::SUCCESS {
+                // Try to free with wrong length
+                let wrong_length_free = free_memory_space(allocated_address, 0x2000); // 8KB instead of 4KB
+                assert_ne!(wrong_length_free, efi::Status::SUCCESS);
+                assert!(wrong_length_free.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
+            }
+        });
+    }
+
+    #[test]
+    fn test_free_memory_space_large_values() {
+        with_locked_state(|| {
+            // Test with large but not overflow-causing values
+            // Use a high address but leave room to avoid overflow
+            let large_base = 0x7FFFFFFF00000000u64; // Large but safe value
+            let length = 0x1000u64; // 4KB length
+
+            let result = free_memory_space(large_base, length);
+            // Should return an error for invalid large values (not allocated)
+            assert_ne!(result, efi::Status::SUCCESS, "Large unallocated values should fail");
+            assert!(result.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
+        });
+    }
+
+    #[test]
+    fn test_free_memory_space_allocate_free_cycle() {
+        with_locked_state(|| {
+            // Add memory space
+            let base = 0x700000;
+            let length = 0x10000;
+            let _ = add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB);
+
+            // Test multiple allocate/free cycles
+            for i in 0..3 {
+                let mut allocated_address: efi::PhysicalAddress = 0;
+                let allocate_result = allocate_memory_space(
+                    dxe_services::GcdAllocateType::AnySearchBottomUp,
+                    GcdMemoryType::SystemMemory,
+                    12,     // 4KB alignment
+                    0x1000, // 4KB length
+                    &mut allocated_address,
+                    1 as _,
+                    core::ptr::null_mut(),
+                );
+
+                if allocate_result == efi::Status::SUCCESS {
+                    let free_result = free_memory_space(allocated_address, 0x1000);
+                    assert_eq!(free_result, efi::Status::SUCCESS, "Cycle {} free should succeed", i);
+                }
+            }
+        });
+    }
+}
