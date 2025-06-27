@@ -22,7 +22,6 @@ use patina_sdk::{
         service::{memory::MemoryManager, IntoService, Service},
     },
     efi_types::EfiMemoryType,
-    uefi_size_to_pages,
 };
 
 use spin::rwlock::RwLock;
@@ -631,7 +630,7 @@ where
 
         if let Some(table_to_delete) = table_for_key {
             if let Some(physical_addr) = table_to_delete.physical_address {
-                self.delete_table(physical_addr, table_to_delete.signature(), table_to_delete.length() as usize)?;
+                self.delete_table(physical_addr, table_to_delete.signature())?;
             } else {
                 // Cannot delete a table that was never installed
                 return Err(AcpiError::TableNotPresentInMemory);
@@ -1167,7 +1166,7 @@ mod tests {
             *write_guard = Some(fadt_allocated);
         }
 
-        let result = provider.delete_table(dsdt_addr as usize, signature::DSDT, size_of::<AcpiDsdt>());
+        let result = provider.delete_table(dsdt_addr as usize, signature::DSDT);
         assert!(result.is_ok());
 
         // Should have cleared DSDT pointer
