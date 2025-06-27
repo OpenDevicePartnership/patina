@@ -11,7 +11,7 @@
 //! To initialize the `AcpiProviderManager`, the configuration should be customized with the correct platform values (`oem_id`, etc).
 //! In the platform start routine, provide these configuration values and initialize a new `AcpiProviderManager` instance.
 //!
-//! ```
+//! ```rust,ignore
 //!  Core::default()
 //!         ...
 //!         .with_config(AcpiProviderInit {
