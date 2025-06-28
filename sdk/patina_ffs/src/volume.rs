@@ -11,6 +11,7 @@ use mu_pi::fw_fs::{
 
 use crate::{
     file::{File, FileRef},
+    section::SectionExtractor,
     FirmwareFileSystemError,
 };
 
@@ -347,6 +348,30 @@ impl TryFrom<VolumeRef<'_>> for Volume {
                 Err(err) => Err(err),
             })
             .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            file_system_guid: src.file_system_guid(),
+            attributes: src.attributes(),
+            ext_header: src.ext_header(),
+            revision: src.revision(),
+            block_map: src.block_map().clone(),
+            files,
+        })
+    }
+}
+
+impl TryFrom<(VolumeRef<'_>, &dyn SectionExtractor)> for Volume {
+    type Error = FirmwareFileSystemError;
+
+    fn try_from(src: (VolumeRef<'_>, &dyn SectionExtractor)) -> Result<Self, Self::Error> {
+        let (src, extractor) = src;
+        let files = src
+            .files()
+            .map(|x| match x {
+                Ok(file_ref) => (file_ref, extractor).try_into(),
+                Err(err) => Err(err),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(Self {
             file_system_guid: src.file_system_guid(),
             attributes: src.attributes(),

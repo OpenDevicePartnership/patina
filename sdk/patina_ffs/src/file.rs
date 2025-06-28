@@ -299,3 +299,22 @@ impl TryFrom<FileRef<'_>> for File {
         })
     }
 }
+
+impl TryFrom<(FileRef<'_>, &dyn SectionExtractor)> for File {
+    type Error = FirmwareFileSystemError;
+
+    fn try_from(src: (FileRef<'_>, &dyn SectionExtractor)) -> Result<Self, Self::Error> {
+        let (src, extractor) = src;
+        let mut sections = src.sections()?;
+        for section in sections.iter_mut() {
+            section.extract(extractor)?
+        }
+        Ok(Self {
+            name: src.name(),
+            file_type_raw: src.file_type_raw(),
+            attributes: src.attributes_raw(),
+            erase_polarity: src.erase_polarity(),
+            sections,
+        })
+    }
+}
