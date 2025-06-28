@@ -9,7 +9,10 @@ use mu_pi::fw_fs::{
     fvb,
 };
 
-use crate::{file::FileRef, FirmwareFileSystemError};
+use crate::{
+    file::{File, FileRef},
+    FirmwareFileSystemError,
+};
 
 pub struct VolumeRef<'a> {
     data: &'a [u8],
@@ -185,12 +188,17 @@ impl<'a> VolumeRef<'a> {
         }
     }
 
-    pub fn ext_header(&self) -> Option<fv::ExtHeader> {
-        self.ext_header
+    pub fn ext_header(&self) -> Option<(fv::ExtHeader, Vec<u8>)> {
+        self.ext_header.map(|ext_header| {
+            let ext_header_data_start = self.fv_header.ext_header_offset as usize + mem::size_of_val(&ext_header);
+            let ext_header_end = ext_header_data_start + ext_header.ext_header_size as usize;
+            let header_data = self.data[ext_header_data_start..ext_header_end].to_vec();
+            (ext_header, header_data)
+        })
     }
 
     pub fn fv_name(&self) -> Option<efi::Guid> {
-        self.ext_header().map(|x| x.fv_name)
+        self.ext_header().map(|x| x.0.fv_name)
     }
 
     pub fn block_map(&self) -> &Vec<BlockMapEntry> {
@@ -231,6 +239,14 @@ impl<'a> VolumeRef<'a> {
 
     pub fn files(&self) -> impl Iterator<Item = Result<FileRef<'a>, FirmwareFileSystemError>> {
         FileRefIter::new(&self.data[self.content_offset..], self.erase_byte())
+    }
+
+    fn revision(&self) -> u8 {
+        self.fv_header.revision
+    }
+
+    fn file_system_guid(&self) -> efi::Guid {
+        self.fv_header.file_system_guid
     }
 }
 
@@ -295,6 +311,50 @@ impl<'a> Iterator for FileRefIter<'a> {
             self.error = true;
         }
         Some(result)
+    }
+}
+
+pub struct Volume {
+    file_system_guid: efi::Guid,
+    attributes: fvb::attributes::EfiFvbAttributes2,
+    ext_header: Option<(fv::ExtHeader, Vec<u8>)>,
+    revision: u8,
+    block_map: Vec<BlockMapEntry>,
+    files: Vec<File>,
+}
+
+impl Volume {
+    pub fn new(block_map: Vec<BlockMapEntry>) -> Self {
+        Self {
+            file_system_guid: ffs::guid::EFI_FIRMWARE_FILE_SYSTEM3_GUID,
+            attributes: 0,
+            ext_header: None,
+            revision: fv::FFS_REVISION,
+            block_map,
+            files: Vec::new(),
+        }
+    }
+}
+
+impl TryFrom<VolumeRef<'_>> for Volume {
+    type Error = FirmwareFileSystemError;
+
+    fn try_from(src: VolumeRef<'_>) -> Result<Self, Self::Error> {
+        let files = src
+            .files()
+            .map(|x| match x {
+                Ok(file_ref) => file_ref.try_into(),
+                Err(err) => Err(err),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            file_system_guid: src.file_system_guid(),
+            attributes: src.attributes(),
+            ext_header: src.ext_header(),
+            revision: src.revision(),
+            block_map: src.block_map().clone(),
+            files,
+        })
     }
 }
 

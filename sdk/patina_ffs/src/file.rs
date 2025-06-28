@@ -4,7 +4,7 @@ use mu_pi::fw_fs::{
 };
 
 use crate::{
-    section::{Section, SectionExtractor, SectionIterator},
+    section::{Section, SectionComposer, SectionExtractor, SectionIterator},
     FirmwareFileSystemError,
 };
 
@@ -183,8 +183,8 @@ pub struct File {
 }
 
 impl File {
-    pub fn new(name: efi::Guid, file_type_raw: u8, attributes: u8, erase_polarity: bool) -> Self {
-        Self { name, file_type_raw, attributes, erase_polarity, sections: Vec::new() }
+    pub fn new(name: efi::Guid, file_type_raw: u8) -> Self {
+        Self { name, file_type_raw, attributes: 0, erase_polarity: true, sections: Vec::new() }
     }
 
     pub fn serialize(&self) -> Result<Vec<u8>, FirmwareFileSystemError> {
@@ -268,6 +268,21 @@ impl File {
 
         header.extend(content);
         Ok(header)
+    }
+
+    pub fn serialize_with_composer(
+        &mut self,
+        composer: &dyn SectionComposer,
+    ) -> Result<Vec<u8>, FirmwareFileSystemError> {
+        self.compose(composer)?;
+        self.serialize()
+    }
+
+    pub fn compose(&mut self, composer: &dyn SectionComposer) -> Result<(), FirmwareFileSystemError> {
+        for section in self.sections.iter_mut() {
+            section.compose(composer)?;
+        }
+        Ok(())
     }
 }
 
