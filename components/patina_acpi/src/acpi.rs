@@ -273,7 +273,7 @@ where
 {
     /// Retrieves a specific entry from the XSDT.
     /// The XSDT has a standard ACPI header followed by a variable-length list of entries in ACPI memory.
-    fn get_xsdt_entry(idx: usize, xsdt_start_ptr: *const u8, xsdt_len: usize) -> Result<u64, AcpiError> {
+    fn get_xsdt_entry_from_hob(idx: usize, xsdt_start_ptr: *const u8, xsdt_len: usize) -> Result<u64, AcpiError> {
         // Offset from the start of the XSDT in memory
         // Entries directly follow the header
         let offset = ACPI_HEADER_LEN + idx * core::mem::size_of::<u64>();
@@ -359,7 +359,7 @@ where
         let entries = (xsdt_length as usize - ACPI_HEADER_LEN) / mem::size_of::<u64>();
         for i in 0..entries {
             // Find the address value of the next XSDT entry
-            let entry_addr = Self::get_xsdt_entry(i, xsdt_ptr as *const u8, xsdt_length as usize)?;
+            let entry_addr = Self::get_xsdt_entry_from_hob(i, xsdt_ptr as *const u8, xsdt_length as usize)?;
 
             // Each entry points to a table
             let mut table_from_addr = RawAcpiTable::new_from_address(entry_addr)?;
@@ -754,7 +754,6 @@ where
                 self.boot_services
                     .get()
                     .ok_or(AcpiError::ProviderNotInitialized)?
-                    // this is usually named something like `install_configuration_table_raw`
                     .install_configuration_table_unchecked(&signature::ACPI_TABLE_GUID, ptr)
                     .map_err(|_| AcpiError::InstallConfigurationTableFailed)?;
             }
@@ -928,15 +927,15 @@ mod tests {
 
         // We should be able to retrieve both XSDT entries
         let ptr = buf.as_ptr();
-        let got0 =
-            StandardAcpiProvider::<MockBootServices>::get_xsdt_entry(0, ptr, xsdt_len).expect("entry0 should be valid");
-        let got1 =
-            StandardAcpiProvider::<MockBootServices>::get_xsdt_entry(1, ptr, xsdt_len).expect("entry1 should be valid");
+        let got0 = StandardAcpiProvider::<MockBootServices>::get_xsdt_entry_from_hob(0, ptr, xsdt_len)
+            .expect("entry0 should be valid");
+        let got1 = StandardAcpiProvider::<MockBootServices>::get_xsdt_entry_from_hob(1, ptr, xsdt_len)
+            .expect("entry1 should be valid");
         assert_eq!(got0, entry0);
         assert_eq!(got1, entry1);
 
         // Index 2 is out of bounds (we have 2 total entries)
-        let err = StandardAcpiProvider::<MockBootServices>::get_xsdt_entry(2, ptr, xsdt_len).unwrap_err();
+        let err = StandardAcpiProvider::<MockBootServices>::get_xsdt_entry_from_hob(2, ptr, xsdt_len).unwrap_err();
         assert!(matches!(err, AcpiError::InvalidXsdtEntry));
     }
 
