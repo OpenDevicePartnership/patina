@@ -146,7 +146,7 @@ impl Performance {
         enabled_measurements: Config<EnabledMeasurement>,
         boot_services: StandardBootServices,
         runtime_services: StandardRuntimeServices,
-        records_buffers_hobs: Hob<HobPerformanceData>,
+        records_buffers_hobs: Option<Hob<HobPerformanceData>>,
         mm_comm_region_hobs: Hob<MmCommRegion>,
     ) -> Result<(), EfiError> {
         PERF_MEASUREMENT_MASK.store(enabled_measurements.mask(), Ordering::Relaxed);

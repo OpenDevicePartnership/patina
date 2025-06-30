@@ -64,6 +64,16 @@ impl HobPerformanceDataExtractor for Hob<'_, HobPerformanceData> {
     }
 }
 
+impl HobPerformanceDataExtractor for Option<Hob<'_, HobPerformanceData>> {
+    // #[cfg(not(tarpaulin_include))]
+    fn extract_hob_perf_data(&self) -> Result<(u32, PerformanceRecordBuffer), Error> {
+        match self {
+            Some(hob) => merge_hob_performance_buffer(hob.iter()),
+            None => Ok((0, PerformanceRecordBuffer::new())),
+        }
+    }
+}
+
 fn merge_hob_performance_buffer<'a, T>(iter: T) -> Result<(u32, PerformanceRecordBuffer), Error>
 where
     T: Iterator<Item = &'a HobPerformanceData>,
