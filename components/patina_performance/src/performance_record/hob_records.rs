@@ -92,6 +92,21 @@ pub mod test {
     use super::{merge_hob_performance_buffer, HobPerformanceData};
 
     #[test]
+    fn test_merge_hob_performance_buffer_with_none() {
+        let buffer: Option<Vec<HobPerformanceData>> = None;
+
+        let result = match buffer {
+            Some(data) => merge_hob_performance_buffer(data.iter()),
+            None => Ok((0, PerformanceRecordBuffer::new())),
+        };
+
+        assert!(result.is_ok());
+        let (load_image_count, perf_record_buffer) = result.unwrap();
+        assert_eq!(load_image_count, 0);
+        assert!(perf_record_buffer.buffer().is_empty());
+    }
+
+    #[test]
     fn test_hob_performance_record_buffer_parse_from_hob() {
         let mut buffer = [0_u8; 32];
         let mut offset = 0;
