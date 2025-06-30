@@ -146,7 +146,7 @@ impl Performance {
         enabled_measurements: Config<EnabledMeasurement>,
         boot_services: StandardBootServices,
         runtime_services: StandardRuntimeServices,
-        records_buffers_hobs: Hob<HobPerformanceData>,
+        records_buffers_hobs: Option<Hob<HobPerformanceData>>,
         mm_comm_region_hobs: Hob<MmCommRegion>,
     ) -> Result<(), EfiError> {
         PERF_MEASUREMENT_MASK.store(enabled_measurements.mask(), Ordering::Relaxed);
@@ -166,7 +166,7 @@ impl Performance {
         self,
         boot_services: BB,
         runtime_services: RR,
-        records_buffers_hobs: P,
+        records_buffers_hobs: Option<P>, // Changed to Option<P>
         mm_comm_region: MmCommRegion,
         fbpt: &'static TplMutex<'static, F, B>,
     ) -> Result<(), EfiError>
@@ -187,19 +187,26 @@ impl Performance {
             &EVENT_GROUP_END_OF_DXE,
         )?;
 
-        let (hob_load_image_count, hob_perf_records) = records_buffers_hobs
-            .extract_hob_perf_data()
-            .inspect(|(_, perf_buf)| {
-                log::info!("Performance: {} Hob performance records found.", perf_buf.iter().count());
-            })
-            .inspect_err(|_| {
-                log::error!("Performance: Error while trying to insert hob performance records, using default values")
-            })
-            .unwrap_or_default();
+        // Handle optional `records_buffers_hobs`
+        if let Some(records_buffers_hobs) = records_buffers_hobs {
+            let (hob_load_image_count, hob_perf_records) = records_buffers_hobs
+                .extract_hob_perf_data()
+                .inspect(|(_, perf_buf)| {
+                    log::info!("Performance: {} Hob performance records found.", perf_buf.iter().count());
+                })
+                .inspect_err(|_| {
+                    log::error!(
+                        "Performance: Error while trying to insert hob performance records, using default values"
+                    )
+                })
+                .unwrap_or_default();
 
-        // Initialize perf data form hob values.
-        LOAD_IMAGE_COUNT.store(hob_load_image_count, Ordering::Relaxed);
-        fbpt.lock().set_perf_records(hob_perf_records);
+            // Initialize perf data from hob values.
+            LOAD_IMAGE_COUNT.store(hob_load_image_count, Ordering::Relaxed);
+            fbpt.lock().set_perf_records(hob_perf_records);
+        } else {
+            log::info!("Performance: No Hob performance records provided.");
+        }
 
         // Install the protocol interfaces for DXE performance.
         boot_services.as_ref().install_protocol_interface(
@@ -758,7 +765,7 @@ mod test {
         let _ = Performance._entry_point(
             Rc::new(boot_services),
             Rc::new(runtime_services),
-            hob_perf_data_extractor,
+            Some(hob_perf_data_extractor),
             mm_comm_region,
             fbpt,
         );
@@ -833,7 +840,7 @@ mod test {
 
             loaded_image_protocol.assume_init_mut().file_path =
                 media_fw_vol_file_path_device_path.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;
-        };
+        }
         let loaded_image_protocol_address = loaded_image_protocol.as_mut_ptr() as usize;
 
         boot_services.expect_handle_protocol::<efi::protocols::loaded_image::Protocol>().returning(move |_| unsafe {
