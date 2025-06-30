@@ -1,5 +1,8 @@
 use alloc::vec::Vec;
-use core::{fmt, mem, ptr, slice};
+use core::{
+    fmt, iter, mem, ptr,
+    slice::{self, from_raw_parts},
+};
 use patina_sdk::base::align_up;
 use r_efi::efi;
 
@@ -319,7 +322,6 @@ pub struct Volume {
     file_system_guid: efi::Guid,
     attributes: fvb::attributes::EfiFvbAttributes2,
     ext_header: Option<(fv::ExtHeader, Vec<u8>)>,
-    revision: u8,
     block_map: Vec<BlockMapEntry>,
     files: Vec<File>,
 }
@@ -330,10 +332,96 @@ impl Volume {
             file_system_guid: ffs::guid::EFI_FIRMWARE_FILE_SYSTEM3_GUID,
             attributes: 0,
             ext_header: None,
-            revision: fv::FFS_REVISION,
             block_map,
             files: Vec::new(),
         }
+    }
+
+    pub fn serialize(&self) -> Result<Vec<u8>, FirmwareFileSystemError> {
+        let pad_byte =
+            if (self.attributes & fvb::attributes::raw::fvb2::ERASE_POLARITY) != 0 { 0xffu8 } else { 0x00u8 };
+
+        let large_file_support = self.file_system_guid == ffs::guid::EFI_FIRMWARE_FILE_SYSTEM3_GUID;
+
+        //Serialize the file list into a content vector.
+        let mut content = Vec::new();
+        for file in &self.files {
+            let file_buffer = &file.serialize()?;
+
+            // Check if the file is too big for the filesystem format.
+            if file_buffer.len() >= fv::FFS_V2_MAX_FILE_SIZE && !large_file_support {
+                Err(FirmwareFileSystemError::Unsupported)?;
+            }
+            content.extend_from_slice(file_buffer);
+
+            //pad to next 8-byte aligned length, since files start at 8-byte aligned offsets.
+            let pad_length = 8 - (content.len() % 8);
+
+            content.extend(iter::repeat(pad_byte).take(pad_length));
+        }
+
+        let mut fv_header = fv::Header {
+            zero_vector: [0u8; 16],
+            file_system_guid: self.file_system_guid,
+            fv_length: 0,
+            signature: u32::from_le_bytes(*b"_FVH"),
+            attributes: self.attributes,
+            header_length: 0,
+            checksum: 0,
+            ext_header_offset: 0,
+            reserved: 0,
+            revision: fv::FFS_REVISION,
+            block_map: [BlockMapEntry { num_blocks: 0, length: 0 }; 0],
+        };
+
+        //Patch the initial header into the output buffer
+        let mut fv_buffer =
+            unsafe { from_raw_parts(&raw mut fv_header as *mut u8, mem::size_of_val(&fv_header)).to_vec() };
+
+        // add the block map
+        for block in self.block_map.iter().chain(iter::once(&BlockMapEntry { num_blocks: 0, length: 0 })) {
+            fv_buffer
+                .extend_from_slice(unsafe { from_raw_parts(&raw const block as *const u8, mem::size_of_val(block)) });
+        }
+
+        // add the ext_header, if present
+        let ext_header_offset = if let Some((ext_header, data)) = &self.ext_header {
+            let offset = fv_buffer.len();
+
+            fv_buffer.extend_from_slice(unsafe {
+                from_raw_parts(&raw const ext_header as *const u8, mem::size_of_val(ext_header))
+            });
+
+            fv_buffer.extend(data);
+
+            offset
+        } else {
+            0
+        };
+
+        let header_len = fv_buffer.len();
+        // add padding to ensure first file is 8-byte aligned.
+        let padding_len = 8 - (fv_buffer.len() % 8);
+        fv_buffer.extend(iter::repeat(pad_byte).take(padding_len));
+
+        //add content
+        fv_buffer.extend(content);
+
+        // calculate/patch the various header fields that need knowledge of buffer.
+        fv_header.fv_length = fv_buffer.len().try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
+        fv_header.header_length = header_len.try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
+        fv_header.ext_header_offset =
+            ext_header_offset.try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
+        let checksum = fv_buffer[..header_len]
+            .chunks_exact(2)
+            .fold(0u16, |sum, value| sum.wrapping_add(u16::from_le_bytes(value.try_into().unwrap())));
+        fv_header.checksum = 0u16.wrapping_sub(checksum);
+
+        //re-write the updated fv_header into the front of the fv_buffer.
+        fv_buffer[..mem::size_of_val(&fv_header)]
+            .copy_from_slice(unsafe { from_raw_parts(&raw mut fv_header as *mut u8, mem::size_of_val(&fv_header)) });
+
+        Ok(fv_buffer)
     }
 }
 
@@ -341,6 +429,9 @@ impl TryFrom<VolumeRef<'_>> for Volume {
     type Error = FirmwareFileSystemError;
 
     fn try_from(src: VolumeRef<'_>) -> Result<Self, Self::Error> {
+        if src.revision() > fv::FFS_REVISION {
+            Err(FirmwareFileSystemError::Unsupported)?;
+        }
         let files = src
             .files()
             .map(|x| match x {
@@ -352,7 +443,6 @@ impl TryFrom<VolumeRef<'_>> for Volume {
             file_system_guid: src.file_system_guid(),
             attributes: src.attributes(),
             ext_header: src.ext_header(),
-            revision: src.revision(),
             block_map: src.block_map().clone(),
             files,
         })
@@ -364,6 +454,9 @@ impl TryFrom<(VolumeRef<'_>, &dyn SectionExtractor)> for Volume {
 
     fn try_from(src: (VolumeRef<'_>, &dyn SectionExtractor)) -> Result<Self, Self::Error> {
         let (src, extractor) = src;
+        if src.revision() > fv::FFS_REVISION {
+            Err(FirmwareFileSystemError::Unsupported)?;
+        }
         let files = src
             .files()
             .map(|x| match x {
@@ -376,7 +469,6 @@ impl TryFrom<(VolumeRef<'_>, &dyn SectionExtractor)> for Volume {
             file_system_guid: src.file_system_guid(),
             attributes: src.attributes(),
             ext_header: src.ext_header(),
-            revision: src.revision(),
             block_map: src.block_map().clone(),
             files,
         })

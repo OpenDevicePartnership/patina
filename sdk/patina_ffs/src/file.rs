@@ -9,7 +9,7 @@ use crate::{
 };
 
 use alloc::{vec, vec::Vec};
-use core::{mem, ptr, slice::from_raw_parts};
+use core::{iter, mem, ptr, slice::from_raw_parts};
 use r_efi::efi;
 
 #[derive(Clone)]
@@ -191,6 +191,10 @@ impl File {
         let mut content = Vec::new();
         for section in &self.sections {
             content.extend_from_slice(section.try_as_slice()?);
+            //pad to next 4-byte aligned length, since files start at 4-byte aligned offsets.
+            let pad_length = 4 - (content.len() % 4);
+            let pad_byte = if self.erase_polarity { 0xffu8 } else { 0x00u8 };
+            content.extend(iter::repeat(pad_byte).take(pad_length));
         }
 
         let mut header = {
@@ -268,6 +272,10 @@ impl File {
 
         header.extend(content);
         Ok(header)
+    }
+
+    pub fn set_erase_polarity(&mut self, erase_polarity: bool) {
+        self.erase_polarity = erase_polarity;
     }
 
     pub fn serialize_with_composer(
