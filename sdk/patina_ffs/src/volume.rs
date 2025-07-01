@@ -242,7 +242,13 @@ impl<'a> VolumeRef<'a> {
     }
 
     pub fn files(&self) -> impl Iterator<Item = Result<FileRef<'a>, FirmwareFileSystemError>> {
-        FileRefIter::new(&self.data[self.content_offset..], self.erase_byte())
+        FileRefIter::new(&self.data[self.content_offset..], self.erase_byte()).filter(|x| {
+            //Per PI spec 1.8A, V3, section 2.1.4.1.8: "Standard firmware file system services will not return the
+            //handle of any PAD files, nor will they permit explicit creation of such files."
+            //Pad files are ignored on read, and will be inserted on serialziation as needed to honor alignment
+            //requirements. Filter them out here.
+            !matches!(x, Ok(file) if file.file_type_raw() == ffs::file::raw::r#type::FFS_PAD)
+        })
     }
 
     fn revision(&self) -> u8 {
@@ -493,7 +499,7 @@ mod test {
 
     use crate::{
         section::{Section, SectionExtractor, SectionMetaData},
-        volume::VolumeRef,
+        volume::{Volume, VolumeRef},
         FirmwareFileSystemError,
     };
 
@@ -880,6 +886,19 @@ mod test {
             }
             otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_firmware_volume_serialization() -> Result<(), Box<dyn Error>> {
+        set_logger();
+        let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
+
+        let original_fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
+        let fv_ref = VolumeRef::new(&original_fv_bytes).map_err(stringify)?;
+
+        let _fv: Volume = fv_ref.try_into().map_err(stringify)?;
 
         Ok(())
     }

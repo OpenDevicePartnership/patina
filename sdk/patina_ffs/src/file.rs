@@ -9,7 +9,7 @@ use crate::{
 };
 
 use alloc::{vec, vec::Vec};
-use core::{iter, mem, ptr, slice::from_raw_parts};
+use core::{fmt, iter, mem, ptr, slice::from_raw_parts};
 use r_efi::efi;
 
 #[derive(Clone)]
@@ -171,6 +171,18 @@ impl<'a> FileRef<'a> {
             })
             .collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
         Ok(sections.iter().flat_map(|x| x.sections().cloned().collect::<Vec<_>>()).collect())
+    }
+}
+
+impl fmt::Debug for FileRef<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FileRef")
+            .field("data (bytes)", &self.data.len())
+            .field("header", &self.header)
+            .field("erase_polarity", &self.erase_polarity)
+            .field("size", &self.size)
+            .field("content_offset", &self.content_offset)
+            .finish()
     }
 }
 
