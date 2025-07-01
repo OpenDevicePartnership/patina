@@ -2,16 +2,17 @@
 //!
 //! Wrappers for the C ACPI protocols to call into Rust ACPI implementations.
 
-use crate::acpi_table::{AcpiTableHeader, StandardAcpiTable};
+use crate::acpi_table::{AcpiTable, AcpiTableHeader, StandardAcpiTable};
 use crate::signature::ACPI_VERSIONS_GTE_2;
 
 use alloc::collections::btree_map::BTreeMap;
 use core::ffi::c_void;
+use core::mem;
 use patina_sdk::uefi_protocol::ProtocolInterface;
 use r_efi::efi;
 use spin::rwlock::RwLock;
 
-use crate::service::{AcpiNotifyFn, AcpiProvider};
+use crate::service::{AcpiNotifyFn, AcpiProvider, TableKey};
 use crate::{
     acpi::ACPI_TABLE_INFO,
     acpi_table::AcpiFacs,
@@ -55,13 +56,13 @@ impl AcpiTableProtocol {
     /// Returns [`UNSUPPORTED`](r_efi::efi::Status::UNSUPPORTED) if boot services cannot install the given table format.
     /// Returns [`OUT_OF_RESOURCES`](r_efi::efi::Status::OUT_OF_RESOURCES) if allocating memory for the table fails.
     /// Returns [`ALREADY_STARTED`](r_efi::efi::Status::ALREADY_STARTED) if the FADT already exists and `install` is called on a FADT again.
+    /// Returns [`NOT_STARTED`](r_efi::efi::Status::NOT_STARTED) if memory or boot services are not properly initialized.
     extern "efiapi" fn install_acpi_table_ext(
         _protocol: *const AcpiTableProtocol,
         acpi_table_buffer: *const c_void,
         acpi_table_buffer_size: usize,
         table_key: *mut usize,
     ) -> efi::Status {
-        use core::{mem, ptr::NonNull};
         if acpi_table_buffer.is_null() || acpi_table_buffer_size < 4 {
             return efi::Status::INVALID_PARAMETER;
         }
@@ -72,42 +73,24 @@ impl AcpiTableProtocol {
             *(acpi_table_buffer as *const u32)
         };
 
-        // Special handling for FACS, which has a different format than other ACPI tables
-        if signature == signature::FACS {
-            if acpi_table_buffer_size < mem::size_of::<AcpiFacs>() {
-                return efi::Status::INVALID_PARAMETER;
-            }
+        if acpi_table_buffer_size < mem::size_of::<AcpiTableHeader>() {
+            return efi::Status::INVALID_PARAMETER;
+        }
 
-            let facs = unsafe {
-                // SAFETY: size was checked above, and pointer is valid
-                &mut *(acpi_table_buffer as *mut AcpiFacs)
-            };
-
-            if let Err(e) = ACPI_TABLE_INFO.install_facs(facs) {
-                e.into()
-            } else {
-                // The FACS doesn't have an associated key
-                efi::Status::SUCCESS
-            }
-        } else {
-            if acpi_table_buffer_size < mem::size_of::<AcpiTableHeader>() {
-                return efi::Status::INVALID_PARAMETER;
-            }
-
-            // SAFETY: acpi_table_buffer is checked non-null and large enough to read an AcpiTableHeader.
-            let acpi_table = unsafe { CAcpiTable::from_ptr(acpi_table_buffer) };
-
-            match ACPI_TABLE_INFO.install_acpi_table(&acpi_table) {
+        // SAFETY: acpi_table_buffer is checked non-null and large enough to read an AcpiTableHeader.
+        if let Some(global_mm) = ACPI_TABLE_INFO.memory_manager.get() {
+            let acpi_header = unsafe { *(acpi_table_buffer as *const AcpiTableHeader) };
+            let acpi_table = unsafe { AcpiTable::new(acpi_header, global_mm) };
+            match ACPI_TABLE_INFO.install_acpi_table(acpi_table) {
                 Ok(key) => {
-                    if let Some(key_ptr) = NonNull::new(table_key) {
-                        // SAFETY: `key_ptr` is checked to be non-null
-                        // The caller must ensure the buffer is writeable
-                        unsafe { *key_ptr.as_ptr() = key };
-                    }
+                    // SAFETY: The caller must ensure the buffer passed in for the key is appropriately sized and non-null.
+                    unsafe { *table_key = key.0 };
                     efi::Status::SUCCESS
                 }
                 Err(e) => e.into(),
             }
+        } else {
+            efi::Status::NOT_STARTED
         }
     }
 
@@ -123,7 +106,7 @@ impl AcpiTableProtocol {
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if the table key does not correspond to an installed table.
     /// Returns [`OUT_OF_RESOURCES`](r_efi::efi::Status::OUT_OF_RESOURCES) if memory operations fail.
     extern "efiapi" fn uninstall_acpi_table_ext(_protocol: *const AcpiTableProtocol, table_key: usize) -> efi::Status {
-        match ACPI_TABLE_INFO.uninstall_acpi_table(table_key) {
+        match ACPI_TABLE_INFO.uninstall_acpi_table(TableKey(table_key)) {
             Ok(_) => efi::Status::SUCCESS,
             Err(e) => e.into(),
         }
@@ -167,7 +150,6 @@ impl AcpiSdtProtocol {
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) the index is out of bounds of the list of installed tables.
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) any input or output parameters are null.
     /// Returns [`OUT_OF_RESOURCES`](r_efi::efi::Status::OUT_OF_RESOURCES) if memory operations fail.
-    /// Returns [`NOT_FOUND`](r_efi::efi::Status::NOT_FOUND) if the retrieve table is not present in ACPI memory.
     extern "efiapi" fn get_acpi_table_ext(
         index: usize,
         table: *mut *mut AcpiTableHeader,
@@ -182,15 +164,12 @@ impl AcpiSdtProtocol {
             Ok(table_info) => {
                 // SAFETY: table_info is valid and output pointers have been checked for null
                 // We only support ACPI versions >= 2.0
+                let (key_at_idx, mut table_at_idx) = table_info;
                 unsafe { *version = ACPI_VERSIONS_GTE_2 };
-                unsafe { *table_key = table_info.table_key };
+                unsafe { *table_key = key_at_idx.0 };
 
-                if table_info.physical_address.is_none() {
-                    return efi::Status::NOT_FOUND;
-                }
-
-                let sdt_ptr = table_info.physical_address.unwrap() as *mut AcpiTableHeader;
-                unsafe { *table = sdt_ptr };
+                let sdt_ptr = table_at_idx.header_mut();
+                unsafe { *table = sdt_ptr as *mut AcpiTableHeader };
                 efi::Status::SUCCESS
             }
             Err(e) => e.into(),

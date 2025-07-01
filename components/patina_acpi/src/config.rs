@@ -1,11 +1,6 @@
 /// Initialization configuration for ACPI provider.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AcpiProviderInit {
-    /// Whether to reclaim ACPI memory when allocating tables.
-    /// If `should_reclaim_memory` is true, tables will be allocated in ACPI reclaim memory when possible.
-    /// Otherwise, all tables will be allocated in ACPI NVS memory. This setting should be used with caution.
-    /// In most cases, `should_reclaim_memory` should be true, unless there is a need for some special platform tables to persist during runtime.
-    pub should_reclaim_memory: bool,
     /// Platform vendor.
     pub oem_id: [u8; 6],
     /// Product variant for platform vendor.

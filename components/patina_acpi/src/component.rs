@@ -1,4 +1,4 @@
-use crate::acpi_table::{AcpiTableHeader, AcpiXsdtMetadata, StandardAcpiTable};
+use crate::acpi_table::{AcpiTableHeader, StandardAcpiTable};
 use crate::alloc::boxed::Box;
 
 use core::mem;
@@ -48,9 +48,7 @@ impl AcpiProviderManager {
         acpi_hob: Option<Hob<AcpiMemoryHob>>,
         memory_manager: Service<dyn MemoryManager>,
     ) -> patina_sdk::error::Result<()> {
-        ACPI_TABLE_INFO
-            .initialize(config.should_reclaim_memory, boot_services, memory_manager)
-            .map_err(|_e| EfiError::AlreadyStarted)?;
+        ACPI_TABLE_INFO.initialize(boot_services, memory_manager).map_err(|_e| EfiError::AlreadyStarted)?;
 
         // Both XSDT and RSDP are always in reclaim memory.
         let allocator = ACPI_TABLE_INFO

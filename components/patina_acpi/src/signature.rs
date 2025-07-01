@@ -9,6 +9,7 @@ pub const UEFI: u32 = 0x49464555;
 pub const FACP: u32 = 0x50434146;
 pub const DSDT: u32 = 0x54534444;
 pub const XSDT: u32 = 0x54445358;
+pub const FADT: u32 = FACP; // For legacy ACPI reasons, the FADT has signature 'FACP'.
 
 pub const ACPI_TABLE_GUID: efi::Guid =
     efi::Guid::from_fields(0x8868E871, 0xE4F1, 0x11D3, 0xBC, 0x22, &[0x00, 0x80, 0xC7, 0x3C, 0x88, 0x81]);

@@ -51,6 +51,8 @@ pub enum AcpiError {
     ProviderNotInitialized,
     /// There was an attempt to index an invalid location in the XSDT.
     XsdtOverflow,
+    /// There was an attempt to install an XSDT when one already exists.
+    XsdtAlreadyInstalled,
 }
 
 impl From<AcpiError> for efi::Status {
