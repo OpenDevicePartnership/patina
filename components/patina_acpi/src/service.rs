@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 use patina_sdk::component::service::{IntoService, Service};
 
 use crate::acpi_protocol::CAcpiTable;
-use crate::acpi_table::{AcpiFacs, AcpiTableHeader, MemoryAcpiTable, RawAcpiTable, StandardAcpiTable};
+use crate::acpi_table::{AcpiFacs, AcpiTable, AcpiTableHeader, MemoryAcpiTable, RawAcpiTable, StandardAcpiTable};
 use crate::error::AcpiError;
 
 pub type TableKey = usize;
@@ -122,7 +122,7 @@ pub trait AcpiProvider {
     fn uninstall_acpi_table(&self, table_key: TableKey) -> Result<(), AcpiError>;
 
     /// Retrieves an ACPI table by its table key. This must be the same key returned at the time of installation.
-    fn get_acpi_table(&self, table_key: TableKey) -> Result<MemoryAcpiTable, AcpiError>;
+    fn get_acpi_table(&self, table_key: TableKey) -> Result<AcpiTable, AcpiError>;
 
     /// Registers or unregisters a function which will be called whenever a new ACPI table is installed.
     fn register_notify(&self, should_register: bool, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError>;

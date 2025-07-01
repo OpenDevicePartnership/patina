@@ -1,4 +1,4 @@
-use alloc::boxed::Box;
+use alloc::{boxed::Box, collections::btree_map::BTreeMap};
 use core::{
     any::TypeId,
     cell::OnceCell,
@@ -9,7 +9,7 @@ use core::{
 };
 
 use crate::{
-    acpi_table::{AcpiTableHeader, AcpiXsdtMetadata, MemoryAcpiTable, RawAcpiTable, StandardAcpiTable},
+    acpi_table::{AcpiTable, AcpiTableHeader, AcpiXsdtMetadata, MemoryAcpiTable, RawAcpiTable, StandardAcpiTable},
     alloc::vec::Vec,
     signature::{ACPI_CHECKSUM_OFFSET, ACPI_VERSIONS_GTE_2, ACPI_XSDT_ENTRY_SIZE},
 };
@@ -40,15 +40,11 @@ pub static ACPI_TABLE_INFO: StandardAcpiProvider<StandardBootServices> = Standar
 #[derive(IntoService)]
 #[service(dyn AcpiProvider)]
 pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
-    /// Whether the platform should reclaim freed ACPI memory.
-    /// If true, the ACPI code will try to reclaim unused memory when possible.
-    /// If false, all allocations will be made to NVS.
-    pub(crate) should_reclaim_memory: AtomicBool,
     /// Known ACPI system tables, such as the FADT, DSDT, etc.
     pub(crate) system_tables: SystemTables,
     /// Platform-installed ACPI tables.
     /// If installing a non-standard ACPI table, the platform is responsible for writing its own handler and parser.
-    acpi_tables: RwLock<Vec<MemoryAcpiTable>>,
+    acpi_tables: RwLock<BTreeMap<TableKey, AcpiTable>>,
     /// Stores a monotonically increasing unique table key for installation.
     next_table_key: AtomicUsize,
     /// Stores notify callbacks, which are called upon table installation.
@@ -113,9 +109,8 @@ where
     /// Attempting to use `StandardAcpiProvider` before initialization will cause a panic.
     pub const fn new_uninit() -> Self {
         Self {
-            should_reclaim_memory: AtomicBool::new(false),
             system_tables: SystemTables::new(),
-            acpi_tables: RwLock::new(vec![]),
+            acpi_tables: RwLock::new(BTreeMap::new()),
             next_table_key: AtomicUsize::new(1),
             notify_list: RwLock::new(vec![]),
             boot_services: OnceCell::new(),
@@ -127,16 +122,10 @@ where
     /// Fills in `StandardAcpiProvider` fields at runtime.
     /// This function must be called before any attempts to use `StandardAcpiProvider`, or any usages will fail.
     /// Attempting to initialize a single `StandardAcpiProvider` instance more than once will also cause a failure.
-    pub fn initialize(
-        &self,
-        should_reclaim_memory: bool,
-        bs: B,
-        memory_manager: Service<dyn MemoryManager>,
-    ) -> Result<(), AcpiError>
+    pub fn initialize(&self, bs: B, memory_manager: Service<dyn MemoryManager>) -> Result<(), AcpiError>
     where
         B: BootServices,
     {
-        self.should_reclaim_memory.store(should_reclaim_memory, Ordering::Release);
         if self.boot_services.set(bs).is_err() {
             return Err(AcpiError::BootServicesAlreadyInitialized);
         }
@@ -223,14 +212,12 @@ where
         Ok(())
     }
 
-    fn get_acpi_table(&self, table_key: TableKey) -> Result<MemoryAcpiTable, AcpiError> {
-        let acpi_tables = self.acpi_tables.read();
-        for memory_table in acpi_tables.iter() {
-            if memory_table.table_key == table_key {
-                return Ok(memory_table.clone());
-            }
-        }
-        Err(AcpiError::InvalidTableKey)
+    fn get_acpi_table(&self, table_key: TableKey) -> Result<AcpiTable, AcpiError> {
+        self.acpi_tables
+            .read()
+            .get(&table_key)
+            .cloned() // Option<&AcpiTable> → Option<AcpiTable>
+            .ok_or(AcpiError::InvalidTableKey)
     }
 
     fn register_notify(&self, should_register: bool, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError> {
@@ -380,17 +367,14 @@ where
         Ok(())
     }
 
-    // Determines the type of memory to allocate for the table based on platform and table properties.
+    // Determines the type of memory to allocate for the table based on table properties.
     fn allocation_memory_type(&self, signature: u32) -> EfiMemoryType {
-        let mut memory_type = self.memory_type();
-
-        // FACS and UEFI table needs to be aligned to 64B
         if signature == signature::FACS || signature == signature::UEFI {
-            // FACS and UEFI table must be allocated in NVS, even if reclaim is enabled
-            memory_type = EfiMemoryType::ACPIMemoryNVS;
+            // FACS and UEFI table must be allocated in NVS (by spec).
+            EfiMemoryType::ACPIMemoryNVS
+        } else {
+            EfiMemoryType::ACPIReclaimMemory
         }
-
-        memory_type
     }
 
     /// Allocates memory for the FADT and adds it  to the list of installed tables
@@ -532,15 +516,6 @@ where
         // Since XSDT was modified, recalculate checksum for root tables.
         self.checksum_common_tables()?;
         Ok(next_table_key)
-    }
-
-    /// Determines whether memory allocations should reclaim or store everything in NVS.
-    pub(crate) fn memory_type(&self) -> EfiMemoryType {
-        if self.should_reclaim_memory.load(Ordering::Acquire) {
-            EfiMemoryType::ACPIReclaimMemory
-        } else {
-            EfiMemoryType::ACPIMemoryNVS
-        }
     }
 
     /// Adds an address entry to the XSDT.

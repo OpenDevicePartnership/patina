@@ -6,11 +6,15 @@
 
 use alloc::boxed::Box;
 use downcast_rs::{impl_downcast, Downcast};
+use patina_sdk::component::service::memory::MemoryManager;
+use patina_sdk::component::service::Service;
+use patina_sdk::efi_types::EfiMemoryType;
 
 use crate::error::AcpiError;
 use crate::{service::TableKey, signature::ACPI_HEADER_LEN};
 
 use core::any::{Any, TypeId};
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use core::{mem, slice};
 
@@ -151,8 +155,9 @@ impl AcpiFadt {
 /// Represents the FACS for ACPI 2.0+.
 /// Note that the FACS does not have a standard ACPI header.
 /// The FACS is not present in the list of installed ACPI tables; instead, it is only accessible through the FADT's `x_firmware_ctrl` field.
+/// The FACS is always allocated in NVS, and is required to be 64B-aligned.
 /// Equivalent to EFI_ACPI_3_0_FIRMWARE_ACPI_CONTROL_STRUCTURE.
-#[repr(C)]
+#[repr(C, align(64))]
 #[derive(Default, Clone, Copy)]
 pub struct AcpiFacs {
     pub(crate) signature: u32,
@@ -473,5 +478,114 @@ impl MemoryAcpiTable {
         } else {
             unsafe { self.header.as_ref() }.creator_revision
         }
+    }
+}
+
+/// The inner table structure.
+union Table<T = AcpiTableHeader> {
+    /// The signature of the ACPI table.
+    signature: u32,
+    /// The header of the ACPI table.
+    header: AcpiTableHeader,
+    /// The full ACPI table, represented as its original type.
+    inner: ManuallyDrop<T>,
+}
+
+impl<T> Table<T> {
+    /// Creates a new table.
+    ///
+    /// ## Safety
+    ///
+    /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
+    /// - Caller must ensure that the table's first field is [AcpiTableHeader].
+    pub unsafe fn new(table: T) -> Self {
+        Table { inner: ManuallyDrop::new(table) }
+    }
+
+    /// Returns the signature of the ACPI table.
+    pub fn signature(&self) -> u32 {
+        // SAFETY: [Self::new] ensures that the first field is a u32.
+        unsafe { self.signature }
+    }
+
+    /// Returns an immutable reference to the entire table.
+    pub fn as_ref(&self) -> &T {
+        // SAFETY: [Self::new] insures the inner object is a valid instance of `T`.
+        unsafe { &self.inner }
+    }
+
+    /// Returns an immutable reference to the entire table.
+    pub fn as_mut(&mut self) -> &mut T {
+        // SAFETY: [Self::new] insures the inner object is a valid instance of `T`.
+        unsafe { &mut self.inner }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct AcpiTable {
+    table: NonNull<Table>,
+}
+
+impl AcpiTable {
+    pub const FACS: u32 = 0x53434146;
+    pub const UEFI: u32 = 0x49464555;
+    pub const FACP: u32 = 0x50434146;
+    pub const FADT: u32 = AcpiTable::FACP;
+    pub const DSDT: u32 = 0x54534444;
+    pub const XSDT: u32 = 0x54445358;
+
+    /// Creates a new AcpiTable from a given table.
+    pub unsafe fn new<T>(table: T, mm: &Service<dyn MemoryManager>) -> Self {
+        let table = Table::new(table);
+
+        // FACS and UEFI tables must always be located in NVS (by spec).
+        let allocator_type = match table.signature() {
+            Self::FACS | Self::UEFI => EfiMemoryType::ACPIMemoryNVS,
+            _ => EfiMemoryType::ACPIReclaimMemory,
+        };
+
+        let table =
+            NonNull::from(Box::leak(Box::new_in(table, mm.get_allocator(allocator_type).unwrap()))).cast::<Table>();
+
+        AcpiTable { table }
+    }
+
+    pub fn signature(&self) -> u32 {
+        // SAFETY: The table is guaranteed to be a valid ACPI table.
+        unsafe { self.table.as_ref().signature() }
+    }
+
+    pub fn header(&self) -> &AcpiTableHeader {
+        // SAFETY: The table is guaranteed to be a valid ACPI table.
+        unsafe { &self.table.as_ref().header }
+    }
+
+    pub fn update_checksum(&mut self) {
+        todo!()
+    }
+
+    /// Returns a reference to the entire AcpiTable.
+    ///
+    /// ## Safety
+    ///
+    /// - Caller must ensure that the provided table format is the same as `T`.
+    pub fn as_ref<T>(&self) -> &T {
+        // SAFETY: Caller must ensure that the provided table format is the same as `T`.
+        unsafe { self.table.cast::<Table<T>>().as_ref().as_ref() }
+    }
+
+    /// Returns a mutable reference to the entire AcpiTable.
+    ///
+    /// ## Safety
+    ///
+    /// - Caller must ensure that the provided table format is the same as `T`.
+    pub unsafe fn as_mut<T>(&mut self) -> &mut T {
+        // SAFETY: Caller must ensure that the provided table format is the same as `T`.
+        unsafe { self.table.cast::<Table<T>>().as_mut().as_mut() }
+    }
+
+    /// Returns a pointer the the underlying AcpiTable.
+    pub fn as_ptr(&self) -> *const AcpiTableHeader {
+        self.table.as_ptr() as *const AcpiTableHeader
     }
 }
