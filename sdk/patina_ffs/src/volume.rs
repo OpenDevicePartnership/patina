@@ -969,26 +969,32 @@ mod test {
     #[test]
     fn test_firmware_volume_serialization() -> Result<(), Box<dyn Error>> {
         set_logger();
-        let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
+        let paths = &[
+            Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources/DXEFV.Fv"),
+            Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources/GIGANTOR.Fv"),
+            Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources/FVMAIN_COMPACT.Fv"),
+        ];
 
-        let original_fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
-        let fv_ref = VolumeRef::new(&original_fv_bytes).map_err(stringify)?;
+        for path in paths {
+            let original_fv_bytes = fs::read(path)?;
+            let fv_ref = VolumeRef::new(&original_fv_bytes).map_err(stringify)?;
 
-        let fv: Volume = fv_ref.try_into().map_err(stringify)?;
+            let fv: Volume = fv_ref.try_into().map_err(stringify)?;
 
-        let serialized_fv_bytes = fv.serialize().map_err(stringify)?;
+            let serialized_fv_bytes = fv.serialize().map_err(stringify)?;
 
-        assert_eq!(original_fv_bytes.len(), serialized_fv_bytes.len());
+            assert_eq!(original_fv_bytes.len(), serialized_fv_bytes.len());
 
-        let mismatch = original_fv_bytes.iter().zip(serialized_fv_bytes).enumerate()
-            .find(|(_offset, (expected, actual))|{
-                *expected != actual
-            });
+            let mismatch = original_fv_bytes
+                .iter()
+                .zip(serialized_fv_bytes)
+                .enumerate()
+                .find(|(_offset, (expected, actual))| *expected != actual);
 
-        if let Some((offset, (expected, actual))) = mismatch {
-            panic!("mismatch in serialized buffer at offset {offset:x}. Expected {expected:x}, actual: {actual:x}");
+            if let Some((offset, (expected, actual))) = mismatch {
+                panic!("mismatch in serialized buffer at offset {offset:x}. Expected {expected:x}, actual: {actual:x}");
+            }
         }
-
         Ok(())
     }
 }
