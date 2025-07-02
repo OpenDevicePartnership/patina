@@ -979,10 +979,13 @@ mod test {
             let original_fv_bytes = fs::read(path)?;
             let fv_ref = VolumeRef::new(&original_fv_bytes).map_err(stringify)?;
 
+            // convert the ref to a volume.
             let fv: Volume = fv_ref.try_into().map_err(stringify)?;
 
+            // serialize the volume back to bytes
             let serialized_fv_bytes = fv.serialize().map_err(stringify)?;
 
+            // compare that the two buffers match
             assert_eq!(original_fv_bytes.len(), serialized_fv_bytes.len());
 
             let mismatch = original_fv_bytes
