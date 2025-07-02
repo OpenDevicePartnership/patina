@@ -170,6 +170,10 @@ impl Section {
         Ok(Section { meta, data: SectionData::Composed(buffer[..section_size].to_vec()) })
     }
 
+    pub fn new_from_meta_with_data(meta: SectionMetaData, data: Vec<u8>) -> Self {
+        Self { meta, data: SectionData::Composed(data) }
+    }
+
     pub fn new_from_meta_with_sections(meta: SectionMetaData, sections: Vec<Section>) -> Self {
         Self { meta, data: SectionData::Extracted(sections) }
     }

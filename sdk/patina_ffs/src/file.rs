@@ -115,6 +115,10 @@ impl<'a> FileRef<'a> {
         &self.data[self.content_offset..]
     }
 
+    pub fn content_offset(&self) -> usize {
+        self.content_offset
+    }
+
     pub fn data(&self) -> &[u8] {
         self.data
     }
@@ -201,12 +205,20 @@ impl File {
 
     pub fn serialize(&self) -> Result<Vec<u8>, FirmwareFileSystemError> {
         let mut content = Vec::new();
-        for section in &self.sections {
+
+        let mut section_iter = self.sections.iter().peekable();
+
+        while let Some(section) = &section_iter.next() {
             content.extend_from_slice(section.try_as_slice()?);
-            //pad to next 4-byte aligned length, since files start at 4-byte aligned offsets.
-            let pad_length = 4 - (content.len() % 4);
-            let pad_byte = if self.erase_polarity { 0xffu8 } else { 0x00u8 };
-            content.extend(iter::repeat(pad_byte).take(pad_length));
+            if section_iter.peek().is_some() {
+                //pad to next 4-byte aligned length, since sections start at 4-byte aligned offsets. No padding is added
+                //after the last section.
+                if content.len() % 4 != 0 {
+                    let pad_length = 4 - (content.len() % 4);
+                    //Per PI 1.8A volume 3 section 2.2.4, pad byte is always zero.
+                    content.extend(iter::repeat(0u8).take(pad_length));
+                }
+            }
         }
 
         let mut header = {
@@ -235,11 +247,16 @@ impl File {
                 file_header.header.integrity_check_header = 0u8.wrapping_sub(sum);
 
                 // calculate file data check
-                let sum = content.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
-                file_header.header.integrity_check_header = 0u8.wrapping_sub(sum);
+                if self.is_data_checksum() {
+                    let sum = content.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
+                    file_header.header.integrity_check_file = 0u8.wrapping_sub(sum);
+                } else {
+                    file_header.header.integrity_check_file = 0xaau8;
+                }
 
-                file_header.header.state =
-                    ffs::file::raw::state::HEADER_CONSTRUCTION | ffs::file::raw::state::HEADER_VALID;
+                file_header.header.state = ffs::file::raw::state::HEADER_CONSTRUCTION
+                    | ffs::file::raw::state::HEADER_VALID
+                    | ffs::file::raw::state::DATA_VALID;
                 if self.erase_polarity {
                     file_header.header.state = !file_header.header.state;
                 }
@@ -268,10 +285,16 @@ impl File {
                 file_header.integrity_check_header = 0u8.wrapping_sub(sum);
 
                 // calculate file data check
-                let sum = content.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
-                file_header.integrity_check_header = 0u8.wrapping_sub(sum);
+                if self.is_data_checksum() {
+                    let sum = content.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
+                    file_header.integrity_check_file = 0u8.wrapping_sub(sum);
+                } else {
+                    file_header.integrity_check_file = 0xaau8;
+                }
 
-                file_header.state = ffs::file::raw::state::HEADER_CONSTRUCTION | ffs::file::raw::state::HEADER_VALID;
+                file_header.state = ffs::file::raw::state::HEADER_CONSTRUCTION
+                    | ffs::file::raw::state::HEADER_VALID
+                    | ffs::file::raw::state::DATA_VALID;
                 if self.erase_polarity {
                     file_header.state = !file_header.state;
                 }
@@ -288,6 +311,43 @@ impl File {
 
     pub fn set_erase_polarity(&mut self, erase_polarity: bool) {
         self.erase_polarity = erase_polarity;
+    }
+
+    pub fn set_data_checksum(&mut self, checksum: bool) {
+        if checksum {
+            self.attributes |= attributes::raw::CHECKSUM;
+        } else {
+            self.attributes &= !attributes::raw::CHECKSUM;
+        }
+    }
+
+    pub fn is_data_checksum(&self) -> bool {
+        self.attributes & attributes::raw::CHECKSUM != 0
+    }
+
+    pub fn content_offset(&self) -> Result<usize, FirmwareFileSystemError> {
+        if self.attributes & attributes::raw::LARGE_FILE != 0 {
+            Ok(mem::size_of::<ffs::file::Header2>())
+        } else {
+            let mut section_iter = self.sections.iter().peekable();
+            let mut content_len = 0;
+            while let Some(section) = &section_iter.next() {
+                let section_len = section.try_as_slice()?.len();
+                content_len += section_len;
+                if section_iter.peek().is_some() {
+                    //pad to next 4-byte aligned length, since sections start at 4-byte aligned offsets. No padding is added
+                    //after the last section.
+                    let pad_length = 4 - (section_len % 4);
+                    //Per PI 1.8A volume 3 section 2.2.4, pad byte is always zero.
+                    content_len += pad_length;
+                }
+            }
+            if content_len + mem::size_of::<ffs::file::Header>() > 0xffffff {
+                Ok(mem::size_of::<ffs::file::Header2>())
+            } else {
+                Ok(mem::size_of::<ffs::file::Header>())
+            }
+        }
     }
 
     pub fn serialize_with_composer(

@@ -14,7 +14,7 @@ use mu_pi::fw_fs::{
 
 use crate::{
     file::{File, FileRef},
-    section::SectionExtractor,
+    section::{self, Section, SectionExtractor},
     FirmwareFileSystemError,
 };
 
@@ -194,8 +194,9 @@ impl<'a> VolumeRef<'a> {
 
     pub fn ext_header(&self) -> Option<(fv::ExtHeader, Vec<u8>)> {
         self.ext_header.map(|ext_header| {
-            let ext_header_data_start = self.fv_header.ext_header_offset as usize + mem::size_of_val(&ext_header);
-            let ext_header_end = ext_header_data_start + ext_header.ext_header_size as usize;
+            let header_size = mem::size_of_val(&ext_header);
+            let ext_header_data_start = self.fv_header.ext_header_offset as usize + header_size;
+            let ext_header_end = ext_header_data_start + ext_header.ext_header_size as usize - header_size;
             let header_data = self.data[ext_header_data_start..ext_header_end].to_vec();
             (ext_header, header_data)
         })
@@ -238,7 +239,7 @@ impl<'a> VolumeRef<'a> {
     }
 
     pub fn size(&self) -> u64 {
-        self.data.len() as u64
+        self.fv_header.fv_length
     }
 
     pub fn files(&self) -> impl Iterator<Item = Result<FileRef<'a>, FirmwareFileSystemError>> {
@@ -324,12 +325,18 @@ impl<'a> Iterator for FileRefIter<'a> {
     }
 }
 
+enum Capacity {
+    Unbounded,
+    Size(usize),
+}
+
 pub struct Volume {
     file_system_guid: efi::Guid,
     attributes: fvb::attributes::EfiFvbAttributes2,
     ext_header: Option<(fv::ExtHeader, Vec<u8>)>,
     block_map: Vec<BlockMapEntry>,
     files: Vec<File>,
+    capacity: Capacity,
 }
 
 impl Volume {
@@ -340,6 +347,7 @@ impl Volume {
             ext_header: None,
             block_map,
             files: Vec::new(),
+            capacity: Capacity::Unbounded,
         }
     }
 
@@ -348,23 +356,6 @@ impl Volume {
             if (self.attributes & fvb::attributes::raw::fvb2::ERASE_POLARITY) != 0 { 0xffu8 } else { 0x00u8 };
 
         let large_file_support = self.file_system_guid == ffs::guid::EFI_FIRMWARE_FILE_SYSTEM3_GUID;
-
-        //Serialize the file list into a content vector.
-        let mut content = Vec::new();
-        for file in &self.files {
-            let file_buffer = &file.serialize()?;
-
-            // Check if the file is too big for the filesystem format.
-            if file_buffer.len() >= fv::FFS_V2_MAX_FILE_SIZE && !large_file_support {
-                Err(FirmwareFileSystemError::Unsupported)?;
-            }
-            content.extend_from_slice(file_buffer);
-
-            //pad to next 8-byte aligned length, since files start at 8-byte aligned offsets.
-            let pad_length = 8 - (content.len() % 8);
-
-            content.extend(iter::repeat(pad_byte).take(pad_length));
-        }
 
         let mut fv_header = fv::Header {
             zero_vector: [0u8; 16],
@@ -386,46 +377,129 @@ impl Volume {
 
         // add the block map
         for block in self.block_map.iter().chain(iter::once(&BlockMapEntry { num_blocks: 0, length: 0 })) {
-            fv_buffer
-                .extend_from_slice(unsafe { from_raw_parts(&raw const block as *const u8, mem::size_of_val(block)) });
+            fv_buffer.extend_from_slice(unsafe {
+                from_raw_parts(block as *const BlockMapEntry as *const u8, mem::size_of_val(block))
+            });
         }
+
+        let header_len = fv_buffer.len();
 
         // add the ext_header, if present
         let ext_header_offset = if let Some((ext_header, data)) = &self.ext_header {
             let offset = fv_buffer.len();
+            let mut ext_hdr_data = unsafe {
+                from_raw_parts(ext_header as *const fv::ExtHeader as *const u8, mem::size_of_val(ext_header)).to_vec()
+            };
+            ext_hdr_data.extend(data);
 
-            fv_buffer.extend_from_slice(unsafe {
-                from_raw_parts(&raw const ext_header as *const u8, mem::size_of_val(ext_header))
-            });
+            // ext_header data is added as a "Pad" file
+            let mut ext_header_pad_file =
+                File::new(efi::Guid::from_bytes(&[0xffu8; 16]), ffs::file::raw::r#type::FFS_PAD);
+            let ext_header_section = Section::new_from_meta_with_data(
+                section::SectionMetaData::Standard(ffs::section::raw_type::FFS_PAD, 0),
+                ext_hdr_data,
+            );
 
-            fv_buffer.extend(data);
+            ext_header_pad_file.sections.push(ext_header_section);
+            ext_header_pad_file.set_data_checksum(false);
 
-            offset
+            fv_buffer.extend(ext_header_pad_file.serialize()?);
+
+            offset + ext_header_pad_file.content_offset()?
         } else {
             0
         };
 
-        let header_len = fv_buffer.len();
         // add padding to ensure first file is 8-byte aligned.
         let padding_len = 8 - (fv_buffer.len() % 8);
         fv_buffer.extend(iter::repeat(pad_byte).take(padding_len));
 
-        //add content
-        fv_buffer.extend(content);
+        //Serialize the file list into a content vector.
+        for file in &self.files {
+            let file_buffer = &file.serialize()?;
+
+            // Check if the file is too big for the filesystem format.
+            if file_buffer.len() >= fv::FFS_V2_MAX_FILE_SIZE && !large_file_support {
+                Err(FirmwareFileSystemError::Unsupported)?;
+            }
+
+            let file_ref = FileRef::new(file_buffer)?;
+
+            //check if a pad file needs to be inserted to align the file content.
+            let required_content_alignment = file_ref.fv_attributes() & fv::file::raw::attribute::ALIGNMENT;
+            let required_content_alignment: usize = 1 << required_content_alignment;
+
+            if (fv_buffer.len() + file_ref.content_offset()) % required_content_alignment != 0 {
+                //need to insert a pad file to ensure content is aligned to the required alignment specified in the
+                //file attributes.
+
+                //Per spec, max required_content_alignement is pad files is 16M (2^24). That means that pad file size
+                //will always be less than 16M so we can always use Header (instead of Header2) for pad header.
+                assert!(required_content_alignment < 0x1000000);
+
+                let pad_len = fv_buffer.len() + mem::size_of::<ffs::file::Header>() + file_ref.content_offset();
+                let pad_len = required_content_alignment - (pad_len % required_content_alignment);
+
+                // check the padding math.
+                debug_assert_eq!(
+                    (fv_buffer.len() + mem::size_of::<ffs::file::Header>() + pad_len + file_ref.content_offset())
+                        % required_content_alignment,
+                    0
+                );
+
+                let mut pad_file = File::new(efi::Guid::from_bytes(&[0xffu8; 16]), ffs::file::raw::r#type::FFS_PAD);
+                let pad_section = Section::new_from_meta_with_data(
+                    section::SectionMetaData::Standard(ffs::section::raw_type::FFS_PAD, 0),
+                    iter::repeat(0xffu8).take(pad_len).collect(),
+                );
+                pad_file.sections.push(pad_section);
+
+                fv_buffer.extend(pad_file.serialize()?);
+            }
+
+            fv_buffer.extend_from_slice(file_buffer);
+
+            //pad to next 8-byte aligned length, since files start at 8-byte aligned offsets.
+            if fv_buffer.len() % 8 != 0 {
+                let pad_length = 8 - (fv_buffer.len() % 8);
+
+                fv_buffer.extend(iter::repeat(pad_byte).take(pad_length));
+            }
+        }
+
+        if let Capacity::Size(size) = self.capacity {
+            if size > fv_buffer.len() {
+                fv_buffer.extend(iter::repeat(pad_byte).take(size - fv_buffer.len()));
+            }
+        }
 
         // calculate/patch the various header fields that need knowledge of buffer.
         fv_header.fv_length = fv_buffer.len().try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
         fv_header.header_length = header_len.try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
         fv_header.ext_header_offset =
             ext_header_offset.try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
+
+        // calculate the checksum.
         let checksum = fv_buffer[..header_len]
             .chunks_exact(2)
+            //in the fv_buffer the following 3 fields are still set to zero, so manually add them to the checksum calculation.
+            .chain(fv_header.fv_length.to_le_bytes().chunks_exact(2))
+            .chain(fv_header.header_length.to_le_bytes().chunks_exact(2))
+            .chain(fv_header.ext_header_offset.to_le_bytes().chunks_exact(2))
             .fold(0u16, |sum, value| sum.wrapping_add(u16::from_le_bytes(value.try_into().unwrap())));
         fv_header.checksum = 0u16.wrapping_sub(checksum);
 
         //re-write the updated fv_header into the front of the fv_buffer.
         fv_buffer[..mem::size_of_val(&fv_header)]
             .copy_from_slice(unsafe { from_raw_parts(&raw mut fv_header as *mut u8, mem::size_of_val(&fv_header)) });
+
+        // verify the checksum
+        debug_assert_eq!(
+            fv_buffer[..header_len]
+                .chunks_exact(2)
+                .fold(0u16, |sum, value| sum.wrapping_add(u16::from_le_bytes(value.try_into().unwrap()))),
+            0
+        );
 
         Ok(fv_buffer)
     }
@@ -451,6 +525,7 @@ impl TryFrom<VolumeRef<'_>> for Volume {
             ext_header: src.ext_header(),
             block_map: src.block_map().clone(),
             files,
+            capacity: Capacity::Size(src.size() as usize),
         })
     }
 }
@@ -477,6 +552,7 @@ impl TryFrom<(VolumeRef<'_>, &dyn SectionExtractor)> for Volume {
             ext_header: src.ext_header(),
             block_map: src.block_map().clone(),
             files,
+            capacity: Capacity::Size(src.size() as usize),
         })
     }
 }
@@ -898,7 +974,20 @@ mod test {
         let original_fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
         let fv_ref = VolumeRef::new(&original_fv_bytes).map_err(stringify)?;
 
-        let _fv: Volume = fv_ref.try_into().map_err(stringify)?;
+        let fv: Volume = fv_ref.try_into().map_err(stringify)?;
+
+        let serialized_fv_bytes = fv.serialize().map_err(stringify)?;
+
+        assert_eq!(original_fv_bytes.len(), serialized_fv_bytes.len());
+
+        let mismatch = original_fv_bytes.iter().zip(serialized_fv_bytes).enumerate()
+            .find(|(_offset, (expected, actual))|{
+                *expected != actual
+            });
+
+        if let Some((offset, (expected, actual))) = mismatch {
+            panic!("mismatch in serialized buffer at offset {offset:x}. Expected {expected:x}, actual: {actual:x}");
+        }
 
         Ok(())
     }
