@@ -147,18 +147,23 @@ impl Performance {
         boot_services: StandardBootServices,
         runtime_services: StandardRuntimeServices,
         records_buffers_hobs: Option<Hob<HobPerformanceData>>,
-        mm_comm_region_hobs: Hob<MmCommRegion>,
+        mm_comm_region_hobs: Option<Hob<MmCommRegion>>,
     ) -> Result<(), EfiError> {
         PERF_MEASUREMENT_MASK.store(enabled_measurements.mask(), Ordering::Relaxed);
 
         let fbpt = set_static_state(StandardBootServices::clone(&boot_services))
             .expect("Static state should only be initialized here!");
 
-        let Some(mm_comm_region) = mm_comm_region_hobs.iter().find(|r| r.is_user_type()) else {
-            return Ok(());
+        let Some(mm_comm_region_hobs) = mm_comm_region_hobs else {
+            // If no MM communication region is provided, we can skip the SMM performance records.
+            return self._entry_point(boot_services, runtime_services, records_buffers_hobs, None, fbpt);
         };
 
-        self._entry_point(boot_services, runtime_services, records_buffers_hobs, *mm_comm_region, fbpt)
+        let Some(mm_comm_region) = mm_comm_region_hobs.iter().find(|r| r.is_user_type()) else {
+            return Ok(());
+};
+
+        self._entry_point(boot_services, runtime_services, records_buffers_hobs, Some(*mm_comm_region), fbpt)
     }
 
     /// Entry point that have generic parameter.
@@ -167,7 +172,7 @@ impl Performance {
         boot_services: BB,
         runtime_services: RR,
         records_buffers_hobs: Option<P>, // Changed to Option<P>
-        mm_comm_region: MmCommRegion,
+        mm_comm_region: Option<MmCommRegion>, // Changed to Option<MmCommRegion>
         fbpt: &'static TplMutex<'static, F, B>,
     ) -> Result<(), EfiError>
     where
@@ -215,13 +220,18 @@ impl Performance {
         )?;
 
         // Register ReadyToBoot event to update the boot performance table for SMM performance data.
-        boot_services.as_ref().create_event_ex(
-            EventType::NOTIFY_SIGNAL,
-            Tpl::CALLBACK,
-            Some(fetch_and_add_mm_performance_records),
-            Box::new((BB::clone(&boot_services), mm_comm_region, fbpt)),
-            &EVENT_GROUP_READY_TO_BOOT,
-        )?;
+        // Only register if mm_comm_region is available
+        if let Some(mm_comm_region) = mm_comm_region {
+            boot_services.as_ref().create_event_ex(
+                EventType::NOTIFY_SIGNAL,
+                Tpl::CALLBACK,
+                Some(fetch_and_add_mm_performance_records),
+                Box::new((BB::clone(&boot_services), Some(mm_comm_region), fbpt)),
+                &EVENT_GROUP_READY_TO_BOOT,
+            )?;
+        } else {
+            log::info!("Performance: No MM communication region available, skipping SMM performance event registration.");
+        }
 
         // Install configuration table for performance property.
         unsafe {
@@ -295,7 +305,7 @@ extern "efiapi" fn report_fbpt_record_buffer<BB, B, RR, R, F>(
 /// Event callback that add the SMM performance record to the FBPT.
 extern "efiapi" fn fetch_and_add_mm_performance_records<BB, B, F>(
     event: efi::Event,
-    ctx: Box<(BB, MmCommRegion, &TplMutex<'static, F, B>)>,
+    ctx: Box<(BB, Option<MmCommRegion>, &TplMutex<'static, F, B>)>,
 ) where
     BB: AsRef<B> + Clone,
     B: BootServices + 'static,
@@ -303,6 +313,11 @@ extern "efiapi" fn fetch_and_add_mm_performance_records<BB, B, F>(
 {
     let (boot_services, mm_comm_region, fbpt) = *ctx;
     let _ = boot_services.as_ref().close_event(event);
+
+    let Some(mm_comm_region) = mm_comm_region else {
+        log::info!("Performance: No MM communication region available, skipping SMM performance records.");
+        return;
+    };
 
     // SAFETY: This is safe because the reference returned by locate_protocol is never mutated after installation.
     let Ok(communication) = (unsafe { boot_services.as_ref().locate_protocol::<CommunicateProtocol>(None) }) else {
