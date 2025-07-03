@@ -202,27 +202,3 @@ impl AcpiSdtProtocol {
 }
 
 type AcpiNotifyFnExt = fn(*const AcpiTableHeader, u32, usize) -> efi::Status;
-
-/// Represents a `*const c_void` pointer to an ACPI table in C.
-pub(crate) struct CAcpiTable {
-    table_ptr: *const c_void,
-}
-
-impl CAcpiTable {
-    /// Converts a `*const c_void` pointer to a `CAcpiTable`.
-    ///
-    /// # Safety
-    /// The caller must ensure that the pointer is valid and points to an ACPI table.
-    unsafe fn from_ptr(ptr: *const c_void) -> Self {
-        Self { table_ptr: ptr }
-    }
-}
-
-impl StandardAcpiTable for CAcpiTable {
-    /// # Safety
-    /// The caller must ensure that the pointer is valid and points to an ACPI table.
-    fn header(&self) -> &AcpiTableHeader {
-        // SAFETY: The first field of any ACPI table is the header.
-        unsafe { &*(self.table_ptr as *const AcpiTableHeader) }
-    }
-}

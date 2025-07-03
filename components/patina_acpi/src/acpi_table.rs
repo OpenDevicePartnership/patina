@@ -11,6 +11,7 @@ use patina_sdk::component::service::Service;
 use patina_sdk::efi_types::EfiMemoryType;
 
 use crate::error::AcpiError;
+use crate::signature::ACPI_XSDT_ENTRY_SIZE;
 use crate::{service::TableKey, signature::ACPI_HEADER_LEN};
 
 use core::any::{Any, TypeId};
@@ -220,8 +221,7 @@ impl AcpiRsdp {
     }
 }
 
-/// Represents the DSDT for ACPI 2.0+.
-/// The DSDT is not present in the list of installed ACPI tables; instead, it is only accessible through the FADT's `x_dsdt` field.
+/// Represents the XSDT for ACPI 2.0+.
 /// The XSDT has a standard header followed by 64-bit addresses of installed tables.
 /// The `length` field of the header tells us the number of trailing bytes representing table entries.
 #[repr(C)]
@@ -236,29 +236,54 @@ impl StandardAcpiTable for AcpiXsdt {
     }
 }
 
-/// Represents a raw pointer to an ACPI table in C.
-/// Because the table is abstracted as a pointer, the `type_id` may not be valid.
-pub struct RawAcpiTable {
-    header: NonNull<AcpiTableHeader>,
+/// Stores implementation-specific data about the XSDT.
+pub(crate) struct AcpiXsdtMetadata {
+    pub(crate) n_entries: usize,
+    pub(crate) max_capacity: usize,
+    pub(crate) slice: Box<[u8], &'static dyn alloc::alloc::Allocator>,
 }
 
-impl RawAcpiTable {
-    /// Converts an address to a `CAcpiTable`.
-    ///
-    /// # Safety
-    /// The caller must ensure that the address is in valid ACPI memory and points to a valid ACPI table.
-    pub fn new_from_address(addr: u64) -> Result<Self, AcpiError> {
-        let header = addr as *mut AcpiTableHeader;
-        Ok(Self { header: NonNull::new(header).ok_or(AcpiError::NullTablePtr)? })
+impl AcpiXsdtMetadata {
+    // Get the 4-byte length (bytes 4..8 of the header).
+    pub(crate) fn get_length(&self) -> Result<u32, AcpiError> {
+        // XSDT always starts with header.
+        let length_offset = mem::offset_of!(AcpiTableHeader, length);
+        // Grab the current length from the correct offset in the header.
+        self.slice
+            .get(length_offset..length_offset + mem::size_of::<u32>()) // Length is a u32
+            .and_then(|b| b.try_into().ok())
+            .map(u32::from_le_bytes)
+            .ok_or(AcpiError::XsdtOverflow)
     }
-}
 
-impl StandardAcpiTable for RawAcpiTable {
-    /// # Safety
-    /// The caller must ensure that the address is in valid ACPI memory and points to a valid ACPI table.
-    fn header(&self) -> &AcpiTableHeader {
-        // SAFETY: The first field of any ACPI table is the header.
-        unsafe { self.header.as_ref() }
+    // Set the 4-byte length (bytes 4..8 of the header).
+    pub(crate) fn set_length(&mut self, new_len: u32) {
+        // XSDT always starts with header.
+        let length_offset = mem::offset_of!(AcpiTableHeader, length);
+        // Write the new length into the correct offset in the header.
+        self.slice[length_offset..length_offset + mem::size_of::<u32>()] // Length is a u32
+            .copy_from_slice(&new_len.to_le_bytes());
+    }
+
+    /// Set the 6-byte OEM ID (bytes 10..16 of the header).
+    pub(crate) fn set_oem_id(&mut self, new_id: [u8; 6]) {
+        let offset = mem::offset_of!(AcpiTableHeader, oem_id);
+        let end = offset + mem::size_of::<[u8; 6]>();
+        self.slice[offset..end].copy_from_slice(&new_id);
+    }
+
+    /// Set the 8-byte OEM Table ID (bytes 16..24 of the header).
+    pub(crate) fn set_oem_table_id(&mut self, new_table_id: [u8; 8]) {
+        let offset = mem::offset_of!(AcpiTableHeader, oem_table_id);
+        let end = offset + mem::size_of::<[u8; 8]>();
+        self.slice[offset..end].copy_from_slice(&new_table_id);
+    }
+
+    /// Set the 4-byte OEM Revision (bytes 24..28 of the header).
+    pub(crate) fn set_oem_revision(&mut self, new_rev: u32) {
+        let offset = mem::offset_of!(AcpiTableHeader, oem_revision);
+        let end = offset + mem::size_of::<u32>();
+        self.slice[offset..end].copy_from_slice(&new_rev.to_le_bytes());
     }
 }
 
@@ -320,7 +345,7 @@ impl<T> Table<T> {
 
 #[derive(Clone, Copy)]
 pub(crate) struct AcpiTable {
-    table: NonNull<Table>,
+    pub(crate) table: NonNull<Table>,
 }
 
 impl AcpiTable {
@@ -332,6 +357,10 @@ impl AcpiTable {
     pub const XSDT: u32 = 0x54445358;
 
     /// Creates a new AcpiTable from a given table.
+    /// ## Safety
+    ///
+    /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
+    /// - Caller must ensure that the table's first field is [AcpiTableHeader].
     pub unsafe fn new<T>(table: T, mm: &Service<dyn MemoryManager>) -> Self {
         let table = Table::new(table);
 
@@ -345,6 +374,16 @@ impl AcpiTable {
             NonNull::from(Box::leak(Box::new_in(table, mm.get_allocator(allocator_type).unwrap()))).cast::<Table>();
 
         AcpiTable { table }
+    }
+
+    /// Creates a new ACPI table from a boxed Table (already allocated).
+    /// ## Safety
+    ///
+    /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
+    /// - Caller must ensure that the table's first field is [AcpiTableHeader].
+    pub unsafe fn new_from_boxed(boxed_table: Box<Table>) -> Self {
+        let acpi_table = NonNull::from(Box::leak(boxed_table));
+        AcpiTable { table: acpi_table }
     }
 
     pub fn signature(&self) -> u32 {
@@ -362,7 +401,7 @@ impl AcpiTable {
         unsafe { &mut self.table.as_mut().header }
     }
 
-    pub fn update_checksum(&mut self) {
+    pub fn update_checksum(&mut self, offset: usize) {
         todo!()
     }
 

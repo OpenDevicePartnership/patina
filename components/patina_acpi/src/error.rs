@@ -80,6 +80,7 @@ impl From<AcpiError> for efi::Status {
             AcpiError::MemoryManagerAlreadyInitialized => efi::Status::ALREADY_STARTED,
             AcpiError::ProviderNotInitialized => efi::Status::NOT_FOUND,
             AcpiError::XsdtOverflow => efi::Status::INVALID_PARAMETER,
+            AcpiError::XsdtAlreadyInstalled => efi::Status::NOT_STARTED,
         }
     }
 }

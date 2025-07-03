@@ -1,4 +1,4 @@
-use crate::acpi_table::{AcpiTableHeader, StandardAcpiTable};
+use crate::acpi_table::{AcpiTable, AcpiTableHeader, AcpiXsdtMetadata, StandardAcpiTable};
 use crate::alloc::boxed::Box;
 
 use core::mem;
@@ -104,7 +104,8 @@ impl AcpiProviderManager {
         };
 
         // Allocate memory for the RSDP.
-        let rsdp_allocated = Box::new_in(rsdp_data, allocator);
+        let rsdp_allocated =
+            unsafe { AcpiTable::new(rsdp_data, ACPI_TABLE_INFO.memory_manager.get().ok_or(EfiError::NotStarted)?) };
         ACPI_TABLE_INFO.set_rsdp(rsdp_allocated);
 
         // Checksum the root tables after setting up.
