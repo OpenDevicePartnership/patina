@@ -437,7 +437,7 @@ pub fn init_dxe_services(system_table: &mut EfiSystemTable) {
 }
 
 #[cfg(test)]
-mod add_memory_space_tests {
+mod tests {
     use super::*;
     use crate::test_support;
     use dxe_services::GcdMemoryType;
@@ -745,23 +745,6 @@ mod add_memory_space_tests {
             assert!(result.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
         });
     }
-}
-
-#[cfg(test)]
-mod free_memory_space_tests {
-    use super::*;
-    use crate::test_support;
-    use dxe_services::GcdMemoryType;
-
-    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
-        test_support::with_global_lock(|| {
-            unsafe {
-                crate::test_support::init_test_gcd(None);
-            }
-            f();
-        })
-        .unwrap();
-    }
 
     #[test]
     fn test_free_memory_space_success() {
@@ -783,11 +766,9 @@ mod free_memory_space_tests {
                 core::ptr::null_mut(),
             );
 
-            // If allocation succeeded, test freeing
-            if allocate_result == efi::Status::SUCCESS {
-                let free_result = free_memory_space(allocated_address, 0x1000);
-                assert_eq!(free_result, efi::Status::SUCCESS, "Should successfully free allocated memory");
-            }
+            assert_eq!(allocate_result, efi::Status::SUCCESS, "Should successfully allocate memory");
+            let free_result = free_memory_space(allocated_address, 0x1000);
+            assert_eq!(free_result, efi::Status::SUCCESS, "Should successfully free allocated memory");
         });
     }
 
@@ -843,16 +824,15 @@ mod free_memory_space_tests {
                 core::ptr::null_mut(),
             );
 
-            if allocate_result == efi::Status::SUCCESS {
-                // Free once - should succeed
-                let first_free = free_memory_space(allocated_address, 0x1000);
-                assert_eq!(first_free, efi::Status::SUCCESS, "First free should succeed");
+            assert_eq!(allocate_result, efi::Status::SUCCESS, "Should successfully allocate memory");
+            // Free once - should succeed
+            let first_free = free_memory_space(allocated_address, 0x1000);
+            assert_eq!(first_free, efi::Status::SUCCESS, "First free should succeed");
 
-                // Try to free again - should fail
-                let second_free = free_memory_space(allocated_address, 0x1000);
-                assert_ne!(second_free, efi::Status::SUCCESS, "Double free should fail");
-                assert!(second_free.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
-            }
+            // Try to free again - should fail
+            let second_free = free_memory_space(allocated_address, 0x1000);
+            assert_ne!(second_free, efi::Status::SUCCESS, "Double free should fail");
+            assert!(second_free.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
         });
     }
 
@@ -876,10 +856,9 @@ mod free_memory_space_tests {
                 core::ptr::null_mut(),
             );
 
-            if allocate_result == efi::Status::SUCCESS {
-                let partial_free = free_memory_space(allocated_address, 0x1000); // Only 4KB instead of 8KB
-                assert_eq!(partial_free, efi::Status::SUCCESS);
-            }
+            assert_eq!(allocate_result, efi::Status::SUCCESS, "Should successfully allocate memory");
+            let partial_free = free_memory_space(allocated_address, 0x1000); // Only 4KB instead of 8KB
+            assert_eq!(partial_free, efi::Status::SUCCESS);
         });
     }
 
@@ -903,12 +882,11 @@ mod free_memory_space_tests {
                 core::ptr::null_mut(),
             );
 
-            if allocate_result == efi::Status::SUCCESS {
-                // Try to free with wrong length
-                let wrong_length_free = free_memory_space(allocated_address, 0x2000); // 8KB instead of 4KB
-                assert_ne!(wrong_length_free, efi::Status::SUCCESS);
-                assert!(wrong_length_free.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
-            }
+            assert_eq!(allocate_result, efi::Status::SUCCESS, "Should successfully allocate memory");
+            // Try to free with wrong length
+            let wrong_length_free = free_memory_space(allocated_address, 0x2000); // 8KB instead of 4KB
+            assert_ne!(wrong_length_free, efi::Status::SUCCESS);
+            assert!(wrong_length_free.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
         });
     }
 
@@ -948,10 +926,9 @@ mod free_memory_space_tests {
                     core::ptr::null_mut(),
                 );
 
-                if allocate_result == efi::Status::SUCCESS {
-                    let free_result = free_memory_space(allocated_address, 0x1000);
-                    assert_eq!(free_result, efi::Status::SUCCESS, "Cycle {} free should succeed", i);
-                }
+                assert_eq!(allocate_result, efi::Status::SUCCESS, "Cycle {} allocate should succeed", i);
+                let free_result = free_memory_space(allocated_address, 0x1000);
+                assert_eq!(free_result, efi::Status::SUCCESS, "Cycle {} free should succeed", i);
             }
         });
     }
