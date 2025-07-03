@@ -97,16 +97,16 @@ impl AcpiTableManager {
         self.provider_service.register_notify(should_register, notify_fn)
     }
 
-    /// Returns an iterator over the installed ACPI tables.
-    /// Each returned `AcpiTableHeader` points to the header of an ACPI table installed in ACPI memory.
-    ///
-    /// This can be used in place of `get_acpi_table`, or in conjunction with it to retrieve a specific table reference.
-    ///
-    /// The RSDP and XSDT are not included in the list of iterable ACPI tables.
-    pub fn iter(&self) -> impl Iterator<Item = &AcpiTableHeader> {
-        let wrapper_vec = self.provider_service.iter_tables().collect();
-        wrapper_vec.iter().map(|tbl| tbl.header())
-    }
+    // / Returns an iterator over the installed ACPI tables.
+    // / Each returned `AcpiTableHeader` points to the header of an ACPI table installed in ACPI memory.
+    // /
+    // / This can be used in place of `get_acpi_table`, or in conjunction with it to retrieve a specific table reference.
+    // /
+    // / The RSDP and XSDT are not included in the list of iterable ACPI tables.
+    // pub fn iter(&self) -> impl Iterator<Item = &AcpiTableHeader> {
+    //     let wrapper_vec = self.provider_service.iter_tables().collect();
+    //     wrapper_vec.iter().map(|tbl| tbl.header())
+    // }
 }
 
 /// The `AcpiTableManager` provides functionality for installing, uninstalling, and accessing ACPI tables.

@@ -304,7 +304,7 @@ pub struct AcpiTableHeader {
 }
 
 /// The inner table structure.
-union Table<T = AcpiTableHeader> {
+pub(crate) union Table<T = AcpiTableHeader> {
     /// The signature of the ACPI table.
     signature: u32,
     /// The header of the ACPI table.
