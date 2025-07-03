@@ -11,7 +11,7 @@ use alloc_no_stdlib::{self, define_index_ops_mut, SliceWrapper, SliceWrapperMut}
 use brotli_decompressor::{BrotliDecompressStream, BrotliResult, BrotliState, HuffmanCode};
 use mu_pi::fw_fs;
 use patina_ffs::{
-    section::{Section, SectionExtractor, SectionMetaData},
+    section::{Section, SectionExtractor, SectionHeader},
     FirmwareFileSystemError,
 };
 
@@ -55,7 +55,7 @@ impl<T: Clone> alloc_no_stdlib::Allocator<T> for HeapAllocator<T> {
 pub struct BrotliSectionExtractor;
 impl SectionExtractor for BrotliSectionExtractor {
     fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
-        if let SectionMetaData::GuidDefined(guid_header, __guid_header_fields, _) = section.metadata() {
+        if let SectionHeader::GuidDefined(guid_header, __guid_header_fields, _) = section.header() {
             if guid_header.section_definition_guid == fw_fs::guid::BROTLI_SECTION {
                 let data = section.try_as_slice()?;
                 let out_size = u64::from_le_bytes(data[0..8].try_into().unwrap());

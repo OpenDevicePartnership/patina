@@ -395,8 +395,8 @@ impl Volume {
             // ext_header data is added as a "Pad" file
             let mut ext_header_pad_file =
                 File::new(efi::Guid::from_bytes(&[0xffu8; 16]), ffs::file::raw::r#type::FFS_PAD);
-            let ext_header_section = Section::new_from_meta_with_data(
-                section::SectionMetaData::Standard(ffs::section::raw_type::FFS_PAD, 0),
+            let ext_header_section = Section::new_from_header_with_data(
+                section::SectionHeader::Standard(ffs::section::raw_type::FFS_PAD, 0),
                 ext_hdr_data,
             );
 
@@ -448,8 +448,8 @@ impl Volume {
                 );
 
                 let mut pad_file = File::new(efi::Guid::from_bytes(&[0xffu8; 16]), ffs::file::raw::r#type::FFS_PAD);
-                let pad_section = Section::new_from_meta_with_data(
-                    section::SectionMetaData::Standard(ffs::section::raw_type::FFS_PAD, 0),
+                let pad_section = Section::new_from_header_with_data(
+                    section::SectionHeader::Standard(ffs::section::raw_type::FFS_PAD, 0),
                     iter::repeat(0xffu8).take(pad_len).collect(),
                 );
                 pad_file.sections.push(pad_section);
@@ -559,8 +559,9 @@ impl TryFrom<(VolumeRef<'_>, &dyn SectionExtractor)> for Volume {
 
 #[cfg(test)]
 mod test {
-    use core::{mem, sync::atomic::AtomicBool};
+    use core::{iter, mem, sync::atomic::AtomicBool};
     use log::{self, Level, LevelFilter, Metadata, Record};
+    use lzma_rs::{lzma_compress, lzma_decompress};
     use mu_pi::fw_fs::{self, ffs, fv};
     use r_efi::efi;
     use serde::Deserialize;
@@ -569,12 +570,13 @@ mod test {
         env,
         error::Error,
         fs::{self, File},
+        io::Cursor,
         path::Path,
     };
     use uuid::Uuid;
 
     use crate::{
-        section::{Section, SectionExtractor, SectionMetaData},
+        section::{Section, SectionComposer, SectionExtractor, SectionHeader},
         volume::{Volume, VolumeRef},
         FirmwareFileSystemError,
     };
@@ -751,7 +753,7 @@ mod test {
 
         impl SectionExtractor for TestExtractor {
             fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
-                let SectionMetaData::GuidDefined(metadata, _, _) = section.metadata() else {
+                let SectionHeader::GuidDefined(metadata, _, _) = section.header() else {
                     panic!("Unexpected section metadata");
                 };
                 assert_eq!(metadata.section_definition_guid, fw_fs::guid::BROTLI_SECTION);
@@ -894,13 +896,13 @@ mod test {
         set_logger();
         let empty_pe32: [u8; 4] = [0x04, 0x00, 0x00, 0x10];
         let section = Section::new_from_buffer(&empty_pe32).unwrap();
-        assert!(matches!(section.metadata(), SectionMetaData::Standard(ffs::section::raw_type::PE32, _)));
+        assert!(matches!(section.header(), SectionHeader::Standard(ffs::section::raw_type::PE32, _)));
 
         let empty_compression: [u8; 0x11] =
             [0x11, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
         let section = Section::new_from_buffer(&empty_compression).unwrap();
-        match section.metadata() {
-            SectionMetaData::Compression(header, _) => {
+        match section.header() {
+            SectionHeader::Compression(header, _) => {
                 let length = header.uncompressed_length;
                 assert_eq!(length, 0);
                 assert_eq!(header.compression_type, 1);
@@ -917,8 +919,8 @@ mod test {
             0x04, 0x15, 0x19, 0x80, //Data
         ];
         let section = Section::new_from_buffer(&empty_guid_defined).unwrap();
-        match section.metadata() {
-            SectionMetaData::GuidDefined(header, guid_data, _) => {
+        match section.header() {
+            SectionHeader::GuidDefined(header, guid_data, _) => {
                 assert_eq!(
                     header.section_definition_guid,
                     efi::Guid::from_bytes(&[
@@ -936,8 +938,8 @@ mod test {
         let empty_version: [u8; 14] =
             [0x0E, 0x00, 0x00, 0x14, 0x00, 0x00, 0x31, 0x00, 0x2E, 0x00, 0x30, 0x00, 0x00, 0x00];
         let section = Section::new_from_buffer(&empty_version).unwrap();
-        match section.metadata() {
-            SectionMetaData::Version(version, _) => {
+        match section.header() {
+            SectionHeader::Version(version, _) => {
                 assert_eq!(version.build_number, 0);
                 assert_eq!(section.try_content_as_slice().unwrap(), &[0x31, 0x00, 0x2E, 0x00, 0x30, 0x00, 0x00, 0x00]);
             }
@@ -950,8 +952,8 @@ mod test {
             0x04, 0x15, 0x19, 0x80, //Data
         ];
         let section = Section::new_from_buffer(&empty_freeform_subtype).unwrap();
-        match section.metadata() {
-            SectionMetaData::FreeFormSubtypeGuid(ffst_header, _) => {
+        match section.header() {
+            SectionHeader::FreeFormSubtypeGuid(ffst_header, _) => {
                 assert_eq!(
                     ffst_header.sub_type_guid,
                     efi::Guid::from_bytes(&[
@@ -985,7 +987,7 @@ mod test {
             // serialize the volume back to bytes
             let serialized_fv_bytes = fv.serialize().map_err(stringify)?;
 
-            // compare that the two buffers match
+            // the two buffers should match.
             assert_eq!(original_fv_bytes.len(), serialized_fv_bytes.len());
 
             let mismatch = original_fv_bytes
@@ -998,6 +1000,54 @@ mod test {
                 panic!("mismatch in serialized buffer at offset {offset:x}. Expected {expected:x}, actual: {actual:x}");
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_serialization_with_extractor_composer() -> Result<(), Box<dyn Error>> {
+        struct LzmaExtractorComposer {}
+        impl SectionExtractor for LzmaExtractorComposer {
+            fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
+                if let SectionHeader::GuidDefined(guid_header, _, _) = section.header() {
+                    if guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION {
+                        let data = section.try_content_as_slice()?;
+                        let mut decomp: Vec<u8> = Vec::new();
+                        lzma_decompress(&mut Cursor::new(data), &mut decomp)
+                            .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+                        return Ok(decomp);
+                    }
+                }
+                Err(FirmwareFileSystemError::Unsupported)
+            }
+        }
+        impl SectionComposer for LzmaExtractorComposer {
+            fn compose(&self, section: &Section) -> Result<(SectionHeader, Vec<u8>), FirmwareFileSystemError> {
+                if let SectionHeader::GuidDefined(guid_header, _, _) = section.header() {
+                    if guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION {
+                        let mut content = Vec::new();
+                        let mut section_iter = section.sections().peekable();
+                        while let Some(section) = &section_iter.next() {
+                            content.extend_from_slice(section.try_as_slice()?);
+                            if section_iter.peek().is_some() {
+                                //pad to next 4-byte aligned length, since sections start at 4-byte aligned offsets. No padding is added
+                                //after the last section.
+                                if content.len() % 4 != 0 {
+                                    let pad_length = 4 - (content.len() % 4);
+                                    //Per PI 1.8A volume 3 section 2.2.4, pad byte is always zero.
+                                    content.extend(iter::repeat(0u8).take(pad_length));
+                                }
+                            }
+                        }
+                        let mut compressed: Vec<u8> = Vec::new();
+                        lzma_compress(&mut Cursor::new(content), &mut compressed)
+                            .map_err(|_| FirmwareFileSystemError::ComposeFailed)?;
+                        return Ok((section.header().clone(), compressed));
+                    }
+                }
+                Err(FirmwareFileSystemError::Unsupported)
+            }
+        }
+
         Ok(())
     }
 }

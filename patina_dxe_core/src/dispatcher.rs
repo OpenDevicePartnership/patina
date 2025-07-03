@@ -262,7 +262,7 @@ fn dispatch() -> Result<bool, EfiError> {
 
             if depex_satisfied && candidate.evaluate_auth().is_ok() {
                 for section in candidate.fv_sections {
-                    let content_offset = section.metadata().content_offset();
+                    let content_offset = section.header().content_offset();
                     let data = section.try_into_boxed_slice()?;
                     let data_ptr = Box::leak(data);
 

@@ -1,8 +1,8 @@
 use alloc::{boxed::Box, format, vec, vec::Vec};
 use mu_pi::fw_fs::ffs::{self, section};
-use patina_sdk::base::align_up;
+use patina_sdk::{base::align_up, boot_services::c_ptr::CPtr};
 
-use core::{fmt, iter, mem, ptr};
+use core::{fmt, iter, mem, ptr, slice::from_raw_parts};
 
 use crate::FirmwareFileSystemError;
 
@@ -11,27 +11,106 @@ pub trait SectionExtractor {
 }
 
 pub trait SectionComposer {
-    fn compose(&self, section: &Section) -> Result<(SectionMetaData, Vec<u8>), FirmwareFileSystemError>;
+    fn compose(&self, section: &Section) -> Result<(SectionHeader, Vec<u8>), FirmwareFileSystemError>;
 }
 
 #[derive(Debug, Clone)]
-pub enum SectionMetaData {
-    Standard(section::EfiSectionType, usize),
-    Compression(section::header::Compression, usize),
-    GuidDefined(section::header::GuidDefined, Vec<u8>, usize),
-    Version(section::header::Version, usize),
-    FreeFormSubtypeGuid(section::header::FreeformSubtypeGuid, usize),
+pub enum SectionHeader {
+    Standard(section::EfiSectionType, u32),
+    Compression(section::header::Compression, u32),
+    GuidDefined(section::header::GuidDefined, Vec<u8>, u32),
+    Version(section::header::Version, u32),
+    FreeFormSubtypeGuid(section::header::FreeformSubtypeGuid, u32),
 }
 
-impl SectionMetaData {
+impl SectionHeader {
     pub fn content_offset(&self) -> usize {
+        self.serialize().len()
+    }
+
+    pub fn section_type_raw(&self) -> u8 {
         match self {
-            SectionMetaData::Standard(_, offset)
-            | SectionMetaData::Compression(_, offset)
-            | SectionMetaData::GuidDefined(_, _, offset)
-            | SectionMetaData::Version(_, offset)
-            | SectionMetaData::FreeFormSubtypeGuid(_, offset) => *offset,
+            SectionHeader::Standard(raw_type, _) => *raw_type,
+            SectionHeader::Compression(_, _) => ffs::section::raw_type::encapsulated::COMPRESSION,
+            SectionHeader::GuidDefined(_, _, _) => ffs::section::raw_type::encapsulated::GUID_DEFINED,
+            SectionHeader::Version(_, _) => ffs::section::raw_type::VERSION,
+            SectionHeader::FreeFormSubtypeGuid(_, _) => ffs::section::raw_type::FREEFORM_SUBTYPE_GUID,
         }
+    }
+    pub fn section_type(&self) -> Option<ffs::section::Type> {
+        match self {
+            SectionHeader::Standard(section_type_raw, _) => match *section_type_raw {
+                ffs::section::raw_type::encapsulated::DISPOSABLE => Some(ffs::section::Type::Disposable),
+                ffs::section::raw_type::PE32 => Some(ffs::section::Type::Pe32),
+                ffs::section::raw_type::PIC => Some(ffs::section::Type::Pic),
+                ffs::section::raw_type::TE => Some(ffs::section::Type::Te),
+                ffs::section::raw_type::DXE_DEPEX => Some(ffs::section::Type::DxeDepex),
+                ffs::section::raw_type::USER_INTERFACE => Some(ffs::section::Type::UserInterface),
+                ffs::section::raw_type::COMPATIBILITY16 => Some(ffs::section::Type::Compatibility16),
+                ffs::section::raw_type::FIRMWARE_VOLUME_IMAGE => Some(ffs::section::Type::FirmwareVolumeImage),
+                ffs::section::raw_type::RAW => Some(ffs::section::Type::Raw),
+                ffs::section::raw_type::PEI_DEPEX => Some(ffs::section::Type::PeiDepex),
+                ffs::section::raw_type::MM_DEPEX => Some(ffs::section::Type::MmDepex),
+                _ => None,
+            },
+            SectionHeader::Compression(_, _) => Some(ffs::section::Type::Compression),
+            SectionHeader::GuidDefined(_, _, _) => Some(ffs::section::Type::GuidDefined),
+            SectionHeader::Version(_, _) => Some(ffs::section::Type::Version),
+            SectionHeader::FreeFormSubtypeGuid(_, _) => Some(ffs::section::Type::FreeformSubtypeGuid),
+        }
+    }
+    pub fn serialize(&self) -> Vec<u8> {
+        let (header_data, content_size) = match self {
+            SectionHeader::Standard(_, content_size) => (vec![0u8; 0], *content_size),
+            SectionHeader::Compression(compression, content_size) => {
+                //safety: compression is repr(C)
+                let compression_slice =
+                    unsafe { from_raw_parts(compression.as_ptr() as *const u8, mem::size_of_val(compression)) };
+                (compression_slice.to_vec(), *content_size)
+            }
+            SectionHeader::GuidDefined(guid_defined, items, context_size) => {
+                //safety: guid_defined is repr(C)
+                let mut guid_defined_vec = unsafe {
+                    from_raw_parts(guid_defined.as_ptr() as *const u8, mem::size_of_val(guid_defined)).to_vec()
+                };
+                guid_defined_vec.extend(items);
+                (guid_defined_vec, *context_size)
+            }
+            SectionHeader::Version(version, content_size) => {
+                //safety: version is repr(C)
+                let version_slice = unsafe { from_raw_parts(version.as_ptr() as *const u8, mem::size_of_val(version)) };
+                (version_slice.to_vec(), *content_size)
+            }
+            SectionHeader::FreeFormSubtypeGuid(freeform_subtype_guid, content_size) => {
+                //safety: freeform_subtype_guid is repr(C)
+                let freeform_slice = unsafe {
+                    from_raw_parts(freeform_subtype_guid.as_ptr() as *const u8, mem::size_of_val(freeform_subtype_guid))
+                };
+                (freeform_slice.to_vec(), *content_size)
+            }
+        };
+
+        let mut section_header = ffs::section::Header { section_type: self.section_type_raw(), size: [0xffu8; 3] };
+
+        let section_size = mem::size_of_val(&section_header) + header_data.len() + (content_size as usize);
+
+        if section_size < 0x1000000 {
+            section_header.size = (section_size as u32).to_le_bytes()[0..3].try_into().unwrap();
+        }
+
+        //safety: header is repr(C)
+        let mut section_vec = unsafe {
+            from_raw_parts(&raw const section_header as *const u8, mem::size_of_val(&section_header)).to_vec()
+        };
+
+        //add ext size if req.
+        if section_size >= 0x1000000 {
+            section_vec.extend((section_size as u32 + 4).to_le_bytes());
+        }
+
+        section_vec.extend(header_data);
+
+        section_vec
     }
 }
 
@@ -58,13 +137,13 @@ impl fmt::Debug for SectionData {
 
 #[derive(Debug, Clone)]
 pub struct Section {
-    meta: SectionMetaData,
+    header: SectionHeader,
     data: SectionData,
 }
 
 impl Section {
-    pub fn new_from_meta(meta: SectionMetaData) -> Self {
-        Self { meta, data: SectionData::None }
+    pub fn new_from_header(header: SectionHeader) -> Self {
+        Self { header, data: SectionData::None }
     }
 
     pub fn new_from_buffer(buffer: &[u8]) -> Result<Self, FirmwareFileSystemError> {
@@ -104,7 +183,7 @@ impl Section {
         }
 
         // For spec-defined section types, validate the section-specific headers.
-        let meta = match section_header.section_type {
+        let header = match section_header.section_type {
             section::raw_type::encapsulated::COMPRESSION => {
                 let compression_header_size = mem::size_of::<section::header::Compression>();
                 // verify that the buffer is large enough to hold the compresion header.
@@ -115,7 +194,10 @@ impl Section {
                 let compression_header = unsafe {
                     ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::Compression)
                 };
-                SectionMetaData::Compression(compression_header, section_data_offset + compression_header_size)
+                let content_size: u32 = (section_size - (section_data_offset + compression_header_size))
+                    .try_into()
+                    .map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
+                SectionHeader::Compression(compression_header, content_size)
             }
             section::raw_type::encapsulated::GUID_DEFINED => {
                 // verify that the buffer is large enough to hold the GuidDefined header.
@@ -135,8 +217,9 @@ impl Section {
                 }
 
                 let guid_specific_data = buffer[section_data_offset + guid_header_size..data_offset].to_vec();
-
-                SectionMetaData::GuidDefined(guid_defined_header, guid_specific_data, data_offset)
+                let content_size: u32 =
+                    (section_size - data_offset).try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
+                SectionHeader::GuidDefined(guid_defined_header, guid_specific_data, content_size)
             }
             section::raw_type::VERSION => {
                 let version_header_size = mem::size_of::<section::header::Version>();
@@ -148,7 +231,10 @@ impl Section {
                 let version_header = unsafe {
                     ptr::read_unaligned(buffer[section_data_offset..].as_ptr() as *const section::header::Version)
                 };
-                SectionMetaData::Version(version_header, section_data_offset + version_header_size)
+                let content_size: u32 = (section_size - (section_data_offset + version_header_size))
+                    .try_into()
+                    .map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
+                SectionHeader::Version(version_header, content_size)
             }
             section::raw_type::FREEFORM_SUBTYPE_GUID => {
                 // verify that the buffer is large enough to hold the FreeformSubtypeGuid header.
@@ -162,24 +248,33 @@ impl Section {
                         buffer[section_data_offset..].as_ptr() as *const section::header::FreeformSubtypeGuid
                     )
                 };
-                SectionMetaData::FreeFormSubtypeGuid(freeform_header, section_data_offset + freeform_subtype_size)
+                let content_size: u32 = (section_size - (section_data_offset + freeform_subtype_size))
+                    .try_into()
+                    .map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
+                SectionHeader::FreeFormSubtypeGuid(freeform_header, content_size)
             }
-            _ => SectionMetaData::Standard(section_header.section_type, section_data_offset), //for all other types, the content immediately follows the standard header.
+            _ => {
+                let content_size: u32 = (section_size - section_data_offset)
+                    .try_into()
+                    .map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
+                SectionHeader::Standard(section_header.section_type, content_size)
+                //for all other types, the content immediately follows the standard header.
+            }
         };
 
-        Ok(Section { meta, data: SectionData::Composed(buffer[..section_size].to_vec()) })
+        Ok(Section { header, data: SectionData::Composed(buffer[..section_size].to_vec()) })
     }
 
-    pub fn new_from_meta_with_data(meta: SectionMetaData, data: Vec<u8>) -> Self {
-        Self { meta, data: SectionData::Composed(data) }
+    pub fn new_from_header_with_data(header: SectionHeader, data: Vec<u8>) -> Self {
+        Self { header, data: SectionData::Composed(data) }
     }
 
-    pub fn new_from_meta_with_sections(meta: SectionMetaData, sections: Vec<Section>) -> Self {
-        Self { meta, data: SectionData::Extracted(sections) }
+    pub fn new_from_header_with_sections(header: SectionHeader, sections: Vec<Section>) -> Self {
+        Self { header, data: SectionData::Extracted(sections) }
     }
 
-    pub fn metadata(&self) -> &SectionMetaData {
-        &self.meta
+    pub fn header(&self) -> &SectionHeader {
+        &self.header
     }
 
     pub fn size(&self) -> Result<usize, FirmwareFileSystemError> {
@@ -190,35 +285,10 @@ impl Section {
     }
 
     pub fn section_type_raw(&self) -> u8 {
-        match &self.meta {
-            SectionMetaData::Standard(raw_type, _) => *raw_type,
-            SectionMetaData::Compression(_, _) => ffs::section::raw_type::encapsulated::COMPRESSION,
-            SectionMetaData::GuidDefined(_, _, _) => ffs::section::raw_type::encapsulated::GUID_DEFINED,
-            SectionMetaData::Version(_, _) => ffs::section::raw_type::VERSION,
-            SectionMetaData::FreeFormSubtypeGuid(_, _) => ffs::section::raw_type::FREEFORM_SUBTYPE_GUID,
-        }
+        self.header.section_type_raw()
     }
     pub fn section_type(&self) -> Option<ffs::section::Type> {
-        match &self.meta {
-            SectionMetaData::Standard(section_type_raw, _) => match *section_type_raw {
-                ffs::section::raw_type::encapsulated::DISPOSABLE => Some(ffs::section::Type::Disposable),
-                ffs::section::raw_type::PE32 => Some(ffs::section::Type::Pe32),
-                ffs::section::raw_type::PIC => Some(ffs::section::Type::Pic),
-                ffs::section::raw_type::TE => Some(ffs::section::Type::Te),
-                ffs::section::raw_type::DXE_DEPEX => Some(ffs::section::Type::DxeDepex),
-                ffs::section::raw_type::USER_INTERFACE => Some(ffs::section::Type::UserInterface),
-                ffs::section::raw_type::COMPATIBILITY16 => Some(ffs::section::Type::Compatibility16),
-                ffs::section::raw_type::FIRMWARE_VOLUME_IMAGE => Some(ffs::section::Type::FirmwareVolumeImage),
-                ffs::section::raw_type::RAW => Some(ffs::section::Type::Raw),
-                ffs::section::raw_type::PEI_DEPEX => Some(ffs::section::Type::PeiDepex),
-                ffs::section::raw_type::MM_DEPEX => Some(ffs::section::Type::MmDepex),
-                _ => None,
-            },
-            SectionMetaData::Compression(_, _) => Some(ffs::section::Type::Compression),
-            SectionMetaData::GuidDefined(_, _, _) => Some(ffs::section::Type::GuidDefined),
-            SectionMetaData::Version(_, _) => Some(ffs::section::Type::Version),
-            SectionMetaData::FreeFormSubtypeGuid(_, _) => Some(ffs::section::Type::FreeformSubtypeGuid),
-        }
+        self.header.section_type()
     }
 
     pub fn compose(&mut self, composer: &dyn SectionComposer) -> Result<(), FirmwareFileSystemError> {
@@ -232,14 +302,18 @@ impl Section {
             section.compose(composer)?;
         }
 
-        let (meta, content) = composer.compose(self)?;
+        let (header, content) = composer.compose(self)?;
+        let mut new_data = header.serialize();
+        new_data.extend(&content);
+
         let old_data = mem::replace(&mut self.data, SectionData::None);
 
         self.data = match old_data {
             SectionData::None | SectionData::Composed(_) => unreachable!(), // returned above.
-            SectionData::Extracted(sections) | SectionData::Both(_, sections) => SectionData::Both(content, sections),
+            SectionData::Extracted(sections) | SectionData::Both(_, sections) => SectionData::Both(new_data, sections),
         };
-        self.meta = meta;
+
+        self.header = header;
 
         Ok(())
     }
@@ -277,7 +351,7 @@ impl Section {
     }
 
     pub fn try_content_as_slice(&self) -> Result<&[u8], FirmwareFileSystemError> {
-        let content_offset = self.meta.content_offset();
+        let content_offset = self.header.content_offset();
         match &self.data {
             SectionData::None | SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
             SectionData::Composed(data) | SectionData::Both(data, _) => Ok(&data[content_offset..]),
@@ -297,7 +371,7 @@ impl Section {
             SectionData::Composed(_) => Box::new(iter::once(self)),
             SectionData::Extracted(sections) => Box::new(sections.into_iter().flat_map(|x| x.into_sections())),
             SectionData::Both(data, sections) => {
-                let current = Self { meta: self.meta, data: SectionData::Composed(data) };
+                let current = Self { header: self.header, data: SectionData::Composed(data) };
                 Box::new(iter::once(current).chain(sections.into_iter().flat_map(|x| x.clone().into_sections())))
             }
         }

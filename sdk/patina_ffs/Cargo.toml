@@ -18,3 +18,4 @@ log = {workspace = true}
 serde = {workspace = true}
 uuid = {workspace = true}
 serde_yaml = {workspace = true}
+lzma-rs = {workspace = true}

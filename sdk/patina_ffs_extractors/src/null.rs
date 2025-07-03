@@ -7,7 +7,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use patina_ffs::{
-    section::{Section, SectionComposer, SectionExtractor, SectionMetaData},
+    section::{Section, SectionComposer, SectionExtractor, SectionHeader},
     FirmwareFileSystemError,
 };
 
@@ -21,7 +21,7 @@ impl SectionExtractor for NullSectionProcessor {
 }
 
 impl SectionComposer for NullSectionProcessor {
-    fn compose(&self, _section: &Section) -> Result<(SectionMetaData, alloc::vec::Vec<u8>), FirmwareFileSystemError> {
+    fn compose(&self, _section: &Section) -> Result<(SectionHeader, alloc::vec::Vec<u8>), FirmwareFileSystemError> {
         Err(FirmwareFileSystemError::Unsupported)
     }
 }

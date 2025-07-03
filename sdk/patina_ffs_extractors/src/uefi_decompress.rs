@@ -10,7 +10,7 @@ use alloc::vec;
 use mu_pi::fw_fs::{self, ffs};
 use mu_rust_helpers::uefi_decompress::{decompress_into_with_algo, DecompressionAlgorithm};
 use patina_ffs::{
-    section::{SectionExtractor, SectionMetaData},
+    section::{SectionExtractor, SectionHeader},
     FirmwareFileSystemError,
 };
 
@@ -19,13 +19,13 @@ use patina_ffs::{
 pub struct UefiDecompressSectionExtractor {}
 impl SectionExtractor for UefiDecompressSectionExtractor {
     fn extract(&self, section: &patina_ffs::section::Section) -> Result<vec::Vec<u8>, FirmwareFileSystemError> {
-        let (src, algo) = match section.metadata() {
-            SectionMetaData::GuidDefined(guid_header, _, _)
+        let (src, algo) = match section.header() {
+            SectionHeader::GuidDefined(guid_header, _, _)
                 if guid_header.section_definition_guid == fw_fs::guid::TIANO_DECOMPRESS_SECTION =>
             {
                 (section.try_content_as_slice()?, DecompressionAlgorithm::TianoDecompress)
             }
-            SectionMetaData::Compression(compression_header, _) => {
+            SectionHeader::Compression(compression_header, _) => {
                 match compression_header.compression_type {
                     ffs::section::header::NOT_COMPRESSED => return Ok(section.try_content_as_slice()?.to_vec()), //not compressed, so just return section data
                     ffs::section::header::STANDARD_COMPRESSION => {

@@ -31,6 +31,7 @@ pub enum FirmwareFileSystemError {
     DataCorrupt,
     NotComposed,
     NotExtracted,
+    ComposeFailed,
 }
 
 impl From<FirmwareFileSystemError> for EfiError {
@@ -44,6 +45,7 @@ impl From<FirmwareFileSystemError> for EfiError {
             | FirmwareFileSystemError::InvalidBlockMap
             | FirmwareFileSystemError::InvalidState
             | FirmwareFileSystemError::DataCorrupt => EfiError::VolumeCorrupted,
+            FirmwareFileSystemError::ComposeFailed => EfiError::DeviceError,
         }
     }
 }

@@ -8,7 +8,7 @@
 //!
 use mu_pi::fw_fs;
 use patina_ffs::{
-    section::{SectionExtractor, SectionMetaData},
+    section::{SectionExtractor, SectionHeader},
     FirmwareFileSystemError,
 };
 
@@ -17,7 +17,7 @@ use patina_ffs::{
 pub struct Crc32SectionExtractor {}
 impl SectionExtractor for Crc32SectionExtractor {
     fn extract(&self, section: &patina_ffs::section::Section) -> Result<alloc::vec::Vec<u8>, FirmwareFileSystemError> {
-        if let SectionMetaData::GuidDefined(guid_header, crc_header, _) = section.metadata() {
+        if let SectionHeader::GuidDefined(guid_header, crc_header, _) = section.header() {
             if guid_header.section_definition_guid == fw_fs::guid::CRC32_SECTION {
                 if crc_header.len() < 4 {
                     Err(FirmwareFileSystemError::DataCorrupt)?;
