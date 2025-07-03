@@ -69,7 +69,7 @@ impl AcpiTableManager {
     /// The generic type `T` should be the expected type of the table.
     ///
     /// The RSDP and XSDT cannot be accessed through `get_acpi_table`.
-    pub fn get_acpi_table<T: 'static + Clone>(&self, table_key: TableKey) -> Result<&T, AcpiError> {
+    pub fn get_acpi_table<T: 'static>(&self, table_key: TableKey) -> Result<&T, AcpiError> {
         let acpi_table = self.provider_service.get_acpi_table(table_key)?;
 
         // There may be ACPI tables whose type is unknown at installation, due to installation from the HOB or a C protocol.
@@ -103,10 +103,9 @@ impl AcpiTableManager {
     // / This can be used in place of `get_acpi_table`, or in conjunction with it to retrieve a specific table reference.
     // /
     // / The RSDP and XSDT are not included in the list of iterable ACPI tables.
-    // pub fn iter(&self) -> impl Iterator<Item = &AcpiTableHeader> {
-    //     let wrapper_vec = self.provider_service.iter_tables().collect();
-    //     wrapper_vec.iter().map(|tbl| tbl.header())
-    // }
+    pub fn iter_tables(&self) -> Vec<AcpiTable> {
+        self.provider_service.iter_tables()
+    }
 }
 
 /// The `AcpiTableManager` provides functionality for installing, uninstalling, and accessing ACPI tables.
@@ -125,5 +124,5 @@ pub trait AcpiProvider {
     fn register_notify(&self, should_register: bool, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError>;
 
     /// Returns all currently installed tables in an iterable format.
-    fn iter_tables(&self) -> Vec<AcpiTable>;
+    fn iter_tables<'a>(&'a self) -> Vec<AcpiTable>;
 }

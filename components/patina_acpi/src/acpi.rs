@@ -1,6 +1,6 @@
 use alloc::{
     boxed::Box,
-    collections::btree_map::{BTreeMap, Values},
+    collections::btree_map::{self, BTreeMap, Values},
 };
 use core::{
     any::{Any, TypeId},
@@ -186,19 +186,12 @@ where
     /// Iterate over installed tables in the ACPI table list.
     /// The RSDP, FACS, and DSDT are not considered part of the list of installed tables and should not be iterated over.
     fn iter_tables(&self) -> Vec<AcpiTable> {
-        // The following system tables do not count in the list of installed tables and should not be iterated over.
-        let installed_tables_list: Vec<AcpiTable> = self
-            .acpi_tables
+        self.acpi_tables
             .read()
             .iter()
-            .filter(|(key, _value)| {
-                // Keep only those entries whose key is NOT in invalid_table_keys
-                !Self::PRIVATE_SYSTEM_TABLES.contains(key)
-            })
-            .map(|(_key, value)| value)
-            .cloned()
-            .collect();
-        installed_tables_list
+            .filter(|(k, _)| !Self::PRIVATE_SYSTEM_TABLES.contains(k))
+            .map(|(_, v)| v.clone())
+            .collect()
     }
 }
 
