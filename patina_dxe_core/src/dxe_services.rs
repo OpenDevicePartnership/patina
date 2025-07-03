@@ -535,23 +535,6 @@ mod add_memory_space_tests {
             assert_eq!(result, efi::Status::SUCCESS);
         });
     }
-}
-
-#[cfg(test)]
-mod allocate_memory_space_tests {
-    use super::*;
-    use crate::test_support;
-    use dxe_services::GcdMemoryType;
-
-    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
-        test_support::with_global_lock(|| {
-            unsafe {
-                crate::test_support::init_test_gcd(None);
-            }
-            f();
-        })
-        .unwrap();
-    }
 
     #[test]
     fn test_allocate_memory_space_success() {
