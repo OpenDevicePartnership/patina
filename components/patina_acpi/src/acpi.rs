@@ -181,7 +181,7 @@ where
             .read()
             .iter()
             .filter(|(k, _)| !Self::PRIVATE_SYSTEM_TABLES.contains(k))
-            .map(|(_, v)| v.clone())
+            .map(|(_, v)| *v)
             .collect()
     }
 }
@@ -529,7 +529,7 @@ where
                 }
             }
             _ => {
-                self.remove_table_from_xsdt(physical_addr as u64)?;
+                self.remove_table_from_xsdt(physical_addr)?;
             }
         }
 
@@ -645,11 +645,11 @@ where
         let installed: Vec<(TableKey, AcpiTable)> = read_guard
             .iter()
             .filter(|(k, _)| !Self::PRIVATE_SYSTEM_TABLES.contains(k))
-            .map(|(&k, v)| (k, v.clone()))
+            .map(|(&k, v)| (k, *v))
             .collect();
 
         if let Some(pair) = installed.get(idx) {
-            Ok(pair.clone())
+            Ok(*pair)
         } else {
             // Out-of-bounds index provided.
             Err(AcpiError::InvalidTableIndex)
@@ -817,7 +817,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        xsdt_allocated_bytes.extend(xsdt_info.header.to_bytes());
+        xsdt_allocated_bytes.extend(xsdt_info.header.hdr_to_bytes());
         // Add some extra space after the XSDT so it's safe to write the entry.
         xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(100));
         let xsdt_metadata = AcpiXsdtMetadata {
@@ -915,7 +915,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        xsdt_allocated_bytes.extend(xsdt_info.header.to_bytes());
+        xsdt_allocated_bytes.extend(xsdt_info.header.hdr_to_bytes());
         // Add some extra space after the XSDT so it's safe to write the entry.
         xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(100));
         let xsdt_metadata = AcpiXsdtMetadata {
@@ -969,7 +969,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        xsdt_allocated_bytes.extend(xsdt_info.header.to_bytes());
+        xsdt_allocated_bytes.extend(xsdt_info.header.hdr_to_bytes());
         // Add some extra space after the XSDT so it's safe to write the entry.
         xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(100));
         let xsdt_metadata = AcpiXsdtMetadata {
@@ -1148,7 +1148,7 @@ mod tests {
             creator_revision: 1,
         };
         let mut buf = Vec::with_capacity(mem::size_of::<AcpiTableHeader>());
-        buf.extend_from_slice(&hdr.to_bytes());
+        buf.extend_from_slice(&hdr.hdr_to_bytes());
         buf
     }
 

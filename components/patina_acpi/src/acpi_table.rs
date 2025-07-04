@@ -250,7 +250,7 @@ pub struct AcpiTableHeader {
 
 impl AcpiTableHeader {
     /// Serialize `self` into a `Vec<u8>` in ACPI's canonical layout.
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn hdr_to_bytes(&self) -> Vec<u8> {
         // Pre‑allocate exactly the right length
         let mut buf = Vec::with_capacity(mem::size_of::<Self>());
 

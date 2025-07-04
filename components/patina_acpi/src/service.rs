@@ -125,5 +125,5 @@ pub trait AcpiProvider {
     fn register_notify(&self, should_register: bool, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError>;
 
     /// Returns all currently installed tables in an iterable format.
-    fn iter_tables<'a>(&'a self) -> Vec<AcpiTable>;
+    fn iter_tables(&self) -> Vec<AcpiTable>;
 }

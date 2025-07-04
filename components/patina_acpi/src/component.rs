@@ -75,7 +75,7 @@ impl AcpiProviderManager {
             },
         };
         // Fill in XSDT data.
-        let header_bytes = xsdt_info.header.to_bytes();
+        let header_bytes = xsdt_info.header.hdr_to_bytes();
         xsdt_allocated_bytes.extend(header_bytes);
         // Fill in trailing space with zeros so it is accessible (Vec length != Vec capacity).
         xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(xsdt_capacity - ACPI_HEADER_LEN));
