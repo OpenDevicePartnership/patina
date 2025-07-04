@@ -1,4 +1,4 @@
-//! Component that provides initialization of ACPI funtionality in the core.
+//! Component that provides initialization of ACPI functionality in the core.
 
 use crate::acpi_table::{AcpiTable, AcpiTableHeader, AcpiXsdtMetadata};
 use crate::alloc::boxed::Box;
