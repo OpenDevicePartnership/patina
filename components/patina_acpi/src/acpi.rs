@@ -689,18 +689,6 @@ mod tests {
         }
     }
 
-    use std::sync::Once;
-
-    static INIT: Once = Once::new();
-
-    fn init_logger() {
-        INIT.call_once(|| {
-            env_logger::builder()
-                .is_test(true) // Ensures logs go to stdout during tests
-                .init();
-        });
-    }
-
     #[test]
     fn test_get_table() {
         let provider = StandardAcpiProvider::new_uninit();
