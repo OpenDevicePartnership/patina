@@ -20,7 +20,6 @@ cfg-if = { version = "1" }
 clap = { version = '4.5.36' }
 compile-time = { version = "0.2" }
 crc32fast = { version = "1.4", default-features = false }
-downcast-rs = { version = "1.2", default-features = false }
 fallible-streaming-iterator = { version = "0.1.9" }
 fixedbitset = { version = "^0.5", default-features = false }
 gdbstub = { version = "0.7.3", default-features = false }

@@ -5,8 +5,9 @@ default_to_workspace = false
 RUSTC_BOOTSTRAP = 1
 NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
-TEST_FLAGS = "--features mockall"
-COV_FLAGS = { value = "--workspace --out html --out xml --exclude-files **/tests/* --exclude-files **/benches/* --exclude patina_test_macro", condition = { env_not_set = ["COV_FLAGS"] } }
+TEST_FLAGS = { value = "--features enable_patina_tests", condition = { env_not_set = ["TEST_FLAGS"] } }
+COV_FLAGS = { value = "--features enable_patina_tests --workspace --out html --out xml --exclude-files **/tests/* --exclude-files **/benches/* --exclude patina_test_macro", condition = { env_not_set = ["COV_FLAGS"] } }
+RUSTDOCFLAGS = "-D warnings -D missing_docs"
 
 [env.development]
 RUSTC_PROFILE = "dev"
@@ -96,13 +97,13 @@ args = ["build", "@@split(STD_FLAGS, )", "--example", "dxe_core_std"]
 description = "Checks rust code for no_std build errors with results."
 private = true
 command = "cargo"
-args = ["check", "--target", "aarch64-unknown-uefi", "@@split(NO_STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["check", "--target", "x86_64-unknown-uefi", "@@split(NO_STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 
 [tasks.check_std]
 description = "Checks rust code for std build errors with results."
 private = true
 command = "cargo"
-args = ["check", "--tests", "@@split(STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["check", "@@split(STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 
 [tasks.check]
 description = "Checks rust code for errors. Example `cargo make check`"
