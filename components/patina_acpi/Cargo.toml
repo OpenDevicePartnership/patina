@@ -10,7 +10,6 @@ description = "UEFI ACPI services that provide common types and functionality us
 
 [dependencies]
 log = { workspace = true }
-downcast-rs = { workspace = true }
 memoffset = { workspace = true }
 mockall = { workspace = true, optional = true }
 patina_sdk = { workspace = true }
