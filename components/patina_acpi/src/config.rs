@@ -5,7 +5,7 @@ pub struct AcpiProviderInit {
     pub oem_id: [u8; 6],
     /// Product variant for platform vendor.
     pub oem_table_id: [u8; 8],
-    // Platform edition (OEM-defined). Not to be confused with ACPI revision.
+    /// Platform edition (OEM-defined). Not to be confused with ACPI revision.
     pub oem_revision: u32,
     /// ID of compiler used to generate the ACPI table.
     pub creator_id: u32,
@@ -14,6 +14,7 @@ pub struct AcpiProviderInit {
 }
 
 impl AcpiProviderInit {
+    /// Initializes a new AcpiProviderInit with platform settings.
     pub fn new(
         oem_id: [u8; 6],
         oem_table_id: [u8; 8],

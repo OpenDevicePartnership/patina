@@ -40,9 +40,13 @@
 #![feature(allocator_api)]
 extern crate alloc;
 
+/// Component that provides initialization of ACPI funtionality in the core.
 pub mod component;
+/// Platform configuration for the ACPI provider.
 pub mod config;
+/// Errors associated with operation of the ACPI protocol.
 pub mod error;
+/// Public service interface for the ACPI protocol.
 pub mod service;
 
 mod acpi;

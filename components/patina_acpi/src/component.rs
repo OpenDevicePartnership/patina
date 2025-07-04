@@ -1,3 +1,5 @@
+//! Component that provides initialization of ACPI funtionality in the core.
+
 use crate::acpi_table::{AcpiTable, AcpiTableHeader, AcpiXsdtMetadata};
 use crate::alloc::boxed::Box;
 
@@ -25,17 +27,20 @@ use crate::{
     },
 };
 
-// Initializes the ACPI provider service
+/// Initializes the ACPI provider service.
 #[derive(IntoComponent, Default)]
 pub struct AcpiProviderManager {}
 
+/// Hob that contains information about previously installed ACPI tables.
 #[derive(Copy, Clone, FromHob)]
 #[hob = "9f9a9506-5597-4515-bab6-8bcde784ba87"]
 pub struct AcpiMemoryHob {
+    /// The address of the previous RSDP, which holds information about installed ACPI tables.
     pub rsdp_address: u64,
 }
 
 impl AcpiProviderManager {
+    /// Initializes a new `AcpiProviderManager`.
     pub fn new() -> Self {
         Self {}
     }
@@ -122,7 +127,7 @@ impl AcpiProviderManager {
     }
 }
 
-// Produces EDKII ACPI protocols
+/// Produces EDKII ACPI protocols.
 #[derive(IntoComponent)]
 pub struct AcpiSystemTableProtocolManager {}
 

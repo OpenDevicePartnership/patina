@@ -41,7 +41,7 @@ pub enum AcpiError {
     TableNotPresentInMemory,
     /// There was an attempt to install a null table pointer.
     NullTablePtr,
-    /// get_acpi_table<T> was provided a type that does not match the type of the table at the given index.
+    /// `get_acpi_table<T>` was provided a type that does not match the type of the table at the given index.
     InvalidTableType,
     /// There was an attempt to initialize the boot services pointer after it has already been set.
     BootServicesAlreadyInitialized,
