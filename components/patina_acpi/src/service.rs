@@ -13,14 +13,15 @@ use core::any::{Any, TypeId};
 use alloc::vec::Vec;
 use patina_sdk::component::service::memory::MemoryManager;
 use patina_sdk::component::service::{IntoService, Service};
+use r_efi::efi;
 
-use crate::acpi_table::{AcpiFacs, AcpiTable, AcpiTableHeader, StandardAcpiTable};
+use crate::acpi_table::{AcpiTable, AcpiTableHeader};
 use crate::error::AcpiError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TableKey(pub(crate) usize);
 
-pub type AcpiNotifyFn = fn(&AcpiTableHeader, u32, TableKey) -> Result<(), AcpiError>;
+pub type AcpiNotifyFn = fn(&AcpiTableHeader, u32, usize) -> efi::Status;
 
 /// The `AcpiTableManager` provides an interface for installing, uninstalling, and accessing ACPI tables.
 /// This struct serves as the API by which external components can access ACPI services.

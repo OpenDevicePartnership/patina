@@ -405,7 +405,7 @@ impl GCD {
     ) -> Result<usize, EfiError> {
         ensure!(self.maximum_address != 0, EfiError::NotReady);
         ensure!(len > 0, EfiError::InvalidParameter);
-        ensure!(base_address + len <= self.maximum_address, EfiError::Unsupported);
+        ensure!(base_address.checked_add(len).is_some_and(|sum| sum <= self.maximum_address), EfiError::Unsupported);
 
         log::trace!(target: "allocations", "[{}] Adding memory space at {:#x}", function!(), base_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);

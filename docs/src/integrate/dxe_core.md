@@ -271,3 +271,9 @@ patina_dxe_core = { features = ["compatibility_mode_allowed"] }
 With the flag disabled, the Patina DXE Core will not launch any EFI_APPLICATIONs that do not have the NX_COMPAT
 DLL Characteristics set. With the flag enabled, the Patina DXE Core will enable
 [compatibility mode](../dxe_core/memory_management.md).
+
+---
+
+> Note: The Patina QEMU documentation provides an overview of where binary size comes from, and how to reduce it using the
+Patina QEMU DXE Core binary as an example. You can find those details in
+[Patina DXE Core Release Binary Composition and Size Optimization](https://github.com/OpenDevicePartnership/patina-qemu/blob/main/Platforms/Docs/Common/patina_dxe_core_release_binary_size.md).

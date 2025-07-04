@@ -53,6 +53,8 @@ pub enum AcpiError {
     XsdtOverflow,
     /// There was an attempt to install an XSDT when one already exists.
     XsdtAlreadyInstalled,
+    /// There was an attempt to update the checksum at an invalid byte offset.
+    InvalidChecksumOffset,
 }
 
 impl From<AcpiError> for efi::Status {
@@ -81,6 +83,7 @@ impl From<AcpiError> for efi::Status {
             AcpiError::ProviderNotInitialized => efi::Status::NOT_FOUND,
             AcpiError::XsdtOverflow => efi::Status::INVALID_PARAMETER,
             AcpiError::XsdtAlreadyInstalled => efi::Status::NOT_STARTED,
+            AcpiError::InvalidChecksumOffset => efi::Status::INVALID_PARAMETER,
         }
     }
 }

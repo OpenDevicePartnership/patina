@@ -2,7 +2,7 @@
 //!
 //! Wrappers for the C ACPI protocols to call into Rust ACPI implementations.
 
-use crate::acpi_table::{AcpiTable, AcpiTableHeader, StandardAcpiTable};
+use crate::acpi_table::{AcpiTable, AcpiTableHeader};
 use crate::signature::ACPI_VERSIONS_GTE_2;
 
 use alloc::collections::btree_map::BTreeMap;
@@ -12,12 +12,8 @@ use patina_sdk::uefi_protocol::ProtocolInterface;
 use r_efi::efi;
 use spin::rwlock::RwLock;
 
+use crate::acpi::ACPI_TABLE_INFO;
 use crate::service::{AcpiNotifyFn, AcpiProvider, TableKey};
-use crate::{
-    acpi::ACPI_TABLE_INFO,
-    acpi_table::AcpiFacs,
-    signature::{self},
-};
 
 /// Corresponds to the ACPI Table Protocol as defined in UEFI spec.
 #[repr(C)]
@@ -66,12 +62,6 @@ impl AcpiTableProtocol {
         if acpi_table_buffer.is_null() || acpi_table_buffer_size < 4 {
             return efi::Status::INVALID_PARAMETER;
         }
-
-        let signature = unsafe {
-            // SAFETY: acpi_table_buffer is checked non-null and large enough to read a u32
-            // The signature is always the first field on any ACPI table
-            *(acpi_table_buffer as *const u32)
-        };
 
         if acpi_table_buffer_size < mem::size_of::<AcpiTableHeader>() {
             return efi::Status::INVALID_PARAMETER;

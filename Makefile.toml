@@ -5,7 +5,7 @@ default_to_workspace = false
 RUSTC_BOOTSTRAP = 1
 NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
-TEST_FLAGS = "--features mockall test_get_table"
+TEST_FLAGS = "--features mockall"
 COV_FLAGS = { value = "--workspace --out html --out xml --exclude-files **/tests/* --exclude-files **/benches/* --exclude patina_test_macro", condition = { env_not_set = ["COV_FLAGS"] } }
 
 [env.development]
