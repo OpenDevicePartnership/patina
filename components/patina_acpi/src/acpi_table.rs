@@ -450,7 +450,7 @@ mod tests {
                 length: (mem::size_of::<TestTable>()) as u32,
                 revision: 1,
                 checksum: 0, // we'll fill this
-                oem_id: *b"OEM_ID!",
+                oem_id: [0; 6],
                 oem_table_id: *b"TBL_ID__",
                 oem_revision: 0xAABBCCDD,
                 creator_id: 0x11223344,
