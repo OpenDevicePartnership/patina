@@ -941,7 +941,6 @@ mod tests {
 
     #[test]
     fn test_reallocate_xsdt() {
-        init_logger();
         let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
 

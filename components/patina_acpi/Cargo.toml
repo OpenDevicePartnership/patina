@@ -19,7 +19,6 @@ spin = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
-env_logger = "0.10" # logging implementation for tests
 
 [features]
 alloc = []
