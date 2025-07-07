@@ -9,3 +9,5 @@ publish.workspace = true
 description = "Variable service support for the DXE Core."
 
 [dependencies]
+r-efi = { workspace = true }
+patina_sdk = { workspace = true }
