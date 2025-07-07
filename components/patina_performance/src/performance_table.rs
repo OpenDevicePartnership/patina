@@ -79,6 +79,7 @@ pub struct FBPT {
 }
 
 impl FBPT {
+    /// FBPT - Firmware Basic Boot Performance Table signature
     pub const SIGNATURE: u32 = u32::from_le_bytes([b'F', b'B', b'P', b'T']);
 
     /// Create an new empty FBPT.
@@ -250,6 +251,7 @@ impl FirmwareBasicBootPerfDataRecord {
     const TYPE: u16 = 2;
     const REVISION: u8 = 2;
 
+    /// Create a new empty FirmwareBasicBootPerfDataRecord.
     pub const fn new() -> Self {
         Self {
             reset_end: 0,

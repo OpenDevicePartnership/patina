@@ -19,6 +19,7 @@ path = "examples/std.rs"
 required-features = ["std"]
 
 [dependencies]
+cfg-if = { workspace = true }
 compile-time = { workspace = true }
 crc32fast = { workspace = true }
 goblin = { workspace = true, features = ["pe32", "pe64", "te"] }
@@ -33,7 +34,7 @@ scroll = { workspace = true, features = ["derive"] }
 spin = { workspace = true }
 uefi_corosensei = { workspace = true  }
 uuid = { workspace = true  }
-patina_sdk = { workspace = true, features = ["core"] }
+patina_sdk = { workspace = true, features = ["core", "enable_patina_tests"] }
 patina_internal_collections = { workspace = true  }
 patina_internal_cpu = { workspace = true }
 patina_debugger = { workspace = true }

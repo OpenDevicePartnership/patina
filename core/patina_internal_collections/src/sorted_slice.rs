@@ -12,7 +12,9 @@ use crate::{Error, SliceKey};
 
 /// A slice that is always sorted.
 pub struct SortedSlice<'a, T> {
+    /// The underlying mutable slice that holds the sorted data.
     pub slice: &'a mut [T],
+    /// The number of items currently in the slice.
     pub item_count: usize,
 }
 
@@ -20,6 +22,7 @@ impl<'a, T> SortedSlice<'a, T>
 where
     T: Clone + Copy + SliceKey + Sized,
 {
+    /// Creates a new sorted slice with a maximum capacity defined by the provided mutable slice.
     pub fn new(slice: &'a mut [u8]) -> SortedSlice<'a, T> {
         Self {
             slice: unsafe {
@@ -29,6 +32,7 @@ where
         }
     }
 
+    /// Inserts an element into the sliced via sorting.
     pub fn add(&mut self, element: T) -> Result<usize, Error> {
         if self.capacity() == self.len() {
             return Err(Error::OutOfSpace);
@@ -43,6 +47,7 @@ where
         Ok(idx)
     }
 
+    /// Merges the provided slice into the sorted slice.
     pub fn add_contiguous_slice(&mut self, elements: &[T]) -> Result<usize, Error> {
         if elements.is_empty() {
             return Ok(0);
@@ -82,6 +87,7 @@ where
         Ok(idx)
     }
 
+    /// Removes the datum and returns it's previous index.
     pub fn remove(&mut self, element: T) -> Result<usize, Error> {
         let Ok(idx) = self.search(element) else {
             return Err(Error::NotFound);
@@ -90,6 +96,7 @@ where
         Ok(idx)
     }
 
+    /// Removes and returns the datum at the specified index.
     pub fn remove_at_idx(&mut self, idx: usize) -> Option<T> {
         if idx >= self.item_count {
             return None;
@@ -100,15 +107,24 @@ where
         Some(item)
     }
 
+    /// Returns the index in the slice where the datum with the given key would be found.
+    ///
+    /// Returns the exact index if the datum exists, or the index where it would be inserted if it does not.
     pub fn search(&self, element: T) -> Result<usize, usize> {
         let target = element.key();
         self.binary_search_by_key(&target, |e| e.key())
     }
 
+    /// Returns a reference to a datum.
+    ///
+    /// Returns the exact datum if it exists, or the closest datum that is greater than the key if it does not.
     pub fn search_with_key(&self, key: &T::Key) -> Result<&T, &T> {
         self.binary_search_by_key(&key, |e| e.key()).map(|idx| &self[idx]).map_err(|idx| &self[idx])
     }
 
+    /// Returns a mutable reference to a datum.
+    ///
+    /// Returns the exact datum if it exists, or the closest datum that is greater than the key if it does not.
     pub fn search_with_key_mut(&mut self, key: &T::Key) -> Result<&mut T, &mut T> {
         let index = self.binary_search_by_key(&key, |e| e.key());
         match index {
@@ -117,10 +133,12 @@ where
         }
     }
 
+    /// Returns the current index in the slice where the datum with the given key would be found.
     pub fn search_idx_with_key(&mut self, key: &T::Key) -> Result<usize, usize> {
         self.binary_search_by_key(&key, |e| e.key())
     }
 
+    /// Returns the maximum number of items that can be stored in the slice.
     pub fn capacity(&self) -> usize {
         self.slice.len()
     }

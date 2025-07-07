@@ -1,7 +1,7 @@
 # Monolithically Compiled Component Model
 
 This section covers the design and operations flow of how a monolithically compiled component is dispatched by the pure
-rust DXE core. That is to say how the component is registered, initialized, validated, and eventually dispatched. This
+Patina DXE Core. That is to say how the component is registered, initialized, validated, and eventually dispatched. This
 does not expand any further on [Driver Dispatch](./dispatcher.md) and is distinctly different then the [UEFI Driver Model](./driver_model.md).
 
 See [Quick Reference](#quick-reference) at the bottom of this documentation.
@@ -14,9 +14,9 @@ and (4) [Executing Components](#executing-components).
 
 ### Filling Storage
 
-[Storage](todo/docs.rs) is the single struct that contains all data (or a reference to data) that can be consumed by a
+`Storage` is the single struct that contains all data (or a reference to data) that can be consumed by a
 driver. The design point of having a centralized location for all data was chosen because it ensures that adding new
-`Param` types does not become a breaking change. This is because the [Component](todo/docs.rs) trait interface consumes
+`Param` types does not become a breaking change. This is because the `Component` trait interface consumes
 the `Storage` object instead each piece of data individually. When adding a new `Param` type, instead of updating the
 `Component` trait interface with this new data, we instead update the `Storage` object, adding the new data to that
 instead. This causes the "breaking change" to be internal to the DXE Core, instead of to every driver written.
@@ -94,15 +94,20 @@ _when_ to execute a component), and an inner process handled by the `Component` 
 execute a component.
 
 We will first talk about the logic behind _when_ to execute a component. This processes is straight forward. The
-dispatcher attempts to run all components as-is. It does this in a similar fashion as the EDKII dispatcher. That is
+dispatcher attempts to run all components as-is. It does this in a similar fashion as the EDK II dispatcher. That is
 to say it will loop through all components, attempting to execute them until either no components are left, or no
-change has happened since the previous loop. Where as EDKII would normally exit dispatch, the component dispatcher
+change has happened since the previous loop. Whereas EDK II would normally exit dispatch, the component dispatcher
 instead will lock all configuration values and restart the process. This is important because it allows any component
 that relies on `Config<T>` to execute, even if a driver that needed `ConfigMut<T>` never locked the underlying value.
 
 Below is the flow chart for attempting to dispatch all components:
 
 ```mermaid
+---
+config:
+  layout: elk
+  look: handDrawn
+---
 graph LR
     A[DxeCore::dispatch_components] --> B[Storage::lock_configs]
     B --> C[DxeCore::dispatch_components]
@@ -112,6 +117,12 @@ graph LR
 Below is the flow chart for `DxeCore::dispatch_components`.
 
 ```mermaid
+---
+config:
+  layout: elk
+  look: handDrawn
+displayMode: compact
+---
 graph LR
     A[Component::run] --> B{Success?}
     B -- Yes --> C[Remove Component]
@@ -132,6 +143,12 @@ value indicating as such. it must be noted that params self-validate, so it is i
 Below is the flow chart for `Component::run`
 
 ```mermaid
+---
+config:
+  layout: elk
+  look: handDrawn
+displayMode: compact
+---
 graph LR
     B[Param::validate] --> C{Valid?};
     C -- Yes --> D[Param::retrieve];
@@ -177,7 +194,7 @@ injection!
 
 - **Configuration**: A single location exists for all configuration for the platform. This prevents configuration from
 being duplicated across multiple drivers as with Static PCDs. This also allows for configuration to be of any rust
-supported type, unlike the limited configuration of EDKII. Finally, any component is able to hook any configuration
+supported type, unlike the limited configuration of EDK II. Finally, any component is able to hook any configuration
 value it wants, so long as it is public configuration.
 
 - **Testing**: Testing is made easy, particularly with `FunctionComponent`. Simply create an instance / mock for each

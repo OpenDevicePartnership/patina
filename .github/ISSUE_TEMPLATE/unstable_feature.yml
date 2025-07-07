@@ -1,0 +1,48 @@
+# GitHub issue form for tracking unstable features.
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+name: 📓 Tracking unstable feature issue.
+description: Track an unstable feature.
+title: "[Unstable] Tracking Issue for <unstable feature name>"
+labels: ["unstable-feature"]
+
+body:
+  - type: markdown 
+    id: documentation
+    attributes:
+      value: "For more details about unstable features, see: [unstable_feature.md](https://github.com/OpenDevicePartnership/patina/blob/main/docs/src/dev/unstable_feature.md)"
+
+  - type: input 
+    id: feature-gate-name
+    attributes:
+      label: Name of the rust feature in `Cargo.toml` to gate this unstable feature.
+      placeholder: "`unstable-<unstable-feature-name>`"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: description
+      description: A concise description of the unstable feature.
+    validations:
+      required: true
+
+  - type: checkboxes
+    attributes:
+      label: Type of unstable feature
+      description: Select what kind of unstable feature this is.
+      options:
+      - label: New feature, this gives time to get additional feedback to apply changes. Having a transition period allows to make API changes without incrementing the major version.
+      - label: Working feature that still has some unresolved questions that has a potential to change the API design.
+      - label: Proof of concept feature.
+
+  - type: textarea
+    attributes:
+      label: Unresolved Questions
+      description: List every unresolved question that needs to be answered for the feature to be stable.
+    validations:
+      required: true

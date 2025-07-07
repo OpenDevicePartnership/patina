@@ -31,6 +31,7 @@ impl<'a, S> Logger<'a, S>
 where
     S: SerialIO + Send,
 {
+    /// Creates a new logger instance.
     pub const fn new(
         format: Format,
         target_filters: &'a [(&'a str, log::LevelFilter)],

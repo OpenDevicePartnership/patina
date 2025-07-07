@@ -192,6 +192,9 @@ pub trait Component {
 
 /// A helper trait to convert an object into a [Component].
 pub trait IntoComponent<Input> {
+    /// Converts a non-[Component] struct into an object that does implement [Component].
+    ///
+    /// Returns a boxed trait object that implements [Component].
     fn into_component(self) -> alloc::boxed::Box<dyn Component>;
 }
 

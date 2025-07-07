@@ -29,26 +29,31 @@ impl MetaData {
         Self { access: Access::new(), name: core::any::type_name::<S>(), last_failed_param: None }
     }
 
+    /// Returns the name of the component, including the module path.
     #[inline(always)]
     pub fn name(&self) -> &'static str {
         self.name
     }
 
+    /// Sets the name of the `param` that could not be retrieved from storage when attempting to dispatch the function.
     #[inline(always)]
     pub fn set_failed_param(&mut self, param: &'static str) {
         self.last_failed_param = Some(param);
     }
 
+    /// Returns the name of the last `param` that could not be retrieved from storage.
     #[inline(always)]
     pub fn failed_param(&self) -> Option<&'static str> {
         self.last_failed_param
     }
 
+    /// Returns mutable access to the param usage metadata for the component.
     #[inline(always)]
     pub(crate) fn access_mut(&mut self) -> &mut Access {
         &mut self.access
     }
 
+    /// Returns immutable access to the param usage metadata for the component.
     #[inline(always)]
     pub(crate) fn access(&self) -> &Access {
         &self.access
@@ -71,6 +76,7 @@ pub struct Access {
 }
 
 impl Access {
+    /// Creates a new `Access` instance with no registered accesses.
     pub const fn new() -> Self {
         Self {
             config_writes: FixedBitSet::new(),
@@ -104,31 +110,38 @@ impl Access {
         self.reads_all_configs | self.config_read_and_writes.contains(id)
     }
 
+    /// Returns whether or not the component accesses any config resources mutablely.
     pub fn has_any_config_write(&self) -> bool {
         self.writes_all_configs | (self.config_writes.count_ones(..) > 0)
     }
 
+    /// Returns whether or not the component accesses any config resources at all.
     pub fn has_any_config_read(&self) -> bool {
         self.reads_all_configs | (self.config_read_and_writes.count_ones(..) > 0)
     }
 
+    /// Returns whether the component has exclusive access to all config resources
     pub fn has_writes_all_configs(&self) -> bool {
         self.writes_all_configs
     }
 
+    /// Returns whether or not the component has the ability to register a deferred action.
     pub fn has_deferred(&self) -> bool {
         self.has_deferred
     }
 
+    /// Marks the component as having exclusive read-only access to all config resources.
     pub fn reads_all_configs(&mut self) {
         self.reads_all_configs = true;
     }
 
+    /// Marks the component as having exclusive mutable access to all config resources.
     pub fn writes_all_configs(&mut self) {
         self.writes_all_configs = true;
         self.reads_all_configs = true;
     }
 
+    /// Marks the component as being able to register a deferred action.
     pub fn deferred(&mut self) {
         self.has_deferred = true;
     }

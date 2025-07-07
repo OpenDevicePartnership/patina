@@ -12,6 +12,7 @@ pub use interrupt_manager::InterruptsNull;
 use mu_pi::protocols::cpu_arch::EfiSystemContext;
 use patina_sdk::error::EfiError;
 
+/// Null implementation of the EfiSystemContextFactory and EfiExceptionStackTrace traits.
 #[derive(Debug)]
 pub struct ExceptionContextNull;
 
@@ -26,12 +27,15 @@ impl super::EfiExceptionStackTrace for ExceptionContextNull {
     fn dump_stack_trace(&self) {}
 }
 
+/// A function that does nothing as this is a null implementation.
 #[allow(unused)]
 pub fn enable_interrupts() {}
 
+/// A function that does nothing as this is a null implementation.
 #[allow(unused)]
 pub fn disable_interrupts() {}
 
+/// A function that always returns `false` as this is a null implementation.
 #[allow(unused)]
 pub fn get_interrupt_state() -> Result<bool, EfiError> {
     Ok(false)

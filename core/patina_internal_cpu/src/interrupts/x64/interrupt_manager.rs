@@ -80,6 +80,7 @@ lazy_static! {
 pub struct InterruptsX64 {}
 
 impl InterruptsX64 {
+    /// Creates a new instance of the x64 implementation of the InterruptManager.
     pub const fn new() -> Self {
         Self {}
     }

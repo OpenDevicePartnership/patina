@@ -26,4 +26,7 @@ patina_sdk = { path="../../sdk/patina_sdk" }
 
 [features]
 default = []
-off = []
+# Opting in to the `enable_patina_tests` feature requires registering at least one test
+# with the `#[patina_test]` attribute. Otherwise, a linker crash or failure will
+# occur!
+enable_patina_tests = []

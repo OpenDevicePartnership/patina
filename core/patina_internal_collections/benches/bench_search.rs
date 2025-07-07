@@ -1,3 +1,32 @@
+//! Benchmarks for the search operations in various data structures.
+//!
+//! This benchmark tests the performance performing random search operations on the supported data structures in this
+//! crate, including Red-Black Trees (RBT), Binary Search Trees (BST), and Sorted Slices.
+//!
+//! ## Benchmark execution
+//!
+//! Running this exact benchmark can be done with the following command:
+//!
+//! `> cargo make bench -p patina_internal_collections --bench bench_search`
+//!
+//! If you wish to run a subset of benchmarks in this file, you can filter them by name:
+//!
+//! `> cargo make bench -p patina_internal_collections --bench bench_search -- <filter>`
+//!
+//! ## Examples
+//!
+//! ```bash
+//! > cargo make bench -p patina_internal_collections --bench bench_search -- rbt
+//! > cargo make bench -p patina_internal_collections --bench bench_search -- 32bit
+//! > cargo make bench -p patina_internal_collections --bench bench_search
+//! ```
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use patina_internal_collections::{node_size, Bst, Rbt, SortedSlice};
 use rand::Rng;

@@ -39,6 +39,7 @@ words:
   - bndldx
   - bndstx
   - brotli
+  - bucketize
   - cdecl
   - cdrom
   - cforce
@@ -76,9 +77,11 @@ words:
   - fvmain
   - fxrstor
   - fxsave
+  - gantt
   - gdbstub
   - getsp
   - gigantor
+  - granularities
   - gread
   - gwrite
   - guids
@@ -86,9 +89,11 @@ words:
   - hresult
   - icfgr
   - indoc
+  - inmodule
   - inproc
   - intid
   - irouter
+  - iscsi
   - isenabler
   - kbyte
   - keccak
@@ -119,6 +124,7 @@ words:
   - nomem
   - nshst
   - ntdll
+  - nvdimm
   - oleaut
   - opinfo
   - oppermann
@@ -187,6 +193,7 @@ words:
   - vmalle
   - vpopcntdq
   - vpopcntdq
+  - vtable
   - wakeup
   - wbinvd
   - webpki

@@ -1,7 +1,7 @@
 //! Monitor commands handling
 //!
 //! This module contains the implementation of the monitor command handling for the
-//! UEFI target.
+//! Patina target.
 //!
 //! ## License
 //!
@@ -15,10 +15,10 @@ use gdbstub::target::ext::{self, monitor_cmd::ConsoleOutput};
 
 use crate::{arch::DebuggerArch, arch::SystemArch};
 
-use super::UefiTarget;
+use super::PatinaTarget;
 
 const MONITOR_HELP: &str = "
-UEFI Rust Debugger monitor commands:
+Patina Rust Debugger monitor commands:
     help - Display this help.
     ? - Display information about the state of the machine.
     reboot - Prepares to reboot the machine on the next continue.
@@ -34,7 +34,7 @@ Mod commands:
     clear - clear all module breakpoints.
 ";
 
-impl ext::monitor_cmd::MonitorCmd for UefiTarget {
+impl ext::monitor_cmd::MonitorCmd for PatinaTarget {
     fn handle_monitor_cmd(&mut self, cmd: &[u8], mut out: ConsoleOutput<'_>) -> Result<(), Self::Error> {
         let cmd_str = core::str::from_utf8(cmd).map_err(|_| ())?;
         let mut tokens: SplitWhitespace<'_> = cmd_str.split_whitespace();
@@ -71,7 +71,7 @@ impl ext::monitor_cmd::MonitorCmd for UefiTarget {
             Some("?") => {
                 let _ = write!(
                     self.monitor_buffer,
-                    "UEFI Rust Debugger.\nException Type: {:x?}",
+                    "Patina Rust Debugger.\nException Type: {:x?}",
                     self.exception_info.exception_type
                 );
             }
@@ -101,7 +101,7 @@ impl ext::monitor_cmd::MonitorCmd for UefiTarget {
     }
 }
 
-impl UefiTarget {
+impl PatinaTarget {
     fn module_cmd(&mut self, tokens: &mut SplitWhitespace<'_>) {
         let mut state = match self.system_state.try_lock() {
             Some(state) => state,

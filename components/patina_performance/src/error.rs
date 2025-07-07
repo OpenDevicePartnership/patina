@@ -1,7 +1,16 @@
+//! Error codes for the patina_performance crate
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
 use core::fmt::Display;
 
 use patina_sdk::error::EfiError;
 
+/// Macro to assert an expression and return an error if the assertion fails.
+#[doc(hidden)]
 #[macro_export]
 macro_rules! error_debug_assert {
     ($expression:expr, $msg:literal) => {{
@@ -13,17 +22,22 @@ macro_rules! error_debug_assert {
     };
 }
 
+/// Error type for the Patina Performance component.
 #[derive(Debug)]
 pub enum Error {
-    // FBPT full, can't add more performance records.
+    /// FBPT full, can't add more performance records.
     OutOfResources,
-    // Buffer too small to allocate fbpt.
+    /// Buffer too small to allocate fbpt.
     BufferTooSmall,
+    /// UEFI specification defined error type.
     Efi(EfiError),
     /// Error returned when `debug_assert` is disabled.
     DebugAssert {
+        /// The message describing the assertion failure.
         msg: &'static str,
+        /// The file where the assertion failed.
         file: &'static str,
+        /// The line number where the assertion failed.
         line: u32,
     },
 }

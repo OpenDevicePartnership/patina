@@ -9,7 +9,7 @@ implementation for Rust Heap allocations that is used throughout the rest of the
 
 ## General Architecture
 
-The memory management architecture of the Rust DXE core is split into two main layers - an upper [`UefiAllocator`](memory_management.md#uefiallocator)
+The memory management architecture of the Patina DXE Core is split into two main layers - an upper [`UefiAllocator`](memory_management.md#uefiallocator)
 layer consisting of discrete allocators for each EFI memory type that are designed to service general heap allocations
 in a performant manner, and a lower layer consisting of a single large (and relatively slower) allocator that tracks the
 global system memory map at page-level granularity and enforces memory attributes (such as `Execute Protect`) on memory
@@ -124,7 +124,7 @@ memory to satisfy a request.
 The GCD tracks memory allocations at the system level to provide a global view of the memory map. In addition, this is
 level at which memory attributes (such as `Execute Protect` or `Read Protect`) are tracked.
 
-The Rust DXE core implements the GCD using a Red-Black Tree to track the memory regions within the
+The Patina DXE Core implements the GCD using a Red-Black Tree to track the memory regions within the
 GCD. This gives the best expected performance when the number of elements in the GCD is expected to
 be large. There are alternative storage implementations in the `patina_internal_collections` crate
 within the core that implement the same interface that provide different performance characteristics
@@ -235,7 +235,7 @@ These implementations are used within the core for two purposes:
 1. The `GlobalAlloc` implementation allows one of the `UefiAllocator` instances to be designated as the Rust Global
 Allocator. This permits use of the standard Rust [`alloc`](https://doc.rust-lang.org/alloc) smart pointers (e.g. [Box](https://doc.rust-lang.org/alloc/boxed/index.html))
 and collections (e.g. [Vec](https://doc.rust-lang.org/std/vec/struct.Vec.html), [BTreeMap](https://doc.rust-lang.org/std/collections/struct.BTreeMap.html)).
-The `EfiBootServicesData` UefiAllocator instance is designated as the default global allocator for the Rust DXE core.
+The `EfiBootServicesData` UefiAllocator instance is designated as the default global allocator for the Patina DXE Core.
 2. UEFI requires being able to manage many different memory regions with different characteristics. As such, it may
 require heap allocations that are not in the default `EfiBootServicesData` allocator. For example, the EFI System Tables
 need to be allocated in `EfiRuntimeServicesData`. To facilitate this in a natural way, the [`Allocator`](https://doc.rust-lang.org/std/alloc/trait.Allocator.html)
@@ -257,7 +257,7 @@ Platforms should ensure that when handling an `EXIT_BOOT_SERVICES` signal (and `
 they do not change the memory map. This means allocating and freeing are disallowed once
 `EFI_BOOT_SERVICES.ExitBootServices()` (`exit_boot_services()`) is invoked.
 
-In the Rust DXE core in release mode, allocating and freeing within the GCD (which changes the memory map and its key)
+In the Patina DXE Core in release mode, allocating and freeing within the GCD (which changes the memory map and its key)
 will return an error that can be handled by the corresponding driver.
 In debug builds, any changes to the memory map following `exit_boot_services` will panic due to an assertion.
 

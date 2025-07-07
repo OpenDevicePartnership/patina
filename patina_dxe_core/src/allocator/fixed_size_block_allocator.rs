@@ -28,7 +28,7 @@ use core::{
 use linked_list_allocator::{align_down_size, align_up_size};
 use mu_pi::dxe_services::GcdMemoryType;
 use patina_sdk::{
-    base::{UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE},
+    base::{align_up, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE},
     error::EfiError,
     uefi_pages_to_size, uefi_size_to_pages,
 };
@@ -54,6 +54,9 @@ pub const MIN_EXPANSION: usize = 0x100000;
 const ALIGNMENT: usize = 0x1000;
 
 const BLOCK_SIZES: &[usize] = &[8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+
+// Compile-time check to ensure the MIN_EXPANSION is a multiple of RUNTIME_PAGE_ALLOCATION_GRANULARITY.
+const _: () = assert!(MIN_EXPANSION % super::RUNTIME_PAGE_ALLOCATION_GRANULARITY == 0);
 
 // Returns the index in the block list for the minimum size block that will
 // satisfy allocation for the given layout
@@ -167,17 +170,41 @@ pub type PageChangeCallback = fn(&mut FixedSizeBlockAllocator);
 /// the allocator where a new backing linked-list is created.
 ///
 pub struct FixedSizeBlockAllocator {
+    /// The memory type that this allocator is managing. This is used to bucketize memory for the EFI_MEMORY_MAP and
+    /// handle any special cases for memory types.
     memory_type: efi::MemoryType,
+
+    /// The heads of the linked lists for each fixed-size block. Each index corresponds to a block size in
+    /// `BLOCK_SIZES`.
     list_heads: [Option<&'static mut BlockListNode>; BLOCK_SIZES.len()],
+
+    /// The linked-list of allocators that this allocator uses to back allocations that are larger than the fixed-size
+    /// blocks or if the required fixed-size block list is empty.
     allocators: Option<*mut AllocatorListNode>,
+
+    /// The range of memory that is reserved for this allocator. This is used to stabilize the memory map during an
+    /// S4 resume.
     pub(crate) reserved_range: Option<Range<efi::PhysicalAddress>>,
+
+    /// Statistics about the allocator's usage.
     stats: AllocationStatistics,
+
+    /// Callback to invoke when the allocator changes pages, such as when it allocates or frees pages.
     page_change_callback: PageChangeCallback,
+
+    /// The page allocation granularity used by this allocator. This is expected to be one of the following:
+    /// - `SIZE_4KB` for all allocators except AARCH64 runtime memory allocators
+    /// - `SIZE_64KB` for AARCH64 runtime memory allocators
+    page_allocation_granularity: usize,
 }
 
 impl FixedSizeBlockAllocator {
     /// Creates a new empty FixedSizeBlockAllocator
-    pub const fn new(memory_type: efi::MemoryType, page_change_callback: PageChangeCallback) -> Self {
+    pub const fn new(
+        memory_type: efi::MemoryType,
+        page_change_callback: PageChangeCallback,
+        page_allocation_granularity: usize,
+    ) -> Self {
         const EMPTY: Option<&'static mut BlockListNode> = None;
         FixedSizeBlockAllocator {
             memory_type,
@@ -186,6 +213,7 @@ impl FixedSizeBlockAllocator {
             reserved_range: None,
             stats: AllocationStatistics::new(),
             page_change_callback,
+            page_allocation_granularity,
         }
     }
 
@@ -473,8 +501,14 @@ impl Display for FixedSizeBlockAllocator {
 /// A wrapper for [`FixedSizeBlockAllocator`] that allocates additional memory as needed from a GCD
 /// and provides Sync/Send via means of a spin mutex.
 pub struct SpinLockedFixedSizeBlockAllocator {
+    /// The GCD instance that this allocator uses to allocate additional memory as needed.
     gcd: &'static SpinLockedGcd,
+
+    /// The handle associated with this allocator. It is used to track ownership of the memory allocated
+    /// by this allocator in the GCD.
     handle: efi::Handle,
+
+    /// The inner allocator that is protected by a TPL mutex.
     inner: tpl_lock::TplMutex<FixedSizeBlockAllocator>,
 }
 
@@ -486,13 +520,14 @@ impl SpinLockedFixedSizeBlockAllocator {
         allocator_handle: efi::Handle,
         memory_type: efi::MemoryType,
         page_change_callback: PageChangeCallback,
+        page_allocation_granularity: usize,
     ) -> Self {
         SpinLockedFixedSizeBlockAllocator {
             gcd,
             handle: allocator_handle,
             inner: tpl_lock::TplMutex::new(
                 efi::TPL_HIGH_LEVEL,
-                FixedSizeBlockAllocator::new(memory_type, page_change_callback),
+                FixedSizeBlockAllocator::new(memory_type, page_change_callback, page_allocation_granularity),
                 "FsbLock",
             ),
         }
@@ -538,14 +573,21 @@ impl SpinLockedFixedSizeBlockAllocator {
     ) -> Result<NonNull<[u8]>, EfiError> {
         // Record this call in the FSB's stats
         self.lock().stats.page_allocation_calls += 1;
+        let granularity = self.lock().page_allocation_granularity;
 
-        let align_shift = page_shift_from_alignment(alignment)?;
+        // Granularity and alignment both are powers of two, so we can use the max of the two
+        let required_alignment = max(granularity, alignment);
+
+        // Ensure that the requested number of pages is a multiple of the granularity
+        let required_pages = align_up(pages, uefi_size_to_pages!(granularity))?;
+
+        let align_shift = page_shift_from_alignment(required_alignment)?;
 
         if let AllocationStrategy::Address(address) = allocation_strategy {
             // validate allocation strategy addresses for direct address allocation is properly aligned.
             // for BottomUp and TopDown strategies, the address parameter doesn't have to be page-aligned, but
             // the resulting allocation will be page-aligned.
-            if address % alignment != 0 {
+            if address % required_alignment != 0 {
                 return Err(EfiError::InvalidParameter);
             }
         }
@@ -558,7 +600,7 @@ impl SpinLockedFixedSizeBlockAllocator {
                 allocation_strategy,
                 GcdMemoryType::SystemMemory,
                 align_shift,
-                pages << UEFI_PAGE_SHIFT,
+                uefi_pages_to_size!(required_pages),
                 self.handle,
                 None,
             )
@@ -567,7 +609,7 @@ impl SpinLockedFixedSizeBlockAllocator {
                 _ => EfiError::OutOfResources,
             })?;
 
-        let allocation = slice_from_raw_parts_mut(start_address as *mut u8, pages * ALIGNMENT);
+        let allocation = slice_from_raw_parts_mut(start_address as *mut u8, uefi_pages_to_size!(required_pages));
         let allocation = NonNull::new(allocation).ok_or(EfiError::OutOfResources)?;
 
         // Notify the FSB that additional pages were allocated for record keeping
@@ -583,7 +625,12 @@ impl SpinLockedFixedSizeBlockAllocator {
     pub unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), EfiError> {
         self.lock().stats.page_free_calls += 1;
 
-        if address % ALIGNMENT != 0 {
+        let granularity = self.lock().page_allocation_granularity;
+
+        // Ensure that the requested number of pages is a multiple of the granularity
+        let required_pages = align_up(pages, uefi_size_to_pages!(granularity))?;
+
+        if address % granularity != 0 {
             return Err(EfiError::InvalidParameter);
         }
 
@@ -598,19 +645,21 @@ impl SpinLockedFixedSizeBlockAllocator {
         }
 
         if self.lock().in_reserved_range(address as efi::PhysicalAddress) {
-            self.gcd.free_memory_space_preserving_ownership(address, pages * ALIGNMENT).map_err(|err| match err {
-                EfiError::NotFound => err,
-                _ => EfiError::InvalidParameter,
-            })?;
+            self.gcd.free_memory_space_preserving_ownership(address, uefi_pages_to_size!(required_pages)).map_err(
+                |err| match err {
+                    EfiError::NotFound => err,
+                    _ => EfiError::InvalidParameter,
+                },
+            )?;
         } else {
-            self.gcd.free_memory_space(address, pages * ALIGNMENT).map_err(|err| match err {
+            self.gcd.free_memory_space(address, uefi_pages_to_size!(required_pages)).map_err(|err| match err {
                 EfiError::NotFound => err,
                 _ => EfiError::InvalidParameter,
             })?;
         }
 
         // Notify the FSB that pages were freed for record keeping
-        self.lock().notify_pages_freed(address as efi::PhysicalAddress, pages);
+        self.lock().notify_pages_freed(address as efi::PhysicalAddress, required_pages);
 
         Ok(())
     }
@@ -633,14 +682,21 @@ impl SpinLockedFixedSizeBlockAllocator {
             Err(EfiError::AlreadyStarted)?;
         }
 
-        let reserved_block_len = uefi_pages_to_size!(pages);
+        // Even though the platform is telling us what the memory buckets are, we have to take into account
+        // architecture-specific requirements for runtime page allocation granularity.
+        let granularity = self.lock().page_allocation_granularity;
+
+        // Ensure that the requested number of pages is a multiple of the granularity
+        let required_pages = align_up(pages, uefi_size_to_pages!(granularity))?;
+
+        let reserved_block_len = uefi_pages_to_size!(required_pages);
 
         // Allocate then free a block of the requested length in the GCD while preserving ownership.
         // This, in effect, reserves this region in the GCD for use by this allocator.
         let reserved_block_addr = self.gcd.allocate_memory_space(
             DEFAULT_ALLOCATION_STRATEGY,
             GcdMemoryType::SystemMemory,
-            UEFI_PAGE_SHIFT,
+            page_shift_from_alignment(granularity)?,
             reserved_block_len,
             self.handle,
             None,
@@ -702,15 +758,26 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
         match allocation {
             Ok(alloc) => Ok(alloc),
             Err(FixedSizeBlockAllocatorError::OutOfMemory(additional_mem_required)) => {
-                // As a matter of policy, allocate at least `MIN_EXPANSION` memory and ensure the size is
-                // aligned to `ALIGNMENT`.
-                let allocation_size = max(additional_mem_required, MIN_EXPANSION);
-                let allocation_size = align_up_size(allocation_size, ALIGNMENT);
-
                 // Compile-time check to ensure ALIGNMENT is compatible with the alignment requirements
                 // of `expand()` and `page_shift_from_alignment()`
                 const _: () = assert!(ALIGNMENT % align_of::<AllocatorListNode>() == 0);
                 const _: () = assert!(ALIGNMENT % UEFI_PAGE_SIZE == 0 && ALIGNMENT > 0);
+
+                // As a matter of policy, allocate at least `MIN_EXPANSION` memory and ensure the size is
+                // aligned to `ALIGNMENT`.
+                let mut allocation_size = max(additional_mem_required, MIN_EXPANSION);
+                let required_alignment = self.lock().page_allocation_granularity;
+
+                // Ensure that the requested number of pages is a multiple of the granularity
+                let required_pages =
+                    align_up(uefi_size_to_pages!(allocation_size), uefi_size_to_pages!(required_alignment)).map_err(
+                        |_| {
+                            debug_assert!(false);
+                            AllocError
+                        },
+                    )?;
+
+                allocation_size = uefi_pages_to_size!(required_pages);
 
                 // Allocate additional memory through the GCD, returning AllocError
                 // if the GCD returns an error
@@ -719,26 +786,42 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                     .allocate_memory_space(
                         DEFAULT_ALLOCATION_STRATEGY,
                         GcdMemoryType::SystemMemory,
-                        page_shift_from_alignment(ALIGNMENT).unwrap(),
+                        page_shift_from_alignment(required_alignment).map_err(|_| {
+                            debug_assert!(false);
+                            AllocError
+                        })?,
                         allocation_size,
                         self.handle,
                         None,
                     )
-                    .map_err(|_| AllocError)?;
+                    .map_err(|_| {
+                        debug_assert!(false);
+                        AllocError
+                    })?;
 
                 // Expand the FSB using the allocated memory region
-                let allocated_ptr = NonNull::new(start_address as *mut u8).ok_or(AllocError)?;
+                let allocated_ptr = NonNull::new(start_address as *mut u8).ok_or_else(|| {
+                    debug_assert!(false);
+                    AllocError
+                })?;
                 if self.lock().expand(NonNull::slice_from_raw_parts(allocated_ptr, allocation_size)).is_err() {
+                    debug_assert!(false);
                     return Err(AllocError);
                 }
 
                 // Try the allocation one more time
                 match self.lock().alloc(layout) {
                     Ok(alloc) => Ok(alloc),
-                    Err(_) => Err(AllocError),
+                    Err(_) => {
+                        debug_assert!(false);
+                        Err(AllocError)
+                    }
                 }
             }
-            Err(_) => Err(AllocError),
+            Err(_) => {
+                debug_assert!(false);
+                Err(AllocError)
+            }
         }
     }
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
@@ -758,21 +841,37 @@ unsafe impl Send for SpinLockedFixedSizeBlockAllocator {}
 #[cfg(test)]
 mod tests {
     extern crate std;
-    use crate::{gcd, test_support};
+    use crate::{
+        allocator::{DEFAULT_ALLOCATION_STRATEGY, DEFAULT_PAGE_ALLOCATION_GRANULARITY},
+        gcd, test_support,
+    };
     use core::{alloc::GlobalAlloc, ffi::c_void, panic};
     use std::alloc::System;
 
-    use patina_sdk::{base::UEFI_PAGE_SIZE, uefi_pages_to_size};
+    use patina_sdk::{
+        base::{SIZE_64KB, UEFI_PAGE_SIZE},
+        uefi_pages_to_size,
+    };
 
     use super::*;
 
     fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
+        unsafe { gcd.reset() };
+
+        gcd.init(48, 16);
         let layout = Layout::from_size_align(size, UEFI_PAGE_SIZE).unwrap();
         let base = unsafe { System.alloc(layout) as u64 };
         unsafe {
             gcd.add_memory_space(GcdMemoryType::SystemMemory, base as usize, size, efi::MEMORY_WB).unwrap();
         }
         base
+    }
+
+    // this runs each test twice, once with 4KB page allocation granularity and once with 64KB page allocation
+    // granularity. This is to ensure that the allocator works correctly with both page allocation granularities.
+    fn with_granularity_modulation<F: Fn(usize) + std::panic::RefUnwindSafe>(f: F) {
+        f(DEFAULT_PAGE_ALLOCATION_GRANULARITY);
+        f(SIZE_64KB);
     }
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
@@ -788,26 +887,32 @@ mod tests {
 
     #[test]
     fn allocate_deallocate_test() {
-        with_locked_state(|| {
-            // Create a static GCD for test.
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                // Create a static GCD for test.
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-            // Allocate some space on the heap with the global allocator (std) to be used by expand().
-            init_gcd(&GCD, 0x400000);
+                // Allocate some space on the heap with the global allocator (std) to be used by expand().
+                init_gcd(&GCD, 0x400000);
 
-            let fsb =
-                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+                let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    DUMMY_HANDLE,
+                    efi::RUNTIME_SERVICES_DATA,
+                    page_change_callback,
+                    granularity,
+                );
 
-            let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-            let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+                let layout = Layout::from_size_align(0x8, 0x8).unwrap();
+                let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
 
-            unsafe { fsb.deallocate(allocation, layout) };
+                unsafe { fsb.deallocate(allocation, layout) };
 
-            let layout = Layout::from_size_align(0x20, 0x20).unwrap();
-            let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+                let layout = Layout::from_size_align(0x20, 0x20).unwrap();
+                let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
 
-            unsafe { fsb.deallocate(allocation, layout) };
+                unsafe { fsb.deallocate(allocation, layout) };
+            });
         });
     }
 
@@ -835,7 +940,11 @@ mod tests {
     #[test]
     fn test_construct_empty_fixed_size_block_allocator() {
         with_locked_state(|| {
-            let fsb = FixedSizeBlockAllocator::new(efi::BOOT_SERVICES_DATA, page_change_callback);
+            let fsb = FixedSizeBlockAllocator::new(
+                efi::BOOT_SERVICES_DATA,
+                page_change_callback,
+                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+            );
             assert!(fsb.list_heads.iter().all(|x| x.is_none()));
             assert!(fsb.allocators.is_none());
         });
@@ -843,79 +952,81 @@ mod tests {
 
     #[test]
     fn test_expand() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                // Create a static GCD
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-            // Allocate some space on the heap with the global allocator (std) to be used by expand().
-            let base = init_gcd(&GCD, 0x400000);
+                // Allocate some space on the heap with the global allocator (std) to be used by expand().
+                let base = init_gcd(&GCD, 0x4000000);
 
-            //verify no allocators exist before expand.
-            let mut fsb = FixedSizeBlockAllocator::new(efi::BOOT_SERVICES_DATA, page_change_callback);
-            assert!(fsb.allocators.is_none());
+                //verify no allocators exist before expand.
+                let mut fsb =
+                    FixedSizeBlockAllocator::new(efi::RUNTIME_SERVICES_DATA, page_change_callback, granularity);
+                assert!(fsb.allocators.is_none());
 
-            let allocation_size = MIN_EXPANSION;
+                let allocation_size = MIN_EXPANSION;
 
-            // Allocate one page to expand by
-            let allocated_address = GCD
-                .allocate_memory_space(
-                    DEFAULT_ALLOCATION_STRATEGY,
-                    GcdMemoryType::SystemMemory,
-                    UEFI_PAGE_SHIFT,
+                // Allocate one page to expand by
+                let allocated_address = GCD
+                    .allocate_memory_space(
+                        DEFAULT_ALLOCATION_STRATEGY,
+                        GcdMemoryType::SystemMemory,
+                        UEFI_PAGE_SHIFT,
+                        allocation_size,
+                        DUMMY_HANDLE,
+                        None,
+                    )
+                    .unwrap();
+
+                fsb.expand(NonNull::slice_from_raw_parts(
+                    NonNull::new(allocated_address as *mut u8).unwrap(),
                     allocation_size,
-                    DUMMY_HANDLE,
-                    None,
-                )
+                ))
                 .unwrap();
 
-            fsb.expand(NonNull::slice_from_raw_parts(
-                NonNull::new(allocated_address as *mut u8).unwrap(),
-                allocation_size,
-            ))
-            .unwrap();
+                assert!(fsb.allocators.is_some());
+                unsafe {
+                    assert!((*fsb.allocators.unwrap()).next.is_none());
+                    assert!((*fsb.allocators.unwrap()).allocator.bottom() as usize > base as usize);
+                    assert_eq!(
+                        (*fsb.allocators.unwrap()).allocator.free(),
+                        allocation_size - size_of::<AllocatorListNode>()
+                    );
+                }
 
-            assert!(fsb.allocators.is_some());
-            unsafe {
-                assert!((*fsb.allocators.unwrap()).next.is_none());
-                assert!((*fsb.allocators.unwrap()).allocator.bottom() as usize > base as usize);
-                assert_eq!(
-                    (*fsb.allocators.unwrap()).allocator.free(),
-                    allocation_size - size_of::<AllocatorListNode>()
-                );
-            }
+                //expand by larger than MIN_EXPANSION.
+                let allocation_size = MIN_EXPANSION + 0x1000;
 
-            //expand by larger than MIN_EXPANSION.
-            let allocation_size = MIN_EXPANSION + 0x1000;
+                // Allocate one page to expand by
+                let allocated_address = GCD
+                    .allocate_memory_space(
+                        DEFAULT_ALLOCATION_STRATEGY,
+                        GcdMemoryType::SystemMemory,
+                        UEFI_PAGE_SHIFT,
+                        allocation_size,
+                        DUMMY_HANDLE,
+                        None,
+                    )
+                    .unwrap();
 
-            // Allocate one page to expand by
-            let allocated_address = GCD
-                .allocate_memory_space(
-                    DEFAULT_ALLOCATION_STRATEGY,
-                    GcdMemoryType::SystemMemory,
-                    UEFI_PAGE_SHIFT,
+                fsb.expand(NonNull::slice_from_raw_parts(
+                    NonNull::new(allocated_address as *mut u8).unwrap(),
                     allocation_size,
-                    DUMMY_HANDLE,
-                    None,
-                )
+                ))
                 .unwrap();
-
-            fsb.expand(NonNull::slice_from_raw_parts(
-                NonNull::new(allocated_address as *mut u8).unwrap(),
-                allocation_size,
-            ))
-            .unwrap();
-            assert!(fsb.allocators.is_some());
-            unsafe {
-                assert!((*fsb.allocators.unwrap()).next.is_some());
-                assert!((*(*fsb.allocators.unwrap()).next.unwrap()).next.is_none());
-                assert!((*fsb.allocators.unwrap()).allocator.bottom() as usize > base as usize);
-                assert_eq!(
-                    (*fsb.allocators.unwrap()).allocator.free(),
-                    //expected free: size + a page to hold allocator node - size of allocator node.
-                    allocation_size - size_of::<AllocatorListNode>()
-                );
-            }
+                assert!(fsb.allocators.is_some());
+                unsafe {
+                    assert!((*fsb.allocators.unwrap()).next.is_some());
+                    assert!((*(*fsb.allocators.unwrap()).next.unwrap()).next.is_none());
+                    assert!((*fsb.allocators.unwrap()).allocator.bottom() as usize > base as usize);
+                    assert_eq!(
+                        (*fsb.allocators.unwrap()).allocator.free(),
+                        //expected free: size + a page to hold allocator node - size of allocator node.
+                        allocation_size - size_of::<AllocatorListNode>()
+                    );
+                }
+            });
         });
     }
 
@@ -924,12 +1035,15 @@ mod tests {
         with_locked_state(|| {
             // Create a static GCD
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
 
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             init_gcd(&GCD, 0x800000);
 
-            let mut fsb = FixedSizeBlockAllocator::new(efi::BOOT_SERVICES_DATA, page_change_callback);
+            let mut fsb = FixedSizeBlockAllocator::new(
+                efi::BOOT_SERVICES_DATA,
+                page_change_callback,
+                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+            );
 
             const NUM_ALLOCATIONS: usize = 5;
 
@@ -961,191 +1075,230 @@ mod tests {
 
     #[test]
     fn test_fallback_alloc() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                // Create a static GCD
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-            // Allocate some space on the heap with the global allocator (std) to be used by expand().
-            let _ = init_gcd(&GCD, 0x400000);
+                // Allocate some space on the heap with the global allocator (std) to be used by expand().
+                let _ = init_gcd(&GCD, 0x400000);
 
-            let mut fsb = FixedSizeBlockAllocator::new(efi::BOOT_SERVICES_DATA, page_change_callback);
+                let mut fsb =
+                    FixedSizeBlockAllocator::new(efi::RUNTIME_SERVICES_DATA, page_change_callback, granularity);
 
-            // Test fallback_alloc with size < size_of::<AllocatorListNode>()
-            let allocation_size = size_of::<AllocatorListNode>() / 2;
-            let layout = Layout::from_size_align(allocation_size, 0x10).unwrap();
-            match fsb.fallback_alloc(layout) {
-                Err(FixedSizeBlockAllocatorError::OutOfMemory(mem_req)) => {
-                    assert!(mem_req >= layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size(),
-                        "fallback_alloc should request enough memory to fit aligned layout and an aligned AllocatorListNode");
+                // Test fallback_alloc with size < size_of::<AllocatorListNode>()
+                let allocation_size = size_of::<AllocatorListNode>() / 2;
+                let layout = Layout::from_size_align(allocation_size, 0x10).unwrap();
+                match fsb.fallback_alloc(layout) {
+                    Err(FixedSizeBlockAllocatorError::OutOfMemory(mem_req)) => {
+                        assert!(
+                                mem_req >= layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size(),
+                                "fallback_alloc should request enough memory to fit aligned layout and an aligned AllocatorListNode"
+                            );
+                    }
+                    _ => {
+                        panic!(
+                            "fallback_alloc with no allocators should return FixedSizeBlockAllocatorError::OutOfMemory"
+                        )
+                    }
                 }
-                _ => {
-                    panic!("fallback_alloc with no allocators should return FixedSizeBlockAllocatorError::OutOfMemory")
-                }
-            }
-            assert!(fsb.allocators.is_none());
+                assert!(fsb.allocators.is_none());
 
-            // Test fallback_alloc with size > size_of::<AllocatorListNode>(), but unaligned to AllocatorListNode
-            let allocation_size = size_of::<AllocatorListNode>() + align_of::<AllocatorListNode>() / 2;
-            let layout = Layout::from_size_align(allocation_size, 0x10).unwrap();
-            match fsb.fallback_alloc(layout) {
-                Err(FixedSizeBlockAllocatorError::OutOfMemory(mem_req)) => {
-                    assert!(mem_req >= layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size(),
-                        "fallback_alloc should request enough memory to fit aligned layout and an aligned AllocatorListNode");
+                // Test fallback_alloc with size > size_of::<AllocatorListNode>(), but unaligned to AllocatorListNode
+                let allocation_size = size_of::<AllocatorListNode>() + align_of::<AllocatorListNode>() / 2;
+                let layout = Layout::from_size_align(allocation_size, 0x10).unwrap();
+                match fsb.fallback_alloc(layout) {
+                    Err(FixedSizeBlockAllocatorError::OutOfMemory(mem_req)) => {
+                        assert!(
+                                mem_req >= layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size(),
+                                "fallback_alloc should request enough memory to fit aligned layout and an aligned AllocatorListNode"
+                            );
+                    }
+                    _ => {
+                        panic!(
+                            "fallback_alloc with no allocators should return FixedSizeBlockAllocatorError::OutOfMemory"
+                        )
+                    }
                 }
-                _ => {
-                    panic!("fallback_alloc with no allocators should return FixedSizeBlockAllocatorError::OutOfMemory")
-                }
-            }
-            assert!(fsb.allocators.is_none());
+                assert!(fsb.allocators.is_none());
+            });
         });
     }
 
     #[test]
     fn test_alloc() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                // Create a static GCD
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-            // Allocate some space on the heap with the global allocator (std) to be used by expand().
-            let base = init_gcd(&GCD, 0x400000);
+                // Allocate some space on the heap with the global allocator (std) to be used by expand().
+                let base = init_gcd(&GCD, 0x400000);
 
-            let fsb =
-                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+                let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    1 as _,
+                    efi::RUNTIME_SERVICES_DATA,
+                    page_change_callback,
+                    granularity,
+                );
 
-            let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-            let allocation = unsafe { fsb.alloc(layout) };
-            assert!(fsb.lock().allocators.is_some());
-            assert!((allocation as u64) > base);
-            assert!((allocation as u64) < base + 0x400000);
+                let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
+                let allocation = unsafe { fsb.alloc(layout) };
+                assert!(fsb.lock().allocators.is_some());
+                assert!((allocation as u64) > base);
+                assert!((allocation as u64) < base + 0x400000);
+            });
         });
     }
 
     #[test]
     fn test_allocate() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                // Create a static GCD
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-            // Allocate some space on the heap with the global allocator (std) to be used by expand().
-            let base = init_gcd(&GCD, 0x400000);
+                // Allocate some space on the heap with the global allocator (std) to be used by expand().
+                let base = init_gcd(&GCD, 0x400000);
 
-            let fsb =
-                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+                let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    1 as _,
+                    efi::RUNTIME_SERVICES_DATA,
+                    page_change_callback,
+                    granularity,
+                );
 
-            let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
-            let allocation = fsb.allocate(layout).unwrap().as_ptr() as *mut u8;
-            assert!(fsb.lock().allocators.is_some());
-            assert!((allocation as u64) > base);
-            assert!((allocation as u64) < base + 0x400000);
+                let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
+                let allocation = fsb.allocate(layout).unwrap().as_ptr() as *mut u8;
+                assert!(fsb.lock().allocators.is_some());
+                assert!((allocation as u64) > base);
+                assert!((allocation as u64) < base + 0x400000);
+            });
         });
     }
 
     #[test]
     fn test_fallback_dealloc() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                // Create a static GCD
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-            // Allocate some space on the heap with the global allocator (std) to be used by expand().
-            init_gcd(&GCD, 0x400000);
+                // Allocate some space on the heap with the global allocator (std) to be used by expand().
+                init_gcd(&GCD, 0x400000);
 
-            let mut fsb = FixedSizeBlockAllocator::new(efi::BOOT_SERVICES_DATA, page_change_callback);
+                let mut fsb =
+                    FixedSizeBlockAllocator::new(efi::RUNTIME_SERVICES_DATA, page_change_callback, granularity);
 
-            let layout = Layout::from_size_align(0x8, 0x8).unwrap();
+                let layout = Layout::from_size_align(0x8, 0x8).unwrap();
 
-            // Expand the FSB by `MIN_EXPANSION` to fit the allocation
-            fsb.expand(NonNull::slice_from_raw_parts(
-                NonNull::new(
-                    GCD.allocate_memory_space(
-                        DEFAULT_ALLOCATION_STRATEGY,
-                        GcdMemoryType::SystemMemory,
-                        UEFI_PAGE_SHIFT,
-                        MIN_EXPANSION,
-                        DUMMY_HANDLE,
-                        None,
+                // Expand the FSB by `MIN_EXPANSION` to fit the allocation
+                fsb.expand(NonNull::slice_from_raw_parts(
+                    NonNull::new(
+                        GCD.allocate_memory_space(
+                            DEFAULT_ALLOCATION_STRATEGY,
+                            GcdMemoryType::SystemMemory,
+                            UEFI_PAGE_SHIFT,
+                            MIN_EXPANSION,
+                            DUMMY_HANDLE,
+                            None,
+                        )
+                        .unwrap() as *mut u8,
                     )
-                    .unwrap() as *mut u8,
-                )
-                .unwrap(),
-                MIN_EXPANSION,
-            ))
-            .unwrap();
+                    .unwrap(),
+                    MIN_EXPANSION,
+                ))
+                .unwrap();
 
-            let allocation = fsb.fallback_alloc(layout).unwrap();
+                let allocation = fsb.fallback_alloc(layout).unwrap();
 
-            // Finally, we can test fallback_dealloc
-            fsb.fallback_dealloc(allocation.cast(), layout);
-            unsafe {
-                assert_eq!((*fsb.allocators.unwrap()).allocator.free(), MIN_EXPANSION - size_of::<AllocatorListNode>());
-            }
+                // Finally, we can test fallback_dealloc
+                fsb.fallback_dealloc(allocation.cast(), layout);
+                unsafe {
+                    assert_eq!(
+                        (*fsb.allocators.unwrap()).allocator.free(),
+                        MIN_EXPANSION - size_of::<AllocatorListNode>()
+                    );
+                }
+            });
         });
     }
 
     #[test]
     fn test_dealloc() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                // Create a static GCD
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-            // Allocate some space on the heap with the global allocator (std) to be used by expand().
-            init_gcd(&GCD, 0x400000);
+                // Allocate some space on the heap with the global allocator (std) to be used by expand().
+                init_gcd(&GCD, 0x400000);
 
-            let fsb =
-                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+                let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    1 as _,
+                    efi::RUNTIME_SERVICES_DATA,
+                    page_change_callback,
+                    granularity,
+                );
 
-            let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-            let allocation = unsafe { fsb.alloc(layout) };
+                let layout = Layout::from_size_align(0x8, 0x8).unwrap();
+                let allocation = unsafe { fsb.alloc(layout) };
 
-            unsafe { fsb.dealloc(allocation, layout) };
-            let free_block_ptr =
-                fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap() as *mut BlockListNode as *mut u8;
-            assert_eq!(free_block_ptr, allocation);
+                unsafe { fsb.dealloc(allocation, layout) };
+                let free_block_ptr = fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap()
+                    as *mut BlockListNode as *mut u8;
+                assert_eq!(free_block_ptr, allocation);
 
-            let layout = Layout::from_size_align(0x20, 0x20).unwrap();
-            let allocation = unsafe { fsb.alloc(layout) };
+                let layout = Layout::from_size_align(0x20, 0x20).unwrap();
+                let allocation = unsafe { fsb.alloc(layout) };
 
-            unsafe { fsb.dealloc(allocation, layout) };
-            let free_block_ptr =
-                fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap() as *mut BlockListNode as *mut u8;
-            assert_eq!(free_block_ptr, allocation);
+                unsafe { fsb.dealloc(allocation, layout) };
+                let free_block_ptr = fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap()
+                    as *mut BlockListNode as *mut u8;
+                assert_eq!(free_block_ptr, allocation);
+            });
         });
     }
 
     #[test]
     fn test_deallocate() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                // Create a static GCD
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-            // Allocate some space on the heap with the global allocator (std) to be used by expand().
-            init_gcd(&GCD, 0x400000);
+                // Allocate some space on the heap with the global allocator (std) to be used by expand().
+                init_gcd(&GCD, 0x400000);
 
-            let fsb =
-                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+                let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    1 as _,
+                    efi::RUNTIME_SERVICES_DATA,
+                    page_change_callback,
+                    granularity,
+                );
 
-            let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-            let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
-            let allocation_ptr = allocation.as_ptr();
+                let layout = Layout::from_size_align(0x8, 0x8).unwrap();
+                let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+                let allocation_ptr = allocation.as_ptr();
 
-            unsafe { fsb.deallocate(allocation, layout) };
-            let free_block_ptr =
-                fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap() as *mut BlockListNode as *mut u8;
-            assert_eq!(free_block_ptr, allocation_ptr);
+                unsafe { fsb.deallocate(allocation, layout) };
+                let free_block_ptr = fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap()
+                    as *mut BlockListNode as *mut u8;
+                assert_eq!(free_block_ptr, allocation_ptr);
 
-            let layout = Layout::from_size_align(0x20, 0x20).unwrap();
-            let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
-            let allocation_ptr = allocation.as_ptr();
+                let layout = Layout::from_size_align(0x20, 0x20).unwrap();
+                let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+                let allocation_ptr = allocation.as_ptr();
 
-            unsafe { fsb.deallocate(allocation, layout) };
-            let free_block_ptr =
-                fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap() as *mut BlockListNode as *mut u8;
-            assert_eq!(free_block_ptr, allocation_ptr);
+                unsafe { fsb.deallocate(allocation, layout) };
+                let free_block_ptr = fsb.lock().list_heads[list_index(&layout).unwrap()].take().unwrap()
+                    as *mut BlockListNode as *mut u8;
+                assert_eq!(free_block_ptr, allocation_ptr);
+            });
         });
     }
 
@@ -1154,13 +1307,17 @@ mod tests {
         with_locked_state(|| {
             // Create a static GCD
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
 
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             init_gcd(&GCD, 0x400000);
 
-            let fsb =
-                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                &GCD,
+                1 as _,
+                efi::BOOT_SERVICES_DATA,
+                page_change_callback,
+                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+            );
 
             let layout = Layout::from_size_align(0x8, 0x8).unwrap();
             let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
@@ -1170,120 +1327,147 @@ mod tests {
 
     #[test]
     fn test_allocate_pages() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                // Create a static GCD
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-            // Allocate some space on the heap with the global allocator (std) to back the test GCD.
-            let address = init_gcd(&GCD, 0x1000000);
+                // Allocate some space on the heap with the global allocator (std) to back the test GCD.
+                let address = init_gcd(&GCD, 0x1000000);
 
-            let fsb =
-                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+                let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    1 as _,
+                    efi::RUNTIME_SERVICES_DATA,
+                    page_change_callback,
+                    granularity,
+                );
 
-            let pages = 4;
+                let pages = 4;
 
-            let allocation =
-                fsb.allocate_pages(gcd::AllocateType::BottomUp(None), pages, UEFI_PAGE_SIZE).unwrap().as_non_null_ptr();
+                let allocation = fsb
+                    .allocate_pages(gcd::AllocateType::BottomUp(None), pages, UEFI_PAGE_SIZE)
+                    .unwrap()
+                    .as_non_null_ptr();
 
-            assert!(allocation.as_ptr() as u64 >= address);
-            assert!((allocation.as_ptr() as u64) < address + 0x1000000);
+                assert!(allocation.as_ptr() as u64 >= address);
+                assert!((allocation.as_ptr() as u64) < address + 0x1000000);
 
-            unsafe {
-                match fsb.free_pages(0, pages) {
-                    Err(EfiError::NotFound) => {}
-                    _ => panic!("Expected NOT_FOUND"),
+                unsafe {
+                    match fsb.free_pages(0, pages) {
+                        Err(EfiError::NotFound) => {}
+                        _ => panic!("Expected NOT_FOUND"),
+                    };
                 };
-            };
 
-            unsafe {
-                fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
-            };
+                unsafe {
+                    fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
+                };
+            });
         });
     }
 
     #[test]
     fn test_allocate_at_address() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                // Create a static GCD
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-            // Allocate some space on the heap with the global allocator (std) to back the test GCD.
-            let address = init_gcd(&GCD, 0x1000000);
+                // Allocate some space on the heap with the global allocator (std) to back the test GCD.
+                let address = init_gcd(&GCD, 0x1000000);
 
-            let fsb =
-                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+                let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    1 as _,
+                    efi::RUNTIME_SERVICES_DATA,
+                    page_change_callback,
+                    granularity,
+                );
 
-            let target_address = address + 0x400000 - 8 * (ALIGNMENT as u64);
-            let pages = 4;
+                let target_address = (address + 0x400000 - max(8_u64 * ALIGNMENT as u64, granularity as u64))
+                    & (!(granularity as u64 - 1_u64));
+                let pages = 4;
 
-            let allocation = fsb
-                .allocate_pages(gcd::AllocateType::Address(target_address as usize), pages, UEFI_PAGE_SIZE)
-                .unwrap()
-                .as_non_null_ptr();
+                let allocation = fsb
+                    .allocate_pages(gcd::AllocateType::Address(target_address as usize), pages, UEFI_PAGE_SIZE)
+                    .unwrap()
+                    .as_non_null_ptr();
 
-            assert_eq!(allocation.as_ptr() as u64, target_address);
+                assert_eq!(allocation.as_ptr() as u64, target_address);
 
-            unsafe {
-                fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
-            };
+                unsafe {
+                    fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
+                };
+            });
         });
     }
 
     #[test]
     fn test_allocate_below_address() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                // Create a static GCD
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-            // Allocate some space on the heap with the global allocator (std) to be back the test GCD.
-            let address = init_gcd(&GCD, 0x1000000);
+                // Allocate some space on the heap with the global allocator (std) to back the test GCD.
+                let address = init_gcd(&GCD, 0x1000000);
 
-            let fsb =
-                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+                let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    1 as _,
+                    efi::RUNTIME_SERVICES_DATA,
+                    page_change_callback,
+                    granularity,
+                );
 
-            let target_address = address + 0x400000 - 8 * (ALIGNMENT as u64);
-            let pages = 4;
+                let target_address = address + 0x400000 - 8 * (ALIGNMENT as u64);
+                let pages = 4;
 
-            let allocation = fsb
-                .allocate_pages(gcd::AllocateType::BottomUp(Some(target_address as usize)), pages, UEFI_PAGE_SIZE)
-                .unwrap()
-                .as_non_null_ptr();
-            assert!((allocation.as_ptr() as u64) < target_address);
+                let allocation = fsb
+                    .allocate_pages(gcd::AllocateType::BottomUp(Some(target_address as usize)), pages, UEFI_PAGE_SIZE)
+                    .unwrap()
+                    .as_non_null_ptr();
+                assert!((allocation.as_ptr() as u64) < target_address);
 
-            unsafe {
-                fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
-            };
+                unsafe {
+                    fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
+                };
+            });
         });
     }
 
     #[test]
     fn test_allocate_above_address() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                // Create a static GCD
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-            // Allocate some space on the heap with the global allocator (std) to back the test GCD.
-            let address = init_gcd(&GCD, 0x1000000);
+                // Allocate some space on the heap with the global allocator (std) to back the test GCD.
+                let address = init_gcd(&GCD, 0x1000000);
 
-            let fsb =
-                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+                let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                    &GCD,
+                    1 as _,
+                    efi::RUNTIME_SERVICES_DATA,
+                    page_change_callback,
+                    granularity,
+                );
 
-            let target_address = address + 0x400000 - 8 * (ALIGNMENT as u64);
-            let pages = 4;
+                let target_address = address + 0x400000 - 8 * (ALIGNMENT as u64);
+                let pages = 4;
 
-            let allocation = fsb
-                .allocate_pages(gcd::AllocateType::TopDown(Some(target_address as usize)), pages, UEFI_PAGE_SIZE)
-                .unwrap()
-                .as_non_null_ptr();
-            assert!((allocation.as_ptr() as u64) > target_address);
+                let allocation = fsb
+                    .allocate_pages(gcd::AllocateType::TopDown(Some(target_address as usize)), pages, UEFI_PAGE_SIZE)
+                    .unwrap()
+                    .as_non_null_ptr();
+                assert!((allocation.as_ptr() as u64) > target_address);
 
-            unsafe {
-                fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
-            };
+                unsafe {
+                    fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
+                };
+            });
         });
     }
 
@@ -1292,21 +1476,30 @@ mod tests {
         with_locked_state(|| {
             // Create a static GCD
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
 
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             let _ = init_gcd(&GCD, 0x400000);
 
             // Test commands with bad handle.
-            let fsb =
-                SpinLockedFixedSizeBlockAllocator::new(&GCD, 0 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                &GCD,
+                0 as _,
+                efi::BOOT_SERVICES_DATA,
+                page_change_callback,
+                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+            );
             match fsb.allocate_pages(AllocationStrategy::Address(0x1000), 5, UEFI_PAGE_SIZE) {
                 Err(EfiError::InvalidParameter) => {}
                 _ => panic!("Expected INVALID_PARAMETER"),
             }
 
-            let fsb =
-                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                &GCD,
+                1 as _,
+                efi::BOOT_SERVICES_DATA,
+                page_change_callback,
+                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+            );
 
             let allocation_strategy = AllocationStrategy::Address(0x1000);
             match fsb.allocate_pages(allocation_strategy, 5, UEFI_PAGE_SIZE) {
@@ -1334,13 +1527,17 @@ mod tests {
         with_locked_state(|| {
             // Create a static GCD
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
 
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             let _ = init_gcd(&GCD, 0x400000);
 
-            let fsb =
-                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                &GCD,
+                1 as _,
+                efi::BOOT_SERVICES_DATA,
+                page_change_callback,
+                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+            );
             fsb.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 5, UEFI_PAGE_SIZE).unwrap();
 
             let layout = Layout::from_size_align(0x1000, 0x10).unwrap();
@@ -1356,14 +1553,18 @@ mod tests {
         with_locked_state(|| {
             // Create a static GCD
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
 
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             let _ = init_gcd(&GCD, 0x1000000);
 
             // Make a fixed-sized-block allocator
-            let fsb =
-                SpinLockedFixedSizeBlockAllocator::new(&GCD, 1 as _, efi::BOOT_SERVICES_DATA, page_change_callback);
+            let fsb = SpinLockedFixedSizeBlockAllocator::new(
+                &GCD,
+                1 as _,
+                efi::BOOT_SERVICES_DATA,
+                page_change_callback,
+                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+            );
 
             let stats = fsb.stats();
             assert_eq!(stats.pool_allocation_calls, 0);
@@ -1556,58 +1757,60 @@ mod tests {
 
     #[test]
     fn test_get_memory_ranges() {
-        with_locked_state(|| {
-            // Create a static GCD
-            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            GCD.init(48, 16);
+        with_granularity_modulation(|granularity| {
+            with_locked_state(|| {
+                // Create a static GCD
+                static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
 
-            // Allocate some space on the heap with the global allocator (std) to be used by expand().
-            let base = init_gcd(&GCD, 0x400000);
+                // Allocate some space on the heap with the global allocator (std) to be used by expand().
+                let base = init_gcd(&GCD, 0x400000);
 
-            let mut fsb = FixedSizeBlockAllocator::new(efi::BOOT_SERVICES_DATA, page_change_callback);
+                let mut fsb =
+                    FixedSizeBlockAllocator::new(efi::RUNTIME_SERVICES_DATA, page_change_callback, granularity);
 
-            const NUM_ALLOCATIONS: usize = 3;
+                const NUM_ALLOCATIONS: usize = 3;
 
-            // Expand the FSB multiple times
-            for _ in 0..NUM_ALLOCATIONS {
-                fsb.expand(NonNull::slice_from_raw_parts(
-                    NonNull::new(
-                        GCD.allocate_memory_space(
-                            DEFAULT_ALLOCATION_STRATEGY,
-                            GcdMemoryType::SystemMemory,
-                            UEFI_PAGE_SHIFT,
-                            MIN_EXPANSION,
-                            DUMMY_HANDLE,
-                            None,
+                // Expand the FSB multiple times
+                for _ in 0..NUM_ALLOCATIONS {
+                    fsb.expand(NonNull::slice_from_raw_parts(
+                        NonNull::new(
+                            GCD.allocate_memory_space(
+                                DEFAULT_ALLOCATION_STRATEGY,
+                                GcdMemoryType::SystemMemory,
+                                UEFI_PAGE_SHIFT,
+                                MIN_EXPANSION,
+                                DUMMY_HANDLE,
+                                None,
+                            )
+                            .unwrap() as *mut u8,
                         )
-                        .unwrap() as *mut u8,
-                    )
-                    .unwrap(),
-                    MIN_EXPANSION,
-                ))
-                .unwrap();
-            }
-
-            // Collect the memory ranges reported by the allocator
-            let memory_ranges: Vec<_> = fsb.get_memory_ranges().collect();
-
-            // Verify that the reported ranges match the expected ranges
-            assert_eq!(memory_ranges.len(), NUM_ALLOCATIONS);
-            for range in &memory_ranges {
-                assert!(range.start >= base as usize);
-                assert!(range.end <= (base + 0x400000) as usize);
-                assert!(range.start < range.end);
-            }
-
-            // Ensure that the ranges do not overlap
-            for i in 0..memory_ranges.len() {
-                for j in i + 1..memory_ranges.len() {
-                    assert!(
-                        memory_ranges[i].end <= memory_ranges[j].start
-                            || memory_ranges[j].end <= memory_ranges[i].start
-                    );
+                        .unwrap(),
+                        MIN_EXPANSION,
+                    ))
+                    .unwrap();
                 }
-            }
+
+                // Collect the memory ranges reported by the allocator
+                let memory_ranges: Vec<_> = fsb.get_memory_ranges().collect();
+
+                // Verify that the reported ranges match the expected ranges
+                assert_eq!(memory_ranges.len(), NUM_ALLOCATIONS);
+                for range in &memory_ranges {
+                    assert!(range.start >= base as usize);
+                    assert!(range.end <= (base + 0x400000) as usize);
+                    assert!(range.start < range.end);
+                }
+
+                // Ensure that the ranges do not overlap
+                for i in 0..memory_ranges.len() {
+                    for j in i + 1..memory_ranges.len() {
+                        assert!(
+                            memory_ranges[i].end <= memory_ranges[j].start
+                                || memory_ranges[j].end <= memory_ranges[i].start
+                        );
+                    }
+                }
+            });
         });
     }
 

@@ -38,6 +38,7 @@
 extern crate alloc;
 
 mod allocator;
+mod config_tables;
 mod cpu_arch_protocol;
 mod dispatcher;
 mod driver_services;
@@ -51,7 +52,6 @@ mod gcd;
 mod hw_interrupt_protocol;
 mod image;
 mod memory_attributes_protocol;
-mod memory_attributes_table;
 mod memory_manager;
 mod misc_boot_services;
 mod pecoff;
@@ -86,6 +86,9 @@ use patina_sdk::{
 use protocols::PROTOCOL_DB;
 use r_efi::efi;
 
+use crate::config_tables::memory_attributes_table;
+
+#[doc(hidden)]
 #[macro_export]
 macro_rules! ensure {
     ($condition:expr, $err:expr) => {{
@@ -95,6 +98,7 @@ macro_rules! ensure {
     }};
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! error {
     ($err:expr) => {{
@@ -104,10 +108,32 @@ macro_rules! error {
 
 pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_change));
 
+/// A configuration struct containing the GIC bases (gic_d, gic_r) for AARCH64 systems.
+///
+/// ## Example
+///
+/// ```rust,no_run
+/// use patina_dxe_core::{Core, GicBases};
+/// # #[derive(Default, Clone, Copy)]
+/// # struct SectionExtractExample;
+/// # impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
+/// #     fn extract(&self, _: &mu_pi::fw_fs::Section) -> Result<Box<[u8]>, r_efi::base::Status> { Ok(Box::new([0])) }
+/// # }
+/// # let physical_hob_list = core::ptr::null();
+///
+/// let gic_bases = GicBases::new(0x1E000000, 0x1E010000);
+/// let core = Core::default()
+///    .with_section_extractor(SectionExtractExample::default())
+///    .init_memory(physical_hob_list)
+///    .with_config(gic_bases)
+///    .start()
+///    .unwrap();
+/// ```
 #[derive(Debug, PartialEq)]
 pub struct GicBases(pub u64, pub u64);
 
 impl GicBases {
+    /// Creates a new instance of the GicBases struct with the provided GIC Distributor and Redistributor base addresses.
     pub fn new(gicd_base: u64, gicr_base: u64) -> Self {
         GicBases(gicd_base, gicr_base)
     }
@@ -395,6 +421,7 @@ where
             events::init_events_support(st.boot_services_mut());
             protocols::init_protocol_support(st.boot_services_mut());
             misc_boot_services::init_misc_boot_services_support(st.boot_services_mut());
+            config_tables::init_config_tables_support(st.boot_services_mut());
             runtime::init_runtime_support(st.runtime_services_mut());
             image::init_image_support(&self.hob_list, st);
             dispatcher::init_dispatcher(Box::from(self.section_extractor));
@@ -412,9 +439,9 @@ where
                 uuid::Uuid::from_str("7739F24C-93D7-11D4-9A3A-0090273FC14D").expect("Invalid UUID format.").as_fields();
             let hob_list_guid: efi::Guid = efi::Guid::from_fields(a, b, c, d0, d1, &[d2, d3, d4, d5, d6, d7]);
 
-            misc_boot_services::core_install_configuration_table(
+            config_tables::core_install_configuration_table(
                 hob_list_guid,
-                Some(unsafe { &mut *(Box::leak(relocated_c_hob_list).as_mut_ptr() as *mut c_void) }),
+                Box::leak(relocated_c_hob_list).as_mut_ptr() as *mut c_void,
                 st,
             )
             .expect("Unable to create configuration table due to invalid table entry.");
@@ -506,7 +533,7 @@ const ARCH_PROTOCOLS: &[(uuid::Uuid, &str)] = &[
 
 fn core_display_missing_arch_protocols() {
     for (uuid, name) in ARCH_PROTOCOLS {
-        let guid: efi::Guid = unsafe { core::mem::transmute(uuid.to_bytes_le()) };
+        let guid = efi::Guid::from_bytes(&uuid.to_bytes_le());
         if protocols::PROTOCOL_DB.locate_protocol(guid).is_err() {
             log::warn!("Missing architectural protocol: {:?}, {:?}", uuid, name);
         }
