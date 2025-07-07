@@ -30,8 +30,8 @@ pub type AcpiNotifyFn = fn(&AcpiTableHeader, u32, usize) -> efi::Status;
 #[derive(IntoService)]
 #[service(AcpiTableManager)]
 pub struct AcpiTableManager {
-    provider_service: Service<dyn AcpiProvider>,
-    memory_manager: Service<dyn MemoryManager>,
+    pub(crate) provider_service: Service<dyn AcpiProvider>,
+    pub(crate) memory_manager: Service<dyn MemoryManager>,
 }
 
 impl AcpiTableManager {

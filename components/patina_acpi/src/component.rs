@@ -2,6 +2,7 @@
 
 use crate::acpi_table::{AcpiTable, AcpiTableHeader, AcpiXsdtMetadata};
 use crate::alloc::boxed::Box;
+use crate::service::{AcpiProvider, AcpiTableManager};
 
 use core::mem;
 
@@ -129,12 +130,37 @@ impl AcpiProviderManager {
 
 /// Produces EDKII ACPI protocols.
 #[derive(IntoComponent)]
-pub struct AcpiSystemTableProtocolManager {}
+pub struct AcpiSystemProtocolManager {}
 
-impl AcpiSystemTableProtocolManager {
+impl AcpiSystemProtocolManager {
     fn entry_point(self, boot_services: StandardBootServices) -> patina_sdk::error::Result<()> {
         boot_services.install_protocol_interface(None, Box::new(AcpiTableProtocol::new()))?;
         boot_services.install_protocol_interface(None, Box::new(AcpiSdtProtocol::new()))?;
+        Ok(())
+    }
+}
+
+/// Initializes the ACPI table manager service.
+/// This services wraps `AcpiProvider` and allows for generic retrieval of tables.
+#[derive(IntoComponent, Default)]
+pub struct GenericAcpiManager {}
+
+impl GenericAcpiManager {
+    /// Initializes a new `GenericAcpiManager`.
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    fn entry_point(
+        self,
+        mut commands: Commands,
+        acpi_provider: Service<dyn AcpiProvider>,
+        memory_manager: Service<dyn MemoryManager>,
+    ) -> patina_sdk::error::Result<()> {
+        let acpi_service = AcpiTableManager { provider_service: acpi_provider, memory_manager };
+
+        commands.add_service(acpi_service);
+
         Ok(())
     }
 }
