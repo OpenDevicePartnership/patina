@@ -9,7 +9,7 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use crate::memory_log::{self, AdvLoggerInfo, LogEntry};
+use crate::memory_log::{self, AdvancedLog, LogEntry};
 use core::marker::Send;
 use log::Level;
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
@@ -30,7 +30,7 @@ where
     target_filters: &'a [(&'a str, log::LevelFilter)],
     max_level: log::LevelFilter,
     format: Format,
-    memory_log: Once<&'static AdvLoggerInfo>,
+    memory_log: Once<AdvancedLog<'static>>,
 }
 
 impl<'a, S> AdvancedLogger<'a, S>
@@ -58,7 +58,7 @@ where
     /// Writes a log entry to the hardware port and memory log if available.
     pub(crate) fn log_write(&self, error_level: u32, data: &[u8]) {
         let mut hw_write = true;
-        if let Some(memory_log) = self.get_log_info() {
+        if let Some(memory_log) = self.memory_log.get() {
             hw_write = memory_log.hardware_write_enabled(error_level);
             let timestamp = Arch::cpu_count();
             let _ = memory_log.add_log_entry(LogEntry {
@@ -77,14 +77,14 @@ where
     /// Sets the address of the advanced logger memory log.
     pub(crate) fn set_log_info_address(&self, address: efi::PhysicalAddress) {
         assert!(!self.memory_log.is_completed());
-        if let Some(log_info) = unsafe { AdvLoggerInfo::adopt_memory_log(address) } {
-            self.memory_log.call_once(|| log_info);
-            log::info!("Advanced logger buffer initialized. Address = {:#p}", log_info);
+        if let Some(log) = unsafe { AdvancedLog::adopt_memory_log(address) } {
+            let memory_log = self.memory_log.call_once(|| log);
+            log::info!("Advanced logger buffer initialized. Address = {:#x}", memory_log.get_address());
 
             // The frequency may not be initialized, if not do so now.
-            if log_info.get_frequency() == 0 {
+            if memory_log.get_frequency() == 0 {
                 let frequency = Arch::perf_frequency();
-                log_info.set_frequency(frequency);
+                memory_log.set_frequency(frequency);
             }
 
             // SAFETY: This is only set for discoverability while debugging.
@@ -96,12 +96,8 @@ where
         }
     }
 
-    /// Returns the underlying logger metadata.
-    pub(crate) fn get_log_info(&self) -> Option<&AdvLoggerInfo> {
-        match self.memory_log.get() {
-            Some(log_info) => Some(*log_info),
-            None => None,
-        }
+    pub(crate) fn get_log_address(&self) -> Option<efi::PhysicalAddress> {
+        self.memory_log.get().map(|log| log.get_address())
     }
 }
 
