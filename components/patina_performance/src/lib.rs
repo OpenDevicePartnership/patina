@@ -170,7 +170,7 @@ impl Performance {
 
         let Some(mm_comm_region) = mm_comm_region_hobs.iter().find(|r| r.is_user_type()) else {
             return Ok(());
-};
+        };
 
         self._entry_point(boot_services, runtime_services, records_buffers_hobs, Some(*mm_comm_region), fbpt)
     }
@@ -180,7 +180,7 @@ impl Performance {
         self,
         boot_services: BB,
         runtime_services: RR,
-        records_buffers_hobs: Option<P>, // Changed to Option<P>
+        records_buffers_hobs: Option<P>,      // Changed to Option<P>
         mm_comm_region: Option<MmCommRegion>, // Changed to Option<MmCommRegion>
         fbpt: &'static TplMutex<'static, F, B>,
     ) -> Result<(), EfiError>
@@ -239,7 +239,9 @@ impl Performance {
                 &EVENT_GROUP_READY_TO_BOOT,
             )?;
         } else {
-            log::info!("Performance: No MM communication region available, skipping SMM performance event registration.");
+            log::info!(
+                "Performance: No MM communication region available, skipping SMM performance event registration."
+            );
         }
 
         // Install configuration table for performance property.
@@ -743,7 +745,7 @@ mod test {
         boot_services
             .expect_create_event_ex::<Box<(
                 Rc<MockBootServices>,
-                MmCommRegion,
+                Option<MmCommRegion>,
                 &TplMutex<'static, MockFirmwareBasicBootPerfTable, MockBootServices>,
             )>>()
             .once()
@@ -790,7 +792,7 @@ mod test {
             Rc::new(boot_services),
             Rc::new(runtime_services),
             Some(hob_perf_data_extractor),
-            mm_comm_region,
+            Some(mm_comm_region),
             fbpt,
         );
     }
