@@ -180,8 +180,8 @@ impl Performance {
         self,
         boot_services: BB,
         runtime_services: RR,
-        records_buffers_hobs: Option<P>,      // Changed to Option<P>
-        mm_comm_region: Option<MmCommRegion>, // Changed to Option<MmCommRegion>
+        records_buffers_hobs: Option<P>,
+        mm_comm_region: Option<MmCommRegion>,
         fbpt: &'static TplMutex<'static, F, B>,
     ) -> Result<(), EfiError>
     where
