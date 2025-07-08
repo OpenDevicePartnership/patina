@@ -316,7 +316,7 @@ extern "efiapi" fn report_fbpt_record_buffer<BB, B, RR, R, F>(
 /// Event callback that add the SMM performance record to the FBPT.
 extern "efiapi" fn fetch_and_add_mm_performance_records<BB, B, F>(
     event: efi::Event,
-    ctx: Box<(BB, Option<MmCommRegion>, &TplMutex<'static, F, B>)>,
+    ctx: Box<(BB, MmCommRegion, &TplMutex<'static, F, B>)>,
 ) where
     BB: AsRef<B> + Clone,
     B: BootServices + 'static,
