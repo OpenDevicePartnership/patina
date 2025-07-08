@@ -235,7 +235,7 @@ impl Performance {
                 EventType::NOTIFY_SIGNAL,
                 Tpl::CALLBACK,
                 Some(fetch_and_add_mm_performance_records),
-                Box::new((BB::clone(&boot_services), Some(mm_comm_region), fbpt)),
+                Box::new((BB::clone(&boot_services), mm_comm_region, fbpt)),
                 &EVENT_GROUP_READY_TO_BOOT,
             )?;
         } else {
@@ -324,11 +324,6 @@ extern "efiapi" fn fetch_and_add_mm_performance_records<BB, B, F>(
 {
     let (boot_services, mm_comm_region, fbpt) = *ctx;
     let _ = boot_services.as_ref().close_event(event);
-
-    let Some(mm_comm_region) = mm_comm_region else {
-        log::info!("Performance: No MM communication region available, skipping SMM performance records.");
-        return;
-    };
 
     // SAFETY: This is safe because the reference returned by locate_protocol is never mutated after installation.
     let Ok(communication) = (unsafe { boot_services.as_ref().locate_protocol::<CommunicateProtocol>(None) }) else {
@@ -745,7 +740,7 @@ mod test {
         boot_services
             .expect_create_event_ex::<Box<(
                 Rc<MockBootServices>,
-                Option<MmCommRegion>,
+                MmCommRegion,
                 &TplMutex<'static, MockFirmwareBasicBootPerfTable, MockBootServices>,
             )>>()
             .once()
