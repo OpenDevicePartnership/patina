@@ -39,7 +39,12 @@ fn main() -> io::Result<()> {
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
 
-    let parser = patina_adv_logger::parser::Parser::new(&buffer).with_entry_metadata(args.entry_metadata);
+    let mut parser = patina_adv_logger::parser::Parser::open(&buffer).map_err(|e| {
+        eprintln!("Error opening log data: {}", e);
+        io::Error::new(io::ErrorKind::InvalidData, e)
+    })?;
+
+    parser.configure_print_entry_metadata(args.entry_metadata);
     // Write to standard if no output file is specified.
     match args.output_path {
         Some(path) => {

@@ -47,9 +47,11 @@ fn adv_logger_test(bs: StandardBootServices) -> patina_sdk::test::Result {
     u_assert_eq!(efi_status, efi::Status::SUCCESS, "adv_logger_test: Failed to write to the advanced logger protocol.");
 
     // Check that the strings were added to the log.
-    let log_info = unsafe { memory_log::AdvLoggerInfo::adopt_memory_log(protocol.log_info) };
-    u_assert!(log_info.is_some(), "adv_logger_test: Failed to adopt the memory log.");
-    let log_info = log_info.unwrap();
+    // SAFETY: We know this memory is safe and well structure as we just created it
+    //         using the counterpart functions.
+    let log = unsafe { memory_log::AdvancedLog::adopt_memory_log(protocol.log_info) };
+    u_assert!(log.is_some(), "adv_logger_test: Failed to adopt the memory log.");
+    let log_info = log.unwrap();
     let mut direct_found = false;
     let mut protocol_found = false;
     for entry in log_info.iter() {
