@@ -50,7 +50,7 @@ from the PI spec interact directly with the lower-layer GCD allocator.
 
 The `UefiAllocator` impelements a general purpose [slab allocator](https://en.wikipedia.org/wiki/Slab_allocation) based
 on the [Fixed-Size Block Allocator](https://os.phil-opp.com/allocator-designs/#fixed-size-block-allocator) that is
-presented as part of the excellent [Writing an OS in Rust](https://os.phil-opp.com/) series by Philipp Oppermann.
+presented as part of the [Writing an OS in Rust](https://os.phil-opp.com/) blog series.
 
 Each allocator tracks "free" blocks of fixed sizes that are used to satisfy allocation requests. These lists are backed
 up by a linked list allocator to satisfy allocations in the event that a fixed-sized block list doesn't exist (in the
@@ -221,7 +221,7 @@ no explicit allocations or [implicit Rust heap allocations](memory_management.md
 occur in the course of servicing an allocation.
 
 In general, the entire memory management subsystem is designed to avoid implicit allocations while servicing allocation
-calls to avoid re-entrancy. If an attempt is made to re-acquire the lock (indicating an unexpected re-entrancy bug has
+calls to avoid reentrancy. If an attempt is made to re-acquire the lock (indicating an unexpected reentrancy bug has
 occurred) then a panic will be generated.
 
 ## Rust `Allocator` and `GlobalAlloc` Implementations

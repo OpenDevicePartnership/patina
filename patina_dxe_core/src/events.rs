@@ -234,10 +234,10 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
         // the current set of notifies; this will continue looping as long as there are any pending notifications, even
         // if they were queued after the loop started.
         loop {
-            // Care must be taken to deal with re-entrant "restore_tpl" cases. For example, the consume_next_event_notify
+            // Care must be taken to deal with reentrant "restore_tpl" cases. For example, the consume_next_event_notify
             // call requires taking the lock on EVENT_DB to retrieve the next notification. The release of that lock will
             // call restore_tpl. To avoid infinite recursion, this logic uses EVENT_NOTIFIES_IN_PROGRESS as a flag to
-            // avoid re-entrancy in the specific case that the lock is being taken for the purpose of acquiring event
+            // avoid reentrancy in the specific case that the lock is being taken for the purpose of acquiring event
             // notifies.
             static EVENT_NOTIFIES_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
             let event =
@@ -247,7 +247,7 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
                         EVENT_NOTIFIES_IN_PROGRESS.store(false, Ordering::Release);
                         result
                     }
-                    _ => break, /* re-entrant restore_tpl case */
+                    _ => break, /* reentrant restore_tpl case */
                 };
 
             let Some(event) = event else {
