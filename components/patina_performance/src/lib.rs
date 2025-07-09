@@ -155,19 +155,24 @@ impl Performance {
         enabled_measurements: Config<EnabledMeasurement>,
         boot_services: StandardBootServices,
         runtime_services: StandardRuntimeServices,
-        records_buffers_hobs: Hob<HobPerformanceData>,
-        mm_comm_region_hobs: Hob<MmCommRegion>,
+        records_buffers_hobs: Option<Hob<HobPerformanceData>>,
+        mm_comm_region_hobs: Option<Hob<MmCommRegion>>,
     ) -> Result<(), EfiError> {
         PERF_MEASUREMENT_MASK.store(enabled_measurements.mask(), Ordering::Relaxed);
 
         let fbpt = set_static_state(StandardBootServices::clone(&boot_services))
             .expect("Static state should only be initialized here!");
 
+        let Some(mm_comm_region_hobs) = mm_comm_region_hobs else {
+            // If no MM communication region is provided, we can skip the SMM performance records.
+            return self._entry_point(boot_services, runtime_services, records_buffers_hobs, None, fbpt);
+        };
+
         let Some(mm_comm_region) = mm_comm_region_hobs.iter().find(|r| r.is_user_type()) else {
             return Ok(());
         };
 
-        self._entry_point(boot_services, runtime_services, records_buffers_hobs, *mm_comm_region, fbpt)
+        self._entry_point(boot_services, runtime_services, records_buffers_hobs, Some(*mm_comm_region), fbpt)
     }
 
     /// Entry point that have generic parameter.
@@ -175,8 +180,8 @@ impl Performance {
         self,
         boot_services: BB,
         runtime_services: RR,
-        records_buffers_hobs: P,
-        mm_comm_region: MmCommRegion,
+        records_buffers_hobs: Option<P>,
+        mm_comm_region: Option<MmCommRegion>,
         fbpt: &'static TplMutex<'static, F, B>,
     ) -> Result<(), EfiError>
     where
@@ -196,19 +201,26 @@ impl Performance {
             &EVENT_GROUP_END_OF_DXE,
         )?;
 
-        let (hob_load_image_count, hob_perf_records) = records_buffers_hobs
-            .extract_hob_perf_data()
-            .inspect(|(_, perf_buf)| {
-                log::info!("Performance: {} Hob performance records found.", perf_buf.iter().count());
-            })
-            .inspect_err(|_| {
-                log::error!("Performance: Error while trying to insert hob performance records, using default values")
-            })
-            .unwrap_or_default();
+        // Handle optional `records_buffers_hobs`
+        if let Some(records_buffers_hobs) = records_buffers_hobs {
+            let (hob_load_image_count, hob_perf_records) = records_buffers_hobs
+                .extract_hob_perf_data()
+                .inspect(|(_, perf_buf)| {
+                    log::info!("Performance: {} Hob performance records found.", perf_buf.iter().count());
+                })
+                .inspect_err(|_| {
+                    log::error!(
+                        "Performance: Error while trying to insert hob performance records, using default values"
+                    )
+                })
+                .unwrap_or_default();
 
-        // Initialize perf data form hob values.
-        LOAD_IMAGE_COUNT.store(hob_load_image_count, Ordering::Relaxed);
-        fbpt.lock().set_perf_records(hob_perf_records);
+            // Initialize perf data from hob values.
+            LOAD_IMAGE_COUNT.store(hob_load_image_count, Ordering::Relaxed);
+            fbpt.lock().set_perf_records(hob_perf_records);
+        } else {
+            log::info!("Performance: No Hob performance records provided.");
+        }
 
         // Install the protocol interfaces for DXE performance.
         boot_services.as_ref().install_protocol_interface(
@@ -217,13 +229,20 @@ impl Performance {
         )?;
 
         // Register ReadyToBoot event to update the boot performance table for SMM performance data.
-        boot_services.as_ref().create_event_ex(
-            EventType::NOTIFY_SIGNAL,
-            Tpl::CALLBACK,
-            Some(fetch_and_add_mm_performance_records),
-            Box::new((BB::clone(&boot_services), mm_comm_region, fbpt)),
-            &EVENT_GROUP_READY_TO_BOOT,
-        )?;
+        // Only register if mm_comm_region is available
+        if let Some(mm_comm_region) = mm_comm_region {
+            boot_services.as_ref().create_event_ex(
+                EventType::NOTIFY_SIGNAL,
+                Tpl::CALLBACK,
+                Some(fetch_and_add_mm_performance_records),
+                Box::new((BB::clone(&boot_services), mm_comm_region, fbpt)),
+                &EVENT_GROUP_READY_TO_BOOT,
+            )?;
+        } else {
+            log::info!(
+                "Performance: No MM communication region available, skipping SMM performance event registration."
+            );
+        }
 
         // Install configuration table for performance property.
         unsafe {
@@ -767,8 +786,8 @@ mod test {
         let _ = Performance._entry_point(
             Rc::new(boot_services),
             Rc::new(runtime_services),
-            hob_perf_data_extractor,
-            mm_comm_region,
+            Some(hob_perf_data_extractor),
+            Some(mm_comm_region),
             fbpt,
         );
     }
@@ -842,7 +861,7 @@ mod test {
 
             loaded_image_protocol.assume_init_mut().file_path =
                 media_fw_vol_file_path_device_path.as_mut_ptr() as *mut efi::protocols::device_path::Protocol;
-        };
+        }
         let loaded_image_protocol_address = loaded_image_protocol.as_mut_ptr() as usize;
 
         boot_services.expect_handle_protocol::<efi::protocols::loaded_image::Protocol>().returning(move |_| unsafe {

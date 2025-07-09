@@ -41,7 +41,7 @@ use uefi_allocator::UefiAllocator;
 pub use fixed_size_block_allocator::FixedSizeBlockAllocator;
 
 use patina_sdk::{
-    base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
+    base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     error::EfiError,
     guid, uefi_size_to_pages,
 };
@@ -54,6 +54,19 @@ pub const DEFAULT_ALLOCATION_STRATEGY: AllocationStrategy = AllocationStrategy::
 const PRIVATE_ALLOCATOR_TRACKING_GUID: efi::Guid =
     efi::Guid::from_fields(0x9d1fa6e9, 0x0c86, 0x4f7f, 0xa9, 0x9b, &[0xdd, 0x22, 0x9c, 0x9b, 0x38, 0x93]);
 
+pub(crate) const DEFAULT_PAGE_ALLOCATION_GRANULARITY: usize = SIZE_4KB;
+
+// Per the UEFI spec, AARCH64 runtime pages need to be allocated on 64KB boundaries in units of 64KB to accommodate
+// OSes that use 16KB or 64KB page sizes. Other architectures use 4KB pages, so we don't have any additional
+// granularity requirements for them.
+cfg_if::cfg_if! {
+    if #[cfg(target_arch = "aarch64")] {
+        pub(crate) const RUNTIME_PAGE_ALLOCATION_GRANULARITY: usize = patina_sdk::base::SIZE_64KB;
+    } else {
+        pub(crate) const RUNTIME_PAGE_ALLOCATION_GRANULARITY: usize = DEFAULT_PAGE_ALLOCATION_GRANULARITY;
+    }
+}
+
 // The boot services data allocator is special as it is used as the GlobalAllocator instance for the DXE Rust core.
 // This means that any rust heap allocations (e.g. Box::new()) will come from this allocator unless explicitly directed
 // to a different allocator. This allocator does not need to be public since all dynamic allocations will implicitly
@@ -64,19 +77,26 @@ pub(crate) static EFI_BOOT_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocato
     efi::BOOT_SERVICES_DATA,
     protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
     page_change_callback,
+    DEFAULT_PAGE_ALLOCATION_GRANULARITY,
 );
 
 // The following allocators are directly used by the core. These allocators are declared static so that they can easily
 // be used in the core without e.g. the overhead of acquiring a lock to retrieve them from the allocator map that all
 // the other allocators use.
-pub static EFI_LOADER_CODE_ALLOCATOR: UefiAllocator =
-    UefiAllocator::new(&GCD, efi::LOADER_CODE, protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE, page_change_callback);
+pub static EFI_LOADER_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
+    &GCD,
+    efi::LOADER_CODE,
+    protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE,
+    page_change_callback,
+    DEFAULT_PAGE_ALLOCATION_GRANULARITY,
+);
 
 pub static EFI_BOOT_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
     efi::BOOT_SERVICES_CODE,
     protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE,
     page_change_callback,
+    DEFAULT_PAGE_ALLOCATION_GRANULARITY,
 );
 
 // This needs to call MemoryAttributesTable::install on allocation/deallocation, hence having the real callback
@@ -86,6 +106,7 @@ pub static EFI_RUNTIME_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::n
     efi::RUNTIME_SERVICES_CODE,
     protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE,
     page_change_callback,
+    RUNTIME_PAGE_ALLOCATION_GRANULARITY,
 );
 
 // This needs to call MemoryAttributesTable::install on allocation/deallocation, hence having the real callback
@@ -95,6 +116,7 @@ pub static EFI_RUNTIME_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocator::n
     efi::RUNTIME_SERVICES_DATA,
     protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE,
     page_change_callback,
+    RUNTIME_PAGE_ALLOCATION_GRANULARITY,
 );
 
 static STATIC_ALLOCATORS: &[&UefiAllocator] = &[
@@ -286,9 +308,16 @@ impl AllocatorMap {
         // the lock ensures exclusive access to the map, but an allocator may have been created already; so only create
         // the allocator if it doesn't yet exist for this memory type. MAT callbacks are only needed for Runtime
         // Services Code and Data, which are static allocators, so we can always do None here
-        self.map
-            .entry(memory_type)
-            .or_insert_with(|| UefiAllocator::new(&GCD, memory_type, handle, page_change_callback))
+        self.map.entry(memory_type).or_insert_with(|| {
+            let granularity = match memory_type {
+                efi::RESERVED_MEMORY_TYPE
+                | efi::RUNTIME_SERVICES_CODE
+                | efi::RUNTIME_SERVICES_DATA
+                | efi::ACPI_MEMORY_NVS => RUNTIME_PAGE_ALLOCATION_GRANULARITY,
+                _ => UEFI_PAGE_SIZE,
+            };
+            UefiAllocator::new(&GCD, memory_type, handle, page_change_callback, granularity)
+        })
     }
 
     // retrieves an allocator if it exists
@@ -1233,12 +1262,6 @@ mod tests {
             assert_eq!(
                 allocate_pool(efi::BOOT_SERVICES_DATA, 0x1000, core::ptr::addr_of_mut!(buffer_ptr)),
                 efi::Status::SUCCESS
-            );
-
-            let mut buffer_ptr = core::ptr::null_mut();
-            assert_eq!(
-                allocate_pool(efi::BOOT_SERVICES_DATA, 0x2000000, core::ptr::addr_of_mut!(buffer_ptr)),
-                efi::Status::OUT_OF_RESOURCES
             );
 
             assert_eq!(

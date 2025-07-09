@@ -19,6 +19,7 @@ path = "examples/std.rs"
 required-features = ["std"]
 
 [dependencies]
+cfg-if = { workspace = true }
 compile-time = { workspace = true }
 crc32fast = { workspace = true }
 goblin = { workspace = true, features = ["pe32", "pe64", "te"] }

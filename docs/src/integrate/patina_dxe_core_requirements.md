@@ -72,22 +72,27 @@ in FFS listed order.
 > Platforms may also list drivers in FFSes in the order they should be dispatched, though it is recommended to rely on
 > depex statements.
 
-#### 1.3 Driver Section Alignment Must Be a Positive Multiple of 4 KB
+#### 1.3 Driver Section Alignment Must Be a Multiple of 4 KB
 
-Patina relies on using a 4 KB page size and as a result requires that the C based drivers it dispatches have a positive
+Patina relies on using a 4 KB page size and as a result requires that the C based drivers it dispatches have a
 multiple of 4KB as a page size in order to apply image memory protections. The EDK II DXE Core cannot apply image
 memory protections on images without this section alignment requirement, but it will dispatch them, depending on
 configuration.
 
+ARM64 DXE_RUNTIME_DRIVERs must have a multiple of 64 KB image section alignment per UEFI spec requirements.
+This is required to boot operating systems with 16 KB or 64 KB page sizes.
+
 Patina components will have 4 KB section alignment by nature of being compiled into Patina.
 
-The DXE Readiness Tool validates all drivers have a positive multiple of 4 KB section alignment and reports an error if
-not.
+The DXE Readiness Tool validates all drivers have a multiple of 4 KB section alignment and reports an error if
+not. It will also validate that ARM64 DXE_RUNTIME_DRIVERs have a multiple of 64KB section alignment.
 
 > **Guidance:**
-> All C based drivers must be compiled with a linker flag that enforces a positive multiple of 4 KB section alignment.
-> Commonly, 4 KB is used except for ARM64 runtime drivers, which use 64 KB per UEFI spec requirements. For MSVC, this
-> linker flag is `/ALIGN:4096` for GCC/CLANG, the flag is `-z common-page-size=0x1000`.
+> All C based drivers must be compiled with a linker flag that enforces a multiple of 4 KB section alignment.
+> For MSVC, this linker flag is `/ALIGN:0x1000` for GCC/CLANG, the flag is `-z common-page-size=0x1000`. This section
+> allows for multiples of 4 KB or 64 KB, depending on driver, but unless a specific use case dictates greater section
+> alignment, then it is recommended to use 4 KB for everything except for ARM64 DXE_RUNTIME_DRIVERs, which should use
+> 64 KB, e.g. `/ALIGN:0x10000` for MSVC and `-z common-page-size=0x10000` for GCC/CLANG.
 
 ### 2. Hand Off Block (HOB) Requirements
 
@@ -195,15 +200,3 @@ Tracking issue: [#517](https://github.com/OpenDevicePartnership/patina/issues/51
 
 > **Guidance:**
 > Temporarily, LZMA compressed sections that will be decompressed in DXE should use Brotli or TianoCompress.
-
-#### 4.2 ARM64 64KB Runtime Memory Alignment Not Guaranteed
-
-The Patina DXE Core does not currently support allocating ARM64 runtime memory with 64KB granularity as required per the
-UEFI spec to allow booting operating systems that use 16KB or 64KB page sizes.
-
-Windows only uses a 4KB page size and Linux by default uses 4KB.
-
-Tracking issue: [#524](https://github.com/OpenDevicePartnership/patina/issues/524)
-
-> **Guidance:**
-> Ensure any operating system being booted with Patina uses a 4KB page size.
