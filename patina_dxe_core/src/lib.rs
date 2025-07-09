@@ -67,7 +67,7 @@ pub mod test_support;
 
 use core::{ffi::c_void, ptr, str::FromStr};
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, format, vec::Vec};
 use gcd::SpinLockedGcd;
 use memory_manager::CoreMemoryManager;
 use mu_pi::{
@@ -265,6 +265,10 @@ where
         // they are available in the initial breakpoint.
         patina_debugger::add_monitor_command("version", |_, out| {
             let _ = out.write_str(concat!("Patina DXE Core v", env!("CARGO_PKG_VERSION")));
+        });
+
+        patina_debugger::add_monitor_command("gcd", |_, out| {
+            let _ = out.write_str(&format!("GCD -\n{}", GCD));
         });
 
         // Initialize the debugger if it is enabled.
