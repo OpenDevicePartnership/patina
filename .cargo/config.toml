@@ -1,24 +1,6 @@
 [registries]
 patina-fw = { index = "sparse+https://pkgs.dev.azure.com/patina-fw/artifacts/_packaging/temporary/Cargo/index/" }
 
-[patch.crates-io]
-patina_adv_logger = { path = "components/patina_adv_logger" }
-patina_debugger = { path = "core/patina_debugger" }
-patina_dxe_core = { path = "patina_dxe_core" }
-patina_internal_collections = { path = "core/patina_internal_collections" }
-patina_internal_cpu = { path = "core/patina_internal_cpu" }
-patina_internal_depex = { path = "core/patina_internal_depex" }
-patina_internal_device_path = { path = "core/patina_internal_device_path" }
-patina_mm = { path = "components/patina_mm" }
-patina_mtrr = { registry = "patina-fw", version = "1" }
-patina_paging = { registry = "patina-fw", version = "6" }
-patina_performance = { path = "components/patina_performance" }
-patina_samples = { path = "components/patina_samples" }
-patina_sdk = { path = "sdk/patina_sdk" }
-patina_sdk_macro = { path = "sdk/patina_sdk_macro" }
-patina_section_extractor = { path = "core/patina_section_extractor" }
-patina_stacktrace = { path = "core/patina_stacktrace" }
-
 [net]
 git-fetch-with-cli = true
 
