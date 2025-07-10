@@ -377,24 +377,30 @@ where
     }
 
     fn display_components_not_dispatched(&self) {
-        let name_len = "name".len();
-        let param_len = "failed_param".len();
+        if !self.components.is_empty() {
+            let name_len = "name".len();
+            let param_len = "failed_param".len();
 
-        let max_name_len = self.components.iter().map(|c| c.metadata().name().len()).max().unwrap_or(name_len);
-        let max_param_len = self
-            .components
-            .iter()
-            .map(|c| c.metadata().failed_param().map(|s| s.len()).unwrap_or(0))
-            .max()
-            .unwrap_or(param_len);
+            let max_name_len = self.components.iter().map(|c| c.metadata().name().len()).max().unwrap_or(name_len);
+            let max_param_len = self
+                .components
+                .iter()
+                .map(|c| c.metadata().failed_param().map(|s| s.len()).unwrap_or(0))
+                .max()
+                .unwrap_or(param_len);
 
-        log::warn!("Components not dispatched:");
-        log::warn!("{:-<max_name_len$} {:-<max_param_len$}", "", "");
-        log::warn!("{:<max_name_len$} {:<max_param_len$}", "name", "failed_param");
+            log::warn!("Components not dispatched:");
+            log::warn!("{:-<max_name_len$} {:-<max_param_len$}", "", "");
+            log::warn!("{:<max_name_len$} {:<max_param_len$}", "name", "failed_param");
 
-        for component in &self.components {
-            let metadata = component.metadata();
-            log::warn!("{:<max_name_len$} {:<max_param_len$}", metadata.name(), metadata.failed_param().unwrap_or(""));
+            for component in &self.components {
+                let metadata = component.metadata();
+                log::warn!(
+                    "{:<max_name_len$} {:<max_param_len$}",
+                    metadata.name(),
+                    metadata.failed_param().unwrap_or("")
+                );
+            }
         }
     }
 
