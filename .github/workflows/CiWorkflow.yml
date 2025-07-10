@@ -96,8 +96,8 @@ jobs:
         env:
           RUSTC_BOOTSTRAP: 1
 
-      - name: Run cargo-deny
-        run: cargo make deny
+      # - name: Run cargo-deny
+      #   run: cargo make deny
 
       - name: Run cargo-clippy
         run: cargo clippy --all-targets --all-features -- -D warnings

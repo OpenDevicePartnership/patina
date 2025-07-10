@@ -11,7 +11,7 @@ patina_internal_depex = { path = "core/patina_internal_depex" }
 patina_internal_device_path = { path = "core/patina_internal_device_path" }
 patina_mm = { path = "components/patina_mm" }
 patina_mtrr = { registry = "patina-fw", version = "1" }
-patina_paging = { registry = "patina-fw", version = "8" }
+patina_paging = { registry = "patina-fw", version = "=8.0.1" }
 patina_performance = { path = "components/patina_performance" }
 patina_samples = { path = "components/patina_samples" }
 patina_sdk = { path = "sdk/patina_sdk" }
