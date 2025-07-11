@@ -1,3 +1,4 @@
+use alloc::{string::String, vec::Vec};
 use patina_sdk::{
     component::service::{IntoService, Service},
     runtime_services::variable_services::{GetVariableStatus, VariableInfo},
@@ -5,6 +6,8 @@ use patina_sdk::{
 use r_efi::efi;
 
 use crate::{error::VariableError, variable};
+
+use core::ffi::c_void;
 
 #[derive(IntoService)]
 #[service(VariableServices)]
@@ -18,10 +21,7 @@ impl VariableServices {
         name: &str,
         namespace: &efi::Guid,
         size_hint: Option<usize>,
-    ) -> Result<(&T, u32), VariableError>
-    where
-        T: 'static,
-    {
+    ) -> Result<(&T, u32), VariableError> {
         let (var_bytes, var_attr) = self.storage_provider.get_variable(name, namespace, size_hint)?;
         let typed_var = var_bytes.as_ptr() as *const T;
         Ok((unsafe { &*typed_var }, var_attr))
@@ -31,12 +31,19 @@ impl VariableServices {
         self.storage_provider.iter_variable_names()
     }
 
-    // SHERrY: i don't think this is actually the best solution for T but idk what is
-    fn set_variable<T>(&self, name: &str, namespace: &efi::Guid, attributes: u32, data: &T) -> Result<(), VariableError>
-    where
-        T: AsRef<[u8]> + 'static,
-    {
-        self.storage_provider.set_variable(name, namespace, attributes, data.as_ref())
+    fn set_variable<T>(
+        &self,
+        name: &str,
+        namespace: &efi::Guid,
+        attributes: u32,
+        data: &mut T,
+    ) -> Result<(), VariableError> {
+        let data_ptr: *mut c_void = data as *mut T as *mut c_void;
+        // SHERRY tangent: i don't hate the idea of using bytemuck + Pod here
+        // the requirement of Pod are 1) repr(C) + 2) Copy - which we are basically requiring by doing the pointer conversion above
+        // so it doesn't add any additional requirements on T
+        // and makes the VariableStorage.set_variable a bit nicer
+        self.storage_provider.set_variable(name, namespace, attributes, data_ptr)
     }
 
     fn query_variables_info(&self, attributes: u32) -> Result<VariableInfo, VariableError> {
@@ -59,7 +66,7 @@ pub trait VariableStorage {
         name: &str,
         namespace: &efi::Guid,
         attributes: u32,
-        data: &[u8],
+        data: *mut c_void,
     ) -> Result<(), VariableError>;
 
     fn query_variables_info(&self, attributes: u32) -> Result<VariableInfo, VariableError>;

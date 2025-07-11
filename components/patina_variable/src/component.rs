@@ -1,5 +1,3 @@
-use std::process::Command;
-
 use patina_sdk::{
     component::{params::Commands, service::Service, IntoComponent},
     runtime_services::{self, StandardRuntimeServices},
