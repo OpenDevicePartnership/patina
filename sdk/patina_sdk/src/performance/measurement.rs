@@ -13,6 +13,7 @@ use core::{
     clone::Clone,
     convert::AsRef,
     ffi::{CStr, c_char, c_void},
+    ops::BitOr,
     ptr,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -410,6 +411,33 @@ impl Measurement {
             Measurement::DriverBindingStart => Measurement::DriverBindingStart as u32,
             Measurement::DriverBindingStop => Measurement::DriverBindingStop as u32,
         }
+    }
+}
+
+/// Implement bitwise OR for measurements (`Measurement | Measurement`).
+impl BitOr for Measurement {
+    type Output = u32;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        self.as_u32() | rhs.as_u32()
+    }
+}
+
+/// Implement bitwise OR for measurements and u32 (`Measurement | u32`).
+impl BitOr<u32> for Measurement {
+    type Output = u32;
+
+    fn bitor(self, rhs: u32) -> Self::Output {
+        self.as_u32() | rhs
+    }
+}
+
+/// Implement bitwise OR for u32 and measurements (`u32 | Measurement`).
+impl BitOr<Measurement> for u32 {
+    type Output = u32;
+
+    fn bitor(self, rhs: Measurement) -> Self::Output {
+        self | rhs.as_u32()
     }
 }
 
