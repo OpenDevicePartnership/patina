@@ -48,7 +48,7 @@ impl fmt::Display for Error {
         match self {
             Error::BufferTooShort(index) => write!(fmt, "Buffer is too short {}", index),
             Error::BufferUnaligned(addr) => write!(fmt, "Buffer is not aligned {:X}", addr),
-            Error::Malformed(ref msg) => write!(fmt, "Malformed entity: {}", msg),
+            Error::Malformed(msg) => write!(fmt, "Malformed entity: {}", msg),
             Error::ImageNotFound(rva) => {
                 write!(fmt, "Failed to locate a PE Image in memory with rip: {:X}", rva)
             }
