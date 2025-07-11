@@ -1,4 +1,5 @@
-//! This module contains every perf token and perf id known by this library.
+//! This module contains every Performance Token and Performance ID for well-known performance events within
+//! the Patina SDK.
 //!
 //! ## License
 //!
@@ -12,7 +13,7 @@ use core::convert::TryFrom;
 
 use r_efi::efi;
 
-use crate::performance_measurement_protocol::PerfAttribute;
+use crate::uefi_protocol::performance_measurement::PerfAttribute;
 
 /// Performance tokens for well-known performance events.
 #[derive(Debug, Eq, PartialEq)]
@@ -33,7 +34,7 @@ pub enum KnownPerfToken {
     DriverBindingStop,
     /// Load a dispatched module.
     LoadImage,
-    /// Dispatch modules entry oint execution
+    /// Dispatch modules entry point execution
     StartImage,
     /// PEIM modules entry point execution.
     PEIM,

@@ -19,8 +19,13 @@ use mu_pi::{
 use mu_rust_helpers::{function, guid::guid_fmt};
 use patina_internal_depex::{AssociatedDependency, Depex, Opcode};
 use patina_internal_device_path::concat_device_path_to_boxed_slice;
-use patina_performance::{create_performance_measurement, perf_function_begin, perf_function_end};
-use patina_sdk::error::EfiError;
+use patina_sdk::{
+    error::EfiError,
+    performance::{
+        logging::{perf_function_begin, perf_function_end},
+        measurement::create_performance_measurement,
+    },
+};
 use r_efi::efi;
 use tpl_lock::TplMutex;
 

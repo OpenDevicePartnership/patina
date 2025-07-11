@@ -1,4 +1,4 @@
-//! Error codes for the patina_performance crate
+//! Error codes for performance APIs in the Patina SDK.
 //!
 //! ## License
 //!
@@ -7,18 +7,18 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 use core::fmt::Display;
 
-use patina_sdk::error::EfiError;
+use crate::error::EfiError;
 
 /// Macro to assert an expression and return an error if the assertion fails.
 #[doc(hidden)]
 #[macro_export]
-macro_rules! error_debug_assert {
+macro_rules! performance_debug_assert {
     ($expression:expr, $msg:literal) => {{
         debug_assert!($expression, $msg);
-        Err($crate::error::Error::DebugAssert { msg: $msg, file: file!(), line: line!() })
+        Err($crate::performance::error::Error::DebugAssert { msg: $msg, file: file!(), line: line!() })
     }};
     ($msg:literal) => {
-        error_debug_assert!(false, $msg)
+        performance_debug_assert!(false, $msg)
     };
 }
 

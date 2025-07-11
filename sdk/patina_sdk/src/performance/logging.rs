@@ -1,4 +1,4 @@
-//! Module that defines all performance functions used to log performance records.
+//! Functionality for logging performance measurements.
 //!
 //! ## License
 //!
@@ -10,16 +10,13 @@
 use core::{
     ffi::{c_char, c_void},
     ptr,
-    sync::atomic::Ordering,
 };
 
 use alloc::ffi::CString;
 use r_efi::efi;
 
-use crate::{
-    KnownPerfId, Measurement, PERF_MEASUREMENT_MASK,
-    performance_measurement_protocol::{CreateMeasurement, PerfAttribute},
-};
+use crate::performance::{Measurement, globals::get_perf_measurement_mask, record::known::KnownPerfId};
+use crate::uefi_protocol::performance_measurement::{CreateMeasurement, PerfAttribute};
 
 /// Create performance record
 ///
@@ -98,7 +95,7 @@ fn end_perf_measurement(
 
 /// Begins performance measurement of start image in core.
 pub fn perf_image_start_begin(module_handle: efi::Handle, create_performance_measurement: CreateMeasurement) {
-    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::StartImage as u32 == 0 {
+    if get_perf_measurement_mask() & Measurement::StartImage as u32 == 0 {
         return;
     }
     log_perf_measurement(
@@ -113,7 +110,7 @@ pub fn perf_image_start_begin(module_handle: efi::Handle, create_performance_mea
 
 /// Ends performance measurement of start image in core.
 pub fn perf_image_start_end(image_handle: efi::Handle, create_performance_measurement: CreateMeasurement) {
-    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::StartImage as u32 == 0 {
+    if get_perf_measurement_mask() & Measurement::StartImage as u32 == 0 {
         return;
     }
     log_perf_measurement(image_handle, None, None, 0, KnownPerfId::ModuleEnd.as_u16(), create_performance_measurement)
@@ -121,7 +118,7 @@ pub fn perf_image_start_end(image_handle: efi::Handle, create_performance_measur
 
 /// Begins performance measurement of load image in core.
 pub fn perf_load_image_begin(module_handle: efi::Handle, create_performance_measurement: CreateMeasurement) {
-    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::LoadImage as u32 == 0 {
+    if get_perf_measurement_mask() & Measurement::LoadImage as u32 == 0 {
         return;
     }
     log_perf_measurement(
@@ -136,7 +133,7 @@ pub fn perf_load_image_begin(module_handle: efi::Handle, create_performance_meas
 
 /// Ends performance measurement of load image in core.
 pub fn perf_load_image_end(module_handle: efi::Handle, create_performance_measurement: CreateMeasurement) {
-    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::LoadImage as u32 == 0 {
+    if get_perf_measurement_mask() & Measurement::LoadImage as u32 == 0 {
         return;
     }
     log_perf_measurement(
@@ -155,7 +152,7 @@ pub fn perf_driver_binding_support_begin(
     controller_handle: efi::Handle,
     create_performance_measurement: CreateMeasurement,
 ) {
-    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::DriverBindingSupport as u32 == 0 {
+    if get_perf_measurement_mask() & Measurement::DriverBindingSupport as u32 == 0 {
         return;
     }
     log_perf_measurement(
@@ -174,7 +171,7 @@ pub fn perf_driver_binding_support_end(
     controller_handle: efi::Handle,
     create_performance_measurement: CreateMeasurement,
 ) {
-    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::DriverBindingSupport as u32 == 0 {
+    if get_perf_measurement_mask() & Measurement::DriverBindingSupport as u32 == 0 {
         return;
     }
     log_perf_measurement(
@@ -193,7 +190,7 @@ pub fn perf_driver_binding_start_begin(
     controller_handle: efi::Handle,
     create_performance_measurement: CreateMeasurement,
 ) {
-    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::DriverBindingStart as u32 == 0 {
+    if get_perf_measurement_mask() & Measurement::DriverBindingStart as u32 == 0 {
         return;
     }
     log_perf_measurement(
@@ -212,7 +209,7 @@ pub fn perf_driver_binding_start_end(
     controller_handle: efi::Handle,
     create_performance_measurement: CreateMeasurement,
 ) {
-    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::DriverBindingStart as u32 == 0 {
+    if get_perf_measurement_mask() & Measurement::DriverBindingStart as u32 == 0 {
         return;
     }
     log_perf_measurement(
@@ -231,7 +228,7 @@ pub fn perf_driver_binding_stop_begin(
     controller_handle: efi::Handle,
     create_performance_measurement: CreateMeasurement,
 ) {
-    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::DriverBindingStop as u32 == 0 {
+    if get_perf_measurement_mask() & Measurement::DriverBindingStop as u32 == 0 {
         return;
     }
     log_perf_measurement(
@@ -250,7 +247,7 @@ pub fn perf_driver_binding_stop_end(
     controller_handle: efi::Handle,
     create_performance_measurement: CreateMeasurement,
 ) {
-    if PERF_MEASUREMENT_MASK.load(Ordering::Relaxed) & Measurement::DriverBindingStop as u32 == 0 {
+    if get_perf_measurement_mask() & Measurement::DriverBindingStop as u32 == 0 {
         return;
     }
     log_perf_measurement(

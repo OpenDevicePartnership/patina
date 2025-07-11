@@ -24,17 +24,16 @@ extern crate alloc;
 pub mod macros;
 
 pub mod base;
+pub mod boot_services;
 pub mod component;
+pub mod driver_binding;
 pub mod efi_types;
 pub mod error;
 pub mod guid;
 pub mod log;
-pub mod serial;
-
-pub mod boot_services;
-pub mod driver_binding;
+pub mod performance;
 pub mod runtime_services;
+pub mod serial;
+pub mod test;
 pub mod tpl_mutex;
 pub mod uefi_protocol;
-
-pub mod test;

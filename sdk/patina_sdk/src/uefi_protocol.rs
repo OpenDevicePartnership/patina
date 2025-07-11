@@ -9,6 +9,8 @@
 
 #[cfg(feature = "unstable-device-path")]
 pub mod device_path;
+
+pub mod performance_measurement;
 pub mod status_code;
 
 extern crate alloc;
