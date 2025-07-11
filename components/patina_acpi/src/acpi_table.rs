@@ -3,6 +3,12 @@
 //! Defines standard formats for system ACPI tables.
 //! Supports only ACPI version >= 2.0.
 //! Fields corresponding to ACPI 1.0 are preceded with an underscore (`_`) and are not in use.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -14,7 +20,7 @@ use crate::error::AcpiError;
 use crate::signature::{self};
 
 use core::mem::ManuallyDrop;
-use core::ptr::NonNull;
+use core::ptr::{self, NonNull};
 use core::{mem, slice};
 
 /// Represents the FADT for ACPI 2.0+.
@@ -300,8 +306,22 @@ impl<T> Table<T> {
     ///
     /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
     /// - Caller must ensure that the table's first field is [AcpiTableHeader].
-    pub unsafe fn new(table: T) -> Self {
-        Table { inner: ManuallyDrop::new(table) }
+    pub unsafe fn new(table: T) -> Result<Self, AcpiError> {
+        let returned_table = Table { inner: ManuallyDrop::new(table) };
+
+        // Make sure all bytes are valid ASCII.
+        // By spec, ACPI table signatures are length-4 ASCII strings (represented numerically as u32's).
+        let is_valid_ascii = returned_table.signature().to_le_bytes().iter().all(|b| b.is_ascii());
+        if !is_valid_ascii {
+            return Err(AcpiError::InvalidTableFormat);
+        }
+
+        // Make sure length is valid for type T.
+        if (returned_table.header.length as usize) < mem::size_of::<T>() {
+            return Err(AcpiError::InvalidTableFormat);
+        }
+
+        Ok(returned_table)
     }
 
     /// Returns the signature of the ACPI table.
@@ -334,8 +354,8 @@ impl AcpiTable {
     ///
     /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
     /// - Caller must ensure that the table's first field is [AcpiTableHeader].
-    pub unsafe fn new<T>(table: T, mm: &Service<dyn MemoryManager>) -> Self {
-        let table = Table::new(table);
+    pub unsafe fn new<T>(table: T, mm: &Service<dyn MemoryManager>) -> Result<Self, AcpiError> {
+        let table = Table::new(table)?;
 
         // FACS and UEFI tables must always be located in NVS (by spec).
         let allocator_type = match table.signature() {
@@ -343,10 +363,46 @@ impl AcpiTable {
             _ => EfiMemoryType::ACPIReclaimMemory,
         };
 
-        let table =
-            NonNull::from(Box::leak(Box::new_in(table, mm.get_allocator(allocator_type).unwrap()))).cast::<Table>();
+        let table = NonNull::from(Box::leak(Box::new_in(
+            table,
+            mm.get_allocator(allocator_type).map_err(|_e| AcpiError::AllocationFailed)?,
+        )))
+        .cast::<Table>();
 
-        AcpiTable { table }
+        Ok(AcpiTable { table })
+    }
+
+    /// Creates a new AcpiTable from a raw pointer.
+    /// When created this way, the type of the table is unknown.
+    ///
+    /// ## Safety
+    ///
+    /// - Caller must ensure the pointer refers to a valid ACPI table.
+    /// - Caller must ensure `table_length` is correctly specifies the length of the table, including the header and any trailing data bytes.
+    pub unsafe fn new_from_ptr(
+        header_ptr: *const AcpiTableHeader,
+        mm: &Service<dyn MemoryManager>,
+    ) -> Result<Self, AcpiError> {
+        let table_signature = (*header_ptr).signature;
+        let table_length = (*header_ptr).length as usize;
+
+        let allocator_type = match table_signature {
+            signature::FACS | signature::UEFI => EfiMemoryType::ACPIMemoryNVS,
+            _ => EfiMemoryType::ACPIReclaimMemory,
+        };
+
+        // Allocate table based on the length given in the header field.
+        let allocator = mm.get_allocator(allocator_type).map_err(|_e| AcpiError::AllocationFailed)?;
+        let mut table_bytes = Vec::with_capacity_in(table_length, allocator);
+
+        // Copy entire table into the new allocation.
+        ptr::copy_nonoverlapping(header_ptr as *const u8, table_bytes.as_mut_ptr(), table_length);
+        table_bytes.set_len(table_length);
+
+        // Leak the allocated bytes.
+        let raw_header = Box::into_raw(table_bytes.into_boxed_slice()) as *mut AcpiTableHeader;
+
+        Ok(Self { table: NonNull::new(raw_header).ok_or(AcpiError::NullTablePtr)?.cast::<Table>() })
     }
 
     pub fn signature(&self) -> u32 {
@@ -365,20 +421,26 @@ impl AcpiTable {
     }
 
     /// Returns a raw byte slice over the entire table.
-    /// SAFETY: self.length must accurately reflect the allocated size of the table.
-    pub fn as_bytes(&self) -> &[u8] {
+    ///
+    /// ## SAFETY
+    /// `self.length` must accurately reflect the allocated size of the table.
+    pub unsafe fn as_bytes(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.table.as_ptr() as *const u8, self.header().length as usize) }
     }
 
     /// Returns a mutable byte slice over the entire table.
     /// (This is primarily useful for computing the checksum.)
-    /// SAFETY: self.length must accurately reflect the allocated size of the table.
-    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+    ///
+    /// ## SAFETY
+    /// `self.length` must accurately reflect the allocated size of the table.
+    pub unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
         unsafe { slice::from_raw_parts_mut(self.table.as_ptr() as *mut u8, self.header().length as usize) }
     }
 
+    /// Updates the checksum for an ACPI table.
+    /// According to the ACPI spec 2.0+, all bytes of a table must sum to zero modulo 256.
     pub fn update_checksum(&mut self, offset: usize) -> Result<(), AcpiError> {
-        let bytes = self.as_bytes_mut();
+        let bytes = unsafe { self.as_bytes_mut() };
         let len = bytes.len();
 
         // Set the checksum field (byte at the specified `offset`) to zero before recalculation.
@@ -399,7 +461,7 @@ impl AcpiTable {
     /// ## Safety
     ///
     /// - Caller must ensure that the provided table format is the same as `T`.
-    pub fn as_ref<T>(&self) -> &T {
+    pub unsafe fn as_ref<T>(&self) -> &T {
         // SAFETY: Caller must ensure that the provided table format is the same as `T`.
         unsafe { self.table.cast::<Table<T>>().as_ref().as_ref() }
     }
@@ -474,7 +536,7 @@ mod tests {
         assert!(acpi_table.update_checksum(offset).is_ok());
 
         // Pull out the bytes and verify the checksum.
-        let bytes: &[u8] = acpi_table.as_bytes();
+        let bytes: &[u8] = unsafe { acpi_table.as_bytes() };
         // Total sum must be zero mod 256.
         let total: u8 = bytes.iter().copied().fold(0u8, |acc, b| acc.wrapping_add(b));
         assert_eq!(total, 0, "entire table did not sum to zero");

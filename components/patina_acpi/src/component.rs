@@ -2,6 +2,7 @@
 
 use crate::acpi_table::{AcpiTable, AcpiTableHeader, AcpiXsdtMetadata};
 use crate::alloc::boxed::Box;
+use crate::hob::AcpiMemoryHob;
 use crate::service::{AcpiProvider, AcpiTableManager};
 
 use core::mem;
@@ -22,7 +23,6 @@ use crate::{
     acpi::ACPI_TABLE_INFO,
     acpi_protocol::{AcpiSdtProtocol, AcpiTableProtocol},
     acpi_table::{AcpiRsdp, AcpiXsdt},
-    config::AcpiProviderInit,
     signature::{
         self, ACPI_HEADER_LEN, ACPI_RESERVED_BYTE, ACPI_RSDP_REVISION, ACPI_XSDT_REVISION, MAX_INITIAL_ENTRIES,
     },
@@ -30,27 +30,35 @@ use crate::{
 
 /// Initializes the ACPI provider service.
 #[derive(IntoComponent, Default)]
-pub struct AcpiProviderManager {}
-
-/// Hob that contains information about previously installed ACPI tables.
-#[derive(Copy, Clone, FromHob)]
-#[hob = "9f9a9506-5597-4515-bab6-8bcde784ba87"]
-pub struct AcpiMemoryHob {
-    /// The address of the previous RSDP, which holds information about installed ACPI tables.
-    pub rsdp_address: u64,
+pub struct AcpiProviderManager {
+    /// Platform vendor.
+    pub oem_id: [u8; 6],
+    /// Product variant for platform vendor.
+    pub oem_table_id: [u8; 8],
+    /// Platform edition (OEM-defined). Not to be confused with ACPI revision.
+    pub oem_revision: u32,
+    /// ID of compiler used to generate the ACPI table.
+    pub creator_id: u32,
+    /// Version of the tool used to generate the ACPI table.
+    pub creator_revision: u32,
 }
 
 impl AcpiProviderManager {
     /// Initializes a new `AcpiProviderManager`.
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(
+        oem_id: [u8; 6],
+        oem_table_id: [u8; 8],
+        oem_revision: u32,
+        creator_id: u32,
+        creator_revision: u32,
+    ) -> Self {
+        Self { oem_id, oem_table_id, oem_revision, creator_id, creator_revision }
     }
 
     fn entry_point(
         self,
         boot_services: StandardBootServices,
         mut commands: Commands,
-        config: Config<AcpiProviderInit>,
         acpi_hob: Option<Hob<AcpiMemoryHob>>,
         memory_manager: Service<dyn MemoryManager>,
     ) -> patina_sdk::error::Result<()> {
@@ -73,11 +81,11 @@ impl AcpiProviderManager {
                 length: ACPI_HEADER_LEN as u32, // XSDT starts off with no entries
                 revision: ACPI_XSDT_REVISION,
                 checksum: 0,
-                oem_id: config.oem_id,
-                oem_table_id: config.oem_table_id,
-                oem_revision: config.oem_revision,
-                creator_id: config.creator_id,
-                creator_revision: config.creator_revision,
+                oem_id: self.oem_id,
+                oem_table_id: self.oem_table_id,
+                oem_revision: self.oem_revision,
+                creator_id: self.creator_id,
+                creator_revision: self.creator_revision,
             },
         };
         // Fill in XSDT data.
@@ -101,7 +109,7 @@ impl AcpiProviderManager {
         let rsdp_data = AcpiRsdp {
             signature: signature::ACPI_RSDP_TABLE,
             _checksum: 0,
-            oem_id: config.oem_id,
+            oem_id: self.oem_id,
             revision: ACPI_RSDP_REVISION,
             _rsdt_address: 0,
             length: mem::size_of::<AcpiRsdp>() as u32, // RSDP size is fixed for ACPI 2.0+.
@@ -111,8 +119,10 @@ impl AcpiProviderManager {
         };
 
         // Allocate memory for the RSDP.
-        let rsdp_allocated =
-            unsafe { AcpiTable::new(rsdp_data, ACPI_TABLE_INFO.memory_manager.get().ok_or(EfiError::NotStarted)?) };
+        let rsdp_allocated = unsafe {
+            AcpiTable::new(rsdp_data, ACPI_TABLE_INFO.memory_manager.get().ok_or(EfiError::NotStarted)?)
+                .map_err(|_e| EfiError::InvalidParameter)?
+        };
         ACPI_TABLE_INFO.set_rsdp(rsdp_allocated);
 
         // Checksum the root tables after setting up.

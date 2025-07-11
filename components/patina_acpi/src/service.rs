@@ -23,7 +23,11 @@ use crate::error::AcpiError;
 pub struct TableKey(pub(crate) usize);
 
 /// A notification function that is called when a new ACPI table is installed.
-pub type AcpiNotifyFn = fn(&AcpiTableHeader, u32, usize) -> efi::Status;
+pub type AcpiNotifyFn = fn(
+    &AcpiTableHeader, /* Standard ACPI header. */
+    u32,              /* Supported ACPI versions. */
+    usize,            /* Table key. */
+) -> efi::Status;
 
 /// The `AcpiTableManager` provides an interface for installing, uninstalling, and accessing ACPI tables.
 /// This struct serves as the API by which external components can access ACPI services.
@@ -53,7 +57,7 @@ impl AcpiTableManager {
     /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
     /// - Caller must ensure that the table's first field is a standard ACPI table header.
     pub unsafe fn install_acpi_table<T>(&self, table: &T) -> Result<TableKey, AcpiError> {
-        let acpi_table = unsafe { AcpiTable::new(table, &self.memory_manager) };
+        let acpi_table = unsafe { AcpiTable::new(table, &self.memory_manager)? };
         self.provider_service.install_acpi_table(acpi_table)
     }
 
@@ -69,7 +73,10 @@ impl AcpiTableManager {
     /// Retrieves an ACPI table by its table key.
     ///
     /// The `table_key` is the opaque reference returned by `install_acpi_table`.
-    /// The generic type `T` should be the expected type of the table.
+    ///
+    /// The generic type `T` should be the expected type of the table, which should match the type passed in during installation.
+    /// To cast retrieved tables to different types, or to retrieve tables across the C FFI protocol interface,
+    /// use `get_acpi_table_unchecked` for a untyped retrieval.
     ///
     /// The RSDP and XSDT cannot be accessed through `get_acpi_table`.
     pub fn get_acpi_table<T: 'static>(&self, table_key: TableKey) -> Result<&T, AcpiError> {
@@ -78,26 +85,50 @@ impl AcpiTableManager {
         // There may be ACPI tables whose type is unknown at installation, due to installation from the HOB or a C protocol.
         // In these cases, the type is is unspecified (AcpiTableHeader instead of a specific table type), so we skip type checking.
         // In all other cases, verify the type provided by the user is valid.
-        if acpi_table.type_id() != TypeId::of::<AcpiTableHeader>() && acpi_table.type_id() != TypeId::of::<T>() {
+        if acpi_table.type_id() != TypeId::of::<T>() {
             return Err(AcpiError::InvalidTableType);
         }
 
         // SAFETY: The type id of the returned table has been verified.
         // SAFETY: The installed tables are stored in the provider and live at least as long as `self`,
-        let raw_table_ptr: *const T = acpi_table
-            .table // this is your NonNull<Table>
-            .cast::<T>() // reinterpret it as NonNull<T>
-            .as_ptr(); // get a *const T
+        // Cast the table to its expected type.
+        let raw_table_ptr: *const T = acpi_table.table.cast::<T>().as_ptr();
 
         Ok(unsafe { &*raw_table_ptr })
     }
 
-    /// Registers or unregisters a function which will be called whenever a new ACPI table is installed.
+    /// Retrieves an ACPI table by its table key.
     ///
-    /// If `should_register` is true, it will register the function.
-    /// Otherwise, it will unregister the function if it exists in the current notify list.
-    pub fn register_notify(&self, should_register: bool, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError> {
-        self.provider_service.register_notify(should_register, notify_fn)
+    /// The `table_key` is the opaque reference returned by `install_acpi_table`.
+    ///
+    /// When using `get_acpi_table_unchecked`, no type checking occurs on the retrieved table.
+    /// This function should be used to cast tables to a different type from their installation type,
+    /// or to retrieve tables across the C FFI protocol interface.
+    ///
+    /// The RSDP and XSDT cannot be accessed through `get_acpi_table_unchecked`.
+    ///
+    /// ## SAFETY
+    ///
+    /// - The caller must ensure the type T is a valid representation for the retrieved table.
+    pub unsafe fn get_acpi_table_unchecked<T: 'static>(&self, table_key: TableKey) -> Result<&T, AcpiError> {
+        let acpi_table = self.provider_service.get_acpi_table(table_key)?;
+
+        // SAFETY: The installed tables are stored in the provider and live at least as long as `self`,
+        // Cast the table to its expected type.
+        let raw_table_ptr: *const T = acpi_table.table.cast::<T>().as_ptr();
+
+        Ok(unsafe { &*raw_table_ptr })
+    }
+
+    /// Registers a function which will be called whenever a new ACPI table is installed.
+    pub fn register_notify(&self, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError> {
+        self.provider_service.register_notify(true, notify_fn)
+    }
+
+    /// Unregisters an existing notification function.
+    /// The function must have been previously registered with `register_notify`.
+    pub fn unregister_notify(&self, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError> {
+        self.provider_service.register_notify(false, notify_fn)
     }
 
     /// Returns an iterator over the installed ACPI tables.
@@ -113,7 +144,7 @@ impl AcpiTableManager {
 
 /// The `AcpiTableManager` provides functionality for installing, uninstalling, and accessing ACPI tables.
 /// This struct serves as the API by which internal implementations can provide custom ACPI implementation.
-pub trait AcpiProvider {
+pub(crate) trait AcpiProvider {
     /// Installs an ACPI table and returns an associated key which can be used to get or uninstall the table later.
     fn install_acpi_table(&self, acpi_table: AcpiTable) -> Result<TableKey, AcpiError>;
 

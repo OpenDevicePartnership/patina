@@ -1,3 +1,14 @@
+//! ACPI Service Error Definitions.
+//!
+//! Defines standard errors during operation of the ACPI service interface.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
+
 use r_efi::efi;
 
 /// Custom errors for ACPI operations
@@ -55,6 +66,8 @@ pub enum AcpiError {
     XsdtAlreadyInstalled,
     /// There was an attempt to update the checksum at an invalid byte offset.
     InvalidChecksumOffset,
+    /// There was an attempt to construct a table that does not match the standard ACPI layout.
+    InvalidTableFormat,
 }
 
 impl From<AcpiError> for efi::Status {
@@ -84,6 +97,7 @@ impl From<AcpiError> for efi::Status {
             AcpiError::XsdtOverflow => efi::Status::INVALID_PARAMETER,
             AcpiError::XsdtAlreadyInstalled => efi::Status::NOT_STARTED,
             AcpiError::InvalidChecksumOffset => efi::Status::INVALID_PARAMETER,
+            AcpiError::InvalidTableFormat => efi::Status::INVALID_PARAMETER,
         }
     }
 }

@@ -1,3 +1,15 @@
+//! ACPI Service Implementations.
+//!
+//! Implements the ACPI service interface defined in `service.rs`.
+//! Supports only ACPI version >= 2.0.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
+
 use alloc::collections::btree_map::BTreeMap;
 use core::{
     cell::OnceCell,
@@ -5,16 +17,10 @@ use core::{
     mem::{self, offset_of},
     sync::atomic::{AtomicUsize, Ordering},
 };
+use spin::rwlock::RwLock;
 
-use crate::{
-    acpi_table::{AcpiTable, AcpiTableHeader, AcpiXsdtMetadata},
-    alloc::vec::Vec,
-    signature::{ACPI_CHECKSUM_OFFSET, ACPI_VERSIONS_GTE_2, ACPI_XSDT_ENTRY_SIZE},
-};
-use crate::{alloc::vec, service::AcpiNotifyFn};
-
-use patina_sdk::boot_services::{BootServices, StandardBootServices};
 use patina_sdk::{
+    boot_services::{BootServices, StandardBootServices},
     component::{
         hob::Hob,
         service::{memory::MemoryManager, IntoService, Service},
@@ -22,14 +28,14 @@ use patina_sdk::{
     efi_types::EfiMemoryType,
 };
 
-use spin::rwlock::RwLock;
-
 use crate::{
-    acpi_table::{AcpiDsdt, AcpiFacs, AcpiFadt, AcpiRsdp},
-    component::AcpiMemoryHob,
+    acpi_table::{AcpiDsdt, AcpiFacs, AcpiFadt, AcpiRsdp, AcpiTable, AcpiTableHeader, AcpiXsdtMetadata},
+    alloc::vec,
+    alloc::vec::Vec,
     error::AcpiError,
-    service::{AcpiProvider, TableKey},
-    signature::{self, ACPI_HEADER_LEN},
+    hob::AcpiMemoryHob,
+    service::{AcpiNotifyFn, AcpiProvider, TableKey},
+    signature::{self, ACPI_CHECKSUM_OFFSET, ACPI_HEADER_LEN, ACPI_VERSIONS_GTE_2, ACPI_XSDT_ENTRY_SIZE},
 };
 
 pub static ACPI_TABLE_INFO: StandardAcpiProvider<StandardBootServices> = StandardAcpiProvider::new_uninit();
@@ -193,7 +199,8 @@ where
     fn install_facs(&self, facs_info: AcpiTable) -> Result<TableKey, AcpiError> {
         // Update the FADT's address pointer to the FACS.
         if let Some(fadt_table) = self.acpi_tables.write().get_mut(&Self::FADT_KEY) {
-            let facs_addr = facs_info.as_ref::<AcpiFacs>() as *const AcpiFacs as u64;
+            // SAFETY: We verify the table's signature before calling `install_facs`.
+            let facs_addr = unsafe { facs_info.as_ref::<AcpiFacs>() } as *const AcpiFacs as u64;
             unsafe { fadt_table.as_mut::<AcpiFadt>().set_x_firmware_ctrl(facs_addr) };
         }
 
@@ -251,7 +258,7 @@ where
         }
 
         // SAFETY: We validate that the XSDT is non-null and contains the right signature.
-        let xsdt_ptr = rsdp.xsdt_address as *mut AcpiTableHeader;
+        let xsdt_ptr = rsdp.xsdt_address as *const AcpiTableHeader;
         let xsdt = unsafe { &*(xsdt_ptr) };
 
         if xsdt.length < ACPI_HEADER_LEN as u32 {
@@ -273,7 +280,7 @@ where
             }
 
             let facs_table = unsafe {
-                AcpiTable::new(facs_from_ptr, self.memory_manager.get().ok_or(AcpiError::ProviderNotInitialized)?)
+                AcpiTable::new(facs_from_ptr, self.memory_manager.get().ok_or(AcpiError::ProviderNotInitialized)?)?
             };
             self.install_facs(facs_table)?;
         }
@@ -287,7 +294,7 @@ where
             }
 
             let dsdt_table = unsafe {
-                AcpiTable::new(dsdt_from_ptr, self.memory_manager.get().ok_or(AcpiError::ProviderNotInitialized)?)
+                AcpiTable::new(dsdt_from_ptr, self.memory_manager.get().ok_or(AcpiError::ProviderNotInitialized)?)?
             };
             self.install_dsdt(dsdt_table)?;
         }
@@ -314,7 +321,7 @@ where
             let tbl_header = unsafe { *(entry_addr as *const AcpiTableHeader) };
             // Because we are installing from raw pointers, information about the type of the table cannot be extracted.
             let mut table = unsafe {
-                AcpiTable::new(tbl_header, self.memory_manager.get().ok_or(AcpiError::ProviderNotInitialized)?)
+                AcpiTable::new(tbl_header, self.memory_manager.get().ok_or(AcpiError::ProviderNotInitialized)?)?
             };
 
             self.install_standard_table(table)?;
@@ -511,22 +518,22 @@ where
                 self.acpi_tables.write().remove(&Self::FADT_KEY);
             }
             signature::FACS => {
-                self.acpi_tables.write().remove(&Self::FACS_KEY);
-
                 // Clear out the FACS pointer in the FADT.
                 if let Some(fadt_table) = self.acpi_tables.write().get_mut(&Self::FADT_KEY) {
                     unsafe { fadt_table.as_mut::<AcpiFadt>() }.set_x_firmware_ctrl(0);
                     fadt_table.update_checksum(ACPI_CHECKSUM_OFFSET)?;
                 }
+
+                self.acpi_tables.write().remove(&Self::FACS_KEY);
             }
             signature::DSDT => {
-                self.acpi_tables.write().remove(&Self::DSDT_KEY);
-
-                // Clear out the FACS pointer in the FADT
+                // Clear out the FACS pointer in the FADT.
                 if let Some(fadt_table) = self.acpi_tables.write().get_mut(&Self::FADT_KEY) {
                     unsafe { fadt_table.as_mut::<AcpiFadt>() }.set_x_dsdt(0);
                     fadt_table.update_checksum(ACPI_CHECKSUM_OFFSET)?;
                 }
+
+                self.acpi_tables.write().remove(&Self::DSDT_KEY);
             }
             _ => {
                 self.remove_table_from_xsdt(physical_addr)?;
@@ -561,6 +568,11 @@ where
 
                 // Decrement entries.
                 xsdt_data.n_entries -= 1;
+
+                // Zero out the end of the XSDT.
+                // (After removing and shifting all entryes, there is one extra slot at the end.)
+                // This is not technically necessary for correctness but is good practice for consistency.
+                xsdt_data.slice[end_ptr - ACPI_XSDT_ENTRY_SIZE..end_ptr].iter_mut().for_each(|b| *b = 0);
 
                 // Decrease XSDT length.
                 xsdt_data.set_length(xsdt_data.get_length()? - ACPI_XSDT_ENTRY_SIZE as u32);
@@ -854,7 +866,7 @@ mod tests {
         assert_eq!(provider.get_acpi_table(res.unwrap()).unwrap().signature(), signature::FACS);
 
         // Make sure FACS was installed into FADT.
-        assert!(provider.get_acpi_table(fadt_key).unwrap().as_ref::<AcpiFadt>().x_firmware_ctrl() != 0);
+        assert!(unsafe { provider.get_acpi_table(fadt_key).unwrap().as_ref::<AcpiFadt>() }.x_firmware_ctrl() != 0);
     }
 
     #[test]
@@ -884,7 +896,7 @@ mod tests {
         assert_eq!(provider.get_acpi_table(res.unwrap()).unwrap().signature(), signature::DSDT);
 
         // Make sure DSDT was installed into FADT.
-        assert!(provider.get_acpi_table(fadt_key).unwrap().as_ref::<AcpiFadt>().x_dsdt() != 0);
+        assert!(unsafe { provider.get_acpi_table(fadt_key).unwrap().as_ref::<AcpiFadt>() }.x_dsdt() != 0);
     }
 
     #[test]
@@ -1020,7 +1032,7 @@ mod tests {
         assert_eq!(provider.get_acpi_table(dsdt_key).unwrap_err(), AcpiError::InvalidTableKey);
 
         // FADT should no longer point to a DSDT.
-        assert_eq!(provider.get_acpi_table(fadt_key).unwrap().as_ref::<AcpiFadt>().x_dsdt(), 0);
+        assert_eq!(unsafe { provider.get_acpi_table(fadt_key).unwrap().as_ref::<AcpiFadt>() }.x_dsdt(), 0);
     }
 
     fn mock_rsdp(rsdp_signature: u64, include_xsdt: bool, xsdt_length: usize, xsdt_signature: u32) -> u64 {

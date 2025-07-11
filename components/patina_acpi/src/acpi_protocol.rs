@@ -1,6 +1,12 @@
 //! ACPI C Protocol Definitions.
 //!
 //! Wrappers for the C ACPI protocols to call into Rust ACPI implementations.
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
 
 use crate::acpi_table::{AcpiTable, AcpiTableHeader};
 use crate::signature::ACPI_VERSIONS_GTE_2;
@@ -69,15 +75,18 @@ impl AcpiTableProtocol {
 
         // SAFETY: acpi_table_buffer is checked non-null and large enough to read an AcpiTableHeader.
         if let Some(global_mm) = ACPI_TABLE_INFO.memory_manager.get() {
-            let acpi_header = unsafe { *(acpi_table_buffer as *const AcpiTableHeader) };
-            let acpi_table = unsafe { AcpiTable::new(acpi_header, global_mm) };
-            match ACPI_TABLE_INFO.install_acpi_table(acpi_table) {
-                Ok(key) => {
-                    // SAFETY: The caller must ensure the buffer passed in for the key is appropriately sized and non-null.
-                    unsafe { *table_key = key.0 };
-                    efi::Status::SUCCESS
+            let acpi_table = unsafe { AcpiTable::new_from_ptr(acpi_table_buffer as *const AcpiTableHeader, global_mm) };
+            if let Ok(table) = acpi_table {
+                match ACPI_TABLE_INFO.install_acpi_table(table) {
+                    Ok(key) => {
+                        // SAFETY: The caller must ensure the buffer passed in for the key is appropriately sized and non-null.
+                        unsafe { *table_key = key.0 };
+                        efi::Status::SUCCESS
+                    }
+                    Err(e) => e.into(),
                 }
-                Err(e) => e.into(),
+            } else {
+                efi::Status::OUT_OF_RESOURCES
             }
         } else {
             efi::Status::NOT_STARTED

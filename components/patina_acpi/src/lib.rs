@@ -11,9 +11,18 @@
 //! To initialize the `AcpiProviderManager`, the configuration should be customized with the correct platform values (`oem_id`, etc).
 //! In the platform start routine, provide these configuration values and initialize a new `AcpiProviderManager` instance.
 //!
-//! ```rust,ignore
+//! ```rust,no_run
+//!  #[derive(Default, Clone, Copy)]
+//!  struct SectionExtractExample;
+//!  impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
+//!      fn extract(&self, _: &mu_pi::fw_fs::Section) -> Result<Box<[u8]>, r_efi::base::Status> { Ok(Box::new([0])) }
+//!  }
+//!
+//!  let physical_hob_list = core::ptr::null();
+//!
 //!  Core::default()
-//!         ...
+//!         .with_section_extractor(SectionExtractExample::default())
+//!         .init_memory(physical_hob_list)
 //!         .with_config(AcpiProviderInit {
 //!                         version: 1,
 //!                         should_reclaim_memory: true,
@@ -23,6 +32,7 @@
 //!                         creator_revision: 1,
 //!                     })
 //!         .with_component(AcpiProviderManager::new())
+//!         .start().unwrap();
 //! ```
 //!
 //! A similar pattern can be followed to create the `AcpiSystemTableProtocolManager`.
@@ -42,10 +52,10 @@ extern crate alloc;
 
 /// Component that provides initialization of ACPI functionality in the core.
 pub mod component;
-/// Platform configuration for the ACPI provider.
-pub mod config;
 /// Errors associated with operation of the ACPI protocol.
 pub mod error;
+/// Definition for ACPI HOB, which transfers existing ACPI tables from the PEI phase through the RSDP.
+pub mod hob;
 /// Public service interface for the ACPI protocol.
 pub mod service;
 

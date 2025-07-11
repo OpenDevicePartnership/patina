@@ -1,3 +1,13 @@
+//! ACPI Service Q35 Integration Test.
+//!
+//! Defines basic integration tests for the ACPI service interface.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+
 use patina_sdk::component::service::Service;
 use patina_sdk::test::patina_test;
 
