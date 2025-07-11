@@ -194,7 +194,7 @@ where
     ///
     pub unsafe fn get_mut(&self, key: &D::Key) -> Option<&mut D> {
         match self.get_node(key) {
-            Some(node) => Some(&mut (*node.as_mut_ptr()).data),
+            Some(node) => Some(unsafe { &mut (*node.as_mut_ptr()).data }),
             None => None,
         }
     }

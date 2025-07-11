@@ -15,6 +15,7 @@ use super::{AllocationStrategy, DEFAULT_ALLOCATION_STRATEGY};
 
 use crate::{gcd::SpinLockedGcd, tpl_lock};
 
+use alloc::vec::Vec;
 use core::{
     alloc::{AllocError, Allocator, GlobalAlloc, Layout},
     cmp::max,
@@ -711,8 +712,9 @@ impl SpinLockedFixedSizeBlockAllocator {
 
     /// Returns an iterator of the ranges of memory owned by this allocator
     /// Returns an empty iterator if the allocator does not own any memory.
-    pub fn get_memory_ranges(&self) -> impl Iterator<Item = Range<usize>> {
-        self.lock().get_memory_ranges()
+    pub fn get_memory_ranges(&self) -> alloc::vec::IntoIter<Range<usize>> {
+        let ranges: Vec<_> = self.lock().get_memory_ranges().collect();
+        ranges.into_iter()
     }
 
     /// Returns the allocator handle associated with this allocator.
