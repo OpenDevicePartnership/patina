@@ -11,8 +11,8 @@ use alloc::vec::Vec;
 use patina_sdk::boot_services::{BootServices, StandardBootServices};
 
 use patina_sdk::component::{
-    hob::{FromHob, Hob},
-    params::{Commands, Config},
+    hob::Hob,
+    params::Commands,
     service::{memory::MemoryManager, Service},
     IntoComponent,
 };

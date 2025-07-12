@@ -522,7 +522,7 @@ mod tests {
         };
 
         // Set up the test table.
-        let table_union: Table<TestTable> = unsafe { Table::new(test_table) };
+        let table_union: Table<TestTable> = unsafe { Table::new(test_table).unwrap() };
         // Box it on the heap (uses the global allocator).
         let boxed: Box<Table<TestTable>> = Box::new(table_union);
         let raw_ptr: *mut Table<TestTable> = Box::into_raw(boxed);
