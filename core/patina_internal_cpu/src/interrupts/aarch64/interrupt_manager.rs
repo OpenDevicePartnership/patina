@@ -22,7 +22,7 @@ global_asm!(include_str!("exception_handler.asm"));
 
 #[cfg(all(not(test), target_arch = "aarch64"))]
 // extern "efiapi" fn AsmGetVectorAddress(index: u64);
-extern "C" {
+unsafe extern "C" {
     static exception_handlers_start: u64;
     static sp_el0_end: u64;
 }

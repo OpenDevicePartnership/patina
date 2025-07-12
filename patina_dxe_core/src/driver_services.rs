@@ -315,7 +315,7 @@ pub unsafe fn core_connect_controller(
     if recursive {
         for child in PROTOCOL_DB.get_child_handles(handle) {
             //ignore the return value to match behavior of edk2 reference.
-            _ = core_connect_controller(child, Vec::new(), None, true);
+            _ = unsafe { core_connect_controller(child, Vec::new(), None, true) };
         }
     }
 

@@ -87,7 +87,7 @@ where
             return Ok(false);
         }
 
-        let param_value = Func::Param::get_param(param_state, storage);
+        let param_value = unsafe { Func::Param::get_param(param_state, storage) };
 
         self.func.run(self.input.take().unwrap(), param_value).map(|_| true)
     }

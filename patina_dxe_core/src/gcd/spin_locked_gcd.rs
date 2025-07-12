@@ -348,10 +348,10 @@ impl GCD {
         });
 
         self.memory_blocks
-            .resize(slice::from_raw_parts_mut::<'static>(base_address as *mut u8, MEMORY_BLOCK_SLICE_SIZE));
+            .resize(unsafe { slice::from_raw_parts_mut::<'static>(base_address as *mut u8, MEMORY_BLOCK_SLICE_SIZE) });
 
         self.memory_blocks.add(unallocated_memory_space).map_err(|_| EfiError::OutOfResources)?;
-        let idx = self.add_memory_space(memory_type, base_address, len, capabilities)?;
+        let idx = unsafe { self.add_memory_space(memory_type, base_address, len, capabilities) }?;
 
         //initialize attributes on the first block to WB + XP
         match self.set_memory_space_attributes(
@@ -421,7 +421,7 @@ impl GCD {
         }
 
         if self.memory_blocks.capacity() == 0 {
-            return self.init_memory_blocks(memory_type, base_address, len, capabilities);
+            return unsafe { self.init_memory_blocks(memory_type, base_address, len, capabilities) };
         }
         let memory_blocks = &mut self.memory_blocks;
 
@@ -2110,7 +2110,7 @@ impl SpinLockedGcd {
         len: usize,
         capabilities: u64,
     ) -> Result<usize, EfiError> {
-        let result = self.memory.lock().add_memory_space(memory_type, base_address, len, capabilities);
+        let result = unsafe { self.memory.lock().add_memory_space(memory_type, base_address, len, capabilities) };
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
                 callback(MapChangeType::AddMemorySpace);
@@ -3880,8 +3880,8 @@ mod tests {
     }
 
     unsafe fn get_memory(size: usize) -> &'static mut [u8] {
-        let addr = alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, UEFI_PAGE_SIZE).unwrap());
-        core::slice::from_raw_parts_mut(addr, size)
+        let addr = unsafe { alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, UEFI_PAGE_SIZE).unwrap()) };
+        unsafe { core::slice::from_raw_parts_mut(addr, size) }
     }
 
     #[test]

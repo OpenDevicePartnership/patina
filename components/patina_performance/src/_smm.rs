@@ -53,7 +53,7 @@ impl MmCommRegion {
     }
 
     pub unsafe fn as_buffer(&self) -> &'static mut [u8] {
-        slice::from_raw_parts_mut(self.region_address as usize as *mut u8, self.size())
+        unsafe { slice::from_raw_parts_mut(self.region_address as usize as *mut u8, self.size()) }
     }
 }
 
@@ -99,7 +99,7 @@ impl CommunicateProtocol {
         assert_ne!(0, communication_memory_region.region_address);
         assert_ne!(0, communication_memory_region.region_nb_pages);
 
-        let comm_buffer = communication_memory_region.as_buffer();
+        let comm_buffer = unsafe { communication_memory_region.as_buffer() };
         let mut offset = 0;
 
         comm_buffer.gwrite_with(T::GUID.as_bytes().as_slice(), &mut offset, ()).unwrap();

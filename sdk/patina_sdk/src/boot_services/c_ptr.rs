@@ -35,7 +35,7 @@ impl<'a, R: CPtr<'a, Type = T>, T> PtrMetadata<'a, R> {
     /// # Safety
     /// Caller must ensure that the pointed-to memory is still valid and uphold rust pointer invariants (e.g. no aliasing)
     pub unsafe fn into_original_ptr(self) -> R {
-        mem::transmute_copy(&self.ptr_value)
+        unsafe { mem::transmute_copy(&self.ptr_value) }
     }
 }
 

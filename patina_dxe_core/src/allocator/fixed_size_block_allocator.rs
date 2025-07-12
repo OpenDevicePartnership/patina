@@ -749,7 +749,7 @@ unsafe impl GlobalAlloc for SpinLockedFixedSizeBlockAllocator {
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         if let Some(ptr) = NonNull::new(ptr) {
-            self.deallocate(ptr, layout)
+            unsafe { self.deallocate(ptr, layout) }
         }
     }
 }
@@ -827,7 +827,7 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
         }
     }
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        self.lock().dealloc(ptr, layout)
+        unsafe { self.lock().dealloc(ptr, layout) }
     }
 }
 

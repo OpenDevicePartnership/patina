@@ -26,7 +26,7 @@ use crate::interrupts::InterruptManager;
 global_asm!(include_str!("interrupt_handler.asm"));
 
 // Use efiapi for the consistent calling convention.
-extern "efiapi" {
+unsafe extern "efiapi" {
     fn AsmGetVectorAddress(index: usize) -> u64;
 }
 

@@ -121,13 +121,14 @@ impl AdvLoggerInfo {
 
     pub unsafe fn adopt_memory_log(address: efi::PhysicalAddress) -> Option<&'static Self> {
         let log_info = address as *mut Self;
-        if (*log_info).signature != Self::SIGNATURE
-            || (*log_info).version != Self::VERSION
-            || (*log_info).log_buffer_offset < size_of::<AdvLoggerInfo>() as u32
+        let log_info_ref = unsafe { log_info.as_ref() }?;
+        if log_info_ref.signature != Self::SIGNATURE
+            || log_info_ref.version != Self::VERSION
+            || log_info_ref.log_buffer_offset < size_of::<AdvLoggerInfo>() as u32
         {
             None
         } else {
-            log_info.as_ref()
+            Some(log_info_ref)
         }
     }
 
@@ -138,8 +139,8 @@ impl AdvLoggerInfo {
         if log_info.is_null() {
             None
         } else {
-            ptr::write(log_info, AdvLoggerInfo::new(length, false, 0, 0, efi::Time::default(), 0));
-            log_info.as_ref()
+            unsafe { ptr::write(log_info, AdvLoggerInfo::new(length, false, 0, 0, efi::Time::default(), 0)) };
+            unsafe { log_info.as_ref() }
         }
     }
 
@@ -285,37 +286,44 @@ impl AdvLoggerMessageEntry {
         }
 
         // Write the header.
-        ptr::write_volatile::<Self>(
-            address as *mut Self,
-            Self::new(log_entry.phase, log_entry.level, log_entry.timestamp, log_entry.data.len() as u16),
-        );
+        unsafe {
+            ptr::write_volatile::<Self>(
+                address as *mut Self,
+                Self::new(log_entry.phase, log_entry.level, log_entry.timestamp, log_entry.data.len() as u16),
+            );
+        }
 
         const _: () = assert!(
             size_of::<AdvLoggerMessageEntry>() % size_of::<u64>() == 0,
             "AdvLoggerMessageEntry must be a multiple of 8 bytes in length"
         );
 
-        let message_slice: &mut [u8] =
-            slice::from_raw_parts_mut((address as *mut u8).byte_add(size_of::<Self>()), log_entry.data.len());
+        let message_slice: &mut [u8] = unsafe {
+            slice::from_raw_parts_mut((address as *mut u8).byte_add(size_of::<Self>()), log_entry.data.len())
+        };
 
         // Since address must be aligned to 8 bytes and AdvLoggerMessageEntry is a multiple of 8 bytes in length,
         // there is guaranteed to be no prefix when using align_to_mut.
-        let (_, aligned, suffix) = message_slice.align_to_mut::<u64>();
+        let (_, aligned, suffix) = unsafe { message_slice.align_to_mut::<u64>() };
 
         // Write aligned QWORDs of the message 8 characters at a time.
         for (qword_index, qword) in aligned.iter_mut().enumerate() {
-            ptr::write_volatile::<u64>(
-                qword as *mut u64,
-                ptr::read_unaligned(log_entry.data.as_ptr().add(size_of::<u64>() * qword_index) as *const u64),
-            );
+            unsafe {
+                ptr::write_volatile::<u64>(
+                    qword as *mut u64,
+                    ptr::read_unaligned(log_entry.data.as_ptr().add(size_of::<u64>() * qword_index) as *const u64),
+                );
+            }
         }
 
         // Write all remaining characters in the message 1 character at a time.
         for (byte_index, byte) in suffix.iter_mut().enumerate() {
-            ptr::write_volatile::<u8>(
-                byte as *mut u8,
-                *log_entry.data.as_ptr().add(core::mem::size_of_val(aligned) + byte_index),
-            );
+            unsafe {
+                ptr::write_volatile::<u8>(
+                    byte as *mut u8,
+                    *log_entry.data.as_ptr().add(core::mem::size_of_val(aligned) + byte_index),
+                );
+            }
         }
 
         unsafe { Ok(&*(address as *const Self)) }

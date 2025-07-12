@@ -161,18 +161,20 @@ impl UefiAllocator {
         let allocation_info: *mut AllocationInfo = ((buffer as usize) - offset) as *mut AllocationInfo;
 
         //must be true for any pool allocation
-        if (*allocation_info).signature != POOL_SIG {
+        if unsafe { (*allocation_info).signature } != POOL_SIG {
             debug_assert!(false, "Pool signature is incorrect.");
             return Err(EfiError::InvalidParameter);
         }
         // check if allocation is from this pool.
-        if (*allocation_info).memory_type != self.memory_type {
+        if unsafe { (*allocation_info).memory_type } != self.memory_type {
             return Err(EfiError::NotFound);
         }
         //zero after check so it doesn't get reused.
-        (*allocation_info).signature = 0;
+        unsafe {
+            (*allocation_info).signature = 0;
+        }
         if let Some(non_null_ptr) = NonNull::new(allocation_info as *mut u8) {
-            self.allocator.deallocate(non_null_ptr, (*allocation_info).layout);
+            unsafe { self.allocator.deallocate(non_null_ptr, (*allocation_info).layout) };
         } else {
             return Err(EfiError::InvalidParameter);
         }
@@ -204,7 +206,7 @@ impl UefiAllocator {
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
     /// [Self::allocate_pages]
     pub unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), EfiError> {
-        self.allocator.free_pages(address, pages)
+        unsafe { self.allocator.free_pages(address, pages) }
     }
 
     /// Returns the allocator handle associated with this allocator.
@@ -227,10 +229,10 @@ impl UefiAllocator {
 
 unsafe impl GlobalAlloc for UefiAllocator {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        self.allocator.alloc(layout)
+        unsafe { self.allocator.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
-        self.allocator.dealloc(ptr, layout)
+        unsafe { self.allocator.dealloc(ptr, layout) }
     }
 }
 
@@ -239,7 +241,7 @@ unsafe impl Allocator for UefiAllocator {
         self.allocator.allocate(layout)
     }
     unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
-        self.allocator.deallocate(ptr, layout)
+        unsafe { self.allocator.deallocate(ptr, layout) }
     }
 }
 

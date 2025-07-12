@@ -65,7 +65,7 @@ impl<'a, T, B: BootServices> BootServicesBox<'a, [T], B> {
     ///
     /// Caller must ensure that the pointer and len are correct and that rust pointer invariants (e.g. no aliasing) are respected.
     pub unsafe fn from_raw_parts_mut(ptr: *mut T, len: usize, boot_services: &'a B) -> Self {
-        let ptr = slice::from_raw_parts_mut(ptr, len);
+        let ptr = unsafe { slice::from_raw_parts_mut(ptr, len) };
         Self { boot_services, ptr }
     }
 }

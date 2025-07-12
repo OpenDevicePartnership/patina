@@ -483,12 +483,12 @@ unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::Hand
     let mut interfaces_to_install = Vec::new();
     loop {
         //consume the protocol, break the loop if it is null.
-        let protocol: *mut efi::Guid = args.arg();
+        let protocol: *mut efi::Guid = unsafe { args.arg() };
         if protocol.is_null() {
             break;
         }
-        let interface: *mut c_void = args.arg();
-        if *protocol == efi::protocols::device_path::PROTOCOL_GUID {
+        let interface: *mut c_void = unsafe { args.arg() };
+        if unsafe { *protocol } == efi::protocols::device_path::PROTOCOL_GUID {
             if let Ok((remaining_path, handle)) = core_locate_device_path(
                 efi::protocols::device_path::PROTOCOL_GUID,
                 interface as *const efi::protocols::device_path::Protocol,
@@ -509,7 +509,7 @@ unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::Hand
             err => {
                 //on error, attempt to uninstall all the previously installed interfaces. best-effort, errors are ignored.
                 for (protocol, interface) in interfaces_to_uninstall_on_error {
-                    let _ = uninstall_protocol_interface(*handle, protocol, interface);
+                    let _ = uninstall_protocol_interface(unsafe { *handle }, protocol, interface);
                 }
                 return err;
             }
@@ -526,11 +526,11 @@ unsafe extern "C" fn uninstall_multiple_protocol_interfaces(handle: efi::Handle,
 
     let mut interfaces_to_uninstall = Vec::new();
     loop {
-        let protocol: *mut efi::Guid = args.arg();
+        let protocol: *mut efi::Guid = unsafe { args.arg() };
         if protocol.is_null() {
             break;
         }
-        let interface: *mut c_void = args.arg();
+        let interface: *mut c_void = unsafe { args.arg() };
         interfaces_to_uninstall.push((protocol, interface));
     }
 

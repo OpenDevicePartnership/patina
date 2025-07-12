@@ -74,12 +74,12 @@ impl DebugImageInfoTableHeader {
 
     /// Returns the current update status of the DebugImageInfoTableHeader.
     pub unsafe fn get_update_status(&self) -> u32 {
-        ptr::read_volatile(&self.update_status)
+        unsafe { ptr::read_volatile(&self.update_status) }
     }
 
     /// Sets the update status of the DebugImageInfoTableHeader.
     pub unsafe fn set_update_status(&mut self, status: u32) {
-        ptr::write_volatile(&mut self.update_status as *mut u32, status)
+        unsafe { ptr::write_volatile(&mut self.update_status as *mut u32, status) }
     }
 }
 
