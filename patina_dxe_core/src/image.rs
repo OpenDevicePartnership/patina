@@ -1505,7 +1505,7 @@ mod tests {
     }
 
     unsafe fn init_test_image_support() {
-        PRIVATE_IMAGE_DATA.lock().reset();
+        unsafe { PRIVATE_IMAGE_DATA.lock().reset() };
 
         const DXE_CORE_MEMORY_SIZE: usize = 0x10000;
         let dxe_core_memory_base: Vec<u64> = Vec::with_capacity(DXE_CORE_MEMORY_SIZE);

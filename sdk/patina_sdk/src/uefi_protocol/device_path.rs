@@ -170,7 +170,7 @@ impl DevicePath {
             return Err("Null pointer provided");
         }
 
-        let mut buffer = core::slice::from_raw_parts(buffer, Header::size_of_header());
+        let mut buffer = unsafe { core::slice::from_raw_parts(buffer, Header::size_of_header()) };
         let mut offset = 0;
         loop {
             let header =
@@ -182,10 +182,10 @@ impl DevicePath {
 
             let new_length = buffer.len() + header.length;
             offset += header.length;
-            buffer = core::slice::from_raw_parts(buffer.as_ptr(), new_length);
+            buffer = unsafe { core::slice::from_raw_parts(buffer.as_ptr(), new_length) };
         }
 
-        let device_path = &*(buffer as *const [u8] as *const DevicePath);
+        let device_path = unsafe { &*(buffer as *const [u8] as *const DevicePath) };
         Ok(device_path)
     }
 

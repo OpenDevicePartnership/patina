@@ -45,8 +45,8 @@ pub(crate) fn with_global_lock<F: Fn() + std::panic::RefUnwindSafe>(f: F) -> Res
 }
 
 unsafe fn get_memory(size: usize) -> &'static mut [u8] {
-    let addr = alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 0x1000).unwrap());
-    core::slice::from_raw_parts_mut(addr, size)
+    let addr = unsafe { alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 0x1000).unwrap()) };
+    unsafe { core::slice::from_raw_parts_mut(addr, size) }
 }
 
 // default GCD allocation.
@@ -58,33 +58,35 @@ const TEST_GCD_MEM_SIZE: usize = 0x1000000;
 /// that this should be called few enough times in testing so that this leak does not cause problems.
 pub(crate) unsafe fn init_test_gcd(size: Option<usize>) {
     let size = size.unwrap_or(TEST_GCD_MEM_SIZE);
-    let addr = alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 0x1000).unwrap());
-    GCD.reset();
+    let addr = unsafe { alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 0x1000).unwrap()) };
+    unsafe { GCD.reset() };
     GCD.init(48, 16);
-    GCD.add_memory_space(
-        GcdMemoryType::SystemMemory,
-        addr as usize,
-        TEST_GCD_MEM_SIZE,
-        efi::MEMORY_UC
-            | efi::MEMORY_WC
-            | efi::MEMORY_WT
-            | efi::MEMORY_WB
-            | efi::MEMORY_WP
-            | efi::MEMORY_RP
-            | efi::MEMORY_XP
-            | efi::MEMORY_RO,
-    )
-    .unwrap();
+    unsafe {
+        GCD.add_memory_space(
+            GcdMemoryType::SystemMemory,
+            addr as usize,
+            TEST_GCD_MEM_SIZE,
+            efi::MEMORY_UC
+                | efi::MEMORY_WC
+                | efi::MEMORY_WT
+                | efi::MEMORY_WB
+                | efi::MEMORY_WP
+                | efi::MEMORY_RP
+                | efi::MEMORY_XP
+                | efi::MEMORY_RO,
+        )
+        .unwrap()
+    };
 }
 
 /// Resets the ALLOCATOR map to empty and resets the static allocators
 pub(crate) unsafe fn reset_allocators() {
-    crate::allocator::reset_allocators()
+    unsafe { crate::allocator::reset_allocators() }
 }
 
 /// Reset and re-initialize the protocol database to default empty state.
 pub(crate) unsafe fn init_test_protocol_db() {
-    PROTOCOL_DB.reset();
+    unsafe { PROTOCOL_DB.reset() };
     PROTOCOL_DB.init_protocol_db();
 }
 

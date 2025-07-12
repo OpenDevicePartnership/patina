@@ -160,21 +160,23 @@ mod tests {
         let log_address = log_buff as *const u8 as efi::PhysicalAddress;
 
         // initialize the log so it's valid for the hob list
-        AdvLoggerInfo::initialize_memory_log(log_address, LOG_LEN as u32);
+        unsafe { AdvLoggerInfo::initialize_memory_log(log_address, LOG_LEN as u32) };
 
         const HOB_LEN: usize = size_of::<GuidHob>() + size_of::<efi::PhysicalAddress>();
         let hob_buff = Box::into_raw(Box::new([0_u8; HOB_LEN]));
         let hob = hob_buff as *mut GuidHob;
-        ptr::write(
-            hob,
-            GuidHob {
-                header: Hob { r#type: GUID_EXTENSION, length: HOB_LEN as u16, reserved: 0 },
-                name: memory_log::ADV_LOGGER_HOB_GUID,
-            },
-        );
+        unsafe {
+            ptr::write(
+                hob,
+                GuidHob {
+                    header: Hob { r#type: GUID_EXTENSION, length: HOB_LEN as u16, reserved: 0 },
+                    name: memory_log::ADV_LOGGER_HOB_GUID,
+                },
+            )
+        };
 
-        let address: *mut efi::PhysicalAddress = hob.add(1) as *mut efi::PhysicalAddress;
-        (*address) = log_address;
+        let address: *mut efi::PhysicalAddress = unsafe { hob.add(1) } as *mut efi::PhysicalAddress;
+        unsafe { (*address) = log_address };
         hob_buff as *const c_void
     }
 

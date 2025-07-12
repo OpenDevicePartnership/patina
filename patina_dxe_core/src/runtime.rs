@@ -309,8 +309,8 @@ mod tests {
     }
 
     unsafe fn get_memory(size: usize) -> &'static mut [u8] {
-        let addr = alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 0x1000).unwrap());
-        core::slice::from_raw_parts_mut(addr, size)
+        let addr = unsafe { alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 0x1000).unwrap()) };
+        unsafe { core::slice::from_raw_parts_mut(addr, size) }
     }
 
     #[test]

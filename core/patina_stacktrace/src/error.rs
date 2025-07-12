@@ -91,7 +91,7 @@ impl fmt::Display for Error {
                 )
             }
             #[cfg(test)]
-            Error::ModuleLoadFailed(ref module) => {
+            Error::ModuleLoadFailed(module) => {
                 write!(fmt, "Failed to load module: {}", module.as_ref().unwrap_or(&no_module_str))
             }
         }
