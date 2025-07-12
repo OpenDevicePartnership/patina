@@ -22,13 +22,13 @@ use alloc::{collections::BTreeMap, vec::Vec};
 use mu_rust_helpers::function;
 
 use crate::{
-    config_tables,
+    GCD, config_tables,
     gcd::{self, AllocateType as AllocationStrategy},
     memory_attributes_table::MemoryAttributesTable,
     protocol_db::{self, INVALID_HANDLE},
     protocols::PROTOCOL_DB,
     systemtables::EfiSystemTable,
-    tpl_lock, GCD,
+    tpl_lock,
 };
 use mu_pi::{
     dxe_services::{self, GcdMemoryType, MemorySpaceDescriptor},
@@ -349,13 +349,11 @@ impl AllocatorMap {
             // not a well known handle or illegal memory type - check the active allocators and create a handle if it doesn't
             // already exist.
             _ => {
-                if let Some(handle) = ALLOCATORS.lock().iter().find_map(|x| {
-                    if x.memory_type() == memory_type {
-                        Some(x.handle())
-                    } else {
-                        None
-                    }
-                }) {
+                if let Some(handle) = ALLOCATORS
+                    .lock()
+                    .iter()
+                    .find_map(|x| if x.memory_type() == memory_type { Some(x.handle()) } else { None })
+                {
                     return Ok(handle);
                 }
                 let (handle, _) = PROTOCOL_DB.install_protocol_interface(
@@ -747,11 +745,7 @@ pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
     let mm_desc_bytes: &[u8] = unsafe { slice::from_raw_parts(mm_desc.as_ptr() as *const u8, mm_desc_size) };
 
     let current_map_key = crc32fast::hash(mm_desc_bytes) as usize;
-    if map_key == current_map_key {
-        Ok(())
-    } else {
-        Err(EfiError::InvalidParameter)
-    }
+    if map_key == current_map_key { Ok(()) } else { Err(EfiError::InvalidParameter) }
 }
 
 static mut MEMORY_TYPE_INFO_TABLE: [EFiMemoryTypeInformation; 17] = [
@@ -1046,7 +1040,7 @@ mod tests {
     };
 
     use super::*;
-    use mu_pi::hob::{header, GuidHob, Hob, GUID_EXTENSION};
+    use mu_pi::hob::{GUID_EXTENSION, GuidHob, Hob, header};
     use r_efi::efi;
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(gcd_size: usize, f: F) {

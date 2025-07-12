@@ -146,7 +146,7 @@ mod tests {
     extern crate std;
     use core::mem::size_of;
 
-    use mu_pi::hob::{header::Hob, GuidHob, GUID_EXTENSION};
+    use mu_pi::hob::{GUID_EXTENSION, GuidHob, header::Hob};
     use patina_sdk::serial::uart::UartNull;
 
     use super::*;

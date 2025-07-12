@@ -13,8 +13,8 @@ use patina_sdk::error::EfiError;
 use r_efi::efi;
 
 use super::{
-    fixed_size_block_allocator::{AllocationStatistics, PageChangeCallback, SpinLockedFixedSizeBlockAllocator},
     AllocationStrategy,
+    fixed_size_block_allocator::{AllocationStatistics, PageChangeCallback, SpinLockedFixedSizeBlockAllocator},
 };
 use core::{
     alloc::{Allocator, GlobalAlloc, Layout},
@@ -276,7 +276,7 @@ mod tests {
     use patina_sdk::base::{SIZE_4KB, SIZE_64KB, UEFI_PAGE_SIZE};
 
     use crate::{
-        allocator::{FixedSizeBlockAllocator, DEFAULT_ALLOCATION_STRATEGY, DEFAULT_PAGE_ALLOCATION_GRANULARITY},
+        allocator::{DEFAULT_ALLOCATION_STRATEGY, DEFAULT_PAGE_ALLOCATION_GRANULARITY, FixedSizeBlockAllocator},
         test_support,
     };
 

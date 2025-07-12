@@ -6,7 +6,7 @@ members = ["components/*", "core/*", "sdk/*", "patina_dxe_core"]
 [workspace.package]
 version = "4.2.0"
 license = "BSD-2-Clause-Patent"
-edition = "2021"
+edition = "2024"
 rust-version = "1.85"
 repository = "https://github.com/OpenDevicePartnership/patina"
 publish = ["patina-fw"]

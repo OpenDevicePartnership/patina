@@ -13,8 +13,8 @@
 use core::marker::PhantomData;
 
 use crate::component::{
-    params::{Param, ParamFunction},
     MetaData, Storage, UnsafeStorageCell,
+    params::{Param, ParamFunction},
 };
 
 /// Where all the test cases marked with `#[patina_test]` are collated to.

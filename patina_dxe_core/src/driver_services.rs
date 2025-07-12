@@ -497,11 +497,7 @@ pub unsafe fn core_disconnect_controller(
         }
     }
 
-    if one_or_more_drivers_disconnected || no_drivers {
-        Ok(())
-    } else {
-        Err(EfiError::NotFound)
-    }
+    if one_or_more_drivers_disconnected || no_drivers { Ok(()) } else { Err(EfiError::NotFound) }
 }
 
 extern "efiapi" fn disconnect_controller(

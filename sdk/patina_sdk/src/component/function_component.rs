@@ -18,10 +18,10 @@ extern crate alloc;
 use core::marker::PhantomData;
 
 use super::{
+    Component, IntoComponent,
     metadata::MetaData,
     params::{Param, ParamFunction},
     storage::{Storage, UnsafeStorageCell},
-    Component, IntoComponent,
 };
 
 use crate::error::Result;

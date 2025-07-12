@@ -363,11 +363,7 @@ impl EventDb {
 
     fn is_signaled(&mut self, event: efi::Event) -> bool {
         let id = event as usize;
-        if let Some(event) = self.events.get(&id) {
-            event.signaled
-        } else {
-            false
-        }
+        if let Some(event) = self.events.get(&id) { event.signaled } else { false }
     }
 
     fn queue_event_notify(&mut self, event: efi::Event) -> Result<(), EfiError> {

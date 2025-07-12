@@ -13,7 +13,7 @@ use core::{
     ptr,
 };
 
-use super::{allocation::MemoryType, BootServices};
+use super::{BootServices, allocation::MemoryType};
 
 /// A boxed type to wrap a [BootServices] implementation
 #[derive(Debug)]

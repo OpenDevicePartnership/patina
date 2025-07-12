@@ -10,9 +10,9 @@
 use core::arch::{asm, global_asm};
 use patina_sdk::{component::service::IntoService, error::EfiError};
 
+use crate::interrupts::InterruptManager;
 #[cfg(all(not(test), target_arch = "aarch64"))]
 use crate::interrupts::aarch64::sysreg::{read_sysreg, write_sysreg};
-use crate::interrupts::InterruptManager;
 use crate::interrupts::{disable_interrupts, enable_interrupts};
 
 #[cfg(all(not(test), target_arch = "aarch64"))]

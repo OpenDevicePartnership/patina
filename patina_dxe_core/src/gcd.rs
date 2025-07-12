@@ -21,7 +21,7 @@ use patina_sdk::error::EfiError;
 use r_efi::efi;
 
 #[cfg(feature = "compatibility_mode_allowed")]
-use patina_sdk::base::{align_range, UEFI_PAGE_SIZE};
+use patina_sdk::base::{UEFI_PAGE_SIZE, align_range};
 
 use crate::GCD;
 
@@ -314,10 +314,10 @@ pub(crate) fn activate_compatibility_mode() {
 
                     if GCD.set_memory_space_attributes(addr as usize, len as usize, attributes).is_err() {
                         log::error!(
-                                        "Failed to set memory space attributes for range {:#x?} - {:#x?}, compatibility mode may fail",
-                                        addr,
-                                        len,
-                                    );
+                            "Failed to set memory space attributes for range {:#x?} - {:#x?}, compatibility mode may fail",
+                            addr,
+                            len,
+                        );
                         debug_assert!(false);
                     }
                 }
@@ -346,9 +346,9 @@ mod tests {
     };
 
     use crate::{
+        GCD,
         gcd::init_gcd,
         test_support::{self, build_test_hob_list},
-        GCD,
     };
 
     use super::add_hob_resource_descriptors_to_gcd;
@@ -380,9 +380,11 @@ mod tests {
         assert!(free_memory_size <= 0x100000);
         let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
         GCD.get_memory_descriptors(&mut descriptors).expect("get_memory_descriptors failed.");
-        assert!(descriptors
-            .iter()
-            .any(|x| x.base_address == free_memory_start && x.memory_type == GcdMemoryType::SystemMemory))
+        assert!(
+            descriptors
+                .iter()
+                .any(|x| x.base_address == free_memory_start && x.memory_type == GcdMemoryType::SystemMemory)
+        )
     }
 
     fn add_resource_descriptors_should_add_resource_descriptors(hob_list: &HobList, mem_base: u64) {

@@ -29,10 +29,10 @@ extern crate alloc;
 
 use crate::{
     component::{
+        Component,
         metadata::MetaData,
         params::{ComponentInput, Param, ParamFunction},
         storage::{Storage, UnsafeStorageCell},
-        Component,
     },
     error::Result,
 };
@@ -106,8 +106,8 @@ where
 #[cfg(test)]
 mod tests {
     use crate as patina_sdk;
-    use crate::component::params::{Config, ConfigMut};
     use crate::component::IntoComponent;
+    use crate::component::params::{Config, ConfigMut};
 
     #[derive(IntoComponent)]
     #[entry_point(path = TestStructSuccess::entry_point)]

@@ -16,9 +16,9 @@ use patina_sdk::base::SIZE_4GB;
 use patina_sdk::base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE};
 use patina_sdk::{component::service::IntoService, error::EfiError};
 use patina_stacktrace::StackTrace;
+use x86_64::VirtAddr;
 use x86_64::structures::idt::InterruptDescriptorTable;
 use x86_64::structures::idt::InterruptStackFrame;
-use x86_64::VirtAddr;
 
 use crate::interrupts::HandlerType;
 use crate::interrupts::InterruptManager;
@@ -197,13 +197,8 @@ extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystem
     log::error!("Paging Features (cr4): 0x{:x?}", x64_context.cr4);
     interpret_page_fault_exception_data(x64_context.exception_data);
 
-    let paging_type = {
-        if x64_context.cr4 & (1 << 12) != 0 {
-            PagingType::Paging5Level
-        } else {
-            PagingType::Paging4Level
-        }
-    };
+    let paging_type =
+        { if x64_context.cr4 & (1 << 12) != 0 { PagingType::Paging5Level } else { PagingType::Paging4Level } };
 
     if let Some(attrs) = get_fault_attributes(x64_context.cr2, x64_context.cr3, paging_type) {
         log::error!("Page Attributes: {:?}", attrs);

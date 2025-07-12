@@ -10,8 +10,8 @@
 extern crate alloc;
 
 use crate::{
-    node::{Node, NodeTrait, Storage},
     SliceKey,
+    node::{Node, NodeTrait, Storage},
 };
 
 use super::{Error, Result};
@@ -1817,8 +1817,8 @@ mod tests {
 #[cfg(test)]
 mod fuzz_tests {
     extern crate std;
-    use crate::{node_size, Rbt};
-    use rand::{seq::SliceRandom, Rng};
+    use crate::{Rbt, node_size};
+    use rand::{Rng, seq::SliceRandom};
     use std::{collections::HashSet, vec::Vec};
 
     const RBT_MAX_SIZE: usize = 0x1000;

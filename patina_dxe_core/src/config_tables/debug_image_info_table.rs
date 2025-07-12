@@ -19,7 +19,7 @@ use core::{
 };
 
 use crate::{
-    config_tables::core_install_configuration_table, gcd::AllocateType, protocol_db, systemtables::EfiSystemTable, GCD,
+    GCD, config_tables::core_install_configuration_table, gcd::AllocateType, protocol_db, systemtables::EfiSystemTable,
 };
 
 use mu_pi::dxe_services::GcdMemoryType;

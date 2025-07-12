@@ -15,8 +15,8 @@ use r_efi::efi;
 
 use patina_sdk::{base::UEFI_PAGE_SIZE, component::hob::FromHob, uefi_protocol::ProtocolInterface};
 use scroll::{
-    ctx::{TryFromCtx, TryIntoCtx},
     Endian, Pread, Pwrite,
+    ctx::{TryFromCtx, TryIntoCtx},
 };
 
 pub const EFI_SMM_COMMUNICATION_PROTOCOL_GUID: efi::Guid =

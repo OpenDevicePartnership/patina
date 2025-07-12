@@ -10,12 +10,12 @@ use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
 use goblin::pe::section_table;
 use mu_pi::hob::{Hob, HobList};
-use patina_internal_device_path::{copy_device_path_to_boxed_slice, device_path_node_count, DevicePathWalker};
+use patina_internal_device_path::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count};
 use patina_performance::{
     create_performance_measurement, perf_image_start_begin, perf_image_start_end, perf_load_image_begin,
     perf_load_image_end,
 };
-use patina_sdk::base::{align_up, DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE};
+use patina_sdk::base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up};
 use patina_sdk::error::EfiError;
 use patina_sdk::{guid, uefi_pages_to_size, uefi_size_to_pages};
 use r_efi::efi;
@@ -23,23 +23,23 @@ use r_efi::efi;
 use crate::{
     allocator::{core_allocate_pages, core_free_pages},
     config_tables::debug_image_info_table::{
-        core_new_debug_image_info_entry, core_remove_debug_image_info_entry, initialize_debug_image_info_table,
-        EfiDebugImageInfoNormal,
+        EfiDebugImageInfoNormal, core_new_debug_image_info_entry, core_remove_debug_image_info_entry,
+        initialize_debug_image_info_table,
     },
     dxe_services::{self, core_set_memory_space_attributes},
     events::EVENT_DB,
     filesystems::SimpleFile,
-    pecoff::{self, relocation::RelocationBlock, UefiPeInfo},
+    pecoff::{self, UefiPeInfo, relocation::RelocationBlock},
     protocol_db,
-    protocols::{core_install_protocol_interface, core_locate_device_path, PROTOCOL_DB},
+    protocols::{PROTOCOL_DB, core_install_protocol_interface, core_locate_device_path},
     runtime,
     systemtables::EfiSystemTable,
     tpl_lock,
 };
 
 use uefi_corosensei::{
-    stack::{Stack, StackPointer, MIN_STACK_SIZE, STACK_ALIGNMENT},
     Coroutine, CoroutineResult, Yielder,
+    stack::{MIN_STACK_SIZE, STACK_ALIGNMENT, Stack, StackPointer},
 };
 
 pub const EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION: u16 = 10;
@@ -730,8 +730,10 @@ fn activate_compatibility_mode(private_info: &PrivateImageData) -> Result<(), Ef
 /// If the compatibility_mode_allowed feature flag is not set, we will fail to load the image that would crash the
 /// system with memory protections enabled
 fn activate_compatibility_mode(private_info: &PrivateImageData) -> Result<(), EfiError> {
-    log::error!("Attempting to load {} that is not NX compatible. Compatibility mode is not allowed in this build, not loading image.",
-                private_info.pe_info.filename.clone().unwrap_or(String::from("Unknown")));
+    log::error!(
+        "Attempting to load {} that is not NX compatible. Compatibility mode is not allowed in this build, not loading image.",
+        private_info.pe_info.filename.clone().unwrap_or(String::from("Unknown"))
+    );
     Err(EfiError::LoadError)
 }
 
@@ -1480,10 +1482,10 @@ mod tests {
     extern crate std;
     use super::{empty_image_info, get_buffer_by_file_path, load_image};
     use crate::{
-        image::{exit, start_image, unload_image, PRIVATE_IMAGE_DATA},
+        image::{PRIVATE_IMAGE_DATA, exit, start_image, unload_image},
         protocol_db,
-        protocols::{core_install_protocol_interface, PROTOCOL_DB},
-        systemtables::{init_system_table, SYSTEM_TABLE},
+        protocols::{PROTOCOL_DB, core_install_protocol_interface},
+        systemtables::{SYSTEM_TABLE, init_system_table},
         test_collateral, test_support,
     };
     use core::{ffi::c_void, sync::atomic::AtomicBool};

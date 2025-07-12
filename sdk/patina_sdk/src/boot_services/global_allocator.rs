@@ -12,7 +12,7 @@ use core::{
     ptr,
 };
 
-use crate::boot_services::{allocation::MemoryType, BootServices};
+use crate::boot_services::{BootServices, allocation::MemoryType};
 
 pub struct BootServicesGlobalAllocator<T: BootServices + 'static>(pub &'static T);
 

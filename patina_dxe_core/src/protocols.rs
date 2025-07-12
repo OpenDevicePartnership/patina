@@ -18,8 +18,8 @@ use tpl_lock::TplMutex;
 use crate::{
     allocator::core_allocate_pool,
     driver_services::{core_connect_controller, core_disconnect_controller},
-    events::{signal_event, EVENT_DB},
-    protocol_db::{SpinLockedProtocolDb, DXE_CORE_HANDLE},
+    events::{EVENT_DB, signal_event},
+    protocol_db::{DXE_CORE_HANDLE, SpinLockedProtocolDb},
     tpl_lock,
 };
 

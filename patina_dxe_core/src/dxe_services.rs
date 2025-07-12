@@ -18,13 +18,13 @@ use mu_pi::{dxe_services, fw_fs::FirmwareVolume};
 use r_efi::efi;
 
 use crate::{
-    allocator::{core_allocate_pool, EFI_RUNTIME_SERVICES_DATA_ALLOCATOR},
+    GCD,
+    allocator::{EFI_RUNTIME_SERVICES_DATA_ALLOCATOR, core_allocate_pool},
     config_tables,
     dispatcher::{core_dispatcher, core_schedule, core_trust},
     fv::core_install_firmware_volume,
     gcd,
     systemtables::EfiSystemTable,
-    GCD,
 };
 
 extern "efiapi" fn add_memory_space(

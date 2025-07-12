@@ -11,8 +11,8 @@
 extern crate alloc;
 
 use mu_pi::{
-    hob::{self, header},
     BootMode,
+    hob::{self, header},
 };
 use patina_dxe_core::Core;
 use r_efi::efi;

@@ -153,11 +153,7 @@ pub unsafe trait Param {
     /// A wrapper around [validate](Param::validate) that maps the boolean to a Result<(), &'static str>. where the
     /// &'static str is the name of the type that failed validation.
     fn try_validate(state: &Self::State, storage: UnsafeStorageCell) -> Result<(), &'static str> {
-        if Self::validate(state, storage) {
-            Ok(())
-        } else {
-            Err(core::any::type_name::<Self>())
-        }
+        if Self::validate(state, storage) { Ok(()) } else { Err(core::any::type_name::<Self>()) }
     }
 
     /// Initializes this Parameter's [State](Param::State).
@@ -660,7 +656,7 @@ impl_component_param_tuple!(T1, T2, T3, T4, T5);
 #[cfg(test)]
 mod tests {
     use crate::{
-        component::{storage::Storage, IntoComponent},
+        component::{IntoComponent, storage::Storage},
         error::Result,
     };
 
@@ -824,8 +820,10 @@ mod tests {
         let id = ConfigMut::<i32>::init_state(&mut storage, &mut mock_metadata);
 
         // Trying to access it with config, validation should fail because it is unlocked.
-        assert!(Config::<i32>::try_validate(&id, (&storage).into())
-            .is_err_and(|err| err == "patina_sdk::component::params::Config<i32>"));
+        assert!(
+            Config::<i32>::try_validate(&id, (&storage).into())
+                .is_err_and(|err| err == "patina_sdk::component::params::Config<i32>")
+        );
     }
 
     #[test]
@@ -834,8 +832,10 @@ mod tests {
         let mut mock_metadata = MetaData::new::<i32>();
 
         let id = Config::<i32>::init_state(&mut storage, &mut mock_metadata);
-        assert!(ConfigMut::<i32>::try_validate(&id, (&storage).into())
-            .is_err_and(|err| err == "patina_sdk::component::params::ConfigMut<i32>"));
+        assert!(
+            ConfigMut::<i32>::try_validate(&id, (&storage).into())
+                .is_err_and(|err| err == "patina_sdk::component::params::ConfigMut<i32>")
+        );
     }
 
     #[test]

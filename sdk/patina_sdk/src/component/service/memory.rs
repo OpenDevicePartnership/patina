@@ -789,7 +789,7 @@ pub use mock::StdMemoryManager;
 mod mock {
     extern crate std;
     use std::{
-        alloc::{alloc, dealloc, Layout},
+        alloc::{Layout, alloc, dealloc},
         collections::HashMap,
         sync::Mutex,
     };

@@ -72,7 +72,7 @@ use gcd::SpinLockedGcd;
 use memory_manager::CoreMemoryManager;
 use mu_pi::{
     fw_fs,
-    hob::{get_c_hob_list_size, HobList},
+    hob::{HobList, get_c_hob_list_size},
     protocols::{bds, status_code},
     status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
 };

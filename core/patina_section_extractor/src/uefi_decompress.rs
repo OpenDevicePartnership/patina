@@ -7,8 +7,8 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::{boxed::Box, vec};
-use mu_pi::fw_fs::{ffs, SectionExtractor, SectionMetaData};
-use mu_rust_helpers::uefi_decompress::{decompress_into_with_algo, DecompressionAlgorithm};
+use mu_pi::fw_fs::{SectionExtractor, SectionMetaData, ffs};
+use mu_rust_helpers::uefi_decompress::{DecompressionAlgorithm, decompress_into_with_algo};
 use r_efi::efi;
 
 pub const TIANO_DECOMPRESS_SECTION_GUID: efi::Guid =
@@ -28,7 +28,7 @@ impl SectionExtractor for UefiDecompressSectionExtractor {
             SectionMetaData::Compression(compression_header) => {
                 match compression_header.compression_type {
                     ffs::section::header::NOT_COMPRESSED => {
-                        return Ok(section.section_data().to_vec().into_boxed_slice())
+                        return Ok(section.section_data().to_vec().into_boxed_slice());
                     } //not compressed, so just return section data
                     ffs::section::header::STANDARD_COMPRESSION => {
                         (section.section_data(), DecompressionAlgorithm::UefiDecompress)

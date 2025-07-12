@@ -8,13 +8,13 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use crate::{protocols::PROTOCOL_DB, GCD};
+use crate::{GCD, protocols::PROTOCOL_DB};
 use core::ffi::c_void;
 use mu_pi::hob::HobList;
 use mu_pi::{
+    BootMode,
     dxe_services::GcdMemoryType,
     hob::{self, header},
-    BootMode,
 };
 use r_efi::efi;
 use std::any::Any;
@@ -329,10 +329,10 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
 mod tests {
     use super::*;
     use crate::c_void;
+    use crate::test_support::BootMode;
     use crate::test_support::get_memory;
     use crate::test_support::header;
     use crate::test_support::hob;
-    use crate::test_support::BootMode;
     use mu_pi::hob::Hob::MemoryAllocationModule;
     use patina_sdk::guid;
 

@@ -12,5 +12,5 @@
 mod function_component;
 mod struct_component;
 
-pub use function_component::{log_hello, Name};
+pub use function_component::{Name, log_hello};
 pub use struct_component::{GreetingsEnum, HelloStruct};

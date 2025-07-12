@@ -25,7 +25,7 @@ use alloc::{boxed::Box, string::ToString, vec::Vec};
 use core::{
     clone::Clone,
     convert::{AsRef, TryFrom},
-    ffi::{c_char, c_void, CStr},
+    ffi::{CStr, c_char, c_void},
     mem::MaybeUninit,
     ptr,
     sync::atomic::{AtomicBool, AtomicU32, Ordering},
@@ -44,8 +44,8 @@ use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 use _smm::{CommunicateProtocol, MmCommRegion, SmmGetRecordDataByOffset, SmmGetRecordSize};
 
 use patina_sdk::{
-    boot_services::{event::EventType, tpl::Tpl, BootServices, StandardBootServices},
-    component::{hob::Hob, params::Config, IntoComponent},
+    boot_services::{BootServices, StandardBootServices, event::EventType, tpl::Tpl},
+    component::{IntoComponent, hob::Hob, params::Config},
     error::EfiError,
     guid::{EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE, EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
     runtime_services::{RuntimeServices, StandardRuntimeServices},
@@ -57,15 +57,15 @@ use crate::{
     error::Error,
     performance_measurement_protocol::{EdkiiPerformanceMeasurement, PerfAttribute},
     performance_record::{
+        Iter,
         extended::{
             DualGuidStringEventRecord, DynamicStringEventRecord, GuidEventRecord, GuidQwordEventRecord,
             GuidQwordStringEventRecord,
         },
         hob_records::{HobPerformanceData, HobPerformanceDataExtractor},
         known_records::{KnownPerfId, KnownPerfToken},
-        Iter,
     },
-    performance_table::{FirmwareBasicBootPerfTable, FBPT},
+    performance_table::{FBPT, FirmwareBasicBootPerfTable},
 };
 
 pub use log_perf_measurement::*;
@@ -666,8 +666,8 @@ mod test {
 
     use patina_sdk::{
         boot_services::{
-            c_ptr::{CMutPtr, CPtr},
             MockBootServices,
+            c_ptr::{CMutPtr, CPtr},
         },
         runtime_services::MockRuntimeServices,
         uefi_protocol::ProtocolInterface,
@@ -675,7 +675,7 @@ mod test {
 
     use crate::{
         performance_measurement_protocol::EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID,
-        performance_record::{hob_records::MockHobPerformanceDataExtractor, PerformanceRecordBuffer},
+        performance_record::{PerformanceRecordBuffer, hob_records::MockHobPerformanceDataExtractor},
         performance_table::{FirmwarePerformanceVariable, MockFirmwareBasicBootPerfTable},
     };
 

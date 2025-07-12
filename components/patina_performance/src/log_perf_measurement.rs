@@ -17,8 +17,8 @@ use alloc::ffi::CString;
 use r_efi::efi;
 
 use crate::{
-    performance_measurement_protocol::{CreateMeasurement, PerfAttribute},
     KnownPerfId, Measurement, PERF_MEASUREMENT_MASK,
+    performance_measurement_protocol::{CreateMeasurement, PerfAttribute},
 };
 
 /// Create performance record

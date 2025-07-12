@@ -963,11 +963,7 @@ impl BootServices for StandardBootServices {
             notify_context as *mut c_void,
             event.as_mut_ptr(),
         );
-        if status.is_error() {
-            Err(status)
-        } else {
-            Ok(unsafe { event.assume_init() })
-        }
+        if status.is_error() { Err(status) } else { Ok(unsafe { event.assume_init() }) }
     }
 
     unsafe fn create_event_ex_unchecked<T: Sized + 'static>(
@@ -992,11 +988,7 @@ impl BootServices for StandardBootServices {
             event_group as *const _,
             event.as_mut_ptr(),
         );
-        if status.is_error() {
-            Err(status)
-        } else {
-            Ok(unsafe { event.assume_init() })
-        }
+        if status.is_error() { Err(status) } else { Ok(unsafe { event.assume_init() }) }
     }
 
     fn close_event(&self, event: efi::Event) -> Result<(), efi::Status> {
@@ -1020,11 +1012,7 @@ impl BootServices for StandardBootServices {
             events.as_mut_ptr(),
             index.as_mut_ptr(),
         );
-        if status.is_error() {
-            Err(status)
-        } else {
-            Ok(unsafe { index.assume_init() })
-        }
+        if status.is_error() { Err(status) } else { Ok(unsafe { index.assume_init() }) }
     }
 
     fn check_event(&self, event: efi::Event) -> Result<(), efi::Status> {
@@ -1576,7 +1564,7 @@ impl BootServices for StandardBootServices {
 #[cfg(test)]
 mod test {
     use c_ptr::CPtr;
-    use efi::{protocols::device_path, Boolean, Char16, OpenProtocolInformationEntry};
+    use efi::{Boolean, Char16, OpenProtocolInformationEntry, protocols::device_path};
 
     use super::*;
     use core::{mem::MaybeUninit, slice, sync::atomic::AtomicUsize, sync::atomic::Ordering};

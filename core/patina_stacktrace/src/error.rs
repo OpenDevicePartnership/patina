@@ -55,7 +55,8 @@ impl fmt::Display for Error {
             Error::ExceptionDirectoryNotFound(module) => {
                 write!(
                     fmt,
-                    "Exception directory not found for module {}. Make sure to build with RUSTFLAGS=-Cforce-unwind-tables", module.as_ref().unwrap_or(&no_module_str)
+                    "Exception directory not found for module {}. Make sure to build with RUSTFLAGS=-Cforce-unwind-tables",
+                    module.as_ref().unwrap_or(&no_module_str)
                 )
             }
             Error::RuntimeFunctionNotFound(module, rip_rva) => {

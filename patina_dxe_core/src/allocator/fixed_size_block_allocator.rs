@@ -23,13 +23,13 @@ use core::{
     fmt::{self, Display},
     mem::{align_of, size_of},
     ops::Range,
-    ptr::{slice_from_raw_parts_mut, NonNull},
+    ptr::{NonNull, slice_from_raw_parts_mut},
     result::Result,
 };
 use linked_list_allocator::{align_down_size, align_up_size};
 use mu_pi::dxe_services::GcdMemoryType;
 use patina_sdk::{
-    base::{align_up, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE},
+    base::{UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, align_up},
     error::EfiError,
     uefi_pages_to_size, uefi_size_to_pages,
 };
@@ -1070,8 +1070,10 @@ mod tests {
             }
 
             assert_eq!(NUM_ALLOCATIONS, AllocatorIterator::new(fsb.allocators).count());
-            assert!(AllocatorIterator::new(fsb.allocators)
-                .all(|node| unsafe { (*node).allocator.free() == MIN_EXPANSION - size_of::<AllocatorListNode>() }));
+            assert!(
+                AllocatorIterator::new(fsb.allocators)
+                    .all(|node| unsafe { (*node).allocator.free() == MIN_EXPANSION - size_of::<AllocatorListNode>() })
+            );
         });
     }
 
@@ -1094,9 +1096,11 @@ mod tests {
                 match fsb.fallback_alloc(layout) {
                     Err(FixedSizeBlockAllocatorError::OutOfMemory(mem_req)) => {
                         assert!(
-                                mem_req >= layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size(),
-                                "fallback_alloc should request enough memory to fit aligned layout and an aligned AllocatorListNode"
-                            );
+                            mem_req
+                                >= layout.pad_to_align().size()
+                                    + Layout::new::<AllocatorListNode>().pad_to_align().size(),
+                            "fallback_alloc should request enough memory to fit aligned layout and an aligned AllocatorListNode"
+                        );
                     }
                     _ => {
                         panic!(
@@ -1112,9 +1116,11 @@ mod tests {
                 match fsb.fallback_alloc(layout) {
                     Err(FixedSizeBlockAllocatorError::OutOfMemory(mem_req)) => {
                         assert!(
-                                mem_req >= layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size(),
-                                "fallback_alloc should request enough memory to fit aligned layout and an aligned AllocatorListNode"
-                            );
+                            mem_req
+                                >= layout.pad_to_align().size()
+                                    + Layout::new::<AllocatorListNode>().pad_to_align().size(),
+                            "fallback_alloc should request enough memory to fit aligned layout and an aligned AllocatorListNode"
+                        );
                     }
                     _ => {
                         panic!(

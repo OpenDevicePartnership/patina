@@ -11,9 +11,9 @@
 use crate::config::{MmCommunicationConfiguration, MmiPort};
 use crate::service::platform_mm_control::PlatformMmControl;
 use patina_sdk::component::{
+    IntoComponent,
     params::{Commands, Config},
     service::{IntoService, Service},
-    IntoComponent,
 };
 
 #[cfg(any(feature = "doc", all(target_os = "uefi", target_arch = "x86_64")))]
@@ -138,9 +138,11 @@ mod tests {
     #[test]
     fn test_sw_mmi_manager_without_platform_mm_control() {
         let sw_mmi_manager = SwMmiManager::new();
-        assert!(sw_mmi_manager
-            .entry_point(Config::mock(MmCommunicationConfiguration::default()), None, Commands::mock())
-            .is_ok());
+        assert!(
+            sw_mmi_manager
+                .entry_point(Config::mock(MmCommunicationConfiguration::default()), None, Commands::mock())
+                .is_ok()
+        );
     }
 
     #[test]
@@ -152,12 +154,14 @@ mod tests {
         let platform_mm_control_service: Service<dyn PlatformMmControl> =
             Service::mock(Box::new(mock_platform_mm_control));
 
-        assert!(sw_mmi_manager
-            .entry_point(
-                Config::mock(MmCommunicationConfiguration::default()),
-                Some(platform_mm_control_service),
-                Commands::mock()
-            )
-            .is_ok());
+        assert!(
+            sw_mmi_manager
+                .entry_point(
+                    Config::mock(MmCommunicationConfiguration::default()),
+                    Some(platform_mm_control_service),
+                    Commands::mock()
+                )
+                .is_ok()
+        );
     }
 }
