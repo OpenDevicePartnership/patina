@@ -31,12 +31,9 @@ use crate::{
 
 /// Length of the static buffer used for GDB communication.
 const GDB_BUFF_LEN: usize = 0x2000;
-const MONITOR_BUFF_LEN: usize = GDB_BUFF_LEN / 2;
 
 #[cfg(not(feature = "alloc"))]
 static GDB_BUFFER: [u8; GDB_BUFF_LEN] = [0; GDB_BUFF_LEN];
-#[cfg(not(feature = "alloc"))]
-static MONITOR_BUFFER: [u8; MONITOR_BUFF_LEN] = [0; MONITOR_BUFF_LEN];
 
 // SAFETY: The exception info is not actually stored globally, but this is needed to satisfy
 // the compiler as it will be a contained within the target struct which the GdbStub
@@ -92,7 +89,6 @@ where
 {
     gdb: Option<GdbStubStateMachine<'a, PatinaTarget, SerialConnection<'a, T>>>,
     gdb_buffer: Option<&'a [u8; GDB_BUFF_LEN]>,
-    monitor_buffer: Option<&'a [u8; MONITOR_BUFF_LEN]>,
 }
 
 impl<T: SerialIO> PatinaDebugger<T> {
@@ -111,7 +107,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
                 initial_break: false,
                 initial_break_timeout: 0,
             }),
-            internal: Mutex::new(DebuggerInternal { gdb_buffer: None, gdb: None, monitor_buffer: None }),
+            internal: Mutex::new(DebuggerInternal { gdb_buffer: None, gdb: None }),
             system_state: Mutex::new(SystemState::new()),
         }
     }
@@ -191,17 +187,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
             }
         }
 
-        // Get the stored allocated buffer for the monitor. This needs to be
-        // pre-allocated as allocations should not occur during the debugger.
-        let monitor_buffer = {
-            let const_buffer = debug.monitor_buffer.ok_or(DebugError::NotInitialized)?;
-
-            // SAFETY: The buffer will only ever be used by the target monitor
-            // within the internal state lock.
-            unsafe { core::slice::from_raw_parts_mut(const_buffer.as_ptr() as *mut u8, const_buffer.len()) }
-        };
-
-        let mut target = PatinaTarget::new(exception_info, &self.system_state, monitor_buffer);
+        let mut target = PatinaTarget::new(exception_info, &self.system_state);
 
         // Either take the existing state machine, or start one if this is the first break.
         let mut gdb = match debug.gdb {
@@ -309,9 +295,6 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
                 if #[cfg(feature = "alloc")] {
                     if internal.gdb_buffer.is_none() {
                         internal.gdb_buffer = Some(Box::leak(Box::new([0u8; GDB_BUFF_LEN])));
-                    }
-                    if internal.monitor_buffer.is_none() {
-                        internal.monitor_buffer = Some(Box::leak(Box::new([0u8; MONITOR_BUFF_LEN])));
                     }
                 }
                 else {
