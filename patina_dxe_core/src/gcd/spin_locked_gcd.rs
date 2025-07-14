@@ -13,20 +13,20 @@ use patina_sdk::{base::DEFAULT_CACHE_ATTR, error::EfiError};
 
 use mu_pi::{dxe_services, hob};
 use mu_rust_helpers::function;
-use patina_internal_collections::{node_size, Error as SliceError, Rbt, SliceKey};
+use patina_internal_collections::{Error as SliceError, Rbt, SliceKey, node_size};
 use patina_sdk::{
-    base::{align_up, SIZE_4GB, UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE},
+    base::{SIZE_4GB, UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, align_up},
     guid::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP,
     uefi_pages_to_size,
 };
 use r_efi::efi;
 
 use crate::{
-    allocator::DEFAULT_ALLOCATION_STRATEGY, ensure, error, events::EVENT_DB, protocol_db, protocol_db::INVALID_HANDLE,
-    tpl_lock, GCD,
+    GCD, allocator::DEFAULT_ALLOCATION_STRATEGY, ensure, error, events::EVENT_DB, protocol_db,
+    protocol_db::INVALID_HANDLE, tpl_lock,
 };
 use patina_internal_cpu::paging::create_cpu_paging;
-use patina_paging::{page_allocator::PageAllocator, MemoryAttributes, PageTable, PtError, PtResult};
+use patina_paging::{MemoryAttributes, PageTable, PtError, PtResult, page_allocator::PageAllocator};
 
 use mu_pi::hob::{Hob, HobList};
 
@@ -348,10 +348,10 @@ impl GCD {
         });
 
         self.memory_blocks
-            .resize(slice::from_raw_parts_mut::<'static>(base_address as *mut u8, MEMORY_BLOCK_SLICE_SIZE));
+            .resize(unsafe { slice::from_raw_parts_mut::<'static>(base_address as *mut u8, MEMORY_BLOCK_SLICE_SIZE) });
 
         self.memory_blocks.add(unallocated_memory_space).map_err(|_| EfiError::OutOfResources)?;
-        let idx = self.add_memory_space(memory_type, base_address, len, capabilities)?;
+        let idx = unsafe { self.add_memory_space(memory_type, base_address, len, capabilities) }?;
 
         //initialize attributes on the first block to WB + XP
         match self.set_memory_space_attributes(
@@ -421,7 +421,7 @@ impl GCD {
         }
 
         if self.memory_blocks.capacity() == 0 {
-            return self.init_memory_blocks(memory_type, base_address, len, capabilities);
+            return unsafe { self.init_memory_blocks(memory_type, base_address, len, capabilities) };
         }
         let memory_blocks = &mut self.memory_blocks;
 
@@ -681,11 +681,7 @@ impl GCD {
                 Err(e) => panic!("{e:?}"),
             }
         }
-        if max_address == usize::MAX {
-            Err(EfiError::OutOfResources)
-        } else {
-            Err(EfiError::NotFound)
-        }
+        if max_address == usize::MAX { Err(EfiError::OutOfResources) } else { Err(EfiError::NotFound) }
     }
 
     fn allocate_top_down(
@@ -745,11 +741,7 @@ impl GCD {
                 Err(e) => panic!("{e:?}"),
             }
         }
-        if min_address == 0 {
-            Err(EfiError::OutOfResources)
-        } else {
-            Err(EfiError::NotFound)
-        }
+        if min_address == 0 { Err(EfiError::OutOfResources) } else { Err(EfiError::NotFound) }
     }
 
     fn allocate_address(
@@ -1127,8 +1119,14 @@ impl GCD {
 
 impl Display for GCD {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        writeln!(f, "GCDMemType Range                             Capabilities     Attributes       ImageHandle      DeviceHandle")?;
-        writeln!(f, "========== ================================= ================ ================ ================ ================")?;
+        writeln!(
+            f,
+            "GCDMemType Range                             Capabilities     Attributes       ImageHandle      DeviceHandle"
+        )?;
+        writeln!(
+            f,
+            "========== ================================= ================ ================ ================ ================"
+        )?;
 
         let blocks = &self.memory_blocks;
         let mut current = blocks.first_idx();
@@ -1697,13 +1695,7 @@ impl Display for IoGCD {
                         IoGCD::GCD_IO_TYPE_NAMES[io_type_str_idx],
                         descriptor.base_address,
                         descriptor.base_address + descriptor.length - 1,
-                        {
-                            if descriptor.image_handle == INVALID_HANDLE {
-                                ""
-                            } else {
-                                "*"
-                            }
-                        }
+                        { if descriptor.image_handle == INVALID_HANDLE { "" } else { "*" } }
                     )?;
                 }
             }
@@ -2110,7 +2102,7 @@ impl SpinLockedGcd {
         len: usize,
         capabilities: u64,
     ) -> Result<usize, EfiError> {
-        let result = self.memory.lock().add_memory_space(memory_type, base_address, len, capabilities);
+        let result = unsafe { self.memory.lock().add_memory_space(memory_type, base_address, len, capabilities) };
         if result.is_ok() {
             if let Some(callback) = self.memory_change_callback {
                 callback(MapChangeType::AddMemorySpace);
@@ -2615,8 +2607,10 @@ mod tests {
 
         let mut n = 0;
         while gcd.memory_descriptor_count() < MEMORY_BLOCK_SLICE_LEN {
-            assert!(unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, addr + n, 1, n as u64) }
-                .is_ok());
+            assert!(
+                unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, addr + n, 1, n as u64) }
+                    .is_ok()
+            );
             n += 1;
         }
 
@@ -2797,10 +2791,10 @@ mod tests {
     fn test_remove_memory_space_outside_processor_range() {
         let (mut gcd, _) = create_gcd();
         // Add memory space to remove in a valid area.
-        assert!(unsafe {
-            gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, gcd.maximum_address - 10, 10, 0)
-        }
-        .is_ok());
+        assert!(
+            unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, gcd.maximum_address - 10, 10, 0) }
+                .is_ok()
+        );
 
         let snapshot = copy_memory_block(&gcd);
 
@@ -2880,10 +2874,10 @@ mod tests {
         assert!(unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, addr, 10, 0_u64) }.is_ok());
         let mut n = 1;
         while gcd.memory_descriptor_count() < MEMORY_BLOCK_SLICE_LEN {
-            assert!(unsafe {
-                gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, addr + 10 + n, 1, n as u64)
-            }
-            .is_ok());
+            assert!(
+                unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, addr + 10 + n, 1, n as u64) }
+                    .is_ok()
+            );
             n += 1;
         }
 
@@ -2911,10 +2905,12 @@ mod tests {
             aligned_address + aligned_length
         };
 
-        assert!(unsafe {
-            gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, aligned_address, aligned_length, 0)
-        }
-        .is_ok());
+        assert!(
+            unsafe {
+                gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, aligned_address, aligned_length, 0)
+            }
+            .is_ok()
+        );
 
         let block_count = gcd.memory_descriptor_count();
 
@@ -3880,8 +3876,8 @@ mod tests {
     }
 
     unsafe fn get_memory(size: usize) -> &'static mut [u8] {
-        let addr = alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, UEFI_PAGE_SIZE).unwrap());
-        core::slice::from_raw_parts_mut(addr, size)
+        let addr = unsafe { alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, UEFI_PAGE_SIZE).unwrap()) };
+        unsafe { core::slice::from_raw_parts_mut(addr, size) }
     }
 
     #[test]

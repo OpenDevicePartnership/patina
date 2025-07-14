@@ -18,7 +18,7 @@ use core::{
 };
 
 use crate::{
-    allocator::{core_allocate_pool, core_free_pool, get_memory_map_descriptors, MemoryDescriptorSlice},
+    allocator::{MemoryDescriptorSlice, core_allocate_pool, core_free_pool, get_memory_map_descriptors},
     config_tables::core_install_configuration_table,
     events::EVENT_DB,
     systemtables,
@@ -357,10 +357,10 @@ mod tests {
                 for (i, page) in allocated_pages.iter().enumerate() {
                     let entry = &entry_slice[i];
 
-                    let expected_type = page.1 .0;
+                    let expected_type = page.1.0;
                     let expected_physical_start = page.0 as u64;
                     let expected_number_of_pages = page.2 as u64;
-                    let expected_attribute = page.1 .1;
+                    let expected_attribute = page.1.1;
 
                     assert_eq!(entry.r#type, expected_type);
                     assert_eq!(entry.physical_start, expected_physical_start);

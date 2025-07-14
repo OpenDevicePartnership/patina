@@ -9,9 +9,8 @@ use core::{
 };
 
 use scroll::{
-    self,
+    self, Endian, Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
-    Endian, Pread, Pwrite,
 };
 
 use super::nodes;

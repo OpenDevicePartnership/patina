@@ -17,7 +17,7 @@ use patina_sdk::guid;
 use r_efi::efi;
 
 use crate::{
-    allocator::terminate_memory_map, events::EVENT_DB, protocols::PROTOCOL_DB, systemtables::SYSTEM_TABLE, GCD,
+    GCD, allocator::terminate_memory_map, events::EVENT_DB, protocols::PROTOCOL_DB, systemtables::SYSTEM_TABLE,
 };
 
 static METRONOME_ARCH_PTR: AtomicPtr<protocols::metronome::Protocol> = AtomicPtr::new(core::ptr::null_mut());

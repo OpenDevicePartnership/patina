@@ -29,10 +29,10 @@ extern crate alloc;
 
 use crate::{
     component::{
+        Component,
         metadata::MetaData,
         params::{ComponentInput, Param, ParamFunction},
         storage::{Storage, UnsafeStorageCell},
-        Component,
     },
     error::Result,
 };
@@ -87,7 +87,7 @@ where
             return Ok(false);
         }
 
-        let param_value = Func::Param::get_param(param_state, storage);
+        let param_value = unsafe { Func::Param::get_param(param_state, storage) };
 
         self.func.run(self.input.take().unwrap(), param_value).map(|_| true)
     }
@@ -106,8 +106,8 @@ where
 #[cfg(test)]
 mod tests {
     use crate as patina_sdk;
-    use crate::component::params::{Config, ConfigMut};
     use crate::component::IntoComponent;
+    use crate::component::params::{Config, ConfigMut};
 
     #[derive(IntoComponent)]
     #[entry_point(path = TestStructSuccess::entry_point)]

@@ -74,7 +74,7 @@ extern "efiapi" fn create_event_ex(
 
     match event_type {
         efi::EVT_SIGNAL_EXIT_BOOT_SERVICES | efi::EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE => {
-            return efi::Status::INVALID_PARAMETER
+            return efi::Status::INVALID_PARAMETER;
         }
         _ => (),
     }

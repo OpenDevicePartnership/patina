@@ -14,21 +14,21 @@ mod breakpoint;
 mod monitor;
 
 use gdbstub::target::{
+    Target, TargetError, TargetResult,
     ext::{
         self,
         base::singlethread::{SingleThreadBase, SingleThreadResume, SingleThreadResumeOps},
         breakpoints::{self, BreakpointsOps},
     },
-    Target, TargetError, TargetResult,
 };
 use spin::Mutex;
 
 use crate::{
+    ExceptionInfo,
     arch::{DebuggerArch, SystemArch, UefiArchRegs},
     memory,
     system::SystemState,
     transport::BufferWriter,
-    ExceptionInfo,
 };
 
 /// Addresses that windbg will attempt to read in a loop, reads from these addresses

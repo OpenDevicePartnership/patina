@@ -319,11 +319,7 @@ impl RuntimeServices for StandardRuntimeServices {
             data.as_ptr() as *mut c_void,
         );
 
-        if status.is_error() {
-            Err(status)
-        } else {
-            Ok(())
-        }
+        if status.is_error() { Err(status) } else { Ok(()) }
     }
 
     unsafe fn get_variable_unchecked(
@@ -436,11 +432,7 @@ impl RuntimeServices for StandardRuntimeServices {
             ptr::addr_of_mut!(var_info.maximum_variable_size),
         );
 
-        if status.is_error() {
-            Err(status)
-        } else {
-            Ok(var_info)
-        }
+        if status.is_error() { Err(status) } else { Ok(var_info) }
     }
 }
 

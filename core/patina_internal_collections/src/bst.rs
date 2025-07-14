@@ -14,8 +14,8 @@ use core::{
 };
 
 use crate::{
-    node::{Node, NodeTrait, Storage},
     Error, Result, SliceKey,
+    node::{Node, NodeTrait, Storage},
 };
 
 /// A binary search tree that can hold up to `SIZE` nodes.
@@ -184,7 +184,10 @@ where
     ///
     pub unsafe fn get_mut(&self, key: &D::Key) -> Option<&mut D> {
         match self.get_node(key) {
-            Some(node) => Some(&mut (*node.as_mut_ptr()).data),
+            Some(node) => {
+                let ptr = node.as_mut_ptr();
+                Some(unsafe { &mut (*ptr).data })
+            }
             None => None,
         }
     }
@@ -657,7 +660,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{node_size, Bst};
+    use crate::{Bst, node_size};
 
     const BST_MAX_SIZE: usize = 4096;
 
@@ -869,8 +872,8 @@ mod tests {
 #[cfg(test)]
 mod fuzz_tests {
     extern crate std;
-    use crate::{node_size, Bst};
-    use rand::{seq::SliceRandom, Rng};
+    use crate::{Bst, node_size};
+    use rand::{Rng, seq::SliceRandom};
     use std::{collections::HashSet, vec::Vec};
 
     const BST_MAX_SIZE: usize = 4096;

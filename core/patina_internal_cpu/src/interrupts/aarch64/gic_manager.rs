@@ -1,4 +1,4 @@
-use arm_gic::gicv3::{registers::GICD, GicV3, IntId, Trigger};
+use arm_gic::gicv3::{GicV3, IntId, Trigger, registers::GICD};
 use core::ptr::{addr_of, addr_of_mut, write_volatile};
 use patina_sdk::error::EfiError;
 use r_efi::efi;
@@ -78,11 +78,7 @@ pub fn get_system_gic_version() -> GicVersion {
 pub unsafe fn get_max_interrupt_number(gicd: *mut GICD) -> u32 {
     let max_num = unsafe { addr_of!((*gicd).typer).read_volatile() & 0x1f };
 
-    if max_num == 0x1f {
-        1020
-    } else {
-        (max_num + 1) * 32
-    }
+    if max_num == 0x1f { 1020 } else { (max_num + 1) * 32 }
 }
 
 pub fn get_mpidr() -> u64 {
@@ -225,11 +221,7 @@ impl AArch64InterruptInitializer {
             }
         };
 
-        if level {
-            Trigger::Level
-        } else {
-            Trigger::Edge
-        }
+        if level { Trigger::Level } else { Trigger::Edge }
     }
 
     pub fn set_trigger_type(&mut self, interrupt_source: u64, trigger_type: Trigger) -> Result<(), EfiError> {

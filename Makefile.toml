@@ -105,10 +105,16 @@ private = true
 command = "cargo"
 args = ["check", "@@split(STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 
+[tasks.check_tests]
+description = "Checks rust test code for build errors with results."
+private = true
+command = "cargo"
+args = ["test", "--no-run", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+
 [tasks.check]
 description = "Checks rust code for errors. Example `cargo make check`"
 clear = true
-run_task = [{ name = ["check_no_std", "check_std"], parallel = true }]
+run_task = [{ name = ["check_no_std", "check_std", "check_tests"], parallel = true }]
 
 [tasks.test]
 description = "Builds all rust tests in the workspace. Example `cargo make test`"

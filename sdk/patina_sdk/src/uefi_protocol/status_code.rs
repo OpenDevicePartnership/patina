@@ -64,11 +64,7 @@ impl StatusCodeRuntimeProtocol {
         let status =
             (self.protocol.report_status_code)(status_code_type, status_code_value, instance, caller_id, data_ptr);
 
-        if status.is_error() {
-            Err(status)
-        } else {
-            Ok(())
-        }
+        if status.is_error() { Err(status) } else { Ok(()) }
     }
 }
 

@@ -89,7 +89,7 @@ pub mod test {
 
     use crate::performance_record::{GenericPerformanceRecord, PerformanceRecordBuffer};
 
-    use super::{merge_hob_performance_buffer, HobPerformanceData};
+    use super::{HobPerformanceData, merge_hob_performance_buffer};
 
     #[test]
     fn test_merge_hob_performance_buffer_with_none() {

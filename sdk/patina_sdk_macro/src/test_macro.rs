@@ -11,7 +11,7 @@
 //!
 use std::collections::HashMap;
 
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
 use syn::{Attribute, ItemFn, Meta};
 
 const KEY_SHOULD_FAIL: &str = "should_fail";
