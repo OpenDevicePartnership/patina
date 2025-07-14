@@ -9,7 +9,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use patina_sdk::{
-    component::{params::Config, IntoComponent},
+    component::{IntoComponent, params::Config},
     error::Result,
 };
 

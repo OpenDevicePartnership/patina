@@ -146,11 +146,7 @@ impl<R: RuntimeServices> FallibleStreamingIterator for VariableNameIterator<'_, 
     }
 
     fn get(&self) -> Option<&Self::Item> {
-        if self.finished {
-            None
-        } else {
-            Some(&self.current)
-        }
+        if self.finished { None } else { Some(&self.current) }
     }
 }
 
@@ -160,11 +156,11 @@ mod test {
 
     use super::*;
     use crate::runtime_services::{
-        test::{
-            mock_efi_get_next_variable_name, runtime_services, DUMMY_FIRST_NAME, DUMMY_FIRST_NAMESPACE,
-            DUMMY_SECOND_NAME, DUMMY_SECOND_NAMESPACE,
-        },
         StandardRuntimeServices,
+        test::{
+            DUMMY_FIRST_NAME, DUMMY_FIRST_NAMESPACE, DUMMY_SECOND_NAME, DUMMY_SECOND_NAMESPACE,
+            mock_efi_get_next_variable_name, runtime_services,
+        },
     };
     use std::mem;
 

@@ -15,18 +15,18 @@
 use alloc::boxed::Box;
 use gdbstub::{
     conn::ConnectionExt,
-    stub::{state_machine::GdbStubStateMachine, GdbStubBuilder, SingleThreadStopReason},
+    stub::{GdbStubBuilder, SingleThreadStopReason, state_machine::GdbStubStateMachine},
 };
 use patina_internal_cpu::interrupts::{ExceptionType, HandlerType, InterruptHandler, InterruptManager};
 use patina_sdk::serial::SerialIO;
 use spin::Mutex;
 
 use crate::{
+    DebugError, Debugger, DebuggerLoggingPolicy, ExceptionInfo,
     arch::{DebuggerArch, SystemArch},
     dbg_target::PatinaTarget,
     system::SystemState,
     transport::{LoggingSuspender, SerialConnection},
-    DebugError, Debugger, DebuggerLoggingPolicy, ExceptionInfo,
 };
 
 /// Length of the static buffer used for GDB communication.

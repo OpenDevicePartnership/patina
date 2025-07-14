@@ -9,7 +9,7 @@
 
 use core::ptr;
 
-use patina_paging::{page_allocator::PageAllocator, MemoryAttributes, PageTable};
+use patina_paging::{MemoryAttributes, PageTable, page_allocator::PageAllocator};
 
 use crate::arch::DebuggerArch;
 

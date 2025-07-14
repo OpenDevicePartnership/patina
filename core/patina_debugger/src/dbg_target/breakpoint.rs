@@ -12,7 +12,7 @@
 
 use gdbstub::{
     arch::Arch,
-    target::{ext::breakpoints, TargetResult},
+    target::{TargetResult, ext::breakpoints},
 };
 
 use crate::{

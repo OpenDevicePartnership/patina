@@ -154,7 +154,7 @@ impl CommunicateBuffer {
         if buffer.is_null() {
             panic!("CommunicateBuffer::from_raw_parts: null buffer pointer");
         }
-        Self::new(unsafe { Pin::new_unchecked(core::slice::from_raw_parts_mut(buffer, size)) }, id)
+        unsafe { Self::new(Pin::new_unchecked(core::slice::from_raw_parts_mut(buffer, size)), id) }
     }
 
     /// Returns the length of the buffer.

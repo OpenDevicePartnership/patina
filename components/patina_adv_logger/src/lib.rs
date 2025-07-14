@@ -42,7 +42,7 @@
 //! ```
 //!
 //! For the protocol to be created for use of by external components, the platform
-//! should invoke dxecore.start with the advanced logger component.
+//! should invoke patina_dxe_core.start with the advanced logger component.
 //!
 //! ## License
 //!

@@ -10,7 +10,7 @@ use alloc::{boxed::Box, vec, vec::Vec};
 use mu_pi::fw_fs::{SectionExtractor, SectionMetaData};
 use r_efi::efi;
 
-use alloc_no_stdlib::{self, define_index_ops_mut, SliceWrapper, SliceWrapperMut};
+use alloc_no_stdlib::{self, SliceWrapper, SliceWrapperMut, define_index_ops_mut};
 use brotli_decompressor::{BrotliDecompressStream, BrotliResult, BrotliState, HuffmanCode};
 
 //Rebox and HeapAllocator exist to satisfy BrotliDecompress custom allocation requirements.

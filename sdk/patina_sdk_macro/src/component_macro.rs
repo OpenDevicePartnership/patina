@@ -9,10 +9,10 @@
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 use syn::{
+    Attribute, Generics, ItemEnum, ItemStruct, Meta, Token,
     parse::{Parse, Parser},
     parse2,
     punctuated::Punctuated,
-    Attribute, Generics, ItemEnum, ItemStruct, Meta, Token,
 };
 
 /// A struct responsible for parsing any additional #[...] attributes associated with the main derive attribute.

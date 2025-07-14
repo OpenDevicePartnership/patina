@@ -9,13 +9,13 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::boxed::Box;
-use patina_paging::{aarch64::AArch64PageTable, MemoryAttributes, PageTable, PagingType, PtError, PtResult};
+use patina_paging::{MemoryAttributes, PageTable, PagingType, PtError, PtResult, aarch64::AArch64PageTable};
 
 use patina_paging::page_allocator::PageAllocator;
 use r_efi::efi;
 
 #[cfg(test)]
-use std::alloc::{dealloc, Layout};
+use std::alloc::{Layout, dealloc};
 
 /// The aarch64 paging implementation. It acts as a bridge between the EFI CPU
 /// Architecture Protocol and the aarch64 paging implementation.

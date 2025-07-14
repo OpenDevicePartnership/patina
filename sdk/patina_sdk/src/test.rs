@@ -255,7 +255,7 @@ impl TestRunner {
 
 #[cfg(test)]
 mod tests {
-    use crate::component::{params::Config, IntoComponent, Storage};
+    use crate::component::{IntoComponent, Storage, params::Config};
 
     // A test function where we mock DxeComponentInterface to return what we want for the test.
     #[allow(unused)]

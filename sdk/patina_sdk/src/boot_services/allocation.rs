@@ -10,7 +10,7 @@ use core::ops::{BitOr, BitOrAssign};
 
 use r_efi::efi;
 
-use super::{boxed::BootServicesBox, BootServices};
+use super::{BootServices, boxed::BootServicesBox};
 
 /// The way to perform a memory allocation.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

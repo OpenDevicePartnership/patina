@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
-use quote::{quote, ToTokens};
-use syn::{parse::Parse, spanned::Spanned, Attribute, Generics, ItemEnum, ItemStruct, Meta};
+use quote::{ToTokens, quote};
+use syn::{Attribute, Generics, ItemEnum, ItemStruct, Meta, parse::Parse, spanned::Spanned};
 
 struct AttrConfig {
     hob_guid: TokenStream,

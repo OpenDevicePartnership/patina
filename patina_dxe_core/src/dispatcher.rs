@@ -282,7 +282,9 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
             //process freshly discovered FV
             let fvb_ptr = match PROTOCOL_DB.get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID) {
                 Err(_) => {
-                    panic!("get_interface_for_handle failed to return an interface on a handle where it should have existed")
+                    panic!(
+                        "get_interface_for_handle failed to return an interface on a handle where it should have existed"
+                    )
                 }
                 Ok(protocol) => protocol as *mut firmware_volume_block::Protocol,
             };
@@ -503,11 +505,7 @@ pub fn core_dispatcher() -> Result<(), EfiError> {
 
     perf_function_end(function!(), &CALLER_ID, create_performance_measurement);
 
-    if something_dispatched {
-        Ok(())
-    } else {
-        Err(EfiError::NotFound)
-    }
+    if something_dispatched { Ok(()) } else { Err(EfiError::NotFound) }
 }
 
 pub fn init_dispatcher(extractor: Box<dyn SectionExtractor>) {

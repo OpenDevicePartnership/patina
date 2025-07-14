@@ -10,8 +10,8 @@
 extern crate alloc;
 
 use crate::{
-    node::{Node, NodeTrait, Storage},
     SliceKey,
+    node::{Node, NodeTrait, Storage},
 };
 
 use super::{Error, Result};
@@ -194,7 +194,7 @@ where
     ///
     pub unsafe fn get_mut(&self, key: &D::Key) -> Option<&mut D> {
         match self.get_node(key) {
-            Some(node) => Some(&mut (*node.as_mut_ptr()).data),
+            Some(node) => Some(unsafe { &mut (*node.as_mut_ptr()).data }),
             None => None,
         }
     }
@@ -1817,8 +1817,8 @@ mod tests {
 #[cfg(test)]
 mod fuzz_tests {
     extern crate std;
-    use crate::{node_size, Rbt};
-    use rand::{seq::SliceRandom, Rng};
+    use crate::{Rbt, node_size};
+    use rand::{Rng, seq::SliceRandom};
     use std::{collections::HashSet, vec::Vec};
 
     const RBT_MAX_SIZE: usize = 0x1000;

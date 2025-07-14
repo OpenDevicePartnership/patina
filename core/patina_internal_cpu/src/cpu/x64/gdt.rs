@@ -12,15 +12,15 @@ use core::ptr::addr_of;
 use lazy_static::lazy_static;
 use patina_sdk::base::SIZE_4GB;
 use x86_64::instructions::{
-    segmentation::{Segment, CS, DS, ES, FS, GS, SS},
+    segmentation::{CS, DS, ES, FS, GS, SS, Segment},
     tables::load_tss,
 };
 use x86_64::{
+    VirtAddr,
     structures::{
         gdt::{Descriptor, DescriptorFlags, GlobalDescriptorTable, SegmentSelector},
         tss::TaskStateSegment,
     },
-    VirtAddr,
 };
 
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
@@ -211,7 +211,7 @@ pub fn init() {
 mod test {
     use super::GDT;
     use super::{
-        LINEAR_CODE64_SEL, LINEAR_CODE_SEL, LINEAR_DATA64_SEL, LINEAR_SEL, SPARE5_SEL, SYS_CODE16_SEL, SYS_CODE_SEL,
+        LINEAR_CODE_SEL, LINEAR_CODE64_SEL, LINEAR_DATA64_SEL, LINEAR_SEL, SPARE5_SEL, SYS_CODE_SEL, SYS_CODE16_SEL,
         SYS_DATA_SEL,
     };
 

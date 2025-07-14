@@ -153,11 +153,7 @@ pub unsafe trait Param {
     /// A wrapper around [validate](Param::validate) that maps the boolean to a Result<(), &'static str>. where the
     /// &'static str is the name of the type that failed validation.
     fn try_validate(state: &Self::State, storage: UnsafeStorageCell) -> Result<(), &'static str> {
-        if Self::validate(state, storage) {
-            Ok(())
-        } else {
-            Err(core::any::type_name::<Self>())
-        }
+        if Self::validate(state, storage) { Ok(()) } else { Err(core::any::type_name::<Self>()) }
     }
 
     /// Initializes this Parameter's [State](Param::State).
@@ -264,7 +260,7 @@ unsafe impl<P: Param> Param for Option<P> {
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
         match P::validate(state, storage) {
-            true => Some(P::get_param(state, storage)),
+            true => Some(unsafe { P::get_param(state, storage) }),
             false => None,
         }
     }
@@ -338,7 +334,7 @@ unsafe impl<T: Default + 'static> Param for Config<'_, T> {
         lookup_id: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        Config::from(storage.storage().get_raw_config(*lookup_id))
+        Config::from(unsafe { storage.storage().get_raw_config(*lookup_id) })
     }
 
     // `Config` is only available if the underlying datum is locked.
@@ -441,7 +437,7 @@ unsafe impl<T: Default + 'static> Param for ConfigMut<'_, T> {
         lookup_id: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        ConfigMut::from(storage.storage().get_raw_config_mut(*lookup_id))
+        ConfigMut::from(unsafe { storage.storage().get_raw_config_mut(*lookup_id) })
     }
 
     // `ConfigMut` is only available if the underlying datum is not locked.
@@ -558,7 +554,7 @@ unsafe impl Param for Commands<'_> {
         _state: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        Commands { queue: storage.storage_mut().deferred() }
+        Commands { queue: unsafe { storage.storage_mut().deferred() } }
     }
 
     fn validate(_state: &Self::State, _storage: UnsafeStorageCell) -> bool {
@@ -583,7 +579,7 @@ unsafe impl Param for StandardBootServices {
         _state: &'state Self::State,
         storage: UnsafeStorageCell<'_>,
     ) -> Self::Item<'static, 'state> {
-        StandardBootServices::clone(storage.storage().boot_services())
+        StandardBootServices::clone(unsafe { storage.storage().boot_services() })
     }
 
     fn validate(_state: &Self::State, storage: UnsafeStorageCell) -> bool {
@@ -601,7 +597,7 @@ unsafe impl Param for StandardRuntimeServices {
         _state: &'state Self::State,
         storage: UnsafeStorageCell<'_>,
     ) -> Self::Item<'static, 'state> {
-        StandardRuntimeServices::clone(storage.storage().runtime_services())
+        StandardRuntimeServices::clone(unsafe { storage.storage().runtime_services() })
     }
 
     fn validate(_state: &Self::State, storage: UnsafeStorageCell) -> bool {
@@ -621,7 +617,10 @@ macro_rules! impl_component_param_tuple {
 
             unsafe fn get_param<'storage, 'state>(state: &'state  Self::State, _storage: UnsafeStorageCell<'storage>) -> Self::Item<'storage, 'state> {
                 let ($($param,)*) = state;
-                ($($param::get_param($param, _storage),)*)
+                #[allow(unused_unsafe)]
+                ($(
+                    unsafe { $param::get_param($param, _storage) },
+                )*)
             }
 
             fn try_validate(state: &Self::State, _storage: UnsafeStorageCell) -> Result<(), &'static str> {
@@ -657,7 +656,7 @@ impl_component_param_tuple!(T1, T2, T3, T4, T5);
 #[cfg(test)]
 mod tests {
     use crate::{
-        component::{storage::Storage, IntoComponent},
+        component::{IntoComponent, storage::Storage},
         error::Result,
     };
 
@@ -821,8 +820,10 @@ mod tests {
         let id = ConfigMut::<i32>::init_state(&mut storage, &mut mock_metadata);
 
         // Trying to access it with config, validation should fail because it is unlocked.
-        assert!(Config::<i32>::try_validate(&id, (&storage).into())
-            .is_err_and(|err| err == "patina_sdk::component::params::Config<i32>"));
+        assert!(
+            Config::<i32>::try_validate(&id, (&storage).into())
+                .is_err_and(|err| err == "patina_sdk::component::params::Config<i32>")
+        );
     }
 
     #[test]
@@ -831,8 +832,10 @@ mod tests {
         let mut mock_metadata = MetaData::new::<i32>();
 
         let id = Config::<i32>::init_state(&mut storage, &mut mock_metadata);
-        assert!(ConfigMut::<i32>::try_validate(&id, (&storage).into())
-            .is_err_and(|err| err == "patina_sdk::component::params::ConfigMut<i32>"));
+        assert!(
+            ConfigMut::<i32>::try_validate(&id, (&storage).into())
+                .is_err_and(|err| err == "patina_sdk::component::params::ConfigMut<i32>")
+        );
     }
 
     #[test]

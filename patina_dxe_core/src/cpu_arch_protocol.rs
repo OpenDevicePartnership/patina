@@ -15,7 +15,7 @@ use patina_sdk::{
 };
 use r_efi::efi;
 
-use mu_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandler, Protocol, PROTOCOL_GUID};
+use mu_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandler, PROTOCOL_GUID, Protocol};
 
 #[repr(C)]
 pub struct EfiCpuArchProtocolImpl {

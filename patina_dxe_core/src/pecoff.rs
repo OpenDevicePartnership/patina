@@ -13,7 +13,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use scroll::{Pread, Pwrite, LE};
+use scroll::{LE, Pread, Pwrite};
 
 pub mod error;
 pub mod relocation;
@@ -22,7 +22,7 @@ mod resource_directory;
 #[allow(unused_imports)]
 pub use goblin::pe::section_table::IMAGE_SCN_CNT_CODE;
 
-use relocation::{parse_relocation_blocks, RelocationBlock};
+use relocation::{RelocationBlock, parse_relocation_blocks};
 use resource_directory::{DataEntry, Directory, DirectoryEntry, DirectoryString};
 
 // Magic value for TE header.
@@ -340,7 +340,7 @@ pub fn load_resource_section(pe_info: &UefiPeInfo, image: &[u8]) -> error::Resul
                 None => {
                     return Err(error::Error::Goblin(goblin::error::Error::Malformed(String::from(
                         "HII resource section size is invalid",
-                    ))))
+                    ))));
                 }
             };
             let resource_section = image

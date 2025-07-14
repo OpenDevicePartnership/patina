@@ -13,8 +13,8 @@ use crate::{
     config::{CommunicateBuffer, EfiMmCommunicateHeader, MmCommunicationConfiguration},
 };
 use patina_sdk::component::{
-    service::{IntoService, Service},
     IntoComponent, Storage,
+    service::{IntoService, Service},
 };
 use r_efi::efi;
 extern crate alloc;

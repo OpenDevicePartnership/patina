@@ -11,8 +11,8 @@ use alloc::{
 };
 
 use scroll::{
-    ctx::{TryFromCtx, TryIntoCtx},
     Pread, Pwrite,
+    ctx::{TryFromCtx, TryIntoCtx},
 };
 
 use super::device_path_node::{DevicePathNode, UnknownDevicePathNode};

@@ -324,7 +324,7 @@ impl EventDb {
         let id = event as usize;
         let current_event = self.events.get_mut(&id).ok_or(EfiError::InvalidParameter)?;
 
-        //explicitly match the Tianocore C implementation by not queueing an additional notify.
+        //explicitly match the EDK II C implementation by not queueing an additional notify.
         if current_event.signaled {
             return Ok(());
         }
@@ -363,11 +363,7 @@ impl EventDb {
 
     fn is_signaled(&mut self, event: efi::Event) -> bool {
         let id = event as usize;
-        if let Some(event) = self.events.get(&id) {
-            event.signaled
-        } else {
-            false
-        }
+        if let Some(event) = self.events.get(&id) { event.signaled } else { false }
     }
 
     fn queue_event_notify(&mut self, event: efi::Event) -> Result<(), EfiError> {

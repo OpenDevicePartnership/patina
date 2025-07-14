@@ -15,6 +15,7 @@ use super::{AllocationStrategy, DEFAULT_ALLOCATION_STRATEGY};
 
 use crate::{gcd::SpinLockedGcd, tpl_lock};
 
+use alloc::vec::Vec;
 use core::{
     alloc::{AllocError, Allocator, GlobalAlloc, Layout},
     cmp::max,
@@ -22,13 +23,13 @@ use core::{
     fmt::{self, Display},
     mem::{align_of, size_of},
     ops::Range,
-    ptr::{slice_from_raw_parts_mut, NonNull},
+    ptr::{NonNull, slice_from_raw_parts_mut},
     result::Result,
 };
 use linked_list_allocator::{align_down_size, align_up_size};
 use mu_pi::dxe_services::GcdMemoryType;
 use patina_sdk::{
-    base::{align_up, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE},
+    base::{UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, align_up},
     error::EfiError,
     uefi_pages_to_size, uefi_size_to_pages,
 };
@@ -711,8 +712,9 @@ impl SpinLockedFixedSizeBlockAllocator {
 
     /// Returns an iterator of the ranges of memory owned by this allocator
     /// Returns an empty iterator if the allocator does not own any memory.
-    pub fn get_memory_ranges(&self) -> impl Iterator<Item = Range<usize>> {
-        self.lock().get_memory_ranges()
+    pub fn get_memory_ranges(&self) -> alloc::vec::IntoIter<Range<usize>> {
+        let ranges: Vec<_> = self.lock().get_memory_ranges().collect();
+        ranges.into_iter()
     }
 
     /// Returns the allocator handle associated with this allocator.
@@ -747,7 +749,7 @@ unsafe impl GlobalAlloc for SpinLockedFixedSizeBlockAllocator {
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         if let Some(ptr) = NonNull::new(ptr) {
-            self.deallocate(ptr, layout)
+            unsafe { self.deallocate(ptr, layout) }
         }
     }
 }
@@ -825,7 +827,7 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
         }
     }
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        self.lock().dealloc(ptr, layout)
+        unsafe { self.lock().dealloc(ptr, layout) }
     }
 }
 
@@ -1068,8 +1070,10 @@ mod tests {
             }
 
             assert_eq!(NUM_ALLOCATIONS, AllocatorIterator::new(fsb.allocators).count());
-            assert!(AllocatorIterator::new(fsb.allocators)
-                .all(|node| unsafe { (*node).allocator.free() == MIN_EXPANSION - size_of::<AllocatorListNode>() }));
+            assert!(
+                AllocatorIterator::new(fsb.allocators)
+                    .all(|node| unsafe { (*node).allocator.free() == MIN_EXPANSION - size_of::<AllocatorListNode>() })
+            );
         });
     }
 
@@ -1092,9 +1096,11 @@ mod tests {
                 match fsb.fallback_alloc(layout) {
                     Err(FixedSizeBlockAllocatorError::OutOfMemory(mem_req)) => {
                         assert!(
-                                mem_req >= layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size(),
-                                "fallback_alloc should request enough memory to fit aligned layout and an aligned AllocatorListNode"
-                            );
+                            mem_req
+                                >= layout.pad_to_align().size()
+                                    + Layout::new::<AllocatorListNode>().pad_to_align().size(),
+                            "fallback_alloc should request enough memory to fit aligned layout and an aligned AllocatorListNode"
+                        );
                     }
                     _ => {
                         panic!(
@@ -1110,9 +1116,11 @@ mod tests {
                 match fsb.fallback_alloc(layout) {
                     Err(FixedSizeBlockAllocatorError::OutOfMemory(mem_req)) => {
                         assert!(
-                                mem_req >= layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size(),
-                                "fallback_alloc should request enough memory to fit aligned layout and an aligned AllocatorListNode"
-                            );
+                            mem_req
+                                >= layout.pad_to_align().size()
+                                    + Layout::new::<AllocatorListNode>().pad_to_align().size(),
+                            "fallback_alloc should request enough memory to fit aligned layout and an aligned AllocatorListNode"
+                        );
                     }
                     _ => {
                         panic!(

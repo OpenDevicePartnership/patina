@@ -94,6 +94,23 @@ not. It will also validate that ARM64 DXE_RUNTIME_DRIVERs have a multiple of 64K
 > alignment, then it is recommended to use 4 KB for everything except for ARM64 DXE_RUNTIME_DRIVERs, which should use
 > 64 KB, e.g. `/ALIGN:0x10000` for MSVC and `-z common-page-size=0x10000` for GCC/CLANG.
 
+#### 1.4 CpuDxe Is No Longer Used
+
+EDK II supplies a driver named `CpuDxe` that provides CPU related functionality to a platform. In Patina DXE Core, this
+is part of the core, not offloaded to a driver. As a result, the CPU Arch and memory attributes protocols are owned by
+the Patina DXE Core. MultiProcessor (MP) Services are not part of the core. ARM64 already does not have MP Services
+owned by `CpuDxe`, `ArmPsciMpServicesDxe` owns them. There is an x64 implementation of
+[`MpDxe`](https://github.com/microsoft/mu_basecore/blob/HEAD/UefiCpuPkg/MpDxe/MpDxe.inf) that platforms should add to
+their flash file for use with the Patina DXE Core if MP services are desired.
+
+On ARM64 systems, when Patina assumes ownership of `CpuDxe` it also encompasses the functionality provided by
+`ArmGicDxe`. This is because the GIC is considered a prerequisite for `CpuDxe` to handle interrupts correctly. As such,
+ARM64 platforms also should not include `ArmGicDxe`.
+
+> **Guidance:**
+> Platforms must not include `CpuDxe` in their platforms and instead use CPU services from Patina DXE Core and MP Services
+> from a separate C based driver. ARM64 platforms should not use `ArmGicDxe`.
+
 ### 2. Hand Off Block (HOB) Requirements
 
 The following are the Patina DXE Core HOB requirements.

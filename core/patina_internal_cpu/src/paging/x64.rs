@@ -9,9 +9,9 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::boxed::Box;
-use patina_mtrr::{create_mtrr_lib, error::MtrrError, structs::MtrrMemoryCacheType, Mtrr};
+use patina_mtrr::{Mtrr, create_mtrr_lib, error::MtrrError, structs::MtrrMemoryCacheType};
 use patina_paging::{
-    page_allocator::PageAllocator, x64::X64PageTable, MemoryAttributes, PageTable, PagingType, PtError, PtResult,
+    MemoryAttributes, PageTable, PagingType, PtError, PtResult, page_allocator::PageAllocator, x64::X64PageTable,
 };
 use patina_sdk::error::EfiError;
 use r_efi::efi;

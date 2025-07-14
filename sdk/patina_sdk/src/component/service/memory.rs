@@ -638,7 +638,7 @@ unsafe impl Allocator for PageFree {
         //         into a smart pointer. The smart pointers themselves will ensure
         //         that the memory is safe to free.
 
-        if self.memory_manager.free_pages(self.address, self.page_count).is_err() {
+        if unsafe { self.memory_manager.free_pages(self.address, self.page_count).is_err() } {
             debug_assert!(false, "Failed to free page allocation!");
             log::error!("Failed to free page allocation at {:x}!", self.address);
         }
@@ -789,7 +789,7 @@ pub use mock::StdMemoryManager;
 mod mock {
     extern crate std;
     use std::{
-        alloc::{alloc, dealloc, Layout},
+        alloc::{Layout, alloc, dealloc},
         collections::HashMap,
         sync::Mutex,
     };
