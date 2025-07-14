@@ -198,6 +198,14 @@ pub trait IntoComponent<Input> {
     fn into_component(self) -> alloc::boxed::Box<dyn Component>;
 }
 
+/// A prelude module that re-exports commonly used items from the `component` module.
+pub mod prelude {
+    pub use crate::component::hob::{FromHob, Hob};
+    pub use crate::component::params::{Commands, Config, ConfigMut};
+    pub use crate::component::service::Service;
+    pub use crate::error::{EfiError, Result};
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
