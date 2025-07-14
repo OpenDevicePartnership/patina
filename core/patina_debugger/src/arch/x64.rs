@@ -1,4 +1,4 @@
-use core::{arch::asm, fmt::Write, num::NonZeroUsize};
+use core::{arch::asm, num::NonZeroUsize};
 
 use gdbstub::{
     arch::{RegId, Registers},
@@ -8,7 +8,7 @@ use patina_internal_cpu::interrupts::ExceptionContext;
 use patina_paging::PagingType;
 
 use super::{DebuggerArch, UefiArchRegs};
-use crate::{ExceptionInfo, ExceptionType, memory, transport::BufferWriter};
+use crate::{ExceptionInfo, ExceptionType, memory};
 
 /// The "int 3" instruction.
 const INT_3: u8 = 0xCC;
@@ -152,7 +152,7 @@ impl DebuggerArch for X64Arch {
         }
     }
 
-    fn monitor_cmd(tokens: &mut core::str::SplitWhitespace, out: &mut BufferWriter) {
+    fn monitor_cmd(tokens: &mut core::str::SplitWhitespace, out: &mut dyn core::fmt::Write) {
         match tokens.next() {
             Some("regs") => {
                 let mut gdtr: u64 = 0;
