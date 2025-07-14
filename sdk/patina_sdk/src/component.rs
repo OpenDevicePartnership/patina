@@ -69,6 +69,11 @@
 //!
 //! ### Examples
 //!
+//! ### Compiled Examples
+//!
+//! This crate has multiple example binaries in it's `example` folder that can be compiled and executed. These show
+//! implementations of common use cases and usage models for components and their parameters.
+//!
 //! ### Function Component Example
 //!
 //! ```rust

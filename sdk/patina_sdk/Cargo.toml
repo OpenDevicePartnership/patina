@@ -16,6 +16,9 @@ harness = false
 name = "bench_service"
 harness = false
 
+[[example]]
+name = "basic_hob_usage"
+
 [dependencies]
 patina_sdk_macro = { workspace = true }
 fixedbitset = { workspace = true }
