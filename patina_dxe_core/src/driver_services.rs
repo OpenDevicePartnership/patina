@@ -814,10 +814,22 @@ mod tests {
             // Track whether security2 was called
             static SECURITY2_CALLED: AtomicBool = AtomicBool::new(false);
 
-            // Create a mock Security2 protocol that returns SUCCESS and sets our flag
+            // Mock file_authentication function with proper UEFI calling convention
+            extern "efiapi" fn mock_file_authentication(
+                _this: *mut u8,
+                _device_path: *mut u8,
+                _file_buffer: *mut u8,
+                _file_size: usize,
+                _boot_policy: bool,
+            ) -> efi::Status {
+                SECURITY2_CALLED.store(true, Ordering::SeqCst);
+                efi::Status::SUCCESS
+            }
+
+            // Create a mock Security2 protocol that uses the extern function
             #[repr(C)]
             struct MockSecurity2Protocol {
-                file_authentication: fn(
+                file_authentication: extern "efiapi" fn(
                     this: *mut u8,
                     device_path: *mut u8,
                     file_buffer: *mut u8,
@@ -826,12 +838,7 @@ mod tests {
                 ) -> efi::Status,
             }
 
-            let security2 = Box::new(MockSecurity2Protocol {
-                file_authentication: |_this, _device_path, _file_buffer, _file_size, _boot_policy| {
-                    SECURITY2_CALLED.store(true, Ordering::SeqCst);
-                    efi::Status::SUCCESS
-                },
-            });
+            let security2 = Box::new(MockSecurity2Protocol { file_authentication: mock_file_authentication });
             let security2_ptr = Box::into_raw(security2) as *mut core::ffi::c_void;
 
             // Install the security2 protocol in the protocol database
