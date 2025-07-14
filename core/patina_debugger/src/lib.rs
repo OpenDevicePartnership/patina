@@ -165,6 +165,8 @@ enum DebugError {
     GdbStubError(gdbstub::stub::GdbStubError<(), patina_sdk::error::EfiError>),
     /// Failure to reboot the system.
     RebootFailure,
+    /// Failure in the transport layer.
+    TransportFailure,
 }
 
 /// Policy for how the debugger will handle logging on the system.
