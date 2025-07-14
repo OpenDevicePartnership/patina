@@ -17,8 +17,8 @@ use patina_sdk::error::EfiError;
 
 use r_efi::efi;
 
-use crate::protocol_db::DXE_CORE_HANDLE;
 use crate::protocols::PROTOCOL_DB;
+use crate::protocol_db::DXE_CORE_HANDLE;
 
 fn get_bindings_for_handles(handles: Vec<efi::Handle>) -> Vec<*mut efi::protocols::driver_binding::Protocol> {
     handles
@@ -650,7 +650,7 @@ mod tests {
             Ok((handle, _)) => handle,
             Err(_) => DXE_CORE_HANDLE, // Fallback to DXE_CORE_HANDLE
         };
-
+        
         Box::new(efi::protocols::driver_binding::Protocol {
             version,
             supported: supported_fn,
@@ -1464,14 +1464,22 @@ mod tests {
             let driver_device_path = Box::new(create_vendor_defined_device_path(0x2222));
             let driver_device_path_ptr = Box::into_raw(driver_device_path) as *mut core::ffi::c_void;
             let (driver_handle, _) = PROTOCOL_DB
-                .install_protocol_interface(None, efi::protocols::device_path::PROTOCOL_GUID, driver_device_path_ptr)
+                .install_protocol_interface(
+                    None,
+                    efi::protocols::device_path::PROTOCOL_GUID,
+                    driver_device_path_ptr,
+                )
                 .unwrap();
 
             // Create child handle with VendorDefined device path
             let child_device_path = Box::new(create_vendor_defined_device_path(0x3333));
             let child_device_path_ptr = Box::into_raw(child_device_path) as *mut core::ffi::c_void;
             let (child_handle, _) = PROTOCOL_DB
-                .install_protocol_interface(None, efi::protocols::device_path::PROTOCOL_GUID, child_device_path_ptr)
+                .install_protocol_interface(
+                    None,
+                    efi::protocols::device_path::PROTOCOL_GUID,
+                    child_device_path_ptr,
+                )
                 .unwrap();
 
             // Create driver binding protocol
@@ -1481,7 +1489,7 @@ mod tests {
                 start: mock_start_success,
                 stop: mock_stop_with_tracking,
                 driver_binding_handle: driver_handle,
-                image_handle: (driver_handle as usize + 1) as efi::Handle,
+                image_handle: DXE_CORE_HANDLE,
             });
             let binding_ptr = Box::into_raw(binding) as *mut core::ffi::c_void;
 
@@ -1598,7 +1606,7 @@ mod tests {
                 start: mock_start_success,
                 stop: mock_stop_tracking,
                 driver_binding_handle: driver_handle,
-                image_handle: (driver_handle as usize + 1) as efi::Handle,
+                image_handle: DXE_CORE_HANDLE,
             });
             let binding_ptr = Box::into_raw(binding) as *mut core::ffi::c_void;
 
