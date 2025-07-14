@@ -225,7 +225,19 @@ impl<T: SerialIO> PatinaDebugger<T> {
         while !target.is_resumed() {
             gdb = match gdb {
                 GdbStubStateMachine::Idle(mut gdb) => {
-                    let byte = gdb.borrow_conn().read().unwrap();
+                    let byte = loop {
+                        match gdb.borrow_conn().read() {
+                            Ok(0x0) => {
+                                log::error!(
+                                    "Debugger: Read 0x00 from the transport. This is unexpected and will be ignored."
+                                );
+                                continue;
+                            }
+                            Ok(b) => break b,
+                            Err(_) => return Err(DebugError::TransportFailure),
+                        }
+                    };
+
                     match gdb.incoming_data(&mut target, byte) {
                         Ok(gdb) => gdb,
                         Err(e) => return Err(DebugError::GdbStubError(e)),
