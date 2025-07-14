@@ -7,8 +7,8 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote, ToTokens};
-use syn::{parse::Parse, spanned::Spanned, Attribute, Generics, ItemEnum, ItemStruct, Meta};
+use quote::{ToTokens, format_ident, quote};
+use syn::{Attribute, Generics, ItemEnum, ItemStruct, Meta, parse::Parse, spanned::Spanned};
 
 /// A struct responsible for parsing any additional #[...] attributes associated with the main derive macro.
 #[derive(Clone)]

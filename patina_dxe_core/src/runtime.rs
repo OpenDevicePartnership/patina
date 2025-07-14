@@ -282,7 +282,7 @@ pub fn init_runtime_support(rt: &mut efi::RuntimeServices) {
 
 #[cfg(test)]
 mod tests {
-    use super::{convert_pointer, init_runtime_support, set_virtual_address_map, RUNTIME_DATA};
+    use super::{RUNTIME_DATA, convert_pointer, init_runtime_support, set_virtual_address_map};
     use crate::test_support;
     use core::{ffi::c_void, mem};
     use r_efi::efi;
@@ -309,8 +309,8 @@ mod tests {
     }
 
     unsafe fn get_memory(size: usize) -> &'static mut [u8] {
-        let addr = alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 0x1000).unwrap());
-        core::slice::from_raw_parts_mut(addr, size)
+        let addr = unsafe { alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 0x1000).unwrap()) };
+        unsafe { core::slice::from_raw_parts_mut(addr, size) }
     }
 
     #[test]

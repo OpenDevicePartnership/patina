@@ -15,7 +15,7 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use crate::boot_services::{tpl::Tpl, BootServices, StandardBootServices};
+use crate::boot_services::{BootServices, StandardBootServices, tpl::Tpl};
 
 /// Type use for mutual exclusion of data across Tpl (task priority level)
 ///

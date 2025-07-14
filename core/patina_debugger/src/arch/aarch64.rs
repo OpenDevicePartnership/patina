@@ -3,7 +3,7 @@ use core::{arch::asm, fmt::Write, num::NonZeroUsize, ops::Shr};
 use gdbstub::arch::{RegId, Registers};
 use patina_internal_cpu::interrupts::ExceptionContext;
 
-use crate::{memory, transport::BufferWriter, ExceptionInfo, ExceptionType};
+use crate::{ExceptionInfo, ExceptionType, memory, transport::BufferWriter};
 
 use super::{DebuggerArch, UefiArchRegs};
 use bitfield_struct::bitfield;

@@ -1,11 +1,11 @@
-use crate::tpl_lock::TplMutex;
 use crate::GicBases;
+use crate::tpl_lock::TplMutex;
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ffi::c_void;
 use patina_internal_cpu::interrupts::gic_manager::{
-    get_max_interrupt_number, gic_initialize, AArch64InterruptInitializer,
+    AArch64InterruptInitializer, get_max_interrupt_number, gic_initialize,
 };
 use patina_internal_cpu::interrupts::{ExceptionContext, InterruptHandler, InterruptManager};
 use r_efi::efi;

@@ -24,8 +24,8 @@ use scroll::Pwrite;
 use patina_sdk::{
     base::UEFI_PAGE_SIZE,
     boot_services::{
-        allocation::{AllocType, MemoryType},
         BootServices,
+        allocation::{AllocType, MemoryType},
     },
     error::EfiError,
     runtime_services::RuntimeServices,
@@ -304,11 +304,11 @@ mod test {
     use super::*;
     use crate::{
         performance_record::{
+            GenericPerformanceRecord, PERFORMANCE_RECORD_HEADER_SIZE,
             extended::{
                 DualGuidStringEventRecord, DynamicStringEventRecord, GuidEventRecord, GuidQwordEventRecord,
                 GuidQwordStringEventRecord,
             },
-            GenericPerformanceRecord, PERFORMANCE_RECORD_HEADER_SIZE,
         },
         performance_table::FirmwareBasicBootPerfDataRecord,
     };

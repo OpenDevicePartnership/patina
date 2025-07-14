@@ -3,11 +3,11 @@ use patina_sdk::test::patina_test;
 use patina_sdk::{
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     component::service::{
+        IntoService, Service,
         memory::{
             AccessType, AllocationOptions, CachingType, MemoryError, MemoryManager, PageAllocation,
             PageAllocationStrategy,
         },
-        IntoService, Service,
     },
     efi_types::EfiMemoryType,
     error::EfiError,

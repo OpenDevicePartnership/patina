@@ -107,13 +107,7 @@ impl fmt::Display for UnwindInfo<'_> {
                 write!(
                     f,
                     "UnwindInfo::PackedUnwindInfo {{ flag: 0x{:X}, function_length: 0x{:X}, regf: 0x{:X}, regl: 0x{:X}, h: 0x{:X}, cr: 0x{:X}, frame_size: 0x{:X} }}",
-                    flag,
-                    function_length,
-                    regf,
-                    regl,
-                    h,
-                    cr,
-                    frame_size
+                    flag, function_length, regf, regl, h, cr, frame_size
                 )
             }
             UnwindInfo::UnpackedUnwindInfo {
@@ -122,13 +116,7 @@ impl fmt::Display for UnwindInfo<'_> {
                 write!(
                     f,
                     "UnwindInfo::UnpackedUnwindInfo {{ xdata_rva: 0x{:X}, function_length: 0x{:X}, code_words: 0x{:X}, epilog_count: 0x{:X}, e: 0x{:X}, x: 0x{:X}, vers: 0x{:X} }}",
-                    xdata_rva,
-                    function_length,
-                    code_words,
-                    epilog_count,
-                    e,
-                    x,
-                    vers,
+                    xdata_rva, function_length, code_words, epilog_count, e, x, vers,
                 )
             }
         }

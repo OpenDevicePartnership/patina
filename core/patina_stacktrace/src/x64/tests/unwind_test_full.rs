@@ -93,9 +93,9 @@ unsafe extern "system" fn call_stack_thread(raw_ffi_function_pointers: *mut c_vo
     }
 
     let boxed_ffi_function_pointers: Box<FfiFunctionPointers> =
-        Box::from_raw(raw_ffi_function_pointers as *mut FfiFunctionPointers);
+        unsafe { Box::from_raw(raw_ffi_function_pointers as *mut FfiFunctionPointers) };
 
-    (boxed_ffi_function_pointers.start_call_stack)();
+    unsafe { (boxed_ffi_function_pointers.start_call_stack)() };
 
     0
 }
@@ -105,18 +105,18 @@ unsafe fn execute_frame_transitions(ffi_function_pointers: &FfiFunctionPointers)
     let mut current_rsp;
 
     // Frame 1 - func1():
-    while (ffi_function_pointers.get_current_frame_number)() < 1 {
+    while unsafe { (ffi_function_pointers.get_current_frame_number)() } < 1 {
         // Wait until thread gets in to frame 1 aka func1()
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    let current_rip = (ffi_function_pointers.get_current_rip)();
-    current_rsp = (ffi_function_pointers.get_current_rsp)();
-    return_rip = (ffi_function_pointers.get_return_rip)();
+    let current_rip = unsafe { (ffi_function_pointers.get_current_rip)() };
+    current_rsp = unsafe { (ffi_function_pointers.get_current_rsp)() };
+    return_rip = unsafe { (ffi_function_pointers.get_return_rip)() };
 
     log::info!("[+] Required call stack has been setup. Dumping it using Stack unwind implementation...");
 
     // Dump the call stack using StackTrace lib
-    let res = StackTrace::dump_with(current_rip, current_rsp);
+    let res = unsafe { StackTrace::dump_with(current_rip, current_rsp) };
     assert!(res.is_ok());
 
     log::info!("\n[+] Unwinding the stack one frame at a time. Querying the actual Rsp/Return Rip...");
@@ -125,98 +125,102 @@ unsafe fn execute_frame_transitions(ffi_function_pointers: &FfiFunctionPointers)
 
     // At Frame 2 - func2() - Unwind frame 1:
     // This should trigger completion of func1() and func2() will loop
-    (ffi_function_pointers.continue_to_next_frame)(); // Trigger thread to get in to frame 2 aka func2()
-    while (ffi_function_pointers.get_current_frame_number)() < 2 {
+    unsafe { (ffi_function_pointers.continue_to_next_frame)() }; // Trigger thread to get in to frame 2 aka func2()
+    while unsafe { (ffi_function_pointers.get_current_frame_number)() } < 2 {
         // Wait until thread gets in to frame 2 aka func2()
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     // current_rip = (ffi_function_pointers.get_current_rip)();
-    current_rsp = (ffi_function_pointers.get_current_rsp)();
-    return_rip = (ffi_function_pointers.get_return_rip)();
+    current_rsp = unsafe { (ffi_function_pointers.get_current_rsp)() };
+    return_rip = unsafe { (ffi_function_pointers.get_return_rip)() };
     log::info!("    1 {:X}   {:X}", current_rsp, return_rip);
 
     // At Frame 3 - func3() - Unwind frame 2:
     // This should trigger completion of func2() and func3() will loop
-    (ffi_function_pointers.continue_to_next_frame)(); // Trigger thread to get in to frame 3 aka func3()
-    while (ffi_function_pointers.get_current_frame_number)() < 3 {
+    unsafe { (ffi_function_pointers.continue_to_next_frame)() }; // Trigger thread to get in to frame 3 aka func3()
+    while unsafe { (ffi_function_pointers.get_current_frame_number)() } < 3 {
         // Wait until thread gets in to frame 3 aka func3()
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     // current_rip = (ffi_function_pointers.get_current_rip)();
-    current_rsp = (ffi_function_pointers.get_current_rsp)();
-    return_rip = (ffi_function_pointers.get_return_rip)();
+    current_rsp = unsafe { (ffi_function_pointers.get_current_rsp)() };
+    return_rip = unsafe { (ffi_function_pointers.get_return_rip)() };
     log::info!("    2 {:X}   {:X}", current_rsp, return_rip);
 
     // At Frame 4 - func4() - Unwind frame 3:
     // This should trigger completion of func3() and func4() will loop
-    (ffi_function_pointers.continue_to_next_frame)(); // Trigger thread to get in to frame 4 aka func4()
-    while (ffi_function_pointers.get_current_frame_number)() < 4 {
+    unsafe { (ffi_function_pointers.continue_to_next_frame)() }; // Trigger thread to get in to frame 4 aka func4()
+    while unsafe { (ffi_function_pointers.get_current_frame_number)() } < 4 {
         // Wait until thread gets in to frame 4 aka func4()
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     // current_rip = (ffi_function_pointers.get_current_rip)();
-    current_rsp = (ffi_function_pointers.get_current_rsp)();
-    return_rip = (ffi_function_pointers.get_return_rip)();
+    current_rsp = unsafe { (ffi_function_pointers.get_current_rsp)() };
+    return_rip = unsafe { (ffi_function_pointers.get_return_rip)() };
     log::info!("    3 {:X}   {:X}", current_rsp, return_rip);
 
     // Unwind frame 4:
     // This should trigger completion of func4()
-    (ffi_function_pointers.continue_to_next_frame)();
+    unsafe { (ffi_function_pointers.continue_to_next_frame)() };
 }
 
 unsafe fn load_functions(dll: HINSTANCE) -> Option<FfiFunctionPointers> {
     let name_cstr = CString::new("StartCallStack").unwrap();
-    let proc_address = GetProcAddress(dll, name_cstr.as_ptr());
+    let proc_address = unsafe { GetProcAddress(dll, name_cstr.as_ptr()) };
     let start_call_stack: StartCallStack = if proc_address.is_null() {
-        log::info!("Failed to get function address for StartCallStack. Error: {}", GetLastError());
+        log::info!("Failed to get function address for StartCallStack. Error: {}", unsafe { GetLastError() });
         return None;
     } else {
-        std::mem::transmute::<*mut winapi::shared::minwindef::__some_function, StartCallStack>(proc_address)
+        unsafe { std::mem::transmute::<*mut winapi::shared::minwindef::__some_function, StartCallStack>(proc_address) }
     };
 
     let name_cstr = CString::new("ContinueToNextFrame").unwrap();
-    let proc_address = GetProcAddress(dll, name_cstr.as_ptr());
+    let proc_address = unsafe { GetProcAddress(dll, name_cstr.as_ptr()) };
     let continue_to_next_frame: ContinueToNextFrame = if proc_address.is_null() {
-        log::info!("Failed to get function address for ContinueToNextFrame. Error: {}", GetLastError());
+        log::info!("Failed to get function address for ContinueToNextFrame. Error: {}", unsafe { GetLastError() });
         return None;
     } else {
-        std::mem::transmute::<*mut winapi::shared::minwindef::__some_function, ContinueToNextFrame>(proc_address)
+        unsafe {
+            std::mem::transmute::<*mut winapi::shared::minwindef::__some_function, ContinueToNextFrame>(proc_address)
+        }
     };
 
     let name_cstr = CString::new("GetCurrentFrameNumber").unwrap();
-    let proc_address = GetProcAddress(dll, name_cstr.as_ptr());
+    let proc_address = unsafe { GetProcAddress(dll, name_cstr.as_ptr()) };
     let get_current_frame_number: GetCurrentFrameNumber = if proc_address.is_null() {
-        log::info!("Failed to get function address for GetCurrentFrameNumber. Error: {}", GetLastError());
+        log::info!("Failed to get function address for GetCurrentFrameNumber. Error: {}", unsafe { GetLastError() });
         return None;
     } else {
-        std::mem::transmute::<*mut winapi::shared::minwindef::__some_function, GetCurrentFrameNumber>(proc_address)
+        unsafe {
+            std::mem::transmute::<*mut winapi::shared::minwindef::__some_function, GetCurrentFrameNumber>(proc_address)
+        }
     };
 
     let name_cstr = CString::new("GetCurrentRip").unwrap();
-    let proc_address = GetProcAddress(dll, name_cstr.as_ptr());
+    let proc_address = unsafe { GetProcAddress(dll, name_cstr.as_ptr()) };
     let get_current_rip: GetCurrentRip = if proc_address.is_null() {
-        log::info!("Failed to get function address for GetCurrentRip. Error: {}", GetLastError());
+        log::info!("Failed to get function address for GetCurrentRip. Error: {}", unsafe { GetLastError() });
         return None;
     } else {
-        std::mem::transmute::<*mut winapi::shared::minwindef::__some_function, GetCurrentRip>(proc_address)
+        unsafe { std::mem::transmute::<*mut winapi::shared::minwindef::__some_function, GetCurrentRip>(proc_address) }
     };
 
     let name_cstr = CString::new("GetReturnRip").unwrap();
-    let proc_address = GetProcAddress(dll, name_cstr.as_ptr());
+    let proc_address = unsafe { GetProcAddress(dll, name_cstr.as_ptr()) };
     let get_return_rip: GetReturnRip = if proc_address.is_null() {
-        log::info!("Failed to get function address for GetReturnRip. Error: {}", GetLastError());
+        log::info!("Failed to get function address for GetReturnRip. Error: {}", unsafe { GetLastError() });
         return None;
     } else {
-        std::mem::transmute::<*mut winapi::shared::minwindef::__some_function, GetReturnRip>(proc_address)
+        unsafe { std::mem::transmute::<*mut winapi::shared::minwindef::__some_function, GetReturnRip>(proc_address) }
     };
 
     let name_cstr = CString::new("GetCurrentRsp").unwrap();
-    let proc_address = GetProcAddress(dll, name_cstr.as_ptr());
+    let proc_address = unsafe { GetProcAddress(dll, name_cstr.as_ptr()) };
     let get_current_rsp: GetCurrentRsp = if proc_address.is_null() {
-        log::info!("Failed to get function address for GetCurrentRsp. Error: {}", GetLastError());
+        log::info!("Failed to get function address for GetCurrentRsp. Error: {}", unsafe { GetLastError() });
         return None;
     } else {
-        std::mem::transmute::<*mut winapi::shared::minwindef::__some_function, GetCurrentRsp>(proc_address)
+        unsafe { std::mem::transmute::<*mut winapi::shared::minwindef::__some_function, GetCurrentRsp>(proc_address) }
     };
 
     Some(FfiFunctionPointers {

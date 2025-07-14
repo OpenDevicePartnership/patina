@@ -341,7 +341,7 @@ mod tests {
         assert_eq!(align_up(0xFFFFu64, 0x1000u64).unwrap(), 0x10000u64);
         assert_eq!(align_up(0x1000u64, 0x1000u64).unwrap(), 0x1000u64);
         assert!(align_up(100u64, 3u64).is_err()); // not power of two
-                                                  // Check for overflow
+        // Check for overflow
         assert!(align_up(u64::MAX, 2u64).is_err());
     }
 

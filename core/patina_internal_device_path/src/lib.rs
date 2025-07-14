@@ -294,11 +294,11 @@ impl DevicePathNode {
     ///
     /// Caller must ensure that the raw pointer points to a valid device path node structure.
     pub unsafe fn new(node: *const efi::protocols::device_path::Protocol) -> Option<Self> {
-        let header = core::ptr::read_unaligned(node);
+        let header = unsafe { core::ptr::read_unaligned(node) };
         let node_len = u16::from_le_bytes(header.length);
         let data_len = node_len.checked_sub(size_of_val(&header).try_into().ok()?)?;
-        let data_ptr = node.byte_offset(size_of_val(&header).try_into().ok()?) as *const u8;
-        let data = from_raw_parts(data_ptr, data_len.into()).to_vec();
+        let data_ptr = unsafe { node.byte_offset(size_of_val(&header).try_into().ok()?) } as *const u8;
+        let data = unsafe { from_raw_parts(data_ptr, data_len.into()).to_vec() };
         Some(Self { header, data })
     }
 

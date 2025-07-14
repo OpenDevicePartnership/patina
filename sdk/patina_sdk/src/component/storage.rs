@@ -513,7 +513,7 @@ unsafe impl Param for &mut Storage {
         _state: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        storage.storage_mut()
+        unsafe { storage.storage_mut() }
     }
 
     fn validate(_state: &Self::State, _storage: UnsafeStorageCell) -> bool {
@@ -548,7 +548,7 @@ unsafe impl Param for &Storage {
         _state: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        storage.storage()
+        unsafe { storage.storage() }
     }
 
     fn validate(_state: &Self::State, _storage: UnsafeStorageCell) -> bool {

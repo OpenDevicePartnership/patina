@@ -220,7 +220,7 @@ unsafe impl<T: FromHob + 'static> Param for Hob<'_, T> {
         lookup_id: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        Hob::from(storage.storage().get_raw_hob(*lookup_id))
+        Hob::from(unsafe { storage.storage().get_raw_hob(*lookup_id) })
     }
 
     fn validate(state: &Self::State, storage: UnsafeStorageCell) -> bool {

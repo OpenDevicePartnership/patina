@@ -71,8 +71,8 @@ use r_efi::{
 };
 
 use crate::boot_services::{
-    c_ptr::{CPtr, PtrMetadata},
     BootServices,
+    c_ptr::{CPtr, PtrMetadata},
 };
 
 /// Driver binding protocol interface to enable mocking in tests.

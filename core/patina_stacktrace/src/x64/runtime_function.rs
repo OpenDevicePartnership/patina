@@ -57,7 +57,7 @@ impl<'a> RuntimeFunction<'a> {
     /// Function to return the Runtime Function corresponding to the given
     /// relative rip.
     pub unsafe fn find_function(pe: &PE<'a>, rip_rva: u32) -> StResult<RuntimeFunction<'a>> {
-        let (exception_table_rva, exception_table_size) = pe.get_exception_table()?;
+        let (exception_table_rva, exception_table_size) = unsafe { pe.get_exception_table() }?;
 
         // Jump to .pdata section and parse the Runtime Function records.
         // - Break the section in to 12 byte chunks
@@ -83,7 +83,7 @@ impl<'a> RuntimeFunction<'a> {
     /// Windows only test function to return all Runtime Functions
     #[cfg(all(target_os = "windows", target_arch = "x86_64", test))]
     pub(crate) unsafe fn find_all_functions(pe: &PE<'a>) -> StResult<Vec<RuntimeFunction<'a>>> {
-        let (exception_table_rva, exception_table_size) = pe.get_exception_table()?;
+        let (exception_table_rva, exception_table_size) = unsafe { pe.get_exception_table() }?;
 
         // Jump to .pdata section and parse the Runtime Function records.
         // - Break the section in to 12 byte chunks

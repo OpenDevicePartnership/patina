@@ -8,7 +8,7 @@ use patina_internal_cpu::interrupts::ExceptionContext;
 use patina_paging::PagingType;
 
 use super::{DebuggerArch, UefiArchRegs};
-use crate::{memory, transport::BufferWriter, ExceptionInfo, ExceptionType};
+use crate::{ExceptionInfo, ExceptionType, memory, transport::BufferWriter};
 
 /// The "int 3" instruction.
 const INT_3: u8 = 0xCC;
@@ -141,13 +141,7 @@ impl DebuggerArch for X64Arch {
         unsafe { asm!("mov {}, cr4", out(reg) cr4) };
 
         // Check CR4 to determine if we are using 4-level or 5-level paging.
-        let paging_type = {
-            if cr4 & (1 << 12) != 0 {
-                PagingType::Paging5Level
-            } else {
-                PagingType::Paging4Level
-            }
-        };
+        let paging_type = { if cr4 & (1 << 12) != 0 { PagingType::Paging5Level } else { PagingType::Paging4Level } };
 
         // SAFETY: The CR3 is currently being should be identity mapped and so
         // should point to a valid page table.

@@ -27,8 +27,8 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use patina_internal_collections::{node_size, Bst, Rbt, SortedSlice};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use patina_internal_collections::{Bst, Rbt, SortedSlice, node_size};
 use rand::Rng;
 use std::{collections::HashSet, hash::Hash, mem::size_of};
 use uint::construct_uint;

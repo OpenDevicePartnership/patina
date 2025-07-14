@@ -326,9 +326,11 @@ unsafe impl<T: ?Sized + 'static> Param for Service<T> {
         state: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        Service::from(storage.storage().get_raw_service(*state).unwrap_or_else(|| {
-            panic!("Could not find Service value with id [{}] even though it was just validated.", *state)
-        }))
+        Service::from(unsafe {
+            storage.storage().get_raw_service(*state).unwrap_or_else(|| {
+                panic!("Could not find Service value with id [{}] even though it was just validated.", *state)
+            })
+        })
     }
 
     fn validate(state: &Self::State, storage: UnsafeStorageCell) -> bool {
