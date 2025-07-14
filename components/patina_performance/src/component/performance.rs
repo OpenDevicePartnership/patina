@@ -44,13 +44,18 @@ impl Performance {
     #[cfg(not(tarpaulin_include))] // This is tested via the generic version, see _entry_point.
     pub fn entry_point(
         self,
-        enabled_measurements: Config<config::EnabledMeasurement>,
+        config: Config<config::PerfConfig>,
         boot_services: StandardBootServices,
         runtime_services: StandardRuntimeServices,
         records_buffers_hobs: Option<Hob<HobPerformanceData>>,
         mm_comm_region_hobs: Option<Hob<MmCommRegion>>,
     ) -> Result<(), EfiError> {
-        set_perf_measurement_mask(enabled_measurements.mask());
+        if !config.enable_component {
+            log::warn!("Patina Performance Component is not enabled, skipping entry point.");
+            return Ok(());
+        }
+
+        set_perf_measurement_mask(config.enabled_measurements);
 
         let fbpt = set_static_state(StandardBootServices::clone(&boot_services))
             .expect("Static state should only be initialized here!");

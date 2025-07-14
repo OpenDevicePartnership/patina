@@ -29,19 +29,35 @@ The Patina performance component uses a feature mask in its configuration to con
 
 Core::default()
  // ...
- .with_config(patina_performance::config::EnabledMeasurement(&[
-        patina_sdk::performance::Measurement::DriverBindingStart,   // Adds driver binding start measurements.
-        patina_sdk::performance::Measurement::DriverBindingStop,    // Adds driver binding stop measurements.
-        patina_sdk::performance::Measurement::DriverBindingSupport, // Adds driver binding support measurements.
-        patina_sdk::performance::Measurement::LoadImage,            // Adds load image measurements.
-        patina_sdk::performance::Measurement::StartImage,           // Adds start image measurements.
-    ]))
+ .with_config(patina_performance::config::PerfConfig {
+     enable_component: true,
+     enabled_measurements: {
+        patina_sdk::performance::Measurement::DriverBindingStart         // Adds driver binding start measurements.
+        | patina_sdk::performance::Measurement::DriverBindingStop        // Adds driver binding stop measurements.
+        | patina_sdk::performance::Measurement::DriverBindingSupport     // Adds driver binding support measurements.
+        | patina_sdk::performance::Measurement::LoadImage                // Adds load image measurements.
+        | patina_sdk::performance::Measurement::StartImage               // Adds start image measurements.
+     }
+ })
  .with_component(patina_performance::component::Performance))
  .start()
  .unwrap();
 
 // ...
 ```
+
+### Enabling Performance Measurements During Boot
+
+A component called `PerformanceConfigurationProvider` is used to enable performance measurements during the boot
+process. This component depends on a `PerformanceConfigHob` HOB to be produced during boot to determine whether the
+performance component should be enabled and which measurements should be active.
+
+If a platform needs to use a single Patina DXE Core and support firmware builds where performance measurements can
+be enabled or disabled, it should produce a `PerformanceConfigHob` HOB during the boot process and include the
+`PerformanceConfigurationProvider` component in the DXE Core build. The HOB can be populated by any platform-specific
+logic, such as a PCD value or a build variable.
+
+> **Note:** `PerformanceConfigurationProvider` will override the enabled measurements based on the HOB value.
 
 ## API
 
