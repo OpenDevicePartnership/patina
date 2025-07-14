@@ -158,11 +158,7 @@ where
     }
 
     fn get_acpi_table(&self, table_key: TableKey) -> Result<AcpiTable, AcpiError> {
-        self.acpi_tables
-            .read()
-            .get(&table_key)
-            .cloned() // Option<&AcpiTable> → Option<AcpiTable>
-            .ok_or(AcpiError::InvalidTableKey)
+        self.acpi_tables.read().get(&table_key).cloned().ok_or(AcpiError::InvalidTableKey)
     }
 
     fn register_notify(&self, should_register: bool, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError> {

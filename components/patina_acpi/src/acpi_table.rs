@@ -489,6 +489,8 @@ impl AcpiTable {
 
 #[cfg(test)]
 mod tests {
+    use patina_sdk::component::service::memory::StdMemoryManager;
+
     use crate::signature::ACPI_CHECKSUM_OFFSET;
 
     use super::*;
@@ -540,5 +542,49 @@ mod tests {
         // Total sum must be zero mod 256.
         let total: u8 = bytes.iter().copied().fold(0u8, |acc, b| acc.wrapping_add(b));
         assert_eq!(total, 0, "entire table did not sum to zero");
+    }
+
+    #[test]
+    fn test_new_from_ptr_creates_valid_acpi_table() {
+        // Build a mock table.
+        let test_table = TestTable {
+            header: AcpiTableHeader {
+                signature: TEST_SIGNATURE,
+                length: (mem::size_of::<TestTable>()) as u32,
+                revision: 2,
+                checksum: 0,
+                oem_id: [1, 2, 3, 4, 5, 6],
+                oem_table_id: *b"test_tes",
+                oem_revision: 0xDEADBEEF,
+                creator_id: 0xCAFEBABE,
+                creator_revision: 0xFEEDFACE,
+            },
+            body: [42, 43, 44],
+        };
+
+        // Allocate the table on the heap.
+        let boxed = Box::new(test_table);
+        let raw_ptr = Box::into_raw(boxed);
+
+        let mm: Service<dyn MemoryManager> = Service::mock(Box::new(StdMemoryManager::new()));
+
+        // SAFETY: raw_ptr points to a valid TestTable with a valid header.
+        let acpi_table = unsafe { AcpiTable::new_from_ptr(raw_ptr as *const AcpiTableHeader, &mm) }.unwrap();
+
+        // Check signature and header fields.
+        assert_eq!(acpi_table.signature(), TEST_SIGNATURE);
+        let header = acpi_table.header();
+        assert_eq!(header.length, mem::size_of::<TestTable>() as u32);
+        assert_eq!(header.revision, 2);
+        assert_eq!(header.oem_id, [1, 2, 3, 4, 5, 6]);
+        assert_eq!(header.oem_table_id, *b"test_tes");
+        assert_eq!(header.oem_revision, 0xDEADBEEF);
+        assert_eq!(header.creator_id, 0xCAFEBABE);
+        assert_eq!(header.creator_revision, 0xFEEDFACE);
+
+        // Check that the body bytes are correct.
+        let bytes = unsafe { acpi_table.as_bytes() };
+        let body_offset = mem::size_of::<AcpiTableHeader>();
+        assert_eq!(&bytes[body_offset..body_offset + 3], &[42, 43, 44]);
     }
 }
