@@ -52,7 +52,7 @@ Example:
 alias = "build-std"
 
 [tasks.build-std]
-description = """Builds crates in the repository with the standard library.
+description = """Builds crates in the repository with the standard library, and their examples.
 
 Customizations:
     -p [development|release]: Builds in debug or release. Default: development
@@ -65,7 +65,23 @@ Example:
 """
 clear = true
 command = "cargo"
-args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )",]
+args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )", "--examples"]
+dependencies = ["individual-package-targets", "build-lib"]
+
+[tasks.build-lib]
+description = """Builds crates in the repository with the standard library.
+Customizations:
+    -p [development|release]: Builds in debug or release. Default: development
+    -e FEATURES=[feature,...]: Builds with the specified features. Default: none
+
+Example:
+    `cargo make build-lib`
+    `cargo make -p release build-lib`
+    `cargo make build-lib <package_name>`
+"""
+clear = true
+command = "cargo"
+args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )"]
 dependencies = ["individual-package-targets"]
 
 [tasks.run-bin]
