@@ -1,4 +1,4 @@
-//! This module contains every implementation of [`PerformanceRecord`] that are produce by this library.
+//! This module contains every implementation of [`PerformanceRecord`] produced by Patina SDK performance measurements.
 //!
 //! ## License
 //!

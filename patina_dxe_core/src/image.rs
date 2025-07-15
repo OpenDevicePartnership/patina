@@ -11,12 +11,12 @@ use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts}
 use goblin::pe::section_table;
 use mu_pi::hob::{Hob, HobList};
 use patina_internal_device_path::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count};
-use patina_performance::{
-    create_performance_measurement, perf_image_start_begin, perf_image_start_end, perf_load_image_begin,
-    perf_load_image_end,
-};
 use patina_sdk::base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up};
 use patina_sdk::error::EfiError;
+use patina_sdk::performance::{
+    logging::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end},
+    measurement::create_performance_measurement,
+};
 use patina_sdk::{guid, uefi_pages_to_size, uefi_size_to_pages};
 use r_efi::efi;
 
