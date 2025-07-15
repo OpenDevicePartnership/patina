@@ -1,4 +1,4 @@
-//! This module contains definition of performance records and performance records buffer.
+//! Defines performance record and the performance record buffer types.
 //!
 //! ## License
 //!
@@ -8,15 +8,13 @@
 //!
 
 pub mod extended;
-pub mod hob_records;
-pub mod known_records;
+pub mod hob;
+pub mod known;
 
+use crate::{performance::error::Error, performance_debug_assert};
 use alloc::vec::Vec;
 use core::{fmt::Debug, mem, ops::AddAssign};
-
 use scroll::{self, Pread, Pwrite};
-
-use crate::{error::Error, error_debug_assert};
 
 /// Maximum size in byte that a performance record can have.
 pub const FPDT_MAX_PERF_RECORD_SIZE: usize = u8::MAX as usize;
@@ -114,7 +112,7 @@ impl PerformanceRecordBuffer {
                 let mut offset = buffer.len();
                 buffer.resize(offset + FPDT_MAX_PERF_RECORD_SIZE, 0);
                 let Ok(record_size) = record.write_into(buffer, &mut offset) else {
-                    return error_debug_assert!("Record size should not exceed FPDT_MAX_PERF_RECORD_SIZE");
+                    return performance_debug_assert!("Record size should not exceed FPDT_MAX_PERF_RECORD_SIZE");
                 };
                 buffer.truncate(offset);
                 Ok(record_size)
@@ -128,7 +126,7 @@ impl PerformanceRecordBuffer {
         let current_buffer = match self {
             PerformanceRecordBuffer::Unpublished(b) => b.as_slice(),
             PerformanceRecordBuffer::Published(_, _) => {
-                return error_debug_assert!("PerformanceRecordBuffer already reported.");
+                return performance_debug_assert!("PerformanceRecordBuffer already reported.");
             }
         };
         let size = current_buffer.len();
@@ -231,16 +229,15 @@ impl<'a> Iterator for Iter<'a> {
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use core::{assert_eq, slice, unreachable};
 
     use r_efi::efi;
 
-    use crate::performance_record::extended::{
+    use extended::{
         DualGuidStringEventRecord, DynamicStringEventRecord, GuidEventRecord, GuidQwordEventRecord,
         GuidQwordStringEventRecord,
     };
-
-    use super::*;
 
     #[test]
     fn test_performance_record_buffer_new() {

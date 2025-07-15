@@ -1,4 +1,4 @@
-//! This module defines everything used to extract performance records from HOBs.
+//! This module implements the functionality necessary to extract performance records from HOBs.
 //!
 //! ## License
 //!
@@ -7,26 +7,25 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
-#[cfg(test)]
+#[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
 
 use alloc::vec::Vec;
 use core::iter::Iterator;
 
-use scroll::Pread;
-
-use patina_sdk::{
+use crate::{
     component::hob::{FromHob, Hob},
     guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
+    performance::{
+        error::Error,
+        record::{Iter, PerformanceRecordBuffer},
+    },
 };
 
-use crate::{
-    error::Error,
-    performance_record::{Iter, PerformanceRecordBuffer},
-};
+use scroll::Pread;
 
 /// API to extract the performance data from HOB.
-#[cfg_attr(test, automock)]
+#[cfg_attr(any(test, feature = "mockall"), automock)]
 pub trait HobPerformanceDataExtractor {
     /// Extract the number of image loaded and the performance records from performance HOB.
     fn extract_hob_perf_data(&self) -> Result<(u32, PerformanceRecordBuffer), Error>;
@@ -84,12 +83,13 @@ where
 pub mod test {
     use core::assert_eq;
 
-    use patina_sdk::component::hob::FromHob;
     use scroll::Pwrite;
 
-    use crate::performance_record::{GenericPerformanceRecord, PerformanceRecordBuffer};
-
     use super::{HobPerformanceData, merge_hob_performance_buffer};
+    use crate::{
+        component::hob::FromHob,
+        performance::record::{GenericPerformanceRecord, PerformanceRecordBuffer},
+    };
 
     #[test]
     fn test_merge_hob_performance_buffer_with_none() {

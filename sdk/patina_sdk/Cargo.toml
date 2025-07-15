@@ -25,6 +25,7 @@ cfg-if = { workspace = true }
 log = { workspace = true }
 r-efi = { workspace = true }
 mockall = { workspace = true, optional = true }
+mu_rust_helpers = { workspace = true }
 num-traits = { workspace = true }
 fallible-streaming-iterator = { workspace = true }
 linkme = { workspace = true }

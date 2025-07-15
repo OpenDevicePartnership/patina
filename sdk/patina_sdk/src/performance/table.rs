@@ -1,4 +1,5 @@
-//! This module define the API and default implementation of the Firmware Basic Boot Performance Table (FBPT).
+//! Defines the API and default implementation of performance tables such as the Firmware Basic Boot Performance
+//! Table (FBPT).
 //!
 //! ## License
 //!
@@ -7,7 +8,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
-#[cfg(test)]
+#[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
 
 use alloc::vec::Vec;
@@ -18,31 +19,31 @@ use core::{
     sync::atomic::{AtomicPtr, Ordering},
 };
 
-use r_efi::efi;
-use scroll::Pwrite;
-
-use patina_sdk::{
+use crate::{
     base::UEFI_PAGE_SIZE,
     boot_services::{
         BootServices,
         allocation::{AllocType, MemoryType},
     },
     error::EfiError,
+    performance::{
+        self,
+        error::Error,
+        record::{PerformanceRecord, PerformanceRecordBuffer},
+    },
     runtime_services::RuntimeServices,
 };
 
-use crate::{
-    error::Error,
-    performance_record::{self, PerformanceRecord, PerformanceRecordBuffer},
-};
+use r_efi::efi;
+use scroll::Pwrite;
 
 /// The number of extra space in byte that will be allocated when publishing the performance buffer.
 /// This is used for every performance records that will be added to the table after it is published.
 // const PUBLISHED_FBPT_EXTRA_SPACE: usize = 0x400_000;
 const PUBLISHED_FBPT_EXTRA_SPACE: usize = 0x10_000;
 
-/// API for a Firmware Basic Boot Performance Table.
-#[cfg_attr(test, automock)]
+/// Interface for a Firmware Basic Boot Performance Table.
+#[cfg_attr(any(test, feature = "mockall"), automock)]
 pub trait FirmwareBasicBootPerfTable: Sized {
     /// Return the address where the table is.
     fn fbpt_address(&self) -> usize;
@@ -103,7 +104,7 @@ impl FBPT {
     const fn size_of_empty_table() -> usize {
         mem::size_of::<u32>() // Header signature
         + mem::size_of::<u32>() // Header length
-        + performance_record::PERFORMANCE_RECORD_HEADER_SIZE
+        + performance::record::PERFORMANCE_RECORD_HEADER_SIZE
         + FirmwareBasicBootPerfDataRecord::data_size()
     }
 
@@ -296,21 +297,24 @@ impl Default for FirmwareBasicBootPerfDataRecord {
 
 #[cfg(test)]
 mod test {
-    use core::{assert_eq, slice, unreachable};
+    use super::*;
 
-    use patina_sdk::{boot_services::MockBootServices, runtime_services::MockRuntimeServices};
+    use core::{assert_eq, slice, unreachable};
     use scroll::Pread;
 
-    use super::*;
     use crate::{
-        performance_record::{
-            GenericPerformanceRecord, PERFORMANCE_RECORD_HEADER_SIZE,
-            extended::{
-                DualGuidStringEventRecord, DynamicStringEventRecord, GuidEventRecord, GuidQwordEventRecord,
-                GuidQwordStringEventRecord,
+        boot_services::MockBootServices,
+        performance::{
+            record::{
+                GenericPerformanceRecord, PERFORMANCE_RECORD_HEADER_SIZE,
+                extended::{
+                    DualGuidStringEventRecord, DynamicStringEventRecord, GuidEventRecord, GuidQwordEventRecord,
+                    GuidQwordStringEventRecord,
+                },
             },
+            table::FirmwareBasicBootPerfDataRecord,
         },
-        performance_table::FirmwareBasicBootPerfDataRecord,
+        runtime_services::MockRuntimeServices,
     };
 
     #[test]
