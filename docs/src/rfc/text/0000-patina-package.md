@@ -8,12 +8,13 @@ This RFC proposes:
 ## Change Log
 
 - 2025-07-14: Initial draft of RFC.
+- 2025-07-15: Note automated process open under the "Unresolved Questions" section.
 
 ## Motivation
 
 As the Patina project grows, it is inevitable that it needs to define content that it is made available to interact
 with edk2 C code today, such as GUID definitions for HOBs that are exclusively defined by Patina components. There is
-not a clear common package to put this content in today - Patina is an independent project of Project Mu and edk2.
+not a clear common package to put this content in today - Patina is a project independent of Project Mu and edk2.
 
 This RFC proposes a new repo named `patina-edk2` that will contain a new package called `PatinaPkg`. This repo can
 be used as a submodule in any platform that needs to consume Patina content. This repo would be entirely optional
@@ -59,7 +60,11 @@ may be useful as a general reference to understand how `PatinaPkg.dec` and the o
 
 ## Unresolved Questions
 
-- None
+- Should we consider a strict generation process such as content being required to be generated from a tool like
+  `cbindgen`? This would ensure that the content is always in sync with the Patina codebase and avoids manual
+  maintenance. This proposal is avoided at this time to avoid the implication that Patina C generated content is
+  so extensive that it requires a formal process and generation tool. That is certainly subjective though and this
+  RFC simply does not propose this requirement at this time.
 
 ## Prior Art (Existing PI C Implementation)
 
