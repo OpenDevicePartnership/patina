@@ -291,6 +291,10 @@ impl Section {
         self.header.section_type()
     }
 
+    pub fn set_section_data(&mut self, _data: Vec<u8>) -> Result<(), FirmwareFileSystemError> {
+        todo!()
+    }
+
     pub fn compose(&mut self, composer: &dyn SectionComposer) -> Result<(), FirmwareFileSystemError> {
         let sections = match &mut self.data {
             SectionData::None | SectionData::Composed(_) => return Ok(()), //nothing to do
@@ -386,6 +390,9 @@ impl Section {
                 Box::new(iter::once(self).chain(sections.iter().flat_map(|x| x.sections())))
             }
         }
+    }
+    pub fn sections_mut(&mut self) -> Box<dyn Iterator<Item = &mut Section> + '_> {
+        todo!()
     }
 }
 pub struct SectionIterator<'a> {

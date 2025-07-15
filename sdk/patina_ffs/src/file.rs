@@ -350,6 +350,13 @@ impl File {
         }
     }
 
+    pub fn extract(&mut self, extractor: &dyn SectionExtractor) -> Result<(), FirmwareFileSystemError> {
+        for section in self.sections.iter_mut() {
+            section.extract(extractor)?;
+        }
+        Ok(())
+    }
+
     pub fn serialize_with_composer(
         &mut self,
         composer: &dyn SectionComposer,
@@ -363,6 +370,26 @@ impl File {
             section.compose(composer)?;
         }
         Ok(())
+    }
+
+    pub fn section_iter(&self) -> impl Iterator<Item = &Section> {
+        self.sections.iter().flat_map(|x| x.sections())
+    }
+
+    pub fn section_iter_mut(&mut self) -> impl Iterator<Item = &mut Section> {
+        self.sections.iter_mut().flat_map(|x| x.sections_mut())
+    }
+
+    pub fn name(&self) -> efi::Guid {
+        self.name
+    }
+
+    pub fn file_type_raw(&self) -> u8 {
+        self.file_type_raw
+    }
+
+    pub fn attributes_raw(&self) -> u8 {
+        self.attributes
     }
 }
 

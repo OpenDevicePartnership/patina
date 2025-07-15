@@ -351,6 +351,14 @@ impl Volume {
         }
     }
 
+    pub fn files(&self) -> &Vec<File> {
+        &self.files
+    }
+
+    pub fn files_mut(&mut self) -> &mut Vec<File> {
+        &mut self.files
+    }
+
     pub fn serialize(&self) -> Result<Vec<u8>, FirmwareFileSystemError> {
         let pad_byte =
             if (self.attributes & fvb::attributes::raw::fvb2::ERASE_POLARITY) != 0 { 0xffu8 } else { 0x00u8 };
@@ -505,10 +513,10 @@ impl Volume {
     }
 }
 
-impl TryFrom<VolumeRef<'_>> for Volume {
+impl TryFrom<&VolumeRef<'_>> for Volume {
     type Error = FirmwareFileSystemError;
 
-    fn try_from(src: VolumeRef<'_>) -> Result<Self, Self::Error> {
+    fn try_from(src: &VolumeRef<'_>) -> Result<Self, Self::Error> {
         if src.revision() > fv::FFS_REVISION {
             Err(FirmwareFileSystemError::Unsupported)?;
         }
@@ -530,10 +538,10 @@ impl TryFrom<VolumeRef<'_>> for Volume {
     }
 }
 
-impl TryFrom<(VolumeRef<'_>, &dyn SectionExtractor)> for Volume {
+impl TryFrom<(&VolumeRef<'_>, &dyn SectionExtractor)> for Volume {
     type Error = FirmwareFileSystemError;
 
-    fn try_from(src: (VolumeRef<'_>, &dyn SectionExtractor)) -> Result<Self, Self::Error> {
+    fn try_from(src: (&VolumeRef<'_>, &dyn SectionExtractor)) -> Result<Self, Self::Error> {
         let (src, extractor) = src;
         if src.revision() > fv::FFS_REVISION {
             Err(FirmwareFileSystemError::Unsupported)?;
@@ -581,13 +589,13 @@ mod test {
         FirmwareFileSystemError,
     };
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, Clone)]
     struct TargetValues {
         total_number_of_files: u32,
         files_to_test: HashMap<String, FfsFileTargetValues>,
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, Clone)]
     struct FfsFileTargetValues {
         file_type: u8,
         attributes: u8,
@@ -596,7 +604,7 @@ mod test {
         sections: HashMap<usize, FfsSectionTargetValues>,
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, Clone)]
     struct FfsSectionTargetValues {
         section_type: Option<ffs::section::EfiSectionType>,
         size: usize,
@@ -649,8 +657,8 @@ mod test {
         }
     }
 
-    fn test_firmware_volume_worker(
-        fv: VolumeRef,
+    fn test_firmware_volume_ref_worker(
+        fv: &VolumeRef,
         mut expected_values: TargetValues,
         extractor: &dyn SectionExtractor,
     ) -> Result<(), Box<dyn Error>> {
@@ -708,6 +716,59 @@ mod test {
         Ok(())
     }
 
+    fn test_firmware_volume_worker(fv: &Volume, mut expected_values: TargetValues) -> Result<(), Box<dyn Error>> {
+        let mut count = 0;
+        for ffs_file in fv.files() {
+            count += 1;
+            let file_name = Uuid::from_bytes_le(*ffs_file.name().as_bytes()).to_string().to_uppercase();
+            if let Some(mut target) = expected_values.files_to_test.remove(&file_name) {
+                assert_eq!(target.file_type, ffs_file.file_type_raw(), "[{file_name}] Error with the file type.");
+                assert_eq!(
+                    target.attributes,
+                    ffs_file.attributes_raw(),
+                    "[{file_name}] Error with the file attributes."
+                );
+                let sections: Vec<&Section> = ffs_file.section_iter().collect();
+                for section in sections.iter().enumerate() {
+                    println!("{:x?}", section);
+                }
+                assert_eq!(
+                    target.number_of_sections,
+                    sections.len(),
+                    "[{file_name}] Error with the number of section in the File"
+                );
+
+                for (idx, section) in sections.iter().enumerate() {
+                    if let Some(target) = target.sections.remove(&idx) {
+                        assert_eq!(
+                            target.section_type,
+                            section.section_type().map(|x| x as u8),
+                            "[{file_name}, section: {idx}] Error with the section Type"
+                        );
+                        assert_eq!(
+                            target.size,
+                            section.try_content_as_slice().unwrap().len(),
+                            "[{file_name}, section: {idx}] Error with the section Size"
+                        );
+                        assert_eq!(
+                            target.text,
+                            extract_text_from_section(section),
+                            "[{file_name}, section: {idx}] Error with the section Text"
+                        );
+                    }
+                }
+
+                assert!(target.sections.is_empty(), "Some section use case has not been run.");
+            }
+        }
+        assert_eq!(
+            expected_values.total_number_of_files, count,
+            "The number of file found does not match the expected one."
+        );
+        assert!(expected_values.files_to_test.is_empty(), "Some file use case has not been run.");
+        Ok(())
+    }
+
     #[test]
     fn test_firmware_volume() -> Result<(), Box<dyn Error>> {
         set_logger();
@@ -719,7 +780,7 @@ mod test {
         let expected_values =
             serde_yaml::from_reader::<File, TargetValues>(File::open(root.join("DXEFV_expected_values.yml"))?)?;
 
-        test_firmware_volume_worker(fv, expected_values, &NullExtractror {})
+        test_firmware_volume_ref_worker(&fv, expected_values, &NullExtractror {})
     }
 
     #[test]
@@ -733,7 +794,7 @@ mod test {
         let expected_values =
             serde_yaml::from_reader::<File, TargetValues>(File::open(root.join("GIGANTOR_expected_values.yml"))?)?;
 
-        test_firmware_volume_worker(fv, expected_values, &NullExtractror {})
+        test_firmware_volume_ref_worker(&fv, expected_values, &NullExtractror {})
     }
 
     #[test]
@@ -766,7 +827,7 @@ mod test {
 
         let fv = VolumeRef::new(&fv_bytes).unwrap();
 
-        test_firmware_volume_worker(fv, expected_values, &test_extractor)?;
+        test_firmware_volume_ref_worker(&fv, expected_values, &test_extractor)?;
 
         assert!(test_extractor.invoked.load(core::sync::atomic::Ordering::SeqCst));
 
@@ -982,7 +1043,7 @@ mod test {
             let fv_ref = VolumeRef::new(&original_fv_bytes).map_err(stringify)?;
 
             // convert the ref to a volume.
-            let fv: Volume = fv_ref.try_into().map_err(stringify)?;
+            let fv: Volume = (&fv_ref).try_into().map_err(stringify)?;
 
             // serialize the volume back to bytes
             let serialized_fv_bytes = fv.serialize().map_err(stringify)?;
@@ -1005,6 +1066,8 @@ mod test {
 
     #[test]
     fn test_serialization_with_extractor_composer() -> Result<(), Box<dyn Error>> {
+        set_logger();
+
         struct LzmaExtractorComposer {}
         impl SectionExtractor for LzmaExtractorComposer {
             fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
@@ -1046,6 +1109,40 @@ mod test {
                 }
                 Err(FirmwareFileSystemError::Unsupported)
             }
+        }
+
+        let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
+        let original_fv_bytes: Vec<u8> = fs::read(root.join("LZMATEST.Fv"))?;
+        let expected_values =
+            serde_yaml::from_reader::<File, TargetValues>(File::open(root.join("LZMATEST_expected_values.yml"))?)?;
+
+        let fv_ref = VolumeRef::new(&original_fv_bytes).map_err(stringify)?;
+        let fv: Volume = (&fv_ref, &LzmaExtractorComposer {} as &dyn SectionExtractor).try_into().map_err(stringify)?;
+
+        //Verify expected results for both ref and owned versions of FV.
+        test_firmware_volume_ref_worker(
+            &fv_ref,
+            expected_values.clone(),
+            &LzmaExtractorComposer {} as &dyn SectionExtractor,
+        )?;
+        test_firmware_volume_worker(&fv, expected_values)?;
+
+        //re-serializing the FV without modifying it should work and generat the same byte stream. This doesn't require
+        //a composer since the sections haven't been modified, so they are already composed (i.e. the backing section
+        //data for the LZMA section already exists and is correct)
+        let serialized_fv_bytes = fv.serialize().map_err(stringify)?;
+
+        // the two buffers should match.
+        assert_eq!(original_fv_bytes.len(), serialized_fv_bytes.len());
+
+        let mismatch = original_fv_bytes
+            .iter()
+            .zip(serialized_fv_bytes)
+            .enumerate()
+            .find(|(_offset, (expected, actual))| *expected != actual);
+
+        if let Some((offset, (expected, actual))) = mismatch {
+            panic!("mismatch in serialized buffer at offset {offset:x}. Expected {expected:x}, actual: {actual:x}");
         }
 
         Ok(())
