@@ -17,7 +17,6 @@ use patina_sdk::error::EfiError;
 
 use r_efi::efi;
 
-use crate::protocol_db::DXE_CORE_HANDLE;
 use crate::protocols::PROTOCOL_DB;
 
 fn get_bindings_for_handles(handles: Vec<efi::Handle>) -> Vec<*mut efi::protocols::driver_binding::Protocol> {
@@ -524,6 +523,7 @@ pub fn init_driver_services(bs: &mut efi::BootServices) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol_db::DXE_CORE_HANDLE;
     use crate::test_support;
     use core::ffi::c_void;
     use core::ptr;
