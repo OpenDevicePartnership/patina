@@ -9,6 +9,7 @@ This RFC proposes:
 
 - 2025-07-14: Initial draft of RFC.
 - 2025-07-15: Note automated process open under the "Unresolved Questions" section.
+- 2025-07-15: Removed `UefiCpuPkg` (in `edk2`) as an allowed dependency at this time.
 
 ## Motivation
 
@@ -51,8 +52,8 @@ may be useful as a general reference to understand how `PatinaPkg.dec` and the o
    through existing means. However, Patina will define some new content that is not defined in specifications and may
    be made available for use in edk2 C code. In that case, this repository is the proper place to put a single
    officially maintained copy of that content.
-4. **Minimal Dependencies** - The repository is not allowed to depend on any content other than `MdePkg`, `MdeModulePkg`,
-   and `UefiCpuPkg` from upstream `edk2`. Any other dependency to an `edk2` package must be requested via RFC and
+4. **Minimal Dependencies** - The repository is not allowed to depend on any content other than `MdePkg` and
+   `MdeModulePkg` from upstream `edk2`. Any other dependency to an `edk2` package must be requested via RFC and
    Project Mu dependencies are completely disallowed.
 5. **No Dependencies From Patina** - No other Patina repository can depend on content in this repository. No other
    Patina repository documentation should reference details in this repository. The repository should be able to be
