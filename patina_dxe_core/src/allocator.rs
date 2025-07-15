@@ -831,6 +831,19 @@ fn process_hob_allocations(hob_list: &HobList) {
                     continue;
                 }
 
+                if desc.memory_length == 0 {
+                    log::warn!("Memory Allocation HOB has a 0 length, ignoring.\n{:#x?}", hob);
+                    continue;
+                }
+
+                if desc.memory_base_address == 0 {
+                    log::warn!(
+                        "Memory Allocation HOB has a 0 base address, ignoring. Page 0 cannot be allocated:\n{:#x?}",
+                        hob
+                    );
+                    continue;
+                }
+
                 //Use allocate_pages here to record these allocations and keep the allocator stats up to date.
                 //Note: PI spec 1.8 III-5.4.1.1 stipulates that memory allocations must have page-granularity,
                 //which allows us to use allocate_pages. Check and warn if an allocation doesn't meet the alignment
@@ -940,6 +953,40 @@ fn process_hob_allocations(hob_list: &HobList) {
             }
             _ => continue,
         };
+    }
+
+    // now that we've processed HOBs, lets allocate page 0 because we are going to use it for null pointer detection
+    // if we don't allocate it, bootloaders may try to allocate it (as they often allocate by address from what the
+    // EFI_MEMORY_MAP reports as EfiConventionalMemory), which will cause a failure that is unnecessary. We do this
+    // after HOB processing because we want to ensure that the GCD is fully populated with the memory map
+    // before we allocate page 0, as it may not live in system memory, in which case we cannot allocate it.
+    match GCD.get_memory_descriptor_for_address(0) {
+        Ok(desc) if desc.memory_type == GcdMemoryType::SystemMemory => {
+            let mut address: efi::PhysicalAddress = 0;
+            if core_allocate_pages(
+                efi::ALLOCATE_ADDRESS,
+                efi::BOOT_SERVICES_DATA,
+                UEFI_PAGE_SIZE,
+                &mut address as *mut efi::PhysicalAddress,
+                None,
+            )
+            .is_err()
+            {
+                // if we failed, we should just continue, we won't have null pointer detection, possibly, although one failure
+                // could be that address 0 is not in the memory region of the platform, which will also act as null pointer
+                // detection.
+                log::warn!(
+                    "Failed to allocate page 0 for null pointer detection. It will still be unmapped but something may attempt to allocate it by address."
+                );
+                debug_assert!(false);
+            }
+        }
+        _ => {
+            // if we got here, then page 0 is already allocated, so we don't need to do anything.
+            log::info!(
+                "Page 0 is not part of system memory, it cannot be allocated. It will still be unmapped to use for null pointer detection."
+            );
+        }
     }
 }
 
