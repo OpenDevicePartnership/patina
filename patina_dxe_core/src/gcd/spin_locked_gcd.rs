@@ -629,7 +629,7 @@ impl GCD {
     fn allocate_bottom_up(
         &mut self,
         memory_type: dxe_services::GcdMemoryType,
-        alignment: usize,
+        align_shift: usize,
         len: usize,
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
@@ -640,11 +640,12 @@ impl GCD {
         log::trace!(target: "allocations", "[{}] Bottom up GCD allocation: {:#?}", function!(), memory_type);
         log::trace!(target: "allocations", "[{}]   Max Address: {:#x}", function!(), max_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
-        log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
+        log::trace!(target: "allocations", "[{}]   Align Shift: {:#x}", function!(), align_shift);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
         log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
         let memory_blocks = &mut self.memory_blocks;
+        let alignment = 1 << align_shift;
 
         log::trace!(target: "gcd_measure", "search");
         let mut current = memory_blocks.first_idx();
@@ -654,15 +655,30 @@ impl GCD {
                 current = memory_blocks.next_idx(idx);
                 continue;
             }
+
             let address = mb.start();
-            let mut addr = address & (usize::MAX << alignment);
+            let mut addr = address & (usize::MAX << align_shift);
+
             if addr < address {
-                addr += 1 << alignment;
+                addr += alignment;
             }
             ensure!(addr + len <= max_address, EfiError::NotFound);
+
             if mb.as_ref().memory_type != memory_type {
                 current = memory_blocks.next_idx(idx);
                 continue;
+            }
+
+            // We don't allow allocations on page 0, to allow for null pointer detection. If this block starts at 0,
+            // attempt to move forward a page + alignment to find a valid address. If there is not enough space in this
+            // block, move to the next one.
+            if addr == 0 {
+                addr = align_up(UEFI_PAGE_SIZE, alignment)?;
+                // we can do mb.len() - addr here because we know this block starts from 0
+                if addr + len >= max_address || mb.len() - addr < len {
+                    current = memory_blocks.next_idx(idx);
+                    continue;
+                }
             }
 
             match Self::split_state_transition_at_idx(
@@ -687,7 +703,7 @@ impl GCD {
     fn allocate_top_down(
         &mut self,
         memory_type: dxe_services::GcdMemoryType,
-        alignment: usize,
+        align_shift: usize,
         len: usize,
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
@@ -698,11 +714,12 @@ impl GCD {
         log::trace!(target: "allocations", "[{}] Top down GCD allocation: {:#?}", function!(), memory_type);
         log::trace!(target: "allocations", "[{}]   Min Address: {:#x}", function!(), min_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
-        log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
+        log::trace!(target: "allocations", "[{}]   Align Shift: {:#x}", function!(), align_shift);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
         log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
         let memory_blocks = &mut self.memory_blocks;
+        let alignment = 1 << align_shift;
 
         log::trace!(target: "gcd_measure", "search");
         let mut current = memory_blocks.last_idx();
@@ -717,12 +734,25 @@ impl GCD {
                 current = memory_blocks.prev_idx(idx);
                 continue;
             }
-            addr &= usize::MAX << alignment;
+            addr &= usize::MAX << align_shift;
             ensure!(addr >= min_address, EfiError::NotFound);
 
             if mb.as_ref().memory_type != memory_type {
                 current = memory_blocks.prev_idx(idx);
                 continue;
+            }
+
+            // We don't allow allocations on page 0, to allow for null pointer detection. If this block starts at 0,
+            // attempt to move forward a page + alignment to find a valid address. If there is not enough space in this
+            // block, move to the next one.
+            if addr == 0 {
+                addr = align_up(UEFI_PAGE_SIZE, alignment)?;
+                // we don't check against the min_address here because it was already checked above
+                // we can do mb.len() - addr here because we know this block starts from 0
+                if mb.len() - addr < len {
+                    current = memory_blocks.prev_idx(idx);
+                    continue;
+                }
             }
 
             match Self::split_state_transition_at_idx(
@@ -747,7 +777,7 @@ impl GCD {
     fn allocate_address(
         &mut self,
         memory_type: dxe_services::GcdMemoryType,
-        alignment: usize,
+        align_shift: usize,
         len: usize,
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
@@ -759,9 +789,14 @@ impl GCD {
         log::trace!(target: "allocations", "[{}]   Address: {:#x}", function!(), address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Memory Type: {:?}", function!(), memory_type);
-        log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
+        log::trace!(target: "allocations", "[{}]   Align Shift: {:#x}", function!(), align_shift);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
         log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
+
+        // allocate_address allows allocating page 0. This is needed to let Patina DXE Core allocate it for null
+        // pointer detection very early in the boot process. Any future allocate at address will fail because it is
+        // already allocated. However, Patina DXE Core needs to allocate address 0 in order to prevent bootloaders
+        // from thinking it is free memory that can be allocated.
 
         let memory_blocks = &mut self.memory_blocks;
 
@@ -770,7 +805,7 @@ impl GCD {
         let block = memory_blocks.get_with_idx(idx).ok_or(EfiError::NotFound)?;
 
         ensure!(
-            block.as_ref().memory_type == memory_type && address == address & (usize::MAX << alignment),
+            block.as_ref().memory_type == memory_type && address == address & (usize::MAX << align_shift),
             EfiError::NotFound
         );
 
@@ -1773,6 +1808,33 @@ impl SpinLockedGcd {
             let paging_attrs = MemoryAttributes::from_bits_truncate(attributes)
                 & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask);
 
+            // EFI_MEMORY_RP is a special case, we don't actually want to set it in the page table, we want to unmap
+            // the region
+            if paging_attrs & MemoryAttributes::ReadProtect == MemoryAttributes::ReadProtect {
+                match page_table.unmap_memory_region(base_address as u64, len as u64) {
+                    Ok(_) => {
+                        log::trace!(
+                            target: "paging",
+                            "Memory region {:#x?} of length {:#x?} unmapped",
+                            base_address,
+                            len,
+                        );
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to unmap memory region {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
+                            base_address,
+                            len,
+                            attributes,
+                            e
+                        );
+                        debug_assert!(false);
+                        return Err(EfiError::InvalidParameter);
+                    }
+                }
+            }
+
             // we assume that the page table and GCD are in sync. If not, we will debug_assert and return an error here
             // as such, we only need to query the first page of this region to get the attributes. This will tell us
             // whether the region is mapped or not and if so, what cache attributes to persist.
@@ -2082,6 +2144,14 @@ impl SpinLockedGcd {
             }
         }
 
+        // make sure we didn't map page 0 if it was reserved or MMIO, we are using this for null pointer detection
+        if let Err(err) = self.set_memory_space_attributes(0, UEFI_PAGE_SIZE, efi::MEMORY_RP) {
+            // if we fail to set these attributes we can continue to boot, but we will not be able to detect null
+            // pointer dereferences.
+            log::error!("Failed to unmap page 0, which is reserved for null pointer detection. Error: {:?}", err);
+            debug_assert!(false);
+        }
+
         self.page_table.lock().as_mut().unwrap().install_page_table().expect("Failed to install the page table");
 
         log::info!("Paging initialized for the GCD");
@@ -2310,10 +2380,10 @@ impl SpinLockedGcd {
                 attributes,
             ) {
                 Err(EfiError::NotReady) => {
-                    // before the page table is installed, we expect to get a return of NotInitialized. This means the GCD
-                    // has been updated with the attributes, but the page table is NotInitialized yet. In init_paging, the
+                    // before the page table is installed, we expect to get a return of NotReady. This means the GCD
+                    // has been updated with the attributes, but the page table is NotReady yet. In init_paging, the
                     // page table will be updated with the current state of the GCD. The code that calls into this expects
-                    // NotInitialized to be returned, so we must catch that error and report it. However, we also need to
+                    // NotReady to be returned, so we must catch that error and report it. However, we also need to
                     // make sure any attribute updates across descriptors update the full range and not error out here.
                     res = Err(EfiError::NotReady);
                 }
@@ -2452,8 +2522,19 @@ impl SpinLockedGcd {
     pub(crate) fn activate_compatibility_mode(&self) {
         const LEGACY_BIOS_WB_ADDRESS: usize = 0xA0000;
 
+        // always map page 0 if it exists in this system, as grub will attempt to read it for legacy boot structures
+        // map it WB by default, because 0 is being used as the null page, it may not have gotten cache attributes
+        // populated
+        if self.get_memory_descriptor_for_address(0).is_ok() {
+            // set_memory_space_attributes will set both the GCD and paging attributes
+            if let Some(error) = self.set_memory_space_attributes(0, UEFI_PAGE_SIZE, efi::MEMORY_WB).err() {
+                log::error!("Failed to map page 0 for compat mode. Status: {:#x?}", error);
+                debug_assert!(false);
+            }
+        }
+
         // map legacy region if system mem
-        let mut address = 0;
+        let mut address = UEFI_PAGE_SIZE; // start at 0x1000, as we already mapped page 0
         while address < LEGACY_BIOS_WB_ADDRESS {
             let mut size = UEFI_PAGE_SIZE;
             if let Ok(descriptor) = self.get_memory_descriptor_for_address(address as efi::PhysicalAddress) {
@@ -3050,8 +3131,8 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            unsafe { gcd.add_memory_space(memory_type, i * 10, 10, 0) }.unwrap();
-            let res = gcd.allocate_memory_space(AllocateType::Address(i * 10), memory_type, 0, 10, 1 as _, None);
+            unsafe { gcd.add_memory_space(memory_type, (i + 1) * 10, 10, 0) }.unwrap();
+            let res = gcd.allocate_memory_space(AllocateType::Address((i + 1) * 10), memory_type, 0, 10, 1 as _, None);
             match memory_type {
                 dxe_services::GcdMemoryType::Unaccepted => assert_eq!(Err(EfiError::InvalidParameter), res),
                 _ => assert!(res.is_ok()),
@@ -3110,10 +3191,10 @@ mod tests {
     #[test]
     fn test_allocate_memory_space_alignment() {
         let (mut gcd, _) = create_gcd();
-        unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 0x1000, 0) }.unwrap();
+        unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000, 0x1000, 0) }.unwrap();
 
         assert_eq!(
-            Ok(0),
+            Ok(0x1000),
             gcd.allocate_memory_space(
                 AllocateType::BottomUp(None),
                 dxe_services::GcdMemoryType::SystemMemory,
@@ -3125,7 +3206,7 @@ mod tests {
             "Allocate bottom up without alignment"
         );
         assert_eq!(
-            Ok(0x10),
+            Ok(0x1010),
             gcd.allocate_memory_space(
                 AllocateType::BottomUp(None),
                 dxe_services::GcdMemoryType::SystemMemory,
@@ -3137,7 +3218,7 @@ mod tests {
             "Allocate bottom up with alignment of 4 bits (find first address that is aligned)"
         );
         assert_eq!(
-            Ok(0x20),
+            Ok(0x1020),
             gcd.allocate_memory_space(
                 AllocateType::BottomUp(None),
                 dxe_services::GcdMemoryType::SystemMemory,
@@ -3149,7 +3230,7 @@ mod tests {
             "Allocate bottom up with alignment of 4 bits (already aligned)"
         );
         assert_eq!(
-            Ok(0xff1),
+            Ok(0x1ff1),
             gcd.allocate_memory_space(
                 AllocateType::TopDown(None),
                 dxe_services::GcdMemoryType::SystemMemory,
@@ -3161,7 +3242,7 @@ mod tests {
             "Allocate top down without alignment"
         );
         assert_eq!(
-            Ok(0xfe0),
+            Ok(0x1fe0),
             gcd.allocate_memory_space(
                 AllocateType::TopDown(None),
                 dxe_services::GcdMemoryType::SystemMemory,
@@ -3173,7 +3254,7 @@ mod tests {
             "Allocate top down with alignment of 4 bits (find first address that is aligned)"
         );
         assert_eq!(
-            Ok(0xf00),
+            Ok(0x1f00),
             gcd.allocate_memory_space(
                 AllocateType::TopDown(None),
                 dxe_services::GcdMemoryType::SystemMemory,
@@ -3185,9 +3266,9 @@ mod tests {
             "Allocate top down with alignment of 4 bits (already aligned)"
         );
         assert_eq!(
-            Ok(0xa00),
+            Ok(0x1a00),
             gcd.allocate_memory_space(
-                AllocateType::Address(0xa00),
+                AllocateType::Address(0x1a00),
                 dxe_services::GcdMemoryType::SystemMemory,
                 4,
                 100,
@@ -3203,7 +3284,7 @@ mod tests {
         assert_eq!(
             Err(EfiError::NotFound),
             gcd.allocate_memory_space(
-                AllocateType::Address(0xa0f),
+                AllocateType::Address(0x1a0f),
                 dxe_services::GcdMemoryType::SystemMemory,
                 4,
                 100,
@@ -3533,7 +3614,8 @@ mod tests {
     #[test]
     fn test_set_capabilities_and_attributes() {
         let (mut gcd, address) = create_gcd();
-        unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, address, 0) }.unwrap();
+        unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000, address - 0x1000, 0) }
+            .unwrap();
 
         gcd.allocate_memory_space(
             AllocateType::BottomUp(None),
@@ -3545,9 +3627,9 @@ mod tests {
         )
         .unwrap();
         // Trying to set capabilities where the range falls outside a block should return unsupported
-        assert_eq!(Err(EfiError::Unsupported), gcd.set_memory_space_capabilities(0, 0x3000, 0b1111));
-        gcd.set_memory_space_capabilities(0, 0x2000, efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP).unwrap();
-        gcd.set_gcd_memory_attributes(0, 0x2000, efi::MEMORY_RO).unwrap();
+        assert_eq!(Err(EfiError::Unsupported), gcd.set_memory_space_capabilities(0x1000, 0x3000, 0b1111));
+        gcd.set_memory_space_capabilities(0x1000, 0x2000, efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP).unwrap();
+        gcd.set_gcd_memory_attributes(0x1000, 0x2000, efi::MEMORY_RO).unwrap();
     }
 
     #[test]
@@ -4093,5 +4175,63 @@ mod tests {
                 }
             }
         });
+    }
+
+    #[test]
+    fn test_allocate_page_zero_should_fail() {
+        let (mut gcd, _) = create_gcd();
+        // Increase the memory block size so allocation at 0x1000 is possible after skipping page 0
+        unsafe {
+            gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 0x2000, efi::MEMORY_WB).unwrap();
+        }
+
+        // Try to allocate page 0 implicitly bottom up, we should get bumped to the next available page
+        let res = gcd.allocate_memory_space(
+            AllocateType::BottomUp(None),
+            dxe_services::GcdMemoryType::SystemMemory,
+            0,
+            0x1000,
+            1 as _,
+            None,
+        );
+        assert_eq!(res.unwrap(), 0x1000, "Should not be able to allocate page 0");
+
+        // Try to allocate page 0 implicitly top down, we should fail with out of resources
+        let res = gcd.allocate_memory_space(
+            AllocateType::TopDown(None),
+            dxe_services::GcdMemoryType::SystemMemory,
+            0,
+            0x1000,
+            1 as _,
+            None,
+        );
+        assert_eq!(res, Err(EfiError::OutOfResources), "Should not be able to allocate page 0");
+
+        // add a new block to ensure block skipping logic works
+        unsafe {
+            gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x2000, 0x2000, efi::MEMORY_WB).unwrap();
+        }
+
+        // now allocate bottom up, we should be able to allocate page 0x2000
+        let res = gcd.allocate_memory_space(
+            AllocateType::BottomUp(None),
+            dxe_services::GcdMemoryType::SystemMemory,
+            0,
+            0x2000,
+            1 as _,
+            None,
+        );
+        assert_eq!(res.unwrap(), 0x2000, "Should be able to allocate page 0x2000");
+
+        // Try to allocate page 0 explicitly. This should pass as Patina DXE Core needs to allocate by address
+        let res = gcd.allocate_memory_space(
+            AllocateType::Address(0),
+            dxe_services::GcdMemoryType::SystemMemory,
+            0,
+            UEFI_PAGE_SIZE,
+            1 as _,
+            None,
+        );
+        assert_eq!(res.unwrap(), 0x0, "Should be able to allocate page 0 by address");
     }
 }
