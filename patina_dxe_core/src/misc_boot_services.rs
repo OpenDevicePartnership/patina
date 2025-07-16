@@ -271,13 +271,14 @@ mod tests {
         // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
         initialize_boot_services(st.boot_services_mut());
         init_misc_boot_services_support(st.boot_services_mut());
-        
+        // Release the lock at the end
+        std::mem::drop(st_guard);
     }
 
     #[test]
     fn test_misc_calc_crc32() {
-        let mut st = systemtables::SYSTEM_TABLE.lock();
-        let st = st.as_mut().expect("System Table not initialized!");
+        let mut st_guard = systemtables::SYSTEM_TABLE.lock();
+        let st = st_guard.as_mut().expect("System Table not initialized!");
 
         // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
         initialize_boot_services(st.boot_services_mut());
@@ -292,11 +293,13 @@ mod tests {
         );
 
         (st.boot_services_mut().calculate_crc32)(BUFFER.as_ptr() as *mut c_void, 0, &mut data_crc as *mut u32);
+        // Release the lock at the end
+        std::mem::drop(st_guard);
     }
     #[test]
     fn test_misc_watchdog_timer() {
-        let mut st = systemtables::SYSTEM_TABLE.lock();
-        let st = st.as_mut().expect("System Table not initialized!");
+        let mut st_guard = systemtables::SYSTEM_TABLE.lock();
+        let st = st_guard.as_mut().expect("System Table not initialized!");
 
         // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
         initialize_boot_services(st.boot_services_mut());
@@ -312,11 +315,13 @@ mod tests {
 
         // Case 2: Disable the watchdog timer with non-null data
         let _status = (st.boot_services_mut().set_watchdog_timer)(0, 0, data.len(), data_ptr);
+        // Release the lock at the end
+        std::mem::drop(st_guard);
     }
     #[test]
     fn test_misc_stall() {
-        let mut st = systemtables::SYSTEM_TABLE.lock();
-        let st = st.as_mut().expect("System Table not initialized!");
+        let mut st_guard = systemtables::SYSTEM_TABLE.lock();
+        let st = st_guard.as_mut().expect("System Table not initialized!");
 
         // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
         initialize_boot_services(st.boot_services_mut());
@@ -325,6 +330,8 @@ mod tests {
         (st.boot_services_mut().stall)(10000);
         (st.boot_services_mut().stall)(0); // Changed
         (st.boot_services_mut().stall)(usize::MAX); // Changed
+        // Release the lock at the end
+        std::mem::drop(st_guard);
     }
 
     #[test]
@@ -337,7 +344,7 @@ mod tests {
         // Call exit_boot_services with a valid map_key
         let handle: efi::Handle = 0x1000 as efi::Handle; // Example handle
         let _status = (st.boot_services_mut().exit_boot_services)(handle, valid_map_key);
-            // Release the lock at the end
+        // Release the lock at the end
         std::mem::drop(st_guard);
     }
 }
