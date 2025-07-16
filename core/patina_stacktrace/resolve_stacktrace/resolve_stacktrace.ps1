@@ -283,14 +283,28 @@ foreach ($line in $lines) {
         continue
     }
 
-    # Skip the header line
-    if ($line -match "^\s*#") {
+    # Skip the header line, but allow for prefixes like "INFO -"
+    if ($line -match "^\s*[^#]*#") {
         Write-Output " # Source Path                                                           Child-SP         Return Address   Call Site"
         continue
     }
 
-    # Split the line by whitespace and extract the Call Site column (4th column)
-    $columns = $line -split "\s+"
+    # Remove any prefix before the frame number (e.g., "INFO -    ")
+    # This regex matches: optional prefix, then frame number, then the rest
+    if ($line -match "^[^\d]*?(\d+)\s+(.*)$") {
+        $frameNumber = $matches[1]
+        $restOfLine = $matches[2]
+        $columns = @($frameNumber) + ($restOfLine -split "\s+")
+    } else {
+        # If it doesn't match, skip the line
+        continue
+    }
+
+    # Now $columns[0] is the frame number, $columns[1] is Child-SP, $columns[2] is Return Address, $columns[3] is Call Site
+    if ($columns.Count -lt 4) {
+        continue
+    }
+
     $callSite = $columns[3]
 
     # Transform the Call Site

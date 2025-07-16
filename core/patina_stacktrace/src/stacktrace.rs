@@ -11,7 +11,9 @@ cfg_if::cfg_if! {
     }
 }
 
+/// A structure representing a stack trace.
 pub struct StackTrace;
+
 impl StackTrace {
     /// Dumps the stack trace for the given PC and SP values.
     ///
@@ -44,13 +46,13 @@ impl StackTrace {
         loop {
             let no_name = "<no module>";
 
-            let image = PE::locate_image(pc)?;
+            let image = unsafe { PE::locate_image(pc) }?;
 
             let image_name = image.image_name.unwrap_or(no_name);
 
             let pc_rva = pc - image.base_address;
 
-            let runtime_function = RuntimeFunction::find_function(&image, pc_rva as u32)?;
+            let runtime_function = unsafe { RuntimeFunction::find_function(&image, pc_rva as u32) }?;
             let unwind_info = runtime_function.get_unwind_info()?;
             let (curr_sp, _curr_pc, prev_sp, prev_pc) = unwind_info.get_current_stack_frame(sp, pc)?;
 
@@ -122,6 +124,6 @@ impl StackTrace {
             }
         }
 
-        StackTrace::dump_with(pc, sp)
+        unsafe { StackTrace::dump_with(pc, sp) }
     }
 }

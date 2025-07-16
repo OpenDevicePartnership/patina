@@ -1,6 +1,35 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use patina_internal_collections::{node_size, Bst, Rbt, SliceKey, SortedSlice};
-use rand::{prelude::SliceRandom, Rng};
+//! Benchmarks for the delete operations in various data structures.
+//!
+//! This benchmark tests the performance performing random delete operations on the supported data structures in this
+//! crate, including Red-Black Trees (RBT), Binary Search Trees (BST), and Sorted Slices.
+//!
+//! ## Benchmark execution
+//!
+//! Running this exact benchmark can be done with the following command:
+//!
+//! `> cargo make bench -p patina_internal_collections --bench bench_delete`
+//!
+//! If you wish to run a subset of benchmarks in this file, you can filter them by name:
+//!
+//! `> cargo make bench -p patina_internal_collections --bench bench_delete -- <filter>`
+//!
+//! ## Examples
+//!
+//! ```bash
+//! > cargo make bench -p patina_internal_collections --bench bench_delete -- rbt
+//! > cargo make bench -p patina_internal_collections --bench bench_delete -- 32bit
+//! > cargo make bench -p patina_internal_collections --bench bench_delete
+//! ```
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use patina_internal_collections::{Bst, Rbt, SliceKey, SortedSlice, node_size};
+use rand::{Rng, prelude::SliceRandom};
 use std::{collections::HashSet, hash::Hash};
 use uint::construct_uint;
 

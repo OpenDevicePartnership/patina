@@ -1,5 +1,13 @@
+//! Error codes for the patina_stacktrace crate
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
 use core::fmt;
 
+/// The error type for stacktrace operations.
 #[derive(Debug, PartialEq)]
 pub enum Error {
     /// Error during parsing the PE
@@ -40,14 +48,15 @@ impl fmt::Display for Error {
         match self {
             Error::BufferTooShort(index) => write!(fmt, "Buffer is too short {}", index),
             Error::BufferUnaligned(addr) => write!(fmt, "Buffer is not aligned {:X}", addr),
-            Error::Malformed(ref msg) => write!(fmt, "Malformed entity: {}", msg),
+            Error::Malformed(msg) => write!(fmt, "Malformed entity: {}", msg),
             Error::ImageNotFound(rva) => {
                 write!(fmt, "Failed to locate a PE Image in memory with rip: {:X}", rva)
             }
             Error::ExceptionDirectoryNotFound(module) => {
                 write!(
                     fmt,
-                    "Exception directory not found for module {}. Make sure to build with RUSTFLAGS=-Cforce-unwind-tables", module.as_ref().unwrap_or(&no_module_str)
+                    "Exception directory not found for module {}. Make sure to build with RUSTFLAGS=-Cforce-unwind-tables",
+                    module.as_ref().unwrap_or(&no_module_str)
                 )
             }
             Error::RuntimeFunctionNotFound(module, rip_rva) => {
@@ -82,11 +91,12 @@ impl fmt::Display for Error {
                 )
             }
             #[cfg(test)]
-            Error::ModuleLoadFailed(ref module) => {
+            Error::ModuleLoadFailed(module) => {
                 write!(fmt, "Failed to load module: {}", module.as_ref().unwrap_or(&no_module_str))
             }
         }
     }
 }
 
+/// A specialized result type for the patina_stacktrace crate.
 pub type StResult<T> = Result<T, Error>;

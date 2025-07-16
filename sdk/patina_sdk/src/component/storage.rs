@@ -224,6 +224,7 @@ impl Default for Storage {
 }
 
 impl Storage {
+    /// Creates a new [Storage] object with empty containers for all datums.
     pub const fn new() -> Self {
         Self {
             deferred: None,
@@ -246,6 +247,10 @@ impl Storage {
         }
     }
 
+    /// A queue for commands to be executed later.
+    ///
+    /// This is used to defer structural changes to the storage until a later time, to prevent scheduling conflicts
+    /// in a multi-threaded environment.
     pub(crate) fn deferred(&mut self) -> &mut Deferred {
         if self.deferred.is_none() {
             self.deferred = Some(Deferred::default());
@@ -508,7 +513,7 @@ unsafe impl Param for &mut Storage {
         _state: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        storage.storage_mut()
+        unsafe { storage.storage_mut() }
     }
 
     fn validate(_state: &Self::State, _storage: UnsafeStorageCell) -> bool {
@@ -543,7 +548,7 @@ unsafe impl Param for &Storage {
         _state: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        storage.storage()
+        unsafe { storage.storage() }
     }
 
     fn validate(_state: &Self::State, _storage: UnsafeStorageCell) -> bool {

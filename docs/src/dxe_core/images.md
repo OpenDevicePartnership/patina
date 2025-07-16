@@ -8,7 +8,7 @@ RAM as well as setting up image execution context and executing images.
 Images are loaded by the core through the `core_load_image` function, which has the same semantics as the [EFI_BOOT_SERVICES.LoadImage()](https://uefi.org/specs/UEFI/2.10_A/07_Services_Boot_Services.html#efi-boot-services-loadimage)
 in the UEFI spec. This routine takes as input the image source, in the form of either a `device_path` that describes
 where to load the image from, or a `image` source buffer. This routine also takes as input the `parent_image_handle`
-(which is typically the well-known Rust Dxe Core handle), but can be used in some scenarios where another agent is
+(which is typically the well-known Patina DXE Core handle), but can be used in some scenarios where another agent is
 loading the image (for example, UEFI Shell), as well as a 'boot_policy' flag that has meaning when `device_path` is used
 to source the image (see [Loading an Image from a Device Path](images.md#sourcing-an-image-from-a-device-path), below).
 
@@ -50,15 +50,15 @@ Once the source image buffer is available (either having been directly passed in
 somewhere identified by the `device_path` parameter), it must be loaded into memory and processed so that it can be
 executed.
 
-The Rust DXE Core supports images in the [`PE32+`](https://uefi.org/specs/UEFI/2.10_A/02_Overview.html#uefi-images)
-format as required by the UEFI spec. In addition, the Rust DXE Core also supports the [`Terse Executable (TE)`](https://uefi.org/specs/PI/1.8A/V1_TE_Image.html)
+The Patina DXE Core supports images in the [`PE32+`](https://uefi.org/specs/UEFI/2.10_A/02_Overview.html#uefi-images)
+format as required by the UEFI spec. In addition, the Patina DXE Core also supports the [`Terse Executable (TE)`](https://uefi.org/specs/PI/1.8A/V1_TE_Image.html)
 format as specified in the UEFI Platform Initialization Spec.
 
-To parse these image formats, the Rust DXE Core uses the [goblin](https://docs.rs/goblin/latest/goblin/) crate which
+To parse these image formats, the Patina DXE Core uses the [goblin](https://docs.rs/goblin/latest/goblin/) crate which
 supports parsing both formats. Interactions with Goblin to support image parsing are implemented in the `patina_dxe_core`
 crate.
 
-To load an image, the Rust DXE core does the following:
+To load an image, the Patina DXE Core does the following:
 
 1. Parse the PE32+ or TE header to extract information about the image.
 2. Allocate a destination buffer of the appropriate type to hold the loaded image.
@@ -84,13 +84,13 @@ is also installed on the image handle.
 ## Executing an Image
 
 Once an image is loaded, it may be executed with a call to `core_start_image`. To manage the execution context of the
-new image, the Rust DXE core uses a modified version of the [corosensei](https://github.com/Amanieu/corosensei) crate to
+new image, the Patina DXE Core uses a modified version of the [corosensei](https://github.com/Amanieu/corosensei) crate to
 run the entry point as a "coroutine". The main extension to corosensei is the definition of a "UEFI" target to match UEFI
 stack conventions - which is basically a "windows" target without [TEB](https://learn.microsoft.com/en-us/windows/win32/debug/thread-environment-block--debugging-notes-).
 The primary rationale for using a coroutine-based approach to image execution is to simplify and generalize the ability
 to "exit" an image, which would otherwise require architecture-specific processor context save/and restore operations
 (i.e. "SetJump" and "LongJump"). In addition, the coroutine approach allows for better isolation of the image stack from
-the Rust DXE Core stack.
+the Patina DXE Core stack.
 
 When `core_start_image` is called, it first allocates a stack for the new image context, and then constructs a
 corosensei [`Coroutine`](https://docs.rs/corosensei/latest/corosensei/struct.Coroutine.html) structure. The coroutine is
@@ -109,6 +109,8 @@ start allows calls to `exit()` to properly resume into the previous context.
 ```mermaid
 ---
 title: Image Coroutine Flow
+config:
+  layout: elk
 ---
 flowchart TD
 
@@ -118,7 +120,7 @@ flowchart TD
   image2_exit-- "exit()" -->image1_exit
   image1_exit-- "exit()" -->dispatcher
 
-  subgraph core_dispatcher["Rust DXE Core Stack"]
+  subgraph core_dispatcher["Patina DXE Core Stack"]
     dispatcher
   end
 
@@ -170,7 +172,7 @@ is dropped and any resources associated with it (including the buffer containing
 
 ## Executing a Component
 
-The Rust DXE Core also supports dispatching Rust [`Components`](../driver/interface.md#component-interface). A
+The Patina DXE Core also supports dispatching Rust [`Components`](../driver/interface.md#component-interface). A
 `component` can be started by invoking `core_start_local_image`. The usage model is much simpler since `exit()` is not
 supported and neither are nested calls to `core_start_local_image`. A `Coroutine` is still instantiated with a separate
 stack for each component invocation, but the coroutine simply runs until the `Component` entry point returns at which
@@ -178,7 +180,7 @@ point it resumes back to the the `core_start_local_image` context.
 
 ## Image Module Global Private Data
 
-The Rust DXE Core image module maintains a global database of private data associated with each image that has been
+The Patina DXE Core image module maintains a global database of private data associated with each image that has been
 loaded, indexed by the image handle. This data contains some data that is published on the handle (e.g., data in the
 `EFI_LOADED_IMAGE_PROTOCOL`), as well as private data required to maintain the image and support public operations on it
 (such as relocation of runtime images, whether the image has been "started", a copy of the PE/COFF header information

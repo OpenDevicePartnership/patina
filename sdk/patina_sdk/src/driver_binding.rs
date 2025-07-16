@@ -71,10 +71,11 @@ use r_efi::{
 };
 
 use crate::boot_services::{
-    c_ptr::{CPtr, PtrMetadata},
     BootServices,
+    c_ptr::{CPtr, PtrMetadata},
 };
 
+/// Driver binding protocol interface to enable mocking in tests.
 #[cfg_attr(any(test, feature = "mockall"), automock)]
 pub trait DriverBinding {
     /// Tests to see if this driver supports a given controller.
@@ -207,7 +208,9 @@ where
     T: DriverBinding + 'static,
     U: BootServices + 'static,
 {
+    /// An owned, uninstalled driver binding.
     Uninstalled(Box<_UefiDriverBinding<T, U>>),
+    /// A leaked, global, installed driver binding.
     Installed(PtrMetadata<'static, Box<_UefiDriverBinding<T, U>>>),
 }
 

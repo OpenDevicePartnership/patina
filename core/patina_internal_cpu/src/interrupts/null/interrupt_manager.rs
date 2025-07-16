@@ -17,10 +17,12 @@ use crate::interrupts::InterruptManager;
 pub struct InterruptsNull {}
 
 impl InterruptsNull {
+    /// Creates a new instance of the null implementation of the InterruptManager.
     pub const fn new() -> Self {
         Self {}
     }
 
+    /// A do-nothing initialization function for the null implementation.
     pub fn initialize(&mut self) -> Result<(), EfiError> {
         Ok(())
     }

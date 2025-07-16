@@ -57,7 +57,7 @@ impl<'a> RuntimeFunction<'a> {
     /// Function to return the Runtime Function corresponding to the given
     /// relative pc.
     pub unsafe fn find_function(pe: &PE<'a>, pc_rva: u32) -> StResult<RuntimeFunction<'a>> {
-        let (exception_table_rva, exception_table_size) = pe.get_exception_table()?;
+        let (exception_table_rva, exception_table_size) = unsafe { pe.get_exception_table()? };
 
         // Jump to .pdata section and parse the Runtime Function records.
         // - Break the section in to 8 byte chunks(2 u32)

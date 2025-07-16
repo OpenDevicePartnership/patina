@@ -54,7 +54,7 @@ N/A
 ## Rust Code Design
 
 The current design requirement is a suggested starting place; It is looking for feedback and improvements. Once this
-RFC is accepted, documentation will be added to the patina mdbook that lays out the requirements defined here.
+RFC is accepted, documentation will be added to the Patina mdbook that lays out the requirements defined here.
 
 The intent is for this RFC is to define certain requirements for a public crate that produces a component as described
 below.

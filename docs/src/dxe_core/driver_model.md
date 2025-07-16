@@ -6,7 +6,7 @@ and [`EFI_BOOT_SERVICES.DisconnectController`](https://uefi.org/specs/UEFI/2.10_
 APIs. These routines are technically part of the "Protocol Handler Services" portion of the [UEFI Spec](https://uefi.org/specs/UEFI/2.10_A/07_Services_Boot_Services.html#protocol-handler-services)
 but are complex enough to merit their own module and documentation.
 
-The driver_services.rs module within the Rust DXE Core is responsible for implementing the driver service logic for the
+The driver_services.rs module within the Patina DXE Core is responsible for implementing the driver service logic for the
 core, and uses the services of the [Protocol Database](protocol_database.md) module to implement most of the logic.
 
 In UEFI parlance, "connecting" a controller means discovering and starting any drivers that have support for managing a

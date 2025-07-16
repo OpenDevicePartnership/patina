@@ -18,10 +18,10 @@ extern crate alloc;
 use core::marker::PhantomData;
 
 use super::{
+    Component, IntoComponent,
     metadata::MetaData,
     params::{Param, ParamFunction},
     storage::{Storage, UnsafeStorageCell},
-    Component, IntoComponent,
 };
 
 use crate::error::Result;
@@ -56,7 +56,7 @@ where
             return Ok(false);
         }
 
-        let param_value = Func::Param::get_param(param_state, storage);
+        let param_value = unsafe { Func::Param::get_param(param_state, storage) };
 
         self.func.run((), param_value).map(|_| true)
     }

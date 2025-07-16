@@ -12,7 +12,7 @@
 //!
 //! ## Feature Flags
 //!
-//! - `off`: Will not compile any tests.
+//! - `patina-tests`: Will opt-in to compile any tests.
 //!
 //! ## Example
 //!
@@ -255,7 +255,7 @@ impl TestRunner {
 
 #[cfg(test)]
 mod tests {
-    use crate::component::{params::Config, IntoComponent, Storage};
+    use crate::component::{IntoComponent, Storage, params::Config};
 
     // A test function where we mock DxeComponentInterface to return what we want for the test.
     #[allow(unused)]
@@ -286,7 +286,7 @@ mod tests {
         assert!(config.fail_fast);
     }
 
-    #[cfg_attr(not(feature = "off"), linkme::distributed_slice(super::__private_api::TEST_CASES))]
+    #[cfg_attr(feature = "enable_patina_tests", linkme::distributed_slice(super::__private_api::TEST_CASES))]
     #[allow(unused)]
     static TEST_CASE1: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test",
@@ -296,7 +296,7 @@ mod tests {
         func: |storage| crate::test::__private_api::FunctionTest::new(test_function).run(storage.into()),
     };
 
-    #[cfg_attr(not(feature = "off"), linkme::distributed_slice(super::__private_api::TEST_CASES))]
+    #[cfg_attr(feature = "enable_patina_tests", linkme::distributed_slice(super::__private_api::TEST_CASES))]
     #[allow(unused)]
     static TEST_CASE2: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test",
@@ -308,7 +308,11 @@ mod tests {
 
     #[test]
     fn test_we_run_without_panicking() {
-        assert_eq!(2, super::__private_api::test_cases().len());
+        if cfg!(feature = "enable_patina_tests") {
+            assert_eq!(2, super::__private_api::test_cases().len());
+        } else {
+            assert_eq!(0, super::__private_api::test_cases().len());
+        }
 
         let mut storage = Storage::new();
 

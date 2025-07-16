@@ -1,8 +1,24 @@
 //! Benchmarks for the component framework.
 //!
-//! To run the benchmarks, the `core` feature must be enabled.
+//! This benchmark tests the performance of adding and running components in the Patina SDK.
 //!
-//! `cargo bench -F core`
+//! ## Benchmark execution
+//!
+//! Running this exact benchmark can be done with the following command:
+//!
+//! `> cargo make bench -p patina_sdk --bench bench_component`
+//!
+//! If you wish to run a subset of benchmarks in this file, you can filter them by name:
+//!
+//! `> cargo make bench -p patina_sdk --bench bench_component -- <filter>`
+//!
+//! ## Examples
+//!
+//! ```bash
+//! > cargo make bench -p patina_sdk --bench bench_component -- with_component
+//! > cargo make bench -p patina_sdk --bench bench_component -- run_component
+//! > cargo make bench -p patina_sdk --bench bench_component
+//! ```
 //!
 //! ## License
 //!
@@ -10,10 +26,10 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use criterion::{criterion_group, criterion_main, Bencher, Criterion};
+use criterion::{Bencher, Criterion, criterion_group, criterion_main};
 use patina_sdk::{
     boot_services::StandardBootServices,
-    component::{params::*, Component, IntoComponent, Storage},
+    component::{Component, IntoComponent, Storage, params::*},
     error::Result,
 };
 

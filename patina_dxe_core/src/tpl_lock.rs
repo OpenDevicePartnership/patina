@@ -145,7 +145,7 @@ mod tests {
 
     use crate::test_support;
 
-    use super::{init_boot_services, TplMutex};
+    use super::{TplMutex, init_boot_services};
     use core::{
         mem::MaybeUninit,
         sync::atomic::{AtomicUsize, Ordering},

@@ -1,3 +1,11 @@
+//! A module containing a TPL aware Mutex implementation.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
 extern crate alloc;
 
 use core::{
@@ -7,9 +15,11 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use crate::boot_services::{tpl::Tpl, BootServices, StandardBootServices};
+use crate::boot_services::{BootServices, StandardBootServices, tpl::Tpl};
 
 /// Type use for mutual exclusion of data across Tpl (task priority level)
+///
+/// This mutex will raise the TPL to the specified level when locked, and restore it when the lock is released.
 pub struct TplMutex<'a, T: ?Sized, B: BootServices = StandardBootServices> {
     boot_services: &'a B,
     tpl_lock_level: Tpl,

@@ -324,7 +324,7 @@ impl EventDb {
         let id = event as usize;
         let current_event = self.events.get_mut(&id).ok_or(EfiError::InvalidParameter)?;
 
-        //explicitly match the Tianocore C implementation by not queueing an additional notify.
+        //explicitly match the EDK II C implementation by not queueing an additional notify.
         if current_event.signaled {
             return Ok(());
         }
@@ -363,11 +363,7 @@ impl EventDb {
 
     fn is_signaled(&mut self, event: efi::Event) -> bool {
         let id = event as usize;
-        if let Some(event) = self.events.get(&id) {
-            event.signaled
-        } else {
-            false
-        }
+        if let Some(event) = self.events.get(&id) { event.signaled } else { false }
     }
 
     fn queue_event_notify(&mut self, event: efi::Event) -> Result<(), EfiError> {
@@ -892,11 +888,11 @@ mod tests {
     fn signal_event_on_an_event_group_should_put_all_members_in_signaled_state() {
         with_locked_state(|| {
             let uuid = Uuid::from_str("aefcf33c-ce02-47b4-89f6-4bacdeda3377").unwrap();
-            let group1: efi::Guid = unsafe { core::mem::transmute(*uuid.as_bytes()) };
+            let group1 = efi::Guid::from_bytes(uuid.as_bytes());
             let uuid = Uuid::from_str("3a08a8c7-054b-4268-8aed-bc6a3aef999f").unwrap();
-            let group2: efi::Guid = unsafe { core::mem::transmute(*uuid.as_bytes()) };
+            let group2 = efi::Guid::from_bytes(uuid.as_bytes());
             let uuid = Uuid::from_str("745e8316-4889-4f58-be3c-6b718b7170ec").unwrap();
-            let group3: efi::Guid = unsafe { core::mem::transmute(*uuid.as_bytes()) };
+            let group3 = efi::Guid::from_bytes(uuid.as_bytes());
 
             static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
             let mut group1_events: Vec<efi::Event> = Vec::new();

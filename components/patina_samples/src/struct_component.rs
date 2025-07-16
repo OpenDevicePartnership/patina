@@ -9,10 +9,11 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use patina_sdk::{
-    component::{params::Config, IntoComponent},
+    component::{IntoComponent, params::Config},
     error::Result,
 };
 
+/// A simple struct component example that uses the default entry point function.
 #[derive(IntoComponent)]
 pub struct HelloStruct(pub &'static str);
 
@@ -23,13 +24,17 @@ impl HelloStruct {
     }
 }
 
+/// A simple enum component implementation example that uses a custom entry point function.
 #[derive(IntoComponent)]
 #[entry_point(path = my_function)]
 pub enum GreetingsEnum {
+    /// Represents a greeting message.
     Hello(&'static str),
+    /// Represents a farewell message.
     Goodbye(&'static str),
 }
 
+// This example shows that the entry point function can be defined outside of the enum.
 fn my_function(s: GreetingsEnum) -> Result<()> {
     match s {
         GreetingsEnum::Hello(name) => log::info!("Hello, {}!", name),

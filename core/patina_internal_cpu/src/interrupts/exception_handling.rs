@@ -92,7 +92,7 @@ pub(crate) fn unregister_exception_handler(exception_type: ExceptionType) -> Res
 /// Panics if no callback has been registered for a given exception or the handler
 /// read lock cannot be acquired.
 ///
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "efiapi" fn exception_handler(exception_type: usize, context: &mut ExceptionContext) {
     let handler_lock =
         EXCEPTION_HANDLERS[exception_type].try_read().expect("Failed to read lock in exception handler!");

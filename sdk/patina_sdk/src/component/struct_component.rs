@@ -29,15 +29,16 @@ extern crate alloc;
 
 use crate::{
     component::{
+        Component,
         metadata::MetaData,
         params::{ComponentInput, Param, ParamFunction},
         storage::{Storage, UnsafeStorageCell},
-        Component,
     },
     error::Result,
 };
 use core::marker::PhantomData;
 
+/// A [Component] implementation for Structs who specify a function whose parameters implement [Param].
 pub struct StructComponent<Marker, Func>
 where
     Func: ParamFunction<Marker>,
@@ -54,6 +55,7 @@ where
     Marker: 'static,
     Func: ParamFunction<Marker>,
 {
+    /// Creates a new `struct` component with the given function and input.
     pub fn new(func: Func, input: Func::In) -> Self {
         Self {
             func,
@@ -85,7 +87,7 @@ where
             return Ok(false);
         }
 
-        let param_value = Func::Param::get_param(param_state, storage);
+        let param_value = unsafe { Func::Param::get_param(param_state, storage) };
 
         self.func.run(self.input.take().unwrap(), param_value).map(|_| true)
     }
@@ -104,8 +106,8 @@ where
 #[cfg(test)]
 mod tests {
     use crate as patina_sdk;
-    use crate::component::params::{Config, ConfigMut};
     use crate::component::IntoComponent;
+    use crate::component::params::{Config, ConfigMut};
 
     #[derive(IntoComponent)]
     #[entry_point(path = TestStructSuccess::entry_point)]

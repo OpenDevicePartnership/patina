@@ -24,7 +24,7 @@ use r_efi::efi;
 
 use crate::{
     allocator::core_allocate_pool,
-    protocols::{core_install_protocol_interface, PROTOCOL_DB},
+    protocols::{PROTOCOL_DB, core_install_protocol_interface},
     tpl_lock,
 };
 
@@ -466,11 +466,7 @@ extern "efiapi" fn fv_read_section(
 
     //TODO: authentication status not yet supported.
 
-    if dest_buffer.len() < section_data.len() {
-        efi::Status::WARN_BUFFER_TOO_SMALL
-    } else {
-        efi::Status::SUCCESS
-    }
+    if dest_buffer.len() < section_data.len() { efi::Status::WARN_BUFFER_TOO_SMALL } else { efi::Status::SUCCESS }
 }
 
 extern "efiapi" fn fv_write_file(
@@ -730,7 +726,7 @@ pub fn device_path_bytes_for_fv_file(fv_handle: efi::Handle, file_name: efi::Gui
 }
 
 fn initialize_hob_fvs(hob_list: &hob::HobList) -> Result<(), efi::Status> {
-    let fv_hobs = hob_list.iter().filter_map(|h| if let hob::Hob::FirmwareVolume(&fv) = h { Some(fv) } else { None });
+    let fv_hobs = hob_list.iter().filter_map(|h| if let hob::Hob::FirmwareVolume(fv) = h { Some(*fv) } else { None });
 
     for fv in fv_hobs {
         // construct a FirmwareVolume struct to verify sanity.
@@ -756,8 +752,8 @@ mod tests {
     use crate::test_collateral;
     use mu_pi::fw_fs::FfsFileRawType;
     use mu_pi::hob::HobList;
-    use mu_pi::{hob, BootMode};
-    use std::alloc::{alloc, dealloc, Layout};
+    use mu_pi::{BootMode, hob};
+    use std::alloc::{Layout, alloc, dealloc};
     use std::ffi::c_void;
     use std::ptr;
     use std::{fs::File, io::Read};
@@ -1434,6 +1430,8 @@ mod tests {
                 fv_private_data_reset();
             }
             assert!(PRIVATE_FV_DATA.lock().fv_information.is_empty());
+
+            PRIVATE_FV_DATA.lock().section_extractor = Some(Box::new(patina_section_extractor::BrotliSectionExtractor));
 
             let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
                 get_volume_attributes: fv_get_volume_attributes,

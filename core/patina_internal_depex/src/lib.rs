@@ -56,7 +56,12 @@ pub enum Opcode {
     /// that should be treated as an error during evaluation.
     Unknown,
     /// A known opcode with an unexpected payload length.
-    Malformed { opcode: u8, len: usize },
+    Malformed {
+        /// The unhandled opcode value.
+        opcode: u8,
+        /// The length of the payload sent with the opcode.
+        len: usize,
+    },
 }
 
 /// Converts a UUID to an EFI GUID.
@@ -108,9 +113,12 @@ impl Opcode {
     }
 }
 
+/// Represents an associated dependency, where one guid must execute before or after another guid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssociatedDependency {
+    /// Indicates that the associated guid must be executed before the guid in the enum.
     Before(efi::Guid),
+    /// Indicates that the associated guid must be executed after the guid in the enum.
     After(efi::Guid),
 }
 
@@ -143,11 +151,11 @@ impl Depex {
     /// Evaluates a DEPEX expression.
     pub fn eval(&mut self, protocols: &[efi::Guid]) -> bool {
         let mut stack = Vec::with_capacity(DEPEX_STACK_SIZE_INCREMENT);
-        log::info!("Depex:");
+        log::trace!("Depex:");
         for (index, opcode) in self.expression.iter_mut().enumerate() {
             match opcode {
                 Opcode::Before(_) | Opcode::After(_) => {
-                    log::info!("  {:#x?}", opcode);
+                    log::trace!("  {:#x?}", opcode);
                     if index != 0 {
                         debug_assert!(false, "Invalid BEFORE or AFTER not at start of depex {:#x?}", self.expression);
                         return false;
@@ -173,7 +181,7 @@ impl Depex {
                     return false;
                 }
                 Opcode::Sor => {
-                    log::info!("  {:#x?}", opcode);
+                    log::trace!("  {:#x?}", opcode);
                     if index != 0 {
                         debug_assert!(false, "Invalid SOR not at start of depex.");
                         return false;
@@ -193,7 +201,7 @@ impl Depex {
                         }
                         stack.push(false);
                     }
-                    log::info!(
+                    log::trace!(
                         "  {opcode:x?} => {:?}, stack ->{:?}",
                         stack.last(),
                         stack.iter().rev().collect::<Vec<_>>()
@@ -203,7 +211,7 @@ impl Depex {
                     let operator1 = stack.pop().unwrap_or(false);
                     let operator2 = stack.pop().unwrap_or(false);
                     stack.push(operator1 && operator2);
-                    log::info!(
+                    log::trace!(
                         "  {opcode:x?}({operator1:?},{operator2:?}) => {:?}, stack ->{:?}",
                         stack.last(),
                         stack.iter().rev().collect::<Vec<_>>()
@@ -213,7 +221,7 @@ impl Depex {
                     let operator1 = stack.pop().unwrap_or(false);
                     let operator2 = stack.pop().unwrap_or(false);
                     stack.push(operator1 || operator2);
-                    log::info!(
+                    log::trace!(
                         "  {opcode:x?}({operator1:?},{operator2:?}) => {:?}, stack ->{:?}",
                         stack.last(),
                         stack.iter().rev().collect::<Vec<_>>()
@@ -222,7 +230,7 @@ impl Depex {
                 Opcode::Not => {
                     let operator = stack.pop().unwrap_or(false);
                     stack.push(!operator);
-                    log::info!(
+                    log::trace!(
                         "  {opcode:x?}({operator:?}) => {:?}, stack ->{:?}",
                         stack.last(),
                         stack.iter().rev().collect::<Vec<_>>()
@@ -230,7 +238,7 @@ impl Depex {
                 }
                 Opcode::True => {
                     stack.push(true);
-                    log::info!(
+                    log::trace!(
                         "  {opcode:x?} => {:?}, stack ->{:?}",
                         stack.last(),
                         stack.iter().rev().collect::<Vec<_>>()
@@ -238,7 +246,7 @@ impl Depex {
                 }
                 Opcode::False => {
                     stack.push(false);
-                    log::info!(
+                    log::trace!(
                         "  {opcode:x?} => {:?}, stack ->{:?}",
                         stack.last(),
                         stack.iter().rev().collect::<Vec<_>>()
@@ -246,7 +254,7 @@ impl Depex {
                 }
                 Opcode::End => {
                     let operator = stack.pop().unwrap_or(false);
-                    log::info!(
+                    log::trace!(
                         "  {opcode:x?} => final result: {:?}, final stack ->{:?}",
                         operator,
                         stack.iter().rev().collect::<Vec<_>>()
@@ -270,6 +278,7 @@ impl Depex {
         false
     }
 
+    /// If the depex expression is an associated dependency, it returns the associated dependency.
     pub fn is_associated(&self) -> Option<AssociatedDependency> {
         match self.expression.first() {
             Some(Opcode::Before(uid)) => Some(AssociatedDependency::Before(guid_from_uuid(uid)?)),

@@ -10,9 +10,9 @@
 use core::arch::{asm, global_asm};
 use patina_sdk::{component::service::IntoService, error::EfiError};
 
+use crate::interrupts::InterruptManager;
 #[cfg(all(not(test), target_arch = "aarch64"))]
 use crate::interrupts::aarch64::sysreg::{read_sysreg, write_sysreg};
-use crate::interrupts::InterruptManager;
 use crate::interrupts::{disable_interrupts, enable_interrupts};
 
 #[cfg(all(not(test), target_arch = "aarch64"))]
@@ -22,7 +22,7 @@ global_asm!(include_str!("exception_handler.asm"));
 
 #[cfg(all(not(test), target_arch = "aarch64"))]
 // extern "efiapi" fn AsmGetVectorAddress(index: u64);
-extern "C" {
+unsafe extern "C" {
     static exception_handlers_start: u64;
     static sp_el0_end: u64;
 }
@@ -33,6 +33,7 @@ extern "C" {
 pub struct InterruptsAarch64 {}
 
 impl InterruptsAarch64 {
+    /// Creates a new instance of the AARCH64 implementation of the InterruptManager.
     pub const fn new() -> Self {
         Self {}
     }

@@ -11,9 +11,11 @@
 use log::info;
 use patina_sdk::{component::params::Config, error::Result};
 
+/// An example of a config parameter that is consumed by a component.
 #[derive(Default, Clone, Copy)]
 pub struct Name(pub &'static str);
 
+/// A simple function component example that uses consumes a configuration value.
 pub fn log_hello(name: Config<Name>) -> Result<()> {
     info!("Hello, {}!", name.0);
     Ok(())

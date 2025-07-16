@@ -73,7 +73,7 @@ impl PE<'_> {
 
                     // Identify the image name
                     let image_name = if debug_directory_size != 0 {
-                        Self::get_image_name(rip, debug_directory_rva, debug_directory_size)
+                        unsafe { Self::get_image_name(rip, debug_directory_rva, debug_directory_size) }
                     } else {
                         None
                     };

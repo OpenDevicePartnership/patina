@@ -128,13 +128,9 @@ use crate::component::{
 
 pub mod memory;
 
+pub use patina_sdk_macro::IntoService;
 #[doc(hidden)]
 pub use r_efi::efi::Guid;
-
-pub mod mm_communicator;
-pub mod platform_mm_control;
-pub mod sw_mmi_manager;
-pub use patina_sdk_macro::IntoService;
 
 /// A trait that allows the implementor to register a service with the underlying [Storage].
 pub trait IntoService {
@@ -330,9 +326,11 @@ unsafe impl<T: ?Sized + 'static> Param for Service<T> {
         state: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
-        Service::from(storage.storage().get_raw_service(*state).unwrap_or_else(|| {
-            panic!("Could not find Service value with id [{}] even though it was just validated.", *state)
-        }))
+        Service::from(unsafe {
+            storage.storage().get_raw_service(*state).unwrap_or_else(|| {
+                panic!("Could not find Service value with id [{}] even though it was just validated.", *state)
+            })
+        })
     }
 
     fn validate(state: &Self::State, storage: UnsafeStorageCell) -> bool {

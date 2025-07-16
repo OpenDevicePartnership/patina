@@ -19,8 +19,13 @@ use mu_pi::{
 use mu_rust_helpers::{function, guid::guid_fmt};
 use patina_internal_depex::{AssociatedDependency, Depex, Opcode};
 use patina_internal_device_path::concat_device_path_to_boxed_slice;
-use patina_performance::{create_performance_measurement, perf_function_begin, perf_function_end};
-use patina_sdk::error::EfiError;
+use patina_sdk::{
+    error::EfiError,
+    performance::{
+        logging::{perf_function_begin, perf_function_end},
+        measurement::create_performance_measurement,
+    },
+};
 use r_efi::efi;
 use tpl_lock::TplMutex;
 
@@ -166,7 +171,7 @@ fn dispatch() -> Result<bool, EfiError> {
         let driver_candidates: Vec<_> = dispatcher.pending_drivers.drain(..).collect();
         let mut scheduled_driver_candidates = Vec::new();
         for mut candidate in driver_candidates {
-            log::info!("Evaluting depex for candidate: {:?}", guid_fmt!(candidate.file_name));
+            log::trace!("Evaluating depex for candidate: {:?}", guid_fmt!(candidate.file_name));
             let depex_satisfied = match candidate.depex {
                 Some(ref mut depex) => depex.eval(&PROTOCOL_DB.registered_protocols()),
                 None => dispatcher.arch_protocols_available,
@@ -282,7 +287,9 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
             //process freshly discovered FV
             let fvb_ptr = match PROTOCOL_DB.get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID) {
                 Err(_) => {
-                    panic!("get_interface_for_handle failed to return an interface on a handle where it should have existed")
+                    panic!(
+                        "get_interface_for_handle failed to return an interface on a handle where it should have existed"
+                    )
                 }
                 Ok(protocol) => protocol as *mut firmware_volume_block::Protocol,
             };
@@ -503,11 +510,7 @@ pub fn core_dispatcher() -> Result<(), EfiError> {
 
     perf_function_end(function!(), &CALLER_ID, create_performance_measurement);
 
-    if something_dispatched {
-        Ok(())
-    } else {
-        Err(EfiError::NotFound)
-    }
+    if something_dispatched { Ok(()) } else { Err(EfiError::NotFound) }
 }
 
 pub fn init_dispatcher(extractor: Box<dyn SectionExtractor>) {
@@ -848,22 +851,22 @@ mod tests {
                     let mut node_walker = DevicePathWalker::new(file);
                     //outer FV of NESTEDFV.Fv does not have an extended header so expect MMAP device path.
                     let fv_node = node_walker.next().unwrap();
-                    assert_eq!(fv_node.header.r#type, efi::protocols::device_path::TYPE_HARDWARE);
-                    assert_eq!(fv_node.header.sub_type, efi::protocols::device_path::Hardware::SUBTYPE_MMAP);
+                    assert_eq!(fv_node.header().r#type, efi::protocols::device_path::TYPE_HARDWARE);
+                    assert_eq!(fv_node.header().sub_type, efi::protocols::device_path::Hardware::SUBTYPE_MMAP);
 
                     //Internal nested FV file name is 2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75
                     let file_node = node_walker.next().unwrap();
-                    assert_eq!(file_node.header.r#type, efi::protocols::device_path::TYPE_MEDIA);
+                    assert_eq!(file_node.header().r#type, efi::protocols::device_path::TYPE_MEDIA);
                     assert_eq!(
-                        file_node.header.sub_type,
+                        file_node.header().sub_type,
                         efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE
                     );
-                    assert_eq!(file_node.data, uuid!("2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75").to_bytes_le());
+                    assert_eq!(file_node.data(), uuid!("2DFBCBC7-14D6-4C70-A9C5-AD0AD03F4D75").to_bytes_le());
 
                     //device path end node
                     let end_node = node_walker.next().unwrap();
-                    assert_eq!(end_node.header.r#type, efi::protocols::device_path::TYPE_END);
-                    assert_eq!(end_node.header.sub_type, efi::protocols::device_path::End::SUBTYPE_ENTIRE);
+                    assert_eq!(end_node.header().r#type, efi::protocols::device_path::TYPE_END);
+                    assert_eq!(end_node.header().sub_type, efi::protocols::device_path::End::SUBTYPE_ENTIRE);
                 }
 
                 SECURITY_CALL_EXECUTED.store(true, core::sync::atomic::Ordering::SeqCst);

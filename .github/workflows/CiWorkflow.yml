@@ -105,6 +105,7 @@ jobs:
           RUSTC_BOOTSTRAP: 1
 
       - name: Crate Release Dry Run
+        if: ${{ !contains(github.event.pull_request.body, '(skip cargo release dry run)') }}
         run: cargo release --no-tag --workspace --no-push --allow-branch '*' --registry patina-fw
         env:
           RUSTC_BOOTSTRAP: 1

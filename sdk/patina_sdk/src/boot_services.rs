@@ -1,3 +1,12 @@
+//! UEFI Boot Services trait definition and implementations.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
+
 #[cfg(feature = "global_allocator")]
 pub mod global_allocator;
 
@@ -492,7 +501,7 @@ pub trait BootServices {
     where
         T: ProtocolInterface + 'static,
     {
-        match self.handle_protocol_maybe_empty(handle)? {
+        match unsafe { self.handle_protocol_maybe_empty(handle)? } {
             Some(_) if mem::size_of::<T>() == 0 => {
                 debug_assert!(false, "Expect null interface. Type {} need to have a size of 0.", any::type_name::<T>());
                 Err(efi::Status::INVALID_PARAMETER)
@@ -508,7 +517,7 @@ pub trait BootServices {
             Some(i) => Ok(i),
             None => {
                 static ZERO_SIZE_TYPE: () = ();
-                Ok((ptr::addr_of!(ZERO_SIZE_TYPE) as *mut T).as_mut().unwrap())
+                Ok(unsafe { (ptr::addr_of!(ZERO_SIZE_TYPE) as *mut T).as_mut().unwrap() })
             }
         }
     }
@@ -523,7 +532,7 @@ pub trait BootServices {
     where
         T: ProtocolInterface + 'static,
     {
-        Ok((self.handle_protocol_unchecked(handle, &T::PROTOCOL_GUID)? as *mut T).as_mut())
+        Ok(unsafe { (self.handle_protocol_unchecked(handle, &T::PROTOCOL_GUID)? as *mut T).as_mut() })
     }
 
     /// Use [`BootServices::handle_protocol`] when possible.
@@ -568,7 +577,7 @@ pub trait BootServices {
     where
         T: ProtocolInterface + 'static,
     {
-        match self.open_protocol_maybe_empty::<T>(handle, agent_handle, controller_handle, attribute)? {
+        match unsafe { self.open_protocol_maybe_empty::<T>(handle, agent_handle, controller_handle, attribute)? } {
             Some(_) if mem::size_of::<T>() == 0 => {
                 debug_assert!(false, "Expect null interface. Type {} need to have a size of 0.", any::type_name::<T>());
                 Err(efi::Status::INVALID_PARAMETER)
@@ -584,7 +593,7 @@ pub trait BootServices {
             Some(i) => Ok(i),
             None => {
                 static ZERO_SIZE_TYPE: () = ();
-                Ok((ptr::addr_of!(ZERO_SIZE_TYPE) as *mut T).as_mut().unwrap())
+                Ok(unsafe { (ptr::addr_of!(ZERO_SIZE_TYPE) as *mut T).as_mut().unwrap() })
             }
         }
     }
@@ -608,9 +617,11 @@ pub trait BootServices {
     where
         T: ProtocolInterface + 'static,
     {
-        Ok((self.open_protocol_unchecked(handle, &T::PROTOCOL_GUID, agent_handle, controller_handle, attribute)?
-            as *mut T)
-            .as_mut())
+        Ok(unsafe {
+            (self.open_protocol_unchecked(handle, &T::PROTOCOL_GUID, agent_handle, controller_handle, attribute)?
+                as *mut T)
+                .as_mut()
+        })
     }
 
     /// Use [`BootServices::open_protocol`] when possible.
@@ -699,7 +710,7 @@ pub trait BootServices {
     where
         T: ProtocolInterface + 'static,
     {
-        match self.locate_protocol_maybe_empty(registration)? {
+        match unsafe { self.locate_protocol_maybe_empty(registration)? } {
             Some(_) if mem::size_of::<T>() == 0 => {
                 debug_assert!(false, "Expect null interface. Type {} need to have a size of 0.", any::type_name::<T>());
                 Err(efi::Status::INVALID_PARAMETER)
@@ -715,7 +726,7 @@ pub trait BootServices {
             Some(i) => Ok(i),
             None => {
                 static ZERO_SIZE_TYPE: () = ();
-                Ok((ptr::addr_of!(ZERO_SIZE_TYPE) as *mut T).as_mut().unwrap())
+                Ok(unsafe { (ptr::addr_of!(ZERO_SIZE_TYPE) as *mut T).as_mut().unwrap() })
             }
         }
     }
@@ -735,9 +746,11 @@ pub trait BootServices {
         T: ProtocolInterface + 'static,
     {
         //SAFETY: The generic ProtocolInterface ensure that the interfaces is the right type for the specified protocol.
-        Ok((self.locate_protocol_unchecked(&T::PROTOCOL_GUID, registration.map_or(ptr::null_mut(), NonNull::as_ptr))?
-            as *mut T)
-            .as_mut())
+        Ok(unsafe {
+            (self.locate_protocol_unchecked(&T::PROTOCOL_GUID, registration.map_or(ptr::null_mut(), NonNull::as_ptr))?
+                as *mut T)
+                .as_mut()
+        })
     }
 
     /// Returns the first protocol instance that matches the given marker protocol.
@@ -890,7 +903,7 @@ pub trait BootServices {
         guid: &efi::Guid,
         table: T,
     ) -> Result<(), efi::Status> {
-        self.install_configuration_table_unchecked(guid, table.into_mut_ptr() as *mut c_void)
+        unsafe { self.install_configuration_table_unchecked(guid, table.into_mut_ptr() as *mut c_void) }
     }
 
     /// Use [`BootServices::install_configuration_table`] when possible.
@@ -941,18 +954,16 @@ impl BootServices for StandardBootServices {
         let status = efi_boot_services_fn!(self.efi_boot_services(), create_event)(
             event_type.into(),
             notify_tpl.into(),
-            mem::transmute::<
-                Option<extern "efiapi" fn(*mut c_void, *mut T)>,
-                Option<extern "efiapi" fn(*mut c_void, *mut c_void)>,
-            >(notify_function),
+            unsafe {
+                mem::transmute::<
+                    Option<extern "efiapi" fn(*mut c_void, *mut T)>,
+                    Option<extern "efiapi" fn(*mut c_void, *mut c_void)>,
+                >(notify_function)
+            },
             notify_context as *mut c_void,
             event.as_mut_ptr(),
         );
-        if status.is_error() {
-            Err(status)
-        } else {
-            Ok(event.assume_init())
-        }
+        if status.is_error() { Err(status) } else { Ok(unsafe { event.assume_init() }) }
     }
 
     unsafe fn create_event_ex_unchecked<T: Sized + 'static>(
@@ -967,19 +978,17 @@ impl BootServices for StandardBootServices {
         let status = efi_boot_services_fn!(self.efi_boot_services(), create_event_ex)(
             event_type.into(),
             notify_tpl.into(),
-            mem::transmute::<
-                extern "efiapi" fn(*mut c_void, *mut T),
-                Option<extern "efiapi" fn(*mut c_void, *mut c_void)>,
-            >(notify_function),
+            unsafe {
+                mem::transmute::<
+                    extern "efiapi" fn(*mut c_void, *mut T),
+                    Option<extern "efiapi" fn(*mut c_void, *mut c_void)>,
+                >(notify_function)
+            },
             notify_context as *mut c_void,
             event_group as *const _,
             event.as_mut_ptr(),
         );
-        if status.is_error() {
-            Err(status)
-        } else {
-            Ok(event.assume_init())
-        }
+        if status.is_error() { Err(status) } else { Ok(unsafe { event.assume_init() }) }
     }
 
     fn close_event(&self, event: efi::Event) -> Result<(), efi::Status> {
@@ -1003,11 +1012,7 @@ impl BootServices for StandardBootServices {
             events.as_mut_ptr(),
             index.as_mut_ptr(),
         );
-        if status.is_error() {
-            Err(status)
-        } else {
-            Ok(unsafe { index.assume_init() })
-        }
+        if status.is_error() { Err(status) } else { Ok(unsafe { index.assume_init() }) }
     }
 
     fn check_event(&self, event: efi::Event) -> Result<(), efi::Status> {
@@ -1559,7 +1564,7 @@ impl BootServices for StandardBootServices {
 #[cfg(test)]
 mod test {
     use c_ptr::CPtr;
-    use efi::{protocols::device_path, Boolean, Char16, OpenProtocolInformationEntry};
+    use efi::{Boolean, Char16, OpenProtocolInformationEntry, protocols::device_path};
 
     use super::*;
     use core::{mem::MaybeUninit, slice, sync::atomic::AtomicUsize, sync::atomic::Ordering};

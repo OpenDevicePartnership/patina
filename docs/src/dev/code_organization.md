@@ -1,17 +1,53 @@
 # Code Organization
 
 Patina contains many constituent parts. This document describes the organization of the overall codebase, including the
-key dependencies that are shared between the Rust DXE Core and other components. The goal is to provide a high-level
+key dependencies that are shared between the Patina DXE Core and other components. The goal is to provide a high-level
 overview of these relationships.
 
-This is meant to be a living document, and as the code base evolves, this document should be updated to reflect the
+```mermaid
+---
+title: High-Level Repo Layout
+displayMode: compact
+config:
+  layout: elk
+  look: handDrawn
+gantt:
+    useWidth: 400
+    compact: true
+---
+graph TD
+  A[Patina Repository] --> B[**core** - Core-specific functionality]
+  A --> C[**sdk** - Software Development Kit]
+  A --> D[**components** - Feature Components]
+  A --> E[**patina_dxe_core** - DXE Core Library]
+
+  B --> G[Debugger]
+  B --> H[Section Extractor]
+  B --> I[Stacktrace]
+
+  C --> J[**patina_sdk** - SDK library]
+  J --> K[Common Types and Definitions]
+  J --> L[Boot Services]
+  J --> M[Runtime Services]
+  J --> N[Component Infrastructure]
+  J --> O[Logging and Serial Support]
+
+  D --> P[Advanced Logger]
+  D --> Q[Management Mode Support]
+  D --> R[Performance Measurement Support]
+  D --> S[Component Samples]
+
+  E --> T[Examples and Core Functionality]
+```
+
+This is meant to be a living document, and as the codebase evolves, this document should be updated to reflect the
 current state.
 
 ## General Principles
 
 As we build the elements necessary for a functional UEFI firmware, many supporting systems must necessarily be created
 along the way. In the end, a set of largely independent software entities are integrated to ultimately fulfill the
-dependencies necessary for a functional firmware. The fact code was conceived to support the UEFI firmware does not
+dependencies necessary for functional firmware. The fact that code was conceived to support UEFI firmware does not
 always mean it is intrinsically coupled with UEFI firmware.
 
 The principles described here are not meant to be more detailed or complex than necessary. Their goal is to support
@@ -49,15 +85,15 @@ software design over time. Tight coupling results in:
 - **Systems that are more difficult to test** – A coupled system requires testing layers, dependencies, and interfaces
   irrelevant the interface initially being tested.
 
-This essentially forms “spaghetti code”. Spaghetti code is relatively easy to identify in existing code. Spaghetti
+This essentially forms "spaghetti code". Spaghetti code is relatively easy to identify in existing code. Spaghetti
 code often begins because of a slip in coupling in one part of the system that starts the cycle. In the end, no one is
-quite sure who is responsible for the spaghetti code and how it got that way, but it did. Now it’s a huge mess to clean
-and many parts of the system must be impacted to do so. Depending on the complexity of the system, now tests,
-documentation, repo organization, and public APIs all must change. This is the “ripple” effect coupling has where the
+quite sure who is responsible for the spaghetti code and how it got that way, but it did. Now it's a huge mess to clean
+up and many parts of the system must be impacted to do so. Depending on the complexity of the system, now tests,
+documentation, repo organization, and public APIs all must change. This is the "ripple" effect coupling has where the
 ripple grows larger based on the degree of coupling and size of the system.
 
-Code in the DXE Core should strive to achieve high cohesion and low coupling in the various layers of “containers”.
-This results in higher quality software.
+Code in the Patina DXE Core should strive to achieve high cohesion and low coupling in the various layers of
+"containers". This results in higher quality software.
 
 ### SOLID
 
@@ -126,6 +162,8 @@ subject to change based on review.
 - Core Specific Crate (`core`)
   - Functionality exclusively used in core environment like DXE Core, MM Core, and PEI Core.
   - Examples: DXE Core, Event infrastructure, GCD, memory allocator
+- Components (`components`)
+  - Functionality for features provided using the Patina component model.
 - Module Development (SDK) Crate (`sdk`)
   - Functionality necessary to build UEFI modules.
     - Can be used by core or individual driver components.
@@ -136,12 +174,6 @@ subject to change based on review.
     - GUID services
     - Performance services
     - TPL services
-- Utility Crates (`util`)
-  - Code that is helpful to build UEFI modules but less common and/or has a strong need for independence. These are
-    generally self-contained optional sets of functionality.
-  - Examples:
-    - Code to draw to the screen
-    - Crypto
 
 If a more generic location for crates is needed, a `misc` directory made be created in the `patina` workspace.
 
@@ -152,11 +184,13 @@ define the guidelines for managing crates.
 
 The matrix below shows allowed dependencies for each class of crate defined in the previous section.
 
-|           | Core      | SDK       | Utility   | Feature   | Generic   |
-|-----------|-----------|-----------|-----------|-----------|-----------|
-| Core      | x         | Y         | N         | N         | Y         |
-| SDK       | N         | x         | N         | N         | Y         |
-| Utility   | N         | Y         | N         | N         | Y         |
+|            | Core      | SDK       | Components | Feature   | Generic   |
+|------------|-----------|-----------|------------|-----------|-----------|
+| Core       | x         | Y         | N          | N         | Y         |
+| SDK        | N         | x         | N          | N         | Y         |
+| Components | N         | Y         | x          | N         | Y         |
+
+**Key**: Y = Allowed, N = Not Allowed, x = Self-dependencies within category
 
 Separating out generic code is beneficial because it allows the code to be reused in the greatest number of places
 including outside the UEFI environment in host unit tests.
