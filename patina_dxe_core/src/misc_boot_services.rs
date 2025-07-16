@@ -24,7 +24,6 @@ use crate::{
     systemtables::{EfiSystemTable, SYSTEM_TABLE},
     GCD,
 };
-//use mu_pi::{dxe_services, fw_fs::FirmwareVolume};
 
 static METRONOME_ARCH_PTR: AtomicPtr<protocols::metronome::Protocol> = AtomicPtr::new(core::ptr::null_mut());
 static WATCHDOG_ARCH_PTR: AtomicPtr<protocols::watchdog::Protocol> = AtomicPtr::new(core::ptr::null_mut());
@@ -209,7 +208,7 @@ extern "efiapi" fn set_watchdog_timer(
         efi::Status::NOT_READY
     }
 }
-
+// Requires excessive Mocking for the OK case.
 #[cfg(not(tarpaulin_include))]
 // This callback is invoked when the Metronome Architectural protocol is installed. It initializes the
 // METRONOME_ARCH_PTR to point to the Metronome Architectural protocol interface.
@@ -224,7 +223,7 @@ extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_
         Err(err) => panic!("Unable to retrieve metronome arch: {:?}", err),
     }
 }
-
+// Requires excessive Mocking for the OK case.
 #[cfg(not(tarpaulin_include))]
 // This callback is invoked when the Watchdog Timer Architectural protocol is installed. It initializes the
 // WATCHDOG_ARCH_PTR to point to the Watchdog Timer Architectural protocol interface.
