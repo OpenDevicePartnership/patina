@@ -13,7 +13,8 @@ publish = ["patina-fw"]
 
 [workspace.dependencies]
 alloc-no-stdlib = { version = "~2.0" }
-arm-gic = { version = "^0.1.2" }
+arm-gic = { version = "0.5" }
+safe-mmio = { version = "0.2.5" }
 bitfield-struct = { version = "0.10" }
 brotli-decompressor = { version = "4.0.0", default-features = false }
 cfg-if = { version = "1" }
