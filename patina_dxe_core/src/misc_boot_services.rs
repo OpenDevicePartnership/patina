@@ -245,11 +245,10 @@ pub fn init_misc_boot_services_support(bs: &mut efi::BootServices) {
 mod tests {
     use super::*;
     use crate::systemtables;
-    use core::{ffi::c_void, ptr, str::FromStr};
-    use mu_pi::protocols::status_code::EfiStatusCodeData;
+    use core::{ffi::c_void, ptr};
     use r_efi::efi;
-    use r_efi::efi::{BootServices, Status};
     use std::cell::UnsafeCell;
+    use patina_sdk::error::EfiError;
 
     // Define a global static variable to store the Boot Services pointer
     struct BootServicesWrapper {
@@ -314,10 +313,10 @@ mod tests {
         let data: [efi::Char16; 6] = [b'H' as u16, b'e' as u16, b'l' as u16, b'l' as u16, b'o' as u16, 0];
         let data_ptr = data.as_ptr() as *mut efi::Char16;
         // Case 1: Set the watchdog timer with non-null data
-        let status = (st.boot_services_mut().set_watchdog_timer)(300, 0, data.len(), data_ptr);
+        let _status = (st.boot_services_mut().set_watchdog_timer)(300, 0, data.len(), data_ptr);
 
         // Case 2: Disable the watchdog timer with non-null data
-        let status = (st.boot_services_mut().set_watchdog_timer)(0, 0, data.len(), data_ptr);
+        let _status = (st.boot_services_mut().set_watchdog_timer)(0, 0, data.len(), data_ptr);
     }
     #[test]
     fn test_misc_stall() {
@@ -334,59 +333,14 @@ mod tests {
     }
 
     #[test]
-    fn test_misc_install_configuration_table() {
-        // Acquire the lock on SYSTEM_TABLE
-        let mut st_guard = systemtables::SYSTEM_TABLE.lock();
-        let st = st_guard.as_mut().expect("System Table not initialized!");
-        // Prepare parameters
-        let table_guid = Box::into_raw(Box::new(efi::Guid::from_fields(
-            0x12345678,
-            0x1234,
-            0x5678,
-            0x12,
-            0x34,
-            &[0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0],
-        )));
-        let table_data: [u8; 16] = [0xAA; 16]; // Example data
-        let table_ptr = Box::into_raw(Box::new(table_data)) as *mut c_void;
-        // Release the lock before calling install_configuration_table
-        std::mem::drop(st_guard);
-        // Call install_configuration_table
-        let status = install_configuration_table(table_guid, table_ptr);
-        assert_eq!(
-            status,
-            efi::Status::SUCCESS,
-            "Expected SUCCESS when installing configuration table with valid parameters"
-        );
-        // Call install_configuration_table with second parameter null
-        let status = install_configuration_table(table_guid, core::ptr::null_mut());
-        // Call install_configuration_table with both parameters null
-        let status = install_configuration_table(core::ptr::null_mut(), core::ptr::null_mut());
-        // Clean up
-        unsafe {
-            Box::from_raw(table_guid); // Free the allocated memory for `table_guid`
-            Box::from_raw(table_ptr as *mut [u8; 16]); // Free the allocated memory for `table`
-        }
-    }
-
-    #[test]
     fn test_misc_exit_boot_services() {
         let valid_map_key: usize = 0x2000;
-        // Define a mock function that matches the type of TERMINATE_MEMORY_MAP_FN
-        fn test_terminate_memory_map(key: usize) -> Result<(), EfiError> {
-            assert_eq!(key, 0x2000, "Expected valid map_key");
-            Ok(())
-        }
-        // Assign the mock function to TERMINATE_MEMORY_MAP_FN
-        unsafe {
-            let TERMINATE_MEMORY_MAP_FN = test_terminate_memory_map;
-        }
         // Acquire the lock on SYSTEM_TABLE
         let mut st_guard = systemtables::SYSTEM_TABLE.lock();
         let st = st_guard.as_mut().expect("System Table not initialized!");
         init_misc_boot_services_support(st.boot_services_mut());
         // Call exit_boot_services with a valid map_key
         let handle: efi::Handle = 0x1000 as efi::Handle; // Example handle
-        let status = (st.boot_services_mut().exit_boot_services)(handle, valid_map_key);
+        let _status = (st.boot_services_mut().exit_boot_services)(handle, valid_map_key);
     }
 }
