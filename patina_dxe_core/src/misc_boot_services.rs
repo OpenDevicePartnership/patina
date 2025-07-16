@@ -246,7 +246,6 @@ mod tests {
     use super::*;
     use crate::systemtables;
     use core::{ffi::c_void, ptr};
-    use patina_sdk::error::EfiError;
     use r_efi::efi;
     use std::cell::UnsafeCell;
 
@@ -266,9 +265,6 @@ mod tests {
         }
     }
 
-    pub fn get_boot_services() -> Option<&'static mut efi::BootServices> {
-        unsafe { (*BOOT_SERVICES.boot_services.get()).as_mut().map(|bs| &mut **bs) }
-    }
     #[test]
     fn test_init_misc_boot_services_support() {
         let mut st = systemtables::SYSTEM_TABLE.lock();
