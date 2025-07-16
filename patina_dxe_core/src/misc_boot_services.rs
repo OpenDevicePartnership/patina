@@ -246,9 +246,9 @@ mod tests {
     use super::*;
     use crate::systemtables;
     use core::{ffi::c_void, ptr};
+    use patina_sdk::error::EfiError;
     use r_efi::efi;
     use std::cell::UnsafeCell;
-    use patina_sdk::error::EfiError;
 
     // Define a global static variable to store the Boot Services pointer
     struct BootServicesWrapper {
