@@ -265,8 +265,8 @@ mod tests {
 
     #[test]
     fn test_init_misc_boot_services_support() {
-        let mut st = systemtables::SYSTEM_TABLE.lock();
-        let st = st.as_mut().expect("System Table not initialized!");
+        let mut st_guard = systemtables::SYSTEM_TABLE.lock();
+        let st = st_guard.as_mut().expect("System Table not initialized!");
 
         // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
         initialize_boot_services(st.boot_services_mut());
