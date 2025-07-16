@@ -33,7 +33,6 @@ static WATCHDOG_ARCH_PTR: AtomicPtr<protocols::watchdog::Protocol> = AtomicPtr::
 // { 0x5f1d7e16, 0x784a, 0x4da2, { 0xb0, 0x84, 0xf8, 0x12, 0xf2, 0x3a, 0x8d, 0xce }}
 pub const PRE_EBS_GUID: efi::Guid =
     efi::Guid::from_fields(0x5f1d7e16, 0x784a, 0x4da2, 0xb0, 0x84, &[0xf8, 0x12, 0xf2, 0x3a, 0x8d, 0xce]);
-
 // TODO [END]: LOCAL (TEMP) GUID DEFINITIONS (MOVE LATER)
 extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, crc_32: *mut u32) -> efi::Status {
     if data.is_null() || data_size == 0 || crc_32.is_null() {
@@ -83,7 +82,6 @@ extern "efiapi" fn stall(microseconds: usize) -> efi::Status {
 //
 // The watchdog timer is only used during boot services. On successful completion of
 // EFI_BOOT_SERVICES.ExitBootServices() the watchdog timer is disabled.
-
 extern "efiapi" fn set_watchdog_timer(
     timeout: usize,
     _watchdog_code: u64,
