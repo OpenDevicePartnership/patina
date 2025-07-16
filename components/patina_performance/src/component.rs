@@ -8,6 +8,7 @@
 //!
 
 pub mod performance;
+pub mod performance_config_provider;
 
 // Re-export the Performance component for easier access.
 pub use performance::Performance;
