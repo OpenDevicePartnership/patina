@@ -243,10 +243,10 @@ pub fn init_misc_boot_services_support(bs: &mut efi::BootServices) {
 mod tests {
     use super::*;
     use crate::systemtables;
+    use crate::test_support;
     use core::{ffi::c_void, ptr};
     use r_efi::efi;
     use std::cell::UnsafeCell;
-    use crate::test_support;
 
     // Define a global static variable to store the Boot Services pointer
     struct BootServicesWrapper {
