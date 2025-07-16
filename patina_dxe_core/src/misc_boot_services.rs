@@ -273,6 +273,7 @@ mod tests {
         // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
         initialize_boot_services(st.boot_services_mut());
         init_misc_boot_services_support(st.boot_services_mut());
+        
     }
 
     #[test]
@@ -338,5 +339,7 @@ mod tests {
         // Call exit_boot_services with a valid map_key
         let handle: efi::Handle = 0x1000 as efi::Handle; // Example handle
         let _status = (st.boot_services_mut().exit_boot_services)(handle, valid_map_key);
+            // Release the lock at the end
+        std::mem::drop(st_guard);
     }
 }
