@@ -90,13 +90,13 @@ pub const HARDWARE_INTERRUPT_PROTOCOL: efi::Guid =
 /// This protocol provides a means of registering and unregistering interrupt handlers for AARCH64 systems.
 /// This protocol extends the Hardware Interrupt Protocol to support interrupt type query.
 ///
-/// (`32898322-2D1A-474A-BAAA-F3F7CF569470`)
+/// (`32898322-2DA1-474A-BAAA-F3F7CF569470`)
 /// ```
 /// # use patina_sdk::guid::*;
-/// # assert_eq!("32898322-2D1A-474A-BAAA-F3F7CF569470", format!("{:?}", FmtGuid(&HARDWARE_INTERRUPT_PROTOCOL_V2)));
+/// # assert_eq!("32898322-2DA1-474A-BAAA-F3F7CF569470", format!("{:?}", FmtGuid(&HARDWARE_INTERRUPT_PROTOCOL_V2)));
 /// ```
 pub const HARDWARE_INTERRUPT_PROTOCOL_V2: efi::Guid =
-    efi::Guid::from_fields(0x32898322, 0x2d1a, 0x474a, 0xba, 0xaa, &[0xf3, 0xf7, 0xcf, 0x56, 0x94, 0x70]);
+    efi::Guid::from_fields(0x32898322, 0x2da1, 0x474a, 0xba, 0xaa, &[0xf3, 0xf7, 0xcf, 0x56, 0x94, 0x70]);
 
 /// Memory Type Info GUID
 ///
