@@ -5,7 +5,6 @@
 
 # Keep these options sorted in ascending order to ease lookup with rustfmt documentation.
 
-edition = "2021"              # This would normally be picked up from Cargo.toml if not specified here
 force_explicit_abi = true     # Always print the ABI for extern items (e.g. extern {... will become extern "C" {...)
 hard_tabs = false             # Always uses spaces for indentation and alignment
 max_width = 120               # The maximum width of each line
