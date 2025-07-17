@@ -585,7 +585,7 @@ where
         Ok(())
     }
 
-    /// Performs `exteneded_checksum` on the RSDP.
+    /// Performs `extended_checksum` on the RSDP.
     pub(crate) fn checksum_common_tables(&self) -> Result<(), AcpiError> {
         // The RSDP doesn't have a standard header, so it is easier to calculate the checksum manually.
         if let Some(rsdp_table) = self.acpi_tables.write().get_mut(&Self::RSDP_KEY) {

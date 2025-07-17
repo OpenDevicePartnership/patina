@@ -139,7 +139,7 @@ impl AcpiProviderManager {
 }
 
 /// Produces EDKII ACPI protocols.
-#[derive(IntoComponent)]
+#[derive(IntoComponent, Default)]
 pub struct AcpiSystemProtocolManager {}
 
 impl AcpiSystemProtocolManager {
