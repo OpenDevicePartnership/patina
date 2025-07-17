@@ -18,7 +18,7 @@ use core::{
 };
 
 extern crate alloc;
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use mu_rust_helpers::function;
 
 use crate::{
@@ -266,7 +266,7 @@ pub(crate) fn get_memory_ranges_for_memory_type(memory_type: efi::MemoryType) ->
 // that are not satisfied by the static allocators.
 static ALLOCATORS: tpl_lock::TplMutex<AllocatorMap> = AllocatorMap::new();
 struct AllocatorMap {
-    map: BTreeMap<efi::MemoryType, UefiAllocator>,
+    map: BTreeMap<efi::MemoryType, &'static UefiAllocator>,
 }
 
 impl AllocatorMap {
@@ -277,8 +277,8 @@ impl AllocatorMap {
 
 impl AllocatorMap {
     // Returns an iterator that returns references to the static allocators followed by the custom allocators.
-    fn iter(&self) -> impl Iterator<Item = &UefiAllocator> {
-        STATIC_ALLOCATORS.iter().copied().chain(self.map.values())
+    fn iter(&self) -> impl Iterator<Item = &'static UefiAllocator> {
+        STATIC_ALLOCATORS.iter().copied().chain(self.map.values().copied())
     }
 
     // Retrieves an allocator for the given memory type, creating one if it doesn't already exist.
@@ -295,7 +295,7 @@ impl AllocatorMap {
         &mut self,
         memory_type: efi::MemoryType,
         handle: efi::Handle,
-    ) -> Result<&UefiAllocator, EfiError> {
+    ) -> Result<&'static UefiAllocator, EfiError> {
         if let Some(allocator) = STATIC_ALLOCATORS.iter().find(|x| x.memory_type() == memory_type) {
             return Ok(allocator);
         }
@@ -304,7 +304,11 @@ impl AllocatorMap {
 
     // retrieves a dynamic allocator from the map and creates a new one with the given handle if it doesn't exist.
     // See note on `handle` in [`get_or_create_allocator`]
-    fn get_or_create_dynamic_allocator(&mut self, memory_type: efi::MemoryType, handle: efi::Handle) -> &UefiAllocator {
+    fn get_or_create_dynamic_allocator(
+        &mut self,
+        memory_type: efi::MemoryType,
+        handle: efi::Handle,
+    ) -> &'static UefiAllocator {
         // the lock ensures exclusive access to the map, but an allocator may have been created already; so only create
         // the allocator if it doesn't yet exist for this memory type. MAT callbacks are only needed for Runtime
         // Services Code and Data, which are static allocators, so we can always do None here
@@ -316,7 +320,7 @@ impl AllocatorMap {
                 | efi::ACPI_MEMORY_NVS => RUNTIME_PAGE_ALLOCATION_GRANULARITY,
                 _ => UEFI_PAGE_SIZE,
             };
-            UefiAllocator::new(&GCD, memory_type, handle, page_change_callback, granularity)
+            Box::leak(Box::new(UefiAllocator::new(&GCD, memory_type, handle, page_change_callback, granularity)))
         })
     }
 
@@ -512,6 +516,11 @@ pub fn core_allocate_pages(
     }
 
     res
+}
+
+pub fn core_get_allocator(memory_type: efi::MemoryType) -> Result<&'static UefiAllocator, EfiError> {
+    let handle = AllocatorMap::handle_for_memory_type(memory_type)?;
+    ALLOCATORS.lock().get_or_create_allocator(memory_type, handle)
 }
 
 extern "efiapi" fn free_pages(memory: efi::PhysicalAddress, pages: usize) -> efi::Status {
