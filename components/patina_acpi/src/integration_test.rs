@@ -18,12 +18,11 @@ use r_efi::efi;
 
 use crate::acpi::ACPI_TABLE_INFO;
 use crate::acpi_protocol::{AcpiSdtProtocol, AcpiTableProtocol};
-use crate::service::TableKey;
 use crate::signature::ACPI_VERSIONS_GTE_2;
 use crate::{
-    acpi_table::{AcpiDsdt, AcpiFacs, AcpiFadt, AcpiTableHeader},
+    acpi_table::{AcpiFacs, AcpiFadt, AcpiTableHeader},
     service::AcpiTableManager,
-    signature::{self, ACPI_HEADER_LEN},
+    signature::{self},
 };
 
 #[patina_test]

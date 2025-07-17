@@ -308,22 +308,17 @@ impl<T> Table<T> {
     /// - Caller must ensure the provided table, `T`, a C compatible layout (typically using `#[repr(C)]`).
     /// - Caller must ensure that the table's first field is [AcpiTableHeader].
     pub unsafe fn new(table: T) -> Result<Self, AcpiError> {
-        log::info!("it's all bad");
         let returned_table = Table { inner: ManuallyDrop::new(table) };
 
         // Make sure all bytes are valid ASCII.
         // By spec, ACPI table signatures are length-4 ASCII strings (represented numerically as u32's).
-        log::info!("Signature: {:x}", returned_table.signature());
         let is_valid_ascii = returned_table.signature().to_le_bytes().iter().all(|b| b.is_ascii());
         if !is_valid_ascii {
-            log::info!("naur");
             return Err(AcpiError::InvalidTableFormat);
         }
 
         // Make sure length is valid for type T.
         // SAFETY: If function preconditions are met, the header is valid and has a valid length.
-        log::info!("FADT length: {}", returned_table.header.length);
-        log::info!("Size of T: {}", mem::size_of::<T>());
         if (unsafe { returned_table.header.length } as usize) < mem::size_of::<T>() {
             return Err(AcpiError::InvalidTableFormat);
         }
@@ -363,7 +358,6 @@ impl AcpiTable {
     /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
     /// - Caller must ensure that the table's first field is [AcpiTableHeader].
     pub unsafe fn new<T: 'static>(table: T, mm: &Service<dyn MemoryManager>) -> Result<Self, AcpiError> {
-        log::info!("it's joever3");
         // SAFETY: If the caller preconditions are met, the signature, header, and table fields of the union are valid.
         let table = unsafe { Table::new(table) }?;
 

@@ -14,7 +14,7 @@ use alloc::collections::btree_map::BTreeMap;
 use core::{
     cell::OnceCell,
     ffi::c_void,
-    mem::{self, offset_of},
+    mem::{self},
     slice,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -347,7 +347,6 @@ where
         // If the FACS is already installed, update the FADT's x_firmware_ctrl field.
         // If not, it will be updated when the FACS is installed.
         if let Some(facs) = self.acpi_tables.read().get(&Self::FACS_KEY) {
-            log::info!("WHY AM I HERE");
             unsafe { fadt_info.as_mut::<AcpiFadt>() }.inner.x_firmware_ctrl = facs.as_ptr() as u64;
         }
 
@@ -414,7 +413,6 @@ where
 
         // Add the table to the internal hashmap of installed tables.
         self.acpi_tables.write().insert(curr_key, table_info);
-        log::info!("Installing ACPI table with key: {:?}", curr_key);
 
         // Recalculate checksum for the newly installed table.
         table_info.update_checksum(ACPI_CHECKSUM_OFFSET)?;
@@ -673,7 +671,6 @@ where
             .map(|(&key, table)| (key, *table));
 
         let table_at_idx = found_table.ok_or(AcpiError::InvalidTableIndex)?;
-        log::info!("Retrieved ACPI table at index {}: {:?}", idx, unsafe { table_at_idx.1.as_ref::<AcpiFadt>() });
         Ok(table_at_idx)
     }
 }

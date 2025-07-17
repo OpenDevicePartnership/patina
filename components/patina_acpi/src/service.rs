@@ -8,7 +8,7 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use core::any::{Any, TypeId};
+use core::any::TypeId;
 
 use alloc::vec::Vec;
 use patina_sdk::component::service::memory::MemoryManager;
