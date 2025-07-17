@@ -932,4 +932,348 @@ mod tests {
             }
         });
     }
+
+    #[test]
+    fn test_remove_memory_space_success() {
+        with_locked_state(|| {
+            let base = 0x800000;
+            let length = 0x10000;
+            let result = add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB);
+            assert_eq!(result, efi::Status::SUCCESS, "Should successfully add memory space");
+
+            let result = remove_memory_space(base, length);
+            assert_eq!(result, efi::Status::SUCCESS, "Should successfully remove memory space");
+        });
+    }
+
+    #[test]
+    fn test_remove_memory_space_zero_length() {
+        with_locked_state(|| {
+            let result = remove_memory_space(0x800000, 0);
+            assert_ne!(result, efi::Status::SUCCESS, "Zero length should fail");
+            assert!(result.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
+        });
+    }
+
+    #[test]
+    fn test_remove_memory_space_not_found() {
+        with_locked_state(|| {
+            let result = remove_memory_space(0x900000, 0x1000);
+            assert_ne!(result, efi::Status::SUCCESS, "Removing non-existent memory space should fail");
+            assert!(result.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
+        });
+    }
+
+    #[test]
+    fn test_remove_memory_space_wrong_base_address() {
+        with_locked_state(|| {
+            let base = 0xB00000;
+            let length = 0x10000;
+            let result = add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB);
+            assert_eq!(result, efi::Status::SUCCESS, "Should successfully add memory space");
+
+            let result = remove_memory_space(base + 0x1000, length); // Offset base address
+            assert_ne!(result, efi::Status::SUCCESS, "Wrong base address should fail");
+            assert!(result.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
+        });
+    }
+
+    #[test]
+    fn test_remove_memory_space_wrong_length() {
+        with_locked_state(|| {
+            let base = 0xC00000;
+            let length = 0x10000;
+            let result = add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB);
+            assert_eq!(result, efi::Status::SUCCESS, "Should successfully add memory space");
+
+            let result = remove_memory_space(base, length * 2); // Double the length
+            assert_ne!(result, efi::Status::SUCCESS, "Wrong length should fail");
+            assert!(result.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
+        });
+    }
+
+    #[test]
+    fn test_remove_memory_space_double_remove() {
+        with_locked_state(|| {
+            // Add memory space
+            let base = 0xD00000;
+            let length = 0x10000;
+            let result = add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB);
+            assert_eq!(result, efi::Status::SUCCESS, "Should successfully add memory space");
+
+            let first_remove = remove_memory_space(base, length);
+            assert_eq!(first_remove, efi::Status::SUCCESS, "First removal should succeed");
+
+            let second_remove = remove_memory_space(base, length);
+            assert_ne!(second_remove, efi::Status::SUCCESS, "Double removal should fail");
+            assert!(second_remove.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
+        });
+    }
+
+    #[test]
+    fn test_remove_memory_space_different_memory_types() {
+        with_locked_state(|| {
+            // Test removal of different memory types
+            let memory_types = [
+                GcdMemoryType::SystemMemory,
+                GcdMemoryType::Reserved,
+                GcdMemoryType::MemoryMappedIo,
+                GcdMemoryType::Persistent,
+            ];
+
+            for (i, mem_type) in memory_types.iter().enumerate() {
+                // Add memory space for each type
+                let base = 0xE00000 + (i as u64 * 0x100000);
+                let length = 0x10000;
+                let result = add_memory_space(*mem_type, base, length, efi::MEMORY_WB);
+                assert_eq!(result, efi::Status::SUCCESS, "Adding memory space for type {:?} failed", mem_type);
+
+                // Remove the memory space
+                let result = remove_memory_space(base, length);
+                assert_eq!(result, efi::Status::SUCCESS, "Removing memory type {:?} should succeed", mem_type);
+            }
+        });
+    }
+
+    #[test]
+    fn test_remove_memory_space_with_allocated_memory() {
+        with_locked_state(|| {
+            let base = 0x1200000;
+            let length = 0x10000;
+            let result = add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB);
+            assert_eq!(result, efi::Status::SUCCESS, "Should successfully add memory space");
+
+            let mut allocated_address: efi::PhysicalAddress = 0;
+            let allocate_result = allocate_memory_space(
+                dxe_services::GcdAllocateType::AnySearchBottomUp,
+                GcdMemoryType::SystemMemory,
+                12,     // 4KB alignment
+                0x1000, // 4KB length
+                &mut allocated_address,
+                1 as _,
+                core::ptr::null_mut(),
+            );
+
+            assert_eq!(allocate_result, efi::Status::SUCCESS, "Should successfully allocate memory");
+
+            let result = remove_memory_space(base, length);
+            assert_ne!(result, efi::Status::SUCCESS, "Removing memory space with allocations should fail");
+            assert!(result.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
+        });
+    }
+
+    #[test]
+    fn test_remove_memory_space_large_values() {
+        with_locked_state(|| {
+            let large_base = 0x7FFFFFFF00000000u64; // Large but safe value
+            let length = 0x1000u64; // 4KB length
+
+            let result = remove_memory_space(large_base, length);
+            assert_ne!(result, efi::Status::SUCCESS, "Large non-existent values should fail");
+            assert!(result.as_usize() & 0x8000000000000000 != 0, "Should return an error status");
+        });
+    }
+
+    #[test]
+    fn test_remove_memory_space_add_remove_cycle() {
+        with_locked_state(|| {
+            let base = 0x1300000;
+            let length = 0x10000;
+
+            for i in 0..3 {
+                let add_result = add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB);
+                assert_eq!(add_result, efi::Status::SUCCESS, "Cycle {} add should succeed", i);
+
+                let remove_result = remove_memory_space(base, length);
+                assert_eq!(remove_result, efi::Status::SUCCESS, "Cycle {} remove should succeed", i);
+            }
+        });
+    }
+
+    #[test]
+    fn test_remove_memory_space_multiple_regions_independence() {
+        with_locked_state(|| {
+            let regions = [(0x1400000, 0x10000), (0x1500000, 0x20000), (0x1600000, 0x15000)];
+
+            for (base, length) in regions {
+                let result = add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB);
+                assert_eq!(result, efi::Status::SUCCESS, "Should add region at 0x{:x}", base);
+            }
+
+            let remove_result = remove_memory_space(regions[1].0, regions[1].1);
+            assert_eq!(remove_result, efi::Status::SUCCESS, "Should remove middle region");
+
+            let remove_first = remove_memory_space(regions[0].0, regions[0].1);
+            assert_eq!(remove_first, efi::Status::SUCCESS, "Should remove first region");
+
+            let remove_third = remove_memory_space(regions[2].0, regions[2].1);
+            assert_eq!(remove_third, efi::Status::SUCCESS, "Should remove third region");
+        });
+    }
+
+    #[test]
+    fn test_get_memory_space_descriptor_success() {
+        with_locked_state(|| {
+            let base = 0x1700000;
+            let length = 0x20000;
+            let capabilities = efi::MEMORY_WB | efi::MEMORY_WT;
+
+            // Add memory space first
+            let result = add_memory_space(GcdMemoryType::SystemMemory, base, length, capabilities);
+            assert_eq!(result, efi::Status::SUCCESS, "Should add memory space");
+
+            // Get descriptor for the added memory space
+            let mut descriptor = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
+            let result = get_memory_space_descriptor(base, descriptor.as_mut_ptr());
+            assert_eq!(result, efi::Status::SUCCESS, "Should get memory space descriptor");
+
+            let descriptor = unsafe { descriptor.assume_init() };
+            assert_eq!(descriptor.base_address, base, "Base address should match");
+            assert_eq!(descriptor.length, length, "Length should match");
+            assert_eq!(descriptor.memory_type, GcdMemoryType::SystemMemory, "Memory type should match");
+            // Note: GCD may add additional capability flags, so we check that our requested capabilities are present
+            assert!(
+                descriptor.capabilities & capabilities == capabilities,
+                "Requested capabilities should be present. Expected: 0x{:x}, Got: 0x{:x}",
+                capabilities,
+                descriptor.capabilities
+            );
+        });
+    }
+
+    #[test]
+    fn test_get_memory_space_descriptor_null_descriptor() {
+        with_locked_state(|| {
+            let result = get_memory_space_descriptor(0x1000000, core::ptr::null_mut());
+            assert_eq!(result, efi::Status::INVALID_PARAMETER, "Null descriptor should return INVALID_PARAMETER");
+        });
+    }
+
+    #[test]
+    fn test_get_memory_space_descriptor_address_within_range() {
+        with_locked_state(|| {
+            let base = 0x1800000;
+            let length = 0x10000;
+            let capabilities = efi::MEMORY_UC;
+
+            // Add memory space
+            let result = add_memory_space(GcdMemoryType::Reserved, base, length, capabilities);
+            assert_eq!(result, efi::Status::SUCCESS, "Should add memory space");
+
+            // Test getting descriptor for address within the range (not at the base)
+            let test_address = base + 0x5000; // Address within the range
+            let mut descriptor = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
+            let result = get_memory_space_descriptor(test_address, descriptor.as_mut_ptr());
+
+            assert_eq!(result, efi::Status::SUCCESS, "Should get descriptor for address within range");
+
+            let descriptor = unsafe { descriptor.assume_init() };
+            assert_eq!(descriptor.base_address, base, "Base address should be the region base");
+            assert_eq!(descriptor.length, length, "Length should match the region length");
+            assert_eq!(descriptor.memory_type, GcdMemoryType::Reserved, "Memory type should match");
+        });
+    }
+
+    #[test]
+    fn test_get_memory_space_descriptor_different_memory_types() {
+        with_locked_state(|| {
+            let memory_types = [
+                (GcdMemoryType::SystemMemory, 0x1A00000),
+                (GcdMemoryType::Reserved, 0x1B00000),
+                (GcdMemoryType::MemoryMappedIo, 0x1C00000),
+                (GcdMemoryType::Persistent, 0x1D00000),
+            ];
+
+            // Add different memory types
+            for (mem_type, base) in memory_types.iter() {
+                let result = add_memory_space(*mem_type, *base, 0x10000, efi::MEMORY_WB);
+                assert_eq!(result, efi::Status::SUCCESS, "Should add memory space for type {:?}", mem_type);
+            }
+
+            // Verify each memory type can be retrieved correctly
+            for (expected_type, base) in memory_types.iter() {
+                let mut descriptor = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
+                let result = get_memory_space_descriptor(*base, descriptor.as_mut_ptr());
+
+                assert_eq!(result, efi::Status::SUCCESS, "Should get descriptor for type {:?}", expected_type);
+
+                let descriptor = unsafe { descriptor.assume_init() };
+                assert_eq!(descriptor.memory_type, *expected_type, "Memory type should match for {:?}", expected_type);
+                assert_eq!(descriptor.base_address, *base, "Base address should match for type {:?}", expected_type);
+            }
+        });
+    }
+
+    #[test]
+    fn test_get_memory_space_descriptor_different_capabilities() {
+        with_locked_state(|| {
+            let capabilities_tests = [
+                (0x1E00000, efi::MEMORY_WB),
+                (0x1F00000, efi::MEMORY_WT),
+                (0x2000000, efi::MEMORY_UC),
+                (0x2100000, efi::MEMORY_WB | efi::MEMORY_WT),
+                (0x2200000, efi::MEMORY_XP | efi::MEMORY_RO),
+            ];
+
+            // Add memory spaces with different capabilities
+            for (base, capabilities) in capabilities_tests.iter() {
+                let result = add_memory_space(GcdMemoryType::SystemMemory, *base, 0x10000, *capabilities);
+                assert_eq!(
+                    result,
+                    efi::Status::SUCCESS,
+                    "Should add memory space with capabilities 0x{:x}",
+                    capabilities
+                );
+            }
+
+            // Verify capabilities are preserved (may have additional flags)
+            for (base, expected_capabilities) in capabilities_tests.iter() {
+                let mut descriptor = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
+                let result = get_memory_space_descriptor(*base, descriptor.as_mut_ptr());
+
+                assert_eq!(
+                    result,
+                    efi::Status::SUCCESS,
+                    "Should get descriptor for capabilities 0x{:x}",
+                    expected_capabilities
+                );
+
+                let descriptor = unsafe { descriptor.assume_init() };
+                // Check that our requested capabilities are present (GCD may add additional flags)
+                assert!(
+                    descriptor.capabilities & expected_capabilities == *expected_capabilities,
+                    "Requested capabilities should be present. Expected: 0x{:x}, Got: 0x{:x}",
+                    expected_capabilities,
+                    descriptor.capabilities
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn test_get_memory_space_descriptor_boundary_addresses() {
+        with_locked_state(|| {
+            let base = 0x2300000;
+            let length = 0x10000;
+
+            let result = add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB);
+            assert_eq!(result, efi::Status::SUCCESS, "Should add memory space");
+
+            let mut descriptor = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
+            let result = get_memory_space_descriptor(base, descriptor.as_mut_ptr());
+            assert_eq!(result, efi::Status::SUCCESS, "Should get descriptor at base address");
+
+            let mut descriptor = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
+            let result = get_memory_space_descriptor(base + length - 1, descriptor.as_mut_ptr());
+            assert_eq!(result, efi::Status::SUCCESS, "Should get descriptor at last valid address");
+
+            let mut descriptor = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
+            let result = get_memory_space_descriptor(base - 1, descriptor.as_mut_ptr());
+            assert_eq!(result, efi::Status::SUCCESS, "Should get descriptor at address before base");
+
+            let mut descriptor = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
+            let result = get_memory_space_descriptor(base + length, descriptor.as_mut_ptr());
+            assert_eq!(result, efi::Status::SUCCESS, "Should get descriptor at address after end of range");
+        });
+    }
 }

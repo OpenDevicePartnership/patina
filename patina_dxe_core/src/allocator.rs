@@ -18,7 +18,7 @@ use core::{
 };
 
 extern crate alloc;
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use mu_rust_helpers::function;
 
 use crate::{
@@ -266,7 +266,7 @@ pub(crate) fn get_memory_ranges_for_memory_type(memory_type: efi::MemoryType) ->
 // that are not satisfied by the static allocators.
 static ALLOCATORS: tpl_lock::TplMutex<AllocatorMap> = AllocatorMap::new();
 struct AllocatorMap {
-    map: BTreeMap<efi::MemoryType, UefiAllocator>,
+    map: BTreeMap<efi::MemoryType, &'static UefiAllocator>,
 }
 
 impl AllocatorMap {
@@ -277,8 +277,8 @@ impl AllocatorMap {
 
 impl AllocatorMap {
     // Returns an iterator that returns references to the static allocators followed by the custom allocators.
-    fn iter(&self) -> impl Iterator<Item = &UefiAllocator> {
-        STATIC_ALLOCATORS.iter().copied().chain(self.map.values())
+    fn iter(&self) -> impl Iterator<Item = &'static UefiAllocator> {
+        STATIC_ALLOCATORS.iter().copied().chain(self.map.values().copied())
     }
 
     // Retrieves an allocator for the given memory type, creating one if it doesn't already exist.
@@ -295,7 +295,7 @@ impl AllocatorMap {
         &mut self,
         memory_type: efi::MemoryType,
         handle: efi::Handle,
-    ) -> Result<&UefiAllocator, EfiError> {
+    ) -> Result<&'static UefiAllocator, EfiError> {
         if let Some(allocator) = STATIC_ALLOCATORS.iter().find(|x| x.memory_type() == memory_type) {
             return Ok(allocator);
         }
@@ -304,7 +304,11 @@ impl AllocatorMap {
 
     // retrieves a dynamic allocator from the map and creates a new one with the given handle if it doesn't exist.
     // See note on `handle` in [`get_or_create_allocator`]
-    fn get_or_create_dynamic_allocator(&mut self, memory_type: efi::MemoryType, handle: efi::Handle) -> &UefiAllocator {
+    fn get_or_create_dynamic_allocator(
+        &mut self,
+        memory_type: efi::MemoryType,
+        handle: efi::Handle,
+    ) -> &'static UefiAllocator {
         // the lock ensures exclusive access to the map, but an allocator may have been created already; so only create
         // the allocator if it doesn't yet exist for this memory type. MAT callbacks are only needed for Runtime
         // Services Code and Data, which are static allocators, so we can always do None here
@@ -316,7 +320,7 @@ impl AllocatorMap {
                 | efi::ACPI_MEMORY_NVS => RUNTIME_PAGE_ALLOCATION_GRANULARITY,
                 _ => UEFI_PAGE_SIZE,
             };
-            UefiAllocator::new(&GCD, memory_type, handle, page_change_callback, granularity)
+            Box::leak(Box::new(UefiAllocator::new(&GCD, memory_type, handle, page_change_callback, granularity)))
         })
     }
 
@@ -512,6 +516,11 @@ pub fn core_allocate_pages(
     }
 
     res
+}
+
+pub fn core_get_allocator(memory_type: efi::MemoryType) -> Result<&'static UefiAllocator, EfiError> {
+    let handle = AllocatorMap::handle_for_memory_type(memory_type)?;
+    ALLOCATORS.lock().get_or_create_allocator(memory_type, handle)
 }
 
 extern "efiapi" fn free_pages(memory: efi::PhysicalAddress, pages: usize) -> efi::Status {
@@ -831,6 +840,19 @@ fn process_hob_allocations(hob_list: &HobList) {
                     continue;
                 }
 
+                if desc.memory_length == 0 {
+                    log::warn!("Memory Allocation HOB has a 0 length, ignoring.\n{:#x?}", hob);
+                    continue;
+                }
+
+                if desc.memory_base_address == 0 {
+                    log::warn!(
+                        "Memory Allocation HOB has a 0 base address, ignoring. Page 0 cannot be allocated:\n{:#x?}",
+                        hob
+                    );
+                    continue;
+                }
+
                 //Use allocate_pages here to record these allocations and keep the allocator stats up to date.
                 //Note: PI spec 1.8 III-5.4.1.1 stipulates that memory allocations must have page-granularity,
                 //which allows us to use allocate_pages. Check and warn if an allocation doesn't meet the alignment
@@ -940,6 +962,40 @@ fn process_hob_allocations(hob_list: &HobList) {
             }
             _ => continue,
         };
+    }
+
+    // now that we've processed HOBs, lets allocate page 0 because we are going to use it for null pointer detection
+    // if we don't allocate it, bootloaders may try to allocate it (as they often allocate by address from what the
+    // EFI_MEMORY_MAP reports as EfiConventionalMemory), which will cause a failure that is unnecessary. We do this
+    // after HOB processing because we want to ensure that the GCD is fully populated with the memory map
+    // before we allocate page 0, as it may not live in system memory, in which case we cannot allocate it.
+    match GCD.get_memory_descriptor_for_address(0) {
+        Ok(desc) if desc.memory_type == GcdMemoryType::SystemMemory => {
+            let mut address: efi::PhysicalAddress = 0;
+            if core_allocate_pages(
+                efi::ALLOCATE_ADDRESS,
+                efi::BOOT_SERVICES_DATA,
+                UEFI_PAGE_SIZE,
+                &mut address as *mut efi::PhysicalAddress,
+                None,
+            )
+            .is_err()
+            {
+                // if we failed, we should just continue, we won't have null pointer detection, possibly, although one failure
+                // could be that address 0 is not in the memory region of the platform, which will also act as null pointer
+                // detection.
+                log::warn!(
+                    "Failed to allocate page 0 for null pointer detection. It will still be unmapped but something may attempt to allocate it by address."
+                );
+                debug_assert!(false);
+            }
+        }
+        _ => {
+            // if we got here, then page 0 is already allocated, so we don't need to do anything.
+            log::info!(
+                "Page 0 is not part of system memory, it cannot be allocated. It will still be unmapped to use for null pointer detection."
+            );
+        }
     }
 }
 

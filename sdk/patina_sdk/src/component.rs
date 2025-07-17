@@ -69,6 +69,11 @@
 //!
 //! ### Examples
 //!
+//! ### Compiled Examples
+//!
+//! This crate has multiple example binaries in it's `example` folder that can be compiled and executed. These show
+//! implementations of common use cases and usage models for components and their parameters.
+//!
 //! ### Function Component Example
 //!
 //! ```rust
@@ -196,6 +201,14 @@ pub trait IntoComponent<Input> {
     ///
     /// Returns a boxed trait object that implements [Component].
     fn into_component(self) -> alloc::boxed::Box<dyn Component>;
+}
+
+/// A prelude module that re-exports commonly used items from the `component` module.
+pub mod prelude {
+    pub use crate::component::hob::{FromHob, Hob};
+    pub use crate::component::params::{Commands, Config, ConfigMut};
+    pub use crate::component::service::Service;
+    pub use crate::error::{EfiError, Result};
 }
 
 #[cfg(test)]

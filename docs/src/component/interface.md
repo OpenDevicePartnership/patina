@@ -204,6 +204,12 @@ the given parameter is actually available, even if it would have been made avail
 
 ## Examples
 
+### Compiled Examples
+
+The [patina_sdk](https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patina_sdk) crate has multiple example
+binaries in it's `example` folder that can be compiled and executed. These show implementations of common use cases and
+usage models for components and their parameters.
+
 ### FunctionComponent Examples
 
 ```rust

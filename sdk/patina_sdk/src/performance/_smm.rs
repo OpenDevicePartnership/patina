@@ -1,6 +1,8 @@
-//! This module is a temporary module that has for goal to make communication protocol work in perf. It will eventually be replaced by another communicate abstraction.
+//! This module is a temporary module that has for goal to make communication protocol work in perf. It will eventually
+//! be replaced by another communicate abstraction.
 //!
-//! This module also contain smm performance communicate structures that define the communicate buffer data that need to be used to fetch perf records from smm.
+//! This module also contain smm performance communicate structures that define the communicate buffer data that need
+//! to be used to fetch perf records from smm.
 //!
 //! ## License
 //!
@@ -9,11 +11,14 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
+// Allow missing docs since this is a temporary module.
+#![allow(missing_docs)]
+
 use core::{debug_assert_eq, ptr, slice};
 
 use r_efi::efi;
 
-use patina_sdk::{base::UEFI_PAGE_SIZE, component::hob::FromHob, uefi_protocol::ProtocolInterface};
+use crate::{base::UEFI_PAGE_SIZE, component::hob::FromHob, uefi_protocol::ProtocolInterface};
 use scroll::{
     Endian, Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
@@ -52,6 +57,16 @@ impl MmCommRegion {
         self.region_nb_pages as usize * UEFI_PAGE_SIZE
     }
 
+    /// Get the memory region as a mutable buffer.
+    ///
+    /// # Safety
+    /// This function is unsafe because it assumes that the memory region is valid and properly aligned.
+    ///
+    /// - The caller must ensure that the `region_address` points to a valid memory region of size `size()`.
+    /// - The caller must also ensure that the memory region is not used concurrently by other parts of the code.
+    ///
+    /// # Returns
+    /// A mutable slice representing the memory region.
     pub unsafe fn as_buffer(&self) -> &'static mut [u8] {
         unsafe { slice::from_raw_parts_mut(self.region_address as usize as *mut u8, self.size()) }
     }

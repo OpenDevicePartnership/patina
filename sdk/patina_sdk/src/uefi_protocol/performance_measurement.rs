@@ -17,7 +17,7 @@ use core::{
 
 use r_efi::efi;
 
-use patina_sdk::uefi_protocol::ProtocolInterface;
+use crate::uefi_protocol::ProtocolInterface;
 
 /// GUID for the EDKII Performance Measurement Protocol.
 pub const EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID: efi::Guid =

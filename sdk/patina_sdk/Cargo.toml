@@ -16,6 +16,9 @@ harness = false
 name = "bench_service"
 harness = false
 
+[[example]]
+name = "basic_hob_usage"
+
 [dependencies]
 patina_sdk_macro = { workspace = true }
 fixedbitset = { workspace = true }
@@ -25,6 +28,7 @@ cfg-if = { workspace = true }
 log = { workspace = true }
 r-efi = { workspace = true }
 mockall = { workspace = true, optional = true }
+mu_rust_helpers = { workspace = true }
 num-traits = { workspace = true }
 fallible-streaming-iterator = { workspace = true }
 linkme = { workspace = true }
