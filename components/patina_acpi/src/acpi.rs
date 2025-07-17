@@ -15,6 +15,7 @@ use core::{
     cell::OnceCell,
     ffi::c_void,
     mem::{self, offset_of},
+    slice,
     sync::atomic::{AtomicUsize, Ordering},
 };
 use spin::rwlock::RwLock;
@@ -23,7 +24,7 @@ use patina_sdk::{
     boot_services::{BootServices, StandardBootServices},
     component::{
         hob::Hob,
-        service::{memory::MemoryManager, IntoService, Service},
+        service::{IntoService, Service, memory::MemoryManager},
     },
     efi_types::EfiMemoryType,
 };
@@ -46,7 +47,7 @@ pub static ACPI_TABLE_INFO: StandardAcpiProvider<StandardBootServices> = Standar
 pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
     /// Platform-installed ACPI tables.
     /// If installing a non-standard ACPI table, the platform is responsible for writing its own handler and parser.
-    acpi_tables: RwLock<BTreeMap<TableKey, AcpiTable>>,
+    pub(crate) acpi_tables: RwLock<BTreeMap<TableKey, AcpiTable>>,
     /// Stores a monotonically increasing unique table key for installation.
     next_table_key: AtomicUsize,
     /// Stores notify callbacks, which are called upon table installation.
@@ -346,6 +347,7 @@ where
         // If the FACS is already installed, update the FADT's x_firmware_ctrl field.
         // If not, it will be updated when the FACS is installed.
         if let Some(facs) = self.acpi_tables.read().get(&Self::FACS_KEY) {
+            log::info!("WHY AM I HERE");
             unsafe { fadt_info.as_mut::<AcpiFadt>() }.inner.x_firmware_ctrl = facs.as_ptr() as u64;
         }
 
@@ -412,6 +414,7 @@ where
 
         // Add the table to the internal hashmap of installed tables.
         self.acpi_tables.write().insert(curr_key, table_info);
+        log::info!("Installing ACPI table with key: {:?}", curr_key);
 
         // Recalculate checksum for the newly installed table.
         table_info.update_checksum(ACPI_CHECKSUM_OFFSET)?;
@@ -571,7 +574,7 @@ where
                 xsdt_data.n_entries -= 1;
 
                 // Zero out the end of the XSDT.
-                // (After removing and shifting all entryes, there is one extra slot at the end.)
+                // (After removing and shifting all entries, there is one extra slot at the end.)
                 // This is not technically necessary for correctness but is good practice for consistency.
                 xsdt_data.slice[end_ptr - ACPI_XSDT_ENTRY_SIZE..end_ptr].iter_mut().for_each(|b| *b = 0);
 
@@ -584,10 +587,18 @@ where
         Ok(())
     }
 
-    // Performs checksums on shared ACPI tables (the XSDT and RSDP track other tables).
+    /// Performs `exteneded_checksum` on the RSDP.
     pub(crate) fn checksum_common_tables(&self) -> Result<(), AcpiError> {
+        // The RSDP doesn't have a standard header, so it is easier to calculate the checksum manually.
         if let Some(rsdp_table) = self.acpi_tables.write().get_mut(&Self::RSDP_KEY) {
-            rsdp_table.update_checksum(offset_of!(AcpiRsdp, extended_checksum))?;
+            // SAFETY: We know the size and layout of the RSDP in memory.
+            let rsdp_bytes =
+                unsafe { slice::from_raw_parts(rsdp_table.table.as_ptr() as *mut u8, mem::size_of::<AcpiRsdp>()) };
+            let sum_of_bytes: u8 = rsdp_bytes.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
+            // SAFETY: We only ever store an `AcpiRsdp` in the RSDP key.
+            let rsdp = unsafe { rsdp_table.as_mut::<AcpiRsdp>() };
+            // All bytes must sum to zero, so we write the negative of the sum.
+            rsdp.extended_checksum = sum_of_bytes.wrapping_neg();
         }
 
         if let Some(ref mut xsdt_data) = *self.xsdt_metadata.write() {
@@ -659,9 +670,10 @@ where
             .iter()
             .filter(|(k, _)| !Self::PRIVATE_SYSTEM_TABLES.contains(k))
             .nth(idx)
-            .map(|(&key, table)| (key, table.clone()));
+            .map(|(&key, table)| (key, *table));
 
         let table_at_idx = found_table.ok_or(AcpiError::InvalidTableIndex)?;
+        log::info!("Retrieved ACPI table at index {}: {:?}", idx, unsafe { table_at_idx.1.as_ref::<AcpiFadt>() });
         Ok(table_at_idx)
     }
 }
@@ -670,7 +682,6 @@ where
 mod tests {
     extern crate std;
 
-    use crate::acpi_table;
     use crate::acpi_table::AcpiXsdt;
     use crate::signature::MAX_INITIAL_ENTRIES;
 
@@ -869,7 +880,10 @@ mod tests {
         assert_eq!(provider.get_acpi_table(res.unwrap()).unwrap().signature(), signature::FACS);
 
         // Make sure FACS was installed into FADT.
-        assert!(unsafe { provider.get_acpi_table(fadt_key).unwrap().as_ref::<AcpiFadt>() }.x_firmware_ctrl() != 0);
+        assert!({
+            let table = provider.get_acpi_table(fadt_key).unwrap();
+            unsafe { table.as_ref::<AcpiFadt>() }.x_firmware_ctrl() != 0
+        });
     }
 
     #[test]
@@ -900,7 +914,10 @@ mod tests {
         assert_eq!(provider.get_acpi_table(res.unwrap()).unwrap().signature(), signature::DSDT);
 
         // Make sure DSDT was installed into FADT.
-        assert!(unsafe { provider.get_acpi_table(fadt_key).unwrap().as_ref::<AcpiFadt>() }.x_dsdt() != 0);
+        assert!({
+            let table = provider.get_acpi_table(fadt_key).unwrap();
+            unsafe { table.as_ref::<AcpiFadt>() }.x_dsdt() != 0
+        });
     }
 
     #[test]
@@ -1202,13 +1219,15 @@ mod tests {
         );
 
         // Both the RSDP and XSDT are valid
-        assert!(StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(mock_rsdp(
-            signature::ACPI_RSDP_TABLE,
-            true,
-            ACPI_HEADER_LEN,
-            signature::XSDT,
-        ))
-        .is_ok());
+        assert!(
+            StandardAcpiProvider::<MockBootServices>::get_xsdt_address_from_rsdp(mock_rsdp(
+                signature::ACPI_RSDP_TABLE,
+                true,
+                ACPI_HEADER_LEN,
+                signature::XSDT,
+            ))
+            .is_ok()
+        );
     }
 
     #[test]
@@ -1391,10 +1410,10 @@ mod tests {
         // Register notify function
         provider.register_notify(true, notify_fn).expect("should register notify");
 
-        // Install a standard table and check if notify was called
+        // Install a standard table and check if notify was called.
         let header = AcpiTableHeader { signature: 0x0101, length: 100, ..Default::default() };
         let table = unsafe { AcpiTable::new(header, provider.memory_manager.get().unwrap()).unwrap() };
-        let key = provider.install_acpi_table(table).unwrap();
+        let _ = provider.install_acpi_table(table).unwrap();
 
         // notify_acpi_list should have been called by install_standard_table
         assert!(NOTIFY_CALLED.load(AtomicOrdering::SeqCst));

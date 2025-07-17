@@ -11,10 +11,10 @@ use alloc::vec::Vec;
 use patina_sdk::boot_services::{BootServices, StandardBootServices};
 
 use patina_sdk::component::{
+    IntoComponent,
     hob::Hob,
     params::Commands,
-    service::{memory::MemoryManager, Service},
-    IntoComponent,
+    service::{Service, memory::MemoryManager},
 };
 use patina_sdk::efi_types::EfiMemoryType;
 use patina_sdk::error::EfiError;
@@ -94,7 +94,7 @@ impl AcpiProviderManager {
         // Fill in trailing space with zeros so it is accessible (Vec length != Vec capacity).
         xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(xsdt_capacity - ACPI_HEADER_LEN));
 
-        // Get pointer to the XSDT in memory for RSDP and metadata.
+        // // Get pointer to the XSDT in memory for RSDP and metadata.
         let xsdt_ptr = xsdt_allocated_bytes.as_mut_ptr();
         let xsdt_addr = xsdt_ptr as u64;
         let xsdt_metadata = AcpiXsdtMetadata {
@@ -143,6 +143,11 @@ impl AcpiProviderManager {
 pub struct AcpiSystemProtocolManager {}
 
 impl AcpiSystemProtocolManager {
+    /// Initializes a new `AcpiSystemProtocolManager`.
+    pub fn new() -> Self {
+        Self {}
+    }
+
     fn entry_point(self, boot_services: StandardBootServices) -> patina_sdk::error::Result<()> {
         boot_services.install_protocol_interface(None, Box::new(AcpiTableProtocol::new()))?;
         boot_services.install_protocol_interface(None, Box::new(AcpiSdtProtocol::new()))?;

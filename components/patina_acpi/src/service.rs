@@ -56,7 +56,7 @@ impl AcpiTableManager {
     /// ## SAFETY
     /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
     /// - Caller must ensure that the table's first field is a standard ACPI table header.
-    pub unsafe fn install_acpi_table<T>(&self, table: &T) -> Result<TableKey, AcpiError> {
+    pub unsafe fn install_acpi_table<T: 'static>(&self, table: T) -> Result<TableKey, AcpiError> {
         let acpi_table = unsafe { AcpiTable::new(table, &self.memory_manager)? };
         self.provider_service.install_acpi_table(acpi_table)
     }
@@ -85,7 +85,7 @@ impl AcpiTableManager {
         // There may be ACPI tables whose type is unknown at installation, due to installation from the HOB or a C protocol.
         // In these cases, the type is is unspecified (AcpiTableHeader instead of a specific table type), so we skip type checking.
         // In all other cases, verify the type provided by the user is valid.
-        if acpi_table.type_id() != TypeId::of::<T>() {
+        if acpi_table.type_id != TypeId::of::<T>() {
             return Err(AcpiError::InvalidTableType);
         }
 

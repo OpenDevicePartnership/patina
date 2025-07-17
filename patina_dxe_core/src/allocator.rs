@@ -520,6 +520,7 @@ pub fn core_allocate_pages(
 
 pub fn core_get_allocator(memory_type: efi::MemoryType) -> Result<&'static UefiAllocator, EfiError> {
     let handle = AllocatorMap::handle_for_memory_type(memory_type)?;
+    log::info!("it's joever");
     ALLOCATORS.lock().get_or_create_allocator(memory_type, handle)
 }
 

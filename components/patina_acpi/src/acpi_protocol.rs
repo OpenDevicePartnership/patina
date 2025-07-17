@@ -23,9 +23,9 @@ use crate::service::{AcpiNotifyFn, AcpiProvider, TableKey};
 
 /// Corresponds to the ACPI Table Protocol as defined in UEFI spec.
 #[repr(C)]
-pub(crate) struct AcpiTableProtocol {
-    install_table: AcpiTableInstall,
-    uninstall_table: AcpiTableUninstall,
+pub struct AcpiTableProtocol {
+    pub install_table: AcpiTableInstall,
+    pub uninstall_table: AcpiTableUninstall,
 }
 
 unsafe impl ProtocolInterface for AcpiTableProtocol {
@@ -114,11 +114,11 @@ impl AcpiTableProtocol {
 
 /// Corresponds to the ACPI SDT Protocol as defined in PI spec.
 #[repr(C)]
-pub(crate) struct AcpiSdtProtocol {
-    get_table: AcpiTableGet,
-    register_notify: AcpiTableRegisterNotify,
+pub struct AcpiSdtProtocol {
+    pub get_table: AcpiTableGet,
+    pub register_notify: AcpiTableRegisterNotify,
     // Maps between Rust-side function IDs and C-side function pointers
-    id_to_fn: RwLock<BTreeMap<*const AcpiNotifyFnExt, usize>>,
+    pub id_to_fn: RwLock<BTreeMap<*const AcpiNotifyFnExt, usize>>,
 }
 
 unsafe impl ProtocolInterface for AcpiSdtProtocol {
@@ -163,12 +163,12 @@ impl AcpiSdtProtocol {
             Ok(table_info) => {
                 // SAFETY: table_info is valid and output pointers have been checked for null
                 // We only support ACPI versions >= 2.0
-                let (key_at_idx, mut table_at_idx) = table_info;
+                let (key_at_idx, table_at_idx) = table_info;
                 unsafe { *version = ACPI_VERSIONS_GTE_2 };
                 unsafe { *table_key = key_at_idx.0 };
 
-                let sdt_ptr = table_at_idx.header_mut();
-                unsafe { *table = sdt_ptr as *mut AcpiTableHeader };
+                let sdt_ptr = table_at_idx.as_mut_ptr();
+                unsafe { *table = sdt_ptr };
                 efi::Status::SUCCESS
             }
             Err(e) => e.into(),

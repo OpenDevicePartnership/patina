@@ -195,8 +195,8 @@ unknown-git = "deny"
 # List of URLs for allowed Git repositories
 allow-git = []
 allow-registry = [
-    "registry+https://github.com/rust-lang/crates.io-index",
     "sparse+https://pkgs.dev.azure.com/patina-fw/artifacts/_packaging/temporary/Cargo/index/",
+    "registry+https://github.com/rust-lang/crates.io-index",
 ]
 
 [sources.allow-org]

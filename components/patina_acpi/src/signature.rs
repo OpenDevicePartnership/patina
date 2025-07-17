@@ -9,7 +9,9 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use r_efi::efi;
+use core::any::TypeId;
+
+use r_efi::{efi, protocols::driver_diagnostics2::Type};
 
 use crate::acpi_table::AcpiTableHeader;
 
