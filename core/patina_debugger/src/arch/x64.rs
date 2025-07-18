@@ -53,6 +53,7 @@ impl DebuggerArch for X64Arch {
                 14 => ExceptionType::AccessViolation(context.cr2 as usize),
                 _ => ExceptionType::Other(exception_type),
             },
+            instruction_pointer: context.rip,
             context: *context,
         }
     }

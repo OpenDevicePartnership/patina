@@ -248,17 +248,18 @@ pub fn add_monitor_command(cmd: &'static str, function: MonitorCommandFn) {
 }
 
 /// Exception information for the debugger.
-#[derive(Debug)]
 #[allow(dead_code)]
 struct ExceptionInfo {
     /// The type of exception that occurred.
     pub exception_type: ExceptionType,
+    /// The instruction pointer address.
+    pub instruction_pointer: u64,
     /// The system context at the time of the exception.
     pub context: ExceptionContext,
 }
 
 /// Exception type information.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 #[allow(dead_code)]
 enum ExceptionType {
     /// A break due to a completed instruction step.
@@ -271,4 +272,18 @@ enum ExceptionType {
     GeneralProtectionFault(u64),
     /// A break due to an exception type not handled by the debugger. The exception type is provided.
     Other(u64),
+}
+
+impl core::fmt::Display for ExceptionType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ExceptionType::Step => write!(f, "Debug Step"),
+            ExceptionType::Breakpoint => write!(f, "Breakpoint"),
+            ExceptionType::AccessViolation(addr) => write!(f, "Access Violation at {:#X}", addr),
+            ExceptionType::GeneralProtectionFault(data) => {
+                write!(f, "General Protection Fault. Exception data: {:#X}", data)
+            }
+            ExceptionType::Other(exception_type) => write!(f, "Unknown. Architecture code: {:#X}", exception_type),
+        }
+    }
 }
