@@ -97,6 +97,7 @@ impl DebuggerArch for Aarch64Arch {
                 | EC_DATA_ABORT_CURRENT_EL => ExceptionType::AccessViolation(context.far as usize),
                 _ => ExceptionType::Other(exception_class),
             },
+            instruction_pointer: context.elr,
         }
     }
 

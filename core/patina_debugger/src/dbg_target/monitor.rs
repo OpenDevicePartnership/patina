@@ -71,8 +71,14 @@ impl ext::monitor_cmd::MonitorCmd for PatinaTarget {
             Some("?") => {
                 let _ = write!(
                     self.monitor_buffer,
-                    "Patina Rust Debugger.\nException Type: {:x?}",
-                    self.exception_info.exception_type
+                    concat!(
+                        "Patina Rust Debugger ",
+                        env!("CARGO_PKG_VERSION"),
+                        "\n",
+                        "Instruction Pointer: {:#X}\n",
+                        "Exception Type: {}\n"
+                    ),
+                    self.exception_info.instruction_pointer, self.exception_info.exception_type
                 );
             }
             Some("disablechecks") => {
