@@ -16,6 +16,8 @@ here, but are not in scope for this RFC.
 
 - 2025-07-16: Initial draft of RFC.
 - 2025-07-16: Added "Requirements" section.
+- 2025-07-17: Update the RFC to state that the pre-existing [Memory Management service](https://github.com/OpenDevicePartnership/patina/blob/55fcb7704b6917d7ccb9744dd5bedeaa261af5c4/docs/src/rfc/text/0002-memory-management-interface.md)
+  should be used for memory management services in components.
 
 ## Motivation
 
@@ -76,32 +78,32 @@ Patina components (and constituent elements such as "services) are primarily des
 > Note: "Boot Services" and "Runtime Services" in the UEFI Specification are generically referred to as "UEFI Services"
 in this RFC.
 
-1. Make a single component available called `patina_uefi_services` that provides "UEFI Services" to Patina components.
-2. All Boot Services and Runtime Services must be accounted for in the `patina_uefi_services` component.
+1. Make a single component available called `patina_uefi_services` that provides "UEFI Services" to Patina components
+   that do not have an equivalent services produced today. At this time, that is only expected to apply to
+   "Memory Services" provided by the [`MemoryManager` service](https://github.com/OpenDevicePartnership/patina/blob/728c7e3a345a0a74351b14c1ff9a6bf948248fed/patina_dxe_core/src/memory_manager.rs#L27).
+2. All Boot Services and Runtime Services must be accounted for in the `patina_uefi_services` component unless exempted
+   by (1).
 3. The `patina_uefi_services` component must not provide any service outside of those within Boot Services and Runtime
    Services (at this time). In the future, it may be allowable to include other APIs defined in the UEFI Specification
    as services.
-4. Patina components must use the `patina_uefi_services` component to access any "UEFI Service".
+4. Patina components must use the `patina_uefi_services` component to access any "UEFI Service" offered by services
+   produced by the component.
 
 ## Unresolved Questions
 
-- Where exactly to draw lines between services.
-- Whether to produce various services from a single component (A) or multiple components (B).
+- Where exactly to draw lines between services?
+- Whether to produce various services from a single component (A) or multiple components (B)?
   - For example:
     - A:
       - Component: `patina_uefi_services`
         - Produces:
           - `EventService`
-          - `MemoryService`
           - `ProtocolService`
           - `ImageService`
     - B:
       - Component: `patina_uefi_event_service`
         - Produces:
           - `EventService`
-      - Component: `patina_uefi_memory_service`
-        - Produces:
-          - `MemoryService`
       - Component: `patina_uefi_protocol_service`
         - Produces:
           - `ProtocolService`
@@ -148,7 +150,6 @@ Todo - The plan right now is to follow this overall layout:
 - Component: `patina_uefi_services`
   - Produces:
     - `EventService`
-    - `MemoryService`
     - `ProtocolService`
     - `ImageService`
 
