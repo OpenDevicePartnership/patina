@@ -102,6 +102,9 @@ pub unsafe fn gic_initialize<'a>(gicd_base: *mut u64, gicr_base: *mut u64) -> Re
 
     // Set binary point reg to 0x7 (no preemption)
     // Safety: this is a legal value for BPR1 register.
+    // Refer to "Arm Generic Interrupt Controller Architecture Specification GIC
+    // architecture version 3 and Version 4" (Arm IHI 0069H.b ID041224)
+    // 12.2.5: "ICC_BPR1_EL1, Interrupt Controller Binary Point Register 1"
     unsafe {
         write_sysreg!(ICC_BPR1_EL1, 0x7u64);
     }
