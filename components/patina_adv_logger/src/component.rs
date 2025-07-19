@@ -192,9 +192,12 @@ extern "efiapi" fn variable_write_registered(
     event: *mut c_void,
     ctx: Box<(StandardBootServices, StandardRuntimeServices, u64)>,
 ) {
-    // Write the AdvLoggerLocator variable
     let (bs, rs, address) = *ctx;
 
+    // Always close the event to prevent a double-free when ctx is dropped
+    let _ = bs.close_event(event);
+
+    // Write the AdvLoggerLocator variable
     if let Err(status) = rs.set_variable(
         ADV_LOGGER_LOCATOR_VAR_NAME,
         &ADV_LOGGER_HOB_GUID,
@@ -203,13 +206,14 @@ extern "efiapi" fn variable_write_registered(
     ) {
         log::error!("Failed to set the advanced logger locator variable. Status = {:#x?}", status);
     }
-
-    let _ = bs.close_event(event);
 }
 
 /// Event callback triggered when the variable write architectural protocol is installed that will
 /// register a Mu variable protection policy on the "AdvancedLoggerLocator" variable.
 extern "efiapi" fn variable_policy_registered(event: *mut c_void, bs: Box<StandardBootServices>) {
+    // Always close the event to prevent a double-free when bs is dropped
+    let _ = bs.close_event(event);
+
     // Set the policy on the AdvLoggerLocator variable
     match unsafe { bs.locate_protocol::<mu_variable_policy::MuVariablePolicyProtocol>(None) } {
         Ok(protocol) => {
@@ -235,8 +239,6 @@ extern "efiapi" fn variable_policy_registered(event: *mut c_void, bs: Box<Standa
                     status
                 )
             }
-
-            let _ = bs.close_event(event);
         }
         Err(status) => {
             log::error!("Failed to locate variable policy protocol! Status = {:#x?}", status)

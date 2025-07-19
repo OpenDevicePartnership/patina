@@ -56,6 +56,7 @@ pub mod protocol {
         pub attributes_cant_have: u32,
         pub lock_policy_type: VariablePolicyType,
         _reserved: [u8; 3],
+        // Either name or LockOnVarStatePolicy comes next, depending on lock type
     }
 
     #[repr(C, packed(1))]
@@ -84,7 +85,7 @@ pub mod protocol {
         variable_name: *const u16,
         vendor_guid: *const Guid,
         variable_lock_policy_variable_name_buffer_size: *mut usize,
-        variable_polcy: *mut c_void,
+        variable_policy: *mut c_void,
         variable_lock_policy_variable_name: *mut u16,
     ) -> Status;
 
@@ -204,7 +205,7 @@ impl VariablePolicy<'_> {
             lock_on_var_state_policy.namespace_guid = u128::from_le_bytes(*target_var_namespace.as_bytes());
             lock_on_var_state_policy.value = *target_var_value;
 
-            // Interpret the buffer from size_of::<protocol::VariablePolicyEntryHeader>() + size_of::<protocol::LockOnVarStatePolicy>() to header.offset_to_name as a slice of u16
+            // Copy over the target variable name
             unsafe {
                 core::slice::from_raw_parts_mut(
                     lock_on_var_state_policy_ptr.add(size_of::<protocol::LockOnVarStatePolicy>()) as *mut u16,
