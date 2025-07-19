@@ -33,6 +33,7 @@ num-traits = { workspace = true }
 fallible-streaming-iterator = { workspace = true }
 linkme = { workspace = true }
 scroll = { workspace = true }
+uuid = {workspace = true}
 
 [target.'cfg(target_arch="x86_64")'.dependencies]
 x86_64 = { workspace = true, features = ["instructions"] }
@@ -41,6 +42,7 @@ uart_16550 = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 mockall = { workspace = true }
+utf16_lit = { workspace = true }
 
 [features]
 core = ['alloc']

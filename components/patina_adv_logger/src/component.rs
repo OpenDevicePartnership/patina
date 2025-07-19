@@ -13,18 +13,23 @@ use alloc::boxed::Box;
 use core::{ffi::c_void, ptr};
 use mu_pi::hob::{Hob, PhaseHandoffInformationTable};
 use patina_sdk::{
-    boot_services::{BootServices, StandardBootServices},
+    boot_services::{BootServices, StandardBootServices, event::EventType, tpl::Tpl},
     component::IntoComponent,
     error::{EfiError, Result},
+    runtime_services::{RuntimeServices, StandardRuntimeServices},
     serial::SerialIO,
+    uefi_protocol::{self, ProtocolInterface, mu_variable_policy},
 };
-use r_efi::efi;
+use r_efi::efi::{self, Guid};
 
 use crate::{
     logger::AdvancedLogger,
-    memory_log::{self, AdvLoggerInfo},
+    memory_log::{self, ADV_LOGGER_HOB_GUID, ADV_LOGGER_LOCATOR_VAR_NAME, AdvLoggerInfo},
     protocol::AdvancedLoggerProtocol,
 };
+
+const VARIABLE_WRITE_ARCH_PROTOCOL_GUID: Guid =
+    Guid::from_fields(0x6441f818, 0x6362, 0x4e44, 0xb5, 0x70, &[0x7d, 0xba, 0x31, 0xdd, 0x24, 0x53]);
 
 /// C struct for the internal Advanced Logger protocol for the component.
 #[repr(C)]
@@ -112,7 +117,7 @@ where
     ///
     /// Installs the Advanced Logger Protocol for use by non-local components.
     ///
-    fn entry_point(self, bs: StandardBootServices) -> Result<()> {
+    fn entry_point(self, bs: StandardBootServices, rs: StandardRuntimeServices) -> Result<()> {
         let log_info = match self.adv_logger.get_log_info() {
             Some(log_info) => log_info,
             None => {
@@ -131,12 +136,110 @@ where
         match bs.install_protocol_interface(None, &mut protocol.protocol) {
             Err(status) => {
                 log::error!("Failed to install Advanced Logger protocol! Status = {:#x?}", status);
-                Err(EfiError::ProtocolError)
+                return Err(EfiError::ProtocolError);
             }
             Ok(_) => {
                 log::info!("Advanced Logger protocol installed.");
-                Ok(())
             }
+        }
+
+        // Create an event to write the AdvLoggerLocator variable once the variable write architectural protocol
+        // is available
+        match bs.create_event(
+            EventType::NOTIFY_SIGNAL,
+            Tpl::CALLBACK,
+            Some(variable_write_registered),
+            Box::new((bs.clone(), rs.clone(), address)),
+        ) {
+            Err(status) => {
+                log::error!("Failed to create create variable write registered event! Status = {:#x?}", status);
+            }
+            Ok(event) => {
+                if let Err(status) = bs.register_protocol_notify(&VARIABLE_WRITE_ARCH_PROTOCOL_GUID, event) {
+                    log::error!("Failed to register protocol notify for variable write event! Status = {:#x?}", status);
+                }
+            }
+        };
+
+        // Create an event to lock the AdvancedLoggerLocator variable if/when the variable policy protocol is
+        // available
+        match bs.create_event::<Box<StandardBootServices>>(
+            EventType::NOTIFY_SIGNAL,
+            Tpl::CALLBACK,
+            Some(variable_policy_registered),
+            Box::new(bs.clone()),
+        ) {
+            Err(status) => {
+                log::error!("Failed to create create variable policy registered event! Status = {:#x?}", status);
+            }
+            Ok(event) => {
+                if let Err(status) = bs.register_protocol_notify(
+                    &uefi_protocol::mu_variable_policy::MuVariablePolicyProtocol::PROTOCOL_GUID,
+                    event,
+                ) {
+                    log::error!("Failed to register protocol notify for variable write event! Status = {:#x?}", status);
+                }
+            }
+        };
+
+        Ok(())
+    }
+}
+
+/// Event callback triggered when the variable write architectural protocol is installed that will
+/// write the "AdvancedLoggerLocator" variable.
+extern "efiapi" fn variable_write_registered(
+    event: *mut c_void,
+    ctx: Box<(StandardBootServices, StandardRuntimeServices, u64)>,
+) {
+    // Write the AdvLoggerLocator variable
+    let (bs, rs, address) = *ctx;
+
+    if let Err(status) = rs.set_variable(
+        ADV_LOGGER_LOCATOR_VAR_NAME,
+        &ADV_LOGGER_HOB_GUID,
+        r_efi::system::VARIABLE_RUNTIME_ACCESS | r_efi::system::VARIABLE_BOOTSERVICE_ACCESS,
+        &address.to_le_bytes(),
+    ) {
+        log::error!("Failed to set the advanced logger locator variable. Status = {:#x?}", status);
+    }
+
+    let _ = bs.close_event(event);
+}
+
+/// Event callback triggered when the variable write architectural protocol is installed that will
+/// register a Mu variable protection policy on the "AdvancedLoggerLocator" variable.
+extern "efiapi" fn variable_policy_registered(event: *mut c_void, bs: Box<StandardBootServices>) {
+    // Set the policy on the AdvLoggerLocator variable
+    match unsafe { bs.locate_protocol::<mu_variable_policy::MuVariablePolicyProtocol>(None) } {
+        Ok(protocol) => {
+            // Match policy from Mu's AdvLoggerPkg implementation
+            if let Err(status) =
+                protocol.register_variable_policy(&uefi_protocol::mu_variable_policy::VariablePolicy::LockOnCreate(
+                    mu_variable_policy::BasicVariablePolicy {
+                        name: ADV_LOGGER_LOCATOR_VAR_NAME,
+                        namespace: &ADV_LOGGER_HOB_GUID,
+                        min_size: Some(size_of::<efi::PhysicalAddress>() as u32),
+                        max_size: Some(size_of::<efi::PhysicalAddress>() as u32),
+                        attributes_must_have: Some(
+                            r_efi::system::VARIABLE_RUNTIME_ACCESS | r_efi::system::VARIABLE_BOOTSERVICE_ACCESS,
+                        ),
+                        attributes_cant_have: Some(
+                            !(r_efi::system::VARIABLE_RUNTIME_ACCESS | r_efi::system::VARIABLE_BOOTSERVICE_ACCESS),
+                        ),
+                    },
+                ))
+            {
+                log::error!(
+                    "Failed to set variable policy on advanced logger locator variable. Status = {:#x?}",
+                    status
+                )
+            }
+
+            let _ = bs.close_event(event);
+        }
+        Err(status) => {
+            log::error!("Failed to locate variable policy protocol! Status = {:#x?}", status)
         }
     }
 }

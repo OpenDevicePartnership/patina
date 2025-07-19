@@ -17,10 +17,13 @@ use core::{
 };
 use patina_sdk::error::{EfiError, Result};
 use r_efi::efi;
+use utf16_lit::utf16_null;
 
 // { 0x4d60cfb5, 0xf481, 0x4a98, {0x9c, 0x81, 0xbf, 0xf8, 0x64, 0x60, 0xc4, 0x3e }}
 pub const ADV_LOGGER_HOB_GUID: efi::Guid =
     efi::Guid::from_fields(0x4d60cfb5, 0xf481, 0x4a98, 0x9c, 0x81, &[0xbf, 0xf8, 0x64, 0x60, 0xc4, 0x3e]);
+
+pub const ADV_LOGGER_LOCATOR_VAR_NAME: &[u16] = &utf16_null!("AdvLoggerLocator");
 
 // UEFI Debug Levels
 pub const DEBUG_LEVEL_ERROR: u32 = 0x80000000;
