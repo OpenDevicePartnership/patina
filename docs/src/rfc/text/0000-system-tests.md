@@ -2,13 +2,15 @@
 
 Add the ability to control on-system unit test execution to a limited degree, to include (1) Tests executing multiple
 times via event triggers and (2) Allow execution at different points of DXE, rather than only during monolithic
-component execution prior to normal EDKII style component dispatch
+component execution prior to normal EDK II style component dispatch
 
 ## Change Log
 
 This text can be modified over time. Add a change log entry for every change made to the RFC.
 
 - 2025-07-21: Initial RFC created.
+- 2025-07-21: Updated timer trigger to be based on ms.
+- 2025-07-21: Updated display results event based off of `OnReadyToBoot` with a secondary diff at `ExitBootServices`.
 
 ## Motivation
 
@@ -18,21 +20,21 @@ on code that may not be bootstrapped during component execution.
 
 ## Technology Background
 
-This feature will rely almost entirely on the EDKII style eventing system, however it will not be implemented until
+This feature will rely almost entirely on the EDK II style eventing system, however it will not be implemented until
 [Uefi Services](https://github.com/OpenDevicePartnership/patina/pull/592) is implemented, which will provide an
 abstraction for eventing.
 
 ## Goals
 
-- #[patina_test] macro configuration for specifying the event that a component can trigger for rather than in the
-  monolithic
+- #[patina_test] macro configuration for specifying how the unit test is triggered; via a timer event, protocol
+  install, event group, etc.
 - Maintain the ability to report all unit test results together
 - Further standardize testing
 - Current default configuration should not change.
 
 ## Requirements
 
-- Support Timer based validation tests (Trigger every X (s, ms, etc))
+- Support Timer based validation tests (Trigger every X ms)
 - Support Protocol installation based validation tests
 - Support Event based validation tests
 
@@ -92,8 +94,8 @@ fn my_test() -> Result { ... }
 pub enum Trigger {
     /// A Test that runs immediately during Test component execution.
     Component,
-    /// A test that runs multiple times, every 'X' seconds.
-    Timer(f32)
+    /// A test that runs multiple times, every 'X' milliseconds.
+    Timer(u32)
     /// A test that runs whenever the specified protocol is installed. Can run multiple times if the protocol is
     /// installed multiple times.
     Protocol(efi::Guid),
@@ -123,37 +125,37 @@ event, a event callback will use this service to report all results to the user.
 ┌─────────────────────────────────┐                    
 │ TestRunner Component Execution  │                    
 └─────────────────────────────────┤                    
-│┌───────────────────┐    ┌───────────────────────────┐
-││ Produce TestReport│ ┌──► Component                 │
-││ Service           │ │  └───────────────────────────┘
-│└────────┬──────────┘ │  │ Run component immediately │
-│         │            │  │ and report results to     │
-│┌────────▼─────────┐  │  │ service                   │
-││ Foreach Test:    │  │  └───────┬───────────────────┘
-││ │                │  │  ┌───────┴───────────────────┐
-││ │ match Trigger: │  │┌─► Timer                     │
-││ │ │              │  ││ └───────────────────────────┘
-││ │ │- Component ──┼──┘│ │ Create event callback     │
-││ │ │              │   │ │ that runs and reports     │
-││ │ │- Timer ──────┼───┘ │ Results.                  │
-││ │ │              │     │ Use SetTimer to setup a   │
-││ │ │- Protocol────┼────┐│ Timer for the test.       │
-││ │ │              │    │└────────┬──────────────────┘
-││ │ │- Event ──────┼──┐ │┌────────┴──────────────────┐
-│└────────┬─────────┘  │ └► Protocol                  │
-│         │            │  └───────────────────────────┘
-│┌────────▼─────────┐  │  │Create event callback      │
-││Register          │  │  │that runs and reports      │
-││ReportResults     │  │  │Results.                   │
-││Callback          │  │  │Use RegisterProtocolNotify │
-│└────────┬─────────┘  │  │to setup a callback for    │
-│         │            │  └───────┬───────────────────┘
-│         │            │  ┌───────┴───────────────────┐
-│         │            └──► Event                     │
-│         │               └───────────────────────────┘
-└─────────▼───────────────│Use CreateEventEx to       │
-                          │register an event callback │
-                          └───────────────────────────┘
+│┌───────────────────┐    ┌────────────────────────────┐
+││ Produce TestReport│ ┌──► Component                  │
+││ Service           │ │  └────────────────────────────┘
+│└────────┬──────────┘ │  │ Run component immediately  │
+│         │            │  │ and report results to      │
+│┌────────▼─────────┐  │  │ service                    │
+││ Foreach Test:    │  │  └───────┬────────────────────┘
+││ │                │  │  ┌───────┴────────────────────┐
+││ │ match Trigger: │  │┌─► Timer                      │
+││ │ │              │  ││ └────────────────────────────┘
+││ │ │- Component ──┼──┘│ │ Create event callback      │
+││ │ │              │   │ │ that runs and reports      │
+││ │ │- Timer ──────┼───┘ │ Results.                   │
+││ │ │              │     │ Use SetTimer to setup a    │
+││ │ │- Protocol────┼────┐│ Timer for the test.        │
+││ │ │              │    │└────────┬───────────────────┘
+││ │ │- Event ──────┼──┐ │┌────────┴───────────────────┐
+│└────────┬─────────┘  │ └► Protocol                   │
+│         │            │  └────────────────────────────┘
+│┌────────▼─────────┐  │  │ Create event callback      │
+││Register          │  │  │ that runs and reports      │
+││ReportResults     │  │  │ Results.                   │
+││Callback          │  │  │ Use RegisterProtocolNotify │
+│└────────┬─────────┘  │  │ to setup a callback for    │
+│         │            │  └───────┬────────────────────┘
+│         │            │  ┌───────┴────────────────────┐
+│         │            └──► Event                      │
+│         │               └────────────────────────────┘
+└─────────▼───────────────│ Use CreateEventEx to       │
+                          │ register an event callback │
+                          └────────────────────────────┘
 ```
 
 ## Guide-Level Explanation
@@ -161,9 +163,10 @@ event, a event callback will use this service to report all results to the user.
 This feature allows a user to select how a particular `patina_test` is executed. In addition to the default execution
 time of a `patina_test` (which is during `TestRunner` component execution), developers can now chose to delay execution
 of a particular unit test to execute periodically based off a timer using `#[on(timer = X)]`, when a protocol is
-registered using `#[on(protocol = "GUID")]`, or whenever a particular event is triggered  using
+registered using `#[on(protocol = "GUID")]`, or whenever a particular event is triggered using
 `#[on(event = "GUID")]`.
 
 This new functionality will not provide any breaking changes to the consumer, only allowing additional configuration.
-This change will delay the reporting of all test results until a certain event group runs (undetermined which group,
-but possibly ExitBootServices), even if tests run prior to that.
+This change will delay the reporting of all test results until `OnReadyToBoot`. We may also support a secondary display
+of test results of tests executed between `OnReadyToBoot` and `ExitBootServices`. This is because in most testing
+scenarios, we boot to the UEFI shell, which does not trigger `ExitBootServices`.
