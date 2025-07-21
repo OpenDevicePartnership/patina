@@ -11,7 +11,10 @@ use alloc::{boxed::Box, slice, vec, vec::Vec};
 use core::{fmt::Display, ptr};
 use patina_sdk::{base::DEFAULT_CACHE_ATTR, error::EfiError};
 
-use mu_pi::{dxe_services, hob};
+use mu_pi::{
+    dxe_services::{self, GcdMemoryType},
+    hob,
+};
 use mu_rust_helpers::function;
 use patina_internal_collections::{Error as SliceError, Rbt, SliceKey, node_size};
 use patina_sdk::{
@@ -2145,11 +2148,19 @@ impl SpinLockedGcd {
         }
 
         // make sure we didn't map page 0 if it was reserved or MMIO, we are using this for null pointer detection
-        if let Err(err) = self.set_memory_space_attributes(0, UEFI_PAGE_SIZE, efi::MEMORY_RP) {
-            // if we fail to set these attributes we can continue to boot, but we will not be able to detect null
-            // pointer dereferences.
-            log::error!("Failed to unmap page 0, which is reserved for null pointer detection. Error: {:?}", err);
-            debug_assert!(false);
+        // only do this if page 0 actually exists
+        if let Ok(descriptor) = self.get_memory_descriptor_for_address(0) {
+            if descriptor.memory_type != GcdMemoryType::NonExistent {
+                if let Err(err) = self.set_memory_space_attributes(0, UEFI_PAGE_SIZE, efi::MEMORY_RP) {
+                    // if we fail to set these attributes we can continue to boot, but we will not be able to detect null
+                    // pointer dereferences.
+                    log::error!(
+                        "Failed to unmap page 0, which is reserved for null pointer detection. Error: {:?}",
+                        err
+                    );
+                    debug_assert!(false);
+                }
+            }
         }
 
         self.page_table.lock().as_mut().unwrap().install_page_table().expect("Failed to install the page table");
