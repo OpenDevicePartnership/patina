@@ -11,6 +11,7 @@ This text can be modified over time. Add a change log entry for every change mad
 - 2025-07-21: Initial RFC created.
 - 2025-07-21: Updated timer trigger to be based on ms.
 - 2025-07-21: Updated display results event based off of `OnReadyToBoot` with a secondary diff at `ExitBootServices`.
+- 2025-07-22: Resolve test result reporting question.
 
 ## Motivation
 
@@ -39,9 +40,6 @@ abstraction for eventing.
 - Support Event based validation tests
 
 ## Unresolved Questions
-
-- Should The test runner report multiple executions of the same test as a single result, as individual tests, or
-  as a single test that just has an execution count field?
 
 - Should the report service have a log function that tests log to, so we can report all log results at once instead
   of throughout boot?
@@ -156,6 +154,24 @@ event, a event callback will use this service to report all results to the user.
 └─────────▼───────────────│ Use CreateEventEx to       │
                           │ register an event callback │
                           └────────────────────────────┘
+```
+
+### `ReportResults` Callback
+
+The `ReportResults` Callback will be registered against two separate event groups - `OnReadyToBoot` and
+`ExitBootServices`. On the first callback, A table will be logged showing all tests that have been executed to this
+point in boot. If / when the `ExitBootServices` callback is executed, a table will be logged showing only the
+additional tests that have been executed between `OnReadyToBoot` and `ExitBootServices`. Each table will be properly
+marked with the event group being executed under. This logic is added due to the fact that most boot / test scenarios
+involve booting to UEFI shell, which does not trigger `ExitBootServices`; however in scenarios where we do reach
+`ExitBootServices`, we wish to print any additional tests that have executed.
+
+The format of the table will be as such:
+
+``` cmd
+| Test Name | Number of Executions | Status             |
+| MyTest    | 3                    | Success            |
+| OtherTest | 5                    | Failed [1 time(s)] |
 ```
 
 ## Guide-Level Explanation
