@@ -509,8 +509,14 @@ impl PageAllocation {
     ///
     #[must_use]
     #[cfg(any(test, feature = "alloc"))]
-    pub fn try_into_box<T>(self, value: T) -> Option<Box<T, PageFree>> {
+    pub fn try_into_box<T>(mut self, value: T) -> Option<Box<T, PageFree>> {
         if self.byte_length() < size_of::<T>() {
+            // This is an intentional case where the struct is being dropped,
+            // but we want to avoid triggering the panic in its `Drop` implementation.
+            // To handle this safely, we manually free the pages and then call `forget`
+            // to prevent `drop` from running.
+            self.free_pages();
+            core::mem::forget(self);
             return None;
         }
 
@@ -556,8 +562,14 @@ impl PageAllocation {
     /// - `Some(&'static T)` of the initialized value.
     ///
     #[must_use]
-    pub fn try_leak_as<T>(self, value: T) -> Option<&'static T> {
+    pub fn try_leak_as<T>(mut self, value: T) -> Option<&'static T> {
         if self.byte_length() < size_of::<T>() {
+            // This is an intentional case where the struct is being dropped,
+            // but we want to avoid triggering the panic in its `Drop` implementation.
+            // To handle this safely, we manually free the pages and then call `forget`
+            // to prevent `drop` from running.
+            self.free_pages();
+            core::mem::forget(self);
             return None;
         }
 
@@ -585,10 +597,12 @@ impl PageAllocation {
             slice.as_mut().unwrap()
         }
     }
-}
 
-impl Drop for PageAllocation {
-    fn drop(&mut self) {
+    /// Frees the allocated pages of memory this struct manages.
+    /// 
+    /// This is not a public method as it invalidates `Self` without consuming `self`.
+    /// This should only be used internally to free the memory when dropping `self`.
+    fn free_pages(&mut self) {
         // SAFETY: The allocation was never converted into a usable type, so
         //         this structure contains the only reference to the memory and
         //         the memory is safe to free.
@@ -598,6 +612,12 @@ impl Drop for PageAllocation {
                 log::error!("Failed to free page allocation at {:x}!", self.address);
             }
         }
+    }
+}
+
+impl Drop for PageAllocation {
+    fn drop(&mut self) {
+        self.free_pages();
 
         // Allocating memory that is never used before being freed is treated as
         // a bug.
