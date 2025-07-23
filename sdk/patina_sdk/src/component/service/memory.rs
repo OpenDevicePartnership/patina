@@ -599,7 +599,7 @@ impl PageAllocation {
     }
 
     /// Frees the allocated pages of memory this struct manages.
-    /// 
+    ///
     /// This is not a public method as it invalidates `Self` without consuming `self`.
     /// This should only be used internally to free the memory when dropping `self`.
     fn free_pages(&mut self) {
@@ -912,5 +912,33 @@ mod tests {
         let page = service.allocate_pages(1, AllocationOptions::new()).unwrap();
         let my_thing = page.try_leak_as(42).unwrap();
         assert_eq!(*my_thing, 42);
+    }
+
+    #[test]
+    fn test_failed_try_into_box_does_not_panic() {
+        let mm = Service::mock(Box::new(StdMemoryManager::new()));
+
+        let page = mm
+            .allocate_pages(1, AllocationOptions::default())
+            .unwrap_or_else(|e| panic!("Failed to allocate pages: {:?}", e));
+
+        assert!(
+            page.try_into_box([42_u8; UEFI_PAGE_SIZE + 1]).is_none(),
+            "Expected allocation to fail due to insufficient size for Box<[u8]>"
+        );
+    }
+
+    #[test]
+    fn test_failed_try_leak_as_does_not_panic() {
+        let mm = Service::mock(Box::new(StdMemoryManager::new()));
+
+        let page = mm
+            .allocate_pages(1, AllocationOptions::default())
+            .unwrap_or_else(|e| panic!("Failed to allocate pages: {:?}", e));
+
+        assert!(
+            page.try_leak_as([42_u8; UEFI_PAGE_SIZE + 1]).is_none(),
+            "Expected allocation to fail due to insufficient size for [u8]"
+        );
     }
 }
