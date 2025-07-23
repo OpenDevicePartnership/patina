@@ -108,7 +108,7 @@ impl AcpiProviderManager {
         // Fields preceded with an underscore are for unsupported ACPI version 1.0.
         let rsdp_data = AcpiRsdp {
             signature: signature::ACPI_RSDP_TABLE,
-            _checksum: 0,
+            checksum: 0,
             oem_id: self.oem_id,
             revision: ACPI_RSDP_REVISION,
             _rsdt_address: 0,

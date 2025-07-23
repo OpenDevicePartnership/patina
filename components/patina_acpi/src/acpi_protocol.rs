@@ -83,7 +83,7 @@ impl AcpiTableProtocol {
                         unsafe { *table_key = key.0 };
                         efi::Status::SUCCESS
                     }
-                    Err(e) => e.into(),
+                    Err(e) => {log::info!("ACPIACPI {:?}", e); e.into()},
                 }
             } else {
                 efi::Status::OUT_OF_RESOURCES

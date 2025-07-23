@@ -585,17 +585,27 @@ where
         Ok(())
     }
 
-    /// Performs `extended_checksum` on the RSDP.
+    /// Performs `checksum` and `extended_checksum` calculations on the RSDP and XSDT.
     pub(crate) fn checksum_common_tables(&self) -> Result<(), AcpiError> {
         // The RSDP doesn't have a standard header, so it is easier to calculate the checksum manually.
         if let Some(rsdp_table) = self.acpi_tables.write().get_mut(&Self::RSDP_KEY) {
             // SAFETY: We know the size and layout of the RSDP in memory.
             let rsdp_bytes =
                 unsafe { slice::from_raw_parts(rsdp_table.table.as_ptr() as *mut u8, mem::size_of::<AcpiRsdp>()) };
-            let sum_of_bytes: u8 = rsdp_bytes.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
+
             // SAFETY: We only ever store an `AcpiRsdp` in the RSDP key.
             let rsdp = unsafe { rsdp_table.as_mut::<AcpiRsdp>() };
-            // All bytes must sum to zero, so we write the negative of the sum.
+
+            // Zero out both checksums before recalculating.
+            rsdp.checksum = 0;
+            rsdp.extended_checksum = 0;
+
+            // Calculate the `checksum` field (first 20 bytes).
+            let sum20: u8 = rsdp_bytes[..20].iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
+            rsdp.checksum = sum20.wrapping_neg();
+
+            // Calculate the `extended_checksum` (checksums over all bytes).
+            let sum_of_bytes: u8 = rsdp_bytes.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
             rsdp.extended_checksum = sum_of_bytes.wrapping_neg();
         }
 
