@@ -31,10 +31,10 @@
 //!
 
 use core::mem::ManuallyDrop;
-#[cfg(feature = "alloc")]
+#[cfg(any(test, feature = "alloc"))]
 use core::{alloc::Allocator, ptr::NonNull};
 
-#[cfg(feature = "alloc")]
+#[cfg(any(test, feature = "alloc"))]
 use alloc::boxed::Box;
 use r_efi::efi;
 
@@ -469,7 +469,7 @@ impl PageAllocation {
 
     /// Internal function for creating the `PageFree` struct for this allocation.
     #[inline(always)]
-    #[cfg(feature = "alloc")]
+    #[cfg(any(test, feature = "alloc"))]
     fn get_page_free(&self) -> PageFree {
         PageFree { address: self.address, page_count: self.page_count, memory_manager: self.memory_manager }
     }
@@ -508,7 +508,7 @@ impl PageAllocation {
     /// - `Some(Box<T, _>)` of the initialized value.
     ///
     #[must_use]
-    #[cfg(feature = "alloc")]
+    #[cfg(any(test, feature = "alloc"))]
     pub fn try_into_box<T>(self, value: T) -> Option<Box<T, PageFree>> {
         if self.byte_length() < size_of::<T>() {
             return None;
@@ -533,7 +533,7 @@ impl PageAllocation {
     /// memory to the default value of `T`. The length of the slice is the number
     /// of bytes in the allocation divided by the size of `T`.
     #[must_use]
-    #[cfg(feature = "alloc")]
+    #[cfg(any(test, feature = "alloc"))]
     pub fn into_boxed_slice<T: Default>(self) -> Box<[T], PageFree> {
         let page_free = self.get_page_free();
         let slice = self.into_raw_slice::<T>();
@@ -614,14 +614,14 @@ impl core::fmt::Display for PageAllocation {
 /// The `PageFree` struct is a wrapper around a page allocation that allows
 /// the memory to be freed when a smart pointer is dropped. This cannot be used to
 /// allocate memory, and should only be used to free the specific memory it tracks.
-#[cfg(feature = "alloc")]
+#[cfg(any(test, feature = "alloc"))]
 pub struct PageFree {
     address: usize,
     page_count: usize,
     memory_manager: &'static dyn MemoryManager,
 }
 
-#[cfg(feature = "alloc")]
+#[cfg(any(test, feature = "alloc"))]
 unsafe impl Allocator for PageFree {
     fn allocate(&self, _layout: core::alloc::Layout) -> Result<NonNull<[u8]>, core::alloc::AllocError> {
         Err(core::alloc::AllocError)
