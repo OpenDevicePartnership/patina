@@ -7,7 +7,7 @@ use r_efi::efi;
 
 use crate::{error::VariableError, variable};
 
-use core::ffi::c_void;
+use core::{ffi::c_void, mem, slice};
 
 #[derive(IntoService)]
 #[service(VariableServices)]
@@ -38,12 +38,12 @@ impl VariableServices {
         attributes: u32,
         data: &mut T,
     ) -> Result<(), VariableError> {
-        let data_ptr: *mut c_void = data as *mut T as *mut c_void;
+        let data_ptr: *mut u8 = data as *mut T as *mut u8;
         // SHERRY tangent: i don't hate the idea of using bytemuck + Pod here
         // the requirement of Pod are 1) repr(C) + 2) Copy - which we are basically requiring by doing the pointer conversion above
         // so it doesn't add any additional requirements on T
         // and makes the VariableStorage.set_variable a bit nicer
-        self.storage_provider.set_variable(name, namespace, attributes, data_ptr)
+        self.storage_provider.set_variable(name, namespace, attributes, unsafe { slice::from_raw_parts_mut(data_ptr, mem::size_of::<T>()) })
     }
 
     fn query_variables_info(&self, attributes: u32) -> Result<VariableInfo, VariableError> {
@@ -57,7 +57,7 @@ pub trait VariableStorage {
         name: &str,
         namespace: &efi::Guid,
         size_hint: Option<usize>,
-    ) -> Result<(&[u8], u32), VariableError>;
+    ) -> Result<(Vec<u8>, u32), VariableError>;
 
     fn iter_variable_names(&self) -> Result<Vec<String>, VariableError>;
 
@@ -66,7 +66,7 @@ pub trait VariableStorage {
         name: &str,
         namespace: &efi::Guid,
         attributes: u32,
-        data: *mut c_void,
+        data: &[u8],
     ) -> Result<(), VariableError>;
 
     fn query_variables_info(&self, attributes: u32) -> Result<VariableInfo, VariableError>;

@@ -1,6 +1,6 @@
 use alloc::{string::String, vec::Vec};
 use core::ffi::c_void;
-use patina_sdk::{component::service::IntoService, runtime_services::StandardRuntimeServices};
+use patina_sdk::{component::service::IntoService, runtime_services::{variable_services::GetVariableStatus, RuntimeServices, StandardRuntimeServices}};
 use r_efi::efi;
 
 use crate::{error::VariableError, service::VariableStorage};
@@ -18,51 +18,43 @@ impl VariableStorage for SimpleVariableStorage {
         name: &str,
         namespace: &r_efi::efi::Guid,
         data_size: Option<usize>,
-    ) -> Result<(&[u8], u32), VariableError> {
-        if !name.iter().any(|&c| c == 0) {
-            debug_assert!(false, "Name passed into get_variable is not null-terminated.");
-            return Err(efi::Status::INVALID_PARAMETER);
-        }
+    ) -> Result<(Vec<u8>, u32), VariableError> { 
+        // Convert the name to UTF-16.
+        let mut name_vec: Vec<u16> = name.encode_utf16().collect();
+        let name_slice: &mut [u16] = name_vec.as_mut_slice();
 
-        // Keep a local copy of name to unburden the caller of having to pass in a mutable slice
-        let mut name_vec = name.to_vec();
-
-        // We can't simply allocate an empty buffer of size T because we can't assume
-        // the TryFrom representation of T will be the same as T
+        // Attempt to use size provided by caller (it may not be correct).
         let mut data = Vec::<u8>::new();
-        if let Some(size_hint) = size_hint {
+        if let Some(size_hint) = data_size {
             data.resize(size_hint, 0);
         }
 
-        // Do at most two calls to get_variable_unchecked.
+        // Do at most two calls to `runtime_services.get_variable_unchecked`.
         //
-        // If size_hint was provided (and the size is sufficient), then only call to get_variable_unchecked is
-        // needed. Otherwise, the first check will determine the size of the buffer to allocate for the second
-        // call.
+        // If size_hint was provided (and the size is correct), then only one call to `get_variable_unchecked` is
+        // needed. Otherwise, the first check will determine the size of the buffer to allocate for the second call.
         let mut first_attempt = true;
         loop {
             unsafe {
-                let status = self.get_variable_unchecked(
-                    name_vec.as_mut_slice(),
+                let status = self.runtime_services.get_variable_unchecked(
+                    name_slice,
                     namespace,
                     if data.is_empty() { None } else { Some(&mut data) },
                 );
 
                 match status {
-                    GetVariableStatus::Success { data_size: _, attributes } => match T::try_from(data) {
-                        Ok(d) => return Ok((d, attributes)),
-                        Err(_) => return Err(efi::Status::INVALID_PARAMETER),
-                    },
+                    GetVariableStatus::Success { data_size: _, attributes } => { return Ok((data, attributes)); },
+                    // Size hint was wrong. Use the size provided by the `runtime_services` call.
                     GetVariableStatus::BufferTooSmall { data_size, attributes: _ } => {
                         if first_attempt {
                             first_attempt = false;
-                            data.resize(data_size, 10);
+                            data.resize(data_size, 0);
                         } else {
-                            return Err(efi::Status::BUFFER_TOO_SMALL);
+                            return Err(VariableError::BufferTooSmall);
                         }
                     }
                     GetVariableStatus::Error(e) => {
-                        return Err(e);
+                        return Err(e.into());
                     }
                 }
             }
@@ -70,7 +62,22 @@ impl VariableStorage for SimpleVariableStorage {
     }
 
     fn iter_variable_names(&self) -> Result<Vec<String>, VariableError> {
-        todo!()
+        while (true) {
+            match unsafe { self.runtime_services.get_next_variable_name_unchecked() } {
+                Ok(name) => {
+                    if name.is_empty() {
+                        break;
+                    }
+                    return Ok(name.into_iter().map(String::from).collect());
+                }
+                Err(efi::Status::NOT_FOUND) => {
+                    return Ok(Vec::new());
+                }
+                Err(status) => {
+                    return Err(status.into());
+                }
+            }
+        }
     }
 
     fn set_variable(
@@ -78,15 +85,30 @@ impl VariableStorage for SimpleVariableStorage {
         name: &str,
         namespace: &efi::Guid,
         attributes: u32,
-        data: *mut c_void,
+        data: &[u8],
     ) -> Result<(), VariableError> {
-        todo!();
+        // Convert the name to UTF-16.
+        let mut name_vec: Vec<u16> = name.encode_utf16().collect();
+        let name_slice: &mut [u16] = name_vec.as_mut_slice();
+
+        match unsafe {
+            self.runtime_services.set_variable_unchecked(
+                name_slice,
+                namespace,
+                attributes,
+                data,
+            )
+        } {
+            Ok(()) => Ok(()),
+            Err(status) => Err(status.into()),
+        }
     }
 
     fn query_variables_info(
         &self,
         attributes: u32,
     ) -> Result<patina_sdk::runtime_services::variable_services::VariableInfo, VariableError> {
-        todo!()
+        self.runtime_services.query_variable_info(attributes)
+            .map_err(|e| e.into())
     }
 }
