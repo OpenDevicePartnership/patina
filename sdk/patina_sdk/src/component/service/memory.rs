@@ -552,13 +552,13 @@ impl PageAllocation {
 
     /// Converts the allocation and leaks the memory as a mutable `T`.
     ///
-    /// This function is similar to [Box::lea] in terms of caller responsibility for memory
+    /// This function is similar to [Box::leak] in terms of caller responsibility for memory
     /// management. Dropping the returned reference will cause a memory leak.
     ///
     /// # Returns
     ///
     /// - `None` if the size of the value is larger than the allocation.
-    /// - `Some(&T)` of the initialized value.
+    /// - `Some(&mut T)` of the initialized value.
     ///
     #[must_use]
     pub fn try_leak_as<'a, T>(mut self, value: T) -> Option<&'a mut T> {
