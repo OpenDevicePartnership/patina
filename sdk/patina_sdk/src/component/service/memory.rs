@@ -948,12 +948,18 @@ mod tests {
     #[test]
     fn test_into_boxed_slice_will_call_drop_properly() {
         static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
 
-        #[derive(Default)]
         struct MyStruct(usize);
         impl MyStruct {
             fn value(&self) -> usize {
                 self.0
+            }
+        }
+
+        impl Default for MyStruct {
+            fn default() -> Self {
+                MyStruct(COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
             }
         }
 
@@ -972,7 +978,7 @@ mod tests {
 
             let mut i = 0;
             boxed_slice.iter().for_each(|item| {
-                assert_eq!(item.value(), 0, "Default value of MyStruct should be zero");
+                assert_eq!(item.value(), i, "Default value of MyStruct should be {i}");
                 i += 1;
             });
         }
