@@ -551,7 +551,7 @@ impl PageAllocation {
     }
 
     /// Converts the allocation and leaks the memory as a mutable `T`.
-    /// 
+    ///
     /// This function is similar to [Box::lea] in terms of caller responsibility for memory
     /// management. Dropping the returned reference will cause a memory leak.
     ///
@@ -582,7 +582,7 @@ impl PageAllocation {
     }
 
     /// Converts the allocation and leaks the memory as a mutable slice of type `T`.
-    /// 
+    ///
     /// This function is similar to [Box::leak] in terms of caller responsibility for memory
     /// management. Dropping the returned reference will cause a memory leak.
     #[must_use]
