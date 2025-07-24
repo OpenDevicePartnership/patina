@@ -32,7 +32,7 @@
 
 use core::mem::ManuallyDrop;
 #[cfg(any(test, feature = "alloc"))]
-use core::{alloc::Allocator, ptr::NonNull};
+use core::{alloc::Allocator, mem::MaybeUninit, ptr::NonNull};
 
 #[cfg(any(test, feature = "alloc"))]
 use alloc::boxed::Box;
@@ -542,12 +542,13 @@ impl PageAllocation {
     #[cfg(any(test, feature = "alloc"))]
     pub fn into_boxed_slice<T: Default>(self) -> Box<[T], PageFree> {
         let page_free = self.get_page_free();
-        let slice = self.into_raw_slice::<T>();
+        let slice = self.into_raw_slice::<MaybeUninit<T>>();
 
-        // SAFETY: The memory is allocated and valid for writing through the length.
+        // SAFETY: This function has sole ownership of the memory. The allocator the box
+        //         is created with is the same allocator that was used to allocate the memory.
         unsafe {
-            (*slice).fill_with(Default::default);
-            Box::from_raw_in(slice.as_mut().unwrap(), page_free)
+            (*slice).fill_with(|| MaybeUninit::new(Default::default()));
+            Box::from_raw_in(slice as *mut [T], page_free)
         }
     }
 
@@ -885,6 +886,8 @@ mod mock {
 
 #[cfg(test)]
 mod tests {
+    use core::sync::atomic::AtomicUsize;
+
     use super::*;
     use crate::component::service::Service;
 
@@ -939,6 +942,44 @@ mod tests {
         assert!(
             page.try_leak_as([42_u8; UEFI_PAGE_SIZE + 1]).is_none(),
             "Expected allocation to fail due to insufficient size for [u8]"
+        );
+    }
+
+    #[test]
+    fn test_into_boxed_slice_will_call_drop_properly() {
+        static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+        #[derive(Default)]
+        struct MyStruct(usize);
+        impl MyStruct {
+            fn value(&self) -> usize {
+                self.0
+            }
+        }
+
+        impl Drop for MyStruct {
+            fn drop(&mut self) {
+                DROP_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+
+        let pa = mm.allocate_pages(1, AllocationOptions::default()).expect("Should not fail for test.");
+        {
+            let boxed_slice = pa.into_boxed_slice::<MyStruct>();
+            assert_eq!(boxed_slice.len(), UEFI_PAGE_SIZE / size_of::<MyStruct>());
+
+            let mut i = 0;
+            boxed_slice.iter().for_each(|item| {
+                assert_eq!(item.value(), 0, "Default value of MyStruct should be zero");
+                i += 1;
+            });
+        }
+        assert_eq!(
+            DROP_COUNT.load(std::sync::atomic::Ordering::SeqCst),
+            UEFI_PAGE_SIZE / size_of::<MyStruct>(),
+            "Drop should be called for each item in the boxed slice"
         );
     }
 }
