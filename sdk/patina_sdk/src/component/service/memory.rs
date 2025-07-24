@@ -881,7 +881,7 @@ mod mock {
 
 #[cfg(test)]
 mod tests {
-    use core::sync::atomic::AtomicUsize;
+    use core::sync::atomic::{AtomicBool, AtomicUsize};
 
     use super::*;
     use crate::component::service::Service;
@@ -908,6 +908,8 @@ mod tests {
         let service = Service::mock(Box::new(mock));
 
         let page = service.allocate_pages(1, AllocationOptions::new()).unwrap();
+        assert_eq!(page.page_count(), 1);
+        assert_eq!(page.byte_length(), UEFI_PAGE_SIZE);
         let my_thing = page.try_leak_as(42).unwrap();
         assert_eq!(*my_thing, 42);
     }
@@ -982,6 +984,129 @@ mod tests {
             UEFI_PAGE_SIZE / size_of::<MyStruct>(),
             "Drop should be called for each item in the boxed slice"
         );
+    }
+
+    #[test]
+    fn test_allocation_options_config_sticks() {
+        let options = AllocationOptions::default()
+            .with_alignment(0x200)
+            .with_memory_type(EfiMemoryType::PalCode)
+            .with_strategy(PageAllocationStrategy::Address(0x1000_0000_0000_0004));
+
+        assert_eq!(options.alignment(), 0x200);
+        assert_eq!(options.memory_type(), EfiMemoryType::PalCode);
+        assert_eq!(options.strategy(), PageAllocationStrategy::Address(0x1000_0000_0000_0004));
+    }
+
+    #[test]
+    fn test_bad_page_allocation() {
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+        
+        // Catch unaligned address
+        assert!(unsafe { PageAllocation::new(UEFI_PAGE_SIZE + 1, 1, mm) }.is_err_and(|e| matches!(e, MemoryError::UnalignedAddress)));
+        assert!(unsafe { PageAllocation::new(UEFI_PAGE_SIZE - 1, 1, mm) }.is_err_and(|e| matches!(e, MemoryError::UnalignedAddress)));
+
+        // Catch zero page count
+        assert!(unsafe { PageAllocation::new(UEFI_PAGE_SIZE, 0, mm) }.is_err_and(|e| matches!(e, MemoryError::InvalidPageCount)));
+    }
+
+    #[test]
+    fn test_page_allocation_zeroing_all_pages_works() {
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+
+        let pa = mm.allocate_pages(10, AllocationOptions::default()).expect("Should not fail for test.");
+        pa.zero_pages();
+
+        // check that all bytes are zeroed
+        let a = pa.into_raw_ptr::<u8>();
+        for i in 0..(UEFI_PAGE_SIZE * 10) {
+            assert_eq!(unsafe { *a.add(i) }, 0, "Byte at index {} is not zeroed", i);
+        }
+    }
+
+    #[test]
+    fn test_into_raw_slice() {
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+
+        let pa = mm.allocate_pages(10, AllocationOptions::default()).expect("Should not fail for test.");
+        let slice: *mut [u64] = pa.into_raw_slice();
+        assert_eq!(unsafe { (*slice).len() }, (UEFI_PAGE_SIZE * 10) / size_of::<u64>());
+
+        #[repr(packed(1))]
+        struct TestWeirdSized {
+            _a: u64,
+            _b: u32,
+            _c: u16
+        }
+
+        // The intent is to ensure that the size of the struct is not evenly divisible by 4k page size. We want a weird size that does not fit into
+        // the standard page size alignment evenly.
+        assert_ne!(size_of::<TestWeirdSized>() % UEFI_PAGE_SIZE, 0);
+
+        let pa = mm.allocate_pages(10, AllocationOptions::default()).expect("Should not fail for test.");
+        let slice: *mut [TestWeirdSized] = pa.into_raw_slice();
+        assert_eq!(unsafe { (*slice).len() }, (UEFI_PAGE_SIZE * 10) / size_of::<TestWeirdSized>());
+    }
+
+    #[test]
+    fn test_allocate_zero_pages_bubbles_up_error() {
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+
+        // Do a normal page allocation just to ensure it succeeds.
+        let Ok(pa) = mm.allocate_zero_pages(10, AllocationOptions::default()) else {
+            panic!("Expected allocation to succeed, but it failed.");
+        };
+        // use it so we don't panic for unused page allocation.
+        let _ = pa.into_raw_ptr::<u8>();
+
+
+        // Overflow isize::MAX to ensure that the allocation fails.
+        let pages = 2usize.pow(63) / UEFI_PAGE_SIZE;
+        assert!(mm.allocate_pages(pages, AllocationOptions::default()).is_err());
+    }
+
+    #[test]
+    fn test_try_into_box_value_is_placed_properly() {
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+        static DROPPED: AtomicBool = AtomicBool::new(false);
+
+        struct MyStruct(usize);
+
+        impl MyStruct {
+            fn new(value: usize) -> Self {
+                MyStruct(value)
+            }
+
+            fn value(&self) -> usize {
+                self.0
+            }
+        }
+
+        impl Drop for MyStruct {
+            fn drop(&mut self) {
+                DROPPED.store(true, core::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        let pa = mm.allocate_pages(1, AllocationOptions::default()).expect("Should not fail for test.");
+        
+        // Create the object for a limited time
+        {
+            let boxed = pa.try_into_box(MyStruct::new(42)).expect("Should convert to Box<T> successfully");
+            assert_eq!(boxed.value(), 42);
+        }
+        
+        // ensure drop was called
+        assert!(DROPPED.load(core::sync::atomic::Ordering::SeqCst), "Drop was not called on MyStruct");
+    }
+
+    #[test]
+    fn test_into_boxed_slice_with_missing_size_returns_slice_of_size_zero() {
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+
+        let pa = mm.allocate_pages(1, AllocationOptions::default()).expect("Should not fail for test.");
+        let slice = pa.into_raw_slice::<[u8; UEFI_PAGE_SIZE * 2]>();
+        assert_eq!(unsafe { (*slice).len() }, 0);
     }
 
     #[test]
