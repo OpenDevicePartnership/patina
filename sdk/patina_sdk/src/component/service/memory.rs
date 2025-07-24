@@ -542,7 +542,7 @@ impl PageAllocation {
     #[cfg(any(test, feature = "alloc"))]
     pub fn into_boxed_slice<T: Default>(self) -> Box<[T], PageFree> {
         let page_free = self.get_page_free();
-        let slice = self.into_slice::<T>();
+        let slice = self.leak_as_slice::<T>();
 
         // SAFETY: This function has sole ownership of the underlying memory, so
         //         the memory is safe from being converted into a Box multiple times,
@@ -550,18 +550,18 @@ impl PageAllocation {
         unsafe { Box::from_raw_in(slice as *mut _, page_free) }
     }
 
-    /// Initializes the memory with the provided value and returns a static lifetime
-    /// reference to the value. This memory should be treated as leaked and should
-    /// not be freed. This is useful for global structures that need to be shared
-    /// between multiple entities.
+    /// Converts the allocation and leaks the memory as a mutable `T`.
+    /// 
+    /// This function is similar to [Box::lea] in terms of caller responsibility for memory
+    /// management. Dropping the returned reference will cause a memory leak.
     ///
     /// # Returns
     ///
     /// - `None` if the size of the value is larger than the allocation.
-    /// - `Some(&'static T)` of the initialized value.
+    /// - `Some(&T)` of the initialized value.
     ///
     #[must_use]
-    pub fn try_leak_as<T: 'static>(mut self, value: T) -> Option<&'static T> {
+    pub fn try_leak_as<'a, T>(mut self, value: T) -> Option<&'a mut T> {
         if self.byte_length() < size_of::<T>() {
             // This is an intentional case where the struct is being dropped,
             // but we want to avoid triggering the panic in its `Drop` implementation.
@@ -577,27 +577,21 @@ impl PageAllocation {
         // SAFETY: The memory is allocated and valid for writing through the length.
         unsafe {
             ptr.write(value);
-            Some(&*ptr)
+            ptr.as_mut()
         }
     }
 
-    /// Returns a slice with the specified lifetime
-    fn into_slice<'a, T: Default>(self) -> &'a mut [T] {
+    /// Converts the allocation and leaks the memory as a mutable slice of type `T`.
+    /// 
+    /// This function is similar to [Box::leak] in terms of caller responsibility for memory
+    /// management. Dropping the returned reference will cause a memory leak.
+    #[must_use]
+    pub fn leak_as_slice<'a, T: Default>(self) -> &'a mut [T] {
         let slice = self.into_raw_slice::<MaybeUninit<T>>();
         unsafe {
             (*slice).fill_with(|| MaybeUninit::new(Default::default()));
             (slice as *mut [T]).as_mut().expect("Slice Pointer just created and is not null")
         }
-    }
-
-    /// Leaks the memory as a slice of type `T`. This will initialize the memory
-    /// to the default value of `T` and return a static lifetime reference to the
-    /// slice. This memory should be treated as leaked and should not be freed.
-    /// This is useful for global structures that need to be shared between multiple
-    /// entities.
-    #[must_use]
-    pub fn leak_as_slice<T: Default + 'static>(self) -> &'static mut [T] {
-        self.into_slice::<'static, T>()
     }
 
     /// Frees the allocated pages of memory this struct manages.
@@ -991,7 +985,7 @@ mod tests {
     }
 
     #[test]
-    fn test_leak_as_slice_will_call_drop_properly() {
+    fn test_leak_as_slice_does_not_drop_items() {
         static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
         static COUNT: AtomicUsize = AtomicUsize::new(0);
 
