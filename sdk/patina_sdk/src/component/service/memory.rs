@@ -542,7 +542,7 @@ impl PageAllocation {
     #[cfg(any(test, feature = "alloc"))]
     pub fn into_boxed_slice<T: Default>(self) -> Box<[T], PageFree> {
         let page_free = self.get_page_free();
-        let slice = self.leak_as_slice::<T>();
+        let slice = self.into_slice::<T>();
 
         // SAFETY: This function has sole ownership of the underlying memory, so
         //         the memory is safe from being converted into a Box multiple times,
@@ -561,7 +561,7 @@ impl PageAllocation {
     /// - `Some(&'static T)` of the initialized value.
     ///
     #[must_use]
-    pub fn try_leak_as<T>(mut self, value: T) -> Option<&'static T> {
+    pub fn try_leak_as<T: 'static>(mut self, value: T) -> Option<&'static T> {
         if self.byte_length() < size_of::<T>() {
             // This is an intentional case where the struct is being dropped,
             // but we want to avoid triggering the panic in its `Drop` implementation.
@@ -581,21 +581,23 @@ impl PageAllocation {
         }
     }
 
+    /// Returns a slice with the specified lifetime
+    fn into_slice<'a, T: Default>(self) -> &'a mut [T] {
+        let slice = self.into_raw_slice::<MaybeUninit<T>>();
+        unsafe {
+            (*slice).fill_with(|| MaybeUninit::new(Default::default()));
+            (slice as *mut [T]).as_mut().expect("Slice Pointer just created and is not null")
+        }
+    }
+
     /// Leaks the memory as a slice of type `T`. This will initialize the memory
     /// to the default value of `T` and return a static lifetime reference to the
     /// slice. This memory should be treated as leaked and should not be freed.
     /// This is useful for global structures that need to be shared between multiple
     /// entities.
     #[must_use]
-    pub fn leak_as_slice<T: Default>(self) -> &'static mut [T] {
-        let slice = self.into_raw_slice::<MaybeUninit<T>>();
-
-        // SAFETY: This function has sole ownership of the memory. The allocator the box
-        //         is created with is the same allocator that was used to allocate the memory.
-        unsafe {
-            (*slice).fill_with(|| MaybeUninit::new(Default::default()));
-            (slice as *mut [T]).as_mut().expect("Slice Pointer just created and is not null")
-        }
+    pub fn leak_as_slice<T: Default + 'static>(self) -> &'static mut [T] {
+        self.into_slice::<'static, T>()
     }
 
     /// Frees the allocated pages of memory this struct manages.
