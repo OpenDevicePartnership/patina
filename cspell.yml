@@ -55,6 +55,7 @@ words:
   - getrsp
   - getsp
   - granularities
+  - grcov
   - gread
   - guids
   - gwrite
