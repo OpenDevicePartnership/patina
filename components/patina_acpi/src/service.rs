@@ -79,7 +79,7 @@ impl AcpiTableManager {
     /// use `get_acpi_table_unchecked` for a untyped retrieval.
     ///
     /// The RSDP and XSDT cannot be accessed through `get_acpi_table`.
-    pub fn get_acpi_table<T: 'static>(&self, table_key: TableKey) -> Result<&T, AcpiError> {
+    pub fn get_acpi_table<T: Clone + 'static>(&self, table_key: TableKey) -> Result<T, AcpiError> {
         let acpi_table = self.provider_service.get_acpi_table(table_key)?;
 
         // There may be ACPI tables whose type is unknown at installation, due to installation from the HOB or a C protocol.
@@ -92,9 +92,7 @@ impl AcpiTableManager {
         // SAFETY: The type id of the returned table has been verified.
         // SAFETY: The installed tables are stored in the provider and live at least as long as `self`,
         // Cast the table to its expected type.
-        let raw_table_ptr: *const T = acpi_table.table.cast::<T>().as_ptr();
-
-        Ok(unsafe { &*raw_table_ptr })
+        unsafe { Ok(acpi_table.as_ref::<T>().clone()) }
     }
 
     /// Retrieves an ACPI table by its table key.
