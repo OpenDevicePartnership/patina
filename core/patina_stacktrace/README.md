@@ -38,6 +38,49 @@ Output:
   7 [Failed to load PDB file (HRESULT: 0x806D0005)                      ] 00000057261FFCA0 0000000000000000 ntdll+34521
 ```
 
+The input may contain additional whitespace before each frame line, a timestamp in the format shown, or a log prefix
+level. Those will be ignored.
+
+## Allowed Examples
+
+Each of these examples will produce the same output:
+
+```cmd
+.\resolve_stacktrace\resolve_stacktrace.ps1 -StackTrace "
+> 13:39:09.014 : INFO -       # Child-SP              Return Address         Call Site
+> 13:39:09.014 : INFO -       0 000000007E96F930      000000007E982668       qemu_q35_dxe_core-2d9bed3cc1f2b4ea+6E1BF
+> 13:39:09.014 : INFO -       1 000000007E96F960      000000007EA8B92F       qemu_q35_dxe_core-2d9bed3cc1f2b4ea+12668
+> 13:39:09.014 : INFO -       2 000000007E96FA70      000000007E9739E0       qemu_q35_dxe_core-2d9bed3cc1f2b4ea+11B92F
+> 13:39:09.014 : INFO -       3 000000007E96FAB0      000000007E98301D       qemu_q35_dxe_core-2d9bed3cc1f2b4ea+39E0
+> 13:39:09.014 : INFO -       4 000000007E96FC00      000000007EBE62F4       qemu_q35_dxe_core-2d9bed3cc1f2b4ea+1301D
+>
+> " -PdbDirectory C:\src\patina-dxe-core-qemu\target\x86_64-unknown-uefi\debug\deps
+```
+
+```cmd
+.\resolve_stacktrace\resolve_stacktrace.ps1 -StackTrace "
+> INFO -       # Child-SP              Return Address         Call Site
+> INFO -       0 000000007E96F930      000000007E982668       qemu_q35_dxe_core-2d9bed3cc1f2b4ea+6E1BF
+> INFO -       1 000000007E96F960      000000007EA8B92F       qemu_q35_dxe_core-2d9bed3cc1f2b4ea+12668
+> INFO -       2 000000007E96FA70      000000007E9739E0       qemu_q35_dxe_core-2d9bed3cc1f2b4ea+11B92F
+> INFO -       3 000000007E96FAB0      000000007E98301D       qemu_q35_dxe_core-2d9bed3cc1f2b4ea+39E0
+> INFO -       4 000000007E96FC00      000000007EBE62F4       qemu_q35_dxe_core-2d9bed3cc1f2b4ea+1301D
+>
+> " -PdbDirectory C:\src\patina-dxe-core-qemu\target\x86_64-unknown-uefi\debug\deps
+```
+
+```cmd
+.\resolve_stacktrace\resolve_stacktrace.ps1 -StackTrace "
+> # Child-SP              Return Address         Call Site
+> 0 000000007E96F930      000000007E982668       qemu_q35_dxe_core-2d9bed3cc1f2b4ea+6E1BF
+> 1 000000007E96F960      000000007EA8B92F       qemu_q35_dxe_core-2d9bed3cc1f2b4ea+12668
+> 2 000000007E96FA70      000000007E9739E0       qemu_q35_dxe_core-2d9bed3cc1f2b4ea+11B92F
+> 3 000000007E96FAB0      000000007E98301D       qemu_q35_dxe_core-2d9bed3cc1f2b4ea+39E0
+> 4 000000007E96FC00      000000007EBE62F4       qemu_q35_dxe_core-2d9bed3cc1f2b4ea+1301D
+>
+> " -PdbDirectory C:\src\patina-dxe-core-qemu\target\x86_64-unknown-uefi\debug\deps
+```
+
 ![Stack Trace Diagram](stacktrace.png)
 
 ## Prerequisites

@@ -283,19 +283,18 @@ foreach ($line in $lines) {
         continue
     }
 
-    # Skip the header line, but allow for prefixes like "INFO -"
-    if ($line -match "^\s*[^#]*#") {
-        Write-Output " # Source Path                                                           Child-SP         Return Address   Call Site"
-        continue
-    }
-
-    # Remove any prefix before the frame number (e.g., "INFO -    ")
-    # This regex matches: optional prefix, then frame number, then the rest
-    if ($line -match "^[^\d]*?(\d+)\s+(.*)$") {
+    # Remove content before the frame number, including timestamps like "dd:dd:dd.ddd : " and optional prefixes like
+    # "INFO -".
+    if ($line -match "^(?:.*?\d{2}:\d{2}:\d{2}\.\d{3}\s*:\s*)?(?:[^\d]*?)(\d+)\s+(.*)$") {
         $frameNumber = $matches[1]
         $restOfLine = $matches[2]
         $columns = @($frameNumber) + ($restOfLine -split "\s+")
     } else {
+        # Skip the header line, but allow for prefixes and timestamps
+        if ($line -match "^(?:.*?\d{2}:\d{2}:\d{2}\.\d{3}\s*:\s*)?\s*[^#]*#") {
+            Write-Output " # Source Path                                                           Child-SP         Return Address   Call Site"
+            continue
+        }
         # If it doesn't match, skip the line
         continue
     }
