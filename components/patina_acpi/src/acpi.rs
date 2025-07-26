@@ -193,7 +193,7 @@ impl<B> StandardAcpiProvider<B>
 where
     B: BootServices,
 {
-    fn install_facs(&self, facs_info: AcpiTable) -> Result<TableKey, AcpiError> {
+    pub(crate) fn install_facs(&self, facs_info: AcpiTable) -> Result<TableKey, AcpiError> {
         // Update the FADT's address pointer to the FACS.
         if let Some(fadt_table) = self.acpi_tables.write().get_mut(&Self::FADT_KEY) {
             // SAFETY: We verify the table's signature before calling `install_facs`.
@@ -338,7 +338,7 @@ where
     }
 
     /// Allocates memory for the FADT and adds it  to the list of installed tables
-    fn install_fadt(&self, mut fadt_info: AcpiTable) -> Result<TableKey, AcpiError> {
+    pub(crate) fn install_fadt(&self, mut fadt_info: AcpiTable) -> Result<TableKey, AcpiError> {
         if self.acpi_tables.read().get(&Self::FADT_KEY).is_some() {
             // FADT already installed. By spec, only one copy of the FADT should ever be installed, and it cannot be replaced.
             return Err(AcpiError::FadtAlreadyInstalled);
@@ -388,7 +388,7 @@ where
 
     /// Installs the DSDT.
     /// The DSDT is not added to the list of XSDT entries.
-    fn install_dsdt(&self, mut dsdt_info: AcpiTable) -> Result<TableKey, AcpiError> {
+    pub(crate) fn install_dsdt(&self, mut dsdt_info: AcpiTable) -> Result<TableKey, AcpiError> {
         // If the FADT is already installed, update the FACP's x_dsdt field.Add commentMore actions
         // If not, it will be updated when the FACP is installed.
         if let Some(facp) = self.acpi_tables.write().get_mut(&Self::FADT_KEY) {

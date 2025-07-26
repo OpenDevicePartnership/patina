@@ -9,7 +9,7 @@
 //!
 
 use crate::acpi_table::{AcpiTable, AcpiTableHeader};
-use crate::signature::ACPI_VERSIONS_GTE_2;
+use crate::signature::{self, ACPI_VERSIONS_GTE_2};
 
 use alloc::collections::btree_map::BTreeMap;
 use core::ffi::c_void;
@@ -18,7 +18,7 @@ use patina_sdk::uefi_protocol::ProtocolInterface;
 use r_efi::efi;
 use spin::rwlock::RwLock;
 
-use crate::acpi::ACPI_TABLE_INFO;
+use crate::acpi::{self, ACPI_TABLE_INFO};
 use crate::service::{AcpiNotifyFn, AcpiProvider, TableKey};
 
 /// Corresponds to the ACPI Table Protocol as defined in UEFI spec.
@@ -73,17 +73,34 @@ impl AcpiTableProtocol {
             return efi::Status::INVALID_PARAMETER;
         }
 
+        // The size of the allocated table buffer must be large enough to store the whole table.
+        let tbl_length = unsafe { (*(acpi_table_buffer as *const AcpiTableHeader)).length } as usize;
+        if tbl_length > acpi_table_buffer_size {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
         // SAFETY: acpi_table_buffer is checked non-null and large enough to read an AcpiTableHeader.
         if let Some(global_mm) = ACPI_TABLE_INFO.memory_manager.get() {
             let acpi_table = unsafe { AcpiTable::new_from_ptr(acpi_table_buffer as *const AcpiTableHeader, global_mm) };
+
             if let Ok(table) = acpi_table {
-                match ACPI_TABLE_INFO.install_acpi_table(table) {
+                let install_result = match table.signature() {
+                    signature::FACS => ACPI_TABLE_INFO.install_facs(table),
+                    signature::FADT => ACPI_TABLE_INFO.install_fadt(table),
+                    signature::DSDT => ACPI_TABLE_INFO.install_dsdt(table),
+                    _ => ACPI_TABLE_INFO.install_standard_table(table),
+                };
+
+                match install_result {
                     Ok(key) => {
                         // SAFETY: The caller must ensure the buffer passed in for the key is appropriately sized and non-null.
                         unsafe { *table_key = key.0 };
                         efi::Status::SUCCESS
                     }
-                    Err(e) => {log::info!("ACPIACPI {:?}", e); e.into()},
+                    Err(e) => {
+                        log::info!("Protocol install failed: {:?} for table with signature {}", e, table.signature());
+                        e.into()
+                    }
                 }
             } else {
                 efi::Status::OUT_OF_RESOURCES
