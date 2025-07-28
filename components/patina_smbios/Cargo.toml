@@ -8,3 +8,8 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+log = {workspace = true}
+patina_sdk = {workspace = true}
+
+[features]
+std = []
