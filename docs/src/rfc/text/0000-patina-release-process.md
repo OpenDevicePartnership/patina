@@ -5,6 +5,7 @@ This RFC proposes a process for releasing Patina crates.
 ## Change Log
 
 - 2025-07-28: Initial draft of RFC.
+- 2025-07-29: Add more granular crate versioning to the unresolved questions section.
 
 ## Motivation
 
@@ -77,7 +78,10 @@ automation tools.
 
 ## Unresolved Questions
 
-None at this time.
+- Currently all crates in the `patina` repository are released (and versioned) together. Should this be changed to
+  allow for independent versioning of crates? This would allow for more granular releases, but may complicate the
+  release process and require more coordination between crates.
+  - Should this decision be made in this RFC?
 
 ## Prior Art (Existing PI C Implementation)
 
