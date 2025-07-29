@@ -18,7 +18,7 @@ use crate::acpi_table::AcpiTableHeader;
 pub const FACS: u32 = 0x53434146;
 pub const UEFI: u32 = 0x49464555;
 pub const FACP: u32 = 0x50434146;
-pub const DSDT: u32 = 0x54534444;
+pub const DSDT: u32 = 0x54445344;
 pub const XSDT: u32 = 0x54445358;
 pub const FADT: u32 = FACP; // For legacy ACPI reasons, the FADT has signature 'FACP'.
 

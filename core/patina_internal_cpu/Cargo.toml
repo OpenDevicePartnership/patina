@@ -31,6 +31,7 @@ patina_mtrr = { workspace = true }
 
 [target.'cfg(all(target_arch="aarch64"))'.dependencies]
 arm-gic = { workspace = true }
+safe-mmio = {workspace = true }
 
 [dev-dependencies]
 x86_64 = { workspace = true, features = [

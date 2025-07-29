@@ -4,13 +4,14 @@ use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ffi::c_void;
-use patina_internal_cpu::interrupts::gic_manager::{
-    AArch64InterruptInitializer, get_max_interrupt_number, gic_initialize,
-};
+use patina_internal_cpu::interrupts::gic_manager::{AArch64InterruptInitializer, gic_initialize};
 use patina_internal_cpu::interrupts::{ExceptionContext, InterruptHandler, InterruptManager};
 use r_efi::efi;
 
-use arm_gic::gicv3::{GicV3, Trigger};
+use arm_gic::{
+    Trigger,
+    gicv3::{GicV3, InterruptGroup},
+};
 use patina_sdk::boot_services::{BootServices, StandardBootServices};
 use patina_sdk::component::{params::Config, service::Service};
 use patina_sdk::error::Result;
@@ -71,7 +72,10 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        unsafe { &mut *this }.hw_interrupt_handler.register_interrupt_source(interrupt_source as usize, handler)
+        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
+        let hw_interrupt_protocol = unsafe { &mut *this };
+
+        hw_interrupt_protocol.hw_interrupt_handler.register_interrupt_source(interrupt_source as usize, handler)
     }
 
     unsafe extern "efiapi" fn enable_interrupt_source(
@@ -82,7 +86,16 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().enable_interrupt_source(interrupt_source)
+        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
+        let hw_interrupt_protocol = unsafe { &mut *this };
+
+        if let Err(err) =
+            hw_interrupt_protocol.hw_interrupt_handler.aarch64_int.lock().enable_interrupt_source(interrupt_source)
+        {
+            err.into()
+        } else {
+            efi::Status::SUCCESS
+        }
     }
 
     unsafe extern "efiapi" fn disable_interrupt_source(
@@ -93,7 +106,16 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().disable_interrupt_source(interrupt_source)
+        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
+        let hw_interrupt_protocol = unsafe { &mut *this };
+
+        if let Err(err) =
+            hw_interrupt_protocol.hw_interrupt_handler.aarch64_int.lock().disable_interrupt_source(interrupt_source)
+        {
+            err.into()
+        } else {
+            efi::Status::SUCCESS
+        }
     }
 
     unsafe extern "efiapi" fn get_interrupt_source_state(
@@ -105,12 +127,18 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
+        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
+        let hw_interrupt_protocol = unsafe { &mut *this };
+
         let enable =
-            unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source);
-        unsafe {
-            *state = enable;
+            hw_interrupt_protocol.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source);
+        match enable {
+            Ok(enable) => {
+                unsafe { *state = enable }
+                efi::Status::SUCCESS
+            }
+            Err(err) => err.into(),
         }
-        efi::Status::SUCCESS
     }
 
     unsafe extern "efiapi" fn end_of_interrupt(
@@ -121,7 +149,16 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().end_of_interrupt(interrupt_source)
+        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptProtocol.
+        let hw_interrupt_protocol = unsafe { &mut *this };
+
+        if let Err(err) =
+            hw_interrupt_protocol.hw_interrupt_handler.aarch64_int.lock().end_of_interrupt(interrupt_source)
+        {
+            err.into()
+        } else {
+            efi::Status::SUCCESS
+        }
     }
 }
 
@@ -185,7 +222,9 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        unsafe { &mut *this }.hw_interrupt_handler.register_interrupt_source(interrupt_source as usize, handler)
+        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
+        let hw_interrupt2_protocol = unsafe { &mut *this };
+        hw_interrupt2_protocol.hw_interrupt_handler.register_interrupt_source(interrupt_source as usize, handler)
     }
 
     unsafe extern "efiapi" fn enable_interrupt_source(
@@ -196,7 +235,15 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().enable_interrupt_source(interrupt_source)
+        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
+        let hw_interrupt2_protocol = unsafe { &mut *this };
+        if let Err(err) =
+            hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.lock().enable_interrupt_source(interrupt_source)
+        {
+            err.into()
+        } else {
+            efi::Status::SUCCESS
+        }
     }
 
     unsafe extern "efiapi" fn disable_interrupt_source(
@@ -207,7 +254,15 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().disable_interrupt_source(interrupt_source)
+        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
+        let hw_interrupt2_protocol = unsafe { &mut *this };
+        if let Err(err) =
+            hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.lock().disable_interrupt_source(interrupt_source)
+        {
+            err.into()
+        } else {
+            efi::Status::SUCCESS
+        }
     }
 
     unsafe extern "efiapi" fn get_interrupt_source_state(
@@ -219,12 +274,17 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
+        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
+        let hw_interrupt2_protocol = unsafe { &mut *this };
         let enable =
-            unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source);
-        unsafe {
-            *state = enable;
+            hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source);
+        match enable {
+            Ok(enable) => {
+                unsafe { *state = enable }
+                efi::Status::SUCCESS
+            }
+            Err(err) => err.into(),
         }
-        efi::Status::SUCCESS
     }
 
     unsafe extern "efiapi" fn end_of_interrupt(
@@ -234,8 +294,15 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
         if this.is_null() {
             return efi::Status::INVALID_PARAMETER;
         }
-
-        unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().end_of_interrupt(interrupt_source)
+        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
+        let hw_interrupt2_protocol = unsafe { &mut *this };
+        if let Err(err) =
+            hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.lock().end_of_interrupt(interrupt_source)
+        {
+            err.into()
+        } else {
+            efi::Status::SUCCESS
+        }
     }
 
     unsafe extern "efiapi" fn get_trigger_type(
@@ -247,16 +314,16 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        let level = unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().get_trigger_type(interrupt_source);
-
-        // I know this looks odd, but this is how ArmGicV3 in EDK2 does it...
-        let t_type = level.into();
-
-        unsafe {
-            *trigger_type = t_type;
+        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
+        let hw_interrupt2_protocol = unsafe { &mut *this };
+        let level = hw_interrupt2_protocol.hw_interrupt_handler.aarch64_int.lock().get_trigger_type(interrupt_source);
+        match level {
+            Ok(level) => {
+                unsafe { *trigger_type = level.into() }
+                efi::Status::SUCCESS
+            }
+            Err(err) => err.into(),
         }
-
-        efi::Status::SUCCESS
     }
 
     unsafe extern "efiapi" fn set_trigger_type(
@@ -268,14 +335,17 @@ impl<'a> EfiHardwareInterruptV2Protocol<'a> {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        let level = trigger_type.into();
-
-        let result =
-            unsafe { &mut *this }.hw_interrupt_handler.aarch64_int.lock().set_trigger_type(interrupt_source, level);
-
-        match result {
-            Ok(()) => efi::Status::SUCCESS,
-            Err(err) => err.into(),
+        // Safety: caller guarantees that *this is valid pointer to EfiHardwareInterruptV2Protocol.
+        let hw_interrupt2_protocol = unsafe { &mut *this };
+        if let Err(err) = hw_interrupt2_protocol
+            .hw_interrupt_handler
+            .aarch64_int
+            .lock()
+            .set_trigger_type(interrupt_source, trigger_type.into())
+        {
+            err.into()
+        } else {
+            efi::Status::SUCCESS
         }
     }
 }
@@ -306,12 +376,12 @@ impl From<HardwareInterrupt2TriggerType> for Trigger {
 
 struct HwInterruptProtocolHandler {
     handlers: TplMutex<Vec<Option<HwInterruptHandler>>>,
-    aarch64_int: TplMutex<AArch64InterruptInitializer>,
+    aarch64_int: TplMutex<AArch64InterruptInitializer<'static>>,
 }
 
 impl InterruptHandler for HwInterruptProtocolHandler {
     fn handle_interrupt(&'static self, exception_type: usize, context: &mut ExceptionContext) {
-        let int_id = GicV3::get_and_acknowledge_interrupt();
+        let int_id = GicV3::get_and_acknowledge_interrupt(InterruptGroup::Group1);
         if int_id.is_none() {
             // The special interrupt do not need to be acknowledged
             return;
@@ -335,7 +405,7 @@ impl InterruptHandler for HwInterruptProtocolHandler {
         if let Some(handler) = self.handlers.lock()[raw_value as usize] {
             handler(raw_value as u64, context);
         } else {
-            GicV3::end_interrupt(int_id);
+            GicV3::end_interrupt(int_id, InterruptGroup::Group1);
             log::error!("Unhandled Exception! 0x{:x}", exception_type);
             log::error!("Exception Context: {:#x?}", context);
             panic! {"Unhandled Exception! 0x{:x}", exception_type};
@@ -344,7 +414,7 @@ impl InterruptHandler for HwInterruptProtocolHandler {
 }
 
 impl HwInterruptProtocolHandler {
-    pub fn new(handlers: Vec<Option<HwInterruptHandler>>, aarch64_int: AArch64InterruptInitializer) -> Self {
+    pub fn new(handlers: Vec<Option<HwInterruptHandler>>, aarch64_int: AArch64InterruptInitializer<'static>) -> Self {
         Self {
             handlers: TplMutex::new(efi::TPL_HIGH_LEVEL, handlers, "Hardware Interrupt Lock"),
             aarch64_int: TplMutex::new(efi::TPL_HIGH_LEVEL, aarch64_int, "AArch64 GIC Lock"),
@@ -369,13 +439,15 @@ impl HwInterruptProtocolHandler {
         }
 
         // If the interrupt handler is unregistered then disable the interrupt
-        if m_handler.is_null() {
+        let result = if m_handler.is_null() {
             self.handlers.lock()[interrupt_source as usize] = None;
-            return self.aarch64_int.lock().disable_interrupt_source(interrupt_source as u64);
+            self.aarch64_int.lock().disable_interrupt_source(interrupt_source as u64)
         } else {
             self.handlers.lock()[interrupt_source as usize] = Some(handler);
-            return self.aarch64_int.lock().enable_interrupt_source(interrupt_source as u64);
-        }
+            self.aarch64_int.lock().enable_interrupt_source(interrupt_source as u64)
+        };
+
+        if let Err(err) = result { err.into() } else { efi::Status::SUCCESS }
     }
 }
 
@@ -385,13 +457,14 @@ pub(crate) fn install_hw_interrupt_protocol(
     gic_bases: Config<GicBases>,
     boot_services: StandardBootServices,
 ) -> Result<()> {
-    let mut gic_v3 = unsafe {
+    log::info!("GICv3 initializing {:x?}", (gic_bases.0, gic_bases.1));
+    let gic_v3 = unsafe {
         gic_initialize(gic_bases.0 as _, gic_bases.1 as _).inspect_err(|_| log::error!("Failed to initialize GICv3"))?
     };
     log::info!("GICv3 initialized");
 
-    let max_int = unsafe { get_max_interrupt_number(gic_v3.gicd_ptr()) as usize };
-    let handlers = vec![None; max_int];
+    let max_int = gic_v3.typer().num_spis();
+    let handlers = vec![None; max_int as usize];
     let aarch64_int = AArch64InterruptInitializer::new(gic_v3);
 
     // Prepare context for the v1 interrupt handler

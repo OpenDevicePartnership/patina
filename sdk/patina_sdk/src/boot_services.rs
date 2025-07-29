@@ -1130,6 +1130,7 @@ impl BootServices for StandardBootServices {
         protocol: &'static efi::Guid,
         interface: *mut c_void,
     ) -> Result<efi::Handle, efi::Status> {
+        log::info!("Install protocol interface: {:?} on handle: {:?}", protocol, handle);
         let mut handle = handle.unwrap_or(ptr::null_mut());
         match efi_boot_services_fn!(self.efi_boot_services(), install_protocol_interface)(
             ptr::addr_of_mut!(handle),
@@ -1549,6 +1550,7 @@ impl BootServices for StandardBootServices {
     }
 
     unsafe fn calculate_crc_32_unchecked(&self, data: *const c_void, data_size: usize) -> Result<u32, efi::Status> {
+        log::info!("Calculating CRC32 for data at: {:p}, size: {}", data, data_size);
         let mut crc32 = MaybeUninit::uninit();
         match efi_boot_services_fn!(self.efi_boot_services(), calculate_crc32)(
             data as *mut _,

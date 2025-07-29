@@ -415,9 +415,12 @@ impl AcpiTable {
             ptr::copy_nonoverlapping(header_ptr as *const u8, table_bytes.as_mut_ptr(), table_length);
             table_bytes.set_len(table_length);
         }
+        log::info!("Created ACPI table with signature from ptr: 0x{:08x}", table_signature);
+        log::info!("raw table bytes: {:?}", table_bytes);
 
         // Leak the allocated bytes.
         let raw_header = Box::into_raw(table_bytes.into_boxed_slice()) as *mut AcpiTableHeader;
+        log::info!("Address of raw header: {:?}", raw_header);
 
         Ok(Self {
             table: NonNull::new(raw_header).ok_or(AcpiError::NullTablePtr)?.cast::<Table>(),

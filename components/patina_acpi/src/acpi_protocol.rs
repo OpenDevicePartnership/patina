@@ -8,7 +8,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
-use crate::acpi_table::{AcpiTable, AcpiTableHeader};
+use crate::acpi_table::{AcpiFacs, AcpiFadt, AcpiTable, AcpiTableHeader};
 use crate::signature::{self, ACPI_VERSIONS_GTE_2};
 
 use alloc::collections::btree_map::BTreeMap;
@@ -65,6 +65,7 @@ impl AcpiTableProtocol {
         acpi_table_buffer_size: usize,
         table_key: *mut usize,
     ) -> efi::Status {
+        log::info!("memer");
         if acpi_table_buffer.is_null() || acpi_table_buffer_size < 4 {
             return efi::Status::INVALID_PARAMETER;
         }
@@ -82,6 +83,7 @@ impl AcpiTableProtocol {
         // SAFETY: acpi_table_buffer is checked non-null and large enough to read an AcpiTableHeader.
         if let Some(global_mm) = ACPI_TABLE_INFO.memory_manager.get() {
             let acpi_table = unsafe { AcpiTable::new_from_ptr(acpi_table_buffer as *const AcpiTableHeader, global_mm) };
+            log::info!("protocol signature: 0x{:08x}", acpi_table.unwrap().signature());
 
             if let Ok(table) = acpi_table {
                 let install_result = match table.signature() {
@@ -132,10 +134,9 @@ impl AcpiTableProtocol {
 /// Corresponds to the ACPI SDT Protocol as defined in PI spec.
 #[repr(C)]
 pub struct AcpiSdtProtocol {
+    pub version: u32,
     pub get_table: AcpiTableGet,
     pub register_notify: AcpiTableRegisterNotify,
-    // Maps between Rust-side function IDs and C-side function pointers
-    pub id_to_fn: RwLock<BTreeMap<*const AcpiNotifyFnExt, usize>>,
 }
 
 unsafe impl ProtocolInterface for AcpiSdtProtocol {
@@ -146,9 +147,9 @@ unsafe impl ProtocolInterface for AcpiSdtProtocol {
 impl AcpiSdtProtocol {
     pub(crate) fn new() -> Self {
         Self {
+            version: ACPI_VERSIONS_GTE_2,
             get_table: Self::get_acpi_table_ext,
             register_notify: Self::register_notify_ext,
-            id_to_fn: RwLock::new(BTreeMap::new()),
         }
     }
 }
@@ -172,6 +173,7 @@ impl AcpiSdtProtocol {
         version: *mut u32,
         table_key: *mut usize,
     ) -> efi::Status {
+        log::info!("Getting ACPI table at index: {}", index);
         if table.is_null() || version.is_null() || table_key.is_null() {
             return efi::Status::INVALID_PARAMETER;
         }
@@ -185,7 +187,17 @@ impl AcpiSdtProtocol {
                 unsafe { *table_key = key_at_idx.0 };
 
                 let sdt_ptr = table_at_idx.as_mut_ptr();
+                log::info!("SDT pointer: {:?}", sdt_ptr);
+                log::info!("Returning ACPI table with signature: 0x{:08x} 1111", unsafe { (*sdt_ptr).signature });
                 unsafe { *table = sdt_ptr };
+                log::info!("Returning ACPI table with signature: 0x{:08x} 22222", unsafe { (*sdt_ptr).signature });
+                if table_at_idx.signature() == signature::FACP {
+                    let fadt_fields = unsafe { table_at_idx.as_ref::<AcpiFadt>() };
+                    log::info!("FADT fields {:?}", fadt_fields);
+                    let facs = fadt_fields.x_firmware_ctrl() as *const AcpiFacs;
+                    log::info!("FACS pointer: {:?}", facs);
+                    log::info!("FACS signature: 0x{:08x}", unsafe { (*facs).signature });
+                }
                 efi::Status::SUCCESS
             }
             Err(e) => e.into(),
@@ -204,6 +216,7 @@ impl AcpiSdtProtocol {
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if there is an attempt to unregister a notify function that was never registered.
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if the notify function pointer is null or does not match the standard notify function signature.
     extern "efiapi" fn register_notify_ext(register: bool, notify_fn: *const AcpiNotifyFnExt) -> efi::Status {
+        log::info!("Registering ACPI notify function: {}", register);
         // SAFETY: the caller must pass in a valid pointer to a notify function
         let rust_fn: AcpiNotifyFn = match unsafe { notify_fn.as_ref() } {
             Some(ptr) => unsafe { core::mem::transmute::<*const AcpiNotifyFnExt, AcpiNotifyFn>(ptr) },

@@ -339,6 +339,7 @@ where
 
     /// Allocates memory for the FADT and adds it  to the list of installed tables
     pub(crate) fn install_fadt(&self, mut fadt_info: AcpiTable) -> Result<TableKey, AcpiError> {
+        log::info!("Installing FADT with signature: 0x{:08x}", fadt_info.signature());
         if self.acpi_tables.read().get(&Self::FADT_KEY).is_some() {
             // FADT already installed. By spec, only one copy of the FADT should ever be installed, and it cannot be replaced.
             return Err(AcpiError::FadtAlreadyInstalled);
@@ -349,6 +350,7 @@ where
         if let Some(facs) = self.acpi_tables.read().get(&Self::FACS_KEY) {
             unsafe { fadt_info.as_mut::<AcpiFadt>() }.inner.x_firmware_ctrl = facs.as_ptr() as u64;
         }
+        log::info!("FADT x_firmware_ctrl set to: 0x{:x}", unsafe { fadt_info.as_ref::<AcpiFadt>() }.x_firmware_ctrl());
 
         // If the DSDT is already installed, update the FACP's x_dsdt field.
         // If not, it will be updated when the DSDT is installed.
@@ -679,6 +681,8 @@ where
             .filter(|(k, _)| !Self::PRIVATE_SYSTEM_TABLES.contains(k))
             .nth(idx)
             .map(|(&key, table)| (key, *table));
+
+        log::info!("ACPI dict: {:?}", self.acpi_tables.read().keys());
 
         let table_at_idx = found_table.ok_or(AcpiError::InvalidTableIndex)?;
         Ok(table_at_idx)
