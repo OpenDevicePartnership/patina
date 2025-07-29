@@ -392,7 +392,16 @@ impl Section {
             SectionData::Leaf(_) => (),
         }
 
-        let (header, content) = composer.compose(self)?;
+        self.dirty = false;
+
+        let (header, content) = match self.data {
+            SectionData::Encapsulation(_) => composer.compose(self)?,
+            SectionData::Leaf(_) => {
+                let content = self.try_content_as_slice()?.to_vec();
+                (self.header.clone(), content)
+            }
+        };
+
         self.header = header;
         self.header.set_content_size(content.len())?;
 
@@ -405,7 +414,6 @@ impl Section {
             }
         }
 
-        self.dirty = false;
         Ok(())
     }
 
@@ -474,6 +482,13 @@ impl Section {
                 Box::new(iter::once(self).chain(sub_sections))
             }
             SectionData::Leaf(_leaf) => Box::new(iter::once(self)),
+        }
+    }
+
+    pub fn sub_sections(&self) -> Box<dyn Iterator<Item = &Section> + '_> {
+        match &self.data {
+            SectionData::Encapsulation(encapsulation) => Box::new(encapsulation.sub_sections.iter()),
+            SectionData::Leaf(_leaf) => Box::new(iter::empty()),
         }
     }
 
