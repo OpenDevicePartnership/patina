@@ -495,7 +495,7 @@ pub fn core_allocate_pages(
             };
 
             if let Ok(ptr) = result {
-                unsafe { memory.write(ptr.as_ptr() as *mut u8 as u64) }
+                unsafe { memory.write(ptr.cast::<u8>().as_ptr().expose_provenance() as u64) }
                 Ok(())
             } else {
                 result.map(|_| ())
