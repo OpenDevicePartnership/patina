@@ -400,9 +400,11 @@ impl Volume {
             let mut ext_header_pad_file =
                 File::new(efi::Guid::from_bytes(&[0xffu8; 16]), ffs::file::raw::r#type::FFS_PAD);
             let ext_header_section = Section::new_from_header_with_data(
-                section::SectionHeader::Standard(ffs::section::raw_type::FFS_PAD, 0),
+                section::SectionHeader::Pad(
+                    ext_hdr_data.len().try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?,
+                ),
                 ext_hdr_data,
-            );
+            )?;
 
             ext_header_pad_file.sections.push(ext_header_section);
             ext_header_pad_file.set_data_checksum(false);
@@ -453,9 +455,11 @@ impl Volume {
 
                 let mut pad_file = File::new(efi::Guid::from_bytes(&[0xffu8; 16]), ffs::file::raw::r#type::FFS_PAD);
                 let pad_section = Section::new_from_header_with_data(
-                    section::SectionHeader::Standard(ffs::section::raw_type::FFS_PAD, 0),
+                    section::SectionHeader::Pad(
+                        pad_len.try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?,
+                    ),
                     iter::repeat(0xffu8).take(pad_len).collect(),
-                );
+                )?;
                 pad_file.sections.push(pad_section);
 
                 fv_buffer.extend(pad_file.serialize()?);
@@ -1047,11 +1051,15 @@ mod test {
             // the two buffers should match.
             assert_eq!(original_fv_bytes.len(), serialized_fv_bytes.len());
 
-            let mismatch = original_fv_bytes
-                .iter()
-                .zip(serialized_fv_bytes)
-                .enumerate()
-                .find(|(_offset, (expected, actual))| *expected != actual);
+            let mismatch = &original_fv_bytes.iter().zip(&serialized_fv_bytes).enumerate().find_map(
+                |(offset, (expected, actual))| {
+                    if *expected != *actual {
+                        Some((offset, (*expected, *actual)))
+                    } else {
+                        None
+                    }
+                },
+            );
 
             if let Some((offset, (expected, actual))) = mismatch {
                 panic!("mismatch in serialized buffer at offset {offset:x}. Expected {expected:x}, actual: {actual:x}");
@@ -1086,7 +1094,7 @@ mod test {
                         let mut content = Vec::new();
                         let mut section_iter = section.sections().peekable();
                         while let Some(section) = &section_iter.next() {
-                            content.extend_from_slice(section.try_as_slice()?);
+                            content.extend_from_slice(section.try_content_as_slice()?);
                             if section_iter.peek().is_some() {
                                 //pad to next 4-byte aligned length, since sections start at 4-byte aligned offsets. No padding is added
                                 //after the last section.
