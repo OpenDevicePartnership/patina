@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, format, vec, vec::Vec};
+use alloc::{boxed::Box, vec, vec::Vec};
 use mu_pi::fw_fs::ffs::{self, section};
 use patina_sdk::{base::align_up, boot_services::c_ptr::CPtr};
 
@@ -26,6 +26,33 @@ pub enum SectionHeader {
 impl SectionHeader {
     pub fn content_offset(&self) -> usize {
         self.serialize().len()
+    }
+
+    pub fn total_section_size(&self) -> usize {
+        self.content_offset() + self.content_size()
+    }
+
+    pub fn set_content_size(&mut self, size: usize) -> Result<(), FirmwareFileSystemError> {
+        match self {
+            SectionHeader::Standard(_, content_size) |
+            SectionHeader::Compression(_, content_size) |
+            SectionHeader::GuidDefined(_, _, content_size) |
+            SectionHeader::Version(_, content_size) |
+            SectionHeader::FreeFormSubtypeGuid(_, content_size) => {
+                *content_size = size.try_into().map_err(|_|FirmwareFileSystemError::InvalidParameter)?;
+                Ok(())
+            }
+        }
+    }
+
+    pub fn content_size(&self) -> usize {
+        match self {
+            SectionHeader::Standard(_, content_size) |
+            SectionHeader::Compression(_, content_size) |
+            SectionHeader::GuidDefined(_, _, content_size) |
+            SectionHeader::Version(_, content_size) |
+            SectionHeader::FreeFormSubtypeGuid(_, content_size) => *content_size as usize,
+        }
     }
 
     pub fn section_type_raw(&self) -> u8 {
@@ -115,35 +142,45 @@ impl SectionHeader {
 }
 
 #[derive(Clone)]
-enum SectionData {
-    None,
-    Composed(Vec<u8>),
-    Extracted(Vec<Section>),
-    Both(Vec<u8>, Vec<Section>),
+struct LeafSectionData {
+    data: Vec<u8>,
 }
 
-impl fmt::Debug for SectionData {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::None => write!(f, "None"),
-            Self::Composed(arg0) => f.debug_tuple("Composed").field(&format!("{:#x} bytes", arg0.len())).finish(),
-            Self::Extracted(arg0) => f.debug_tuple("Extracted").field(arg0).finish(),
-            Self::Both(arg0, arg1) => {
-                f.debug_tuple("Both").field(&format!("{:#x} bytes", arg0.len())).field(arg1).finish()
-            }
-        }
+impl fmt::Debug for LeafSectionData {
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        todo!()
     }
+}
+
+#[derive(Clone)]
+struct EncapsulationSectionData {
+    sub_sections: Vec<Section>,
+    data: Vec<u8>,
+    extracted: bool
+}
+
+impl fmt::Debug for EncapsulationSectionData {
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        todo!()
+    }
+}
+
+#[derive(Clone, Debug)]
+enum SectionData {
+    Leaf(LeafSectionData),
+    Encapsulation(EncapsulationSectionData),
 }
 
 #[derive(Debug, Clone)]
 pub struct Section {
     header: SectionHeader,
     data: SectionData,
+    dirty: bool
 }
 
 impl Section {
-    pub fn new_from_header(header: SectionHeader) -> Self {
-        Self { header, data: SectionData::None }
+    pub fn new_from_header_with_data(_header: SectionHeader, _data: Vec<u8>) -> Self {
+        todo!();
     }
 
     pub fn new_from_buffer(buffer: &[u8]) -> Result<Self, FirmwareFileSystemError> {
@@ -262,147 +299,184 @@ impl Section {
             }
         };
 
-        Ok(Section { header, data: SectionData::Composed(buffer[..section_size].to_vec()) })
-    }
+        let section_data = match header {
+            SectionHeader::Compression(_, _) |
+            SectionHeader::GuidDefined(_, _, _) => {
+                SectionData::Encapsulation(
+                    EncapsulationSectionData {
+                        sub_sections: Vec::new(),
+                        data: buffer[section_data_offset..section_size].to_vec(),
+                        extracted: false
+                    }
+                )
+            }
+            _ => {
+                SectionData::Leaf(
+                    LeafSectionData {
+                        data: buffer[section_data_offset..section_size].to_vec()
+                    }
+                )
+            }
+        };
 
-    pub fn new_from_header_with_data(header: SectionHeader, data: Vec<u8>) -> Self {
-        Self { header, data: SectionData::Composed(data) }
-    }
-
-    pub fn new_from_header_with_sections(header: SectionHeader, sections: Vec<Section>) -> Self {
-        Self { header, data: SectionData::Extracted(sections) }
+        Ok(Section { header, data: section_data, dirty: false })
     }
 
     pub fn header(&self) -> &SectionHeader {
         &self.header
     }
 
-    pub fn size(&self) -> Result<usize, FirmwareFileSystemError> {
-        match &self.data {
-            SectionData::None | SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
-            SectionData::Composed(data) | SectionData::Both(data, _) => Ok(data.len()),
+    pub fn encapsulation(&self) -> bool {
+        matches!(self.data, SectionData::Encapsulation(_))
+    }
+
+    pub fn dirty(&self) -> bool {
+        if let SectionData::Encapsulation(data) = &self.data {
+            if data.extracted {
+                self.dirty || data.sub_sections.iter().any(|x|x.dirty())
+            } else {
+                self.dirty
+            }
+        } else {
+            self.dirty
         }
+    }
+
+    pub fn size(&self) -> Result<usize, FirmwareFileSystemError> {
+        if self.dirty() {
+            Err(FirmwareFileSystemError::NotComposed)?;
+        }
+        Ok(self.header.total_section_size())
     }
 
     pub fn section_type_raw(&self) -> u8 {
         self.header.section_type_raw()
     }
+
     pub fn section_type(&self) -> Option<ffs::section::Type> {
         self.header.section_type()
     }
 
-    pub fn set_section_data(&mut self, _data: Vec<u8>) -> Result<(), FirmwareFileSystemError> {
-        todo!()
+    pub fn set_section_data(&mut self, data: Vec<u8>) -> Result<(), FirmwareFileSystemError> {
+        if let SectionData::Leaf(leaf) = &mut self.data {
+            leaf.data = data;
+            self.header.set_content_size(leaf.data.len())?;
+            self.dirty = true;
+            Ok(())
+        } else {
+            Err(FirmwareFileSystemError::NotLeaf)
+        }
     }
 
     pub fn compose(&mut self, composer: &dyn SectionComposer) -> Result<(), FirmwareFileSystemError> {
-        let sections = match &mut self.data {
-            SectionData::None | SectionData::Composed(_) => return Ok(()), //nothing to do
-            SectionData::Extracted(sections) => sections,
-            SectionData::Both(_, sections) => sections,
-        };
 
-        for section in sections {
-            section.compose(composer)?;
+        match &mut self.data {
+            SectionData::Encapsulation(encapsulation) => {
+                for section in encapsulation.sub_sections.iter_mut() {
+                    section.compose(composer)?;
+                }
+            },
+            SectionData::Leaf(_) => (),
         }
 
         let (header, content) = composer.compose(self)?;
-        let mut new_data = header.serialize();
-        new_data.extend(&content);
-
-        let old_data = mem::replace(&mut self.data, SectionData::None);
-
-        self.data = match old_data {
-            SectionData::None | SectionData::Composed(_) => unreachable!(), // returned above.
-            SectionData::Extracted(sections) | SectionData::Both(_, sections) => SectionData::Both(new_data, sections),
-        };
-
         self.header = header;
+        self.header.set_content_size(content.len())?;
 
+        match &mut self.data {
+            SectionData::Encapsulation(encapsulation) => {
+                encapsulation.data = content;
+            },
+            SectionData::Leaf(leaf) => {
+                leaf.data = content;
+            },
+        }
+
+        self.dirty = false;
         Ok(())
     }
 
     pub fn extract(&mut self, extractor: &dyn SectionExtractor) -> Result<(), FirmwareFileSystemError> {
-        let extracted_data = match self.data {
-            SectionData::None | SectionData::Extracted(_) => return Ok(()), //nothing to do.
-            SectionData::Composed(_) | SectionData::Both(_, _) => {
-                match extractor.extract(self) {
-                    Err(FirmwareFileSystemError::Unsupported) => Vec::new(), //unsupported section, so no subsections.
-                    result => result?,
-                }
-            }
+
+        match &self.data {
+            SectionData::Encapsulation(x) if !x.extracted => (),
+            _ => return Ok(()) //nothing to do.
         };
 
-        let mut sections: Vec<Section> =
-            SectionIterator::new(&extracted_data).collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
+        let extracted_data = match extractor.extract(self) {
+            Err(FirmwareFileSystemError::Unsupported) => Vec::new(),
+            result => result?,
+        };
+
+        let mut sections: Vec<Section> = SectionIterator::new(&extracted_data).collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
+
         for section in sections.iter_mut() {
             section.extract(extractor)?;
         }
 
-        let old_data = mem::replace(&mut self.data, SectionData::None);
-        self.data = match old_data {
-            SectionData::None | SectionData::Extracted(_) => unreachable!(), // returned above.
-            SectionData::Composed(content) | SectionData::Both(content, _) => SectionData::Both(content, sections),
-        };
+        match &mut self.data {
+            SectionData::Encapsulation(encapsulation) => {
+                encapsulation.sub_sections = sections;
+                encapsulation.extracted = true;
+            },
+            _ => unreachable!()
+        }
         Ok(())
     }
 
-    pub fn try_as_slice(&self) -> Result<&[u8], FirmwareFileSystemError> {
-        match &self.data {
-            SectionData::None | SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
-            SectionData::Composed(data) | SectionData::Both(data, _) => Ok(data),
+    pub fn serialize(&self) -> Result<Vec<u8>, FirmwareFileSystemError> {
+        if self.dirty() {
+            Err(FirmwareFileSystemError::NotComposed)?;
         }
+        let mut data = self.header.serialize();
+        data.extend(
+            match &self.data {
+                SectionData::Encapsulation(encapsulation) => &encapsulation.data,
+                SectionData::Leaf(leaf) => &leaf.data,
+            }
+        );
+        Ok(data)
     }
 
     pub fn try_content_as_slice(&self) -> Result<&[u8], FirmwareFileSystemError> {
-        let content_offset = self.header.content_offset();
+        if self.dirty() {
+            Err(FirmwareFileSystemError::NotComposed)?;
+        }
         match &self.data {
-            SectionData::None | SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
-            SectionData::Composed(data) | SectionData::Both(data, _) => Ok(&data[content_offset..]),
+            SectionData::Encapsulation(encapsulation) => Ok(&encapsulation.data),
+            SectionData::Leaf(leaf) => Ok(&leaf.data),
         }
     }
 
-    pub fn try_content_into_boxed_slice(&self) -> Result<Box<[u8]>, FirmwareFileSystemError> {
-        let content_offset = self.header.content_offset();
-        match &self.data {
-            SectionData::None | SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
-            SectionData::Composed(data) | SectionData::Both(data, _) => {
-                Ok(data[content_offset..].to_vec().into_boxed_slice())
-            }
-        }
-    }
-
-    pub fn try_into_boxed_slice(self) -> Result<Box<[u8]>, FirmwareFileSystemError> {
-        match self.data {
-            SectionData::None | SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
-            SectionData::Composed(data) | SectionData::Both(data, _) => Ok(data.into_boxed_slice()),
-        }
-    }
-
-    pub fn into_sections(self) -> Box<dyn Iterator<Item = Section>> {
-        match self.data {
-            SectionData::None => Box::new(iter::empty()),
-            SectionData::Composed(_) => Box::new(iter::once(self)),
-            SectionData::Extracted(sections) => Box::new(sections.into_iter().flat_map(|x| x.into_sections())),
-            SectionData::Both(data, sections) => {
-                let current = Self { header: self.header, data: SectionData::Composed(data) };
-                Box::new(iter::once(current).chain(sections.into_iter().flat_map(|x| x.clone().into_sections())))
-            }
-        }
+    pub fn into_sections(self) -> impl Iterator<Item = Section> {
+        let sub_sections = match &self.data {
+            SectionData::Encapsulation(encapsulation) => encapsulation.sub_sections.clone(),
+            SectionData::Leaf(_) => vec![],
+        };
+        iter::once(self).chain(sub_sections)
     }
 
     pub fn sections(&self) -> Box<dyn Iterator<Item = &Section> + '_> {
         match &self.data {
-            SectionData::None => Box::new(iter::empty()),
-            SectionData::Composed(_) => Box::new(iter::once(self)),
-            SectionData::Extracted(sections) => Box::new(sections.iter().flat_map(|x| x.sections())),
-            SectionData::Both(_, sections) => {
-                Box::new(iter::once(self).chain(sections.iter().flat_map(|x| x.sections())))
-            }
+            SectionData::Encapsulation(encapsulation) => {
+                let sub_sections = encapsulation.sub_sections.iter();
+                Box::new(iter::once(self).chain(sub_sections))
+            },
+            SectionData::Leaf(_leaf) => {
+                Box::new(iter::once(self))
+            },
         }
     }
-    pub fn sections_mut(&mut self) -> Box<dyn Iterator<Item = &mut Section> + '_> {
-        todo!()
+
+    pub fn sub_sections_mut(&mut self) -> Box<dyn Iterator<Item = &mut Section> + '_> {
+        match &mut self.data {
+            SectionData::Encapsulation(encapsulation) => {
+                Box::new(encapsulation.sub_sections.iter_mut())
+            },
+            SectionData::Leaf(_leaf) => {
+                Box::new(iter::empty())
+            },
+        }
     }
 }
 pub struct SectionIterator<'a> {

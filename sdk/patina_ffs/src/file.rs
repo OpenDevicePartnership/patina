@@ -209,7 +209,7 @@ impl File {
         let mut section_iter = self.sections.iter().peekable();
 
         while let Some(section) = &section_iter.next() {
-            content.extend_from_slice(section.try_as_slice()?);
+            content.extend_from_slice(&section.serialize()?);
             if section_iter.peek().is_some() {
                 //pad to next 4-byte aligned length, since sections start at 4-byte aligned offsets. No padding is added
                 //after the last section.
@@ -332,7 +332,7 @@ impl File {
             let mut section_iter = self.sections.iter().peekable();
             let mut content_len = 0;
             while let Some(section) = &section_iter.next() {
-                let section_len = section.try_as_slice()?.len();
+                let section_len = section.serialize()?.len();
                 content_len += section_len;
                 if section_iter.peek().is_some() {
                     //pad to next 4-byte aligned length, since sections start at 4-byte aligned offsets. No padding is added
@@ -374,10 +374,6 @@ impl File {
 
     pub fn section_iter(&self) -> impl Iterator<Item = &Section> {
         self.sections.iter().flat_map(|x| x.sections())
-    }
-
-    pub fn section_iter_mut(&mut self) -> impl Iterator<Item = &mut Section> {
-        self.sections.iter_mut().flat_map(|x| x.sections_mut())
     }
 
     pub fn name(&self) -> efi::Guid {

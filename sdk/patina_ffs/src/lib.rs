@@ -31,6 +31,7 @@ pub enum FirmwareFileSystemError {
     DataCorrupt,
     NotComposed,
     NotExtracted,
+    NotLeaf,
     ComposeFailed,
 }
 
@@ -39,7 +40,8 @@ impl From<FirmwareFileSystemError> for EfiError {
         match value {
             FirmwareFileSystemError::InvalidParameter
             | FirmwareFileSystemError::NotComposed
-            | FirmwareFileSystemError::NotExtracted => EfiError::InvalidParameter,
+            | FirmwareFileSystemError::NotExtracted
+            | FirmwareFileSystemError::NotLeaf => EfiError::InvalidParameter,
             FirmwareFileSystemError::Unsupported => EfiError::Unsupported,
             FirmwareFileSystemError::InvalidHeader
             | FirmwareFileSystemError::InvalidBlockMap
