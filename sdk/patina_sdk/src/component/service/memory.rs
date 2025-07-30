@@ -420,7 +420,18 @@ impl PageAllocation {
     /// Returns an appropriate `Err` if the address is not page aligned or the
     /// page count is zero.
     ///
-    /// # Safety
+    /// ## Pointer Provenance
+    ///
+    /// As the function interface does not take a pointer, and instead takes a usize
+    /// representing the address, there is no pointer provenance metadata during
+    /// build by default. This function uses [with_exposed_provenance_mut] to allow
+    /// the compiler / other tools to attempt to associate the address with the
+    /// original pointer's provenance. It is imperative that the caller exposes the
+    /// original pointer's provenance before passing the address to this function via
+    /// one of the means described in [pointer provenance](https://doc.rust-lang.org/std/ptr/index.html#provenance)
+    /// such as `expose_provenance`.
+    ///
+    /// ## Safety
     ///
     /// The caller is responsible for ensuring the provided address and page count
     /// are valid and are read/write accessible. Producing a `PageAllocation` will
