@@ -371,10 +371,6 @@ impl AllocationOptions {
 #[allow(dead_code)]
 struct UefiPage([u8; UEFI_PAGE_SIZE]);
 
-impl UefiPage {
-    const ZERO_PAGE: UefiPage = UefiPage([0; UEFI_PAGE_SIZE]);
-}
-
 /// The `PageAllocation` struct represents a block of memory allocated in pages.
 /// This struct provides the caller the ability to convert that block of memory
 /// into whatever structure best fits the use case. These structures fall into the
@@ -471,13 +467,7 @@ impl PageAllocation {
         // SAFETY: The memory is allocated and valid for writing through the
         //         provided page count. This is the responsibility of the caller
         //         of PageAllocation::new().
-        unsafe {
-            for i in 0..self.page_count {
-                // SAFETY: The address is page aligned and the page count is valid.
-                //         This is the responsibility of the caller of PageAllocation::new().
-                self.blob.cast::<UefiPage>().add(i).write_volatile(UefiPage::ZERO_PAGE);
-            }
-        }
+        unsafe { self.blob.write_bytes(0, self.byte_length()) };
     }
 
     /// Internal function for creating the `PageFree` struct for this allocation.
@@ -1185,7 +1175,7 @@ mod tests {
     fn test_bad_page_allocation() {
         let mm = Box::leak(Box::new(StdMemoryManager::new()));
 
-        let address = &UefiPage::ZERO_PAGE as *const _ as usize;
+        let address = UefiPage([0u8; UEFI_PAGE_SIZE]).0.as_mut_ptr() as usize;
 
         // Catch unaligned address
         assert!(
@@ -1352,14 +1342,5 @@ mod tests {
     #[test]
     fn test_uefi_page_size_is_4k() {
         assert_eq!(UEFI_PAGE_SIZE, 4096, "UEFI page size should be 4k (4096 bytes)");
-    }
-
-    #[test]
-    fn test_uefi_page_zeros_is_zero() {
-        assert_eq!(
-            UefiPage::ZERO_PAGE.0,
-            [0u8; UEFI_PAGE_SIZE],
-            "UefiPage::zeros should return a page filled with zeros"
-        );
     }
 }
