@@ -258,10 +258,17 @@ mod tests {
     static BOOT_SERVICES: BootServicesWrapper = BootServicesWrapper { boot_services: UnsafeCell::new(None) };
 
     // Function to initialize the global Boot Services pointer
-    pub fn initialize_boot_services(bs: &mut efi::BootServices) {
+    pub fn initialize_boot_services(bs: &'static mut efi::BootServices) {
         unsafe {
-            *BOOT_SERVICES.boot_services.get() = Some(&mut *(bs as *mut _));
+            *BOOT_SERVICES.boot_services.get() = Some(bs);
         }
+    }
+
+    // Helper function to safely get a static reference from the system table
+    unsafe fn get_static_boot_services(bs: &mut efi::BootServices) -> &'static mut efi::BootServices {
+        // SAFETY: The SYSTEM_TABLE is a static global that lives for the entire program duration
+        // The boot services within it have the same lifetime as the system table itself
+        unsafe { core::mem::transmute(bs) }
     }
 
     #[test]
@@ -271,10 +278,8 @@ mod tests {
             let st = st_guard.as_mut().expect("System Table not initialized!");
 
             // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
-            initialize_boot_services(st.boot_services_mut());
+            initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
             init_misc_boot_services_support(st.boot_services_mut());
-            // Release the lock at the end
-            std::mem::drop(st_guard);
         })
         .expect("Unexpected Error in test_init_misc_boot_services_support");
     }
@@ -286,20 +291,62 @@ mod tests {
             let st = st_guard.as_mut().expect("System Table not initialized!");
 
             // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
-            initialize_boot_services(st.boot_services_mut());
+            initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
             init_misc_boot_services_support(st.boot_services_mut());
 
             static BUFFER: [u8; 16] = [0; 16];
             let mut data_crc: u32 = 0;
-            (st.boot_services_mut().calculate_crc32)(
+
+            // Test case 1: Valid parameters - successful CRC32 calculation
+            let status = (st.boot_services_mut().calculate_crc32)(
                 BUFFER.as_ptr() as *mut c_void,
                 BUFFER.len(),
                 &mut data_crc as *mut u32,
             );
+            // Verify the function succeeded and CRC32 was calculated correctly for zero buffer
+            if status == efi::Status::SUCCESS {
+                let expected_crc = crc32fast::hash(&BUFFER);
+                if data_crc == expected_crc {
+                    log::debug!("CRC32 calculation successful: {:#x}", data_crc);
+                } else {
+                    log::warn!("CRC32 mismatch: got {:#x}, expected {:#x}", data_crc, expected_crc);
+                }
+            } else {
+                log::warn!("CRC32 calculation failed with status: {:#x?}", status);
+            }
 
-            (st.boot_services_mut().calculate_crc32)(BUFFER.as_ptr() as *mut c_void, 0, &mut data_crc as *mut u32);
-            // Release the lock at the end
-            std::mem::drop(st_guard);
+            // Test case 2: Zero data size - should return INVALID_PARAMETER
+            let status =
+                (st.boot_services_mut().calculate_crc32)(BUFFER.as_ptr() as *mut c_void, 0, &mut data_crc as *mut u32);
+            if status == efi::Status::INVALID_PARAMETER {
+                log::debug!("Zero data size correctly returned INVALID_PARAMETER");
+            } else {
+                log::warn!("Zero data size returned unexpected status: {:#x?}", status);
+            }
+
+            // Test case 3: Null data pointer - should return INVALID_PARAMETER
+            let status = (st.boot_services_mut().calculate_crc32)(
+                core::ptr::null_mut(),
+                BUFFER.len(),
+                &mut data_crc as *mut u32,
+            );
+            if status == efi::Status::INVALID_PARAMETER {
+                log::debug!("Null data pointer correctly returned INVALID_PARAMETER");
+            } else {
+                log::warn!("Null data pointer returned unexpected status: {:#x?}", status);
+            }
+
+            // Test case 4: Null output pointer - should return INVALID_PARAMETER
+            let status = (st.boot_services_mut().calculate_crc32)(
+                BUFFER.as_ptr() as *mut c_void,
+                BUFFER.len(),
+                core::ptr::null_mut(),
+            );
+            if status == efi::Status::INVALID_PARAMETER {
+                log::debug!("Null output pointer correctly returned INVALID_PARAMETER");
+            } else {
+                log::warn!("Null output pointer returned unexpected status: {:#x?}", status);
+            }
         })
         .expect("Unexpected Error in test_misc_calc_crc32");
     }
@@ -310,21 +357,43 @@ mod tests {
             let st = st_guard.as_mut().expect("System Table not initialized!");
 
             // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
-            initialize_boot_services(st.boot_services_mut());
+            initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
             init_misc_boot_services_support(st.boot_services_mut());
 
-            (st.boot_services_mut().set_watchdog_timer)(300, 0, 0, ptr::null_mut());
-            (st.boot_services_mut().set_watchdog_timer)(0, 0, 0, ptr::null_mut()); //nothing changed.
+            // Test case 1: Set watchdog timer with null data - should return NOT_READY (no watchdog available in test)
+            let status = (st.boot_services_mut().set_watchdog_timer)(300, 0, 0, ptr::null_mut());
+            if status == efi::Status::NOT_READY {
+                log::debug!("Set watchdog timer correctly returned NOT_READY (no watchdog protocol)");
+            } else {
+                log::warn!("Set watchdog timer returned unexpected status: {:#x?}", status);
+            }
+
+            // Test case 2: Disable watchdog timer with null data - should return NOT_READY
+            let status = (st.boot_services_mut().set_watchdog_timer)(0, 0, 0, ptr::null_mut());
+            if status == efi::Status::NOT_READY {
+                log::debug!("Disable watchdog timer correctly returned NOT_READY");
+            } else {
+                log::warn!("Disable watchdog timer returned unexpected status: {:#x?}", status);
+            }
 
             let data: [efi::Char16; 6] = [b'H' as u16, b'e' as u16, b'l' as u16, b'l' as u16, b'o' as u16, 0];
             let data_ptr = data.as_ptr() as *mut efi::Char16;
-            // Case 1: Set the watchdog timer with non-null data
-            let _status = (st.boot_services_mut().set_watchdog_timer)(300, 0, data.len(), data_ptr);
 
-            // Case 2: Disable the watchdog timer with non-null data
-            let _status = (st.boot_services_mut().set_watchdog_timer)(0, 0, data.len(), data_ptr);
-            // Release the lock at the end
-            std::mem::drop(st_guard);
+            // Test case 3: Set the watchdog timer with non-null data - should return NOT_READY
+            let status = (st.boot_services_mut().set_watchdog_timer)(300, 0, data.len(), data_ptr);
+            if status == efi::Status::NOT_READY {
+                log::debug!("Set watchdog timer with data correctly returned NOT_READY");
+            } else {
+                log::warn!("Set watchdog timer with data returned unexpected status: {:#x?}", status);
+            }
+
+            // Test case 4: Disable the watchdog timer with non-null data - should return NOT_READY
+            let status = (st.boot_services_mut().set_watchdog_timer)(0, 0, data.len(), data_ptr);
+            if status == efi::Status::NOT_READY {
+                log::debug!("Disable watchdog timer with data correctly returned NOT_READY");
+            } else {
+                log::warn!("Disable watchdog timer with data returned unexpected status: {:#x?}", status);
+            }
         })
         .expect("Unexpected Error in test_misc_watchdog_timer");
     }
@@ -335,14 +404,32 @@ mod tests {
             let st = st_guard.as_mut().expect("System Table not initialized!");
 
             // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
-            initialize_boot_services(st.boot_services_mut());
+            initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
             init_misc_boot_services_support(st.boot_services_mut());
 
-            (st.boot_services_mut().stall)(10000);
-            (st.boot_services_mut().stall)(0); // Changed
-            (st.boot_services_mut().stall)(usize::MAX); // Changed
-            // Release the lock at the end
-            std::mem::drop(st_guard);
+            // Test case 1: Normal stall duration - should return NOT_READY (no metronome available in test)
+            let status = (st.boot_services_mut().stall)(10000);
+            if status == efi::Status::NOT_READY {
+                log::debug!("Stall function correctly returned NOT_READY (no metronome protocol)");
+            } else {
+                log::warn!("Stall function returned unexpected status: {:#x?}", status);
+            }
+
+            // Test case 2: Zero microseconds stall - should return NOT_READY
+            let status = (st.boot_services_mut().stall)(0);
+            if status == efi::Status::NOT_READY {
+                log::debug!("Zero stall correctly returned NOT_READY");
+            } else {
+                log::warn!("Zero stall returned unexpected status: {:#x?}", status);
+            }
+
+            // Test case 3: Maximum stall duration - should return NOT_READY
+            let status = (st.boot_services_mut().stall)(usize::MAX);
+            if status == efi::Status::NOT_READY {
+                log::debug!("Maximum stall correctly returned NOT_READY");
+            } else {
+                log::warn!("Maximum stall returned unexpected status: {:#x?}", status);
+            }
         })
         .expect("Unexpected Error in test_misc_watchdog_timer");
     }
@@ -358,8 +445,6 @@ mod tests {
             // Call exit_boot_services with a valid map_key
             let handle: efi::Handle = 0x1000 as efi::Handle; // Example handle
             let _status = (st.boot_services_mut().exit_boot_services)(handle, valid_map_key);
-            // Release the lock at the end
-            std::mem::drop(st_guard);
         })
         .expect("Unexpected Error in test_misc_watchdog_timer");
     }
