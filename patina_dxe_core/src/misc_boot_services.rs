@@ -431,7 +431,7 @@ mod tests {
                 log::warn!("Maximum stall returned unexpected status: {:#x?}", status);
             }
         })
-        .expect("Unexpected Error in test_misc_watchdog_timer");
+        .expect("Unexpected Error in test_misc_stall");
     }
 
     #[test]
@@ -446,6 +446,6 @@ mod tests {
             let handle: efi::Handle = 0x1000 as efi::Handle; // Example handle
             let _status = (st.boot_services_mut().exit_boot_services)(handle, valid_map_key);
         })
-        .expect("Unexpected Error in test_misc_watchdog_timer");
+        .expect("Unexpected Error in test_misc_exit_boot_services");
     }
 }
