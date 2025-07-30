@@ -74,19 +74,8 @@ impl MemoryManager for CoreMemoryManager {
     }
 
     fn get_allocator(&self, memory_type: EfiMemoryType) -> Result<&'static dyn core::alloc::Allocator, MemoryError> {
-        // TODO: Because the allocator has to live for a undefined amount of time
-        // to allow for freeing the memory, we can only use the static allocators.
-        // This should be changed in the future.
-        let allocator = match memory_type {
-            EfiMemoryType::LoaderCode => &crate::allocator::EFI_LOADER_CODE_ALLOCATOR,
-            EfiMemoryType::BootServicesCode => &crate::allocator::EFI_BOOT_SERVICES_CODE_ALLOCATOR,
-            EfiMemoryType::BootServicesData => &crate::allocator::EFI_BOOT_SERVICES_DATA_ALLOCATOR,
-            EfiMemoryType::RuntimeServicesCode => &crate::allocator::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR,
-            EfiMemoryType::RuntimeServicesData => &crate::allocator::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR,
-            _ => {
-                return Err(MemoryError::UnsupportedMemoryType);
-            }
-        };
+        let allocator =
+            crate::allocator::core_get_allocator(memory_type.into()).map_err(|_| MemoryError::UnsupportedMemoryType)?;
         Ok(allocator as &'static dyn core::alloc::Allocator)
     }
 
@@ -245,12 +234,22 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_sdk
 
     // Get an allocator
     let result = mm.get_allocator(EfiMemoryType::BootServicesData);
-    u_assert!(result.is_ok(), "Failed to free page.");
+    u_assert!(result.is_ok(), "Failed to get allocator.");
     let allocator = result.unwrap();
 
     // Allocate and free a simple structure using the allocator.
     let boxed_struct = Box::new_in(42, allocator);
-    u_assert_eq!(*boxed_struct, 42, "Failed to allocate boxed struct.");
+    u_assert_eq!(*boxed_struct, 42, "Failed to allocate boxed struct from allocator.");
+    drop(boxed_struct);
+
+    // Get a dynamic allocator
+    let result = mm.get_allocator(EfiMemoryType::ACPIReclaimMemory);
+    u_assert!(result.is_ok(), "Failed to get dynamic allocator.");
+    let allocator = result.unwrap();
+
+    // Allocate and free a simple structure using the allocator.
+    let boxed_struct = Box::new_in(42, allocator);
+    u_assert_eq!(*boxed_struct, 42, "Failed to allocate boxed struct from dynamic allocator.");
     drop(boxed_struct);
 
     Ok(())

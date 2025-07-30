@@ -201,6 +201,22 @@ configurations to trigger the memory allocation/free.
 > **Guidance:**
 > Platforms must ensure all memory allocations/frees take place before exit boot services callbacks.
 
+#### 3.2 All Code Must Support Native Address Width
+
+By default, the Patina DXE Core allocates memory top-down in the available memory space. Other DXE implementations such
+as EDK II allocate memory bottom-up. This means that all code storing memory addresses (including C and Rust code) must
+support storing that address in a variable as large as the native address width.
+
+For example, in a platform with free system memory > 4GB, EDK II may have never returned a buffer address greater than
+4GB so `UINT32` variables were sufficient (though bad practice) for storing the address. Since Patina allocates memory
+top-down, addresses greater than 4GB will be returned if suitable memory is available in that range and code must
+be able to accommodate that.
+
+> **Guidance:**
+> All DXE code (including all C modules) must support storing native address width memory addresses.
+
+Note: The Patina DXE Readiness Tool does not perform this check.
+
 ### 4. Known Limitations
 
 This section details requirements Patina currently has due to limitations in implementation, but that support will be

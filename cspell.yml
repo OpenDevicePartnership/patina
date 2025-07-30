@@ -31,6 +31,7 @@ words:
   - addrs
   - armasm
   - bucketize
+  - cbindgen
   - cdecl
   - cdrom
   - corosensei
@@ -79,6 +80,7 @@ words:
   - ntdll
   - nvdimm
   - oleaut
+  - openvmm
   - opinfo
   - oslar
   - oslsr
@@ -117,3 +119,6 @@ words:
   - windbg
   - withf
   - xdata
+  - xtask
+  - zbuild
+  - zunstable

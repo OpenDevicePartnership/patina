@@ -30,11 +30,11 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
-use core::mem::ManuallyDrop;
-#[cfg(feature = "alloc")]
+use core::mem::{ManuallyDrop, MaybeUninit};
+#[cfg(any(test, feature = "alloc"))]
 use core::{alloc::Allocator, ptr::NonNull};
 
-#[cfg(feature = "alloc")]
+#[cfg(any(test, feature = "alloc"))]
 use alloc::boxed::Box;
 use r_efi::efi;
 
@@ -469,7 +469,7 @@ impl PageAllocation {
 
     /// Internal function for creating the `PageFree` struct for this allocation.
     #[inline(always)]
-    #[cfg(feature = "alloc")]
+    #[cfg(any(test, feature = "alloc"))]
     fn get_page_free(&self) -> PageFree {
         PageFree { address: self.address, page_count: self.page_count, memory_manager: self.memory_manager }
     }
@@ -508,9 +508,15 @@ impl PageAllocation {
     /// - `Some(Box<T, _>)` of the initialized value.
     ///
     #[must_use]
-    #[cfg(feature = "alloc")]
-    pub fn try_into_box<T>(self, value: T) -> Option<Box<T, PageFree>> {
+    #[cfg(any(test, feature = "alloc"))]
+    pub fn try_into_box<T>(mut self, value: T) -> Option<Box<T, PageFree>> {
         if self.byte_length() < size_of::<T>() {
+            // This is an intentional case where the struct is being dropped,
+            // but we want to avoid triggering the panic in its `Drop` implementation.
+            // To handle this safely, we manually free the pages and then call `forget`
+            // to prevent `drop` from running.
+            self.free_pages();
+            core::mem::forget(self);
             return None;
         }
 
@@ -533,31 +539,36 @@ impl PageAllocation {
     /// memory to the default value of `T`. The length of the slice is the number
     /// of bytes in the allocation divided by the size of `T`.
     #[must_use]
-    #[cfg(feature = "alloc")]
+    #[cfg(any(test, feature = "alloc"))]
     pub fn into_boxed_slice<T: Default>(self) -> Box<[T], PageFree> {
         let page_free = self.get_page_free();
-        let slice = self.into_raw_slice::<T>();
+        let slice = self.leak_as_slice::<T>();
 
-        // SAFETY: The memory is allocated and valid for writing through the length.
-        unsafe {
-            (*slice).fill_with(Default::default);
-            Box::from_raw_in(slice.as_mut().unwrap(), page_free)
-        }
+        // SAFETY: This function has sole ownership of the underlying memory, so
+        //         the memory is safe from being converted into a Box multiple times,
+        //         which would result in a double free.
+        unsafe { Box::from_raw_in(slice as *mut _, page_free) }
     }
 
-    /// Initializes the memory with the provided value and returns a static lifetime
-    /// reference to the value. This memory should be treated as leaked and should
-    /// not be freed. This is useful for global structures that need to be shared
-    /// between multiple entities.
+    /// Converts the allocation and leaks the memory as a mutable `T`.
+    ///
+    /// This function is similar to [Box::leak] in terms of caller responsibility for memory
+    /// management. Dropping the returned reference will cause a memory leak.
     ///
     /// # Returns
     ///
     /// - `None` if the size of the value is larger than the allocation.
-    /// - `Some(&'static T)` of the initialized value.
+    /// - `Some(&mut T)` of the initialized value.
     ///
     #[must_use]
-    pub fn try_leak_as<T>(self, value: T) -> Option<&'static T> {
+    pub fn try_leak_as<'a, T>(mut self, value: T) -> Option<&'a mut T> {
         if self.byte_length() < size_of::<T>() {
+            // This is an intentional case where the struct is being dropped,
+            // but we want to avoid triggering the panic in its `Drop` implementation.
+            // To handle this safely, we manually free the pages and then call `forget`
+            // to prevent `drop` from running.
+            self.free_pages();
+            core::mem::forget(self);
             return None;
         }
 
@@ -566,38 +577,43 @@ impl PageAllocation {
         // SAFETY: The memory is allocated and valid for writing through the length.
         unsafe {
             ptr.write(value);
-            Some(&*ptr)
+            ptr.as_mut()
         }
     }
 
-    /// Leaks the memory as a slice of type `T`. This will initialize the memory
-    /// to the default value of `T` and return a static lifetime reference to the
-    /// slice. This memory should be treated as leaked and should not be freed.
-    /// This is useful for global structures that need to be shared between multiple
-    /// entities.
+    /// Converts the allocation and leaks the memory as a mutable slice of type `T`.
+    ///
+    /// This function is similar to [Box::leak] in terms of caller responsibility for memory
+    /// management. Dropping the returned reference will cause a memory leak.
     #[must_use]
-    pub fn leak_as_slice<T: Default>(self) -> &'static [T] {
-        let slice = self.into_raw_slice::<T>();
-
-        // SAFETY: The memory is allocated and valid for writing through the length.
+    pub fn leak_as_slice<'a, T: Default>(self) -> &'a mut [T] {
+        let slice = self.into_raw_slice::<MaybeUninit<T>>();
         unsafe {
-            (*slice).fill_with(Default::default);
-            slice.as_mut().unwrap()
+            (*slice).fill_with(|| MaybeUninit::new(Default::default()));
+            (slice as *mut [T]).as_mut().expect("Slice Pointer just created and is not null")
+        }
+    }
+
+    /// Frees the allocated pages of memory this struct manages.
+    ///
+    /// This is not a public method as it invalidates `Self` without consuming `self`.
+    /// This should only be used internally to free the memory when dropping `self`.
+    fn free_pages(&mut self) {
+        // SAFETY: The allocation was never converted into a usable type, so
+        //         this structure contains the only reference to the memory and
+        //         the memory is safe to free.
+        unsafe {
+            if self.memory_manager.free_pages(self.address, self.page_count).is_err() {
+                log::error!("Failed to free page allocation at {:x}!", self.address);
+                debug_assert!(false, "Failed to free page allocation!");
+            }
         }
     }
 }
 
 impl Drop for PageAllocation {
     fn drop(&mut self) {
-        // SAFETY: The allocation was never converted into a usable type, so
-        //         this structure contains the only reference to the memory and
-        //         the memory is safe to free.
-        unsafe {
-            if self.memory_manager.free_pages(self.address, self.page_count).is_err() {
-                debug_assert!(false, "Failed to free page allocation!");
-                log::error!("Failed to free page allocation at {:x}!", self.address);
-            }
-        }
+        self.free_pages();
 
         // Allocating memory that is never used before being freed is treated as
         // a bug.
@@ -614,14 +630,14 @@ impl core::fmt::Display for PageAllocation {
 /// The `PageFree` struct is a wrapper around a page allocation that allows
 /// the memory to be freed when a smart pointer is dropped. This cannot be used to
 /// allocate memory, and should only be used to free the specific memory it tracks.
-#[cfg(feature = "alloc")]
+#[cfg(any(test, feature = "alloc"))]
 pub struct PageFree {
     address: usize,
     page_count: usize,
     memory_manager: &'static dyn MemoryManager,
 }
 
-#[cfg(feature = "alloc")]
+#[cfg(any(test, feature = "alloc"))]
 unsafe impl Allocator for PageFree {
     fn allocate(&self, _layout: core::alloc::Layout) -> Result<NonNull<[u8]>, core::alloc::AllocError> {
         Err(core::alloc::AllocError)
@@ -629,8 +645,8 @@ unsafe impl Allocator for PageFree {
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, _layout: core::alloc::Layout) {
         if ptr.as_ptr() as usize != self.address {
-            debug_assert!(false, "PageFree was not used to free the correct memory!");
             log::error!("PageFree was not used to free the correct memory! Leaking memory at {:x}!", self.address);
+            debug_assert!(false, "PageFree was not used to free the correct memory!");
             return;
         }
 
@@ -639,8 +655,8 @@ unsafe impl Allocator for PageFree {
         //         that the memory is safe to free.
 
         if unsafe { self.memory_manager.free_pages(self.address, self.page_count).is_err() } {
-            debug_assert!(false, "Failed to free page allocation!");
             log::error!("Failed to free page allocation at {:x}!", self.address);
+            debug_assert!(false, "Failed to free page allocation!");
         }
     }
 }
@@ -786,6 +802,7 @@ pub enum PageAllocationStrategy {
 pub use mock::StdMemoryManager;
 
 #[cfg(any(test, feature = "mockall"))]
+#[cfg(not(tarpaulin_include))]
 mod mock {
     extern crate std;
     use std::{
@@ -865,6 +882,11 @@ mod mock {
 
 #[cfg(test)]
 mod tests {
+    use core::{
+        alloc::Layout,
+        sync::atomic::{AtomicBool, AtomicUsize},
+    };
+
     use super::*;
     use crate::component::service::Service;
 
@@ -884,13 +906,416 @@ mod tests {
     }
 
     #[test]
+    fn test_error_to_efi_error_conversion_not_changed() {
+        // enumerate all the errors and ensure they convert to the expected EFI error codes.
+        let error = MemoryError::NoAvailableMemory;
+        assert_eq!(Into::<EfiError>::into(error), EfiError::OutOfResources);
+
+        let error = MemoryError::UnsupportedAttributes;
+        assert_eq!(Into::<EfiError>::into(error), EfiError::Unsupported);
+
+        let error = MemoryError::InvalidAddress;
+        assert_eq!(Into::<EfiError>::into(error), EfiError::InvalidParameter);
+
+        let error = MemoryError::InternalError;
+        assert_eq!(Into::<EfiError>::into(error), EfiError::InvalidParameter);
+
+        let error = MemoryError::InconsistentRangeAttributes;
+        assert_eq!(Into::<EfiError>::into(error), EfiError::InvalidParameter);
+
+        let error = MemoryError::InvalidPageCount;
+        assert_eq!(Into::<EfiError>::into(error), EfiError::InvalidParameter);
+
+        let error = MemoryError::InvalidAlignment;
+        assert_eq!(Into::<EfiError>::into(error), EfiError::InvalidParameter);
+
+        let error = MemoryError::UnsupportedMemoryType;
+        assert_eq!(Into::<EfiError>::into(error), EfiError::Unsupported);
+
+        let error = MemoryError::UnalignedAddress;
+        assert_eq!(Into::<EfiError>::into(error), EfiError::InvalidParameter);
+    }
+
+    #[test]
+    fn test_access_type_rp_always_no_access() {
+        let access = AccessType::from_efi_attributes(efi::MEMORY_RP | efi::MEMORY_RO);
+        assert_eq!(access, AccessType::NoAccess);
+
+        let access = AccessType::from_efi_attributes(efi::MEMORY_RP | efi::MEMORY_XP);
+        assert_eq!(access, AccessType::NoAccess);
+
+        let access = AccessType::from_efi_attributes(efi::MEMORY_RP | 0x50000);
+        assert_eq!(access, AccessType::NoAccess);
+    }
+
+    #[test]
+    fn test_access_type_logic_matches_expectations() {
+        // Memory is not Execute protected (MEMORY_XP) so it is read and execute
+        let access = AccessType::from_efi_attributes(efi::MEMORY_RO);
+        assert_eq!(access, AccessType::ReadExecute);
+
+        // Memory is execute protected (MEMORY_XP) so it is read and write
+        let access = AccessType::from_efi_attributes(efi::MEMORY_XP);
+        assert_eq!(access, AccessType::ReadWrite);
+
+        // Memory is read only (MEMORY_RO) and execute protected (MEMORY_XP), so it is read only
+        let access = AccessType::from_efi_attributes(efi::MEMORY_RO | efi::MEMORY_XP);
+        assert_eq!(access, AccessType::ReadOnly);
+
+        // Memory is neither read only (MEMORY_RO) nor execute protected (MEMORY_XP), so it is read write execute
+        let access = AccessType::from_efi_attributes(0);
+        assert_eq!(access, AccessType::ReadWriteExecute);
+    }
+
+    #[test]
+    fn test_conflicting_caching_types() {
+        // Test that conflicting caching types return None.
+        let caching = CachingType::from_efi_attributes(efi::MEMORY_WB | efi::MEMORY_WC);
+        assert_eq!(caching, None);
+
+        let caching = CachingType::from_efi_attributes(efi::MEMORY_WT | efi::MEMORY_UC);
+        assert_eq!(caching, None);
+
+        let caching = CachingType::from_efi_attributes(0x50000);
+        assert_eq!(caching, None);
+    }
+
+    #[test]
+    fn test_caching_type_hardcoded_conversion_has_not_changed() {
+        // Fully test all the caching types to ensure they match the expected values.
+        let caching = CachingType::from_efi_attributes(efi::MEMORY_WB);
+        assert_eq!(caching, Some(CachingType::WriteBack));
+
+        let caching = CachingType::from_efi_attributes(efi::MEMORY_WC);
+        assert_eq!(caching, Some(CachingType::WriteCombining));
+
+        let caching = CachingType::from_efi_attributes(efi::MEMORY_WT);
+        assert_eq!(caching, Some(CachingType::WriteThrough));
+
+        let caching = CachingType::from_efi_attributes(efi::MEMORY_UC);
+        assert_eq!(caching, Some(CachingType::Uncached));
+
+        let caching = CachingType::from_efi_attributes(efi::MEMORY_WP);
+        assert_eq!(caching, Some(CachingType::WriteProtect));
+
+        // Test an unsupported caching type.
+        let caching = CachingType::from_efi_attributes(0x50000);
+        assert_eq!(caching, None);
+    }
+
+    #[test]
+    fn test_page_free_allocate_errors() {
+        let pf =
+            PageFree { address: 0x1000, page_count: 1, memory_manager: Box::leak(Box::new(StdMemoryManager::new())) };
+
+        assert!(pf.allocate(Layout::new::<u8>()).is_err_and(|e| matches!(e, core::alloc::AllocError)));
+    }
+
+    #[test]
+    #[should_panic(expected = "PageFree was not used to free the correct memory!")]
+    fn test_page_free_mismatched_address_should_assert() {
+        let mut value: u8 = 5;
+        let data = NonNull::new(&mut value).unwrap();
+        let pf = PageFree {
+            address: data.as_ptr() as usize + 0x1000, // Intentionally mismatched address
+            page_count: 1,
+            memory_manager: Box::leak(Box::new(StdMemoryManager::new())),
+        };
+
+        unsafe { pf.deallocate(data, Layout::new::<u8>()) };
+    }
+
+    #[test]
+    #[should_panic(expected = "Failed to free page allocation!")]
+    fn test_page_free_should_bubble_update_page_dealloc_error() {
+        let mut value: u8 = 5;
+        let data = NonNull::new(&mut value).unwrap();
+        let mut mock = MockMemoryManager::new();
+        mock.expect_free_pages().returning(|_, _| Err(MemoryError::InvalidAddress));
+        let pf = PageFree { address: data.as_ptr() as usize, page_count: 1, memory_manager: Box::leak(Box::new(mock)) };
+
+        // This will panic because the mock returns an error.
+        unsafe { pf.deallocate(data, Layout::new::<u8>()) };
+    }
+
+    #[test]
+    #[should_panic(expected = "Failed to free page allocation")]
+    fn test_bubble_up_free_pages_err() {
+        let mut pa = StdMemoryManager::new().allocate_pages(1, AllocationOptions::new()).unwrap();
+        let mut mock = MockMemoryManager::new();
+        mock.expect_free_pages().returning(|_, _| Err(MemoryError::InvalidAddress));
+        pa.memory_manager = Box::leak(Box::new(mock));
+        // When pa goes out of scope, free_pages will be called, which will panic due to the mock returning an error.
+    }
+
+    #[test]
+    fn test_page_allocation_display() {
+        let mm = StdMemoryManager::new();
+
+        let page = mm.allocate_pages(1, AllocationOptions::new()).unwrap();
+        let address = page.address;
+
+        assert_eq!(format!("{}", page), format!("PageAllocation {{ address: {}, page_count: 1 }}", address));
+        let _ = page.into_raw_ptr::<u8>(); // Consume the pa to avoid the debug_assert in drop.
+    }
+
+    #[test]
     fn test_page_allocation() {
         let mock = StdMemoryManager::new();
 
         let service = Service::mock(Box::new(mock));
 
         let page = service.allocate_pages(1, AllocationOptions::new()).unwrap();
+        assert_eq!(page.page_count(), 1);
+        assert_eq!(page.byte_length(), UEFI_PAGE_SIZE);
         let my_thing = page.try_leak_as(42).unwrap();
         assert_eq!(*my_thing, 42);
+    }
+
+    #[test]
+    fn test_failed_try_into_box_does_not_panic() {
+        let mm = Service::mock(Box::new(StdMemoryManager::new()));
+
+        let page = mm
+            .allocate_pages(1, AllocationOptions::default())
+            .unwrap_or_else(|e| panic!("Failed to allocate pages: {:?}", e));
+
+        assert!(
+            page.try_into_box([42_u8; UEFI_PAGE_SIZE + 1]).is_none(),
+            "Expected allocation to fail due to insufficient size for Box<[u8]>"
+        );
+    }
+
+    #[test]
+    fn test_failed_try_leak_as_does_not_panic() {
+        let mm = Service::mock(Box::new(StdMemoryManager::new()));
+
+        let page = mm
+            .allocate_pages(1, AllocationOptions::default())
+            .unwrap_or_else(|e| panic!("Failed to allocate pages: {:?}", e));
+
+        assert!(
+            page.try_leak_as([42_u8; UEFI_PAGE_SIZE + 1]).is_none(),
+            "Expected allocation to fail due to insufficient size for [u8]"
+        );
+    }
+
+    #[test]
+    fn test_into_boxed_slice_will_call_drop_properly() {
+        static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
+
+        struct MyStruct(usize);
+        impl MyStruct {
+            fn value(&self) -> usize {
+                self.0
+            }
+        }
+
+        impl Default for MyStruct {
+            fn default() -> Self {
+                MyStruct(COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
+            }
+        }
+
+        impl Drop for MyStruct {
+            fn drop(&mut self) {
+                DROP_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+
+        let pa = mm.allocate_pages(1, AllocationOptions::default()).expect("Should not fail for test.");
+        {
+            let boxed_slice = pa.into_boxed_slice::<MyStruct>();
+            assert_eq!(boxed_slice.len(), UEFI_PAGE_SIZE / size_of::<MyStruct>());
+
+            let mut i = 0;
+            boxed_slice.iter().for_each(|item| {
+                assert_eq!(item.value(), i, "Default value of MyStruct should be {i}");
+                i += 1;
+            });
+        }
+        assert_eq!(
+            DROP_COUNT.load(std::sync::atomic::Ordering::SeqCst),
+            UEFI_PAGE_SIZE / size_of::<MyStruct>(),
+            "Drop should be called for each item in the boxed slice"
+        );
+    }
+
+    #[test]
+    fn test_allocation_options_config_sticks() {
+        let options = AllocationOptions::default()
+            .with_alignment(0x200)
+            .with_memory_type(EfiMemoryType::PalCode)
+            .with_strategy(PageAllocationStrategy::Address(0x1000_0000_0000_0004));
+
+        assert_eq!(options.alignment(), 0x200);
+        assert_eq!(options.memory_type(), EfiMemoryType::PalCode);
+        assert_eq!(options.strategy(), PageAllocationStrategy::Address(0x1000_0000_0000_0004));
+    }
+
+    #[test]
+    fn test_bad_page_allocation() {
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+
+        // Catch unaligned address
+        assert!(
+            unsafe { PageAllocation::new(UEFI_PAGE_SIZE + 1, 1, mm) }
+                .is_err_and(|e| matches!(e, MemoryError::UnalignedAddress))
+        );
+        assert!(
+            unsafe { PageAllocation::new(UEFI_PAGE_SIZE - 1, 1, mm) }
+                .is_err_and(|e| matches!(e, MemoryError::UnalignedAddress))
+        );
+
+        // Catch zero page count
+        assert!(
+            unsafe { PageAllocation::new(UEFI_PAGE_SIZE, 0, mm) }
+                .is_err_and(|e| matches!(e, MemoryError::InvalidPageCount))
+        );
+    }
+
+    #[test]
+    fn test_page_allocation_zeroing_all_pages_works() {
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+
+        let pa = mm.allocate_pages(10, AllocationOptions::default()).expect("Should not fail for test.");
+        pa.zero_pages();
+
+        // check that all bytes are zeroed
+        let a = pa.into_raw_ptr::<u8>();
+        for i in 0..(UEFI_PAGE_SIZE * 10) {
+            assert_eq!(unsafe { *a.add(i) }, 0, "Byte at index {} is not zeroed", i);
+        }
+    }
+
+    #[test]
+    fn test_into_raw_slice() {
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+
+        let pa = mm.allocate_pages(10, AllocationOptions::default()).expect("Should not fail for test.");
+        let slice: *mut [u64] = pa.into_raw_slice();
+        assert_eq!(unsafe { (*slice).len() }, (UEFI_PAGE_SIZE * 10) / size_of::<u64>());
+
+        #[repr(C, packed(1))]
+        struct TestWeirdSized {
+            _a: u64,
+            _b: u32,
+            _c: u16,
+        }
+
+        // The intent is to ensure that the size of the struct is not evenly divisible by 4k page size. We want a weird size that does not fit into
+        // the standard page size alignment evenly.
+        assert_ne!(size_of::<TestWeirdSized>() % UEFI_PAGE_SIZE, 0);
+
+        let pa = mm.allocate_pages(10, AllocationOptions::default()).expect("Should not fail for test.");
+        let slice: *mut [TestWeirdSized] = pa.into_raw_slice();
+        assert_eq!(unsafe { (*slice).len() }, (UEFI_PAGE_SIZE * 10) / size_of::<TestWeirdSized>());
+    }
+
+    #[test]
+    fn test_allocate_zero_pages_bubbles_up_error() {
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+
+        // Do a normal page allocation just to ensure it succeeds.
+        let Ok(pa) = mm.allocate_zero_pages(10, AllocationOptions::default()) else {
+            panic!("Expected allocation to succeed, but it failed.");
+        };
+        // use it so we don't panic for unused page allocation.
+        let _ = pa.into_raw_ptr::<u8>();
+
+        // Overflow isize::MAX to ensure that the allocation fails.
+        let pages = 2usize.pow(63) / UEFI_PAGE_SIZE;
+        assert!(mm.allocate_pages(pages, AllocationOptions::default()).is_err());
+    }
+
+    #[test]
+    fn test_try_into_box_value_is_placed_properly() {
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+        static DROPPED: AtomicBool = AtomicBool::new(false);
+
+        struct MyStruct(usize);
+
+        impl MyStruct {
+            fn new(value: usize) -> Self {
+                MyStruct(value)
+            }
+
+            fn value(&self) -> usize {
+                self.0
+            }
+        }
+
+        impl Drop for MyStruct {
+            fn drop(&mut self) {
+                DROPPED.store(true, core::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        let pa = mm.allocate_pages(1, AllocationOptions::default()).expect("Should not fail for test.");
+
+        // Create the object for a limited time
+        {
+            let boxed = pa.try_into_box(MyStruct::new(42)).expect("Should convert to Box<T> successfully");
+            assert_eq!(boxed.value(), 42);
+        }
+
+        // ensure drop was called
+        assert!(DROPPED.load(core::sync::atomic::Ordering::SeqCst), "Drop was not called on MyStruct");
+    }
+
+    #[test]
+    fn test_into_boxed_slice_with_missing_size_returns_slice_of_size_zero() {
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+
+        let pa = mm.allocate_pages(1, AllocationOptions::default()).expect("Should not fail for test.");
+        let slice = pa.into_raw_slice::<[u8; UEFI_PAGE_SIZE * 2]>();
+        assert_eq!(unsafe { (*slice).len() }, 0);
+    }
+
+    #[test]
+    fn test_leak_as_slice_does_not_drop_items() {
+        static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
+
+        struct MyStruct(usize);
+        impl MyStruct {
+            fn value(&self) -> usize {
+                self.0
+            }
+        }
+
+        impl Default for MyStruct {
+            fn default() -> Self {
+                MyStruct(COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
+            }
+        }
+
+        impl Drop for MyStruct {
+            fn drop(&mut self) {
+                DROP_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+
+        let pa = mm.allocate_pages(1, AllocationOptions::default()).expect("Should not fail for test.");
+        {
+            let boxed_slice = pa.leak_as_slice::<MyStruct>();
+            assert_eq!(boxed_slice.len(), UEFI_PAGE_SIZE / size_of::<MyStruct>());
+
+            let mut i = 0;
+            boxed_slice.iter().for_each(|item| {
+                assert_eq!(item.value(), i, "Default value of MyStruct should be {i}");
+                i += 1;
+            });
+        }
+        assert_eq!(
+            DROP_COUNT.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "Slice is static, so individual items should not be dropped unless replaced"
+        );
     }
 }
