@@ -264,7 +264,7 @@ mod tests {
         }
     }
 
-    // Helper function to safely get a static reference from the system table
+    // Helper function to get a static reference from the system table
     unsafe fn get_static_boot_services(bs: &mut efi::BootServices) -> &'static mut efi::BootServices {
         // SAFETY: The SYSTEM_TABLE is a static global that lives for the entire program duration
         // The boot services within it have the same lifetime as the system table itself
