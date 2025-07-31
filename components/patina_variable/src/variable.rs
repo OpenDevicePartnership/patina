@@ -1,6 +1,9 @@
 use alloc::{string::String, vec::Vec};
 use core::ffi::c_void;
-use patina_sdk::{component::service::IntoService, runtime_services::{variable_services::GetVariableStatus, RuntimeServices, StandardRuntimeServices}};
+use patina_sdk::{
+    component::service::IntoService,
+    runtime_services::{variable_services::GetVariableStatus, RuntimeServices, StandardRuntimeServices},
+};
 use r_efi::efi;
 
 use crate::{error::VariableError, service::VariableStorage};
@@ -18,7 +21,7 @@ impl VariableStorage for SimpleVariableStorage {
         name: &str,
         namespace: &r_efi::efi::Guid,
         data_size: Option<usize>,
-    ) -> Result<(Vec<u8>, u32), VariableError> { 
+    ) -> Result<(Vec<u8>, u32), VariableError> {
         // Convert the name to UTF-16.
         let mut name_vec: Vec<u16> = name.encode_utf16().collect();
         let name_slice: &mut [u16] = name_vec.as_mut_slice();
@@ -43,7 +46,9 @@ impl VariableStorage for SimpleVariableStorage {
                 );
 
                 match status {
-                    GetVariableStatus::Success { data_size: _, attributes } => { return Ok((data, attributes)); },
+                    GetVariableStatus::Success { data_size: _, attributes } => {
+                        return Ok((data, attributes));
+                    }
                     // Size hint was wrong. Use the size provided by the `runtime_services` call.
                     GetVariableStatus::BufferTooSmall { data_size, attributes: _ } => {
                         if first_attempt {
@@ -62,22 +67,28 @@ impl VariableStorage for SimpleVariableStorage {
     }
 
     fn iter_variable_names(&self) -> Result<Vec<String>, VariableError> {
-        while (true) {
-            match unsafe { self.runtime_services.get_next_variable_name_unchecked() } {
-                Ok(name) => {
+        // Start with an empty name to get the first variable.
+        let prev_string: &[u16] = &[0u16];
+        // When `get_next_variable_name` is called with an empty name, the GUID doesn't matter (for the first name).
+        let prev_guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
+
+        let mut str_names = Vec::new();
+        loop {
+            match unsafe { self.runtime_services.get_next_variable_name(prev_string, &prev_guid) } {
+                Ok((name, _)) => {
                     if name.is_empty() {
                         break;
                     }
-                    return Ok(name.into_iter().map(String::from).collect());
-                }
-                Err(efi::Status::NOT_FOUND) => {
-                    return Ok(Vec::new());
+                    let next_str_name = String::from_utf16(&name).map_err(|_| VariableError::InvalidUtf16Name)?;
+                    str_names.push(next_str_name);
                 }
                 Err(status) => {
                     return Err(status.into());
                 }
             }
         }
+
+        unreachable!()
     }
 
     fn set_variable(
@@ -91,14 +102,7 @@ impl VariableStorage for SimpleVariableStorage {
         let mut name_vec: Vec<u16> = name.encode_utf16().collect();
         let name_slice: &mut [u16] = name_vec.as_mut_slice();
 
-        match unsafe {
-            self.runtime_services.set_variable_unchecked(
-                name_slice,
-                namespace,
-                attributes,
-                data,
-            )
-        } {
+        match unsafe { self.runtime_services.set_variable_unchecked(name_slice, namespace, attributes, data) } {
             Ok(()) => Ok(()),
             Err(status) => Err(status.into()),
         }
@@ -108,7 +112,6 @@ impl VariableStorage for SimpleVariableStorage {
         &self,
         attributes: u32,
     ) -> Result<patina_sdk::runtime_services::variable_services::VariableInfo, VariableError> {
-        self.runtime_services.query_variable_info(attributes)
-            .map_err(|e| e.into())
+        self.runtime_services.query_variable_info(attributes).map_err(|e| e.into())
     }
 }
