@@ -97,13 +97,26 @@ impl AcpiTableProtocol {
                     Ok(key) => {
                         // SAFETY: The caller must ensure the buffer passed in for the key is appropriately sized and non-null.
                         unsafe { *table_key = key.0 };
-                        efi::Status::SUCCESS
                     }
                     Err(e) => {
                         log::info!("Protocol install failed: {:?} for table with signature {}", e, table.signature());
-                        e.into()
+                        return e.into();
                     }
                 }
+
+                let publish_result = ACPI_TABLE_INFO.publish_tables();
+                if let Err(e) = publish_result {
+                    log::info!("Failed to publish ACPI tables: {:?}", e);
+                    return e.into();
+                }
+
+                let notify_result = ACPI_TABLE_INFO.notify_acpi_list(TableKey(unsafe { *table_key }));
+                if let Err(e) = notify_result {
+                    log::info!("Failed to notify ACPI list: {:?}", e);
+                    return e.into();
+                }
+
+                efi::Status::SUCCESS
             } else {
                 efi::Status::OUT_OF_RESOURCES
             }

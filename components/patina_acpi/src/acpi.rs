@@ -624,10 +624,14 @@ where
     }
 
     /// Publishes ACPI tables after installation.
-    fn publish_tables(&self) -> Result<(), AcpiError> {
+    pub(crate) fn publish_tables(&self) -> Result<(), AcpiError> {
+        log::info!("tyna system table");
+
         if let Some(rsdp_table) = self.acpi_tables.write().get_mut(&Self::RSDP_KEY) {
             // Cast RSDP to raw pointer for boot services.
             let rsdp_ptr = rsdp_table.as_mut_ptr() as *mut c_void;
+
+            log::info!("installing system table");
 
             unsafe {
                 self.boot_services
@@ -642,7 +646,7 @@ where
     }
 
     /// Calls the notify functions in `notify_list` upon installation of an ACPI table.
-    fn notify_acpi_list(&self, table_key: TableKey) -> Result<(), AcpiError> {
+    pub(crate) fn notify_acpi_list(&self, table_key: TableKey) -> Result<(), AcpiError> {
         // Extract the guard as a variable so it lives until the end of this function.
         let read_guard = self.acpi_tables.read();
         let table_for_key = read_guard.get(&table_key);

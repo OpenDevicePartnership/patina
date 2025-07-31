@@ -65,7 +65,7 @@ mod tpl_lock;
 #[macro_use]
 pub mod test_support;
 
-use core::{ffi::c_void, ptr, str::FromStr};
+use core::{ffi::c_void, ptr, slice, str::FromStr};
 
 use alloc::{boxed::Box, format, vec::Vec};
 use gcd::SpinLockedGcd;
@@ -84,7 +84,7 @@ use patina_sdk::{
     runtime_services::StandardRuntimeServices,
 };
 use protocols::PROTOCOL_DB;
-use r_efi::efi;
+use r_efi::efi::{self, ConfigurationTable};
 
 use crate::config_tables::memory_attributes_table;
 
@@ -517,6 +517,26 @@ where
         core_display_missing_arch_protocols();
 
         dispatcher::display_discovered_not_dispatched();
+
+        // let mut st = systemtables::SYSTEM_TABLE.lock();
+        // let st = st.as_mut().expect("System Table not initialized!");
+        // unsafe {
+        //     // Build a &[ConfigurationTable] out of the raw pointer + length
+        //     let entries: &[ConfigurationTable] = slice::from_raw_parts(
+        //         st.system_table().configuration_table,
+        //         st.system_table().number_of_table_entries as usize,
+        //     );
+
+        //     log::info!("lol");
+
+        //     for (i, entry) in entries.iter().enumerate() {
+        //         // Now you can just read entry.vendor_guid and entry.vendor_table
+        //         let guid = &entry.vendor_guid;
+        //         let table = entry.vendor_table;
+        //         // …do whatever you need with them…
+        //         log::info!("guid {:?}", guid);
+        //     }
+        // }
 
         call_bds();
 
