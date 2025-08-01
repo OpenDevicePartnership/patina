@@ -318,7 +318,7 @@ impl AllocatorMap {
                 _ => UEFI_PAGE_SIZE,
             };
 
-            // Dyamic allocators are not tracked in the system table, so we can just create a leaked memory type info struct
+            // Dynamic allocators are not tracked in the system table, so we can just create a leaked memory type info struct
             let memory_type_info = MemoryTypeInfo { memory_type, number_of_pages: AtomicU32::new(0) };
             let memory_type_info = NonNull::new(Box::leak(Box::new(memory_type_info))).unwrap();
             Box::leak(Box::new(UefiAllocator::new_dynamic(&GCD, memory_type_info, handle, granularity)))
