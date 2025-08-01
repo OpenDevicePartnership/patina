@@ -18,7 +18,10 @@ use patina_sdk::{
     error::{EfiError, Result},
     runtime_services::{RuntimeServices, StandardRuntimeServices},
     serial::SerialIO,
-    uefi_protocol::{self, ProtocolInterface, mu_variable_policy::{VariablePolicy, MuVariablePolicyProtocol, BasicVariablePolicy}},
+    uefi_protocol::{
+        self, ProtocolInterface,
+        mu_variable_policy::{BasicVariablePolicy, MuVariablePolicyProtocol, VariablePolicy},
+    },
 };
 use r_efi::efi::{self, Guid};
 
@@ -218,18 +221,15 @@ extern "efiapi" fn variable_policy_registered(event: *mut c_void, bs: Box<Standa
     match unsafe { bs.locate_protocol::<MuVariablePolicyProtocol>(None) } {
         Ok(protocol) => {
             // Match policy from Mu's AdvLoggerPkg implementation
-            if let Err(status) =
-                protocol.register_variable_policy(&VariablePolicy::LockOnCreate(
-                    BasicVariablePolicy::new_exact_match(
-                        Some(ADV_LOGGER_LOCATOR_VAR_NAME),
-                        ADV_LOGGER_HOB_GUID,
-                        Some(size_of::<efi::PhysicalAddress>() as u32),
-                        Some(
-                            r_efi::system::VARIABLE_RUNTIME_ACCESS | r_efi::system::VARIABLE_BOOTSERVICE_ACCESS,
-                        )
-                    ).unwrap(),
-                ))
-            {
+            if let Err(status) = protocol.register_variable_policy(&VariablePolicy::LockOnCreate(
+                BasicVariablePolicy::new_exact_match(
+                    Some(ADV_LOGGER_LOCATOR_VAR_NAME),
+                    ADV_LOGGER_HOB_GUID,
+                    Some(size_of::<efi::PhysicalAddress>() as u32),
+                    Some(r_efi::system::VARIABLE_RUNTIME_ACCESS | r_efi::system::VARIABLE_BOOTSERVICE_ACCESS),
+                )
+                .unwrap(),
+            )) {
                 log::error!(
                     "Failed to set variable policy on advanced logger locator variable. Status = {:#x?}",
                     status

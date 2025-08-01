@@ -16,6 +16,7 @@ use core::mem::MaybeUninit;
 use core::ptr::{self, null_mut};
 
 use crate::boot_services::c_ptr::{CMutPtr, CPtr};
+use crate::guid::FmtGuid;
 use crate::uefi_protocol::mu_variable_policy::protocol::LockOnVarStatePolicy;
 use crate::{error::EfiError, uefi_protocol::mu_variable_policy::protocol::VariablePolicyEntryHeader};
 
@@ -177,6 +178,17 @@ impl PartialEq for RefOrRC<'_, [u16]> {
 
 impl Eq for RefOrRC<'_, [u16]> {}
 
+struct FmtU16String<'a>(pub &'a [u16]);
+
+impl core::fmt::Display for FmtU16String<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for &ch in self.0 {
+            write!(f, "{}", char::from_u32(ch as u32).unwrap_or('\u{FFFD}'))?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BasicVariablePolicy<'a> {
     name: Option<RefOrRC<'a, [u16]>>,
@@ -251,6 +263,40 @@ impl<'a> BasicVariablePolicy<'a> {
     pub fn name(&self) -> Option<&[u16]> {
         self.name.as_ref().map(|name| name.as_ref())
     }
+
+    fn fmt_inner_values(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.name() {
+            Some(name) => write!(f, "name: \"{}\", ", FmtU16String(name))?,
+            None => write!(f, "name: None, ")?,
+        }
+
+        write!(f, "namespace: {}, ", FmtGuid(&self.namespace))?;
+
+        match self.min_size {
+            Some(size) => write!(f, "min_size: 0x{:x}, ", size)?,
+            None => write!(f, "min_size: None, ")?,
+        }
+        match self.max_size {
+            Some(size) => write!(f, "max_size: 0x{:x}, ", size)?,
+            None => write!(f, "max_size: None, ")?,
+        }
+        match self.attributes_must_have {
+            Some(attrs) => write!(f, "attributes_must_have: 0x{:08x}, ", attrs)?,
+            None => write!(f, "attributes_must_have: None, ")?,
+        }
+        match self.attributes_cant_have {
+            Some(attrs) => write!(f, "attributes_cant_have: 0x{:08x}", attrs),
+            None => write!(f, "attributes_cant_have: None"),
+        }
+    }
+}
+
+impl core::fmt::Display for BasicVariablePolicy<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "BasicVariablePolicy {{ ")?;
+        self.fmt_inner_values(f)?;
+        write!(f, " }}")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -278,6 +324,24 @@ impl<'a> TargetVarState<'a> {
 
     pub fn target_var_name(&self) -> Option<&[u16]> {
         self.target_var_name.as_ref().map(|name| name.as_ref())
+    }
+
+    fn fmt_inner_values(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.target_var_name() {
+            Some(name) => write!(f, "target_var_name: \"{}\", ", FmtU16String(name))?,
+            None => write!(f, "target_var_name: None, ")?,
+        }
+
+        write!(f, "target_var_namespace: {}, ", FmtGuid(&self.target_var_namespace))?;
+        write!(f, "target_var_value: 0x{:02x}", self.target_var_value)
+    }
+}
+
+impl core::fmt::Display for TargetVarState<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "TargetVarState {{ ")?;
+        self.fmt_inner_values(f)?;
+        write!(f, " }}")
     }
 }
 
@@ -571,6 +635,18 @@ impl VariablePolicy<'_> {
             // There was no valid variable policy type
             return Err(EfiError::VolumeFull);
         }
+    }
+}
+
+impl core::fmt::Display for VariablePolicy<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "VariablePolicy::{:?} {{ ", self.get_type())?;
+        self.get_basic_policy().fmt_inner_values(f)?;
+        if let Some(target_var_state) = self.get_target_var_state() {
+            write!(f, ", ")?;
+            target_var_state.fmt_inner_values(f)?;
+        }
+        write!(f, " }}")
     }
 }
 
