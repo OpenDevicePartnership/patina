@@ -113,7 +113,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
     //
     // The test HOB list will also include resource allocation hobs that describe allocations as follows:
     // A Memory Allocation Hob for each memory type. This will be placed in the SystemMemory region at base+0xE0000 as
-    // 4K allocations.
+    // 4K allocations. There is also a Memory Allocation Hob for MMIO space at 0x10000000 for 0x2000 bytes.
     // A Firmware Volume HOB located in the FirmwareDevice region at 0x10000000
     //
     let phit = hob::PhaseHandoffInformationTable {
@@ -317,6 +317,13 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             core::ptr::copy(&allocation_hob_template, cursor as *mut hob::MemoryAllocation, 1);
             cursor = cursor.offset(allocation_hob_template.header.length as isize);
         }
+
+        // memory allocation HOB for MMIO space
+        allocation_hob_template.alloc_descriptor.memory_base_address = resource_descriptor3.physical_start;
+        allocation_hob_template.alloc_descriptor.memory_length = 0x2000;
+        allocation_hob_template.alloc_descriptor.memory_type = efi::MEMORY_MAPPED_IO;
+        core::ptr::copy(&allocation_hob_template, cursor as *mut hob::MemoryAllocation, 1);
+        cursor = cursor.offset(allocation_hob_template.header.length as isize);
 
         //FV HOB.
         core::ptr::copy(&firmware_volume_hob, cursor as *mut hob::FirmwareVolume, 1);
