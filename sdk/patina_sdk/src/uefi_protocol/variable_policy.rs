@@ -17,8 +17,8 @@ use core::ptr::{self, null_mut};
 
 use crate::boot_services::c_ptr::{CMutPtr, CPtr};
 use crate::guid::FmtGuid;
-use crate::uefi_protocol::mu_variable_policy::protocol::LockOnVarStatePolicy;
-use crate::{error::EfiError, uefi_protocol::mu_variable_policy::protocol::VariablePolicyEntryHeader};
+use crate::uefi_protocol::variable_policy::protocol::LockOnVarStatePolicy;
+use crate::{error::EfiError, uefi_protocol::variable_policy::protocol::VariablePolicyEntryHeader};
 
 extern crate alloc;
 
@@ -477,7 +477,7 @@ impl VariablePolicy<'_> {
     }
 
     fn decode<'a>(encoded_policy: &[u8]) -> Result<Box<VariablePolicy<'a>>, EfiError> {
-        // Santity checking the buffer is large enough to hold VariablePolicyEntryHeader
+        // Sanity checking the buffer is large enough to hold VariablePolicyEntryHeader
         if encoded_policy.len() < size_of::<protocol::VariablePolicyEntryHeader>() {
             return Err(EfiError::InvalidParameter);
         }
@@ -699,7 +699,7 @@ impl MuVariablePolicyProtocol {
 
         let mut size: u32 = 0;
 
-        // Do an initial call to dump_variable_polcy to get the size of the buffer required
+        // Do an initial call to dump_variable_policy to get the size of the buffer required
         match (self.protocol.dump_variable_policy)(ptr::null_mut(), &mut size) {
             efi::Status::SUCCESS | efi::Status::BUFFER_TOO_SMALL => {}
             status => return Err(EfiError::from(status)),

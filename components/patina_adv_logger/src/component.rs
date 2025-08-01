@@ -20,7 +20,7 @@ use patina_sdk::{
     serial::SerialIO,
     uefi_protocol::{
         self, ProtocolInterface,
-        mu_variable_policy::{BasicVariablePolicy, MuVariablePolicyProtocol, VariablePolicy},
+        variable_policy::{BasicVariablePolicy, MuVariablePolicyProtocol, VariablePolicy},
     },
 };
 use r_efi::efi::{self, Guid};
@@ -177,7 +177,7 @@ where
             }
             Ok(event) => {
                 if let Err(status) = bs.register_protocol_notify(
-                    &uefi_protocol::mu_variable_policy::MuVariablePolicyProtocol::PROTOCOL_GUID,
+                    &uefi_protocol::variable_policy::MuVariablePolicyProtocol::PROTOCOL_GUID,
                     event,
                 ) {
                     log::error!("Failed to register protocol notify for variable write event! Status = {:#x?}", status);
