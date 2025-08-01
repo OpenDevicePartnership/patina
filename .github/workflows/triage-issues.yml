@@ -1,0 +1,21 @@
+# This workflow assists with initial triage of new issues by applying
+# labels based on data provided in the issue.
+#
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+
+name: Initial Triage for New Issue
+
+on:
+  issues:
+    types: [ opened ]
+
+jobs:
+  triage:
+    permissions:
+      contents: read
+      issues: write
+
+    uses: ./.github/workflows/IssueTriager.yml
+    secrets: inherit
