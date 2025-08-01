@@ -14,7 +14,9 @@ use core::{
     fmt::Debug,
     mem,
     ops::Range,
+    ptr::NonNull,
     slice::{self, from_raw_parts_mut},
+    sync::atomic::AtomicU32,
 };
 
 extern crate alloc;
@@ -38,7 +40,7 @@ use r_efi::{efi, system::TPL_HIGH_LEVEL};
 use uefi_allocator::UefiAllocator;
 
 //FixedSizeBlockAllocator is passed as a reference to the callbacks on page allocations
-pub use fixed_size_block_allocator::FixedSizeBlockAllocator;
+pub use fixed_size_block_allocator::MemoryTypeInfo;
 
 use patina_sdk::{
     base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
@@ -76,7 +78,6 @@ pub(crate) static EFI_BOOT_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocato
     &GCD,
     efi::BOOT_SERVICES_DATA,
     protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-    page_change_callback,
     DEFAULT_PAGE_ALLOCATION_GRANULARITY,
 );
 
@@ -87,7 +88,6 @@ pub static EFI_LOADER_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
     efi::LOADER_CODE,
     protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE,
-    page_change_callback,
     DEFAULT_PAGE_ALLOCATION_GRANULARITY,
 );
 
@@ -95,7 +95,6 @@ pub static EFI_BOOT_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
     efi::BOOT_SERVICES_CODE,
     protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE,
-    page_change_callback,
     DEFAULT_PAGE_ALLOCATION_GRANULARITY,
 );
 
@@ -105,7 +104,6 @@ pub static EFI_RUNTIME_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::n
     &GCD,
     efi::RUNTIME_SERVICES_CODE,
     protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE,
-    page_change_callback,
     RUNTIME_PAGE_ALLOCATION_GRANULARITY,
 );
 
@@ -115,7 +113,6 @@ pub static EFI_RUNTIME_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocator::n
     &GCD,
     efi::RUNTIME_SERVICES_DATA,
     protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE,
-    page_change_callback,
     RUNTIME_PAGE_ALLOCATION_GRANULARITY,
 );
 
@@ -320,7 +317,11 @@ impl AllocatorMap {
                 | efi::ACPI_MEMORY_NVS => RUNTIME_PAGE_ALLOCATION_GRANULARITY,
                 _ => UEFI_PAGE_SIZE,
             };
-            Box::leak(Box::new(UefiAllocator::new(&GCD, memory_type, handle, page_change_callback, granularity)))
+
+            // Dyamic allocators are not tracked in the system table, so we can just create a leaked memory type info struct
+            let memory_type_info = MemoryTypeInfo { memory_type, number_of_pages: AtomicU32::new(0) };
+            let memory_type_info = NonNull::new(Box::leak(Box::new(memory_type_info))).unwrap();
+            Box::leak(Box::new(UefiAllocator::new_dynamic(&GCD, memory_type_info, handle, granularity)))
         })
     }
 
@@ -761,63 +762,10 @@ pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
     if map_key == current_map_key { Ok(()) } else { Err(EfiError::InvalidParameter) }
 }
 
-static mut MEMORY_TYPE_INFO_TABLE: [EFiMemoryTypeInformation; 17] = [
-    EFiMemoryTypeInformation { memory_type: efi::RESERVED_MEMORY_TYPE, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::LOADER_CODE, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::LOADER_DATA, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::BOOT_SERVICES_CODE, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::BOOT_SERVICES_DATA, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::RUNTIME_SERVICES_CODE, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::RUNTIME_SERVICES_DATA, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::CONVENTIONAL_MEMORY, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::UNUSABLE_MEMORY, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::ACPI_RECLAIM_MEMORY, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::ACPI_MEMORY_NVS, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::MEMORY_MAPPED_IO, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::MEMORY_MAPPED_IO_PORT_SPACE, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::PAL_CODE, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::PERSISTENT_MEMORY, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::UNACCEPTED_MEMORY_TYPE, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: 16 /*EfiMaxMemoryType*/, number_of_pages: 0 },
-];
-
-// This callback is invoked whenever the allocator performs an operation that would potentially allocate or free pages
-// from the GCD and thus change the memory map. It receives a mutable reference to the allocator that is performing
-// the operation.
-//
-// ## Safety
-// (copied from patina_dxe_core::fixed_size_block_allocator::PageChangeCallback)
-// This callback has several constraints and cautions on its usage:
-// 1. The callback is invoked while the allocator in question is locked. This means that to avoid a re-entrant lock
-//    on the allocator, any operations required from the allocator must be invoked via the given reference, and not
-//    via other means (such as global allocation routines that target this same allocator).
-// 2. The allocator could potentially be the "global" allocator (i.e. EFI_BOOT_SERVICES_DATA). Extra care should be
-//    taken to avoid implicit heap usage (e.g. `Box::new()`) if that's the case.
-//
-// Generally - be very cautious about any allocations performed with this callback. There be dragons.
-//
-fn page_change_callback(allocator: &mut FixedSizeBlockAllocator) {
-    // Update MEMORY_TYPE_INFO_TABLE.
-    unsafe {
-        // Custom Memory types (higher than EfiMaxMemoryType) are not tracked.
-        let idx = allocator.memory_type() as usize;
-        #[allow(static_mut_refs)]
-        if idx < MEMORY_TYPE_INFO_TABLE.len() {
-            let stats = allocator.stats();
-            let reserved_free = uefi_size_to_pages!(stats.reserved_size - stats.reserved_used);
-            MEMORY_TYPE_INFO_TABLE[idx].number_of_pages = (stats.claimed_pages - reserved_free) as u32;
-        }
-    }
-}
-
 pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), EfiError> {
     // SAFETY: This is safe because we are initializing the table with a static array
-    #[allow(static_mut_refs)]
-    config_tables::core_install_configuration_table(
-        guid::MEMORY_TYPE_INFORMATION,
-        unsafe { MEMORY_TYPE_INFO_TABLE.as_mut_ptr() as *mut c_void },
-        system_table,
-    )
+    let table_ptr = GCD.memory_type_info_table().as_ptr() as *mut MemoryTypeInfo as *mut c_void;
+    config_tables::core_install_configuration_table(guid::MEMORY_TYPE_INFORMATION, table_ptr, system_table)
 }
 
 fn process_hob_allocations(hob_list: &HobList) {

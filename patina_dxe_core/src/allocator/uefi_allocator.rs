@@ -8,13 +8,13 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use crate::gcd::SpinLockedGcd;
+use crate::{allocator::fixed_size_block_allocator::MemoryTypeInfo, gcd::SpinLockedGcd};
 use patina_sdk::error::EfiError;
 use r_efi::efi;
 
 use super::{
     AllocationStrategy,
-    fixed_size_block_allocator::{AllocationStatistics, PageChangeCallback, SpinLockedFixedSizeBlockAllocator},
+    fixed_size_block_allocator::{AllocationStatistics, SpinLockedFixedSizeBlockAllocator},
 };
 use core::{
     alloc::{Allocator, GlobalAlloc, Layout},
@@ -40,7 +40,6 @@ struct AllocationInfo {
 /// - A pool implementation that allows tracking the layout and memory_type of UEFI pool allocations.
 pub struct UefiAllocator {
     allocator: SpinLockedFixedSizeBlockAllocator,
-    memory_type: efi::MemoryType,
 }
 
 impl UefiAllocator {
@@ -51,18 +50,36 @@ impl UefiAllocator {
         gcd: &'static SpinLockedGcd,
         memory_type: efi::MemoryType,
         allocator_handle: efi::Handle,
-        page_change_callback: PageChangeCallback,
+        page_allocation_granularity: usize,
+    ) -> Self {
+        let memory_type_info = NonNull::new(unsafe {
+            (gcd.memory_type_info_table().as_ptr() as *mut MemoryTypeInfo).add(memory_type as usize)
+        })
+        .unwrap();
+        UefiAllocator {
+            allocator: SpinLockedFixedSizeBlockAllocator::new(
+                gcd,
+                allocator_handle,
+                memory_type_info,
+                page_allocation_granularity,
+            ),
+        }
+    }
+
+    /// Creates a new UEFI Allocator with a non-standard memory type
+    pub const fn new_dynamic(
+        gcd: &'static SpinLockedGcd,
+        memory_type_info: NonNull<MemoryTypeInfo>,
+        allocator_handle: efi::Handle,
         page_allocation_granularity: usize,
     ) -> Self {
         UefiAllocator {
             allocator: SpinLockedFixedSizeBlockAllocator::new(
                 gcd,
                 allocator_handle,
-                memory_type,
-                page_change_callback,
+                memory_type_info,
                 page_allocation_granularity,
             ),
-            memory_type,
         }
     }
 
@@ -81,7 +98,7 @@ impl UefiAllocator {
 
     /// Returns the UEFI memory type associated with this allocator.
     pub fn memory_type(&self) -> efi::MemoryType {
-        self.memory_type
+        self.allocator.memory_type()
     }
 
     /// Reserves a range of memory to be used by this allocator of the given size in pages.
@@ -118,7 +135,7 @@ impl UefiAllocator {
     pub unsafe fn allocate_pool(&self, size: usize, buffer: *mut *mut c_void) -> Result<(), EfiError> {
         let mut allocation_info = AllocationInfo {
             signature: POOL_SIG,
-            memory_type: self.memory_type,
+            memory_type: self.memory_type(),
             layout: Layout::new::<AllocationInfo>(),
         };
         let offset: usize;
@@ -166,7 +183,7 @@ impl UefiAllocator {
             return Err(EfiError::InvalidParameter);
         }
         // check if allocation is from this pool.
-        if unsafe { (*allocation_info).memory_type } != self.memory_type {
+        if unsafe { (*allocation_info).memory_type } != self.memory_type() {
             return Err(EfiError::NotFound);
         }
         //zero after check so it doesn't get reused.
@@ -262,7 +279,7 @@ fn string_for_memory_type(memory_type: efi::MemoryType) -> &'static str {
 
 impl Display for UefiAllocator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Memory Type: {}", string_for_memory_type(self.memory_type))?;
+        writeln!(f, "Memory Type: {}", string_for_memory_type(self.memory_type()))?;
         self.allocator.fmt(f)
     }
 }
@@ -277,13 +294,11 @@ mod tests {
     use patina_sdk::base::{SIZE_4KB, SIZE_64KB, UEFI_PAGE_SIZE};
 
     use crate::{
-        allocator::{DEFAULT_ALLOCATION_STRATEGY, DEFAULT_PAGE_ALLOCATION_GRANULARITY, FixedSizeBlockAllocator},
+        allocator::{DEFAULT_ALLOCATION_STRATEGY, DEFAULT_PAGE_ALLOCATION_GRANULARITY},
         test_support,
     };
 
     use super::*;
-
-    fn page_change_callback(_allocator: &mut FixedSizeBlockAllocator) {}
 
     fn init_gcd(gcd: &SpinLockedGcd, size: usize) -> u64 {
         unsafe { gcd.reset() };
@@ -316,14 +331,8 @@ mod tests {
     fn test_uefi_allocator_new() {
         with_locked_state(|| {
             static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
-            let ua = UefiAllocator::new(
-                &GCD,
-                efi::BOOT_SERVICES_DATA,
-                1 as _,
-                page_change_callback,
-                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
-            );
-            assert_eq!(ua.memory_type, efi::BOOT_SERVICES_DATA);
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, DEFAULT_PAGE_ALLOCATION_GRANULARITY);
+            assert_eq!(ua.memory_type(), efi::BOOT_SERVICES_DATA);
         });
     }
 
@@ -335,8 +344,7 @@ mod tests {
 
                 let base = init_gcd(&GCD, 0x400000);
 
-                let ua =
-                    UefiAllocator::new(&GCD, efi::RUNTIME_SERVICES_DATA, 1 as _, page_change_callback, granularity);
+                let ua = UefiAllocator::new(&GCD, efi::RUNTIME_SERVICES_DATA, 1 as _, granularity);
 
                 let mut buffer: *mut c_void = core::ptr::null_mut();
                 assert!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }.is_ok());
@@ -369,8 +377,7 @@ mod tests {
 
                 let base = init_gcd(&GCD, 0x400000);
 
-                let ua =
-                    UefiAllocator::new(&GCD, efi::RUNTIME_SERVICES_DATA, 1 as _, page_change_callback, granularity);
+                let ua = UefiAllocator::new(&GCD, efi::RUNTIME_SERVICES_DATA, 1 as _, granularity);
 
                 let mut buffer: *mut c_void = core::ptr::null_mut();
                 assert!(unsafe { ua.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer)) }.is_ok());
@@ -407,8 +414,7 @@ mod tests {
 
                 let base = init_gcd(&GCD, 0x400000);
 
-                let ua =
-                    UefiAllocator::new(&GCD, efi::RUNTIME_SERVICES_DATA, 1 as _, page_change_callback, granularity);
+                let ua = UefiAllocator::new(&GCD, efi::RUNTIME_SERVICES_DATA, 1 as _, granularity);
 
                 let buffer = ua.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 4, UEFI_PAGE_SIZE).unwrap();
                 let buffer_address = buffer.as_ptr() as *mut u8 as efi::PhysicalAddress;
@@ -441,20 +447,10 @@ mod tests {
 
             init_gcd(&GCD, 0x400000);
 
-            let bs_allocator = UefiAllocator::new(
-                &GCD,
-                efi::BOOT_SERVICES_DATA,
-                1 as _,
-                page_change_callback,
-                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
-            );
-            let bc_allocator = UefiAllocator::new(
-                &GCD,
-                efi::BOOT_SERVICES_CODE,
-                2 as _,
-                page_change_callback,
-                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
-            );
+            let bs_allocator =
+                UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, DEFAULT_PAGE_ALLOCATION_GRANULARITY);
+            let bc_allocator =
+                UefiAllocator::new(&GCD, efi::BOOT_SERVICES_CODE, 2 as _, DEFAULT_PAGE_ALLOCATION_GRANULARITY);
 
             let bs_buffer = bs_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 4, UEFI_PAGE_SIZE).unwrap();
             let bc_buffer = bc_allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, 4, UEFI_PAGE_SIZE).unwrap();
@@ -479,8 +475,7 @@ mod tests {
                 static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
                 let _ = init_gcd(&GCD, 0x400000);
 
-                let ua =
-                    UefiAllocator::new(&GCD, efi::RUNTIME_SERVICES_DATA, 1 as _, page_change_callback, granularity);
+                let ua = UefiAllocator::new(&GCD, efi::RUNTIME_SERVICES_DATA, 1 as _, granularity);
 
                 let layout = Layout::from_size_align(0x8, 0x8).unwrap();
                 unsafe {
@@ -505,13 +500,7 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             init_gcd(&GCD, 0x400000);
 
-            let ua = UefiAllocator::new(
-                &GCD,
-                efi::BOOT_SERVICES_DATA,
-                1 as _,
-                page_change_callback,
-                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
-            );
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, DEFAULT_PAGE_ALLOCATION_GRANULARITY);
 
             let layout = Layout::from_size_align(0x8, 0x8).unwrap();
             let allocation = ua.allocate(layout).unwrap().as_non_null_ptr();
@@ -528,13 +517,7 @@ mod tests {
             // Allocate some space on the heap with the global allocator (std) to be used by expand().
             init_gcd(&GCD, 0x400000);
 
-            let ua = UefiAllocator::new(
-                &GCD,
-                efi::BOOT_SERVICES_DATA,
-                1 as _,
-                page_change_callback,
-                DEFAULT_PAGE_ALLOCATION_GRANULARITY,
-            );
+            let ua = UefiAllocator::new(&GCD, efi::BOOT_SERVICES_DATA, 1 as _, DEFAULT_PAGE_ALLOCATION_GRANULARITY);
             assert_eq!(ua.memory_type(), efi::BOOT_SERVICES_DATA);
             assert_eq!(ua.handle(), 1 as _);
 
@@ -567,17 +550,11 @@ mod tests {
                 let base = init_gcd(&GCD, 0x400000);
                 let gcd_range = base..base + 0x400000;
 
-                let reserved_allocator =
-                    UefiAllocator::new(&GCD, efi::RUNTIME_SERVICES_DATA, 1 as _, page_change_callback, granularity);
+                let reserved_allocator = UefiAllocator::new(&GCD, efi::RUNTIME_SERVICES_DATA, 1 as _, granularity);
                 reserved_allocator.reserve_memory_pages(0x100).unwrap();
 
-                let unreserved_allocator = UefiAllocator::new(
-                    &GCD,
-                    efi::LOADER_DATA,
-                    2 as _,
-                    page_change_callback,
-                    DEFAULT_PAGE_ALLOCATION_GRANULARITY,
-                );
+                let unreserved_allocator =
+                    UefiAllocator::new(&GCD, efi::LOADER_DATA, 2 as _, DEFAULT_PAGE_ALLOCATION_GRANULARITY);
 
                 //check that the ranges are set up.
                 let allocator = reserved_allocator.allocator.lock();

@@ -6,9 +6,12 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use crate::pecoff::{self, UefiPeInfo};
+use crate::{
+    allocator::MemoryTypeInfo,
+    pecoff::{self, UefiPeInfo},
+};
 use alloc::{boxed::Box, slice, vec, vec::Vec};
-use core::{fmt::Display, ptr};
+use core::{fmt::Display, ptr, sync::atomic::AtomicU32};
 use patina_sdk::{base::DEFAULT_CACHE_ATTR, error::EfiError};
 
 use mu_pi::{
@@ -1774,6 +1777,7 @@ pub struct SpinLockedGcd {
     memory: tpl_lock::TplMutex<GCD>,
     io: tpl_lock::TplMutex<IoGCD>,
     memory_change_callback: Option<MapChangeCallback>,
+    memory_type_info_table: [MemoryTypeInfo; 17],
     page_table: tpl_lock::TplMutex<Option<Box<dyn PageTable>>>,
 }
 
@@ -1805,8 +1809,31 @@ impl SpinLockedGcd {
                 "GcdIoLock",
             ),
             memory_change_callback,
+            memory_type_info_table: [
+                MemoryTypeInfo { memory_type: efi::RESERVED_MEMORY_TYPE, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: efi::LOADER_CODE, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: efi::LOADER_DATA, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: efi::BOOT_SERVICES_CODE, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: efi::BOOT_SERVICES_DATA, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: efi::RUNTIME_SERVICES_CODE, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: efi::RUNTIME_SERVICES_DATA, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: efi::CONVENTIONAL_MEMORY, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: efi::UNUSABLE_MEMORY, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: efi::ACPI_RECLAIM_MEMORY, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: efi::ACPI_MEMORY_NVS, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: efi::MEMORY_MAPPED_IO, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: efi::MEMORY_MAPPED_IO_PORT_SPACE, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: efi::PAL_CODE, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: efi::PERSISTENT_MEMORY, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: efi::UNACCEPTED_MEMORY_TYPE, number_of_pages: AtomicU32::new(0) },
+                MemoryTypeInfo { memory_type: 16 /*EfiMaxMemoryType*/, number_of_pages: AtomicU32::new(0) },
+            ],
             page_table: tpl_lock::TplMutex::new(efi::TPL_HIGH_LEVEL, None, "GcdPageTableLock"),
         }
+    }
+
+    pub const fn memory_type_info_table(&self) -> &[MemoryTypeInfo; 17] {
+        &self.memory_type_info_table
     }
 
     fn set_paging_attributes(&self, base_address: usize, len: usize, attributes: u64) -> Result<(), EfiError> {
