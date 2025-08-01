@@ -32,6 +32,7 @@ use r_efi::efi;
 use super::ProtocolInterface;
 
 pub mod protocol {
+    use alloc::boxed::Box;
     use core::ffi::c_void;
 
     use r_efi::efi::{Guid, Status};
@@ -46,6 +47,8 @@ pub mod protocol {
     pub const UNRESTRICTED_MAX_SIZE: u32 = u32::MAX;
     pub const UNRESTRICTED_ATTRIBUTES_MUST_HAVE: u32 = 0;
     pub const UNRESTRICTED_ATTRIBUTES_CANT_HAVE: u32 = 0;
+
+    pub type VariableLockPolicyInfo = (LockOnVarStatePolicy, Option<Box<[u16]>>);
 
     #[repr(u8)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,7 +142,7 @@ pub enum RefOrRC<'a, T: ?Sized> {
     Rc(Rc<T>),
 }
 
-impl<'a, T: ?Sized> RefOrRC<'a, T> {
+impl<T: ?Sized> RefOrRC<'_, T> {
     fn as_ref(&self) -> &T {
         match self {
             RefOrRC::Ref(r) => r,
@@ -221,14 +224,15 @@ impl<'a> BasicVariablePolicy<'a> {
         }
 
         // The attributes must have and can't have should not overlap
-        if attributes_must_have.is_some() && attributes_cant_have.is_some() {
-            if attributes_must_have.unwrap() & attributes_cant_have.unwrap() != 0 {
-                return Err(EfiError::InvalidParameter);
-            }
+        if attributes_must_have.is_some()
+            && attributes_cant_have.is_some()
+            && (attributes_must_have.unwrap() & attributes_cant_have.unwrap() != 0)
+        {
+            return Err(EfiError::InvalidParameter);
         }
 
         Ok(Self {
-            name: name.map(|n| RefOrRC::Ref(n)),
+            name: name.map(RefOrRC::Ref),
             namespace,
             min_size,
             max_size,
@@ -251,7 +255,7 @@ impl<'a> BasicVariablePolicy<'a> {
         }
 
         Ok(Self {
-            name: name.map(|n| RefOrRC::Ref(n)),
+            name: name.map(RefOrRC::Ref),
             namespace,
             min_size: exact_size,
             max_size: exact_size,
@@ -319,7 +323,7 @@ impl<'a> TargetVarState<'a> {
             }
         }
 
-        Ok(Self { target_var_name: target_var_name.map(|n| RefOrRC::Ref(n)), target_var_namespace, target_var_value })
+        Ok(Self { target_var_name: target_var_name.map(RefOrRC::Ref), target_var_namespace, target_var_value })
     }
 
     pub fn target_var_name(&self) -> Option<&[u16]> {
@@ -475,30 +479,30 @@ impl VariablePolicy<'_> {
     fn decode<'a>(encoded_policy: &[u8]) -> Result<Box<VariablePolicy<'a>>, EfiError> {
         // Santity checking the buffer is large enough to hold VariablePolicyEntryHeader
         if encoded_policy.len() < size_of::<protocol::VariablePolicyEntryHeader>() {
-            return Err(EfiError::Aborted);
+            return Err(EfiError::InvalidParameter);
         }
 
         // Interpret the buffer as a VariablePolicyEntryHeader
         let header = unsafe { &*(encoded_policy.as_ptr() as *const protocol::VariablePolicyEntryHeader) };
         if header.version != protocol::VARIABLE_POLICY_ENTRY_REVISION {
-            return Err(EfiError::AccessDenied);
+            return Err(EfiError::InvalidParameter);
         }
 
         // Check to make sure the buffer is the right size
         if header.size as usize != encoded_policy.len() {
-            return Err(EfiError::AlreadyStarted);
+            return Err(EfiError::InvalidParameter);
         }
 
         // Check to make sure the name offset is within the buffer, but after the header
         if header.offset_to_name as usize > encoded_policy.len()
             || (header.offset_to_name as usize) < size_of::<protocol::VariablePolicyEntryHeader>()
         {
-            return Err(EfiError::BufferTooSmall);
+            return Err(EfiError::InvalidParameter);
         }
 
         let name_length_in_bytes = encoded_policy.len() - header.offset_to_name as usize;
         if name_length_in_bytes % size_of::<u16>() != 0 {
-            return Err(EfiError::BadBufferSize);
+            return Err(EfiError::InvalidParameter);
         }
 
         let mut name: MaybeUninit<Option<Vec<u16>>> = MaybeUninit::uninit();
@@ -520,7 +524,7 @@ impl VariablePolicy<'_> {
 
             // Ensure the end (and only the end) of the name is null-terminated
             if name_ref.last() != Some(&0) || name_ref[..name_ref.len() - 1].iter().any(|&c| c == 0) {
-                return Err(EfiError::CompromisedData);
+                return Err(EfiError::InvalidParameter);
             }
         } else {
             name.write(None);
@@ -529,7 +533,7 @@ impl VariablePolicy<'_> {
         let name = unsafe { name.assume_init() };
 
         let basic_policy = BasicVariablePolicy {
-            name: if name.is_some() { Some(RefOrRC::Rc(Rc::from(name.unwrap()))) } else { None },
+            name: name.map(|name| RefOrRC::Rc(Rc::from(name))),
             namespace: Guid::from_bytes(&header.namespace_guid.to_le_bytes()),
             min_size: if header.min_size == protocol::UNRESTRICTED_MIN_SIZE { None } else { Some(header.min_size) },
             max_size: if header.max_size == protocol::UNRESTRICTED_MAX_SIZE { None } else { Some(header.max_size) },
@@ -547,15 +551,9 @@ impl VariablePolicy<'_> {
 
         if let Ok(lock_policy_type) = protocol::VariablePolicyType::try_from(header.lock_policy_type) {
             match lock_policy_type {
-                protocol::VariablePolicyType::NoLock => {
-                    return Ok(Box::new(VariablePolicy::NoLock(basic_policy)));
-                }
-                protocol::VariablePolicyType::LockNow => {
-                    return Ok(Box::new(VariablePolicy::LockNow(basic_policy)));
-                }
-                protocol::VariablePolicyType::LockOnCreate => {
-                    return Ok(Box::new(VariablePolicy::LockOnCreate(basic_policy)));
-                }
+                protocol::VariablePolicyType::NoLock => Ok(Box::new(VariablePolicy::NoLock(basic_policy))),
+                protocol::VariablePolicyType::LockNow => Ok(Box::new(VariablePolicy::LockNow(basic_policy))),
+                protocol::VariablePolicyType::LockOnCreate => Ok(Box::new(VariablePolicy::LockOnCreate(basic_policy))),
                 protocol::VariablePolicyType::LockOnVarState => {
                     // Check if the buffer is large enough for the VariablePolicyEntryHeader, LockOnVarStatePolicy, and the variable name, if defined
                     if encoded_policy.len()
@@ -563,7 +561,7 @@ impl VariablePolicy<'_> {
                             + size_of::<protocol::LockOnVarStatePolicy>()
                             + name_length_in_bytes
                     {
-                        return Err(EfiError::CrcError);
+                        return Err(EfiError::InvalidParameter);
                     }
 
                     // Ensure that both the VariablePolicyEntryHeader and LockOnVarStatePolicy fit before the offset_to_name
@@ -571,14 +569,14 @@ impl VariablePolicy<'_> {
                         < (size_of::<protocol::VariablePolicyEntryHeader>()
                             + size_of::<protocol::LockOnVarStatePolicy>())
                     {
-                        return Err(EfiError::EndOfFile);
+                        return Err(EfiError::InvalidParameter);
                     }
 
                     let target_name_length_in_bytes = header.offset_to_name as usize
                         - size_of::<protocol::VariablePolicyEntryHeader>()
                         - size_of::<protocol::LockOnVarStatePolicy>();
                     if target_name_length_in_bytes % size_of::<u16>() != 0 {
-                        return Err(EfiError::EndOfMedia);
+                        return Err(EfiError::InvalidParameter);
                     }
 
                     let mut target_name: MaybeUninit<Option<Vec<u16>>> = MaybeUninit::uninit();
@@ -605,7 +603,7 @@ impl VariablePolicy<'_> {
                         if target_name_ref.last() != Some(&0)
                             || target_name_ref[..target_name_ref.len() - 1].iter().any(|&c| c == 0)
                         {
-                            return Err(EfiError::VolumeCorrupted);
+                            return Err(EfiError::InvalidParameter);
                         }
                     } else {
                         target_name.write(None);
@@ -619,7 +617,7 @@ impl VariablePolicy<'_> {
                             as *const protocol::LockOnVarStatePolicy)
                     };
 
-                    return Ok(Box::new(VariablePolicy::LockOnVarState(
+                    Ok(Box::new(VariablePolicy::LockOnVarState(
                         basic_policy,
                         TargetVarState {
                             target_var_name: target_name.map(|name| RefOrRC::Rc(Rc::from(name))),
@@ -628,12 +626,12 @@ impl VariablePolicy<'_> {
                             ),
                             target_var_value: lock_on_var_state_policy.value,
                         },
-                    )));
+                    )))
                 }
             }
         } else {
             // There was no valid variable policy type
-            return Err(EfiError::VolumeFull);
+            Err(EfiError::InvalidParameter)
         }
     }
 }
@@ -773,7 +771,7 @@ impl MuVariablePolicyProtocol {
         &self,
         variable_name: &[u16],
         namespace_guid: &Guid,
-    ) -> Result<(protocol::LockOnVarStatePolicy, Option<Box<[u16]>>), EfiError> {
+    ) -> Result<protocol::VariableLockPolicyInfo, EfiError> {
         let mut lock_on_var_state_policy_data = [0u8; size_of::<protocol::LockOnVarStatePolicy>()];
         let mut target_name: Option<Box<[u16]>> = None;
         let mut target_name_buffer_size_in_bytes: usize = 0;
@@ -792,7 +790,7 @@ impl MuVariablePolicyProtocol {
                 }
 
                 let mut target_name_box =
-                    vec![0 as u16; target_name_buffer_size_in_bytes / size_of::<u16>()].into_boxed_slice();
+                    vec![0_u16; target_name_buffer_size_in_bytes / size_of::<u16>()].into_boxed_slice();
 
                 // Get the lock on variable state policy again, this time passing in an appropriately sized name buffer
                 match (self.protocol.get_lock_on_variable_state_variable_policy_info)(
@@ -839,7 +837,7 @@ impl MuVariablePolicyProtocol {
             }
         }
 
-        let variable_name = variable_name.unwrap_or(&[0_u16].as_ref());
+        let variable_name = variable_name.unwrap_or([0_u16].as_ref());
 
         match (self.protocol.get_variable_policy_info)(
             variable_name.as_ptr(),
@@ -854,7 +852,7 @@ impl MuVariablePolicyProtocol {
                     return Err(EfiError::BadBufferSize);
                 }
 
-                let mut name_box = vec![0 as u16; name_buffer_size_in_bytes / size_of::<u16>()].into_boxed_slice();
+                let mut name_box = vec![0_u16; name_buffer_size_in_bytes / size_of::<u16>()].into_boxed_slice();
 
                 // Get the variable policy again, this time passing in an appropriately sized name buffer
                 match (self.protocol.get_variable_policy_info)(
@@ -926,7 +924,7 @@ impl MuVariablePolicyProtocol {
                 None => 0,
             };
 
-        let mut encoded_policy = vec![0 as u8; encoded_policy_size].into_boxed_slice();
+        let mut encoded_policy = vec![0_u8; encoded_policy_size].into_boxed_slice();
 
         // Update the header with the correct size and offset to name
         header.size = encoded_policy_size as u16;
@@ -949,8 +947,7 @@ impl MuVariablePolicyProtocol {
             if let Some(target_name) = target_name_val.as_ref() {
                 let target_name_ptr = encoded_policy
                     .as_mut_ptr()
-                    .add(size_of::<LockOnVarStatePolicy>() + core::mem::size_of::<VariablePolicyEntryHeader>())
-                    as *mut u8;
+                    .add(size_of::<LockOnVarStatePolicy>() + core::mem::size_of::<VariablePolicyEntryHeader>());
                 ptr::copy_nonoverlapping(
                     (*target_name).as_ref().as_ptr() as *const u8,
                     target_name_ptr,
@@ -969,9 +966,7 @@ impl MuVariablePolicyProtocol {
         }
 
         // Now that everything is in place, decode and return the policy
-        let result = VariablePolicy::decode(&encoded_policy).map(|boxed_policy| Some(boxed_policy));
-
-        result
+        VariablePolicy::decode(&encoded_policy).map(Some)
     }
 }
 
