@@ -8,7 +8,8 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use crate::{allocator::fixed_size_block_allocator::MemoryTypeInfo, gcd::SpinLockedGcd};
+use crate::gcd::SpinLockedGcd;
+use mu_pi::hob::EFiMemoryTypeInformation;
 use patina_sdk::error::EfiError;
 use r_efi::efi;
 
@@ -60,7 +61,7 @@ impl UefiAllocator {
         // Get the pointer to the first memory type info struct in the table, then offset it by the memory type, which
         // is also the index in the table. The debug_assert above ensures that the memory type is tracked by the GCD.
         let memory_type_info = NonNull::new(unsafe {
-            (gcd.memory_type_info_table().as_ptr() as *mut MemoryTypeInfo).add(memory_type as usize)
+            (gcd.memory_type_info_table().as_ptr() as *mut EFiMemoryTypeInformation).add(memory_type as usize)
         })
         .expect("GCD has a valid memory type info table as a part of its initialization.");
 
@@ -77,7 +78,7 @@ impl UefiAllocator {
     /// Creates a new UEFI Allocator with a non-standard memory type
     pub const fn new_dynamic(
         gcd: &'static SpinLockedGcd,
-        memory_type_info: NonNull<MemoryTypeInfo>,
+        memory_type_info: NonNull<EFiMemoryTypeInformation>,
         allocator_handle: efi::Handle,
         page_allocation_granularity: usize,
     ) -> Self {

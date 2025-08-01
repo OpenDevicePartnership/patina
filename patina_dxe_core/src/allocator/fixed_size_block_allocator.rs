@@ -25,10 +25,9 @@ use core::{
     ops::Range,
     ptr::{NonNull, slice_from_raw_parts_mut},
     result::Result,
-    sync::atomic::AtomicU32,
 };
 use linked_list_allocator::{align_down_size, align_up_size};
-use mu_pi::dxe_services::GcdMemoryType;
+use mu_pi::{dxe_services::GcdMemoryType, hob::EFiMemoryTypeInformation};
 use patina_sdk::{
     base::{UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, align_up},
     error::EfiError,
@@ -148,15 +147,6 @@ impl AllocationStatistics {
     }
 }
 
-#[derive(Debug)]
-pub struct MemoryTypeInfo {
-    /// The memory type for which this information is valid.
-    pub memory_type: efi::MemoryType,
-
-    /// The number of pages allocated for this memory type.
-    pub number_of_pages: AtomicU32,
-}
-
 /// Fixed Size Block Allocator
 ///
 /// Implements an expandable memory allocator using fixed-sized blocks for speed backed by a linked-list allocator
@@ -167,7 +157,7 @@ pub struct MemoryTypeInfo {
 pub struct FixedSizeBlockAllocator {
     /// The memory type this allocator is managing and number of pages allocated for this memory type. This is used
     /// to bucketize memory for the EFI_MEMORY_MAP and handle any special cases for memory types.
-    memory_type_info: NonNull<MemoryTypeInfo>,
+    memory_type_info: NonNull<EFiMemoryTypeInformation>,
 
     /// The heads of the linked lists for each fixed-size block. Each index corresponds to a block size in
     /// `BLOCK_SIZES`.
@@ -192,7 +182,7 @@ pub struct FixedSizeBlockAllocator {
 
 impl FixedSizeBlockAllocator {
     /// Creates a new empty FixedSizeBlockAllocator
-    pub const fn new(memory_type_info: NonNull<MemoryTypeInfo>, page_allocation_granularity: usize) -> Self {
+    pub const fn new(memory_type_info: NonNull<EFiMemoryTypeInformation>, page_allocation_granularity: usize) -> Self {
         const EMPTY: Option<&'static mut BlockListNode> = None;
         FixedSizeBlockAllocator {
             memory_type_info,
@@ -212,7 +202,7 @@ impl FixedSizeBlockAllocator {
         self.list_heads = [EMPTY; BLOCK_SIZES.len()];
         self.allocators = None;
         self.reserved_range = None;
-        self.memory_type_info().number_of_pages.store(0, core::sync::atomic::Ordering::Release);
+        self.memory_type_info_mut().number_of_pages = 0;
         self.stats = AllocationStatistics::new();
     }
 
@@ -450,9 +440,15 @@ impl FixedSizeBlockAllocator {
     }
 
     #[inline(always)]
-    fn memory_type_info(&self) -> &MemoryTypeInfo {
+    fn memory_type_info(&self) -> &EFiMemoryTypeInformation {
         // SAFETY: memory_type_info is a pointer to a leaked MemoryTypeInfo structure and there have been no type casts
         unsafe { self.memory_type_info.as_ref() }
+    }
+
+    #[inline(always)]
+    fn memory_type_info_mut(&mut self) -> &mut EFiMemoryTypeInformation {
+        // SAFETY: memory_type_info is a pointer to a leaked MemoryTypeInfo structure and there have been no type casts
+        unsafe { self.memory_type_info.as_mut() }
     }
 
     /// Returns the memory type for this allocator
@@ -467,11 +463,11 @@ impl FixedSizeBlockAllocator {
     }
 
     /// Re-calculates the number of pages allocated for this memory type and updates the memory type info.
-    fn update_memory_type_info(&self) {
+    fn update_memory_type_info(&mut self) {
         let stats = self.stats();
         let reserved_free = uefi_size_to_pages!(stats.reserved_size - stats.reserved_used);
         let page_count = (stats.claimed_pages - reserved_free) as u32;
-        self.memory_type_info().number_of_pages.store(page_count, core::sync::atomic::Ordering::Release);
+        self.memory_type_info_mut().number_of_pages = page_count;
     }
 }
 
@@ -526,7 +522,7 @@ impl SpinLockedFixedSizeBlockAllocator {
     pub const fn new(
         gcd: &'static SpinLockedGcd,
         allocator_handle: efi::Handle,
-        memory_type_info: NonNull<MemoryTypeInfo>,
+        memory_type_info: NonNull<EFiMemoryTypeInformation>,
         page_allocation_granularity: usize,
     ) -> Self {
         SpinLockedFixedSizeBlockAllocator {
@@ -879,8 +875,8 @@ mod tests {
     }
 
     // Test function to create a memory type info structure.
-    fn memory_type_info(memory_type: efi::MemoryType) -> NonNull<MemoryTypeInfo> {
-        let memory_type_info = Box::new(MemoryTypeInfo { memory_type, number_of_pages: AtomicU32::new(0) });
+    fn memory_type_info(memory_type: efi::MemoryType) -> NonNull<EFiMemoryTypeInformation> {
+        let memory_type_info = Box::new(EFiMemoryTypeInformation { memory_type, number_of_pages: 0 });
         NonNull::new(Box::leak(memory_type_info)).unwrap()
     }
 

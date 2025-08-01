@@ -16,7 +16,6 @@ use core::{
     ops::Range,
     ptr::NonNull,
     slice::{self, from_raw_parts_mut},
-    sync::atomic::AtomicU32,
 };
 
 extern crate alloc;
@@ -38,9 +37,6 @@ use mu_pi::{
 };
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
 use uefi_allocator::UefiAllocator;
-
-//FixedSizeBlockAllocator is passed as a reference to the callbacks on page allocations
-pub use fixed_size_block_allocator::MemoryTypeInfo;
 
 use patina_sdk::{
     base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
@@ -326,7 +322,7 @@ impl AllocatorMap {
 
             // Otherwise, we will just leak a new memory type info struct with the given memory type and have the
             // allocator use it.
-            let memory_type_info = MemoryTypeInfo { memory_type, number_of_pages: AtomicU32::new(0) };
+            let memory_type_info = EFiMemoryTypeInformation { memory_type, number_of_pages: 0 };
             let memory_type_info = NonNull::new(Box::leak(Box::new(memory_type_info))).unwrap();
             Box::leak(Box::new(UefiAllocator::new_dynamic(&GCD, memory_type_info, handle, granularity)))
         })
@@ -771,7 +767,7 @@ pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
 
 pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), EfiError> {
     // SAFETY: This is safe because we are initializing the table with a static array
-    let table_ptr = GCD.memory_type_info_table().as_ptr() as *mut MemoryTypeInfo as *mut c_void;
+    let table_ptr = GCD.memory_type_info_table().as_ptr() as *mut EFiMemoryTypeInformation as *mut c_void;
     config_tables::core_install_configuration_table(guid::MEMORY_TYPE_INFORMATION, table_ptr, system_table)
 }
 
