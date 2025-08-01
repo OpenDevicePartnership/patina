@@ -865,46 +865,85 @@ fn process_hob_allocations(hob_list: &HobList) {
                 }
 
                 let mut address = desc.memory_base_address;
-                let _ = core_allocate_pages(
-                    efi::ALLOCATE_ADDRESS,
-                    desc.memory_type,
-                    uefi_size_to_pages!(desc.memory_length as usize),
-                    &mut address as *mut efi::PhysicalAddress,
-                    None)
-                    .inspect_err(|err|{
-                        if *err == EfiError::NotFound && desc.name != guid::ZERO {
-                            //Guided Memory Allocation Hobs are typically MemoryAllocationModule or MemoryAllocationStack HOBs
-                            //which have corresponding non-guided allocation HOBs associated with them; they are rejected as
-                            //duplicates if we attempt to log them. Only log trace messages for these.
-                            log::trace!(
-                                "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
-                                desc.memory_base_address,
-                                desc.memory_length,
-                                err
-                            );
-                        } else {
+                match GCD.get_memory_descriptor_for_address(address) {
+                    // we found the region in the GCD, so we can allocate it
+                    Ok(gcd_desc) => {
+                        if gcd_desc.base_address == desc.memory_base_address
+                            && gcd_desc.length == desc.memory_length
+                            && gcd_desc.image_handle != INVALID_HANDLE
+                        {
                             // check to see if a duplicate HOB has already added this allocation
-                            if let Ok(existing_desc) = GCD.get_memory_descriptor_for_address(desc.memory_base_address) {
-                                if existing_desc.base_address == desc.memory_base_address &&
-                                   existing_desc.length == desc.memory_length &&
-                                   existing_desc.image_handle != INVALID_HANDLE {
-                                        log::trace!(
-                                            "Duplicate allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
-                                            desc.memory_base_address,
-                                            desc.memory_length,
-                                            err
-                                        );
-                                        return;
-                                   }
-                            }
-                            log::error!(
-                                "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
+                            log::trace!(
+                                "Duplicate allocation HOB at {:#x?} of length {:#x?}. Skipping allocation.",
                                 desc.memory_base_address,
-                                desc.memory_length,
-                                err
+                                desc.memory_length
                             );
+                            continue;
                         }
-                    });
+                        let alloc_res = match gcd_desc.memory_type {
+                            // if this is system memory, we use core_allocate_pages to allocate it
+                            // so that we can track the allocation in the allocator
+                            GcdMemoryType::SystemMemory => core_allocate_pages(
+                                efi::ALLOCATE_ADDRESS,
+                                desc.memory_type,
+                                uefi_size_to_pages!(desc.memory_length as usize),
+                                &mut address as *mut efi::PhysicalAddress,
+                                None,
+                            ),
+                            GcdMemoryType::NonExistent | GcdMemoryType::Unaccepted => {
+                                // we can't allocate memory in a non-existent or unaccepted memory type
+                                log::error!(
+                                    "Memory Allocation HOB specifies a non-existent or unaccepted memory type: {:#x?}. Cannot allocate memory.",
+                                    desc.memory_type
+                                );
+                                continue;
+                            }
+                            // for all other memory types, we can allocate it directly in the GCD
+                            // because they are not managed by the allocators
+                            _ => GCD
+                                .allocate_memory_space(
+                                    AllocationStrategy::Address(desc.memory_base_address as usize),
+                                    gcd_desc.memory_type,
+                                    0,
+                                    desc.memory_length as usize,
+                                    protocol_db::DXE_CORE_HANDLE,
+                                    None,
+                                )
+                                .map(|_| ()),
+                        };
+
+                        if let Err(err) = alloc_res {
+                            if err == EfiError::NotFound && desc.name != guid::ZERO {
+                                // Guided Memory Allocation Hobs are typically MemoryAllocationModule or
+                                // MemoryAllocationStack HOBs which have corresponding non-guided allocation HOBs
+                                // associated with them; they are rejected as duplicates if we attempt to log them.
+                                // Only log trace messages for these.
+                                log::trace!(
+                                    "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
+                                    desc.memory_base_address,
+                                    desc.memory_length,
+                                    err
+                                );
+                            } else {
+                                log::error!(
+                                    "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
+                                    desc.memory_base_address,
+                                    desc.memory_length,
+                                    err
+                                );
+                            }
+                            continue;
+                        }
+                    }
+                    Err(_) => {
+                        log::error!(
+                            "Failed to get memory descriptor for address {:#x?} in GCD specified in Memory Allocation HOB:\n{:#x?}. Cannot allocate memory.",
+                            address,
+                            hob
+                        );
+                        continue;
+                    }
+                }
             }
             Hob::FirmwareVolume(hob::FirmwareVolume { header: _, base_address, length })
             | Hob::FirmwareVolume2(hob::FirmwareVolume2 {
@@ -1205,6 +1244,20 @@ mod tests {
             }
         })
         .unwrap();
+
+        // confirm the MMIO memory allocation occurred in the GCD
+        let mmio_desc = GCD.get_memory_descriptor_for_address(0x10000000).unwrap();
+        assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
+        assert_eq!(mmio_desc.base_address, 0x10000000);
+        assert_eq!(mmio_desc.length, 0x2000);
+        assert_eq!(mmio_desc.image_handle, protocol_db::DXE_CORE_HANDLE);
+
+        // confirm the rest of the MMIO region is not allocated
+        let mmio_desc = GCD.get_memory_descriptor_for_address(0x10002000).unwrap();
+        assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
+        assert_eq!(mmio_desc.base_address, 0x10002000);
+        assert_eq!(mmio_desc.length, 0x1000000 - 0x2000);
+        assert_eq!(mmio_desc.image_handle, INVALID_HANDLE);
     }
 
     #[test]
