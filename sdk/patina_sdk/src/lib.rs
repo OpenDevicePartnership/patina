@@ -37,3 +37,4 @@ pub mod serial;
 pub mod test;
 pub mod tpl_mutex;
 pub mod uefi_protocol;
+pub mod variable_policy;

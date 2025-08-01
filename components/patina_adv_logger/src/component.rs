@@ -18,10 +18,8 @@ use patina_sdk::{
     error::{EfiError, Result},
     runtime_services::{RuntimeServices, StandardRuntimeServices},
     serial::SerialIO,
-    uefi_protocol::{
-        self, ProtocolInterface,
-        variable_policy::{BasicVariablePolicy, MuVariablePolicyProtocol, VariablePolicy},
-    },
+    uefi_protocol::ProtocolInterface,
+    variable_policy::{BasicVariablePolicy, VariablePolicy, VariablePolicyProtocol},
 };
 use r_efi::efi::{self, Guid};
 
@@ -176,10 +174,7 @@ where
                 log::error!("Failed to create create variable policy registered event! Status = {:#x?}", status);
             }
             Ok(event) => {
-                if let Err(status) = bs.register_protocol_notify(
-                    &uefi_protocol::variable_policy::MuVariablePolicyProtocol::PROTOCOL_GUID,
-                    event,
-                ) {
+                if let Err(status) = bs.register_protocol_notify(&VariablePolicyProtocol::PROTOCOL_GUID, event) {
                     log::error!("Failed to register protocol notify for variable write event! Status = {:#x?}", status);
                 }
             }
@@ -218,7 +213,7 @@ extern "efiapi" fn variable_policy_registered(event: *mut c_void, bs: Box<Standa
     let _ = bs.close_event(event);
 
     // Set the policy on the AdvLoggerLocator variable
-    match unsafe { bs.locate_protocol::<MuVariablePolicyProtocol>(None) } {
+    match unsafe { bs.locate_protocol::<VariablePolicyProtocol>(None) } {
         Ok(protocol) => {
             // Match policy from Mu's AdvLoggerPkg implementation
             if let Err(status) = protocol.register_variable_policy(&VariablePolicy::LockOnCreate(

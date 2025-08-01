@@ -10,7 +10,6 @@
 #[cfg(feature = "unstable-device-path")]
 pub mod device_path;
 
-pub mod variable_policy;
 pub mod performance_measurement;
 pub mod status_code;
 

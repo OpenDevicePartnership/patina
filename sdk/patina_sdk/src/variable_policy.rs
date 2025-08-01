@@ -1,24 +1,44 @@
-//! MU Variable Policy Protocol
-//!
-//! Provides the protocol required to set policies on UEFI variables.
-//!
-//! See <https://microsoft.github.io/mu/dyn/mu_basecore/MdeModulePkg/Library/VariablePolicyLib/ReadMe/>
+//! Wrapper around the Variable Policy Protocol implemented in Tianocore EDKII and Project Mu.
 //!
 //! ## License
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
-//!
+//! 
+//! Example Usage:
+//! ```ignore
+//! use patina_sdk::variable_policy::{BasicVariablePolicy, VariablePolicy, VariablePolicyProtocol};
+//! use patina_sdk::guid::Guid;
+//! use utf16_lit::utf16_null;
+//! 
+//! let variable_policy_protocol = VariablePolicyProtocol::new(/* A copy of `variable_policy::protocol::Protocol` */);
+//! 
+//! let policy = VariablePolicy::LockOnVarState(
+//!                 BasicVariablePolicy::new(
+//!                     Some(&utf16_null!("MyVariableName")),
+//!                     Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x9a, 0xbc, &[0xde, 0xf0, 0x12, 0x34, 0x56, 0x78]),
+//!                     Some(SOME_MIN_SIZE),
+//!                     Some(SOME_MAX_SIZE),
+//!                     Some(SOME_ATTRIBUTES_MUST_HAVE),
+//!                     Some(SOME_ATTRIBUTES_CANT_HAVE),
+//!                 ).unwrap(),
+//!                 TargetVarState::new(
+//!                     &utf16_null!("MyTargetVariableName"),
+//!                     Guid::from_fields(0x10101010, 0x1010, 0x1010, 0x10, 0x10, &[0x10, 0x10, 0x10, 0x10, 0x10, 0x10]),
+//!                     SOME_TARGET_VAR_VALUE,
+//!                 ).unwrap(),
+//!              );
+//! 
+//! variable_policy_protocol.register_variable_policy(&policy).expect("Failed to register variable policy");
 
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::ptr::{self, null_mut};
 
 use crate::boot_services::c_ptr::{CMutPtr, CPtr};
+use crate::error::EfiError;
 use crate::guid::FmtGuid;
-use crate::uefi_protocol::variable_policy::protocol::LockOnVarStatePolicy;
-use crate::{error::EfiError, uefi_protocol::variable_policy::protocol::VariablePolicyEntryHeader};
 
 extern crate alloc;
 
@@ -29,29 +49,47 @@ use alloc::vec::Vec;
 use efi::Guid;
 use r_efi::efi;
 
-use super::ProtocolInterface;
+use crate::uefi_protocol::ProtocolInterface;
 
+/// Provides unsafe interfaces for and details regarding the Variable Policy Protocol as implemented in Tianocore
+/// Note: Direct use of this protocol is discouraged. Use the `VariablePolicy` type instead with an instance of `VariablePolicyProtocol`.
 pub mod protocol {
     use alloc::boxed::Box;
     use core::ffi::c_void;
 
     use r_efi::efi::{Guid, Status};
 
-    pub const PROTOCOL_REVISION_1: u64 = 0x10000;
-    pub const PROTOCOL_REVISION_2: u64 = 0x20000;
-    pub const VARIABLE_POLICY_ENTRY_REVISION: u32 = 0x10000;
+    /// The GUID for the Variable Policy Protocol.
     pub const PROTOCOL_GUID: Guid =
         Guid::from_fields(0x81d1675c, 0x86f6, 0x48df, 0xbd, 0x95, &[0x9a, 0x6e, 0x4f, 0x09, 0x25, 0xc3]);
 
+    /// The initial protocol revision in which DisableVariablePolicy, IsVariablePolicyEnabled, RegisterVariablePolicy, DumpVariablePolicy, and LockVariablePolicy were introduced.
+    pub const PROTOCOL_REVISION_1: u64 = 0x10000;
+
+    /// The second protocol revision in which GetVariablePolicyInfo and GetLockOnVariableStateVariablePolicyInfo were introduced.
+    pub const PROTOCOL_REVISION_2: u64 = 0x20000;
+
+    /// The revision of the variable policy header supported by this implementation.
+    pub const VARIABLE_POLICY_ENTRY_REVISION: u32 = 0x10000;
+
+    /// The default, unrestricted minimum variable size, as implemented in the Tianocore Variable Policy Library.
     pub const UNRESTRICTED_MIN_SIZE: u32 = 0;
+
+    /// The default, unrestricted maximum variable size, as implemented in the Tianocore Variable Policy Library.
     pub const UNRESTRICTED_MAX_SIZE: u32 = u32::MAX;
+
+    /// The default, unrestricted must have attributes, as implemented in the Tianocore Variable Policy Library.
     pub const UNRESTRICTED_ATTRIBUTES_MUST_HAVE: u32 = 0;
+
+    /// The default, unrestricted cant have attributes, as implemented in the Tianocore Variable Policy Library.
     pub const UNRESTRICTED_ATTRIBUTES_CANT_HAVE: u32 = 0;
 
-    pub type VariableLockPolicyInfo = (LockOnVarStatePolicy, Option<Box<[u16]>>);
+    /// Type alias for the lock policy information returned by GetLockOnVariableStateVariablePolicyInfo.
+    pub(super) type VariableLockPolicyInfo = (LockOnVarStatePolicy, Option<Box<[u16]>>);
 
     #[repr(u8)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    /// The type of variable policy that can be applied to a UEFI variable.
     pub enum VariablePolicyType {
         /// No variable locking is performed. However, the attribute and size constraints are still enforced. LockPolicy field is size 0.
         NoLock = 0,
@@ -78,36 +116,63 @@ pub mod protocol {
     }
 
     #[repr(C, packed(1))]
+    /// Version 0x10000 of the Variable Policy Entry Header, as defined by the Variable Policy Protocols.
     pub struct VariablePolicyEntryHeader {
+        /// The version of the Variable Policy Entry Header.
         pub version: u32,
+        /// The size of the entire Variable Policy Entry, including the header and any additional data.
         pub size: u16,
+        /// The offset to the variable name within the Variable Policy Entry, in bytes.
         pub offset_to_name: u16,
+        /// The GUID of the namespace for which this policy applies.
         pub namespace_guid: u128,
+        /// The minimum size of the variable, in bytes. If this is set to `UNRESTRICTED_MIN_SIZE`, there is no minimum size
         pub min_size: u32,
+        /// The maximum size of the variable, in bytes. If this is set to `UNRESTRICTED_MAX_SIZE`, there is no maximum size
         pub max_size: u32,
+        /// The attributes that the variable must have. If this is set to `UNRESTRICTED_ATTRIBUTES_MUST_HAVE`, there are no required attributes.
         pub attributes_must_have: u32,
+        /// The attributes that the variable cannot have. If this is set to `UNRESTRICTED_ATTRIBUTES_CANT_HAVE`, there are no restricted attributes.
         pub attributes_cant_have: u32,
+        /// The type of lock policy that applies to this variable. This is one of the `VariablePolicyType` values.
         pub lock_policy_type: u8,
-        pub _reserved: [u8; 3],
+        _reserved: [u8; 3],
         // Either name or LockOnVarStatePolicy comes next, depending on lock type
     }
 
+    /// The LockOnVarStatePolicy structure, as defined by the Variable Policy Protocol.
     #[repr(C, packed(1))]
     pub struct LockOnVarStatePolicy {
+        /// The GUID of the namespace for the target variable that this policy depends on.
         pub namespace_guid: u128,
+        /// The value of the target variable that this policy depends on.
         pub value: u8,
         _reserved: u8,
         // Name comes next
     }
 
-    // Functions introduced in the first revision of the protocol
+    /// Disables the variable policy engine, preventing any further variable policies from being enforced.
+    /// Introduced in the first revision of the protocol. See protocol definition for additional details.
     pub type DisableVariablePolicy = extern "efiapi" fn() -> Status;
+
+    /// Checks if the variable policy engine is enabled.
+    /// Introduced in the first revision of the protocol. See protocol definition for additional details.
     pub type IsVariablePolicyEnabled = extern "efiapi" fn(state: *mut bool) -> Status;
+
+    /// Registers a new variable policy entry.
+    /// Introduced in the first revision of the protocol. See protocol definition for additional details.
     pub type RegisterVariablePolicy = extern "efiapi" fn(policy_entry: *const VariablePolicyEntryHeader) -> Status;
+
+    /// Dumps the current variable policies into a buffer.
+    /// Introduced in the first revision of the protocol. See protocol definition for additional details.
     pub type DumpVariablePolicy = extern "efiapi" fn(policy: *mut u8, size: *mut u32) -> Status;
+
+    /// Locks the variable policy engine, preventing any further modifications to the variable policies.
+    /// Introduced in the first revision of the protocol. See protocol definition for additional details.
     pub type LockVariablePolicy = extern "efiapi" fn() -> Status;
 
-    // Functions introduced in the second revision of the protocol
+    /// Retrieves information about a variable policy entry, including its name and GUID, but excluding TargetVarState.
+    /// Introduced in the second revision of the protocol. See protocol definition for additional details.
     pub type GetVariablePolicyInfo = extern "efiapi" fn(
         variable_name: *const u16,
         vendor_guid: *const Guid,
@@ -115,6 +180,9 @@ pub mod protocol {
         variable_policy: *mut c_void,
         variable_policy_variable_name: *mut u16,
     ) -> Status;
+
+    /// Retrieves information about the TargetVarState of a variable policy entry.
+    /// Introduced in the second revision of the protocol. See protocol definition for additional details.
     pub type GetLockOnVariableStateVariablePolicyInfo = extern "efiapi" fn(
         variable_name: *const u16,
         vendor_guid: *const Guid,
@@ -123,26 +191,45 @@ pub mod protocol {
         variable_lock_policy_variable_name: *mut u16,
     ) -> Status;
 
+    /// The protocol structure for the Variable Policy Protocol.
     #[repr(C)]
     pub struct Protocol {
+        /// The revision of the protocol.
         pub revision: u64,
+
+        /// An implementation of DisableVariablePolicy
         pub disable_variable_policy: DisableVariablePolicy,
+
+        /// An implementation of IsVariablePolicyEnabled
         pub is_variable_policy_enabled: IsVariablePolicyEnabled,
+
+        /// An implementation of RegisterVariablePolicy
         pub register_variable_policy: RegisterVariablePolicy,
+
+        /// An implementation of DumpVariablePolicy
         pub dump_variable_policy: DumpVariablePolicy,
+
+        /// An implementation of LockVariablePolicy
         pub lock_variable_policy: LockVariablePolicy,
+
+        /// An implementation of GetVariablePolicyInfo
         pub get_variable_policy_info: GetVariablePolicyInfo,
+
+        /// An implementation of GetLockOnVariableStateVariablePolicyInfo
         pub get_lock_on_variable_state_variable_policy_info: GetLockOnVariableStateVariablePolicyInfo,
     }
 }
 
 #[derive(Debug)]
-pub enum RefOrRC<'a, T: ?Sized> {
+/// A wrapper type that can hold either a reference or a reference-counted pointer.
+/// Used to facilitate allowing for cloning variable policies without requiring an additional allocation for the name.
+enum RefOrRC<'a, T: ?Sized> {
     Ref(&'a T),
     Rc(Rc<T>),
 }
 
 impl<T: ?Sized> RefOrRC<'_, T> {
+    /// Returns a reference to the underlying data, regardless of whether it is a reference or a reference-counted pointer.
     fn as_ref(&self) -> &T {
         match self {
             RefOrRC::Ref(r) => r,
@@ -152,18 +239,21 @@ impl<T: ?Sized> RefOrRC<'_, T> {
 }
 
 impl<'a> From<&'a [u16]> for RefOrRC<'a, [u16]> {
+    /// Wraps a slice of `u16` into a `RefOrRC::Ref` type.
     fn from(slice: &'a [u16]) -> Self {
         RefOrRC::Ref(slice)
     }
 }
 
 impl From<Rc<[u16]>> for RefOrRC<'_, [u16]> {
+    /// Wraps a reference-counted slice of `u16` into a `RefOrRC::Rc` type.
     fn from(rc: Rc<[u16]>) -> Self {
         RefOrRC::Rc(rc)
     }
 }
 
 impl Clone for RefOrRC<'_, [u16]> {
+    /// Clones reference or RC
     fn clone(&self) -> Self {
         match self {
             RefOrRC::Ref(slice) => RefOrRC::Ref(slice),
@@ -173,17 +263,20 @@ impl Clone for RefOrRC<'_, [u16]> {
 }
 
 impl PartialEq for RefOrRC<'_, [u16]> {
+    /// Compares two `RefOrRC` instances for equality.
     fn eq(&self, other: &Self) -> bool {
         self.as_ref().len() == other.as_ref().len()
             && self.as_ref().iter().zip(other.as_ref().iter()).all(|(a, b)| a == b)
     }
 }
-
 impl Eq for RefOrRC<'_, [u16]> {}
 
+/// A helper struct to format a slice of `u16` as a string for display purposes.
 struct FmtU16String<'a>(pub &'a [u16]);
 
 impl core::fmt::Display for FmtU16String<'_> {
+    /// Formats the `FmtU16String` as a string, converting each `u16` to a `char`.
+    /// If a `u16` cannot be converted to a valid `char`, it uses the replacement character `\u{FFFD}`.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         for &ch in self.0 {
             write!(f, "{}", char::from_u32(ch as u32).unwrap_or('\u{FFFD}'))?;
@@ -193,16 +286,24 @@ impl core::fmt::Display for FmtU16String<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// A basic variable policy that can be applied to a UEFI variable.
 pub struct BasicVariablePolicy<'a> {
+    /// The name of the variable, which should be null-terminated.
     name: Option<RefOrRC<'a, [u16]>>,
+    /// The namespace GUID for the variable policy.
     pub namespace: Guid,
+    /// The minimum size of the variable, in bytes. If this is `None`, there is no minimum size.
     pub min_size: Option<u32>,
+    /// The maximum size of the variable, in bytes. If this is `None`, there is no maximum size.
     pub max_size: Option<u32>,
+    /// The attributes that the variable must have.
     pub attributes_must_have: Option<u32>,
+    /// The attributes that the variable cannot have. If this is `None`, there are no restricted attributes.
     pub attributes_cant_have: Option<u32>,
 }
 
 impl<'a> BasicVariablePolicy<'a> {
+    /// Creates a new `BasicVariablePolicy` with the specified parameters.
     pub fn new(
         name: Option<&'a [u16]>,
         namespace: Guid,
@@ -241,6 +342,7 @@ impl<'a> BasicVariablePolicy<'a> {
         })
     }
 
+    /// Creates a new `BasicVariablePolicy` that requires an exact match for the variable size and attributes.
     pub fn new_exact_match(
         name: Option<&'a [u16]>,
         namespace: Guid,
@@ -264,10 +366,12 @@ impl<'a> BasicVariablePolicy<'a> {
         })
     }
 
+    /// Returns the name of the variable policy, if it exists.
     pub fn name(&self) -> Option<&[u16]> {
         self.name.as_ref().map(|name| name.as_ref())
     }
 
+    /// Formats the inner values of the `BasicVariablePolicy` for display.
     fn fmt_inner_values(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self.name() {
             Some(name) => write!(f, "name: \"{}\", ", FmtU16String(name))?,
@@ -304,13 +408,17 @@ impl core::fmt::Display for BasicVariablePolicy<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Represents the state of a target variable for a `LockOnVarState` policy.
 pub struct TargetVarState<'a> {
     target_var_name: Option<RefOrRC<'a, [u16]>>,
+    /// The namespace GUID of the target variable that this policy depends on.
     pub target_var_namespace: Guid,
+    /// The value of the target variable that this policy depends on.
     pub target_var_value: u8,
 }
 
 impl<'a> TargetVarState<'a> {
+    /// Creates a new `TargetVarState` with the specified parameters.
     pub fn new(
         target_var_name: Option<&'a [u16]>,
         target_var_namespace: Guid,
@@ -326,10 +434,12 @@ impl<'a> TargetVarState<'a> {
         Ok(Self { target_var_name: target_var_name.map(RefOrRC::Ref), target_var_namespace, target_var_value })
     }
 
+    /// Returns the name of the target variable, if it exists.
     pub fn target_var_name(&self) -> Option<&[u16]> {
         self.target_var_name.as_ref().map(|name| name.as_ref())
     }
 
+    /// Formats the inner values of the `TargetVarState` for display.
     fn fmt_inner_values(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self.target_var_name() {
             Some(name) => write!(f, "target_var_name: \"{}\", ", FmtU16String(name))?,
@@ -350,15 +460,20 @@ impl core::fmt::Display for TargetVarState<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[repr(u8)]
+/// A Variable Policy that can be applied to a UEFI variable.
 pub enum VariablePolicy<'a> {
+    /// A variable policy that does not lock the variable, but enforces size and attribute constraints.
     NoLock(BasicVariablePolicy<'a>),
+    /// A variable policy that locks the variable immediately after registration, preventing its creation on this boot.
     LockNow(BasicVariablePolicy<'a>),
+    /// A variable policy that locks the variable after it is created, allowing for variable creation and protection after the policy is registered.
     LockOnCreate(BasicVariablePolicy<'a>),
+    /// A variable policy that locks the variable based on the state of a target variable.
     LockOnVarState(BasicVariablePolicy<'a>, TargetVarState<'a>),
 }
 
 impl VariablePolicy<'_> {
+    /// Returns the type of the variable policy.
     pub fn get_type(&self) -> protocol::VariablePolicyType {
         match self {
             Self::NoLock(_) => protocol::VariablePolicyType::NoLock,
@@ -368,6 +483,7 @@ impl VariablePolicy<'_> {
         }
     }
 
+    /// Returns the basic variable policy associated with this variable policy.
     pub fn get_basic_policy(&self) -> &BasicVariablePolicy {
         match self {
             Self::NoLock(basic_policy) => basic_policy,
@@ -377,6 +493,7 @@ impl VariablePolicy<'_> {
         }
     }
 
+    /// Returns the target variable state if this is a `LockOnVarState` policy, otherwise returning `None`.
     pub fn get_target_var_state(&self) -> Option<&TargetVarState> {
         match self {
             Self::LockOnVarState(_, target_var_state) => Some(target_var_state),
@@ -384,6 +501,7 @@ impl VariablePolicy<'_> {
         }
     }
 
+    /// Encodes the variable policy into a buffer suitable for transmission through the Variable Policy Protocol.
     fn encode(&self) -> Result<Box<[u8]>, EfiError> {
         let basic_policy: &BasicVariablePolicy = self.get_basic_policy();
 
@@ -476,6 +594,8 @@ impl VariablePolicy<'_> {
         Ok(buffer)
     }
 
+    /// Decodes a Variable Policy entry from a buffer retrieved from the Variable Policy Protocol.
+    /// Returns Efi::InvalidParameter if the buffer is not a valid Variable Policy entry.
     fn decode<'a>(encoded_policy: &[u8]) -> Result<Box<VariablePolicy<'a>>, EfiError> {
         // Sanity checking the buffer is large enough to hold VariablePolicyEntryHeader
         if encoded_policy.len() < size_of::<protocol::VariablePolicyEntryHeader>() {
@@ -532,6 +652,7 @@ impl VariablePolicy<'_> {
 
         let name = unsafe { name.assume_init() };
 
+        // Generate a `BasicVariablePolicy`
         let basic_policy = BasicVariablePolicy {
             name: name.map(|name| RefOrRC::Rc(Rc::from(name))),
             namespace: Guid::from_bytes(&header.namespace_guid.to_le_bytes()),
@@ -648,16 +769,22 @@ impl core::fmt::Display for VariablePolicy<'_> {
     }
 }
 
-pub struct MuVariablePolicyProtocol {
+/// A wrapper around the Variable Policy Protocol, providing methods to interact with variable policies.
+pub struct VariablePolicyProtocol {
     protocol: protocol::Protocol,
 }
 
-unsafe impl ProtocolInterface for MuVariablePolicyProtocol {
+unsafe impl ProtocolInterface for VariablePolicyProtocol {
     const PROTOCOL_GUID: Guid = protocol::PROTOCOL_GUID;
 }
 
-impl MuVariablePolicyProtocol {
-    /// Disable the variable policy engine
+impl VariablePolicyProtocol {
+    /// Creates a new `VariablePolicyProtocol` instance with the given protocol.
+    pub fn new(protocol: protocol::Protocol) -> Self {
+        Self { protocol }
+    }
+
+    /// Disables the variable policy engine, preventing any further variable policies from being enforced.
     pub fn disable_variable_policy(&self) -> Result<(), EfiError> {
         if self.protocol.revision < protocol::PROTOCOL_REVISION_1 {
             return Err(EfiError::Unsupported);
@@ -666,7 +793,7 @@ impl MuVariablePolicyProtocol {
         EfiError::status_to_result((self.protocol.disable_variable_policy)())
     }
 
-    /// Determine whether or not the variable policy engine is enabled
+    /// Determines if the variable policy engine is enabled.
     pub fn is_variable_policy_enabled(&self) -> Result<bool, EfiError> {
         if self.protocol.revision < protocol::PROTOCOL_REVISION_1 {
             return Err(EfiError::Unsupported);
@@ -688,10 +815,11 @@ impl MuVariablePolicyProtocol {
         let encoded_policy: Box<[u8]> = policy.encode().map_err(|_| EfiError::InvalidParameter)?;
 
         EfiError::status_to_result((self.protocol.register_variable_policy)(
-            encoded_policy.as_ptr() as *const VariablePolicyEntryHeader
+            encoded_policy.as_ptr() as *const protocol::VariablePolicyEntryHeader
         ))
     }
 
+    /// Dumps all variable policies currently registered into a vector of `VariablePolicy`.
     pub fn dump_variable_policy(&self) -> Result<Vec<VariablePolicy>, EfiError> {
         if self.protocol.revision < protocol::PROTOCOL_REVISION_1 {
             return Err(EfiError::Unsupported);
@@ -758,7 +886,7 @@ impl MuVariablePolicyProtocol {
         Ok(policies)
     }
 
-    /// Locks the variable policy engine
+    /// Locks the variable policy, preventing any further changes to the variable policies.
     pub fn lock_variable_policy(&self) -> Result<(), EfiError> {
         if self.protocol.revision < protocol::PROTOCOL_REVISION_1 {
             return Err(EfiError::Unsupported);
@@ -767,6 +895,8 @@ impl MuVariablePolicyProtocol {
         EfiError::status_to_result((self.protocol.lock_variable_policy)())
     }
 
+    /// Helper function to retrieve the lock on variable state policy information for a given variable name and namespace GUID.
+    /// Returns a tuple containing the `LockOnVarStatePolicy` and an optional target name
     fn get_variable_lock_policy_info(
         &self,
         variable_name: &[u16],
@@ -816,6 +946,10 @@ impl MuVariablePolicyProtocol {
         Ok((lock_on_var_state_policy, target_name))
     }
 
+    /// Retrieves the variable policy for a given variable name and namespace GUID.
+    /// Returns `Ok(None)` if the variable policy is not found.
+    /// Returns `Ok(Some(Box<VariablePolicy>))` if the variable policy is found.
+    /// Returns an `EfiError` if an error occurs during the operation.
     pub fn get_variable_policy(
         &self,
         variable_name: Option<&[u16]>,
@@ -933,21 +1067,23 @@ impl MuVariablePolicyProtocol {
         // Put all components into the encoded policy buffer
         unsafe {
             // Insert the VariablePolicyEntryHeader at the start of the buffer
-            let header_ptr: *mut VariablePolicyEntryHeader =
+            let header_ptr: *mut protocol::VariablePolicyEntryHeader =
                 encoded_policy.as_mut_ptr() as *mut protocol::VariablePolicyEntryHeader;
             ptr::copy_nonoverlapping((&header).as_ptr(), header_ptr, 1);
 
             // If the lock type is LockOnVarState, we need to insert the LockOnVarStatePolicy and target name
             if let Some(lock_on_var_state_policy) = lock_on_var_state_policy {
-                let lock_on_var_state_ptr = encoded_policy.as_mut_ptr().add(size_of::<VariablePolicyEntryHeader>())
-                    as *mut protocol::LockOnVarStatePolicy;
+                let lock_on_var_state_ptr =
+                    encoded_policy.as_mut_ptr().add(size_of::<protocol::VariablePolicyEntryHeader>())
+                        as *mut protocol::LockOnVarStatePolicy;
                 ptr::copy_nonoverlapping((&lock_on_var_state_policy).as_ptr(), lock_on_var_state_ptr, 1);
             }
 
             if let Some(target_name) = target_name_val.as_ref() {
-                let target_name_ptr = encoded_policy
-                    .as_mut_ptr()
-                    .add(size_of::<LockOnVarStatePolicy>() + core::mem::size_of::<VariablePolicyEntryHeader>());
+                let target_name_ptr = encoded_policy.as_mut_ptr().add(
+                    size_of::<protocol::LockOnVarStatePolicy>()
+                        + core::mem::size_of::<protocol::VariablePolicyEntryHeader>(),
+                );
                 ptr::copy_nonoverlapping(
                     (*target_name).as_ref().as_ptr() as *const u8,
                     target_name_ptr,
@@ -994,14 +1130,18 @@ mod test {
 
     const DUMMY_VAR_VALUE: u8 = 42;
 
+    /// Mocked protocol::VariablePolicyProtocol::disable_variable_policy
     extern "efiapi" fn mock_disable_variable_policy() -> efi::Status {
         efi::Status::SUCCESS
     }
 
+    /// Mocked protocol::VariablePolicyProtocol::lock_variable_policy
     extern "efiapi" fn mock_lock_variable_policy() -> efi::Status {
         efi::Status::SUCCESS
     }
 
+    /// Mocked protocol::VariablePolicyProtocol::get_variable_policy_info that
+    /// uses get_dummy_policies() as a variable policy store.
     extern "efiapi" fn mock_get_variable_policy_info(
         variable_name: *const u16,
         vendor_guid: *const Guid,
@@ -1053,8 +1193,8 @@ mod test {
                 let variable_policy_size = size_of::<protocol::VariablePolicyEntryHeader>()
                     + basic_policy.name().unwrap_or(EMPTY_NAME).len() * size_of::<u16>();
 
-                let header: &mut VariablePolicyEntryHeader =
-                    unsafe { &mut *(encoded_policy.as_mut_ptr() as *mut VariablePolicyEntryHeader) };
+                let header: &mut protocol::VariablePolicyEntryHeader =
+                    unsafe { &mut *(encoded_policy.as_mut_ptr() as *mut protocol::VariablePolicyEntryHeader) };
 
                 header.size = variable_policy_size as u16;
                 header.offset_to_name = size_of::<protocol::VariablePolicyEntryHeader>() as u16;
@@ -1079,6 +1219,8 @@ mod test {
         return efi::Status::NOT_FOUND;
     }
 
+    /// Mocked protocol::VariablePolicyProtocol::get_lock_on_variable_state_variable_policy_info that
+    /// uses get_dummy_policies() as a variable policy store.
     extern "efiapi" fn mock_get_lock_on_variable_state_variable_policy_info(
         variable_name: *const u16,
         vendor_guid: *const Guid,
@@ -1158,6 +1300,7 @@ mod test {
         return efi::Status::NOT_FOUND;
     }
 
+    /// Mocked protocol::VariablePolicyProtocol::is_variable_policy_enabled that always returns true
     extern "efiapi" fn mock_is_variable_policy_enabled(state: *mut bool) -> efi::Status {
         unsafe {
             *state = true;
@@ -1165,14 +1308,28 @@ mod test {
         efi::Status::SUCCESS
     }
 
-    extern "efiapi" fn mock_register_variable_policy(policy_entry: *const VariablePolicyEntryHeader) -> efi::Status {
+    /// Mocked protocol::VariablePolicyProtocol::register_variable_policy that validates the policy entry
+    extern "efiapi" fn mock_register_variable_policy(
+        policy_entry: *const protocol::VariablePolicyEntryHeader,
+    ) -> efi::Status {
         if policy_entry.is_null() {
+            assert!(false, "Policy entry pointer was null");
             return efi::Status::INVALID_PARAMETER;
         }
 
-        efi::Status::SUCCESS
+        // Validate entry by decoding it
+        match VariablePolicy::decode(unsafe {
+            core::slice::from_raw_parts(policy_entry as *const u8, (*policy_entry).size as usize)
+        }) {
+            Ok(_) => efi::Status::SUCCESS,
+            Err(e) => {
+                assert!(false, "Failed to decode policy entry: {:?}", e);
+                efi::Status::INVALID_PARAMETER
+            }
+        }
     }
 
+    /// Mocked protocol::VariablePolicyProtocol::dump_variable_policy that dumps dummy policies
     extern "efiapi" fn mock_dump_variable_policy(buffer: *mut u8, size: *mut u32) -> efi::Status {
         let dummy_policies = get_dummy_policies().iter().map(|policy| policy.encode().unwrap()).collect::<Vec<_>>();
         let policy_dump_size = dummy_policies.iter().map(|p| p.len()).sum::<usize>();
@@ -1215,6 +1372,7 @@ mod test {
         efi::Status::SUCCESS
     }
 
+    /// Mocked protocol::Protocol with the mocked functions
     const MOCKED_PROTOCOL: protocol::Protocol = protocol::Protocol {
         revision: protocol::PROTOCOL_REVISION_2,
         disable_variable_policy: mock_disable_variable_policy,
@@ -1226,6 +1384,7 @@ mod test {
         dump_variable_policy: mock_dump_variable_policy,
     };
 
+    /// Returns a vector of dummy variable policies for testing purposes
     pub fn get_dummy_policies() -> Vec<VariablePolicy<'static>> {
         vec![
             VariablePolicy::NoLock(
@@ -1319,6 +1478,19 @@ mod test {
     }
 
     #[test]
+    /// Tests the `register_variable_policy` method of the `VariablePolicyProtocol`.
+    pub fn test_register_variable_policy() {
+        let protocol = VariablePolicyProtocol::new(MOCKED_PROTOCOL);
+
+        // Do the following for all policies
+        for policy in get_dummy_policies().iter() {
+            let result = protocol.register_variable_policy(policy);
+            assert!(result.is_ok());
+        }
+    }
+
+    #[test]
+    /// Tests encoding a variable policy, checking encoded fields manually.
     pub fn test_encode_variable_policy() {
         // Do the following for all policies
         for policy in get_dummy_policies().iter() {
@@ -1337,13 +1509,13 @@ mod test {
                 encoded_policy.len(),
                 match policy {
                     VariablePolicy::LockOnVarState(..) => {
-                        size_of::<VariablePolicyEntryHeader>()
+                        size_of::<protocol::VariablePolicyEntryHeader>()
                             + size_of::<protocol::LockOnVarStatePolicy>()
                             + target_name_length_in_bytes
                             + name_length_in_bytes
                     }
                     _ => {
-                        size_of::<VariablePolicyEntryHeader>() + name_length_in_bytes
+                        size_of::<protocol::VariablePolicyEntryHeader>() + name_length_in_bytes
                     }
                 }
             );
@@ -1359,10 +1531,10 @@ mod test {
                 u16::from_le_bytes(encoded_policy[6..8].try_into().unwrap()),
                 match &policy {
                     VariablePolicy::NoLock(_) | VariablePolicy::LockNow(_) | VariablePolicy::LockOnCreate(_) => {
-                        size_of::<VariablePolicyEntryHeader>()
+                        size_of::<protocol::VariablePolicyEntryHeader>()
                     }
                     VariablePolicy::LockOnVarState(..) => {
-                        size_of::<VariablePolicyEntryHeader>()
+                        size_of::<protocol::VariablePolicyEntryHeader>()
                             + size_of::<protocol::LockOnVarStatePolicy>()
                             + target_name_length_in_bytes
                     }
@@ -1422,6 +1594,7 @@ mod test {
     }
 
     #[test]
+    /// Tests encoding and decoding of variable policies, ensuring that the round trip preserves the original policy.
     fn test_round_trip_encode_decode() {
         for policy in get_dummy_policies().iter() {
             let encoded_policy = policy.encode().unwrap();
@@ -1431,6 +1604,7 @@ mod test {
     }
 
     #[test]
+    /// Tests encoding of variable policies with invalid names, ensuring that it returns an error.
     fn test_encode_variable_policy_invalid_name() {
         let bad_name_policy = VariablePolicy::NoLock(BasicVariablePolicy {
             name: Some((&utf16!("InvalidName")[..]).into()), // Missing null terminator
@@ -1462,6 +1636,7 @@ mod test {
         assert!(bad_target_name_policy.encode().unwrap_err() == EfiError::InvalidParameter);
     }
 
+    /// Test decoding invalid variable policies, ensuring that it returns an error.
     #[test]
     fn test_decode_invalid_variable_policy() {
         // Test decoding with an invalid buffer size (one byte smaller than a header + a minimal (zero char) name)
@@ -1539,26 +1714,31 @@ mod test {
         }
     }
 
-    // Test dump_variable_policy mocking policy.dump_variable_policy
+    // Test dump_variable_policy method
     #[test]
     fn test_dump_variable_policy() {
-        let protocol = MuVariablePolicyProtocol { protocol: MOCKED_PROTOCOL };
+        let protocol = VariablePolicyProtocol { protocol: MOCKED_PROTOCOL };
 
         let policies = protocol.dump_variable_policy().unwrap();
 
+        // Confirm that the number of policies dumped matches the number of dummy policies
         assert_eq!(policies.len(), get_dummy_policies().len());
+
+        // Confirm that the policies dumped match the dummy policies
         for (i, policy) in policies.iter().enumerate() {
             assert_eq!(policy, &get_dummy_policies()[i]);
         }
     }
 
     #[test]
+    /// Tests the `get_variable_policy` method of `VariablePolicyProtocol`.
     fn test_get_variable_policy() {
-        let protocol = MuVariablePolicyProtocol { protocol: MOCKED_PROTOCOL };
+        let protocol = VariablePolicyProtocol { protocol: MOCKED_PROTOCOL };
 
         for policy in get_dummy_policies().iter() {
             let basic_policy = policy.get_basic_policy();
 
+            // Retrieve each dummy policy, ensuring it matches the original
             let retrieved_policy: Option<Box<VariablePolicy<'_>>> = protocol
                 .get_variable_policy(basic_policy.name(), basic_policy.namespace)
                 .expect(format!("Failed to get variable policy for policy {:?}", policy).as_str());
@@ -1566,12 +1746,12 @@ mod test {
             assert_eq!(retrieved_policy.unwrap().as_ref(), policy);
         }
 
-        // Test getting a variable policy that does not exist
+        // Test getting a variable policy that does not exist, ensuring it returns None
         let non_existent_policy =
             protocol.get_variable_policy(Some(&utf16_null!("NonExistentVariable")), DUMMY_GUID_1).unwrap();
         assert!(non_existent_policy.is_none());
 
-        // Test getting a variable policy with a non-null-terminated name
+        // Test getting a variable policy with a non-null-terminated name, ensuring it returns EfiError::InvalidParameter
         let invalid_name_policy = protocol.get_variable_policy(Some(&utf16!("InvalidName")), DUMMY_GUID_1);
         assert!(invalid_name_policy.unwrap_err() == EfiError::InvalidParameter);
     }
