@@ -165,6 +165,8 @@ pub struct MemoryTypeInfo {
 /// the allocator where a new backing linked-list is created.
 ///
 pub struct FixedSizeBlockAllocator {
+    /// The memory type this allocator is managing and number of pages allocated for this memory type. This is used
+    /// to bucketize memory for the EFI_MEMORY_MAP and handle any special cases for memory types.
     memory_type_info: NonNull<MemoryTypeInfo>,
 
     /// The heads of the linked lists for each fixed-size block. Each index corresponds to a block size in
@@ -464,6 +466,7 @@ impl FixedSizeBlockAllocator {
         &self.stats
     }
 
+    /// Re-calculates the number of pages allocated for this memory type and updates the memory type info.
     fn update_memory_type_info(&self) {
         let stats = self.stats();
         let reserved_free = uefi_size_to_pages!(stats.reserved_size - stats.reserved_used);
@@ -875,6 +878,7 @@ mod tests {
         base
     }
 
+    // Test function to create a memory type info structure.
     fn memory_type_info(memory_type: efi::MemoryType) -> NonNull<MemoryTypeInfo> {
         let memory_type_info = Box::new(MemoryTypeInfo { memory_type, number_of_pages: AtomicU32::new(0) });
         NonNull::new(Box::leak(memory_type_info)).unwrap()

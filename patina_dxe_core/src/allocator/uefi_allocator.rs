@@ -52,10 +52,18 @@ impl UefiAllocator {
         allocator_handle: efi::Handle,
         page_allocation_granularity: usize,
     ) -> Self {
+        debug_assert!(
+            memory_type as usize <= gcd.memory_type_info_table().len(),
+            "Memory Type is not tracked in the GCD, use `new_dynamic` instead."
+        );
+
+        // Get the pointer to the first memory type info struct in the table, then offset it by the memory type, which
+        // is also the index in the table. The debug_assert above ensures that the memory type is tracked by the GCD.
         let memory_type_info = NonNull::new(unsafe {
             (gcd.memory_type_info_table().as_ptr() as *mut MemoryTypeInfo).add(memory_type as usize)
         })
-        .unwrap();
+        .expect("GCD has a valid memory type info table as a part of its initialization.");
+
         UefiAllocator {
             allocator: SpinLockedFixedSizeBlockAllocator::new(
                 gcd,
