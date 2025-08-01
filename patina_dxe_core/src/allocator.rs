@@ -1020,17 +1020,17 @@ fn process_hob_allocations(hob_list: &HobList) {
             )
             .is_err()
             {
-                // if we failed, we should just continue, we won't have null pointer detection, possibly, although one failure
-                // could be that address 0 is not in the memory region of the platform, which will also act as null pointer
-                // detection.
+                // if we failed, we should just continue, we will still unmap page 0, but it will be possible to
+                // allocate by another entity, which is dangerous.
                 log::warn!(
                     "Failed to allocate page 0 for null pointer detection. It will still be unmapped but something may attempt to allocate it by address."
                 );
-                debug_assert!(false);
             }
         }
         _ => {
-            // if we got here, then page 0 is already allocated, so we don't need to do anything.
+            // if we got here, then page 0 is not part of system memory, it may be absent entirely, or the platform may
+            // have this reserved or marked as MMIO. That is a dangerous configuration, because we will unmap it
+            // regardless of being able to allocate it.
             log::info!(
                 "Page 0 is not part of system memory, it cannot be allocated. It will still be unmapped to use for null pointer detection."
             );
