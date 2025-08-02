@@ -323,7 +323,7 @@ impl AllocatorMap {
             // Otherwise, we will just leak a new memory type info struct with the given memory type and have the
             // allocator use it.
             let memory_type_info = EFiMemoryTypeInformation { memory_type, number_of_pages: 0 };
-            let memory_type_info = NonNull::new(Box::leak(Box::new(memory_type_info))).unwrap();
+            let memory_type_info = NonNull::from(Box::leak(Box::new(memory_type_info)));
             Box::leak(Box::new(UefiAllocator::new_dynamic(&GCD, memory_type_info, handle, granularity)))
         })
     }
