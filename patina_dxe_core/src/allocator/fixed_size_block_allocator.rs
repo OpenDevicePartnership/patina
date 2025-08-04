@@ -291,8 +291,13 @@ impl FixedSizeBlockAllocator {
         }
 
         // Determine how much additional memory is required
-        let additional_mem_required =
-            layout.pad_to_align().size() + Layout::new::<AllocatorListNode>().pad_to_align().size();
+        //
+        // Per the `linked_list_allocator::hole::HoleList::new` documentation, depending on the alignment of the
+        // hole_addr pointer, the minimum size for storing required metadata is between 2 * size_of::<usize> and
+        //  3 * size_of::<usize>. The size reservation for `additional_mem_required` assumed the largest size.
+        let additional_mem_required = layout.pad_to_align().size()
+            + Layout::new::<AllocatorListNode>().pad_to_align().size()
+            + 3 * size_of::<usize>();
         let additional_mem_required = align_up_size(additional_mem_required, align_of::<AllocatorListNode>());
 
         Err(FixedSizeBlockAllocatorError::OutOfMemory(additional_mem_required))
@@ -1607,7 +1612,7 @@ mod tests {
             assert_eq!(stats.page_allocation_calls, 0);
             assert_eq!(stats.page_free_calls, 0);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
-            assert_eq!(stats.reserved_used, MIN_EXPANSION);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION + uefi_pages_to_size!(1));
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 2));
 
             unsafe {
@@ -1621,7 +1626,7 @@ mod tests {
             assert_eq!(stats.page_allocation_calls, 0);
             assert_eq!(stats.page_free_calls, 0);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
-            assert_eq!(stats.reserved_used, MIN_EXPANSION);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION + uefi_pages_to_size!(1));
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 2));
 
             //test alloc/deallocate and stats blowing the bucket
@@ -1640,7 +1645,7 @@ mod tests {
             assert_eq!(stats.page_allocation_calls, 0);
             assert_eq!(stats.page_free_calls, 0);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
-            assert_eq!(stats.reserved_used, MIN_EXPANSION);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION + uefi_pages_to_size!(1));
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
 
             unsafe {
@@ -1659,7 +1664,7 @@ mod tests {
             assert_eq!(stats.page_allocation_calls, 0);
             assert_eq!(stats.page_free_calls, 0);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
-            assert_eq!(stats.reserved_used, MIN_EXPANSION);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION + uefi_pages_to_size!(1));
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
 
             // test that a small page allocation fits in the 1MB free reserved region.
@@ -1678,7 +1683,7 @@ mod tests {
             assert_eq!(stats.page_allocation_calls, 1);
             assert_eq!(stats.page_free_calls, 0);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
-            assert_eq!(stats.reserved_used, MIN_EXPANSION + uefi_pages_to_size!(4));
+            assert_eq!(stats.reserved_used, MIN_EXPANSION + uefi_pages_to_size!(5));
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
 
             unsafe {
@@ -1697,7 +1702,7 @@ mod tests {
             assert_eq!(stats.page_allocation_calls, 1);
             assert_eq!(stats.page_free_calls, 1);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
-            assert_eq!(stats.reserved_used, MIN_EXPANSION);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION + uefi_pages_to_size!(1));
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
 
             //test that a lage page allocation results in more claimed pages.
@@ -1716,7 +1721,7 @@ mod tests {
             assert_eq!(stats.page_allocation_calls, 2);
             assert_eq!(stats.page_free_calls, 1);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
-            assert_eq!(stats.reserved_used, MIN_EXPANSION);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION + uefi_pages_to_size!(1));
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1 + 0x104);
 
             // test that a small page allocation fits in the 1MB free reserved region.
@@ -1736,7 +1741,7 @@ mod tests {
             assert_eq!(stats.page_allocation_calls, 3);
             assert_eq!(stats.page_free_calls, 1);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
-            assert_eq!(stats.reserved_used, MIN_EXPANSION + uefi_pages_to_size!(4));
+            assert_eq!(stats.reserved_used, MIN_EXPANSION + uefi_pages_to_size!(5));
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1 + 0x104);
 
             unsafe {
@@ -1758,7 +1763,7 @@ mod tests {
             assert_eq!(stats.page_allocation_calls, 3);
             assert_eq!(stats.page_free_calls, 3);
             assert_eq!(stats.reserved_size, MIN_EXPANSION * 2);
-            assert_eq!(stats.reserved_used, MIN_EXPANSION);
+            assert_eq!(stats.reserved_used, MIN_EXPANSION + uefi_pages_to_size!(1));
             assert_eq!(stats.claimed_pages, uefi_size_to_pages!(MIN_EXPANSION * 5) + 1);
         });
     }

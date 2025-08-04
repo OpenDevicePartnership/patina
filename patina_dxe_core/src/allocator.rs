@@ -1336,6 +1336,28 @@ mod tests {
         });
     }
 
+    // This test uses an allocation request size of 0x2b2fa0 to test a specific edge case.
+    //
+    // When core_allocate_pool attempts to allocate 0x2b2fa0 bytes (aligned to 0x2b2fb8 bytes), the allocation
+    // will initially fail and trigger a fallback to fallback_alloc, which requests 0x2b2ff8 bytes of additional
+    // memory. The GCD then allocates memory with a page-aligned size of 0x2b3000 bytes. Following this, the system
+    // calls expand() to add the newly allocated heap, which ends up being 0x2b2fc0 bytes in size. However, the
+    // difference between the heap size (0x2b2fc0) and the expected memory size (0x2b2fb8) is only 8 bytes. This
+    // small gap is insufficient to accommodate the metadata required by HoleList::new() from the
+    // linked_list_allocator crate, which expects extra space for internal bookkeeping structures.
+    //
+    // This test ensures that the linked list hole list structure is accounted for correctly and that the allocation
+    // succeeds without panicking due to insufficient space. For this particular test, the failing additional memory
+    // size returned was 0x2b3000 bytes (panic) whereas now 0x2b3010 bytes is returned to account for the HoleList
+    // metadata.
+    #[test]
+    fn linked_list_hole_list_struct_should_be_accounted_for() {
+        with_locked_state(0x4000000, || {
+            let ptr = core_allocate_pool(efi::BOOT_SERVICES_DATA, 0x2B2FA0).unwrap();
+            assert!(!ptr.is_null());
+        });
+    }
+
     #[test]
     fn allocate_pool_should_allocate_pool() {
         with_locked_state(0x1000000, || {
