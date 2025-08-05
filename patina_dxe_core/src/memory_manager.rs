@@ -214,12 +214,12 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_sdk
     let result = mm.allocate_pages(1, AllocationOptions::new());
     u_assert!(result.is_ok(), "Failed to allocate single page.");
     let allocation = result.unwrap();
-    let address = allocation.into_raw_ptr::<u8>() as usize;
+    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
     let result = unsafe { mm.free_pages(address, 1) };
     u_assert!(result.is_ok(), "Failed to free page.");
     let result = mm.allocate_pages(1, AllocationOptions::new().with_strategy(PageAllocationStrategy::Address(address)));
     u_assert!(result.is_ok(), "Failed to allocate page by address");
-    u_assert_eq!(result.unwrap().into_raw_ptr::<u8>() as usize, address, "Failed to allocate correct address");
+    u_assert_eq!(result.unwrap().into_raw_ptr::<u8>().unwrap() as usize, address, "Failed to allocate correct address");
 
     // Allocate an aligned address.
     const TEST_ALIGNMENT: usize = 0x400000;
@@ -227,7 +227,7 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_sdk
     u_assert!(result.is_ok(), "Failed to allocate single aligned pages.");
     let allocation = result.unwrap();
     u_assert_eq!(allocation.page_count(), 8);
-    let address = allocation.into_raw_ptr::<u8>() as usize;
+    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
     u_assert_eq!(address % TEST_ALIGNMENT, 0, "Allocated page not correctly aligned.");
     let result = unsafe { mm.free_pages(address, 8) };
     u_assert!(result.is_ok(), "Failed to free page.");
@@ -261,7 +261,7 @@ fn memory_manager_attributes_test(mm: Service<dyn MemoryManager>) -> patina_sdk:
     let result = mm.allocate_pages(1, AllocationOptions::new());
     u_assert!(result.is_ok(), "Failed to allocate single page.");
     let allocation = result.unwrap();
-    let address = allocation.into_raw_ptr::<u8>() as usize;
+    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
     let result = mm.get_page_attributes(address, 1);
     u_assert!(result.is_ok(), "Failed to get original page attributes.");
     let (access, caching) = result.unwrap();

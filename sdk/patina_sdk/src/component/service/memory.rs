@@ -96,18 +96,18 @@ pub trait MemoryManager {
     /// fn component(memory_manager: &dyn MemoryManager) -> Result<(), MemoryError> {
     ///     // Allocate a page of memory and leak it.
     ///     let alloc = memory_manager.allocate_pages(1, AllocationOptions::new())?;
-    ///     let static_u64 = alloc.try_leak_as(42).unwrap();
+    ///     let static_u64 = alloc.leak_as(42).unwrap();
     ///
     ///     // Allocate a page and convert it into a Box.
     ///     let alloc = memory_manager.allocate_pages(1, AllocationOptions::new())?;
     ///     #[cfg(feature = "alloc")]
-    ///     let boxed_value = alloc.try_into_box(42).unwrap();
+    ///     let boxed_value = alloc.into_box(42).unwrap();
     ///     // Memory will be safely freed when the Box is dropped.
     ///
     ///     // Allocate a page of memory and manually manage it, making sure
     ///     // to free it.
     ///     let alloc = memory_manager.allocate_pages(1, AllocationOptions::new())?;
-    ///     let ptr = alloc.into_raw_ptr::<u8>();
+    ///     let ptr = alloc.into_raw_ptr::<u8>().unwrap();
     ///     unsafe { memory_manager.free_pages(ptr as usize, 1)? };
     ///
     ///     Ok(())
@@ -493,11 +493,25 @@ impl PageAllocation {
     /// to free the memory, it will leak. The caller is responsible for assuring
     /// the type fits in the allocation before dereferencing. The memory will not
     /// be initialized and the caller is responsible ensuring the type is valid.
+    ///
+    /// # Errors
+    ///
+    /// If the size of the type `T` is larger than the allocation, this function
+    /// will return `None` and the pages will be freed.
     #[must_use]
-    #[inline(always)]
-    pub fn into_raw_ptr<T>(self) -> *mut T {
+    pub fn into_raw_ptr<T>(mut self) -> Option<*mut T> {
+        if self.byte_length() < size_of::<T>() {
+            // This is an intentional case where the struct is being dropped,
+            // but we want to avoid triggering the panic in its `Drop` implementation.
+            // To handle this safely, we manually free the pages and then call `forget`
+            // to prevent `drop` from running.
+            self.free_pages();
+            core::mem::forget(self);
+            return None;
+        }
+
         // Move this struct to manual management and return the address.
-        ManuallyDrop::new(self).blob.cast::<T>().as_ptr()
+        Some(ManuallyDrop::new(self).blob.cast::<T>().as_ptr())
     }
 
     /// Consumes the allocation and returns the raw address as a slice of type `T`.
@@ -509,7 +523,7 @@ impl PageAllocation {
     #[must_use]
     pub fn into_raw_slice<T>(self) -> *mut [T] {
         let count = self.byte_length() / size_of::<T>();
-        let ptr = self.into_raw_ptr::<T>();
+        let ptr = ManuallyDrop::new(self).blob.cast::<T>().as_ptr();
         core::ptr::slice_from_raw_parts_mut(ptr, count)
     }
 
@@ -521,26 +535,20 @@ impl PageAllocation {
     /// - `None` if the size of the value is larger than the allocation.
     /// - `Some(Box<T, _>)` of the initialized value.
     ///
+    /// # Errors
+    ///
+    /// If the size of the type `T` is larger than the allocation, this function
+    /// will return `None` and the pages will be freed.
     #[must_use]
     #[cfg(any(test, feature = "alloc"))]
-    pub fn try_into_box<T>(mut self, value: T) -> Option<Box<T, PageFree>> {
-        if self.byte_length() < size_of::<T>() {
-            // This is an intentional case where the struct is being dropped,
-            // but we want to avoid triggering the panic in its `Drop` implementation.
-            // To handle this safely, we manually free the pages and then call `forget`
-            // to prevent `drop` from running.
-            self.free_pages();
-            core::mem::forget(self);
-            return None;
-        }
-
+    pub fn into_box<T>(self, value: T) -> Option<Box<T, PageFree>> {
         // Create the struct to de-allocate the memory when the smart pointer is
         // dropped.
         let page_free = self.get_page_free();
 
         // Get the raw pointer. This will cause the page to be manually managed
         // which will be done by the Box and through the PageFree struct.
-        let ptr: *mut T = self.into_raw_ptr();
+        let ptr: *mut T = self.into_raw_ptr()?;
 
         // SAFETY: The memory is allocated and valid for writing through the length.
         unsafe {
@@ -574,19 +582,13 @@ impl PageAllocation {
     /// - `None` if the size of the value is larger than the allocation.
     /// - `Some(&mut T)` of the initialized value.
     ///
+    /// # Errors
+    ///
+    /// If the size of the type `T` is larger than the allocation, this function
+    /// will return `None` and the pages will be freed.
     #[must_use]
-    pub fn try_leak_as<'a, T>(mut self, value: T) -> Option<&'a mut T> {
-        if self.byte_length() < size_of::<T>() {
-            // This is an intentional case where the struct is being dropped,
-            // but we want to avoid triggering the panic in its `Drop` implementation.
-            // To handle this safely, we manually free the pages and then call `forget`
-            // to prevent `drop` from running.
-            self.free_pages();
-            core::mem::forget(self);
-            return None;
-        }
-
-        let ptr = self.into_raw_ptr::<T>();
+    pub fn leak_as<'a, T>(self, value: T) -> Option<&'a mut T> {
+        let ptr = self.into_raw_ptr::<T>()?;
 
         // SAFETY: The memory is allocated and valid for writing through the length.
         unsafe {
@@ -1094,12 +1096,12 @@ mod tests {
         let page = service.allocate_pages(1, AllocationOptions::new()).unwrap();
         assert_eq!(page.page_count(), 1);
         assert_eq!(page.byte_length(), UEFI_PAGE_SIZE);
-        let my_thing = page.try_leak_as(42).unwrap();
+        let my_thing = page.leak_as(42).unwrap();
         assert_eq!(*my_thing, 42);
     }
 
     #[test]
-    fn test_failed_try_into_box_does_not_panic() {
+    fn test_failed_into_box_does_not_panic() {
         let mm = Service::mock(Box::new(StdMemoryManager::new()));
 
         let page = mm
@@ -1107,13 +1109,13 @@ mod tests {
             .unwrap_or_else(|e| panic!("Failed to allocate pages: {:?}", e));
 
         assert!(
-            page.try_into_box([42_u8; UEFI_PAGE_SIZE + 1]).is_none(),
+            page.into_box([42_u8; UEFI_PAGE_SIZE + 1]).is_none(),
             "Expected allocation to fail due to insufficient size for Box<[u8]>"
         );
     }
 
     #[test]
-    fn test_failed_try_leak_as_does_not_panic() {
+    fn test_failed_leak_as_does_not_panic() {
         let mm = Service::mock(Box::new(StdMemoryManager::new()));
 
         let page = mm
@@ -1121,7 +1123,7 @@ mod tests {
             .unwrap_or_else(|e| panic!("Failed to allocate pages: {:?}", e));
 
         assert!(
-            page.try_leak_as([42_u8; UEFI_PAGE_SIZE + 1]).is_none(),
+            page.leak_as([42_u8; UEFI_PAGE_SIZE + 1]).is_none(),
             "Expected allocation to fail due to insufficient size for [u8]"
         );
     }
@@ -1216,7 +1218,7 @@ mod tests {
         pa.zero_pages();
 
         // check that all bytes are zeroed
-        let a = pa.into_raw_ptr::<u8>();
+        let a = pa.into_raw_ptr::<u8>().unwrap();
         for i in 0..(UEFI_PAGE_SIZE * 10) {
             assert_eq!(unsafe { *a.add(i) }, 0, "Byte at index {} is not zeroed", i);
         }
@@ -1263,7 +1265,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_into_box_value_is_placed_properly() {
+    fn test_into_box_value_is_placed_properly() {
         let mm = Box::leak(Box::new(StdMemoryManager::new()));
         static DROPPED: AtomicBool = AtomicBool::new(false);
 
@@ -1289,7 +1291,7 @@ mod tests {
 
         // Create the object for a limited time
         {
-            let boxed = pa.try_into_box(MyStruct::new(42)).expect("Should convert to Box<T> successfully");
+            let boxed = pa.into_box(MyStruct::new(42)).expect("Should convert to Box<T> successfully");
             assert_eq!(boxed.value(), 42);
         }
 
@@ -1353,5 +1355,13 @@ mod tests {
     #[test]
     fn test_uefi_page_size_is_4k() {
         assert_eq!(UEFI_PAGE_SIZE, 4096, "UEFI page size should be 4k (4096 bytes)");
+    }
+
+    #[test]
+    fn test_ptr_too_large() {
+        let mm = Box::leak(Box::new(StdMemoryManager::new()));
+        let pa = mm.allocate_pages(1, AllocationOptions::default()).expect("Should not fail for test.");
+        let res = pa.into_raw_ptr::<[u8; UEFI_PAGE_SIZE + 1]>();
+        assert!(res.is_none(), "Expected allocation to fail due to insufficient size for [u8; UEFI_PAGE_SIZE + 1]");
     }
 }
