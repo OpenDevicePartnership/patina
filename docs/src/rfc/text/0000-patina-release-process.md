@@ -11,6 +11,8 @@ This RFC proposes a process for releasing Patina crates.
   - Clarify crate versioning process
   - Clarify open source versioning plan
   - Add requirement that hot fixes will only occur on the greatest version of a release
+- 2025-08-05:
+  - Simplify language in the hot fix process
 
 ## Motivation
 
@@ -219,7 +221,7 @@ Patina makes official releases on as the project determines necessary. This RFC 
   discussion section of the work item request. Note that the requested date may not be feasible; try to plan a
   special release request as early as possible.
 
-  Please consider if you can simply take the latest code as an early release and avoid a hot fix.
+  Please consider if you can simply take a newer release and avoid a hot fix.
 
 ## Hot Fix Process
 
