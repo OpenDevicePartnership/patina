@@ -13,6 +13,7 @@ This RFC proposes a process for releasing Patina crates.
   - Add requirement that hot fixes will only occur on the greatest version of a release
 - 2025-08-05:
   - Simplify language in the hot fix process
+  - Add release note organization requirement for crates sharing the same version
 
 ## Motivation
 
@@ -98,6 +99,10 @@ automation tools.
   the GitHub repository version.
   - This not a "strong" requirement and may be reviewed again the future if a compelling use case arises for more
     granular crate versioning. At a minimum, the "core" and "SDK" crates are expected to share the same version.
+
+- Note: Since all crates will have the same version, the release notes must be organized to break down changes by
+  crate. This will allow a given crate consumer to filter the changes relevant to them. The implementation details of
+  how to achieve this are outside the scope of this RFC.
 
 ### Branching
 
