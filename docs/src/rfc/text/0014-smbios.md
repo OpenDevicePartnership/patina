@@ -280,9 +280,6 @@ impl BiosInformation {
 A `SmbiosManager` struct provides the core SMBIOS functionality and maintains the global state:
 
 ```rust
-use std::collections::HashSet;
-use std::sync::Mutex;
-
 pub struct SmbiosManager {
     records: Vec<SmbiosRecord>,
     allocated_handles: HashSet<SmbiosHandle>,
