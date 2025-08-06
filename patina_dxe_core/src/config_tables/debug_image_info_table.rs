@@ -222,6 +222,7 @@ pub(crate) fn core_new_debug_image_info_entry(
         metadata_table.slice = new_boxed_slice;
 
         metadata_table.actual_table_size = new_table_size;
+        metadata_table.table.efi_debug_image_info_table = metadata_table.slice.as_ptr();
     }
 
     // size here is last_index + 1
