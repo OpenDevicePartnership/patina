@@ -42,7 +42,7 @@
 //!     patina_debugger::set_debugger(&DEBUGGER);
 //!
 //!     // Setup a custom monitor command for this platform.
-//!     patina_debugger::add_monitor_command("my_command", |args, writer| {
+//!     patina_debugger::add_monitor_command("my_command", "Description of my_command", |args, writer| {
 //!         // Parse the arguments from _args, which is a SplitWhitespace iterator.
 //!         let _ = write!(writer, "Executed my_command with args: {:?}", args);
 //!     });
@@ -147,7 +147,7 @@ trait Debugger: Sync {
     fn poll_debugger(&'static self);
 
     /// Adds a monitor command to the debugger.
-    fn add_monitor_command(&'static self, cmd: &'static str, function: MonitorCommandFn);
+    fn add_monitor_command(&'static self, cmd: &'static str, description: &'static str, function: MonitorCommandFn);
 }
 
 #[derive(Debug)]
@@ -237,15 +237,15 @@ pub fn enabled() -> bool {
 /// ## Example
 ///
 /// ```rust
-/// patina_debugger::add_monitor_command("my_command", |args, writer| {
+/// patina_debugger::add_monitor_command("my_command", "Description of my_command", |args, writer| {
 ///     // Parse the arguments from _args, which is a SplitWhitespace iterator.
 ///     let _ = write!(writer, "Executed my_command with args: {:?}", args);
 /// });
 /// ```
 ///
-pub fn add_monitor_command(cmd: &'static str, function: MonitorCommandFn) {
+pub fn add_monitor_command(cmd: &'static str, description: &'static str, function: MonitorCommandFn) {
     if let Some(debugger) = DEBUGGER.get() {
-        debugger.add_monitor_command(cmd, function);
+        debugger.add_monitor_command(cmd, description, function);
     }
 }
 
