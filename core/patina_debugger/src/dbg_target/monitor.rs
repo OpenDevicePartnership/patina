@@ -60,7 +60,7 @@ impl ext::monitor_cmd::MonitorCmd for PatinaTarget {
                 let _ = buf.write_str("External commands:\n");
                 if let Some(state) = self.system_state.try_lock() {
                     for cmd in state.monitor_commands.iter() {
-                        let _ = write!(buf, "{}\t", cmd.command);
+                        let _ = writeln!(buf, "    {} - {}", cmd.command, cmd.description);
                     }
                 };
             }
