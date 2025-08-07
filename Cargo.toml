@@ -52,6 +52,7 @@ syn = { version = "2" }
 uart_16550 = { version = "^0.3.2" }
 uefi_corosensei = { version = "0.1.3", default-features = false, registry = "patina-fw" }
 uuid = { version = "1.8", default-features = false }
+utf16_lit = { version = "2.0.2" }
 x86_64 = { version = "=0.15.2", default-features = false }
 
 # dev dependencies
