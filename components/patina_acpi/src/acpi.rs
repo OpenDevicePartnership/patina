@@ -199,6 +199,7 @@ where
             // SAFETY: We verify the table's signature before calling `install_facs`.
             let facs_addr = unsafe { facs_info.as_ref::<AcpiFacs>() } as *const AcpiFacs as u64;
             unsafe { fadt_table.as_mut::<AcpiFadt>().set_x_firmware_ctrl(facs_addr) };
+            unsafe { fadt_table.as_mut::<AcpiFadt>().inner._firmware_ctrl = facs_addr as u32 };
         }
 
         self.acpi_tables.write().insert(Self::FACS_KEY, facs_info);
@@ -380,6 +381,13 @@ where
             xsdt_data.set_oem_revision(fadt_info.header().oem_revision);
         }
 
+        // Zero out the ACPI 1.0 fields to indicate not supported.
+        unsafe {
+            fadt_info.as_mut::<AcpiFadt>().inner._firmware_ctrl =
+                fadt_info.as_mut::<AcpiFadt>().inner.x_firmware_ctrl as u32
+        };
+        unsafe { fadt_info.as_mut::<AcpiFadt>().inner._dsdt = fadt_info.as_mut::<AcpiFadt>().inner.x_dsdt as u32 };
+
         // Checksum root tables after modifying fields.
         self.checksum_common_tables()?;
 
@@ -395,6 +403,7 @@ where
         // If not, it will be updated when the FACP is installed.
         if let Some(facp) = self.acpi_tables.write().get_mut(&Self::FADT_KEY) {
             unsafe { facp.as_mut::<AcpiFadt>() }.inner.x_dsdt = dsdt_info.as_ptr() as u64;
+            unsafe { facp.as_mut::<AcpiFadt>().inner._firmware_ctrl = dsdt_info.as_ptr() as u32 };
         };
 
         dsdt_info.update_checksum(ACPI_CHECKSUM_OFFSET)?;
