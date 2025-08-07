@@ -559,6 +559,11 @@ pub fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(),
         }
     };
 
+    // Release the lock on allocators, as it raises the TPL to TPL_HIGH_LEVEL. During the MAT install, it will attempt
+    // to lock the system tables, which will result in an attempt to raise the TPL to a lower level because the system
+    // tables are locked at TPL_NOTIFY
+    drop(allocators);
+
     // If the memory type is runtime services code or data, we need to install the memory attributes table to reflect
     // the update. The MAT logic will decide if it is a proper time to install the MAT or not.
     match memory_type {
