@@ -27,7 +27,7 @@ pub fn read_memory<Arch: DebuggerArch>(address: u64, buffer: &mut [u8], unsafe_r
     let page_table = Arch::get_page_table()?;
 
     // Check that all of the pages are mapped before accessing the memory.
-    let len = if !unsafe_read { check_range_accessibility(&page_table, address, buffer.len())? } else { buffer.len() };
+    let len = if !unsafe_read { check_range_access::<Arch>(&page_table, address, buffer.len())? } else { buffer.len() };
 
     if len == 0 {
         return Err(());
@@ -53,7 +53,7 @@ pub fn write_memory<Arch: DebuggerArch>(address: u64, buffer: &[u8]) -> Result<(
     let mut page_table = Arch::get_page_table()?;
 
     // Check that all of the pages are mapped before accessing the memory.
-    let valid_bytes = check_range_accessibility(&page_table, address, buffer.len())?;
+    let valid_bytes = check_range_access::<Arch>(&page_table, address, buffer.len())?;
     if valid_bytes != buffer.len() {
         return Err(());
     }
@@ -98,10 +98,28 @@ pub fn write_memory<Arch: DebuggerArch>(address: u64, buffer: &[u8]) -> Result<(
     Ok(())
 }
 
+/// Checks if the range is valid for access. This will check the page tables and
+/// attempt to read the memory at the address to ensure that it is accessible.
+fn check_range_access<Arch: DebuggerArch>(
+    page_table: &Arch::PageTable,
+    address: u64,
+    length: usize,
+) -> Result<usize, ()> {
+    // Check the page tables first.
+    let len = check_paging_range(page_table, address, length)?;
+
+    // Poke it with a stick. This will just check the first address
+    // to try to catch bogus memory ranges that are still mapped, which is common
+    // on the debugger's initial breakpoint on the inherited page tables.
+    Arch::memory_poke_test(address)?;
+
+    Ok(len)
+}
+
 /// Checks that the range of memory is valid in the page tables. This ensures that
 /// reads to this region will not fault. On success returns the number of bytes valid
 /// to read from.
-fn check_range_accessibility<P: PageTable>(page_table: &P, start_address: u64, length: usize) -> Result<usize, ()> {
+fn check_paging_range<P: PageTable>(page_table: &P, start_address: u64, length: usize) -> Result<usize, ()> {
     // This is done page-by-page because it is unknown if the memory region has
     // consistent attributes across the entire range.
     // The length takes us to the start of the next memory range, so we go until the end of the range, e.g
@@ -187,6 +205,8 @@ mod tests {
             fn remove_watchpoint(address: u64, length: u64, access_type: breakpoints::WatchKind) -> bool;
             fn get_page_table() -> Result<MockMemPageTable, ()>;
             fn reboot();
+            fn memory_poke_test(address: u64) -> Result<(), ()>;
+            fn check_memory_poke_test(context: &mut ExceptionContext) -> bool;
         }
     }
 
@@ -195,7 +215,7 @@ mod tests {
         let mut mock_page_table = MockMemPageTable::new();
         mock_page_table.expect_query_memory_region().once().returning(|_, _| Ok(MemoryAttributes::empty()));
 
-        let result = check_range_accessibility(&mock_page_table, 0, 0x1000);
+        let result = check_paging_range(&mock_page_table, 0, 0x1000);
         assert!(result.expect("Failed to check range access.") == 0x1000);
     }
 
@@ -207,9 +227,9 @@ mod tests {
             .times(2)
             .returning(|_, _| Err(patina_paging::PtError::InvalidMemoryRange));
 
-        let result = check_range_accessibility(&mock_page_table, 0, 0x1000);
+        let result = check_paging_range(&mock_page_table, 0, 0x1000);
         result.expect_err("Should have return a failure.");
-        let result = check_range_accessibility(&mock_page_table, 0x800, 0x1000);
+        let result = check_paging_range(&mock_page_table, 0x800, 0x1000);
         result.expect_err("Should have return a failure.");
     }
 
@@ -218,7 +238,7 @@ mod tests {
         let mut mock_page_table = MockMemPageTable::new();
         mock_page_table.expect_query_memory_region().times(4).returning(|_, _| Ok(MemoryAttributes::empty()));
 
-        let result = check_range_accessibility(&mock_page_table, 0x800, 0x3000);
+        let result = check_paging_range(&mock_page_table, 0x800, 0x3000);
         assert!(result.expect("Failed to check range access.") == 0x3000);
     }
 
@@ -231,7 +251,7 @@ mod tests {
             .times(1)
             .returning(|_, _| Err(patina_paging::PtError::InvalidMemoryRange));
 
-        let result = check_range_accessibility(&mock_page_table, 0x800, 0x3000);
+        let result = check_paging_range(&mock_page_table, 0x800, 0x3000);
         assert!(result.expect("Failed to check range access.") == 0x1800);
     }
 
@@ -245,6 +265,8 @@ mod tests {
         let mut buffer = [0_u8];
 
         let _lock = PAGE_LOCK.lock().unwrap();
+        let poke_ctx = MockMemDebuggerArch::memory_poke_test_context();
+        poke_ctx.expect().returning(|_| Ok(()));
         let ctx = MockMemDebuggerArch::get_page_table_context();
         ctx.expect().returning(|| {
             let mut mock_page_table = MockMemPageTable::new();
@@ -282,6 +304,8 @@ mod tests {
         let buffer = [0xCF_u8; 1];
 
         let _lock = PAGE_LOCK.lock().unwrap();
+        let poke_ctx = MockMemDebuggerArch::memory_poke_test_context();
+        poke_ctx.expect().returning(|_| Ok(()));
         let ctx = MockMemDebuggerArch::get_page_table_context();
         ctx.expect().returning(|| {
             let mut mock_page_table = MockMemPageTable::new();
