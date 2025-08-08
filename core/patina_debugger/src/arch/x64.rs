@@ -1,4 +1,8 @@
-use core::{arch::asm, num::NonZeroUsize};
+use core::{
+    arch::asm,
+    num::NonZeroUsize,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use gdbstub::{
     arch::{RegId, Registers},
@@ -12,6 +16,8 @@ use crate::{ExceptionInfo, ExceptionType, memory};
 
 /// The "int 3" instruction.
 const INT_3: u8 = 0xCC;
+
+static POKE_TEST_MARKER: AtomicBool = AtomicBool::new(false);
 
 /// The uninhabitable type for implementing X64 architecture.
 pub enum X64Arch {}
@@ -169,6 +175,33 @@ impl DebuggerArch for X64Arch {
                 let _ = out.write_str("Unknown X64 monitor command. Supported commands: regs");
             }
         }
+    }
+
+    #[inline(never)]
+    fn memory_poke_test(address: u64) -> Result<(), ()> {
+        POKE_TEST_MARKER.store(true, Ordering::SeqCst);
+
+        // Attempt to read the address to check if it is accessible.
+        // This will raise a page fault if the address is not accessible.
+
+        let _value: u64;
+        // SAFETY: The safety of this is dubious and may cause a page fault, but
+        // the exception handler will catch it and resolve it by stepping beyond
+        // the exception.
+        unsafe { asm!("mov {}, [{}]", out(reg) _value, in(reg) address, options(nostack)) };
+
+        // Check if the marker was cleared, indicating a page fault. Reset either way.
+        if POKE_TEST_MARKER.swap(false, Ordering::SeqCst) { Ok(()) } else { Err(()) }
+    }
+
+    fn check_memory_poke_test(context: &mut ExceptionContext) -> bool {
+        let poke_test = POKE_TEST_MARKER.swap(false, Ordering::SeqCst);
+        if poke_test {
+            // We need to increment the instruction pointer to step past the load
+            context.rip += 3;
+        }
+
+        poke_test
     }
 }
 

@@ -48,7 +48,7 @@ pub trait DebuggerArch {
 
     /// Processes the entry into the debugger, doing any fixup needed to the
     /// CPU state of the system context.
-    fn process_entry(exception_type: u64, context: &mut ExceptionContext) -> crate::ExceptionInfo;
+    fn process_entry(exception_type: u64, context: &mut ExceptionContext) -> ExceptionInfo;
 
     /// Processes the exit from the debugger, doing any fixup needed to the
     /// CPU state of the system context.
@@ -74,6 +74,13 @@ pub trait DebuggerArch {
 
     /// Process architecture specific monitor commands.
     fn monitor_cmd(_tokens: &mut core::str::SplitWhitespace, _out: &mut dyn core::fmt::Write) {}
+
+    /// Checks if the memory is accessible by attempting a read and handling faults.
+    fn memory_poke_test(_address: u64) -> Result<(), ()>;
+
+    /// Checks if a memory poke test is active, handling it and returning true
+    /// if it is.
+    fn check_memory_poke_test(_context: &mut ExceptionContext) -> bool;
 }
 
 pub trait UefiArchRegs: Sized {
