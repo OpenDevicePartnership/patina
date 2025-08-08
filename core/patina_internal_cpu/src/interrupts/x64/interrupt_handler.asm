@@ -52,27 +52,24 @@ common_interrupt_entry:
     pop     rax
     xchg    qword ptr [rsp], rcx
 
-    jnz     error_code_present
+    jnz     stack_normalized
 
     # No error code, inject 0 before the vector.
 
     push    qword ptr [rsp]
     mov     qword ptr [rsp + 8], 0
-    push    1
-    jmp     stack_normalized
-
-error_code_present:
-    push    0
 
 stack_normalized:
+
+    push    0
 
     #
     # At This point, the stack is as follows. The offset is relative to the address
     # stored in R15 during this routine.
     #
     # --------------------------------------------------------------------------
-    # Offset -8 |   Error Code Hint. Ignore for now. This serves the dual
-    # Size   8  |   purpose of 16-aligning the stack and simplifying unwind.
+    # Offset -8 |   Unused (alignent)
+    # Size   8  |
     # --------------------------------------------------------------------------
     # Offset 0  |   Vector Index
     # Size   8  |
@@ -281,15 +278,8 @@ stack_normalized:
     pop     r14
     pop     r15
 
-    # Check the error code hint, if zero then we can leave the error code by adding
-    # 8 to the stack instead of 16.
-    cmp     qword ptr [rsp], 0
-    je      leave_error_code
-    add     rsp, 8
-
-leave_error_code:
-    # Pop the hint and the vector index, or vector index and faked error code.
-    add     rsp, 16
+    # Pop alignment qword, the error code (real or fake), and the vector index
+    add     rsp, 24
 
     # Return from the interrupt
     iretq
