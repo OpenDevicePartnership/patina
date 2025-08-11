@@ -822,7 +822,7 @@ pub enum PageAllocationStrategy {
 pub use mock::StdMemoryManager;
 
 #[cfg(any(test, feature = "mockall"))]
-#[cfg(not(tarpaulin_include))]
+#[coverage(off)]
 mod mock {
     extern crate std;
     use std::{

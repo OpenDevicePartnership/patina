@@ -102,7 +102,7 @@ extern "efiapi" fn set_watchdog_timer(
     }
 }
 // Requires excessive Mocking for the OK case.
-#[cfg(not(tarpaulin_include))]
+#[coverage(off)]
 // This callback is invoked when the Metronome Architectural protocol is installed. It initializes the
 // METRONOME_ARCH_PTR to point to the Metronome Architectural protocol interface.
 extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_void) {
@@ -117,7 +117,7 @@ extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_
     }
 }
 // Requires excessive Mocking for the OK case.
-#[cfg(not(tarpaulin_include))]
+#[coverage(off)]
 // This callback is invoked when the Watchdog Timer Architectural protocol is installed. It initializes the
 // WATCHDOG_ARCH_PTR to point to the Watchdog Timer Architectural protocol interface.
 extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_void) {

@@ -28,6 +28,3 @@ x86_64 = { workspace = true, features = [
 doc = []
 mockall = ["dep:mockall", "std"]
 std = []
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }

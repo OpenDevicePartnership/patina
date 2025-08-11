@@ -57,7 +57,7 @@ impl FromHob for HobPerformanceData {
 }
 
 impl HobPerformanceDataExtractor for Hob<'_, HobPerformanceData> {
-    #[cfg(not(tarpaulin_include))]
+    #[coverage(off)]
     fn extract_hob_perf_data(&self) -> Result<(u32, PerformanceRecordBuffer), Error> {
         merge_hob_performance_buffer(self.iter())
     }
