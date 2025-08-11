@@ -4,7 +4,7 @@ resolver = "2"
 members = ["components/*", "core/*", "sdk/*", "patina_dxe_core"]
 
 [workspace.package]
-version = "6.0.4"
+version = "6.1.0"
 license = "BSD-2-Clause-Patent"
 edition = "2024"
 rust-version = "1.85"
@@ -32,17 +32,17 @@ log = { version = "0.4", default-features = false }
 mu_pi = { version = "5.2.3" }
 mu_rust_helpers = { version = "3.0.1" }
 num-traits = { version = "0.2", default-features = false }
-patina_debugger = { version = "6.0.4", path = "core/patina_debugger", registry = "patina-fw" }
-patina_internal_collections = { version = "6.0.4", path = "core/patina_internal_collections", default-features = false, registry = "patina-fw" }
-patina_internal_cpu = { version = "6.0.4", path = "core/patina_internal_cpu", registry = "patina-fw" }
-patina_internal_depex = { version = "6.0.4", path = "core/patina_internal_depex", registry = "patina-fw" }
-patina_internal_device_path = { version = "6.0.4", path = "core/patina_internal_device_path", registry = "patina-fw" }
+patina_debugger = { version = "6.1.0", path = "core/patina_debugger", registry = "patina-fw" }
+patina_internal_collections = { version = "6.1.0", path = "core/patina_internal_collections", default-features = false, registry = "patina-fw" }
+patina_internal_cpu = { version = "6.1.0", path = "core/patina_internal_cpu", registry = "patina-fw" }
+patina_internal_depex = { version = "6.1.0", path = "core/patina_internal_depex", registry = "patina-fw" }
+patina_internal_device_path = { version = "6.1.0", path = "core/patina_internal_device_path", registry = "patina-fw" }
 patina_mtrr = { version = "1.0.0", registry = "patina-fw" }
 patina_paging = { version = "8", registry = "patina-fw" }
-patina_performance = { version = "6.0.4", path = "components/patina_performance", registry = "patina-fw" }
-patina_sdk = { version = "6.0.4", path = "sdk/patina_sdk", registry = "patina-fw" }
-patina_sdk_macro = { version = "6.0.4", path = "sdk/patina_sdk_macro", registry = "patina-fw" }
-patina_stacktrace = { version = "6.0.4", path = "core/patina_stacktrace", registry = "patina-fw" }
+patina_performance = { version = "6.1.0", path = "components/patina_performance", registry = "patina-fw" }
+patina_sdk = { version = "6.1.0", path = "sdk/patina_sdk", registry = "patina-fw" }
+patina_sdk_macro = { version = "6.1.0", path = "sdk/patina_sdk_macro", registry = "patina-fw" }
+patina_stacktrace = { version = "6.1.0", path = "core/patina_stacktrace", registry = "patina-fw" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
 r-efi = { version = "5.0.0", default-features = false }
