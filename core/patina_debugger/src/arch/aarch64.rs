@@ -1,9 +1,9 @@
-use core::{arch::asm, fmt::Write, num::NonZeroUsize, ops::Shr};
+use core::{arch::asm, num::NonZeroUsize, ops::Shr};
 
 use gdbstub::arch::{RegId, Registers};
 use patina_internal_cpu::interrupts::ExceptionContext;
 
-use crate::{ExceptionInfo, ExceptionType, memory, transport::BufferWriter};
+use crate::{ExceptionInfo, ExceptionType, memory};
 
 use super::{DebuggerArch, UefiArchRegs};
 use bitfield_struct::bitfield;
@@ -97,6 +97,7 @@ impl DebuggerArch for Aarch64Arch {
                 | EC_DATA_ABORT_CURRENT_EL => ExceptionType::AccessViolation(context.far as usize),
                 _ => ExceptionType::Other(exception_class),
             },
+            instruction_pointer: context.elr,
         }
     }
 
@@ -236,7 +237,7 @@ impl DebuggerArch for Aarch64Arch {
         }
     }
 
-    fn monitor_cmd(tokens: &mut core::str::SplitWhitespace, out: &mut BufferWriter) {
+    fn monitor_cmd(tokens: &mut core::str::SplitWhitespace, out: &mut dyn core::fmt::Write) {
         macro_rules! print_sysreg {
           ($reg:expr, $out:expr) => {
             {

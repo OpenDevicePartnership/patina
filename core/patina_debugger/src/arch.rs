@@ -73,7 +73,7 @@ pub trait DebuggerArch {
     fn get_page_table() -> Result<Self::PageTable, ()>;
 
     /// Process architecture specific monitor commands.
-    fn monitor_cmd(_tokens: &mut core::str::SplitWhitespace, _out: &mut crate::transport::BufferWriter) {}
+    fn monitor_cmd(_tokens: &mut core::str::SplitWhitespace, _out: &mut dyn core::fmt::Write) {}
 }
 
 pub trait UefiArchRegs: Sized {

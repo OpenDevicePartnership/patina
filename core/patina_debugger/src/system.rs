@@ -25,8 +25,13 @@ impl SystemState {
         SystemState { modules: Modules::new(), monitor_commands: Vec::new() }
     }
 
-    pub fn add_monitor_command(&mut self, command: &'static str, callback: MonitorCommandFn) {
-        let _monitor = MonitorCallback { command, callback };
+    pub fn add_monitor_command(
+        &mut self,
+        command: &'static str,
+        description: &'static str,
+        callback: MonitorCommandFn,
+    ) {
+        let _monitor = MonitorCallback { command, description, callback };
         cfg_if::cfg_if! {
             if #[cfg(feature = "alloc")] {
                 self.monitor_commands.push(_monitor);
@@ -125,6 +130,8 @@ impl Modules {
 pub(crate) struct MonitorCallback {
     /// The monitor command string that triggers the callback.
     pub command: &'static str,
+    /// The description of the monitor command.
+    pub description: &'static str,
     /// The callback function that will be invoked when the command is executed.
     /// See [MonitorCommandFn] for more details on the function signature.
     pub callback: MonitorCommandFn,
@@ -182,10 +189,11 @@ mod tests {
     fn test_handle_monitor_command() {
         let mut system_state = SystemState::new();
         let command = "test_command";
+        let description = "This is a test command";
         let callback: MonitorCommandFn = |args, out| {
             let _ = writeln!(out, "Executed with args: {:?}", args.collect::<Vec<_>>());
         };
-        system_state.add_monitor_command(command, callback);
+        system_state.add_monitor_command(command, description, callback);
 
         let mut out = String::new();
         let args = &mut "arg1 arg2".split_whitespace();
