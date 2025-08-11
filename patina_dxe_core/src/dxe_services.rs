@@ -1808,7 +1808,7 @@ mod tests {
                 core::ptr::null_mut(),
             );
             assert_eq!(s, efi::Status::SUCCESS);
-            assert!(out >= 0x3000 && out < 0x3300);
+            assert!((0x3000..0x3300).contains(&out));
             assert_eq!(out & 0x7, 0, "alignment not respected");
         });
     }
@@ -1830,7 +1830,7 @@ mod tests {
                 core::ptr::null_mut(),
             );
             assert_eq!(s, efi::Status::SUCCESS);
-            assert!(out >= 0x4000 && out < 0x4400);
+            assert!((0x4000..0x4400).contains(&out));
             assert_eq!(out & 0xF, 0);
         });
     }
