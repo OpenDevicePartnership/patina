@@ -229,7 +229,7 @@ impl CommunicateBuffer {
     }
 }
 
-#[cfg(not(tarpaulin_include))]
+#[coverage(off)]
 impl fmt::Debug for CommunicateBuffer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "CommunicateBuffer(id: 0x{:X}. len: 0x{:X})", self.id(), self.len())?;

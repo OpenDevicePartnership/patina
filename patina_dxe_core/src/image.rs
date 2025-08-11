@@ -49,7 +49,7 @@ pub const EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER: u16 = 12;
 pub const ENTRY_POINT_STACK_SIZE: usize = 0x100000;
 
 // dummy function used to initialize PrivateImageData.entry_point.
-#[cfg(not(tarpaulin_include))]
+#[coverage(off)]
 extern "efiapi" fn unimplemented_entry_point(
     _handle: efi::Handle,
     _system_table: *mut efi::SystemTable,

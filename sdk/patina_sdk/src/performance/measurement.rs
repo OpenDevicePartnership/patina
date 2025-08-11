@@ -193,7 +193,7 @@ pub mod event_callback {
     }
 }
 
-#[cfg(not(tarpaulin_include))]
+#[coverage(off)]
 // Tested via the generic version, see _create_performance_measurement. This one is using the static state which makes
 // it not mockable.
 ///
