@@ -1214,7 +1214,9 @@ mod tests {
     #[test]
     fn init_memory_support_should_process_resource_allocations() {
         test_support::with_global_lock(|| {
-            let physical_hob_list = build_test_hob_list(0x200000);
+            // Provide a larger test memory so allocator expansion during initialization won't fail.
+            // Previously 0x200000 (2 MiB) was sometimes insufficient; bump to 0x400000 (4 MiB).
+            let physical_hob_list = build_test_hob_list(0x400000);
             unsafe {
                 GCD.reset();
                 gcd::init_gcd(physical_hob_list);
@@ -1229,7 +1231,7 @@ mod tests {
 
             let allocators = ALLOCATORS.lock();
 
-            //Verify that the memory allocation hobs resulted in claimed pages in the allocator.
+            // Verify that the memory allocation HOBs resulted in claimed pages in the allocator.
             for memory_type in [
                 efi::RESERVED_MEMORY_TYPE,
                 efi::LOADER_CODE,
