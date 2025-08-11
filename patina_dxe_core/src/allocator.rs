@@ -1220,8 +1220,8 @@ mod tests {
     #[test]
     fn init_memory_support_should_process_resource_allocations() {
         test_support::with_global_lock(|| {
-            // Provide a larger test memory so allocator expansion during initialization won't fail.
-            // Previously 0x200000 (2 MiB) was sometimes insufficient; bump to 0x400000 (4 MiB).
+            // 4 MiB of test memory is required because allocator expansion during initialization
+            // may need to handle large allocations for memory buckets and HOBs.
             let physical_hob_list = build_test_hob_list(0x400000);
             unsafe {
                 GCD.reset();
