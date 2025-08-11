@@ -263,11 +263,7 @@ where
 
         // Add custom monitor commands to the debugger before initializing so that
         // they are available in the initial breakpoint.
-        patina_debugger::add_monitor_command("version", |_, out| {
-            let _ = out.write_str(concat!("Patina DXE Core v", env!("CARGO_PKG_VERSION")));
-        });
-
-        patina_debugger::add_monitor_command("gcd", |_, out| {
+        patina_debugger::add_monitor_command("gcd", "Prints the GCD", |_, out| {
             let _ = write!(out, "GCD -\n{}", GCD);
         });
 

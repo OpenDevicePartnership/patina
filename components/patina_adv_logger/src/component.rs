@@ -20,11 +20,7 @@ use patina_sdk::{
 };
 use r_efi::efi;
 
-use crate::{
-    logger::AdvancedLogger,
-    memory_log::{self, AdvLoggerInfo},
-    protocol::AdvancedLoggerProtocol,
-};
+use crate::{logger::AdvancedLogger, memory_log, protocol::AdvancedLoggerProtocol};
 
 /// C struct for the internal Advanced Logger protocol for the component.
 #[repr(C)]
@@ -113,15 +109,11 @@ where
     /// Installs the Advanced Logger Protocol for use by non-local components.
     ///
     fn entry_point(self, bs: StandardBootServices) -> Result<()> {
-        let log_info = match self.adv_logger.get_log_info() {
-            Some(log_info) => log_info,
-            None => {
-                log::error!("Advanced logger not initialized before component entry point!");
-                return Err(EfiError::NotStarted);
-            }
+        let Some(address) = self.adv_logger.get_log_address() else {
+            log::error!("Advanced logger not initialized before component entry point!");
+            return Err(EfiError::NotStarted);
         };
 
-        let address = log_info as *const AdvLoggerInfo as efi::PhysicalAddress;
         let protocol = AdvancedLoggerProtocolInternal {
             protocol: AdvancedLoggerProtocol::new(Self::adv_log_write, address),
             adv_logger: self.adv_logger,
@@ -149,6 +141,8 @@ mod tests {
     use mu_pi::hob::{GUID_EXTENSION, GuidHob, header::Hob};
     use patina_sdk::serial::uart::UartNull;
 
+    use crate::memory_log::AdvancedLog;
+
     use super::*;
 
     static TEST_LOGGER: AdvancedLogger<UartNull> =
@@ -160,7 +154,7 @@ mod tests {
         let log_address = log_buff as *const u8 as efi::PhysicalAddress;
 
         // initialize the log so it's valid for the hob list
-        unsafe { AdvLoggerInfo::initialize_memory_log(log_address, LOG_LEN as u32) };
+        unsafe { AdvancedLog::initialize_memory_log(log_address, LOG_LEN as u32) };
 
         const HOB_LEN: usize = size_of::<GuidHob>() + size_of::<efi::PhysicalAddress>();
         let hob_buff = Box::into_raw(Box::new([0_u8; HOB_LEN]));

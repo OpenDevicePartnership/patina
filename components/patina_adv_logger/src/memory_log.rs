@@ -10,13 +10,18 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use core::{
-    ffi::c_void,
+    cell::UnsafeCell,
     mem::size_of,
     ptr, slice,
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
-use patina_sdk::error::{EfiError, Result};
+use patina_sdk::{
+    base::align_up,
+    error::{EfiError, Result},
+};
 use r_efi::efi;
+use zerocopy::{FromBytes, IntoBytes};
+use zerocopy_derive::*;
 
 // { 0x4d60cfb5, 0xf481, 0x4a98, {0x9c, 0x81, 0xbf, 0xf8, 0x64, 0x60, 0xc4, 0x3e }}
 pub const ADV_LOGGER_HOB_GUID: efi::Guid =
@@ -31,7 +36,10 @@ pub const DEBUG_LEVEL_VERBOSE: u32 = 0x00400000;
 // Phase definitions.
 pub const ADVANCED_LOGGER_PHASE_DXE: u16 = 4;
 
-/// A struct for carrying log entry data through this module.
+/// A struct for carrying log entry both as input and output to this module.
+/// This struct contains the key information for the log entry, but excludes the
+/// log entry specifics that are not needed by generic code.
+#[derive(Clone, Copy)]
 pub struct LogEntry<'a> {
     pub phase: u16,
     pub level: u32,
@@ -39,11 +47,229 @@ pub struct LogEntry<'a> {
     pub data: &'a [u8],
 }
 
+impl<'a> LogEntry<'a> {
+    /// Returns the message data as a slice.
+    pub fn get_message(&self) -> &'a [u8] {
+        self.data
+    }
+}
+
+/// This struct represents an advanced logger memory log. It contains the appropriate
+/// pointers and interior mutability to allow for safe access to the log data. This
+/// serves as the idiomatic rust container for the C based structures.
+pub struct AdvancedLog<'a> {
+    /// The header of the memory log.
+    pub(crate) header: &'a AdvLoggerInfo,
+    /// The data portion of the memory log.
+    data: LogData<'a>,
+}
+
+// SAFETY: The only interior mutability is the UnsafeCell for the data region of
+//         the log. Safety here is checked by the allocation logic in add_log_entry
+//         which relies on atomics to safely allocate portions of the buffer.
+unsafe impl Send for AdvancedLog<'static> {}
+unsafe impl Sync for AdvancedLog<'static> {}
+
+impl AdvancedLog<'static> {
+    /// Initializes a `AdvancedLog` from an existing advanced logger buffer at the
+    /// provided address. The caller must ensure that this memory is accessible.
+    ///
+    /// ### Safety
+    ///
+    /// This function assumes that the provided address points to a valid `AdvLoggerInfo`
+    /// structure and that the memory is properly sized initialized based on the
+    /// information in that structure.
+    pub unsafe fn adopt_memory_log(address: efi::PhysicalAddress) -> Option<Self> {
+        let log_info = address as *const AdvLoggerInfo;
+        // SAFETY: The caller should ensure that the address is valid and
+        //         that the memory is readable. Check just the header to establish
+        //         that the log is valid.
+        if unsafe {
+            (*log_info).signature != AdvLoggerInfo::SIGNATURE
+                || (*log_info).version != AdvLoggerInfo::VERSION
+                || (*log_info).log_buffer_offset < size_of::<AdvLoggerInfo>() as u32
+        } {
+            None
+        } else {
+            // SAFETY: The log_info is valid, convert the data for future safety.
+            unsafe {
+                let header = log_info.as_ref()?;
+                let data_size = header.log_buffer_size;
+                let data_start = (address + header.log_buffer_offset as u64) as *mut u8;
+                let data = slice::from_raw_parts_mut(data_start, data_size as usize);
+
+                Some(Self { header, data: LogData::ReadWrite(UnsafeCell::from_mut(data)) })
+            }
+        }
+    }
+
+    // Allow unused as it is used in tests and intended for future general use.
+    #[allow(dead_code)]
+    /// Initializes a new Advanced Log buffer at the provided address with the
+    /// specified length.
+    ///
+    /// ### Safety
+    ///
+    /// The caller is responsible for ensuring that the provided address is appropriately
+    /// allocated and accessible.
+    pub unsafe fn initialize_memory_log(address: efi::PhysicalAddress, length: u32) -> Option<Self> {
+        if length < size_of::<AdvLoggerInfo>() as u32 || address % core::mem::align_of::<AdvLoggerInfo>() as u64 != 0 {
+            return None;
+        }
+
+        let header = address as *mut AdvLoggerInfo;
+        if header.is_null() {
+            None
+        } else {
+            // SAFETY: The caller should ensure that the address is valid and
+            //         that the memory is writable.
+            unsafe { ptr::write(header, AdvLoggerInfo::new(length, false, 0, 0, efi::Time::default(), 0)) };
+
+            // SAFETY: The header is now initialized, so we can safely create the
+            //         AdvancedLog instance.
+            unsafe { Self::adopt_memory_log(address) }
+        }
+    }
+}
+
+impl<'a> AdvancedLog<'a> {
+    // Only used in the parser which is not always compiled.
+    #[allow(dead_code)]
+    pub fn open_log(log_bytes: &'a [u8]) -> Result<Self> {
+        if log_bytes.len() < size_of::<AdvLoggerInfo>() {
+            return Err(EfiError::BufferTooSmall);
+        }
+
+        // SAFETY: We have checked the length of the buffer is at least the size.
+        //         Ideally we use ZeroCopy to do this, but `efi::Time` does not
+        //         support that.
+        let header =
+            unsafe { log_bytes.as_ptr().cast::<AdvLoggerInfo>().as_ref() }.ok_or(EfiError::InvalidParameter)?;
+
+        // Check that this is a valid log header.
+        if header.signature != AdvLoggerInfo::SIGNATURE {
+            return Err(EfiError::InvalidParameter);
+        }
+
+        // Currently only supports version 5.
+        if header.version != AdvLoggerInfo::VERSION {
+            return Err(EfiError::Unsupported);
+        }
+
+        // Check that the various pointers are consistent.
+        let log_current = header.log_current_offset.load(Ordering::Relaxed);
+        if log_current < header.log_buffer_offset
+            || log_current > header.full_size()
+            || header.log_buffer_offset < size_of::<AdvLoggerInfo>() as u32
+        {
+            return Err(EfiError::InvalidParameter);
+        }
+
+        // Only require that the valid portion of the log buffer be present.
+        if log_current > log_bytes.len() as u32 {
+            return Err(EfiError::BufferTooSmall);
+        }
+
+        let (_, data_slice) = log_bytes.split_at(header.log_buffer_offset as usize);
+
+        Ok(Self { header, data: LogData::ReadOnly(data_slice) })
+    }
+
+    pub fn add_log_entry(&self, log_entry: LogEntry) -> Result<()> {
+        // Adding a log entry consists of two steps:
+        // 1. Atomically allocate space in the log buffer. This must be done before
+        //    writing the log entry to ensure that no other system can write to the
+        //    same space in the log buffer.
+        // 2. Write the log entry to the allocated space in the log buffer.
+        //
+
+        // Get the total size of the long entry with the header, including the
+        // alignment padding for 8 byte alignment.
+        let data_offset = size_of::<AdvLoggerMessageEntry>() as u16;
+        let unaligned_size = data_offset as u32 + log_entry.data.len() as u32;
+        let message_size = align_up(unaligned_size, 8).unwrap() as u32;
+
+        // try to swap in the updated value. if this grows beyond the buffer, fall out.
+        // Using relaxed here as we only want the atomic swap and are not concerned
+        // with ordering. The loop should still use the atomic swap and update each
+        // iteration.
+        let mut current_offset = self.header.log_current_offset.load(Ordering::Relaxed);
+        while current_offset + message_size <= self.header.full_size() {
+            match self.header.log_current_offset.compare_exchange(
+                current_offset,
+                current_offset + message_size,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(val) => current_offset = val,
+            }
+        }
+
+        // check if we fell out of bounds.
+        if current_offset + message_size > self.header.full_size() {
+            // Add the discarded value. No ordering needed as this is a single
+            // operation.
+            self.header.discarded_size.fetch_add(message_size, Ordering::Relaxed);
+            return Err(EfiError::OutOfResources);
+        }
+
+        let data_index = (current_offset - self.header.log_buffer_offset) as usize;
+
+        // SAFETY: The space hase been allocated. It should now be safe to write
+        // data so long as it sticks to the range of the allocated entry. Get only
+        // the allocated slice to maintain safety.
+        let entry_slice = unsafe {
+            let data: *mut [u8] = self.data.get_mut()?;
+            (*data).get_mut(data_index..data_index + message_size as usize).ok_or(EfiError::BufferTooSmall)?
+        };
+
+        let (header_slice, entry_slice) = entry_slice.split_at_mut(size_of::<AdvLoggerMessageEntry>());
+        let (data_slice, remainder_slice) = entry_slice.split_at_mut(log_entry.data.len());
+
+        AdvLoggerMessageEntry::from_log_entry(&log_entry)
+            .write_to(header_slice)
+            .map_err(|_| EfiError::BufferTooSmall)?;
+
+        log_entry.data.write_to(data_slice).map_err(|_| EfiError::BufferTooSmall)?;
+        remainder_slice.fill(0);
+
+        Ok(())
+    }
+
+    pub fn hardware_write_enabled(&self, level: u32) -> bool {
+        !self.header.hw_port_disabled && (level & self.header.hw_print_level != 0)
+    }
+
+    pub fn iter(&self) -> AdvLogIterator {
+        AdvLogIterator::new(self)
+    }
+
+    pub fn get_frequency(&self) -> u64 {
+        self.header.timer_frequency.load(Ordering::Relaxed)
+    }
+
+    pub fn set_frequency(&self, frequency: u64) {
+        // try to swap, assuming the value it initially 0. If this fails, just continue.
+        let _ = self.header.timer_frequency.compare_exchange(0, frequency, Ordering::Relaxed, Ordering::Relaxed);
+    }
+
+    pub fn get_address(&self) -> efi::PhysicalAddress {
+        self.header as *const AdvLoggerInfo as efi::PhysicalAddress
+    }
+
+    // Allow unused as it is used in tests and intended for future general use.
+    #[allow(dead_code)]
+    pub fn discarded_size(&self) -> u32 {
+        self.header.discarded_size.load(Ordering::Relaxed)
+    }
+}
+
 /// Implementation of the C struct ADVANCED_LOGGER_INFO for tracking in-memory
 /// logging structure for Advanced Logger.
 #[derive(Debug)]
 #[repr(C)]
-pub struct AdvLoggerInfo {
+pub(crate) struct AdvLoggerInfo {
     /// Signature 'ALOG'
     signature: u32,
     /// Current Version
@@ -105,7 +331,7 @@ impl AdvLoggerInfo {
             reserved2: 0,
             log_current_offset: AtomicU32::new(size_of::<AdvLoggerInfo>() as u32),
             discarded_size: AtomicU32::new(0),
-            log_buffer_size,
+            log_buffer_size: log_buffer_size - size_of::<AdvLoggerInfo>() as u32,
             in_permanent_ram: true,
             at_runtime: false,
             gone_virtual: false,
@@ -119,88 +345,38 @@ impl AdvLoggerInfo {
         }
     }
 
-    pub unsafe fn adopt_memory_log(address: efi::PhysicalAddress) -> Option<&'static Self> {
-        let log_info = address as *mut Self;
-        let log_info_ref = unsafe { log_info.as_ref() }?;
-        if log_info_ref.signature != Self::SIGNATURE
-            || log_info_ref.version != Self::VERSION
-            || log_info_ref.log_buffer_offset < size_of::<AdvLoggerInfo>() as u32
-        {
-            None
-        } else {
-            Some(log_info_ref)
+    /// Returns the size of the log buffer, which is the size of the header plus
+    /// the size of the data buffer.
+    pub fn full_size(&self) -> u32 {
+        self.log_buffer_offset + self.log_buffer_size
+    }
+}
+
+/// Wrapper to allow for a read-only or read-write data region for the log.
+enum LogData<'a> {
+    /// A slice of bytes representing the log message.
+    ReadOnly(&'a [u8]),
+    /// A string slice representing the log message.
+    ReadWrite(&'a UnsafeCell<[u8]>),
+}
+
+impl<'a> LogData<'a> {
+    /// Returns the data as a slice.
+    fn get(&self) -> &'a [u8] {
+        match self {
+            LogData::ReadOnly(slice) => slice,
+            // SAFETY: The allocated memory is guaranteed to be valid, and the lifetime
+            //         of the underlining data is tied to the lifetime of the `AdvancedLog`.
+            LogData::ReadWrite(cell) => unsafe { &*cell.get() },
         }
     }
 
-    // Allow unused as it is used in tests and intended for future general use.
-    #[allow(dead_code)]
-    pub unsafe fn initialize_memory_log(address: efi::PhysicalAddress, length: u32) -> Option<&'static Self> {
-        let log_info = address as *mut Self;
-        if log_info.is_null() {
-            None
-        } else {
-            unsafe { ptr::write(log_info, AdvLoggerInfo::new(length, false, 0, 0, efi::Time::default(), 0)) };
-            unsafe { log_info.as_ref() }
+    /// Returns the data as a mutable slice.
+    fn get_mut(&self) -> Result<*mut [u8]> {
+        match self {
+            LogData::ReadOnly(_) => Err(EfiError::AccessDenied),
+            LogData::ReadWrite(cell) => Ok(cell.get()),
         }
-    }
-
-    pub fn add_log_entry(&self, log_entry: LogEntry) -> Result<&AdvLoggerMessageEntry> {
-        let data_offset = size_of::<AdvLoggerMessageEntry>() as u16;
-        let message_size = data_offset as u32 + log_entry.data.len() as u32;
-        // Align up to the next 8 byte.
-        let message_size = (message_size + 7) & !7;
-
-        // try to swap in the updated value. if this grows beyond the buffer, fall out.
-        // Using relaxed here as we only want the atomic swap and are not concerned
-        // with ordering. The loop should still use the atomic swap and update each
-        // iteration.
-        let mut current_offset = self.log_current_offset.load(Ordering::Relaxed);
-        while current_offset + message_size <= self.log_buffer_size {
-            match self.log_current_offset.compare_exchange(
-                current_offset,
-                current_offset + message_size,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(val) => current_offset = val,
-            }
-        }
-
-        // check if we fell out of bounds.
-        if current_offset + message_size > self.log_buffer_size {
-            // Add the discarded value. No ordering needed as this is a single
-            // operation.
-            self.discarded_size.fetch_add(message_size, Ordering::Relaxed);
-            return Err(EfiError::OutOfResources);
-        }
-
-        // Convert the newly allocated to usable data.
-        let address = unsafe { (self as *const AdvLoggerInfo).byte_offset(current_offset as isize) };
-        unsafe { AdvLoggerMessageEntry::init_from_memory(address as *mut c_void, message_size, log_entry) }
-    }
-
-    pub fn hardware_write_enabled(&self, level: u32) -> bool {
-        !self.hw_port_disabled && (level & self.hw_print_level != 0)
-    }
-
-    pub fn iter(&self) -> AdvLogIterator {
-        AdvLogIterator::new(self)
-    }
-
-    pub fn get_frequency(&self) -> u64 {
-        self.timer_frequency.load(Ordering::Relaxed)
-    }
-
-    pub fn set_frequency(&self, frequency: u64) {
-        // try to swap, assuming the value it initially 0. If this fails, just continue.
-        let _ = self.timer_frequency.compare_exchange(0, frequency, Ordering::Relaxed, Ordering::Relaxed);
-    }
-
-    // Allow unused as it is used in tests and intended for future general use.
-    #[allow(dead_code)]
-    pub fn get_log_buffer_size(&self) -> usize {
-        self.log_buffer_size as usize
     }
 }
 
@@ -208,8 +384,8 @@ impl AdvLoggerInfo {
 /// a memory log entry.
 #[repr(C)]
 #[repr(packed)]
-#[derive(Debug)]
-pub struct AdvLoggerMessageEntry {
+#[derive(Debug, IntoBytes, FromBytes, Immutable, KnownLayout)]
+struct AdvLoggerMessageEntry {
     /// Signature
     signature: u32,
     /// Major version of advanced logger message structure. Current = 2
@@ -257,86 +433,9 @@ impl AdvLoggerMessageEntry {
         }
     }
 
-    /// Initializes an AdvLoggerMessageEntry given a memory address and length.
-    ///
-    /// This routine will create a AdvLoggerMessageEntry at the given address with
-    /// the contents provided by log_entry.
-    ///
-    /// SAFETY: This routine will directly alter the given memory address up to
-    /// the provided length. The caller is responsible for ensuring this memory
-    /// range is valid.
-    ///
-    pub unsafe fn init_from_memory(address: *const c_void, length: u32, log_entry: LogEntry) -> Result<&'static Self> {
-        // Ensure the entry fits.
-        if size_of::<Self>() + log_entry.data.len() > length as usize {
-            debug_assert!(false, "Advanced logger entry initialized in an insufficiently sized buffer!");
-            return Err(EfiError::BufferTooSmall);
-        }
-
-        // Ensure the address and length are aligned.
-        if address.align_offset(size_of::<u64>()) != 0 {
-            debug_assert!(false, "Advanced logger entry must be aligned to 8 bytes.");
-            return Err(EfiError::InvalidParameter);
-        }
-
-        // Ensure the address is not null.
-        if address.is_null() {
-            debug_assert!(false, "Advanced logger entry address is null.");
-            return Err(EfiError::InvalidParameter);
-        }
-
-        // Write the header.
-        unsafe {
-            ptr::write_volatile::<Self>(
-                address as *mut Self,
-                Self::new(log_entry.phase, log_entry.level, log_entry.timestamp, log_entry.data.len() as u16),
-            );
-        }
-
-        const _: () = assert!(
-            size_of::<AdvLoggerMessageEntry>() % size_of::<u64>() == 0,
-            "AdvLoggerMessageEntry must be a multiple of 8 bytes in length"
-        );
-
-        let message_slice: &mut [u8] = unsafe {
-            slice::from_raw_parts_mut((address as *mut u8).byte_add(size_of::<Self>()), log_entry.data.len())
-        };
-
-        // Since address must be aligned to 8 bytes and AdvLoggerMessageEntry is a multiple of 8 bytes in length,
-        // there is guaranteed to be no prefix when using align_to_mut.
-        let (_, aligned, suffix) = unsafe { message_slice.align_to_mut::<u64>() };
-
-        // Write aligned QWORDs of the message 8 characters at a time.
-        for (qword_index, qword) in aligned.iter_mut().enumerate() {
-            unsafe {
-                ptr::write_volatile::<u64>(
-                    qword as *mut u64,
-                    ptr::read_unaligned(log_entry.data.as_ptr().add(size_of::<u64>() * qword_index) as *const u64),
-                );
-            }
-        }
-
-        // Write all remaining characters in the message 1 character at a time.
-        for (byte_index, byte) in suffix.iter_mut().enumerate() {
-            unsafe {
-                ptr::write_volatile::<u8>(
-                    byte as *mut u8,
-                    *log_entry.data.as_ptr().add(core::mem::size_of_val(aligned) + byte_index),
-                );
-            }
-        }
-
-        unsafe { Ok(&*(address as *const Self)) }
-    }
-
-    /// Returns the data array of the message entry.
-    pub fn get_message(&self) -> &'static [u8] {
-        let message = unsafe { (self as *const Self).offset(1) } as *mut u8;
-
-        // SAFETY: Assurances should be made during creation that this buffer
-        //         offset is sufficient and accurate.
-        let data = unsafe { core::slice::from_raw_parts(message, self.message_length as usize) };
-        data
+    /// Creates the structure of AdvLoggerMessageEntry from a [`LogEntry`].
+    const fn from_log_entry(entry: &LogEntry) -> Self {
+        Self::new(entry.phase, entry.level, entry.timestamp, entry.data.len() as u16)
     }
 
     /// Returns the length of the entire log entry.
@@ -346,39 +445,72 @@ impl AdvLoggerMessageEntry {
 
     /// Returns the aligned length of the entire log entry.
     pub fn aligned_len(&self) -> usize {
-        (self.len() + 7) & !7
+        // The length is already bounded to less than the buffer size and so cannot
+        // overflow the usize with a simple 8 bit alignment.
+        align_up(self.len(), 8).unwrap()
     }
 }
 
 /// Iterator for an advanced logger memory buffer log.
 pub struct AdvLogIterator<'a> {
-    log_info: &'a AdvLoggerInfo,
+    log: &'a AdvancedLog<'a>,
     offset: usize,
 }
 
 /// Iterator for an Advanced Logger memory buffer.
 impl<'a> AdvLogIterator<'a> {
     /// Creates a new log iterator from a given AdvLoggerInfo reference.
-    const fn new(log_info: &'a AdvLoggerInfo) -> Self {
-        AdvLogIterator { log_info, offset: log_info.log_buffer_offset as usize }
+    const fn new(log: &'a AdvancedLog) -> Self {
+        AdvLogIterator { log, offset: log.header.log_buffer_offset as usize }
     }
 }
 
 impl<'a> Iterator for AdvLogIterator<'a> {
-    type Item = &'a AdvLoggerMessageEntry;
+    type Item = LogEntry<'a>;
 
     /// Provides the next advanced logger entry in the Advanced Logger memory buffer.
     fn next(&mut self) -> Option<Self::Item> {
         if self.offset + size_of::<AdvLoggerMessageEntry>()
-            > self.log_info.log_current_offset.load(Ordering::Relaxed) as usize
+            > self.log.header.log_current_offset.load(Ordering::Relaxed) as usize
         {
             None
         } else {
-            let entry = unsafe { (self.log_info as *const AdvLoggerInfo).byte_add(self.offset) }
-                as *const AdvLoggerMessageEntry;
-            unsafe { entry.as_ref() }.inspect(|entry| {
-                self.offset += entry.aligned_len();
-            })
+            // Get the data relative offset.
+            let mut data_index = self.offset - self.log.header.log_buffer_offset as usize;
+
+            // SAFETY: We have verified the buffer through the header, read that
+            //         to check the rest of the range.
+            let header_slice = unsafe {
+                let data: *const [u8] = self.log.data.get();
+                (*data).get(data_index..data_index + size_of::<AdvLoggerMessageEntry>())?
+            };
+
+            let entry_header = AdvLoggerMessageEntry::ref_from_bytes(header_slice).ok()?;
+            data_index += size_of::<AdvLoggerMessageEntry>();
+
+            if self.offset + size_of::<AdvLoggerMessageEntry>() + entry_header.message_length as usize
+                > self.log.header.log_current_offset.load(Ordering::Relaxed) as usize
+            {
+                None
+            } else {
+                // SAFETY: We know that the buffer is valid through previous checks,
+                //         and this structure should be well formed from the header
+                //         information.
+                let entry_data = unsafe {
+                    let data: *const [u8] = self.log.data.get();
+                    (*data).get(data_index..data_index + entry_header.message_length as usize)?
+                };
+
+                // Move the offset up by the aligned total size.
+                self.offset += entry_header.aligned_len();
+
+                Some(LogEntry {
+                    phase: entry_header.boot_phase,
+                    level: entry_header.level,
+                    timestamp: entry_header.timestamp,
+                    data: entry_data,
+                })
+            }
         }
     }
 }
@@ -398,18 +530,18 @@ mod tests {
         let address = buffer as *mut u64 as PhysicalAddress;
         let len = buffer.len() as u32;
 
-        let log = unsafe { AdvLoggerInfo::initialize_memory_log(address, len) };
+        let log = unsafe { AdvancedLog::initialize_memory_log(address, len) }.unwrap();
 
         // Fill the log.
         let mut entries: u32 = 0;
         loop {
             let data = entries.to_be_bytes();
-            let entry = LogEntry { level: 0, phase: 0, timestamp: 0, data: &data };
-            let log_entry = log.unwrap().add_log_entry(entry);
+            let entry: LogEntry<'_> = LogEntry { level: 0, phase: 0, timestamp: 0, data: &data };
+            let log_entry = log.add_log_entry(entry);
             match log_entry {
                 Ok(_) => {}
                 Err(EfiError::OutOfResources) => {
-                    assert!(log.unwrap().discarded_size.load(Ordering::Relaxed) > 0);
+                    assert!(log.discarded_size() > 0);
                     assert!(entries > 0);
                     break;
                 }
@@ -418,12 +550,10 @@ mod tests {
                 }
             }
             entries += 1;
-            let log_entry = log_entry.unwrap();
-            assert_eq!(log_entry.get_message(), data);
         }
 
         // check the contents.
-        let mut iter = log.unwrap().iter();
+        let mut iter = log.iter();
         for entry_num in 0..entries {
             let data = entry_num.to_be_bytes();
             let log_entry = iter.next().unwrap();
@@ -440,29 +570,27 @@ mod tests {
         let address = buffer as *const u8 as PhysicalAddress;
         let len = buffer.len() as u32;
 
-        let log = unsafe { AdvLoggerInfo::initialize_memory_log(address, len) };
+        let log = unsafe { AdvancedLog::initialize_memory_log(address, len) }.unwrap();
 
         // Fill the log.
         for val in 0..50 {
             let data = (val as u32).to_be_bytes();
             let entry = LogEntry { level: 0, phase: 0, timestamp: 0, data: &data };
-            let log_entry = log.unwrap().add_log_entry(entry).unwrap();
-            assert_eq!(log_entry.get_message(), data);
+            log.add_log_entry(entry).unwrap();
         }
 
         // adopt the log.
-        let log = unsafe { AdvLoggerInfo::adopt_memory_log(address) }.unwrap();
+        let log = unsafe { AdvancedLog::adopt_memory_log(address) }.unwrap();
 
         // Add more entries.
         for val in 50..100 {
             let data = (val as u32).to_be_bytes();
             let entry = LogEntry { level: 0, phase: 0, timestamp: 0, data: &data };
-            let log_entry = log.add_log_entry(entry).unwrap();
-            assert_eq!(log_entry.get_message(), data);
+            log.add_log_entry(entry).unwrap();
         }
 
         // check the contents.
-        assert!(log.discarded_size.load(Ordering::Relaxed) == 0);
+        assert!(log.discarded_size() == 0);
         let mut iter = log.iter();
         for entry_num in 0..100 {
             let data = (entry_num as u32).to_be_bytes();

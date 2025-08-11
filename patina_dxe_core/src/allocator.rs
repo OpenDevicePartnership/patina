@@ -614,11 +614,12 @@ fn merge_blocks(
 ///
 /// ## Arguments
 ///
-/// * `attributes_mask` - Optional mask to filter the attributes of the memory descriptors
-///                       prior to them being consolidated. This mask will be ANDed with the
-///                       attributes of the memory descriptors.
+/// * `active_attributes` - Specifies whether the `attributes` field of the memory descriptors should
+///   include the active attributes (true) or capabilities (false) of the memory but not
+///   necessarily the active attributes. The capabilities should be used for memory map generation
+///   as the UEFI specification requires.
 ///
-pub(crate) fn get_memory_map_descriptors(attributes_mask: Option<u64>) -> Result<Vec<efi::MemoryDescriptor>, EfiError> {
+pub(crate) fn get_memory_map_descriptors(active_attributes: bool) -> Result<Vec<efi::MemoryDescriptor>, EfiError> {
     let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
 
     // the fold operation would allocate boot services data, which we cannot do because we cannot change the memory map
@@ -673,15 +674,20 @@ pub(crate) fn get_memory_map_descriptors(attributes_mask: Option<u64>) -> Result
                 return None; //skip entries not page aligned.
             }
 
-            // Add the runtime attribute for runtime services code and data as
-            // higher level code will expect this but it is not explicitly tracked.
-            let mut attributes = match memory_type {
-                efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA => descriptor.attributes | efi::MEMORY_RUNTIME,
-                _ => descriptor.attributes,
+            let mut attributes = match active_attributes {
+                true => descriptor.attributes,
+                false => {
+                    // When using the capabilities, drop the runtime attribute and
+                    // pick it up from the active attributes.
+                    (descriptor.capabilities & !(efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME))
+                        | (descriptor.attributes & efi::MEMORY_RUNTIME)
+                }
             };
 
-            if let Some(mask) = attributes_mask {
-                attributes &= mask;
+            if matches!(memory_type, efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA) {
+                // Add the runtime attribute for runtime services code and data as
+                // higher level code will expect this but it is not explicitly tracked.
+                attributes |= efi::MEMORY_RUNTIME;
             }
 
             Some(efi::MemoryDescriptor {
@@ -716,7 +722,7 @@ extern "efiapi" fn get_memory_map(
 
     let map_size = unsafe { *memory_map_size };
 
-    let efi_descriptors = match get_memory_map_descriptors(Some(!efi::MEMORY_ACCESS_MASK)) {
+    let efi_descriptors = match get_memory_map_descriptors(false) {
         Ok(descriptors) => descriptors,
         Err(status) => return status.into(),
     };
@@ -754,7 +760,7 @@ extern "efiapi" fn get_memory_map(
 }
 
 pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
-    let mm_desc = get_memory_map_descriptors(Some(!efi::MEMORY_ACCESS_MASK))?;
+    let mm_desc = get_memory_map_descriptors(false)?;
     let mm_desc_size = mm_desc.len() * mem::size_of::<efi::MemoryDescriptor>();
     let mm_desc_bytes: &[u8] = unsafe { slice::from_raw_parts(mm_desc.as_ptr() as *const u8, mm_desc_size) };
 

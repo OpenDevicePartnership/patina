@@ -373,12 +373,17 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
         }
     }
 
-    fn add_monitor_command(&'static self, command: &'static str, callback: crate::MonitorCommandFn) {
+    fn add_monitor_command(
+        &'static self,
+        command: &'static str,
+        description: &'static str,
+        callback: crate::MonitorCommandFn,
+    ) {
         if !self.enabled() {
             return;
         }
 
-        self.system_state.lock().add_monitor_command(command, callback);
+        self.system_state.lock().add_monitor_command(command, description, callback);
     }
 }
 
