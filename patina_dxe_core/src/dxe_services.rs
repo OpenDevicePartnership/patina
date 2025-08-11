@@ -153,12 +153,10 @@ pub fn core_set_memory_space_attributes(
             // isn’t installed yet, the GCD state has been updated and callers
             // of the DXE Services wrapper expect SUCCESS. Only surface
             // NOT_READY when the GCD itself is uninitialized.
-            let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
-                Vec::with_capacity(GCD.memory_descriptor_count() + 10);
-            match GCD.get_memory_descriptors(&mut descriptors) {
-                Ok(()) => Ok(()),                                   // GCD ready, paging not ready -> treat as success
-                Err(EfiError::NotReady) => Err(EfiError::NotReady), // GCD not initialized
-                Err(e) => Err(e),
+            if GCD.is_ready() {
+                Ok(()) // GCD ready, paging not ready -> treat as success
+            } else {
+                Err(EfiError::NotReady) // GCD not initialized
             }
         }
         Err(e) => Err(e),

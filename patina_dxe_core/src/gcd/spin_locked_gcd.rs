@@ -287,6 +287,13 @@ struct GCD {
     default_attributes: u64,
 }
 
+impl GCD {
+    /// Returns true if the GCD is initialized and ready for use.
+    pub fn is_ready(&self) -> bool {
+        self.maximum_address != 0
+    }
+}
+
 impl core::fmt::Debug for GCD {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("GCD")
@@ -1779,6 +1786,11 @@ pub struct SpinLockedGcd {
 }
 
 impl SpinLockedGcd {
+    /// Returns true if the underlying GCD is initialized and ready for use.
+    pub fn is_ready(&self) -> bool {
+        self.memory.lock().is_ready()
+    }
+
     /// Creates a new uninitialized GCD. [`Self::init`] must be invoked before any other functions or they will return
     /// [`EfiError::NotReady`]. An optional callback can be provided which will be invoked whenever an operation
     /// changes the GCD map.
