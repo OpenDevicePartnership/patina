@@ -39,7 +39,7 @@ impl StatusCodeRuntimeProtocol {
         Self { protocol: status_code::Protocol { report_status_code } }
     }
 
-    /// Reports a status code to the platform firmware.
+    /// Reports a status code to the platform firmware with data.
     pub fn report_status_code_with_data<T>(
         &self,
         status_code_type: EfiStatusCodeType,
@@ -67,6 +67,7 @@ impl StatusCodeRuntimeProtocol {
         if status.is_error() { Err(status) } else { Ok(()) }
     }
 
+    /// Reports a status code to the platform firmware without data.
     pub fn report_status_code(
         &self,
         status_code_type: EfiStatusCodeType,
