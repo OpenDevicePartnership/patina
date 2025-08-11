@@ -6,7 +6,7 @@ RUSTC_BOOTSTRAP = 1
 NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
 TEST_FLAGS = { value = "--features enable_patina_tests", condition = { env_not_set = ["TEST_FLAGS"] } }
-COV_FLAGS = { value = "--features enable_patina_tests --workspace --out html --out xml --exclude-files **/tests/* --exclude-files **/benches/*", condition = { env_not_set = ["COV_FLAGS"] } }
+COV_FLAGS = { value = "--features enable_patina_tests --workspace --lcov --ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
 RUSTDOCFLAGS = "-D warnings -D missing_docs"
 
 [env.development]
@@ -144,7 +144,7 @@ description = "Build and run all tests and calculate coverage."
 install_crate = false
 clear = true
 command = "cargo"
-args = ["tarpaulin", "@@split(COV_FLAGS, )", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target"]
+args = ["llvm-cov", "@@split(COV_FLAGS, )", "--output-path", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/lcov.info"]
 dependencies = ["individual-package-targets"]
 
 [tasks.coverage-filter]
@@ -153,21 +153,18 @@ private = true
 script_runner = "@duckscript"
 script = '''
 package = get_env PACKAGE
-members =  get_env CARGO_MAKE_CRATE_WORKSPACE_MEMBERS
+members = get_env CARGO_MAKE_CRATE_WORKSPACE_MEMBERS
 
 1 = split ${members} ,
 
 2 = array
 for member in ${1}
-  if not contains ${member} ${package}
-    t = concat "--exclude-files " ${member} /*
-    array_push ${2} ${t}
-    release ${t}
-  end
+    if not contains ${member} ${package}
+        array_push ${2} ${member}
+    end
 end
 
-joined_args = trim ${2}
-joined = array_join ${joined_args} " "
+joined = array_join ${2} "|"
 
 set_env PACKAGE_COVERAGE_FILTER ${joined}
 release ${1}
@@ -182,7 +179,7 @@ install_crate = false
 description = """Generates Code coverage for $(PACKAGE) and fails the build if coverage is below 80%."""
 dependencies = ["coverage-filter"]
 command = "cargo"
-args = ["tarpaulin", "-p", "${PACKAGE}", "--fail-under", "80", "--exclude-files", "@@split(PACKAGE_COVERAGE_FILTER, )", "@@split(COV_FLAGS, )", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target"]
+args = ["llvm-cov", "--package", "${PACKAGE}", "--fail-under-lines", "80", "--ignore-filename-regex", "${PACKAGE_COVERAGE_FILTER}"]
 
 [tasks.coverage-fail]
 description = """Runs coverage on one or all packages and fails if coverage is below 80%.
