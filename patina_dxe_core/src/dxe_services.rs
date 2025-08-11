@@ -156,7 +156,7 @@ pub fn core_set_memory_space_attributes(
             let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
                 Vec::with_capacity(GCD.memory_descriptor_count() + 10);
             match GCD.get_memory_descriptors(&mut descriptors) {
-                Ok(()) => Ok(()),           // GCD ready, paging not ready -> treat as success
+                Ok(()) => Ok(()),                                   // GCD ready, paging not ready -> treat as success
                 Err(EfiError::NotReady) => Err(EfiError::NotReady), // GCD not initialized
                 Err(e) => Err(e),
             }
@@ -1415,8 +1415,7 @@ mod tests {
             }
 
             let expected_count = GCD.memory_descriptor_count();
-            let mut expected: Vec<dxe_services::MemorySpaceDescriptor> =
-                Vec::with_capacity(expected_count + 10);
+            let mut expected: Vec<dxe_services::MemorySpaceDescriptor> = Vec::with_capacity(expected_count + 10);
             GCD.get_memory_descriptors(&mut expected).expect("get_memory_descriptors failed");
             assert!(!expected.is_empty());
 
@@ -1449,8 +1448,7 @@ mod tests {
 
             // Fetch expected
             let expected_count = GCD.memory_descriptor_count();
-            let mut expected: Vec<dxe_services::MemorySpaceDescriptor> =
-                Vec::with_capacity(expected_count + 10);
+            let mut expected: Vec<dxe_services::MemorySpaceDescriptor> = Vec::with_capacity(expected_count + 10);
             GCD.get_memory_descriptors(&mut expected).expect("get_memory_descriptors failed");
             assert!(expected.len() >= 3);
 
@@ -1803,8 +1801,8 @@ mod tests {
             let s = allocate_io_space(
                 dxe_services::GcdAllocateType::AnySearchBottomUp,
                 GcdIoType::Io,
-                3,      // 8-byte alignment
-                0x20,   // 32 bytes
+                3,    // 8-byte alignment
+                0x20, // 32 bytes
                 &mut out,
                 1 as _, // valid image handle
                 core::ptr::null_mut(),
@@ -1847,8 +1845,8 @@ mod tests {
             let s = allocate_io_space(
                 dxe_services::GcdAllocateType::Address,
                 GcdIoType::Io,
-                0,      // no extra alignment
-                0x20,   // 32 bytes
+                0,    // no extra alignment
+                0x20, // 32 bytes
                 &mut desired,
                 1 as _,
                 core::ptr::null_mut(),
@@ -2092,8 +2090,8 @@ mod tests {
 
     #[test]
     fn test_dispatch_with_installed_fv_still_not_found() {
-        use std::{fs::File, io::Read};
         use crate::test_collateral;
+        use std::{fs::File, io::Read};
 
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
@@ -2132,8 +2130,8 @@ mod tests {
 
     #[test]
     fn test_schedule_with_installed_fv_returns_not_found() {
-        use std::{fs::File, io::Read};
         use crate::test_collateral;
+        use std::{fs::File, io::Read};
         use uuid::Uuid;
 
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
@@ -2193,15 +2191,16 @@ mod tests {
             // Provide a tiny, obviously invalid buffer
             let bad_buf: [u8; 16] = [0u8; 16];
             let mut out_handle: efi::Handle = core::ptr::null_mut();
-            let s = process_firmware_volume(bad_buf.as_ptr() as *const core::ffi::c_void, bad_buf.len(), &mut out_handle);
+            let s =
+                process_firmware_volume(bad_buf.as_ptr() as *const core::ffi::c_void, bad_buf.len(), &mut out_handle);
             assert_eq!(s, efi::Status::VOLUME_CORRUPTED);
         });
     }
 
     #[test]
     fn test_process_firmware_volume_success_with_real_fv() {
-        use std::{fs::File, io::Read};
         use crate::test_collateral;
+        use std::{fs::File, io::Read};
 
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
@@ -2240,12 +2239,8 @@ mod tests {
             assert_eq!(st_ref.number_of_table_entries, 1);
             assert!(!st_ref.configuration_table.is_null());
 
-            let entries = unsafe {
-                core::slice::from_raw_parts(
-                    st_ref.configuration_table,
-                    st_ref.number_of_table_entries,
-                )
-            };
+            let entries =
+                unsafe { core::slice::from_raw_parts(st_ref.configuration_table, st_ref.number_of_table_entries) };
 
             let entry = entries
                 .iter()

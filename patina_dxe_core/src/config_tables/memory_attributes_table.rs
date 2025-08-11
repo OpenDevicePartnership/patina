@@ -364,7 +364,9 @@ mod tests {
 
                     let entry = entry_slice
                         .iter()
-                        .find(|e| e.physical_start == expected_physical_start && e.number_of_pages == expected_number_of_pages)
+                        .find(|e| {
+                            e.physical_start == expected_physical_start && e.number_of_pages == expected_number_of_pages
+                        })
                         .expect("Expected MAT entry not found for allocated runtime pages");
 
                     assert_eq!(entry.r#type, expected_type);
