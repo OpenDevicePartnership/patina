@@ -801,8 +801,14 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                         self.handle,
                         None,
                     )
-                    .map_err(|_| {
-                        debug_assert!(false);
+                    .map_err(|err| {
+                        log::error!(
+                            "Allocator Expansion via GCD failed: [{:?}], {{ Bytes: {:#x}, Alignment: {:#x}, Page Count: {:#x} }}",
+                            err,
+                            allocation_size,
+                            required_alignment,
+                            required_pages,
+                        );
                         AllocError
                     })?;
 
