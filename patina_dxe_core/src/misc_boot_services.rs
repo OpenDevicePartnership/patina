@@ -240,6 +240,7 @@ pub fn init_misc_boot_services_support(bs: &mut efi::BootServices) {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use crate::systemtables;

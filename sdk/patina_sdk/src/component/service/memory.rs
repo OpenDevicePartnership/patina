@@ -902,6 +902,7 @@ mod mock {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use core::{
         alloc::Layout,

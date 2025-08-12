@@ -437,6 +437,7 @@ pub fn init_dxe_services(system_table: &mut EfiSystemTable) {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use crate::test_support;

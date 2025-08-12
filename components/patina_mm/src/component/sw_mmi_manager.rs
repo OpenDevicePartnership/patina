@@ -129,6 +129,7 @@ impl Default for SwMmiManager {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use crate::config::MmCommunicationConfiguration;

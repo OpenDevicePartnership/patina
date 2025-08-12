@@ -104,6 +104,7 @@ where
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use crate as patina_sdk;
     use crate::component::IntoComponent;

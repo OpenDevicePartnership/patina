@@ -139,6 +139,7 @@ pub(crate) struct MonitorCallback {
 
 #[cfg(feature = "alloc")]
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
 

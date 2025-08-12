@@ -568,6 +568,7 @@ unsafe impl Param for &Storage {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
 

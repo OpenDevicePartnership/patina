@@ -9,6 +9,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 #![cfg_attr(not(feature = "std"), no_std)]
+#![feature(coverage_attribute)]
 mod function_component;
 mod struct_component;
 

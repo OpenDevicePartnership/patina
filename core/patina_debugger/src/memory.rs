@@ -163,6 +163,7 @@ impl PageAllocator for DebugPageAllocator {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
 
     use super::*;

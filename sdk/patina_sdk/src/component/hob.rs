@@ -283,6 +283,7 @@ impl<'h, T: FromHob + 'static> IntoIterator for &Hob<'h, T> {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use crate::{
         component::IntoComponent,

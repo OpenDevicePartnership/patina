@@ -151,6 +151,7 @@ impl<R: RuntimeServices> FallibleStreamingIterator for VariableNameIterator<'_, 
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod test {
     use r_efi::efi;
 

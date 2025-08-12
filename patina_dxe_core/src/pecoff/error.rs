@@ -36,6 +36,7 @@ impl From<goblin::error::Error> for Error {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
 

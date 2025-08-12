@@ -852,6 +852,7 @@ unsafe impl Sync for SpinLockedFixedSizeBlockAllocator {}
 unsafe impl Send for SpinLockedFixedSizeBlockAllocator {}
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     extern crate std;
     use crate::{
