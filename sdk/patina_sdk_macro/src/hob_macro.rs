@@ -136,6 +136,7 @@ pub fn hob_config2(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use proc_macro2::TokenStream;

@@ -34,6 +34,7 @@
 #![feature(allocator_api)]
 #![feature(slice_ptr_get)]
 #![feature(get_many_mut)]
+#![feature(coverage_attribute)]
 
 extern crate alloc;
 
@@ -63,11 +64,12 @@ mod tpl_lock;
 
 #[cfg(test)]
 #[macro_use]
+#[coverage(off)]
 pub mod test_support;
 
 use core::{ffi::c_void, ptr, slice, str::FromStr};
 
-use alloc::{boxed::Box, format, vec::Vec};
+use alloc::{boxed::Box, vec::Vec};
 use gcd::SpinLockedGcd;
 use memory_manager::CoreMemoryManager;
 use mu_pi::{
@@ -263,12 +265,8 @@ where
 
         // Add custom monitor commands to the debugger before initializing so that
         // they are available in the initial breakpoint.
-        patina_debugger::add_monitor_command("version", |_, out| {
-            let _ = out.write_str(concat!("Patina DXE Core v", env!("CARGO_PKG_VERSION")));
-        });
-
-        patina_debugger::add_monitor_command("gcd", |_, out| {
-            let _ = out.write_str(&format!("GCD -\n{}", GCD));
+        patina_debugger::add_monitor_command("gcd", "Prints the GCD", |_, out| {
+            let _ = write!(out, "GCD -\n{}", GCD);
         });
 
         // Initialize the debugger if it is enabled.

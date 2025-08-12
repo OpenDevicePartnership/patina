@@ -350,6 +350,7 @@ where
         // If not, it will be updated when the FACS is installed.
         if let Some(facs) = self.acpi_tables.read().get(&Self::FACS_KEY) {
             unsafe { fadt_info.as_mut::<AcpiFadt>() }.inner.x_firmware_ctrl = facs.as_ptr() as u64;
+            unsafe { fadt_info.as_mut::<AcpiFadt>() }.inner._firmware_ctrl = facs.as_ptr() as u32;
         }
         log::info!("FADT x_firmware_ctrl set to: 0x{:x}", unsafe { fadt_info.as_ref::<AcpiFadt>() }.x_firmware_ctrl());
 
@@ -358,6 +359,14 @@ where
         if let Some(dsdt) = self.acpi_tables.read().get(&Self::DSDT_KEY) {
             unsafe { fadt_info.as_mut::<AcpiFadt>() }.inner.x_dsdt = dsdt.as_ptr() as u64;
         }
+
+        // sherry testing stuff.
+        unsafe {
+            fadt_info.as_mut::<AcpiFadt>().inner._firmware_ctrl =
+                fadt_info.as_mut::<AcpiFadt>().inner.x_firmware_ctrl as u32
+        };
+        unsafe { fadt_info.as_mut::<AcpiFadt>().inner._dsdt = fadt_info.as_mut::<AcpiFadt>().inner.x_dsdt as u32 };
+        log::info!("sherry is dumb");
 
         // The FADT is stored in the XSDT like a normal table. Add the FADT to the XSDT.
         let physical_addr = fadt_info.as_ptr() as u64;
@@ -380,13 +389,6 @@ where
             xsdt_data.set_oem_table_id(fadt_info.header().oem_table_id);
             xsdt_data.set_oem_revision(fadt_info.header().oem_revision);
         }
-
-        // Zero out the ACPI 1.0 fields to indicate not supported.
-        unsafe {
-            fadt_info.as_mut::<AcpiFadt>().inner._firmware_ctrl =
-                fadt_info.as_mut::<AcpiFadt>().inner.x_firmware_ctrl as u32
-        };
-        unsafe { fadt_info.as_mut::<AcpiFadt>().inner._dsdt = fadt_info.as_mut::<AcpiFadt>().inner.x_dsdt as u32 };
 
         // Checksum root tables after modifying fields.
         self.checksum_common_tables()?;

@@ -9,6 +9,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 #![no_std]
+#![feature(coverage_attribute)]
 
 extern crate alloc;
 
@@ -327,6 +328,7 @@ impl Iterator for DepexParser {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     extern crate std;
     use alloc::vec;

@@ -172,7 +172,7 @@ pub(crate) fn initialize_debug_image_info_table(system_table: &mut EfiSystemTabl
     // Set the system table address for the debugger.
     DBG_SYSTEM_TABLE_POINTER_ADDRESS.store(address as u64, Ordering::Relaxed);
 
-    patina_debugger::add_monitor_command("system_table_ptr", |_, out| {
+    patina_debugger::add_monitor_command("system_table_ptr", "Prints the system table pointer", |_, out| {
         let address = DBG_SYSTEM_TABLE_POINTER_ADDRESS.load(Ordering::Relaxed);
         let _ = write!(out, "{:x}", address);
     });
@@ -222,6 +222,7 @@ pub(crate) fn core_new_debug_image_info_entry(
         metadata_table.slice = new_boxed_slice;
 
         metadata_table.actual_table_size = new_table_size;
+        metadata_table.table.efi_debug_image_info_table = metadata_table.slice.as_ptr();
     }
 
     // size here is last_index + 1

@@ -1,9 +1,14 @@
-use core::{arch::asm, fmt::Write, num::NonZeroUsize, ops::Shr};
+use core::{
+    arch::asm,
+    num::NonZeroUsize,
+    ops::Shr,
+    sync::atomic::{AtomicBool, Ordering, compiler_fence},
+};
 
 use gdbstub::arch::{RegId, Registers};
 use patina_internal_cpu::interrupts::ExceptionContext;
 
-use crate::{ExceptionInfo, ExceptionType, memory, transport::BufferWriter};
+use crate::{ExceptionInfo, ExceptionType, memory};
 
 use super::{DebuggerArch, UefiArchRegs};
 use bitfield_struct::bitfield;
@@ -32,6 +37,8 @@ const MDSCR_MDE: u64 = 0x8000;
 const MDSCR_KDE: u64 = 0x2000;
 
 const DAIF_DEBUG_MASK: u64 = 0x200;
+
+static POKE_TEST_MARKER: AtomicBool = AtomicBool::new(false);
 
 macro_rules! read_sysreg {
   ($reg:expr) => {{
@@ -97,6 +104,7 @@ impl DebuggerArch for Aarch64Arch {
                 | EC_DATA_ABORT_CURRENT_EL => ExceptionType::AccessViolation(context.far as usize),
                 _ => ExceptionType::Other(exception_class),
             },
+            instruction_pointer: context.elr,
         }
     }
 
@@ -138,14 +146,14 @@ impl DebuggerArch for Aarch64Arch {
         let mut daif = read_sysreg!("daif");
         daif |= DAIF_DEBUG_MASK;
         write_sysreg!("daif", daif);
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        compiler_fence(Ordering::SeqCst);
 
         // Clear the OS lock if needed
         let oslsr_el1 = read_sysreg!("oslsr_el1");
         if oslsr_el1 & 1 != 0 {
             unsafe { asm!("msr oslar_el1, xzr") };
         }
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        compiler_fence(Ordering::SeqCst);
 
         // Enable kernel and monitor debug bits
         let mut mdscr_el1 = read_sysreg!("mdscr_el1");
@@ -156,13 +164,13 @@ impl DebuggerArch for Aarch64Arch {
         for i in 0..NUM_WATCHPOINTS {
             write_dbg_wcr(i, Wcr::from(0));
         }
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        compiler_fence(Ordering::SeqCst);
 
         // Enable debug exceptions in DAIF
         daif = read_sysreg!("daif");
         daif &= !DAIF_DEBUG_MASK;
         write_sysreg!("daif", daif);
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        compiler_fence(Ordering::SeqCst);
     }
 
     fn add_watchpoint(address: u64, length: u64, access_type: gdbstub::target::ext::breakpoints::WatchKind) -> bool {
@@ -236,7 +244,7 @@ impl DebuggerArch for Aarch64Arch {
         }
     }
 
-    fn monitor_cmd(tokens: &mut core::str::SplitWhitespace, out: &mut BufferWriter) {
+    fn monitor_cmd(tokens: &mut core::str::SplitWhitespace, out: &mut dyn core::fmt::Write) {
         macro_rules! print_sysreg {
           ($reg:expr, $out:expr) => {
             {
@@ -264,6 +272,33 @@ impl DebuggerArch for Aarch64Arch {
                 let _ = out.write_str("Unknown AArch64 monitor command. Supported commands: regs");
             }
         }
+    }
+
+    #[inline(never)]
+    fn memory_poke_test(address: u64) -> Result<(), ()> {
+        POKE_TEST_MARKER.store(true, Ordering::SeqCst);
+
+        // Attempt to read the address to check if it is accessible.
+        // This will raise a page fault if the address is not accessible.
+
+        let _value: u64;
+        // SAFETY: The safety of this is dubious and may cause a page fault, but
+        // the exception handler will catch it and resolve it by stepping beyond
+        // the exception.
+        unsafe { asm!("ldr {}, [{}]", out(reg) _value, in(reg) address, options(nostack)) };
+
+        // Check if the marker was cleared, indicating a page fault. Reset either way.
+        if POKE_TEST_MARKER.swap(false, Ordering::SeqCst) { Ok(()) } else { Err(()) }
+    }
+
+    fn check_memory_poke_test(context: &mut ExceptionContext) -> bool {
+        let poke_test = POKE_TEST_MARKER.swap(false, Ordering::SeqCst);
+        if poke_test {
+            // We need to increment the instruction pointer to step past the load
+            context.elr += 4;
+        }
+
+        poke_test
     }
 }
 

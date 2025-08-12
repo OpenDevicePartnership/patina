@@ -559,6 +559,11 @@ pub fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(),
         }
     };
 
+    // Release the lock on allocators, as it raises the TPL to TPL_HIGH_LEVEL. During the MAT install, it will attempt
+    // to lock the system tables, which will result in an attempt to raise the TPL to a lower level because the system
+    // tables are locked at TPL_NOTIFY
+    drop(allocators);
+
     // If the memory type is runtime services code or data, we need to install the memory attributes table to reflect
     // the update. The MAT logic will decide if it is a proper time to install the MAT or not.
     match memory_type {
@@ -609,11 +614,12 @@ fn merge_blocks(
 ///
 /// ## Arguments
 ///
-/// * `attributes_mask` - Optional mask to filter the attributes of the memory descriptors
-///                       prior to them being consolidated. This mask will be ANDed with the
-///                       attributes of the memory descriptors.
+/// * `active_attributes` - Specifies whether the `attributes` field of the memory descriptors should
+///   include the active attributes (true) or capabilities (false) of the memory but not
+///   necessarily the active attributes. The capabilities should be used for memory map generation
+///   as the UEFI specification requires.
 ///
-pub(crate) fn get_memory_map_descriptors(attributes_mask: Option<u64>) -> Result<Vec<efi::MemoryDescriptor>, EfiError> {
+pub(crate) fn get_memory_map_descriptors(active_attributes: bool) -> Result<Vec<efi::MemoryDescriptor>, EfiError> {
     let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
 
     // the fold operation would allocate boot services data, which we cannot do because we cannot change the memory map
@@ -668,15 +674,20 @@ pub(crate) fn get_memory_map_descriptors(attributes_mask: Option<u64>) -> Result
                 return None; //skip entries not page aligned.
             }
 
-            // Add the runtime attribute for runtime services code and data as
-            // higher level code will expect this but it is not explicitly tracked.
-            let mut attributes = match memory_type {
-                efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA => descriptor.attributes | efi::MEMORY_RUNTIME,
-                _ => descriptor.attributes,
+            let mut attributes = match active_attributes {
+                true => descriptor.attributes,
+                false => {
+                    // When using the capabilities, drop the runtime attribute and
+                    // pick it up from the active attributes.
+                    (descriptor.capabilities & !(efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME))
+                        | (descriptor.attributes & efi::MEMORY_RUNTIME)
+                }
             };
 
-            if let Some(mask) = attributes_mask {
-                attributes &= mask;
+            if matches!(memory_type, efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA) {
+                // Add the runtime attribute for runtime services code and data as
+                // higher level code will expect this but it is not explicitly tracked.
+                attributes |= efi::MEMORY_RUNTIME;
             }
 
             Some(efi::MemoryDescriptor {
@@ -711,7 +722,7 @@ extern "efiapi" fn get_memory_map(
 
     let map_size = unsafe { *memory_map_size };
 
-    let efi_descriptors = match get_memory_map_descriptors(Some(!efi::MEMORY_ACCESS_MASK)) {
+    let efi_descriptors = match get_memory_map_descriptors(false) {
         Ok(descriptors) => descriptors,
         Err(status) => return status.into(),
     };
@@ -749,7 +760,7 @@ extern "efiapi" fn get_memory_map(
 }
 
 pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
-    let mm_desc = get_memory_map_descriptors(Some(!efi::MEMORY_ACCESS_MASK))?;
+    let mm_desc = get_memory_map_descriptors(false)?;
     let mm_desc_size = mm_desc.len() * mem::size_of::<efi::MemoryDescriptor>();
     let mm_desc_bytes: &[u8] = unsafe { slice::from_raw_parts(mm_desc.as_ptr() as *const u8, mm_desc_size) };
 
@@ -865,46 +876,85 @@ fn process_hob_allocations(hob_list: &HobList) {
                 }
 
                 let mut address = desc.memory_base_address;
-                let _ = core_allocate_pages(
-                    efi::ALLOCATE_ADDRESS,
-                    desc.memory_type,
-                    uefi_size_to_pages!(desc.memory_length as usize),
-                    &mut address as *mut efi::PhysicalAddress,
-                    None)
-                    .inspect_err(|err|{
-                        if *err == EfiError::NotFound && desc.name != guid::ZERO {
-                            //Guided Memory Allocation Hobs are typically MemoryAllocationModule or MemoryAllocationStack HOBs
-                            //which have corresponding non-guided allocation HOBs associated with them; they are rejected as
-                            //duplicates if we attempt to log them. Only log trace messages for these.
-                            log::trace!(
-                                "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
-                                desc.memory_base_address,
-                                desc.memory_length,
-                                err
-                            );
-                        } else {
+                match GCD.get_memory_descriptor_for_address(address) {
+                    // we found the region in the GCD, so we can allocate it
+                    Ok(gcd_desc) => {
+                        if gcd_desc.base_address == desc.memory_base_address
+                            && gcd_desc.length == desc.memory_length
+                            && gcd_desc.image_handle != INVALID_HANDLE
+                        {
                             // check to see if a duplicate HOB has already added this allocation
-                            if let Ok(existing_desc) = GCD.get_memory_descriptor_for_address(desc.memory_base_address) {
-                                if existing_desc.base_address == desc.memory_base_address &&
-                                   existing_desc.length == desc.memory_length &&
-                                   existing_desc.image_handle != INVALID_HANDLE {
-                                        log::trace!(
-                                            "Duplicate allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
-                                            desc.memory_base_address,
-                                            desc.memory_length,
-                                            err
-                                        );
-                                        return;
-                                   }
-                            }
-                            log::error!(
-                                "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
+                            log::trace!(
+                                "Duplicate allocation HOB at {:#x?} of length {:#x?}. Skipping allocation.",
                                 desc.memory_base_address,
-                                desc.memory_length,
-                                err
+                                desc.memory_length
                             );
+                            continue;
                         }
-                    });
+                        let alloc_res = match gcd_desc.memory_type {
+                            // if this is system memory, we use core_allocate_pages to allocate it
+                            // so that we can track the allocation in the allocator
+                            GcdMemoryType::SystemMemory => core_allocate_pages(
+                                efi::ALLOCATE_ADDRESS,
+                                desc.memory_type,
+                                uefi_size_to_pages!(desc.memory_length as usize),
+                                &mut address as *mut efi::PhysicalAddress,
+                                None,
+                            ),
+                            GcdMemoryType::NonExistent | GcdMemoryType::Unaccepted => {
+                                // we can't allocate memory in a non-existent or unaccepted memory type
+                                log::error!(
+                                    "Memory Allocation HOB specifies a non-existent or unaccepted memory type: {:#x?}. Cannot allocate memory.",
+                                    desc.memory_type
+                                );
+                                continue;
+                            }
+                            // for all other memory types, we can allocate it directly in the GCD
+                            // because they are not managed by the allocators
+                            _ => GCD
+                                .allocate_memory_space(
+                                    AllocationStrategy::Address(desc.memory_base_address as usize),
+                                    gcd_desc.memory_type,
+                                    0,
+                                    desc.memory_length as usize,
+                                    protocol_db::DXE_CORE_HANDLE,
+                                    None,
+                                )
+                                .map(|_| ()),
+                        };
+
+                        if let Err(err) = alloc_res {
+                            if err == EfiError::NotFound && desc.name != guid::ZERO {
+                                // Guided Memory Allocation Hobs are typically MemoryAllocationModule or
+                                // MemoryAllocationStack HOBs which have corresponding non-guided allocation HOBs
+                                // associated with them; they are rejected as duplicates if we attempt to log them.
+                                // Only log trace messages for these.
+                                log::trace!(
+                                    "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
+                                    desc.memory_base_address,
+                                    desc.memory_length,
+                                    err
+                                );
+                            } else {
+                                log::error!(
+                                    "Failed to allocate memory space for memory allocation HOB at {:#x?} of length {:#x?}. Error: {:x?}",
+                                    desc.memory_base_address,
+                                    desc.memory_length,
+                                    err
+                                );
+                            }
+                            continue;
+                        }
+                    }
+                    Err(_) => {
+                        log::error!(
+                            "Failed to get memory descriptor for address {:#x?} in GCD specified in Memory Allocation HOB:\n{:#x?}. Cannot allocate memory.",
+                            address,
+                            hob
+                        );
+                        continue;
+                    }
+                }
             }
             Hob::FirmwareVolume(hob::FirmwareVolume { header: _, base_address, length })
             | Hob::FirmwareVolume2(hob::FirmwareVolume2 {
@@ -981,17 +1031,17 @@ fn process_hob_allocations(hob_list: &HobList) {
             )
             .is_err()
             {
-                // if we failed, we should just continue, we won't have null pointer detection, possibly, although one failure
-                // could be that address 0 is not in the memory region of the platform, which will also act as null pointer
-                // detection.
+                // if we failed, we should just continue, we will still unmap page 0, but it will be possible to
+                // allocate by another entity, which is dangerous.
                 log::warn!(
                     "Failed to allocate page 0 for null pointer detection. It will still be unmapped but something may attempt to allocate it by address."
                 );
-                debug_assert!(false);
             }
         }
         _ => {
-            // if we got here, then page 0 is already allocated, so we don't need to do anything.
+            // if we got here, then page 0 is not part of system memory, it may be absent entirely, or the platform may
+            // have this reserved or marked as MMIO. That is a dangerous configuration, because we will unmap it
+            // regardless of being able to allocate it.
             log::info!(
                 "Page 0 is not part of system memory, it cannot be allocated. It will still be unmapped to use for null pointer detection."
             );
@@ -1088,6 +1138,7 @@ pub(crate) unsafe fn reset_allocators() {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
 
     use crate::{
@@ -1170,7 +1221,9 @@ mod tests {
     #[test]
     fn init_memory_support_should_process_resource_allocations() {
         test_support::with_global_lock(|| {
-            let physical_hob_list = build_test_hob_list(0x200000);
+            // 4 MiB of test memory is required because allocator expansion during initialization
+            // may need to handle large allocations for memory buckets and HOBs.
+            let physical_hob_list = build_test_hob_list(0x400000);
             unsafe {
                 GCD.reset();
                 gcd::init_gcd(physical_hob_list);
@@ -1185,7 +1238,7 @@ mod tests {
 
             let allocators = ALLOCATORS.lock();
 
-            //Verify that the memory allocation hobs resulted in claimed pages in the allocator.
+            // Verify that the memory allocation HOBs resulted in claimed pages in the allocator.
             for memory_type in [
                 efi::RESERVED_MEMORY_TYPE,
                 efi::LOADER_CODE,
@@ -1205,6 +1258,20 @@ mod tests {
             }
         })
         .unwrap();
+
+        // confirm the MMIO memory allocation occurred in the GCD
+        let mmio_desc = GCD.get_memory_descriptor_for_address(0x10000000).unwrap();
+        assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
+        assert_eq!(mmio_desc.base_address, 0x10000000);
+        assert_eq!(mmio_desc.length, 0x2000);
+        assert_eq!(mmio_desc.image_handle, protocol_db::DXE_CORE_HANDLE);
+
+        // confirm the rest of the MMIO region is not allocated
+        let mmio_desc = GCD.get_memory_descriptor_for_address(0x10002000).unwrap();
+        assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
+        assert_eq!(mmio_desc.base_address, 0x10002000);
+        assert_eq!(mmio_desc.length, 0x1000000 - 0x2000);
+        assert_eq!(mmio_desc.image_handle, INVALID_HANDLE);
     }
 
     #[test]
@@ -1280,6 +1347,28 @@ mod tests {
             assert_eq!(allocators.memory_type_for_handle(handle), Some(0x81234567));
             drop(allocators);
             assert_eq!(AllocatorMap::handle_for_memory_type(0x81234567).unwrap(), handle);
+        });
+    }
+
+    // This test uses an allocation request size of 0x2b2fa0 to test a specific edge case.
+    //
+    // When core_allocate_pool attempts to allocate 0x2b2fa0 bytes (aligned to 0x2b2fb8 bytes), the allocation
+    // will initially fail and trigger a fallback to fallback_alloc, which requests 0x2b2ff8 bytes of additional
+    // memory. The GCD then allocates memory with a page-aligned size of 0x2b3000 bytes. Following this, the system
+    // calls expand() to add the newly allocated heap, which ends up being 0x2b2fc0 bytes in size. However, the
+    // difference between the heap size (0x2b2fc0) and the expected memory size (0x2b2fb8) is only 8 bytes. This
+    // small gap is insufficient to accommodate the metadata required by HoleList::new() from the
+    // linked_list_allocator crate, which expects extra space for internal bookkeeping structures.
+    //
+    // This test ensures that the linked list hole list structure is accounted for correctly and that the allocation
+    // succeeds without panicking due to insufficient space. For this particular test, the failing additional memory
+    // size returned was 0x2b3000 bytes (panic) whereas now 0x2b3010 bytes is returned to account for the HoleList
+    // metadata.
+    #[test]
+    fn linked_list_hole_list_struct_should_be_accounted_for() {
+        with_locked_state(0x4000000, || {
+            let ptr = core_allocate_pool(efi::BOOT_SERVICES_DATA, 0x2B2FA0).unwrap();
+            assert!(!ptr.is_null());
         });
     }
 

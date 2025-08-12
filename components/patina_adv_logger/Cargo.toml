@@ -20,6 +20,8 @@ mu_pi = { workspace = true }
 r-efi = { workspace = true }
 spin = { workspace = true }
 mu_rust_helpers = { workspace = true }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
 
 # Only used for CLI
 clap = { workspace = true, features = ['derive'], optional = true }

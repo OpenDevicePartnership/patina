@@ -13,7 +13,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use patina_sdk::component::service::Service;
-use patina_sdk::component::service::memory::MemoryManager;
+use patina_sdk::component::service::memory::{AllocationOptions, MemoryManager, PageAllocationStrategy};
 use patina_sdk::efi_types::EfiMemoryType;
 
 use crate::error::AcpiError;
@@ -402,6 +402,26 @@ impl AcpiTable {
             signature::FACS | signature::UEFI => EfiMemoryType::ACPIMemoryNVS,
             _ => EfiMemoryType::ACPIReclaimMemory,
         };
+
+        if table_signature == signature::FACS {
+            let facs_alloc = mm
+                .allocate_pages(
+                    1,
+                    AllocationOptions::new()
+                        .with_memory_type(EfiMemoryType::ACPIMemoryNVS)
+                        .with_strategy(PageAllocationStrategy::MaxAddress(0x1000_0000)),
+                )
+                .unwrap();
+            let new_facs_ptr = facs_alloc.into_raw_ptr().unwrap();
+            unsafe { ptr::copy_nonoverlapping(header_ptr as *const u8, new_facs_ptr, table_length) };
+            log::info!("Created FACS table at address: {:?}", new_facs_ptr);
+
+            log::info!("Running sherry's super awesome code");
+            return Ok(Self {
+                table: NonNull::new(new_facs_ptr).ok_or(AcpiError::NullTablePtr)?.cast::<Table>(),
+                type_id: TypeId::of::<AcpiTableHeader>(), // Unknown type, so we use the header type.
+            });
+        }
 
         // Allocate table based on the length given in the header field.
         let allocator = mm.get_allocator(allocator_type).map_err(|_e| AcpiError::AllocationFailed)?;

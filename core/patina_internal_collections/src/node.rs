@@ -590,7 +590,8 @@ impl<D: SliceKey> SliceKey for Node<D> {
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use super::*;
 
     #[test]

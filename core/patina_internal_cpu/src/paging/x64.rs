@@ -158,6 +158,7 @@ fn mtrr_err_to_efi_status(err: MtrrError) -> EfiError {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use mockall::mock;

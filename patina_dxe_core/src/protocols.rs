@@ -690,6 +690,9 @@ pub fn core_locate_device_path(
     protocol: efi::Guid,
     device_path: *const r_efi::protocols::device_path::Protocol,
 ) -> Result<(*mut r_efi::protocols::device_path::Protocol, efi::Handle), EfiError> {
+    if device_path.is_null() {
+        return Err(EfiError::InvalidParameter);
+    }
     let device_path_protocol_guid = &r_efi::protocols::device_path::PROTOCOL_GUID as *const _ as *mut efi::Guid;
 
     let mut best_device: efi::Handle = core::ptr::null_mut();

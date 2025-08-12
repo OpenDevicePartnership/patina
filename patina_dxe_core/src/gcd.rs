@@ -337,6 +337,7 @@ pub(crate) fn activate_compatibility_mode() {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use core::ffi::c_void;
 

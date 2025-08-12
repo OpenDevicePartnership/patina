@@ -1564,7 +1564,8 @@ impl BootServices for StandardBootServices {
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use c_ptr::CPtr;
     use efi::{Boolean, Char16, OpenProtocolInformationEntry, protocols::device_path};
 
