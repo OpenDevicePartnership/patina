@@ -406,10 +406,7 @@ extern "efiapi" fn allocate_pool(pool_type: efi::MemoryType, size: usize, buffer
 
 pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mut c_void, EfiError> {
     // It is not valid to attempt to allocate these memory types
-    if matches!(
-        pool_type,
-        efi::CONVENTIONAL_MEMORY | efi::PERSISTENT_MEMORY | efi::UNUSABLE_MEMORY | efi::UNACCEPTED_MEMORY_TYPE
-    ) {
+    if matches!(pool_type, efi::CONVENTIONAL_MEMORY | efi::PERSISTENT_MEMORY | efi::UNACCEPTED_MEMORY_TYPE) {
         return Err(EfiError::InvalidParameter);
     }
 
@@ -469,10 +466,7 @@ pub fn core_allocate_pages(
     }
 
     // It is not valid to attempt to allocate these memory types
-    if matches!(
-        memory_type,
-        efi::CONVENTIONAL_MEMORY | efi::PERSISTENT_MEMORY | efi::UNUSABLE_MEMORY | efi::UNACCEPTED_MEMORY_TYPE
-    ) {
+    if matches!(memory_type, efi::CONVENTIONAL_MEMORY | efi::PERSISTENT_MEMORY | efi::UNACCEPTED_MEMORY_TYPE) {
         return Err(EfiError::InvalidParameter);
     }
 
@@ -1390,7 +1384,7 @@ mod tests {
 
             assert_eq!(
                 allocate_pool(efi::UNUSABLE_MEMORY, 0x1000, core::ptr::addr_of_mut!(buffer_ptr)),
-                efi::Status::INVALID_PARAMETER
+                efi::Status::SUCCESS
             );
 
             assert_eq!(
@@ -1571,6 +1565,16 @@ mod tests {
                     core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress
                 ),
                 efi::Status::INVALID_PARAMETER
+            );
+
+            assert_eq!(
+                allocate_pages(
+                    efi::ALLOCATE_ANY_PAGES,
+                    efi::UNUSABLE_MEMORY,
+                    0x10,
+                    core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress
+                ),
+                efi::Status::SUCCESS
             );
         })
     }
