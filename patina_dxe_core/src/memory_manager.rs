@@ -243,7 +243,7 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_sdk
     u_assert!(result.is_ok(), "Failed to allocate with max address limit.");
     let allocation = result.unwrap();
     let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
-    u_assert!(address <= max_address, "Allocated address exceeds max address limit.");
+    u_assert!((address + UEFI_PAGE_SIZE - 1) <= max_address, "Allocated address exceeds max address limit.");
 
     // Get an allocator.
     let result = mm.get_allocator(EfiMemoryType::BootServicesData);
