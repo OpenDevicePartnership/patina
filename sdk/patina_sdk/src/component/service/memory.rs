@@ -816,6 +816,8 @@ pub enum PageAllocationStrategy {
     /// If the memory starting at this address through the requested length is not
     /// available, an error will be returned.
     Address(usize),
+    /// Allocate at an address no larger than the specified address (inclusive).
+    MaxAddress(usize),
 }
 
 #[cfg(any(test, feature = "mockall"))]
