@@ -343,6 +343,7 @@ unsafe impl<T: ?Sized + 'static> Param for Service<T> {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::IntoService;
     use super::*;

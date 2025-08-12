@@ -659,6 +659,7 @@ where
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use crate::{Bst, node_size};
 

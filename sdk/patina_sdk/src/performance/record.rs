@@ -228,7 +228,8 @@ impl<'a> Iterator for Iter<'a> {
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use super::*;
     use core::{assert_eq, slice, unreachable};
 

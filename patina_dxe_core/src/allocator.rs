@@ -1138,6 +1138,7 @@ pub(crate) unsafe fn reset_allocators() {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
 
     use crate::{

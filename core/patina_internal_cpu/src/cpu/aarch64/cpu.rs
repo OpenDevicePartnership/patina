@@ -120,6 +120,7 @@ impl Cpu for EfiCpuAarch64 {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
 

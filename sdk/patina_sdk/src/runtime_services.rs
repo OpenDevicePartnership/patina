@@ -437,6 +437,7 @@ impl RuntimeServices for StandardRuntimeServices {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 pub(crate) mod test {
     use super::*;
     use core::{mem, slice};

@@ -60,6 +60,3 @@ default = []
 std = ["patina_sdk/std"]
 doc = ["patina_internal_cpu/doc"]
 compatibility_mode_allowed = []
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }

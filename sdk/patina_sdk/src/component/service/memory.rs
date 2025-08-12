@@ -816,13 +816,15 @@ pub enum PageAllocationStrategy {
     /// If the memory starting at this address through the requested length is not
     /// available, an error will be returned.
     Address(usize),
+    /// Allocate at an address no larger than the specified address (inclusive).
+    MaxAddress(usize),
 }
 
 #[cfg(any(test, feature = "mockall"))]
 pub use mock::StdMemoryManager;
 
 #[cfg(any(test, feature = "mockall"))]
-#[cfg(not(tarpaulin_include))]
+#[coverage(off)]
 mod mock {
     extern crate std;
     use std::{
@@ -902,6 +904,7 @@ mod mock {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use core::{
         alloc::Layout,

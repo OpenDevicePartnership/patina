@@ -248,6 +248,7 @@ pub fn core_install_memory_attributes_table() {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     extern crate std;
     use super::*;

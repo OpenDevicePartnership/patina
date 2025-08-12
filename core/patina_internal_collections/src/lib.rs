@@ -59,6 +59,7 @@
 //!
 #![no_std]
 #![feature(let_chains)]
+#![feature(coverage_attribute)]
 mod bst;
 mod node;
 mod rbt;

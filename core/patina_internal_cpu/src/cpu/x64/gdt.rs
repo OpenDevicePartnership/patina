@@ -208,7 +208,8 @@ pub fn init() {
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use super::GDT;
     use super::{
         LINEAR_CODE_SEL, LINEAR_CODE64_SEL, LINEAR_DATA64_SEL, LINEAR_SEL, SPARE5_SEL, SYS_CODE_SEL, SYS_CODE16_SEL,

@@ -2622,6 +2622,7 @@ unsafe impl Sync for SpinLockedGcd {}
 unsafe impl Send for SpinLockedGcd {}
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     extern crate std;
     use core::{alloc::Layout, sync::atomic::AtomicBool};

@@ -335,6 +335,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use crate::c_void;
