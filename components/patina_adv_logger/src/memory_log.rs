@@ -516,6 +516,7 @@ impl<'a> Iterator for AdvLogIterator<'a> {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     extern crate std;
     use alloc::boxed::Box;

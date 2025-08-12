@@ -446,6 +446,7 @@ pub fn load_resource_section(pe_info: &UefiPeInfo, image: &[u8]) -> error::Resul
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     extern crate std;

@@ -134,6 +134,7 @@ where
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     extern crate std;
     use core::mem::size_of;

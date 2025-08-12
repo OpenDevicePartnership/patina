@@ -139,6 +139,7 @@ impl<T: ?Sized> Drop for TplGuard<'_, T> {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     extern crate std;
     use std::{boxed::Box, println};

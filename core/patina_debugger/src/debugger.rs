@@ -393,7 +393,14 @@ impl<T: SerialIO> InterruptHandler for PatinaDebugger<T> {
         exception_type: ExceptionType,
         context: &mut patina_internal_cpu::interrupts::ExceptionContext,
     ) {
+        // Check for a poke test before continuing
+        if SystemArch::check_memory_poke_test(context) {
+            log::info!("Memory poke test triggered, ignoring exception.");
+            return;
+        }
+
         let mut exception_info = SystemArch::process_entry(exception_type as u64, context);
+
         let result = self.enter_debugger(exception_info);
 
         exception_info = result.unwrap_or_else(|error| {

@@ -187,6 +187,7 @@ where
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     extern crate std;
     use super::*;

@@ -31,6 +31,7 @@
 
 #![cfg_attr(not(test), no_std)]
 #![allow(unexpected_cfgs)]
+#![feature(coverage_attribute)]
 
 pub mod component;
 pub mod config;

@@ -281,6 +281,7 @@ pub fn init_runtime_support(rt: &mut efi::RuntimeServices) {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::{RUNTIME_DATA, convert_pointer, init_runtime_support, set_virtual_address_map};
     use crate::test_support;

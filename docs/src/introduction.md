@@ -99,7 +99,7 @@ components = ["rust-src"]
 
 There are additional cargo plugins (installables) that will need to be installed depending on what you are doing. You
 can find a list of all tools in the same file under the `[tools]` section. At a minimum, you will need `cargo-make` for
-compilation and `cargo-tarpaulin` for code coverage. You should install these tools at the version specified via
+compilation and `cargo-llvm-cov` for code coverage. You should install these tools at the version specified via
 `cargo install --force $(tool_name) --version $(version)`, but it is best to install all of them.
 
 ```admonish note
@@ -116,9 +116,9 @@ simplify the developer experience, we use [cargo-make](https://github.com/sagieg
 replacement for cargo commands. Instead of running `cargo build`, you would now run `cargo make build`. Many other
 commands exist, and will exist on a per-repository basis.
 
-### Cargo Tarpaulin
+### Cargo LLVM-Cov
 
-[cargo-tarpaulin](https://github.com/xd009642/tarpaulin) is our tool for generating code coverage results. Our
+[cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) is our tool for generating code coverage results. Our
 requirement is that any crate being developed must have at least 80% code coverage, so developers will want to use
-`tarpaulin` to calculate code coverage. In an existing repository, a developer will use `cargo make coverage` to
+`cargo llvm-cov` to calculate code coverage. In an existing repository, a developer will use `cargo make coverage` to
 generate coverage results and a line-coverage HTML report.

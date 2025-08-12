@@ -37,10 +37,15 @@ to help developers track local performance changes when making changes during th
 ## Code Coverage
 
 Code coverage is an important aspect of our project. Our intent is to keep above 80% code coverage for all crates
-in any given repository. We use [Cargo Tarpaulin](https://crates.io/crates/cargo-tarpaulin) as our code coverage
+in any given repository. We use [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) as our code coverage
 reporting tool, as it works well with Windows and Linux, and can generate different report types. Each repository
 must have CI that fails if any code added to the repository has less than 80% coverage, or if the repository as a
 whole is below 80% coverage.
+
+By default, cargo-llvm-cov will produced an lcov report, which is easily consumable in various processing tools like
+[Coverage Gutters](https://marketplace.visualstudio.com/items?itemName=ryanluker.vscode-coverage-gutters). To view the
+report in HTML format, `cargo llvm-cov report --html` can be run to generate the report from the already produced lcov
+report.
 
 ```mermaid
 ---

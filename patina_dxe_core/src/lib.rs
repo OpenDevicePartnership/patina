@@ -34,6 +34,7 @@
 #![feature(allocator_api)]
 #![feature(slice_ptr_get)]
 #![feature(get_many_mut)]
+#![feature(coverage_attribute)]
 
 extern crate alloc;
 
@@ -63,6 +64,7 @@ mod tpl_lock;
 
 #[cfg(test)]
 #[macro_use]
+#[coverage(off)]
 pub mod test_support;
 
 use core::{ffi::c_void, ptr, str::FromStr};

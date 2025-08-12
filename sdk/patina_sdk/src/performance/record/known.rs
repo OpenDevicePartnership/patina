@@ -248,7 +248,8 @@ impl TryFrom<u16> for KnownPerfId {
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use core::{assert_eq, convert::From, ptr};
 
     use super::*;

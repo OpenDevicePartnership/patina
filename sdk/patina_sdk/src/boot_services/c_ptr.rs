@@ -219,7 +219,8 @@ unsafe impl<'a, R: CRef<'a, Type = T>, T> CRef<'a> for ManuallyDrop<R> {}
 unsafe impl<'a, R: CMutRef<'a, Type = T>, T> CMutRef<'a> for ManuallyDrop<R> {}
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use core::ptr;
 
     use super::*;
