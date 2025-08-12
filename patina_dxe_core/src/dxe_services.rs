@@ -136,8 +136,8 @@ extern "efiapi" fn set_memory_space_attributes(
     attributes: u64,
 ) -> efi::Status {
     match core_set_memory_space_attributes(base_address, length, attributes) {
-        Err(err) => err.into(),
         Ok(_) => efi::Status::SUCCESS,
+        Err(err) => err.into(),
     }
 }
 
@@ -146,7 +146,21 @@ pub fn core_set_memory_space_attributes(
     length: u64,
     attributes: u64,
 ) -> Result<(), EfiError> {
-    GCD.set_memory_space_attributes(base_address as usize, length as usize, attributes)
+    match GCD.set_memory_space_attributes(base_address as usize, length as usize, attributes) {
+        Ok(()) => Ok(()),
+        Err(EfiError::NotReady) => {
+            // Disambiguate "NotReady": if the GCD is initialized but paging
+            // isn’t installed yet, the GCD state has been updated and callers
+            // of the DXE Services wrapper expect SUCCESS. Only surface
+            // NOT_READY when the GCD itself is uninitialized.
+            if GCD.is_ready() {
+                Ok(()) // GCD ready, paging not ready -> treat as success
+            } else {
+                Err(EfiError::NotReady) // GCD not initialized
+            }
+        }
+        Err(e) => Err(e),
+    }
 }
 
 extern "efiapi" fn set_memory_space_capabilities(
@@ -441,7 +455,7 @@ pub fn init_dxe_services(system_table: &mut EfiSystemTable) {
 mod tests {
     use super::*;
     use crate::test_support;
-    use dxe_services::GcdMemoryType;
+    use dxe_services::{GcdIoType, GcdMemoryType};
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
@@ -1275,6 +1289,986 @@ mod tests {
             let mut descriptor = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
             let result = get_memory_space_descriptor(base + length, descriptor.as_mut_ptr());
             assert_eq!(result, efi::Status::SUCCESS, "Should get descriptor at address after end of range");
+        });
+    }
+
+    #[test]
+    fn test_set_memory_space_attributes_success_and_readback() {
+        with_locked_state(|| {
+            let base = 0x2400000;
+            let length = 0x2000; // 2 pages
+
+            // Prepare a region
+            assert_eq!(
+                add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB),
+                efi::Status::SUCCESS
+            );
+
+            // Allow changing RO/XP and keep WB. Also include RP to continue supporting current attributes.
+            let allowed = efi::MEMORY_RO | efi::MEMORY_XP | efi::MEMORY_WB | efi::MEMORY_RP;
+            assert_eq!(set_memory_space_capabilities(base, length, allowed), efi::Status::SUCCESS);
+
+            // Apply RO + XP + keep WB caching
+            let attrs = efi::MEMORY_RO | efi::MEMORY_XP | efi::MEMORY_WB;
+            let s = set_memory_space_attributes(base, length, attrs);
+            assert_eq!(s, efi::Status::SUCCESS);
+
+            // Read back and verify bits are set
+            let mut d = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
+            assert_eq!(get_memory_space_descriptor(base, d.as_mut_ptr()), efi::Status::SUCCESS);
+            let d = unsafe { d.assume_init() };
+            assert_eq!(d.base_address, base);
+            assert_eq!(d.length, length);
+            assert!(d.attributes & attrs == attrs, "expected attrs 0x{:x} to be set in 0x{:x}", attrs, d.attributes);
+        });
+    }
+
+    #[test]
+    fn test_set_memory_space_attributes_partial_range_only_affects_subset() {
+        with_locked_state(|| {
+            let base = 0x2410000;
+            let length = 0x4000; // 4 pages
+            assert_eq!(
+                add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB),
+                efi::Status::SUCCESS
+            );
+
+            // Allow RO and keep existing WB/XP so current attributes remain supported. Include RP to cover current attrs.
+            assert_eq!(
+                set_memory_space_capabilities(
+                    base,
+                    length,
+                    efi::MEMORY_RO | efi::MEMORY_WB | efi::MEMORY_XP | efi::MEMORY_RP
+                ),
+                efi::Status::SUCCESS
+            );
+
+            // Change attributes for first page only
+            let first_len = 0x1000u64;
+            let attrs = efi::MEMORY_RO | efi::MEMORY_WB;
+            let s = set_memory_space_attributes(base, first_len, attrs);
+            assert_eq!(s, efi::Status::SUCCESS);
+
+            // The first page should have RO set
+            let mut d0 = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
+            assert_eq!(get_memory_space_descriptor(base, d0.as_mut_ptr()), efi::Status::SUCCESS);
+            let d0 = unsafe { d0.assume_init() };
+            assert!(d0.attributes & efi::MEMORY_RO != 0);
+
+            // A later page should not necessarily have RO (split expected). We only assert that RO is not set there.
+            let mut d1 = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
+            assert_eq!(get_memory_space_descriptor(base + 0x3000, d1.as_mut_ptr()), efi::Status::SUCCESS);
+            let d1 = unsafe { d1.assume_init() };
+            assert!(d1.attributes & efi::MEMORY_RO == 0, "RO should not be set on untouched pages");
+        });
+    }
+
+    #[test]
+    fn test_set_memory_space_attributes_not_ready() {
+        with_locked_state(|| {
+            unsafe { GCD.reset() };
+            let s = set_memory_space_attributes(0x2421000, 0x1000, efi::MEMORY_WB);
+            assert_eq!(s, efi::Status::NOT_READY);
+        });
+    }
+
+    // Note: We intentionally do not test out-of-range behavior for set_memory_space_attributes here,
+    // as the debug build asserts on internal GCD errors for this path. The out-of-range case is covered
+    // by set_memory_space_capabilities tests above, which return UNSUPPORTED without asserting.
+
+    #[test]
+    fn test_get_memory_space_map_invalid_parameters() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+
+            let mut out_count: usize = 0;
+            let mut out_ptr: *mut dxe_services::MemorySpaceDescriptor = core::ptr::null_mut();
+
+            let s = get_memory_space_map(core::ptr::null_mut(), &mut out_ptr);
+            assert_eq!(s, efi::Status::INVALID_PARAMETER);
+
+            let s = get_memory_space_map(&mut out_count, core::ptr::null_mut());
+            assert_eq!(s, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_get_memory_space_map_not_ready() {
+        with_locked_state(|| {
+            unsafe { GCD.reset() };
+
+            let mut out_count: usize = 0;
+            let mut out_ptr: *mut dxe_services::MemorySpaceDescriptor = core::ptr::null_mut();
+
+            let s = get_memory_space_map(&mut out_count, &mut out_ptr);
+            assert_eq!(s, efi::Status::NOT_READY, "Expected NOT_READY when GCD is uninitialized");
+        });
+    }
+
+    #[test]
+    fn test_get_memory_space_map_success_and_contents() {
+        with_locked_state(|| {
+            unsafe {
+                crate::test_support::reset_allocators();
+                crate::test_support::init_test_gcd(None);
+            }
+
+            let expected_count = GCD.memory_descriptor_count();
+            let mut expected: Vec<dxe_services::MemorySpaceDescriptor> = Vec::with_capacity(expected_count + 10);
+            GCD.get_memory_descriptors(&mut expected).expect("get_memory_descriptors failed");
+            assert!(!expected.is_empty());
+
+            let mut out_count: usize = 0;
+            let mut out_ptr: *mut dxe_services::MemorySpaceDescriptor = core::ptr::null_mut();
+            let s = get_memory_space_map(&mut out_count, &mut out_ptr);
+            assert_eq!(s, efi::Status::SUCCESS);
+            assert_eq!(out_count, expected.len());
+            assert!(!out_ptr.is_null());
+
+            let out_slice = unsafe { core::slice::from_raw_parts(out_ptr, out_count) };
+            assert_eq!(out_slice, expected.as_slice());
+
+            assert!(crate::allocator::core_free_pool(out_ptr as *mut core::ffi::c_void).is_ok());
+        });
+    }
+
+    #[test]
+    fn test_get_memory_space_map_with_additional_regions() {
+        with_locked_state(|| {
+            unsafe {
+                crate::test_support::reset_allocators();
+                crate::test_support::init_test_gcd(None);
+            }
+
+            // Add a few extra regions of varying types
+            let _ = add_memory_space(GcdMemoryType::SystemMemory, 0x2600000, 0x20000, efi::MEMORY_WB);
+            let _ = add_memory_space(GcdMemoryType::Reserved, 0x2700000, 0x10000, efi::MEMORY_UC | efi::MEMORY_XP);
+            let _ = add_memory_space(GcdMemoryType::MemoryMappedIo, 0x2800000, 0x30000, efi::MEMORY_UC);
+
+            // Fetch expected
+            let expected_count = GCD.memory_descriptor_count();
+            let mut expected: Vec<dxe_services::MemorySpaceDescriptor> = Vec::with_capacity(expected_count + 10);
+            GCD.get_memory_descriptors(&mut expected).expect("get_memory_descriptors failed");
+            assert!(expected.len() >= 3);
+
+            // Call API
+            let mut out_count: usize = 0;
+            let mut out_ptr: *mut dxe_services::MemorySpaceDescriptor = core::ptr::null_mut();
+            let s = get_memory_space_map(&mut out_count, &mut out_ptr);
+            assert_eq!(s, efi::Status::SUCCESS);
+            assert_eq!(out_count, expected.len());
+
+            // Verify first and last few entries match (order should be the same as GCD enumeration)
+            let out_slice = unsafe { core::slice::from_raw_parts(out_ptr, out_count) };
+            assert_eq!(out_slice, expected.as_slice());
+
+            // cleanup
+            assert!(crate::allocator::core_free_pool(out_ptr as *mut core::ffi::c_void).is_ok());
+        });
+    }
+
+    #[test]
+    fn test_get_io_space_map_invalid_parameters() {
+        with_locked_state(|| {
+            let mut out_count: usize = 0;
+            let mut out_ptr: *mut dxe_services::IoSpaceDescriptor = core::ptr::null_mut();
+
+            let s = get_io_space_map(core::ptr::null_mut(), &mut out_ptr);
+            assert_eq!(s, efi::Status::INVALID_PARAMETER);
+
+            let s = get_io_space_map(&mut out_count, core::ptr::null_mut());
+            assert_eq!(s, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_get_io_space_map_not_ready() {
+        with_locked_state(|| {
+            unsafe { GCD.reset() };
+
+            let mut out_count: usize = 0;
+            let mut out_ptr: *mut dxe_services::IoSpaceDescriptor = core::ptr::null_mut();
+
+            let s = get_io_space_map(&mut out_count, &mut out_ptr);
+            assert_eq!(s, efi::Status::NOT_READY, "Expected NOT_READY when GCD is uninitialized");
+        });
+    }
+
+    #[test]
+    fn test_get_io_space_map_success_and_contents() {
+        with_locked_state(|| {
+            unsafe {
+                crate::test_support::reset_allocators();
+                crate::test_support::init_test_gcd(None);
+            }
+
+            let expected_count = GCD.io_descriptor_count();
+            let mut expected: Vec<dxe_services::IoSpaceDescriptor> = Vec::with_capacity(expected_count + 10);
+            GCD.get_io_descriptors(&mut expected).expect("get_io_descriptors failed");
+            assert!(!expected.is_empty());
+
+            let mut out_count: usize = 0;
+            let mut out_ptr: *mut dxe_services::IoSpaceDescriptor = core::ptr::null_mut();
+            let s = get_io_space_map(&mut out_count, &mut out_ptr);
+            assert_eq!(s, efi::Status::SUCCESS);
+            assert_eq!(out_count, expected.len());
+            assert!(!out_ptr.is_null());
+
+            let out_slice = unsafe { core::slice::from_raw_parts(out_ptr, out_count) };
+            assert_eq!(out_slice, expected.as_slice());
+
+            assert!(crate::allocator::core_free_pool(out_ptr as *mut core::ffi::c_void).is_ok());
+        });
+    }
+
+    #[test]
+    fn test_get_io_space_map_with_additional_regions() {
+        with_locked_state(|| {
+            unsafe {
+                crate::test_support::reset_allocators();
+                crate::test_support::init_test_gcd(None);
+            }
+
+            assert_eq!(add_io_space(GcdIoType::Io, 0x2000, 0x100), efi::Status::SUCCESS);
+            assert_eq!(add_io_space(GcdIoType::Reserved, 0x2400, 0x80), efi::Status::SUCCESS);
+            assert_eq!(add_io_space(GcdIoType::Io, 0x2600, 0x180), efi::Status::SUCCESS);
+
+            let expected_count = GCD.io_descriptor_count();
+            let mut expected: Vec<dxe_services::IoSpaceDescriptor> = Vec::with_capacity(expected_count + 10);
+            GCD.get_io_descriptors(&mut expected).expect("get_io_descriptors failed");
+            assert!(!expected.is_empty());
+
+            let mut out_count: usize = 0;
+            let mut out_ptr: *mut dxe_services::IoSpaceDescriptor = core::ptr::null_mut();
+            let s = get_io_space_map(&mut out_count, &mut out_ptr);
+            assert_eq!(s, efi::Status::SUCCESS);
+            assert_eq!(out_count, expected.len());
+
+            let out_slice = unsafe { core::slice::from_raw_parts(out_ptr, out_count) };
+            assert_eq!(out_slice, expected.as_slice());
+
+            assert!(crate::allocator::core_free_pool(out_ptr as *mut core::ffi::c_void).is_ok());
+        });
+    }
+
+    #[test]
+    fn test_set_memory_space_capabilities_success() {
+        with_locked_state(|| {
+            // Add a page-aligned region we can operate on
+            let base = 0x2A00000;
+            let length = 0x2000; // 2 pages
+            assert_eq!(
+                add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB),
+                efi::Status::SUCCESS
+            );
+
+            // Set a combination of reasonable capabilities
+            let caps = efi::MEMORY_RP | efi::MEMORY_RO | efi::MEMORY_XP;
+            let s = set_memory_space_capabilities(base, length, caps);
+            assert_eq!(s, efi::Status::SUCCESS);
+
+            // Verify capabilities include the requested bits
+            let mut d = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
+            assert_eq!(get_memory_space_descriptor(base, d.as_mut_ptr()), efi::Status::SUCCESS);
+            let d = unsafe { d.assume_init() };
+            assert_eq!(d.base_address, base);
+            assert!(d.capabilities & caps == caps, "Expected caps 0x{:x} to be set in 0x{:x}", caps, d.capabilities);
+        });
+    }
+
+    #[test]
+    fn test_set_memory_space_capabilities_zero_length_invalid_param() {
+        with_locked_state(|| {
+            let s = set_memory_space_capabilities(0x2B00000, 0, efi::MEMORY_WB);
+            assert_eq!(s, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_set_memory_space_capabilities_not_ready() {
+        with_locked_state(|| {
+            // Force GCD to an uninitialized state
+            unsafe { GCD.reset() };
+            let s = set_memory_space_capabilities(0x200000, 0x1000, efi::MEMORY_WB);
+            assert_eq!(s, efi::Status::NOT_READY, "Expected NOT_READY when GCD is reset");
+        });
+    }
+
+    #[test]
+    fn test_set_memory_space_capabilities_unaligned_length() {
+        with_locked_state(|| {
+            // Add a valid region first
+            let base = 0x2C00000;
+            let _ = add_memory_space(GcdMemoryType::SystemMemory, base, 0x4000, efi::MEMORY_WB);
+            // Use an unaligned length
+            let s = set_memory_space_capabilities(base, 0x1234, efi::MEMORY_WB);
+            assert_eq!(s, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_set_memory_space_capabilities_unaligned_base() {
+        with_locked_state(|| {
+            // Add a valid region first
+            let base = 0x2D00000;
+            let _ = add_memory_space(GcdMemoryType::SystemMemory, base, 0x4000, efi::MEMORY_WB);
+            // Use an unaligned base
+            let s = set_memory_space_capabilities(base + 1, 0x1000, efi::MEMORY_WB);
+            assert_eq!(s, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_set_memory_space_capabilities_out_of_range_unsupported() {
+        with_locked_state(|| {
+            // The test GCD uses 48-bit physical address space
+            let max_addr = 1u64 << 48;
+            // Choose a base such that base + len > maximum_address
+            let base = max_addr - 0x1000;
+            let len = 0x2000;
+            let s = set_memory_space_capabilities(base, len, efi::MEMORY_WB);
+            assert_eq!(s, efi::Status::UNSUPPORTED);
+        });
+    }
+
+    #[test]
+    fn test_add_io_space_success_io() {
+        with_locked_state(|| {
+            // Initialize GCD (sets IO address bits = 16)
+            unsafe { crate::test_support::init_test_gcd(None) };
+
+            let base = 0x2000u64;
+            let len = 0x100u64;
+            let s = add_io_space(GcdIoType::Io, base, len);
+            assert_eq!(s, efi::Status::SUCCESS);
+
+            // Verify via descriptor query
+            let mut desc = core::mem::MaybeUninit::<dxe_services::IoSpaceDescriptor>::uninit();
+            let s = get_io_space_descriptor(base, desc.as_mut_ptr());
+            assert_eq!(s, efi::Status::SUCCESS);
+            let desc = unsafe { desc.assume_init() };
+            assert_eq!(desc.base_address, base);
+            assert_eq!(desc.length, len);
+            assert_eq!(desc.io_type, GcdIoType::Io);
+        });
+    }
+
+    #[test]
+    fn test_add_io_space_success_reserved() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+
+            let base = 0x3000u64;
+            let len = 0x80u64;
+            let s = add_io_space(GcdIoType::Reserved, base, len);
+            assert_eq!(s, efi::Status::SUCCESS);
+
+            let mut desc = core::mem::MaybeUninit::<dxe_services::IoSpaceDescriptor>::uninit();
+            assert_eq!(get_io_space_descriptor(base, desc.as_mut_ptr()), efi::Status::SUCCESS);
+            let desc = unsafe { desc.assume_init() };
+            assert_eq!(desc.base_address, base);
+            assert_eq!(desc.length, len);
+            assert_eq!(desc.io_type, GcdIoType::Reserved);
+        });
+    }
+
+    #[test]
+    fn test_add_io_space_zero_length_invalid_parameter() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            let s = add_io_space(GcdIoType::Io, 0x1000, 0);
+            assert_eq!(s, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_add_io_space_out_of_range_unsupported() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            // IO address space is 16 bits in tests => maximum address 0x10000
+            // Pick a range that exceeds the maximum
+            let s = add_io_space(GcdIoType::Io, 0xFF80, 0x200);
+            assert_eq!(s, efi::Status::UNSUPPORTED);
+        });
+    }
+
+    #[test]
+    fn test_add_io_space_not_ready() {
+        with_locked_state(|| {
+            // Force GCD to uninitialized state for IO
+            unsafe { GCD.reset() };
+            let s = add_io_space(GcdIoType::Io, 0x1000, 0x10);
+            assert_eq!(s, efi::Status::NOT_READY);
+        });
+    }
+
+    #[test]
+    fn test_add_io_space_overlap_access_denied() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            let base = 0x4000u64;
+            let len = 0x100u64;
+            assert_eq!(add_io_space(GcdIoType::Io, base, len), efi::Status::SUCCESS);
+            // Overlapping add should be denied since region is no longer NonExistent
+            let s = add_io_space(GcdIoType::Reserved, base, 0x80);
+            assert_eq!(s, efi::Status::ACCESS_DENIED);
+        });
+    }
+
+    #[test]
+    fn test_allocate_io_space_null_base_ptr_invalid_parameter() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            let s = allocate_io_space(
+                dxe_services::GcdAllocateType::AnySearchBottomUp,
+                GcdIoType::Io,
+                3,
+                0x10,
+                core::ptr::null_mut(),
+                1 as _,
+                core::ptr::null_mut(),
+            );
+            assert_eq!(s, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_allocate_io_space_not_ready() {
+        with_locked_state(|| {
+            unsafe { GCD.reset() };
+            let mut out: efi::PhysicalAddress = 0;
+            let s = allocate_io_space(
+                dxe_services::GcdAllocateType::AnySearchBottomUp,
+                GcdIoType::Io,
+                3,
+                0x10,
+                &mut out,
+                1 as _,
+                core::ptr::null_mut(),
+            );
+            assert_eq!(s, efi::Status::NOT_READY);
+        });
+    }
+
+    #[test]
+    fn test_allocate_io_space_zero_length_invalid_parameter() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            // Need an IO region present to allocate from, but length 0 should still fail early
+            assert_eq!(add_io_space(GcdIoType::Io, 0x2000, 0x200), efi::Status::SUCCESS);
+            let mut out: efi::PhysicalAddress = 0;
+            let s = allocate_io_space(
+                dxe_services::GcdAllocateType::AnySearchBottomUp,
+                GcdIoType::Io,
+                3,
+                0,
+                &mut out,
+                1 as _,
+                core::ptr::null_mut(),
+            );
+            assert_ne!(s, efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn test_allocate_io_space_null_image_handle_invalid_parameter() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            assert_eq!(add_io_space(GcdIoType::Io, 0x2200, 0x200), efi::Status::SUCCESS);
+            let mut out: efi::PhysicalAddress = 0;
+            let s = allocate_io_space(
+                dxe_services::GcdAllocateType::AnySearchBottomUp,
+                GcdIoType::Io,
+                3,
+                0x20,
+                &mut out,
+                core::ptr::null_mut(), // null image handle should be invalid
+                core::ptr::null_mut(),
+            );
+            assert_ne!(s, efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn test_allocate_io_space_bottom_up_success_and_sets_base() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            // Prepare IO space to allocate from
+            assert_eq!(add_io_space(GcdIoType::Io, 0x3000, 0x300), efi::Status::SUCCESS);
+
+            let mut out: efi::PhysicalAddress = 0;
+            let s = allocate_io_space(
+                dxe_services::GcdAllocateType::AnySearchBottomUp,
+                GcdIoType::Io,
+                3,    // 8-byte alignment
+                0x20, // 32 bytes
+                &mut out,
+                1 as _, // valid image handle
+                core::ptr::null_mut(),
+            );
+            assert_eq!(s, efi::Status::SUCCESS);
+            assert!((0x3000..0x3300).contains(&out));
+            assert_eq!(out & 0x7, 0, "alignment not respected");
+        });
+    }
+
+    #[test]
+    fn test_allocate_io_space_top_down_success() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            assert_eq!(add_io_space(GcdIoType::Io, 0x4000, 0x400), efi::Status::SUCCESS);
+
+            let mut out: efi::PhysicalAddress = 0;
+            let s = allocate_io_space(
+                dxe_services::GcdAllocateType::AnySearchTopDown,
+                GcdIoType::Io,
+                4,    // 16-byte alignment
+                0x40, // 64 bytes
+                &mut out,
+                1 as _,
+                core::ptr::null_mut(),
+            );
+            assert_eq!(s, efi::Status::SUCCESS);
+            assert!((0x4000..0x4400).contains(&out));
+            assert_eq!(out & 0xF, 0);
+        });
+    }
+
+    #[test]
+    fn test_allocate_io_space_address_success() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            assert_eq!(add_io_space(GcdIoType::Io, 0x5000, 0x200), efi::Status::SUCCESS);
+
+            let mut desired: efi::PhysicalAddress = 0x5080;
+            let s = allocate_io_space(
+                dxe_services::GcdAllocateType::Address,
+                GcdIoType::Io,
+                0,    // no extra alignment
+                0x20, // 32 bytes
+                &mut desired,
+                1 as _,
+                core::ptr::null_mut(),
+            );
+            assert_eq!(s, efi::Status::SUCCESS);
+            assert_eq!(desired, 0x5080);
+        });
+    }
+
+    #[test]
+    fn test_allocate_io_space_address_unsupported_when_out_of_io_range() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            let mut desired: efi::PhysicalAddress = 0xFF80;
+            let s = allocate_io_space(
+                dxe_services::GcdAllocateType::Address,
+                GcdIoType::Io,
+                0,
+                0x200,
+                &mut desired,
+                1 as _,
+                core::ptr::null_mut(),
+            );
+            assert_eq!(s, efi::Status::UNSUPPORTED);
+        });
+    }
+
+    #[test]
+    fn test_allocate_io_space_max_address_bottom_up_respected() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            assert_eq!(add_io_space(GcdIoType::Io, 0x6000, 0x400), efi::Status::SUCCESS);
+
+            let mut limit: efi::PhysicalAddress = 0x6100;
+            let s = allocate_io_space(
+                dxe_services::GcdAllocateType::MaxAddressSearchBottomUp,
+                GcdIoType::Io,
+                3,
+                0x20,
+                &mut limit,
+                1 as _,
+                core::ptr::null_mut(),
+            );
+            assert_eq!(s, efi::Status::SUCCESS);
+            assert!(limit <= 0x6100);
+        });
+    }
+
+    #[test]
+    fn test_free_io_space_success() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            let base = 0x7000u64;
+            let len = 0x80u64;
+            assert_eq!(add_io_space(GcdIoType::Io, base, len), efi::Status::SUCCESS);
+
+            let mut desired = base;
+            assert_eq!(
+                allocate_io_space(
+                    dxe_services::GcdAllocateType::Address,
+                    GcdIoType::Io,
+                    0,
+                    len,
+                    &mut desired,
+                    1 as _,
+                    core::ptr::null_mut(),
+                ),
+                efi::Status::SUCCESS
+            );
+
+            let s = free_io_space(base, len);
+            assert_eq!(s, efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn test_free_io_space_zero_length_invalid_parameter() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            assert_eq!(free_io_space(0x1000, 0), efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_free_io_space_not_ready() {
+        with_locked_state(|| {
+            unsafe { GCD.reset() };
+            let s = free_io_space(0x1000, 0x10);
+            assert_eq!(s, efi::Status::NOT_READY);
+        });
+    }
+
+    #[test]
+    fn test_free_io_space_out_of_range_unsupported() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+
+            let s = free_io_space(0xFF80, 0x200);
+            assert_eq!(s, efi::Status::UNSUPPORTED);
+        });
+    }
+
+    #[test]
+    fn test_free_io_space_unallocated_not_found() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            // Add region but do not allocate
+            assert_eq!(add_io_space(GcdIoType::Io, 0x8000, 0x100), efi::Status::SUCCESS);
+            let s = free_io_space(0x8000, 0x20);
+            assert_eq!(s, efi::Status::NOT_FOUND);
+        });
+    }
+
+    #[test]
+    fn test_free_io_space_double_free() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            assert_eq!(add_io_space(GcdIoType::Io, 0x9000, 0x100), efi::Status::SUCCESS);
+
+            let mut desired: efi::PhysicalAddress = 0x9000;
+            assert_eq!(
+                allocate_io_space(
+                    dxe_services::GcdAllocateType::Address,
+                    GcdIoType::Io,
+                    0,
+                    0x40,
+                    &mut desired,
+                    1 as _,
+                    core::ptr::null_mut(),
+                ),
+                efi::Status::SUCCESS
+            );
+            assert_eq!(free_io_space(0x9000, 0x40), efi::Status::SUCCESS);
+
+            // second free should fail with NOT_FOUND
+            assert_eq!(free_io_space(0x9000, 0x40), efi::Status::NOT_FOUND);
+        });
+    }
+
+    #[test]
+    fn test_free_io_space_partial_free() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            assert_eq!(add_io_space(GcdIoType::Io, 0xA000, 0x100), efi::Status::SUCCESS);
+
+            // allocate 0x80 bytes starting at 0xA000
+            let mut desired: efi::PhysicalAddress = 0xA000;
+            assert_eq!(
+                allocate_io_space(
+                    dxe_services::GcdAllocateType::Address,
+                    GcdIoType::Io,
+                    0,
+                    0x80,
+                    &mut desired,
+                    1 as _,
+                    core::ptr::null_mut(),
+                ),
+                efi::Status::SUCCESS
+            );
+
+            // Free first half
+            assert_eq!(free_io_space(0xA000, 0x40), efi::Status::SUCCESS);
+            // Free second half
+            assert_eq!(free_io_space(0xA000 + 0x40, 0x40), efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn test_remove_io_space_success() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            let base = 0xB000u64;
+            let len = 0x80u64;
+            assert_eq!(add_io_space(GcdIoType::Io, base, len), efi::Status::SUCCESS);
+            assert_eq!(remove_io_space(base, len), efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn test_remove_io_space_zero_length_invalid_parameter() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            assert_eq!(remove_io_space(0x1000, 0), efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_remove_io_space_not_ready() {
+        with_locked_state(|| {
+            unsafe { GCD.reset() };
+            assert_eq!(remove_io_space(0x1000, 0x10), efi::Status::NOT_READY);
+        });
+    }
+
+    #[test]
+    fn test_remove_io_space_out_of_range_unsupported() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            // IO address space is 16 bits in tests => maximum address 0x10000
+            assert_eq!(remove_io_space(0xFF80, 0x200), efi::Status::UNSUPPORTED);
+        });
+    }
+
+    #[test]
+    fn test_remove_io_space_not_found_when_never_added() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            assert_eq!(remove_io_space(0xC000, 0x40), efi::Status::NOT_FOUND);
+        });
+    }
+
+    #[test]
+    fn test_remove_io_space_double_remove_not_found() {
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_gcd(None) };
+            let base = 0xE000u64;
+            let len = 0x40u64;
+            assert_eq!(add_io_space(GcdIoType::Io, base, len), efi::Status::SUCCESS);
+            assert_eq!(remove_io_space(base, len), efi::Status::SUCCESS);
+            assert_eq!(remove_io_space(base, len), efi::Status::NOT_FOUND);
+        });
+    }
+
+    #[test]
+    fn test_dispatch_returns_not_found_when_nothing_to_do() {
+        with_locked_state(|| {
+            let s = dispatch();
+            assert_eq!(s, efi::Status::NOT_FOUND);
+        });
+    }
+
+    #[test]
+    fn test_dispatch_is_idempotent_and_consistently_not_found() {
+        with_locked_state(|| {
+            let s1 = dispatch();
+            let s2 = dispatch();
+            assert_eq!(s1, efi::Status::NOT_FOUND);
+            assert_eq!(s2, efi::Status::NOT_FOUND);
+        });
+    }
+
+    #[test]
+    fn test_dispatch_with_installed_fv_still_not_found() {
+        use crate::test_collateral;
+        use std::{fs::File, io::Read};
+
+        let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+        let mut fv: Vec<u8> = Vec::new();
+        file.read_to_end(&mut fv).expect("failed to read test file");
+
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_protocol_db() };
+
+            // Install the FV to obtain a real handle
+            let _handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+
+            // Wrapper should still surface NOT_FOUND (no pending drivers to dispatch in tests)
+            let s = dispatch();
+            assert_eq!(s, efi::Status::NOT_FOUND);
+        });
+    }
+
+    #[test]
+    fn test_schedule_invalid_parameter_when_file_is_null() {
+        with_locked_state(|| {
+            // Passing a null file GUID pointer should return INVALID_PARAMETER
+            let s = schedule(core::ptr::null_mut(), core::ptr::null());
+            assert_eq!(s, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_schedule_not_found_without_pending_drivers() {
+        with_locked_state(|| {
+            // Any GUID is fine; there are no pending drivers in this test harness
+            let guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
+            let s = schedule(core::ptr::null_mut(), &guid);
+            assert_eq!(s, efi::Status::NOT_FOUND);
+        });
+    }
+
+    #[test]
+    fn test_schedule_with_installed_fv_returns_not_found() {
+        use crate::test_collateral;
+        use std::{fs::File, io::Read};
+        use uuid::Uuid;
+
+        let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+        let mut fv: Vec<u8> = Vec::new();
+        file.read_to_end(&mut fv).expect("failed to read test file");
+
+        with_locked_state(|| {
+            unsafe { crate::test_support::init_test_protocol_db() };
+
+            // Install the FV to obtain a real handle
+            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+
+            // Use the same GUID as the dispatcher tests; wrapper should map NotFound correctly
+            let file_guid = efi::Guid::from_bytes(Uuid::from_u128(0x1fa1f39e_feff_4aae_bd7b_38a070a3b609).as_bytes());
+            let s = schedule(handle, &file_guid);
+            assert_eq!(s, efi::Status::NOT_FOUND);
+        });
+    }
+
+    #[test]
+    fn test_trust_invalid_parameter_when_file_is_null() {
+        with_locked_state(|| {
+            let s = trust(core::ptr::null_mut(), core::ptr::null());
+            assert_eq!(s, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_trust_not_found_without_pending_drivers() {
+        with_locked_state(|| {
+            // Any GUID and handle are fine; there are no pending drivers in this harness
+            let guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[1, 2, 3, 4, 5, 6]);
+            let s = trust(core::ptr::null_mut(), &guid);
+            assert_eq!(s, efi::Status::NOT_FOUND);
+        });
+    }
+
+    #[test]
+    fn test_process_firmware_volume_invalid_parameters() {
+        with_locked_state(|| {
+            let mut out_handle: efi::Handle = core::ptr::null_mut();
+
+            // Null header
+            let s = process_firmware_volume(core::ptr::null(), 0, &mut out_handle);
+            assert_eq!(s, efi::Status::INVALID_PARAMETER);
+
+            // Null output handle pointer
+            let bogus = 0xDEAD_BEEFu64 as *const core::ffi::c_void;
+            let s = process_firmware_volume(bogus, 0, core::ptr::null_mut());
+            assert_eq!(s, efi::Status::INVALID_PARAMETER);
+        });
+    }
+
+    #[test]
+    fn test_process_firmware_volume_volume_corrupted_on_bad_input() {
+        with_locked_state(|| {
+            // Provide a tiny, obviously invalid buffer
+            let bad_buf: [u8; 16] = [0u8; 16];
+            let mut out_handle: efi::Handle = core::ptr::null_mut();
+            let s =
+                process_firmware_volume(bad_buf.as_ptr() as *const core::ffi::c_void, bad_buf.len(), &mut out_handle);
+            assert_eq!(s, efi::Status::VOLUME_CORRUPTED);
+        });
+    }
+
+    #[test]
+    fn test_process_firmware_volume_success_with_real_fv() {
+        use crate::test_collateral;
+        use std::{fs::File, io::Read};
+
+        let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+        let mut fv: Vec<u8> = Vec::new();
+        file.read_to_end(&mut fv).expect("failed to read test file");
+
+        with_locked_state(|| {
+            // Ensure protocol DB is ready for installing the FV
+            unsafe { crate::test_support::init_test_protocol_db() };
+
+            let mut out_handle: efi::Handle = core::ptr::null_mut();
+            let s = process_firmware_volume(fv.as_ptr() as *const core::ffi::c_void, fv.len(), &mut out_handle);
+
+            assert_eq!(s, efi::Status::SUCCESS);
+            assert!(!out_handle.is_null(), "process_firmware_volume should return a valid handle");
+        });
+    }
+
+    #[test]
+    fn test_init_dxe_services_installs_config_table_with_valid_crc_and_functions() {
+        with_locked_state(|| {
+            // Initialize a fresh System Table (requires GCD already initialized by with_locked_state)
+            crate::systemtables::init_system_table();
+
+            // Get a mutable reference to the system table
+            let mut st_guard = crate::systemtables::SYSTEM_TABLE.lock();
+            let st = st_guard.as_mut().expect("System Table not initialized");
+
+            // Before: no configuration tables are expected on a fresh init
+            assert_eq!(st.system_table().number_of_table_entries, 0);
+
+            // Act: install the DXE Services table
+            init_dxe_services(st);
+
+            // After: one entry should exist and match DXE_SERVICES_TABLE_GUID
+            let st_ref = st.system_table();
+            assert_eq!(st_ref.number_of_table_entries, 1);
+            assert!(!st_ref.configuration_table.is_null());
+
+            let entries =
+                unsafe { core::slice::from_raw_parts(st_ref.configuration_table, st_ref.number_of_table_entries) };
+
+            let entry = entries
+                .iter()
+                .find(|e| e.vendor_guid == dxe_services::DXE_SERVICES_TABLE_GUID)
+                .expect("DXE Services table entry not found in configuration table");
+            assert!(!entry.vendor_table.is_null(), "DXE Services vendor_table pointer should be non-null");
+
+            // Validate the contents of the installed DXE Services table
+            let dxe_tbl = unsafe { &*(entry.vendor_table as *const dxe_services::DxeServicesTable) };
+
+            // Header signature/revision should match what init_dxe_services sets
+            assert_eq!(dxe_tbl.header.signature, efi::BOOT_SERVICES_SIGNATURE);
+            assert_eq!(dxe_tbl.header.revision, efi::BOOT_SERVICES_REVISION);
+
+            // Recompute CRC32 by zeroing the field in a local copy
+            let mut copy = unsafe { core::ptr::read(dxe_tbl) };
+            copy.header.crc32 = 0;
+            let crc = crc32fast::hash(unsafe {
+                core::slice::from_raw_parts(
+                    (&copy as *const dxe_services::DxeServicesTable) as *const u8,
+                    core::mem::size_of::<dxe_services::DxeServicesTable>(),
+                )
+            });
+            assert_eq!(dxe_tbl.header.crc32, crc, "DXE Services table CRC32 should be valid");
+
+            // Spot-check a few function pointers are correctly wired
+            assert_eq!(dxe_tbl.add_memory_space as usize, add_memory_space as usize);
+            assert_eq!(dxe_tbl.dispatch as usize, dispatch as usize);
+            assert_eq!(dxe_tbl.process_firmware_volume as usize, process_firmware_volume as usize);
         });
     }
 }

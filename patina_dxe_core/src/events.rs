@@ -689,6 +689,8 @@ mod tests {
     #[test]
     fn test_event_notification() {
         with_locked_state(|| {
+            // Ensure we start from a low TPL so that signal_event's raise/restore will dispatch notifies
+            CURRENT_TPL.store(efi::TPL_APPLICATION, Ordering::SeqCst);
             NOTIFY_CALLED.store(false, Ordering::SeqCst);
 
             let mut event: efi::Event = ptr::null_mut();
