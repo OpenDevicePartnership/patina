@@ -425,13 +425,9 @@ extern "efiapi" fn close_protocol(
         }
     };
 
-    // Remove all usages matching the specified controller and agent handles.
-    loop {
-        match PROTOCOL_DB.remove_protocol_usage(handle, unsafe { *protocol }, Some(agent_handle), controller_handle) {
-            Err(EfiError::NotFound) => return efi::Status::SUCCESS,
-            Err(err) => return err.into(),
-            Ok(_) => continue,
-        }
+    match PROTOCOL_DB.remove_protocol_usage(handle, unsafe { *protocol }, Some(agent_handle), controller_handle) {
+        Err(err) => err.into(),
+        Ok(_) => efi::Status::SUCCESS,
     }
 }
 

@@ -409,9 +409,10 @@ impl ProtocolDb {
 
         let key = handle as usize;
         let handle_instance = self.handles.get_mut(&key).expect("valid handle, but no entry in self.handles");
-        let instance = handle_instance.get_mut(&OrdGuid(protocol)).ok_or(EfiError::Unsupported)?;
+        let instance = handle_instance.get_mut(&OrdGuid(protocol)).ok_or(EfiError::NotFound)?;
 
-        if let Some(idx) = instance
+        let mut status = Err(EfiError::NotFound);
+        while let Some(idx) = instance
             .usage
             .iter()
             .rposition(|x| (x.agent_handle == agent_handle) && (x.controller_handle == controller_handle))
@@ -427,10 +428,10 @@ impl ProtocolDb {
             if (usage.attributes & efi::OPEN_PROTOCOL_EXCLUSIVE) != 0 {
                 instance.opened_by_exclusive = false;
             }
-            Ok(())
-        } else {
-            Err(EfiError::NotFound)
+            status = Ok(());
         }
+
+        status
     }
 
     fn get_open_protocol_information_by_protocol(
