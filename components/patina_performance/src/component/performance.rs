@@ -159,7 +159,8 @@ impl Performance {
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use super::*;
 
     use alloc::rc::Rc;

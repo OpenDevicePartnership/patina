@@ -857,6 +857,7 @@ impl Hasher for Xorshift64starHasher {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     extern crate std;
     use core::str::FromStr;

@@ -35,6 +35,7 @@ pub mod log;
 pub mod performance;
 pub mod runtime_services;
 pub mod serial;
+#[coverage(off)]
 pub mod test;
 pub mod tpl_mutex;
 pub mod uefi_protocol;

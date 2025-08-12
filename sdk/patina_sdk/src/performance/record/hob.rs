@@ -80,7 +80,8 @@ where
 }
 
 #[cfg(test)]
-pub mod test {
+#[coverage(off)]
+pub mod tests {
     use core::assert_eq;
 
     use scroll::Pwrite;

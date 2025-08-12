@@ -64,6 +64,7 @@ mod tpl_lock;
 
 #[cfg(test)]
 #[macro_use]
+#[coverage(off)]
 pub mod test_support;
 
 use core::{ffi::c_void, ptr, str::FromStr};

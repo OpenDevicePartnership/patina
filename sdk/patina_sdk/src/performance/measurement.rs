@@ -526,7 +526,8 @@ pub struct MediaFwVolFilepathDevicePath {
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use super::*;
 
     use alloc::rc::Rc;

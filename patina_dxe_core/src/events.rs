@@ -346,6 +346,7 @@ pub fn init_events_support(bs: &mut efi::BootServices) {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use crate::test_support;

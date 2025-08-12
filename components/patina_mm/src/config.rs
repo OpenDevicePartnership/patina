@@ -348,6 +348,7 @@ impl AcpiBase {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use r_efi::efi::Guid;

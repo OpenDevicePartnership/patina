@@ -744,6 +744,7 @@ pub fn init_fv_support(hob_list: &hob::HobList, extractor: Box<dyn SectionExtrac
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use crate::test_support;

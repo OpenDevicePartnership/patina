@@ -122,6 +122,7 @@ where
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use crate::component::Storage;

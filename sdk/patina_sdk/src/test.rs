@@ -254,6 +254,7 @@ impl TestRunner {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use crate::component::{IntoComponent, Storage, params::Config};
 

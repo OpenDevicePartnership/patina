@@ -1478,6 +1478,7 @@ pub fn init_image_support(hob_list: &HobList, system_table: &mut EfiSystemTable)
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     extern crate std;
     use super::{empty_image_info, get_buffer_by_file_path, load_image};

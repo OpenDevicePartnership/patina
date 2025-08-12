@@ -715,7 +715,8 @@ pub fn init_system_table() {
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use super::*;
     use crate::test_support;
 

@@ -293,7 +293,8 @@ impl<T: DriverBinding + 'static, U: BootServices + 'static> UefiDriverBinding<T,
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use core::{
         mem::MaybeUninit,
         ptr,

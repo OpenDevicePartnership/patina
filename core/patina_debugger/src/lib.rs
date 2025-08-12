@@ -92,6 +92,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 #![cfg_attr(not(test), no_std)]
+#![feature(coverage_attribute)]
 
 mod arch;
 mod dbg_target;

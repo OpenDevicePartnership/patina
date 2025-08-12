@@ -690,6 +690,7 @@ unsafe impl Send for SpinLockedEventDb {}
 unsafe impl Sync for SpinLockedEventDb {}
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     extern crate std;
     use core::iter;

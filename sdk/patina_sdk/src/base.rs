@@ -307,6 +307,7 @@ where
     Ok((aligned_base, aligned_length))
 }
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
 
