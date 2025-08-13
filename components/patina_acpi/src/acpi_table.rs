@@ -391,12 +391,7 @@ impl AcpiTable {
         mm: &Service<dyn MemoryManager>,
     ) -> Result<Self, AcpiError> {
         // SAFETY: If function preconditions are met, the pointer is valid and points to a valid ACPI table header.
-        let table_signature;
-        let table_length;
-        unsafe {
-            table_signature = (*header_ptr).signature;
-            table_length = (*header_ptr).length as usize;
-        }
+        let (table_signature, table_length) = unsafe { ((*header_ptr).signature, (*header_ptr).length as usize) };
 
         // The current Windows implementation uses the legacy 32-bit FACS pointer in the FADT.
         // As such, the FACS must be allocated in the lower 32-bit address space.
@@ -618,6 +613,7 @@ mod tests {
         assert_eq!(header.oem_revision, 0xDEADBEEF);
         assert_eq!(header.creator_id, 0xCAFEBABE);
         assert_eq!(header.creator_revision, 0xFEEDFACE);
+        assert_eq!(unsafe { acpi_table.as_ref::<TestTable>().body }, [42, 43, 44]);
 
         // Check that the body bytes are correct.
         let bytes = unsafe { acpi_table.as_bytes() };
