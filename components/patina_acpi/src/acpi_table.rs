@@ -398,11 +398,10 @@ impl AcpiTable {
             table_length = (*header_ptr).length as usize;
         }
 
-        let allocator_type = match table_signature {
-            signature::FACS | signature::UEFI => EfiMemoryType::ACPIMemoryNVS,
-            _ => EfiMemoryType::ACPIReclaimMemory,
-        };
-
+        // The current Windows implementation uses the legacy 32-bit FACS pointer in the FADT.
+        // As such, the FACS must be allocated in the lower 32-bit address space.
+        // This workaround can be removed when Windows no longer relies on this field.
+        // The FACS is always allocated in NVS memory.
         if table_signature == signature::FACS {
             let facs_alloc = mm
                 .allocate_pages(
@@ -411,20 +410,18 @@ impl AcpiTable {
                         .with_memory_type(EfiMemoryType::ACPIMemoryNVS)
                         .with_strategy(PageAllocationStrategy::MaxAddress(0x1000_0000)),
                 )
-                .unwrap();
+                .map_err(|_e| AcpiError::AllocationFailed)?;
             let new_facs_ptr = facs_alloc.into_raw_ptr().unwrap();
             unsafe { ptr::copy_nonoverlapping(header_ptr as *const u8, new_facs_ptr, table_length) };
-            log::info!("Created FACS table at address: {:?}", new_facs_ptr);
 
-            log::info!("Running sherry's super awesome code");
             return Ok(Self {
                 table: NonNull::new(new_facs_ptr).ok_or(AcpiError::NullTablePtr)?.cast::<Table>(),
-                type_id: TypeId::of::<AcpiTableHeader>(), // Unknown type, so we use the header type.
+                type_id: TypeId::of::<AcpiFacs>(),
             });
         }
 
         // Allocate table based on the length given in the header field.
-        let allocator = mm.get_allocator(allocator_type).map_err(|_e| AcpiError::AllocationFailed)?;
+        let allocator = mm.get_allocator(EfiMemoryType::ACPIReclaimMemory).map_err(|_e| AcpiError::AllocationFailed)?;
         let mut table_bytes = Vec::with_capacity_in(table_length, allocator);
 
         // Copy entire table into the new allocation.
@@ -435,12 +432,9 @@ impl AcpiTable {
             ptr::copy_nonoverlapping(header_ptr as *const u8, table_bytes.as_mut_ptr(), table_length);
             table_bytes.set_len(table_length);
         }
-        log::info!("Created ACPI table with signature from ptr: 0x{:08x}", table_signature);
-        log::info!("raw table bytes: {:?}", table_bytes);
 
         // Leak the allocated bytes.
         let raw_header = Box::into_raw(table_bytes.into_boxed_slice()) as *mut AcpiTableHeader;
-        log::info!("Address of raw header: {:?}", raw_header);
 
         Ok(Self {
             table: NonNull::new(raw_header).ok_or(AcpiError::NullTablePtr)?.cast::<Table>(),
