@@ -14,6 +14,8 @@ This RFC proposes a process for releasing Patina crates.
 - 2025-08-05:
   - Simplify language in the hot fix process
   - Add release note organization requirement for crates sharing the same version
+- 2025-08-13:
+  - Change the scheduled release day from Monday to Tuesday to discourage rushed releases at the start of the week.
 
 ## Motivation
 
@@ -77,7 +79,7 @@ automation tools.
 
 ### Release Process Details
 
-- Is automated and triggered by a GitHub action at 7am Pacific time on Monday on cadence decided in the project.
+- Is automated and triggered by a GitHub action at 7am Pacific time on Tuesday on cadence decided in the project.
   - This RFC proposes a weekly release cadence.
   - May be triggered by a Patina team member at any time outside of the scheduled time.
   - The release is composed of changes in the `main` branch that have been merged since the last release.
@@ -186,12 +188,13 @@ portions of this proposal are based on.
 
 Patina makes official releases on as the project determines necessary. This RFC covers three types of releases:
 
-- **Regular Releases**: A release is made on Monday each week. If there are no changes, the release is not made. The
+- **Regular Releases**: A release is made on Tuesday each week. If there are no changes, the release is not made. The
   release process is automated including the release notes, versioning, and publishing to crates.io. However, a Patina
   team member with proper access can always make a release at any time.
-  > Note: Monday was chosen as the provides the maximum amount of time for the Patina team to be available for feedback
-  and support of the release during the given work week.
-  - If Monday falls on a holiday, the automated release process still makes the release on Monday, but the Patina team
+  > Note: Tuesday is chosen as it provides the maximum amount of time for the Patina team to be available for feedback
+  and support of the release during the given work week and discourages rushed changes over the weekend or at the
+  start of the week.
+  - If Tuesday falls on a holiday, the automated release process still makes the release on Tuesday, but the Patina team
     will not be available for support until the next business day.
   - More frequent releases are encouraged to provide greater granularity of changes and to avoid large releases
     that may be harder to test and validate.
