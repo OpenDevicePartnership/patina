@@ -86,7 +86,7 @@ use patina_sdk::{
     runtime_services::StandardRuntimeServices,
 };
 use protocols::PROTOCOL_DB;
-use r_efi::efi::{self};
+use r_efi::efi;
 
 use crate::config_tables::memory_attributes_table;
 

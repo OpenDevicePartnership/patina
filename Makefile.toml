@@ -5,7 +5,7 @@ default_to_workspace = false
 RUSTC_BOOTSTRAP = 1
 NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
-TEST_FLAGS = { value = "--features enable_patina_tests test_new_from_ptr_creates_valid_acpi_table", condition = { env_not_set = ["TEST_FLAGS"] } }
+TEST_FLAGS = { value = "--features enable_patina_tests", condition = { env_not_set = ["TEST_FLAGS"] } }
 COV_FLAGS = { value = "--features enable_patina_tests --workspace --lcov --profile test --ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
 RUSTDOCFLAGS = "-D warnings -D missing_docs"
 
@@ -119,7 +119,7 @@ args = ["check", "--target", "x86_64-unknown-uefi", "@@split(NO_STD_FLAGS, )", "
 description = "Checks rust code for std build errors with results."
 private = true
 command = "cargo"
-args = ["check", "--tests", "@@split(STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["check", "@@split(STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 
 [tasks.check_tests]
 description = "Checks rust test code for build errors with results."

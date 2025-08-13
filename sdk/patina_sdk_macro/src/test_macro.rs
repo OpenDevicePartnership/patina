@@ -124,6 +124,7 @@ fn generate_expanded_test_case(
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
 

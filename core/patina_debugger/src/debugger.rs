@@ -285,6 +285,7 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
             return;
         }
 
+        log::info!("Initializing debugger.");
         let initial_breakpoint = config.initial_break;
         let _initial_break_timeout = config.initial_break_timeout; // TODO
 

@@ -18,7 +18,6 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-
 extern crate alloc;
 use alloc::vec::Vec;
 use core::fmt;

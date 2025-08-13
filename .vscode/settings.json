@@ -9,7 +9,4 @@
     "."
   ],
   "rust-analyzer.cargo.targetDir": true,
-  "rust-analyzer.cargo.extraEnv": {
-    "RUST_BOOTSTRAP": "1"
-  }
 }
