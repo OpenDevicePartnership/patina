@@ -7,8 +7,6 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
-#![feature(coverage_attribute)]
-
 mod component_macro;
 mod hob_macro;
 mod service_macro;

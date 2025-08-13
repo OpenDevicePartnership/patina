@@ -65,7 +65,6 @@ impl AcpiTableProtocol {
         acpi_table_buffer_size: usize,
         table_key: *mut usize,
     ) -> efi::Status {
-        log::info!("memer");
         if acpi_table_buffer.is_null() || acpi_table_buffer_size < 4 {
             return efi::Status::INVALID_PARAMETER;
         }
@@ -83,7 +82,6 @@ impl AcpiTableProtocol {
         // SAFETY: acpi_table_buffer is checked non-null and large enough to read an AcpiTableHeader.
         if let Some(global_mm) = ACPI_TABLE_INFO.memory_manager.get() {
             let acpi_table = unsafe { AcpiTable::new_from_ptr(acpi_table_buffer as *const AcpiTableHeader, global_mm) };
-            log::info!("protocol signature: 0x{:08x}", acpi_table.unwrap().signature());
 
             if let Ok(table) = acpi_table {
                 let install_result = match table.signature() {
@@ -186,7 +184,6 @@ impl AcpiSdtProtocol {
         version: *mut u32,
         table_key: *mut usize,
     ) -> efi::Status {
-        log::info!("Getting ACPI table at index: {}", index);
         if table.is_null() || version.is_null() || table_key.is_null() {
             return efi::Status::INVALID_PARAMETER;
         }
@@ -200,20 +197,13 @@ impl AcpiSdtProtocol {
                 unsafe { *table_key = key_at_idx.0 };
 
                 let sdt_ptr = table_at_idx.as_mut_ptr();
-                log::info!("SDT pointer: {:?}", sdt_ptr);
-                log::info!("Returning ACPI table with signature: 0x{:08x} 1111", unsafe { (*sdt_ptr).signature });
                 unsafe { *table = sdt_ptr };
-                log::info!("Returning ACPI table with signature: 0x{:08x} 22222", unsafe { (*sdt_ptr).signature });
-                if table_at_idx.signature() == signature::FACP {
-                    let fadt_fields = unsafe { table_at_idx.as_ref::<AcpiFadt>() };
-                    log::info!("FADT fields {:?}", fadt_fields);
-                    let facs = fadt_fields.x_firmware_ctrl() as *const AcpiFacs;
-                    log::info!("FACS pointer: {:?}", facs);
-                    log::info!("FACS signature: 0x{:08x}", unsafe { (*facs).signature });
-                }
                 efi::Status::SUCCESS
             }
-            Err(e) => e.into(),
+            Err(e) => {
+                log::info!("get_acpi_table from ACPI protocol failed with error {:?}", e);
+                e.into()
+            }
         }
     }
 
