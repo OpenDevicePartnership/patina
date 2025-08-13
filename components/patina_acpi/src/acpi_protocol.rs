@@ -79,6 +79,13 @@ impl AcpiTableProtocol {
             return efi::Status::INVALID_PARAMETER;
         }
 
+        // The size of the allocated table buffer must be large enough to store the table, for known table types.
+        let signature = unsafe { (*(acpi_table_buffer as *const AcpiTableHeader)).signature };
+        let min_size = signature::acpi_table_min_size(signature);
+        if tbl_length < min_size {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
         // SAFETY: acpi_table_buffer is checked non-null and large enough to read an AcpiTableHeader.
         if let Some(global_mm) = ACPI_TABLE_INFO.memory_manager.get() {
             let acpi_table = unsafe { AcpiTable::new_from_ptr(acpi_table_buffer as *const AcpiTableHeader, global_mm) };
