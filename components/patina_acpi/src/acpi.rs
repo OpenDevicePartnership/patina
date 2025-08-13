@@ -398,7 +398,6 @@ where
         // If not, it will be updated when the FACP is installed.
         if let Some(facp) = self.acpi_tables.write().get_mut(&Self::FADT_KEY) {
             unsafe { facp.as_mut::<AcpiFadt>() }.inner.x_dsdt = dsdt_info.as_ptr() as u64;
-            unsafe { facp.as_mut::<AcpiFadt>().inner._firmware_ctrl = dsdt_info.as_ptr() as u32 };
         };
 
         dsdt_info.update_checksum(ACPI_CHECKSUM_OFFSET)?;
@@ -534,6 +533,10 @@ where
                 // Clear out the FACS pointer in the FADT.
                 if let Some(fadt_table) = self.acpi_tables.write().get_mut(&Self::FADT_KEY) {
                     unsafe { fadt_table.as_mut::<AcpiFadt>() }.set_x_firmware_ctrl(0);
+                    // Also clear out the 32-bit pointer to the FACS. (This is an ACPI 1.0 legacy field.)
+                    // Ideally this would not be necessary, but the current Windows OS implementation relies on this field.
+                    // This workaround can be removed when Windows no longer relies on these fields.
+                    unsafe { fadt_table.as_mut::<AcpiFadt>() }.inner._firmware_ctrl = 0;
                     fadt_table.update_checksum(ACPI_CHECKSUM_OFFSET)?;
                 }
 

@@ -516,26 +516,6 @@ where
 
         dispatcher::display_discovered_not_dispatched();
 
-        // let mut st = systemtables::SYSTEM_TABLE.lock();
-        // let st = st.as_mut().expect("System Table not initialized!");
-        // unsafe {
-        //     // Build a &[ConfigurationTable] out of the raw pointer + length
-        //     let entries: &[ConfigurationTable] = slice::from_raw_parts(
-        //         st.system_table().configuration_table,
-        //         st.system_table().number_of_table_entries as usize,
-        //     );
-
-        //     log::info!("lol");
-
-        //     for (i, entry) in entries.iter().enumerate() {
-        //         // Now you can just read entry.vendor_guid and entry.vendor_table
-        //         let guid = &entry.vendor_guid;
-        //         let table = entry.vendor_table;
-        //         // …do whatever you need with them…
-        //         log::info!("guid {:?}", guid);
-        //     }
-        // }
-
         call_bds();
 
         log::info!("Finished");
