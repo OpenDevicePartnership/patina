@@ -44,6 +44,7 @@ words:
   - distros
   - dllcharacteristics
   - docsrs
+  - dword
   - dxefv
   - edkii
   - efiapi
@@ -87,12 +88,16 @@ words:
   - oslsr
   - pacibsp
   - pccard
+  - pcddxe
   - pdata
   - pdbhelper
   - pread
   - psapi
   - pterror
   - pwrite
+  - pyserial
+  - pywin
+  - qword
   - reentrancy
   - regsvr
   - relia
@@ -107,6 +112,7 @@ words:
   - sysreg
   - tiano
   - typer
+  - uefiext
   - uintn
   - unaccepte
   - uncacheable
