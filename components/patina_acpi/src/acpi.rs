@@ -340,7 +340,6 @@ where
 
     /// Allocates memory for the FADT and adds it  to the list of installed tables
     pub(crate) fn install_fadt(&self, mut fadt_info: AcpiTable) -> Result<TableKey, AcpiError> {
-        log::info!("Installing FADT with signature: 0x{:08x}", fadt_info.signature());
         if self.acpi_tables.read().get(&Self::FADT_KEY).is_some() {
             // FADT already installed. By spec, only one copy of the FADT should ever be installed, and it cannot be replaced.
             return Err(AcpiError::FadtAlreadyInstalled);
@@ -350,23 +349,17 @@ where
         // If not, it will be updated when the FACS is installed.
         if let Some(facs) = self.acpi_tables.read().get(&Self::FACS_KEY) {
             unsafe { fadt_info.as_mut::<AcpiFadt>() }.inner.x_firmware_ctrl = facs.as_ptr() as u64;
+            // Set the 32-bit pointer to the FACS. (This is an ACPI 1.0 legacy field.)
+            // Ideally this would not be necessary, but the current Windows OS implementation relies on this field.
+            // This workaround can be removed when Windows no longer relies on these fields.
             unsafe { fadt_info.as_mut::<AcpiFadt>() }.inner._firmware_ctrl = facs.as_ptr() as u32;
         }
-        log::info!("FADT x_firmware_ctrl set to: 0x{:x}", unsafe { fadt_info.as_ref::<AcpiFadt>() }.x_firmware_ctrl());
 
         // If the DSDT is already installed, update the FACP's x_dsdt field.
         // If not, it will be updated when the DSDT is installed.
         if let Some(dsdt) = self.acpi_tables.read().get(&Self::DSDT_KEY) {
             unsafe { fadt_info.as_mut::<AcpiFadt>() }.inner.x_dsdt = dsdt.as_ptr() as u64;
         }
-
-        // sherry testing stuff.
-        unsafe {
-            fadt_info.as_mut::<AcpiFadt>().inner._firmware_ctrl =
-                fadt_info.as_mut::<AcpiFadt>().inner.x_firmware_ctrl as u32
-        };
-        unsafe { fadt_info.as_mut::<AcpiFadt>().inner._dsdt = fadt_info.as_mut::<AcpiFadt>().inner.x_dsdt as u32 };
-        log::info!("sherry is dumb");
 
         // The FADT is stored in the XSDT like a normal table. Add the FADT to the XSDT.
         let physical_addr = fadt_info.as_ptr() as u64;
@@ -636,14 +629,9 @@ where
 
     /// Publishes ACPI tables after installation.
     pub(crate) fn publish_tables(&self) -> Result<(), AcpiError> {
-        log::info!("tyna system table");
-
         if let Some(rsdp_table) = self.acpi_tables.write().get_mut(&Self::RSDP_KEY) {
             // Cast RSDP to raw pointer for boot services.
             let rsdp_ptr = rsdp_table.as_mut_ptr() as *mut c_void;
-
-            log::info!("installing system table");
-
             unsafe {
                 self.boot_services
                     .get()
@@ -696,8 +684,6 @@ where
             .filter(|(k, _)| !Self::PRIVATE_SYSTEM_TABLES.contains(k))
             .nth(idx)
             .map(|(&key, table)| (key, *table));
-
-        log::info!("ACPI dict: {:?}", self.acpi_tables.read().keys());
 
         let table_at_idx = found_table.ok_or(AcpiError::InvalidTableIndex)?;
         Ok(table_at_idx)
