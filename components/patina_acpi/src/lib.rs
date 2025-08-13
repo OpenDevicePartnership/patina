@@ -11,7 +11,9 @@
 //! To initialize the `AcpiProviderManager`, the configuration should be customized with the correct platform values (`oem_id`, etc).
 //! In the platform start routine, provide these configuration values and initialize a new `AcpiProviderManager` instance.
 //!
-//! ```rust,no_run
+//! ```rust,ignore
+//! use patina_acpi::component::AcpiProviderManager;
+//!
 //!  #[derive(Default, Clone, Copy)]
 //!  struct SectionExtractExample;
 //!  impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
@@ -20,18 +22,10 @@
 //!
 //!  let physical_hob_list = core::ptr::null();
 //!
-//!  Core::default()
+//!  patina_dxe_core::Core::default()
 //!         .with_section_extractor(SectionExtractExample::default())
 //!         .init_memory(physical_hob_list)
-//!         .with_config(AcpiProviderInit {
-//!                         version: 1,
-//!                         should_reclaim_memory: true,
-//!                         oem_id: [0; 6],
-//!                         oem_table_id: [0; 8],
-//!                         creator_id: 0x50415449,
-//!                         creator_revision: 1,
-//!                     })
-//!         .with_component(AcpiProviderManager::new())
+//!         .with_component(AcpiProviderManager::new([0; 6], [0; 8], 0x12345678, 0x87654321, 0xDEADBEEF))
 //!         .start().unwrap();
 //! ```
 //!
