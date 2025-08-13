@@ -525,12 +525,26 @@ where
             signature::FADT => {
                 self.acpi_tables.write().remove(&Self::FADT_KEY);
             }
+            // The current Windows implementation uses the legacy 32-bit FACS pointer in the FADT.
+            // As such, the FACS must be allocated in the lower 32-bit address space using a page allocation,
+            // instead of heap allocation like the rest of the ACPI tables.
+            // This means it must be manually freed when uninstalled.
+            // This workaround can be removed when Windows no longer relies on this field.
             signature::FACS => {
                 // Clear out the FACS pointer in the FADT.
                 if let Some(fadt_table) = self.acpi_tables.write().get_mut(&Self::FADT_KEY) {
                     unsafe { fadt_table.as_mut::<AcpiFadt>() }.set_x_firmware_ctrl(0);
                     fadt_table.update_checksum(ACPI_CHECKSUM_OFFSET)?;
                 }
+
+                // Free the FACS memory.
+                unsafe {
+                    self.memory_manager
+                        .get()
+                        .ok_or(AcpiError::ProviderNotInitialized)?
+                        .free_pages(physical_addr as usize, 1)
+                        .map_err(|_| AcpiError::FreeFailed)
+                }?;
 
                 self.acpi_tables.write().remove(&Self::FACS_KEY);
             }
