@@ -219,7 +219,6 @@ impl AcpiSdtProtocol {
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if there is an attempt to unregister a notify function that was never registered.
     /// Returns [`INVALID_PARAMETER`](r_efi::efi::Status::INVALID_PARAMETER) if the notify function pointer is null or does not match the standard notify function signature.
     extern "efiapi" fn register_notify_ext(register: bool, notify_fn: *const AcpiNotifyFnExt) -> efi::Status {
-        log::info!("Registering ACPI notify function: {}", register);
         // SAFETY: the caller must pass in a valid pointer to a notify function
         let rust_fn: AcpiNotifyFn = match unsafe { notify_fn.as_ref() } {
             Some(ptr) => unsafe { core::mem::transmute::<*const AcpiNotifyFnExt, AcpiNotifyFn>(ptr) },
