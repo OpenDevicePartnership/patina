@@ -32,7 +32,8 @@ pub enum EfiMemoryType {
     RuntimeServicesData,
     /// Free (unallocated) memory.
     ConventionalMemory,
-    /// Memory in which errors have been detected.
+    /// Memory in which errors have been detected. This memory type should only be used to update the memory map, but
+    /// the returned allocation should not be used by the caller.
     UnusableMemory,
     /// Memory reserved for runtime ACPI non-volatile storage.
     ACPIReclaimMemory,
