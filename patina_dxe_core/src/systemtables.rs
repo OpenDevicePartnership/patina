@@ -724,7 +724,7 @@ pub fn register_checksum_on_protocol_install_events(
         SYSTEM_TABLE.lock().as_mut().expect("System Table is initialized").checksum_all();
     }
 
-    const UUIDS: [efi::Guid; 16] = [
+    const GUIDS: [efi::Guid; 16] = [
         efi::Guid::from_bytes(&uuid::uuid!("A46423E3-4617-49F1-B9FF-D1BFA9115839").to_bytes_le()), // gEfiSecurityArchProtocolGuid
         efi::Guid::from_bytes(&uuid::uuid!("26BACCB1-6F42-11D4-BC7E-0080C73C8881").to_bytes_le()), // gEfiCpuArchProtocolGuid
         efi::Guid::from_bytes(&uuid::uuid!("26BACCB2-6F42-11D4-BCE7-0080C73C8881").to_bytes_le()), // gEfiMetronomeArchProtocolGuid
@@ -743,7 +743,7 @@ pub fn register_checksum_on_protocol_install_events(
         efi::Guid::from_bytes(&uuid::uuid!("55198405-26c0-4765-8b7d-be1df5f99712").to_bytes_le()), // gEfiCpu2ProtocolGuid
     ];
 
-    for guid in &UUIDS {
+    for guid in &GUIDS {
         let event = bs.create_event(
             patina_sdk::boot_services::event::EventType::NOTIFY_SIGNAL,
             patina_sdk::boot_services::tpl::Tpl::CALLBACK,
