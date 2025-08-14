@@ -200,6 +200,7 @@ where
             let facs_addr = unsafe { facs_info.as_ref::<AcpiFacs>() } as *const AcpiFacs as u64;
             unsafe { fadt_table.as_mut::<AcpiFadt>().set_x_firmware_ctrl(facs_addr) };
             unsafe { fadt_table.as_mut::<AcpiFadt>().inner._firmware_ctrl = facs_addr as u32 };
+            fadt_table.update_checksum(ACPI_CHECKSUM_OFFSET)?;
         }
 
         self.acpi_tables.write().insert(Self::FACS_KEY, facs_info);
@@ -398,6 +399,7 @@ where
         // If not, it will be updated when the FACP is installed.
         if let Some(facp) = self.acpi_tables.write().get_mut(&Self::FADT_KEY) {
             unsafe { facp.as_mut::<AcpiFadt>() }.inner.x_dsdt = dsdt_info.as_ptr() as u64;
+            facp.update_checksum(ACPI_CHECKSUM_OFFSET)?;
         };
 
         dsdt_info.update_checksum(ACPI_CHECKSUM_OFFSET)?;

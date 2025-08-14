@@ -63,6 +63,9 @@ impl AcpiTableProtocol {
         acpi_table_buffer_size: usize,
         table_key: *mut usize,
     ) -> efi::Status {
+        log::info!("table signature from protocol: {:#x}", unsafe {
+            (*(acpi_table_buffer as *const AcpiTableHeader)).signature
+        });
         if acpi_table_buffer.is_null() || acpi_table_buffer_size < 4 {
             return efi::Status::INVALID_PARAMETER;
         }
