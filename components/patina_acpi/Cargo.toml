@@ -19,6 +19,7 @@ spin = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
+patina_sdk = { workspace = true, features = ["mockall"] }
 
 [features]
 mockall = ["dep:mockall"]
