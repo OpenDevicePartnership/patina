@@ -16,6 +16,9 @@ This RFC proposes a process for releasing Patina crates.
   - Add release note organization requirement for crates sharing the same version
 - 2025-08-13:
   - Change the scheduled release day from Monday to Tuesday to discourage rushed releases at the start of the week.
+- 2025-08-15:
+  - Add a versioning process based on unique criteria for updating the major version.
+  - Add breaking change requirements to the release process details section.
 
 ## Motivation
 
@@ -29,9 +32,9 @@ once a release is made, such as testing and validation criteria.
 ## Technology Background
 
 This RFC does not impact any technology specifically. The [Semantic Versioning 2.0.0 specification](https://semver.org/)
-is used as a reference for versioning and release process. The implementation of automated processes is outside the
-scope of this RFC, but it is expected that the process will be implemented using GitHub Actions or similar
-automation tools.
+is used as a reference but not followed strictly for reasons explained in the RFC. The implementation of automated
+processes is outside the scope of this RFC, but it is expected that the process will be implemented using GitHub
+Actions or similar automation tools.
 
 ## Goals
 
@@ -42,12 +45,90 @@ automation tools.
 5. Ensure multiple hot fixes can clearly be made on a single base version.
 6. Ensure hot fix consumers clearly understand how to consume hot fixes.
 7. Ensure that breaking changes are clearly documented and communicated to consumers.
-8. Ensure that releases are versioned according to semantic versioning.
+8. Ensure that releases are versioned according to a well-defined but modified semantic versioning scheme.
 9. Ensure that release notes are automatically generated and published with each release.
 10. Ensure that the release process is automated as much as possible to reduce manual effort and errors.
-11. Provide a model for changes to stabilized while not impacting the main development branch.
+11. Provide a model for larger breaking changes to be made without impacting the main development branch.
 
-## Requirements
+## Release Version Details and Requirements
+
+Patina generally follows the [Semantic Versioning 2.0.0 specification](https://semver.org/) with some project-specific
+criteria for distinguishing between **minor breaking changes** and **major breaking changes**. It aims to provide clear
+guidance on when a version bump—particularly a major version update—is warranted based on the nature and impact of
+changes to the public API, system behavior, and integration effort required by consumers.
+
+### Definitions
+
+- **Public API**: Interfaces exposed by Patina that are intended for use by external components or consumers. This
+  includes:
+  - Rust APIs explicitly marked as public and intended for external use.
+  - The C FFI layer exposed by Patina.
+- **Private API**: Internal interfaces used exclusively within Patina crates and not intended for external consumption.
+
+### Criteria for Breaking Changes
+
+#### Non-Breaking Changes
+
+The following changes are **not** considered breaking:
+
+1. **Modifications to Private APIs**
+
+   Changes or removals of APIs considered private to Patina (i.e., exposed from internal Patina crates for use by other
+   internal crates) are not considered breaking changes.
+
+2. **Semantic-Preserving API Changes**
+
+   Changes that alter the API surface but preserve semantic behavior, such as:
+
+   - Type signature changes that improve correctness without altering behavior (e.g., `u32` → `usize`).
+   - Addition of new parameters to an API with default values or options that preserve previous behavior (e.g.,
+     `do_something()` → `do_something(extended_behavior: bool)` where `extended_behavior = false` preserves original
+     semantics).
+   <!-- cspell:disable-next-line -->
+   - API renames that preserve behavior (e.g., `do_soemthing()` → `do_something()`).
+
+3. **Addition of New Public APIs**
+
+   Introducing new public APIs is not considered a breaking change.
+
+4. **Refactoring Without Semantic Change**
+
+   Refactoring the internal implementation of a public API function is not breaking unless it results in significant
+   semantic differences when called with the same parameters.
+
+5. **Component Changes Without Operational Impact**
+
+   Moving or removing components or drivers is not breaking if Patina continues to operate correctly without them.
+
+#### Breaking Changes
+
+The following changes are considered **breaking** and may require a major version update:
+
+1. **Removal of Public APIs**
+
+   Removing existing public APIs is a breaking change.
+
+2. **Semantic-Altering Refactors**
+
+   Refactoring a public API in a way that changes its semantic behavior (e.g., `do_something()` →
+   `do_something_with(complicated_to_construct: thing)`) is considered breaking.
+
+3. **Critical Boot Path Modifications**
+
+   Moving a component into or out of the critical boot path is breaking if:
+
+   - The component becomes required for Patina to boot or operate.
+   - Removal of a component or driver causes Patina to fail.
+
+4. **C FFI Layer Changes**
+
+   The C FFI layer is part of the public API and follows the same rules for breaking changes as Rust APIs. Changes to
+   this layer are considered breaking if they alter expected behavior or structure.
+
+5. **Behavioral Changes in Public APIs**
+
+   If a public API is refactored such that calling it without changes results in significantly different behavior
+   (e.g., `core_allocate_pages` returning pages marked `RWX` vs. `RP`), it is considered a breaking change.
 
 ### Release Notes
 
@@ -56,10 +137,9 @@ automation tools.
   - Title: Based on the pull request title.
   - Body: Based on the pull request description.
 
-### Release Version Details
+### Pull Request Version Mapping
 
-- Is maintained as a semantic version following the [Semantic Versioning 2.0.0 specification](https://semver.org/).
-- Is automatically updated in the GitHub release draft based on the labels associated with the pull
+- The version is automatically updated in the GitHub release draft based on the labels associated with the pull
   requests that compose the release.
   - The version is determined as follows:
     - Increment to Major:
@@ -79,7 +159,8 @@ automation tools.
 
 ### Release Process Details
 
-- Is automated and triggered by a GitHub action at 7am Pacific time on Tuesday on cadence decided in the project.
+- The release process is automated and triggered by a GitHub action at 7am Pacific time on Tuesday on cadence decided
+  in the project.
   - This RFC proposes a weekly release cadence.
   - May be triggered by a Patina team member at any time outside of the scheduled time.
   - The release is composed of changes in the `main` branch that have been merged since the last release.
