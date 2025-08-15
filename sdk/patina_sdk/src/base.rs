@@ -306,6 +306,68 @@ where
     let aligned_length = aligned_end - aligned_base;
     Ok((aligned_base, aligned_length))
 }
+
+/// Generates a UEFI-style signature from between 1 to 8 bytes, packing them into a u16, u32
+/// or u64 as appropriate for the parameters passed.
+///
+/// # Examples
+///
+/// ```rust
+/// use patina_sdk::signature;
+/// const SIG: u32 = signature!('A', 'B', 'C', 'D');
+/// assert_eq!(SIG, 0x44434241);
+/// ```
+///
+/// # Note
+/// This macro is typically used to create signatures for UEFI structures
+/// and is the equivalent of the SIGNATURE_16, SIGNATURE_32 and SIGNATURE_64
+/// macros from EDK2.
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! signature {
+    ($a:literal) => {
+        ($a as u16)
+    };
+    ($a:literal, $b:literal) => {
+        ($a as u16) | (($b as u16) << 8)
+    };
+    ($a:literal, $b:literal, $c:literal) => {
+        ($a as u32) | (($b as u32) << 8) | (($c as u32) << 16)
+    };
+    ($a:literal, $b:literal, $c:literal, $d:literal) => {
+        ($a as u32) | (($b as u32) << 8) | (($c as u32) << 16) | (($d as u32) << 24)
+    };
+    ($a:literal, $b:literal, $c:literal, $d:literal, $e:literal) => {
+        ($a as u64) | (($b as u64) << 8) | (($c as u64) << 16) | (($d as u64) << 24) | (($e as u64) << 32)
+    };
+    ($a:literal, $b:literal, $c:literal, $d:literal, $e:literal, $f:literal) => {
+        ($a as u64)
+            | (($b as u64) << 8)
+            | (($c as u64) << 16)
+            | (($d as u64) << 24)
+            | (($e as u64) << 32)
+            | (($f as u64) << 40)
+    };
+    ($a:literal, $b:literal, $c:literal, $d:literal, $e:literal, $f:literal, $g:literal) => {
+        ($a as u64)
+            | (($b as u64) << 8)
+            | (($c as u64) << 16)
+            | (($d as u64) << 24)
+            | (($e as u64) << 32)
+            | (($f as u64) << 40)
+            | (($g as u64) << 48)
+    };
+    ($a:literal, $b:literal, $c:literal, $d:literal, $e:literal, $f:literal, $g:literal, $h:literal) => {
+        ($a as u64)
+            | (($b as u64) << 8)
+            | (($c as u64) << 16)
+            | (($d as u64) << 24)
+            | (($e as u64) << 32)
+            | (($f as u64) << 40)
+            | (($g as u64) << 48)
+            | (($h as u64) << 56)
+    };
+}
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
@@ -361,5 +423,31 @@ mod tests {
         assert_eq!(len, 192u64);
 
         assert!(align_range(100u64, 100u64, 3u64).is_err()); // not power of two
+    }
+    #[test]
+    fn test_signature() {
+        const TEST0: u16 = signature!('A');
+        assert_eq!(TEST0, 0x0041);
+
+        const TEST1: u16 = signature!('A', '\0');
+        assert_eq!(TEST1, 0x0041);
+
+        const TEST2: u16 = signature!('A', 'B');
+        assert_eq!(TEST2, 0x4241);
+
+        const TEST3: u32 = signature!('A', 'B', 'C');
+        assert_eq!(TEST3, 0x00434241);
+
+        const TEST4: u32 = signature!('A', 'B', 'C', 'D');
+        assert_eq!(TEST4, 0x44434241);
+
+        const TEST5: u32 = signature!('\0', '\0', 'C', 'D');
+        assert_eq!(TEST5, 0x44430000);
+
+        const TEST6: u64 = signature!('A', 'B', 'C', 'D', 'E');
+        assert_eq!(TEST6, 0x0000004544434241);
+
+        const TEST7: u64 = signature!('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H');
+        assert_eq!(TEST7, 0x4847464544434241);
     }
 }
