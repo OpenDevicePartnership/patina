@@ -26,6 +26,9 @@
   - [Integration Testing](dev/testing/integration.md)
   - [On-Platform Testing](dev/testing/platform.md)
   - [Mocking](dev/testing/mock.md)
+- [Debugging](dev/debugging.md)
+  - [Windbg Debugging](dev/debugging/windbg_debugging.md)
+  - [Windbg Debugging Example](dev/debugging/windbg_example.md)
 
 # Patina DXE Core Platform Integration
 

@@ -175,6 +175,7 @@ pub(crate) fn component2(item: proc_macro2::TokenStream) -> proc_macro2::TokenSt
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use quote::quote;

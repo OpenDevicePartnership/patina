@@ -22,6 +22,7 @@ pub fn log_hello(name: Config<Name>) -> Result<()> {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use patina_sdk::component::IntoComponent;

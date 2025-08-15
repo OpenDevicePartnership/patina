@@ -5,6 +5,7 @@ are placed in a conditionally compiled sub-module, and each test should be tagge
 
 ```rust
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     #[test]
     fn test_my_functionality() {
@@ -32,6 +33,7 @@ lock, reset global state, then run the test. It is up to the test writer to rese
 a typical example used in the Patina DXE Core:
 
 ```rust
+#[coverage(off)]
 mod test_support {
     static GLOBAL_STATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -42,6 +44,7 @@ mod test_support {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use test_support::with_global_lock;
     fn with_reset_state(f: impl Fn()) {

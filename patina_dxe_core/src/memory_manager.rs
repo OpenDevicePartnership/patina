@@ -46,6 +46,10 @@ impl MemoryManager for CoreMemoryManager {
                 address = requested_address as efi::PhysicalAddress;
                 efi::ALLOCATE_ADDRESS
             }
+            PageAllocationStrategy::MaxAddress(max_address) => {
+                address = max_address as efi::PhysicalAddress;
+                efi::ALLOCATE_MAX_ADDRESS
+            }
         };
 
         let result =
@@ -210,7 +214,7 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_sdk
     data[0] = 42;
     drop(data);
 
-    // allocate a page, free it then allocate the address.
+    // Allocate a page, free it then allocate the address.
     let result = mm.allocate_pages(1, AllocationOptions::new());
     u_assert!(result.is_ok(), "Failed to allocate single page.");
     let allocation = result.unwrap();
@@ -232,7 +236,16 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_sdk
     let result = unsafe { mm.free_pages(address, 8) };
     u_assert!(result.is_ok(), "Failed to free page.");
 
-    // Get an allocator
+    // Allocate with a max address limit.
+    let max_address = 0x1000_0000;
+    let result =
+        mm.allocate_pages(1, AllocationOptions::new().with_strategy(PageAllocationStrategy::MaxAddress(max_address)));
+    u_assert!(result.is_ok(), "Failed to allocate with max address limit.");
+    let allocation = result.unwrap();
+    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
+    u_assert!((address + UEFI_PAGE_SIZE - 1) <= max_address, "Allocated address exceeds max address limit.");
+
+    // Get an allocator.
     let result = mm.get_allocator(EfiMemoryType::BootServicesData);
     u_assert!(result.is_ok(), "Failed to get allocator.");
     let allocator = result.unwrap();
@@ -242,7 +255,7 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_sdk
     u_assert_eq!(*boxed_struct, 42, "Failed to allocate boxed struct from allocator.");
     drop(boxed_struct);
 
-    // Get a dynamic allocator
+    // Get a dynamic allocator.
     let result = mm.get_allocator(EfiMemoryType::ACPIReclaimMemory);
     u_assert!(result.is_ok(), "Failed to get dynamic allocator.");
     let allocator = result.unwrap();

@@ -75,7 +75,8 @@ pub fn get_static_state() -> Option<(&'static StandardBootServices, &'static Tpl
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use super::*;
 
     #[test]

@@ -238,6 +238,7 @@ fn validate_random_data_driver<T: Default>(
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use patina_sdk::component::IntoComponent;
     use super::validate_random_data_driver;

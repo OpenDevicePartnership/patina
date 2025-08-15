@@ -541,6 +541,7 @@ extern "efiapi" fn core_fw_vol_event_protocol_notify(_event: efi::Event, _contex
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use core::sync::atomic::AtomicBool;
     use std::{fs::File, io::Read, vec};

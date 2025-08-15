@@ -115,6 +115,7 @@ extern "efiapi" fn exception_handler(exception_type: usize, context: &mut Except
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     extern crate std;
 

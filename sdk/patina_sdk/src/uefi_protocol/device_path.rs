@@ -351,7 +351,8 @@ impl Display for DevicePath {
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use core::assert_eq;
 
     use super::{

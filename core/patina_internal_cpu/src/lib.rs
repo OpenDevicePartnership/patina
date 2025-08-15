@@ -10,6 +10,7 @@
 //!
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
 #![feature(abi_x86_interrupt)]
+#![feature(coverage_attribute)]
 extern crate alloc;
 
 pub mod cpu;

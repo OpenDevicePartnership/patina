@@ -190,6 +190,7 @@ pub(crate) fn install_cpu_arch_protocol(
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
 

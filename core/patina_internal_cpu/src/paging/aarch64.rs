@@ -66,6 +66,7 @@ pub fn create_cpu_aarch64_paging<A: PageAllocator + 'static>(
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use std::alloc::alloc;
 

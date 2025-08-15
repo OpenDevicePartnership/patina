@@ -406,10 +406,7 @@ extern "efiapi" fn allocate_pool(pool_type: efi::MemoryType, size: usize, buffer
 
 pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mut c_void, EfiError> {
     // It is not valid to attempt to allocate these memory types
-    if matches!(
-        pool_type,
-        efi::CONVENTIONAL_MEMORY | efi::PERSISTENT_MEMORY | efi::UNUSABLE_MEMORY | efi::UNACCEPTED_MEMORY_TYPE
-    ) {
+    if matches!(pool_type, efi::CONVENTIONAL_MEMORY | efi::PERSISTENT_MEMORY | efi::UNACCEPTED_MEMORY_TYPE) {
         return Err(EfiError::InvalidParameter);
     }
 
@@ -469,10 +466,7 @@ pub fn core_allocate_pages(
     }
 
     // It is not valid to attempt to allocate these memory types
-    if matches!(
-        memory_type,
-        efi::CONVENTIONAL_MEMORY | efi::PERSISTENT_MEMORY | efi::UNUSABLE_MEMORY | efi::UNACCEPTED_MEMORY_TYPE
-    ) {
+    if matches!(memory_type, efi::CONVENTIONAL_MEMORY | efi::PERSISTENT_MEMORY | efi::UNACCEPTED_MEMORY_TYPE) {
         return Err(EfiError::InvalidParameter);
     }
 
@@ -1138,6 +1132,7 @@ pub(crate) unsafe fn reset_allocators() {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
 
     use crate::{
@@ -1220,7 +1215,9 @@ mod tests {
     #[test]
     fn init_memory_support_should_process_resource_allocations() {
         test_support::with_global_lock(|| {
-            let physical_hob_list = build_test_hob_list(0x200000);
+            // 4 MiB of test memory is required because allocator expansion during initialization
+            // may need to handle large allocations for memory buckets and HOBs.
+            let physical_hob_list = build_test_hob_list(0x400000);
             unsafe {
                 GCD.reset();
                 gcd::init_gcd(physical_hob_list);
@@ -1235,7 +1232,7 @@ mod tests {
 
             let allocators = ALLOCATORS.lock();
 
-            //Verify that the memory allocation hobs resulted in claimed pages in the allocator.
+            // Verify that the memory allocation HOBs resulted in claimed pages in the allocator.
             for memory_type in [
                 efi::RESERVED_MEMORY_TYPE,
                 efi::LOADER_CODE,
@@ -1387,7 +1384,7 @@ mod tests {
 
             assert_eq!(
                 allocate_pool(efi::UNUSABLE_MEMORY, 0x1000, core::ptr::addr_of_mut!(buffer_ptr)),
-                efi::Status::INVALID_PARAMETER
+                efi::Status::SUCCESS
             );
 
             assert_eq!(
@@ -1568,6 +1565,16 @@ mod tests {
                     core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress
                 ),
                 efi::Status::INVALID_PARAMETER
+            );
+
+            assert_eq!(
+                allocate_pages(
+                    efi::ALLOCATE_ANY_PAGES,
+                    efi::UNUSABLE_MEMORY,
+                    0x10,
+                    core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress
+                ),
+                efi::Status::SUCCESS
             );
         })
     }

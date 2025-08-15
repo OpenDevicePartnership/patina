@@ -526,6 +526,7 @@ pub fn init_driver_services(bs: &mut efi::BootServices) {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use crate::protocol_db::DXE_CORE_HANDLE;

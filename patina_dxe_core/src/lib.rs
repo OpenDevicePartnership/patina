@@ -34,6 +34,7 @@
 #![feature(allocator_api)]
 #![feature(slice_ptr_get)]
 #![feature(get_many_mut)]
+#![feature(coverage_attribute)]
 
 extern crate alloc;
 
@@ -63,6 +64,7 @@ mod tpl_lock;
 
 #[cfg(test)]
 #[macro_use]
+#[coverage(off)]
 pub mod test_support;
 
 use core::{ffi::c_void, ptr, str::FromStr};
@@ -482,6 +484,7 @@ where
 
     /// Registers core provided components
     fn add_core_components(&mut self) {
+        self.insert_component(0, systemtables::register_checksum_on_protocol_install_events.into_component());
         self.insert_component(0, cpu_arch_protocol::install_cpu_arch_protocol.into_component());
         #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
         self.insert_component(0, hw_interrupt_protocol::install_hw_interrupt_protocol.into_component());

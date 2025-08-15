@@ -9,6 +9,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 #![no_std]
+#![feature(coverage_attribute)]
 
 extern crate alloc;
 
@@ -416,6 +417,7 @@ fn protocol_to_subtype_str(protocol: efi::protocols::device_path::Protocol) -> &
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use core::mem::size_of;
 

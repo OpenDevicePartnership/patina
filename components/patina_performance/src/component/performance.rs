@@ -41,7 +41,7 @@ pub struct Performance;
 
 impl Performance {
     /// Entry point of [`Performance`]
-    #[cfg(not(tarpaulin_include))] // This is tested via the generic version, see _entry_point.
+    #[coverage(off)] // This is tested via the generic version, see _entry_point.
     pub fn entry_point(
         self,
         config: Config<config::PerfConfig>,
@@ -159,7 +159,8 @@ impl Performance {
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use super::*;
 
     use alloc::rc::Rc;

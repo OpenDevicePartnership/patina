@@ -267,6 +267,7 @@ impl Display for UefiAllocator {
     }
 }
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     extern crate std;
     use core::cmp::max;

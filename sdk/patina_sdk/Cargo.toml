@@ -57,6 +57,3 @@ enable_patina_tests = ["patina_sdk_macro/enable_patina_tests"]
 
 unstable = ["unstable-device-path"]
 unstable-device-path = []
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }

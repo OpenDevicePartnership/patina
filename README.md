@@ -65,11 +65,11 @@ file contains the tools necessary to compile and can be installed through rustup
 
 3. The `[tools]` section of the [rust-toolchain.toml](https://github.com/OpenDevicePartnership/patina/blob/HEAD/rust-toolchain.toml)
 file contains tools to support commands such as `cargo make coverage` and must be installed manually.  A local build
-does not need them all, but at a minimum, cargo-make and cargo-tarpaulin should be installed.
+does not need them all, but at a minimum, cargo-make and cargo-llvm-cov should be installed.
 
    ```shell
    cargo install cargo-make
-   cargo install cargo-tarpaulin
+   cargo install cargo-llvm-cov
    ```
 
 4. Another optional tool that has proven useful for speeding up the build process is 'cargo-binstall', located on
