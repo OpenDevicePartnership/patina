@@ -220,16 +220,4 @@ Note: The Patina DXE Readiness Tool does not perform this check.
 ### 4. Known Limitations
 
 This section details requirements Patina currently has due to limitations in implementation, but that support will be
-added for in the future.
-
-#### 4.1 LZMA Compressed Section Support Is Not Yet Implemented
-
-The Patina DXE Core has not added LZMA decompression functionality yet, so currently these sections cannot be processed
-and must be converted to one of the support algorithms: Brotli or TianoCompress.
-
-In practice, PEI decompresses most sections (when present), so this is not a large limitation and support will be added.
-
-Tracking issue: [#517](https://github.com/OpenDevicePartnership/patina/issues/517)
-
-> **Guidance:**
-> Temporarily, LZMA compressed sections that will be decompressed in DXE should use Brotli or TianoCompress.
+added for in the future. Currently, this section is empty.
