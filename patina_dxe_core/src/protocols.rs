@@ -30,7 +30,7 @@ pub fn core_install_protocol_interface(
     protocol: efi::Guid,
     interface: *mut c_void,
 ) -> Result<efi::Handle, EfiError> {
-    log::info!("InstallProtocolInterface: {:?} @ {:#x?}", guid_fmt!(protocol), interface);
+    log::debug!("InstallProtocolInterface: {:?} @ {:#x?}", guid_fmt!(protocol), interface);
     let (handle, notifies) = PROTOCOL_DB.install_protocol_interface(handle, protocol, interface)?;
 
     let mut closed_events = Vec::new();
@@ -72,35 +72,31 @@ extern "efiapi" fn install_protocol_interface(
     efi::Status::SUCCESS
 }
 
-extern "efiapi" fn uninstall_protocol_interface(
+pub fn core_uninstall_protocol_interface(
     handle: efi::Handle,
-    protocol: *mut efi::Guid,
+    protocol: efi::Guid,
     interface: *mut c_void,
-) -> efi::Status {
-    if protocol.is_null() {
-        return efi::Status::INVALID_PARAMETER;
-    }
-
-    let caller_protocol = *(unsafe { protocol.as_mut().expect("previously null-checked pointer is null") });
+) -> Result<(), EfiError> {
+    log::debug!("UninstallProtocolInterface: {:?} @ {:#x?}", guid_fmt!(protocol), interface);
 
     // Check if the handle/protocol/interface triple is legitimate
-    match PROTOCOL_DB.get_interface_for_handle(handle, caller_protocol) {
-        Err(err) => return err.into(),
+    match PROTOCOL_DB.get_interface_for_handle(handle, protocol) {
+        Err(err) => return Err(err),
         Ok(found_interface) => {
             if found_interface != interface {
-                return efi::Status::NOT_FOUND;
+                return Err(EfiError::NotFound);
             }
         }
-    }
+    };
 
     //attempt to close all OPEN_BY_DRIVER usages.
     let mut usage_close_status = Ok(());
     loop {
         let mut item_found = false;
-        let usages = match PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, caller_protocol) {
+        let usages = match PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, protocol) {
             Ok(usages) => usages,
             Err(EfiError::NotFound) => Vec::new(),
-            Err(err) => return err.into(),
+            Err(err) => return Err(err),
         };
 
         for usage in usages {
@@ -124,10 +120,10 @@ extern "efiapi" fn uninstall_protocol_interface(
     //Attempt to remove BY_HANDLE_PROTOCOL, GET_PROTOCOL, and TEST_PROTOCOL usages.
     let mut unclosed_usages = false;
     if usage_close_status.is_ok() {
-        let usages = match PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, caller_protocol) {
+        let usages = match PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, protocol) {
             Ok(usages) => usages,
             Err(EfiError::NotFound) => Vec::new(),
-            Err(err) => return err.into(),
+            Err(err) => return Err(err),
         };
 
         for usage in usages {
@@ -137,12 +133,8 @@ extern "efiapi" fn uninstall_protocol_interface(
                     | efi::OPEN_PROTOCOL_TEST_PROTOCOL)
                 != 0
             {
-                let result = PROTOCOL_DB.remove_protocol_usage(
-                    handle,
-                    caller_protocol,
-                    usage.agent_handle,
-                    usage.controller_handle,
-                );
+                let result =
+                    PROTOCOL_DB.remove_protocol_usage(handle, protocol, usage.agent_handle, usage.controller_handle);
                 if result.is_err() {
                     unclosed_usages = true;
                 }
@@ -156,13 +148,26 @@ extern "efiapi" fn uninstall_protocol_interface(
         unsafe {
             let _result = core_connect_controller(handle, Vec::new(), None, true);
         }
-        return efi::Status::ACCESS_DENIED;
+        return Err(EfiError::AccessDenied);
     }
 
-    match PROTOCOL_DB.uninstall_protocol_interface(handle, caller_protocol, interface) {
-        Err(err) => err.into(),
-        Ok(()) => efi::Status::SUCCESS,
+    PROTOCOL_DB.uninstall_protocol_interface(handle, protocol, interface)
+}
+
+extern "efiapi" fn uninstall_protocol_interface(
+    handle: efi::Handle,
+    protocol: *mut efi::Guid,
+    interface: *mut c_void,
+) -> efi::Status {
+    if protocol.is_null() {
+        return efi::Status::INVALID_PARAMETER;
     }
+
+    let caller_protocol = *(unsafe { protocol.as_mut().expect("previously null-checked pointer is null") });
+
+    core_uninstall_protocol_interface(handle, caller_protocol, interface)
+        .map(|_| efi::Status::SUCCESS)
+        .unwrap_or_else(|err| err.into())
 }
 
 // {2ED6CB57-3A78-4C39-9A2A-CA037841D286}

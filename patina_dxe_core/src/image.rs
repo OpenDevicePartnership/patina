@@ -31,7 +31,9 @@ use crate::{
     filesystems::SimpleFile,
     pecoff::{self, UefiPeInfo, relocation::RelocationBlock},
     protocol_db,
-    protocols::{PROTOCOL_DB, core_install_protocol_interface, core_locate_device_path},
+    protocols::{
+        PROTOCOL_DB, core_install_protocol_interface, core_locate_device_path, core_uninstall_protocol_interface,
+    },
     runtime,
     systemtables::EfiSystemTable,
     tpl_lock,
@@ -1359,13 +1361,13 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
     // and the image_info box along with it.
     let private_image_data = PRIVATE_IMAGE_DATA.lock().private_image_data.remove(&image_handle).unwrap();
     // remove the image and device path protocols from the image handle.
-    let _ = PROTOCOL_DB.uninstall_protocol_interface(
+    let _ = core_uninstall_protocol_interface(
         image_handle,
         efi::protocols::loaded_image::PROTOCOL_GUID,
         private_image_data.image_info_ptr,
     );
 
-    let _ = PROTOCOL_DB.uninstall_protocol_interface(
+    let _ = core_uninstall_protocol_interface(
         image_handle,
         efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
         private_image_data.image_device_path_ptr,
