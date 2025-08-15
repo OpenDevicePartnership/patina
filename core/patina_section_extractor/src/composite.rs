@@ -13,6 +13,8 @@ use mu_pi::fw_fs::SectionExtractor;
 use crate::BrotliSectionExtractor;
 #[cfg(feature = "crc32")]
 use crate::Crc32SectionExtractor;
+#[cfg(feature = "lzma")]
+use crate::LzmaSectionExtractor;
 #[cfg(feature = "uefi_decompress")]
 use crate::UefiDecompressSectionExtractor;
 
@@ -25,6 +27,8 @@ pub struct CompositeSectionExtractor {
     brotli: BrotliSectionExtractor,
     #[cfg(feature = "crc32")]
     crc32: Crc32SectionExtractor,
+    #[cfg(feature = "lzma")]
+    lzma: LzmaSectionExtractor,
 }
 
 impl Default for CompositeSectionExtractor {
@@ -36,6 +40,8 @@ impl Default for CompositeSectionExtractor {
             brotli: BrotliSectionExtractor {},
             #[cfg(feature = "crc32")]
             crc32: Crc32SectionExtractor {},
+            #[cfg(feature = "lzma")]
+            lzma: LzmaSectionExtractor {},
         }
     }
 }
@@ -67,6 +73,17 @@ impl SectionExtractor for CompositeSectionExtractor {
         #[cfg(feature = "crc32")]
         {
             match self.crc32.extract(_section) {
+                Err(err) => return Err(err),
+                Ok(buffer) => {
+                    if buffer.len() > 0 {
+                        return Ok(buffer);
+                    }
+                }
+            }
+        }
+        #[cfg(feature = "lzma")]
+        {
+            match self.lzma.extract(_section) {
                 Err(err) => return Err(err),
                 Ok(buffer) => {
                     if buffer.len() > 0 {
