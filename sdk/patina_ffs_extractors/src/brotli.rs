@@ -7,12 +7,12 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use alloc::{boxed::Box, vec, vec::Vec};
-use alloc_no_stdlib::{self, define_index_ops_mut, SliceWrapper, SliceWrapperMut};
+use alloc_no_stdlib::{self, SliceWrapper, SliceWrapperMut, define_index_ops_mut};
 use brotli_decompressor::{BrotliDecompressStream, BrotliResult, BrotliState, HuffmanCode};
 use mu_pi::fw_fs;
 use patina_ffs::{
-    section::{Section, SectionExtractor, SectionHeader},
     FirmwareFileSystemError,
+    section::{Section, SectionExtractor, SectionHeader},
 };
 
 //Rebox and HeapAllocator exist to satisfy BrotliDecompress custom allocation requirements.

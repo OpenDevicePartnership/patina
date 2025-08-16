@@ -7,8 +7,8 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 use patina_ffs::{
-    section::{Section, SectionExtractor},
     FirmwareFileSystemError,
+    section::{Section, SectionExtractor},
 };
 
 #[cfg(feature = "brotli")]

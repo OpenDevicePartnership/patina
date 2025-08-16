@@ -2101,7 +2101,7 @@ mod tests {
             unsafe { crate::test_support::init_test_protocol_db() };
 
             // Install the FV to obtain a real handle
-            let _handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let _handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             // Wrapper should still surface NOT_FOUND (no pending drivers to dispatch in tests)
             let s = dispatch();
@@ -2142,7 +2142,7 @@ mod tests {
             unsafe { crate::test_support::init_test_protocol_db() };
 
             // Install the FV to obtain a real handle
-            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             // Use the same GUID as the dispatcher tests; wrapper should map NotFound correctly
             let file_guid = efi::Guid::from_bytes(Uuid::from_u128(0x1fa1f39e_feff_4aae_bd7b_38a070a3b609).as_bytes());

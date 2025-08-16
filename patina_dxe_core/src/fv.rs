@@ -713,7 +713,7 @@ pub unsafe fn core_install_firmware_volume(
     base_address: u64,
     parent_handle: Option<efi::Handle>,
 ) -> Result<efi::Handle, EfiError> {
-    let handle = install_fv_device_path_protocol(None, base_address)?;
+    let handle = unsafe { install_fv_device_path_protocol(None, base_address)? };
     install_fvb_protocol(Some(handle), parent_handle, base_address)?;
     install_fv_protocol(Some(handle), parent_handle, base_address)?;
     Ok(handle)

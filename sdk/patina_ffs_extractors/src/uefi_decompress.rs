@@ -8,10 +8,10 @@
 //!
 use alloc::vec;
 use mu_pi::fw_fs::{self, ffs};
-use mu_rust_helpers::uefi_decompress::{decompress_into_with_algo, DecompressionAlgorithm};
+use mu_rust_helpers::uefi_decompress::{DecompressionAlgorithm, decompress_into_with_algo};
 use patina_ffs::{
-    section::{SectionExtractor, SectionHeader},
     FirmwareFileSystemError,
+    section::{SectionExtractor, SectionHeader},
 };
 
 /// Provides decompression for sections compressed with UEFI compression algorithm and TianoCompress GUIDed sections.

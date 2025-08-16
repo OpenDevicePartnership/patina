@@ -13,9 +13,9 @@ use mu_pi::fw_fs::{
 };
 
 use crate::{
+    FirmwareFileSystemError,
     file::{File, FileRef},
     section::{self, Section, SectionExtractor},
-    FirmwareFileSystemError,
 };
 
 pub struct VolumeRef<'a> {
@@ -174,22 +174,18 @@ impl<'a> VolumeRef<'a> {
     /// returned VolumeRef.
     ///
     pub unsafe fn new_from_address(base_address: u64) -> Result<Self, FirmwareFileSystemError> {
-        let fv_header = ptr::read_unaligned(base_address as *const fv::Header);
+        let fv_header = unsafe { ptr::read_unaligned(base_address as *const fv::Header) };
         if fv_header.signature != u32::from_le_bytes(*b"_FVH") {
             // base_address is not the start of a firmware volume.
             return Err(FirmwareFileSystemError::DataCorrupt);
         }
 
-        let fv_buffer = slice::from_raw_parts(base_address as *const u8, fv_header.fv_length as usize);
+        let fv_buffer = unsafe { slice::from_raw_parts(base_address as *const u8, fv_header.fv_length as usize) };
         Self::new(fv_buffer)
     }
 
     pub fn erase_byte(&self) -> u8 {
-        if self.fv_header.attributes & fvb::attributes::raw::fvb2::ERASE_POLARITY != 0 {
-            0xff
-        } else {
-            0
-        }
+        if self.fv_header.attributes & fvb::attributes::raw::fvb2::ERASE_POLARITY != 0 { 0xff } else { 0 }
     }
 
     pub fn ext_header(&self) -> Option<(fv::ExtHeader, Vec<u8>)> {
@@ -584,9 +580,9 @@ mod test {
     use uuid::Uuid;
 
     use crate::{
+        FirmwareFileSystemError,
         section::{Section, SectionComposer, SectionExtractor, SectionHeader},
         volume::{Volume, VolumeRef},
-        FirmwareFileSystemError,
     };
 
     #[derive(Debug, Deserialize, Clone)]
@@ -1127,7 +1123,7 @@ mod test {
         )?;
         test_firmware_volume_worker(&fv, expected_values)?;
 
-        //re-serializing the FV without modifying it should work and generat the same byte stream. This doesn't require
+        //re-serializing the FV without modifying it should work and generate the same byte stream. This doesn't require
         //a composer since the sections haven't been modified, so they are already composed (i.e. the backing section
         //data for the LZMA section already exists and is correct)
         let serialized_fv_bytes = fv.serialize().map_err(stringify)?;

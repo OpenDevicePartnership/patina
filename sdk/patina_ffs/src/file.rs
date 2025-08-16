@@ -4,8 +4,8 @@ use mu_pi::fw_fs::{
 };
 
 use crate::{
-    section::{Section, SectionComposer, SectionExtractor, SectionIterator},
     FirmwareFileSystemError,
+    section::{Section, SectionComposer, SectionExtractor, SectionIterator},
 };
 
 use alloc::{vec, vec::Vec};

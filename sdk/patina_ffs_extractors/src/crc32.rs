@@ -8,8 +8,8 @@
 //!
 use mu_pi::fw_fs;
 use patina_ffs::{
-    section::{SectionExtractor, SectionHeader},
     FirmwareFileSystemError,
+    section::{SectionExtractor, SectionHeader},
 };
 
 /// Provides extraction for CRC32 sections.

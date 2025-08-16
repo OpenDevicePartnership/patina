@@ -176,7 +176,7 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     adv_logger_component.init_advanced_logger(physical_hob_list).unwrap();
 
     Core::default()
-        .with_section_extractor(patina_section_extractor::CompositeSectionExtractor::default())
+        .with_section_extractor(patina_ffs_extractors::CompositeSectionExtractor::default())
         .init_memory(physical_hob_list)
         .with_component(adv_logger_component)
         .start()
