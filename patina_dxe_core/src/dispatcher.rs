@@ -133,6 +133,7 @@ struct DispatcherContext {
     executing: bool,
     arch_protocols_available: bool,
     pending_drivers: Vec<PendingDriver>,
+    fv_section_data: Vec<Box<[u8]>>,
     pending_firmware_volume_images: Vec<PendingFirmwareVolumeImage>,
     associated_before: BTreeMap<OrdGuid, Vec<PendingDriver>>,
     associated_after: BTreeMap<OrdGuid, Vec<PendingDriver>>,
@@ -146,6 +147,7 @@ impl DispatcherContext {
             executing: false,
             arch_protocols_available: false,
             pending_drivers: Vec::new(),
+            fv_section_data: Vec::new(),
             pending_firmware_volume_images: Vec::new(),
             associated_before: BTreeMap::new(),
             associated_after: BTreeMap::new(),
@@ -262,19 +264,23 @@ fn dispatch() -> Result<bool, EfiError> {
 
             if depex_satisfied && candidate.evaluate_auth().is_ok() {
                 for section in candidate.fv_sections {
-                    let content_offset = section.header().content_offset();
-                    let data = section.try_into_boxed_slice()?;
-                    let data_ptr = Box::leak(data);
+                    let fv_data = section.try_content_into_boxed_slice()?;
+                    dispatcher.fv_section_data.push(fv_data);
+                    let data_ptr =
+                        dispatcher.fv_section_data.last().expect("freshly pushed fv section data must be valid");
 
-                    let volume_address: u64 = data_ptr[content_offset..].as_ptr() as u64;
-                    // Safety: explicitly leaked the box containing the FV section data to ensure that the section containing the FV data
-                    // lasts until end of UEFI.
+                    let volume_address: u64 = data_ptr.as_ptr() as u64;
+                    // Safety: FV section data is stored in the dispatcher and is valid until end of UEFI (nothing drops it).
                     let res = unsafe { core_install_firmware_volume(volume_address, Some(candidate.parent_fv_handle)) };
 
                     if res.is_ok() {
                         dispatch_attempted = true;
                     } else {
-                        log::warn!("couldn't install firmware volume image {:?}", guid_fmt!(candidate.file_name));
+                        log::warn!(
+                            "couldn't install firmware volume image {:?}: {:?}",
+                            guid_fmt!(candidate.file_name),
+                            res
+                        );
                     }
                 }
             } else {
@@ -546,11 +552,33 @@ mod tests {
     use core::sync::atomic::AtomicBool;
     use std::{fs::File, io::Read, vec};
 
+    use log::{Level, LevelFilter, Metadata, Record};
     use patina_internal_device_path::DevicePathWalker;
     use uuid::uuid;
 
     use super::*;
     use crate::test_collateral;
+
+    // Sample logger for log crate to dump stuff in tests
+    struct SimpleLogger;
+    impl log::Log for SimpleLogger {
+        fn enabled(&self, metadata: &Metadata) -> bool {
+            metadata.level() <= Level::Info
+        }
+
+        fn log(&self, record: &Record) {
+            if self.enabled(record.metadata()) {
+                println!("{}", record.args());
+            }
+        }
+
+        fn flush(&self) {}
+    }
+    static LOGGER: SimpleLogger = SimpleLogger;
+
+    fn set_logger() {
+        let _ = log::set_logger(&LOGGER).map(|()| log::set_max_level(LevelFilter::Info));
+    }
 
     // Monkey patch value for get_physical_address3
     static mut GET_PHYSICAL_ADDRESS3_VALUE: u64 = 0;
@@ -636,6 +664,7 @@ mod tests {
 
     #[test]
     fn test_init_dispatcher() {
+        set_logger();
         with_locked_state(|| {
             init_dispatcher(Box::new(patina_ffs_extractors::BrotliSectionExtractor));
         });
@@ -643,24 +672,30 @@ mod tests {
 
     #[test]
     fn test_add_fv_handle_with_valid_fv() {
+        set_logger();
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
-        let fv = fv.leak();
+        let fv = fv.into_boxed_slice();
+        let fv_raw = Box::into_raw(fv);
 
         with_locked_state(|| {
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
-            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
+            let handle =
+                unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
 
             add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
             const DRIVERS_IN_DXEFV: usize = 130;
             assert_eq!(DISPATCHER_CONTEXT.lock().pending_drivers.len(), DRIVERS_IN_DXEFV);
-        })
+        });
+
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
     #[test]
     fn test_add_fv_handle_with_invalid_handle() {
+        set_logger();
         with_locked_state(|| {
             let result = std::panic::catch_unwind(|| {
                 add_fv_handles(vec![std::ptr::null_mut::<c_void>()]).expect("Failed to add FV handle");
@@ -671,14 +706,17 @@ mod tests {
 
     #[test]
     fn test_add_fv_handle_with_failing_get_physical_address() {
+        set_logger();
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
-        let fv = fv.leak();
+        let fv = fv.into_boxed_slice();
+        let fv_raw = Box::into_raw(fv);
 
         with_locked_state(|| {
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
-            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
+            let handle =
+                unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
 
             // Monkey Patch get_physical_address to one that returns an error.
             let protocol = PROTOCOL_DB
@@ -689,19 +727,24 @@ mod tests {
 
             add_fv_handles(vec![handle]).expect("Failed to add FV handle");
             assert_eq!(DISPATCHER_CONTEXT.lock().pending_drivers.len(), 0);
-        })
+        });
+
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
     #[test]
     fn test_add_fv_handle_with_get_physical_address_of_0() {
+        set_logger();
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
-        let fv = fv.leak();
+        let fv = fv.into_boxed_slice();
+        let fv_raw = Box::into_raw(fv);
 
         with_locked_state(|| {
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
-            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
+            let handle =
+                unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
 
             // Monkey Patch get_physical_address to set address to 0.
             let protocol = PROTOCOL_DB
@@ -712,19 +755,24 @@ mod tests {
 
             add_fv_handles(vec![handle]).expect("Failed to add FV handle");
             assert_eq!(DISPATCHER_CONTEXT.lock().pending_drivers.len(), 0);
-        })
+        });
+
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
     #[test]
     fn test_add_fv_handle_with_wrong_address() {
+        set_logger();
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
-        let fv = fv.leak();
+        let fv = fv.into_boxed_slice();
+        let fv_raw = Box::into_raw(fv);
 
         with_locked_state(|| {
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
-            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
+            let fv_phys_addr = fv_raw.expose_provenance() as u64;
+            let handle = unsafe { crate::fv::core_install_firmware_volume(fv_phys_addr, None).unwrap() };
 
             // Monkey Patch get_physical_address to set to a slightly invalid address.
             let protocol = PROTOCOL_DB
@@ -733,67 +781,85 @@ mod tests {
             let protocol = protocol as *mut firmware_volume_block::Protocol;
             unsafe { &mut *protocol }.get_physical_address = get_physical_address3;
 
-            unsafe { GET_PHYSICAL_ADDRESS3_VALUE = (fv.as_ptr() as u64) + 0x1000 };
+            unsafe { GET_PHYSICAL_ADDRESS3_VALUE = fv_phys_addr + 0x1000 };
             add_fv_handles(vec![handle]).expect("Failed to add FV handle");
             unsafe { GET_PHYSICAL_ADDRESS3_VALUE = 0 };
 
             assert_eq!(DISPATCHER_CONTEXT.lock().pending_drivers.len(), 0);
-        })
+        });
+
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
     #[test]
     fn test_add_fv_handle_with_child_fv() {
+        set_logger();
         let mut file = File::open(test_collateral!("NESTEDFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
-        let fv = fv.leak();
+        let fv = fv.into_boxed_slice();
+        let fv_raw = Box::into_raw(fv);
 
         with_locked_state(|| {
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
-            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
+            let handle =
+                unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
             add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
             // 1 child FV should be pending contained in NESTEDFV.Fv
             assert_eq!(DISPATCHER_CONTEXT.lock().pending_firmware_volume_images.len(), 1);
-        })
+        });
+
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
     #[test]
     fn test_display_discovered_not_dispatched_does_not_fail() {
+        set_logger();
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
-        let fv = fv.leak();
+        let fv = fv.into_boxed_slice();
+        let fv_raw = Box::into_raw(fv);
 
         with_locked_state(|| {
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
-            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
+            let handle =
+                unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
 
             add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
             display_discovered_not_dispatched();
-        })
+        });
+
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
     #[test]
     fn test_core_fw_col_event_protocol_notify() {
+        set_logger();
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
-        let fv = fv.leak();
+        let fv = fv.into_boxed_slice();
+        let fv_raw = Box::into_raw(fv);
 
         with_locked_state(|| {
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
-            let _ = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
+            let _ =
+                unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
             core_fw_vol_event_protocol_notify(std::ptr::null_mut::<c_void>(), std::ptr::null_mut::<c_void>());
 
             const DRIVERS_IN_DXEFV: usize = 130;
             assert_eq!(DISPATCHER_CONTEXT.lock().pending_drivers.len(), DRIVERS_IN_DXEFV);
-        })
+        });
+
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
     #[test]
     fn test_dispatch_when_already_dispatching() {
+        set_logger();
         with_locked_state(|| {
             DISPATCHER_CONTEXT.lock().executing = true;
             let result = core_dispatcher();
@@ -803,6 +869,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_with_nothing_to_dispatch() {
+        set_logger();
         with_locked_state(|| {
             let result = core_dispatcher();
             assert_eq!(result, Err(EfiError::NotFound));
@@ -811,33 +878,41 @@ mod tests {
 
     #[test]
     fn test_dispatch() {
+        set_logger();
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
-        let fv = fv.leak();
+        let fv = fv.into_boxed_slice();
+        let fv_raw = Box::into_raw(fv);
 
         with_locked_state(|| {
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
-            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
+            let handle =
+                unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
 
             add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
             // Cannot actually dispatch
             let result = core_dispatcher();
             assert_eq!(result, Err(EfiError::NotFound));
-        })
+        });
+
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
     #[test]
     fn test_core_schedule() {
+        set_logger();
         let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
-        let fv = fv.leak();
+        let fv = fv.into_boxed_slice();
+        let fv_raw = Box::into_raw(fv);
 
         with_locked_state(|| {
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
-            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
+            let handle =
+                unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
 
             add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
@@ -847,16 +922,18 @@ mod tests {
                 &efi::Guid::from_bytes(uuid::Uuid::from_u128(0x1fa1f39e_feff_4aae_bd7b_38a070a3b609).as_bytes()),
             );
             assert_eq!(result, Err(EfiError::NotFound));
-        })
+        });
+
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
     }
 
     #[test]
     fn test_fv_authentication() {
+        set_logger();
+
         let mut file = File::open(test_collateral!("NESTEDFV.Fv")).unwrap();
         let mut fv: Vec<u8> = Vec::new();
         file.read_to_end(&mut fv).expect("failed to read test file");
-
-        let fv = fv.leak();
 
         with_locked_state(|| {
             static SECURITY_CALL_EXECUTED: AtomicBool = AtomicBool::new(false);

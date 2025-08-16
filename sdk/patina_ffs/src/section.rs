@@ -362,6 +362,16 @@ impl Section {
         }
     }
 
+    pub fn try_content_into_boxed_slice(&self) -> Result<Box<[u8]>, FirmwareFileSystemError> {
+        let content_offset = self.header.content_offset();
+        match &self.data {
+            SectionData::None | SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
+            SectionData::Composed(data) | SectionData::Both(data, _) => {
+                Ok(data[content_offset..].to_vec().into_boxed_slice())
+            }
+        }
+    }
+
     pub fn try_into_boxed_slice(self) -> Result<Box<[u8]>, FirmwareFileSystemError> {
         match self.data {
             SectionData::None | SectionData::Extracted(_) => Err(FirmwareFileSystemError::NotComposed),
