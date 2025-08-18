@@ -81,7 +81,7 @@ pub trait DriverBinding {
     /// Tests to see if this driver supports a given controller.
     /// If a child device is provided, it further tests to see if this driver supports creating a handle for the specified child device.
     fn driver_binding_supported<T: BootServices + 'static>(
-        &self,
+        &mut self,
         boot_services: &'static T,
         controller: efi::Handle,
         remaining_device_path: Option<NonNull<EfiDevicePathProtocol>>,
@@ -89,7 +89,7 @@ pub trait DriverBinding {
 
     /// Starts a device controller or a bus controller.
     fn driver_binding_start<T: BootServices + 'static>(
-        &self,
+        &mut self,
         boot_services: &'static T,
         controller: efi::Handle,
         remaining_device_path: Option<NonNull<EfiDevicePathProtocol>>,
@@ -97,7 +97,7 @@ pub trait DriverBinding {
 
     /// Stops a device controller or a bus controller.
     fn driver_binding_stop<T: BootServices + 'static>(
-        &self,
+        &mut self,
         boot_services: &'static T,
         controller: efi::Handle,
         number_of_children: usize,
@@ -150,7 +150,7 @@ where
         remaining_device_path: *mut EfiDevicePathProtocol,
     ) -> efi::Status {
         // SAFETY Self is passed as the interface when installed and this pointer does not change.
-        let this = unsafe { (this as *mut _UefiDriverBinding<T, U>).as_ref() }.unwrap();
+        let this = unsafe { (this as *mut _UefiDriverBinding<T, U>).as_mut() }.unwrap();
 
         match this.driver_binding.driver_binding_supported(
             this.boot_services,
@@ -169,7 +169,7 @@ where
         remaining_device_path: *mut EfiDevicePathProtocol,
     ) -> efi::Status {
         // SAFETY Self is passed as the interface when installed and this pointer does not change.
-        let this = unsafe { (this as *mut _UefiDriverBinding<T, U>).as_ref() }.unwrap();
+        let this = unsafe { (this as *mut _UefiDriverBinding<T, U>).as_mut() }.unwrap();
         match this.driver_binding.driver_binding_start(
             this.boot_services,
             controller_handle,
@@ -187,7 +187,7 @@ where
         child_handle_buffer: *mut efi::Handle,
     ) -> efi::Status {
         // SAFETY Self is passed as the interface when installed and this pointer does not change.
-        let this = unsafe { (this as *mut _UefiDriverBinding<T, U>).as_ref() }.unwrap();
+        let this = unsafe { (this as *mut _UefiDriverBinding<T, U>).as_mut() }.unwrap();
         match this.driver_binding.driver_binding_stop(
             this.boot_services,
             controller_handle,
