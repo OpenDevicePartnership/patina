@@ -96,19 +96,6 @@ pub mod event_callback {
             log::error!("Performance: Fail to report FBPT status code.");
         }
 
-        // Enable status code capability in Firmware Performance DXE.
-        let status = p.report_status_code(
-            EFI_PROGRESS_CODE,
-            EFI_SOFTWARE_DXE_CORE | EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT,
-            0,
-            &guid::DXE_CORE,
-        );
-        if status.is_err() {
-            log::error!(
-                "Performance: Fail to report status code to enable status code support in Firmware Performance DXE."
-            );
-        }
-
         // SAFETY: This operation is valid because the expected configuration type of a entry with guid `EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE`
         // is a usize and the memory address is a valid and point to an FBPT.
         let status = unsafe {

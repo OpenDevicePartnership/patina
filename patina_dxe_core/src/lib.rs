@@ -550,6 +550,7 @@ fn core_display_missing_arch_protocols() {
 }
 
 fn call_bds() {
+    // Enable status code capability in Firmware Performance DXE.
     match protocols::PROTOCOL_DB.locate_protocol(status_code::PROTOCOL_GUID) {
         Ok(status_code_ptr) => {
             let status_code_protocol = unsafe { (status_code_ptr as *mut status_code::Protocol).as_mut() }.unwrap();
