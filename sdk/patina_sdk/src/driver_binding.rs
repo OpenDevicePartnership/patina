@@ -24,7 +24,7 @@
 //!     }
 //!
 //!     fn driver_binding_start<T: BootServices + 'static>(
-//!         &self,
+//!         &mut self,
 //!         boot_services: &'static T,
 //!         controller: efi::Handle,
 //!         remaining_device_path: Option<NonNull<EfiDevicePathProtocol>>,
@@ -34,7 +34,7 @@
 //!     }
 //!
 //!     fn driver_binding_stop<T: BootServices + 'static>(
-//!         &self,
+//!         &mut self,
 //!         boot_services: &'static T,
 //!         controller: efi::Handle,
 //!         number_of_children: usize,
@@ -81,7 +81,7 @@ pub trait DriverBinding {
     /// Tests to see if this driver supports a given controller.
     /// If a child device is provided, it further tests to see if this driver supports creating a handle for the specified child device.
     fn driver_binding_supported<T: BootServices + 'static>(
-        &mut self,
+        &self,
         boot_services: &'static T,
         controller: efi::Handle,
         remaining_device_path: Option<NonNull<EfiDevicePathProtocol>>,
@@ -457,7 +457,7 @@ mod tests {
             }
 
             fn driver_binding_start<T: BootServices + 'static>(
-                &self,
+                &mut self,
                 _boot_services: &'static T,
                 _controller: efi::Handle,
                 _remaining_device_path: Option<NonNull<EfiDevicePathProtocol>>,
@@ -466,7 +466,7 @@ mod tests {
             }
 
             fn driver_binding_stop<T: BootServices + 'static>(
-                &self,
+                &mut self,
                 _boot_services: &'static T,
                 _controller: efi::Handle,
                 _number_of_children: usize,

@@ -51,9 +51,6 @@ use r_efi::{
 
 /// Functions intended to be registered as event callbacks for reporting performance measurements.
 pub mod event_callback {
-    use mu_pi::status_code::{EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT};
-
-    use crate::guid;
 
     use super::*;
 
