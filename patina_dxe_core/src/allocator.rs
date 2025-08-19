@@ -767,7 +767,7 @@ pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
 
 pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), EfiError> {
     // SAFETY: This is safe because we are initializing the table with a static array
-    let table_ptr = GCD.memory_type_info_table().as_ptr() as *mut EFiMemoryTypeInformation as *mut c_void;
+    let table_ptr = NonNull::from(GCD.memory_type_info_table()).as_ptr() as *mut c_void;
     config_tables::core_install_configuration_table(guid::MEMORY_TYPE_INFORMATION, table_ptr, system_table)
 }
 
