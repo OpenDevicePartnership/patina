@@ -2548,11 +2548,13 @@ impl SpinLockedGcd {
         // always map page 0 if it exists in this system, as grub will attempt to read it for legacy boot structures
         // map it WB by default, because 0 is being used as the null page, it may not have gotten cache attributes
         // populated
-        if self.get_memory_descriptor_for_address(0).is_ok() {
+        if let Ok(descriptor) = self.get_memory_descriptor_for_address(0) {
             // set_memory_space_attributes will set both the GCD and paging attributes
-            if let Some(error) = self.set_memory_space_attributes(0, UEFI_PAGE_SIZE, efi::MEMORY_WB).err() {
-                log::error!("Failed to map page 0 for compat mode. Status: {:#x?}", error);
-                debug_assert!(false);
+            if descriptor.memory_type != dxe_services::GcdMemoryType::NonExistent {
+                if let Err(e) = self.set_memory_space_attributes(0, UEFI_PAGE_SIZE, efi::MEMORY_WB) {
+                    log::error!("Failed to map page 0 for compat mode. Status: {:#x?}", e);
+                    debug_assert!(false);
+                }
             }
         }
 
