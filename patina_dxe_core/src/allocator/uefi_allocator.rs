@@ -58,18 +58,11 @@ impl UefiAllocator {
             "Memory Type is not tracked in the GCD, use `new_dynamic` instead."
         );
 
-        // Get the pointer to the first memory type info struct in the table, then offset it by the memory type, which
-        // is also the index in the table. The debug_assert above ensures that the memory type is tracked by the GCD.
-        let memory_type_info = NonNull::new(unsafe {
-            (gcd.memory_type_info_table().as_ptr() as *mut EFiMemoryTypeInformation).add(memory_type as usize)
-        })
-        .expect("GCD has a valid memory type info table as a part of its initialization.");
-
         UefiAllocator {
             allocator: SpinLockedFixedSizeBlockAllocator::new(
                 gcd,
                 allocator_handle,
-                memory_type_info,
+                NonNull::from_ref(&gcd.memory_type_info_table()[memory_type as usize]),
                 page_allocation_granularity,
             ),
         }
@@ -108,6 +101,10 @@ impl UefiAllocator {
     /// Returns the UEFI memory type associated with this allocator.
     pub fn memory_type(&self) -> efi::MemoryType {
         self.allocator.memory_type()
+    }
+
+    pub fn number_of_pages(&self) -> usize {
+        self.allocator.lock().memory_type_info().number_of_pages as usize
     }
 
     /// Reserves a range of memory to be used by this allocator of the given size in pages.
@@ -297,7 +294,7 @@ impl Display for UefiAllocator {
 mod tests {
     extern crate std;
     use core::cmp::max;
-    use std::alloc::{GlobalAlloc, System};
+    use std::alloc::{dealloc, GlobalAlloc, System};
 
     use mu_pi::dxe_services;
     use patina_sdk::base::{SIZE_4KB, SIZE_64KB, UEFI_PAGE_SIZE};
