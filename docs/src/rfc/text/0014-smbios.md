@@ -2,7 +2,7 @@
 
 This RFC proposes a Rust-based interface for SMBIOS table management providing the functionality described in the
 `EFI_SMBIOS_PROTOCOL` service defined in the UEFI Specification.
-It introduces an SmbiosProvider trait to manage addition, removal, updates, and retrieval of SMBIOS records,
+It introduces an SmbiosRecords trait to manage addition, removal, updates, and retrieval of SMBIOS records,
 encapsulating the SMBIOS protocol behind a safe, idiomatic Rust API.
 The goal is to maintain compatibility with the UEFI specification
 while improving memory safety and simplifying integration for components.
@@ -21,7 +21,7 @@ while maintaining required SMBIOS functionality.
 
 ### Scope
 
-The `SmbiosProvider` service implements equivalent functionality for the following protocol:
+The `SmbiosRecords` service implements equivalent functionality for the following protocol:
 
 - `EFI_SMBIOS_PROTOCOL`
   - `Add`
@@ -90,18 +90,18 @@ This must also be eventually reimplemented in Rust to achieve a pure Rust SMBIOS
 
 ## Rust Code Design
 
-### SMBIOS Provider Service
+### SMBIOS Records Service
 
 Integrated functionality for adding, updating, removing, and retrieving SMBIOS records
-will be provided through the `SmbiosProvider` service.
+will be provided through the `SmbiosRecords` service.
 
 ```rust
-pub trait SmbiosProvider {
+pub trait SmbiosRecords {
     type Iter: Iterator<Item = &SmbiosRecord>;
 
     /// Adds an SMBIOS record to the SMBIOS table.
     /// If handle is SMBIOS_HANDLE_PI_RESERVED (0xFFFE), a unique handle will be assigned.
-    fn add_record(
+    fn add(
         &mut self,
         producer_handle: Option<Handle>,
         smbios_handle: &mut SmbiosHandle,
@@ -117,7 +117,7 @@ pub trait SmbiosProvider {
     ) -> Result<(), SmbiosError>;
 
     /// Removes an SMBIOS record from the SMBIOS table.
-    fn remove_record(&mut self, smbios_handle: SmbiosHandle) -> Result<(), SmbiosError>;
+    fn remove(&mut self, smbios_handle: SmbiosHandle) -> Result<(), SmbiosError>;
 
     /// Discovers SMBIOS records, optionally filtered by type.
     fn get_next(
@@ -366,10 +366,10 @@ impl SmbiosManager {
     }
 }
 
-impl SmbiosProvider for SmbiosManager {
+impl SmbiosRecords for SmbiosManager {
     type Iter = std::slice::Iter<'static, SmbiosRecord>;
 
-    fn add_record(
+    fn add(
         &mut self,
         producer_handle: Option<Handle>,
         smbios_handle: &mut SmbiosHandle,
@@ -439,7 +439,7 @@ impl SmbiosProvider for SmbiosManager {
         Ok(())
     }
 
-    fn remove_record(&mut self, smbios_handle: SmbiosHandle) -> Result<(), SmbiosError> {
+    fn remove(&mut self, smbios_handle: SmbiosHandle) -> Result<(), SmbiosError> {
         let _lock = self.lock.lock().unwrap();
         
         let pos = self.records
@@ -498,8 +498,17 @@ impl SmbiosProvider for SmbiosManager {
 
 ### SMBIOS Component
 
-A single component `SmbiosInit` initializes the SMBIOS tables, registers the SMBIOS provider service,
-and installs the SMBIOS protocol.
+Initialization responsibilities are owned by `SmbiosManager`.
+
+The `SmbiosManager` exposes explicit initialization and registration methods (for example
+`init()` and `register()` or a single `init_and_register()` convenience method) which are
+responsible for building tables, installing system configuration tables, and publishing the
+SMBIOS provider / C protocol. This keeps all SMBIOS logic and state in the manager type and
+keeps any component-level bootstrap very small.
+
+Components should construct a `SmbiosManager` and call its init/register methods. A thin
+bootstrap component may still exist (for example to wire configuration and dependency injection),
+but it should contain no SMBIOS logic beyond creating and handing the manager to the runtime.
 
 #### EDK II Protocol
 
@@ -577,7 +586,7 @@ impl SmbiosProtocol {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // Get global manager and call add_record
+    // Get global manager and call add
         // Implementation would depend on your global state management
         efi::Status::SUCCESS
     }
@@ -615,29 +624,29 @@ impl SmbiosProtocol {
 
 ## Guide-Level Explanation
 
-All interaction with SMBIOS records will be mediated by the `SmbiosProvider` trait interface.
+All interaction with SMBIOS records will be mediated by the `SmbiosRecords` trait interface.
 Consumers will access this service as follows:
 
 ```rust
-pub fn component(smbios_provider: Service<dyn SmbiosProvider>) -> Result<()> {
+pub fn component(smbios_records: Service<dyn SmbiosRecords>) -> Result<()> {
     let mut handle = SMBIOS_HANDLE_PI_RESERVED;
-    smbios_provider.add_record(None, &mut handle, &record)?;
+    smbios_records.add(None, &mut handle, &record)?;
     
     // Update a string in the record
-    smbios_provider.update_string(handle, 1, "New String Value")?;
+    smbios_records.update_string(handle, 1, "New String Value")?;
     
     // Iterate through all records
-    for record in smbios_provider.iter() {
+    for record in smbios_records.iter() {
         // Process each record
     }
     
-    // Remove the record
-    smbios_provider.remove_record(handle)?;
+        // Remove the record
+    smbios_records.remove(handle)?;
     Ok(())
 }
 ```
 
-When adding a record with `add_record`, if the handle is set to `SMBIOS_HANDLE_PI_RESERVED`,
+When adding a record with `add`, if the handle is set to `SMBIOS_HANDLE_PI_RESERVED`,
 a unique handle will be automatically assigned and returned via the mutable reference.
 
 The service automatically handles:
@@ -671,7 +680,7 @@ impl SmbiosBiosInfoManager {
     fn entry_point(
         self,
         config: Config<BiosInfoConfig>,
-        smbios_provider: Service<dyn SmbiosProvider>,
+    smbios_records: Service<dyn SmbiosRecords>,
     ) -> patina_sdk::error::Result<()> {
         // Create BIOS information record
         let mut bios_info = BiosInformation::new();
@@ -691,7 +700,7 @@ impl SmbiosBiosInfoManager {
         )?;
 
         let mut handle = SMBIOS_HANDLE_PI_RESERVED;
-        smbios_provider.add_record(
+    smbios_records.add(
             None,
             &mut handle,
             unsafe { &*(record_data.as_ptr() as *const SmbiosTableHeader) },
@@ -703,12 +712,12 @@ impl SmbiosBiosInfoManager {
 }
 
 #[derive(IntoComponent)]
-struct SmbiosProviderManager;
+struct SmbiosRecordsManager;
 
-impl SmbiosProviderManager {
+impl SmbiosRecordsManager {
     fn entry_point(self) -> patina_sdk::error::Result<()> {
         let smbios_manager = SmbiosManager::new(3, 0); // SMBIOS 3.0
-        smbios_manager.register(); // Brings `SmbiosProvider` service up
+        smbios_manager.register(); // Brings `SmbiosRecords` service up
         Ok(())
     }
 }
@@ -723,7 +732,7 @@ fn _start() {
     };
 
     Core::default()
-        .with_component(SmbiosProviderManager) // Initialize SMBIOS service
+        .with_component(SmbiosRecordsManager) // Initialize SMBIOS service
         .with_config(bios_config)
         .with_component(SmbiosBiosInfoManager) // Add BIOS info record
         // ... other components
@@ -735,7 +744,7 @@ This example demonstrates:
 
 - Creating a typed SMBIOS record structure
 - Building the complete record with strings
-- Using the SmbiosProvider service to install the record
+- Using the SmbiosRecords service to install the record
 - Automatic handle assignment
 - String management and null termination
 
@@ -760,7 +769,7 @@ mod tests {
             &strings
         ).unwrap();
         
-        let result = manager.add_record(
+    let result = manager.add(
             None,
             &mut handle,
             unsafe { &*(record_data.as_ptr() as *const SmbiosTableHeader) }
@@ -814,7 +823,7 @@ mod tests {
             &strings
         ).unwrap();
         
-        let result1 = manager.add_record(
+    let result1 = manager.add(
             None,
             &mut handle,
             unsafe { &*(record_data.as_ptr() as *const SmbiosTableHeader) }
@@ -823,7 +832,7 @@ mod tests {
         
         // Second add with same handle should fail
         let mut duplicate_handle = 100;
-        let result2 = manager.add_record(
+    let result2 = manager.add(
             None,
             &mut duplicate_handle,
             unsafe { &*(record_data.as_ptr() as *const SmbiosTableHeader) }
