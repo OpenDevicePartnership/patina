@@ -150,27 +150,12 @@ pub const SMBIOS_STRING_MAX_LENGTH: usize = 64;
 pub enum SmbiosError {
     InvalidParameter,
     OutOfResources,
-    AlreadyStarted,    // Handle already in use
-    NotFound,          // Handle not found
-    Unsupported,       // Invalid record type
+    HandleAlreadyInUse,
+    HandleNotFound,
+    UnsupportedRecordType,
     InvalidHandle,
-    StringTooLong,     // > 64 characters
+    StringTooLong,
     BufferTooSmall,
-}
-
-impl From<SmbiosError> for efi::Status {
-    fn from(error: SmbiosError) -> Self {
-        match error {
-            SmbiosError::InvalidParameter => efi::Status::INVALID_PARAMETER,
-            SmbiosError::OutOfResources => efi::Status::OUT_OF_RESOURCES,
-            SmbiosError::AlreadyStarted => efi::Status::ALREADY_STARTED,
-            SmbiosError::NotFound => efi::Status::NOT_FOUND,
-            SmbiosError::Unsupported => efi::Status::UNSUPPORTED,
-            SmbiosError::InvalidHandle => efi::Status::INVALID_PARAMETER,
-            SmbiosError::StringTooLong => efi::Status::INVALID_PARAMETER,
-            SmbiosError::BufferTooSmall => efi::Status::BUFFER_TOO_SMALL,
-        }
-    }
 }
 ```
 
@@ -396,7 +381,7 @@ impl SmbiosProvider for SmbiosManager {
         if *smbios_handle == SMBIOS_HANDLE_PI_RESERVED {
             *smbios_handle = self.allocate_handle()?;
         } else if self.allocated_handles.contains(smbios_handle) {
-            return Err(SmbiosError::AlreadyStarted);
+            return Err(SmbiosError::HandleAlreadyInUse);
         } else {
             self.allocated_handles.insert(*smbios_handle);
         }
@@ -443,10 +428,10 @@ impl SmbiosProvider for SmbiosManager {
         let record = self.records
             .iter_mut()
             .find(|r| r.header.handle == smbios_handle)
-            .ok_or(SmbiosError::NotFound)?;
+            .ok_or(SmbiosError::HandleNotFound)?;
 
         if string_number == 0 || string_number > record.string_count {
-            return Err(SmbiosError::InvalidParameter);
+            return Err(SmbiosError::InvalidHandle);
         }
 
         // Update string (simplified implementation)
