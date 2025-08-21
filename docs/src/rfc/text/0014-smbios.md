@@ -73,7 +73,7 @@ Create an idiomatic Rust API for SMBIOS-related protocols (*see [Motivation - Sc
 
 ## Prior Art (Existing PI C Implementation)
 
-The Rust-based SMBIOS implementation follows the SMBIOS protocol
+This Patina-based SMBIOS implementation follows the SMBIOS protocol
 as described in the UEFI specification. *See [Protocols](#protocols) for more information.*
 
 In C, `SMBIOS_INSTANCE` provides the core management structure,
