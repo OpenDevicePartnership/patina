@@ -217,6 +217,16 @@ be able to accommodate that.
 
 Note: The Patina DXE Readiness Tool does not perform this check.
 
+#### 3.3 ConnectController() Must Explicitly Be Called For Handles Created/Modified During Image Start
+
+To maintain compatibility with UEFI drivers that are written to the EFI 1.02 Specification, the EDK II `StartImage()`
+implementation is extended to monitor the handle database before and after each image is started. If any handles are
+created or modified when an image is started, then `EFI_BOOT_SERVICES.ConnectController()` is called with the
+`Recursive` parameter set to `TRUE` for each of the newly created or modified handles before `StartImage()` returns.
+
+Patina does not implement this behavior. Images and platforms dependent on this behavior will need to be modified to
+explicitly call `ConnectController()` on any handles that they create or modify.
+
 ### 4. Known Limitations
 
 This section details requirements Patina currently has due to limitations in implementation, but that support will be
