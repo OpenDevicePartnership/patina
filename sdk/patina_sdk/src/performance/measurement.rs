@@ -51,6 +51,7 @@ use r_efi::{
 
 /// Functions intended to be registered as event callbacks for reporting performance measurements.
 pub mod event_callback {
+
     use super::*;
 
     /// Reports the Firmware Basic Boot Performance Table (FBPT) record buffer.
@@ -80,7 +81,7 @@ pub mod event_callback {
             return;
         };
 
-        let status = p.report_status_code(
+        let status = p.report_status_code_with_data(
             EFI_PROGRESS_CODE,
             EFI_SOFTWARE_DXE_BS_DRIVER,
             0,
@@ -88,7 +89,6 @@ pub mod event_callback {
             efi::Guid::clone(&EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE),
             fbpt_address,
         );
-
         if status.is_err() {
             log::error!("Performance: Fail to report FBPT status code.");
         }

@@ -550,13 +550,7 @@ fn core_display_missing_arch_protocols() {
 }
 
 fn call_bds() {
-    if let Ok(protocol) = protocols::PROTOCOL_DB.locate_protocol(bds::PROTOCOL_GUID) {
-        let bds = protocol as *mut bds::Protocol;
-        unsafe {
-            ((*bds).entry)(bds);
-        }
-    }
-
+    // Enable status code capability in Firmware Performance DXE.
     match protocols::PROTOCOL_DB.locate_protocol(status_code::PROTOCOL_GUID) {
         Ok(status_code_ptr) => {
             let status_code_protocol = unsafe { (status_code_ptr as *mut status_code::Protocol).as_mut() }.unwrap();
@@ -570,4 +564,13 @@ fn call_bds() {
         }
         Err(err) => log::error!("Unable to locate status code runtime protocol: {:?}", err),
     };
+
+    if let Ok(protocol) = protocols::PROTOCOL_DB.locate_protocol(bds::PROTOCOL_GUID) {
+        let bds = protocol as *mut bds::Protocol;
+        unsafe {
+            // If bds entry returns: then the dispatcher must be invoked again,
+            // if it never returns: then an operating system or a system utility have been invoked.
+            ((*bds).entry)(bds);
+        }
+    }
 }

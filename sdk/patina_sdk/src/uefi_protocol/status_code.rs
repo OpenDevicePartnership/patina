@@ -13,7 +13,7 @@
 
 extern crate alloc;
 
-use core::{mem, slice};
+use core::{mem, ptr, slice};
 
 use r_efi::efi;
 
@@ -39,8 +39,8 @@ impl StatusCodeRuntimeProtocol {
         Self { protocol: status_code::Protocol { report_status_code } }
     }
 
-    /// Reports a status code to the platform firmware.
-    pub fn report_status_code<T>(
+    /// Reports a status code to the platform firmware with data.
+    pub fn report_status_code_with_data<T>(
         &self,
         status_code_type: EfiStatusCodeType,
         status_code_value: EfiStatusCodeValue,
@@ -64,6 +64,24 @@ impl StatusCodeRuntimeProtocol {
         let status =
             (self.protocol.report_status_code)(status_code_type, status_code_value, instance, caller_id, data_ptr);
 
+        if status.is_error() { Err(status) } else { Ok(()) }
+    }
+
+    /// Reports a status code to the platform firmware without data.
+    pub fn report_status_code(
+        &self,
+        status_code_type: EfiStatusCodeType,
+        status_code_value: EfiStatusCodeValue,
+        instance: u32,
+        caller_id: &efi::Guid,
+    ) -> Result<(), efi::Status> {
+        let status = (self.protocol.report_status_code)(
+            status_code_type,
+            status_code_value,
+            instance,
+            caller_id,
+            ptr::null_mut(),
+        );
         if status.is_error() { Err(status) } else { Ok(()) }
     }
 }
