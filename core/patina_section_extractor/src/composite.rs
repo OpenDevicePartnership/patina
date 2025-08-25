@@ -53,7 +53,7 @@ impl SectionExtractor for CompositeSectionExtractor {
             match self.uefi_decompress.extract(_section) {
                 Err(err) => return Err(err),
                 Ok(buffer) => {
-                    if buffer.len() > 0 {
+                    if !buffer.is_empty() {
                         return Ok(buffer);
                     }
                 }
@@ -64,7 +64,7 @@ impl SectionExtractor for CompositeSectionExtractor {
             match self.brotli.extract(_section) {
                 Err(err) => return Err(err),
                 Ok(buffer) => {
-                    if buffer.len() > 0 {
+                    if !buffer.is_empty() {
                         return Ok(buffer);
                     }
                 }
@@ -75,7 +75,7 @@ impl SectionExtractor for CompositeSectionExtractor {
             match self.crc32.extract(_section) {
                 Err(err) => return Err(err),
                 Ok(buffer) => {
-                    if buffer.len() > 0 {
+                    if !buffer.is_empty() {
                         return Ok(buffer);
                     }
                 }
@@ -86,7 +86,7 @@ impl SectionExtractor for CompositeSectionExtractor {
             match self.lzma.extract(_section) {
                 Err(err) => return Err(err),
                 Ok(buffer) => {
-                    if buffer.len() > 0 {
+                    if !buffer.is_empty() {
                         return Ok(buffer);
                     }
                 }

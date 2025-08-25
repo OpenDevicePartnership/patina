@@ -214,10 +214,10 @@ pub(crate) fn core_new_debug_image_info_entry(
 
         let mut new_vec = Vec::with_capacity(new_table_size as usize);
         new_vec.extend_from_slice(&metadata_table.slice[..old_table_size as usize]);
-        new_vec.extend(
-            core::iter::repeat(EfiDebugImageInfo { normal_image: core::ptr::null() })
-                .take((new_table_size - old_table_size) as usize),
-        );
+        new_vec.extend(core::iter::repeat_n(
+            EfiDebugImageInfo { normal_image: core::ptr::null() },
+            (new_table_size - old_table_size) as usize,
+        ));
         let new_boxed_slice = new_vec.into_boxed_slice();
         metadata_table.slice = new_boxed_slice;
 
