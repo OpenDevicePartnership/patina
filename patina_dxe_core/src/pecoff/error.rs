@@ -51,10 +51,10 @@ mod tests {
     fn test_convert_error() {
         let goblin_error = goblin::error::Error::Malformed("test".to_string());
         let e: Error = goblin_error.into();
-        assert_eq!(format!("{:?}", e), "Goblin(Malformed(\"test\"))");
+        assert_eq!(format!("{e:?}"), "Goblin(Malformed(\"test\"))");
 
         let scroll_error = scroll::Error::TooBig { size: 50, len: 40 };
         let e: Error = scroll_error.into();
-        assert_eq!(format!("{:?}", e), "Parse(TooBig { size: 50, len: 40 })");
+        assert_eq!(format!("{e:?}"), "Parse(TooBig { size: 50, len: 40 })");
     }
 }

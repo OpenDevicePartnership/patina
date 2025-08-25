@@ -219,7 +219,7 @@ fn dispatch() -> Result<bool, EfiError> {
                         Err(err) => err.into(),
                     };
                 }
-                Err(err) => log::error!("Failed to load: load_image returned {:x?}", err),
+                Err(err) => log::error!("Failed to load: load_image returned {err:x?}"),
             }
         }
 
@@ -301,13 +301,13 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
             let mut fv_address: u64 = 0;
             let status = (fvb.get_physical_address)(fvb_ptr, core::ptr::addr_of_mut!(fv_address));
             if status.is_error() {
-                log::error!("Failed to get physical address for fvb handle {:#x?}. Error: {:#x?}", handle, status);
+                log::error!("Failed to get physical address for fvb handle {handle:#x?}. Error: {status:#x?}");
                 continue;
             }
 
             // Some FVB implementations return a zero physical address - assume that is invalid.
             if fv_address == 0 {
-                log::error!("Physical address for fvb handle {:#x?} is zero - skipping.", handle);
+                log::error!("Physical address for fvb handle {handle:#x?} is zero - skipping.");
                 continue;
             }
 
@@ -320,11 +320,7 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
             let fv = match unsafe { FirmwareVolume::new_from_address(fv_address) } {
                 Ok(fv) => fv,
                 Err(err) => {
-                    log::error!(
-                        "Failed to instantiate memory mapped FV for fvb handle {:#x?}. Error: {:#x?}",
-                        handle,
-                        err
-                    );
+                    log::error!("Failed to instantiate memory mapped FV for fvb handle {handle:#x?}. Error: {err:#x?}");
                     continue;
                 }
             };

@@ -189,7 +189,7 @@ fn memory_attributes_to_str(f: &mut core::fmt::Formatter<'_>, attributes: u64) -
     }
 
     if string_len + attrs.len() > 20 || attrs.is_empty() {
-        write!(f, "{:<#20X}", attributes)?;
+        write!(f, "{attributes:<#20X}")?;
         return Ok(());
     }
 
@@ -216,7 +216,7 @@ fn memory_type_to_str(f: &mut core::fmt::Formatter<'_>, memory_type: efi::Memory
         _ => "Unknown Memory Type",
     };
 
-    write!(f, "{:<25}", string)
+    write!(f, "{string:<25}")
 }
 
 pub struct MemoryDescriptorSlice<'a>(pub &'a [efi::MemoryDescriptor]);
@@ -846,14 +846,13 @@ fn process_hob_allocations(hob_list: &HobList) {
                 }
 
                 if desc.memory_length == 0 {
-                    log::warn!("Memory Allocation HOB has a 0 length, ignoring.\n{:#x?}", hob);
+                    log::warn!("Memory Allocation HOB has a 0 length, ignoring.\n{hob:#x?}");
                     continue;
                 }
 
                 if desc.memory_base_address == 0 {
                     log::warn!(
-                        "Memory Allocation HOB has a 0 base address, ignoring. Page 0 cannot be allocated:\n{:#x?}",
-                        hob
+                        "Memory Allocation HOB has a 0 base address, ignoring. Page 0 cannot be allocated:\n{hob:#x?}"
                     );
                     continue;
                 }
@@ -865,7 +864,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                 if (desc.memory_base_address & UEFI_PAGE_MASK as u64) != 0
                     || (desc.memory_length & UEFI_PAGE_MASK as u64) != 0
                 {
-                    log::warn!("Memory Allocation HOB has invalid address or length granularity:\n{:#x?}", hob);
+                    log::warn!("Memory Allocation HOB has invalid address or length granularity:\n{hob:#x?}");
                     continue;
                 }
 
@@ -942,9 +941,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                     }
                     Err(_) => {
                         log::error!(
-                            "Failed to get memory descriptor for address {:#x?} in GCD specified in Memory Allocation HOB:\n{:#x?}. Cannot allocate memory.",
-                            address,
-                            hob
+                            "Failed to get memory descriptor for address {address:#x?} in GCD specified in Memory Allocation HOB:\n{hob:#x?}. Cannot allocate memory."
                         );
                         continue;
                     }
@@ -978,9 +975,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                         || existing_desc.image_handle != INVALID_HANDLE
                     {
                         log::info!(
-                            "Skipping FV HOB at {:#x?} of length {:#x?}. Containing region is not MMIO.",
-                            base_address,
-                            length,
+                            "Skipping FV HOB at {base_address:#x?} of length {length:#x?}. Containing region is not MMIO."
                         );
                         continue;
                     }
@@ -997,10 +992,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                     None)
                     .inspect_err(|err|{
                         log::error!(
-                            "Failed to allocate memory space for firmware volume HOB at {:#x?} of length {:#x?}. Error: {:x?}",
-                            base_address,
-                            length,
-                            err
+                            "Failed to allocate memory space for firmware volume HOB at {base_address:#x?} of length {length:#x?}. Error: {err:#x?}",
                         );
                     });
             }

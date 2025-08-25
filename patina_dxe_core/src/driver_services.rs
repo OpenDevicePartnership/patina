@@ -1536,7 +1536,7 @@ mod tests {
 
             // Verify stop was called at least once
             let call_count = STOP_CALL_COUNT.load(Ordering::SeqCst);
-            assert!(call_count > 0, "stop should be called at least once, but was called {} times", call_count);
+            assert!(call_count > 0, "stop should be called at least once, but was called {call_count} times");
 
             // Just verify that the function executed the child handling logic
             // The exact behavior depends on the protocol database implementation
@@ -1658,7 +1658,7 @@ mod tests {
             let total_calls = STOP_CALLS.load(Ordering::SeqCst);
             let driver_stops = DRIVER_STOP_CALLED.load(Ordering::SeqCst);
 
-            println!("Total stop calls: {}, Driver stops (num_children=0): {}", total_calls, driver_stops);
+            println!("Total stop calls: {total_calls}, Driver stops (num_children=0): {driver_stops}");
 
             // Since we specified the only child, the driver should be disconnected completely
             assert!(driver_stops > 0, "Driver should be fully stopped when specified child is the only child");

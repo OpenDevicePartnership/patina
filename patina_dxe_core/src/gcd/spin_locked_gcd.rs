@@ -193,7 +193,7 @@ impl<'a> PagingAllocator<'a> {
 impl PageAllocator for PagingAllocator<'_> {
     fn allocate_page(&mut self, align: u64, size: u64, is_root: bool) -> PtResult<u64> {
         if align != UEFI_PAGE_SIZE as u64 || size != UEFI_PAGE_SIZE as u64 {
-            log::error!("Invalid alignment or size for page allocation: align: {:#x}, size: {:#x}", align, size);
+            log::error!("Invalid alignment or size for page allocation: align: {align:#x}, size: {size:#x}");
             return Err(PtError::InvalidParameter);
         }
 
@@ -237,7 +237,7 @@ impl PageAllocator for PagingAllocator<'_> {
                         Ok(root_page) => Ok(root_page as u64),
                         Err(e) => {
                             // okay we are good and dead now
-                            panic!("Failed to allocate root page for the page table page pool: {:?}", e);
+                            panic!("Failed to allocate root page for the page table page pool: {e:?}");
                         }
                     }
                 }
@@ -266,7 +266,7 @@ impl PageAllocator for PagingAllocator<'_> {
                             self.page_pool.pop().ok_or(PtError::OutOfResources)
                         }
                         Err(e) => {
-                            panic!("Failed to allocate pages for the page table page pool {:?}", e);
+                            panic!("Failed to allocate pages for the page table page pool {e:?}");
                         }
                     }
                 }
@@ -899,21 +899,14 @@ impl GCD {
             Ok(_) => Ok(()),
             Err(InternalError::MemoryBlock(e)) => {
                 log::error!(
-                    "GCD failed to set attributes on range {:#x?} of length {:#x?} with attributes {:#x?}. error {:?}",
-                    base_address,
-                    len,
-                    attributes,
-                    e
+                    "GCD failed to set attributes on range {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. error {e:?}",
                 );
                 debug_assert!(false);
                 error!(EfiError::Unsupported)
             }
             Err(InternalError::Slice(SliceError::OutOfSpace)) => {
                 log::error!(
-                    "GCD failed to set attributes on range {:#x?} of length {:#x?} with attributes {:#x?} due to space",
-                    base_address,
-                    len,
-                    attributes
+                    "GCD failed to set attributes on range {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?} due to space",
                 );
                 debug_assert!(false);
                 error!(EfiError::OutOfResources)
@@ -1830,19 +1823,13 @@ impl SpinLockedGcd {
                     Ok(_) => {
                         log::trace!(
                             target: "paging",
-                            "Memory region {:#x?} of length {:#x?} unmapped",
-                            base_address,
-                            len,
+                            "Memory region {base_address:#x?} of length {len:#x?} unmapped",
                         );
                         return Ok(());
                     }
                     Err(e) => {
                         log::error!(
-                            "Failed to unmap memory region {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
-                            base_address,
-                            len,
-                            attributes,
-                            e
+                            "Failed to unmap memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
                         );
                         debug_assert!(false);
                         return Err(EfiError::InvalidParameter);
@@ -1875,11 +1862,7 @@ impl SpinLockedGcd {
                                 {
                                     log::trace!(
                                         target: "paging",
-                                        "Attributes for memory region {:#x?} of length {:#x?} were updated to {:#x?} from {:#x?}, sending cache attributes changed event",
-                                        base_address,
-                                        len,
-                                        paging_attrs,
-                                        region_attrs
+                                        "Attributes for memory region {base_address:#x?} of length {len:#x?} were updated to {paging_attrs:#x?} from {region_attrs:#x?}, sending cache attributes changed event",
                                     );
 
                                     EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
@@ -1888,14 +1871,10 @@ impl SpinLockedGcd {
                             Err(e) => {
                                 // this indicates the GCD and page table are out of sync
                                 log::error!(
-                                    "Failed to remap memory region {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
-                                    base_address,
-                                    len,
-                                    attributes,
-                                    e
+                                    "Failed to remap memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
                                 );
                                 log::error!("GCD and page table are out of sync. This is a critical error.");
-                                log::error!("GCD {}", GCD);
+                                log::error!("GCD {GCD}");
                                 debug_assert!(false);
                                 match e {
                                     PtError::OutOfResources => EfiError::OutOfResources,
@@ -1916,10 +1895,7 @@ impl SpinLockedGcd {
                             if paging_attrs & MemoryAttributes::CacheAttributesMask != MemoryAttributes::empty() {
                                 log::trace!(
                                     target: "paging",
-                                    "Memory region {:#x?} of length {:#x?} mapped with attrs {:#x?}, sending cache attributes changed event",
-                                    base_address,
-                                    len,
-                                    paging_attrs
+                                    "Memory region {base_address:#x?} of length {len:#x?} mapped with attrs {attributes:#x?}, sending cache attributes changed event",
                                 );
 
                                 EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
@@ -1929,14 +1905,10 @@ impl SpinLockedGcd {
                         Err(e) => {
                             // this indicates the GCD and page table are out of sync
                             log::error!(
-                                "Failed to map memory region {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
-                                base_address,
-                                len,
-                                attributes,
-                                e
+                                "Failed to map memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
                             );
                             log::error!("GCD and page table are out of sync. This is a critical error.");
-                            log::error!("GCD {}", GCD);
+                            log::error!("GCD {GCD}");
                             debug_assert!(false);
                             Err(EfiError::InvalidParameter)?
                         }
@@ -1944,11 +1916,7 @@ impl SpinLockedGcd {
                 }
                 Err(e) => {
                     log::error!(
-                        "Failed to query memory region {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
-                        base_address,
-                        len,
-                        attributes,
-                        e
+                        "Failed to query memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
                     );
                     debug_assert!(false);
                     Err(EfiError::InvalidParameter)?
@@ -2106,10 +2074,7 @@ impl SpinLockedGcd {
 
             log::trace!(
                 target: "paging",
-                "Mapping DXE Core image memory region {:#x?} of length {:#x?} with attributes {:#x?}",
-                section_base_address,
-                aligned_virtual_size,
-                attributes
+                "Mapping DXE Core image memory region {section_base_address:#x?} of length {aligned_virtual_size:#x?} with attributes {attributes:#x?}",
             );
 
             attributes |=
@@ -2166,10 +2131,7 @@ impl SpinLockedGcd {
                 if let Err(err) = self.set_memory_space_attributes(0, UEFI_PAGE_SIZE, efi::MEMORY_RP) {
                     // if we fail to set these attributes we can continue to boot, but we will not be able to detect null
                     // pointer dereferences.
-                    log::error!(
-                        "Failed to unmap page 0, which is reserved for null pointer detection. Error: {:?}",
-                        err
-                    );
+                    log::error!("Failed to unmap page 0, which is reserved for null pointer detection. Error: {err:?}");
                     debug_assert!(false);
                 }
             }
@@ -2216,11 +2178,8 @@ impl SpinLockedGcd {
                     Ok(_) => {}
                     Err(status) => {
                         log::error!(
-                            "Failed to unmap memory region {:#x?} of length {:#x?}. Status: {:#x?} during
+                            "Failed to unmap memory region {base_address:#x?} of length {len:#x?}. Status: {status:#x?} during
                                 remove_memory_space removal. This is expected if this region was not previously mapped",
-                            base_address,
-                            len,
-                            status
                         );
                     }
                 }
@@ -2325,10 +2284,7 @@ impl SpinLockedGcd {
                         Ok(_) => {}
                         Err(status) => {
                             log::error!(
-                                "Failed to unmap memory region {:#x?} of length {:#x?}. Status: {:#x?}",
-                                base_address,
-                                len,
-                                status
+                                "Failed to unmap memory region {base_address:#x?} of length {len:#x?}. Status: {status:#x?}",
                             );
                             debug_assert!(false);
                             match status {
@@ -2413,10 +2369,7 @@ impl SpinLockedGcd {
                 Ok(()) => {}
                 _ => {
                     log::error!(
-                        "Failed to set GCD memory attributes for memory region {:#x?} of length {:#x?} with attributes {:#x?}",
-                        current_base,
-                        current_len,
-                        attributes
+                        "Failed to set GCD memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}",
                     );
                     debug_assert!(false);
                 }
@@ -2434,10 +2387,7 @@ impl SpinLockedGcd {
                 }
                 _ => {
                     log::error!(
-                        "Failed to set page table memory attributes for memory region {:#x?} of length {:#x?} with attributes {:#x?}",
-                        current_base,
-                        current_len,
-                        attributes
+                        "Failed to set page table memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}",
                     );
                     debug_assert!(false);
                 }
@@ -2552,7 +2502,7 @@ impl SpinLockedGcd {
             // set_memory_space_attributes will set both the GCD and paging attributes
             if descriptor.memory_type != dxe_services::GcdMemoryType::NonExistent {
                 if let Err(e) = self.set_memory_space_attributes(0, UEFI_PAGE_SIZE, efi::MEMORY_WB) {
-                    log::error!("Failed to map page 0 for compat mode. Status: {:#x?}", e);
+                    log::error!("Failed to map page 0 for compat mode. Status: {e:#x?}");
                     debug_assert!(false);
                 }
             }
@@ -2599,12 +2549,12 @@ impl SpinLockedGcd {
 impl Display for SpinLockedGcd {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(gcd) = self.memory.try_lock() {
-            writeln!(f, "{}", gcd)?;
+            writeln!(f, "{gcd}")?;
         } else {
             writeln!(f, "Locked: {:?}", self.memory.try_lock())?;
         }
         if let Some(gcd) = self.io.try_lock() {
-            writeln!(f, "{}", gcd)?;
+            writeln!(f, "{gcd}")?;
         } else {
             writeln!(f, "Locked: {:?}", self.io.try_lock())?;
         }
@@ -4129,7 +4079,7 @@ mod tests {
                 .unwrap();
             }
 
-            println!("GCD base: {:#x?}", base);
+            println!("GCD base: {base:#x?}");
             let mut last_allocation = 0;
             loop {
                 let allocate_result = GCD.allocate_memory_space(
@@ -4140,13 +4090,11 @@ mod tests {
                     1 as _,
                     None,
                 );
-                println!("Allocation result: {:#x?}", allocate_result);
+                println!("Allocation result: {allocate_result:#x?}");
                 if let Ok(address) = allocate_result {
                     assert!(
                         address > last_allocation,
-                        "address {:#x?} is lower than previously allocated address {:#x?}",
-                        address,
-                        last_allocation
+                        "address {address:#x?} is lower than previously allocated address {last_allocation:#x?}",
                     );
                     last_allocation = address;
                 } else {
@@ -4176,7 +4124,7 @@ mod tests {
                 .unwrap();
             }
 
-            println!("GCD base: {:#x?}", base);
+            println!("GCD base: {base:#x?}");
             let mut last_allocation = usize::MAX;
             loop {
                 let allocate_result = GCD.allocate_memory_space(
@@ -4187,13 +4135,11 @@ mod tests {
                     1 as _,
                     None,
                 );
-                println!("Allocation result: {:#x?}", allocate_result);
+                println!("Allocation result: {allocate_result:#x?}");
                 if let Ok(address) = allocate_result {
                     assert!(
                         address < last_allocation,
-                        "address {:#x?} is higher than previously allocated address {:#x?}",
-                        address,
-                        last_allocation
+                        "address {address:#x?} is higher than previously allocated address {last_allocation:#x?}",
                     );
                     last_allocation = address;
                 } else {

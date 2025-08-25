@@ -126,9 +126,9 @@ impl UefiAllocator {
             .layout
             .extend(
                 Layout::from_size_align(size, UEFI_POOL_ALIGN)
-                    .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err)),
+                    .unwrap_or_else(|err| panic!("Allocation layout error: {err:#?}")),
             )
-            .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err));
+            .unwrap_or_else(|err| panic!("Allocation layout error: {err:#?}"));
 
         match self.allocator.allocate(allocation_info.layout) {
             Ok(ptr) => {
@@ -152,9 +152,9 @@ impl UefiAllocator {
         let (_, offset) = Layout::new::<AllocationInfo>()
             .extend(
                 Layout::from_size_align(0, UEFI_POOL_ALIGN)
-                    .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err)),
+                    .unwrap_or_else(|err| panic!("Allocation layout error: {err:#?}")),
             )
-            .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err));
+            .unwrap_or_else(|err| panic!("Allocation layout error: {err:#?}"));
 
         //TODO: trusting that "buffer" is legit is pretty naive - but performant. Presently the allocator doesn't have
         //tracking mechanisms that permit the validation of the pointer (hence the unsafe).
@@ -346,9 +346,9 @@ mod tests {
                 let (layout, offset) = Layout::new::<AllocationInfo>()
                     .extend(
                         Layout::from_size_align(0x1000, UEFI_POOL_ALIGN)
-                            .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err)),
+                            .unwrap_or_else(|err| panic!("Allocation layout error: {err:#?}")),
                     )
-                    .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err));
+                    .unwrap_or_else(|err| panic!("Allocation layout error: {err:#?}"));
 
                 let allocation_info: *mut AllocationInfo = ((buffer as usize) - offset) as *mut AllocationInfo;
                 unsafe {
@@ -380,9 +380,9 @@ mod tests {
                 let (_, offset) = Layout::new::<AllocationInfo>()
                     .extend(
                         Layout::from_size_align(0x1000, UEFI_POOL_ALIGN)
-                            .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err)),
+                            .unwrap_or_else(|err| panic!("Allocation layout error: {err:#?}")),
                     )
-                    .unwrap_or_else(|err| panic!("Allocation layout error: {:#?}", err));
+                    .unwrap_or_else(|err| panic!("Allocation layout error: {err:#?}"));
 
                 let allocation_info: *mut AllocationInfo = ((buffer as usize) - offset) as *mut AllocationInfo;
                 unsafe {
@@ -539,7 +539,7 @@ mod tests {
             assert_eq!(ua.handle(), 1 as _);
 
             assert_eq!(
-                std::format!("{}", ua),
+                std::format!("{ua}"),
                 concat!(
                     "Memory Type: BootServices Data\n",
                     "Memory Type: 4\n",
@@ -633,8 +633,7 @@ mod tests {
                 let unreserved_page_addr = unreserved_page.as_ptr() as *mut u8 as u64;
                 assert_eq!(
                     reserved_page_addr, unreserved_page_addr,
-                    "reserved_page_addr: {:#x?}, unreserved_page_addr: {:#x?}",
-                    reserved_page_addr, unreserved_page_addr
+                    "reserved_page_addr: {reserved_page_addr:#x?}, unreserved_page_addr: {unreserved_page_addr:#x?}",
                 );
 
                 //verify that if pages are freed within the reserved range, that other allocators cannot use them.

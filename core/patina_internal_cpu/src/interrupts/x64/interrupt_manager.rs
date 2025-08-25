@@ -118,7 +118,7 @@ impl InterruptManager for InterruptsX64 {}
 /// increase the diagnosability of faults in the interrupt handling code.
 ///
 extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) -> ! {
-    panic!("EXCEPTION: DOUBLE FAULT\n{:#x?}", stack_frame);
+    panic!("EXCEPTION: DOUBLE FAULT\n{stack_frame:#x?}");
 }
 
 /// Default handler for GP faults.
@@ -171,10 +171,10 @@ extern "efiapi" fn general_protection_fault_handler(_exception_type: isize, cont
         x64_context.r15
     );
 
-    log::debug!("Full Context: {:#x?}", x64_context);
+    log::debug!("Full Context: {x64_context:#x?}");
 
     if let Err(err) = unsafe { StackTrace::dump_with(x64_context.rip, x64_context.rsp) } {
-        log::error!("StackTrace: {}", err);
+        log::error!("StackTrace: {err}");
     }
 
     panic!("EXCEPTION: GP FAULT\n");
@@ -201,7 +201,7 @@ extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystem
         { if x64_context.cr4 & (1 << 12) != 0 { PagingType::Paging5Level } else { PagingType::Paging4Level } };
 
     if let Some(attrs) = get_fault_attributes(x64_context.cr2, x64_context.cr3, paging_type) {
-        log::error!("Page Attributes: {:?}", attrs);
+        log::error!("Page Attributes: {attrs:?}");
     }
 
     log::error!(
@@ -238,10 +238,10 @@ extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystem
         x64_context.r15
     );
 
-    log::debug!("Full Context: {:#x?}", x64_context);
+    log::debug!("Full Context: {x64_context:#x?}");
 
     if let Err(err) = unsafe { StackTrace::dump_with(x64_context.rip, x64_context.rsp) } {
-        log::error!("StackTrace: {}", err);
+        log::error!("StackTrace: {err}");
     }
 
     panic!("EXCEPTION: PAGE FAULT");
@@ -251,14 +251,14 @@ extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystem
 fn get_vector_address(index: usize) -> VirtAddr {
     // Verify the index is in [0-255]
     if index >= 256 {
-        panic!("Invalid vector index! 0x{:x}", index);
+        panic!("Invalid vector index! 0x{index:x}");
     }
 
     unsafe { VirtAddr::from_ptr(AsmGetVectorAddress(index) as *const ()) }
 }
 
 fn interpret_page_fault_exception_data(exception_data: u64) {
-    log::error!("Error Code: 0x{:x}\n", exception_data);
+    log::error!("Error Code: 0x{exception_data:x}\n");
     if (exception_data & 0x1) == 0 {
         log::error!("Page not present\n");
     } else {
@@ -287,7 +287,7 @@ fn interpret_page_fault_exception_data(exception_data: u64) {
 }
 
 fn interpret_gp_fault_exception_data(exception_data: u64) {
-    log::error!("Error Code: 0x{:x}\n", exception_data);
+    log::error!("Error Code: 0x{exception_data:x}\n");
     if (exception_data & 0x1) != 0 {
         log::error!("Invalid segment\n");
     }

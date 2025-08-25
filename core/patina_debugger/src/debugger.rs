@@ -324,7 +324,7 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
 
             let res = interrupt_manager.register_exception_handler(*exception_type, HandlerType::Handler(self));
             if res.is_err() {
-                log::error!("Failed to register debugger exception handler for type {}: {:?}", exception_type, res);
+                log::error!("Failed to register debugger exception handler for type {exception_type}: {res:?}");
             }
         }
 
@@ -353,7 +353,7 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
         };
 
         if breakpoint {
-            log::error!("MODULE BREAKPOINT! {} - 0x{:x} - 0x{:x}", module_name, address, length);
+            log::error!("MODULE BREAKPOINT! {module_name} - 0x{address:x} - 0x{length:x}");
             SystemArch::breakpoint();
         }
     }
@@ -418,7 +418,7 @@ impl<T: SerialIO> InterruptHandler for PatinaDebugger<T> {
 fn debugger_crash(error: DebugError, exception_type: ExceptionType) -> ! {
     // Always log crashes, the debugger will stop working anyways.
     log::set_max_level(log::LevelFilter::Error);
-    log::error!("DEBUGGER CRASH! Error: {:?} Exception Type: {:?}", error, exception_type);
+    log::error!("DEBUGGER CRASH! Error: {error:?} Exception Type: {exception_type:?}");
 
     // Could use SystemArch::reboot() in the future, but looping makes diagnosing
     // debugger bugs easier for now.

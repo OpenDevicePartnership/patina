@@ -106,10 +106,10 @@ extern "efiapi" fn exception_handler(exception_type: usize, context: &mut Except
             handler.handle_interrupt(exception_type, context);
         }
         HandlerType::None => {
-            log::error!("Unhandled Exception! 0x{:x}", exception_type);
-            log::error!("Exception Context: {:#x?}", context);
+            log::error!("Unhandled Exception! 0x{exception_type:x}");
+            log::error!("Exception Context: {context:#x?}");
             context.dump_stack_trace();
-            panic!("Unhandled Exception! 0x{:x}", exception_type);
+            panic!("Unhandled Exception! 0x{exception_type:x}");
         }
     }
 }

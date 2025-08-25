@@ -40,7 +40,7 @@ fn main() -> io::Result<()> {
     file.read_to_end(&mut buffer)?;
 
     let mut parser = patina_adv_logger::parser::Parser::open(&buffer).map_err(|e| {
-        eprintln!("Error opening log data: {}", e);
+        eprintln!("Error opening log data: {e}");
         io::Error::new(io::ErrorKind::InvalidData, e)
     })?;
 
@@ -64,13 +64,13 @@ fn parse_log<W: std::io::Write>(
 ) -> io::Result<()> {
     if header {
         parser.write_header(out).map_err(|e| {
-            eprintln!("Error writing log: {}", e);
+            eprintln!("Error writing log: {e}");
             io::Error::other(e)
         })?;
     }
 
     parser.write_log(out).map_err(|e| {
-        eprintln!("Error writing log: {}", e);
+        eprintln!("Error writing log: {e}");
         io::Error::other(e)
     })?;
 

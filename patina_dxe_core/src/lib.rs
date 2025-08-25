@@ -244,7 +244,7 @@ where
 
         gcd::init_gcd(physical_hob_list);
 
-        log::trace!("Initial GCD:\n{}", GCD);
+        log::trace!("Initial GCD:\n{GCD}");
 
         // After this point Rust Heap usage is permitted (since GCD is initialized with a single known-free region).
         // Relocate the hobs from the input list pointer into a Vec.
@@ -265,13 +265,13 @@ where
         // Add custom monitor commands to the debugger before initializing so that
         // they are available in the initial breakpoint.
         patina_debugger::add_monitor_command("gcd", "Prints the GCD", |_, out| {
-            let _ = write!(out, "GCD -\n{}", GCD);
+            let _ = write!(out, "GCD -\n{GCD}");
         });
 
         // Initialize the debugger if it is enabled.
         patina_debugger::initialize(&mut interrupt_manager);
 
-        log::info!("GCD - After memory init:\n{}", GCD);
+        log::info!("GCD - After memory init:\n{GCD}");
 
         self.storage.add_service(cpu);
         self.storage.add_service(interrupt_manager);
@@ -543,7 +543,7 @@ fn core_display_missing_arch_protocols() {
     for (uuid, name) in ARCH_PROTOCOLS {
         let guid = efi::Guid::from_bytes(&uuid.to_bytes_le());
         if protocols::PROTOCOL_DB.locate_protocol(guid).is_err() {
-            log::warn!("Missing architectural protocol: {:?}, {:?}", uuid, name);
+            log::warn!("Missing architectural protocol: {uuid:?}, {name:?}");
         }
     }
 }
@@ -561,7 +561,7 @@ fn call_bds() {
                 ptr::null(),
             );
         }
-        Err(err) => log::error!("Unable to locate status code runtime protocol: {:?}", err),
+        Err(err) => log::error!("Unable to locate status code runtime protocol: {err:?}"),
     };
 
     if let Ok(protocol) = protocols::PROTOCOL_DB.locate_protocol(bds::PROTOCOL_GUID) {

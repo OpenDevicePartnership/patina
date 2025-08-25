@@ -169,7 +169,7 @@ impl DebuggerArch for X64Arch {
                         options(nostack, preserves_flags)
                     );
                 }
-                let _ = write!(out, "GDT: {:#x?}", gdtr);
+                let _ = write!(out, "GDT: {gdtr:#x?}");
             }
             _ => {
                 let _ = out.write_str("Unknown X64 monitor command. Supported commands: regs");

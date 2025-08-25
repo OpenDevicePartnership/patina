@@ -803,11 +803,7 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                     )
                     .map_err(|err| {
                         log::error!(
-                            "Allocator Expansion via GCD failed: [{:?}], {{ Bytes: {:#x}, Alignment: {:#x}, Page Count: {:#x} }}",
-                            err,
-                            allocation_size,
-                            required_alignment,
-                            required_pages,
+                            "Allocator Expansion via GCD failed: [{err:?}], {{ Bytes: {allocation_size:#x}, Alignment: {required_alignment:#x}, Page Count: {required_pages:#x} }}",
                         );
                         AllocError
                     })?;
@@ -1853,7 +1849,7 @@ mod tests {
 
         for config in configs {
             let result = page_shift_from_alignment(config.alignment);
-            assert_eq!(result, config.expected, "Test config: {:?}", config);
+            assert_eq!(result, config.expected, "Test config: {config:?}");
         }
     }
 }
