@@ -164,6 +164,16 @@ pub struct NoAlloc;
 /// which provides methods for adding configuration and components with the DXE core, and eventually starting the
 /// dispatching process and eventual handoff to the BDS phase.
 ///
+/// ## Soft Service Dependencies
+///
+/// The core may take a soft dependency on some services, which are described in the below table. These services must
+/// be directly registered with the [Core::with_service] method. If not, there is no guarantee that the service will
+/// be available before the core needs it.
+///
+/// | Service Trait                          | Description                                      |
+/// |----------------------------------------|--------------------------------------------------|
+/// | `N/A`                                  | `N/A`                                            |
+///
 /// ## Examples
 ///
 /// ``` rust,no_run
