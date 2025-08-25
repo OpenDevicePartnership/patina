@@ -96,9 +96,9 @@ pub type Result = core::result::Result<(), &'static str>;
 /// ## Attributes
 ///
 /// - `#[should_fail]`: Indicates that the test is expected to fail. If the test passes, the test runner will log an
-///     error.
+///   error.
 /// - `#[should_fail = "message"]`: Indicates that the test is expected to fail with the given message. If the test
-///     passes or fails with a different message, the test runner will log an error.
+///   passes or fails with a different message, the test runner will log an error.
 /// - `#[skip]`: Indicates that the test should be skipped.
 ///
 /// ## Example

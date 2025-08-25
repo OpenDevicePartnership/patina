@@ -30,8 +30,8 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use patina_internal_collections::{Bst, Rbt, SliceKey, SortedSlice, node_size};
 use rand::{Rng, prelude::SliceRandom};
+use ruint::Uint;
 use std::{collections::HashSet, hash::Hash};
-use uint::construct_uint;
 
 const MAX_SIZE: usize = 4096;
 
@@ -40,9 +40,7 @@ static mut MEM_U128: [u8; 196608] = [0; MAX_SIZE * node_size::<u128>()];
 static mut MEM_U384: [u8; 327680] = [0; MAX_SIZE * node_size::<U384>()];
 
 // The size of MemorySpaceDescriptor
-construct_uint! {
-    pub struct U384(6);
-}
+type U384 = Uint<384, 6>;
 
 fn random_numbers<D>(min: D, max: D) -> Vec<D>
 where
@@ -216,7 +214,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
     });
 
     let nums = random_numbers::<u32>(0, 100_000);
-    let nums = nums.into_iter().map(|x| x.into()).collect::<Vec<U384>>();
+    let nums = nums.into_iter().map(|x| Uint::from(x)).collect::<Vec<U384>>();
     let mut nums_shuffled = nums.clone();
     nums_shuffled.shuffle(&mut rand::thread_rng());
 
