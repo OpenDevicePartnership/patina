@@ -65,13 +65,13 @@ fn parse_log<W: std::io::Write>(
     if header {
         parser.write_header(out).map_err(|e| {
             eprintln!("Error writing log: {}", e);
-            io::Error::new(io::ErrorKind::Other, e)
+            io::Error::other(e)
         })?;
     }
 
     parser.write_log(out).map_err(|e| {
         eprintln!("Error writing log: {}", e);
-        io::Error::new(io::ErrorKind::Other, e)
+        io::Error::other(e)
     })?;
 
     Ok(())

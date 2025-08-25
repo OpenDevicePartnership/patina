@@ -118,7 +118,7 @@ pub trait RuntimeServices {
     where
         T: AsRef<[u8]> + 'static,
     {
-        if !name.iter().any(|&c| c == 0) {
+        if !name.contains(&0) {
             debug_assert!(false, "Name passed into set_variable is not null-terminated.");
             return Err(efi::Status::INVALID_PARAMETER);
         }
@@ -144,7 +144,7 @@ pub trait RuntimeServices {
     where
         T: TryFrom<Vec<u8>> + 'static,
     {
-        if !name.iter().any(|&c| c == 0) {
+        if !name.contains(&0) {
             debug_assert!(false, "Name passed into get_variable is not null-terminated.");
             return Err(efi::Status::INVALID_PARAMETER);
         }
@@ -200,7 +200,7 @@ pub trait RuntimeServices {
         name: &[u16],
         namespace: &efi::Guid,
     ) -> Result<(usize, u32), efi::Status> {
-        if !name.iter().any(|&c| c == 0) {
+        if !name.contains(&0) {
             debug_assert!(false, "Name passed into set_variable is not null-terminated.");
             return Err(efi::Status::INVALID_PARAMETER);
         }
@@ -597,7 +597,7 @@ pub(crate) mod test {
         // Ensure the name and namespace are as expected
         unsafe {
             // Return invalid parameter if the name isn't null-terminated per UEFI spec
-            if !slice::from_raw_parts(name, *name_size).iter().any(|&c| c == 0) {
+            if !slice::from_raw_parts(name, *name_size).contains(&0) {
                 return efi::Status::INVALID_PARAMETER;
             }
 

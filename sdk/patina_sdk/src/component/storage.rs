@@ -281,8 +281,7 @@ impl Storage {
     /// Registers a config type with the storage and returns its global id.
     pub(crate) fn register_config<C: Default + 'static>(&mut self) -> usize {
         let idx = self.config_indices.len();
-        let idx = *self.config_indices.entry(TypeId::of::<C>()).or_insert(idx);
-        idx
+        *self.config_indices.entry(TypeId::of::<C>()).or_insert(idx)
     }
 
     /// Adds a default valued config datum to the storage if it does not exist.
