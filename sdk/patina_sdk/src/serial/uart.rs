@@ -103,19 +103,11 @@ cfg_if::cfg_if! {
                 match self {
                     Uart16550::Io { base } => {
                         let mut serial_port = unsafe { IoSerialPort::new(*base) };
-                        if let Ok(value) = serial_port.try_receive() {
-                            Some(value)
-                        } else {
-                            None
-                        }
+                        serial_port.try_receive().ok()
                     }
                     Uart16550::Mmio { base, reg_stride } => {
                         let mut serial_port = unsafe { MmioSerialPort::new_with_stride(*base, *reg_stride) };
-                        if let Ok(value) = serial_port.try_receive() {
-                            Some(value)
-                        } else {
-                            None
-                        }
+                        serial_port.try_receive().ok()
                     }
                 }
             }
