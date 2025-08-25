@@ -477,8 +477,8 @@ impl<'s> UnsafeStorageCell<'s> {
     /// - The returned `&mut Storage` *must* by unique: it must never be allowed to exists at the
     ///   same time as any other borrows of the storage or any accesses to its data.
     ///   - `&mut Storage` *may* exist at the same time as instances of `UnsafeStorageCell`, so
-    ///      long as none of those instances are used to access storage data in any way while the
-    ///      mutable borrow is active.
+    ///     long as none of those instances are used to access storage data in any way while the
+    ///     mutable borrow is active.
     #[inline]
     pub unsafe fn storage_mut(self) -> &'s mut Storage {
         // Safety:

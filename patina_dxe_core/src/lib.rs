@@ -33,7 +33,6 @@
 #![feature(c_variadic)]
 #![feature(allocator_api)]
 #![feature(slice_ptr_get)]
-#![feature(get_many_mut)]
 #![feature(coverage_attribute)]
 
 extern crate alloc;

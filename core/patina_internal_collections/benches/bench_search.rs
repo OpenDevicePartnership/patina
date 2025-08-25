@@ -30,15 +30,13 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use patina_internal_collections::{Bst, Rbt, SortedSlice, node_size};
 use rand::Rng;
+use ruint::Uint;
 use std::{collections::HashSet, hash::Hash, mem::size_of};
-use uint::construct_uint;
 
 const MAX_SIZE: usize = 200;
 
 // The size of MemorySpaceDescriptor
-construct_uint! {
-    pub struct U384(6);
-}
+type U384 = Uint<384, 6>;
 
 fn random_numbers<D>(min: D, max: D) -> Vec<D>
 where
@@ -146,7 +144,7 @@ fn benchmark_search_function(c: &mut Criterion) {
 
     // u64 nums (converted into 384bit)
     let nums = random_numbers::<u32>(0, 100_000);
-    let nums = nums.into_iter().map(|x| x.into()).collect::<Vec<U384>>();
+    let nums = nums.into_iter().map(|x| Uint::from(x)).collect::<Vec<U384>>();
 
     // RBT 384bit
     let mut mem = [0; MAX_SIZE * node_size::<U384>()];

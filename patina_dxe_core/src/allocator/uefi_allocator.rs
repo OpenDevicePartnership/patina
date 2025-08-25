@@ -185,10 +185,10 @@ impl UefiAllocator {
     /// Valid allocation strategies are:
     /// - BottomUp(None): Allocate the block of pages from the lowest available free memory.
     /// - BottomUp(Some(address)): Allocate the block of pages from the lowest available free memory. Fail if memory
-    ///     cannot be found below `address`.
+    ///   cannot be found below `address`.
     /// - TopDown(None): Allocate the block of pages from the highest available free memory.
     /// - TopDown(Some(address)): Allocate the block of pages from the highest available free memory. Fail if memory
-    ///      cannot be found above `address`.
+    ///   cannot be found above `address`.
     /// - Address(address): Allocate the block of pages at exactly the given address (or fail).
     ///
     /// If an address is specified as part of a strategy, it must be page-aligned.

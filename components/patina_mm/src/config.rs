@@ -190,7 +190,7 @@ impl CommunicateBuffer {
     /// ## Parameters
     ///
     /// - `message`: The message to be sent to the MM handler. The message length in the communicate header is
-    ///              set to the length of this slice.
+    ///   set to the length of this slice.
     pub fn set_message(&mut self, message: &[u8]) -> Result<(), CommunicateBufferStatus> {
         if message.len() > self.message_capacity() {
             return Err(CommunicateBufferStatus::TooSmallForMessage);

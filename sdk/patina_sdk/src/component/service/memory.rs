@@ -235,7 +235,7 @@ pub trait MemoryManager {
     /// - `page_count`: The number of pages to set attributes for.
     /// - `access`: The access type to set for the page.
     /// - `caching`: The caching type to set for the page. If `None`, the caching
-    ///    attributes will be set to the existing values or default caching type.
+    ///   attributes will be set to the existing values or default caching type.
     ///
     /// # Returns
     ///
@@ -268,7 +268,7 @@ pub trait MemoryManager {
     /// - `page_count`: The number of pages to get attributes for.
     /// - `access`: The access type to get for the page.
     /// - `caching`: The caching type to get for the page. If `None`, the caching
-    ///    attributes will be get to the existing values or default caching type.
+    ///   attributes will be get to the existing values or default caching type.
     ///
     /// # Returns
     ///

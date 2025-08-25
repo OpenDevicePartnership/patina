@@ -30,15 +30,12 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use patina_internal_collections::{Bst, Rbt, SortedSlice, node_size};
 use rand::Rng;
+use ruint::Uint;
 use std::{collections::HashSet, hash::Hash, mem::size_of};
-use uint::construct_uint;
 
 const MAX_SIZE: usize = 4096;
 
-// The size of MemorySpaceDescriptor
-construct_uint! {
-    pub struct U384(6);
-}
+type U384 = Uint<384, 6>;
 
 fn random_numbers<D>(min: D, max: D) -> Vec<D>
 where
@@ -132,7 +129,7 @@ pub fn benchmark_add_function(c: &mut Criterion) {
             let mut rbt: Rbt<U384> = Rbt::with_capacity(&mut mem);
 
             for i in nums {
-                rbt.add((*i).into()).unwrap();
+                rbt.add(Uint::from(*i)).unwrap();
             }
         })
     });
@@ -143,7 +140,7 @@ pub fn benchmark_add_function(c: &mut Criterion) {
             let mut bst: Bst<U384> = Bst::with_capacity(&mut mem);
 
             for i in nums {
-                bst.add((*i).into()).unwrap();
+                bst.add(Uint::from(*i)).unwrap();
             }
         })
     });
@@ -154,7 +151,7 @@ pub fn benchmark_add_function(c: &mut Criterion) {
             let mut ss: SortedSlice<U384> = SortedSlice::new(&mut mem);
 
             for i in nums {
-                ss.add((*i).into()).unwrap();
+                ss.add(Uint::from(*i)).unwrap();
             }
         })
     });
