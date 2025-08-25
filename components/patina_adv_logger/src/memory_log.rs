@@ -221,7 +221,7 @@ impl<'a> AdvancedLog<'a> {
         // the allocated slice to maintain safety.
         let entry_slice = unsafe {
             let data: *mut [u8] = self.data.get_mut()?;
-            (*data).get_mut(data_index..data_index + message_size as usize).ok_or(EfiError::BufferTooSmall)?
+            (&mut *data).get_mut(data_index..data_index + message_size as usize).ok_or(EfiError::BufferTooSmall)?
         };
 
         let (header_slice, entry_slice) = entry_slice.split_at_mut(size_of::<AdvLoggerMessageEntry>());
@@ -482,7 +482,7 @@ impl<'a> Iterator for AdvLogIterator<'a> {
             //         to check the rest of the range.
             let header_slice = unsafe {
                 let data: *const [u8] = self.log.data.get();
-                (*data).get(data_index..data_index + size_of::<AdvLoggerMessageEntry>())?
+                (&*data).get(data_index..data_index + size_of::<AdvLoggerMessageEntry>())?
             };
 
             let entry_header = AdvLoggerMessageEntry::ref_from_bytes(header_slice).ok()?;
@@ -498,7 +498,7 @@ impl<'a> Iterator for AdvLogIterator<'a> {
                 //         information.
                 let entry_data = unsafe {
                     let data: *const [u8] = self.log.data.get();
-                    (*data).get(data_index..data_index + entry_header.message_length as usize)?
+                    (&*data).get(data_index..data_index + entry_header.message_length as usize)?
                 };
 
                 // Move the offset up by the aligned total size.
@@ -547,7 +547,7 @@ mod tests {
                     break;
                 }
                 Err(status) => {
-                    panic!("Unexpected add_log_entry returned unexpected status {:#x?}.", status)
+                    panic!("Unexpected add_log_entry returned unexpected status {status:#x?}.")
                 }
             }
             entries += 1;

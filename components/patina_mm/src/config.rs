@@ -238,7 +238,7 @@ impl fmt::Debug for CommunicateBuffer {
             write!(f, "{:08X}: ", i * 16)?;
             // Print the hex values
             for byte in chunk {
-                write!(f, "{:02X} ", byte)?;
+                write!(f, "{byte:02X} ")?;
             }
             // Add spacing for incomplete rows
             if chunk.len() < 16 {
@@ -276,8 +276,8 @@ pub enum MmiPort {
 impl fmt::Debug for MmiPort {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MmiPort::Smi(port) => write!(f, "MmiPort::Smi(0x{:04X})", port),
-            MmiPort::Smc(port) => write!(f, "MmiPort::Smc(0x{:08X})", port),
+            MmiPort::Smi(port) => write!(f, "MmiPort::Smi(0x{port:04X})"),
+            MmiPort::Smc(port) => write!(f, "MmiPort::Smc(0x{port:08X})"),
         }
     }
 }
@@ -297,8 +297,8 @@ pub enum AcpiBase {
 impl fmt::Debug for AcpiBase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AcpiBase::Mmio(addr) => write!(f, "AcpiBase::Mmio(0x{:X})", addr),
-            AcpiBase::Io(port) => write!(f, "AcpiBase::Io(0x{:04X})", port),
+            AcpiBase::Mmio(addr) => write!(f, "AcpiBase::Mmio(0x{addr:X})"),
+            AcpiBase::Io(port) => write!(f, "AcpiBase::Io(0x{port:04X})"),
         }
     }
 }
@@ -535,25 +535,25 @@ mod tests {
     #[test]
     fn test_smiport_debug_msg() {
         let smi_port = MmiPort::Smi(0xFF);
-        let debug_msg: String = format!("{:?}", smi_port);
+        let debug_msg: String = format!("{smi_port:?}");
         assert_eq!(debug_msg, "MmiPort::Smi(0x00FF)");
     }
 
     #[test]
     fn test_smcport_debug_msg_smc() {
         let smc_port = MmiPort::Smc(0x12345678);
-        let debug_msg = format!("{:?}", smc_port);
+        let debug_msg = format!("{smc_port:?}");
         assert_eq!(debug_msg, "MmiPort::Smc(0x12345678)");
     }
 
     #[test]
     fn test_acpibase_debug_msg() {
         let acpi_base_mmio = AcpiBase::Mmio(0x12345678);
-        let debug_msg_mmio = format!("{:?}", acpi_base_mmio);
+        let debug_msg_mmio = format!("{acpi_base_mmio:?}");
         assert_eq!(debug_msg_mmio, "AcpiBase::Mmio(0x12345678)");
 
         let acpi_base_io = AcpiBase::Io(0x1234);
-        let debug_msg_io = format!("{:?}", acpi_base_io);
+        let debug_msg_io = format!("{acpi_base_io:?}");
         assert_eq!(debug_msg_io, "AcpiBase::Io(0x1234)");
     }
 

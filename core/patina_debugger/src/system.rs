@@ -35,10 +35,10 @@ impl SystemState {
         cfg_if::cfg_if! {
             if #[cfg(feature = "alloc")] {
                 self.monitor_commands.push(_monitor);
-                log::info!("Added debugger monitor command: {}", command);
+                log::info!("Added debugger monitor command: {command}");
             }
             else {
-                log::warn!("Monitor commands are only supported with the 'alloc' feature enabled. Will not add command: {}", command);
+                log::warn!("Monitor commands are only supported with the 'alloc' feature enabled. Will not add command: {command}");
             }
         }
     }

@@ -87,7 +87,7 @@ impl ImageStack {
         if let Err(err) =
             dxe_services::core_set_memory_space_attributes(stack, UEFI_PAGE_SIZE as u64, attributes | efi::MEMORY_RP)
         {
-            log::error!("Failed to set memory space attributes for stack guard page: {:#x?}", err);
+            log::error!("Failed to set memory space attributes for stack guard page: {err:?}");
             // unfortunately, this needs to be commented out for now, because the tests have gotten too complex
             // and need to be refactored to handle the page table
             // debug_assert!(false);
@@ -119,7 +119,7 @@ impl Drop for ImageStack {
             if let Err(err) =
                 dxe_services::core_set_memory_space_attributes(stack_addr, UEFI_PAGE_SIZE as u64, attributes)
             {
-                log::error!("Failed to set memory space attributes for stack guard page: {:#x?}", err);
+                log::error!("Failed to set memory space attributes for stack guard page: {err:?}");
                 // unfortunately, this needs to be commented out for now, because the tests have gotten too complex
                 // and need to be refactored to handle the page table
                 // debug_assert!(false);
@@ -299,10 +299,7 @@ impl Drop for PrivateImageData {
         {
             if let Err(status) = core_free_pages(resource_addr, num_pages) {
                 log::error!(
-                    "core_free_pages returned error {:#x?} for HII resource section at {:#x} for num_pages {:#x}",
-                    status,
-                    resource_addr,
-                    num_pages
+                    "core_free_pages returned error {status:#x?} for HII resource section at {resource_addr:#x} for num_pages {num_pages:#x}",
                 );
             }
         }
@@ -396,9 +393,7 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
             }
             Err(status) => {
                 log::error!(
-                    "Failed to find GCD desc for image section {:#X} with Status {:#X?}",
-                    section_base_addr,
-                    status
+                    "Failed to find GCD desc for image section {section_base_addr:#X} with Status {status:#X?}",
                 );
                 debug_assert!(false);
                 continue;
@@ -428,27 +423,20 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
             // even if we fail to set the capabilities, we should still try to set the attributes, who knows, maybe we
             // will succeed
             log::error!(
-                "Failed to set GCD capabilities for image section {:#X} with Status {:#X?}",
-                section_base_addr,
-                status
-            )
+                "Failed to set GCD capabilities for image section {section_base_addr:#X} with Status {status:#X?}",
+            );
         }
 
         // this may be verbose to log, but we also have a lot of errors historically here, so let's log at info level
         // for now
         log::info!(
-            "Applying image memory protections on {:#X} for len {:#X} with attributes {:#X}",
-            section_base_addr,
-            aligned_virtual_size,
-            attributes
+            "Applying image memory protections on {section_base_addr:#X} for len {aligned_virtual_size:#X} with attributes {attributes:#X}",
         );
 
         match dxe_services::core_set_memory_space_attributes(section_base_addr, aligned_virtual_size, attributes) {
             Ok(_) => continue,
             Err(status) => log::error!(
-                "Failed to set GCD attributes for image section {:#X} with Status {:#X?}",
-                section_base_addr,
-                status
+                "Failed to set GCD attributes for image section {section_base_addr:#X} with Status {status:#X?}",
             ),
         }
     }
@@ -483,17 +471,13 @@ fn remove_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateI
                     dxe_services::core_set_memory_space_attributes(section_base_addr, aligned_virtual_size, attributes)
                 {
                     log::error!(
-                        "Failed to remove GCD attributes for image section {:#X} with Status {:#X?}",
-                        section_base_addr,
-                        status
+                        "Failed to remove GCD attributes for image section {section_base_addr:#X} with Status {status:#X?}",
                     );
                 }
             }
             Err(status) => {
                 log::error!(
-                    "Failed to find GCD desc for image section {:#X} with Status {:#X?}, cannot remove memory protections",
-                    section_base_addr,
-                    status
+                    "Failed to find GCD desc for image section {section_base_addr:#X} with Status {status:#X?}, cannot remove memory protections",
                 );
             }
         }
@@ -566,7 +550,7 @@ fn install_dxe_core_image(hob_list: &HobList, system_table: &mut EfiSystemTable)
         efi::protocols::loaded_image::PROTOCOL_GUID,
         image_info_ptr,
     ) {
-        Err(err) => panic!("Failed to install dxe core image handle: {:?}", err),
+        Err(err) => panic!("Failed to install dxe core image handle: {err:?}"),
         Ok(handle) => handle,
     };
     assert_eq!(handle, protocol_db::DXE_CORE_HANDLE);
@@ -594,7 +578,7 @@ fn core_load_pe_image(
 ) -> Result<PrivateImageData, EfiError> {
     // parse and validate the header and retrieve the image data from it.
     let pe_info = pecoff::UefiPeInfo::parse(image)
-        .inspect_err(|err| log::error!("core_load_pe_image failed: UefiPeInfo::parse returned {:#x?}", err))
+        .inspect_err(|err| log::error!("core_load_pe_image failed: UefiPeInfo::parse returned {err:?}"))
         .map_err(|_| EfiError::Unsupported)?;
 
     // based on the image type, determine the correct allocator and code/data types.
@@ -603,7 +587,7 @@ fn core_load_pe_image(
         EFI_IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER => (efi::BOOT_SERVICES_CODE, efi::BOOT_SERVICES_DATA),
         EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER => (efi::RUNTIME_SERVICES_CODE, efi::RUNTIME_SERVICES_DATA),
         unsupported_type => {
-            log::error!("core_load_pe_image_failed: unsupported image type: {:#x?}", unsupported_type);
+            log::error!("core_load_pe_image_failed: unsupported image type: {unsupported_type:#x?}");
             return Err(EfiError::Unsupported);
         }
     };
@@ -614,9 +598,7 @@ fn core_load_pe_image(
     // the section alignment must be at least the size of a page
     if alignment % UEFI_PAGE_SIZE != 0 || alignment == 0 {
         log::error!(
-            "core_load_pe_image_failed: section alignment of {:#x?} is not a (non-zero) multiple of page size {:#x?}",
-            alignment,
-            UEFI_PAGE_SIZE
+            "core_load_pe_image_failed: section alignment of {alignment:#x?} is not a (non-zero) multiple of page size {UEFI_PAGE_SIZE:#x?}",
         );
         debug_assert!(false);
         return Err(EfiError::LoadError);
@@ -639,13 +621,13 @@ fn core_load_pe_image(
 
     //load the image into the new loaded image buffer
     pecoff::load_image(&pe_info, image, loaded_image)
-        .inspect_err(|err| log::error!("core_load_pe_image_failed: load_image returned status: {:#x?}", err))
+        .inspect_err(|err| log::error!("core_load_pe_image_failed: load_image returned status: {err:?}"))
         .map_err(|_| EfiError::LoadError)?;
 
     //relocate the image to the address at which it was loaded.
     let loaded_image_addr = private_info.image_info.image_base as usize;
     private_info.relocation_data = pecoff::relocate_image(&pe_info, loaded_image_addr, loaded_image, &Vec::new())
-        .inspect_err(|err| log::error!("core_load_pe_image_failed: relocate_image returned status: {:#x?}", err))
+        .inspect_err(|err| log::error!("core_load_pe_image_failed: relocate_image returned status: {err:?}"))
         .map_err(|_| EfiError::LoadError)?;
 
     // update the entry point. Transmute is required here to cast the raw function address to the ImageEntryPoint function pointer type.
@@ -656,7 +638,7 @@ fn core_load_pe_image(
     };
 
     let result = pecoff::load_resource_section(&pe_info, image)
-        .inspect_err(|err| log::error!("core_load_pe_image_failed: load_resource_section returned status: {:#x?}", err))
+        .inspect_err(|err| log::error!("core_load_pe_image_failed: load_resource_section returned status: {err:?}"))
         .map_err(|_| EfiError::LoadError)?;
 
     if let Some((resource_section_offset, resource_section_size)) = result {
@@ -769,7 +751,7 @@ extern "efiapi" fn runtime_image_protection_fixup_ebs(event: efi::Event, _contex
     }
 
     if let Err(status) = EVENT_DB.close_event(event) {
-        log::error!("Failed to close image EBS event with status {:#X?}. This should be okay.", status);
+        log::error!("Failed to close image EBS event with status {status:#X?}. This should be okay.");
     }
 }
 
@@ -986,11 +968,11 @@ pub fn core_load_image(
 
     PROTOCOL_DB
         .validate_handle(parent_image_handle)
-        .inspect_err(|err| log::error!("failed to load image: invalid handle: {:#x?}", err))?;
+        .inspect_err(|err| log::error!("failed to load image: invalid handle: {err:#x?}"))?;
 
     PROTOCOL_DB
         .get_interface_for_handle(parent_image_handle, efi::protocols::loaded_image::PROTOCOL_GUID)
-        .inspect_err(|err| log::error!("failed to load image: failed to get loaded image interface: {:#x?}", err))
+        .inspect_err(|err| log::error!("failed to load image: failed to get loaded image interface: {err:?}"))
         .map_err(|_| EfiError::InvalidParameter)?;
 
     let (image_to_load, from_fv, device_handle, authentication_status) = match image {
@@ -1050,7 +1032,7 @@ pub fn core_load_image(
     }
 
     let mut private_info = core_load_pe_image(image_to_load.as_ref(), image_info)
-        .inspect_err(|err| log::error!("failed to load image: core_load_pe_image failed: {:#x?}", err))?;
+        .inspect_err(|err| log::error!("failed to load image: core_load_pe_image failed: {err:?}"))?;
 
     let image_info_ptr = private_info.image_info.as_ref() as *const efi::protocols::loaded_image::Protocol;
     let image_info_ptr = image_info_ptr as *mut c_void;
@@ -1065,7 +1047,7 @@ pub fn core_load_image(
     // install the loaded_image protocol for this freshly loaded image on a new
     // handle.
     let handle = core_install_protocol_interface(None, efi::protocols::loaded_image::PROTOCOL_GUID, image_info_ptr)
-        .inspect_err(|err| log::error!("failed to load image: install loaded image protocol failed: {:#x?}", err))?;
+        .inspect_err(|err| log::error!("failed to load image: install loaded image protocol failed: {err:?}"))?;
 
     // register the loaded image with the debug image info configuration table. This is done before the debugger is
     // notified so that the debugger can access the loaded image protocol before that point, e.g. so
@@ -1100,7 +1082,7 @@ pub fn core_load_image(
         efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
         loaded_image_device_path as *mut c_void,
     )
-    .inspect_err(|err| log::error!("failed to load image: install device path failed: {:#x?}", err))?;
+    .inspect_err(|err| log::error!("failed to load image: install device path failed: {err:?}"))?;
 
     if let Some(res_section) = private_info.hii_resource_section {
         core_install_protocol_interface(
@@ -1108,7 +1090,7 @@ pub fn core_load_image(
             efi::protocols::hii_package_list::PROTOCOL_GUID,
             res_section as *mut c_void,
         )
-        .inspect_err(|err| log::error!("failed to load image: install HII package list failed: {:#x?}", err))?;
+        .inspect_err(|err| log::error!("failed to load image: install HII package list failed: {err:?}"))?;
     }
 
     // Store the interface pointers for unload to use when uninstalling these protocol interfaces.
@@ -1279,7 +1261,7 @@ pub fn core_start_image(image_handle: efi::Handle) -> Result<(), efi::Status> {
         CoroutineResult::Return(status) => status,
     };
 
-    log::info!("start_image entrypoint exit with status: {:x?}", status);
+    log::info!("start_image entrypoint exit with status: {status:x?}");
 
     // because we used exit() to return from the coroutine (as opposed to
     // returning naturally from it), the coroutine is marked as suspended rather
@@ -1532,7 +1514,7 @@ mod tests {
             efi::protocols::loaded_image::PROTOCOL_GUID,
             image_info_ptr,
         ) {
-            Err(err) => panic!("Failed to install dxe core image handle: {:?}", err),
+            Err(err) => panic!("Failed to install dxe core image handle: {err:?}"),
             Ok(handle) => handle,
         };
 
@@ -1564,7 +1546,7 @@ mod tests {
 
             let private_data = PRIVATE_IMAGE_DATA.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
-            let image_buf_len = unsafe { (*image_data.image_buffer).len() as usize };
+            let image_buf_len = unsafe { (&*image_data.image_buffer).len() as usize };
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
             assert_eq!(image_data.image_info.image_data_type, efi::BOOT_SERVICES_DATA);
             assert_eq!(image_data.image_info.image_code_type, efi::BOOT_SERVICES_CODE);
@@ -1622,7 +1604,7 @@ mod tests {
 
             let private_data = PRIVATE_IMAGE_DATA.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
-            let image_buf_len = unsafe { (*image_data.image_buffer).len() as usize };
+            let image_buf_len = unsafe { (&*image_data.image_buffer).len() as usize };
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
             assert_eq!(image_data.image_info.image_data_type, efi::BOOT_SERVICES_DATA);
             assert_eq!(image_data.image_info.image_code_type, efi::BOOT_SERVICES_CODE);
@@ -1706,7 +1688,7 @@ mod tests {
 
             let private_data = PRIVATE_IMAGE_DATA.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
-            let image_buf_len = unsafe { (*image_data.image_buffer).len() as usize };
+            let image_buf_len = unsafe { (&*image_data.image_buffer).len() as usize };
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
             assert_eq!(image_data.image_info.image_data_type, efi::BOOT_SERVICES_DATA);
             assert_eq!(image_data.image_info.image_code_type, efi::BOOT_SERVICES_CODE);

@@ -53,7 +53,7 @@ unsafe fn get_memory(size: usize) -> &'static mut [u8] {
     let addr = unsafe {
         alloc::alloc::alloc(
             alloc::alloc::Layout::from_size_align(size, 0x1000)
-                .unwrap_or_else(|_| panic!("Failed to allocate {:#x} bytes for hob list.", size)),
+                .unwrap_or_else(|_| panic!("Failed to allocate {size:#x} bytes for hob list.")),
         )
     };
     unsafe { core::slice::from_raw_parts_mut(addr, size) }

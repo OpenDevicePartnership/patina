@@ -42,8 +42,8 @@ impl Debug for StateTransition {
             StateTransition::Add(memory_type, capabilities, attributes) => f
                 .debug_struct("Add")
                 .field("memory_type", memory_type)
-                .field("capabilities", &format_args!("{:#X}", capabilities))
-                .field("attributes", &format_args!("{:#X}", attributes))
+                .field("capabilities", &format_args!("{capabilities:#X}"))
+                .field("attributes", &format_args!("{attributes:#X}"))
                 .finish(),
             StateTransition::Remove => f.debug_struct("Remove").finish(),
             StateTransition::Allocate(image_handle, device_handle) => f
@@ -59,10 +59,10 @@ impl Debug for StateTransition {
             StateTransition::Free => f.debug_struct("Free").finish(),
             StateTransition::FreePreservingOwnership => f.debug_struct("FreePreservingOwnership").finish(),
             StateTransition::SetAttributes(attributes) => {
-                f.debug_struct("SetAttributes").field("attributes", &format_args!("{:#X}", attributes)).finish()
+                f.debug_struct("SetAttributes").field("attributes", &format_args!("{attributes:#X}")).finish()
             }
             StateTransition::SetCapabilities(capabilities) => {
-                f.debug_struct("SetCapabilities").field("capabilities", &format_args!("{:#X}", capabilities)).finish()
+                f.debug_struct("SetCapabilities").field("capabilities", &format_args!("{capabilities:#X}")).finish()
             }
         }
     }

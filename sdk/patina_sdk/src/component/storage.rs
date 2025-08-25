@@ -317,7 +317,7 @@ impl Storage {
     pub(crate) fn get_raw_config(&self, id: usize) -> Ref<ConfigRaw> {
         self.configs
             .get(id)
-            .unwrap_or_else(|| panic!("Could not find Config value when with id [{}] it should always exist.", id))
+            .unwrap_or_else(|| panic!("Could not find Config value when with id [{id}] it should always exist."))
             .borrow()
     }
 
@@ -325,7 +325,7 @@ impl Storage {
     pub(crate) fn get_raw_config_mut(&self, id: usize) -> RefMut<ConfigRaw> {
         self.configs
             .get(id)
-            .unwrap_or_else(|| panic!("Could not find Config value when with id [{}] it should always exist.", id))
+            .unwrap_or_else(|| panic!("Could not find Config value when with id [{id}] it should always exist."))
             .borrow_mut()
     }
 
@@ -403,7 +403,7 @@ impl Storage {
     pub(crate) fn get_raw_hob(&self, id: usize) -> &[Box<dyn Any>] {
         self.hobs
             .get(id)
-            .unwrap_or_else(|| panic!("Could not find Hob value when with id [{}] it should always exist.", id))
+            .unwrap_or_else(|| panic!("Could not find Hob value when with id [{id}] it should always exist."))
     }
 
     /// Attempts to retrieve a HOB datum from the storage.

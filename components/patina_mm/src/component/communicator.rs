@@ -129,7 +129,7 @@ impl Debug for MmCommunicator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "MM Communicator:")?;
         for buffer in self.comm_buffers.borrow().iter() {
-            writeln!(f, "Comm Buffer: {:?}", buffer)?;
+            writeln!(f, "Comm Buffer: {buffer:?}")?;
         }
         writeln!(f, "SW MMI Trigger Service Set: {}", self.sw_mmi_trigger_service.is_some())?;
         Ok(())
@@ -271,7 +271,7 @@ mod tests {
         let communicator = get_test_communicator!(1024, mock_sw_mmi_trigger);
 
         let result = communicator.communicate(0, &TEST_DATA, TEST_RECIPIENT);
-        assert_eq!(result, Err(Status::SwMmiFailed), "Expected `Status::SwMmiFailed`, but got: {:?}", result);
+        assert_eq!(result, Err(Status::SwMmiFailed), "Expected `Status::SwMmiFailed`, but got: {result:?}");
     }
 
     #[test]
@@ -288,15 +288,15 @@ mod tests {
         let result = communicator.comm_buffers.borrow_mut()[0].set_message(&TEST_RESPONSE);
         assert_eq!(result, Err(CommunicateBufferStatus::InvalidRecipient));
         let result = communicator.comm_buffers.borrow_mut()[0].set_message_info(TEST_RECIPIENT);
-        assert_eq!(result, Ok(()), "Expected message info to be set successfully, but got: {:?}", result);
+        assert_eq!(result, Ok(()), "Expected message info to be set successfully, but got: {result:?}");
         let result = communicator.comm_buffers.borrow_mut()[0].set_message(&TEST_RESPONSE);
-        assert_eq!(result, Ok(()), "Expected message to be set successfully, but got: {:?}", result);
+        assert_eq!(result, Ok(()), "Expected message to be set successfully, but got: {result:?}");
 
         let message = communicator.comm_buffers.borrow_mut()[0].get_message();
         let mut expected_data = vec![0u8; DATA_BUFFFER_SIZE];
         expected_data[..TEST_RESPONSE.len()].copy_from_slice(&TEST_RESPONSE);
-        assert!(!message.is_empty(), "Expected message to be set, but got empty message: {:?}", message);
-        assert_eq!(message, *expected_data, "Expected message to be set correctly, but got: {:?}", message);
+        assert!(!message.is_empty(), "Expected message to be set, but got empty message: {message:?}");
+        assert_eq!(message, *expected_data, "Expected message to be set correctly, but got: {message:?}");
     }
 
     #[test]
@@ -377,16 +377,14 @@ mod tests {
     fn test_communicate_debug_formatting() {
         let communicator = get_test_communicator!(64, MockSwMmiTrigger::new());
 
-        let debug_output = format!("{:?}", communicator);
+        let debug_output = format!("{communicator:?}");
         assert!(
             debug_output.contains("MM Communicator:"),
-            "Expected debug output to contain 'MM Communicator', but got: {:?}",
-            debug_output
+            "Expected debug output to contain 'MM Communicator', but got: {debug_output:?}"
         );
         assert!(
             debug_output.contains("SW MMI Trigger Service Set: true"),
-            "Expected debug output to contain 'SW MMI Trigger Service Set: true', but got: {:?}",
-            debug_output
+            "Expected debug output to contain 'SW MMI Trigger Service Set: true', but got: {debug_output:?}",
         );
     }
 }

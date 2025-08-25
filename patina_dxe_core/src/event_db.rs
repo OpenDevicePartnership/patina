@@ -446,8 +446,8 @@ impl EventDb {
             let current_event = if let Some(current) = self.events.get_mut(&event) {
                 current
             } else {
-                debug_assert!(false, "Event {:?} not found.", event);
-                log::error!("Event {:?} not found.", event);
+                debug_assert!(false, "Event {event:?} not found.");
+                log::error!("Event {event:?} not found.");
                 continue;
             };
             if current_event.event_type.is_timer() {
@@ -460,7 +460,7 @@ impl EventDb {
                             current_event.trigger_time = None;
                         }
                         if let Err(e) = self.signal_event(event as *mut c_void) {
-                            log::error!("Error {:?} signaling event {:?}.", e, event);
+                            log::error!("Error {e:?} signaling event {event:?}.");
                         }
                     }
                 }

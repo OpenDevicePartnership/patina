@@ -680,7 +680,7 @@ pub(crate) mod test {
     #[test]
     fn test_debug_print_works_before_init() {
         let rs: StandardRuntimeServices = StandardRuntimeServices::new_uninit();
-        let output = format!("{:?}", rs);
+        let output = format!("{rs:?}");
         assert!(output.contains("Not Initialized"));
     }
 

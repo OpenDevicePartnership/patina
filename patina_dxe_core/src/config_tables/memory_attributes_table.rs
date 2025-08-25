@@ -89,7 +89,7 @@ pub fn init_memory_attributes_table_support() {
         None,
         Some(efi::EVENT_GROUP_READY_TO_BOOT),
     ) {
-        log::error!("Failed to register an event at Ready to Boot to create the MAT! Status {:#X?}", status);
+        log::error!("Failed to register an event at Ready to Boot to create the MAT! Status {status:#X?}");
     }
 }
 
@@ -102,7 +102,7 @@ extern "efiapi" fn core_install_memory_attributes_table_event_wrapper(event: efi
     POST_RTB.store(true, Ordering::Relaxed);
 
     if let Err(status) = EVENT_DB.close_event(event) {
-        log::error!("Failed to close MAT ready to boot event with status {:#X?}. This should be okay.", status);
+        log::error!("Failed to close MAT ready to boot event with status {status:#X?}. This should be okay.");
     }
 }
 
@@ -131,13 +131,13 @@ pub fn core_install_memory_attributes_table() {
                     if let Err(status) =
                         core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, empty_ptr, st)
                     {
-                        log::error!("Failed to create a null MAT table with status {:#X?}, cannot create MAT", status);
+                        log::error!("Failed to create a null MAT table with status {status:#X?}, cannot create MAT");
                         return;
                     }
                 }
             }
             Err(err) => {
-                log::error!("Failed to allocate memory for a null MAT! Status {:#X?}", err);
+                log::error!("Failed to allocate memory for a null MAT! Status {err:#X?}");
                 return;
             }
         }
@@ -191,7 +191,7 @@ pub fn core_install_memory_attributes_table() {
         mat_desc_list.len() * size_of::<efi::MemoryDescriptor>() + size_of::<efi::MemoryAttributesTable>();
     match core_allocate_pool(efi::BOOT_SERVICES_DATA, buffer_size) {
         Err(err) => {
-            log::error!("Failed to allocate memory for the MAT! Status {:#X?}", err);
+            log::error!("Failed to allocate memory for the MAT! Status {err:#X?}");
             return;
         }
         Ok(void_ptr) => {
@@ -221,9 +221,9 @@ pub fn core_install_memory_attributes_table() {
 
                 match core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, void_ptr, st) {
                     Err(status) => {
-                        log::error!("Failed to install MAT table! Status {:#X?}", status);
+                        log::error!("Failed to install MAT table! Status {status:#X?}");
                         if let Err(err) = core_free_pool(void_ptr) {
-                            log::error!("Error freeing newly allocated MAT pointer: {:#X?}", err);
+                            log::error!("Error freeing newly allocated MAT pointer: {err:#X?}");
                         }
                         return;
                     }
@@ -233,7 +233,7 @@ pub fn core_install_memory_attributes_table() {
                         let current_ptr = MEMORY_ATTRIBUTES_TABLE.load(Ordering::Relaxed);
                         if !current_ptr.is_null() {
                             if let Err(err) = core_free_pool(current_ptr) {
-                                log::error!("Error freeing previous MAT pointer: {:#X?}", err);
+                                log::error!("Error freeing previous MAT pointer: {err:#X?}");
                             }
                         }
                         MEMORY_ATTRIBUTES_TABLE.store(void_ptr, Ordering::Relaxed);

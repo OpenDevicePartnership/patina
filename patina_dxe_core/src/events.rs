@@ -208,9 +208,7 @@ pub extern "efiapi" fn raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {
 
     assert!(
         new_tpl >= prev_tpl,
-        "Invalid attempt to raise TPL to lower value. New TPL: {:#x?}, Prev TPL: {:#x?}",
-        new_tpl,
-        prev_tpl
+        "Invalid attempt to raise TPL to lower value. New TPL: {new_tpl:#x?}, Prev TPL: {prev_tpl:#x?}"
     );
 
     if (new_tpl == efi::TPL_HIGH_LEVEL) && (prev_tpl < efi::TPL_HIGH_LEVEL) {
@@ -224,9 +222,7 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
 
     assert!(
         new_tpl <= prev_tpl,
-        "Invalid attempt to restore TPL to higher value. New TPL: {:#x?}, Prev TPL: {:#x?}",
-        new_tpl,
-        prev_tpl
+        "Invalid attempt to restore TPL to higher value. New TPL: {new_tpl:#x?}, Prev TPL: {prev_tpl:#x?}"
     );
 
     if new_tpl < prev_tpl {
@@ -298,10 +294,10 @@ extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_
             let timer_arch = unsafe { &*(timer_arch_ptr) };
             (timer_arch.register_handler)(timer_arch_ptr, timer_tick);
             if let Err(status_err) = EVENT_DB.close_event(event) {
-                log::warn!("Could not close event for timer_available_callback due to error {:?}", status_err);
+                log::warn!("Could not close event for timer_available_callback due to error {status_err:?}");
             }
         }
-        Err(err) => panic!("Unable to locate timer arch: {:?}", err),
+        Err(err) => panic!("Unable to locate timer arch: {err:?}"),
     }
 }
 

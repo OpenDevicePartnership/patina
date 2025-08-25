@@ -134,15 +134,13 @@ pub mod event_callback {
             }
             Ok(SmmGetRecordSize { return_status, .. }) => {
                 log::error!(
-                    "Performance: Asking for the smm perf records size result in an error with return status of: {:?}",
-                    return_status
+                    "Performance: Asking for the smm perf records size result in an error with return status of: {return_status:?}",
                 );
                 return;
             }
             Err(status) => {
                 log::error!(
-                    "Performance: Error while trying to communicate with communicate protocol with error code: {:?}",
-                    status
+                    "Performance: Error while trying to communicate with communicate protocol with error code: {status:?}",
                 );
                 return;
             }
@@ -166,15 +164,13 @@ pub mod event_callback {
                 }
                 Ok(SmmGetRecordDataByOffset { return_status, .. }) => {
                     log::error!(
-                        "Performance: Asking for smm perf records data result in an error with return status of: {:?}",
-                        return_status
+                        "Performance: Asking for smm perf records data result in an error with return status of: {return_status:?}",
                     );
                     return;
                 }
                 Err(status) => {
                     log::error!(
-                        "Performance: Error while trying to communicate with communicate protocol with error status code: {:?}",
-                        status
+                        "Performance: Error while trying to communicate with communicate protocol with error status code: {status:?}",
                     );
                     return;
                 }
@@ -189,7 +185,7 @@ pub mod event_callback {
             n += 1;
         }
 
-        log::info!("Performance: {} smm performance records found.", n);
+        log::info!("Performance: {n} smm performance records found.");
     }
 }
 
@@ -312,7 +308,7 @@ where
         KnownPerfId::ModuleStart | KnownPerfId::ModuleEnd => {
             let module_handle = caller_identifier as efi::Handle;
             let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance: Could not find the guid for module handle: {:?}", module_handle);
+                log::error!("Performance: Could not find the guid for module handle: {module_handle:?}");
                 return Err(EfiError::InvalidParameter.into());
             };
             let record = GuidEventRecord::new(perf_id, 0, timestamp, guid);
@@ -324,7 +320,7 @@ where
             }
             let module_handle = caller_identifier as efi::Handle;
             let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance: Could not find the guid for module handle: {:?}", module_handle);
+                log::error!("Performance: Could not find the guid for module handle: {module_handle:?}");
                 return Err(EfiError::InvalidParameter.into());
             };
             let record = GuidQwordEventRecord::new(perf_id, 0, timestamp, guid, get_load_image_count() as u64);
@@ -337,7 +333,7 @@ where
         | KnownPerfId::ModuleDbStopStart => {
             let module_handle = caller_identifier as efi::Handle;
             let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance: Could not find the guid for module handle: {:?}", module_handle);
+                log::error!("Performance: Could not find the guid for module handle: {module_handle:?}");
                 return Err(EfiError::InvalidParameter.into());
             };
             let record = GuidQwordEventRecord::new(perf_id, 0, timestamp, guid, address as u64);
@@ -346,7 +342,7 @@ where
         KnownPerfId::ModuleDbStopEnd => {
             let module_handle = caller_identifier as efi::Handle;
             let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance Lib: Could not find the guid for module handle: {:?}", module_handle);
+                log::error!("Performance Lib: Could not find the guid for module handle: {module_handle:?}");
                 return Err(EfiError::InvalidParameter.into());
             };
             let module_name = "";

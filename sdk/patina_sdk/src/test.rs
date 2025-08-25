@@ -224,7 +224,7 @@ impl TestRunner {
         match count {
             0 => log::warn!("No Tests Found"),
             1 => log::info!("running 1 test"),
-            _ => log::info!("running {} tests", count),
+            _ => log::info!("running {count} tests"),
         }
 
         let mut did_error = false;

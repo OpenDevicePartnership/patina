@@ -1635,7 +1635,7 @@ mod tests {
     #[test]
     fn test_debug_print_works_before_init() {
         let bs = StandardBootServices::new_uninit();
-        let output = format!("{:?}", bs);
+        let output = format!("{bs:?}");
         assert!(output.contains("Not Initialized"));
     }
 
@@ -2860,7 +2860,12 @@ mod tests {
         }
 
         let image_handle = boot_services
-            .load_image(true, 1_usize as *mut c_void, 2_usize as *mut device_path::Protocol, Some(&[1_u8, 2, 3, 4, 5]))
+            .load_image(
+                true,
+                std::ptr::dangling_mut::<c_void>(),
+                2_usize as *mut device_path::Protocol,
+                Some(&[1_u8, 2, 3, 4, 5]),
+            )
             .unwrap();
 
         assert_eq!(3, image_handle as usize);
@@ -3046,7 +3051,7 @@ mod tests {
                 assert_eq!(memory_map.descriptors[0].physical_start, 0xffffffffaaaabbbb);
             }
             Err((status, _)) => {
-                panic!("Error: {:?}", status);
+                panic!("Error: {status:?}");
             }
         }
     }

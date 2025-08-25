@@ -217,11 +217,11 @@ mod tests {
     fn tpl_mutex_and_guard_should_support_debug_and_display() {
         with_locked_state(|| {
             let tpl_mutex = TplMutex::new(efi::TPL_HIGH_LEVEL, 1_usize, "test_lock");
-            println!("{:?}", tpl_mutex);
+            println!("{tpl_mutex:?}");
             let guard = tpl_mutex.lock();
-            println!("{:?}", tpl_mutex);
-            println!("{:?}", guard);
-            println!("{:}", guard);
+            println!("{tpl_mutex:?}");
+            println!("{guard:?}");
+            println!("{guard:}");
         });
     }
 }

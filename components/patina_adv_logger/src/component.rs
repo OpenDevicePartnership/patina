@@ -122,7 +122,7 @@ where
         let protocol = Box::leak(Box::new(protocol));
         match bs.install_protocol_interface(None, &mut protocol.protocol) {
             Err(status) => {
-                log::error!("Failed to install Advanced Logger protocol! Status = {:#x?}", status);
+                log::error!("Failed to install Advanced Logger protocol! Status = {status:#x?}");
                 Err(EfiError::ProtocolError)
             }
             Ok(_) => {

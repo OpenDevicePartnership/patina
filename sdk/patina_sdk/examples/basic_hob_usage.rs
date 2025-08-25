@@ -63,7 +63,7 @@ pub struct BooleanConfig(pub bool);
 pub fn consume_multiple_hobs(hob1: Hob<CustomHob1>, hob2: Option<Hob<CustomHob2>>) -> Result<()> {
     // (3) Show off that if we expect a HOB to exist multiple times, we can iterate over it.
     for hob in hob1.iter() {
-        println!("  Hob1 data: {:?}", hob);
+        println!("  Hob1 data: {hob:?}");
     }
 
     // (2) Show off that we can have optional HOBs

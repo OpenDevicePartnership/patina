@@ -104,10 +104,10 @@ fn benchmark_delete_function(c: &mut Criterion) {
                         Ok(_) => {}
                         Err(_) => {
                             std::println!("{}", nums.len());
-                            std::println!("{:?}", nums);
+                            std::println!("{nums:?}");
                             std::println!("{}", nums_shuffled.len());
-                            std::println!("{:?}", nums_shuffled);
-                            panic!("lol")
+                            std::println!("{nums_shuffled:?}");
+                            panic!("Failed to delete {i}");
                         }
                     }
                 }

@@ -621,7 +621,7 @@ impl PageAllocation {
         //         the memory is safe to free.
         unsafe {
             if self.memory_manager.free_pages(address, self.page_count).is_err() {
-                log::error!("Failed to free page allocation at {:x}!", address);
+                log::error!("Failed to free page allocation at {address:x}!");
                 debug_assert!(false, "Failed to free page allocation!");
             }
         }
@@ -675,7 +675,7 @@ unsafe impl Allocator for PageFree {
         //         into a smart pointer. The smart pointers themselves will ensure
         //         that the memory is safe to free.
         if unsafe { self.memory_manager.free_pages(address, self.page_count).is_err() } {
-            log::error!("Failed to free page allocation at {:x}!", address);
+            log::error!("Failed to free page allocation at {address:x}!");
             debug_assert!(false, "Failed to free page allocation!");
         }
     }
@@ -1083,9 +1083,9 @@ mod tests {
         let page = mm.allocate_pages(1, AllocationOptions::new()).unwrap();
         let address = page.blob.as_ptr() as usize;
 
-        let display = format!("{}", page);
+        let display = format!("{page}");
         let _ = page.into_raw_ptr::<u8>(); // Consume the pa to avoid the debug_assert in drop.
-        let expected = format!("PageAllocation {{ address: 0x{:x}, page_count: 1 }}", address);
+        let expected = format!("PageAllocation {{ address: 0x{address:x}, page_count: 1 }}");
 
         assert_eq!(display, expected);
     }
@@ -1109,7 +1109,7 @@ mod tests {
 
         let page = mm
             .allocate_pages(1, AllocationOptions::default())
-            .unwrap_or_else(|e| panic!("Failed to allocate pages: {:?}", e));
+            .unwrap_or_else(|e| panic!("Failed to allocate pages: {e:?}"));
 
         assert!(
             page.into_box([42_u8; UEFI_PAGE_SIZE + 1]).is_none(),
@@ -1123,7 +1123,7 @@ mod tests {
 
         let page = mm
             .allocate_pages(1, AllocationOptions::default())
-            .unwrap_or_else(|e| panic!("Failed to allocate pages: {:?}", e));
+            .unwrap_or_else(|e| panic!("Failed to allocate pages: {e:?}"));
 
         assert!(
             page.leak_as([42_u8; UEFI_PAGE_SIZE + 1]).is_none(),
@@ -1223,7 +1223,7 @@ mod tests {
         // check that all bytes are zeroed
         let a = pa.into_raw_ptr::<u8>().unwrap();
         for i in 0..(UEFI_PAGE_SIZE * 10) {
-            assert_eq!(unsafe { *a.add(i) }, 0, "Byte at index {} is not zeroed", i);
+            assert_eq!(unsafe { *a.add(i) }, 0, "Byte at index {i} is not zeroed");
         }
     }
 
@@ -1233,7 +1233,7 @@ mod tests {
 
         let pa = mm.allocate_pages(10, AllocationOptions::default()).expect("Should not fail for test.");
         let slice: *mut [u64] = pa.into_raw_slice();
-        assert_eq!(unsafe { (*slice).len() }, (UEFI_PAGE_SIZE * 10) / size_of::<u64>());
+        assert_eq!(slice.len(), (UEFI_PAGE_SIZE * 10) / size_of::<u64>());
 
         #[repr(C, packed(1))]
         struct TestWeirdSized {
@@ -1248,7 +1248,7 @@ mod tests {
 
         let pa = mm.allocate_pages(10, AllocationOptions::default()).expect("Should not fail for test.");
         let slice: *mut [TestWeirdSized] = pa.into_raw_slice();
-        assert_eq!(unsafe { (*slice).len() }, (UEFI_PAGE_SIZE * 10) / size_of::<TestWeirdSized>());
+        assert_eq!(slice.len(), (UEFI_PAGE_SIZE * 10) / size_of::<TestWeirdSized>());
     }
 
     #[test]
@@ -1308,7 +1308,7 @@ mod tests {
 
         let pa = mm.allocate_pages(1, AllocationOptions::default()).expect("Should not fail for test.");
         let slice = pa.into_raw_slice::<[u8; UEFI_PAGE_SIZE * 2]>();
-        assert_eq!(unsafe { (*slice).len() }, 0);
+        assert_eq!(slice.len(), 0);
     }
 
     #[test]
