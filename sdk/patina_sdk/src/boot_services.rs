@@ -154,7 +154,6 @@ impl Debug for StandardBootServices {
 }
 
 /// Functions that are available *before* a successful call to EFI_BOOT_SERVICES.ExitBootServices().
-
 #[cfg_attr(any(test, feature = "mockall"), automock)]
 #[allow(clippy::needless_lifetimes)] //https://github.com/rust-lang/rust-clippy/issues/6622
 pub trait BootServices {
