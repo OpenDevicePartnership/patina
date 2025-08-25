@@ -6,12 +6,16 @@
 //! ## Examples
 //!
 //! ``` rust,no_run
-//! use patina_sdk::error::EfiError;
+//! # use patina_sdk::component::prelude::*;
 //! # fn example_component() -> patina_sdk::error::Result<()> { Ok(()) }
+//! # #[derive(Default, IntoService)]
+//! # #[service(ExampleService)]
+//! # struct ExampleService;
 //! # let physical_hob_list = core::ptr::null();
 //! patina_dxe_core::Core::default()
 //!   .with_section_extractor(patina_ffs_extractors::NullSectionProcessor)
 //!   .init_memory(physical_hob_list)
+//!   .with_service(ExampleService::default())
 //!   .with_component(example_component)
 //!   .start()
 //!   .unwrap();
@@ -75,7 +79,7 @@ use patina_ffs::section;
 use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
 use patina_sdk::{
     boot_services::StandardBootServices,
-    component::{Component, IntoComponent, Storage},
+    component::{Component, IntoComponent, Storage, service::IntoService},
     error::{self, Result},
     runtime_services::StandardRuntimeServices,
 };
@@ -163,12 +167,16 @@ pub struct NoAlloc;
 /// ## Examples
 ///
 /// ``` rust,no_run
-/// use patina_sdk::error::EfiError;
+/// # use patina_sdk::component::prelude::*;
 /// # fn example_component() -> patina_sdk::error::Result<()> { Ok(()) }
+/// # #[derive(Default, IntoService)]
+/// # #[service(ExampleService)]
+/// # struct ExampleService;
 /// # let physical_hob_list = core::ptr::null();
 /// patina_dxe_core::Core::default()
 ///   .with_section_extractor(patina_ffs_extractors::NullSectionProcessor)
 ///   .init_memory(physical_hob_list)
+///   .with_service(ExampleService::default())
 ///   .with_component(example_component)
 ///   .start()
 ///   .unwrap();
@@ -277,6 +285,13 @@ impl<SectionExtractor> Core<SectionExtractor, Alloc>
 where
     SectionExtractor: section::SectionExtractor + Default + Copy + 'static,
 {
+    /// Directly registers an instantiated service with the core, making it available immediately.
+    #[inline(always)]
+    pub fn with_service(mut self, service: impl IntoService + 'static) -> Self {
+        self.storage.add_service(service);
+        self
+    }
+
     /// Registers a component with the core, that will be dispatched during the driver execution phase.
     #[inline(always)]
     pub fn with_component<I>(mut self, component: impl IntoComponent<I>) -> Self {
