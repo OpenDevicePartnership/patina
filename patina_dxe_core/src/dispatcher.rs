@@ -469,13 +469,13 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
 pub fn core_schedule(handle: efi::Handle, file: &efi::Guid) -> Result<(), EfiError> {
     let mut dispatcher = DISPATCHER_CONTEXT.lock();
     for driver in dispatcher.pending_drivers.iter_mut() {
-        if driver.firmware_volume_handle == handle && OrdGuid(driver.file_name) == OrdGuid(*file) {
-            if let Some(depex) = &mut driver.depex {
-                if depex.is_sor() {
-                    depex.schedule();
-                    return Ok(());
-                }
-            }
+        if driver.firmware_volume_handle == handle
+            && OrdGuid(driver.file_name) == OrdGuid(*file)
+            && let Some(depex) = &mut driver.depex
+            && depex.is_sor()
+        {
+            depex.schedule();
+            return Ok(());
         }
     }
     Err(EfiError::NotFound)

@@ -1013,12 +1013,11 @@ impl GCD {
         let mut current = blocks.first_idx();
         while let Some(idx) = current {
             let mb = blocks.get_with_idx(idx).expect("idx is valid from next_idx");
-            if let MemoryBlock::Unallocated(descriptor) = mb {
-                if descriptor.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo
-                    || descriptor.memory_type == dxe_services::GcdMemoryType::Reserved
-                {
-                    buffer.push(*descriptor);
-                }
+            if let MemoryBlock::Unallocated(descriptor) = mb
+                && (descriptor.memory_type == dxe_services::GcdMemoryType::MemoryMappedIo
+                    || descriptor.memory_type == dxe_services::GcdMemoryType::Reserved)
+            {
+                buffer.push(*descriptor);
             }
             current = blocks.next_idx(idx);
         }
@@ -2126,15 +2125,14 @@ impl SpinLockedGcd {
 
         // make sure we didn't map page 0 if it was reserved or MMIO, we are using this for null pointer detection
         // only do this if page 0 actually exists
-        if let Ok(descriptor) = self.get_memory_descriptor_for_address(0) {
-            if descriptor.memory_type != GcdMemoryType::NonExistent {
-                if let Err(err) = self.set_memory_space_attributes(0, UEFI_PAGE_SIZE, efi::MEMORY_RP) {
-                    // if we fail to set these attributes we can continue to boot, but we will not be able to detect null
-                    // pointer dereferences.
-                    log::error!("Failed to unmap page 0, which is reserved for null pointer detection. Error: {err:?}");
-                    debug_assert!(false);
-                }
-            }
+        if let Ok(descriptor) = self.get_memory_descriptor_for_address(0)
+            && descriptor.memory_type != GcdMemoryType::NonExistent
+            && let Err(err) = self.set_memory_space_attributes(0, UEFI_PAGE_SIZE, efi::MEMORY_RP)
+        {
+            // if we fail to set these attributes we can continue to boot, but we will not be able to detect null
+            // pointer dereferences.
+            log::error!("Failed to unmap page 0, which is reserved for null pointer detection. Error: {err:?}");
+            debug_assert!(false);
         }
 
         self.page_table.lock().as_mut().unwrap().install_page_table().expect("Failed to install the page table");
@@ -2158,10 +2156,10 @@ impl SpinLockedGcd {
         capabilities: u64,
     ) -> Result<usize, EfiError> {
         let result = unsafe { self.memory.lock().add_memory_space(memory_type, base_address, len, capabilities) };
-        if result.is_ok() {
-            if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::AddMemorySpace);
-            }
+        if result.is_ok()
+            && let Some(callback) = self.memory_change_callback
+        {
+            callback(MapChangeType::AddMemorySpace);
         }
         result
     }
@@ -2319,10 +2317,10 @@ impl SpinLockedGcd {
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.3
     pub fn free_memory_space_preserving_ownership(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
         let result = self.memory.lock().free_memory_space_preserving_ownership(base_address, len);
-        if result.is_ok() {
-            if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::FreeMemorySpace);
-            }
+        if result.is_ok()
+            && let Some(callback) = self.memory_change_callback
+        {
+            callback(MapChangeType::FreeMemorySpace);
         }
         result
     }
@@ -2415,10 +2413,10 @@ impl SpinLockedGcd {
         capabilities: u64,
     ) -> Result<(), EfiError> {
         let result = self.memory.lock().set_memory_space_capabilities(base_address, len, capabilities);
-        if result.is_ok() {
-            if let Some(callback) = self.memory_change_callback {
-                callback(MapChangeType::SetMemoryCapabilities);
-            }
+        if result.is_ok()
+            && let Some(callback) = self.memory_change_callback
+        {
+            callback(MapChangeType::SetMemoryCapabilities);
         }
         result
     }
@@ -2498,14 +2496,13 @@ impl SpinLockedGcd {
         // always map page 0 if it exists in this system, as grub will attempt to read it for legacy boot structures
         // map it WB by default, because 0 is being used as the null page, it may not have gotten cache attributes
         // populated
-        if let Ok(descriptor) = self.get_memory_descriptor_for_address(0) {
+        if let Ok(descriptor) = self.get_memory_descriptor_for_address(0)
             // set_memory_space_attributes will set both the GCD and paging attributes
-            if descriptor.memory_type != dxe_services::GcdMemoryType::NonExistent {
-                if let Err(e) = self.set_memory_space_attributes(0, UEFI_PAGE_SIZE, efi::MEMORY_WB) {
-                    log::error!("Failed to map page 0 for compat mode. Status: {e:#x?}");
-                    debug_assert!(false);
-                }
-            }
+            && descriptor.memory_type != dxe_services::GcdMemoryType::NonExistent
+            && let Err(e) = self.set_memory_space_attributes(0, UEFI_PAGE_SIZE, efi::MEMORY_WB)
+        {
+            log::error!("Failed to map page 0 for compat mode. Status: {e:#x?}");
+            debug_assert!(false);
         }
 
         // map legacy region if system mem

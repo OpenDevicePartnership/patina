@@ -1065,7 +1065,7 @@ impl BootServices for StandardBootServices {
         }
     }
 
-    fn get_memory_map(&self) -> Result<MemoryMap<Self>, (efi::Status, usize)> {
+    fn get_memory_map(&self) -> Result<MemoryMap<'_, Self>, (efi::Status, usize)> {
         let get_memory_map = efi_boot_services_fn!(self.efi_boot_services(), get_memory_map);
 
         let mut memory_map_size = 0;
@@ -1190,7 +1190,7 @@ impl BootServices for StandardBootServices {
     fn locate_handle(
         &self,
         search_type: HandleSearchType,
-    ) -> Result<BootServicesBox<[efi::Handle], Self>, efi::Status> {
+    ) -> Result<BootServicesBox<'_, [efi::Handle], Self>, efi::Status> {
         let locate_handle = efi_boot_services_fn!(self.efi_boot_services(), locate_handle);
 
         let protocol = match search_type {
@@ -1298,7 +1298,7 @@ impl BootServices for StandardBootServices {
         &self,
         handle: efi::Handle,
         protocol: &efi::Guid,
-    ) -> Result<BootServicesBox<[efi::OpenProtocolInformationEntry], Self>, efi::Status>
+    ) -> Result<BootServicesBox<'_, [efi::OpenProtocolInformationEntry], Self>, efi::Status>
     where
         Self: Sized,
     {
@@ -1358,7 +1358,7 @@ impl BootServices for StandardBootServices {
     fn protocols_per_handle(
         &self,
         handle: efi::Handle,
-    ) -> Result<BootServicesBox<[&'static efi::Guid], Self>, efi::Status> {
+    ) -> Result<BootServicesBox<'_, [&'static efi::Guid], Self>, efi::Status> {
         let mut protocol_buffer = ptr::null_mut();
         let mut protocol_buffer_count = 0;
         match efi_boot_services_fn!(self.efi_boot_services(), protocols_per_handle)(
@@ -1376,7 +1376,7 @@ impl BootServices for StandardBootServices {
     fn locate_handle_buffer(
         &self,
         search_type: HandleSearchType,
-    ) -> Result<BootServicesBox<[efi::Handle], Self>, efi::Status>
+    ) -> Result<BootServicesBox<'_, [efi::Handle], Self>, efi::Status>
     where
         Self: Sized,
     {
@@ -1444,7 +1444,10 @@ impl BootServices for StandardBootServices {
         }
     }
 
-    fn start_image(&self, image_handle: efi::Handle) -> Result<(), (efi::Status, Option<BootServicesBox<[u8], Self>>)> {
+    fn start_image(
+        &self,
+        image_handle: efi::Handle,
+    ) -> Result<(), (efi::Status, Option<BootServicesBox<'_, [u8], Self>>)> {
         let mut exit_data_size = MaybeUninit::uninit();
         let mut exit_data = MaybeUninit::uninit();
         match efi_boot_services_fn!(self.efi_boot_services(), start_image)(
@@ -1699,7 +1702,7 @@ mod tests {
         ) -> efi::Status {
             assert_eq!(efi::EVT_RUNTIME | efi::EVT_NOTIFY_SIGNAL, event_type);
             assert_eq!(efi::TPL_APPLICATION, notify_tpl);
-            assert_eq!(None, notify_function);
+            assert!(notify_function.is_none());
             assert_eq!(ptr::null_mut(), notify_context);
             assert_ne!(ptr::null_mut(), event);
             efi::Status::SUCCESS
@@ -1776,7 +1779,7 @@ mod tests {
         ) -> efi::Status {
             assert_eq!(efi::EVT_RUNTIME | efi::EVT_NOTIFY_SIGNAL, event_type);
             assert_eq!(efi::TPL_APPLICATION, notify_tpl);
-            assert_eq!(None, notify_function);
+            assert!(notify_function.is_none());
             assert_eq!(ptr::null(), notify_context);
             assert_eq!(ptr::addr_of!(GUID), event_group);
             assert_ne!(ptr::null_mut(), event);

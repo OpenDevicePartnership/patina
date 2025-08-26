@@ -56,36 +56,36 @@ pub const BROTLI_SECTION_GUID: efi::Guid =
 pub struct BrotliSectionExtractor;
 impl SectionExtractor for BrotliSectionExtractor {
     fn extract(&self, section: &mu_pi::fw_fs::Section) -> Result<Box<[u8]>, efi::Status> {
-        if let SectionMetaData::GuidDefined(guid_header, _) = section.meta_data() {
-            if guid_header.section_definition_guid == BROTLI_SECTION_GUID {
-                let data = section.section_data();
-                let out_size = u64::from_le_bytes(data[0..8].try_into().unwrap());
-                let _scratch_size = u64::from_le_bytes(data[8..16].try_into().unwrap());
+        if let SectionMetaData::GuidDefined(guid_header, _) = section.meta_data()
+            && guid_header.section_definition_guid == BROTLI_SECTION_GUID
+        {
+            let data = section.section_data();
+            let out_size = u64::from_le_bytes(data[0..8].try_into().unwrap());
+            let _scratch_size = u64::from_le_bytes(data[8..16].try_into().unwrap());
 
-                let mut brotli_state = BrotliState::new(
-                    HeapAllocator::<u8> { default_value: 0 },
-                    HeapAllocator::<u32> { default_value: 0 },
-                    HeapAllocator::<HuffmanCode> { default_value: Default::default() },
-                );
-                let in_data = &data[16..];
-                let mut out_data = vec![0u8; out_size as usize];
-                let mut out_data_size = 0;
-                let result = BrotliDecompressStream(
-                    &mut in_data.len(),
-                    &mut 0,
-                    &data[16..],
-                    &mut out_data.len(),
-                    &mut 0,
-                    out_data.as_mut_slice(),
-                    &mut out_data_size,
-                    &mut brotli_state,
-                );
+            let mut brotli_state = BrotliState::new(
+                HeapAllocator::<u8> { default_value: 0 },
+                HeapAllocator::<u32> { default_value: 0 },
+                HeapAllocator::<HuffmanCode> { default_value: Default::default() },
+            );
+            let in_data = &data[16..];
+            let mut out_data = vec![0u8; out_size as usize];
+            let mut out_data_size = 0;
+            let result = BrotliDecompressStream(
+                &mut in_data.len(),
+                &mut 0,
+                &data[16..],
+                &mut out_data.len(),
+                &mut 0,
+                out_data.as_mut_slice(),
+                &mut out_data_size,
+                &mut brotli_state,
+            );
 
-                if matches!(result, BrotliResult::ResultSuccess) {
-                    return Ok(out_data.into_boxed_slice());
-                } else {
-                    return Err(efi::Status::VOLUME_CORRUPTED);
-                }
+            if matches!(result, BrotliResult::ResultSuccess) {
+                return Ok(out_data.into_boxed_slice());
+            } else {
+                return Err(efi::Status::VOLUME_CORRUPTED);
             }
         }
         Ok(Box::new([0u8; 0]))

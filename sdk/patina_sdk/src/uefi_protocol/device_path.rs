@@ -337,12 +337,11 @@ impl Display for DevicePath {
         while let Some(node) = nodes.next() {
             f.write_fmt(format_args!("{}", &node))?;
 
-            if let Some(next) = nodes.peek() {
-                if node.header().r#type != DevicePathType::End as u8
-                    && next.header().r#type != DevicePathType::End as u8
-                {
-                    f.write_char('/')?;
-                }
+            if let Some(next) = nodes.peek()
+                && node.header().r#type != DevicePathType::End as u8
+                && next.header().r#type != DevicePathType::End as u8
+            {
+                f.write_char('/')?;
             };
         }
 

@@ -87,7 +87,7 @@ impl MemoryBlock {
         }
     }
 
-    pub fn split(&mut self, base_address: usize, len: usize) -> Result<MemoryBlockSplit, Error> {
+    pub fn split(&mut self, base_address: usize, len: usize) -> Result<MemoryBlockSplit<'_>, Error> {
         let start = base_address;
         let end = base_address + len;
 
@@ -141,7 +141,7 @@ impl MemoryBlock {
         base_address: usize,
         len: usize,
         transition: StateTransition,
-    ) -> Result<MemoryBlockSplit, Error> {
+    ) -> Result<MemoryBlockSplit<'_>, Error> {
         let mut split = self.split(base_address, len)?;
 
         match &mut split {

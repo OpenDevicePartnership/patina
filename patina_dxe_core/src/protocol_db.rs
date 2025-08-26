@@ -349,11 +349,11 @@ impl ProtocolDb {
             return Err(EfiError::AlreadyStarted);
         }
 
-        if !instance.opened_by_exclusive {
-            if let Some(exact_match) = exact_match {
-                exact_match.open_count += 1;
-                return Ok(());
-            }
+        if !instance.opened_by_exclusive
+            && let Some(exact_match) = exact_match
+        {
+            exact_match.open_count += 1;
+            return Ok(());
         }
 
         const BY_DRIVER_EXCLUSIVE: u32 = efi::OPEN_PROTOCOL_BY_DRIVER | efi::OPEN_PROTOCOL_EXCLUSIVE;
@@ -495,10 +495,10 @@ impl ProtocolDb {
 
     fn next_handle_for_registration(&mut self, registration: *mut c_void) -> Option<efi::Handle> {
         for (_, v) in self.notifications.iter_mut() {
-            if let Some(index) = v.iter().position(|notify| notify.registration == registration) {
-                if let Some(handle) = v[index].fresh_handles.pop_first() {
-                    return Some(handle);
-                }
+            if let Some(index) = v.iter().position(|notify| notify.registration == registration)
+                && let Some(handle) = v[index].fresh_handles.pop_first()
+            {
+                return Some(handle);
             }
         }
         None
@@ -573,7 +573,7 @@ impl SpinLockedProtocolDb {
         inner.next_registration = 1;
     }
 
-    fn lock(&self) -> tpl_lock::TplGuard<ProtocolDb> {
+    fn lock(&self) -> tpl_lock::TplGuard<'_, ProtocolDb> {
         self.inner.lock()
     }
 

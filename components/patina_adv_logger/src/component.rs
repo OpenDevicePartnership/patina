@@ -68,17 +68,17 @@ where
             })?;
         let hob_list = Hob::Handoff(hob_list_info);
         for hob in &hob_list {
-            if let Hob::GuidHob(guid_hob, data) = hob {
-                if guid_hob.name == memory_log::ADV_LOGGER_HOB_GUID {
-                    // SAFETY: The HOB will have a address of the log info
-                    // immediately following the HOB header.
-                    unsafe {
-                        let address: *const efi::PhysicalAddress = ptr::from_ref(data) as *const efi::PhysicalAddress;
-                        let log_info_addr = (*address) as efi::PhysicalAddress;
-                        self.adv_logger.set_log_info_address(log_info_addr);
-                    };
-                    return Ok(());
-                }
+            if let Hob::GuidHob(guid_hob, data) = hob
+                && guid_hob.name == memory_log::ADV_LOGGER_HOB_GUID
+            {
+                // SAFETY: The HOB will have a address of the log info
+                // immediately following the HOB header.
+                unsafe {
+                    let address: *const efi::PhysicalAddress = ptr::from_ref(data) as *const efi::PhysicalAddress;
+                    let log_info_addr = (*address) as efi::PhysicalAddress;
+                    self.adv_logger.set_log_info_address(log_info_addr);
+                };
+                return Ok(());
             }
         }
 

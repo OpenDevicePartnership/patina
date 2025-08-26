@@ -147,7 +147,7 @@ impl PerformanceRecordBuffer {
     }
 
     /// Return a performance record iterator.
-    pub fn iter(&self) -> Iter {
+    pub fn iter(&self) -> Iter<'_> {
         Iter::new(self.buffer())
     }
 

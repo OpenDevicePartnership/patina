@@ -283,25 +283,24 @@ impl PrivateImageData {
 
 impl Drop for PrivateImageData {
     fn drop(&mut self) {
-        if !self.image_buffer.is_null() {
-            if let Err(status) = core_free_pages(self.image_base_page, self.image_num_pages) {
-                log::error!(
-                    "core_free_pages returned error {:#x?} for image buffer at {:#x} for num_pages {:#x}",
-                    status,
-                    self.image_base_page,
-                    self.image_num_pages
-                );
-            }
+        if !self.image_buffer.is_null()
+            && let Err(status) = core_free_pages(self.image_base_page, self.image_num_pages)
+        {
+            log::error!(
+                "core_free_pages returned error {:#x?} for image buffer at {:#x} for num_pages {:#x}",
+                status,
+                self.image_base_page,
+                self.image_num_pages
+            );
         }
 
         if let (Some(resource_addr), Some(num_pages)) =
             (self.hii_resource_section_base, self.hii_resource_section_num_pages)
+            && let Err(status) = core_free_pages(resource_addr, num_pages)
         {
-            if let Err(status) = core_free_pages(resource_addr, num_pages) {
-                log::error!(
-                    "core_free_pages returned error {status:#x?} for HII resource section at {resource_addr:#x} for num_pages {num_pages:#x}",
-                );
-            }
+            log::error!(
+                "core_free_pages returned error {status:#x?} for HII resource section at {resource_addr:#x} for num_pages {num_pages:#x}",
+            );
         }
     }
 }
@@ -773,12 +772,11 @@ fn get_buffer_by_file_path(
         return Ok((buffer, false, device_handle, 0));
     }
 
-    if !boot_policy {
-        if let Ok((buffer, device_handle)) =
+    if !boot_policy
+        && let Ok((buffer, device_handle)) =
             get_file_buffer_from_load_protocol(efi::protocols::load_file2::PROTOCOL_GUID, false, file_path)
-        {
-            return Ok((buffer, false, device_handle, 0));
-        }
+    {
+        return Ok((buffer, false, device_handle, 0));
     }
 
     if let Ok((buffer, device_handle)) =
@@ -1022,13 +1020,12 @@ pub fn core_load_image(
         }
     }
 
-    if let Some(path) = fixed_file_path {
-        if !path.is_null() {
-            image_info.file_path = Box::into_raw(
-                copy_device_path_to_boxed_slice(path)
-                    .map_err(|status| EfiError::status_to_result(status).unwrap_err())?,
-            ) as *mut efi::protocols::device_path::Protocol;
-        }
+    if let Some(path) = fixed_file_path
+        && !path.is_null()
+    {
+        image_info.file_path = Box::into_raw(
+            copy_device_path_to_boxed_slice(path).map_err(|status| EfiError::status_to_result(status).unwrap_err())?,
+        ) as *mut efi::protocols::device_path::Protocol;
     }
 
     let mut private_info = core_load_pe_image(image_to_load.as_ref(), image_info)
@@ -1170,12 +1167,12 @@ extern "efiapi" fn start_image(
     // retrieve any exit data that was provided by the entry point.
     if !exit_data_size.is_null() && !exit_data.is_null() {
         let private_data = PRIVATE_IMAGE_DATA.lock();
-        if let Some(image_data) = private_data.private_image_data.get(&image_handle) {
-            if let Some(image_exit_data) = image_data.exit_data {
-                unsafe {
-                    exit_data_size.write(image_exit_data.0);
-                    exit_data.write(image_exit_data.1);
-                }
+        if let Some(image_data) = private_data.private_image_data.get(&image_handle)
+            && let Some(image_exit_data) = image_data.exit_data
+        {
+            unsafe {
+                exit_data_size.write(image_exit_data.0);
+                exit_data.write(image_exit_data.1);
             }
         }
     }
@@ -1404,10 +1401,11 @@ extern "efiapi" fn exit(
 
     // save the exit data, if present, into the private_image_data for this
     // image for start_image to retrieve and return.
-    if (exit_data_size != 0) && !exit_data.is_null() {
-        if let Some(image_data) = private_data.private_image_data.get_mut(&image_handle) {
-            image_data.exit_data = Some((exit_data_size, exit_data));
-        }
+    if exit_data_size != 0
+        && !exit_data.is_null()
+        && let Some(image_data) = private_data.private_image_data.get_mut(&image_handle)
+    {
+        image_data.exit_data = Some((exit_data_size, exit_data));
     }
 
     // retrieve the yielder that was saved in the start_image entry point
