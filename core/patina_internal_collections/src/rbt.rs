@@ -192,6 +192,7 @@ where
     /// The caller must ensure that the mutable reference is not used to modify any value that
     /// affects the value of the key.
     ///
+    #[allow(clippy::mut_from_ref)]
     pub unsafe fn get_mut(&self, key: &D::Key) -> Option<&mut D> {
         match self.get_node(key) {
             Some(node) => Some(unsafe { &mut (*node.as_mut_ptr()).data }),
