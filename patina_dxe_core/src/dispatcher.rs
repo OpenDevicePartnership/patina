@@ -264,7 +264,7 @@ fn dispatch() -> Result<bool, EfiError> {
 
             if depex_satisfied && candidate.evaluate_auth().is_ok() {
                 for section in candidate.fv_sections {
-                    let fv_data = section.try_content_into_boxed_slice()?;
+                    let fv_data = Box::from(section.try_content_as_slice()?);
                     dispatcher.fv_section_data.push(fv_data);
                     let data_ptr =
                         dispatcher.fv_section_data.last().expect("freshly pushed fv section data must be valid");
