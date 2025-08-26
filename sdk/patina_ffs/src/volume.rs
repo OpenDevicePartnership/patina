@@ -13,9 +13,9 @@ use mu_pi::fw_fs::{
 };
 
 use crate::{
+    FirmwareFileSystemError,
     file::{File, FileRef},
     section::{self, Section, SectionComposer, SectionExtractor},
-    FirmwareFileSystemError,
 };
 
 pub struct VolumeRef<'a> {
@@ -574,9 +574,9 @@ impl TryFrom<(&VolumeRef<'_>, &dyn SectionExtractor)> for Volume {
 
 #[cfg(test)]
 mod test {
-    use core::{iter, mem, sync::atomic::AtomicBool};
+    use core::{mem, sync::atomic::AtomicBool};
     use log::{self, Level, LevelFilter, Metadata, Record};
-    use lzma_rs::{lzma_compress_with_options, lzma_decompress};
+    use lzma_rs::lzma_decompress;
     use mu_pi::fw_fs::{self, ffs, fv};
     use r_efi::efi;
     use serde::Deserialize;
@@ -1060,11 +1060,7 @@ mod test {
 
             let mismatch = &original_fv_bytes.iter().zip(&serialized_fv_bytes).enumerate().find_map(
                 |(offset, (expected, actual))| {
-                    if *expected != *actual {
-                        Some((offset, (*expected, *actual)))
-                    } else {
-                        None
-                    }
+                    if *expected != *actual { Some((offset, (*expected, *actual))) } else { None }
                 },
             );
 
@@ -1095,40 +1091,8 @@ mod test {
             }
         }
         impl SectionComposer for LzmaExtractorComposer {
-            fn compose(&self, section: &Section) -> Result<(SectionHeader, Vec<u8>), FirmwareFileSystemError> {
-                if let SectionHeader::GuidDefined(guid_header, _, _) = section.header() {
-                    if guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION {
-                        let mut content = Vec::new();
-                        let mut section_iter = section.sub_sections().peekable();
-                        while let Some(section) = &section_iter.next() {
-                            content.extend(section.serialize()?);
-                            if section_iter.peek().is_some() {
-                                //pad to next 4-byte aligned length, since sections start at 4-byte aligned offsets. No padding is added
-                                //after the last section.
-                                if content.len() % 4 != 0 {
-                                    let pad_length = 4 - (content.len() % 4);
-                                    //Per PI 1.8A volume 3 section 2.2.4, pad byte is always zero.
-                                    content.extend(iter::repeat(0u8).take(pad_length));
-                                }
-                            }
-                        }
-                        let mut compressed: Vec<u8> = Vec::new();
-                        let options = lzma_rs::compress::Options {
-                            unpacked_size: lzma_rs::compress::UnpackedSize::WriteToHeader(Some(content.len() as u64)),
-                        };
-                        lzma_compress_with_options(&mut Cursor::new(content), &mut compressed, &options)
-                            .map_err(|_| FirmwareFileSystemError::ComposeFailed)?;
-
-                        let mut header = section.header().clone();
-                        header
-                            .set_content_size(compressed.len())
-                            .map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
-
-                        log::info!("compressed header: {:x?}", header);
-                        return Ok((header, compressed));
-                    }
-                }
-                Err(FirmwareFileSystemError::Unsupported)
+            fn compose(&self, _section: &Section) -> Result<(SectionHeader, Vec<u8>), FirmwareFileSystemError> {
+                unreachable!()
             }
         }
 
@@ -1138,8 +1102,7 @@ mod test {
             serde_yaml::from_reader::<File, TargetValues>(File::open(root.join("LZMATEST_expected_values.yml"))?)?;
 
         let fv_ref = VolumeRef::new(&original_fv_bytes).map_err(stringify)?;
-        let mut fv: Volume =
-            (&fv_ref, &LzmaExtractorComposer {} as &dyn SectionExtractor).try_into().map_err(stringify)?;
+        let fv: Volume = (&fv_ref, &LzmaExtractorComposer {} as &dyn SectionExtractor).try_into().map_err(stringify)?;
         //Verify expected results for both ref and owned versions of FV.
         test_firmware_volume_ref_worker(
             &fv_ref,
@@ -1165,8 +1128,73 @@ mod test {
         if let Some((offset, (expected, actual))) = mismatch {
             panic!("mismatch in serialized buffer at offset {offset:x}. Expected {expected:x}, actual: {actual:x}");
         }
+        Ok(())
+    }
 
-        // change the compressed logo section of the logo file.
+    #[test]
+    fn test_extractor_composer_round_trip() -> Result<(), Box<dyn Error>> {
+        struct LzmaExtractorComposer {}
+
+        impl SectionExtractor for LzmaExtractorComposer {
+            fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
+                if let SectionHeader::GuidDefined(guid_header, _, _) = section.header() {
+                    if guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION {
+                        let data = section.try_content_as_slice()?;
+                        let mut decomp: Vec<u8> = Vec::new();
+                        lzma_decompress(&mut Cursor::new(data), &mut decomp)
+                            .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+                        return Ok(decomp);
+                    }
+                }
+                Err(FirmwareFileSystemError::Unsupported)
+            }
+        }
+
+        impl SectionComposer for LzmaExtractorComposer {
+            fn compose(&self, section: &Section) -> Result<(SectionHeader, Vec<u8>), FirmwareFileSystemError> {
+                if let SectionHeader::GuidDefined(guid_header, _, _) = section.header() {
+                    if guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION {
+                        let mut content = Vec::new();
+                        let mut section_iter = section.sub_sections().peekable();
+                        while let Some(section) = &section_iter.next() {
+                            content.extend(section.serialize()?);
+                            if section_iter.peek().is_some() {
+                                //pad to next 4-byte aligned length, since sections start at 4-byte aligned offsets. No padding is added
+                                //after the last section.
+                                if content.len() % 4 != 0 {
+                                    let pad_length = 4 - (content.len() % 4);
+                                    //Per PI 1.8A volume 3 section 2.2.4, pad byte is always zero.
+                                    content.extend(core::iter::repeat(0u8).take(pad_length));
+                                }
+                            }
+                        }
+                        let mut compressed: Vec<u8> = Vec::new();
+                        let options = lzma_rs::compress::Options {
+                            unpacked_size: lzma_rs::compress::UnpackedSize::WriteToHeader(Some(content.len() as u64)),
+                        };
+                        lzma_rs::lzma_compress_with_options(&mut Cursor::new(content), &mut compressed, &options)
+                            .map_err(|_| FirmwareFileSystemError::ComposeFailed)?;
+
+                        let mut header = section.header().clone();
+                        header
+                            .set_content_size(compressed.len())
+                            .map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
+
+                        return Ok((header, compressed));
+                    }
+                }
+                Err(FirmwareFileSystemError::Unsupported)
+            }
+        }
+
+        let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
+        let original_fv_bytes: Vec<u8> = fs::read(root.join("LZMATEST.Fv"))?;
+
+        let fv_ref = VolumeRef::new(&original_fv_bytes).map_err(stringify)?;
+        let mut fv: Volume =
+            (&fv_ref, &LzmaExtractorComposer {} as &dyn SectionExtractor).try_into().map_err(stringify)?;
+
+        // modify the compressed logo section of the logo file.
         let logo_file = fv.files_mut().get_mut(0).unwrap();
         let lzma_section = &mut logo_file.sections[0];
         match lzma_section.header() {
@@ -1179,53 +1207,82 @@ mod test {
         let logo_sub_section = lzma_section.sub_sections_mut().next().unwrap();
         assert_eq!(logo_sub_section.section_type(), Some(ffs::section::Type::Raw));
 
-        //store the old logo data and replace it with new data.
-        let logo_data = logo_sub_section.try_content_as_slice().unwrap().to_vec();
-        logo_sub_section.set_section_data(vec![0x04u8, 0x15, 0x19, 0x80]).unwrap();
+        let orig_logo_data = logo_sub_section.try_content_as_slice().map_err(stringify)?.to_vec();
+        logo_sub_section.set_section_data(vec![0x04u8, 0x15, 0x19, 0x80]).map_err(stringify)?;
 
-        //re-serialize the FV with the modified logo file. This should fail, since it hasn't been composed.
+        //serialize the modified FV; it should fail since it hasn't been composed.
         assert_eq!(fv.serialize(), Err(FirmwareFileSystemError::NotComposed));
 
-        //Now compose the FV, which will compress the logo file.
-        fv.compose(&LzmaExtractorComposer {}).map_err(stringify)?;
-
-        //re-serialize the FV with the modified logo file. This should succeed.
-        let _serialized_fv_bytes = fv.serialize().map_err(stringify)?;
-
-        // change the compressed logo section of the logo file back to the original data.
-        let logo_file = fv.files_mut().get_mut(0).unwrap();
-        let lzma_section = &mut logo_file.sections[0];
-        match lzma_section.header() {
-            SectionHeader::GuidDefined(header, _, _) => {
-                assert_eq!(header.section_definition_guid, fw_fs::guid::LZMA_SECTION);
-            }
-            _ => panic!("Expected LZMA section header"),
-        }
-
-        let logo_sub_section = lzma_section.sub_sections_mut().next().unwrap();
-        assert_eq!(logo_sub_section.section_type(), Some(ffs::section::Type::Raw));
-
-        //store the old logo data and replace it with new data.
-        logo_sub_section.set_section_data(logo_data).unwrap();
-
-        //Now compose the FV, which will compress the logo file.
+        //compose the FV.
         fv.compose(&LzmaExtractorComposer {}).map_err(stringify)?;
 
         //re-serialize the FV with the modified logo file. This should succeed.
         let serialized_fv_bytes = fv.serialize().map_err(stringify)?;
 
-        // the two buffers should match.
-        assert_eq!(original_fv_bytes.len(), serialized_fv_bytes.len());
+        //Create a new fv_ref/volume from the serialized bytes.
+        let serialized_fv_ref = VolumeRef::new(&serialized_fv_bytes).map_err(stringify)?;
+        let mut serialized_fv: Volume =
+            (&serialized_fv_ref, &LzmaExtractorComposer {} as &dyn SectionExtractor).try_into().map_err(stringify)?;
 
-        let mismatch =
-            original_fv_bytes.iter().zip(&serialized_fv_bytes).enumerate().find_map(|(offset, (expected, actual))| {
-                (*expected != *actual).then_some((offset, (*expected, *actual)))
-            });
+        // read the compressed logo section of the logo file and confirm it matches the test value.
+        let logo_file = serialized_fv.files_mut().get_mut(0).unwrap();
+        let lzma_section = &mut logo_file.sections[0];
+        match lzma_section.header() {
+            SectionHeader::GuidDefined(header, _, _) => {
+                assert_eq!(header.section_definition_guid, fw_fs::guid::LZMA_SECTION);
+            }
+            _ => panic!("Expected LZMA section header"),
+        }
 
-        if let Some((offset, (expected, actual))) = mismatch {
-            fs::write("c:/temp/original_fv.bin", &original_fv_bytes)?;
-            fs::write("c:/temp/serialized_fv.bin", &serialized_fv_bytes)?;
-            panic!("mismatch in serialized buffer at offset {offset:x}. Expected {expected:x}, actual: {actual:x}");
+        let logo_sub_section = lzma_section.sub_sections_mut().next().unwrap();
+        assert_eq!(logo_sub_section.section_type(), Some(ffs::section::Type::Raw));
+        assert_eq!(logo_sub_section.try_content_as_slice().map_err(stringify)?, &[0x04u8, 0x15, 0x19, 0x80]);
+
+        // now put back the original logo.
+        logo_sub_section.set_section_data(orig_logo_data).map_err(stringify)?;
+
+        //compose the FV.
+        serialized_fv.compose(&LzmaExtractorComposer {}).map_err(stringify)?;
+
+        //re-serialize the FV with the original logo file.
+        let serialized_fv_bytes = serialized_fv.serialize().map_err(stringify)?;
+
+        //unfortunately, the lzma-rs encoder isn't robust enough to encode with the expected lzma parameters,
+        //otherwise we could just just compare the original fv bytes to the serialized fv bytes directly.
+        //instead, we'll compare the contents.
+        let serialized_fv_ref = VolumeRef::new(&serialized_fv_bytes).map_err(stringify)?;
+
+        let org_files = fv_ref.files().collect::<Vec<_>>();
+        let round_trip_files = serialized_fv_ref.files().collect::<Vec<_>>();
+
+        assert_eq!(org_files.len(), round_trip_files.len());
+
+        for (org_file, round_trip_file) in Iterator::zip(org_files.into_iter(), round_trip_files.into_iter()) {
+            let org_file = org_file.map_err(stringify)?;
+            let round_trip_file = round_trip_file.map_err(stringify)?;
+            assert_eq!(org_file.name(), round_trip_file.name());
+            assert_eq!(org_file.file_type_raw(), round_trip_file.file_type_raw());
+            assert_eq!(org_file.attributes_raw(), round_trip_file.attributes_raw());
+            //assert_eq!(org_file.size(), round_trip_file.size()); //file sizes are different due to difference in LZMA compression.
+
+            let org_sections = org_file.sections().map_err(stringify)?;
+            let round_trip_sections = round_trip_file.sections().map_err(stringify)?;
+            assert_eq!(org_sections.len(), round_trip_sections.len());
+
+            for (org_section, round_trip_section) in Iterator::zip(org_sections.iter(), round_trip_sections.iter()) {
+                assert_eq!(org_section.section_type(), round_trip_section.section_type());
+                if org_section.section_type() == Some(ffs::section::Type::GuidDefined) {
+                    // the GUID-defined section content is LZMA compressed, but lzma-rs encoder doesn't support the UEFI
+                    // parameter set, so the content won't match because the compression parameters are different.
+                    // however, the sub-sections will be produced as part of the section iterator, so those will be compared.
+                    continue;
+                }
+                assert_eq!(
+                    org_section.try_content_as_slice().map_err(stringify)?,
+                    round_trip_section.try_content_as_slice().map_err(stringify)?
+                );
+            }
+            assert_eq!(org_sections.len(), round_trip_sections.len());
         }
 
         Ok(())

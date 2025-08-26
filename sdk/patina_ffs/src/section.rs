@@ -346,11 +346,7 @@ impl Section {
 
     pub fn dirty(&self) -> bool {
         if let SectionData::Encapsulation(data) = &self.data {
-            if data.extracted {
-                self.dirty || data.sub_sections.iter().any(|x| x.dirty())
-            } else {
-                self.dirty
-            }
+            if data.extracted { self.dirty || data.sub_sections.iter().any(|x| x.dirty()) } else { self.dirty }
         } else {
             self.dirty
         }
