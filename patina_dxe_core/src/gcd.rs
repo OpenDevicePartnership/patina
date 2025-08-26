@@ -54,10 +54,10 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
         }
     }
 
-    log::info!("memory_start: {:#x?}", memory_start);
+    log::info!("memory_start: {memory_start:#x?}");
     log::info!("memory_size: {:#x?}", memory_end - memory_start);
-    log::info!("free_memory_start: {:#x?}", free_memory_start);
-    log::info!("free_memory_size: {:#x?}", free_memory_size);
+    log::info!("free_memory_start: {free_memory_start:#x?}");
+    log::info!("free_memory_size: {free_memory_size:#x?}");
     log::info!("physical_hob_list: {:#x?}", physical_hob_list as u64);
 
     // make sure the PHIT is present and it was reasonable.
@@ -216,10 +216,7 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                     .flatten()
             {
                 log::info!(
-                    "Mapping memory range {:#x?} as {:?} with attributes {:#x?}",
-                    split_range,
-                    gcd_mem_type,
-                    resource_attributes
+                    "Mapping memory range {split_range:#x?} as {gcd_mem_type:?} with attributes {resource_attributes:#x?}",
                 );
                 unsafe {
                     GCD.add_memory_space(
@@ -300,9 +297,7 @@ pub(crate) fn activate_compatibility_mode() {
                         Ok((aligned_addr, aligned_len)) => (aligned_addr, aligned_len),
                         Err(_) => {
                             log::error!(
-                                "Failed to align address {:#x?} + {:#x?} to page size, compatibility mode may fail",
-                                addr,
-                                len
+                                "Failed to align address {addr:#x?} + {len:#x?} to page size, compatibility mode may fail",
                             );
                             debug_assert!(false);
 
@@ -314,9 +309,7 @@ pub(crate) fn activate_compatibility_mode() {
 
                     if GCD.set_memory_space_attributes(addr as usize, len as usize, attributes).is_err() {
                         log::error!(
-                            "Failed to set memory space attributes for range {:#x?} - {:#x?}, compatibility mode may fail",
-                            addr,
-                            len,
+                            "Failed to set memory space attributes for range {addr:#x?} - {len:#x?}, compatibility mode may fail",
                         );
                         debug_assert!(false);
                     }

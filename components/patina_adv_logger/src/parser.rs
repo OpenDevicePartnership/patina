@@ -81,7 +81,7 @@ impl<'a> Parser<'a> {
 fn get_time_str(timestamp: u64, frequency: u64) -> String {
     // If there is no frequency, return the raw timestamp.
     if frequency == 0 {
-        return format!("{}", timestamp);
+        return format!("{timestamp}");
     }
 
     // Convert the timestamp to a human-readable format
@@ -94,7 +94,7 @@ fn get_time_str(timestamp: u64, frequency: u64) -> String {
     let minutes = time_ms % 60;
     time_ms /= 60;
     let hours = time_ms % 24;
-    format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, milliseconds)
+    format!("{hours:02}:{minutes:02}:{seconds:02}.{milliseconds:03}")
 }
 
 fn phase_name(phase: u16) -> &'static str {

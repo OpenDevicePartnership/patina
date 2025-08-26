@@ -37,8 +37,8 @@ pub enum GreetingsEnum {
 // This example shows that the entry point function can be defined outside of the enum.
 fn my_function(s: GreetingsEnum) -> Result<()> {
     match s {
-        GreetingsEnum::Hello(name) => log::info!("Hello, {}!", name),
-        GreetingsEnum::Goodbye(name) => log::info!("Goodbye, {}!", name),
+        GreetingsEnum::Hello(name) => log::info!("Hello, {name}!"),
+        GreetingsEnum::Goodbye(name) => log::info!("Goodbye, {name}!"),
     }
     Ok(())
 }

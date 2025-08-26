@@ -51,6 +51,7 @@ use r_efi::{
 
 /// Functions intended to be registered as event callbacks for reporting performance measurements.
 pub mod event_callback {
+
     use super::*;
 
     /// Reports the Firmware Basic Boot Performance Table (FBPT) record buffer.
@@ -80,7 +81,7 @@ pub mod event_callback {
             return;
         };
 
-        let status = p.report_status_code(
+        let status = p.report_status_code_with_data(
             EFI_PROGRESS_CODE,
             EFI_SOFTWARE_DXE_BS_DRIVER,
             0,
@@ -88,7 +89,6 @@ pub mod event_callback {
             efi::Guid::clone(&EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE),
             fbpt_address,
         );
-
         if status.is_err() {
             log::error!("Performance: Fail to report FBPT status code.");
         }
@@ -134,15 +134,13 @@ pub mod event_callback {
             }
             Ok(SmmGetRecordSize { return_status, .. }) => {
                 log::error!(
-                    "Performance: Asking for the smm perf records size result in an error with return status of: {:?}",
-                    return_status
+                    "Performance: Asking for the smm perf records size result in an error with return status of: {return_status:?}",
                 );
                 return;
             }
             Err(status) => {
                 log::error!(
-                    "Performance: Error while trying to communicate with communicate protocol with error code: {:?}",
-                    status
+                    "Performance: Error while trying to communicate with communicate protocol with error code: {status:?}",
                 );
                 return;
             }
@@ -166,15 +164,13 @@ pub mod event_callback {
                 }
                 Ok(SmmGetRecordDataByOffset { return_status, .. }) => {
                     log::error!(
-                        "Performance: Asking for smm perf records data result in an error with return status of: {:?}",
-                        return_status
+                        "Performance: Asking for smm perf records data result in an error with return status of: {return_status:?}",
                     );
                     return;
                 }
                 Err(status) => {
                     log::error!(
-                        "Performance: Error while trying to communicate with communicate protocol with error status code: {:?}",
-                        status
+                        "Performance: Error while trying to communicate with communicate protocol with error status code: {status:?}",
                     );
                     return;
                 }
@@ -189,7 +185,7 @@ pub mod event_callback {
             n += 1;
         }
 
-        log::info!("Performance: {} smm performance records found.", n);
+        log::info!("Performance: {n} smm performance records found.");
     }
 }
 
@@ -312,7 +308,7 @@ where
         KnownPerfId::ModuleStart | KnownPerfId::ModuleEnd => {
             let module_handle = caller_identifier as efi::Handle;
             let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance: Could not find the guid for module handle: {:?}", module_handle);
+                log::error!("Performance: Could not find the guid for module handle: {module_handle:?}");
                 return Err(EfiError::InvalidParameter.into());
             };
             let record = GuidEventRecord::new(perf_id, 0, timestamp, guid);
@@ -324,7 +320,7 @@ where
             }
             let module_handle = caller_identifier as efi::Handle;
             let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance: Could not find the guid for module handle: {:?}", module_handle);
+                log::error!("Performance: Could not find the guid for module handle: {module_handle:?}");
                 return Err(EfiError::InvalidParameter.into());
             };
             let record = GuidQwordEventRecord::new(perf_id, 0, timestamp, guid, get_load_image_count() as u64);
@@ -337,7 +333,7 @@ where
         | KnownPerfId::ModuleDbStopStart => {
             let module_handle = caller_identifier as efi::Handle;
             let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance: Could not find the guid for module handle: {:?}", module_handle);
+                log::error!("Performance: Could not find the guid for module handle: {module_handle:?}");
                 return Err(EfiError::InvalidParameter.into());
             };
             let record = GuidQwordEventRecord::new(perf_id, 0, timestamp, guid, address as u64);
@@ -346,7 +342,7 @@ where
         KnownPerfId::ModuleDbStopEnd => {
             let module_handle = caller_identifier as efi::Handle;
             let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
-                log::error!("Performance Lib: Could not find the guid for module handle: {:?}", module_handle);
+                log::error!("Performance Lib: Could not find the guid for module handle: {module_handle:?}");
                 return Err(EfiError::InvalidParameter.into());
             };
             let module_name = "";
@@ -486,18 +482,17 @@ fn get_module_guid_from_handle(
         }
 
         // SAFETY: This is safe because the protocol is not mutated.
-        if let Ok(driver_binding_protocol) = unsafe {
-            boot_services.open_protocol::<efi::protocols::driver_binding::Protocol>(
-                handle,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                efi::OPEN_PROTOCOL_GET_PROTOCOL,
-            )
-        } {
-            if let Ok(loaded_image_protocol) = unsafe {
-                boot_services
+        unsafe {
+            if let Ok(driver_binding_protocol) = boot_services
+                .open_protocol::<efi::protocols::driver_binding::Protocol>(
+                    handle,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    efi::OPEN_PROTOCOL_GET_PROTOCOL,
+                )
+                && let Ok(loaded_image_protocol) = boot_services
                     .handle_protocol::<efi::protocols::loaded_image::Protocol>(driver_binding_protocol.image_handle)
-            } {
+            {
                 break 'find_loaded_image_protocol Some(loaded_image_protocol);
             }
         }
@@ -506,11 +501,12 @@ fn get_module_guid_from_handle(
 
     if let Some(loaded_image) = loaded_image_protocol {
         // SAFETY: File path is a pointer from C that is valid and of type Device Path (efi).
-        if let Some(file_path) = unsafe { loaded_image.file_path.as_ref() } {
-            if file_path.r#type == TYPE_MEDIA && file_path.sub_type == Media::SUBTYPE_PIWG_FIRMWARE_FILE {
-                // Guid is stored after the device path in memory.
-                guid = unsafe { ptr::read(loaded_image.file_path.add(1) as *const efi::Guid) }
-            }
+        if let Some(file_path) = unsafe { loaded_image.file_path.as_ref() }
+            && file_path.r#type == TYPE_MEDIA
+            && file_path.sub_type == Media::SUBTYPE_PIWG_FIRMWARE_FILE
+        {
+            // Guid is stored after the device path in memory.
+            guid = unsafe { ptr::read(loaded_image.file_path.add(1) as *const efi::Guid) }
         };
     }
 

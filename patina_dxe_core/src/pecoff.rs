@@ -187,7 +187,7 @@ impl UefiPeInfo {
             filename.drain(..index + 1);
         }
 
-        Ok(Some(format!("{}.efi", filename)))
+        Ok(Some(format!("{filename}.efi")))
     }
 }
 
@@ -559,7 +559,7 @@ mod tests {
         match load_image(&pe_info, edit_image, &mut loaded_image) {
             Err(error::Error::BufferTooShort(..)) => {}
             Ok(_) => panic!("Expected BufferTooShort error"),
-            Err(e) => panic!("Expected BufferTooShort error, got {:?}", e),
+            Err(e) => panic!("Expected BufferTooShort error, got {e:?}"),
         }
     }
 
@@ -654,7 +654,7 @@ mod tests {
         match relocate_image(&image_info, 0x04158000, &mut loaded_image[0..(reloc_addr + 1) as usize], &Vec::new()) {
             Err(error::Error::BufferTooShort(..)) => {}
             Ok(_) => panic!("Expected BufferTooShort error"),
-            Err(e) => panic!("Expected BufferTooShort error, got {:?}", e),
+            Err(e) => panic!("Expected BufferTooShort error, got {e:?}"),
         }
     }
 
@@ -733,7 +733,7 @@ mod tests {
         match load_resource_section(&image_info2, image) {
             Err(error::Error::Goblin(goblin::error::Error::Malformed(..))) => {}
             Ok(_) => panic!("Expected Malformed error"),
-            Err(e) => panic!("Expected Malformed error, got {:?}", e),
+            Err(e) => panic!("Expected Malformed error, got {e:?}"),
         }
 
         // set size_of_raw_data to a value outside the buffer, causing a buffer too short error
@@ -743,7 +743,7 @@ mod tests {
         match load_resource_section(&image_info2, image) {
             Err(error::Error::Goblin(goblin::error::Error::BufferTooShort(..))) => {}
             Ok(_) => panic!("Expected BufferTooShort error"),
-            Err(e) => panic!("Expected BufferTooShort error, got {:?}", e),
+            Err(e) => panic!("Expected BufferTooShort error, got {e:?}"),
         }
     }
 }

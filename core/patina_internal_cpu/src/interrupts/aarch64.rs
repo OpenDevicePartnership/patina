@@ -35,7 +35,7 @@ impl super::EfiSystemContextFactory for ExceptionContextAArch64 {
 impl super::EfiExceptionStackTrace for ExceptionContextAArch64 {
     fn dump_stack_trace(&self) {
         if let Err(err) = unsafe { StackTrace::dump_with(self.elr, self.sp) } {
-            log::error!("StackTrace: {}", err);
+            log::error!("StackTrace: {err}");
         }
     }
 }

@@ -57,14 +57,14 @@ extern "efiapi" fn stall(microseconds: usize) -> efi::Status {
         while ticks > u32::MAX as u128 {
             let status = (metronome.wait_for_tick)(metronome_ptr, u32::MAX);
             if status.is_error() {
-                log::warn!("metronome.wait_for_tick returned unexpected error {:#x?}", status);
+                log::warn!("metronome.wait_for_tick returned unexpected error {status:#x?}");
             }
             ticks -= u32::MAX as u128;
         }
         if ticks != 0 {
             let status = (metronome.wait_for_tick)(metronome_ptr, ticks as u32);
             if status.is_error() {
-                log::warn!("metronome.wait_for_tick returned unexpected error {:#x?}", status);
+                log::warn!("metronome.wait_for_tick returned unexpected error {status:#x?}");
             }
         }
         efi::Status::SUCCESS
@@ -110,10 +110,10 @@ extern "efiapi" fn metronome_arch_available(event: efi::Event, _context: *mut c_
         Ok(metronome_arch_ptr) => {
             METRONOME_ARCH_PTR.store(metronome_arch_ptr as *mut protocols::metronome::Protocol, Ordering::SeqCst);
             if let Err(status_err) = EVENT_DB.close_event(event) {
-                log::warn!("Could not close event for metronome_arch_available due to error {:?}", status_err);
+                log::warn!("Could not close event for metronome_arch_available due to error {status_err:?}");
             }
         }
-        Err(err) => panic!("Unable to retrieve metronome arch: {:?}", err),
+        Err(err) => panic!("Unable to retrieve metronome arch: {err:?}"),
     }
 }
 // Requires excessive Mocking for the OK case.
@@ -125,10 +125,10 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
         Ok(watchdog_arch_ptr) => {
             WATCHDOG_ARCH_PTR.store(watchdog_arch_ptr as *mut protocols::watchdog::Protocol, Ordering::SeqCst);
             if let Err(status_err) = EVENT_DB.close_event(event) {
-                log::warn!("Could not close event for watchdog_arch_available due to error {:?}", status_err);
+                log::warn!("Could not close event for watchdog_arch_available due to error {status_err:?}");
             }
         }
-        Err(err) => panic!("Unable to retrieve watchdog arch: {:?}", err),
+        Err(err) => panic!("Unable to retrieve watchdog arch: {err:?}"),
     }
 }
 
@@ -153,7 +153,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
             let timer_arch = unsafe { &*(timer_arch_ptr) };
             (timer_arch.set_timer_period)(timer_arch_ptr, 0);
         }
-        Err(err) => log::error!("Unable to locate timer arch: {:?}", err),
+        Err(err) => log::error!("Unable to locate timer arch: {err:?}"),
     };
 
     // Lock the memory space to prevent edits to the memory map after this point.
@@ -164,7 +164,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     match terminate_memory_map(map_key) {
         Ok(_) => (),
         Err(err) => {
-            log::error!("Failed to terminate memory map: {:?}", err);
+            log::error!("Failed to terminate memory map: {err:?}");
             GCD.unlock_memory_space();
             EVENT_DB.signal_group(guid::EBS_FAILED);
             return err.into();
@@ -187,7 +187,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
                 core::ptr::null(),
             );
         }
-        Err(err) => log::error!("Unable to locate status code runtime protocol: {:?}", err),
+        Err(err) => log::error!("Unable to locate status code runtime protocol: {err:?}"),
     };
 
     // Disable CPU interrupts
@@ -206,7 +206,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
             let rt_arch_protocol = unsafe { &mut *(rt_arch_ptr) };
             rt_arch_protocol.at_runtime.store(true, Ordering::SeqCst);
         }
-        Err(err) => log::error!("Unable to locate runtime architectural protocol: {:?}", err),
+        Err(err) => log::error!("Unable to locate runtime architectural protocol: {err:?}"),
     };
 
     log::info!("EBS completed successfully.");
@@ -308,12 +308,12 @@ mod tests {
             if status == efi::Status::SUCCESS {
                 let expected_crc = crc32fast::hash(&BUFFER);
                 if data_crc == expected_crc {
-                    log::debug!("CRC32 calculation successful: {:#x}", data_crc);
+                    log::debug!("CRC32 calculation successful: {data_crc:#x}");
                 } else {
-                    log::warn!("CRC32 mismatch: got {:#x}, expected {:#x}", data_crc, expected_crc);
+                    log::warn!("CRC32 mismatch: got {data_crc:#x}, expected {expected_crc:#x}");
                 }
             } else {
-                log::warn!("CRC32 calculation failed with status: {:#x?}", status);
+                log::warn!("CRC32 calculation failed with status: {status:#x?}");
             }
 
             // Test case 2: Zero data size - should return INVALID_PARAMETER
@@ -322,7 +322,7 @@ mod tests {
             if status == efi::Status::INVALID_PARAMETER {
                 log::debug!("Zero data size correctly returned INVALID_PARAMETER");
             } else {
-                log::warn!("Zero data size returned unexpected status: {:#x?}", status);
+                log::warn!("Zero data size returned unexpected status: {status:#x?}");
             }
 
             // Test case 3: Null data pointer - should return INVALID_PARAMETER
@@ -334,7 +334,7 @@ mod tests {
             if status == efi::Status::INVALID_PARAMETER {
                 log::debug!("Null data pointer correctly returned INVALID_PARAMETER");
             } else {
-                log::warn!("Null data pointer returned unexpected status: {:#x?}", status);
+                log::warn!("Null data pointer returned unexpected status: {status:#x?}");
             }
 
             // Test case 4: Null output pointer - should return INVALID_PARAMETER
@@ -346,7 +346,7 @@ mod tests {
             if status == efi::Status::INVALID_PARAMETER {
                 log::debug!("Null output pointer correctly returned INVALID_PARAMETER");
             } else {
-                log::warn!("Null output pointer returned unexpected status: {:#x?}", status);
+                log::warn!("Null output pointer returned unexpected status: {status:#x?}");
             }
         })
         .expect("Unexpected Error in test_misc_calc_crc32");
@@ -366,7 +366,7 @@ mod tests {
             if status == efi::Status::NOT_READY {
                 log::debug!("Set watchdog timer correctly returned NOT_READY (no watchdog protocol)");
             } else {
-                log::warn!("Set watchdog timer returned unexpected status: {:#x?}", status);
+                log::warn!("Set watchdog timer returned unexpected status: {status:#x?}");
             }
 
             // Test case 2: Disable watchdog timer with null data - should return NOT_READY
@@ -374,7 +374,7 @@ mod tests {
             if status == efi::Status::NOT_READY {
                 log::debug!("Disable watchdog timer correctly returned NOT_READY");
             } else {
-                log::warn!("Disable watchdog timer returned unexpected status: {:#x?}", status);
+                log::warn!("Disable watchdog timer returned unexpected status: {status:#x?}");
             }
 
             let data: [efi::Char16; 6] = [b'H' as u16, b'e' as u16, b'l' as u16, b'l' as u16, b'o' as u16, 0];
@@ -385,7 +385,7 @@ mod tests {
             if status == efi::Status::NOT_READY {
                 log::debug!("Set watchdog timer with data correctly returned NOT_READY");
             } else {
-                log::warn!("Set watchdog timer with data returned unexpected status: {:#x?}", status);
+                log::warn!("Set watchdog timer with data returned unexpected status: {status:#x?}");
             }
 
             // Test case 4: Disable the watchdog timer with non-null data - should return NOT_READY
@@ -393,7 +393,7 @@ mod tests {
             if status == efi::Status::NOT_READY {
                 log::debug!("Disable watchdog timer with data correctly returned NOT_READY");
             } else {
-                log::warn!("Disable watchdog timer with data returned unexpected status: {:#x?}", status);
+                log::warn!("Disable watchdog timer with data returned unexpected status: {status:#x?}");
             }
         })
         .expect("Unexpected Error in test_misc_watchdog_timer");
@@ -413,7 +413,7 @@ mod tests {
             if status == efi::Status::NOT_READY {
                 log::debug!("Stall function correctly returned NOT_READY (no metronome protocol)");
             } else {
-                log::warn!("Stall function returned unexpected status: {:#x?}", status);
+                log::warn!("Stall function returned unexpected status: {status:#x?}");
             }
 
             // Test case 2: Zero microseconds stall - should return NOT_READY
@@ -421,7 +421,7 @@ mod tests {
             if status == efi::Status::NOT_READY {
                 log::debug!("Zero stall correctly returned NOT_READY");
             } else {
-                log::warn!("Zero stall returned unexpected status: {:#x?}", status);
+                log::warn!("Zero stall returned unexpected status: {status:#x?}");
             }
 
             // Test case 3: Maximum stall duration - should return NOT_READY
@@ -429,7 +429,7 @@ mod tests {
             if status == efi::Status::NOT_READY {
                 log::debug!("Maximum stall correctly returned NOT_READY");
             } else {
-                log::warn!("Maximum stall returned unexpected status: {:#x?}", status);
+                log::warn!("Maximum stall returned unexpected status: {status:#x?}");
             }
         })
         .expect("Unexpected Error in test_misc_stall");

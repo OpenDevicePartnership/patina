@@ -33,7 +33,7 @@ impl super::EfiSystemContextFactory for ExceptionContextX64 {
 impl super::EfiExceptionStackTrace for ExceptionContextX64 {
     fn dump_stack_trace(&self) {
         if let Err(err) = unsafe { StackTrace::dump_with(self.rip, self.rsp) } {
-            log::error!("StackTrace: {}", err);
+            log::error!("StackTrace: {err}");
         }
     }
 }

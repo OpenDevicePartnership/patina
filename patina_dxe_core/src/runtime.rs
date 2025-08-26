@@ -252,7 +252,7 @@ pub fn init_runtime_support(rt: &mut efi::RuntimeServices) {
     rt.set_virtual_address_map = set_virtual_address_map;
 
     match core_allocate_pool(efi::RUNTIME_SERVICES_DATA, mem::size_of::<runtime::Protocol>()) {
-        Err(err) => panic!("Failed to allocate the Runtime Architecture Protocol: {:?}", err),
+        Err(err) => panic!("Failed to allocate the Runtime Architecture Protocol: {err:?}"),
         Ok(allocation) => unsafe {
             let allocation_ptr = allocation as *mut runtime::Protocol;
 

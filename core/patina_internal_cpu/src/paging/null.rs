@@ -15,6 +15,7 @@ use patina_paging::page_allocator::PageAllocator;
 use r_efi::efi;
 
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct EfiCpuPagingNull<A>
 where
     A: PageAllocator,

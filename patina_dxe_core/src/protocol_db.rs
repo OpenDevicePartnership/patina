@@ -349,11 +349,11 @@ impl ProtocolDb {
             return Err(EfiError::AlreadyStarted);
         }
 
-        if !instance.opened_by_exclusive {
-            if let Some(exact_match) = exact_match {
-                exact_match.open_count += 1;
-                return Ok(());
-            }
+        if !instance.opened_by_exclusive
+            && let Some(exact_match) = exact_match
+        {
+            exact_match.open_count += 1;
+            return Ok(());
         }
 
         const BY_DRIVER_EXCLUSIVE: u32 = efi::OPEN_PROTOCOL_BY_DRIVER | efi::OPEN_PROTOCOL_EXCLUSIVE;
@@ -372,7 +372,7 @@ impl ProtocolDb {
             | efi::OPEN_PROTOCOL_BY_HANDLE_PROTOCOL
             | efi::OPEN_PROTOCOL_GET_PROTOCOL
             | efi::OPEN_PROTOCOL_TEST_PROTOCOL => (),
-            _ => panic!("Unsupported attributes: {:#x?}", attributes), //this should have been dealt with in ProtocolUsingAgent::new().
+            _ => panic!("Unsupported attributes: {attributes:#x?}"), //this should have been dealt with in ProtocolUsingAgent::new().
         }
 
         if agent_handle.is_none() {
@@ -495,10 +495,10 @@ impl ProtocolDb {
 
     fn next_handle_for_registration(&mut self, registration: *mut c_void) -> Option<efi::Handle> {
         for (_, v) in self.notifications.iter_mut() {
-            if let Some(index) = v.iter().position(|notify| notify.registration == registration) {
-                if let Some(handle) = v[index].fresh_handles.pop_first() {
-                    return Some(handle);
-                }
+            if let Some(index) = v.iter().position(|notify| notify.registration == registration)
+                && let Some(handle) = v[index].fresh_handles.pop_first()
+            {
+                return Some(handle);
             }
         }
         None
@@ -573,7 +573,7 @@ impl SpinLockedProtocolDb {
         inner.next_registration = 1;
     }
 
-    fn lock(&self) -> tpl_lock::TplGuard<ProtocolDb> {
+    fn lock(&self) -> tpl_lock::TplGuard<'_, ProtocolDb> {
         self.inner.lock()
     }
 
@@ -1200,7 +1200,7 @@ mod tests {
     }
 
     fn test_driver_and_exclusive_protocol_usage(test_attributes: u32) {
-        println!("Testing add_protocol_usage for attributes: {:#x?}", test_attributes);
+        println!("Testing add_protocol_usage for attributes: {test_attributes:#x?}");
         static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
         let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
@@ -1309,7 +1309,7 @@ mod tests {
     }
 
     fn test_handle_get_or_test_protocol_usage(test_attributes: u32) {
-        println!("Testing add_protocol_usage for attributes: {:#x?}", test_attributes);
+        println!("Testing add_protocol_usage for attributes: {test_attributes:#x?}");
         static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
 
         let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();

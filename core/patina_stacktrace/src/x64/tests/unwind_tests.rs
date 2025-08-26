@@ -27,13 +27,13 @@ fn test_unwind_info() {
         let runtime_functions = runtime_functions.unwrap();
         println!("runtime_functions: ");
         for func in &runtime_functions {
-            println!("Function Name: {}", func);
+            println!("Function Name: {func}");
 
             let unwind_info = func.get_unwind_info().unwrap();
-            println!("unwind_info: {}", unwind_info);
+            println!("unwind_info: {unwind_info}");
 
             let rsp_offset = unwind_info.get_stack_pointer_offset().unwrap();
-            println!("rsp_offset: {} {:X}", rsp_offset, rsp_offset);
+            println!("rsp_offset: {rsp_offset} {rsp_offset:X}");
         }
     }
 

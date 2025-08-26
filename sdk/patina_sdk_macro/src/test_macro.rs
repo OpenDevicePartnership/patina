@@ -71,10 +71,10 @@ fn handle_feature_off(mut item: ItemFn) -> proc_macro2::TokenStream {
 // Returns (`should_fail`, `fail_msg`) as a token stream for placement in the expanded code
 fn parse_should_fail_attr(attr: &Attribute) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
     // CASE1: #[should_fail = "message"]
-    if let Meta::NameValue(nv) = &attr.meta {
-        if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = &nv.value {
-            return (quote! {true}, quote! {Some(#s)});
-        }
+    if let Meta::NameValue(nv) = &attr.meta
+        && let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = &nv.value
+    {
+        return (quote! {true}, quote! {Some(#s)});
     }
     // CASE2: #[should_fail]
     if let Meta::Path(_) = &attr.meta {

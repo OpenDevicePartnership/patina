@@ -343,7 +343,7 @@ impl From<DevicePathWalker> for String {
                     if i > 0 {
                         result.push(',');
                     }
-                    result.push_str(&format!("0x{:02x}", byte));
+                    result.push_str(&format!("0x{byte:02x}"));
                 }
                 result.push('/');
             }

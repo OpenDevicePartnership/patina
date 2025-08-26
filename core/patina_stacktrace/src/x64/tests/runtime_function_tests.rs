@@ -29,14 +29,14 @@ fn test_module_pe_runtime_functions() {
         let runtime_functions = runtime_functions.unwrap();
         println!("runtime_functions: ");
         for func in &runtime_functions {
-            println!("{}", func);
+            println!("{func}");
         }
 
         let rip_rva_in_func1 = 0x1080; // rip rva inside x64.dll!func1. Can be found using .fnent x64!func1
         let runtime_function = RuntimeFunction::find_function(&image, rip_rva_in_func1);
         assert!(runtime_function.is_ok());
         let runtime_function = runtime_function.unwrap();
-        println!("{}", runtime_function);
+        println!("{runtime_function}");
     }
     module.unload();
 }

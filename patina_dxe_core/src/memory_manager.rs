@@ -122,7 +122,7 @@ impl MemoryManager for CoreMemoryManager {
                 match crate::dxe_services::core_get_memory_space_descriptor(current_base as efi::PhysicalAddress) {
                     Ok(descriptor) => descriptor,
                     Err(e) => {
-                        log::error!("Memory descriptor fetching failed with error {:#x?} for {:#x}", e, current_base,);
+                        log::error!("Memory descriptor fetching failed with error {e:?} for {current_base:#x}");
                         return Err(MemoryError::InvalidAddress);
                     }
                 };
@@ -166,13 +166,13 @@ impl MemoryManager for CoreMemoryManager {
         let attributes = match dxe_services::core_get_memory_space_descriptor(base_address) {
             Ok(descriptor) => {
                 if base_address + length > descriptor.base_address + descriptor.length {
-                    log::error!("Inconsistent attributes for: base_address {:#x} length {:#x}", base_address, length);
+                    log::error!("Inconsistent attributes for: base_address {base_address:#x} length {length:#x}");
                     return Err(MemoryError::InconsistentRangeAttributes);
                 }
                 descriptor.attributes
             }
             Err(status) => {
-                log::error!("Failed to get memory descriptor for address {:#x}: {:?}", base_address, status,);
+                log::error!("Failed to get memory descriptor for address {base_address:#x}: {status:?}");
                 return Err(MemoryError::InvalidAddress);
             }
         };

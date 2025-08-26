@@ -174,7 +174,7 @@ pub(crate) fn initialize_debug_image_info_table(system_table: &mut EfiSystemTabl
 
     patina_debugger::add_monitor_command("system_table_ptr", "Prints the system table pointer", |_, out| {
         let address = DBG_SYSTEM_TABLE_POINTER_ADDRESS.load(Ordering::Relaxed);
-        let _ = write!(out, "{:x}", address);
+        let _ = write!(out, "{address:x}");
     });
 }
 
@@ -214,10 +214,10 @@ pub(crate) fn core_new_debug_image_info_entry(
 
         let mut new_vec = Vec::with_capacity(new_table_size as usize);
         new_vec.extend_from_slice(&metadata_table.slice[..old_table_size as usize]);
-        new_vec.extend(
-            core::iter::repeat(EfiDebugImageInfo { normal_image: core::ptr::null() })
-                .take((new_table_size - old_table_size) as usize),
-        );
+        new_vec.extend(core::iter::repeat_n(
+            EfiDebugImageInfo { normal_image: core::ptr::null() },
+            (new_table_size - old_table_size) as usize,
+        ));
         let new_boxed_slice = new_vec.into_boxed_slice();
         metadata_table.slice = new_boxed_slice;
 

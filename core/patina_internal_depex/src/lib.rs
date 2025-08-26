@@ -156,7 +156,7 @@ impl Depex {
         for (index, opcode) in self.expression.iter_mut().enumerate() {
             match opcode {
                 Opcode::Before(_) | Opcode::After(_) => {
-                    log::trace!("  {:#x?}", opcode);
+                    log::trace!("  {opcode:#x?}");
                     if index != 0 {
                         debug_assert!(false, "Invalid BEFORE or AFTER not at start of depex {:#x?}", self.expression);
                         return false;
@@ -182,7 +182,7 @@ impl Depex {
                     return false;
                 }
                 Opcode::Sor => {
-                    log::trace!("  {:#x?}", opcode);
+                    log::trace!("  {opcode:#x?}");
                     if index != 0 {
                         debug_assert!(false, "Invalid SOR not at start of depex.");
                         return false;
@@ -193,12 +193,12 @@ impl Depex {
                     if *present {
                         stack.push(true)
                     } else {
-                        if let Some(guid) = guid_from_uuid(guid) {
-                            if protocols.contains(&guid) {
-                                *present = true;
-                                stack.push(true);
-                                continue;
-                            }
+                        if let Some(guid) = guid_from_uuid(guid)
+                            && protocols.contains(&guid)
+                        {
+                            *present = true;
+                            stack.push(true);
+                            continue;
                         }
                         stack.push(false);
                     }
