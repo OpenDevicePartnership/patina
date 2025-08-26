@@ -63,10 +63,11 @@ impl AcpiTableProtocol {
         acpi_table_buffer_size: usize,
         table_key: *mut usize,
     ) -> efi::Status {
-        log::info!("table signature from protocol: {:#x}", unsafe {
-            (*(acpi_table_buffer as *const AcpiTableHeader)).signature
-        });
         if acpi_table_buffer.is_null() || acpi_table_buffer_size < 4 {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        if table_key.is_null() {
             return efi::Status::INVALID_PARAMETER;
         }
 
@@ -76,7 +77,7 @@ impl AcpiTableProtocol {
 
         // The size of the allocated table buffer must be large enough to store the whole table.
         let tbl_length = unsafe { (*(acpi_table_buffer as *const AcpiTableHeader)).length } as usize;
-        if tbl_length > acpi_table_buffer_size {
+        if tbl_length != acpi_table_buffer_size {
             return efi::Status::INVALID_PARAMETER;
         }
 

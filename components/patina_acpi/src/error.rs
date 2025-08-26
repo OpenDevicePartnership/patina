@@ -78,7 +78,7 @@ impl From<AcpiError> for efi::Status {
             AcpiError::InvalidSignature => efi::Status::INVALID_PARAMETER,
             AcpiError::FadtAlreadyInstalled => efi::Status::ALREADY_STARTED,
             AcpiError::InstallConfigurationTableFailed => efi::Status::UNSUPPORTED,
-            AcpiError::InvalidTableKey => efi::Status::INVALID_PARAMETER,
+            AcpiError::InvalidTableKey => efi::Status::NOT_FOUND,
             AcpiError::InvalidTableIndex => efi::Status::INVALID_PARAMETER,
             AcpiError::InvalidNotifyUnregister => efi::Status::INVALID_PARAMETER,
             AcpiError::FreeFailed => efi::Status::OUT_OF_RESOURCES,
