@@ -50,22 +50,6 @@ existing capabilities of the mu_rust_pi implementation are not.
 3. Crate produces an API for generating new FFS volumes and modifying existing volumes and serializing them back into
 PI-spec confirmant representations (new functionality)
 
-## Unresolved Questions
-
-- General approach to generation?
-
-Initial proposed approach is to have two separate sets of structures: one for fast, mostly zero-copy* read access
-against a `&[u8]` slice to be used in constrained environments (like the core dispatcher), and a second "owned" set of
-heap-allocated structures that model FFS data relationships and allow for manipulation of FFS, and have an API serialize
-the resulting FFS data into a `Vec<u8>` spec-compliant representation. The first set of structures is essentially what
-is implemented today in mu_rust_pi. The borrowed set of structures could be used to read and populate an "owned" set of
-structures for manipulation and re-serialization. More details of the initial proposed approach in the "Rust Code
-Design" section below.
-
-*"mostly" zero-copy because `Section` data is heap-allocated since section extraction will require allocations for
-extracted sections, and having all `Section` data be owned instead of having a mix of owned and borrowed data backing
-`Section` greatly simplifies the ownership model.
-
 ## Prior Art
 
 - mu_rust_pi implementation: <https://github.com/microsoft/mu_rust_pi/blob/main/src/fw_fs.rs>
@@ -96,6 +80,10 @@ implementations that make sense to put it in the core.
 
 This RFC does not contain a detailed API for the proposed changes as developing/extension of the API is part of the
 proposed work to be done if this RFC is accepted. The following section sketches out a high-level design.
+
+Draft PRs for proposed changes are here:
+[https://github.com/OpenDevicePartnership/patina/pull/706](https://github.com/OpenDevicePartnership/patina/pull/706)
+[https://github.com/microsoft/mu_rust_pi/pull/84](https://github.com/microsoft/mu_rust_pi/pull/84)
 
 ### Main Data Objects
 
