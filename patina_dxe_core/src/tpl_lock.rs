@@ -70,21 +70,21 @@ impl<T: ?Sized> TplMutex<T> {
     /// to the level specified at TplMutex creation.
     ///
     /// Safety: Lock reentrance is not supported; attempt to re-lock something already locked will panic.
-    pub fn lock(&self) -> TplGuard<T> {
+    pub fn lock(&self) -> TplGuard<'_, T> {
         self.try_lock().unwrap_or_else(|| panic!("Re-entrant locks for {:?} not permitted.", self.name))
     }
 
     /// Attempts to lock the TplMutex, and if successful, returns a guard object that can be used to access the data.
-    pub fn try_lock(&self) -> Option<TplGuard<T>> {
+    pub fn try_lock(&self) -> Option<TplGuard<'_, T>> {
         let boot_services = boot_services();
         let release_tpl = boot_services.as_ref().map(|bs| (bs.raise_tpl)(self.tpl_lock_level));
         if self.lock.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
             Some(TplGuard { release_tpl, lock: &self.lock, name: self.name, data: unsafe { &mut *self.data.get() } })
         } else {
-            if let Some(release_tpl) = release_tpl {
-                if let Some(bs) = boot_services {
-                    (bs.restore_tpl)(release_tpl);
-                }
+            if let Some(release_tpl) = release_tpl
+                && let Some(bs) = boot_services
+            {
+                (bs.restore_tpl)(release_tpl);
             }
             None
         }

@@ -482,18 +482,17 @@ fn get_module_guid_from_handle(
         }
 
         // SAFETY: This is safe because the protocol is not mutated.
-        if let Ok(driver_binding_protocol) = unsafe {
-            boot_services.open_protocol::<efi::protocols::driver_binding::Protocol>(
-                handle,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                efi::OPEN_PROTOCOL_GET_PROTOCOL,
-            )
-        } {
-            if let Ok(loaded_image_protocol) = unsafe {
-                boot_services
+        unsafe {
+            if let Ok(driver_binding_protocol) = boot_services
+                .open_protocol::<efi::protocols::driver_binding::Protocol>(
+                    handle,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    efi::OPEN_PROTOCOL_GET_PROTOCOL,
+                )
+                && let Ok(loaded_image_protocol) = boot_services
                     .handle_protocol::<efi::protocols::loaded_image::Protocol>(driver_binding_protocol.image_handle)
-            } {
+            {
                 break 'find_loaded_image_protocol Some(loaded_image_protocol);
             }
         }
@@ -502,11 +501,12 @@ fn get_module_guid_from_handle(
 
     if let Some(loaded_image) = loaded_image_protocol {
         // SAFETY: File path is a pointer from C that is valid and of type Device Path (efi).
-        if let Some(file_path) = unsafe { loaded_image.file_path.as_ref() } {
-            if file_path.r#type == TYPE_MEDIA && file_path.sub_type == Media::SUBTYPE_PIWG_FIRMWARE_FILE {
-                // Guid is stored after the device path in memory.
-                guid = unsafe { ptr::read(loaded_image.file_path.add(1) as *const efi::Guid) }
-            }
+        if let Some(file_path) = unsafe { loaded_image.file_path.as_ref() }
+            && file_path.r#type == TYPE_MEDIA
+            && file_path.sub_type == Media::SUBTYPE_PIWG_FIRMWARE_FILE
+        {
+            // Guid is stored after the device path in memory.
+            guid = unsafe { ptr::read(loaded_image.file_path.add(1) as *const efi::Guid) }
         };
     }
 

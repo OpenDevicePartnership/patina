@@ -231,10 +231,10 @@ pub fn core_install_memory_attributes_table() {
                     Ok(_) => {
                         // free the old MAT table if we have one
                         let current_ptr = MEMORY_ATTRIBUTES_TABLE.load(Ordering::Relaxed);
-                        if !current_ptr.is_null() {
-                            if let Err(err) = core_free_pool(current_ptr) {
-                                log::error!("Error freeing previous MAT pointer: {err:#X?}");
-                            }
+                        if !current_ptr.is_null()
+                            && let Err(err) = core_free_pool(current_ptr)
+                        {
+                            log::error!("Error freeing previous MAT pointer: {err:#X?}");
                         }
                         MEMORY_ATTRIBUTES_TABLE.store(void_ptr, Ordering::Relaxed);
                     }

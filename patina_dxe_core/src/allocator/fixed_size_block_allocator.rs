@@ -549,7 +549,7 @@ impl SpinLockedFixedSizeBlockAllocator {
     /// Locks the allocator
     ///
     /// This can be used to do several actions on the allocator atomically.
-    pub fn lock(&self) -> tpl_lock::TplGuard<FixedSizeBlockAllocator> {
+    pub fn lock(&self) -> tpl_lock::TplGuard<'_, FixedSizeBlockAllocator> {
         self.inner.lock()
     }
 

@@ -148,10 +148,10 @@ impl PE<'_> {
         let Ok(file_name) = core::str::from_utf8(file_name_bytes) else {
             return None;
         };
-        if let Some(file_name_with_ext) = file_name.rsplit('\\').next() {
-            if let Some((file_name, _ext)) = file_name_with_ext.rsplit_once('.') {
-                return Some(file_name);
-            }
+        if let Some(file_name_with_ext) = file_name.rsplit('\\').next()
+            && let Some((file_name, _ext)) = file_name_with_ext.rsplit_once('.')
+        {
+            return Some(file_name);
         }
 
         // log::info!("Pdb file name : {}", file_name);

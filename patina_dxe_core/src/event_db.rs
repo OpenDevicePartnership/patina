@@ -450,19 +450,18 @@ impl EventDb {
                 log::error!("Event {event:?} not found.");
                 continue;
             };
-            if current_event.event_type.is_timer() {
-                if let Some(trigger_time) = current_event.trigger_time {
-                    if trigger_time <= current_time {
-                        if let Some(period) = current_event.period {
-                            current_event.trigger_time = Some(current_time + period);
-                        } else {
-                            //no period means it's a one-shot event; another call to set_timer is required to "re-arm"
-                            current_event.trigger_time = None;
-                        }
-                        if let Err(e) = self.signal_event(event as *mut c_void) {
-                            log::error!("Error {e:?} signaling event {event:?}.");
-                        }
-                    }
+            if current_event.event_type.is_timer()
+                && let Some(trigger_time) = current_event.trigger_time
+                && trigger_time <= current_time
+            {
+                if let Some(period) = current_event.period {
+                    current_event.trigger_time = Some(current_time + period);
+                } else {
+                    //no period means it's a one-shot event; another call to set_timer is required to "re-arm"
+                    current_event.trigger_time = None;
+                }
+                if let Err(e) = self.signal_event(event as *mut c_void) {
+                    log::error!("Error {e:?} signaling event {event:?}.");
                 }
             }
         }
@@ -518,7 +517,7 @@ impl SpinLockedEventDb {
         SpinLockedEventDb { inner: tpl_lock::TplMutex::new(efi::TPL_HIGH_LEVEL, EventDb::new(), "EventLock") }
     }
 
-    fn lock(&self) -> tpl_lock::TplGuard<EventDb> {
+    fn lock(&self) -> tpl_lock::TplGuard<'_, EventDb> {
         self.inner.lock()
     }
 

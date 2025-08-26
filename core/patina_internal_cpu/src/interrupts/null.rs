@@ -14,6 +14,7 @@ use patina_sdk::error::EfiError;
 
 /// Null implementation of the EfiSystemContextFactory and EfiExceptionStackTrace traits.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ExceptionContextNull;
 
 impl super::EfiSystemContextFactory for ExceptionContextNull {

@@ -75,7 +75,7 @@ impl Target for PatinaTarget {
     type Arch = SystemArch;
     type Error = ();
 
-    fn base_ops(&mut self) -> gdbstub::target::ext::base::BaseOps<Self::Arch, Self::Error> {
+    fn base_ops(&mut self) -> gdbstub::target::ext::base::BaseOps<'_, Self::Arch, Self::Error> {
         gdbstub::target::ext::base::BaseOps::SingleThread(self)
     }
 

@@ -52,7 +52,7 @@ impl IoBlock {
         }
     }
 
-    pub fn split(&mut self, base_address: usize, len: usize) -> Result<IoBlockSplit, Error> {
+    pub fn split(&mut self, base_address: usize, len: usize) -> Result<IoBlockSplit<'_>, Error> {
         let start = base_address;
         let end = base_address + len;
 
@@ -106,7 +106,7 @@ impl IoBlock {
         base_address: usize,
         len: usize,
         transition: StateTransition,
-    ) -> Result<IoBlockSplit, Error> {
+    ) -> Result<IoBlockSplit<'_>, Error> {
         let mut split = self.split(base_address, len)?;
 
         match &mut split {

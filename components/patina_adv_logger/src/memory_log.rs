@@ -241,7 +241,7 @@ impl<'a> AdvancedLog<'a> {
         !self.header.hw_port_disabled && (level & self.header.hw_print_level != 0)
     }
 
-    pub fn iter(&self) -> AdvLogIterator {
+    pub fn iter(&self) -> AdvLogIterator<'_> {
         AdvLogIterator::new(self)
     }
 

@@ -489,15 +489,15 @@ unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::Hand
             break;
         }
         let interface: *mut c_void = unsafe { args.arg() };
-        if unsafe { *protocol } == efi::protocols::device_path::PROTOCOL_GUID {
-            if let Ok((remaining_path, handle)) = core_locate_device_path(
+        if unsafe { *protocol } == efi::protocols::device_path::PROTOCOL_GUID
+            && let Ok((remaining_path, handle)) = core_locate_device_path(
                 efi::protocols::device_path::PROTOCOL_GUID,
                 interface as *const efi::protocols::device_path::Protocol,
-            ) {
-                if PROTOCOL_DB.validate_handle(handle).is_ok() && is_device_path_end(remaining_path) {
-                    return efi::Status::ALREADY_STARTED;
-                }
-            }
+            )
+            && PROTOCOL_DB.validate_handle(handle).is_ok()
+            && is_device_path_end(remaining_path)
+        {
+            return efi::Status::ALREADY_STARTED;
         }
 
         interfaces_to_install.push((protocol, interface));

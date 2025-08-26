@@ -300,21 +300,21 @@ impl Storage {
     }
 
     /// Attempts to retrieve a config datum from the storage.
-    pub fn get_config<C: Default + 'static>(&self) -> Option<crate::component::params::Config<C>> {
+    pub fn get_config<C: Default + 'static>(&self) -> Option<crate::component::params::Config<'_, C>> {
         let id = self.config_indices.get(&TypeId::of::<C>())?;
         let untyped = self.get_raw_config(*id);
         Some(crate::component::params::Config::from(untyped))
     }
 
     /// Attempts to retrieve a mutable config datum from the storage.
-    pub fn get_config_mut<C: Default + 'static>(&mut self) -> Option<crate::component::params::ConfigMut<C>> {
+    pub fn get_config_mut<C: Default + 'static>(&mut self) -> Option<crate::component::params::ConfigMut<'_, C>> {
         let id = self.config_indices.get(&TypeId::of::<C>())?;
         let untyped = self.get_raw_config_mut(*id);
         Some(crate::component::params::ConfigMut::from(untyped))
     }
 
     /// Retrieves a config from the storage.
-    pub(crate) fn get_raw_config(&self, id: usize) -> Ref<ConfigRaw> {
+    pub(crate) fn get_raw_config(&self, id: usize) -> Ref<'_, ConfigRaw> {
         self.configs
             .get(id)
             .unwrap_or_else(|| panic!("Could not find Config value when with id [{id}] it should always exist."))
@@ -322,7 +322,7 @@ impl Storage {
     }
 
     /// Retrieves a mutable config from the storage.
-    pub(crate) fn get_raw_config_mut(&self, id: usize) -> RefMut<ConfigRaw> {
+    pub(crate) fn get_raw_config_mut(&self, id: usize) -> RefMut<'_, ConfigRaw> {
         self.configs
             .get(id)
             .unwrap_or_else(|| panic!("Could not find Config value when with id [{id}] it should always exist."))
@@ -407,7 +407,7 @@ impl Storage {
     }
 
     /// Attempts to retrieve a HOB datum from the storage.
-    pub fn get_hob<T: FromHob>(&self) -> Option<Hob<T>> {
+    pub fn get_hob<T: FromHob>(&self) -> Option<Hob<'_, T>> {
         let id = self.hob_indices.get(&TypeId::of::<T>())?;
         self.hobs.get(*id).and_then(|hob| {
             if hob.is_empty() {

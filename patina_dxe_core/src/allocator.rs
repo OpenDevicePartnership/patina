@@ -590,14 +590,13 @@ fn merge_blocks(
     current: efi::MemoryDescriptor,
 ) -> Vec<efi::MemoryDescriptor> {
     //if current can be merged with the last block of the previous blocks, merge it.
-    if let Some(descriptor) = previous_blocks.last_mut() {
-        if descriptor.r#type == current.r#type
-            && descriptor.attribute == current.attribute
-            && descriptor.physical_start + descriptor.number_of_pages * UEFI_PAGE_SIZE as u64 == current.physical_start
-        {
-            descriptor.number_of_pages += current.number_of_pages;
-            return previous_blocks;
-        }
+    if let Some(descriptor) = previous_blocks.last_mut()
+        && descriptor.r#type == current.r#type
+        && descriptor.attribute == current.attribute
+        && descriptor.physical_start + descriptor.number_of_pages * UEFI_PAGE_SIZE as u64 == current.physical_start
+    {
+        descriptor.number_of_pages += current.number_of_pages;
+        return previous_blocks;
     }
     //otherwise, just add the new block on the end of the list.
     previous_blocks.push(current);
@@ -970,15 +969,14 @@ fn process_hob_allocations(hob_list: &HobList) {
                 //corresponding resource descriptor. Check the current region in the GCD to see whether a resource
                 //descriptor of the appropriate type has been reported. If not, print a warning and skip attempting
                 //to reserve it in the GCD.
-                if let Ok(existing_desc) = GCD.get_memory_descriptor_for_address(*base_address) {
-                    if existing_desc.memory_type != dxe_services::GcdMemoryType::MemoryMappedIo
-                        || existing_desc.image_handle != INVALID_HANDLE
-                    {
-                        log::info!(
-                            "Skipping FV HOB at {base_address:#x?} of length {length:#x?}. Containing region is not MMIO."
-                        );
-                        continue;
-                    }
+                if let Ok(existing_desc) = GCD.get_memory_descriptor_for_address(*base_address)
+                    && (existing_desc.memory_type != dxe_services::GcdMemoryType::MemoryMappedIo
+                        || existing_desc.image_handle != INVALID_HANDLE)
+                {
+                    log::info!(
+                        "Skipping FV HOB at {base_address:#x?} of length {length:#x?}. Containing region is not MMIO."
+                    );
+                    continue;
                 }
 
                 //The 4K granularity rule does not apply to FV hobs, so allocate_pages cannot be used.
