@@ -36,5 +36,10 @@ mod crc32;
 #[cfg(feature = "crc32")]
 pub use crc32::Crc32SectionExtractor;
 
+#[cfg(feature = "lzma")]
+mod lzma;
+#[cfg(feature = "lzma")]
+pub use lzma::LzmaSectionExtractor;
+
 mod composite;
 pub use composite::CompositeSectionExtractor;
