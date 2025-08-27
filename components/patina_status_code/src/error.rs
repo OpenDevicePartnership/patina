@@ -1,25 +1,16 @@
 use r_efi::efi;
 
-pub enum ReportStatusCodeError {
-    MissingDataType,
-    ProtocolFailed(efi::Status),
-    ProtocolNotFound,
+pub enum RscHandlerError {
+    CallbackAlreadyRegistered,
+    EventCreationFailed(efi::Status),
 }
 
-impl From<ReportStatusCodeError> for efi::Status {
-    fn from(report_status_code_error: ReportStatusCodeError) -> Self {
+impl From<RscHandlerError> for efi::Status {
+    fn from(report_status_code_error: RscHandlerError) -> Self {
         match report_status_code_error {
-            ReportStatusCodeError::MissingDataType => efi::Status::INVALID_PARAMETER,
-            ReportStatusCodeError::ProtocolFailed(status) => status,
-            ReportStatusCodeError::ProtocolNotFound => efi::Status::NOT_FOUND,
-            _ => efi::Status::UNSUPPORTED,
+            RscHandlerError::CallbackAlreadyRegistered => efi::Status::ALREADY_STARTED,
+            RscHandlerError::EventCreationFailed(efi_status) => efi_status,
+            _ => efi::Status::INVALID_PARAMETER,
         }
     }
-}
-
-pub enum RuntimeStatusCodeError {
-    CallbackAlreadyRegistered,
-    CallbackNotRegistered,
-    InvalidCallback,
-    InvalidTpl,
 }

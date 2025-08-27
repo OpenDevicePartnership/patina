@@ -1,80 +1,79 @@
+use alloc::{boxed::Box, vec::Vec};
 use r_efi::efi;
 
 use crate::{
-    error::ReportStatusCodeError,
-    service::{
-        ReportStatusCode, ReportStatusCodeHandlerCallback, RscHandler, RuntimeStatusCode, StatusCodeData,
-        StatusCodeType, StatusCodeValue,
-    },
+    error::RscHandlerError,
+    protocol::EfiStatusCodeHeader,
+    service::{RscHandler, RscHandlerCallback, StatusCodeType, StatusCodeValue},
 };
 
 use patina_sdk::{
-    boot_services::{BootServices, StandardBootServices},
+    boot_services::{
+        BootServices, StandardBootServices,
+        event::EventType,
+        tpl::{self, Tpl},
+    },
     component::service::IntoService,
     uefi_protocol::status_code::StatusCodeRuntimeProtocol,
 };
 
-#[derive(IntoService)]
-#[service(dyn RuntimeStatusCode)]
-struct StandardRuntimeStatusCodeHandler {}
+#[derive(Clone, PartialEq, Eq)]
+struct RscHandlerCallbackEntry {
+    callback: RscHandlerCallback,
+    tpl: tpl::Tpl,
+    status_code_buffer: Vec<RscDataEntry>,
+    // Need this bc rust fn pointer comparisons aren't guaranteed
+    cb_id: usize,
+}
 
-impl RuntimeStatusCode for StandardRuntimeStatusCodeHandler {
-    fn register(&self, callback: ReportStatusCodeHandlerCallback, tpl: efi::Tpl) -> Result<(), ReportStatusCodeError> {
-        // Implementation for registering the callback
+#[derive(Clone, PartialEq, Eq)]
+struct RscDataEntry {
+    code_type: StatusCodeType,
+    value: StatusCodeValue,
+    instance: u32,
+    reserved: u32,
+    caller_id: efi::Guid,
+    data: EfiStatusCodeHeader,
+}
+
+#[derive(IntoService)]
+#[service(dyn RscHandler)]
+struct StandardRscHandler<B: BootServices + 'static> {
+    callback_list: Vec<RscHandlerCallbackEntry>,
+    boot_services: B,
+    next_id: usize, // hack for rust fn comp
+}
+
+impl<B> RscHandler for StandardRscHandler<B>
+where
+    B: BootServices,
+{
+    fn register(&mut self, callback: RscHandlerCallback, tpl: tpl::Tpl) -> Result<(), RscHandlerError> {
+        for entry in &self.callback_list {
+            if entry.callback == callback {
+                return Err(RscHandlerError::CallbackAlreadyRegistered);
+            }
+        }
+
+        self.next_id += 1;
+
+        let new_entry = RscHandlerCallbackEntry { callback, tpl, status_code_buffer: Vec::new(), cb_id: self.next_id };
+
+        if tpl <= tpl::Tpl(efi::TPL_HIGH_LEVEL) {
+            self.boot_services
+                .create_event(EventType::NOTIFY_SIGNAL, tpl, Some(rsc_hander_notification), Box::new(new_entry.clone()))
+                .map_err(|e| RscHandlerError::EventCreationFailed(e))?;
+        }
+
+        self.callback_list.push(new_entry);
+
         Ok(())
     }
 
-    fn unregister(&self, callback: ReportStatusCodeHandlerCallback) -> Result<(), ReportStatusCodeError> {
+    fn unregister(&self, callback: RscHandlerCallback) -> Result<(), RscHandlerError> {
         // Implementation for unregistering the callback
         Ok(())
     }
 }
 
-#[derive(IntoService)]
-#[service(dyn RscHandler)]
-struct StandardReportStatusCodeHandler<B: BootServices + 'static> {
-    boot_services: B,
-}
-
-impl<B> StandardReportStatusCodeHandler<B>
-where
-    B: BootServices,
-{
-    fn new(boot_services: B) -> Self {
-        StandardReportStatusCodeHandler { boot_services }
-    }
-}
-
-impl<B> RscHandler for StandardReportStatusCodeHandler<B>
-where
-    B: BootServices,
-{
-    fn report_status_code(
-        &self,
-        code_type: StatusCodeType,
-        value: StatusCodeValue,
-        instance: u32,
-        caller_id: Option<&efi::Guid>,
-        data_type: Option<efi::Guid>,
-        data: &StatusCodeData,
-    ) -> Result<(), ReportStatusCodeError> {
-        let protocol_exists = unsafe { self.boot_services.locate_protocol::<StatusCodeRuntimeProtocol>(None) };
-        match protocol_exists {
-            Ok(protocol) => {
-                let result = protocol.report_status_code(
-                    code_type,
-                    value,
-                    instance,
-                    caller_id.unwrap(),
-                    data_type.unwrap(),
-                    data,
-                );
-                match result {
-                    Ok(_) => Ok(()),
-                    Err(status) => Err(ReportStatusCodeError::ProtocolFailed(status)),
-                }
-            }
-            Err(_) => Err(ReportStatusCodeError::ProtocolNotFound),
-        }
-    }
-}
+extern "efiapi" fn rsc_hander_notification(event: efi::Event, ctx: Box<RscHandlerCallbackEntry>) {}

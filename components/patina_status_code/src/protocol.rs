@@ -1,7 +1,7 @@
 use r_efi::efi;
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EfiStatusCodeHeader {
     pub header_size: u16,
     pub size: u16,
