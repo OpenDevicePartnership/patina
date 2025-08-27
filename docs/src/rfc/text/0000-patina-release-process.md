@@ -19,6 +19,11 @@ This RFC proposes a process for releasing Patina crates.
 - 2025-08-15:
   - Add a versioning process based on unique criteria for updating the major version.
   - Add breaking change requirements to the release process details section.
+- 2025-08-27:
+  - Branching section updates:
+    - Clarify feature branch PR details
+    - Replace the `stabilization` branch concept with a `major` branch and add details
+    - Indicate all previously unresolved questions have been resolved.
 
 ## Motivation
 
@@ -197,21 +202,17 @@ The following changes are considered **breaking** and may require a major versio
   - **Branch name**: `feature/<feature-name>`
   - **Version Format**: `<major>.<minor>.<patch>-feature<feature-name>.<feature_release_number>`
     - **Example**: `4.1.0-featureabc.1`
-  - Changes must be submitted by PR, however, PR requirements may vary from those in the `main` branch. The
-    final feature merge to `main` will be subject to the normal `main` branch PR requirements.
-- Prior to an upcoming major releases, any breaking changes or other changes not considered stable for release
-  are staged in a `stabilization` branch.
-  - The `stabilization` branch is used to stabilize features and enhancements before they are merged into the `main`
-    branch.
-  - The `stabilization` branch is deleted after it is merged.
-  - **Branch name**: `stabilization/<major>.<minor>`
-  - **Version Format**: `<major>.<minor>.<patch>-rc.<rc_release_number>`
-    - **Example**: `4.1.0-rc.1`
-  - PR requirements are the exact same as those to the `main` branch.
-
-- The time when either a `feature` or `stabilization` branch is merged to `main` is decided within the project by the
-  maintainers and authors of the changes in the branch. Any changes in a branch blocking merge must be removed from
-  the branch prior to merge and then added to the next equivalent branch.
+  - Changes must be submitted by PR so feature changes are visible to the project, however, PR requirements may vary
+    from those in the `main` branch. The final feature merge to `main` will be subject to the normal `main` branch PR
+    requirements.
+- All breaking changes must be made into the `major` branch.
+  - The `major` branch is used to allow multiple breaking changes to be developed in parallel without blocking
+    non-breaking changes in the `main` branch.
+  - The `major` branch is merged into the `main` branch on a regular (monthly) cadence.
+    - The `major` branch may be merged into `main` sooner if all breaking changes are complete, ready for release,
+      and required before the monthly cadence merge.
+  - **Branch name**: `major`
+  - PR requirements into `major` are the exact same as those to the `main` branch.
 
 ```mermaid
  ---
@@ -221,40 +222,35 @@ config:
 ---
 
 graph TD
-    subgraph Main Development Line
-        A[main]
-    end
+  subgraph Main Development Line
+    A[main]
+  end
 
-    subgraph Feature Branch
-        B[feature/feature-name]
-        B1[Work on feature]
-        B2[Version: Release as needed...<br>Example: 4.1.0-featureabc.1]
-        B3[Merge into main]
-        B4[Delete feature branch]
-    end
+  subgraph Feature Branch
+    B[feature/feature-name]
+    B1[Work on feature]
+    B2[Version: Release as needed...<br>Example: 4.1.0-featureabc.1]
+    B3[Merge into main]
+    B4[Delete feature branch]
+  end
 
-    subgraph Stabilization Branch
-        C[stabilization/major.minor]
-        C1[Stabilize changes]
-        C2[Release as needed...<br>Example: 4.1.0-rc.1]
-        C3[Merge into main]
-        C4[Delete stabilization branch]
-    end
+  subgraph Major Branch
+    M[major]
+    M1[Accumulate breaking changes]
+    M2[Merge into main - monthly or as needed]
+  end
 
-    A --> B
-    B --> B1 --> B2 --> B3 --> A
-    B3 --> B4
+  A --> B
+  B --> B1 --> B2 --> B3 --> A
+  B3 --> B4
 
-    A --> C
-    C --> C1 --> C2 --> C3 --> A
-    C3 --> C4
+  A --> M
+  M --> M1 --> M2 -- Reset major branch to main --> A
 ```
 
 ## Unresolved Questions
 
-- What constitutes a "breaking change"?
-  - There is a desire to reduce the amount of major version churn by establishing Patina-specific guidelines for
-    breaking changes. Once this is formalized, the guidelines will be added to this RFC.
+- None remaining.
 
 ## Prior Art (Existing PI C Implementation)
 
@@ -264,6 +260,8 @@ the Semantic Versioning 2.0.0 specification. In terms of related open source fir
 a quarterly interval with freeze periods preceding the release point. [Project Mu](https://microsoft.github.io/mu/) has
 an [automated release note process](https://github.com/microsoft/mu_devops?tab=readme-ov-file#release-drafting) that
 portions of this proposal are based on.
+
+A large number of popular Rust projects do not pick up a major version for a long time.
 
 ## Proposed Release Process
 
@@ -279,6 +277,8 @@ Patina makes official releases on as the project determines necessary. This RFC 
     will not be available for support until the next business day.
   - More frequent releases are encouraged to provide greater granularity of changes and to avoid large releases
     that may be harder to test and validate.
+  - The `major` branch is merged into `main` on the third Tuesday of each month if there are any breaking changes
+    pending in the `major` branch. If there are no breaking changes, the merge does not occur.
 - **Requested Releases**: A release may be requested by a non-Patina team member to unblock a platform or feature
   that depends on the change.
 
