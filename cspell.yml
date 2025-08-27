@@ -54,6 +54,7 @@ words:
   - fnent
   - gantt
   - gdbstub
+  - genfw
   - getrsp
   - getsp
   - granularities
