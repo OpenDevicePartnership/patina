@@ -418,7 +418,7 @@ impl Volume {
 
         // add padding to ensure first file is 8-byte aligned.
         let padding_len = 8 - (fv_buffer.len() % 8);
-        fv_buffer.extend(iter::repeat(pad_byte).take(padding_len));
+        fv_buffer.extend(iter::repeat_n(pad_byte, padding_len));
 
         //Serialize the file list into a content vector.
         for file in &self.files {
@@ -458,7 +458,7 @@ impl Volume {
                     section::SectionHeader::Pad(
                         pad_len.try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?,
                     ),
-                    iter::repeat(0xffu8).take(pad_len).collect(),
+                    iter::repeat_n(0xffu8, pad_len).collect(),
                 )?;
                 pad_file.sections.push(pad_section);
 
@@ -471,14 +471,14 @@ impl Volume {
             if fv_buffer.len() % 8 != 0 {
                 let pad_length = 8 - (fv_buffer.len() % 8);
 
-                fv_buffer.extend(iter::repeat(pad_byte).take(pad_length));
+                fv_buffer.extend(iter::repeat_n(pad_byte, pad_length));
             }
         }
 
-        if let Capacity::Size(size) = self.capacity {
-            if size > fv_buffer.len() {
-                fv_buffer.extend(iter::repeat(pad_byte).take(size - fv_buffer.len()));
-            }
+        if let Capacity::Size(size) = self.capacity
+            && size > fv_buffer.len()
+        {
+            fv_buffer.extend(iter::repeat_n(pad_byte, size - fv_buffer.len()));
         }
 
         // calculate/patch the various header fields that need knowledge of buffer.
@@ -931,7 +931,7 @@ mod test {
         let a_ptr = &a as *const A;
 
         unsafe {
-            assert_eq!((&(*a_ptr).block_map).as_ptr(), a_ptr.offset(1) as *const fv::BlockMapEntry);
+            assert_eq!(((*a_ptr).block_map).as_ptr(), a_ptr.offset(1) as *const fv::BlockMapEntry);
         }
     }
 
@@ -1014,7 +1014,7 @@ mod test {
             otherwise_bad => panic!("invalid section: {:x?}", otherwise_bad),
         }
 
-        let empty_freeform_subtype: [u8; 024] = [
+        let empty_freeform_subtype: [u8; 24] = [
             0x18, 0x00, 0x00, 0x18, //Header
             0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, //GUID
             0x04, 0x15, 0x19, 0x80, //Data
@@ -1078,14 +1078,14 @@ mod test {
         struct LzmaExtractorComposer {}
         impl SectionExtractor for LzmaExtractorComposer {
             fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
-                if let SectionHeader::GuidDefined(guid_header, _, _) = section.header() {
-                    if guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION {
-                        let data = section.try_content_as_slice()?;
-                        let mut decomp: Vec<u8> = Vec::new();
-                        lzma_decompress(&mut Cursor::new(data), &mut decomp)
-                            .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
-                        return Ok(decomp);
-                    }
+                if let SectionHeader::GuidDefined(guid_header, _, _) = section.header()
+                    && guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION
+                {
+                    let data = section.try_content_as_slice()?;
+                    let mut decomp: Vec<u8> = Vec::new();
+                    lzma_decompress(&mut Cursor::new(data), &mut decomp)
+                        .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+                    return Ok(decomp);
                 }
                 Err(FirmwareFileSystemError::Unsupported)
             }
@@ -1137,14 +1137,14 @@ mod test {
 
         impl SectionExtractor for LzmaExtractorComposer {
             fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
-                if let SectionHeader::GuidDefined(guid_header, _, _) = section.header() {
-                    if guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION {
-                        let data = section.try_content_as_slice()?;
-                        let mut decomp: Vec<u8> = Vec::new();
-                        lzma_decompress(&mut Cursor::new(data), &mut decomp)
-                            .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
-                        return Ok(decomp);
-                    }
+                if let SectionHeader::GuidDefined(guid_header, _, _) = section.header()
+                    && guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION
+                {
+                    let data = section.try_content_as_slice()?;
+                    let mut decomp: Vec<u8> = Vec::new();
+                    lzma_decompress(&mut Cursor::new(data), &mut decomp)
+                        .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
+                    return Ok(decomp);
                 }
                 Err(FirmwareFileSystemError::Unsupported)
             }
@@ -1152,37 +1152,36 @@ mod test {
 
         impl SectionComposer for LzmaExtractorComposer {
             fn compose(&self, section: &Section) -> Result<(SectionHeader, Vec<u8>), FirmwareFileSystemError> {
-                if let SectionHeader::GuidDefined(guid_header, _, _) = section.header() {
-                    if guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION {
-                        let mut content = Vec::new();
-                        let mut section_iter = section.sub_sections().peekable();
-                        while let Some(section) = &section_iter.next() {
-                            content.extend(section.serialize()?);
-                            if section_iter.peek().is_some() {
-                                //pad to next 4-byte aligned length, since sections start at 4-byte aligned offsets. No padding is added
-                                //after the last section.
-                                if content.len() % 4 != 0 {
-                                    let pad_length = 4 - (content.len() % 4);
-                                    //Per PI 1.8A volume 3 section 2.2.4, pad byte is always zero.
-                                    content.extend(core::iter::repeat(0u8).take(pad_length));
-                                }
+                if let SectionHeader::GuidDefined(guid_header, _, _) = section.header()
+                    && guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION
+                {
+                    let mut content = Vec::new();
+                    let mut section_iter = section.sub_sections().peekable();
+                    while let Some(section) = &section_iter.next() {
+                        content.extend(section.serialize()?);
+                        if section_iter.peek().is_some() {
+                            //pad to next 4-byte aligned length, since sections start at 4-byte aligned offsets. No padding is added
+                            //after the last section.
+                            if content.len() % 4 != 0 {
+                                let pad_length = 4 - (content.len() % 4);
+                                //Per PI 1.8A volume 3 section 2.2.4, pad byte is always zero.
+                                content.extend(core::iter::repeat_n(0u8, pad_length));
                             }
                         }
-                        let mut compressed: Vec<u8> = Vec::new();
-                        let options = lzma_rs::compress::Options {
-                            unpacked_size: lzma_rs::compress::UnpackedSize::WriteToHeader(Some(content.len() as u64)),
-                        };
-                        lzma_rs::lzma_compress_with_options(&mut Cursor::new(content), &mut compressed, &options)
-                            .map_err(|_| FirmwareFileSystemError::ComposeFailed)?;
-
-                        let mut header = section.header().clone();
-                        header
-                            .set_content_size(compressed.len())
-                            .map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
-
-                        return Ok((header, compressed));
                     }
+                    let mut compressed: Vec<u8> = Vec::new();
+                    let options = lzma_rs::compress::Options {
+                        unpacked_size: lzma_rs::compress::UnpackedSize::WriteToHeader(Some(content.len() as u64)),
+                    };
+                    lzma_rs::lzma_compress_with_options(&mut Cursor::new(content), &mut compressed, &options)
+                        .map_err(|_| FirmwareFileSystemError::ComposeFailed)?;
+
+                    let mut header = section.header().clone();
+                    header.set_content_size(compressed.len()).map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
+
+                    return Ok((header, compressed));
                 }
+
                 Err(FirmwareFileSystemError::Unsupported)
             }
         }

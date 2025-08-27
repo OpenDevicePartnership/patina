@@ -6,9 +6,12 @@
 //!
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
-use alloc::{vec::Vec};
+use alloc::vec::Vec;
 use core::result::Result;
-use patina_ffs::{section::{Section, SectionExtractor, SectionHeader}, FirmwareFileSystemError};
+use patina_ffs::{
+    FirmwareFileSystemError,
+    section::{Section, SectionExtractor, SectionHeader},
+};
 use r_efi::efi;
 
 use patina_lzma_rs::io::Cursor;

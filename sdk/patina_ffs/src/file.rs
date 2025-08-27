@@ -216,7 +216,7 @@ impl File {
                 if content.len() % 4 != 0 {
                     let pad_length = 4 - (content.len() % 4);
                     //Per PI 1.8A volume 3 section 2.2.4, pad byte is always zero.
-                    content.extend(iter::repeat(0u8).take(pad_length));
+                    content.extend(iter::repeat_n(0u8, pad_length));
                 }
             }
         }
