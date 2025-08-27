@@ -242,7 +242,7 @@ impl<'a> VolumeRef<'a> {
         FileRefIter::new(&self.data[self.content_offset..], self.erase_byte()).filter(|x| {
             //Per PI spec 1.8A, V3, section 2.1.4.1.8: "Standard firmware file system services will not return the
             //handle of any PAD files, nor will they permit explicit creation of such files."
-            //Pad files are ignored on read, and will be inserted on serialziation as needed to honor alignment
+            //Pad files are ignored on read, and will be inserted on serialization as needed to honor alignment
             //requirements. Filter them out here.
             !matches!(x, Ok(file) if file.file_type_raw() == ffs::file::raw::r#type::FFS_PAD)
         })
@@ -439,7 +439,7 @@ impl Volume {
                 //need to insert a pad file to ensure content is aligned to the required alignment specified in the
                 //file attributes.
 
-                //Per spec, max required_content_alignement is pad files is 16M (2^24). That means that pad file size
+                //Per spec, max required_content_alignment is pad files is 16M (2^24). That means that pad file size
                 //will always be less than 16M so we can always use Header (instead of Header2) for pad header.
                 assert!(required_content_alignment < 0x1000000);
 
@@ -618,8 +618,8 @@ mod test {
         text: Option<String>,
     }
 
-    struct NullExtractror {}
-    impl SectionExtractor for NullExtractror {
+    struct NullExtractor {}
+    impl SectionExtractor for NullExtractor {
         fn extract(&self, _: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
             Err(FirmwareFileSystemError::Unsupported)
         }
@@ -787,7 +787,7 @@ mod test {
         let expected_values =
             serde_yaml::from_reader::<File, TargetValues>(File::open(root.join("DXEFV_expected_values.yml"))?)?;
 
-        test_firmware_volume_ref_worker(&fv, expected_values, &NullExtractror {})
+        test_firmware_volume_ref_worker(&fv, expected_values, &NullExtractor {})
     }
 
     #[test]
@@ -801,7 +801,7 @@ mod test {
         let expected_values =
             serde_yaml::from_reader::<File, TargetValues>(File::open(root.join("GIGANTOR_expected_values.yml"))?)?;
 
-        test_firmware_volume_ref_worker(&fv, expected_values, &NullExtractror {})
+        test_firmware_volume_ref_worker(&fv, expected_values, &NullExtractor {})
     }
 
     #[test]
@@ -1082,10 +1082,10 @@ mod test {
                     && guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION
                 {
                     let data = section.try_content_as_slice()?;
-                    let mut decomp: Vec<u8> = Vec::new();
-                    lzma_decompress(&mut Cursor::new(data), &mut decomp)
+                    let mut decompressed: Vec<u8> = Vec::new();
+                    lzma_decompress(&mut Cursor::new(data), &mut decompressed)
                         .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
-                    return Ok(decomp);
+                    return Ok(decompressed);
                 }
                 Err(FirmwareFileSystemError::Unsupported)
             }
@@ -1141,10 +1141,10 @@ mod test {
                     && guid_header.section_definition_guid == fw_fs::guid::LZMA_SECTION
                 {
                     let data = section.try_content_as_slice()?;
-                    let mut decomp: Vec<u8> = Vec::new();
-                    lzma_decompress(&mut Cursor::new(data), &mut decomp)
+                    let mut decompressed: Vec<u8> = Vec::new();
+                    lzma_decompress(&mut Cursor::new(data), &mut decompressed)
                         .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
-                    return Ok(decomp);
+                    return Ok(decompressed);
                 }
                 Err(FirmwareFileSystemError::Unsupported)
             }
