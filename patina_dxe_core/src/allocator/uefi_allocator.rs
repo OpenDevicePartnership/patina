@@ -103,10 +103,6 @@ impl UefiAllocator {
         self.allocator.memory_type()
     }
 
-    pub fn number_of_pages(&self) -> usize {
-        self.allocator.lock().memory_type_info().number_of_pages as usize
-    }
-
     /// Reserves a range of memory to be used by this allocator of the given size in pages.
     ///
     /// The caller specifies a maximum number of pages this allocator is expected to require, and as long as the number
@@ -294,7 +290,7 @@ impl Display for UefiAllocator {
 mod tests {
     extern crate std;
     use core::cmp::max;
-    use std::alloc::{dealloc, GlobalAlloc, System};
+    use std::alloc::{GlobalAlloc, System};
 
     use mu_pi::dxe_services;
     use patina_sdk::base::{SIZE_4KB, SIZE_64KB, UEFI_PAGE_SIZE};
