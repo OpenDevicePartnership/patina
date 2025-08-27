@@ -27,5 +27,5 @@ pub(crate) type RscHandlerCallback =
 pub trait RscHandler {
     fn register(&mut self, callback: RscHandlerCallback, tpl: tpl::Tpl) -> Result<(), RscHandlerError>;
 
-    fn unregister(&self, callback: RscHandlerCallback) -> Result<(), RscHandlerError>;
+    fn unregister(&mut self, callback: RscHandlerCallback) -> Result<(), RscHandlerError>;
 }

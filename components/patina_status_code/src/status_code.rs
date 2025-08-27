@@ -22,8 +22,20 @@ struct RscHandlerCallbackEntry {
     callback: RscHandlerCallback,
     tpl: tpl::Tpl,
     status_code_buffer: Vec<RscDataEntry>,
-    // Need this bc rust fn pointer comparisons aren't guaranteed
-    cb_id: usize,
+    event_handle: Option<efi::Event>, // optional if TPL is high
+}
+
+impl RscHandlerCallbackEntry {
+    fn new(callback: RscHandlerCallback, tpl: tpl::Tpl) -> Self {
+        Self { callback, tpl, status_code_buffer: Vec::new(), event_handle: None }
+    }
+
+    pub fn process_all(&mut self) {
+        for entry in &self.status_code_buffer {
+            (self.callback)(entry.code_type, entry.value, entry.instance, entry.caller_id, &entry.data_header);
+        }
+        self.status_code_buffer.clear();
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -33,7 +45,7 @@ struct RscDataEntry {
     instance: u32,
     reserved: u32,
     caller_id: efi::Guid,
-    data: EfiStatusCodeHeader,
+    data_header: EfiStatusCodeHeader,
 }
 
 #[derive(IntoService)]
@@ -41,7 +53,6 @@ struct RscDataEntry {
 struct StandardRscHandler<B: BootServices + 'static> {
     callback_list: Vec<RscHandlerCallbackEntry>,
     boot_services: B,
-    next_id: usize, // hack for rust fn comp
 }
 
 impl<B> RscHandler for StandardRscHandler<B>
@@ -50,19 +61,20 @@ where
 {
     fn register(&mut self, callback: RscHandlerCallback, tpl: tpl::Tpl) -> Result<(), RscHandlerError> {
         for entry in &self.callback_list {
+            // sherry: a thorny problem
             if entry.callback == callback {
                 return Err(RscHandlerError::CallbackAlreadyRegistered);
             }
         }
 
-        self.next_id += 1;
-
-        let new_entry = RscHandlerCallbackEntry { callback, tpl, status_code_buffer: Vec::new(), cb_id: self.next_id };
+        let mut new_entry = RscHandlerCallbackEntry::new(callback, tpl);
 
         if tpl <= tpl::Tpl(efi::TPL_HIGH_LEVEL) {
-            self.boot_services
+            let event = self
+                .boot_services
                 .create_event(EventType::NOTIFY_SIGNAL, tpl, Some(rsc_hander_notification), Box::new(new_entry.clone()))
                 .map_err(|e| RscHandlerError::EventCreationFailed(e))?;
+            new_entry.event_handle = Some(event);
         }
 
         self.callback_list.push(new_entry);
@@ -70,10 +82,23 @@ where
         Ok(())
     }
 
-    fn unregister(&self, callback: RscHandlerCallback) -> Result<(), RscHandlerError> {
-        // Implementation for unregistering the callback
-        Ok(())
+    fn unregister(&mut self, callback: RscHandlerCallback) -> Result<(), RscHandlerError> {
+        // sherry: more fun issues yay :)
+        if let Some(index) = self.callback_list.iter().position(|entry| entry.callback == callback) {
+            let entry = self.callback_list.remove(index);
+
+            if entry.tpl <= tpl::Tpl(efi::TPL_HIGH_LEVEL) {
+                self.boot_services
+                    .close_event(entry.event_handle.ok_or(RscHandlerError::MissingEvent)?)
+                    .map_err(|e| RscHandlerError::EventCreationFailed(e))?;
+            }
+            return Ok(());
+        }
+        Err(RscHandlerError::UnregisterNotFound)
     }
 }
 
-extern "efiapi" fn rsc_hander_notification(event: efi::Event, ctx: Box<RscHandlerCallbackEntry>) {}
+extern "efiapi" fn rsc_hander_notification(event: efi::Event, ctx: Box<RscHandlerCallbackEntry>) {
+    let mut entry = *ctx;
+    entry.process_all();
+}
