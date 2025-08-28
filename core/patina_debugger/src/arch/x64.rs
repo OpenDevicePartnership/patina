@@ -78,9 +78,7 @@ impl DebuggerArch for X64Arch {
         // by the write according to the Intel SDM Vol 3 section 11.6. The CR3
         // write is also serializing so no barriers are needed.
         unsafe {
-            let cr3: usize;
-            asm!("mov {}, cr3", out(reg) cr3);
-            asm!("mov cr3, {}", in(reg) cr3);
+            asm!("mov {0}, cr3", "mov cr3, {0}", out(reg) _);
         }
     }
 
@@ -133,8 +131,9 @@ impl DebuggerArch for X64Arch {
     fn reboot() {
         // Reset the system through the keyboard controller IO port.
         unsafe {
-            asm!("cli");
-            asm!("out dx, al", in("dx") 0x64, in("al") 0xFE_u8);
+            asm!("cli", "out dx, al", in("dx") 0x64, in("al") 0xFE_u8);
+
+            // this is kept in a separate loop because we don't anticipate returning from this
             loop {
                 asm!("hlt");
             }

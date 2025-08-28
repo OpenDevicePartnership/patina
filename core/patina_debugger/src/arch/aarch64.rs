@@ -225,9 +225,10 @@ impl DebuggerArch for Aarch64Arch {
 
     fn reboot() {
         // reboot through PSCI SYSTEM_RESET
+        // this directly loads a value into x0, but this is safe here because we are rebooting anyway
+        // so this doesn't matter if we clobber x0
         unsafe {
-            asm!("ldr x0, =0x84000009");
-            asm!("smc 0");
+            asm!("ldr x0, =0x84000009", "smc 0");
         }
     }
 
