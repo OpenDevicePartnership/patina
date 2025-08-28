@@ -95,7 +95,6 @@ fn benchmark_delete_function(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("bst", "32bit"), |b| {
         b.iter_batched_ref(
             || {
-
                 let mut bst: Bst<u32> = Bst::with_capacity(mem_u32());
                 for i in &nums {
                     bst.add(*i).unwrap();
