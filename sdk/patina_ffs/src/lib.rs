@@ -20,18 +20,28 @@ pub mod volume;
 
 use patina_sdk::error::EfiError;
 use r_efi::efi;
-
+/// Error definitions for Firmware File System
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FirmwareFileSystemError {
+    /// The FFS header is invalid or malformed.
     InvalidHeader,
+    /// The block map structure is invalid.
     InvalidBlockMap,
+    /// A parameter provided to a function is invalid.
     InvalidParameter,
+    /// The requested operation or feature is unsupported.
     Unsupported,
+    /// The FFS is in an invalid or unexpected state.
     InvalidState,
+    /// Data corruption was detected in the FFS.
     DataCorrupt,
+    /// The FFS structure has not been composed yet.
     NotComposed,
+    /// The FFS structure has not been extracted yet.
     NotExtracted,
+    /// The FFS node is not a leaf node.
     NotLeaf,
+    /// Composing the FFS structure failed.
     ComposeFailed,
 }
 

@@ -1,3 +1,11 @@
+//! Firmware File System (FFS) file parsing and composition.
+//!
+//! This module provides:
+//! - `FileRef`: a zero-copy, read-only view over a serialized FFS file backed by a byte slice.
+//! - `File`: an owned, mutable builder for creating and serializing FFS files from sections.
+//!
+//! Both types help inspect file metadata (name GUID, type, attributes), traverse sections, and
+//! serialize with correct headers, checksums, and alignment.
 use mu_pi::fw_fs::{
     ffs::{self, attributes, file},
     fv,
@@ -12,6 +20,11 @@ use alloc::{vec, vec::Vec};
 use core::{fmt, iter, mem, ptr, slice::from_raw_parts};
 use r_efi::efi;
 
+/// Zero-copy view over a Firmware File System (FFS) file backed by a byte slice.
+///
+/// Parsing via [`FileRef::new`] validates the header, state, and (optionally) the
+/// data checksum. The lifetime `'a` ties the instance to the provided buffer.
+/// Accessors expose file metadata (name, type, attributes), content, and sections.
 #[derive(Clone)]
 pub struct FileRef<'a> {
     data: &'a [u8],
@@ -22,6 +35,36 @@ pub struct FileRef<'a> {
 }
 
 impl<'a> FileRef<'a> {
+    /// Parse a byte slice as an FFS file and validate header/state/checksums.
+    ///
+    /// Returns a zero-copy view over the provided buffer.
+    ///
+    /// Errors
+    /// - [`FirmwareFileSystemError::InvalidHeader`]: malformed header or size.
+    /// - [`FirmwareFileSystemError::InvalidState`]: file state not DATA_VALID.
+    /// - [`FirmwareFileSystemError::DataCorrupt`]: data checksum mismatch.
+    ///
+    /// Examples
+    ///
+    /// ```rust no_run
+    /// use patina_ffs::file::{File, FileRef};
+    /// use r_efi::efi;
+    /// use mu_pi::fw_fs::ffs;
+    /// use patina_ffs::section::{Section, SectionHeader};
+    ///
+    /// // Build a file and then parse the resulting bytes back.
+    /// let guid = efi::Guid::from_bytes(&[0u8; 16]);
+    /// let mut file = File::new(guid, 0x07);
+    /// let data = b"hello".to_vec();
+    /// let section = Section::new_from_header_with_data(
+    ///     SectionHeader::Standard(ffs::section::raw_type::RAW, data.len() as u32),
+    ///     data,
+    /// ).unwrap();
+    /// file.sections.push(section);
+    /// let bytes = file.serialize().unwrap();
+    /// let file_ref = FileRef::new(&bytes).unwrap();
+    /// assert_eq!(file_ref.file_type_raw(), 0x07);
+    /// ```
     pub fn new(buffer: &'a [u8]) -> Result<Self, FirmwareFileSystemError> {
         // Verify that buffer has enough storage for a file header.
         if buffer.len() < mem::size_of::<file::Header>() {
@@ -99,34 +142,42 @@ impl<'a> FileRef<'a> {
         Ok(Self { data: &buffer[..size], header, erase_polarity, size, content_offset })
     }
 
+    /// Total serialized size of the file in bytes (header + content).
     pub fn size(&self) -> usize {
         self.size
     }
 
+    /// The file name GUID from the FFS header.
     pub fn name(&self) -> efi::Guid {
         self.header.name
     }
 
+    /// The raw FFS file type byte.
     pub fn file_type_raw(&self) -> u8 {
         self.header.file_type
     }
 
+    /// The file payload bytes (sections area), excluding the header.
     pub fn content(&self) -> &[u8] {
         &self.data[self.content_offset..]
     }
 
+    /// Byte offset from the start of the file to the beginning of content.
     pub fn content_offset(&self) -> usize {
         self.content_offset
     }
 
+    /// The complete file bytes, including header and content.
     pub fn data(&self) -> &[u8] {
         self.data
     }
 
+    /// Erase polarity encoded in the header; `true` for erase=1, `false` for erase=0.
     pub fn erase_polarity(&self) -> bool {
         self.erase_polarity
     }
 
+    /// Decode the file's attributes into `EFI_FV_FILE_ATTRIBUTES` per PI spec.
     pub fn fv_attributes(&self) -> fv::file::EfiFvFileAttributes {
         let attributes = self.header.attributes;
         let data_alignment = (attributes & ffs::attributes::raw::DATA_ALIGNMENT) >> 3;
@@ -152,16 +203,56 @@ impl<'a> FileRef<'a> {
         file_attributes as fv::file::EfiFvFileAttributes
     }
 
+    /// The raw attributes byte from the FFS header.
     pub fn attributes_raw(&self) -> u8 {
         self.header.attributes
     }
 
+    /// Parse and collect all sections contained in this file.
+    ///
+    /// Returns a flattened list of sections; nested containers are expanded.
     pub fn sections(&self) -> Result<Vec<Section>, FirmwareFileSystemError> {
         let sections = SectionIterator::new(&self.data[self.content_offset..])
             .collect::<Result<Vec<_>, FirmwareFileSystemError>>()?;
         Ok(sections.iter().flat_map(|x| x.sections().cloned().collect::<Vec<_>>()).collect())
     }
 
+    /// Parse sections and run the provided extractor on each extracted section.
+    ///
+    /// Useful for decoding compressed or encapsulated sections during traversal.
+    ///
+    /// Examples
+    ///
+    /// ```rust no_run
+    /// use mu_pi::fw_fs::ffs;
+    /// use r_efi::efi;
+    /// use patina_ffs::file::{File, FileRef};
+    /// use patina_ffs::FirmwareFileSystemError;
+    /// use patina_ffs::section::{Section, SectionHeader, SectionExtractor};
+    ///
+    /// // A dummy extractor that declines to handle any section types.
+    /// struct Dummy;
+    /// impl SectionExtractor for Dummy {
+    ///     fn extract(&self, _section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
+    ///         Err(FirmwareFileSystemError::Unsupported)
+    ///     }
+    /// }
+    ///
+    /// // Build a simple file containing a single RAW section and parse it back.
+    /// let guid = efi::Guid::from_bytes(&[0u8; 16]);
+    /// let mut file = File::new(guid, 0x07);
+    /// let data = b"hello".to_vec();
+    /// let section = Section::new_from_header_with_data(
+    ///     SectionHeader::Standard(ffs::section::raw_type::RAW, data.len() as u32),
+    ///     data,
+    /// ).unwrap();
+    /// file.sections.push(section);
+    /// let bytes = file.serialize().unwrap();
+    ///
+    /// let file_ref = FileRef::new(&bytes).unwrap();
+    /// let sections = file_ref.sections_with_extractor(&Dummy).unwrap();
+    /// assert!(!sections.is_empty());
+    /// ```
     pub fn sections_with_extractor(
         &self,
         extractor: &dyn SectionExtractor,
@@ -190,19 +281,56 @@ impl fmt::Debug for FileRef<'_> {
     }
 }
 
+/// Owned, mutable representation of an FFS file for composition and serialization.
+///
+/// Use this to build files programmatically from sections, control attributes
+/// (e.g., data checksum, large-file), select erase polarity, and then
+/// [`serialize`](Self::serialize) into a well-formed byte stream.
 pub struct File {
     name: efi::Guid,
     file_type_raw: u8,
     attributes: u8,
     erase_polarity: bool,
+    /// Top-level sections of this file. Can be used to add/remove sections at the file level.
+    /// Use [`File::section_iter`] for a flattened view of the encapsulation sections.
     pub sections: Vec<Section>,
 }
 
 impl File {
+    /// Create a new, empty FFS file builder with the given name and type.
     pub fn new(name: efi::Guid, file_type_raw: u8) -> Self {
         Self { name, file_type_raw, attributes: 0, erase_polarity: true, sections: Vec::new() }
     }
 
+    /// Serialize the file into a valid FFS byte stream.
+    ///
+    /// Produces the correct header variant (standard or large), includes
+    /// required padding between sections, and computes header/data checksums.
+    /// Errors from section serialization are propagated.
+    ///
+    /// Examples
+    ///
+    /// ```rust no_run
+    /// use mu_pi::fw_fs::ffs;
+    /// use r_efi::efi;
+    /// use patina_ffs::file::File;
+    /// use patina_ffs::section::{Section, SectionHeader};
+    ///
+    /// let guid = efi::Guid::from_bytes(&[0u8; 16]);
+    /// let mut file = File::new(guid, 0x07);
+    /// file.set_data_checksum(true);
+    ///
+    /// // Add a simple RAW section with content "hello".
+    /// let data = b"hello".to_vec();
+    /// let section = Section::new_from_header_with_data(
+    ///     SectionHeader::Standard(ffs::section::raw_type::RAW, data.len() as u32),
+    ///     data,
+    /// ).unwrap();
+    /// file.sections.push(section);
+    ///
+    /// let bytes = file.serialize().unwrap();
+    /// assert!(!bytes.is_empty());
+    /// ```
     pub fn serialize(&self) -> Result<Vec<u8>, FirmwareFileSystemError> {
         let mut content = Vec::new();
 
@@ -309,10 +437,14 @@ impl File {
         Ok(header)
     }
 
+    /// Set the erase polarity to encode in the header state bits.
+    ///
+    /// `true` => erase=1 (bits set), `false` => erase=0 (bits clear).
     pub fn set_erase_polarity(&mut self, erase_polarity: bool) {
         self.erase_polarity = erase_polarity;
     }
 
+    /// Enable or disable the data checksum attribute for the file contents.
     pub fn set_data_checksum(&mut self, checksum: bool) {
         if checksum {
             self.attributes |= attributes::raw::CHECKSUM;
@@ -321,10 +453,14 @@ impl File {
         }
     }
 
+    /// Returns `true` if the file has the data checksum attribute set.
     pub fn is_data_checksum(&self) -> bool {
         self.attributes & attributes::raw::CHECKSUM != 0
     }
 
+    /// Compute the header size (offset to content) for the current sections/attributes.
+    ///
+    /// Uses section lengths to decide whether a large-file header is required.
     pub fn content_offset(&self) -> Result<usize, FirmwareFileSystemError> {
         if self.attributes & attributes::raw::LARGE_FILE != 0 {
             Ok(mem::size_of::<ffs::file::Header2>())
@@ -350,6 +486,7 @@ impl File {
         }
     }
 
+    /// Run the provided extractor over all sections in-place.
     pub fn extract(&mut self, extractor: &dyn SectionExtractor) -> Result<(), FirmwareFileSystemError> {
         for section in self.sections.iter_mut() {
             section.extract(extractor)?;
@@ -357,6 +494,35 @@ impl File {
         Ok(())
     }
 
+    /// Compose sections with the given composer and then serialize the file.
+    ///
+    /// Examples
+    ///
+    /// ```rust no_run
+    /// use mu_pi::fw_fs::ffs;
+    /// use r_efi::efi;
+    /// use patina_ffs::file::File;
+    /// use patina_ffs::section::{Section, SectionHeader, SectionComposer};
+    /// use patina_ffs::section::{SectionHeader as SH};
+    /// use patina_ffs::FirmwareFileSystemError;
+    ///
+    /// // A trivial composer that passes through existing headers and data.
+    /// struct Passthrough;
+    /// impl SectionComposer for Passthrough {
+    ///     fn compose(&self, section: &Section) -> Result<(SH, Vec<u8>), FirmwareFileSystemError> {
+    ///         Ok((section.header().clone(), section.try_content_as_slice()?.to_vec()))
+    ///     }
+    /// }
+    ///
+    /// let guid = efi::Guid::from_bytes(&[0u8; 16]);
+    /// let mut file = File::new(guid, 0x07);
+    /// let data = b"hello".to_vec();
+    /// file.sections.push(Section::new_from_header_with_data(
+    ///     SectionHeader::Standard(ffs::section::raw_type::RAW, data.len() as u32),
+    ///     data,
+    /// ).unwrap());
+    /// let _bytes = file.serialize_with_composer(&Passthrough).unwrap();
+    /// ```
     pub fn serialize_with_composer(
         &mut self,
         composer: &dyn SectionComposer,
@@ -365,6 +531,34 @@ impl File {
         self.serialize()
     }
 
+    /// Compose all sections using the provided composer.
+    ///
+    /// Examples
+    ///
+    /// ```rust no_run
+    /// use mu_pi::fw_fs::ffs;
+    /// use r_efi::efi;
+    /// use patina_ffs::file::File;
+    /// use patina_ffs::section::{Section, SectionHeader, SectionComposer};
+    /// use patina_ffs::section::SectionHeader as SH;
+    /// use patina_ffs::FirmwareFileSystemError;
+    ///
+    /// struct Passthrough;
+    /// impl SectionComposer for Passthrough {
+    ///     fn compose(&self, section: &Section) -> Result<(SH, Vec<u8>), FirmwareFileSystemError> {
+    ///         Ok((section.header().clone(), section.try_content_as_slice()?.to_vec()))
+    ///     }
+    /// }
+    ///
+    /// let guid = efi::Guid::from_bytes(&[0u8; 16]);
+    /// let mut file = File::new(guid, 0x07);
+    /// let data = b"hello".to_vec();
+    /// file.sections.push(Section::new_from_header_with_data(
+    ///     SectionHeader::Standard(ffs::section::raw_type::RAW, data.len() as u32),
+    ///     data,
+    /// ).unwrap());
+    /// file.compose(&Passthrough).unwrap();
+    /// ```
     pub fn compose(&mut self, composer: &dyn SectionComposer) -> Result<(), FirmwareFileSystemError> {
         for section in self.sections.iter_mut() {
             section.compose(composer)?;
@@ -372,18 +566,30 @@ impl File {
         Ok(())
     }
 
+    /// Iterate over all (flattened) sections in this file.
     pub fn section_iter(&self) -> impl Iterator<Item = &Section> {
         self.sections.iter().flat_map(|x| x.sections())
     }
 
+    /// Iterate over top-level sections in this file mutably.
+    ///
+    /// Note: This yields only the top-level sections. To traverse nested
+    /// sections mutably, call [`Section::sub_sections_mut`] on each item.
+    pub fn section_iter_mut(&mut self) -> impl Iterator<Item = &mut Section> {
+        self.sections.iter_mut()
+    }
+
+    /// The file name GUID set for this file.
     pub fn name(&self) -> efi::Guid {
         self.name
     }
 
+    /// The raw FFS file type byte set for this file.
     pub fn file_type_raw(&self) -> u8 {
         self.file_type_raw
     }
 
+    /// The raw attributes byte currently set for this file.
     pub fn attributes_raw(&self) -> u8 {
         self.attributes
     }

@@ -1,3 +1,8 @@
+//! Section parsing and composition utilities for UEFI Firmware File System (FFS) sections.
+//!
+//! This module models a single FFS section (leaf or encapsulation) and provides utilities to
+//! parse from raw bytes, compose/serialize, and traverse immediate sub-sections.
+//!
 use alloc::{boxed::Box, vec, vec::Vec};
 use mu_pi::fw_fs::ffs::{self, section};
 use patina_sdk::{base::align_up, boot_services::c_ptr::CPtr};
@@ -6,15 +11,32 @@ use core::{fmt, iter, mem, ptr, slice::from_raw_parts};
 
 use crate::FirmwareFileSystemError;
 
+/// Extracts the payload of an encapsulation section into raw bytes.
+///
+/// An implementation should return:
+/// - `Ok(Vec<u8>)` with the raw, concatenated sub-section bytes that can be parsed by
+///   [`SectionIterator`] when extraction is supported and succeeds.
+/// - `Err(FirmwareFileSystemError::Unsupported)` if the given section type or parameters are
+///   not supported by the extractor. Callers treat this as "no extraction available".
+/// - Any other `Err(..)` for hard failures.
 pub trait SectionExtractor {
+    /// Attempt to extract the content of `section` into a raw byte buffer that contains zero or
+    /// more serialized sub-sections.
     fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError>;
 }
 
+/// Produces a composed header and content buffer for a section.
+///
+/// Implementors  build a particular section variant, returning a new [`SectionHeader`] and the
+/// corresponding content bytes.
 pub trait SectionComposer {
+    /// Compose `section` into a `(header, content)` pair.
     fn compose(&self, section: &Section) -> Result<(SectionHeader, Vec<u8>), FirmwareFileSystemError>;
 }
 
 #[derive(Debug, Clone)]
+/// Logical header representation for all supported section variants. The `u32` element of the tuple
+/// represents the size of the section content.
 pub enum SectionHeader {
     Pad(u32),
     Standard(section::EfiSectionType, u32),
@@ -25,14 +47,20 @@ pub enum SectionHeader {
 }
 
 impl SectionHeader {
+    /// Number of bytes occupied by the serialized header, i.e., the offset at which the content
+    /// begins in the serialized section.
     pub fn content_offset(&self) -> usize {
         self.serialize().len()
     }
 
+    /// Total serialized size of the section (header + content).
     pub fn total_section_size(&self) -> usize {
         self.content_offset() + self.content_size()
     }
 
+    /// Update the content size stored in the header.
+    ///
+    /// Returns `InvalidParameter` if `size` does not fit in a `u32`.
     pub fn set_content_size(&mut self, size: usize) -> Result<(), FirmwareFileSystemError> {
         match self {
             SectionHeader::Pad(content_size)
@@ -47,6 +75,8 @@ impl SectionHeader {
         }
     }
 
+    /// Size of the section content in bytes (excluding the common header and any variant-specific
+    /// header bytes).
     pub fn content_size(&self) -> usize {
         match self {
             SectionHeader::Pad(content_size)
@@ -58,6 +88,7 @@ impl SectionHeader {
         }
     }
 
+    /// The raw section type as stored in the common header (see `ffs::section::raw_type`).
     pub fn section_type_raw(&self) -> u8 {
         match self {
             SectionHeader::Pad(_) => ffs::section::raw_type::FFS_PAD,
@@ -68,6 +99,7 @@ impl SectionHeader {
             SectionHeader::FreeFormSubtypeGuid(_, _) => ffs::section::raw_type::FREEFORM_SUBTYPE_GUID,
         }
     }
+    /// The high-level section type when known; returns `None` for padding or unknown types.
     pub fn section_type(&self) -> Option<ffs::section::Type> {
         match self {
             SectionHeader::Pad(_) => None,
@@ -91,6 +123,10 @@ impl SectionHeader {
             SectionHeader::FreeFormSubtypeGuid(_, _) => Some(ffs::section::Type::FreeformSubtypeGuid),
         }
     }
+    /// Serialize the header into bytes suitable for prefixing the section content.
+    ///
+    /// If the total section size exceeds `0xFFFFFF`, an extended-size header is emitted as per
+    /// the PI spec.
     pub fn serialize(&self) -> Vec<u8> {
         let (header_data, content_size) = match self {
             SectionHeader::Pad(_content_size) => return Vec::new(),
@@ -182,6 +218,12 @@ enum SectionData {
 }
 
 #[derive(Debug, Clone)]
+/// A section (leaf or encapsulation) with header, content, and (for encapsulation) immediate
+/// sub-sections.
+///
+/// A section is considered "dirty" when its content has been changed but not yet re-composed via
+/// [`Section::compose`]. Serialization and size queries on a dirty section return
+/// `FirmwareFileSystemError::NotComposed`.
 pub struct Section {
     header: SectionHeader,
     data: SectionData,
@@ -189,6 +231,12 @@ pub struct Section {
 }
 
 impl Section {
+    /// Construct a section from a logical header and raw content bytes.
+    ///
+    /// For most section types, this builds a temporary buffer containing the header and content
+    /// and delegates to [`Section::new_from_buffer`] to validate and canonicalize the internal
+    /// representation. `Pad` sections are handled specially as they do not carry a serialized
+    /// header.
     pub fn new_from_header_with_data(header: SectionHeader, data: Vec<u8>) -> Result<Self, FirmwareFileSystemError> {
         //Pad sections need special handling due to having no section header.
         if let SectionHeader::Pad(_) = header {
@@ -200,6 +248,11 @@ impl Section {
         }
     }
 
+    /// Parse a serialized section from `buffer`.
+    ///
+    /// Validates the common and variant-specific headers, sets the content size accordingly, and
+    /// stores raw content bytes. Encapsulation sections start with `extracted = false` and no
+    /// populated sub-sections.
     pub fn new_from_buffer(buffer: &[u8]) -> Result<Self, FirmwareFileSystemError> {
         // Verify that the buffer has enough storage for a section header.
         if buffer.len() < mem::size_of::<section::Header>() {
@@ -336,14 +389,17 @@ impl Section {
         Ok(Section { header, data: section_data, dirty: false })
     }
 
+    /// Borrow the logical header of this section.
     pub fn header(&self) -> &SectionHeader {
         &self.header
     }
 
+    /// Whether this section is an encapsulation variant (i.e., capable of containing sub-sections).
     pub fn encapsulation(&self) -> bool {
         matches!(self.data, SectionData::Encapsulation(_))
     }
 
+    /// Whether the section (or any extracted sub-section) requires composition.
     pub fn dirty(&self) -> bool {
         if let SectionData::Encapsulation(data) = &self.data {
             if data.extracted { self.dirty || data.sub_sections.iter().any(|x| x.dirty()) } else { self.dirty }
@@ -352,6 +408,9 @@ impl Section {
         }
     }
 
+    /// The total serialized size of this section.
+    ///
+    /// Returns `NotComposed` if the section (or any extracted child) is dirty.
     pub fn size(&self) -> Result<usize, FirmwareFileSystemError> {
         if self.dirty() {
             Err(FirmwareFileSystemError::NotComposed)?;
@@ -359,14 +418,19 @@ impl Section {
         Ok(self.header.total_section_size())
     }
 
+    /// Raw section type (see `ffs::section::raw_type`).
     pub fn section_type_raw(&self) -> u8 {
         self.header.section_type_raw()
     }
 
+    /// High-level section type, if recognized.
     pub fn section_type(&self) -> Option<ffs::section::Type> {
         self.header.section_type()
     }
 
+    /// Replace the content of a leaf section and mark it dirty.
+    ///
+    /// Returns `NotLeaf` if called on an encapsulation section.
     pub fn set_section_data(&mut self, data: Vec<u8>) -> Result<(), FirmwareFileSystemError> {
         if let SectionData::Leaf(leaf) = &mut self.data {
             leaf.data = data;
@@ -378,6 +442,9 @@ impl Section {
         }
     }
 
+    /// Compose this section (and any extracted children) using the provided composer.
+    ///
+    /// On success, the section is marked clean and content is updated to the newly composed bytes.
     pub fn compose(&mut self, composer: &dyn SectionComposer) -> Result<(), FirmwareFileSystemError> {
         match &mut self.data {
             SectionData::Encapsulation(encapsulation) => {
@@ -413,6 +480,10 @@ impl Section {
         Ok(())
     }
 
+    /// Extract sub-sections of an encapsulation section via `extractor`.
+    ///
+    /// If the extractor returns `Unsupported`, the method is a no-op. Otherwise, the returned
+    /// bytes are parsed into immediate sub-sections and marked as extracted.
     pub fn extract(&mut self, extractor: &dyn SectionExtractor) -> Result<(), FirmwareFileSystemError> {
         match &self.data {
             SectionData::Encapsulation(x) if !x.extracted => (),
@@ -441,6 +512,9 @@ impl Section {
         Ok(())
     }
 
+    /// Serialize the section into bytes (header + content).
+    ///
+    /// Returns `NotComposed` if this section or any extracted child is dirty.
     pub fn serialize(&self) -> Result<Vec<u8>, FirmwareFileSystemError> {
         if self.dirty() {
             Err(FirmwareFileSystemError::NotComposed)?;
@@ -453,6 +527,9 @@ impl Section {
         Ok(data)
     }
 
+    /// Borrow the section content as a byte slice.
+    ///
+    /// Returns `NotComposed` if this section or any extracted child is dirty.
     pub fn try_content_as_slice(&self) -> Result<&[u8], FirmwareFileSystemError> {
         if self.dirty() {
             Err(FirmwareFileSystemError::NotComposed)?;
@@ -463,6 +540,7 @@ impl Section {
         }
     }
 
+    /// Into-iterator over this section followed by its sub-sections (owned).
     pub fn into_sections(self) -> impl Iterator<Item = Section> {
         let sub_sections = match &self.data {
             SectionData::Encapsulation(encapsulation) => encapsulation.sub_sections.clone(),
@@ -471,6 +549,7 @@ impl Section {
         iter::once(self).chain(sub_sections)
     }
 
+    /// Iterator over `&Section` for this section followed by its sub-sections.
     pub fn sections(&self) -> Box<dyn Iterator<Item = &Section> + '_> {
         match &self.data {
             SectionData::Encapsulation(encapsulation) => {
@@ -481,6 +560,7 @@ impl Section {
         }
     }
 
+    /// Iterator over `&Section` for the sub-sections only.
     pub fn sub_sections(&self) -> Box<dyn Iterator<Item = &Section> + '_> {
         match &self.data {
             SectionData::Encapsulation(encapsulation) => Box::new(encapsulation.sub_sections.iter()),
@@ -488,6 +568,7 @@ impl Section {
         }
     }
 
+    /// Iterator over `&mut Section` for the sub-sections only.
     pub fn sub_sections_mut(&mut self) -> Box<dyn Iterator<Item = &mut Section> + '_> {
         match &mut self.data {
             SectionData::Encapsulation(encapsulation) => Box::new(encapsulation.sub_sections.iter_mut()),
@@ -495,6 +576,11 @@ impl Section {
         }
     }
 }
+/// Parses a list of serialized sections from a raw byte slice.
+///
+/// Each call to the iterator yields the next parsed [`Section`].
+/// Once an error occurs, iteration stops. If any section reports `NotComposed` when sizing,
+/// it is treated as a data error during iteration.
 pub struct SectionIterator<'a> {
     data: &'a [u8],
     next_offset: usize,
@@ -502,6 +588,7 @@ pub struct SectionIterator<'a> {
 }
 
 impl<'a> SectionIterator<'a> {
+    /// Create a new iterator over `data`.
     pub fn new(data: &'a [u8]) -> Self {
         Self { data, next_offset: 0, error: false }
     }

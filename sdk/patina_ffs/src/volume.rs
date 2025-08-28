@@ -1,3 +1,11 @@
+//! Firmware Volume (FV) parsing, inspection, and composition.
+//!
+//! This module provides:
+//! - `VolumeRef`: a zero-copy, read-only view over a serialized FV backed by a byte slice.
+//! - `Volume`: an owned builder for assembling FVs from a block map and FFS files and serializing.
+//!
+//! It validates FV headers and block maps, iterates contained files, and serializes with proper
+//! alignment, optional extended headers, and checksum calculation per the PI specification.
 use alloc::vec::Vec;
 use core::{
     fmt, iter, mem, ptr,
@@ -18,6 +26,11 @@ use crate::{
     section::{self, Section, SectionComposer, SectionExtractor},
 };
 
+/// Zero-copy view over a Firmware Volume (FV) backed by a byte slice.
+///
+/// Parsing via [`VolumeRef::new`] validates the FV header, optional extended
+/// header, block map, and computes the content start offset. Accessors expose
+/// properties like attributes, FV name, block layout, and contained FFS files.
 pub struct VolumeRef<'a> {
     data: &'a [u8],
     fv_header: fv::Header,
@@ -27,6 +40,24 @@ pub struct VolumeRef<'a> {
 }
 
 impl<'a> VolumeRef<'a> {
+    /// Parse a byte slice as a Firmware Volume and validate its metadata.
+    ///
+    /// Validates signature, header length, checksum, revision, filesystem GUID,
+    /// extended header bounds, and block map structure. On success, returns a
+    /// zero-copy view tied to the provided buffer.
+    ///
+    /// Examples
+    ///
+    /// ```rust no_run
+    /// use patina_ffs::volume::{Volume, VolumeRef};
+    /// use mu_pi::fw_fs::fv::BlockMapEntry;
+    ///
+    /// // Build a minimal FV in memory, then parse it back.
+    /// let block_map = vec![BlockMapEntry { num_blocks: 1, length: 4096 }];
+    /// let fv_bytes = Volume::new(block_map).serialize().unwrap();
+    /// let fv_ref = VolumeRef::new(&fv_bytes).unwrap();
+    /// assert!(fv_ref.size() >= 4096);
+    /// ```
     pub fn new(buffer: &'a [u8]) -> Result<Self, FirmwareFileSystemError> {
         // Verify that buffer has enough storage for a volume header.
         if buffer.len() < mem::size_of::<fv::Header>() {
@@ -173,6 +204,19 @@ impl<'a> VolumeRef<'a> {
     /// Caller must ensure that the lifetime of the buffer at base_address is longer than the
     /// returned VolumeRef.
     ///
+    /// Examples
+    ///
+    /// ```rust no_run
+    /// use patina_ffs::volume::{Volume, VolumeRef};
+    /// use mu_pi::fw_fs::fv::BlockMapEntry;
+    ///
+    /// let fv_bytes = Volume::new(vec![BlockMapEntry { num_blocks: 1, length: 4096 }])
+    ///     .serialize()
+    ///     .unwrap();
+    /// let base = fv_bytes.as_ptr() as u64;
+    /// let fv_ref = unsafe { VolumeRef::new_from_address(base) }.unwrap();
+    /// assert!(fv_ref.size() >= 4096);
+    /// ```
     pub unsafe fn new_from_address(base_address: u64) -> Result<Self, FirmwareFileSystemError> {
         let fv_header = unsafe { ptr::read_unaligned(base_address as *const fv::Header) };
         if fv_header.signature != u32::from_le_bytes(*b"_FVH") {
@@ -184,10 +228,16 @@ impl<'a> VolumeRef<'a> {
         Self::new(fv_buffer)
     }
 
+    /// The erase/pad byte used by this FV according to its attributes.
+    ///
+    /// Returns 0xFF when erase polarity is 1, otherwise 0x00.
     pub fn erase_byte(&self) -> u8 {
         if self.fv_header.attributes & fvb::attributes::raw::fvb2::ERASE_POLARITY != 0 { 0xff } else { 0 }
     }
 
+    /// The optional extended header and its vendor data, if present.
+    ///
+    /// Returns a tuple of the header struct and the associated data payload.
     pub fn ext_header(&self) -> Option<(fv::ExtHeader, Vec<u8>)> {
         self.ext_header.map(|ext_header| {
             let header_size = mem::size_of_val(&ext_header);
@@ -198,14 +248,31 @@ impl<'a> VolumeRef<'a> {
         })
     }
 
+    /// The Firmware Volume name GUID from the extended header, if available.
     pub fn fv_name(&self) -> Option<efi::Guid> {
         self.ext_header().map(|x| x.0.fv_name)
     }
 
+    /// The parsed block map describing block counts and sizes within the FV.
     pub fn block_map(&self) -> &Vec<BlockMapEntry> {
         &self.block_map
     }
 
+    /// Resolve information about a Logical Block Address (LBA).
+    ///
+    /// Returns a tuple of (byte_offset_from_fv_start, block_size, remaining_blocks_in_region).
+    /// Errors if `lba` is out of range per the block map.
+    ///
+    /// ```rust no_run
+    /// use patina_ffs::volume::{Volume, VolumeRef};
+    /// use mu_pi::fw_fs::fv::BlockMapEntry;
+    /// let fv_bytes = Volume::new(vec![BlockMapEntry { num_blocks: 1, length: 4096 }])
+    ///     .serialize()
+    ///     .unwrap();
+    /// let fv_ref = VolumeRef::new(&fv_bytes).unwrap();
+    /// let (offset, blk, rem) = fv_ref.lba_info(0).unwrap();
+    /// assert_eq!((offset, blk, rem), (0, 4096, 1));
+    /// ```
     pub fn lba_info(&self, lba: u32) -> Result<(u32, u32, u32), FirmwareFileSystemError> {
         let block_map = self.block_map();
 
@@ -230,14 +297,19 @@ impl<'a> VolumeRef<'a> {
         Ok((offset + lba * block_size, block_size, remaining_blocks))
     }
 
+    /// The FV attributes bitfield (`EFI_FVB_ATTRIBUTES_2`).
     pub fn attributes(&self) -> fvb::attributes::EfiFvbAttributes2 {
         self.fv_header.attributes
     }
 
+    /// Total FV size in bytes (`FvLength`).
     pub fn size(&self) -> u64 {
         self.fv_header.fv_length
     }
 
+    /// Iterate over contained FFS files as zero-copy [`FileRef`]s.
+    ///
+    /// PAD files are filtered out per PI spec. Parsing errors are surfaced as iterator items.
     pub fn files(&self) -> impl Iterator<Item = Result<FileRef<'a>, FirmwareFileSystemError>> {
         FileRefIter::new(&self.data[self.content_offset..], self.erase_byte()).filter(|x| {
             //Per PI spec 1.8A, V3, section 2.1.4.1.8: "Standard firmware file system services will not return the
@@ -326,6 +398,10 @@ enum Capacity {
     Size(usize),
 }
 
+/// Owned, mutable representation of a Firmware Volume for composition and serialization.
+///
+/// Use this to build an FV from a block map and a list of FFS files, set attributes,
+/// optionally attach an extended header, and then [`serialize`](Self::serialize) to bytes.
 pub struct Volume {
     file_system_guid: efi::Guid,
     attributes: fvb::attributes::EfiFvbAttributes2,
@@ -336,6 +412,9 @@ pub struct Volume {
 }
 
 impl Volume {
+    /// Create a new empty Firmware Volume builder with the given block map.
+    ///
+    /// Defaults to the FFSv3 filesystem GUID, no extended header, and unbounded capacity.
     pub fn new(block_map: Vec<BlockMapEntry>) -> Self {
         Self {
             file_system_guid: ffs::guid::EFI_FIRMWARE_FILE_SYSTEM3_GUID,
@@ -347,14 +426,65 @@ impl Volume {
         }
     }
 
+    /// Read-only access to the list of FFS files contained in this FV.
     pub fn files(&self) -> &Vec<File> {
         &self.files
     }
 
+    /// Mutable access to the list of FFS files contained in this FV.
+    ///
+    /// Examples
+    ///
+    /// ```rust no_run
+    /// use patina_ffs::volume::Volume;
+    /// use patina_ffs::file::File;
+    /// use mu_pi::fw_fs::{ffs, fv::BlockMapEntry};
+    /// use r_efi::efi;
+    ///
+    /// let mut fv = Volume::new(vec![BlockMapEntry { num_blocks: 1, length: 4096 }]);
+    /// fv.files_mut().push(File::new(efi::Guid::from_bytes(&[0u8; 16]), ffs::file::raw::r#type::FFS_PAD));
+    /// assert_eq!(fv.files().len(), 1);
+    /// ```
     pub fn files_mut(&mut self) -> &mut Vec<File> {
         &mut self.files
     }
 
+    /// Serialize the Firmware Volume into a valid FV byte stream.
+    ///
+    /// Produces a correct FV header (including checksum), inserts PAD files to
+    /// satisfy file alignment and optional extended header placement, respects
+    /// filesystem capabilities (FFSv2 vs FFSv3), and pads to capacity when set.
+    /// Errors propagate from serializing files and sections or when constraints
+    /// are violated (e.g., file too large for FFSv2).
+    ///
+    /// Examples
+    ///
+    /// ```rust no_run
+    /// use patina_ffs::volume::Volume;
+    /// use patina_ffs::file::File;
+    /// use patina_ffs::section::{Section, SectionHeader};
+    /// use mu_pi::fw_fs::{ffs, fv::BlockMapEntry};
+    /// use r_efi::efi;
+    ///
+    /// // Create a volume and add several files, each with a RAW section.
+    /// let mut fv = Volume::new(vec![BlockMapEntry { num_blocks: 4, length: 4096 }]);
+    ///
+    /// for (i, payload) in ["alpha", "beta", "gamma"].into_iter().enumerate() {
+    ///     let guid = efi::Guid::from_bytes(&[i as u8; 16]);
+    ///     let mut file = File::new(guid, 0x07); // arbitrary file type for example
+    ///
+    ///     let data = payload.as_bytes().to_vec();
+    ///     let section = Section::new_from_header_with_data(
+    ///         SectionHeader::Standard(ffs::section::raw_type::RAW, data.len() as u32),
+    ///         data,
+    ///     ).unwrap();
+    ///     file.sections.push(section);
+    ///     fv.files_mut().push(file);
+    /// }
+    ///
+    /// let bytes = fv.serialize().unwrap();
+    /// assert!(!bytes.is_empty());
+    /// ```
     pub fn serialize(&self) -> Result<Vec<u8>, FirmwareFileSystemError> {
         let pad_byte =
             if (self.attributes & fvb::attributes::raw::fvb2::ERASE_POLARITY) != 0 { 0xffu8 } else { 0x00u8 };
@@ -512,6 +642,31 @@ impl Volume {
         Ok(fv_buffer)
     }
 
+    /// Compose all sections for all files in the volume using the provided composer.
+    ///
+    /// Useful after editing encapsulated sections so that serialization has the
+    /// correct composed bytes.
+    ///
+    /// Examples
+    ///
+    /// ```rust no_run
+    /// use patina_ffs::volume::Volume;
+    /// use patina_ffs::section::{Section, SectionComposer, SectionHeader};
+    /// use mu_pi::fw_fs::{ffs, fv::BlockMapEntry};
+    /// use r_efi::efi;
+    ///
+    /// struct Passthrough;
+    /// impl SectionComposer for Passthrough {
+    ///     fn compose(&self, section: &Section) -> Result<(SectionHeader, Vec<u8>), patina_ffs::FirmwareFileSystemError> {
+    ///         Ok((section.header().clone(), section.try_content_as_slice()?.to_vec()))
+    ///     }
+    /// }
+    ///
+    /// let mut fv = Volume::new(vec![BlockMapEntry { num_blocks: 1, length: 4096 }]);
+    /// // Add an empty PAD file to keep it simple
+    /// fv.files_mut().push(patina_ffs::file::File::new(efi::Guid::from_bytes(&[0u8; 16]), ffs::file::raw::r#type::FFS_PAD));
+    /// fv.compose(&Passthrough).unwrap();
+    /// ```
     pub fn compose(&mut self, composer: &dyn SectionComposer) -> Result<(), FirmwareFileSystemError> {
         for file in self.files_mut() {
             file.compose(composer)?;
