@@ -79,7 +79,7 @@ The following changes are **not** considered breaking:
 1. **Modifications to Private APIs**
 
    Changes or removals of APIs considered private to Patina (i.e., exposed from internal Patina crates for use by other
-   internal crates) are not considered breaking changes.
+   Patina crates) are not considered breaking changes.
 
 2. **Semantic-Preserving API Changes**
 
@@ -164,7 +164,7 @@ The following changes are considered **breaking** and may require a major versio
 
 ### Release Process Details
 
-- The release process is automated and triggered by a GitHub action at 7am Pacific time on Tuesday on cadence decided
+- The release process is automated and triggered by a GitHub action at 7am Pacific time on Tuesday on a cadence decided
   in the project.
   - This RFC proposes a weekly release cadence.
   - May be triggered by a Patina team member at any time outside of the scheduled time.
