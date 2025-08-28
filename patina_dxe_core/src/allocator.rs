@@ -318,10 +318,9 @@ impl AllocatorMap {
             // from the GCD. Otherwise, we will just leak a new memory type info struct with the given memory type and
             // have the allocator use it.
             let memory_type_info = if (memory_type as usize) <= GCD.memory_type_info_table().len() {
-                NonNull::from_ref(&GCD.memory_type_info_table()[memory_type as usize])
+                GCD.memory_type_info(memory_type)
             } else {
-                let memory_type_info = EFiMemoryTypeInformation { memory_type, number_of_pages: 0 };
-                NonNull::from_ref(Box::leak(Box::new(memory_type_info)))
+                NonNull::from_ref(Box::leak(Box::new(EFiMemoryTypeInformation { memory_type, number_of_pages: 0 })))
             };
 
             Box::leak(Box::new(UefiAllocator::new(&GCD, memory_type_info, handle, granularity)))
