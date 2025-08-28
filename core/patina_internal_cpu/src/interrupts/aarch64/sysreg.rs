@@ -22,6 +22,7 @@ pub(crate) use read_sysreg;
 macro_rules! write_sysreg {
     ($name:ident, $value:expr) => {
         {
+            // no barrier required case
             let v: u64 = $value;
             ::core::arch::asm!(
                 concat!("msr ", ::core::stringify!($name), ", {value:x}"),
@@ -29,6 +30,18 @@ macro_rules! write_sysreg {
                 options(nomem, nostack),
             )
         }
-    }
+    };
+    ($name:ident, $value:expr, $barrier:expr) => {
+        {
+            // barrier required case
+            let v: u64 = $value;
+            ::core::arch::asm!(
+                concat!("msr ", ::core::stringify!($name), ", {value:x}"),
+                $barrier,
+                value = in(reg) v,
+                options(nomem, nostack),
+            )
+        }
+    };
 }
 pub(crate) use write_sysreg;

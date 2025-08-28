@@ -48,6 +48,7 @@ impl EfiCpuAarch64 {
 
         #[cfg(all(not(test), target_arch = "aarch64"))]
         {
+            // we have a data barrier after all cache lines have had the operation performed on them as an optimization
             unsafe {
                 asm!("dsb sy", options(nostack));
             }
