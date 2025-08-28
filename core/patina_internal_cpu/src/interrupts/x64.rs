@@ -41,14 +41,14 @@ impl super::EfiExceptionStackTrace for ExceptionContextX64 {
 #[allow(unused)]
 pub fn enable_interrupts() {
     unsafe {
-        asm!("sti", options(preserves_flags, nostack));
+        asm!("sti", options(nostack));
     }
 }
 
 #[allow(unused)]
 pub fn disable_interrupts() {
     unsafe {
-        asm!("cli", options(preserves_flags, nostack));
+        asm!("cli", options(nostack));
     }
 }
 
