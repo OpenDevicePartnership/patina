@@ -8,7 +8,10 @@
 //!
 use crate::pecoff::{self, UefiPeInfo};
 use alloc::{boxed::Box, slice, vec, vec::Vec};
-use core::{fmt::Display, ptr};
+use core::{
+    fmt::Display,
+    ptr::{self, NonNull},
+};
 use patina_sdk::{base::DEFAULT_CACHE_ATTR, error::EfiError};
 
 use mu_pi::{
@@ -1829,8 +1832,14 @@ impl SpinLockedGcd {
         }
     }
 
+    /// Returns a reference to the memory type information table.
     pub const fn memory_type_info_table(&self) -> &[EFiMemoryTypeInformation; 17] {
         &self.memory_type_info_table
+    }
+
+    /// Returns a pointer to the memory type information for the given memory type.
+    pub const fn memory_type_info(&self, memory_type: u32) -> NonNull<EFiMemoryTypeInformation> {
+        NonNull::from_ref(&self.memory_type_info_table[memory_type as usize])
     }
 
     fn set_paging_attributes(&self, base_address: usize, len: usize, attributes: u64) -> Result<(), EfiError> {
