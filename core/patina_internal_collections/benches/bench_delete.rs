@@ -34,10 +34,21 @@ use ruint::Uint;
 use std::{collections::HashSet, hash::Hash};
 
 const MAX_SIZE: usize = 4096;
+const U32_MAX_SIZE: usize = MAX_SIZE * node_size::<u32>();
+const U128_MAX_SIZE: usize = MAX_SIZE * node_size::<u128>();
+const U384_MAX_SIZE: usize = MAX_SIZE * node_size::<U384>();
 
-static mut MEM_U32: [u8; 131072] = [0; MAX_SIZE * node_size::<u32>()];
-static mut MEM_U128: [u8; 196608] = [0; MAX_SIZE * node_size::<u128>()];
-static mut MEM_U384: [u8; 327680] = [0; MAX_SIZE * node_size::<U384>()];
+fn mem_u32() -> &'static mut [u8; U32_MAX_SIZE] {
+    Box::leak(Box::new([0u8; U32_MAX_SIZE]))
+}
+
+fn mem_u128() -> &'static mut [u8; U128_MAX_SIZE] {
+    Box::leak(Box::new([0u8; U128_MAX_SIZE]))
+}
+
+fn mem_u384() -> &'static mut [u8; U384_MAX_SIZE] {
+    Box::leak(Box::new([0u8; U384_MAX_SIZE]))
+}
 
 // The size of MemorySpaceDescriptor
 type U384 = Uint<384, 6>;
@@ -65,11 +76,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("rbt", "32bit"), |b| {
         b.iter_batched_ref(
             || {
-                unsafe {
-                    MEM_U32.fill(0);
-                }
-                #[allow(static_mut_refs)]
-                let mut rbt: Rbt<u32> = Rbt::with_capacity(unsafe { &mut MEM_U32 });
+                let mut rbt: Rbt<u32> = Rbt::with_capacity(mem_u32());
                 for i in &nums {
                     rbt.add(*i).unwrap();
                 }
@@ -88,11 +95,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("bst", "32bit"), |b| {
         b.iter_batched_ref(
             || {
-                unsafe {
-                    MEM_U32.fill(0);
-                }
-                #[allow(static_mut_refs)]
-                let mut bst: Bst<u32> = Bst::with_capacity(unsafe { &mut MEM_U32 });
+                let mut bst: Bst<u32> = Bst::with_capacity(mem_u32());
                 for i in &nums {
                     bst.add(*i).unwrap();
                 }
@@ -120,11 +123,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("sorted_slice", "32bit"), |b| {
         b.iter_batched_ref(
             || {
-                unsafe {
-                    MEM_U32.fill(0);
-                }
-                #[allow(static_mut_refs)]
-                let mut ss: SortedSlice<u32> = SortedSlice::new(unsafe { &mut MEM_U32 });
+                let mut ss: SortedSlice<u32> = SortedSlice::new(mem_u32());
                 for i in &nums {
                     ss.add(*i).unwrap();
                 }
@@ -147,11 +146,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("rbt", "128bit"), |b| {
         b.iter_batched_ref(
             || {
-                unsafe {
-                    MEM_U128.fill(0);
-                }
-                #[allow(static_mut_refs)]
-                let mut rbt: Rbt<u128> = Rbt::with_capacity(unsafe { &mut MEM_U128 });
+                let mut rbt: Rbt<u128> = Rbt::with_capacity(mem_u128());
                 for i in &nums {
                     rbt.add(*i).unwrap();
                 }
@@ -170,11 +165,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("bst", "128bit"), |b| {
         b.iter_batched_ref(
             || {
-                unsafe {
-                    MEM_U128.fill(0);
-                }
-                #[allow(static_mut_refs)]
-                let mut bst: Bst<u128> = Bst::with_capacity(unsafe { &mut MEM_U128 });
+                let mut bst: Bst<u128> = Bst::with_capacity(mem_u128());
                 for i in &nums {
                     bst.add(*i).unwrap();
                 }
@@ -193,11 +184,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("sorted_slice", "128bit"), |b| {
         b.iter_batched_ref(
             || {
-                unsafe {
-                    MEM_U128.fill(0);
-                }
-                #[allow(static_mut_refs)]
-                let mut ss: SortedSlice<u128> = SortedSlice::new(unsafe { &mut MEM_U128 });
+                let mut ss: SortedSlice<u128> = SortedSlice::new(mem_u128());
                 for i in &nums {
                     ss.add(*i).unwrap();
                 }
@@ -222,11 +209,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("rbt", "384bit"), |b| {
         b.iter_batched_ref(
             || {
-                unsafe {
-                    MEM_U384.fill(0);
-                }
-                #[allow(static_mut_refs)]
-                let mut rbt: Rbt<U384> = Rbt::with_capacity(unsafe { &mut MEM_U384 });
+                let mut rbt: Rbt<U384> = Rbt::with_capacity(mem_u384());
                 for i in &nums {
                     rbt.add(*i).unwrap();
                 }
@@ -245,11 +228,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("bst", "384bit"), |b| {
         b.iter_batched_ref(
             || {
-                unsafe {
-                    MEM_U384.fill(0);
-                }
-                #[allow(static_mut_refs)]
-                let mut bst: Bst<U384> = Bst::with_capacity(unsafe { &mut MEM_U384 });
+                let mut bst: Bst<U384> = Bst::with_capacity(mem_u384());
                 for i in &nums {
                     bst.add(*i).unwrap();
                 }
@@ -268,11 +247,7 @@ fn benchmark_delete_function(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("sorted_slice", "384bit"), |b| {
         b.iter_batched_ref(
             || {
-                unsafe {
-                    MEM_U384.fill(0);
-                }
-                #[allow(static_mut_refs)]
-                let mut ss: SortedSlice<U384> = SortedSlice::new(unsafe { &mut MEM_U384 });
+                let mut ss: SortedSlice<U384> = SortedSlice::new(mem_u384());
                 for i in &nums {
                     ss.add(*i).unwrap();
                 }
