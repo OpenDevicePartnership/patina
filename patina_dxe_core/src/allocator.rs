@@ -72,7 +72,7 @@ cfg_if::cfg_if! {
 #[cfg_attr(target_os = "uefi", global_allocator)]
 pub(crate) static EFI_BOOT_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
-    GCD.memory_type_info(efi::BOOT_SERVICES_DATA),
+    NonNull::from_ref(GCD.memory_type_info(efi::BOOT_SERVICES_DATA)),
     protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
     DEFAULT_PAGE_ALLOCATION_GRANULARITY,
 );
@@ -82,14 +82,14 @@ pub(crate) static EFI_BOOT_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocato
 // the other allocators use.
 pub static EFI_LOADER_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
-    GCD.memory_type_info(efi::LOADER_CODE),
+    NonNull::from_ref(GCD.memory_type_info(efi::LOADER_CODE)),
     protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE,
     DEFAULT_PAGE_ALLOCATION_GRANULARITY,
 );
 
 pub static EFI_BOOT_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
-    GCD.memory_type_info(efi::BOOT_SERVICES_CODE),
+    NonNull::from_ref(GCD.memory_type_info(efi::BOOT_SERVICES_CODE)),
     protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE,
     DEFAULT_PAGE_ALLOCATION_GRANULARITY,
 );
@@ -98,7 +98,7 @@ pub static EFI_BOOT_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
 // passed in
 pub static EFI_RUNTIME_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
-    GCD.memory_type_info(efi::RUNTIME_SERVICES_CODE),
+    NonNull::from_ref(GCD.memory_type_info(efi::RUNTIME_SERVICES_CODE)),
     protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE,
     RUNTIME_PAGE_ALLOCATION_GRANULARITY,
 );
@@ -107,7 +107,7 @@ pub static EFI_RUNTIME_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::n
 // passed in
 pub static EFI_RUNTIME_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
-    GCD.memory_type_info(efi::RUNTIME_SERVICES_DATA),
+    NonNull::from_ref(GCD.memory_type_info(efi::RUNTIME_SERVICES_DATA)),
     protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE,
     RUNTIME_PAGE_ALLOCATION_GRANULARITY,
 );
@@ -318,7 +318,7 @@ impl AllocatorMap {
             // from the GCD. Otherwise, we will just leak a new memory type info struct with the given memory type and
             // have the allocator use it.
             let memory_type_info = if (memory_type as usize) <= GCD.memory_type_info_table().len() {
-                GCD.memory_type_info(memory_type)
+                NonNull::from_ref(GCD.memory_type_info(memory_type))
             } else {
                 NonNull::from_ref(Box::leak(Box::new(EFiMemoryTypeInformation { memory_type, number_of_pages: 0 })))
             };
