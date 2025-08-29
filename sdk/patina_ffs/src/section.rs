@@ -38,11 +38,17 @@ pub trait SectionComposer {
 /// Logical header representation for all supported section variants. The `u32` element of the tuple
 /// represents the size of the section content.
 pub enum SectionHeader {
+    /// Padding-only section used for alignment; value is the content size in bytes.
     Pad(u32),
+    /// Standard leaf section; `(raw_type, content_size)`.
     Standard(section::EfiSectionType, u32),
+    /// Encapsulation section with a compression header; `u32` is compressed payload size.
     Compression(section::header::Compression, u32),
+    /// GUID-defined encapsulation; `(header, guid_specific_data, payload_size)`.
     GuidDefined(section::header::GuidDefined, Vec<u8>, u32),
+    /// Version info section; `(header, content_size)` for data following the header.
     Version(section::header::Version, u32),
+    /// Freeform subtype GUID leaf section; `(header, content_size)`.
     FreeFormSubtypeGuid(section::header::FreeformSubtypeGuid, u32),
 }
 
