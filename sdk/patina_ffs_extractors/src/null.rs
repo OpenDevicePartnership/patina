@@ -11,7 +11,7 @@ use patina_ffs::{
     section::{Section, SectionComposer, SectionExtractor, SectionHeader},
 };
 
-/// A section extractor implementation that does no decompression.
+/// A section extractor/composer implementation that does no extraction or composition.
 #[derive(Default, Clone, Copy)]
 pub struct NullSectionProcessor;
 impl SectionExtractor for NullSectionProcessor {
