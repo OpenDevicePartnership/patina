@@ -547,8 +547,10 @@ impl Volume {
         };
 
         // add padding to ensure first file is 8-byte aligned.
-        let padding_len = 8 - (fv_buffer.len() % 8);
-        fv_buffer.extend(iter::repeat_n(pad_byte, padding_len));
+        let rem = fv_buffer.len() % 8;
+        if rem != 0 {
+            fv_buffer.extend(iter::repeat_n(pad_byte, 8 - rem));
+        }
 
         //Serialize the file list into a content vector.
         for file in &self.files {
@@ -573,8 +575,9 @@ impl Volume {
                 //will always be less than 16M so we can always use Header (instead of Header2) for pad header.
                 assert!(required_content_alignment < 0x1000000);
 
-                let pad_len = fv_buffer.len() + mem::size_of::<ffs::file::Header>() + file_ref.content_offset();
-                let pad_len = required_content_alignment - (pad_len % required_content_alignment);
+                let pad_len_base = fv_buffer.len() + mem::size_of::<ffs::file::Header>() + file_ref.content_offset();
+                let rem = pad_len_base % required_content_alignment;
+                let pad_len = if rem == 0 { 0 } else { required_content_alignment - rem };
 
                 // check the padding math.
                 debug_assert_eq!(

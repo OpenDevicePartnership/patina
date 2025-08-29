@@ -470,9 +470,11 @@ impl File {
                 if section_iter.peek().is_some() {
                     //pad to next 4-byte aligned length, since sections start at 4-byte aligned offsets. No padding is added
                     //after the last section.
-                    let pad_length = 4 - (section_len % 4);
-                    //Per PI 1.8A volume 3 section 2.2.4, pad byte is always zero.
-                    content_len += pad_length;
+                    let rem = section_len % 4;
+                    if rem != 0 {
+                        //Per PI 1.8A volume 3 section 2.2.4, pad byte is always zero.
+                        content_len += 4 - rem;
+                    }
                 }
             }
             if content_len + mem::size_of::<ffs::file::Header>() > 0xffffff {
