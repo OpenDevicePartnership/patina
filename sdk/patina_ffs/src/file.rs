@@ -60,7 +60,7 @@ impl<'a> FileRef<'a> {
     ///     SectionHeader::Standard(ffs::section::raw_type::RAW, data.len() as u32),
     ///     data,
     /// ).unwrap();
-    /// file.sections.push(section);
+    /// file.sections_mut().push(section);
     /// let bytes = file.serialize().unwrap();
     /// let file_ref = FileRef::new(&bytes).unwrap();
     /// assert_eq!(file_ref.file_type_raw(), 0x07);
@@ -246,7 +246,7 @@ impl<'a> FileRef<'a> {
     ///     SectionHeader::Standard(ffs::section::raw_type::RAW, data.len() as u32),
     ///     data,
     /// ).unwrap();
-    /// file.sections.push(section);
+    /// file.sections_mut().push(section);
     /// let bytes = file.serialize().unwrap();
     ///
     /// let file_ref = FileRef::new(&bytes).unwrap();
@@ -291,9 +291,7 @@ pub struct File {
     file_type_raw: u8,
     attributes: u8,
     erase_polarity: bool,
-    /// Top-level sections of this file. Can be used to add/remove sections at the file level.
-    /// Use [`File::section_iter`] for a flattened view of the encapsulation sections.
-    pub sections: Vec<Section>,
+    sections: Vec<Section>,
 }
 
 impl File {
@@ -326,8 +324,7 @@ impl File {
     ///     SectionHeader::Standard(ffs::section::raw_type::RAW, data.len() as u32),
     ///     data,
     /// ).unwrap();
-    /// file.sections.push(section);
-    ///
+    /// file.sections_mut().push(section);
     /// let bytes = file.serialize().unwrap();
     /// assert!(!bytes.is_empty());
     /// ```
@@ -517,7 +514,7 @@ impl File {
     /// let guid = efi::Guid::from_bytes(&[0u8; 16]);
     /// let mut file = File::new(guid, 0x07);
     /// let data = b"hello".to_vec();
-    /// file.sections.push(Section::new_from_header_with_data(
+    /// file.sections_mut().push(Section::new_from_header_with_data(
     ///     SectionHeader::Standard(ffs::section::raw_type::RAW, data.len() as u32),
     ///     data,
     /// ).unwrap());
@@ -553,7 +550,7 @@ impl File {
     /// let guid = efi::Guid::from_bytes(&[0u8; 16]);
     /// let mut file = File::new(guid, 0x07);
     /// let data = b"hello".to_vec();
-    /// file.sections.push(Section::new_from_header_with_data(
+    /// file.sections_mut().push(Section::new_from_header_with_data(
     ///     SectionHeader::Standard(ffs::section::raw_type::RAW, data.len() as u32),
     ///     data,
     /// ).unwrap());
@@ -564,6 +561,22 @@ impl File {
             section.compose(composer)?;
         }
         Ok(())
+    }
+
+    /// Read-only access to the list of top-level sections in this file.
+    ///
+    /// Note: This returns only the file's immediate sections. For flattened traversal,
+    /// use [`File::section_iter`], and for nested access per item see [`Section::sub_sections`].
+    pub fn sections(&self) -> &Vec<Section> {
+        &self.sections
+    }
+
+    /// Mutable access to the list of top-level sections in this file.
+    ///
+    /// Note: This does not provide flattened mutable traversal. To mutate nested sections,
+    /// iterate the returned slice and call [`Section::sub_sections_mut`] on each as needed.
+    pub fn sections_mut(&mut self) -> &mut Vec<Section> {
+        &mut self.sections
     }
 
     /// Iterate over all (flattened) sections in this file.

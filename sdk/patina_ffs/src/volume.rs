@@ -478,7 +478,7 @@ impl Volume {
     ///         SectionHeader::Standard(ffs::section::raw_type::RAW, data.len() as u32),
     ///         data,
     ///     ).unwrap();
-    ///     file.sections.push(section);
+    ///     file.sections_mut().push(section);
     ///     fv.files_mut().push(file);
     /// }
     ///
@@ -536,7 +536,7 @@ impl Volume {
                 ext_hdr_data,
             )?;
 
-            ext_header_pad_file.sections.push(ext_header_section);
+            ext_header_pad_file.sections_mut().push(ext_header_section);
             ext_header_pad_file.set_data_checksum(false);
 
             fv_buffer.extend(ext_header_pad_file.serialize()?);
@@ -590,7 +590,7 @@ impl Volume {
                     ),
                     iter::repeat_n(0xffu8, pad_len).collect(),
                 )?;
-                pad_file.sections.push(pad_section);
+                pad_file.sections_mut().push(pad_section);
 
                 fv_buffer.extend(pad_file.serialize()?);
             }
@@ -1350,7 +1350,7 @@ mod test {
 
         // modify the compressed logo section of the logo file.
         let logo_file = fv.files_mut().get_mut(0).unwrap();
-        let lzma_section = &mut logo_file.sections[0];
+        let lzma_section = &mut logo_file.sections_mut()[0];
         match lzma_section.header() {
             SectionHeader::GuidDefined(header, _, _) => {
                 assert_eq!(header.section_definition_guid, fw_fs::guid::LZMA_SECTION);
@@ -1380,7 +1380,7 @@ mod test {
 
         // read the compressed logo section of the logo file and confirm it matches the test value.
         let logo_file = serialized_fv.files_mut().get_mut(0).unwrap();
-        let lzma_section = &mut logo_file.sections[0];
+        let lzma_section = &mut logo_file.sections_mut()[0];
         match lzma_section.header() {
             SectionHeader::GuidDefined(header, _, _) => {
                 assert_eq!(header.section_definition_guid, fw_fs::guid::LZMA_SECTION);
