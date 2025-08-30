@@ -3,6 +3,12 @@
 //! This module models a single FFS section (leaf or encapsulation) and provides utilities to
 //! parse from raw bytes, compose/serialize, and traverse immediate sub-sections.
 //!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
 use alloc::{boxed::Box, vec, vec::Vec};
 use mu_pi::fw_fs::ffs::{self, section};
 use patina_sdk::{base::align_up, boot_services::c_ptr::CPtr};
@@ -10,6 +16,8 @@ use patina_sdk::{base::align_up, boot_services::c_ptr::CPtr};
 use core::{fmt, iter, mem, ptr, slice::from_raw_parts};
 
 use crate::FirmwareFileSystemError;
+
+const MAX_STANDARD_SECTION_SIZE: usize = 0x1000000;
 
 /// Extracts the payload of an encapsulation section into raw bytes.
 ///
@@ -105,6 +113,7 @@ impl SectionHeader {
             SectionHeader::FreeFormSubtypeGuid(_, _) => ffs::section::raw_type::FREEFORM_SUBTYPE_GUID,
         }
     }
+
     /// The high-level section type when known; returns `None` for padding or unknown types.
     pub fn section_type(&self) -> Option<ffs::section::Type> {
         match self {
@@ -129,6 +138,7 @@ impl SectionHeader {
             SectionHeader::FreeFormSubtypeGuid(_, _) => Some(ffs::section::Type::FreeformSubtypeGuid),
         }
     }
+
     /// Serialize the header into bytes suitable for prefixing the section content.
     ///
     /// If the total section size exceeds `0xFFFFFF`, an extended-size header is emitted as per
@@ -169,7 +179,7 @@ impl SectionHeader {
 
         let section_size = mem::size_of_val(&section_header) + header_data.len() + (content_size as usize);
 
-        if section_size < 0x1000000 {
+        if section_size < MAX_STANDARD_SECTION_SIZE {
             section_header.size = (section_size as u32).to_le_bytes()[0..3].try_into().unwrap();
         }
 
@@ -179,7 +189,7 @@ impl SectionHeader {
         };
 
         //add ext size if req.
-        if section_size >= 0x1000000 {
+        if section_size >= MAX_STANDARD_SECTION_SIZE {
             section_vec.extend((section_size as u32 + 4).to_le_bytes());
         }
 
@@ -491,10 +501,9 @@ impl Section {
     /// If the extractor returns `Unsupported`, the method is a no-op. Otherwise, the returned
     /// bytes are parsed into immediate sub-sections and marked as extracted.
     pub fn extract(&mut self, extractor: &dyn SectionExtractor) -> Result<(), FirmwareFileSystemError> {
-        match &self.data {
-            SectionData::Encapsulation(x) if !x.extracted => (),
-            _ => return Ok(()), //nothing to do.
-        };
+        if !matches!(&self.data, SectionData::Encapsulation(x) if !x.extracted) {
+            return Ok(()); //nothing to do for non-encapsulation sections or already extracted encapsulation sections.
+        }
 
         let extracted_data = match extractor.extract(self) {
             Err(FirmwareFileSystemError::Unsupported) => Vec::new(),
@@ -582,6 +591,15 @@ impl Section {
         }
     }
 }
+
+impl TryFrom<&[u8]> for Section {
+    type Error = FirmwareFileSystemError;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Section::new_from_buffer(value)
+    }
+}
+
 /// Parses a list of serialized sections from a raw byte slice.
 ///
 /// Each call to the iterator yields the next parsed [`Section`].

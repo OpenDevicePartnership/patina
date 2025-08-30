@@ -344,22 +344,16 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
                 if file.file_type_raw() == ffs::file::raw::r#type::DRIVER {
                     let file = file.clone();
                     let file_name = file.name();
-                    let sections = {
-                        if let Some(extractor) = &dispatcher.section_extractor {
-                            file.sections_with_extractor(extractor.as_ref())?
-                        } else {
-                            file.sections()?
-                        }
+                    let sections = match &dispatcher.section_extractor {
+                        Some(extractor) => file.sections_with_extractor(extractor.as_ref())?,
+                        None => file.sections()?,
                     };
 
                     let depex = sections
                         .iter()
-                        .find_map(|x| {
-                            if x.section_type() == Some(ffs::section::Type::DxeDepex) {
-                                Some(x.try_content_as_slice())
-                            } else {
-                                None
-                            }
+                        .find_map(|x| match x.section_type() {
+                            Some(ffs::section::Type::DxeDepex) => Some(x.try_content_as_slice()),
+                            _ => None,
                         })
                         .transpose()?
                         .map(Depex::from);
@@ -431,22 +425,16 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
                     let file = file.clone();
                     let file_name = file.name();
 
-                    let sections = {
-                        if let Some(extractor) = &dispatcher.section_extractor {
-                            file.sections_with_extractor(extractor.as_ref())?
-                        } else {
-                            file.sections()?
-                        }
+                    let sections = match &dispatcher.section_extractor {
+                        Some(extractor) => file.sections_with_extractor(extractor.as_ref())?,
+                        None => file.sections()?,
                     };
 
                     let depex = sections
                         .iter()
-                        .find_map(|x| {
-                            if x.section_type() == Some(ffs::section::Type::DxeDepex) {
-                                Some(x.try_content_as_slice())
-                            } else {
-                                None
-                            }
+                        .find_map(|x| match x.section_type() {
+                            Some(ffs::section::Type::DxeDepex) => Some(x.try_content_as_slice()),
+                            _ => None,
                         })
                         .transpose()?
                         .map(Depex::from);
@@ -559,7 +547,7 @@ mod tests {
     use super::*;
     use crate::test_collateral;
 
-    // Sample logger for log crate to dump stuff in tests
+    // Simple logger for log crate to dump stuff in tests
     struct SimpleLogger;
     impl log::Log for SimpleLogger {
         fn enabled(&self, metadata: &Metadata) -> bool {

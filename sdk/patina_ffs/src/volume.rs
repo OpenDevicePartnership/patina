@@ -6,6 +6,13 @@
 //!
 //! It validates FV headers and block maps, iterates contained files, and serializes with proper
 //! alignment, optional extended headers, and checksum calculation per the PI specification.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
 use alloc::vec::Vec;
 use core::{
     fmt, iter, mem, ptr,
@@ -46,7 +53,7 @@ impl<'a> VolumeRef<'a> {
     /// extended header bounds, and block map structure. On success, returns a
     /// zero-copy view tied to the provided buffer.
     ///
-    /// Examples
+    /// ## Examples
     ///
     /// ```rust no_run
     /// use patina_ffs::volume::{Volume, VolumeRef};
@@ -200,11 +207,12 @@ impl<'a> VolumeRef<'a> {
     /// Instantiate a new FirmwareVolume from a base address.
     ///
     /// ## Safety
+    ///
     /// Caller must ensure that base_address is the address of the start of a firmware volume.
     /// Caller must ensure that the lifetime of the buffer at base_address is longer than the
     /// returned VolumeRef.
     ///
-    /// Examples
+    /// ## Examples
     ///
     /// ```rust no_run
     /// use patina_ffs::volume::{Volume, VolumeRef};
@@ -250,7 +258,7 @@ impl<'a> VolumeRef<'a> {
 
     /// The Firmware Volume name GUID from the extended header, if available.
     pub fn fv_name(&self) -> Option<efi::Guid> {
-        self.ext_header().map(|x| x.0.fv_name)
+        self.ext_header().map(|(hdr, _)| hdr.fv_name)
     }
 
     /// The parsed block map describing block counts and sizes within the FV.
@@ -341,6 +349,14 @@ impl fmt::Debug for VolumeRef<'_> {
     }
 }
 
+impl<'a> TryFrom<&'a [u8]> for VolumeRef<'a> {
+    type Error = FirmwareFileSystemError;
+
+    fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
+        VolumeRef::new(value)
+    }
+}
+
 struct FileRefIter<'a> {
     data: &'a [u8],
     next_offset: usize,
@@ -427,13 +443,13 @@ impl Volume {
     }
 
     /// Read-only access to the list of FFS files contained in this FV.
-    pub fn files(&self) -> &Vec<File> {
-        &self.files
+    pub fn files(&self) -> impl Iterator<Item = &File> {
+        self.files.iter()
     }
 
     /// Mutable access to the list of FFS files contained in this FV.
     ///
-    /// Examples
+    /// ## Examples
     ///
     /// ```rust no_run
     /// use patina_ffs::volume::Volume;
@@ -443,7 +459,7 @@ impl Volume {
     ///
     /// let mut fv = Volume::new(vec![BlockMapEntry { num_blocks: 1, length: 4096 }]);
     /// fv.files_mut().push(File::new(efi::Guid::from_bytes(&[0u8; 16]), ffs::file::raw::r#type::FFS_PAD));
-    /// assert_eq!(fv.files().len(), 1);
+    /// assert_eq!(fv.files().count(), 1);
     /// ```
     pub fn files_mut(&mut self) -> &mut Vec<File> {
         &mut self.files
@@ -457,7 +473,7 @@ impl Volume {
     /// Errors propagate from serializing files and sections or when constraints
     /// are violated (e.g., file too large for FFSv2).
     ///
-    /// Examples
+    /// ## Examples
     ///
     /// ```rust no_run
     /// use patina_ffs::volume::Volume;
@@ -650,7 +666,7 @@ impl Volume {
     /// Useful after editing encapsulated sections so that serialization has the
     /// correct composed bytes.
     ///
-    /// Examples
+    /// ## Examples
     ///
     /// ```rust no_run
     /// use patina_ffs::volume::Volume;

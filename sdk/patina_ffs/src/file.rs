@@ -6,6 +6,13 @@
 //!
 //! Both types help inspect file metadata (name GUID, type, attributes), traverse sections, and
 //! serialize with correct headers, checksums, and alignment.
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//!
 use mu_pi::fw_fs::{
     ffs::{self, attributes, file},
     fv,
@@ -16,7 +23,7 @@ use crate::{
     section::{Section, SectionComposer, SectionExtractor, SectionIterator},
 };
 
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 use core::{fmt, iter, mem, ptr, slice::from_raw_parts};
 use r_efi::efi;
 
@@ -44,7 +51,7 @@ impl<'a> FileRef<'a> {
     /// - [`FirmwareFileSystemError::InvalidState`]: file state not DATA_VALID.
     /// - [`FirmwareFileSystemError::DataCorrupt`]: data checksum mismatch.
     ///
-    /// Examples
+    /// ## Examples
     ///
     /// ```rust no_run
     /// use patina_ffs::file::{File, FileRef};
@@ -78,9 +85,9 @@ impl<'a> FileRef<'a> {
         let (size, content_offset) = {
             if (header.attributes & attributes::raw::LARGE_FILE) == 0 {
                 //standard header with 24-bit size.
-                let mut size = vec![00u8; 4];
+                let mut size = [00u8; 4];
                 size[0..3].copy_from_slice(&header.size);
-                let size = u32::from_le_bytes(size.try_into().unwrap()) as usize;
+                let size = u32::from_le_bytes(size) as usize;
                 (size, mem::size_of::<file::Header>())
             } else {
                 //extended header with 64-bit size.
@@ -221,7 +228,7 @@ impl<'a> FileRef<'a> {
     ///
     /// Useful for decoding compressed or encapsulated sections during traversal.
     ///
-    /// Examples
+    /// ##Examples
     ///
     /// ```rust no_run
     /// use mu_pi::fw_fs::ffs;
@@ -306,7 +313,7 @@ impl File {
     /// required padding between sections, and computes header/data checksums.
     /// Errors from section serialization are propagated.
     ///
-    /// Examples
+    /// ## Examples
     ///
     /// ```rust no_run
     /// use mu_pi::fw_fs::ffs;
@@ -350,88 +357,98 @@ impl File {
             if ((self.attributes & attributes::raw::LARGE_FILE) != 0)
                 || content.len() > 0xffffff - mem::size_of::<ffs::file::Header>()
             {
-                let mut file_header = ffs::file::Header2 {
-                    header: ffs::file::Header {
-                        name: self.name,
-                        integrity_check_header: 0,
-                        integrity_check_file: 0,
-                        file_type: self.file_type_raw,
-                        attributes: self.attributes | attributes::raw::LARGE_FILE,
-                        size: [0u8; 3],
-                        state: 0,
-                    },
-                    extended_size: 0,
-                };
-                file_header.extended_size = (mem::size_of_val(&file_header) + content.len()) as u64;
-
-                // calculate checksum (excludes state and integrity_check_file, set to zero)
-                // safety: file_header is repr(C), safe to represent as byte slice for checksum
-                let header_slice =
-                    unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
-                let sum = header_slice.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
-                file_header.header.integrity_check_header = 0u8.wrapping_sub(sum);
-
-                // calculate file data check
-                if self.is_data_checksum() {
-                    let sum = content.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
-                    file_header.header.integrity_check_file = 0u8.wrapping_sub(sum);
-                } else {
-                    file_header.header.integrity_check_file = 0xaau8;
-                }
-
-                file_header.header.state = ffs::file::raw::state::HEADER_CONSTRUCTION
-                    | ffs::file::raw::state::HEADER_VALID
-                    | ffs::file::raw::state::DATA_VALID;
-                if self.erase_polarity {
-                    file_header.header.state = !file_header.header.state;
-                }
-
-                let header_slice =
-                    unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
-                header_slice.to_vec()
+                self.serialize_header2(&content)
             } else {
-                let mut file_header = ffs::file::Header {
-                    name: self.name,
-                    integrity_check_header: 0,
-                    integrity_check_file: 0,
-                    file_type: self.file_type_raw,
-                    attributes: self.attributes,
-                    size: [0u8; 3],
-                    state: 0,
-                };
-                let size = mem::size_of_val(&file_header) + content.len();
-                file_header.size.copy_from_slice(&size.to_le_bytes()[0..3]);
-
-                // calculate checksum (excludes state and integrity_check_file, set to zero)
-                // safety: file_header is repr(C), safe to represent as byte slice for checksum
-                let header_slice =
-                    unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
-                let sum = header_slice.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
-                file_header.integrity_check_header = 0u8.wrapping_sub(sum);
-
-                // calculate file data check
-                if self.is_data_checksum() {
-                    let sum = content.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
-                    file_header.integrity_check_file = 0u8.wrapping_sub(sum);
-                } else {
-                    file_header.integrity_check_file = 0xaau8;
-                }
-
-                file_header.state = ffs::file::raw::state::HEADER_CONSTRUCTION
-                    | ffs::file::raw::state::HEADER_VALID
-                    | ffs::file::raw::state::DATA_VALID;
-                if self.erase_polarity {
-                    file_header.state = !file_header.state;
-                }
-
-                let header_slice =
-                    unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
-                header_slice.to_vec()
+                self.serialize_header(&content)
             }
         };
 
         header.extend(content);
         Ok(header)
+    }
+
+    // Generate a serialized FFS file header for small files that uses ffs::file::Header2
+    fn serialize_header2(&self, content: &[u8]) -> Vec<u8> {
+        let mut file_header = ffs::file::Header2 {
+            header: ffs::file::Header {
+                name: self.name,
+                integrity_check_header: 0,
+                integrity_check_file: 0,
+                file_type: self.file_type_raw,
+                attributes: self.attributes | attributes::raw::LARGE_FILE,
+                size: [0u8; 3],
+                state: 0,
+            },
+            extended_size: 0,
+        };
+        file_header.extended_size = (mem::size_of_val(&file_header) + content.len()) as u64;
+
+        // calculate checksum (excludes state and integrity_check_file, set to zero)
+        // safety: file_header is repr(C), safe to represent as byte slice for checksum
+        let header_slice =
+            unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
+        let sum = header_slice.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
+        file_header.header.integrity_check_header = 0u8.wrapping_sub(sum);
+
+        // calculate file data check
+        if self.is_data_checksum() {
+            let sum = content.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
+            file_header.header.integrity_check_file = 0u8.wrapping_sub(sum);
+        } else {
+            file_header.header.integrity_check_file = 0xaau8;
+        }
+
+        file_header.header.state = ffs::file::raw::state::HEADER_CONSTRUCTION
+            | ffs::file::raw::state::HEADER_VALID
+            | ffs::file::raw::state::DATA_VALID;
+        if self.erase_polarity {
+            file_header.header.state = !file_header.header.state;
+        }
+
+        let header_slice =
+            unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
+        header_slice.to_vec()
+    }
+
+    // Generate a serialized FFS file header for small files that uses ffs::file::Header.
+    fn serialize_header(&self, content: &[u8]) -> Vec<u8> {
+        let mut file_header = ffs::file::Header {
+            name: self.name,
+            integrity_check_header: 0,
+            integrity_check_file: 0,
+            file_type: self.file_type_raw,
+            attributes: self.attributes,
+            size: [0u8; 3],
+            state: 0,
+        };
+        let size = mem::size_of_val(&file_header) + content.len();
+        file_header.size.copy_from_slice(&size.to_le_bytes()[0..3]);
+
+        // calculate checksum (excludes state and integrity_check_file, set to zero)
+        // safety: file_header is repr(C), safe to represent as byte slice for checksum
+        let header_slice =
+            unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
+        let sum = header_slice.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
+        file_header.integrity_check_header = 0u8.wrapping_sub(sum);
+
+        // calculate file data check
+        if self.is_data_checksum() {
+            let sum = content.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
+            file_header.integrity_check_file = 0u8.wrapping_sub(sum);
+        } else {
+            file_header.integrity_check_file = 0xaau8;
+        }
+
+        file_header.state = ffs::file::raw::state::HEADER_CONSTRUCTION
+            | ffs::file::raw::state::HEADER_VALID
+            | ffs::file::raw::state::DATA_VALID;
+        if self.erase_polarity {
+            file_header.state = !file_header.state;
+        }
+
+        let header_slice =
+            unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
+        header_slice.to_vec()
     }
 
     /// Set the erase polarity to encode in the header state bits.
@@ -495,7 +512,7 @@ impl File {
 
     /// Compose sections with the given composer and then serialize the file.
     ///
-    /// Examples
+    /// ## Examples
     ///
     /// ```rust no_run
     /// use mu_pi::fw_fs::ffs;
@@ -532,7 +549,7 @@ impl File {
 
     /// Compose all sections using the provided composer.
     ///
-    /// Examples
+    /// ## Examples
     ///
     /// ```rust no_run
     /// use mu_pi::fw_fs::ffs;
