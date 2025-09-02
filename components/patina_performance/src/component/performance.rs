@@ -65,10 +65,7 @@ impl Performance {
         });
 
         let Some((_, fbpt)) = get_static_state() else {
-            log::error!(
-                "[{}]: Performance static state was not initialized properly.",
-                function!()
-            );
+            log::error!("[{}]: Performance static state was not initialized properly.", function!());
             return Err(EfiError::Aborted);
         };
 
