@@ -2,7 +2,7 @@ use core::{
     arch::asm,
     num::NonZeroUsize,
     ops::Shr,
-    sync::atomic::{AtomicBool, Ordering, compiler_fence},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use gdbstub::arch::{RegId, Registers};
@@ -40,6 +40,11 @@ const DAIF_DEBUG_MASK: u64 = 0x200;
 
 static POKE_TEST_MARKER: AtomicBool = AtomicBool::new(false);
 
+/// This enum is used to specify the type of barrier to use when writing to a system register and in which order.
+enum BarrierType {
+    Instruction,
+}
+
 macro_rules! read_sysreg {
   ($reg:expr) => {{
     let value: u64;
@@ -54,6 +59,16 @@ macro_rules! write_sysreg {
   ($reg:expr, $value:expr) => {
     unsafe {
       asm!(concat!("msr ", $reg, ", {}"), in(reg) $value);
+    }
+  };
+  ($reg:expr, $value:expr, $barrier:expr) => {
+    match $barrier {
+    // Currently only instruction barriers are used by this code, but this can be expanded in the future as needed
+      _ => {
+        unsafe {
+          asm!(concat!("msr ", $reg, ", {}"), "isb sy", in(reg) $value);
+        }
+      }
     }
   };
 }
@@ -145,15 +160,13 @@ impl DebuggerArch for Aarch64Arch {
         // Disable debug exceptions in DAIF while configuring
         let mut daif = read_sysreg!("daif");
         daif |= DAIF_DEBUG_MASK;
-        write_sysreg!("daif", daif);
-        compiler_fence(Ordering::SeqCst);
+        write_sysreg!("daif", daif, BarrierType::Instruction);
 
         // Clear the OS lock if needed
         let oslsr_el1 = read_sysreg!("oslsr_el1");
         if oslsr_el1 & 1 != 0 {
-            unsafe { asm!("msr oslar_el1, xzr") };
+            unsafe { asm!("msr oslar_el1, xzr", "isb sy") };
         }
-        compiler_fence(Ordering::SeqCst);
 
         // Enable kernel and monitor debug bits
         let mut mdscr_el1 = read_sysreg!("mdscr_el1");
@@ -164,13 +177,11 @@ impl DebuggerArch for Aarch64Arch {
         for i in 0..NUM_WATCHPOINTS {
             write_dbg_wcr(i, Wcr::from(0));
         }
-        compiler_fence(Ordering::SeqCst);
 
         // Enable debug exceptions in DAIF
         daif = read_sysreg!("daif");
         daif &= !DAIF_DEBUG_MASK;
-        write_sysreg!("daif", daif);
-        compiler_fence(Ordering::SeqCst);
+        write_sysreg!("daif", daif, BarrierType::Instruction);
     }
 
     fn add_watchpoint(address: u64, length: u64, access_type: gdbstub::target::ext::breakpoints::WatchKind) -> bool {
@@ -537,10 +548,10 @@ fn read_dbg_wcr(index: usize) -> Wcr {
 fn write_dbg_wcr(index: usize, wcr: Wcr) {
     let value: u64 = wcr.into();
     match index {
-        0 => write_sysreg!("dbgwcr0_el1", value),
-        1 => write_sysreg!("dbgwcr1_el1", value),
-        2 => write_sysreg!("dbgwcr2_el1", value),
-        3 => write_sysreg!("dbgwcr3_el1", value),
+        0 => write_sysreg!("dbgwcr0_el1", value, BarrierType::Instruction),
+        1 => write_sysreg!("dbgwcr1_el1", value, BarrierType::Instruction),
+        2 => write_sysreg!("dbgwcr2_el1", value, BarrierType::Instruction),
+        3 => write_sysreg!("dbgwcr3_el1", value, BarrierType::Instruction),
         _ => {}
     }
 }
