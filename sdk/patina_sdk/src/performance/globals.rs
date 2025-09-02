@@ -52,12 +52,12 @@ impl<'a> StaticState<'a> {
     }
 }
 
-/// SAFETY: Initializing the `OnceCell`s via the atomic `is_init` flag satisfies the `Send` requirement for
+/// SAFETY: Initializing the `OnceCell`s via the atomic `initialize` flag satisfies the `Send` requirement for
 /// synchronization on the `set` calls inside `init`. Both the `StandardBootServices` and `TplMutex` types are `Send`
 /// as well, so the only other usage of the `OnceCell`s `get` method is safe.
 unsafe impl Send for StaticState<'static> {}
 
-/// SAFETY: Initializing the `OnceCell`s via the atomic `is_init` flag satisfies the `Sync` requirement for
+/// SAFETY: Initializing the `OnceCell`s via the atomic `initialize` flag satisfies the `Sync` requirement for
 /// synchronization on the `set` calls inside `init`. Both the `StandardBootServices` and `TplMutex` types are `Sync`
 /// as well, so the only other usage of the `OnceCell`s `get` method is safe.
 unsafe impl Sync for StaticState<'static> {}
