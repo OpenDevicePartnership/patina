@@ -415,10 +415,7 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
                             security_status: efi::Status::NOT_READY,
                         });
                     } else {
-                        log::warn!(
-                            "driver {:?} does not contain a PE32 section.",
-                            uuid::Uuid::from_bytes(*file_name.as_bytes())
-                        );
+                        log::warn!("driver {:?} does not contain a PE32 section.", guid_fmt!(file_name));
                     }
                 }
                 if file.file_type_raw() == ffs::file::raw::r#type::FIRMWARE_VOLUME_IMAGE {
@@ -454,7 +451,7 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
                     } else {
                         log::warn!(
                             "firmware volume image {:?} does not contain a firmware volume image section.",
-                            uuid::Uuid::from_bytes(*file_name.as_bytes())
+                            guid_fmt!(file_name)
                         );
                     }
                 }
