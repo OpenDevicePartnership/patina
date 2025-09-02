@@ -66,7 +66,6 @@ where
     nums.into_iter().collect()
 }
 
-#[allow(static_mut_refs)]
 fn benchmark_delete_function(c: &mut Criterion) {
     let mut group = c.benchmark_group("delete");
     let nums = random_numbers::<u32>(0, 100_000);
