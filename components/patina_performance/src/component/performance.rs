@@ -64,7 +64,13 @@ impl Performance {
             );
         });
 
-        let (_, fbpt) = get_static_state().expect("Static state initialized just above!");
+        let Some((_, fbpt)) = get_static_state() else {
+            log::error!(
+                "[{}]: Performance static state was not initialized properly.",
+                function!()
+            );
+            return Err(EfiError::Aborted);
+        };
 
         let Some(mm_comm_region_hobs) = mm_comm_region_hobs else {
             // If no MM communication region is provided, we can skip the SMM performance records.
