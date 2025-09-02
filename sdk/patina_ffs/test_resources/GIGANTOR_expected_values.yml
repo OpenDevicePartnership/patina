@@ -1,0 +1,55 @@
+total_number_of_files: 3
+files_to_test:
+  # GUID of the File (need to be uppercase)
+  "8B02EFF4-7191-446A-AA33-90355378A5B0":
+    file_type: 0x2
+    attributes: 0x01
+    # Body size in UEFITool
+    data_size: 0x200001A
+    # Full size in UEFITool
+    size: 0x200003A
+    # Number of section that the file has
+    number_of_sections: 2
+    sections:
+      # Index of the section in the file (Not required to defined every section)
+      0:
+        section_type: 0x19 #RAW
+        size: 0x2000000
+      1:
+        section_type: 0x19 #RAW
+        base_address: 0x20000A0
+        size: 0xE
+  # GUID of the File (need to be uppercase)
+  "039BACD3-AFB5-4A0C-875B-97F1A1C4686E":
+    file_type: 0x2
+    attributes: 0x00
+    # Body size in UEFITool
+    data_size: 0x12
+    # Full size in UEFITool
+    size: 0x2A
+    # Number of section that the file has
+    number_of_sections: 1
+    sections:
+      # Index of the section in the file (Not required to defined every section)
+      0:
+        section_type: 0x19 #RAW
+        size: 0xE
+  # GUID of the File (need to be uppercase)
+  "DFC62C9E-A7E6-43AF-92A9-FA05A7B682D6":
+    base_address: 0x20000E8
+    file_type: 0x2
+    attributes: 0x01
+    # Body size in UEFITool
+    data_size: 0x200001C
+    # Full size in UEFITool
+    size: 0x200003C
+    # Number of section that the file has
+    number_of_sections: 2
+    sections:
+      # Index of the section in the file (Not required to defined every section)
+      0:
+        section_type: 0x19 #RAW
+        size: 0xE
+      1:
+        section_type: 0x19 #RAW
+        size: 0x2000000

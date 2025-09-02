@@ -102,7 +102,7 @@ not meant to be exhaustive, but rather a starting example for showing how to set
 supports. As an example, a platform may only compress its sections with brotli, so it only needs to support brotli
 extractions. A platform may create their own extractor; it only needs to implement the
 [SectionExtractor](https://github.com/microsoft/mu_rust_pi/blob/c8dd7f990d87746cfae9a5e821ad69501c46f346/src/fw_fs.rs#L77)
-trait. However, multiple implementations are provided via [patina_section_extractor](https://github.com/OpenDevicePartnership/patina/tree/main/core/patina_section_extractor),
+trait. However, multiple implementations are provided via [patina_ffs_extractors](https://github.com/OpenDevicePartnership/patina/tree/main/core/patina_ffs_extractors),
 such as brotli, crc32, uefi_decompress, etc.
 
 ```admonish note
@@ -118,7 +118,7 @@ use patina_dxe_core::Core;
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     Core::default()
-        .with_section_extractor(patina_section_extractor::CompositeSectionExtractor::default())
+        .with_section_extractor(patina_ffs_extractors::CompositeSectionExtractor::default())
         .init_memory(physical_hob_list)
         .start()
         .unwrap();
@@ -127,7 +127,7 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
 ```
 
 ```admonish note
-If you copy + paste this directly, the compiler will not know what `patina_section_extractor` is. You will have to add
+If you copy + paste this directly, the compiler will not know what `patina_ffs_extractors` is. You will have to add
 that to your platform's `Cargo.toml` file. Additionally, where the `Default::default()` option is, this is where you
 would provide any configuration to the Patina DXE Core, similar to a PCD value.
 ```
@@ -176,7 +176,7 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     adv_logger_component.init_advanced_logger(physical_hob_list).unwrap();
 
     Core::default()
-        .with_section_extractor(patina_section_extractor::CompositeSectionExtractor::default())
+        .with_section_extractor(patina_ffs_extractors::CompositeSectionExtractor::default())
         .init_memory(physical_hob_list)
         .with_component(adv_logger_component)
         .start()
@@ -246,7 +246,7 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     adv_logger_component.init_advanced_logger(physical_hob_list).unwrap();
 
     Core::default()
-        .with_section_extractor(patina_section_extractor::CompositeSectionExtractor::default())
+        .with_section_extractor(patina_ffs_extractors::CompositeSectionExtractor::default())
         .init_memory(physical_hob_list)
         .with_component(adv_logger_component)
         .start()

@@ -29,7 +29,7 @@ lazy_static = { version = "^1" }
 linked_list_allocator = { version = "^0.10" }
 linkme = { version = "^0.3.29" }
 log = { version = "0.4", default-features = false }
-mu_pi = { version = "5.2.3" }
+mu_pi = { version = "6.0.0" }
 mu_rust_helpers = { version = "3.0.1" }
 num-traits = { version = "0.2", default-features = false }
 patina_debugger = { version = "6.2.1", path = "core/patina_debugger", registry = "patina-fw" }
@@ -42,6 +42,7 @@ patina_mtrr = { version = "1.0.0", registry = "patina-fw" }
 patina_paging = { version = "8", registry = "patina-fw" }
 patina_performance = { version = "6.2.1", path = "components/patina_performance", registry = "patina-fw" }
 patina_sdk = { version = "6.2.1", path = "sdk/patina_sdk", registry = "patina-fw" }
+patina_ffs = { version = "6.2.1", path = "sdk/patina_ffs"}
 patina_sdk_macro = { version = "6.2.1", path = "sdk/patina_sdk_macro", registry = "patina-fw" }
 patina_stacktrace = { version = "6.2.1", path = "core/patina_stacktrace", registry = "patina-fw" }
 proc-macro2 = { version = "1" }
@@ -63,6 +64,9 @@ mockall = { version = "0.13.0" }
 rand = { version = "0.8" }
 ruint = { version = "1" }
 winapi = { version = "0.3" }
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = { version = "0.9" }
+lzma-rs = { version = "0.3" }
 
 [profile.release]
 debug = true

@@ -12,9 +12,10 @@ use core::{
     mem,
     slice::{self, from_raw_parts},
 };
+use patina_ffs::volume::VolumeRef;
 use patina_sdk::error::EfiError;
 
-use mu_pi::{dxe_services, fw_fs::FirmwareVolume};
+use mu_pi::dxe_services;
 use r_efi::efi;
 
 use crate::{
@@ -388,11 +389,13 @@ extern "efiapi" fn process_firmware_volume(
 
     // construct a FirmwareVolume to verify sanity
     let fv_slice = unsafe { slice::from_raw_parts(firmware_volume_header as *const u8, size) };
-    if let Err(_err) = FirmwareVolume::new(fv_slice) {
-        return efi::Status::VOLUME_CORRUPTED;
+    if let Err(err) = VolumeRef::new(fv_slice) {
+        return err.into();
     }
-
-    let handle = match core_install_firmware_volume(firmware_volume_header as u64, None) {
+    // Safety: caller must ensure that firmware_volume_header is a valid firmware volume that will not be freed
+    // or moved after being sent to the core for processing.
+    let res = unsafe { core_install_firmware_volume(firmware_volume_header as u64, None) };
+    let handle = match res {
         Ok(handle) => handle,
         Err(err) => return err.into(),
     };
@@ -2098,7 +2101,7 @@ mod tests {
             unsafe { crate::test_support::init_test_protocol_db() };
 
             // Install the FV to obtain a real handle
-            let _handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let _handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             // Wrapper should still surface NOT_FOUND (no pending drivers to dispatch in tests)
             let s = dispatch();
@@ -2139,7 +2142,7 @@ mod tests {
             unsafe { crate::test_support::init_test_protocol_db() };
 
             // Install the FV to obtain a real handle
-            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             // Use the same GUID as the dispatcher tests; wrapper should map NotFound correctly
             let file_guid = efi::Guid::from_bytes(Uuid::from_u128(0x1fa1f39e_feff_4aae_bd7b_38a070a3b609).as_bytes());

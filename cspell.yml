@@ -52,11 +52,13 @@ words:
   - efierror
   - eflags
   - fnent
+  - fvmain
   - gantt
   - gdbstub
   - genfw
   - getrsp
   - getsp
+  - gigantor
   - granularities
   - grcov
   - gread
@@ -71,6 +73,7 @@ words:
   - isenabler
   - linkme
   - longjmp
+  - lzmatest
   - mdbook
   - mdscr
   - mmram
