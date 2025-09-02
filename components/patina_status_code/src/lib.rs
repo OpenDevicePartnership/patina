@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+mod callback;
 pub mod error;
 mod protocol;
 mod service;

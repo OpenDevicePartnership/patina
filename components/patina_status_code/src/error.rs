@@ -1,10 +1,13 @@
 use r_efi::efi;
 
+#[derive(Debug)]
 pub enum RscHandlerError {
     CallbackAlreadyRegistered,
     EventCreationFailed(efi::Status),
     UnregisterNotFound,
     MissingEvent, // tpl < tpl_high must have event. if not, error
+    AlreadyInitialized,
+    NotInitialized,
 }
 
 impl From<RscHandlerError> for efi::Status {
@@ -14,6 +17,8 @@ impl From<RscHandlerError> for efi::Status {
             RscHandlerError::EventCreationFailed(efi_status) => efi_status,
             RscHandlerError::UnregisterNotFound => efi::Status::NOT_FOUND,
             RscHandlerError::MissingEvent => efi::Status::NOT_FOUND,
+            RscHandlerError::AlreadyInitialized => efi::Status::ALREADY_STARTED,
+            RscHandlerError::NotInitialized => efi::Status::NOT_READY,
             _ => efi::Status::INVALID_PARAMETER,
         }
     }

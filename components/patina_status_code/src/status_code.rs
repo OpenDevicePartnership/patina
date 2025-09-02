@@ -1,10 +1,17 @@
-use alloc::{boxed::Box, vec::Vec};
+use core::cell::OnceCell;
+
+use alloc::{
+    boxed::Box,
+    vec::{self, Vec},
+};
 use r_efi::efi;
+use spin::RwLock;
 
 use crate::{
+    callback::RscHandlerCallback,
     error::RscHandlerError,
     protocol::EfiStatusCodeHeader,
-    service::{RscHandler, RscHandlerCallback, StatusCodeType, StatusCodeValue},
+    service::{RscHandler, StatusCodeType, StatusCodeValue},
 };
 
 use patina_sdk::{
@@ -16,6 +23,10 @@ use patina_sdk::{
     component::service::IntoService,
     uefi_protocol::status_code::StatusCodeRuntimeProtocol,
 };
+
+// SHERRY: this may be problematic for FFI
+pub(crate) type RustRscHandlerCallback =
+    fn(StatusCodeType, StatusCodeValue, u32, efi::Guid, &EfiStatusCodeHeader) -> efi::Status;
 
 #[derive(Clone, PartialEq, Eq)]
 struct RscHandlerCallbackEntry {
@@ -32,7 +43,14 @@ impl RscHandlerCallbackEntry {
 
     pub fn process_all(&mut self) {
         for entry in &self.status_code_buffer {
-            (self.callback)(entry.code_type, entry.value, entry.instance, entry.caller_id, &entry.data_header);
+            match &self.callback {
+                RscHandlerCallback::Rust(cb) => {
+                    cb(entry.code_type, entry.value, entry.instance, entry.caller_id, &entry.data_header);
+                }
+                RscHandlerCallback::Efi(cb) => unsafe {
+                    cb(entry.code_type, entry.value, entry.instance, entry.caller_id, &entry.data_header);
+                },
+            }
         }
         self.status_code_buffer.clear();
     }
@@ -50,17 +68,35 @@ struct RscDataEntry {
 
 #[derive(IntoService)]
 #[service(dyn RscHandler)]
-struct StandardRscHandler<B: BootServices + 'static> {
-    callback_list: Vec<RscHandlerCallbackEntry>,
-    boot_services: B,
+pub(crate) struct StandardRscHandler<B: BootServices + 'static> {
+    callback_list: RwLock<Vec<RscHandlerCallbackEntry>>,
+    boot_services: OnceCell<B>,
+}
+
+unsafe impl<B> Sync for StandardRscHandler<B> where B: BootServices + Sync {}
+
+impl<B> StandardRscHandler<B>
+where
+    B: BootServices,
+{
+    pub const fn new_uninit() -> Self {
+        Self { callback_list: RwLock::new(vec![]), boot_services: OnceCell::new() }
+    }
+
+    pub fn initialize(&self, bs: B) -> Result<(), RscHandlerError>
+    where
+        B: BootServices,
+    {
+        self.boot_services.set(bs).map_err(|_| RscHandlerError::AlreadyInitialized)
+    }
 }
 
 impl<B> RscHandler for StandardRscHandler<B>
 where
     B: BootServices,
 {
-    fn register(&mut self, callback: RscHandlerCallback, tpl: tpl::Tpl) -> Result<(), RscHandlerError> {
-        for entry in &self.callback_list {
+    fn register(&self, callback: RscHandlerCallback, tpl: tpl::Tpl) -> Result<(), RscHandlerError> {
+        for entry in &self.callback_list.read() {
             // sherry: a thorny problem
             if entry.callback == callback {
                 return Err(RscHandlerError::CallbackAlreadyRegistered);
@@ -72,6 +108,8 @@ where
         if tpl <= tpl::Tpl(efi::TPL_HIGH_LEVEL) {
             let event = self
                 .boot_services
+                .get()
+                .ok_or(RscHandlerError::NotInitialized)?
                 .create_event(EventType::NOTIFY_SIGNAL, tpl, Some(rsc_hander_notification), Box::new(new_entry.clone()))
                 .map_err(|e| RscHandlerError::EventCreationFailed(e))?;
             new_entry.event_handle = Some(event);
@@ -82,13 +120,15 @@ where
         Ok(())
     }
 
-    fn unregister(&mut self, callback: RscHandlerCallback) -> Result<(), RscHandlerError> {
+    fn unregister(&self, callback: RscHandlerCallback) -> Result<(), RscHandlerError> {
         // sherry: more fun issues yay :)
         if let Some(index) = self.callback_list.iter().position(|entry| entry.callback == callback) {
             let entry = self.callback_list.remove(index);
 
             if entry.tpl <= tpl::Tpl(efi::TPL_HIGH_LEVEL) {
                 self.boot_services
+                    .get()
+                    .ok_or(RscHandlerError::NotInitialized)?
                     .close_event(entry.event_handle.ok_or(RscHandlerError::MissingEvent)?)
                     .map_err(|e| RscHandlerError::EventCreationFailed(e))?;
             }
