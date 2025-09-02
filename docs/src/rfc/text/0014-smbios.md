@@ -67,7 +67,94 @@ Create an idiomatic Rust API for SMBIOS-related protocols (*see [Motivation - Sc
 
 ## Unresolved Questions
 
-- Should the API expose separate interfaces for 32-bit and 64-bit SMBIOS tables, or handle this internally?
+ Should the API expose separate interfaces for 32-bit and 64-bit SMBIOS tables, or handle this internally?
+  Summary: Prefer a unified public API that handles 32/64 internally, plus an opt-in low-level escape hatch for experts.
+
+  Separate interfaces (explicit 32-bit and 64-bit APIs)
+  Pros:
+  - Strong correctness and clarity: callers pick the exact format.
+  - Compile-time signal for address sizes and layout differences.
+  - Easier format-specific validation and optimizations.
+  - Good for low-level tooling that needs precise control.
+  Cons:
+  - Larger, duplicated API surface; more to maintain and test.
+  - Forces agnostic consumers to write wrappers or choose formats.
+  - Encourages fragmented code paths and potential divergence.
+  - Harder to support mixed (publish both) scenarios.
+
+  Unified API that handles 32/64 internally
+  Pros:
+  - Ergonomic: most users don’t need to care about table width.
+  - Simpler docs and adoption; fewer call-site code paths.
+  - Stable logical model with internal format translation.
+  - Easier to evolve for future SMBIOS updates.
+  Cons:
+  - More internal complexity and runtime branching.
+  - Advanced users lose direct control without escape hatches.
+  - Version-specific constraints can be hidden/surprising.
+  - Requires thorough tests to catch format-specific bugs.
+
+  Recommendation
+  Patina exposes a single, ergonomic SMBIOS API that’s format-agnostic by default. The SmbiosRecords service lets components add, update, remove, and enumerate records without choosing between SMBIOS 2.x (32-bit) and 3.x (64-bit). The service selects and publishes the appropriate tables per platform and policy. For advanced firmware tooling, an opt-in “raw” module provides explicit 32/64 entry-point construction and publishing primitives, so experts retain full control when needed.
+
+  Tiny API sketch
+  ```rust
+  /// Optional hint when you need to force a target format.
+  #[derive(Copy, Clone, Debug)]
+  pub enum SmbiosTarget {
+      Auto,     // default: publish per platform policy (may publish both)
+      Force32,  // SMBIOS 2.x entry point and table
+      Force64,  // SMBIOS 3.x entry point and table
+  }
+
+  pub trait SmbiosRecordsExt: SmbiosRecords {
+      /// Same as `add`, but allows callers to influence the target format.
+      fn add_with_target(
+          &mut self,
+          producer_handle: Option<Handle>,
+          smbios_handle: &mut SmbiosHandle,
+          record: &SmbiosTableHeader,
+          target: SmbiosTarget,
+      ) -> Result<(), SmbiosError>;
+  }
+
+  // Public, ergonomic usage (format-agnostic by default)
+  fn produce_record(smbios: &mut dyn SmbiosRecords) -> Result<(), SmbiosError> {
+      let mut handle = SMBIOS_HANDLE_PI_RESERVED;
+      let record = SmbiosTableHeader {
+          record_type: 0,
+          length: core::mem::size_of::<SmbiosTableHeader>() as u8,
+          handle: SMBIOS_HANDLE_PI_RESERVED,
+      };
+
+      // Ergonomic path (Auto)
+      smbios.add(None, &mut handle, &record)?;
+
+      // Advanced path (explicit control via extension)
+      // smbios.add_with_target(None, &mut handle, &record, SmbiosTarget::Force64)?;
+      Ok(())
+  }
+
+  // Advanced, low-level escape hatch
+  pub mod smbios {
+      pub mod raw {
+          #[repr(C, packed)]
+          pub struct SmbiosEntryPoint32 { /* _SM_, checksums, 32-bit table addr, etc. */ }
+          #[repr(C, packed)]
+          pub struct SmbiosEntryPoint64 { /* _SM3_, checksums, 64-bit table addr, etc. */ }
+
+          /// Build a 32-bit SMBIOS entry-point from a serialized table buffer.
+          pub fn build_entry_point32(_table: &[u8]) -> SmbiosEntryPoint32 { unimplemented!() }
+
+          /// Build a 64-bit SMBIOS entry-point from a serialized table buffer.
+          pub fn build_entry_point64(_table: &[u8]) -> SmbiosEntryPoint64 { unimplemented!() }
+
+          /// Publish entry-points to the system configuration table (unsafe by nature).
+          pub unsafe fn install_config_table_32(_ep: &SmbiosEntryPoint32) -> Result<(), ()> { unimplemented!() }
+          pub unsafe fn install_config_table_64(_ep: &SmbiosEntryPoint64) -> Result<(), ()> { unimplemented!() }
+      }
+  }
+  ```
 - Is there value in exposing lower-level table construction functionality to advanced users?
 - Should we provide typed interfaces for specific SMBIOS record types (Type 0, Type 1, etc.)?
 
