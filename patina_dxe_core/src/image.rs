@@ -1329,6 +1329,7 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
                         protocol,
                         open_info.agent_handle,
                         open_info.controller_handle,
+                        Some(open_info.attributes),
                     );
                 }
             }
