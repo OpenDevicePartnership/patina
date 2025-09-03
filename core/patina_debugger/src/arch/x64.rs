@@ -129,9 +129,12 @@ impl DebuggerArch for X64Arch {
     }
 
     fn reboot() {
-        // Reset the system through the keyboard controller IO port.
+        // Reset the system through the Reset Control Register.
         unsafe {
-            asm!("cli", "out dx, al", in("dx") 0x64, in("al") 0xFE_u8);
+            asm!("cli",
+                 "out dx, al",
+                 in("dx") 0xCF9,
+                 in("al") 0x06_u8);
 
             // this is kept in a separate loop because we don't anticipate returning from this
             loop {
