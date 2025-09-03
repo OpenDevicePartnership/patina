@@ -22,7 +22,7 @@ use patina_sdk::{
     guid::{EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
     performance::{
         _smm::MmCommRegion,
-        globals::{set_load_image_count, set_perf_measurement_mask, set_static_state},
+        globals::{get_static_state, set_load_image_count, set_perf_measurement_mask, set_static_state},
         measurement::{PerformanceProperty, create_performance_measurement, event_callback},
         record::hob::{HobPerformanceData, HobPerformanceDataExtractor},
         table::FirmwareBasicBootPerfTable,
@@ -57,8 +57,17 @@ impl Performance {
 
         set_perf_measurement_mask(config.enabled_measurements);
 
-        let fbpt = set_static_state(StandardBootServices::clone(&boot_services))
-            .expect("Static state should only be initialized here!");
+        set_static_state(StandardBootServices::clone(&boot_services)).unwrap_or_else(|_| {
+            log::error!(
+                "[{}]: Performance static state was set somewhere else. It should only be set here!",
+                function!()
+            );
+        });
+
+        let Some((_, fbpt)) = get_static_state() else {
+            log::error!("[{}]: Performance static state was not initialized properly.", function!());
+            return Err(EfiError::Aborted);
+        };
 
         let Some(mm_comm_region_hobs) = mm_comm_region_hobs else {
             // If no MM communication region is provided, we can skip the SMM performance records.
