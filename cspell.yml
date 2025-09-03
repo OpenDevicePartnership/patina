@@ -41,6 +41,7 @@ words:
   - cbindgen
   - cdecl
   - cdrom
+  - clangpdb
   - corosensei
   - coverity
   - cpuid
