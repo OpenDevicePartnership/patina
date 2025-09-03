@@ -19,30 +19,48 @@ use core::{
 static LOAD_IMAGE_COUNT: AtomicU32 = AtomicU32::new(0);
 static PERF_MEASUREMENT_MASK: AtomicU32 = AtomicU32::new(0);
 
+/// Static state for the performance component.
 struct StaticState<'a> {
+    /// Boot Services instance
     boot_services: OnceCell<StandardBootServices>,
+    /// The FBPT protected by a TPL mutex.
     fbpt: OnceCell<TplMutex<'a, FBPT>>,
-    initialized: AtomicBool,
+    /// Flag to indicate if the static state is in the process of being initialized.
+    initializing: AtomicBool,
 }
 
 impl<'a> StaticState<'a> {
+    /// Creates a new uninitialized static state.
     const fn uninit() -> Self {
-        Self { boot_services: OnceCell::new(), fbpt: OnceCell::new(), initialized: AtomicBool::new(false) }
+        Self { boot_services: OnceCell::new(), fbpt: OnceCell::new(), initializing: AtomicBool::new(false) }
     }
 
+    /// Initializes the static state.
+    ///
+    /// ## Errors
+    ///
+    /// Returns `Already initialized` if the static state has already been initialized.
+    /// Returns `Currently initializing somewhere else` if another thread is currently initializing the static state.
     fn init(&'a self, bs: StandardBootServices) -> Result<(), &'static str> {
-        if self.initialized.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+        if self.initializing.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
             self.boot_services.set(bs).map_err(|_| "Already initialized")?;
             self.fbpt
                 .set(TplMutex::new(self.boot_services.get().expect("Boot Services Just Set"), Tpl::NOTIFY, FBPT::new()))
                 .map_err(|_| "Failed to set FBPT")?;
+            self.initializing.store(false, Ordering::Release);
             return Ok(());
         }
-        Err("Already initialized")
+
+        Err("Currently initializing somewhere else")
     }
 
+    /// Gets the inner static state if it has been initialized.
+    ///
+    /// Returns `None` if the state is not yet initialized.
+    /// Returns `None` if the state is currently being initialized.
+    /// Returns `Some` with references to the `StandardBootServices` and `TplMutex<FBPT>` if initialized.
     fn inner(&self) -> Option<(&StandardBootServices, &TplMutex<'a, FBPT>)> {
-        if self.initialized.load(Ordering::Acquire)
+        if !self.initializing.load(Ordering::Acquire)
             && let Some(bs) = self.boot_services.get()
             && let Some(fbpt) = self.fbpt.get()
         {
