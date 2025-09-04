@@ -89,7 +89,7 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 #![cfg_attr(not(test), no_std)]
 #![feature(coverage_attribute)]

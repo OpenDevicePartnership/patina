@@ -8,7 +8,7 @@
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 // Allow missing docs since this is a temporary module.

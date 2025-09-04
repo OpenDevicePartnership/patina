@@ -2,7 +2,7 @@
 #
 ##
 # Copyright (c) Microsoft Corporation.
-# SPDX-License-Identifier: BSD-2-Clause-Patent
+# SPDX-License-Identifier: Apache-2.0
 ##
 name: 📓 Tracking unstable feature issue.
 description: Track an unstable feature.
@@ -10,12 +10,12 @@ title: "[Unstable] Tracking Issue for <unstable feature name>"
 labels: ["unstable-feature"]
 
 body:
-  - type: markdown 
+  - type: markdown
     id: documentation
     attributes:
       value: "For more details about unstable features, see: [unstable_feature.md](https://github.com/OpenDevicePartnership/patina/blob/main/docs/src/dev/unstable_feature.md)"
 
-  - type: input 
+  - type: input
     id: feature-gate-name
     attributes:
       label: Name of the rust feature in `Cargo.toml` to gate this unstable feature.

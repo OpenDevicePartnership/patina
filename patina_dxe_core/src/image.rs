@@ -4,7 +4,7 @@
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};

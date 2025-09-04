@@ -4,7 +4,7 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 /// Converts a size in bytes to the number of UEFI pages required.

@@ -4,7 +4,7 @@
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::{boxed::Box, vec, vec::Vec};
 use alloc_no_stdlib::{self, SliceWrapper, SliceWrapperMut, define_index_ops_mut};
