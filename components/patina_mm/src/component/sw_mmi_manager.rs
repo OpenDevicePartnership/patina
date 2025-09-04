@@ -6,7 +6,7 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::config::{MmCommunicationConfiguration, MmiPort};
 use crate::service::platform_mm_control::PlatformMmControl;

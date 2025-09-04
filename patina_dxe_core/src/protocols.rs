@@ -4,7 +4,7 @@
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use core::{ffi::c_void, mem::size_of};
 

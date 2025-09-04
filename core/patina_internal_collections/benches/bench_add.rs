@@ -25,7 +25,7 @@
 //!
 //! Copyright (C) Microsoft Corporation. All rights reserved.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use patina_internal_collections::{Bst, Rbt, SortedSlice, node_size};
