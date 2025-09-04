@@ -396,6 +396,7 @@ impl ProtocolDb {
         protocol: efi::Guid,
         agent_handle: Option<efi::Handle>,
         controller_handle: Option<efi::Handle>,
+        attributes: Option<u32>,
     ) -> Result<(), EfiError> {
         self.validate_handle(handle)?;
 
@@ -412,11 +413,11 @@ impl ProtocolDb {
         let instance = handle_instance.get_mut(&OrdGuid(protocol)).ok_or(EfiError::NotFound)?;
 
         let mut status = Err(EfiError::NotFound);
-        while let Some(idx) = instance
-            .usage
-            .iter()
-            .rposition(|x| (x.agent_handle == agent_handle) && (x.controller_handle == controller_handle))
-        {
+        while let Some(idx) = instance.usage.iter().rposition(|x| {
+            (x.agent_handle == agent_handle)
+                && (x.controller_handle == controller_handle)
+                && attributes.is_none_or(|attr| x.attributes == attr)
+        }) {
             let usage = instance.usage.remove(idx);
             //if we are removing the usage that had this instance open by driver (there should be only one)
             //then clear the flag that the instance was opened by driver.
@@ -738,8 +739,9 @@ impl SpinLockedProtocolDb {
         protocol: efi::Guid,
         agent_handle: Option<efi::Handle>,
         controller_handle: Option<efi::Handle>,
+        attributes: Option<u32>,
     ) -> Result<(), EfiError> {
-        self.lock().remove_protocol_usage(handle, protocol, agent_handle, controller_handle)
+        self.lock().remove_protocol_usage(handle, protocol, agent_handle, controller_handle, attributes)
     }
 
     /// Returns open protocol information for the given handle/protocol.
@@ -1425,13 +1427,81 @@ mod tests {
                 SPIN_LOCKED_PROTOCOL_DB
                     .add_protocol_usage(handle, guid1, Some(agent), Some(controller), attributes)
                     .unwrap();
-                SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle, guid1, Some(agent), Some(controller)).unwrap();
+                SPIN_LOCKED_PROTOCOL_DB
+                    .remove_protocol_usage(handle, guid1, Some(agent), Some(controller), None)
+                    .unwrap();
                 let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
                 let protocol_user_list =
                     &protocol_db.handles.get(&(handle as usize)).unwrap().get(&OrdGuid(guid1)).unwrap().usage;
                 assert_eq!(0, protocol_user_list.len());
                 drop(protocol_db);
             }
+        });
+    }
+
+    #[test]
+    fn remove_protocol_usage_should_remove_only_matching_attributes() {
+        with_locked_state(|| {
+            static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
+
+            let uuid = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
+            let guid = efi::Guid::from_bytes(uuid.as_bytes());
+            let interface: *mut c_void = 0x1234 as *mut c_void;
+
+            let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid, interface).unwrap();
+            let (agent1, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid, interface).unwrap();
+            let (agent2, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid, interface).unwrap();
+            let (controller, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid, interface).unwrap();
+
+            // Add two usages with different attributes
+            SPIN_LOCKED_PROTOCOL_DB
+                .add_protocol_usage(handle, guid, Some(agent1), Some(controller), efi::OPEN_PROTOCOL_GET_PROTOCOL)
+                .unwrap();
+            let result = SPIN_LOCKED_PROTOCOL_DB.add_protocol_usage(
+                handle,
+                guid,
+                Some(agent2),
+                Some(controller),
+                efi::OPEN_PROTOCOL_EXCLUSIVE,
+            );
+            assert_eq!(result, Ok(()));
+
+            // OPEN_PROTOCOL_BY_DRIVER should not remove either usage
+            let result = SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(
+                handle,
+                guid,
+                Some(agent1),
+                Some(controller),
+                Some(efi::OPEN_PROTOCOL_BY_DRIVER),
+            );
+            assert_eq!(result, Err(EfiError::NotFound));
+
+            // Remove the GET_PROTOCOL usage
+            SPIN_LOCKED_PROTOCOL_DB
+                .remove_protocol_usage(
+                    handle,
+                    guid,
+                    Some(agent1),
+                    Some(controller),
+                    Some(efi::OPEN_PROTOCOL_GET_PROTOCOL),
+                )
+                .unwrap();
+
+            let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
+            let usage_list = &protocol_db.handles.get(&(handle as usize)).unwrap().get(&OrdGuid(guid)).unwrap().usage;
+            assert_eq!(usage_list.len(), 1);
+            assert_eq!(usage_list[0].agent_handle, Some(agent2));
+            assert_eq!(usage_list[0].attributes, efi::OPEN_PROTOCOL_EXCLUSIVE);
+
+            // Remove the remaining EXCLUSIVE usage
+            drop(protocol_db);
+            SPIN_LOCKED_PROTOCOL_DB
+                .remove_protocol_usage(handle, guid, Some(agent2), Some(controller), Some(efi::OPEN_PROTOCOL_EXCLUSIVE))
+                .unwrap();
+
+            let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
+            let usage_list = &protocol_db.handles.get(&(handle as usize)).unwrap().get(&OrdGuid(guid)).unwrap().usage;
+            assert_eq!(usage_list.len(), 0);
         });
     }
 
@@ -1452,7 +1522,8 @@ mod tests {
                 .add_protocol_usage(handle1, guid1, Some(handle2), Some(handle3), efi::OPEN_PROTOCOL_BY_DRIVER)
                 .unwrap();
 
-            let result = SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle1, guid1, Some(handle3), Some(handle2));
+            let result =
+                SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle1, guid1, Some(handle3), Some(handle2), None);
             assert_eq!(result, Err(EfiError::NotFound));
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let protocol_user_list =
@@ -1460,7 +1531,7 @@ mod tests {
             assert_eq!(1, protocol_user_list.len());
             drop(protocol_db);
 
-            let result = SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle1, guid1, None, Some(handle3));
+            let result = SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle1, guid1, None, Some(handle3), None);
             assert_eq!(result, Err(EfiError::NotFound));
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let protocol_user_list =
@@ -1468,7 +1539,7 @@ mod tests {
             assert_eq!(1, protocol_user_list.len());
             drop(protocol_db);
 
-            let result = SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle1, guid1, Some(handle2), None);
+            let result = SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle1, guid1, Some(handle2), None, None);
             assert_eq!(result, Err(EfiError::NotFound));
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let protocol_user_list =
@@ -1476,7 +1547,7 @@ mod tests {
             assert_eq!(1, protocol_user_list.len());
             drop(protocol_db);
 
-            let result = SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle1, guid1, None, None);
+            let result = SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle1, guid1, None, None, None);
             assert_eq!(result, Err(EfiError::NotFound));
             let protocol_db = SPIN_LOCKED_PROTOCOL_DB.lock();
             let protocol_user_list =
@@ -1516,7 +1587,9 @@ mod tests {
                 Err(EfiError::AccessDenied)
             );
 
-            SPIN_LOCKED_PROTOCOL_DB.remove_protocol_usage(handle1, guid1, Some(handle2), Some(handle3)).unwrap();
+            SPIN_LOCKED_PROTOCOL_DB
+                .remove_protocol_usage(handle1, guid1, Some(handle2), Some(handle3), Some(efi::OPEN_PROTOCOL_BY_DRIVER))
+                .unwrap();
 
             //adding it agin with different agent handle should succeed.
             assert_eq!(
