@@ -101,9 +101,9 @@ not meant to be exhaustive, but rather a starting example for showing how to set
 `SectionExtractor` is an abstraction point that allows a platform to specify the specific section extraction methods it
 supports. As an example, a platform may only compress its sections with brotli, so it only needs to support brotli
 extractions. A platform may create their own extractor; it only needs to implement the
-[SectionExtractor](https://github.com/microsoft/mu_rust_pi/blob/c8dd7f990d87746cfae9a5e821ad69501c46f346/src/fw_fs.rs#L77)
-trait. However, multiple implementations are provided via [patina_ffs_extractors](https://github.com/OpenDevicePartnership/patina/tree/main/core/patina_ffs_extractors),
-such as brotli, crc32, uefi_decompress, etc.
+[SectionExtractor](https://docs.rs/mu_pi/latest/mu_pi/fw_fs/trait.SectionExtractor.html) trait. However, multiple
+implementations are provided via [patina_ffs_extractors](https://github.com/OpenDevicePartnership/patina/tree/main/core/patina_ffs_extractors)
+such as brotli, crc32, etc.
 
 ```admonish note
 If there are any new traits added, please submit a PR to update this documentation.
@@ -114,12 +114,13 @@ your platform-specific implementations:
 
 ```rust
 use patina_dxe_core::Core;
+use patina_ffs_extractors::CompositeSectionExtractor;
 
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     Core::default()
-        .with_section_extractor(patina_ffs_extractors::CompositeSectionExtractor::default())
         .init_memory(physical_hob_list)
+        .with_service(CompositeSectionExtractor::default())
         .start()
         .unwrap();
     loop {}
@@ -128,8 +129,8 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
 
 ```admonish note
 If you copy + paste this directly, the compiler will not know what `patina_ffs_extractors` is. You will have to add
-that to your platform's `Cargo.toml` file. Additionally, where the `Default::default()` option is, this is where you
-would provide any configuration to the Patina DXE Core, similar to a PCD value.
+that crate to your platform's `Cargo.toml` file. Additionally, where the `Default::default()` option is, this is where
+you would provide any configuration to the Patina DXE Core, similar to a PCD value.
 ```
 
 At this point, you could skip the rest of this section and move on to compiling it into the platform firmware, and it
@@ -141,10 +142,13 @@ We will start simple by configuring and initializing a logger that is used throu
 Core. If you add any `Components` (we will get to that soon), then this same logger will also be used by those too!
 
 The DXE Core uses the same logger interface as [log](https://crates.io/crates/log), so if you wish to create your own
-logger, follow those steps. We currently provide two loggers, including a
-[patina_adv_logger](https://github.com/OpenDevicePartnership/patina/tree/main/components/patina_adv_logger)
-implementation, which is great for this tutorial as it will also show you how to add a `Component` to the Patina DXE
-Core.
+logger, follow those steps. We currently provide two loggers:
+
+- [patina_adv_logger](https://github.com/OpenDevicePartnership/patina/tree/main/components/patina_adv_logger)
+- [serial_logger](https://github.com/OpenDevicePartnership/patina/blob/main/sdk/patina_sdk/src/log/serial_logger.rs)
+
+For this tutorial, we will use the more complex `patina_adv_logger` as it will show you how to add a `Component` to the
+Patina DXE Core.
 
 First, add `patina_adv_logger` to your Cargo.toml file in the crate:
 
@@ -155,6 +159,8 @@ patina_adv_logger = "$(VERSION)"
 Next, update main.rs with the following:
 
 ```rust
+use patina_dxe_core::Core;
+use patina_ffs_extractors::CompositeSectionExtractor;
 use patina_adv_logger::{component::AdvancedLoggerComponent, logger::AdvancedLogger};
 
 static LOGGER: AdvancedLogger<Uart16550> = AdvancedLogger::new(
@@ -176,8 +182,8 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     adv_logger_component.init_advanced_logger(physical_hob_list).unwrap();
 
     Core::default()
-        .with_section_extractor(patina_ffs_extractors::CompositeSectionExtractor::default())
         .init_memory(physical_hob_list)
+        .with_service(CompositeSectionExtractor::default())
         .with_component(adv_logger_component)
         .start()
         .unwrap();
@@ -185,16 +191,17 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
 }
 ```
 
-This does a few things. The first is it creates our actual logger, with some configuration settings. Specifically it
-sets the log message format, disables logging for a few modules, sets the minimum log type allowed, then specifies the
-Writer that we want to write to. In this case we are writing to port `0x402` via `Uart16550`. Again, this is just our
-advanced logger implementation. This could be different if you create your own.
+This does a few things. The first is it creates our actual logger (as a static), with some configuration settings.
+Specifically it sets the log message format, disables logging for a few modules, sets the minimum log type allowed,
+then specifies the Writer that we want to write to. In this case we are writing to port `0x402` via `Uart16550`. Your
+platform may require a different writer.
 
-The next static that we generate is the component that gets executed during runtime, which initializes and publishes
-the advanced logger so that regular EDK II built components also have access to the advanced logger.
+Next, inside `efi_main` we instantiate the advanced logger component, which will be executed by the core at runtime.
+Among other things, this component produces the Advanced Logger Protocol, so that other standard UEFI drivers may
+consume and use it.
 
-Next, we set the global logger to our static logger with the `log` crate. Finally, we initialize the component, and
-then add it to the list of components that the Patina DXE Core will execute.
+Finally, we set the global logger to our static logger with the `log` crate and then register the component instance
+with the core, so that it knows to execute it.
 
 ## Final main.rs
 
@@ -208,6 +215,7 @@ In this final example, we add the ability to stack trace to the panic handler, w
 use core::{ffi::c_void, panic::PanicInfo};
 use patina_adv_logger::{component::AdvancedLoggerComponent, logger::AdvancedLogger};
 use patina_dxe_core::Core;
+use patina_ffs_extractors::CompositeSectionExtractor;
 use patina_sdk::{log::Format, serial::uart::Uart16550};
 use patina_stacktrace::StackTrace;
 extern crate alloc;
@@ -246,8 +254,8 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     adv_logger_component.init_advanced_logger(physical_hob_list).unwrap();
 
     Core::default()
-        .with_section_extractor(patina_ffs_extractors::CompositeSectionExtractor::default())
         .init_memory(physical_hob_list)
+        .with_service(CompositeSectionExtractor::default())
         .with_component(adv_logger_component)
         .start()
         .unwrap();
