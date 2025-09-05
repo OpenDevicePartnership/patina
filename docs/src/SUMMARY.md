@@ -34,9 +34,9 @@
 
 - [Patina DXE Core Requirements](integrate/patina_dxe_core_requirements.md)
 - [Setting up the Patina DXE Core](integrate/dxe_core.md)
-- [Integrating an Externally Compiled EFI Binary to the Platform](integrate/platform_external.md)
 - [Compiling External to the Platform](integrate/compile_external.md)
-- [Compiling Local to the Platform (Deprecated)](integrate/platform_local.md)
+- [Compiling Local to the Platform (Deprecated)](integrate/compile_local.md)
+- [Integrating an Externally Compiled EFI Binary to the Platform](integrate/platform_external.md)
 
 # Patina Component Model
 
