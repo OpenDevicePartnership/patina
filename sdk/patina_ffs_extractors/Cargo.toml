@@ -17,16 +17,12 @@ patina_ffs = { workspace = true }
 r-efi = {workspace = true}
 brotli-decompressor = { workspace = true, optional = true }
 alloc-no-stdlib = { workspace = true, optional = true }
-mu_rust_helpers = { workspace = true, optional = true, features = [
-    "uefi_decompress",
-] }
 crc32fast = { workspace = true, optional = true }
 patina_lzma_rs = { workspace = true, optional = true, default-features = false }
 
 [features]
-default = ["brotli", "uefi_decompress", "crc32", "lzma"]
+default = ["brotli", "crc32", "lzma"]
 std = []
 brotli = ["dep:brotli-decompressor", "dep:alloc-no-stdlib"]
-uefi_decompress = ["dep:mu_rust_helpers"]
 crc32 = ["dep:crc32fast"]
 lzma = ["dep:patina_lzma_rs"]

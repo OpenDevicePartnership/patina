@@ -8,8 +8,6 @@
 //! implementation of the `SectionExtractorLib` trait. The crate is configured in this manner to
 //! reduce compilation times, by only compiling the necessary implementations.
 //! - `brotli`: Enables the `SectionExtractorLibBrotli` implementation.
-//! - `uefi_decompress`: Enables the `UefiDecompressSectionExtractor` implementation, which supports
-//!   PI-spec UEFI standard compression sections and Tiano GUID-defined compressed sections.
 //! - `crc32`: Enables the `Crc32SectionExtractor` implementation to validate CRC32 GUID-defined
 //!   sections and return the verified payload.
 //! - `lzma`: Enables the `LzmaSectionExtractor` implementation for GUID-defined LZMA compressed
@@ -24,18 +22,10 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 extern crate alloc;
 
-mod null;
-pub use null::NullSectionProcessor;
-
 #[cfg(feature = "brotli")]
 mod brotli;
 #[cfg(feature = "brotli")]
 pub use brotli::BrotliSectionExtractor;
-
-#[cfg(feature = "uefi_decompress")]
-mod uefi_decompress;
-#[cfg(feature = "uefi_decompress")]
-pub use uefi_decompress::UefiDecompressSectionExtractor;
 
 #[cfg(feature = "crc32")]
 mod crc32;
