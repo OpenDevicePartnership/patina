@@ -1,3 +1,11 @@
+//! DXE Core Memory Manager
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
 use alloc::boxed::Box;
 use patina_sdk::test::patina_test;
 use patina_sdk::{

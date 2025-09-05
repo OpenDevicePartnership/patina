@@ -1,3 +1,11 @@
+//! DXE Core CPU Architectural Protocol
+//!
+//! ## License
+//!
+//! Copyright (C) Microsoft Corporation. All rights reserved.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
 #![allow(unused)]
 /// Architecture independent public C EFI CPU Architectural Protocol definition.
 use crate::{dxe_services, protocols::PROTOCOL_DB};
