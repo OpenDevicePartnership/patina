@@ -20,11 +20,12 @@ use mu_pi::{
 
 use patina_ffs::{section::SectionExtractor, volume::VolumeRef};
 use patina_internal_device_path::concat_device_path_to_boxed_slice;
-use patina_sdk::error::EfiError;
+use patina_sdk::{component::service::Service, error::EfiError};
 use r_efi::efi;
 
 use crate::{
     allocator::core_allocate_pool,
+    decompress::CoreExtractor,
     protocols::{PROTOCOL_DB, core_install_protocol_interface},
     tpl_lock,
 };
@@ -46,7 +47,7 @@ enum PrivateDataItem {
 
 struct PrivateGlobalData {
     fv_information: BTreeMap<*mut c_void, PrivateDataItem>,
-    section_extractor: Option<Box<dyn SectionExtractor>>,
+    section_extractor: CoreExtractor,
 }
 
 //access to private global data is only through mutex guard, so safe to mark sync/send.
@@ -55,7 +56,7 @@ unsafe impl Send for PrivateGlobalData {}
 
 static PRIVATE_FV_DATA: tpl_lock::TplMutex<PrivateGlobalData> = tpl_lock::TplMutex::new(
     efi::TPL_NOTIFY,
-    PrivateGlobalData { fv_information: BTreeMap::new(), section_extractor: None },
+    PrivateGlobalData { fv_information: BTreeMap::new(), section_extractor: CoreExtractor::new() },
     "FvLock",
 );
 
@@ -415,8 +416,8 @@ extern "efiapi" fn fv_read_section(
     let section_data = match section_type {
         ffs::section::raw_type::ALL => file.data(),
         x => {
-            let extractor = private_data.section_extractor.as_ref().expect("fv support uninitialized");
-            sections = match file.sections_with_extractor(extractor.as_ref()) {
+            let extractor = &private_data.section_extractor;
+            sections = match file.sections_with_extractor(extractor) {
                 Ok(sections) => sections,
                 Err(err) => return err.into(),
             };
@@ -729,7 +730,8 @@ pub fn device_path_bytes_for_fv_file(fv_handle: efi::Handle, file_name: efi::Gui
     )
 }
 
-fn initialize_hob_fvs(hob_list: &hob::HobList) -> Result<(), efi::Status> {
+/// Parse the FVs defined in the HOB list.
+pub fn parse_hob_fvs(hob_list: &hob::HobList) -> Result<(), efi::Status> {
     let fv_hobs = hob_list.iter().filter_map(|h| if let hob::Hob::FirmwareVolume(fv) = h { Some(*fv) } else { None });
 
     for fv in fv_hobs {
@@ -742,10 +744,9 @@ fn initialize_hob_fvs(hob_list: &hob::HobList) -> Result<(), efi::Status> {
     Ok(())
 }
 
-/// Initializes FV services for the DXE core.
-pub fn init_fv_support(hob_list: &hob::HobList, extractor: Box<dyn SectionExtractor>) {
-    PRIVATE_FV_DATA.lock().section_extractor = Some(extractor);
-    initialize_hob_fvs(hob_list).expect("Unexpected error initializing FVs from hob_list");
+/// Registers a section extractor to be used when reading sections from files in firmware volumes.
+pub fn register_section_extractor(extractor: Service<dyn SectionExtractor>) {
+    PRIVATE_FV_DATA.lock().section_extractor.set_extractor(extractor);
 }
 
 #[cfg(test)]
@@ -754,6 +755,7 @@ mod tests {
     use super::*;
     use crate::test_support;
     use mu_pi::hob::Hob;
+    use patina_ffs_extractors::CompositeSectionExtractor;
     extern crate alloc;
     use crate::test_collateral;
     use mu_pi::hob::HobList;
@@ -841,7 +843,8 @@ mod tests {
             // Push the example HOBs onto the HOB l
             hoblist.push(Hob::FirmwareVolume2(&_firmware_volume2));
             hoblist.push(Hob::Handoff(&end_of_hob_list));
-            init_fv_support(&hoblist, Box::new(patina_ffs_extractors::BrotliSectionExtractor));
+            parse_hob_fvs(&hoblist).unwrap();
+            register_section_extractor(Service::mock(Box::new(CompositeSectionExtractor::default())));
         })
         .expect("Unexpected Error Initalising hob fvs ");
     }
@@ -1440,7 +1443,10 @@ mod tests {
             }
             assert!(PRIVATE_FV_DATA.lock().fv_information.is_empty());
 
-            PRIVATE_FV_DATA.lock().section_extractor = Some(Box::new(patina_ffs_extractors::BrotliSectionExtractor));
+            PRIVATE_FV_DATA
+                .lock()
+                .section_extractor
+                .set_extractor(Service::mock(Box::new(patina_ffs_extractors::BrotliSectionExtractor)));
 
             let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
                 get_volume_attributes: fv_get_volume_attributes,

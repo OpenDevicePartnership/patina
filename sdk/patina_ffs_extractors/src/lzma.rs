@@ -16,13 +16,16 @@ use r_efi::efi;
 
 use patina_lzma_rs::io::Cursor;
 
+use patina_sdk::component::prelude::IntoService;
+
 pub const LZMA_SECTION_GUID: efi::Guid =
     efi::Guid::from_fields(0xEE4E5898, 0x3914, 0x4259, 0x9D, 0x6E, &[0xDC, 0x7B, 0xD7, 0x94, 0x03, 0xCF]);
 
 pub const LZMA_UNKNOWN_UNPACKED_SIZE_MAGIC_VALUE: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 
 /// Provides decompression for LZMA GUIDed sections.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, IntoService)]
+#[service(dyn SectionExtractor)]
 pub struct LzmaSectionExtractor;
 
 impl SectionExtractor for LzmaSectionExtractor {

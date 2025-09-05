@@ -15,6 +15,8 @@ use patina_ffs::{
     section::{Section, SectionExtractor, SectionHeader},
 };
 
+use patina_sdk::component::prelude::IntoService;
+
 //Rebox and HeapAllocator exist to satisfy BrotliDecompress custom allocation requirements.
 //They essentially wrap Box for heap allocations.
 struct Rebox<T>(Box<[T]>);
@@ -51,7 +53,8 @@ impl<T: Clone> alloc_no_stdlib::Allocator<T> for HeapAllocator<T> {
 }
 
 /// Provides decompression for Brotli GUIDed sections.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, IntoService)]
+#[service(dyn SectionExtractor)]
 pub struct BrotliSectionExtractor;
 impl SectionExtractor for BrotliSectionExtractor {
     fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {

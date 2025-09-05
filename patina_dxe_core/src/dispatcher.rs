@@ -21,6 +21,7 @@ use patina_ffs::{
 use patina_internal_depex::{AssociatedDependency, Depex, Opcode};
 use patina_internal_device_path::concat_device_path_to_boxed_slice;
 use patina_sdk::{
+    component::service::Service,
     error::EfiError,
     performance::{
         logging::{perf_function_begin, perf_function_end},
@@ -28,17 +29,17 @@ use patina_sdk::{
     },
 };
 use r_efi::efi;
-use tpl_lock::TplMutex;
 
 use mu_rust_helpers::guid::CALLER_ID;
 
 use crate::{
+    decompress::CoreExtractor,
     events::EVENT_DB,
     fv::{core_install_firmware_volume, device_path_bytes_for_fv_file},
     image::{core_load_image, core_start_image},
     protocol_db::DXE_CORE_HANDLE,
     protocols::PROTOCOL_DB,
-    tpl_lock,
+    tpl_lock::TplMutex,
 };
 
 // Default Dependency expression per PI spec v1.2 Vol 2 section 10.9.
@@ -138,7 +139,7 @@ struct DispatcherContext {
     associated_before: BTreeMap<OrdGuid, Vec<PendingDriver>>,
     associated_after: BTreeMap<OrdGuid, Vec<PendingDriver>>,
     processed_fvs: BTreeSet<efi::Handle>,
-    section_extractor: Option<Box<dyn SectionExtractor>>,
+    section_extractor: CoreExtractor,
 }
 
 impl DispatcherContext {
@@ -152,7 +153,7 @@ impl DispatcherContext {
             associated_before: BTreeMap::new(),
             associated_after: BTreeMap::new(),
             processed_fvs: BTreeSet::new(),
-            section_extractor: None,
+            section_extractor: CoreExtractor::new(),
         }
     }
 }
@@ -344,10 +345,7 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
                 if file.file_type_raw() == ffs::file::raw::r#type::DRIVER {
                     let file = file.clone();
                     let file_name = file.name();
-                    let sections = match &dispatcher.section_extractor {
-                        Some(extractor) => file.sections_with_extractor(extractor.as_ref())?,
-                        None => file.sections()?,
-                    };
+                    let sections = file.sections_with_extractor(&dispatcher.section_extractor)?;
 
                     let depex = sections
                         .iter()
@@ -422,10 +420,7 @@ fn add_fv_handles(new_handles: Vec<efi::Handle>) -> Result<(), EfiError> {
                     let file = file.clone();
                     let file_name = file.name();
 
-                    let sections = match &dispatcher.section_extractor {
-                        Some(extractor) => file.sections_with_extractor(extractor.as_ref())?,
-                        None => file.sections()?,
-                    };
+                    let sections = file.sections_with_extractor(&dispatcher.section_extractor)?;
 
                     let depex = sections
                         .iter()
@@ -504,7 +499,7 @@ pub fn core_dispatcher() -> Result<(), EfiError> {
     if something_dispatched { Ok(()) } else { Err(EfiError::NotFound) }
 }
 
-pub fn init_dispatcher(extractor: Box<dyn SectionExtractor>) {
+pub fn init_dispatcher() {
     //set up call back for FV protocol installation.
     let event = EVENT_DB
         .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(core_fw_vol_event_protocol_notify), None, None)
@@ -513,8 +508,10 @@ pub fn init_dispatcher(extractor: Box<dyn SectionExtractor>) {
     PROTOCOL_DB
         .register_protocol_notify(firmware_volume_block::PROTOCOL_GUID, event)
         .expect("Failed to register protocol notify on fv protocol.");
+}
 
-    DISPATCHER_CONTEXT.lock().section_extractor = Some(extractor);
+pub fn register_section_extractor(extractor: Service<dyn SectionExtractor>) {
+    DISPATCHER_CONTEXT.lock().section_extractor.set_extractor(extractor);
 }
 
 pub fn display_discovered_not_dispatched() {
@@ -651,7 +648,8 @@ mod tests {
     fn test_init_dispatcher() {
         set_logger();
         with_locked_state(|| {
-            init_dispatcher(Box::new(patina_ffs_extractors::BrotliSectionExtractor));
+            init_dispatcher();
+            register_section_extractor(Service::mock(Box::new(patina_ffs_extractors::BrotliSectionExtractor)));
         });
     }
 
