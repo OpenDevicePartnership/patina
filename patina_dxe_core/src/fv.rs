@@ -69,21 +69,27 @@ extern "efiapi" fn fvb_get_attributes(
         return efi::Status::INVALID_PARAMETER;
     }
 
+    match core_fvb_get_attributes(this) {
+        Err(err) => return err.into(),
+        Ok(fvb_attributes) => unsafe { attributes.write(fvb_attributes) },
+    };
+
+    efi::Status::SUCCESS
+}
+
+fn core_fvb_get_attributes(
+    this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+) -> Result<fvb::attributes::EfiFvbAttributes2, EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
 
     let fvb_data = match private_data.fv_information.get(&(this as *mut c_void)) {
         Some(PrivateDataItem::FvbData(fvb_data)) => fvb_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
+        Some(_) | None => return Err(EfiError::NotFound),
     };
 
-    let fv = match unsafe { VolumeRef::new_from_address(fvb_data.physical_address) } {
-        Ok(fv) => fv,
-        Err(err) => return err.into(),
-    };
+    let fv = unsafe { VolumeRef::new_from_address(fvb_data.physical_address)? };
 
-    unsafe { attributes.write(fv.attributes()) };
-
-    efi::Status::SUCCESS
+    Ok(fv.attributes())
 }
 
 extern "efiapi" fn fvb_set_attributes(
@@ -123,34 +129,37 @@ extern "efiapi" fn fvb_get_block_size(
         return efi::Status::INVALID_PARAMETER;
     }
 
+    let (size, remaining_blocks) = match core_fvb_get_block_size(this, lba) {
+        Err(err) => return err.into(),
+        Ok((size, remaining_blocks)) => (size, remaining_blocks),
+    };
+
+    unsafe {
+        block_size.write(size);
+        number_of_blocks.write(remaining_blocks);
+    }
+
+    efi::Status::SUCCESS
+}
+
+fn core_fvb_get_block_size(
+    this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    lba: efi::Lba,
+) -> Result<(usize, usize), EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
 
     let fvb_data = match private_data.fv_information.get(&(this as *mut c_void)) {
         Some(PrivateDataItem::FvbData(fvb_data)) => fvb_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
+        Some(_) | None => return Err(EfiError::NotFound),
     };
 
-    let fv = match unsafe { VolumeRef::new_from_address(fvb_data.physical_address) } {
-        Ok(fv) => fv,
-        Err(err) => return err.into(),
-    };
+    let fv = unsafe { VolumeRef::new_from_address(fvb_data.physical_address)? };
 
-    let lba: u32 = match lba.try_into() {
-        Ok(lba) => lba,
-        _ => return efi::Status::INVALID_PARAMETER,
-    };
+    let lba: u32 = lba.try_into().map_err(|_| EfiError::InvalidParameter)?;
 
-    let (size, remaining_blocks) = match fv.lba_info(lba) {
-        Err(err) => return err.into(),
-        Ok((_, size, remaining_blocks)) => (size, remaining_blocks),
-    };
+    let (block_size, remaining_blocks, _) = fv.lba_info(lba)?;
 
-    unsafe {
-        block_size.write(size as usize);
-        number_of_blocks.write(remaining_blocks as usize);
-    }
-
-    efi::Status::SUCCESS
+    Ok((block_size as usize, remaining_blocks as usize))
 }
 
 extern "efiapi" fn fvb_read(
@@ -164,48 +173,61 @@ extern "efiapi" fn fvb_read(
         return efi::Status::INVALID_PARAMETER;
     }
 
+    let bytes_to_read = unsafe { *num_bytes };
+
+    let data = match core_fvb_read(this, lba, offset, bytes_to_read) {
+        Err(err) => return err.into(),
+        Ok(data) => data,
+    };
+
+    if data.len() > bytes_to_read {
+        unsafe { num_bytes.write(data.len()) };
+        return efi::Status::BUFFER_TOO_SMALL;
+    }
+
+    // copy from memory into the destination buffer to do the read.
+    unsafe {
+        let dest_buffer = slice::from_raw_parts_mut(buffer as *mut u8, data.len());
+        dest_buffer.copy_from_slice(data);
+        num_bytes.write(data.len());
+    }
+
+    if data.len() != bytes_to_read { efi::Status::BAD_BUFFER_SIZE } else { efi::Status::SUCCESS }
+}
+
+fn core_fvb_read(
+    this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    lba: efi::Lba,
+    offset: usize,
+    num_bytes: usize,
+) -> Result<&'static [u8], EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
 
     let fvb_data = match private_data.fv_information.get(&(this as *mut c_void)) {
         Some(PrivateDataItem::FvbData(fvb_data)) => fvb_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
+        Some(_) | None => return Err(EfiError::NotFound),
     };
 
-    let fv = match unsafe { VolumeRef::new_from_address(fvb_data.physical_address) } {
-        Ok(fv) => fv,
-        Err(err) => return err.into(),
-    };
+    let fv = unsafe { VolumeRef::new_from_address(fvb_data.physical_address) }?;
 
     let lba: u32 = match lba.try_into() {
         Ok(lba) => lba,
-        _ => return efi::Status::INVALID_PARAMETER,
+        _ => return Err(EfiError::InvalidParameter),
     };
 
     let (lba_base_addr, block_size) = match fv.lba_info(lba) {
-        Err(err) => return err.into(),
+        Err(err) => return Err(err.into()),
         Ok((base, block, _)) => (base as usize, block as usize),
     };
 
-    let mut status = efi::Status::SUCCESS;
-
-    let mut bytes_to_read = unsafe { *num_bytes };
+    let mut bytes_to_read = num_bytes;
     if offset + bytes_to_read > block_size {
         bytes_to_read = block_size - offset;
-        status = efi::Status::BAD_BUFFER_SIZE;
     }
 
     let lba_start = (fvb_data.physical_address as usize + lba_base_addr + offset) as *mut u8;
 
-    // copy from memory into the destination buffer to do the read.
-    unsafe {
-        let source_buffer = slice::from_raw_parts(lba_start, bytes_to_read);
-        let dest_buffer = slice::from_raw_parts_mut(buffer as *mut u8, bytes_to_read);
-        dest_buffer.copy_from_slice(source_buffer);
-
-        num_bytes.write(bytes_to_read);
-    }
-
-    status
+    unsafe { Ok(slice::from_raw_parts(lba_start, bytes_to_read)) }
 }
 
 extern "efiapi" fn fvb_write(
@@ -264,21 +286,29 @@ extern "efiapi" fn fv_get_volume_attributes(
         return efi::Status::INVALID_PARAMETER;
     }
 
+    let fv_attributes_data = match core_fv_get_volume_attributes(this) {
+        Err(err) => return err.into(),
+        Ok(attrs) => attrs,
+    };
+
+    unsafe { fv_attributes.write(fv_attributes_data) };
+
+    efi::Status::SUCCESS
+}
+
+fn core_fv_get_volume_attributes(
+    this: *const mu_pi::protocols::firmware_volume::Protocol,
+) -> Result<fv::attributes::EfiFvAttributes, EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
 
     let fv_data = match private_data.fv_information.get(&(this as *mut c_void)) {
         Some(PrivateDataItem::FvData(fv_data)) => fv_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
+        Some(_) | None => return Err(EfiError::NotFound),
     };
 
-    let fv = match unsafe { VolumeRef::new_from_address(fv_data.physical_address) } {
-        Ok(fv) => fv,
-        Err(err) => return err.into(),
-    };
+    let fv = unsafe { VolumeRef::new_from_address(fv_data.physical_address)? };
 
-    unsafe { fv_attributes.write(fv.attributes() as fv::attributes::EfiFvAttributes) };
-
-    efi::Status::SUCCESS
+    Ok(fv.attributes() as fv::attributes::EfiFvAttributes)
 }
 
 extern "efiapi" fn fv_set_volume_attributes(
@@ -309,6 +339,11 @@ extern "efiapi" fn fv_read_file(
     let local_buffer_size = unsafe { *buffer_size };
     let local_name_guid = unsafe { *name_guid };
 
+    // for this routine, the file data should be copied into the output buffer directly from the FileRef
+    // constructed here. If this logic was moved into a `core_fv_read_file()` routine as with other functions
+    // in this file, the FileRef would be local to that routine and the data slice could not be returned without
+    // making a copy of the data (or otherwise working around the lifetime issues with e.g. unpalatable raw ptr
+    // shenanigans).
     let private_data = PRIVATE_FV_DATA.lock();
 
     let fv_data = match private_data.fv_information.get(&(this as *mut c_void)) {
@@ -390,46 +425,14 @@ extern "efiapi" fn fv_read_section(
 
     let local_name_guid = unsafe { *name_guid };
 
-    let private_data = PRIVATE_FV_DATA.lock();
-
-    let fv_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvData(fv_data)) => fv_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
-    };
-
-    let fv = match unsafe { VolumeRef::new_from_address(fv_data.physical_address) } {
-        Ok(fv) => fv,
+    let section = match core_fv_read_section(this, local_name_guid, section_type, section_instance) {
+        Ok(section) => section,
         Err(err) => return err.into(),
     };
 
-    if (fv.attributes() & fvb::attributes::raw::fvb2::READ_STATUS) == 0 {
-        return efi::Status::ACCESS_DENIED;
-    }
-
-    let file = match fv.files().find(|f| f.as_ref().is_ok_and(|f| f.name() == local_name_guid) || f.is_err()) {
-        Some(Ok(result)) => result,
-        Some(Err(err)) => return err.into(),
-        _ => return efi::Status::NOT_FOUND,
-    };
-
-    let sections; //ensure that section data lifetime is long enough by assigning to section outside match scope.
-    let section_data = match section_type {
-        ffs::section::raw_type::ALL => file.data(),
-        x => {
-            let extractor = &private_data.section_extractor;
-            sections = match file.sections_with_extractor(extractor) {
-                Ok(sections) => sections,
-                Err(err) => return err.into(),
-            };
-
-            match sections.iter().filter(|sec| sec.section_type_raw() == x).nth(section_instance) {
-                Some(sec) => match sec.try_content_as_slice() {
-                    Ok(data) => data,
-                    Err(err) => return err.into(),
-                },
-                _ => return efi::Status::NOT_FOUND,
-            }
-        }
+    let section_data = match section.try_content_as_slice() {
+        Ok(data) => data,
+        Err(err) => return err.into(),
     };
 
     // get the buffer_size and buffer parameters from caller.
@@ -471,6 +474,40 @@ extern "efiapi" fn fv_read_section(
     if dest_buffer.len() < section_data.len() { efi::Status::WARN_BUFFER_TOO_SMALL } else { efi::Status::SUCCESS }
 }
 
+fn core_fv_read_section(
+    this: *const mu_pi::protocols::firmware_volume::Protocol,
+    name_guid: efi::Guid,
+    section_type: ffs::section::EfiSectionType,
+    section_instance: usize,
+) -> Result<patina_ffs::section::Section, EfiError> {
+    let private_data = PRIVATE_FV_DATA.lock();
+
+    let fv_data = match private_data.fv_information.get(&(this as *mut c_void)) {
+        Some(PrivateDataItem::FvData(fv_data)) => fv_data,
+        Some(_) | None => return Err(EfiError::NotFound),
+    };
+
+    let fv = unsafe { VolumeRef::new_from_address(fv_data.physical_address) }?;
+
+    if (fv.attributes() & fvb::attributes::raw::fvb2::READ_STATUS) == 0 {
+        return Err(EfiError::AccessDenied);
+    }
+
+    let file = match fv.files().find(|f| f.as_ref().is_ok_and(|f| f.name() == name_guid) || f.is_err()) {
+        Some(Ok(result)) => result,
+        Some(Err(err)) => return Err(err.into()),
+        _ => return Err(EfiError::NotFound),
+    };
+
+    let extractor = &private_data.section_extractor;
+    let sections = file.sections_with_extractor(extractor)?;
+
+    match sections.iter().filter(|sec| sec.section_type_raw() == section_type).nth(section_instance) {
+        Some(sec) => Ok(sec.clone()),
+        _ => Err(EfiError::NotFound),
+    }
+}
+
 extern "efiapi" fn fv_write_file(
     _this: *const mu_pi::protocols::firmware_volume::Protocol,
     _number_of_files: u32,
@@ -499,53 +536,70 @@ extern "efiapi" fn fv_get_next_file(
         return efi::Status::NOT_FOUND;
     }
 
+    let (file_name, fv_attributes, file_size, found_file_type) =
+        match core_fv_get_next_file(this, local_file_type, local_key) {
+            Err(err) => return err.into(),
+            Ok((name, attrs, size, file_type)) => (name, attrs, size, file_type),
+        };
+    // found matching file. Update the key and outputs.
+    unsafe {
+        (key as *mut usize).write(local_key + 1);
+        name_guid.write(file_name);
+        if (fv_attributes & fvb::attributes::raw::fvb2::MEMORY_MAPPED) == fvb::attributes::raw::fvb2::MEMORY_MAPPED {
+            attributes.write(fv_attributes | fv::file::raw::attribute::MEMORY_MAPPED);
+        } else {
+            attributes.write(fv_attributes);
+        }
+        size.write(file_size);
+        file_type.write(found_file_type);
+    }
+
+    efi::Status::SUCCESS
+}
+
+fn core_fv_get_next_file(
+    this: *const mu_pi::protocols::firmware_volume::Protocol,
+    file_type: fv::EfiFvFileType,
+    key: usize,
+) -> Result<(efi::Guid, fv::file::EfiFvFileAttributes, usize, fv::EfiFvFileType), EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
 
     let fv_data = match private_data.fv_information.get(&(this as *mut c_void)) {
         Some(PrivateDataItem::FvData(fv_data)) => fv_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
+        Some(_) | None => return Err(EfiError::NotFound),
     };
 
-    let fv = match unsafe { VolumeRef::new_from_address(fv_data.physical_address) } {
-        Ok(fv) => fv,
-        Err(err) => return err.into(),
-    };
+    let fv = unsafe { VolumeRef::new_from_address(fv_data.physical_address) }?;
 
     let fv_attributes = fv.attributes();
 
     if (fv_attributes & fvb::attributes::raw::fvb2::READ_STATUS) == 0 {
-        return efi::Status::ACCESS_DENIED;
+        return Err(EfiError::AccessDenied);
     }
 
     let file_candidate = fv
         .files()
         .filter(|f| {
             f.is_err()
-                || local_file_type == ffs::file::raw::r#type::ALL
-                || f.as_ref().is_ok_and(|f| f.file_type_raw() == local_file_type)
+                || file_type == ffs::file::raw::r#type::ALL
+                || f.as_ref().is_ok_and(|f| f.file_type_raw() == file_type)
         })
-        .nth(local_key);
+        .nth(key);
 
     let file = match file_candidate {
-        Some(Err(err)) => return err.into(),
+        Some(Err(err)) => return Err(err.into()),
         Some(Ok(file)) => file,
-        _ => return efi::Status::NOT_FOUND,
+        _ => return Err(EfiError::NotFound),
     };
 
-    // found matching file. Update the key and outputs.
-    unsafe {
-        (key as *mut usize).write(local_key + 1);
-        name_guid.write(file.name());
+    let attributes =
         if (fv_attributes & fvb::attributes::raw::fvb2::MEMORY_MAPPED) == fvb::attributes::raw::fvb2::MEMORY_MAPPED {
-            attributes.write(file.fv_attributes() | fv::file::raw::attribute::MEMORY_MAPPED);
+            file.fv_attributes() | fv::file::raw::attribute::MEMORY_MAPPED
         } else {
-            attributes.write(file.fv_attributes());
-        }
-        size.write(file.data().len());
-        file_type.write(file.file_type_raw());
-    }
+            file.fv_attributes()
+        };
 
-    efi::Status::SUCCESS
+    Ok((file.name(), attributes, file.data().len(), file.file_type_raw()))
 }
 
 extern "efiapi" fn fv_get_info(
