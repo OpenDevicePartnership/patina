@@ -287,6 +287,8 @@ struct GCD {
     /// Default attributes for memory allocations
     /// This is efi::MEMORY_XP unless we have entered compatibility mode, in which case it is 0, e.g. no protection
     default_attributes: u64,
+    /// Whether to prioritize 32-bit memory allocations
+    prioritize_32_bit_memory: bool,
 }
 
 impl GCD {
@@ -316,6 +318,7 @@ impl GCD {
             allocate_memory_space_fn: Self::allocate_memory_space_internal,
             free_memory_space_fn: Self::free_memory_space_worker,
             default_attributes: efi::MEMORY_XP,
+            prioritize_32_bit_memory: false,
         }
     }
 
@@ -723,6 +726,18 @@ impl GCD {
     ) -> Result<usize, EfiError> {
         ensure!(len > 0, EfiError::InvalidParameter);
 
+        // For top down requests specifically, if prioritize 32 bit memory is set, then first
+        // try with an artificial max.
+        if self.prioritize_32_bit_memory && max_address > u32::MAX as usize {
+            match self.allocate_top_down(memory_type, align_shift, len, image_handle, device_handle, u32::MAX as usize)
+            {
+                Ok(addr) => return Ok(addr),
+                Err(error) => {
+                    log::trace!(target: "allocations", "[{}] Top down GCD low memory attempt failed: {:?}", function!(), error);
+                }
+            }
+        }
+
         log::trace!(target: "allocations", "[{}] Top down GCD allocation: {:#?}", function!(), memory_type);
         log::trace!(target: "allocations", "[{}]   Max Address: {:#x}", function!(), max_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
@@ -739,7 +754,8 @@ impl GCD {
 
             // Account for if the block is truncated by the max_address. Max address
             // is inclusive, but end() is exclusive so subtract 1 from end.
-            let usable_len = if mb.end() - 1 > max_address { max_address - mb.start() + 1 } else { mb.len() };
+            let usable_len =
+                if mb.end() - 1 > max_address { max_address.checked_sub(mb.start()).unwrap() + 1 } else { mb.len() };
             if usable_len < len {
                 current = memory_blocks.prev_idx(idx);
                 continue;
@@ -1804,6 +1820,7 @@ impl SpinLockedGcd {
                     allocate_memory_space_fn: GCD::allocate_memory_space_internal,
                     free_memory_space_fn: GCD::free_memory_space_worker,
                     default_attributes: efi::MEMORY_XP,
+                    prioritize_32_bit_memory: false,
                 },
                 "GcdMemLock",
             ),
@@ -1834,6 +1851,10 @@ impl SpinLockedGcd {
             ],
             page_table: tpl_lock::TplMutex::new(efi::TPL_HIGH_LEVEL, None, "GcdPageTableLock"),
         }
+    }
+
+    pub fn prioritize_32_bit_memory(&self, value: bool) {
+        self.memory.lock().prioritize_32_bit_memory = value;
     }
 
     /// Returns a reference to the memory type information table.
@@ -3579,6 +3600,7 @@ mod tests {
             allocate_memory_space_fn: GCD::allocate_memory_space_internal,
             free_memory_space_fn: GCD::free_memory_space_worker,
             default_attributes: efi::MEMORY_XP,
+            prioritize_32_bit_memory: false,
         };
         assert_eq!(Err(EfiError::NotReady), gcd.set_memory_space_attributes(0, 0x50000, 0b1111));
 
@@ -4239,5 +4261,51 @@ mod tests {
             None,
         );
         assert_eq!(res.unwrap(), 0x0, "Should be able to allocate page 0 by address");
+    }
+
+    #[test]
+    fn test_prioritize_32_bit_memory_top_down() {
+        let (mut gcd, _) = create_gcd();
+        gcd.prioritize_32_bit_memory = true;
+
+        // Test with a contiguous 8gb without a gap.
+        unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 2 * SIZE_4GB, 0) }.unwrap();
+
+        // make sure it prioritizes 32 bit addresses.
+        let res = gcd.allocate_memory_space(
+            AllocateType::TopDown(None),
+            dxe_services::GcdMemoryType::SystemMemory,
+            UEFI_PAGE_SHIFT,
+            0x10000,
+            1 as _,
+            None,
+        );
+        assert_eq!(res.unwrap(), SIZE_4GB - 0x10000, "Should allocate below 4GB when prioritizing 32-bit memory");
+
+        // check that it will fall back to >32 bits.
+        let res = gcd.allocate_memory_space(
+            AllocateType::TopDown(None),
+            dxe_services::GcdMemoryType::SystemMemory,
+            UEFI_PAGE_SHIFT,
+            SIZE_4GB,
+            1 as _,
+            None,
+        );
+        assert_eq!(res.unwrap(), SIZE_4GB, "Failed to fall back to higher memory as expected");
+
+        // Free the memory to check the next condition.
+        gcd.free_memory_space(SIZE_4GB - 0x10000, 0x10000).unwrap();
+        gcd.free_memory_space(SIZE_4GB, SIZE_4GB).unwrap();
+
+        // Check that a sufficiently large allocation will straddle the boundary.
+        let res = gcd.allocate_memory_space(
+            AllocateType::TopDown(None),
+            dxe_services::GcdMemoryType::SystemMemory,
+            UEFI_PAGE_SHIFT,
+            SIZE_4GB + 0x1000,
+            1 as _,
+            None,
+        );
+        assert!(res.is_ok(), "Failed to fallback to higher memory as expected");
     }
 }

@@ -263,6 +263,34 @@ impl Core<NoAlloc> {
             _memory_state: core::marker::PhantomData,
         }
     }
+
+    /// Informs the core that it should prioritize allocating 32-bit memory when
+    /// not otherwise specified.
+    ///
+    /// This should only be used as a workaround in environments where address width
+    /// bugs exist in uncontrollable dependent software. For example, when booting
+    /// to an OS that puts any addresses from UEFI into a uint32.
+    ///
+    /// Must be called prior to [`Core::init_memory`].
+    ///
+    /// ## Example
+    ///
+    /// ``` rust,no_run
+    /// # use patina_sdk::component::prelude::*;
+    /// # fn example_component() -> patina_sdk::error::Result<()> { Ok(()) }
+    /// # let physical_hob_list = core::ptr::null();
+    /// patina_dxe_core::Core::default()
+    ///   .prioritize_32_bit_memory()
+    ///   .init_memory(physical_hob_list)
+    ///   .start()
+    ///   .unwrap();
+    /// ```
+    pub fn prioritize_32_bit_memory(self) -> Self {
+        // This doesn't actually alter the core's state, but uses the same model
+        // for consistent abstraction.
+        GCD.prioritize_32_bit_memory(true);
+        self
+    }
 }
 
 impl Core<Alloc> {
