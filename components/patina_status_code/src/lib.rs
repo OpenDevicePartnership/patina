@@ -3,7 +3,8 @@
 extern crate alloc;
 
 mod callback;
+pub mod component;
 pub mod error;
-mod protocol;
+pub mod protocol;
 mod service;
 mod status_code;

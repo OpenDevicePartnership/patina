@@ -18,7 +18,7 @@ pub(crate) struct EfiStatusCodeHeader {
 
 // sherry: u probably need a global :(
 
-static GLOBAL_RSC_HANDLER: StandardRscHandler<StandardBootServices> = StandardRscHandler::new_uninit();
+pub(crate) static GLOBAL_RSC_HANDLER: StandardRscHandler<StandardBootServices> = StandardRscHandler::new_uninit();
 
 pub(crate) type EfiRscHandlerCallback =
     extern "efiapi" fn(StatusCodeType, StatusCodeValue, u32, efi::Guid, &EfiStatusCodeHeader);

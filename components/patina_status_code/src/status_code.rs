@@ -1,14 +1,12 @@
 use core::cell::OnceCell;
 
-use alloc::{
-    boxed::Box,
-    vec::{self, Vec},
-};
+use alloc::vec;
+use alloc::{boxed::Box, vec::Vec};
 use r_efi::efi;
 use spin::RwLock;
 
 use crate::{
-    callback::RscHandlerCallback,
+    callback::{self, RscHandlerCallback},
     error::RscHandlerError,
     protocol::EfiStatusCodeHeader,
     service::{RscHandler, StatusCodeType, StatusCodeValue},
@@ -96,7 +94,7 @@ where
     B: BootServices,
 {
     fn register(&self, callback: RscHandlerCallback, tpl: tpl::Tpl) -> Result<(), RscHandlerError> {
-        for entry in &self.callback_list.read() {
+        for entry in self.callback_list.read().iter() {
             // sherry: a thorny problem
             if entry.callback == callback {
                 return Err(RscHandlerError::CallbackAlreadyRegistered);
@@ -115,15 +113,16 @@ where
             new_entry.event_handle = Some(event);
         }
 
-        self.callback_list.push(new_entry);
+        self.callback_list.write().push(new_entry);
 
         Ok(())
     }
 
     fn unregister(&self, callback: RscHandlerCallback) -> Result<(), RscHandlerError> {
         // sherry: more fun issues yay :)
-        if let Some(index) = self.callback_list.iter().position(|entry| entry.callback == callback) {
-            let entry = self.callback_list.remove(index);
+        let mut callback_list = self.callback_list.write();
+        if let Some(index) = callback_list.iter().position(|entry| entry.callback == callback) {
+            let entry = callback_list.remove(index);
 
             if entry.tpl <= tpl::Tpl(efi::TPL_HIGH_LEVEL) {
                 self.boot_services
