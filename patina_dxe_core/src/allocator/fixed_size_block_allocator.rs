@@ -1408,7 +1408,7 @@ mod tests {
     }
 
     #[test]
-    fn test_allocate_below_address() {
+    fn test_allocate_below_address_bottom_up() {
         with_granularity_modulation(|granularity| {
             with_locked_state(|| {
                 // Create a static GCD
@@ -1441,7 +1441,7 @@ mod tests {
     }
 
     #[test]
-    fn test_allocate_above_address() {
+    fn test_allocate_below_address_top_down() {
         with_granularity_modulation(|granularity| {
             with_locked_state(|| {
                 // Create a static GCD
@@ -1464,7 +1464,7 @@ mod tests {
                     .allocate_pages(gcd::AllocateType::TopDown(Some(target_address as usize)), pages, UEFI_PAGE_SIZE)
                     .unwrap()
                     .as_non_null_ptr();
-                assert!((allocation.as_ptr() as u64) > target_address);
+                assert!((allocation.as_ptr() as usize + uefi_pages_to_size!(pages)) <= target_address as usize);
 
                 unsafe {
                     fsb.free_pages(allocation.as_ptr() as usize, pages).unwrap();
