@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 use clap::Parser;

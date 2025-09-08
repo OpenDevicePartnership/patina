@@ -34,9 +34,15 @@
 
 - [Patina DXE Core Requirements](integrate/patina_dxe_core_requirements.md)
 - [Setting up the Patina DXE Core](integrate/dxe_core.md)
-- [Integrating an Externally Compiled EFI Binary to the Platform](integrate/platform_external.md)
 - [Compiling External to the Platform](integrate/compile_external.md)
-- [Compiling Local to the Platform (Deprecated)](integrate/platform_local.md)
+- [Compiling Local to the Platform (Deprecated)](integrate/compile_local.md)
+- [Integrating an Externally Compiled EFI Binary to the Platform](integrate/platform_external.md)
+
+# Patina Component Model
+
+- [Getting Started with Components](component/getting_started.md)
+- [Component Crate Requirements](component/requirements.md)
+- [Component Interface](component/interface.md)
 
 # Patina DXE Core Subsystems
 
@@ -53,11 +59,6 @@
   - [Synchronization](dxe_core/synchronization.md)
   - [Testing](dxe_core/testing.md)
   - [UEFI Driver Model](dxe_core/driver_model.md)
-
-# Patina Component Model
-
-- [Component Crate Requirements](component/requirements.md)
-- [Component Interface](component/interface.md)
 
 # Component Documentation
 

@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 #[cfg(feature = "global_allocator")]
@@ -3114,7 +3114,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(static_mut_refs)]
     fn test_copy_mem() {
         let boot_services = boot_services!(copy_mem = efi_copy_mem);
 
@@ -3137,7 +3136,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(static_mut_refs)]
     fn test_set_mem() {
         let boot_services = boot_services!(set_mem = efi_set_mem);
 
@@ -3192,7 +3190,6 @@ mod tests {
             efi::Status::SUCCESS
         }
 
-        #[allow(static_mut_refs)]
         unsafe { boot_services.install_configuration_table(&GUID, &mut TABLE) }.unwrap();
     }
 

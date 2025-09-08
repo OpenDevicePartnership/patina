@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use core::{ffi::c_void, mem::size_of};
 
@@ -133,8 +133,13 @@ pub fn core_uninstall_protocol_interface(
                     | efi::OPEN_PROTOCOL_TEST_PROTOCOL)
                 != 0
             {
-                let result =
-                    PROTOCOL_DB.remove_protocol_usage(handle, protocol, usage.agent_handle, usage.controller_handle);
+                let result = PROTOCOL_DB.remove_protocol_usage(
+                    handle,
+                    protocol,
+                    usage.agent_handle,
+                    usage.controller_handle,
+                    Some(usage.attributes),
+                );
                 if result.is_err() {
                     unclosed_usages = true;
                 }
@@ -430,7 +435,7 @@ extern "efiapi" fn close_protocol(
         }
     };
 
-    match PROTOCOL_DB.remove_protocol_usage(handle, unsafe { *protocol }, Some(agent_handle), controller_handle) {
+    match PROTOCOL_DB.remove_protocol_usage(handle, unsafe { *protocol }, Some(agent_handle), controller_handle, None) {
         Err(err) => err.into(),
         Ok(_) => efi::Status::SUCCESS,
     }

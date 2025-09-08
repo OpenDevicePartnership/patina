@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
@@ -1329,6 +1329,7 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
                         protocol,
                         open_info.agent_handle,
                         open_info.controller_handle,
+                        Some(open_info.attributes),
                     );
                 }
             }

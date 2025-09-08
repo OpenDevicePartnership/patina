@@ -6,7 +6,7 @@ inclusive and respectful manner.
 
 ## Contribution Licensing
 
-Most of our code is distributed under the terms of the [MIT license](LICENSE), and when you contribute code that you
+Patina code is distributed under the [Apache 2.0 License](LICENSE), and when you contribute code that you
 wrote to our repositories, you agree that you are contributing under those same terms. In addition, by submitting your
 contributions you are indicating that you have the right to submit those contributions under those terms.
 

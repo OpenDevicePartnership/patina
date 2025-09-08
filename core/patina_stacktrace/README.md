@@ -92,6 +92,10 @@ PE images:
 
 `RUSTFLAGS=-Cforce-unwind-tables`
 
+In order to preserve stack data about C binaries, this needs to be set in the platform DSC's build options section:
+
+`*_*_*_GENFW_FLAGS   = --keepexceptiontable`
+
 ## Supported Platforms
 
 - Hardware

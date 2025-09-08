@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 #![cfg(feature = "std")]
 
@@ -36,13 +36,13 @@ fn main() -> patina_sdk::error::Result<()> {
 
     let hob_list = build_hob_list();
     Core::default()
-        .with_section_extractor(patina_section_extractor::CompositeSectionExtractor::default())
         // Add any config knob functions for pre-gcd-init Core
         // .with_some_config(true)
         .init_memory(hob_list) // We can make allocations now!
         // Add any config knob functions for post-gcd-init Core
         // .with_some_config(true)
         .with_config(patina_samples::Name("World"))
+        .with_service(patina_ffs_extractors::CompositeSectionExtractor::default())
         .with_component(patina_samples::log_hello)
         .start()
 }

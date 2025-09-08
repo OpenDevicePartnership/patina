@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use mu_pi::protocols::cpu_arch::EfiSystemContext;
 use patina_sdk::error::EfiError;
@@ -45,8 +45,7 @@ pub fn enable_interrupts() {
     #[cfg(all(not(test), target_arch = "aarch64"))]
     {
         unsafe {
-            asm!("msr   daifclr, 0x02");
-            asm!("isb", options(nostack));
+            asm!("msr   daifclr, 0x02", "isb", options(nostack));
         }
     }
     #[cfg(not(target_arch = "aarch64"))]
@@ -60,8 +59,7 @@ pub fn disable_interrupts() {
     #[cfg(all(not(test), target_arch = "aarch64"))]
     {
         unsafe {
-            asm!("msr   daifset, 0x02");
-            asm!("isb", options(nostack));
+            asm!("msr   daifset, 0x02", "isb", options(nostack));
         }
     }
     #[cfg(not(target_arch = "aarch64"))]

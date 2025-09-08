@@ -1,3 +1,11 @@
+//! DXE Core Memory Attributes Protocol
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
 #![allow(unused)]
 /// Architecture independent public C EFI Memory Attributes Protocol definition.
 use crate::{dxe_services, protocol_db, protocols::PROTOCOL_DB};

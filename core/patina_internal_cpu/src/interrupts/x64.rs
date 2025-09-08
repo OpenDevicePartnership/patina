@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 use core::arch::asm;
@@ -41,14 +41,14 @@ impl super::EfiExceptionStackTrace for ExceptionContextX64 {
 #[allow(unused)]
 pub fn enable_interrupts() {
     unsafe {
-        asm!("sti", options(preserves_flags, nostack));
+        asm!("sti", options(nostack));
     }
 }
 
 #[allow(unused)]
 pub fn disable_interrupts() {
     unsafe {
-        asm!("cli", options(preserves_flags, nostack));
+        asm!("cli", options(nostack));
     }
 }
 
