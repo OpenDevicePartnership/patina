@@ -482,7 +482,7 @@ pub fn core_allocate_pages(
                 efi::ALLOCATE_ANY_PAGES => allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages, alignment),
                 efi::ALLOCATE_MAX_ADDRESS => {
                     let address = unsafe { memory.as_ref().expect("checked non-null is null") };
-                    allocator.allocate_pages(AllocationStrategy::BottomUp(Some(*address as usize)), pages, alignment)
+                    allocator.allocate_pages(AllocationStrategy::TopDown(Some(*address as usize)), pages, alignment)
                 }
                 efi::ALLOCATE_ADDRESS => {
                     let address = unsafe { memory.as_ref().expect("checked non-null is null") };
@@ -1453,18 +1453,6 @@ mod tests {
                 efi::Status::SUCCESS
             );
             free_pages(buffer_ptr as u64, 0x10);
-
-            //test unsuccessful allocate_max where max is less than the address that was just freed.
-            buffer_ptr = buffer_ptr.wrapping_sub(0x12 * 0x1000);
-            assert_eq!(
-                allocate_pages(
-                    efi::ALLOCATE_MAX_ADDRESS,
-                    efi::BOOT_SERVICES_DATA,
-                    0x10,
-                    core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress
-                ),
-                efi::Status::NOT_FOUND
-            );
 
             //test invalid allocation type
             assert_eq!(
