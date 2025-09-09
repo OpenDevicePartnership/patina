@@ -5,7 +5,7 @@ use patina_sdk::{
     boot_services::tpl,
     component::service::{IntoService, Service},
 };
-use r_efi::efi;
+use r_efi::efi::{self, Status};
 
 use crate::{callback::RscHandlerCallback, error::RscHandlerError, protocol::EfiStatusCodeHeader};
 
@@ -21,8 +21,24 @@ use crate::{callback::RscHandlerCallback, error::RscHandlerError, protocol::EfiS
 pub(crate) type StatusCodeType = u32;
 pub(crate) type StatusCodeValue = u32;
 
-pub trait RscHandler {
-    fn register(&self, callback: RscHandlerCallback, tpl: tpl::Tpl) -> Result<(), RscHandlerError>;
+// sherry: i am so worried about this and don't think it's the best idea tbh
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct StatusCodeData {
+    pub data_header: EfiStatusCodeHeader,
+    pub data_bytes: Box<[u8]>,
+}
 
-    fn unregister(&self, callback: RscHandlerCallback) -> Result<(), RscHandlerError>;
+pub trait RscHandler {
+    fn register_callback(&self, callback: RscHandlerCallback, tpl: tpl::Tpl) -> Result<(), RscHandlerError>;
+
+    fn unregister_callback(&self, callback: RscHandlerCallback) -> Result<(), RscHandlerError>;
+
+    fn report_status_code(
+        &self,
+        code_type: StatusCodeType,
+        value: StatusCodeValue,
+        instance: u32,
+        caller_id: Option<efi::Guid>,
+        data_header: Option<StatusCodeData>,
+    ) -> Result<(), RscHandlerError>;
 }
