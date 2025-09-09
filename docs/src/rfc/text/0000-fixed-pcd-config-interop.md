@@ -2,7 +2,7 @@
 
 *This RFC is in a draft state and will be updated with additional details. Prototyping is set to begin next week (week of 9/15).*
 
-This RFC proposes a translation mechanism to allow fixed PCDs to be converted into component-friendly `Config<T>`s without directly introducing the concept of PCDs into Patina. The conversion mechanism will in the form of an EDK2 build system plugin and a Patina component connected through a crate which defines a shared macro. Of note:
+This RFC proposes a translation mechanism to allow fixed PCDs to be processed into component-friendly `Config<T>`s without directly introducing the concept of PCDs into Patina. The conversion mechanism will in the form of an EDK2 build system plugin and a Patina component connected through a crate which defines a shared macro. Of note:
 - The proposed mechanism will not require custom Cargo build support, and will not require Patina re-compilation when configuration values are changed.
 - The proposed mechanism will not require Patina re-compilation when configuration values are changed.
 - Patina will be unaware of EDK2 build system and PCD name/namespace specifics
@@ -39,7 +39,7 @@ This text can be modified over time. Add a change log entry for every change mad
 
 ## Motivation
 
-The ability to statically configure Components is vital for facilitating Component-sharing between platforms that require divergent behavior. Furthermore, allowing this configuration to be global to not just Patina but to the build system Patina is incorporated within ensures configuration parity between Patina and non-Patina UEFI components. While, as present, these configurations could be manually transfered, this process is error prone, especially as configuration changes may occur in EDK2 within Git submodules.
+The ability to statically configure Components is vital for facilitating Component-sharing between platforms that require divergent behavior. Furthermore, allowing this configuration to be global to not just Patina but to the build system Patina is incorporated within ensures configuration parity between Patina and non-Patina UEFI components. While, as present, these configurations could be manually transferred, this process is error prone, especially as configuration changes may occur in EDK2 within Git submodules.
 
 EDK2 largely achieves static configuration through fixed PCDs that have their values compiled into the C-based modules that request them via declarations in `.inf`, `.dsc`, and `.dec` files. Fixed PCDs meet the challenge of configuring modules for a potentially wide array of platforms well by providing a hierarchical model where PCDs can be scoped and overwritten as needed. As directly adding support for fixed PCDs into the cargo build system would be non-idiomatic for Rust and how Crate repositories generally work (see "Alternatives") section, providing a level of indirection by which the EDK2 build system can publish Rust-compatible configurations based on PCD values provides a middle-ground in which Patina requires no knowledge of the EDK2 build system (outside of the Rust build plugin) or of PCD-specifics. 
 
@@ -115,7 +115,7 @@ Corresponding EDK2 C behavior is outlined in the fixed PCD sections of the [EDK2
     - The potential for struct-layout mismatches would require sharing a set of header files which cover all Patina configuration structures.
     - All PCDs would still be in the PEIM scope.
     - Layout errors and struct field mismatches wouldn't be easily caught.
-    - Extremely unergonomic, and hard to keep track of.
+    - Not ergonomic, and hard to keep track of.
 
 ### Alternative 4: Consolidate All Required PCDs into a "PCD Store" HOB
 - Rather than trying to generate Rust-compatible structs from the EDK2 build system, publish all required PCDs in a consolidated HOB which a Patina-side component would split apart into `Config<T>`s
