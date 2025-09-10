@@ -48,7 +48,7 @@ The goal of this RFC is to create a translation layer that allows fixed EDK II c
 
 The EDK II build system plugin, which will likely be written in combination of Rust and Python, will be responsible for gathering the mapping of fixed EDK II configuration values to Rust configurations, and arrange for a HOB to be published containing those values in the stable structure format.
 
-Whether this plugin would best be unstreamed to Tianocore or modularly included from a Patina EDK II repo as needed depends on the degree of invasiveness into the EDK II build system required to implement it. This will be best determined after an initial prototyping phase.
+Whether this plugin would best be unstreamed to Tianocore or modularly included from a Patina EDK II repo as needed depends on the 1) the degree of invasiveness into the EDK II build system required to implement it and 2) whether the build plugin will need to take a dependency on a Patina crate. This will be best determined after an initial prototyping phase.
 
 #### Specifying Mappings
 
