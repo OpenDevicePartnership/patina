@@ -66,7 +66,16 @@ Mappings between fixed EDK II configurations and Patina configuration structures
  MyConfigStruct.Field3 = $(BUILD_SYSTEM_VAR_NAME)         # Build system variable
 ```
 
-For simplicity, nested configuration structs are out-of-scope for this RFC.
+For simplicity, nested configuration structures are out-of-scope for this RFC.
+
+*Whether additional evaluation capabilities to these mappings should be added is an open question.* Limiting fields to be set only directly to PCD values is limiting and may incentivize configuration struct authors to tailor their implementations to match PCD layouts (such as having bitfield layouts match their C-counterparts). Additional evalulation could possibly be provided through EDK II side Rust code attached to the `.inf` as source, or through inline evaluation through a scripting language such as Python, which may look something like:
+
+```yaml
+[PatinaConfigurations]
+ MyConfigStruct.Field1 = PcdNameSpace.PcdName1 & 0x1
+ MyConfigStruct.Field2 = PcdNameSpace.PcdName2 + PcdNameSpace.PcdName3 + PcdNameSpace.PcdName4
+ MyConfigStruct.Field3 = $(BUILD_SYSTEM_VAR_NAME_1) + "_" + $(BUILD_SYSTEM_VAR_NAME_2)
+```
 
 #### Determining Patina Portable Struct Layout
 
@@ -114,7 +123,7 @@ To aid in the above steps, procedural macros defined within the crate will autom
 
 Whether or not it is possible to achieve this without a manually specified `#[derive]` on all configuration structs or top-level build support is to-be-determined following the prototyping phase.
 
-If it is not possible for a portable representation of a configuration structure to be automatically generated (such as if the configuration struct contains a `Box<T>`), a manually defined portable representation and conversion routine will need to be provided. The exact mechanism for this is an open question.
+If it is not possible for a portable representation of a configuration structure to be automatically generated (such as if the configuration struct contains a `Box<T>`), a manually defined portable representation and conversion routine will need to be provided. The exact mechanism for this is an open question, but one potential solution is to allow a portable data structure to be specified and marked with some `#[derive]` macro that links the portable representation to the main configuration structure and allows mapping to the portable structure's field instead. 
 
 #### Unpacking The Portable Configuration Structs
 
@@ -144,6 +153,7 @@ After verifying a configuration structure is "enabled", the Component will insta
 2. Should the portable configuration structures be stored in a single HOB, or in multiple HOBs (one per configuration structure)? (See: "Unpacking The Portable Configuration Structs")
 3. How should custom portable structure definitions and conversion routines be provided for non-`#[repr(C)]`-safe configuration structs? (See: "Patina `ExternalConfigurationExtractor` Component" section)
 4. How should the Patina `ExternalConfigurationExtractor` component determine whether a configuration structure is "enabled" and should be installed as a `Config<T>`? (See: "Determining Whether a Configuration is "Enabled"")
+5. Should more advanced evaluation capabilities be added to the configuration mapping functionality? If so, what form should that take? (See: "Specifying Mappings")
 
 ## Alternatives
 
