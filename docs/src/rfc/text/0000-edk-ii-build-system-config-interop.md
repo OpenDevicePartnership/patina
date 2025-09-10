@@ -19,6 +19,7 @@ Additional details on the above steps can be found in the sections below.
 ## Change Log
 
 - 2025-09-08: Initial RFC created.
+- 2025-09-09: Updated to second draft of RFC.
 
 ## Motivation
 
