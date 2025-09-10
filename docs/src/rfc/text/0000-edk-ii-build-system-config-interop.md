@@ -1,4 +1,4 @@
-# RFC: EDK II `Config<T>` Interop
+# RFC: EDK II Build System `Config<T>` Interop
 
 This RFC proposes a translation mechanism to allow fixed-at-build EDK II build system configuration mechanisms--which will be referred to as "fixed EDK II configurations"--to be mapped to Patina `Config<T>` structure fields through a level of indirection that will prevent the concept of PCDs from being directly introduced into Patina source code.
 
