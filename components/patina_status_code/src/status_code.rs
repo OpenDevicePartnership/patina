@@ -5,6 +5,7 @@ use alloc::vec;
 use alloc::{boxed::Box, vec::Vec};
 use patina_sdk::boot_services::BootServices;
 use patina_sdk::boot_services::tpl::Tpl;
+use patina_sdk::runtime_services::RuntimeServices;
 use r_efi::efi::{self, Status};
 use spin::RwLock;
 
@@ -31,7 +32,7 @@ pub(crate) type RustRscHandlerCallback =
 
 #[derive(Clone, PartialEq, Eq)]
 struct RscHandlerCallbackEntry {
-    callback: RscHandlerCallback,
+    pub(crate) callback: RscHandlerCallback,
     tpl: tpl::Tpl,
     status_code_buffer: Vec<RscDataEntry>,
     event_handle: Option<efi::Event>, // optional if TPL is high
@@ -51,13 +52,18 @@ impl RscHandlerCallbackEntry {
                 RscHandlerCallback::Efi(cb) => {
                     // Optional parameters become NULL pointers when passed to EFI callbacks.
                     let caller_id = entry.caller_id.as_ref().map_or(core::ptr::null(), |id| id as *const efi::Guid);
-                    // SHERRY: this isn't gonna work, you have to copy the bytes after the header into a buffer too
-                    // since this has the Rust Box layout
-                    let data_header = entry
-                        .status_code_data
-                        .as_ref()
-                        .map_or(core::ptr::null(), |data| &data.data_header as *const EfiStatusCodeHeader);
-                    cb(entry.code_type, entry.value, entry.instance, caller_id, data_header);
+                    match &entry.status_code_data {
+                        Some(data) => {
+                            let mut data_header = Vec::new();
+                            data_header.extend_from_slice(&data.data_header.to_bytes());
+                            data_header.extend_from_slice(&data.data_bytes);
+                            let data_header_ptr = data_header.as_ptr() as *const EfiStatusCodeHeader;
+                            cb(entry.code_type, entry.value, entry.instance, caller_id, data_header_ptr);
+                        }
+                        None => {
+                            cb(entry.code_type, entry.value, entry.instance, caller_id, core::ptr::null());
+                        }
+                    }
                 }
             }
         }
@@ -72,17 +78,15 @@ struct RscDataEntry {
     instance: u32,
     reserved: u32,
     caller_id: Option<efi::Guid>,
-    // SHERRY: this concerns me
-    // bc it has trailing data. big problem.
-    // maybe need a nice rust helper for consumers to write + retrieve data?
     status_code_data: Option<StatusCodeData>,
 }
 
 #[derive(IntoService)]
 #[service(dyn RscHandler)]
-pub(crate) struct StandardRscHandler<B: BootServices + 'static> {
-    callback_list: RwLock<Vec<RscHandlerCallbackEntry>>,
+pub(crate) struct StandardRscHandler<B: BootServices + 'static, R: RuntimeServices + 'static> {
+    pub(crate) callback_list: RwLock<Vec<RscHandlerCallbackEntry>>,
     boot_services: OnceCell<B>,
+    runtime_services: OnceCell<R>,
     /// Report Status Code can only be entered once at a time, this flag is used to prevent re-entrancy.
     report_status_code_entry: AtomicBool,
 }
@@ -195,20 +199,43 @@ where
                         // SHERRY: lots of clones is a concern
                         cb(code_type, value, instance, caller_id, status_code_data.clone());
                     }
-                    RscHandlerCallback::Efi(cb) => unsafe {
+                    RscHandlerCallback::Efi(cb) => {
                         let caller_id_param = caller_id.as_ref().map_or(core::ptr::null(), |id| id as *const efi::Guid);
-                        // SHERRY: this isn't gonna work, you have to copy the bytes after the header into a buffer too
-                        // since this has the Rust Box layout
-                        let data_header = status_code_data
-                            .as_ref()
-                            .map_or(core::ptr::null(), |data| &data.data_header as *const EfiStatusCodeHeader);
-                        cb(code_type, value, instance, caller_id_param, data_header);
-                    },
+
+                        match &status_code_data {
+                            Some(data) => {
+                                let mut data_header = Vec::new();
+                                data_header.extend_from_slice(&data.data_header.to_bytes());
+                                data_header.extend_from_slice(&data.data_bytes);
+                                let data_header_ptr = data_header.as_ptr() as *const EfiStatusCodeHeader;
+                                cb(code_type, value, instance, caller_id_param, data_header_ptr);
+                            }
+                            None => {
+                                cb(code_type, value, instance, caller_id_param, core::ptr::null());
+                            }
+                        }
+                    }
                 }
             }
         }
 
+        self.report_status_code_entry.store(false, core::sync::atomic::Ordering::SeqCst);
+
         Ok(())
+    }
+}
+
+impl<B> StandardRscHandler<B>
+where
+    B: BootServices,
+{
+    /// Converts C-based function pointers from physical addresses to virtual addresses after the system has switched to virtual mode.
+    fn convert_addresses(&self) {
+        for entry in self.callback_list.write().iter_mut() {
+            if let RscHandlerCallback::Efi(cb) = &mut entry.callback {
+                *cb = callback::convert_efi_callback(*cb);
+            }
+        }
     }
 }
 
@@ -219,6 +246,7 @@ extern "efiapi" fn rsc_hander_notification(event: efi::Event, ctx: Box<RscHandle
 
 #[cfg(test)]
 mod tests {
+    use core::sync::atomic::{AtomicBool, Ordering};
     use patina_sdk::boot_services::MockBootServices;
 
     use super::*;
@@ -276,5 +304,60 @@ mod tests {
         let handler = StandardRscHandler::<MockBootServices>::new_uninit();
         handler.initialize(MockBootServices::new()).unwrap();
         assert_eq!(handler.initialize(MockBootServices::new()), Err(RscHandlerError::AlreadyInitialized));
+    }
+
+    static DIRECT_CALLED: AtomicBool = AtomicBool::new(false);
+
+    fn direct_callback(
+        _code_type: StatusCodeType,
+        _value: StatusCodeValue,
+        _instance: u32,
+        _caller_id: Option<efi::Guid>,
+        _header: Option<StatusCodeData>,
+    ) -> efi::Status {
+        DIRECT_CALLED.store(true, Ordering::SeqCst);
+        efi::Status::SUCCESS
+    }
+
+    #[test]
+    fn test_report_status_code_calls_rust_callback_immediately() {
+        let handler = StandardRscHandler::<MockBootServices>::new_uninit();
+        let mock_boot_services = MockBootServices::new();
+        handler.initialize(mock_boot_services).unwrap();
+
+        // Use a TPL greater than TPL_HIGH_LEVEL so the callback is invoked directly.
+        let tpl = Tpl(efi::TPL_HIGH_LEVEL + 1);
+        assert!(handler.register_callback(RscHandlerCallback::Rust(direct_callback), tpl).is_ok());
+
+        let code_type: StatusCodeType = unsafe { core::mem::zeroed() };
+        let value: StatusCodeValue = unsafe { core::mem::zeroed() };
+
+        assert!(handler.report_status_code(code_type, value, 1, None, None).is_ok());
+        assert!(DIRECT_CALLED.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_report_status_code_buffers_and_signals_event() {
+        let handler = StandardRscHandler::<MockBootServices>::new_uninit();
+        let mut mock_boot_services = MockBootServices::new();
+        // Expect event creation for low TPL registrations.
+        mock_boot_services
+            .expect_create_event::<Box<RscHandlerCallbackEntry>>()
+            .times(1)
+            .return_const_st(Ok(1_usize as efi::Event));
+        // Expect signaling the event when report_status_code is called.
+        mock_boot_services.expect_signal_event().times(1).return_const_st(Ok(()));
+        mock_boot_services.expect_close_event().return_const_st(Ok(()));
+
+        handler.initialize(mock_boot_services).unwrap();
+
+        let tpl = Tpl(efi::TPL_APPLICATION);
+        assert!(handler.register_callback(RscHandlerCallback::Rust(dummy_callback), tpl).is_ok());
+
+        let code_type: StatusCodeType = unsafe { core::mem::zeroed() };
+        let value: StatusCodeValue = unsafe { core::mem::zeroed() };
+
+        // This should buffer the entry and trigger a call to signal_event on the boot services.
+        assert!(handler.report_status_code(code_type, value, 42, None, None).is_ok());
     }
 }

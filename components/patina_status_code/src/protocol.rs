@@ -1,4 +1,4 @@
-use alloc::{borrow::ToOwned, boxed::Box};
+use alloc::{borrow::ToOwned, boxed::Box, vec::Vec};
 use patina_sdk::{boot_services::StandardBootServices, uefi_protocol::ProtocolInterface};
 use r_efi::efi;
 
@@ -11,8 +11,19 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EfiStatusCodeHeader {
     pub header_size: u16,
-    pub size: u16,
+    /// Data size in bytes, excluding the header size itself.
+    pub data_size: u16,
     pub data_type: efi::Guid,
+}
+
+impl EfiStatusCodeHeader {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&self.header_size.to_ne_bytes());
+        buf.extend_from_slice(&self.data_size.to_ne_bytes());
+        buf.extend_from_slice(self.data_type.as_bytes());
+        buf
+    }
 }
 
 // Register and unregister
@@ -97,21 +108,20 @@ impl StatusCodeProtocol {
         let caller_id_param = if caller_id.is_null() { None } else { Some(unsafe { *caller_id }) };
         let status_code_data_param = match data_header.is_null() {
             true => None,
-            // SHERRY: double check the parameters here (size)
-            // and also make it not unsafe
-            // also this code is just bad and evil
             false => Some(StatusCodeData {
                 data_header: unsafe { *data_header },
                 data_bytes: unsafe {
-                    core::slice::from_raw_parts(data_header as *const u8, (*data_header).size as usize)
-                        .to_owned()
-                        .into_boxed_slice()
+                    core::slice::from_raw_parts(
+                        (data_header as *const u8).add((*data_header).header_size as usize),
+                        (*data_header).data_size as usize,
+                    )
+                    .to_owned()
+                    .into_boxed_slice()
                 },
             }),
         };
-        match GLOBAL_RSC_HANDLER.report_status_code(code_type, value, instance, unsafe { caller_id_param }, unsafe {
-            status_code_data_param
-        }) {
+        match GLOBAL_RSC_HANDLER.report_status_code(code_type, value, instance, caller_id_param, status_code_data_param)
+        {
             Ok(()) => efi::Status::SUCCESS,
             Err(e) => e.into(),
         }

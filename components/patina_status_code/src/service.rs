@@ -21,7 +21,6 @@ use crate::{callback::RscHandlerCallback, error::RscHandlerError, protocol::EfiS
 pub(crate) type StatusCodeType = u32;
 pub(crate) type StatusCodeValue = u32;
 
-// sherry: i am so worried about this and don't think it's the best idea tbh
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct StatusCodeData {
     pub data_header: EfiStatusCodeHeader,
