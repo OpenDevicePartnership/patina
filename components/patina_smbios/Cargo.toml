@@ -10,6 +10,10 @@ publish.workspace = true
 [dependencies]
 log = {workspace = true}
 patina_sdk = {workspace = true}
+alloc-no-stdlib = {workspace = true}
+r-efi = {workspace = true}
+spin = {workspace = true}
+hashbrown = "0.11.2"
 
 [features]
 std = []
