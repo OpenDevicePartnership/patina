@@ -9,5 +9,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 mod component;
+/// SMBIOS table and type definitions
+pub mod smbios;
 
 pub use component::SmbiosProviderManager;

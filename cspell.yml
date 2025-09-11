@@ -30,10 +30,18 @@ words:
   - acpibase
   - addrs
   - armasm
+  - athlon
   - bucketize
   - cbindgen
   - cdecl
+  - cdram
   - cdrom
+  - celeron
+  - centronics
+  - clflush
+  - clfsh
+  - cmpxchg
+  - corem
   - corosensei
   - ctypes
   - ruint
@@ -46,13 +54,24 @@ words:
   - dllcharacteristics
   - docsrs
   - dword
+  - duron
   - dxefv
   - edkii
+  - edram
+  - eeprom
+  - efficeon
   - efiapi
   - efierror
   - eflags
+  - eprom
+  - familyi
+  - familyz
+  - fbdimm
+  - feprom
   - fnent
   - fvmain
+  - fxrstor
+  - fxsave
   - gantt
   - gdbstub
   - genfw
@@ -64,6 +83,7 @@ words:
   - gread
   - guids
   - gwrite
+  - hireso
   - hresult
   - icfgr
   - inmodule
@@ -73,22 +93,29 @@ words:
   - isenabler
   - linkme
   - longjmp
+  - loong
+  - loongson
+  - lpddr
   - lzmatest
   - mdbook
   - mdscr
+  - mipsr
   - mmram
   - mpidr
   - msdia
   - mtrrs
+  - mutil
   - nestedfv
   - nologo
   - nomem
   - noopt
   - ntdll
+  - numberof
   - nvdimm
   - oleaut
   - openvmm
   - opinfo
+  - opteron
   - oslar
   - oslsr
   - pacibsp
@@ -97,31 +124,47 @@ words:
   - pdata
   - pdbhelper
   - pread
+  - priorto
+  - proprietar
   - psapi
   - pterror
   - pwrite
   - pyserial
   - pywin
   - qword
+  - rdram
   - reentrancy
   - regsvr
   - relia
   - reloc
+  - riscv
   - rposition
+  - ruint
   - rwlock
   - sctlr
+  - sgram
+  - sigle
+  - smbus
   - smcport
   - smiport
   - smram
+  - socketm
+  - socketr
+  - sodimm
+  - srimm
   - swmmis
+  - sysenter
+  - sysexit
   - sysreg
   - tiano
   - tianocore
+  - turion
   - typer
   - uefiext
   - uintn
   - unaccepte
   - uncacheable
+  - uncorrect
   - unregisters
   - unspec
   - vcvarsamd
@@ -129,6 +172,7 @@ words:
   - vtable
   - wakeup
   - wbinvd
+  - weitek
   - windbg
   - withf
   - xdata
