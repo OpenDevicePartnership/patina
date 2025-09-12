@@ -6,19 +6,20 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
+use alloc::collections::BTreeMap;
 use core::{
     ffi::c_void,
     mem, ptr,
     sync::atomic::{AtomicBool, Ordering},
 };
 use mu_pi::{list_entry, protocols::runtime};
-use patina_sdk::base::UEFI_PAGE_SIZE;
+use patina_sdk::{base::UEFI_PAGE_SIZE, error::EfiError};
 use r_efi::efi;
 use spin::Mutex;
 
 use crate::{
-    allocator::core_allocate_pool, events::EVENT_DB, image::core_relocate_runtime_images,
-    protocols::core_install_protocol_interface, systemtables::SYSTEM_TABLE,
+    allocator::core_allocate_pool, image::core_relocate_runtime_images, protocols::core_install_protocol_interface,
+    systemtables::SYSTEM_TABLE,
 };
 
 struct RuntimeData {
@@ -43,6 +44,8 @@ unsafe impl Sync for RuntimeData {}
 unsafe impl Send for RuntimeData {}
 
 static RUNTIME_DATA: Mutex<RuntimeData> = Mutex::new(RuntimeData::new());
+static RUNTIME_EVENTS: Mutex<BTreeMap<usize, crate::event_db::Event, &'static crate::allocator::UefiAllocator>> =
+    Mutex::new(BTreeMap::new_in(&crate::allocator::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR));
 
 pub extern "efiapi" fn set_virtual_address_map(
     memory_map_size: usize,
@@ -52,7 +55,10 @@ pub extern "efiapi" fn set_virtual_address_map(
 ) -> efi::Status {
     //
     // Can only switch to virtual addresses once the memory map is locked down,
-    // and can only set it once
+    // and can only set it once.
+    //
+    // NOTE: Boot services have been destroyed at this point, this routine must not
+    //       call into any other subsystems. Doing so can cause unpredictable behavior.
     //
     {
         let mut runtime_data = RUNTIME_DATA.lock();
@@ -81,7 +87,13 @@ pub extern "efiapi" fn set_virtual_address_map(
     // TODO: Add status code reporting (need to check runtime eligibility)
 
     // Signal EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE events (externally registered events)
-    EVENT_DB.signal_group(efi::EVENT_GROUP_VIRTUAL_ADDRESS_CHANGE);
+    for event in RUNTIME_EVENTS.lock().values() {
+        if event.event_group() == Some(efi::EVENT_GROUP_VIRTUAL_ADDRESS_CHANGE)
+            && let Some(function) = event.notify_fn()
+        {
+            function(event.efi_event(), event.notify_context().unwrap_or(ptr::null_mut()));
+        }
+    }
 
     // Convert runtime images
     core_relocate_runtime_images();
@@ -278,6 +290,19 @@ pub fn init_runtime_support(rt: &mut efi::RuntimeServices) {
                 .expect("Failed to install the Runtime Architecture protocol");
         },
     }
+}
+
+pub fn add_runtime_event(event: crate::event_db::Event) -> Result<(), EfiError> {
+    let event_id = event.event_id();
+    RUNTIME_EVENTS.lock().insert(event_id, event);
+    Ok(())
+}
+
+pub fn remove_runtime_event(event_id: usize) -> Result<(), EfiError> {
+    if RUNTIME_EVENTS.lock().remove(&event_id).is_none() {
+        return Err(EfiError::InvalidParameter);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
