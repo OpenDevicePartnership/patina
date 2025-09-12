@@ -136,6 +136,41 @@ following the same layout as existing benchmarks, and adding the benchmark to th
 puts us in parity with the nightly features that exist on the toolchain targeted.  The "nightly" toolchain may be used
 in place of this.
 
+## High-Level Patina Roadmap
+
+Patina's upcoming work falls into three main categories:
+
+1. **Stabilization** - Bug fixes, performance improvements, and feature completion for existing functionality. This
+   work is focused on ensuring that everything in Patina's main branch is stable and ready for production use. This is
+   the primary focus for the next several months.
+2. **Expansion** - Expansion of Patina's capabilities and this falls into two sub-categories:
+   1. **Component Growth** - Adding new components to Patina to replace equivalent C-based UEFI components. As new
+      components are made available, it is expected that platforms adopting Patina will incrementally remove their
+      C-based UEFI components as the equivalent Rust-based functionality is now available in their Patina build.
+   2. **MM Core Support** - Similar to the DXE Core support in Patina today, adding a Patina Standalone MM Core such
+      that the Management Mode (MM) core environment is written in Rust and a larger portion of MM drivers can be
+      ported to Patina MM components.
+3. **Ecosystem Integration** - This is broken down into two sub-categories:
+    1. **Firmware Ecosystem** - Patina adopters working together to ensure Patina works in their platforms and use
+        cases. This includes things like platform bring-up, integration with existing firmware components, and
+        validation against various hardware configurations.
+    2. **Rust Ecosystem** - Engaging with the broader Rust community to ensure Patina aligns with Rust's best
+        practices and leverages the latest Rust features. This includes things like contributing to Rust libraries,
+        participating in Rust forums, and collaborating with other Rust projects.
+
+### Status
+
+1. **Stabilization** - In Progress
+2. **Expansion**
+    1. **Component Growth** - In Progress
+    2. **MM Core Support** - Planned
+3. **Ecosystem Integration**
+    1. **Firmware Ecosystem** - In Progress
+    2. **Rust Ecosystem** - In Progress
+
+Patina welcomes and encourages community contributions to help accelerate progress in these focus areas. We also value
+your ideas and feedback on additional priorities that matter to the community.
+
 ## Contributing
 
 - Review Rust Documentation in the [/docs](https://github.com/OpenDevicePartnership/patina/blob/HEAD/docs/src/introduction.md)
