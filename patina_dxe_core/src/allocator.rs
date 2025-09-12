@@ -36,7 +36,7 @@ use mu_pi::{
     hob::{self, EFiMemoryTypeInformation, Hob, HobList, MEMORY_TYPE_INFO_HOB_GUID},
 };
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
-use uefi_allocator::UefiAllocator;
+pub use uefi_allocator::UefiAllocator;
 
 use patina_sdk::{
     base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},

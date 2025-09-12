@@ -27,6 +27,7 @@
 #![feature(alloc_error_handler)]
 #![feature(c_variadic)]
 #![feature(allocator_api)]
+#![feature(btreemap_alloc)]
 #![feature(slice_ptr_get)]
 #![feature(coverage_attribute)]
 
