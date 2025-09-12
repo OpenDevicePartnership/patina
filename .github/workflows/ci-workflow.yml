@@ -12,9 +12,15 @@ name: CI
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches:
+      - "main"
+      - "major"
+      - "feature/**/*"
   pull_request:
-    branches: [ "main" ]
+    branches:
+      - "main"
+      - "major"
+      - "feature/**/*"
 
 jobs:
   ci_workflow:
