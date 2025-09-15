@@ -1,5 +1,3 @@
-#![no_std]
-
 use bitfield::bitfield;
 use mu_pi::list_entry;
 use r_efi::efi;
