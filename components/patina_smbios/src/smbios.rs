@@ -171,7 +171,7 @@ pub struct SmbiosStructure {
 }
 
 ///
-/// Text strings associated with a given SMBIOS structure are returned in the dmiStrucBuffer, appended directly after
+/// Text strings associated with a given SMBIOS structure are returned in the dmiStructBuffer, appended directly after
 /// the formatted portion of the structure. This method of returning string information eliminates the need for
 /// application software to deal with pointers embedded in the SMBIOS structure. Each string is terminated with a null
 /// (00h) BYTE and the set of strings is terminated with an additional null (00h) BYTE. When the formatted portion of
@@ -1716,7 +1716,7 @@ pub enum EventLogVariableData {
     MutilEventHandle = 0x03,
     PostResultBitmap = 0x04,
     SysManagementType = 0x05,
-    MutliEventSysManagmentType = 0x06,
+    MutliEventSysManagementType = 0x06,
     Unused = 0x07,
     OemAssigned = 0x80,
 }

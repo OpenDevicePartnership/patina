@@ -30,10 +30,16 @@ words:
   - acpibase
   - addrs
   - armasm
+  - athlon
   - bucketize
   - cbindgen
   - cdecl
+  - cdram
   - cdrom
+  - celeron
+  - centronics
+  - clfsh
+  - corem
   - corosensei
   - ctypes
   - dbgwcr
@@ -44,11 +50,19 @@ words:
   - distros
   - dllcharacteristics
   - docsrs
+  - duron
   - dxefv
   - edkii
+  - edram
+  - eeprom
+  - efficeon
   - efiapi
   - efierror
   - eflags
+  - eprom
+  - familyi
+  - familyz
+  - feprom
   - fnent
   - gantt
   - gdbstub
@@ -58,6 +72,7 @@ words:
   - gread
   - guids
   - gwrite
+  - hireso
   - hresult
   - icfgr
   - inmodule
@@ -67,20 +82,27 @@ words:
   - isenabler
   - linkme
   - longjmp
+  - loong
+  - loongson
+  - lpddr
   - mdbook
   - mdscr
+  - mipsr
   - mmram
   - mpidr
   - msdia
   - mtrrs
+  - mutil
   - nestedfv
   - nologo
   - nomem
   - noopt
   - ntdll
+  - numberof
   - nvdimm
   - oleaut
   - opinfo
+  - opteron
   - oslar
   - oslsr
   - pacibsp
@@ -88,26 +110,39 @@ words:
   - pdata
   - pdbhelper
   - pread
+  - priorto
+  - proprietar
   - psapi
   - pterror
   - pwrite
+  - rdram
   - reentrancy
   - regsvr
   - relia
   - reloc
+  - riscv
   - rposition
   - rwlock
   - sctlr
+  - sgram
+  - sigle
+  - smbus
   - smcport
   - smiport
   - smram
+  - socketm
+  - socketr
+  - sodimm
+  - srimm
   - swmmis
   - sysreg
   - tiano
+  - turion
   - typer
   - uintn
   - unaccepte
   - uncacheable
+  - uncorrect
   - unregisters
   - unspec
   - vcvarsamd
@@ -115,6 +150,7 @@ words:
   - vtable
   - wakeup
   - wbinvd
+  - weitek
   - windbg
   - withf
   - xdata
