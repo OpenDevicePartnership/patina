@@ -1597,7 +1597,13 @@ pub struct SmbiosTableType9 {
     //
     pub data_bus_width: u8,
     pub peer_grouping_count: u8,
-    pub peer_groups: [MiscSlotPeerGroup; 1],
+    // Variable-length tail array of peer groups (SMBIOS Type 9, added in v3.2).
+    // The spec allows Peer Grouping Count to be zero, so represent this with a
+    // zero-length sentinel array. Actual bytes present:
+    //   peer_grouping_count * size_of::<MiscSlotPeerGroup>()
+    // Safety: Any code iterating these must bounds-check against the structure's
+    // length field before dereferencing.
+    pub peer_groups: [MiscSlotPeerGroup; 0],
     //
     // Since PeerGroups has a variable number of entries, must not define new
     // fields in the structure. Remaining fields can be referenced using
