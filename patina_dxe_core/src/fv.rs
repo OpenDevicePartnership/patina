@@ -234,6 +234,7 @@ fn core_fvb_read(
 
     let mut bytes_to_read = num_bytes;
     if offset + bytes_to_read > block_size {
+        debug_assert!(offset + bytes_to_read <= block_size); // caller should not request to read beyond the block.
         bytes_to_read = block_size - offset;
     }
 
