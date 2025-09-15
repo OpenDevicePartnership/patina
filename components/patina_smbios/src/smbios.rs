@@ -1,3 +1,6 @@
+#![allow(unused_doc_comments)]
+#![allow(dead_code)]
+#![allow(private_interfaces)]
 use bitfield::bitfield;
 use mu_pi::list_entry;
 use r_efi::efi;
@@ -6,7 +9,7 @@ use r_efi::efi;
 ///
 /// This module contains SMBIOS standard definitions converted from
 /// TianoCore EDK2's SmbiosStandard.h following UEFI coding standards.
-
+///
 /// Reference SMBIOS 2.6, chapter 3.1.2.
 /// For v2.1 and later, handle values in the range 0xFF00h to 0xFFFFh are reserved for
 /// use by this specification.
@@ -448,7 +451,6 @@ pub enum MiscChassisState {
 ///
 /// System Enclosure or Chassis Security Status.
 ///
-
 #[repr(u8)]
 pub enum MiscChassisSecurityState {
     ChassisSecurityStatusOther = 0x01,
