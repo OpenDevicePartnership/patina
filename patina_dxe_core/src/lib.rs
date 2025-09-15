@@ -7,12 +7,16 @@
 //!
 //! ``` rust,no_run
 //! # use patina_sdk::component::prelude::*;
-//! # fn example_component() -> patina_sdk::error::Result<()> { Ok(()) }
+//! # #[derive(IntoComponent, Default)]
+//! # struct ExampleComponent;
+//! # impl ExampleComponent {
+//! #     fn entry_point(self) -> patina_sdk::error::Result<()> { Ok(()) }
+//! # }
 //! # let physical_hob_list = core::ptr::null();
 //! patina_dxe_core::Core::default()
 //!   .init_memory(physical_hob_list)
 //!   .with_service(patina_ffs_extractors::CompositeSectionExtractor::default())
-//!   .with_component(example_component)
+//!   .with_component(ExampleComponent::default())
 //!   .start()
 //!   .unwrap();
 //! ```
@@ -180,12 +184,16 @@ pub struct NoAlloc;
 ///
 /// ``` rust,no_run
 /// # use patina_sdk::component::prelude::*;
-/// # fn example_component() -> patina_sdk::error::Result<()> { Ok(()) }
+/// # #[derive(IntoComponent, Default)]
+/// # struct ExampleComponent;
+/// # impl ExampleComponent {
+/// #     fn entry_point(self) -> patina_sdk::error::Result<()> { Ok(()) }
+/// # }
 /// # let physical_hob_list = core::ptr::null();
 /// patina_dxe_core::Core::default()
 ///   .init_memory(physical_hob_list)
 ///   .with_service(patina_ffs_extractors::CompositeSectionExtractor::default())
-///   .with_component(example_component)
+///   .with_component(ExampleComponent::default())
 ///   .start()
 ///   .unwrap();
 /// ```
@@ -513,11 +521,11 @@ impl Core<Alloc> {
 
     /// Registers core provided components
     fn add_core_components(&mut self) {
-        self.insert_component(0, decompress::install_decompress_protocol.into_component());
-        self.insert_component(0, systemtables::register_checksum_on_protocol_install_events.into_component());
-        self.insert_component(0, cpu_arch_protocol::install_cpu_arch_protocol.into_component());
+        self.insert_component(0, decompress::DecompressProtocolInstaller.into_component());
+        self.insert_component(0, systemtables::SystemTableChecksumInstaller.into_component());
+        self.insert_component(0, cpu_arch_protocol::CpuArchProtocolInstaller.into_component());
         #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
-        self.insert_component(0, hw_interrupt_protocol::install_hw_interrupt_protocol.into_component());
+        self.insert_component(0, hw_interrupt_protocol::HwInterruptProtocolInstaller.into_component());
     }
 
     /// Starts the core, dispatching all drivers.

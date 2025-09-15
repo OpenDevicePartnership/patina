@@ -54,38 +54,48 @@ impl FromHob for CustomHob2 {
 #[derive(Debug, Default)]
 pub struct BooleanConfig(pub bool);
 
-/// This function component demonstrates how to consume a HOB.
+/// A component that demonstrates how to consume a HOB.
 ///
 /// It shows off three different consumption scenarios:
 /// 1. Consuming a HOB that must exist for the component to run (hob1).
 /// 2. Consuming a HOB that may or may not exist (hob2).
 /// 3. Consuming a HOB that may be in the hob list multiple times (hob1 again).
-pub fn consume_multiple_hobs(hob1: Hob<CustomHob1>, hob2: Option<Hob<CustomHob2>>) -> Result<()> {
-    // (3) Show off that if we expect a HOB to exist multiple times, we can iterate over it.
-    for hob in hob1.iter() {
-        println!("  Hob1 data: {hob:?}");
+#[derive(IntoComponent)]
+pub struct MultipleHobConsumer;
+
+impl MultipleHobConsumer {
+    pub fn entry_point(self, hob1: Hob<CustomHob1>, hob2: Option<Hob<CustomHob2>>) -> Result<()> {
+        // (3) Show off that if we expect a HOB to exist multiple times, we can iterate over it.
+        for hob in hob1.iter() {
+            println!("  Hob1 data: {hob:?}");
+        }
+
+        // (2) Show off that we can have optional HOBs
+        match hob2 {
+            // (1) Show off that if we only expect a single HOB, we can dereference it directly.
+            Some(hob) => println!("  Hob2 exists with data: {:?}", *hob),
+            None => println!("  Hob2 does not exist, continuing without it."),
+        };
+
+        Ok(())
     }
-
-    // (2) Show off that we can have optional HOBs
-    match hob2 {
-        // (1) Show off that if we only expect a single HOB, we can dereference it directly.
-        Some(hob) => println!("  Hob2 exists with data: {:?}", *hob),
-        None => println!("  Hob2 does not exist, continuing without it."),
-    };
-
-    Ok(())
 }
 
-/// This function component demonstrates how to consume a HOB and convert part of it's contents into a Config.
-pub fn hob_to_config(hob: Hob<CustomHob1>, mut cfg: ConfigMut<BooleanConfig>) -> Result<()> {
-    cfg.0 = hob.data4;
-    println!("  Hob data converted to config. Config Value: {:?}", cfg.0);
+/// A component to demonstrate how to consume a hob and convert part of it's contents into a Config.
+#[derive(IntoComponent)]
+pub struct HobToConfigConverter;
 
-    // Mark this configuration as final, so that it cannot be modified further. No other component that consumes this
-    // mutably will run.
-    cfg.lock();
+impl HobToConfigConverter {
+    fn entry_point(self, hob: Hob<CustomHob1>, mut cfg: ConfigMut<BooleanConfig>) -> Result<()> {
+        cfg.0 = hob.data4;
+        println!("  Hob data converted to config. Config Value: {:?}", cfg.0);
 
-    Ok(())
+        // Mark this configuration as final, so that it cannot be modified further. No other component that consumes this
+        // mutably will run.
+        cfg.lock();
+
+        Ok(())
+    }
 }
 
 fn main() {
@@ -93,8 +103,8 @@ fn main() {
     // This is not apart of the example, but is necessary to run the component in std.
     let mut storage = Storage::default();
     let components = vec![
-        util::register_component(consume_multiple_hobs, &mut storage),
-        util::register_component(hob_to_config, &mut storage),
+        util::register_component(MultipleHobConsumer, &mut storage),
+        util::register_component(HobToConfigConverter, &mut storage),
     ];
 
     util::setup_storage(

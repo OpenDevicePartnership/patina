@@ -27,29 +27,24 @@
 //! by any user-defined type. So long as it implements [IntoComponent], it can be registered with and executed by the
 //! DxeCore.
 //!
-//! ### `FunctionComponent`
-//!
-//! This module defines two implementations of the [Component] trait. `FunctionComponent`, whose [IntoComponent]
-//! implementation is a blanket implementation for any functions whose parameters implement [Param](params::Param).
-//! You can review the [Param](params::Param) implementations for all types that can be used as parameters to these
-//! functions. The `FunctionComponent` implementation has an arbitrary parameter count limit of 5, but this can be
-//! changed in the future if needed. See the [params] module for more information.
-//!
 //! ### `StructComponent`
 //!
-//! The second implementation is `StructComponent`, which is a component that allows for private internal configuration
-//! unlike the `FunctionComponent` which requires all configuration to be public via `Config<T>` and `ConfigMut<T>`
-//! parameters. To allow a struct or enum to be used as a `StructComponent`, a derive macro, [IntoComponent] is
-//! provided which implements necessary traits and specifies the entry point function for the component. The default
-//! entry point of `Self::entry_point` can be overridden with the `#[entry_point = path::to::function]` attribute.
+//! This crate provides a single component implementation, [StructComponent], which is a component that allows for
+//! private internal configuration. To enable a struct or enum to be transformed into a [StructComponent], a derive
+//! macro, [IntoComponent] is provided to implement the corresponding trait automatically. By default, the macro
+//! expects the struct or enum to have a method named `entry_point` with the appropriate function signature, however
+//! this can be overridden with the `#[entry_point = path::to::function]` attribute.
 //!
 //! It is important to note that the function's first parameter must be `self` or `mut self`, **NOT** `&self` or
 //! `&mut self`. This design choice was made as components are only expected to be executed once, and by consuming
 //! `self`, you are able to pass ownership of the entire struct (or items within the struct) to other "things" (for
-//! lack of a better term) without the need for cloning or borrowing.
+//! lack of a better term) without the need for cloning or borrowing. The rest of the parameters must implement the
+//! [Param](params::Param) trait, which is described in more detail below. If not all parameters implement
+//! [Param](params::Param), the macro will succeed, but the underlying implementation will report a diagnostic error
+//! at compile time.
 //!
-//! Similar to `FunctionComponent`, there is an arbitrary parameter count limit of 5, but this can be changed in the
-//! future if needed. See the [params] module for more information.
+//! Note: there is an arbitrary parameter count limit of 5, but this can be changed in the future if needed. See the
+//! [params] module for more information.
 //!
 //! ### `Param` types
 //!
@@ -73,24 +68,6 @@
 //!
 //! This crate has multiple example binaries in it's `example` folder that can be compiled and executed. These show
 //! implementations of common use cases and usage models for components and their parameters.
-//!
-//! ### Function Component Example
-//!
-//! ```rust
-//! # use patina_sdk::{error::Result, component::params::ConfigMut};
-//! # use mu_pi::hob::HobList;
-//! fn my_driver(hob_list: &HobList, mut config: ConfigMut<u32>) -> Result<()>{
-//!     for hob in hob_list {
-//!         // Find the hob(s) that I care about, set the config value
-//!         *config = 42;
-//!
-//!         // Lock it so any `Config<u32>` components can be executed. They will not
-//!         // execute until the config is locked.
-//!         config.lock();
-//!     }
-//!     Ok(())
-//! }
-//! ```
 //!
 //! ### Struct Component Example
 //!
@@ -142,7 +119,6 @@
 //!
 extern crate alloc;
 
-mod function_component;
 pub mod hob;
 mod metadata;
 pub mod params;
@@ -205,6 +181,7 @@ pub trait IntoComponent<Input> {
 
 /// A prelude module that re-exports commonly used items from the `component` module.
 pub mod prelude {
+    pub use crate::component::IntoComponent;
     pub use crate::component::hob::{FromHob, Hob};
     pub use crate::component::params::{Commands, Config, ConfigMut};
     pub use crate::component::service::{IntoService, Service};
@@ -227,19 +204,31 @@ mod tests {
     };
     use r_efi::base::Guid;
 
-    // This component should run no problem.
-    fn example_component_success() -> Result<()> {
-        Ok(())
+    #[derive(IntoComponent)]
+    struct ComponentSuccess;
+
+    impl ComponentSuccess {
+        fn entry_point(self) -> Result<()> {
+            Ok(())
+        }
     }
 
-    // Config list should be empty, so `validate_param` should fail and the component
-    // should not run.
-    fn example_component_not_dispatched_config(_cfg: ConfigMut<u32>) -> Result<()> {
-        Ok(())
+    #[derive(IntoComponent)]
+    struct ComponentNotDispatchedConfig;
+
+    impl ComponentNotDispatchedConfig {
+        fn entry_point(self, _: ConfigMut<u32>) -> Result<()> {
+            Ok(())
+        }
     }
 
-    fn example_component_fail() -> Result<()> {
-        Err(EfiError::Aborted)
+    #[derive(IntoComponent)]
+    struct ComponentFail;
+
+    impl ComponentFail {
+        fn entry_point(self) -> Result<()> {
+            Err(EfiError::Aborted)
+        }
     }
 
     #[derive(FromHob, Default, Clone, Copy)]
@@ -247,8 +236,13 @@ mod tests {
     #[repr(C)]
     pub struct TestHob;
 
-    fn example_component_hob_dep_1(_hob: Hob<TestHob>) -> Result<()> {
-        Ok(())
+    #[derive(IntoComponent)]
+    struct ComponentHobDep1;
+
+    impl ComponentHobDep1 {
+        fn entry_point(self, _hob: Hob<TestHob>) -> Result<()> {
+            Ok(())
+        }
     }
 
     #[derive(FromHob, Default, Clone, Copy)]
@@ -256,12 +250,21 @@ mod tests {
     #[repr(C)]
     pub struct TestHob2;
 
-    fn example_component_hob_dep_2(_hob: Hob<TestHob2>) -> Result<()> {
-        Ok(())
-    }
+    #[derive(IntoComponent)]
+    struct ComponentHobDep2;
 
-    fn example_component_hob_dep_3(_hob: Hob<TestHob2>) -> Result<()> {
-        Ok(())
+    impl ComponentHobDep2 {
+        fn entry_point(self, _hob: Hob<TestHob2>) -> Result<()> {
+            Ok(())
+        }
+    }
+    #[derive(IntoComponent)]
+    struct ComponentHobDep3;
+
+    impl ComponentHobDep3 {
+        fn entry_point(self, _hob: Hob<TestHob2>) -> Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
@@ -272,30 +275,30 @@ mod tests {
         let mut storage = storage::Storage::new();
 
         // Test component dispatched and succeeds does not panic does not panic and returns Ok(true)
-        let mut component1 = example_component_success.into_component();
+        let mut component1 = ComponentSuccess.into_component();
         component1.initialize(&mut storage);
         assert!(component1.run(&mut storage).is_ok_and(|res| res));
 
         // Test component not dispatched does not panic and returns Ok(false)
-        let mut component2 = example_component_not_dispatched_config.into_component();
+        let mut component2 = ComponentNotDispatchedConfig.into_component();
         component2.initialize(&mut storage);
         storage.lock_configs(); // Lock the config so the component cannot run
         assert!(component2.run(&mut storage).is_ok_and(|res| !res));
 
         // Test component failed does not panic and returns Err(EfiError::<Something>)
-        let mut component3 = example_component_fail.into_component();
+        let mut component3 = ComponentFail.into_component();
         component3.initialize(&mut storage);
         assert!(component3.run(&mut storage).is_err_and(|res| res == EfiError::Aborted));
 
-        let mut component4 = example_component_hob_dep_1.into_component();
+        let mut component4 = ComponentHobDep1.into_component();
         component4.initialize(&mut storage);
         assert!(component4.run(&mut storage).is_ok_and(|res| !res));
 
-        let mut component5 = example_component_hob_dep_2.into_component();
+        let mut component5 = ComponentHobDep2.into_component();
         component5.initialize(&mut storage);
         assert!(component5.run(&mut storage).is_ok_and(|res| !res));
 
-        let mut component6 = example_component_hob_dep_3.into_component();
+        let mut component6 = ComponentHobDep3.into_component();
         component6.initialize(&mut storage);
         assert!(component6.run(&mut storage).is_ok_and(|res| !res));
 

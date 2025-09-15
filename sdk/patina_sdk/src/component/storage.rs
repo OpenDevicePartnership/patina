@@ -526,13 +526,13 @@ unsafe impl Param for &mut Storage {
         // registered, and set ourselves as exclusive.
         assert!(
             !meta.access().has_any_config_write(),
-            "&mut Storage in system {} conflicts with a previous ConfigMut<T> access.",
+            "&mut Storage in component {} conflicts with a previous ConfigMut<T> access.",
             meta.name()
         );
 
         assert!(
             !meta.access().has_any_config_read(),
-            "&mut Storage in system {} conflicts with a previous Config<T> access.",
+            "&mut Storage in component {} conflicts with a previous Config<T> access.",
             meta.name()
         );
         meta.access_mut().writes_all_configs();
@@ -558,7 +558,7 @@ unsafe impl Param for &Storage {
     fn init_state(_storage: &mut Storage, meta: &mut MetaData) -> Self::State {
         assert!(
             !meta.access().has_any_config_write(),
-            "&mut Storage in system {} conflicts with a previous ConfigMut<T> access.",
+            "&mut Storage in component {} conflicts with a previous ConfigMut<T> access.",
             meta.name()
         );
 

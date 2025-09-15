@@ -13,8 +13,7 @@ use arm_gic::{
     gicv3::{GicV3, InterruptGroup},
 };
 use patina_sdk::boot_services::{BootServices, StandardBootServices};
-use patina_sdk::component::{params::Config, service::Service};
-use patina_sdk::error::Result;
+use patina_sdk::component::{IntoComponent, params::Config, service::Service};
 use patina_sdk::guid::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2};
 use patina_sdk::uefi_protocol::ProtocolInterface;
 
@@ -452,43 +451,53 @@ impl HwInterruptProtocolHandler {
     }
 }
 
-/// This component installs the two hardware interrupt protocols.
-pub(crate) fn install_hw_interrupt_protocol(
-    interrupt_manager: Service<dyn InterruptManager>,
-    gic_bases: Config<GicBases>,
-    boot_services: StandardBootServices,
-) -> Result<()> {
-    log::info!("GICv3 initializing {:x?}", (gic_bases.0, gic_bases.1));
-    let gic_v3 = unsafe {
-        gic_initialize(gic_bases.0 as _, gic_bases.1 as _).inspect_err(|_| log::error!("Failed to initialize GICv3"))?
-    };
-    log::info!("GICv3 initialized");
+#[derive(IntoComponent)]
+/// A component to install the two hardware interrupt protocols.
+pub(crate) struct HwInterruptProtocolInstaller;
 
-    let max_int = gic_v3.typer().num_spis();
-    let handlers = vec![None; max_int as usize];
-    let aarch64_int = AArch64InterruptInitializer::new(gic_v3);
+impl HwInterruptProtocolInstaller {
+    fn entry_point(
+        self,
+        interrupt_manager: Service<dyn InterruptManager>,
+        gic_bases: Config<GicBases>,
+        boot_services: StandardBootServices,
+    ) -> patina_sdk::error::Result<()> {
+        log::info!("GICv3 initializing {:x?}", (gic_bases.0, gic_bases.1));
+        let gic_v3 = unsafe {
+            gic_initialize(gic_bases.0 as _, gic_bases.1 as _)
+                .inspect_err(|_| log::error!("Failed to initialize GICv3"))?
+        };
+        log::info!("GICv3 initialized");
 
-    // Prepare context for the v1 interrupt handler
-    let hw_int_protocol_handler = Box::leak(Box::new(HwInterruptProtocolHandler::new(handlers, aarch64_int)));
-    // Produce Interrupt Protocol with the initialized GIC
-    let interrupt_protocol = Box::leak(Box::new(EfiHardwareInterruptProtocol::new(hw_int_protocol_handler)));
+        let max_int = gic_v3.typer().num_spis();
+        let handlers = vec![None; max_int as usize];
+        let aarch64_int = AArch64InterruptInitializer::new(gic_v3);
 
-    boot_services
-        .install_protocol_interface(None, interrupt_protocol)
-        .inspect_err(|_| log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL"))?;
+        // Prepare context for the v1 interrupt handler
+        let hw_int_protocol_handler = Box::leak(Box::new(HwInterruptProtocolHandler::new(handlers, aarch64_int)));
+        // Produce Interrupt Protocol with the initialized GIC
+        let interrupt_protocol = Box::leak(Box::new(EfiHardwareInterruptProtocol::new(hw_int_protocol_handler)));
 
-    // Produce Interrupt Protocol with the initialized GIC
-    let interrupt_protocol_v2 = Box::leak(Box::new(EfiHardwareInterruptV2Protocol::new(hw_int_protocol_handler)));
+        boot_services
+            .install_protocol_interface(None, interrupt_protocol)
+            .inspect_err(|_| log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL"))?;
 
-    boot_services
-        .install_protocol_interface(None, interrupt_protocol_v2)
-        .inspect_err(|_| log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL_V2"))?;
-    log::info!("installed HARDWARE_INTERRUPT_PROTOCOL_V2");
+        // Produce Interrupt Protocol with the initialized GIC
+        let interrupt_protocol_v2 = Box::leak(Box::new(EfiHardwareInterruptV2Protocol::new(hw_int_protocol_handler)));
 
-    // Register the interrupt handlers for IRQs after CPU arch protocol is installed
-    interrupt_manager
-        .register_exception_handler(1, patina_internal_cpu::interrupts::HandlerType::Handler(hw_int_protocol_handler))
-        .inspect_err(|_| log::error!("Failed to register exception handler for hardware interrupts"))?;
+        boot_services
+            .install_protocol_interface(None, interrupt_protocol_v2)
+            .inspect_err(|_| log::error!("Failed to install HARDWARE_INTERRUPT_PROTOCOL_V2"))?;
+        log::info!("installed HARDWARE_INTERRUPT_PROTOCOL_V2");
 
-    Ok(())
+        // Register the interrupt handlers for IRQs after CPU arch protocol is installed
+        interrupt_manager
+            .register_exception_handler(
+                1,
+                patina_internal_cpu::interrupts::HandlerType::Handler(hw_int_protocol_handler),
+            )
+            .inspect_err(|_| log::error!("Failed to register exception handler for hardware interrupts"))?;
+
+        Ok(())
+    }
 }

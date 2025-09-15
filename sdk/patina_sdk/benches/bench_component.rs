@@ -33,8 +33,13 @@ use patina_sdk::{
     error::Result,
 };
 
-fn test_component(_bs: StandardBootServices, _config: Config<i32>) -> Result<()> {
-    Ok(())
+#[derive(IntoComponent)]
+struct TestComponent;
+
+impl TestComponent {
+    fn entry_point(self, _bs: StandardBootServices, _config: Config<i32>) -> Result<()> {
+        Ok(())
+    }
 }
 
 struct Scheduler {
@@ -75,7 +80,7 @@ fn add_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
         Scheduler::new,
         |mut core| {
             for _ in 0..*count {
-                core = core.with_component(test_component);
+                core = core.with_component(TestComponent);
             }
         },
         criterion::BatchSize::SmallInput,
@@ -89,7 +94,7 @@ fn run_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
         let mut core = Scheduler::new();
         core.storage.set_boot_services(StandardBootServices::new(unsafe { &*mock_bs.as_ptr() }));
         for _ in 0..count {
-            core = core.with_component(test_component);
+            core = core.with_component(TestComponent);
         }
         core
     };
@@ -116,7 +121,7 @@ fn add_and_run_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
         init,
         |mut core| {
             for _ in 0..*count {
-                core = core.with_component(test_component);
+                core = core.with_component(TestComponent);
             }
             core.run();
         },

@@ -285,6 +285,7 @@ impl<'h, T: FromHob + 'static> IntoIterator for &Hob<'h, T> {
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
+    use crate as patina_sdk;
     use crate::{
         component::IntoComponent,
         error::{EfiError, Result},
@@ -351,7 +352,11 @@ mod tests {
 
     #[test]
     fn test_component_flow() {
-        fn my_component(hob: Hob<MyStruct>) -> Result<()> {
+        #[derive(IntoComponent)]
+        #[entry_point(path = my_component)]
+        struct MyComponent;
+
+        fn my_component(_: MyComponent, hob: Hob<MyStruct>) -> Result<()> {
             if hob.unused == 0 {
                 return Err(EfiError::NotReady);
             }
@@ -363,7 +368,7 @@ mod tests {
 
         let mut storage = Storage::new();
 
-        let mut comp = my_component.into_component();
+        let mut comp = MyComponent.into_component();
         comp.initialize(&mut storage);
 
         assert!(!Hob::<MyStruct>::validate(&0, UnsafeStorageCell::from(&storage)));
@@ -372,9 +377,12 @@ mod tests {
 
         let x = unsafe { Hob::<MyStruct>::get_param(&0, UnsafeStorageCell::from(&storage)) };
 
-        assert!(my_component(x).is_err_and(|e| e == EfiError::NotReady));
+        assert!(my_component(MyComponent, x).is_err_and(|e| e == EfiError::NotReady));
 
-        assert!(my_component(Hob::mock(vec![MyStruct { unused: 5 }])).is_ok());
-        assert!(my_component(Hob::mock(vec![MyStruct { unused: 10 }])).is_err_and(|e| e == EfiError::InvalidParameter));
+        assert!(my_component(MyComponent, Hob::mock(vec![MyStruct { unused: 5 }])).is_ok());
+        assert!(
+            my_component(MyComponent, Hob::mock(vec![MyStruct { unused: 10 }]))
+                .is_err_and(|e| e == EfiError::InvalidParameter)
+        );
     }
 }
