@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 publish.workspace = true
+description = "System Management BIOS (SMBIOS) support for UEFI components."
 
 [dependencies]
 log = {workspace = true}
