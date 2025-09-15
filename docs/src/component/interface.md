@@ -25,9 +25,12 @@ graph TD
     C --> F[Remove from Dispatch Queue]
 ```
 
-In the Patina DXE Core, a component is simply a trait implementation. So long as a struct implements
+In the Patina DXE Core, a component is just a trait - the `Component` trait. So long as a struct implements the trait,
+then it can be called as a component.
+
+So long as a struct implements
 [IntoComponent][patina_sdk], it can be consumed and executed by the Patina DXE Core. [patina_sdk][patina_sdk] currently
-provides two implementations for `Component`:
+provides a single implementation for `Component`
 
 1. [FunctionComponent][patina_sdk]: this type cannot be instantiated manually, but a blanket implementation of the
 `IntoComponent` trait allows any function whose parameters support dependency injection to be converted into a
