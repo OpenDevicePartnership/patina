@@ -508,9 +508,7 @@ pub enum MiscSystemWakeupType {
 /// one and only one System Information (Type 1) structure.
 ///
 #[repr(C)]
-pub struct SmbiosTableType1 {
-
-}
+pub struct SmbiosTableType1 {}
 ///
 ///  Base Board - Board Type.
 /// Base Board - Board Type.
@@ -747,7 +745,6 @@ pub struct SmbiosTableType3 {
     /// Length of contained element record
     pub contained_element_record_length: u8,
 }
-
 
 ///
 /// Processor Information - Processor Type.
@@ -1567,7 +1564,7 @@ pub struct SmbiosTableType4 {
     /// Processor socket string
     pub socket: SmbiosTableString,
     /// Processor type (enum value from PROCESSOR_TYPE_DATA)
-    pub processor_type: u8,   //  The enumeration value from PROCESSOR_TYPE_DATA.
+    pub processor_type: u8, //  The enumeration value from PROCESSOR_TYPE_DATA.
     /// Processor family (enum value from PROCESSOR_FAMILY_DATA)
     pub processor_family: u8, //  The enumeration value from PROCESSOR_FAMILY_DATA.
     /// Processor manufacturer string
@@ -2750,7 +2747,7 @@ pub enum EventLogTypeData {
     /// System boot event log type
     SystemBoot = 0x17,
     /// Unused event log type (0x18 - 0x7F)
-    Unused = 0x18,      // < 0x18 - 0x7F
+    Unused = 0x18, // < 0x18 - 0x7F
     /// Available for system event log type (0x80 - 0xFE)
     AvailForSys = 0x80, // < 0x80 - 0xFE
     /// End of log event log type
