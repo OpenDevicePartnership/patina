@@ -2619,7 +2619,6 @@ pub struct DeviceStruct {
 ///
 #[repr(C, packed)]
 /// OEM Strings (Type 11)
-#[repr(C, packed)]
 pub struct SmbiosTableType11 {
     /// Structure header
     pub hdr: SmbiosStructure,
@@ -2634,7 +2633,6 @@ pub struct SmbiosTableType11 {
 ///
 #[repr(C, packed)]
 /// System Configuration Options (Type 12)
-#[repr(C, packed)]
 pub struct SmbiosTableType12 {
     /// Structure header
     pub hdr: SmbiosStructure,
@@ -2649,7 +2647,6 @@ pub struct SmbiosTableType12 {
 ///
 #[repr(C, packed)]
 /// BIOS Language Information (Type 13)
-#[repr(C, packed)]
 pub struct SmbiosTableType13 {
     /// Structure header
     pub hdr: SmbiosStructure,
@@ -2668,7 +2665,6 @@ pub struct SmbiosTableType13 {
 ///
 #[repr(C, packed)]
 /// Group Item Entry
-#[repr(C, packed)]
 pub struct GroupStruct {
     /// Item type
     pub item_type: u8,
@@ -2685,7 +2681,6 @@ pub struct GroupStruct {
 ///
 #[repr(C, packed)]
 /// Group Associations (Type 14)
-#[repr(C, packed)]
 pub struct SmbiosTableType14 {
     /// Structure header
     pub hdr: SmbiosStructure,
@@ -4796,7 +4791,6 @@ impl SmbiosHandleEntry {
 
 #[repr(C, packed)]
 /// EFI SMBIOS Table End Structure
-#[repr(C, packed)]
 pub struct EfiSmbiosTableEndStructure {
     /// Table end header
     pub header: EfiSmbiosTableHeader,
