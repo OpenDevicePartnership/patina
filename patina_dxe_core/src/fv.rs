@@ -83,9 +83,8 @@ fn core_fvb_get_attributes(
 ) -> Result<fvb::attributes::EfiFvbAttributes2, EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
 
-    let fvb_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvbData(fvb_data)) => fvb_data,
-        Some(_) | None => return Err(EfiError::NotFound),
+    let Some(PrivateDataItem::FvbData(fvb_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return Err(EfiError::NotFound);
     };
 
     // Safety: fvb_data.physical_address must point to a valid FV (i.e. private_data is correctly constructed and
@@ -112,10 +111,10 @@ extern "efiapi" fn fvb_get_physical_address(
 
     let private_data = PRIVATE_FV_DATA.lock();
 
-    let fvb_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvbData(fvb_data)) => fvb_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
+    let Some(PrivateDataItem::FvbData(fvb_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return efi::Status::NOT_FOUND;
     };
+
     // SAFETY: caller must provide a valid pointer to receive the address. It is null-checked above.
     unsafe { address.write(fvb_data.physical_address) };
 
@@ -152,9 +151,8 @@ fn core_fvb_get_block_size(
 ) -> Result<(usize, usize), EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
 
-    let fvb_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvbData(fvb_data)) => fvb_data,
-        Some(_) | None => return Err(EfiError::NotFound),
+    let Some(PrivateDataItem::FvbData(fvb_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return Err(EfiError::NotFound);
     };
 
     // Safety: fvb_data.physical_address must point to a valid FV (i.e. private_data is correctly constructed and
@@ -213,24 +211,19 @@ fn core_fvb_read(
 ) -> Result<&'static [u8], EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
 
-    let fvb_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvbData(fvb_data)) => fvb_data,
-        Some(_) | None => return Err(EfiError::NotFound),
+    let Some(PrivateDataItem::FvbData(fvb_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return Err(EfiError::NotFound);
     };
 
     // Safety: fvb_data.physical_address must point to a valid FV (i.e. private_data is correctly constructed and
     // its invariants - like not removing fv once installed - are upheld).
     let fv = unsafe { VolumeRef::new_from_address(fvb_data.physical_address) }?;
 
-    let lba: u32 = match lba.try_into() {
-        Ok(lba) => lba,
-        _ => return Err(EfiError::InvalidParameter),
+    let Ok(lba) = lba.try_into() else {
+        return Err(EfiError::InvalidParameter);
     };
 
-    let (lba_base_addr, block_size) = match fv.lba_info(lba) {
-        Err(err) => return Err(err.into()),
-        Ok((base, block, _)) => (base as usize, block as usize),
-    };
+    let (lba_base_addr, block_size) = fv.lba_info(lba).map(|(addr, size, _)| (addr as usize, size as usize))?;
 
     let mut bytes_to_read = num_bytes;
     if offset + bytes_to_read > block_size {
@@ -317,9 +310,8 @@ fn core_fv_get_volume_attributes(
 ) -> Result<fv::attributes::EfiFvAttributes, EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
 
-    let fv_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvData(fv_data)) => fv_data,
-        Some(_) | None => return Err(EfiError::NotFound),
+    let Some(PrivateDataItem::FvData(fv_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return Err(EfiError::NotFound);
     };
 
     // Safety: fvb_data.physical_address must point to a valid FV (i.e. private_data is correctly constructed and
@@ -365,9 +357,8 @@ extern "efiapi" fn fv_read_file(
     // shenanigans).
     let private_data = PRIVATE_FV_DATA.lock();
 
-    let fv_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvData(fv_data)) => fv_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
+    let Some(PrivateDataItem::FvData(fv_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return efi::Status::NOT_FOUND;
     };
 
     // Safety: fvb_data.physical_address must point to a valid FV (i.e. private_data is correctly constructed and
@@ -513,9 +504,8 @@ fn core_fv_read_section(
 ) -> Result<patina_ffs::section::Section, EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
 
-    let fv_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvData(fv_data)) => fv_data,
-        Some(_) | None => return Err(EfiError::NotFound),
+    let Some(PrivateDataItem::FvData(fv_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return Err(EfiError::NotFound);
     };
 
     // Safety: fvb_data.physical_address must point to a valid FV (i.e. private_data is correctly constructed and
@@ -535,10 +525,12 @@ fn core_fv_read_section(
     let extractor = &private_data.section_extractor;
     let sections = file.sections_with_extractor(extractor)?;
 
-    match sections.iter().filter(|sec| sec.section_type_raw() == section_type).nth(section_instance) {
-        Some(sec) => Ok(sec.clone()),
-        _ => Err(EfiError::NotFound),
-    }
+    sections
+        .iter()
+        .filter(|sec| sec.section_type_raw() == section_type)
+        .nth(section_instance)
+        .cloned()
+        .ok_or(EfiError::NotFound)
 }
 
 extern "efiapi" fn fv_write_file(
@@ -599,9 +591,8 @@ fn core_fv_get_next_file(
 ) -> Result<(efi::Guid, fv::file::EfiFvFileAttributes, usize, fv::EfiFvFileType), EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
 
-    let fv_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvData(fv_data)) => fv_data,
-        Some(_) | None => return Err(EfiError::NotFound),
+    let Some(PrivateDataItem::FvData(fv_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return Err(EfiError::NotFound);
     };
 
     // Safety: fvb_data.physical_address must point to a valid FV (i.e. private_data is correctly constructed and
