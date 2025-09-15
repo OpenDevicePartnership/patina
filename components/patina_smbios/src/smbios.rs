@@ -274,8 +274,12 @@ pub struct ExtendedBiosRomSize {
 }
 
 impl ExtendedBiosRomSize {
-    pub fn size(&self) -> u16 { self.raw & 0x3FFF }
-    pub fn unit(&self) -> u8 { ((self.raw >> 14) & 0x3) as u8 }
+    pub fn size(&self) -> u16 {
+        self.raw & 0x3FFF
+    }
+    pub fn unit(&self) -> u8 {
+        ((self.raw >> 14) & 0x3) as u8
+    }
 }
 
 // Bios Information: Type 0
@@ -493,9 +497,14 @@ pub struct SmbiosTableType3 {
     pub contained_element_count: u8,
     pub contained_element_record_length: u8,
     //
-    // Can have 0 to (ContainedElementCount * ContainedElementRecordLength) contained elements
-    //
-    pub contained_elements: [ContainedElement; 1],
+    // Variable-length tail array of contained elements. Per SMBIOS spec (Type 3)
+    // (System Enclosure or Chassis), ContainedElementCount may be zero; the spec says
+    // "If no Contained Elements are reported, the Contained Element Count is set to 0.".
+    // Therefore we use a zero-length array sentinel here instead of [ContainedElement; 1].
+    // The actual number of bytes present is: contained_element_count * contained_element_record_length.
+    // Safety: Any code walking this must bounds-check against the structure size (Header.Length
+    // plus dynamic tail) before dereferencing.
+    pub contained_elements: [ContainedElement; 0],
     //
     // Add for smbios 2.7
     //
