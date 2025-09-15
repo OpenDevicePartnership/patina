@@ -47,8 +47,8 @@ technical audience and should not assume that the reader is familiar with the te
 1. Ensure any usage of function components have a clear transition to a struct component
 2. Human readable error diagnostic messages via `diagnostic::on_unimplemented` when an invalid function is marked as
   the entry point for the `StructComponent`
-2. Update or remove any existing function components
-3. Update or remove documentation regarding function components
+3. Update or remove any existing function components
+4. Update or remove documentation regarding function components
 
 ## Unresolved Questions
 
@@ -64,7 +64,7 @@ The alternative is to keep the `FunctionComponent` and corresponding `IntoCompon
 lead to additional confusion in developers using Patina, with no corresponding benifit by using it, as the
 `StructComponent` implementation can utilize a zero-sized struct to accomplish the same thing.
 
-```
+```text
 ┌──────────────┐          ┌───────────────┐           
 │ User-defined │          │ User-defined  │           
 │ struct       │          │ function      │           
@@ -98,7 +98,7 @@ lead to additional confusion in developers using Patina, with no corresponding b
 3. usage of `#[diagnostic::on_unimplemented(...)]` macro on the `ParamFunction` trait to provide better error message
   diagnostics when `#[entry_point(path = func)]` is used where `func` does not implement `ParamFunction`.
 
-```
+```text
     ┌──────────────┐        
     │ User-defined │        
     │ struct       │        
