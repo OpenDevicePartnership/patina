@@ -8,7 +8,7 @@
 //!
 #![cfg_attr(not(feature = "std"), no_std)]
 
-pub mod smbios;
 mod component;
+pub mod smbios;
 
 pub use component::SmbiosProviderManager;

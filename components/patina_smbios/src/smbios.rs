@@ -1,9 +1,9 @@
 #![no_std]
 
 use bitfield::bitfield;
-use r_efi::efi;
 use mu_pi::list_entry;
 use patina_dxe_core::tpl_lock;
+use r_efi::efi;
 
 /// SMBIOS Standard Constants
 ///
@@ -984,7 +984,7 @@ pub struct ProcessorIdData {
 pub struct SmbiosTableType4 {
     pub hdr: SmbiosStructure,
     pub socket: SmbiosTableString,
-    pub processor_type: u8, //  The enumeration value from PROCESSOR_TYPE_DATA.
+    pub processor_type: u8,   //  The enumeration value from PROCESSOR_TYPE_DATA.
     pub processor_family: u8, //  The enumeration value from PROCESSOR_FAMILY_DATA.
     pub processor_manufacturer: SmbiosTableString,
     pub processor_id: ProcessorIdData,
@@ -1351,11 +1351,11 @@ pub enum MiscSlotType {
     PciExpressGen3Sff8639 = 0x20,
     PciExpressMini52pinWithBsko = 0x21, // < PCI Express Mini 52-pin (CEM spec. 2.0) with bottom-side keep-outs.
     PciExpressMini52pinWithoutBsko = 0x22, // < PCI Express Mini 52-pin (CEM spec. 2.0) without bottom-side keep-outs.
-    PciExpressMini76pin = 0x23, // < PCI Express Mini 76-pin (CEM spec. 2.0) Corresponds to Display-Mini card.
-    PciExpressGen4Sff8639 = 0x24, // < U.2
-    PciExpressGen5Sff8639 = 0x25, // < U.2
-    OcpNic30SmallFormFactor = 0x26, // < SFF
-    OcpNic30LargeFormFactor = 0x27, // < LFF
+    PciExpressMini76pin = 0x23,         // < PCI Express Mini 76-pin (CEM spec. 2.0) Corresponds to Display-Mini card.
+    PciExpressGen4Sff8639 = 0x24,       // < U.2
+    PciExpressGen5Sff8639 = 0x25,       // < U.2
+    OcpNic30SmallFormFactor = 0x26,     // < SFF
+    OcpNic30LargeFormFactor = 0x27,     // < LFF
     OcpNicPriorto30 = 0x28,
     CxlFlexbus10 = 0x30,
     Pc98C20 = 0xA0,
@@ -1813,8 +1813,8 @@ pub enum MemoryErrorCorrection {
 #[repr(C, packed)]
 pub struct SmbiosTableType16 {
     pub hdr: SmbiosStructure,
-    pub location: u8, // < The enumeration value from MEMORY_ARRAY_LOCATION.
-    pub use_: u8,     // < The enumeration value from MEMORY_ARRAY_USE.
+    pub location: u8,                // < The enumeration value from MEMORY_ARRAY_LOCATION.
+    pub use_: u8,                    // < The enumeration value from MEMORY_ARRAY_USE.
     pub memory_error_correction: u8, // < The enumeration value from MEMORY_ERROR_CORRECTION.
     pub maximum_capacity: u32,
     pub memory_error_information_handle: u16,
@@ -3044,7 +3044,6 @@ pub enum SmbiosStructurePointer {
     Type127(*mut SmbiosTableType127),
     Raw(*mut u8),
 }
-
 
 // ---------------------- SmbiosDxe Header Start ----------------------
 
