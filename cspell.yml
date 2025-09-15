@@ -150,6 +150,7 @@ words:
   - sysreg
   - tiano
   - tianocore
+  - turion
   - typer
   - uefiext
   - uintn
