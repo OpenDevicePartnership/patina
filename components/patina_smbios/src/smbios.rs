@@ -2,7 +2,6 @@
 
 use bitfield::bitfield;
 use mu_pi::list_entry;
-use patina_dxe_core::tpl_lock;
 use r_efi::efi;
 
 /// SMBIOS Standard Constants
@@ -267,11 +266,16 @@ pub struct MiscBiosCharacteristicsExt {
     pub system_reserved: MbceSystemReserved,
 }
 
-// Extended BIOS ROM size
+// Extended BIOS ROM size (SMBIOS 3.1.0+). Layout: bits 0..=13 size, bits 14..=15 unit.
 #[repr(C, packed)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ExtendedBiosRomSize {
-    pub size: B14,
-    pub unit: B2,
+    pub raw: u16,
+}
+
+impl ExtendedBiosRomSize {
+    pub fn size(&self) -> u16 { self.raw & 0x3FFF }
+    pub fn unit(&self) -> u8 { ((self.raw >> 14) & 0x3) as u8 }
 }
 
 // Bios Information: Type 0
@@ -315,7 +319,7 @@ pub enum MiscSystemWakeupType {
 /// An SMBIOS implementation is associated with a single system instance and contains
 /// one and only one System Information (Type 1) structure.
 ///
-#[repr(C, packed)]
+#[repr(C)]
 pub struct SmbiosTableType1 {
     hdr: SmbiosStructure,
     manufacturer: SmbiosTableString,
@@ -952,6 +956,7 @@ bitfield! {
 /// Processor Information - Status
 ///
 bitfield! {
+    #[derive(Copy, Clone)]
     pub struct ProcessorStatusBits(u8);
     impl Debug;
     pub cpu_status, set_cpu_status: 2, 0;       //< Indicates the status of the processor.
@@ -960,6 +965,7 @@ bitfield! {
     pub reserved2, set_reserved2: 7;        //< Reserved for future use. Must be set to zero.
 }
 
+#[derive(Copy, Clone)]
 pub union ProcessorStatusData {
     pub bits: ProcessorStatusBits,
     pub data: u8,
@@ -1028,6 +1034,27 @@ pub struct SmbiosTableType4 {
     pub socket_type: SmbiosTableString,
 }
 
+// Placeholder for Memory Controller Information (Type 5). Define fields as needed.
+#[repr(C, packed)]
+pub struct SmbiosTableType5 {
+    pub hdr: SmbiosStructure,
+    // TODO: Add fields
+}
+
+// Placeholder for Memory Module Information (Type 6).
+#[repr(C, packed)]
+pub struct SmbiosTableType6 {
+    pub hdr: SmbiosStructure,
+    // TODO: Add fields
+}
+
+// Placeholder for On Board Devices Information (Type 10) -- adjust to correct table if different.
+#[repr(C, packed)]
+pub struct SmbiosTableType10 {
+    pub hdr: SmbiosStructure,
+    // TODO: Add fields
+}
+
 ///
 /// Memory Controller Error Detecting Method.
 ///
@@ -1090,18 +1117,18 @@ bitfield! {
 bitfield! {
     pub struct MemoryCurrentType(u16);
     impl Debug;
-    pub other, set_other: 0,
-    pub unknown, set_unknown: 1,
-    pub standard:, set_standard 2,
-    pub fast_page_mode, set_fast_page_mode: 3,
-    pub edo, set_edo: 4,
-    pub parity, set_parity: 5,
-    pub ecc, set_ecc: 6,
-    pub simm, set_simm: 7,
-    pub dimm, set_dimm: 8,
-    pub burst_edo, set_burst_edo: 9,
-    pub sdram, set_sdram: 10,
-    pub reserved, set_reserved: 15, 11,
+    pub other, set_other: 0;
+    pub unknown, set_unknown: 1;
+    pub standard, set_standard: 2;
+    pub fast_page_mode, set_fast_page_mode: 3;
+    pub edo, set_edo: 4;
+    pub parity, set_parity: 5;
+    pub ecc, set_ecc: 6;
+    pub simm, set_simm: 7;
+    pub dimm, set_dimm: 8;
+    pub burst_edo, set_burst_edo: 9;
+    pub sdram, set_sdram: 10;
+    pub reserved, set_reserved: 15, 11;
 }
 
 ///
@@ -1934,6 +1961,7 @@ pub enum MemoryDeviceTechnology {
 /// Memory Device - Memory Operating Mode Capability
 ///
 bitfield! {
+    #[derive(Copy, Clone)]
     pub struct MemoryDeviceOperatingModeCapabilityBits(u16);
     impl Debug;
     pub reserved, set_reserved: 0;
@@ -1945,6 +1973,7 @@ bitfield! {
     pub reserved2, set_reserved2: 15, 6;
 }
 
+#[derive(Copy, Clone)]
 pub union MemoryDeviceOperatingModeCapability {
     pub bits: MemoryDeviceOperatingModeCapabilityBits,
     pub uint16: u16,
@@ -2990,7 +3019,7 @@ pub struct SmbiosTableType127 {
 ///
 /// Union of all the possible SMBIOS record types.
 ///
-#[repr(C, packed)]
+#[repr(C)]
 pub enum SmbiosStructurePointer {
     Hdr(*mut SmbiosStructure),
     Type0(*mut SmbiosTableType0),
@@ -3065,7 +3094,6 @@ pub struct SmbiosInstance {
     pub signature: u32,
     pub handle: core::ffi::c_void,
     pub smbios: Option<i32>, //TODO Dell: protocol implementation later
-    pub data_lock: tpl_lock::TplMutex<Option<SmbiosInstance>>,
     pub data_list_head: list_entry::Entry,
     pub allocated_handle_list_head: list_entry::Entry,
 }
