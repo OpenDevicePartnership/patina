@@ -4,11 +4,12 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 #![no_std]
+#![feature(coverage_attribute)]
 
 extern crate alloc;
 
@@ -342,7 +343,7 @@ impl From<DevicePathWalker> for String {
                     if i > 0 {
                         result.push(',');
                     }
-                    result.push_str(&format!("0x{:02x}", byte));
+                    result.push_str(&format!("0x{byte:02x}"));
                 }
                 result.push('/');
             }
@@ -416,6 +417,7 @@ fn protocol_to_subtype_str(protocol: efi::protocols::device_path::Protocol) -> &
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use core::mem::size_of;
 

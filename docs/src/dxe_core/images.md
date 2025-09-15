@@ -138,6 +138,9 @@ flowchart TD
   style image2 fill:#caa
 ```
 
+See the following compatibility note -
+[ConnectController() Must Explicitly Be Called For Handles Created/Modified During Image Start](../integrate/patina_dxe_core_requirements.md#33-connectcontroller-must-explicitly-be-called-for-handles-createdmodified-during-image-start).
+
 ## Exiting an Image
 
 The `exit()` routine is used to transfer control from the image execution context back to the `core_start_image` context

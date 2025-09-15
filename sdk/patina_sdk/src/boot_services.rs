@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 #[cfg(feature = "global_allocator")]
@@ -154,7 +154,6 @@ impl Debug for StandardBootServices {
 }
 
 /// Functions that are available *before* a successful call to EFI_BOOT_SERVICES.ExitBootServices().
-
 #[cfg_attr(any(test, feature = "mockall"), automock)]
 #[allow(clippy::needless_lifetimes)] //https://github.com/rust-lang/rust-clippy/issues/6622
 pub trait BootServices {
@@ -1066,7 +1065,7 @@ impl BootServices for StandardBootServices {
         }
     }
 
-    fn get_memory_map(&self) -> Result<MemoryMap<Self>, (efi::Status, usize)> {
+    fn get_memory_map(&self) -> Result<MemoryMap<'_, Self>, (efi::Status, usize)> {
         let get_memory_map = efi_boot_services_fn!(self.efi_boot_services(), get_memory_map);
 
         let mut memory_map_size = 0;
@@ -1191,7 +1190,7 @@ impl BootServices for StandardBootServices {
     fn locate_handle(
         &self,
         search_type: HandleSearchType,
-    ) -> Result<BootServicesBox<[efi::Handle], Self>, efi::Status> {
+    ) -> Result<BootServicesBox<'_, [efi::Handle], Self>, efi::Status> {
         let locate_handle = efi_boot_services_fn!(self.efi_boot_services(), locate_handle);
 
         let protocol = match search_type {
@@ -1299,7 +1298,7 @@ impl BootServices for StandardBootServices {
         &self,
         handle: efi::Handle,
         protocol: &efi::Guid,
-    ) -> Result<BootServicesBox<[efi::OpenProtocolInformationEntry], Self>, efi::Status>
+    ) -> Result<BootServicesBox<'_, [efi::OpenProtocolInformationEntry], Self>, efi::Status>
     where
         Self: Sized,
     {
@@ -1359,7 +1358,7 @@ impl BootServices for StandardBootServices {
     fn protocols_per_handle(
         &self,
         handle: efi::Handle,
-    ) -> Result<BootServicesBox<[&'static efi::Guid], Self>, efi::Status> {
+    ) -> Result<BootServicesBox<'_, [&'static efi::Guid], Self>, efi::Status> {
         let mut protocol_buffer = ptr::null_mut();
         let mut protocol_buffer_count = 0;
         match efi_boot_services_fn!(self.efi_boot_services(), protocols_per_handle)(
@@ -1377,7 +1376,7 @@ impl BootServices for StandardBootServices {
     fn locate_handle_buffer(
         &self,
         search_type: HandleSearchType,
-    ) -> Result<BootServicesBox<[efi::Handle], Self>, efi::Status>
+    ) -> Result<BootServicesBox<'_, [efi::Handle], Self>, efi::Status>
     where
         Self: Sized,
     {
@@ -1445,7 +1444,10 @@ impl BootServices for StandardBootServices {
         }
     }
 
-    fn start_image(&self, image_handle: efi::Handle) -> Result<(), (efi::Status, Option<BootServicesBox<[u8], Self>>)> {
+    fn start_image(
+        &self,
+        image_handle: efi::Handle,
+    ) -> Result<(), (efi::Status, Option<BootServicesBox<'_, [u8], Self>>)> {
         let mut exit_data_size = MaybeUninit::uninit();
         let mut exit_data = MaybeUninit::uninit();
         match efi_boot_services_fn!(self.efi_boot_services(), start_image)(
@@ -1562,7 +1564,8 @@ impl BootServices for StandardBootServices {
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use c_ptr::CPtr;
     use efi::{Boolean, Char16, OpenProtocolInformationEntry, protocols::device_path};
 
@@ -1635,7 +1638,7 @@ mod test {
     #[test]
     fn test_debug_print_works_before_init() {
         let bs = StandardBootServices::new_uninit();
-        let output = format!("{:?}", bs);
+        let output = format!("{bs:?}");
         assert!(output.contains("Not Initialized"));
     }
 
@@ -1699,7 +1702,7 @@ mod test {
         ) -> efi::Status {
             assert_eq!(efi::EVT_RUNTIME | efi::EVT_NOTIFY_SIGNAL, event_type);
             assert_eq!(efi::TPL_APPLICATION, notify_tpl);
-            assert_eq!(None, notify_function);
+            assert!(notify_function.is_none());
             assert_eq!(ptr::null_mut(), notify_context);
             assert_ne!(ptr::null_mut(), event);
             efi::Status::SUCCESS
@@ -1776,7 +1779,7 @@ mod test {
         ) -> efi::Status {
             assert_eq!(efi::EVT_RUNTIME | efi::EVT_NOTIFY_SIGNAL, event_type);
             assert_eq!(efi::TPL_APPLICATION, notify_tpl);
-            assert_eq!(None, notify_function);
+            assert!(notify_function.is_none());
             assert_eq!(ptr::null(), notify_context);
             assert_eq!(ptr::addr_of!(GUID), event_group);
             assert_ne!(ptr::null_mut(), event);
@@ -2860,7 +2863,12 @@ mod test {
         }
 
         let image_handle = boot_services
-            .load_image(true, 1_usize as *mut c_void, 2_usize as *mut device_path::Protocol, Some(&[1_u8, 2, 3, 4, 5]))
+            .load_image(
+                true,
+                std::ptr::dangling_mut::<c_void>(),
+                2_usize as *mut device_path::Protocol,
+                Some(&[1_u8, 2, 3, 4, 5]),
+            )
             .unwrap();
 
         assert_eq!(3, image_handle as usize);
@@ -3046,7 +3054,7 @@ mod test {
                 assert_eq!(memory_map.descriptors[0].physical_start, 0xffffffffaaaabbbb);
             }
             Err((status, _)) => {
-                panic!("Error: {:?}", status);
+                panic!("Error: {status:?}");
             }
         }
     }
@@ -3106,7 +3114,6 @@ mod test {
     }
 
     #[test]
-    #[allow(static_mut_refs)]
     fn test_copy_mem() {
         let boot_services = boot_services!(copy_mem = efi_copy_mem);
 
@@ -3129,7 +3136,6 @@ mod test {
     }
 
     #[test]
-    #[allow(static_mut_refs)]
     fn test_set_mem() {
         let boot_services = boot_services!(set_mem = efi_set_mem);
 
@@ -3184,7 +3190,6 @@ mod test {
             efi::Status::SUCCESS
         }
 
-        #[allow(static_mut_refs)]
         unsafe { boot_services.install_configuration_table(&GUID, &mut TABLE) }.unwrap();
     }
 

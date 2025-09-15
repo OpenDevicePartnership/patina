@@ -136,9 +136,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 extern crate alloc;
 
@@ -207,11 +207,12 @@ pub trait IntoComponent<Input> {
 pub mod prelude {
     pub use crate::component::hob::{FromHob, Hob};
     pub use crate::component::params::{Commands, Config, ConfigMut};
-    pub use crate::component::service::Service;
+    pub use crate::component::service::{IntoService, Service};
     pub use crate::error::{EfiError, Result};
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     extern crate std;
 

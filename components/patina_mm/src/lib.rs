@@ -134,8 +134,9 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 #![cfg_attr(all(not(feature = "std"), not(test), not(feature = "mockall")), no_std)]
+#![feature(coverage_attribute)]
 
 pub mod component;
 pub mod config;

@@ -90,9 +90,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 extern crate alloc;
 
@@ -654,6 +654,7 @@ impl_component_param_tuple!(T1, T2, T3, T4);
 impl_component_param_tuple!(T1, T2, T3, T4, T5);
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use crate::{
         component::{IntoComponent, storage::Storage},

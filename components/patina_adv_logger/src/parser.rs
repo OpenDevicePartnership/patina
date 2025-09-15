@@ -2,82 +2,58 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
-use crate::memory_log::{AdvLoggerInfo, AdvLoggerMessageEntry};
+use crate::memory_log::{AdvancedLog, LogEntry};
 use alloc::format;
 use core::str;
+use patina_sdk::error::EfiError;
 
 /// Parser for the Advanced Logger buffer.
 pub struct Parser<'a> {
-    data: &'a [u8],
+    log: AdvancedLog<'a>,
     entry_meta: bool,
 }
 
 impl<'a> Parser<'a> {
     /// Creates a new `Parser` instance with the provided data slice from an advanced
     /// logger buffer.
-    pub const fn new(data: &'a [u8]) -> Self {
-        Parser { data, entry_meta: true }
+    pub fn open(data: &'a [u8]) -> Result<Self, &'static str> {
+        let log = AdvancedLog::open_log(data).map_err(|err| match err {
+            EfiError::InvalidParameter => "Invalid log data provided.",
+            EfiError::BufferTooSmall => "Incomplete log buffer.",
+            EfiError::Unsupported => "Log data format not supported.",
+            _ => "Failed to open log data.",
+        })?;
+
+        Ok(Parser { log, entry_meta: true })
     }
 
     /// Sets whether to print entry metadata (level, phase, timestamp) in the log output.
-    pub const fn with_entry_metadata(mut self, with_meta: bool) -> Self {
+    pub const fn configure_print_entry_metadata(&mut self, with_meta: bool) {
         self.entry_meta = with_meta;
-        self
-    }
-
-    fn get_log(&self) -> Result<&AdvLoggerInfo, &'static str> {
-        if self.data.is_empty() {
-            return Err("Data is empty");
-        }
-
-        if self.data.len() < size_of::<AdvLoggerInfo>() {
-            return Err("Data is too small to contain a valid memory log");
-        }
-
-        // SAFETY: We confirmed the byte array is at least large enough to hold
-        //         the `AdvLoggerInfo` struct, we will confirm the total size
-        //         afterwards.
-        let log = unsafe {
-            let address = self.data.as_ptr() as u64;
-            match AdvLoggerInfo::adopt_memory_log(address) {
-                Some(log) => log,
-                None => return Err("Failed to parse memory log"),
-            }
-        };
-
-        // Check that the entire log described is present to make sure we don't
-        // read past the end of the buffer.
-        if self.data.len() < log.get_log_buffer_size() {
-            return Err("Buffer size is smaller than the log size");
-        }
-
-        Ok(log)
     }
 
     /// Writes the log header information to the provided output stream.
     pub fn write_header<W: std::io::Write>(&self, out: &mut W) -> Result<(), &'static str> {
-        let log = self.get_log()?;
-        let header = &format!("{:#x?}\n", log);
+        let header = &format!("{:#x?}\n", self.log.header);
         out.write(header.as_bytes()).map_err(|_| "Failed to write to output.")?;
         Ok(())
     }
 
     /// Writes the log entries to the provided output stream.
     pub fn write_log<W: std::io::Write>(&self, out: &mut W) -> Result<(), &'static str> {
-        let log = self.get_log()?;
-        let frequency = log.get_frequency();
+        let frequency = self.log.get_frequency();
 
-        let mut carry_entry: Option<&AdvLoggerMessageEntry> = None;
-        for entry in log.iter() {
+        let mut carry_entry: Option<LogEntry> = None;
+        for entry in self.log.iter() {
             if let Some(carry) = carry_entry {
                 // If the carry entry is not the same boot phase, drop it. This
                 // means messages from different environments are interleaved.
-                if carry.boot_phase != entry.boot_phase {
+                if carry.phase != entry.phase {
                     carry_entry = None;
                 }
             }
@@ -87,7 +63,7 @@ impl<'a> Parser<'a> {
                 let meta_data = &format!(
                     "{:<5}|{:<8}|{}| ",
                     level_name(entry.level),
-                    phase_name(entry.boot_phase),
+                    phase_name(entry.phase),
                     get_time_str(timestamp, frequency)
                 );
                 out.write(meta_data.as_bytes()).map_err(|_| "Failed to write to output.")?;
@@ -105,7 +81,7 @@ impl<'a> Parser<'a> {
 fn get_time_str(timestamp: u64, frequency: u64) -> String {
     // If there is no frequency, return the raw timestamp.
     if frequency == 0 {
-        return format!("{}", timestamp);
+        return format!("{timestamp}");
     }
 
     // Convert the timestamp to a human-readable format
@@ -118,7 +94,7 @@ fn get_time_str(timestamp: u64, frequency: u64) -> String {
     let minutes = time_ms % 60;
     time_ms /= 60;
     let hours = time_ms % 24;
-    format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, milliseconds)
+    format!("{hours:02}:{minutes:02}:{seconds:02}.{milliseconds:03}")
 }
 
 fn phase_name(phase: u16) -> &'static str {

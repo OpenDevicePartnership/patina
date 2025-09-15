@@ -8,7 +8,7 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 #[cfg(feature = "alloc")]
@@ -31,12 +31,9 @@ use crate::{
 
 /// Length of the static buffer used for GDB communication.
 const GDB_BUFF_LEN: usize = 0x2000;
-const MONITOR_BUFF_LEN: usize = GDB_BUFF_LEN / 2;
 
 #[cfg(not(feature = "alloc"))]
 static GDB_BUFFER: [u8; GDB_BUFF_LEN] = [0; GDB_BUFF_LEN];
-#[cfg(not(feature = "alloc"))]
-static MONITOR_BUFFER: [u8; MONITOR_BUFF_LEN] = [0; MONITOR_BUFF_LEN];
 
 // SAFETY: The exception info is not actually stored globally, but this is needed to satisfy
 // the compiler as it will be a contained within the target struct which the GdbStub
@@ -92,7 +89,6 @@ where
 {
     gdb: Option<GdbStubStateMachine<'a, PatinaTarget, SerialConnection<'a, T>>>,
     gdb_buffer: Option<&'a [u8; GDB_BUFF_LEN]>,
-    monitor_buffer: Option<&'a [u8; MONITOR_BUFF_LEN]>,
 }
 
 impl<T: SerialIO> PatinaDebugger<T> {
@@ -111,7 +107,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
                 initial_break: false,
                 initial_break_timeout: 0,
             }),
-            internal: Mutex::new(DebuggerInternal { gdb_buffer: None, gdb: None, monitor_buffer: None }),
+            internal: Mutex::new(DebuggerInternal { gdb_buffer: None, gdb: None }),
             system_state: Mutex::new(SystemState::new()),
         }
     }
@@ -191,17 +187,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
             }
         }
 
-        // Get the stored allocated buffer for the monitor. This needs to be
-        // pre-allocated as allocations should not occur during the debugger.
-        let monitor_buffer = {
-            let const_buffer = debug.monitor_buffer.ok_or(DebugError::NotInitialized)?;
-
-            // SAFETY: The buffer will only ever be used by the target monitor
-            // within the internal state lock.
-            unsafe { core::slice::from_raw_parts_mut(const_buffer.as_ptr() as *mut u8, const_buffer.len()) }
-        };
-
-        let mut target = PatinaTarget::new(exception_info, &self.system_state, monitor_buffer);
+        let mut target = PatinaTarget::new(exception_info, &self.system_state);
 
         // Either take the existing state machine, or start one if this is the first break.
         let mut gdb = match debug.gdb {
@@ -239,7 +225,19 @@ impl<T: SerialIO> PatinaDebugger<T> {
         while !target.is_resumed() {
             gdb = match gdb {
                 GdbStubStateMachine::Idle(mut gdb) => {
-                    let byte = gdb.borrow_conn().read().unwrap();
+                    let byte = loop {
+                        match gdb.borrow_conn().read() {
+                            Ok(0x0) => {
+                                log::error!(
+                                    "Debugger: Read 0x00 from the transport. This is unexpected and will be ignored."
+                                );
+                                continue;
+                            }
+                            Ok(b) => break b,
+                            Err(_) => return Err(DebugError::TransportFailure),
+                        }
+                    };
+
                     match gdb.incoming_data(&mut target, byte) {
                         Ok(gdb) => gdb,
                         Err(e) => return Err(DebugError::GdbStubError(e)),
@@ -310,9 +308,6 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
                     if internal.gdb_buffer.is_none() {
                         internal.gdb_buffer = Some(Box::leak(Box::new([0u8; GDB_BUFF_LEN])));
                     }
-                    if internal.monitor_buffer.is_none() {
-                        internal.monitor_buffer = Some(Box::leak(Box::new([0u8; MONITOR_BUFF_LEN])));
-                    }
                 }
                 else {
                     internal.gdb_buffer = unsafe { Some(&*(GDB_BUFFER.as_ptr() as *mut [u8; GDB_BUFF_LEN])) };
@@ -329,7 +324,7 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
 
             let res = interrupt_manager.register_exception_handler(*exception_type, HandlerType::Handler(self));
             if res.is_err() {
-                log::error!("Failed to register debugger exception handler for type {}: {:?}", exception_type, res);
+                log::error!("Failed to register debugger exception handler for type {exception_type}: {res:?}");
             }
         }
 
@@ -358,7 +353,7 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
         };
 
         if breakpoint {
-            log::error!("MODULE BREAKPOINT! {} - 0x{:x} - 0x{:x}", module_name, address, length);
+            log::error!("MODULE BREAKPOINT! {module_name} - 0x{address:x} - 0x{length:x}");
             SystemArch::breakpoint();
         }
     }
@@ -378,12 +373,17 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
         }
     }
 
-    fn add_monitor_command(&'static self, command: &'static str, callback: crate::MonitorCommandFn) {
+    fn add_monitor_command(
+        &'static self,
+        command: &'static str,
+        description: &'static str,
+        callback: crate::MonitorCommandFn,
+    ) {
         if !self.enabled() {
             return;
         }
 
-        self.system_state.lock().add_monitor_command(command, callback);
+        self.system_state.lock().add_monitor_command(command, description, callback);
     }
 }
 
@@ -393,7 +393,14 @@ impl<T: SerialIO> InterruptHandler for PatinaDebugger<T> {
         exception_type: ExceptionType,
         context: &mut patina_internal_cpu::interrupts::ExceptionContext,
     ) {
+        // Check for a poke test before continuing
+        if SystemArch::check_memory_poke_test(context) {
+            log::info!("Memory poke test triggered, ignoring exception.");
+            return;
+        }
+
         let mut exception_info = SystemArch::process_entry(exception_type as u64, context);
+
         let result = self.enter_debugger(exception_info);
 
         exception_info = result.unwrap_or_else(|error| {
@@ -411,7 +418,7 @@ impl<T: SerialIO> InterruptHandler for PatinaDebugger<T> {
 fn debugger_crash(error: DebugError, exception_type: ExceptionType) -> ! {
     // Always log crashes, the debugger will stop working anyways.
     log::set_max_level(log::LevelFilter::Error);
-    log::error!("DEBUGGER CRASH! Error: {:?} Exception Type: {:?}", error, exception_type);
+    log::error!("DEBUGGER CRASH! Error: {error:?} Exception Type: {exception_type:?}");
 
     // Could use SystemArch::reboot() in the future, but looping makes diagnosing
     // debugger bugs easier for now.

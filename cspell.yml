@@ -4,7 +4,7 @@
 #
 ##
 # Copyright (c) Microsoft Corporation
-# SPDX-License-Identifier: BSD-2-Clause-Patent
+# SPDX-License-Identifier: Apache-2.0
 ##
 version: "0.2"
 language: en
@@ -42,6 +42,7 @@ words:
   - corem
   - corosensei
   - ctypes
+  - ruint
   - dbgwcr
   - dbgwvr
   - deassertion
@@ -51,6 +52,7 @@ words:
   - dllcharacteristics
   - docsrs
   - duron
+  - dword
   - dxefv
   - edkii
   - edram
@@ -64,11 +66,15 @@ words:
   - familyz
   - feprom
   - fnent
+  - fvmain
   - gantt
   - gdbstub
+  - genfw
   - getrsp
   - getsp
+  - gigantor
   - granularities
+  - grcov
   - gread
   - guids
   - gwrite
@@ -85,6 +91,7 @@ words:
   - loong
   - loongson
   - lpddr
+  - lzmatest
   - mdbook
   - mdscr
   - mipsr
@@ -101,12 +108,14 @@ words:
   - numberof
   - nvdimm
   - oleaut
+  - openvmm
   - opinfo
   - opteron
   - oslar
   - oslsr
   - pacibsp
   - pccard
+  - pcddxe
   - pdata
   - pdbhelper
   - pread
@@ -116,6 +125,9 @@ words:
   - pterror
   - pwrite
   - rdram
+  - pyserial
+  - pywin
+  - qword
   - reentrancy
   - regsvr
   - relia
@@ -137,8 +149,9 @@ words:
   - swmmis
   - sysreg
   - tiano
-  - turion
+  - tianocore
   - typer
+  - uefiext
   - uintn
   - unaccepte
   - uncacheable
@@ -154,3 +167,6 @@ words:
   - windbg
   - withf
   - xdata
+  - xtask
+  - zbuild
+  - zunstable

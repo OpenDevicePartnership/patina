@@ -145,7 +145,8 @@ graph TD
 The below is a list of requirements for the crate, but it does not prevent additional modules from existing.
 
 1. No public definitions are accessible via the top level lib.rs (or equivalent) module, only public modules.
-2. `component` module: This module must always exist, and contain the publicly importable component(s) for the crate.
+2. `component` module: This module may optionally exist if the crate produces a component. It must contain the publicly
+   importable component(s) for the crate.
 3. `config` module: This module may optionally exist if the component consumes configuration data that is registered
    with the platform via `.with_config` and this config is not accessible via `patina_sdk` or elsewhere.
 4. `error` module: This module may optionally exist if a `service` module is present and the public Service's interface
@@ -156,8 +157,9 @@ The below is a list of requirements for the crate, but it does not prevent addit
    `patina_sdk`, etc.) rather than this crate. HOBs may become a common interface and should thus be moved to the
    appropriate crate. If the HOB type already exists elsewhere, the crate should consume that definition instead of
    making their own.
-6. `service` module: This module may optionally exist if the component produces a service that is not accessible via
-   `patina_sdk` or another crate.
+6. `service` module: This module may optionally exist if the crate produces a service implementation that can be
+   directly instantiated and passed to the core with the `.with_service` method. If the service trait defintion is not
+   accessible via `patina_sdk` or another crate, then the public defintion should also be defined in this module.
 
 **Note**: Type re-exports are allowed, and can be re-exported in the same locations as would a public new type for
 your crate.

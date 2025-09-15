@@ -6,7 +6,7 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::config::{MmCommunicationConfiguration, MmiPort};
 use crate::service::platform_mm_control::PlatformMmControl;
@@ -92,7 +92,7 @@ unsafe impl SwMmiTrigger for SwMmiManager {
             MmiPort::Smi(_port) => {
                 cfg_if::cfg_if! {
                     if #[cfg(any(feature = "doc", all(target_os = "uefi", target_arch = "x86_64")))] {
-                        log::trace!("Writing SMI command port: {:#X}", _port);
+                        log::trace!("Writing SMI command port: {_port:#X}");
                         unsafe { port::Port::new(_port).write(_cmd_port_value); }
                     }
                 }
@@ -106,7 +106,7 @@ unsafe impl SwMmiTrigger for SwMmiManager {
             MmiPort::Smi(_port) => {
                 cfg_if::cfg_if! {
                     if #[cfg(any(feature = "doc", all(target_os = "uefi", target_arch = "x86_64")))] {
-                        log::trace!("Writing SMI data port: {:#X}", _port);
+                        log::trace!("Writing SMI data port: {_port:#X}");
                         unsafe { port::Port::new(_port).write(_data_port_value); }
                     }
                 }
@@ -129,6 +129,7 @@ impl Default for SwMmiManager {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use crate::config::MmCommunicationConfiguration;

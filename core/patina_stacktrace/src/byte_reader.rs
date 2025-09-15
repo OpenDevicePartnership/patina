@@ -81,6 +81,7 @@ impl ByteReader for [u8] {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
 

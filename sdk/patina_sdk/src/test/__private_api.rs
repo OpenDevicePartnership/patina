@@ -5,9 +5,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 use core::marker::PhantomData;
@@ -111,7 +111,7 @@ where
         let param_state = unsafe { Func::Param::init_state(storage.storage_mut(), &mut metadata) };
 
         if let Err(bad_param) = Func::Param::try_validate(&param_state, storage) {
-            log::warn!("Failed to retreive parameter: {:?}", bad_param);
+            log::warn!("Failed to retreive parameter: {bad_param:?}");
             return Ok(false);
         }
 
@@ -122,6 +122,7 @@ where
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use crate::component::Storage;

@@ -4,9 +4,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use patina_sdk::{
     component::{IntoComponent, params::Config},
@@ -37,8 +37,8 @@ pub enum GreetingsEnum {
 // This example shows that the entry point function can be defined outside of the enum.
 fn my_function(s: GreetingsEnum) -> Result<()> {
     match s {
-        GreetingsEnum::Hello(name) => log::info!("Hello, {}!", name),
-        GreetingsEnum::Goodbye(name) => log::info!("Goodbye, {}!", name),
+        GreetingsEnum::Hello(name) => log::info!("Hello, {name}!"),
+        GreetingsEnum::Goodbye(name) => log::info!("Goodbye, {name}!"),
     }
     Ok(())
 }

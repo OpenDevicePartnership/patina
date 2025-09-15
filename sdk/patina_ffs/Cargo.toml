@@ -1,0 +1,21 @@
+[package]
+name = "patina_ffs"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Support for Firmware File System as described in the UEFI Platform Initialization Specification."
+
+[dependencies]
+patina_sdk = {workspace = true}
+mu_pi = {workspace = true}
+r-efi = {workspace = true}
+log = {workspace = true}
+
+[dev-dependencies]
+serde = {workspace = true}
+uuid = {workspace = true}
+serde_yaml = {workspace = true}
+lzma-rs = {workspace = true}

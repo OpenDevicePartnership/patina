@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use core::{
     ffi::c_void,
@@ -208,9 +208,7 @@ pub extern "efiapi" fn raise_tpl(new_tpl: efi::Tpl) -> efi::Tpl {
 
     assert!(
         new_tpl >= prev_tpl,
-        "Invalid attempt to raise TPL to lower value. New TPL: {:#x?}, Prev TPL: {:#x?}",
-        new_tpl,
-        prev_tpl
+        "Invalid attempt to raise TPL to lower value. New TPL: {new_tpl:#x?}, Prev TPL: {prev_tpl:#x?}"
     );
 
     if (new_tpl == efi::TPL_HIGH_LEVEL) && (prev_tpl < efi::TPL_HIGH_LEVEL) {
@@ -224,9 +222,7 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
 
     assert!(
         new_tpl <= prev_tpl,
-        "Invalid attempt to restore TPL to higher value. New TPL: {:#x?}, Prev TPL: {:#x?}",
-        new_tpl,
-        prev_tpl
+        "Invalid attempt to restore TPL to higher value. New TPL: {new_tpl:#x?}, Prev TPL: {prev_tpl:#x?}"
     );
 
     if new_tpl < prev_tpl {
@@ -298,10 +294,10 @@ extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_
             let timer_arch = unsafe { &*(timer_arch_ptr) };
             (timer_arch.register_handler)(timer_arch_ptr, timer_tick);
             if let Err(status_err) = EVENT_DB.close_event(event) {
-                log::warn!("Could not close event for timer_available_callback due to error {:?}", status_err);
+                log::warn!("Could not close event for timer_available_callback due to error {status_err:?}");
             }
         }
-        Err(err) => panic!("Unable to locate timer arch: {:?}", err),
+        Err(err) => panic!("Unable to locate timer arch: {err:?}"),
     }
 }
 
@@ -346,6 +342,7 @@ pub fn init_events_support(bs: &mut efi::BootServices) {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use crate::test_support;
@@ -688,6 +685,8 @@ mod tests {
     #[test]
     fn test_event_notification() {
         with_locked_state(|| {
+            // Ensure we start from a low TPL so that signal_event's raise/restore will dispatch notifies
+            CURRENT_TPL.store(efi::TPL_APPLICATION, Ordering::SeqCst);
             NOTIFY_CALLED.store(false, Ordering::SeqCst);
 
             let mut event: efi::Event = ptr::null_mut();
