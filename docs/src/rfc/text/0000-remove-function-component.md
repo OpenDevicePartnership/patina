@@ -31,9 +31,8 @@ complaints have been noted by users
 
 ## Technology Background
 
-Explain and provide references to technologies that are relevant to the proposal. In particular, an explanation of
-how hardware or existing technologies influence the design of the proposal. This section should be written for a
-technical audience and should not assume that the reader is familiar with the technology.
+No technical background knowledge as this is a non technical change in regards to platform driver changes. This change
+merely changes the underlying component interface layer.
 
 ## Goals
 
