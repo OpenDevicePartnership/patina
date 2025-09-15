@@ -3134,6 +3134,11 @@ impl SmbiosInstance {
 /// An SMBIOS internal Record is an EFI_SMBIOS_RECORD_HEADER followed by
 /// (RecordSize - HeaderSize) bytes of data. The format of the data is
 /// defined by the SMBIOS spec.
+///
+/// TODO: Are these internal for Rust usage, or still used with C FFI?
+/// If they are only intended for Rust usage, consider making safer by avoiding types with header
+/// plus untyped/unconstrained data after them and using e.g. a slice (or a Vec) and accessor routines.
+/// If they are intended for use in FFI, then this is probably fine to match the C style approach.
 #[repr(C, packed)]
 pub struct EfiSmbiosRecordHeader {
     pub version: u16,
