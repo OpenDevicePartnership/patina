@@ -15,6 +15,7 @@ publish = ["patina-fw"]
 alloc-no-stdlib = { version = "~2.0" }
 arm-gic = { version = "0.5" }
 safe-mmio = { version = "0.2.5" }
+bitfield = { version = "0.19.2"}
 bitfield-struct = { version = "0.10" }
 brotli-decompressor = { version = "4.0.0", default-features = false }
 cfg-if = { version = "1" }

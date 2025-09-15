@@ -11,7 +11,7 @@ description = "System Management BIOS (SMBIOS) support for UEFI components."
 [dependencies]
 log = {workspace = true}
 patina_sdk = {workspace = true}
-bitfield = "0.19.2"
+bitfield = {workspace = true} 
 r-efi = "5.3.0"
 mu_pi = {git = "https://github.com/microsoft/mu_rust_pi"}
 
