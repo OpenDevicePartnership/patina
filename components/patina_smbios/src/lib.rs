@@ -7,7 +7,12 @@ use alloc::string::String;
 use r_efi::efi::PhysicalAddress;
 use r_efi::efi::Handle;
 use spin::Mutex;
-//use core::slice;
+use core::ffi::{CStr,c_char, c_void};
+use r_efi::efi;
+use patina_sdk::uefi_protocol::ProtocolInterface;
+// use core::ptr;
+// use core::slice;
+// use core::str::FromStr;
 
 //typedef struct {
 //  SMBIOS_TYPE      Type;
@@ -224,18 +229,8 @@ impl SmbiosRecords<'static> for SmbiosManager {
         &mut self,
         producer_handle: Option<Handle>,
         smbios_handle: &mut SmbiosHandle,
-        header: &SmbiosTableHeader,
+        record: &SmbiosTableHeader,
     ) -> Result<(), SmbiosError> {
-        //TODO fix build error let _lock = self.lock.lock().unwrap();
-
-        // Build record
-        let record = Self::build_record_with_strings(header, &[])?;
-
-        // Validate record
-        if record.len() == 0 {
-            return Err(SmbiosError::InvalidParameter);
-        }
-
         // Assign handle if needed
         if *smbios_handle == SMBIOS_HANDLE_PI_RESERVED {
             *smbios_handle = self.allocate_handle()?;
@@ -246,7 +241,8 @@ impl SmbiosRecords<'static> for SmbiosManager {
         }
 
         // Create record data (simplified - would need proper string parsing)
-        let record_size = record.len() as usize;
+        // let record_size = record.len() as usize;
+        let record_size = core::mem::size_of::<SmbiosTableHeader>();
         let mut data = Vec::with_capacity(record_size + 2); // +2 for double null
         
         unsafe {
@@ -261,7 +257,7 @@ impl SmbiosRecords<'static> for SmbiosManager {
         data.extend_from_slice(&[0, 0]);
 
         let smbios_record = SmbiosRecord {
-            header: header.clone(),
+            header: record.clone(),
             producer_handle,
             data,
             string_count: 0, // Would be calculated from actual strings
@@ -269,6 +265,7 @@ impl SmbiosRecords<'static> for SmbiosManager {
             smbios64_table: true,
         };
 
+        let _lock = self.lock.lock();
         self.records.push(smbios_record);
         Ok(())
     }
@@ -362,12 +359,39 @@ pub struct SmbiosTableHeader {
     pub handle: SmbiosHandle,
 }
 
+// impl SmbiosTableHeader {
+//     pub fn new(record_type: SmbiosType, length: u8, handle: SmbiosHandle) -> Self {
+//         Self { record_type, length, handle }
+//     }
+
+//     fn get_smbios_structure_size(&self) -> (usize, usize) {
+//         let size = self.length as usize;
+//         let num_of_string = 0 as usize;
+//         let mut header_bytes = unsafe {
+//             core::slice::from_raw_parts(
+//                 header as *const _ as *const u8,
+//                 header.length as usize,
+//             )
+//         };
+//         let mut ptr = *self + self.length;
+//         let mut byte = *ptr;
+//         let mut next_byte = unsafe {ptr.offset(1)};
+//         while byte != 0 || next_byte != 0 {
+//             size += 1;
+//             ptr += 1;
+//         }
+        
+
+//     }
+// }
+
 /// Internal SMBIOS record representation
 pub struct SmbiosRecord {
     pub header: SmbiosTableHeader,
     pub producer_handle: Option<Handle>,
     pub data: Vec<u8>, // Complete record including strings
-    pub string_count: usize,
+    // record_size: usize,
+    string_count: usize,
     pub smbios32_table: bool,
     pub smbios64_table: bool,
 }
@@ -437,6 +461,112 @@ impl SmbiosRecordBuilder {
         }
         
         Ok(record)
+    }
+}
+
+#[repr(C)]
+struct SmbiosProtocol {
+    add: SmbiosAdd,
+    update_string: SmbiosUpdateString,
+    remove: SmbiosRemove,
+    get_next: SmbiosGetNext,
+    major_version: u8,
+    minor_version: u8,
+}
+
+unsafe impl ProtocolInterface for SmbiosProtocol {
+    const PROTOCOL_GUID: efi::Guid = efi::Guid::from_fields(
+        0x03583ff6,
+        0xcb36,
+        0x4940,
+        0x94,
+        0x7e,
+        &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7], // ✅ Corrected GUID
+    );
+}
+
+type SmbiosAdd = extern "efiapi" fn(
+    *const SmbiosProtocol,
+    efi::Handle,
+    *mut SmbiosHandle,
+    *const SmbiosTableHeader,
+) -> efi::Status;
+
+type SmbiosUpdateString = extern "efiapi" fn(
+    *const SmbiosProtocol,
+    *mut SmbiosHandle,
+    *mut usize,
+    *const c_char,
+) -> efi::Status;
+
+type SmbiosRemove = extern "efiapi" fn(
+    *const SmbiosProtocol,
+    SmbiosHandle,
+) -> efi::Status;
+
+type SmbiosGetNext = extern "efiapi" fn(
+    *const SmbiosProtocol,
+    *mut SmbiosHandle,
+    *mut SmbiosType,
+    *mut *mut SmbiosTableHeader,
+    *mut efi::Handle,
+) -> efi::Status;
+
+impl SmbiosProtocol {
+    fn new(major_version: u8, minor_version: u8) -> Self {
+        Self {
+            add: Self::add_ext,
+            update_string: Self::update_string_ext,
+            remove: Self::remove_ext,
+            get_next: Self::get_next_ext,
+            major_version,
+            minor_version,
+        }
+    }
+
+    extern "efiapi" fn add_ext(
+        _protocol: *const SmbiosProtocol,
+        producer_handle: efi::Handle,
+        smbios_handle: *mut SmbiosHandle,
+        record: *const SmbiosTableHeader,
+    ) -> efi::Status {
+        // Safety checks
+        if smbios_handle.is_null() || record.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        // Get global manager and call add_record
+        // Implementation would depend on your global state management
+        efi::Status::SUCCESS
+    }
+
+    extern "efiapi" fn update_string_ext(
+        _protocol: *const SmbiosProtocol,
+        smbios_handle: *mut SmbiosHandle,
+        string_number: *mut usize,
+        string: *const c_char,
+    ) -> efi::Status {
+        // Implementation similar to add_ext
+        efi::Status::SUCCESS
+    }
+
+    extern "efiapi" fn remove_ext(
+        _protocol: *const SmbiosProtocol,
+        smbios_handle: SmbiosHandle,
+    ) -> efi::Status {
+        // Implementation similar to add_ext
+        efi::Status::SUCCESS
+    }
+
+    extern "efiapi" fn get_next_ext(
+        _protocol: *const SmbiosProtocol,
+        smbios_handle: *mut SmbiosHandle,
+        record_type: *mut SmbiosType,
+        record: *mut *mut SmbiosTableHeader,
+        producer_handle: *mut efi::Handle,
+    ) -> efi::Status {
+        // Implementation similar to add_ext
+        efi::Status::SUCCESS
     }
 }
 
