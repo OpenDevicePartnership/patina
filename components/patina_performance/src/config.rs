@@ -36,11 +36,22 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+/// Default: component disabled unless explicitly enabled by platform/HOB.
+pub const DEFAULT_ENABLE_COMPONENT: bool = false;
+/// Default: no measurements enabled (mask = 0) until configured.
+pub const DEFAULT_ENABLED_MEASUREMENTS: u32 = 0;
+
 /// The configuration for the Patina Performance component.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct PerfConfig {
     /// Indicates whether the Patina Performance component is enabled.
     pub enable_component: bool,
-    /// A wrapper to generate a mask of all enabled measurements.
+    /// Bitmask of enabled measurements (see `patina_sdk::performance::Measurement`).
     pub enabled_measurements: u32,
+}
+
+impl Default for PerfConfig {
+    fn default() -> Self {
+        Self { enable_component: DEFAULT_ENABLE_COMPONENT, enabled_measurements: DEFAULT_ENABLED_MEASUREMENTS }
+    }
 }
