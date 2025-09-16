@@ -1013,7 +1013,7 @@ mod tests {
 
 - Rust's zero-cost abstractions provide equivalent performance to C
 - Smart pointer usage minimizes memory allocation overhead
-- Compile-time optimization of record structure layouts
+- Record structures use `#[repr(C, packed)]` to maintain SMBIOS specification compliance
 
 ### Runtime Performance
 
