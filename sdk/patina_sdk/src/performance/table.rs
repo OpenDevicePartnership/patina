@@ -278,13 +278,16 @@ impl PerformanceRecord for FirmwareBasicBootPerfDataRecord {
         Self::REVISION
     }
 
-    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error> {
-        buff.gwrite_with([0_u8; 4], offset, scroll::NATIVE)?; // Reserved bytes
-        buff.gwrite_with(self.reset_end, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.os_loader_load_image_start, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.os_loader_start_image_start, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.exit_boot_services_entry, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.exit_boot_services_exit, offset, scroll::NATIVE)?;
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), crate::performance::error::Error> {
+        if buff.gwrite_with([0_u8; 4], offset, scroll::NATIVE).is_err()
+            || buff.gwrite_with(self.reset_end, offset, scroll::NATIVE).is_err()
+            || buff.gwrite_with(self.os_loader_load_image_start, offset, scroll::NATIVE).is_err()
+            || buff.gwrite_with(self.os_loader_start_image_start, offset, scroll::NATIVE).is_err()
+            || buff.gwrite_with(self.exit_boot_services_entry, offset, scroll::NATIVE).is_err()
+            || buff.gwrite_with(self.exit_boot_services_exit, offset, scroll::NATIVE).is_err()
+        {
+            return Err(crate::performance::error::Error::Serialization);
+        }
         Ok(())
     }
 }

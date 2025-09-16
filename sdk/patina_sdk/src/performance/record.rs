@@ -13,18 +13,61 @@ pub mod known;
 
 use crate::{performance::error::Error, performance_debug_assert};
 use alloc::vec::Vec;
-use core::{fmt::Debug, mem, ops::AddAssign};
-use scroll::{self, Pread, Pwrite};
+use core::{fmt::Debug, mem};
+use scroll::Pread;
+use zerocopy::{FromBytes, Immutable, IntoBytes};
 
 /// Maximum size in byte that a performance record can have.
 pub const FPDT_MAX_PERF_RECORD_SIZE: usize = u8::MAX as usize;
 
-/// Size in byte of the reader of a performance record.
-pub const PERFORMANCE_RECORD_HEADER_SIZE: usize = mem::size_of::<u16>() // Type
-        + mem::size_of::<u8>() // Length
-        + mem::size_of::<u8>(); // Revision
+/// Performance record header structure.
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy, FromBytes, IntoBytes, Immutable)]
+pub struct PerformanceRecordHeader {
+    /// This value depicts the format and contents of the performance record.
+    pub record_type: u16,
+    /// This value depicts the length of the performance record, in bytes.
+    pub length: u8,
+    /// This value is updated if the format of the record type is extended.
+    pub revision: u8,
+}
 
-/// Common behavior of every performance records.
+impl PerformanceRecordHeader {
+    /// Size of the header structure in bytes
+    pub const SIZE: usize = core::mem::size_of::<Self>();
+
+    /// Create a new performance record header.
+    pub const fn new(record_type: u16, length: u8, revision: u8) -> Self {
+        Self { record_type, length, revision }
+    }
+
+    /// Try to parse a header from the beginning of a byte slice
+    pub fn try_from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < Self::SIZE {
+            return None;
+        }
+
+        Some(Self { record_type: u16::from_le_bytes([bytes[0], bytes[1]]), length: bytes[2], revision: bytes[3] })
+    }
+
+    /// Convert the header to little-endian bytes.
+    pub fn to_le_bytes(self) -> [u8; mem::size_of::<Self>()] {
+        let le_header = self.to_le();
+        le_header.as_bytes().try_into().expect("Size mismatch in to_le_bytes")
+    }
+
+    /// Convert the header to little-endian format.
+    pub fn to_le(self) -> Self {
+        Self { record_type: self.record_type.to_le(), length: self.length, revision: self.revision }
+    }
+}
+
+/// Size in byte of the header of a performance record.
+pub const PERFORMANCE_RECORD_HEADER_SIZE: usize = mem::size_of::<PerformanceRecordHeader>();
+
+/// Trait implemented by all performance record types that can be serialized into
+/// the Firmware Basic Boot Performance Table (FBPT) buffer.
+/// [`crate::performance::error::Error`].
 pub trait PerformanceRecord {
     /// returns the type ID (NOT Rust's `TypeId`) value of the record
     fn record_type(&self) -> u16;
@@ -32,28 +75,41 @@ pub trait PerformanceRecord {
     /// Returns the revision of the record.
     fn revision(&self) -> u8;
 
-    /// Write the record data into the buffer.
-    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error>;
+    /// Write just the record payload (not including the common header)
+    /// into `buff` at `offset`, advancing `offset` on success.
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), Error>;
 
-    /// Write the record data and the header into the buffer.
-    fn write_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<usize, scroll::Error> {
-        let mut writing_offset = *offset;
+    /// Serialize the full record (header + payload) into `buff` at `offset`.
+    ///
+    /// ## Errors
+    ///
+    /// - On success returns the total size (header + payload).
+    /// - Fails with:
+    ///   - `Error::Serialization` if there is insufficient remaining space.
+    ///   - `Error::RecordTooLarge` if the final size exceeds `u8::MAX`.
+    fn write_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<usize, Error> {
+        let start = *offset;
+        if start + PERFORMANCE_RECORD_HEADER_SIZE > buff.len() {
+            return Err(Error::Serialization);
+        }
 
-        // Write performance record header.
-        buff.gwrite(self.record_type(), &mut writing_offset)?;
-        let record_size_offset = writing_offset;
-        buff.gwrite(0_u8, &mut writing_offset)?;
-        buff.gwrite(self.revision(), &mut writing_offset)?;
+        // Create header with placeholder length
+        let mut header = PerformanceRecordHeader::new(self.record_type(), 0, self.revision());
 
-        // Write data.
-        self.write_data_into(buff, &mut writing_offset)?;
+        // Skip header space and write data first
+        *offset += PERFORMANCE_RECORD_HEADER_SIZE;
+        self.write_data_into(buff, offset)?;
 
-        let record_size = writing_offset - *offset;
+        // Calculate total record size and update header
+        let record_size = *offset - start;
+        if record_size > u8::MAX as usize {
+            return Err(Error::RecordTooLarge { size: record_size });
+        }
+        header.length = record_size as u8;
 
-        // Write record size
-        buff.pwrite(record_size as u8, record_size_offset)?;
-
-        offset.add_assign(record_size);
+        // Write the complete header
+        let header_bytes = header.to_le_bytes();
+        buff[start..start + PERFORMANCE_RECORD_HEADER_SIZE].copy_from_slice(&header_bytes);
 
         Ok(record_size)
     }
@@ -76,6 +132,18 @@ pub struct GenericPerformanceRecord<T: AsRef<[u8]>> {
     pub data: T,
 }
 
+impl<T: AsRef<[u8]>> GenericPerformanceRecord<T> {
+    /// Create a new generic performance record.
+    pub fn new(record_type: u16, length: u8, revision: u8, data: T) -> Self {
+        Self { record_type, length, revision, data }
+    }
+
+    /// Get the header as a structured type.
+    pub fn header(&self) -> PerformanceRecordHeader {
+        PerformanceRecordHeader::new(self.record_type, self.length, self.revision)
+    }
+}
+
 impl<T: AsRef<[u8]>> PerformanceRecord for GenericPerformanceRecord<T> {
     fn record_type(&self) -> u16 {
         self.record_type
@@ -85,8 +153,14 @@ impl<T: AsRef<[u8]>> PerformanceRecord for GenericPerformanceRecord<T> {
         self.revision
     }
 
-    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error> {
-        buff.gwrite_with(self.data.as_ref(), offset, ())?;
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), Error> {
+        let remaining = buff.len().saturating_sub(*offset);
+        let data = self.data.as_ref();
+        if data.len() > remaining {
+            return Err(Error::Serialization);
+        }
+        buff[*offset..*offset + data.len()].copy_from_slice(data);
+        *offset += data.len();
         Ok(())
     }
 }
@@ -168,14 +242,6 @@ impl PerformanceRecordBuffer {
     }
 }
 
-impl scroll::ctx::TryIntoCtx<scroll::Endian> for PerformanceRecordBuffer {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], _ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        dest.pwrite_with(self.buffer(), 0, ())
-    }
-}
-
 impl Default for PerformanceRecordBuffer {
     fn default() -> Self {
         Self::new()
@@ -223,7 +289,7 @@ impl<'a> Iterator for Iter<'a> {
 
         let data = &self.buffer[offset..length as usize];
         self.buffer = &self.buffer[length as usize..];
-        Some(GenericPerformanceRecord { record_type, length, revision, data })
+        Some(GenericPerformanceRecord::new(record_type, length, revision, data))
     }
 }
 
