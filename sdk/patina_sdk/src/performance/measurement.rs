@@ -8,7 +8,7 @@
 //!
 extern crate alloc;
 
-use alloc::{boxed::Box, string::ToString, vec::Vec};
+use alloc::{boxed::Box, string::ToString};
 use core::{
     clone::Clone,
     convert::AsRef,
@@ -24,7 +24,6 @@ use crate::{
     guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
     performance::{
         self,
-        _smm::{CommunicateProtocol, MmCommRegion, SmmGetRecordDataByOffset, SmmGetRecordSize},
         error::Error,
         globals::{get_load_image_count, get_static_state, increment_load_image_count},
         record::{
@@ -104,88 +103,6 @@ pub mod event_callback {
         if status.is_err() {
             log::error!("Performance: Fail to install configuration table for FBPT firmware performance.");
         }
-    }
-
-    /// Adds SMM performance records to the Firmware Basic Boot Performance Table (FBPT).
-    pub extern "efiapi" fn fetch_and_add_mm_performance_records<BB, B, F>(
-        event: efi::Event,
-        ctx: Box<(BB, MmCommRegion, &TplMutex<'static, F, B>)>,
-    ) where
-        BB: AsRef<B> + Clone,
-        B: BootServices + 'static,
-        F: FirmwareBasicBootPerfTable,
-    {
-        let (boot_services, mm_comm_region, fbpt) = *ctx;
-        let _ = boot_services.as_ref().close_event(event);
-
-        // SAFETY: This is safe because the reference returned by locate_protocol is never mutated after installation.
-        let Ok(communication) = (unsafe { boot_services.as_ref().locate_protocol::<CommunicateProtocol>(None) }) else {
-            log::error!("Performance: Could not locate communicate protocol interface.");
-            return;
-        };
-
-        // SAFETY: Is safe to use because the memory region comes from a trusted source and can be considered valid.
-        let boot_record_size = match unsafe {
-            // Ask smm for the total size of the perf records.
-            communication.communicate(SmmGetRecordSize::new(), mm_comm_region)
-        } {
-            Ok(SmmGetRecordSize { return_status, boot_record_size }) if return_status == efi::Status::SUCCESS => {
-                boot_record_size
-            }
-            Ok(SmmGetRecordSize { return_status, .. }) => {
-                log::error!(
-                    "Performance: Asking for the smm perf records size result in an error with return status of: {return_status:?}",
-                );
-                return;
-            }
-            Err(status) => {
-                log::error!(
-                    "Performance: Error while trying to communicate with communicate protocol with error code: {status:?}",
-                );
-                return;
-            }
-        };
-
-        let mut smm_boot_records_data = Vec::with_capacity(boot_record_size);
-
-        while smm_boot_records_data.len() < boot_record_size {
-            // SAFETY: Is safe to use because the memory region commes from a thrusted source and can be considered valid.
-            match unsafe {
-                // Ask smm to return us the next bytes in its buffer.
-                const BUFFER_SIZE: usize = 1024;
-                communication.communicate(
-                    SmmGetRecordDataByOffset::<BUFFER_SIZE>::new(smm_boot_records_data.len()),
-                    mm_comm_region,
-                )
-            } {
-                Ok(record_data) if record_data.return_status == efi::Status::SUCCESS => {
-                    // Append the byte to the total smm performance record data.
-                    smm_boot_records_data.extend_from_slice(record_data.boot_record_data());
-                }
-                Ok(SmmGetRecordDataByOffset { return_status, .. }) => {
-                    log::error!(
-                        "Performance: Asking for smm perf records data result in an error with return status of: {return_status:?}",
-                    );
-                    return;
-                }
-                Err(status) => {
-                    log::error!(
-                        "Performance: Error while trying to communicate with communicate protocol with error status code: {status:?}",
-                    );
-                    return;
-                }
-            };
-        }
-
-        // Write found perf records in the fbpt table.
-        let mut fbpt = fbpt.lock();
-        let mut n = 0;
-        for r in performance::record::Iter::new(&smm_boot_records_data) {
-            _ = fbpt.add_record(r);
-            n += 1;
-        }
-
-        log::info!("Performance: {n} smm performance records found.");
     }
 }
 
