@@ -1,11 +1,13 @@
 # RFC: `SMBIOS`
 
-This RFC proposes a Rust-based interface for SMBIOS table management providing the functionality described in the
+This RFC proposes a Rust-based interface for SMBIOS table management, providing the functionality described in the
 `EFI_SMBIOS_PROTOCOL` service defined in the UEFI Specification.
-It introduces an SmbiosRecords trait to manage addition, removal, updates, and retrieval of SMBIOS records,
+
+It introduces an `SmbiosRecords` trait to manage addition, removal, updates, and retrieval of SMBIOS records,
 encapsulating the SMBIOS protocol behind a safe, idiomatic Rust API.
-The goal is to maintain compatibility with the UEFI specification
-while improving memory safety and simplifying integration for components.
+
+The goal is to maintain compatibility with the UEFI specification while improving memory safety and simplifying
+integration for components.
 
 ## Change Log
 
@@ -13,11 +15,10 @@ while improving memory safety and simplifying integration for components.
 
 ## Motivation
 
-The System Management BIOS (SMBIOS) specification defines data structures and access methods
-that allow hardware and system vendors to provide management applications with system hardware information.
-This RFC proposes a pure Rust interface for existing SMBIOS capabilities, replacing the C-based implementations
-while producing protocols that align with the UEFI specification. This provides a simpler, safer Rust-based interface
-while maintaining required SMBIOS functionality.
+The System Management BIOS (SMBIOS) specification defines data structures and access methods that allow hardware and system
+vendors to provide management applications with system hardware information. This RFC proposes a pure Rust interface for
+existing SMBIOS capabilities, replacing the C-based implementations while producing protocols that align with the UEFI
+specification. This provides a simpler, safer Rust-based interface while maintaining required SMBIOS functionality.
 
 ### Scope
 
@@ -67,38 +68,53 @@ Create an idiomatic Rust API for SMBIOS-related protocols (*see [Motivation - Sc
 
 ## Unresolved Questions
 
- Should the API expose separate interfaces for 32-bit and 64-bit SMBIOS tables, or handle this internally?
-  Summary: Prefer a unified public API that handles 32/64 internally, plus an opt-in low-level escape hatch for experts.
+Should the API expose separate interfaces for 32-bit and 64-bit SMBIOS tables, or handle this internally?
+Summary: Prefer a unified public API that handles 32/64 internally, plus an opt-in low-level escape hatch for experts.
 
-  Separate interfaces (explicit 32-bit and 64-bit APIs)
-  Pros:
-  - Strong correctness and clarity: callers pick the exact format.
-  - Compile-time signal for address sizes and layout differences.
-  - Easier format-specific validation and optimizations.
-  - Good for low-level tooling that needs precise control.
-  Cons:
-  - Larger, duplicated API surface; more to maintain and test.
-  - Forces agnostic consumers to write wrappers or choose formats.
-  - Encourages fragmented code paths and potential divergence.
-  - Harder to support mixed (publish both) scenarios.
+Separate interfaces (explicit 32-bit and 64-bit APIs)
 
-  Unified API that handles 32/64 internally
-  Pros:
-  - Ergonomic: most users don’t need to care about table width.
-  - Simpler docs and adoption; fewer call-site code paths.
-  - Stable logical model with internal format translation.
-  - Easier to evolve for future SMBIOS updates.
-  Cons:
-  - More internal complexity and runtime branching.
-  - Advanced users lose direct control without escape hatches.
-  - Version-specific constraints can be hidden/surprising.
-  - Requires thorough tests to catch format-specific bugs.
+Pros:
 
-  Recommendation
-  Patina exposes a single, ergonomic SMBIOS API that’s format-agnostic by default. The SmbiosRecords service lets components add, update, remove, and enumerate records without choosing between SMBIOS 2.x (32-bit) and 3.x (64-bit). The service selects and publishes the appropriate tables per platform and policy. For advanced firmware tooling, an opt-in “raw” module provides explicit 32/64 entry-point construction and publishing primitives, so experts retain full control when needed.
+- Strong correctness and clarity: callers pick the exact format.
+- Compile-time signal for address sizes and layout differences.
+- Easier format-specific validation and optimizations.
+- Good for low-level tooling that needs precise control.
 
-  Tiny API sketch
-  ```rust
+Cons:
+
+- Larger, duplicated API surface; more to maintain and test.
+- Forces agnostic consumers to write wrappers or choose formats.
+- Encourages fragmented code paths and potential divergence.
+- Harder to support mixed (publish both) scenarios.
+
+Unified API that handles 32/64 internally
+
+Pros:
+
+- Ergonomic: most users don’t need to care about table width.
+- Simpler docs and adoption; fewer call-site code paths.
+- Stable logical model with internal format translation.
+- Easier to evolve for future SMBIOS updates.
+
+Cons:
+
+- More internal complexity and runtime branching.
+- Advanced users lose direct control without escape hatches.
+- Version-specific constraints can be hidden/surprising.
+- Requires thorough tests to catch format-specific bugs.
+
+Recommendation
+
+Patina exposes a single, ergonomic SMBIOS API that's format-agnostic by default. The SmbiosRecords service lets
+components add, update, remove, and enumerate records without choosing between SMBIOS 2.x (32-bit) and 3.x (64-bit).
+
+The service selects and publishes the appropriate tables per platform and policy. For advanced firmware tooling, an
+opt-in "raw" module provides explicit 32/64 entry-point construction and publishing primitives, so experts retain
+full control when needed.
+
+Tiny API sketch
+
+```rust
   /// Optional hint when you need to force a target format.
   #[derive(Copy, Clone, Debug)]
   pub enum SmbiosTarget {
@@ -118,42 +134,43 @@ Create an idiomatic Rust API for SMBIOS-related protocols (*see [Motivation - Sc
       ) -> Result<(), SmbiosError>;
   }
 
-  // Public, ergonomic usage (format-agnostic by default)
-  fn produce_record(smbios: &mut dyn SmbiosRecords) -> Result<(), SmbiosError> {
-      let record = SmbiosTableHeader {
-          record_type: 0,
-          length: core::mem::size_of::<SmbiosTableHeader>() as u8,
-          handle: SMBIOS_HANDLE_PI_RESERVED,
-      };
+// Public, ergonomic usage (format-agnostic by default)
+fn produce_record(smbios: &mut dyn SmbiosRecords) -> Result<(), SmbiosError> {
+    let record = SmbiosTableHeader {
+        record_type: 0,
+        length: core::mem::size_of::<SmbiosTableHeader>() as u8,
+        handle: SMBIOS_HANDLE_PI_RESERVED,
+    };
 
-      // Ergonomic path (Auto)
-      let handle = smbios.add(None, Some(SMBIOS_HANDLE_PI_RESERVED), &record)?;
+    // Ergonomic path (Auto)
+    let handle = smbios.add(None, Some(SMBIOS_HANDLE_PI_RESERVED), &record)?;
 
-      // Advanced path (explicit control via extension)
-      // smbios.add_with_target(None, &mut handle, &record, SmbiosTarget::Force64)?;
-      Ok(())
-  }
+    // Advanced path (explicit control via extension)
+    // smbios.add_with_target(None, &mut handle, &record, SmbiosTarget::Force64)?;
+    Ok(())
+}
 
-  // Advanced, low-level escape hatch
-  pub mod smbios {
-      pub mod raw {
-          #[repr(C, packed)]
-          pub struct SmbiosEntryPoint32 { /* _SM_, checksums, 32-bit table addr, etc. */ }
-          #[repr(C, packed)]
-          pub struct SmbiosEntryPoint64 { /* _SM3_, checksums, 64-bit table addr, etc. */ }
+// Advanced, low-level escape hatch
+pub mod smbios {
+    pub mod raw {
+        #[repr(C, packed)]
+        pub struct SmbiosEntryPoint32 { /* _SM_, checksums, 32-bit table addr, etc. */ }
+        #[repr(C, packed)]
+        pub struct SmbiosEntryPoint64 { /* _SM3_, checksums, 64-bit table addr, etc. */ }
 
-          /// Build a 32-bit SMBIOS entry-point from a serialized table buffer.
-          pub fn build_entry_point32(_table: &[u8]) -> SmbiosEntryPoint32 { unimplemented!() }
+        /// Build a 32-bit SMBIOS entry-point from a serialized table buffer.
+        pub fn build_entry_point32(_table: &[u8]) -> SmbiosEntryPoint32 { unimplemented!() }
 
-          /// Build a 64-bit SMBIOS entry-point from a serialized table buffer.
-          pub fn build_entry_point64(_table: &[u8]) -> SmbiosEntryPoint64 { unimplemented!() }
+        /// Build a 64-bit SMBIOS entry-point from a serialized table buffer.
+        pub fn build_entry_point64(_table: &[u8]) -> SmbiosEntryPoint64 { unimplemented!() }
 
-          /// Publish entry-points to the system configuration table (unsafe by nature).
-          pub unsafe fn install_config_table_32(_ep: &SmbiosEntryPoint32) -> Result<(), ()> { unimplemented!() }
-          pub unsafe fn install_config_table_64(_ep: &SmbiosEntryPoint64) -> Result<(), ()> { unimplemented!() }
-      }
-  }
-  ```
+        /// Publish entry-points to the system configuration table (unsafe by nature).
+        pub unsafe fn install_config_table_32(_ep: &SmbiosEntryPoint32) -> Result<(), ()> { unimplemented!() }
+        pub unsafe fn install_config_table_64(_ep: &SmbiosEntryPoint64) -> Result<(), ()> { unimplemented!() }
+    }
+}
+- Is there value in exposing lower-level table construction functionality to advanced users?
+- Should we provide typed interfaces for specific SMBIOS record types (Type 0, Type 1, etc.)?
 - Is there value in exposing lower-level table construction functionality to advanced users?
 - Should we provide typed interfaces for specific SMBIOS record types (Type 0, Type 1, etc.)?
 
@@ -424,30 +441,39 @@ impl SmbiosManager {
             record.push(0); // Double null terminator
         }
         
+
         Ok(record)
     }
 
     fn allocate_handle(&mut self) -> Result<SmbiosHandle, SmbiosError> {
         for handle in 1..0xFF00 {
+
             if !self.allocated_handles.contains(&handle) {
                 self.allocated_handles.insert(handle);
                 return Ok(handle);
             }
         }
+
         Err(SmbiosError::OutOfResources)
+
     }
 
     fn install_configuration_table(&self) -> Result<(), SmbiosError> {
         // This would interact with UEFI Boot Services to install
         // the SMBIOS table in the system configuration table
+
         // Implementation depends on your UEFI framework
         
         // For SMBIOS 2.x
         if let Some(_entry_point_32) = &self.entry_point_32 {
             // Install with SMBIOS 2.x GUID
+
         }
+
         
+
         // For SMBIOS 3.x  
+
         if let Some(_entry_point_64) = &self.entry_point_64 {
             // Install with SMBIOS 3.x GUID
         }
@@ -480,28 +506,35 @@ impl SmbiosRecords for SmbiosManager {
         let record_size = record.length as usize;
         let mut data = Vec::with_capacity(record_size + 2); // +2 for double null
         
+
         unsafe {
             let bytes = std::slice::from_raw_parts(
                 record as *const _ as *const u8,
                 record_size,
             );
+
             data.extend_from_slice(bytes);
         }
         
         // Add double null terminator (simplified)
         data.extend_from_slice(&[0, 0]);
 
+
+
         let smbios_record = SmbiosRecord {
             header: *record,
             producer_handle,
             data,
             string_count: 0, // Would be calculated from actual strings
+
             smbios32_table: true,
             smbios64_table: true,
         };
 
         self.records.push(smbios_record);
+
         Ok(())
+
     }
 
     fn update_string(
@@ -759,7 +792,8 @@ pub fn component(smbios_records: Service<dyn SmbiosRecords>) -> Result<()> {
 }
 ```
 
-When adding a record with `add`, automatic handle assignment is always used; the API does not allow adding a record to an existing handle. This ensures unique handle allocation and avoids ambiguity or errors from reusing handles.
+When adding a record with `add`, automatic handle assignment is always used; the API does not allow adding a record to an
+existing handle. This ensures unique handle allocation and avoids ambiguity or errors from reusing handles.
 
 The service automatically handles:
 
@@ -792,9 +826,8 @@ impl SmbiosBiosInfoManager {
     fn entry_point(
         self,
         config: Config<BiosInfoConfig>,
-    smbios_records: Service<dyn SmbiosRecords>,
+        smbios_records: Service<dyn SmbiosRecords>,
     ) -> patina_sdk::error::Result<()> {
-        // Create BIOS information record
         let mut bios_info = BiosInformation::new();
         bios_info.major_release = config.major_release;
         bios_info.minor_release = config.minor_release;
@@ -812,7 +845,7 @@ impl SmbiosBiosInfoManager {
         )?;
 
         let mut handle = SMBIOS_HANDLE_PI_RESERVED;
-    smbios_records.add(
+        smbios_records.add(
             None,
             &mut handle,
             unsafe { &*(record_data.as_ptr() as *const SmbiosTableHeader) },
