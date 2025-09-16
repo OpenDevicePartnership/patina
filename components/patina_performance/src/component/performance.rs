@@ -25,7 +25,6 @@ use patina::{
     error::EfiError,
     guids::{EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
     performance::{
-        _smm::MmCommRegion,
         globals::{get_static_state, set_load_image_count, set_perf_measurement_mask, set_static_state},
         measurement::{PerformanceProperty, create_performance_measurement, event_callback},
         record::{
@@ -60,7 +59,7 @@ impl Performance {
         runtime_services: StandardRuntimeServices,
         records_buffers_hobs: Option<Hob<HobPerformanceData>>,
         timer: Service<dyn ArchTimerFunctionality>,
-        mm_params: (Option<Hob<MmCommRegion>>, Option<Service<dyn MmCommunication>>),
+        mm_comm_service: Option<Service<dyn MmCommunication>>,
     ) -> Result<(), EfiError> {
         if !config.enable_component {
             log::warn!("Patina Performance Component is not enabled, skipping entry point.");
@@ -81,7 +80,6 @@ impl Performance {
             return Err(EfiError::Aborted);
         };
 
-        let (_mm_comm_region_hobs, mm_comm_service) = mm_params;
         self._entry_point(boot_services, runtime_services, records_buffers_hobs, mm_comm_service, fbpt, timer)
     }
 
