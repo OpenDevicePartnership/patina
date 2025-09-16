@@ -12,6 +12,8 @@ integration for components.
 ## Change Log
 
 - 2025-07-28: Initial RFC created.
+- 2025-09-16: Updated `add` method signature to return handle and marked unsafe to address memory safety concerns.
+  Added safe `add_from_bytes` alternative.
 
 ## Motivation
 
@@ -65,6 +67,42 @@ Create an idiomatic Rust API for SMBIOS-related protocols (*see [Motivation - Sc
 3. The SMBIOS service should produce protocols equivalent to the current C implementations, preserving existing C functionality
 4. Support both SMBIOS 2.x (32-bit) and SMBIOS 3.x (64-bit) table formats
 5. Provide safe string manipulation for SMBIOS records
+
+## Memory Safety Considerations
+
+Some methods in this API are marked as `unsafe` because they work with raw pointers and make assumptions about memory layout:
+
+- **`add()`**: Takes a `&SmbiosTableHeader` but assumes it points to a complete SMBIOS record with the structured data
+  following the header in memory. This is dangerous because a caller could pass just a header struct without the actual
+  record data, leading to buffer overruns.
+
+- **`build_record_with_strings()`**: Similar issue - assumes the header parameter points to the complete structured
+  portion of the record.
+
+**Safe alternatives:**
+
+- **`add_from_bytes()`**: Takes the complete record as a byte slice, avoiding unsafe pointer arithmetic
+- Create the complete record data as a byte vector before passing to the API
+
+**Example of unsafe usage that could cause memory corruption:**
+
+```rust
+// DANGEROUS: This only creates a header, not a complete record
+let bogus_header = SmbiosTableHeader { length: 0x1234, /* other fields */ };
+let record_data = unsafe { 
+    SmbiosManager::build_record_with_strings(&bogus_header, strings) 
+}; // This will read beyond the header, potentially corrupting memory
+```
+
+**Safe alternative:**
+
+```rust
+// SAFE: Create complete record as bytes first
+let mut record_bytes = Vec::new();
+record_bytes.extend_from_slice(&header_bytes);
+record_bytes.extend_from_slice(&structured_data_bytes);
+let handle = smbios.add_from_bytes(None, &record_bytes)?;
+```
 
 ## Unresolved Questions
 
@@ -125,13 +163,17 @@ Tiny API sketch
 
   pub trait SmbiosRecordsExt: SmbiosRecords {
       /// Same as `add`, but allows callers to influence the target format.
-      fn add_with_target(
+      ///
+      /// # Safety
+      /// 
+      /// This method is unsafe for the same reasons as `add` - it assumes that `record`
+      /// points to a complete SMBIOS record structure with valid memory following it.
+      unsafe fn add_with_target(
           &mut self,
           producer_handle: Option<Handle>,
-          smbios_handle: &mut SmbiosHandle,
           record: &SmbiosTableHeader,
           target: SmbiosTarget,
-      ) -> Result<(), SmbiosError>;
+      ) -> Result<SmbiosHandle, SmbiosError>;
   }
 
 // Public, ergonomic usage (format-agnostic by default)
@@ -142,11 +184,16 @@ fn produce_record(smbios: &mut dyn SmbiosRecords) -> Result<(), SmbiosError> {
         handle: SMBIOS_HANDLE_PI_RESERVED,
     };
 
-    // Ergonomic path (Auto)
-    let handle = smbios.add(None, Some(SMBIOS_HANDLE_PI_RESERVED), &record)?;
+    // Unsafe path (requires complete record in memory)
+    // SAFETY: record must point to a complete SMBIOS record structure
+    let handle = unsafe { smbios.add(None, &record)? };
+    
+    // Safe alternative using byte slice
+    // let record_bytes = &[/* complete SMBIOS record data */];
+    // let handle = smbios.add_from_bytes(None, record_bytes)?;
 
     // Advanced path (explicit control via extension)
-    // smbios.add_with_target(None, &mut handle, &record, SmbiosTarget::Force64)?;
+    // let handle = unsafe { smbios.add_with_target(None, &record, SmbiosTarget::Force64)? };
     Ok(())
 }
 
@@ -204,15 +251,29 @@ pub trait SmbiosRecords {
 
     /// Adds an SMBIOS record to the SMBIOS table.
     ///
-    /// Per EDK2 usage, if a handle is provided and already in use, EFI_ALREADY_STARTED is returned and the record is not updated.
-    /// However, automatic handle assignment is preferred and aligns with idiomatic Rust API design.
+    /// # Safety
+    /// 
+    /// This method is unsafe because it assumes that `record` points to a complete
+    /// SMBIOS record structure where the header is followed by the record data.
+    /// The caller must ensure that `record` points to a valid, complete SMBIOS record
+    /// with at least `record.length` bytes of valid memory following the header.
     ///
-    /// It is recommended to omit the handle argument entirely, letting the implementation always assign a unique handle.
-    /// This avoids ambiguity, simplifies usage, and matches the most common use case.
-    fn add(
+    /// Consider using `add_from_bytes` for a safer alternative that takes the complete
+    /// record data as a byte slice.
+    unsafe fn add(
         &mut self,
         producer_handle: Option<Handle>,
         record: &SmbiosTableHeader,
+    ) -> Result<SmbiosHandle, SmbiosError>;
+
+    /// Adds an SMBIOS record to the SMBIOS table from a complete byte representation.
+    ///
+    /// This is the safe alternative to `add` that takes the complete record data
+    /// as a byte slice, avoiding the unsafe pointer arithmetic.
+    fn add_from_bytes(
+        &mut self,
+        producer_handle: Option<Handle>,
+        record_data: &[u8],
     ) -> Result<SmbiosHandle, SmbiosError>;
 
     /// Updates a string in an existing SMBIOS record.
@@ -409,7 +470,13 @@ impl SmbiosManager {
         Ok(())
     }
     
-    fn build_record_with_strings(
+    /// # Safety
+    /// 
+    /// This method is unsafe because it assumes that `header` points to a complete
+    /// SMBIOS record structure where the header is followed by the structured data.
+    /// The caller must ensure that `header` points to a valid, complete SMBIOS record
+    /// with at least `header.length` bytes of valid memory.
+    unsafe fn build_record_with_strings(
         header: &SmbiosTableHeader,
         strings: &[&str],
     ) -> Result<Vec<u8>, SmbiosError> {
@@ -421,12 +488,11 @@ impl SmbiosManager {
         let mut record = Vec::new();
         
         // Add the structured data
-        let header_bytes = unsafe {
-            std::slice::from_raw_parts(
-                header as *const _ as *const u8,
-                header.length as usize,
-            )
-        };
+        // SAFETY: Caller guarantees that header points to a complete record structure
+        let header_bytes = std::slice::from_raw_parts(
+            header as *const _ as *const u8,
+            header.length as usize,
+        );
         record.extend_from_slice(header_bytes);
         
         // Add strings
@@ -485,56 +551,106 @@ impl SmbiosManager {
 impl SmbiosRecords for SmbiosManager {
     type Iter = std::slice::Iter<'static, SmbiosRecord>;
 
-    fn add(
+    unsafe fn add(
         &mut self,
         producer_handle: Option<Handle>,
-        smbios_handle: &mut SmbiosHandle,
         record: &SmbiosTableHeader,
-    ) -> Result<(), SmbiosError> {
+    ) -> Result<SmbiosHandle, SmbiosError> {
         let _lock = self.lock.lock().unwrap();
 
-        // Assign handle if needed
-        if *smbios_handle == SMBIOS_HANDLE_PI_RESERVED {
-            *smbios_handle = self.allocate_handle()?;
-        } else if self.allocated_handles.contains(smbios_handle) {
-            return Err(SmbiosError::HandleAlreadyInUse);
-        } else {
-            self.allocated_handles.insert(*smbios_handle);
-        }
+        // Assign handle 
+        let smbios_handle = self.allocate_handle()?;
 
-        // Create record data (simplified - would need proper string parsing)
-        let record_size = record.length as usize;
-        let mut data = Vec::with_capacity(record_size + 2); // +2 for double null
-        
-
-        unsafe {
+        // This is unsafe because we're assuming that `record` points to a complete
+        // SMBIOS record structure where the header is followed by the record data.
+        // The caller must ensure that `record` points to a valid, complete SMBIOS record
+        // with at least `record.length` bytes of valid memory.
+        let data = unsafe {
+            // Create record data (simplified - would need proper string parsing)
+            let record_size = record.length as usize;
+            let mut data = Vec::with_capacity(record_size + 2); // +2 for double null
+            
             let bytes = std::slice::from_raw_parts(
                 record as *const _ as *const u8,
                 record_size,
             );
 
             data.extend_from_slice(bytes);
-        }
-        
-        // Add double null terminator (simplified)
-        data.extend_from_slice(&[0, 0]);
+            
+            // Add double null terminator (simplified)
+            data.extend_from_slice(&[0, 0]);
+            data
+        };
 
 
+
+        let mut record_header = *record;
+        record_header.handle = smbios_handle;
 
         let smbios_record = SmbiosRecord {
-            header: *record,
+            header: record_header,
             producer_handle,
             data,
             string_count: 0, // Would be calculated from actual strings
-
             smbios32_table: true,
             smbios64_table: true,
         };
 
         self.records.push(smbios_record);
 
-        Ok(())
+        Ok(smbios_handle)
 
+    }
+
+    fn add_from_bytes(
+        &mut self,
+        producer_handle: Option<Handle>,
+        record_data: &[u8],
+    ) -> Result<SmbiosHandle, SmbiosError> {
+        let _lock = self.lock.lock().unwrap();
+
+        // Validate minimum size for header
+        if record_data.len() < core::mem::size_of::<SmbiosTableHeader>() {
+            return Err(SmbiosError::InvalidHandle);
+        }
+
+        // Parse header from the byte data
+        let header = unsafe {
+            &*(record_data.as_ptr() as *const SmbiosTableHeader)
+        };
+
+        // Validate that the record data is at least as long as the header claims
+        if record_data.len() < header.length as usize {
+            return Err(SmbiosError::InvalidHandle);
+        }
+
+        // Assign handle 
+        let smbios_handle = self.allocate_handle()?;
+        
+        // Create a safe copy of the data with updated handle
+        let mut data = Vec::with_capacity(record_data.len() + 2); // +2 for double null
+        data.extend_from_slice(record_data);
+        
+        // Add double null terminator if not already present (simplified)
+        if !data.ends_with(&[0, 0]) {
+            data.extend_from_slice(&[0, 0]);
+        }
+
+        let mut record_header = *header;
+        record_header.handle = smbios_handle;
+
+        let smbios_record = SmbiosRecord {
+            header: record_header,
+            producer_handle,
+            data,
+            string_count: 0, // Would be calculated from actual strings
+            smbios32_table: true,
+            smbios64_table: true,
+        };
+
+        self.records.push(smbios_record);
+
+        Ok(smbios_handle)
     }
 
     fn update_string(
@@ -726,7 +842,7 @@ impl SmbiosProtocol {
         let header = unsafe { &*record };
 
         // Call the Rust API
-        match manager.lock().unwrap().add(Some(producer_handle), &header) {
+        match unsafe { manager.lock().unwrap().add(Some(producer_handle), &header) } {
             Ok(assigned_handle) => {
                 unsafe { *smbios_handle = assigned_handle; }
                 efi::Status::SUCCESS
@@ -776,7 +892,7 @@ Consumers will access this service as follows:
 
 ```rust
 pub fn component(smbios_records: Service<dyn SmbiosRecords>) -> Result<()> {
-    let handle = smbios_records.add(None, None, &record)?;
+    let handle = unsafe { smbios_records.add(None, &record)? };
     
     // Update a string in the record
     smbios_records.update_string(handle, 1, "New String Value")?;
@@ -839,17 +955,15 @@ impl SmbiosBiosInfoManager {
             config.release_date.as_str(),
         ];
 
-        let record_data = SmbiosManager::build_record_with_strings(
-            &bios_info.header,
-            &strings,
-        )?;
+        let record_data = unsafe {
+            SmbiosManager::build_record_with_strings(
+                &bios_info.header,
+                &strings,
+            )?
+        };
 
-        let mut handle = SMBIOS_HANDLE_PI_RESERVED;
-        smbios_records.add(
-            None,
-            &mut handle,
-            unsafe { &*(record_data.as_ptr() as *const SmbiosTableHeader) },
-        )?;
+        // Use the safe add_from_bytes method instead
+        let handle = smbios_records.add_from_bytes(None, &record_data)?;
 
         log::info!("Added BIOS Information record with handle: {}", handle);
         Ok(())
@@ -909,18 +1023,17 @@ mod tests {
         let bios_info = BiosInformation::new();
         
         let strings = vec!["Test Vendor", "1.0.0", "07/24/2025"];
-        let record_data = SmbiosManager::build_record_with_strings(
-            &bios_info.header, 
-            &strings
-        ).unwrap();
+        let record_data = unsafe {
+            SmbiosManager::build_record_with_strings(
+                &bios_info.header, 
+                &strings
+            ).unwrap()
+        };
         
-    let result = manager.add(
-            None,
-            &mut handle,
-            unsafe { &*(record_data.as_ptr() as *const SmbiosTableHeader) }
-        );
+        let result = manager.add_from_bytes(None, &record_data);
         
         assert!(result.is_ok());
+        let handle = result.unwrap();
         assert_ne!(handle, SMBIOS_HANDLE_PI_RESERVED);
     }
     
@@ -963,26 +1076,20 @@ mod tests {
         // First add should succeed
         let bios_info = BiosInformation::new();
         let strings = vec!["Vendor", "Version", "Date"];
-        let record_data = SmbiosManager::build_record_with_strings(
-            &bios_info.header, 
-            &strings
-        ).unwrap();
+        let record_data = unsafe {
+            SmbiosManager::build_record_with_strings(
+                &bios_info.header, 
+                &strings
+            ).unwrap()
+        };
         
-    let result1 = manager.add(
-            None,
-            &mut handle,
-            unsafe { &*(record_data.as_ptr() as *const SmbiosTableHeader) }
-        );
+        let result1 = manager.add_from_bytes(None, &record_data);
         assert!(result1.is_ok());
         
-        // Second add with same handle should fail
-        let mut duplicate_handle = 100;
-    let result2 = manager.add(
-            None,
-            &mut duplicate_handle,
-            unsafe { &*(record_data.as_ptr() as *const SmbiosTableHeader) }
-        );
-        assert_eq!(result2, Err(SmbiosError::AlreadyStarted));
+        // Second add with same data should succeed and get different handle
+        let result2 = manager.add_from_bytes(None, &record_data);
+        assert!(result2.is_ok());
+        assert_ne!(result1.unwrap(), result2.unwrap());
     }
 }
 ```
