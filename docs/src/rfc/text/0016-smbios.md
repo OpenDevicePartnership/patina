@@ -684,9 +684,25 @@ impl SmbiosProtocol {
             }
         }
 
-        // Get global manager and call add (implementation depends on your global state management)
-        // ...
-        efi::Status::SUCCESS
+        // Example: Use the internal Rust API to add a record
+        // (Assume a global SMBIOS manager instance is available)
+        let manager = get_global_smbios_manager(); // This function is illustrative
+
+        // SAFETY: smbios_handle and record are checked above
+        let mut handle = SMBIOS_HANDLE_PI_RESERVED;
+        let header = unsafe { &*record };
+
+        // Call the Rust API
+        match manager.lock().unwrap().add(Some(producer_handle), &header) {
+            Ok(assigned_handle) => {
+                unsafe { *smbios_handle = assigned_handle; }
+                efi::Status::SUCCESS
+            }
+            Err(SmbiosError::InvalidParameter) => efi::Status::INVALID_PARAMETER,
+            Err(SmbiosError::OutOfResources) => efi::Status::OUT_OF_RESOURCES,
+            Err(SmbiosError::HandleAlreadyInUse) => efi::Status::ALREADY_STARTED,
+            Err(_) => efi::Status::DEVICE_ERROR,
+        }
     }
 
     extern "efiapi" fn update_string_ext(
