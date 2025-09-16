@@ -163,9 +163,15 @@ pub unsafe trait Param {
     fn init_state(storage: &mut Storage, meta: &mut MetaData) -> Self::State;
 }
 
-/// A hidden marker to differentiate between functions that have input and those that do not.
+/// A hidden marker for functions that consume their input (take `In` by value).
+/// These functions can only be executed once since they take ownership.
 #[doc(hidden)]
-pub struct HasInput;
+pub struct RunOnce;
+
+/// A hidden marker for functions that borrow their input (take `&In` or `&mut In`).
+/// These functions can be executed multiple times since they don't consume the input.
+#[doc(hidden)]
+pub struct RunMany;
 
 /// A trait that must be implemented by all components that have input.
 #[doc(hidden)]
@@ -176,6 +182,13 @@ impl ComponentInput for () {}
 
 /// A trait that allows the implementor to define a function whose parameters can be automatically retrieved from the
 /// underlying [Storage] before being immediately executed.
+#[diagnostic::on_unimplemented(
+    message = "The function signature does not meet the requirements.\n\n{Self}\n",
+    note = "1. The first parameter must be Self, &Self, or &mut Self.",
+    note = "2. The remaining parameters must implement patina_sdk::component::params::Param",
+    note = "3. Only a function with up to 5 parameters, excluding self, is supported.",
+    note = "4. The return type must be patina_sdk::error::Result<()>"
+)]
 pub trait ParamFunction<Marker>: Send + Sync + 'static {
     /// All parameters of the function that are retrievable from [Storage].
     type Param: Param;
@@ -185,7 +198,7 @@ pub trait ParamFunction<Marker>: Send + Sync + 'static {
     type Out;
 
     /// Runs the function with the given input and parameter values.
-    fn run(&mut self, input: Self::In, param_value: ParamItem<Self::Param>) -> Self::Out;
+    fn run(&mut self, input: &mut Option<Self::In>, param_value: ParamItem<Self::Param>) -> Self::Out;
 }
 
 macro_rules! impl_param_function {
@@ -203,7 +216,7 @@ macro_rules! impl_param_function {
             type Param = ($($param,)*);
             type In = ();
             type Out = Out;
-            fn run(&mut self, _input: (), param_value: ParamItem<($($param,)*)>) -> Out {
+            fn run(&mut self, _input: &mut Option<()>, param_value: ParamItem<($($param,)*)>) -> Out {
                 fn call_inner<Out, $($param),*>(
                     mut f: impl FnMut($($param),*) -> Out,
                     $($param: $param,)*
@@ -217,7 +230,7 @@ macro_rules! impl_param_function {
 
         #[allow(unused_variables)]
         #[allow(non_snake_case)]
-        impl<In, Out, Func, $($param: Param),*> ParamFunction<(HasInput, fn(In, $($param,)*)->Out)> for Func
+        impl<In, Out, Func, $($param: Param),*> ParamFunction<(RunOnce, fn(In, $($param,)*)->Out)> for Func
         where
             Func: Send + Sync + 'static,
             for <'a> &'a mut Func:
@@ -229,7 +242,7 @@ macro_rules! impl_param_function {
             type Param = ($($param,)*);
             type In = In;
             type Out = Out;
-            fn run(&mut self, input: In, param_value: ParamItem<($($param,)*)>) -> Out {
+            fn run(&mut self, input: &mut Option<In>, param_value: ParamItem<($($param,)*)>) -> Out {
                 fn call_inner<In, Out, $($param,)*>(
                     mut f: impl FnMut(In, $($param),*) -> Out,
                     input: In,
@@ -238,7 +251,61 @@ macro_rules! impl_param_function {
                     f(input, $($param),*)
                 }
                 let ($($param,)*) = param_value;
-                call_inner(self, input, $($param),*)
+                call_inner(self, input.take().unwrap(), $($param),*)
+            }
+        }
+
+        #[allow(unused_variables)]
+        #[allow(non_snake_case)]
+        impl<In, Out, Func, $($param: Param),*> ParamFunction<(RunMany, fn(&mut In, $($param,)*)->Out)> for Func
+        where
+            Func: Send + Sync + 'static,
+            for <'a, 'b> &'a mut Func:
+                FnMut(&'b mut In, $($param),*) -> Out +
+                FnMut(&'b mut In, $(ParamItem<$param>),*) -> Out,
+            In: ComponentInput + 'static,
+            Out: 'static,
+        {
+            type Param = ($($param,)*);
+            type In = In;
+            type Out = Out;
+            fn run(&mut self, input: &mut Option<In>, param_value: ParamItem<($($param,)*)>) -> Out {
+                fn call_inner<In, Out, $($param,)*>(
+                    mut f: impl FnMut(&mut In, $($param),*) -> Out,
+                    input: &mut In,
+                    $($param: $param,)*
+                ) -> Out {
+                    f(input, $($param),*)
+                }
+                let ($($param,)*) = param_value;
+                call_inner(self, input.as_mut().unwrap(), $($param),*)
+            }
+        }
+
+        #[allow(unused_variables)]
+        #[allow(non_snake_case)]
+        impl<In, Out, Func, $($param: Param),*> ParamFunction<(RunMany, fn(&In, $($param,)*)->Out)> for Func
+        where
+            Func: Send + Sync + 'static,
+            for <'a, 'b> &'a mut Func:
+                FnMut(&'b In, $($param),*) -> Out +
+                FnMut(&'b In, $(ParamItem<$param>),*) -> Out,
+            In: ComponentInput + 'static,
+            Out: 'static,
+        {
+            type Param = ($($param,)*);
+            type In = In;
+            type Out = Out;
+            fn run(&mut self, input: &mut Option<In>, param_value: ParamItem<($($param,)*)>) -> Out {
+                fn call_inner<In, Out, $($param,)*>(
+                    mut f: impl FnMut(&In, $($param),*) -> Out,
+                    input: &In,
+                    $($param: $param,)*
+                ) -> Out {
+                    f(input, $($param),*)
+                }
+                let ($($param,)*) = param_value;
+                call_inner(self, input.as_ref().unwrap(), $($param),*)
             }
         }
     }
