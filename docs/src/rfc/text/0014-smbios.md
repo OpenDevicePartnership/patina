@@ -120,7 +120,6 @@ Create an idiomatic Rust API for SMBIOS-related protocols (*see [Motivation - Sc
 
   // Public, ergonomic usage (format-agnostic by default)
   fn produce_record(smbios: &mut dyn SmbiosRecords) -> Result<(), SmbiosError> {
-      let mut handle = SMBIOS_HANDLE_PI_RESERVED;
       let record = SmbiosTableHeader {
           record_type: 0,
           length: core::mem::size_of::<SmbiosTableHeader>() as u8,
@@ -128,7 +127,7 @@ Create an idiomatic Rust API for SMBIOS-related protocols (*see [Motivation - Sc
       };
 
       // Ergonomic path (Auto)
-      smbios.add(None, &mut handle, &record)?;
+      let handle = smbios.add(None, Some(SMBIOS_HANDLE_PI_RESERVED), &record)?;
 
       // Advanced path (explicit control via extension)
       // smbios.add_with_target(None, &mut handle, &record, SmbiosTarget::Force64)?;
@@ -187,13 +186,17 @@ pub trait SmbiosRecords {
     type Iter: Iterator<Item = &SmbiosRecord>;
 
     /// Adds an SMBIOS record to the SMBIOS table.
-    /// If handle is SMBIOS_HANDLE_PI_RESERVED (0xFFFE), a unique handle will be assigned.
+    ///
+    /// Per EDK2 usage, if a handle is provided and already in use, EFI_ALREADY_STARTED is returned and the record is not updated.
+    /// However, automatic handle assignment is preferred and aligns with idiomatic Rust API design.
+    ///
+    /// It is recommended to omit the handle argument entirely, letting the implementation always assign a unique handle.
+    /// This avoids ambiguity, simplifies usage, and matches the most common use case.
     fn add(
         &mut self,
         producer_handle: Option<Handle>,
-        smbios_handle: &mut SmbiosHandle,
         record: &SmbiosTableHeader,
-    ) -> Result<(), SmbiosError>;
+    ) -> Result<SmbiosHandle, SmbiosError>;
 
     /// Updates a string in an existing SMBIOS record.
     fn update_string(
@@ -673,8 +676,16 @@ impl SmbiosProtocol {
             return efi::Status::INVALID_PARAMETER;
         }
 
-    // Get global manager and call add
-        // Implementation would depend on your global state management
+        // Enforce automatic handle assignment: do not allow adding to a non-reserved handle
+        unsafe {
+            if *smbios_handle != SMBIOS_HANDLE_PI_RESERVED {
+                // External caller tried to add to a specific handle, which is not allowed
+                return efi::Status::ALREADY_STARTED;
+            }
+        }
+
+        // Get global manager and call add (implementation depends on your global state management)
+        // ...
         efi::Status::SUCCESS
     }
 
@@ -716,8 +727,7 @@ Consumers will access this service as follows:
 
 ```rust
 pub fn component(smbios_records: Service<dyn SmbiosRecords>) -> Result<()> {
-    let mut handle = SMBIOS_HANDLE_PI_RESERVED;
-    smbios_records.add(None, &mut handle, &record)?;
+    let handle = smbios_records.add(None, None, &record)?;
     
     // Update a string in the record
     smbios_records.update_string(handle, 1, "New String Value")?;
@@ -733,8 +743,7 @@ pub fn component(smbios_records: Service<dyn SmbiosRecords>) -> Result<()> {
 }
 ```
 
-When adding a record with `add`, if the handle is set to `SMBIOS_HANDLE_PI_RESERVED`,
-a unique handle will be automatically assigned and returned via the mutable reference.
+When adding a record with `add`, automatic handle assignment is always used; the API does not allow adding a record to an existing handle. This ensures unique handle allocation and avoids ambiguity or errors from reusing handles.
 
 The service automatically handles:
 
