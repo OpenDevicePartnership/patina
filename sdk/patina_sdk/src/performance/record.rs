@@ -13,18 +13,67 @@ pub mod known;
 
 use crate::{performance::error::Error, performance_debug_assert};
 use alloc::vec::Vec;
-use core::{fmt::Debug, mem, ops::AddAssign};
-use scroll::{self, Pread, Pwrite};
+use core::{fmt::Debug, mem};
+use scroll::Pread;
+use zerocopy::{FromBytes, Immutable, IntoBytes};
 
 /// Maximum size in byte that a performance record can have.
 pub const FPDT_MAX_PERF_RECORD_SIZE: usize = u8::MAX as usize;
 
-/// Size in byte of the reader of a performance record.
-pub const PERFORMANCE_RECORD_HEADER_SIZE: usize = mem::size_of::<u16>() // Type
-        + mem::size_of::<u8>() // Length
-        + mem::size_of::<u8>(); // Revision
+/// Performance record header structure.
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy, FromBytes, IntoBytes, Immutable)]
+pub struct PerformanceRecordHeader {
+    /// This value depicts the format and contents of the performance record.
+    pub record_type: u16,
+    /// This value depicts the length of the performance record, in bytes.
+    pub length: u8,
+    /// This value is updated if the format of the record type is extended.
+    pub revision: u8,
+}
 
-/// Common behavior of every performance records.
+impl PerformanceRecordHeader {
+    /// Size of the header structure in bytes
+    pub const SIZE: usize = core::mem::size_of::<Self>();
+
+    /// Create a new performance record header.
+    pub const fn new(record_type: u16, length: u8, revision: u8) -> Self {
+        Self { record_type, length, revision }
+    }
+
+    /// Convert the header to little-endian format.
+    pub fn to_le(self) -> Self {
+        Self { record_type: self.record_type.to_le(), length: self.length, revision: self.revision }
+    }
+}
+
+impl TryFrom<&[u8]> for PerformanceRecordHeader {
+    type Error = &'static str;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        if bytes.len() < Self::SIZE {
+            return Err("Insufficient bytes for PerformanceRecordHeader");
+        }
+
+        Self::read_from_prefix(bytes)
+            .map_err(|_| "Failed to parse PerformanceRecordHeader from bytes")
+            .map(|(header, _)| header.to_le())
+    }
+}
+
+impl From<PerformanceRecordHeader> for [u8; mem::size_of::<PerformanceRecordHeader>()] {
+    fn from(header: PerformanceRecordHeader) -> Self {
+        let le_header = header.to_le();
+        le_header.as_bytes().try_into().expect("Size mismatch in From implementation")
+    }
+}
+
+/// Size in byte of the header of a performance record.
+pub const PERFORMANCE_RECORD_HEADER_SIZE: usize = mem::size_of::<PerformanceRecordHeader>();
+
+/// Trait implemented by all performance record types that can be serialized into
+/// the Firmware Basic Boot Performance Table (FBPT) buffer.
+/// [`crate::performance::error::Error`].
 pub trait PerformanceRecord {
     /// returns the type ID (NOT Rust's `TypeId`) value of the record
     fn record_type(&self) -> u16;
@@ -32,28 +81,41 @@ pub trait PerformanceRecord {
     /// Returns the revision of the record.
     fn revision(&self) -> u8;
 
-    /// Write the record data into the buffer.
-    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error>;
+    /// Write just the record payload (not including the common header)
+    /// into `buff` at `offset`, advancing `offset` on success.
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), Error>;
 
-    /// Write the record data and the header into the buffer.
-    fn write_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<usize, scroll::Error> {
-        let mut writing_offset = *offset;
+    /// Serialize the full record (header + payload) into `buff` at `offset`.
+    ///
+    /// ## Errors
+    ///
+    /// - On success returns the total size (header + payload).
+    /// - Fails with:
+    ///   - `Error::Serialization` if there is insufficient remaining space.
+    ///   - `Error::RecordTooLarge` if the final size exceeds `u8::MAX`.
+    fn write_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<usize, Error> {
+        let start = *offset;
+        if start + PERFORMANCE_RECORD_HEADER_SIZE > buff.len() {
+            return Err(Error::Serialization);
+        }
 
-        // Write performance record header.
-        buff.gwrite(self.record_type(), &mut writing_offset)?;
-        let record_size_offset = writing_offset;
-        buff.gwrite(0_u8, &mut writing_offset)?;
-        buff.gwrite(self.revision(), &mut writing_offset)?;
+        // Create header with placeholder length
+        let mut header = PerformanceRecordHeader::new(self.record_type(), 0, self.revision());
 
-        // Write data.
-        self.write_data_into(buff, &mut writing_offset)?;
+        // Skip header space and write data first
+        *offset += PERFORMANCE_RECORD_HEADER_SIZE;
+        self.write_data_into(buff, offset)?;
 
-        let record_size = writing_offset - *offset;
+        // Calculate total record size and update header
+        let record_size = *offset - start;
+        if record_size > u8::MAX as usize {
+            return Err(Error::RecordTooLarge { size: record_size });
+        }
+        header.length = record_size as u8;
 
-        // Write record size
-        buff.pwrite(record_size as u8, record_size_offset)?;
-
-        offset.add_assign(record_size);
+        // Write the complete header
+        let header_bytes: [u8; mem::size_of::<PerformanceRecordHeader>()] = header.into();
+        buff[start..start + PERFORMANCE_RECORD_HEADER_SIZE].copy_from_slice(&header_bytes);
 
         Ok(record_size)
     }
@@ -76,6 +138,18 @@ pub struct GenericPerformanceRecord<T: AsRef<[u8]>> {
     pub data: T,
 }
 
+impl<T: AsRef<[u8]>> GenericPerformanceRecord<T> {
+    /// Create a new generic performance record.
+    pub fn new(record_type: u16, length: u8, revision: u8, data: T) -> Self {
+        Self { record_type, length, revision, data }
+    }
+
+    /// Get the header as a structured type.
+    pub fn header(&self) -> PerformanceRecordHeader {
+        PerformanceRecordHeader::new(self.record_type, self.length, self.revision)
+    }
+}
+
 impl<T: AsRef<[u8]>> PerformanceRecord for GenericPerformanceRecord<T> {
     fn record_type(&self) -> u16 {
         self.record_type
@@ -85,8 +159,14 @@ impl<T: AsRef<[u8]>> PerformanceRecord for GenericPerformanceRecord<T> {
         self.revision
     }
 
-    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error> {
-        buff.gwrite_with(self.data.as_ref(), offset, ())?;
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), Error> {
+        let remaining = buff.len().saturating_sub(*offset);
+        let data = self.data.as_ref();
+        if data.len() > remaining {
+            return Err(Error::Serialization);
+        }
+        buff[*offset..*offset + data.len()].copy_from_slice(data);
+        *offset += data.len();
         Ok(())
     }
 }
@@ -168,14 +248,6 @@ impl PerformanceRecordBuffer {
     }
 }
 
-impl scroll::ctx::TryIntoCtx<scroll::Endian> for PerformanceRecordBuffer {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], _ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        dest.pwrite_with(self.buffer(), 0, ())
-    }
-}
-
 impl Default for PerformanceRecordBuffer {
     fn default() -> Self {
         Self::new()
@@ -223,7 +295,7 @@ impl<'a> Iterator for Iter<'a> {
 
         let data = &self.buffer[offset..length as usize];
         self.buffer = &self.buffer[length as usize..];
-        Some(GenericPerformanceRecord { record_type, length, revision, data })
+        Some(GenericPerformanceRecord::new(record_type, length, revision, data))
     }
 }
 
@@ -352,5 +424,112 @@ mod tests {
                 _ => unreachable!(),
             }
         }
+    }
+
+    #[test]
+    fn test_performance_record_header_try_from_valid_bytes() {
+        let original_header = PerformanceRecordHeader::new(0x1234, 42, 1);
+        let bytes: [u8; 4] = original_header.into();
+
+        let parsed_header = PerformanceRecordHeader::try_from(bytes.as_slice()).unwrap();
+
+        // Copy values locally since `PerformanceRecordHeader` is packed
+        let parsed_type = parsed_header.record_type;
+        let parsed_length = parsed_header.length;
+        let parsed_revision = parsed_header.revision;
+
+        assert_eq!(parsed_type, 0x1234);
+        assert_eq!(parsed_length, 42);
+        assert_eq!(parsed_revision, 1);
+    }
+
+    #[test]
+    fn test_performance_record_header_try_from_insufficient_bytes() {
+        let bytes = [0x34, 0x12]; // Only 2 bytes instead of 4
+        let result = PerformanceRecordHeader::try_from(bytes.as_slice());
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Insufficient bytes for PerformanceRecordHeader");
+    }
+
+    #[test]
+    fn test_performance_record_header_try_from_empty_bytes() {
+        let bytes: &[u8] = &[];
+        let result = PerformanceRecordHeader::try_from(bytes);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Insufficient bytes for PerformanceRecordHeader");
+    }
+
+    #[test]
+    fn test_performance_record_header_from_trait_conversion_le() {
+        let header = PerformanceRecordHeader::new(0xABCD, 100, 2);
+        let bytes: [u8; mem::size_of::<PerformanceRecordHeader>()] = header.into();
+
+        // Check little-endian order
+        assert_eq!(bytes[0], 0xCD); // Low byte of 0xABCD
+        assert_eq!(bytes[1], 0xAB); // High byte of 0xABCD
+        assert_eq!(bytes[2], 100); // Length
+        assert_eq!(bytes[3], 2); // Revision
+    }
+
+    #[test]
+    fn test_performance_record_header_roundtrip_conversion() {
+        // Test that we can convert header -> bytes -> header and get the same result
+        let original_header = PerformanceRecordHeader::new(0x5678, 200, 3);
+
+        let bytes: [u8; mem::size_of::<PerformanceRecordHeader>()] = original_header.into();
+        let parsed_header = PerformanceRecordHeader::try_from(bytes.as_slice()).unwrap();
+
+        let orig_type = original_header.record_type;
+        let orig_length = original_header.length;
+        let orig_revision = original_header.revision;
+        let parsed_type = parsed_header.record_type;
+        let parsed_length = parsed_header.length;
+        let parsed_revision = parsed_header.revision;
+
+        assert_eq!(orig_type, parsed_type);
+        assert_eq!(orig_length, parsed_length);
+        assert_eq!(orig_revision, parsed_revision);
+    }
+
+    #[test]
+    fn test_performance_record_header_le_handling() {
+        // Test that little-endian conversion works correctly for multi-byte fields
+        let header = PerformanceRecordHeader::new(0x0102, 50, 1);
+        let bytes: [u8; mem::size_of::<PerformanceRecordHeader>()] = header.into();
+
+        assert_eq!(bytes[0], 0x02);
+        assert_eq!(bytes[1], 0x01);
+        assert_eq!(bytes[2], 50);
+        assert_eq!(bytes[3], 1);
+
+        // Parse it back
+        let parsed = PerformanceRecordHeader::try_from(bytes.as_slice()).unwrap();
+
+        let parsed_type = parsed.record_type;
+        let parsed_length = parsed.length;
+        let parsed_revision = parsed.revision;
+
+        assert_eq!(parsed_type, 0x0102);
+        assert_eq!(parsed_length, 50);
+        assert_eq!(parsed_revision, 1);
+    }
+
+    #[test]
+    fn test_performance_record_header_try_from_extra_bytes() {
+        // Test with more bytes than needed (should still work)
+        let mut bytes = vec![0x34, 0x12, 42, 1]; // Valid header
+        bytes.extend_from_slice(&[0xFF, 0xFF, 0xFF]); // Extra bytes
+
+        let parsed_header = PerformanceRecordHeader::try_from(bytes.as_slice()).unwrap();
+
+        let parsed_type = parsed_header.record_type;
+        let parsed_length = parsed_header.length;
+        let parsed_revision = parsed_header.revision;
+
+        assert_eq!(parsed_type, 0x1234);
+        assert_eq!(parsed_length, 42);
+        assert_eq!(parsed_revision, 1);
     }
 }

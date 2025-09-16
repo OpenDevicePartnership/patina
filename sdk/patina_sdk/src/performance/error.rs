@@ -31,6 +31,13 @@ pub enum Error {
     BufferTooSmall,
     /// UEFI specification defined error type.
     Efi(EfiError),
+    /// Generic serialization error while encoding a performance record or table.
+    Serialization,
+    /// A performance record exceeded the representable maximum size (u8::MAX bytes).
+    RecordTooLarge {
+        /// The actual size of the record that exceeded the limit.
+        size: usize,
+    },
     /// Error returned when `debug_assert` is disabled.
     DebugAssert {
         /// The message describing the assertion failure.
@@ -54,6 +61,8 @@ impl Display for Error {
             Error::OutOfResources => write!(f, "FBPT buffer full, can't add more performance records."),
             Error::BufferTooSmall => write!(f, "Buffer to small to allocate FBPT table"),
             Error::Efi(efi_error) => write!(f, "{efi_error:?}"),
+            Error::Serialization => write!(f, "Failed to serialize performance data"),
+            Error::RecordTooLarge { size } => write!(f, "Performance record size {size} exceeds u8::MAX"),
             Error::DebugAssert { msg, file, line } => write!(f, "Assertion at {file}:{line}: {msg}"),
         }
     }
