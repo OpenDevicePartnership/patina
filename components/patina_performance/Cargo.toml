@@ -10,14 +10,15 @@ description = "Performance support for the DXE Core."
 
 [dependencies]
 r-efi = { workspace = true }
-scroll = { workspace = true }
 log = { workspace = true }
 uuid = { workspace = true }
+zerocopy = { workspace = true, features = ["derive"] }
 
 mu_pi = { workspace = true }
 mu_rust_helpers = { workspace = true }
-patina_sdk = { workspace = true }
 patina_internal_device_path = { workspace = true }
+patina_mm = { workspace = true }
+patina_sdk = { workspace = true }
 
 [dev-dependencies]
 patina_sdk = { path = "../../sdk/patina_sdk", features = ["mockall"] }
