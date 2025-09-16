@@ -13,14 +13,14 @@ workspace = true
 
 [dependencies]
 r-efi = { workspace = true }
-scroll = { workspace = true }
 log = { workspace = true }
 uuid = { workspace = true }
 
 mu_rust_helpers = { workspace = true }
 patina = { workspace = true }
 patina_internal_device_path = { workspace = true }
-zerocopy = { workspace = true }
+patina_mm = { workspace = true }
+zerocopy = { workspace = true, features = ["derive"] }
 zerocopy-derive = { workspace = true }
 
 [dev-dependencies]
