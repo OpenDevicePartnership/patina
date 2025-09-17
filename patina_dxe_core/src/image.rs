@@ -7,7 +7,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
-use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
+use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts, option::Option::None};
 use goblin::pe::section_table;
 use mu_pi::hob::{Hob, HobList};
 use patina_internal_device_path::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count};
@@ -32,7 +32,7 @@ use crate::{
     pecoff::{self, UefiPeInfo, relocation::RelocationBlock},
     protocol_db,
     protocols::{
-        PROTOCOL_DB, core_install_protocol_interface, core_locate_device_path, core_uninstall_protocol_interface,
+        PROTOCOL_DB, core_install_protocol_interface, core_locate_device_path, core_uninstall_protocol_interface, handle_protocol
     },
     runtime,
     systemtables::EfiSystemTable,
@@ -43,6 +43,7 @@ use uefi_corosensei::{
     Coroutine, CoroutineResult, Yielder,
     stack::{MIN_STACK_SIZE, STACK_ALIGNMENT, Stack, StackPointer},
 };
+use mu_pi::{protocols::firmware_volume};
 
 pub const EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION: u16 = 10;
 pub const EFI_IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER: u16 = 11;
@@ -767,6 +768,9 @@ fn get_buffer_by_file_path(
 
     //TODO: EDK2 core has support for loading an image from an FV device path which is not presently supported here.
     //this is the only case that Ok((buffer, true, authentication_status)) would be returned.
+    if let Ok((buffer, device_handle)) = get_file_buffer_from_fw(file_path) {
+        return Ok((buffer, true, device_handle, 0));
+    }
 
     if let Ok((buffer, device_handle)) = get_file_buffer_from_sfs(file_path) {
         return Ok((buffer, false, device_handle, 0));
@@ -786,6 +790,93 @@ fn get_buffer_by_file_path(
     }
 
     Err(EfiError::NotFound)
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct MediaFwVolFilePathDevicePath {
+    pub header: efi::protocols::device_path::Protocol,
+    pub fb_file_name: efi::Guid,
+}
+
+fn efi_get_name_guid_from_fwvol_device_path_node(
+    device_path: *const efi::protocols::device_path::Protocol,
+) -> Option<efi::Guid> {
+    let fv_device_path_node_ptr = device_path as *const MediaFwVolFilePathDevicePath;
+    if fv_device_path_node_ptr.is_null() {
+        return None;
+    }
+
+    let fv_device_path_node = unsafe { *fv_device_path_node_ptr };
+
+    // if fv_device_path_node.header.r#type == efi::protocols::device_path::TYPE_MEDIA && fv_device_path_node.header.sub_type == efi::protocols::device_path::Media::SUBTYPE_FIRMWARE_VOLUME_FILE {
+    //     return fv_device_path_node.fb_file_name;
+    // }
+
+    match fv_device_path_node.header.r#type {
+        efi::protocols::device_path::TYPE_MEDIA => {
+            match fv_device_path_node.header.sub_type {
+                efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE => {
+                    return Some(fv_device_path_node.fb_file_name);
+                },
+                _ => {
+                    return None;
+                }
+            }
+        },
+        _ => {
+            return None;
+        }
+    }
+}
+
+fn get_file_buffer_from_fw (
+    file_path: *mut efi::protocols::device_path::Protocol,
+) -> Result<(Vec<u8>, efi::Handle), EfiError> {
+    // Locate the handles to a device on the file_path that supports the firmware volume protocol
+    let (remaining_file_path, handle) =
+        core_locate_device_path(firmware_volume::PROTOCOL_GUID, file_path)?;
+
+    // For FwVol File system there is only a single file name that is a GUID.
+    let fv_name_guid = efi_get_name_guid_from_fwvol_device_path_node(remaining_file_path);
+    if fv_name_guid.is_none() {
+        return Err(EfiError::InvalidParameter);
+    }
+
+    let fv_name_guid = fv_name_guid.unwrap();
+
+    // Get the firmware volume protocol
+    let firmware_volume_protocol_guid = &firmware_volume::PROTOCOL_GUID as *const _ as *mut efi::Guid;
+    let mut fw_vol: *mut firmware_volume::Protocol = core::ptr::null_mut();
+    let fw_vol_ptr: *mut *mut c_void = &mut fw_vol as *mut _ as *mut *mut c_void;
+    let status = handle_protocol(handle, firmware_volume_protocol_guid, fw_vol_ptr);
+    if status != efi::Status::SUCCESS {
+        return Err(EfiError::NotFound);
+    }
+
+    let fw_vol =
+        unsafe { (fw_vol as *mut firmware_volume::Protocol).as_mut().ok_or(EfiError::Unsupported)? };
+
+    // Read image from the firmware file
+    let mut buffer: *mut u8 = core::ptr::null_mut();
+    let buffer_ptr: *mut *mut c_void = &mut buffer as *mut _ as *mut *mut c_void;
+    let mut buffer_size = 0;
+    let mut authentication_status = 0;
+    let authentication_status_ptr = &mut authentication_status;
+    let status = ((*fw_vol).read_section)(
+        fw_vol,
+        &fv_name_guid,
+        16, // EFI_SECTION_PE32
+        0,  // Instance
+        buffer_ptr,
+        core::ptr::addr_of_mut!(buffer_size),
+        authentication_status_ptr,
+    );
+    
+    unsafe {
+        let file_buffer = Vec::from_raw_parts(buffer, buffer_size, buffer_size);
+        EfiError::status_to_result(status).map(|_| (file_buffer, handle))
+    }
 }
 
 fn get_file_buffer_from_sfs(
