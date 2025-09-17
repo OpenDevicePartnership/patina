@@ -259,7 +259,7 @@ merge.
 
 If necessary, a large feature can be broken down into phases where each phase has a clear goal and deliverable. Once
 a feature phase is complete, it is merged into `main` and the next phase can begin in a new feature branch. If the
-feature is broken down this way, consider whether the [unstable feature process](../dev/unstable_feature.md) should
+feature is broken down this way, consider whether the [unstable feature process](../../dev/unstable_feature.md) should
 be used.
 
 Regardless of feature details, the criteria to merge into `main` are consistent:
