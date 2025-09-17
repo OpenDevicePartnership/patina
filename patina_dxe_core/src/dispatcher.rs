@@ -21,7 +21,7 @@ use patina_ffs::{
 use patina_internal_depex::{AssociatedDependency, Depex, Opcode};
 use patina_internal_device_path::concat_device_path_to_boxed_slice;
 use patina_sdk::{
-    component::service::Service,
+    component::{service::Service, IntoComponent},
     error::EfiError,
     performance::{
         logging::{perf_function_begin, perf_function_end},
@@ -163,7 +163,7 @@ unsafe impl Send for DispatcherContext {}
 static DISPATCHER_CONTEXT: TplMutex<DispatcherContext> =
     TplMutex::new(efi::TPL_NOTIFY, DispatcherContext::new(), "Dispatcher Context");
 
-fn dispatch() -> Result<bool, EfiError> {
+pub fn dispatch() -> Result<bool, EfiError> {
     let scheduled: Vec<PendingDriver>;
     {
         let mut dispatcher = DISPATCHER_CONTEXT.lock();

@@ -351,6 +351,7 @@ impl Core<Alloc> {
     /// This method will exit once no components remain or no components were dispatched during a full iteration.
     fn dispatch_components(&mut self) {
         loop {
+            log::info!("Loop START :)");
             let len = self.components.len();
             self.components.retain_mut(|component| {
                 // Ok(true): Dispatchable and dispatched returning success
@@ -377,7 +378,18 @@ impl Core<Alloc> {
                     }
                 }
             });
-            if self.components.len() == len {
+
+            // C Driver dispatch
+            let dispatched = match dispatcher::dispatch() {
+                Err(e) => {
+                    log::error!("Dispatcher error: {e:?}");
+                    return
+                }
+                Ok(res) => res
+            };
+            log::info!("Loop END :)");
+
+            if self.components.len() == len && !dispatched {
                 break;
             }
         }
@@ -513,13 +525,6 @@ impl Core<Alloc> {
         self.parse_hobs();
         log::info!("Finished.");
 
-        log::info!("Dispatching Local Drivers");
-        self.dispatch_components();
-        self.storage.lock_configs();
-        self.dispatch_components();
-        log::info!("Finished Dispatching Local Drivers");
-        self.display_components_not_dispatched();
-
         if let Some(extractor) = self.storage.get_service::<dyn SectionExtractor>() {
             log::debug!("Section Extractor service found, registering with FV and Dispatcher.");
             dispatcher::register_section_extractor(extractor.clone());
@@ -530,10 +535,14 @@ impl Core<Alloc> {
         fv::parse_hob_fvs(&self.hob_list)?;
         log::info!("Finished.");
 
-        dispatcher::core_dispatcher().expect("initial dispatch failed.");
+        log::info!("Dispatching Drivers");
+        self.dispatch_components();
+        self.storage.lock_configs();
+        self.dispatch_components();
+        log::info!("Finished Dispatching Drivers");
 
+        self.display_components_not_dispatched();
         core_display_missing_arch_protocols();
-
         dispatcher::display_discovered_not_dispatched();
 
         call_bds();
