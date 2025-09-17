@@ -284,10 +284,11 @@ Regardless of feature details, the criteria to merge into `main` are consistent:
    The pull request that merges the feature into `main` must link to a patina-qemu pull request that integrates the
    feature.
 
-   > Note: The patina-qemu PR does not necessarily need to build successfully prior to merging the feature branch into
-   > `main`. However, the patina-qemu PR must be opened and linked to demonstrate how a platform is expected to
-   > integrate the feature. The patina-qemu PR must be completed and merged as soon as possible after the feature
-   > branch is merged into `main`.
+   > Note: The patina-qemu PR does not necessarily need to build (due to dependencies on the patina repo) successfully
+   > prior to merging the feature branch into `main`. However, the patina-qemu PR must be opened, linked to
+   > demonstrate how a platform is expected to integrate the feature, and have been tested locally including OS boot
+   > with the feature enabled. The patina-qemu PR must be completed and merged as soon as possible after the feature
+   > branch is merged into the `main` branch in the patina repository.
 
 ## Unresolved Questions
 
