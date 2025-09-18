@@ -201,9 +201,1639 @@ compatibility with existing UEFI protocol patterns. However, **it should be stro
 `add_from_bytes()` alternative** for all new implementations. The unsafe method exists only to support legacy code
 migration scenarios.
 
+## Versioned Typed Record Interfaces
+
+### Design Philosophy
+
+This RFC proposes a versioned approach to typed SMBIOS record interfaces that addresses the challenge of
+specification evolution while maintaining forward and backward compatibility. Each SMBIOS record type can have
+multiple versions corresponding to different SMBIOS specification releases.
+
+### Key Design Principles
+
+1. **Version Awareness**: Each typed record structure includes version information from the SMBIOS specification
+2. **Forward Compatibility**: Implementations gracefully handle records with more data than expected
+3. **Backward Compatibility**: Newer implementations can work with older record formats
+4. **Safe Parsing**: Unknown or newer fields are preserved but not interpreted
+5. **Extensible Design**: New specification versions can be added without breaking existing code
+
+### Versioned Record Trait
+
+```rust
+/// Trait for versioned SMBIOS record types
+pub trait VersionedSmbiosRecord: Sized {
+    /// The SMBIOS record type number
+    const RECORD_TYPE: u8;
+    
+    /// The minimum SMBIOS specification version that introduced this record format
+    const MIN_SPEC_VERSION: (u8, u8);
+    
+    /// Parse a record from raw bytes, handling version differences
+    fn from_bytes(data: &[u8], spec_version: (u8, u8)) -> Result<Self, SmbiosError>;
+    
+    /// Convert the record back to raw bytes
+    fn to_bytes(&self) -> Vec<u8>;
+    
+    /// Get the specification version this record was parsed with
+    fn parsed_version(&self) -> (u8, u8);
+    
+    /// Check if this record format supports a given specification version
+    fn supports_version(spec_version: (u8, u8)) -> bool {
+        spec_version >= Self::MIN_SPEC_VERSION
+    }
+}
+```
+
+### Version-Aware BIOS Information (Type 0)
+
+```rust
+/// BIOS Information (Type 0) with version-aware parsing
+pub struct BiosInformation {
+    pub header: SmbiosTableHeader,
+    // Fields present in SMBIOS 2.0+
+    pub vendor: u8,              // String index
+    pub bios_version: u8,        // String index  
+    pub bios_segment: u16,
+    pub bios_release_date: u8,   // String index
+    pub bios_size: u8,
+    pub characteristics: u64,
+    
+    // Fields added in SMBIOS 2.4+
+    pub characteristics_ext1: Option<u8>,
+    pub characteristics_ext2: Option<u8>,
+    
+    // Fields added in SMBIOS 2.4+
+    pub major_release: Option<u8>,
+    pub minor_release: Option<u8>,
+    
+    // Fields added in SMBIOS 2.4+
+    pub ec_major_release: Option<u8>,
+    pub ec_minor_release: Option<u8>,
+    
+    // Fields added in SMBIOS 3.1+
+    pub extended_bios_size: Option<u16>,
+    
+    // Track which version this was parsed with
+    parsed_version: (u8, u8),
+    
+    // Preserve unknown future fields
+    unknown_data: Vec<u8>,
+}
+
+impl VersionedSmbiosRecord for BiosInformation {
+    const RECORD_TYPE: u8 = 0;
+    const MIN_SPEC_VERSION: (u8, u8) = (2, 0);
+    
+    fn from_bytes(data: &[u8], spec_version: (u8, u8)) -> Result<Self, SmbiosError> {
+        if data.len() < core::mem::size_of::<SmbiosTableHeader>() {
+            return Err(SmbiosError::BufferTooSmall);
+        }
+        
+        let header = unsafe { &*(data.as_ptr() as *const SmbiosTableHeader) };
+        
+        if header.record_type != Self::RECORD_TYPE {
+            return Err(SmbiosError::InvalidParameter);
+        }
+        
+        let mut record = BiosInformation {
+            header: *header,
+            vendor: 0,
+            bios_version: 0,
+            bios_segment: 0,
+            bios_release_date: 0,
+            bios_size: 0,
+            characteristics: 0,
+            characteristics_ext1: None,
+            characteristics_ext2: None,
+            major_release: None,
+            minor_release: None,
+            ec_major_release: None,
+            ec_minor_release: None,
+            extended_bios_size: None,
+            parsed_version: spec_version,
+            unknown_data: Vec::new(),
+        };
+        
+        let mut offset = core::mem::size_of::<SmbiosTableHeader>();
+        
+        // Parse based on available data and spec version
+        if data.len() > offset && offset < header.length as usize {
+            record.vendor = data[offset];
+            offset += 1;
+        }
+        
+        if data.len() > offset && offset < header.length as usize {
+            record.bios_version = data[offset];
+            offset += 1;
+        }
+        
+        if data.len() > offset + 1 && offset < header.length as usize {
+            record.bios_segment = u16::from_le_bytes([data[offset], data[offset + 1]]);
+            offset += 2;
+        }
+        
+        if data.len() > offset && offset < header.length as usize {
+            record.bios_release_date = data[offset];
+            offset += 1;
+        }
+        
+        if data.len() > offset && offset < header.length as usize {
+            record.bios_size = data[offset];
+            offset += 1;
+        }
+        
+        if data.len() > offset + 7 && offset < header.length as usize {
+            record.characteristics = u64::from_le_bytes([
+                data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+                data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
+            ]);
+            offset += 8;
+        }
+        
+        // Fields added in SMBIOS 2.4+
+        if spec_version >= (2, 4) && data.len() > offset && offset < header.length as usize {
+            record.characteristics_ext1 = Some(data[offset]);
+            offset += 1;
+        }
+        
+        if spec_version >= (2, 4) && data.len() > offset && offset < header.length as usize {
+            record.characteristics_ext2 = Some(data[offset]);
+            offset += 1;
+        }
+        
+        if spec_version >= (2, 4) && data.len() > offset && offset < header.length as usize {
+            record.major_release = Some(data[offset]);
+            offset += 1;
+        }
+        
+        if spec_version >= (2, 4) && data.len() > offset && offset < header.length as usize {
+            record.minor_release = Some(data[offset]);
+            offset += 1;
+        }
+        
+        if spec_version >= (2, 4) && data.len() > offset && offset < header.length as usize {
+            record.ec_major_release = Some(data[offset]);
+            offset += 1;
+        }
+        
+        if spec_version >= (2, 4) && data.len() > offset && offset < header.length as usize {
+            record.ec_minor_release = Some(data[offset]);
+            offset += 1;
+        }
+        
+        // Fields added in SMBIOS 3.1+
+        if spec_version >= (3, 1) && data.len() > offset + 1 && offset < header.length as usize {
+            record.extended_bios_size = Some(u16::from_le_bytes([data[offset], data[offset + 1]]));
+            offset += 2;
+        }
+        
+        // Handle forward compatibility: preserve unknown future fields
+        if offset < header.length as usize && offset < data.len() {
+            let remaining_structured_data = core::cmp::min(
+                header.length as usize - offset,
+                data.len() - offset
+            );
+            record.unknown_data = data[offset..offset + remaining_structured_data].to_vec();
+        }
+        
+        Ok(record)
+    }
+    
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        
+        // Add header (will be updated with correct length later)
+        let header_bytes = unsafe {
+            core::slice::from_raw_parts(
+                &self.header as *const _ as *const u8,
+                core::mem::size_of::<SmbiosTableHeader>(),
+            )
+        };
+        bytes.extend_from_slice(header_bytes);
+        
+        // Add mandatory fields
+        bytes.push(self.vendor);
+        bytes.push(self.bios_version);
+        bytes.extend_from_slice(&self.bios_segment.to_le_bytes());
+        bytes.push(self.bios_release_date);
+        bytes.push(self.bios_size);
+        bytes.extend_from_slice(&self.characteristics.to_le_bytes());
+        
+        // Add version-specific fields
+        if let Some(val) = self.characteristics_ext1 {
+            bytes.push(val);
+        }
+        if let Some(val) = self.characteristics_ext2 {
+            bytes.push(val);
+        }
+        if let Some(val) = self.major_release {
+            bytes.push(val);
+        }
+        if let Some(val) = self.minor_release {
+            bytes.push(val);
+        }
+        if let Some(val) = self.ec_major_release {
+            bytes.push(val);
+        }
+        if let Some(val) = self.ec_minor_release {
+            bytes.push(val);
+        }
+        if let Some(val) = self.extended_bios_size {
+            bytes.extend_from_slice(&val.to_le_bytes());
+        }
+        
+        // Add preserved unknown data for forward compatibility
+        bytes.extend_from_slice(&self.unknown_data);
+        
+        // Update header with correct length
+        let correct_length = bytes.len() as u8;
+        bytes[1] = correct_length; // length field is at offset 1 in SmbiosTableHeader
+        
+        bytes
+    }
+    
+    fn parsed_version(&self) -> (u8, u8) {
+        self.parsed_version
+    }
+}
+
+impl BiosInformation {
+    /// Create a new BIOS Information record for a specific SMBIOS version
+    pub fn new_for_version(spec_version: (u8, u8)) -> Self {
+        let mut record = Self {
+            header: SmbiosTableHeader {
+                record_type: 0,
+                length: 0, // Will be calculated in to_bytes()
+                handle: SMBIOS_HANDLE_PI_RESERVED,
+            },
+            vendor: 1,
+            bios_version: 2,
+            bios_segment: 0xE000,
+            bios_release_date: 3,
+            bios_size: 0x0F,
+            characteristics: 0x08,
+            characteristics_ext1: None,
+            characteristics_ext2: None,
+            major_release: None,
+            minor_release: None,
+            ec_major_release: None,
+            ec_minor_release: None,
+            extended_bios_size: None,
+            parsed_version: spec_version,
+            unknown_data: Vec::new(),
+        };
+        
+        // Set version-appropriate defaults
+        if spec_version >= (2, 4) {
+            record.characteristics_ext1 = Some(0x01); // ACPI supported
+            record.characteristics_ext2 = Some(0x00);
+            record.major_release = Some(1);
+            record.minor_release = Some(0);
+            record.ec_major_release = Some(0xFF); // Not supported
+            record.ec_minor_release = Some(0xFF); // Not supported
+        }
+        
+        if spec_version >= (3, 1) {
+            record.extended_bios_size = Some(0x0000);
+        }
+        
+        record
+    }
+}
+```
+
+### Enhanced SmbiosRecords Service with Typed Support
+
+```rust
+pub trait SmbiosRecords {
+    // ... existing methods ...
+    
+    /// Add a versioned typed record
+    fn add_typed_record<T: VersionedSmbiosRecord>(
+        &mut self,
+        producer_handle: Option<Handle>,
+        record: &T,
+    ) -> Result<SmbiosHandle, SmbiosError> {
+        let record_bytes = record.to_bytes();
+        self.add_from_bytes(producer_handle, &record_bytes)
+    }
+    
+    /// Get a typed record by handle
+    fn get_typed_record<T: VersionedSmbiosRecord>(
+        &self,
+        smbios_handle: SmbiosHandle,
+    ) -> Result<T, SmbiosError> {
+        // Find the record
+        let record = self.records
+            .iter()
+            .find(|r| r.header.handle == smbios_handle)
+            .ok_or(SmbiosError::HandleNotFound)?;
+        
+        if record.header.record_type != T::RECORD_TYPE {
+            return Err(SmbiosError::UnsupportedRecordType);
+        }
+        
+        T::from_bytes(&record.data, self.version())
+    }
+    
+    /// Iterate over typed records of a specific type
+    fn iter_typed_records<T: VersionedSmbiosRecord>(&self) -> impl Iterator<Item = Result<T, SmbiosError>> {
+        self.records
+            .iter()
+            .filter(|r| r.header.record_type == T::RECORD_TYPE)
+            .map(|r| T::from_bytes(&r.data, self.version()))
+    }
+}
+```
+
+### Forward Compatibility Example
+
+```rust
+// Example: An SMBIOS 3.0 implementation encountering a SMBIOS 3.2 Type 0 record
+let smbios_3_2_bios_data = vec![
+    // Standard SMBIOS 3.0 Type 0 fields...
+    0x00, 0x20, 0x01, 0x00,  // Header: Type 0, Length 32, Handle 1
+    0x01, 0x02, 0x00, 0xE0,  // Vendor, Version, Segment
+    0x03, 0x0F,              // Date, Size
+    0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Characteristics
+    0x01, 0x00,              // Extension bytes (SMBIOS 2.4+)
+    0x01, 0x00,              // Major/Minor release
+    0xFF, 0xFF,              // EC releases
+    0x00, 0x00,              // Extended BIOS size (SMBIOS 3.1+)
+    // NEW: Future SMBIOS 3.2 fields that our implementation doesn't know about
+    0xAB, 0xCD, 0xEF, 0x12,  // Unknown future fields
+];
+
+// Our SMBIOS 3.0 implementation can still parse this safely
+let bios_info = BiosInformation::from_bytes(&smbios_3_2_bios_data, (3, 0))?;
+
+// Known fields are parsed correctly
+assert_eq!(bios_info.vendor, 1);
+assert_eq!(bios_info.major_release, Some(1));
+
+// Unknown future fields are preserved
+assert_eq!(bios_info.unknown_data, vec![0xAB, 0xCD, 0xEF, 0x12]);
+
+// When converting back to bytes, the unknown data is preserved
+let preserved_bytes = bios_info.to_bytes();
+assert!(preserved_bytes.ends_with(&[0xAB, 0xCD, 0xEF, 0x12]));
+```
+
+### Migration Strategy for Typed Records
+
+1. **Gradual Adoption**: Existing byte-based APIs remain available
+2. **Opt-in Typing**: Components can choose to use typed interfaces when needed
+3. **Version Detection**: Automatic detection of appropriate record versions based on SMBIOS spec version
+4. **Compatibility Testing**: Comprehensive tests ensure new versions don't break existing functionality
+
+This approach addresses the core concern raised in the comment by providing:
+
+- **Version Awareness**: Each record type can handle multiple SMBIOS specification versions
+- **Forward Compatibility**: Unknown fields are preserved, allowing older implementations to work with newer records
+- **Backward Compatibility**: Newer implementations can gracefully handle older record formats
+- **Safety**: All parsing is bounds-checked and error-handling is explicit
+
+## Alternative Approach: Sized Structures with Byte Array Interface
+
+### Alternative Design Philosophy
+
+An alternative to the versioned typed interfaces above is to provide sized structures for SMBIOS records
+while maintaining a simple byte array interface at the service level. This approach offers a middle ground
+between type safety and simplicity.
+
+### Alternative Design Principles
+
+1. **Simple Service Interface**: The core service API remains byte-array based for maximum flexibility
+2. **Structured Record Definitions**: Provide well-defined structures for standard SMBIOS record types
+3. **OEM Extensibility**: Enable OEMs to define custom record structures using the same pattern
+4. **Validation Focus**: Emphasize validation at the service boundary rather than complex type systems
+5. **String Pool Integration**: Include string management directly in the record structures
+
+### Scalable Record Structure Pattern
+
+You're absolutely right about scalability concerns! Custom `to_bytes()` for 50+ record types would be
+unmaintainable. Here's a better approach using generic serialization:
+
+```rust
+/// Base trait for SMBIOS record structures with generic serialization
+pub trait SmbiosRecordStructure {
+    /// The SMBIOS record type number
+    const RECORD_TYPE: u8;
+    
+    /// Convert the structure to a complete SMBIOS record byte array
+    fn to_bytes(&self) -> Vec<u8> {
+        SmbiosSerializer::serialize(self)
+    }
+    
+    /// Validate the structure before serialization
+    fn validate(&self) -> Result<(), SmbiosError>;
+    
+    /// Get the string pool for this record
+    fn string_pool(&self) -> &[String];
+    
+    /// Get mutable access to the string pool
+    fn string_pool_mut(&mut self) -> &mut Vec<String>;
+}
+
+/// Generic SMBIOS record serializer using reflection-like techniques
+pub struct SmbiosSerializer;
+
+impl SmbiosSerializer {
+    /// Serialize any SMBIOS record structure to bytes
+    pub fn serialize<T: SmbiosRecordStructure + SmbiosFieldLayout>(record: &T) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        
+        // Step 1: Calculate structured data size using field layout
+        let field_layout = T::field_layout();
+        let structured_size = core::mem::size_of::<SmbiosTableHeader>() + field_layout.total_size();
+        
+        // Step 2: Create header
+        let header = SmbiosTableHeader {
+            record_type: T::RECORD_TYPE,
+            length: structured_size as u8,
+            handle: SMBIOS_HANDLE_PI_RESERVED,
+        };
+        
+        // Step 3: Serialize header
+        bytes.extend_from_slice(&Self::serialize_header(&header));
+        
+        // Step 4: Serialize structured fields using generic field serialization
+        bytes.extend_from_slice(&Self::serialize_fields(record, &field_layout));
+        
+        // Step 5: Serialize string pool
+        bytes.extend_from_slice(&Self::serialize_string_pool(record.string_pool()));
+        
+        bytes
+    }
+    
+    fn serialize_header(header: &SmbiosTableHeader) -> [u8; 4] {
+        [
+            header.record_type,
+            header.length,
+            (header.handle & 0xFF) as u8,
+            ((header.handle >> 8) & 0xFF) as u8,
+        ]
+    }
+    
+    fn serialize_fields<T: SmbiosRecordStructure + SmbiosFieldLayout>(
+        record: &T, 
+        layout: &FieldLayout
+    ) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        
+        // Use the field layout to serialize each field generically
+        for field_info in &layout.fields {
+            match field_info.field_type {
+                FieldType::U8(offset) => {
+                    let value = unsafe { 
+                        *((record as *const T as *const u8).add(offset) as *const u8)
+                    };
+                    bytes.push(value);
+                }
+                FieldType::U16(offset) => {
+                    let value = unsafe { 
+                        *((record as *const T as *const u8).add(offset) as *const u16)
+                    };
+                    bytes.extend_from_slice(&value.to_le_bytes());
+                }
+                FieldType::U32(offset) => {
+                    let value = unsafe { 
+                        *((record as *const T as *const u8).add(offset) as *const u32)
+                    };
+                    bytes.extend_from_slice(&value.to_le_bytes());
+                }
+                FieldType::U64(offset) => {
+                    let value = unsafe { 
+                        *((record as *const T as *const u8).add(offset) as *const u64)
+                    };
+                    bytes.extend_from_slice(&value.to_le_bytes());
+                }
+                FieldType::ByteArray { offset, len } => {
+                    let slice = unsafe {
+                        core::slice::from_raw_parts(
+                            (record as *const T as *const u8).add(offset),
+                            len
+                        )
+                    };
+                    bytes.extend_from_slice(slice);
+                }
+            }
+        }
+        
+        bytes
+    }
+    
+    fn serialize_string_pool(strings: &[String]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        
+        if strings.is_empty() {
+            bytes.extend_from_slice(&[0, 0]);
+        } else {
+            for string in strings {
+                if !string.is_empty() {
+                    bytes.extend_from_slice(string.as_bytes());
+                }
+                bytes.push(0);
+            }
+            bytes.push(0); // Double null terminator
+        }
+        
+        bytes
+    }
+}
+
+/// Field layout description for generic serialization
+pub trait SmbiosFieldLayout {
+    fn field_layout() -> FieldLayout;
+}
+
+#[derive(Debug, Clone)]
+pub struct FieldLayout {
+    pub fields: Vec<FieldInfo>,
+}
+
+impl FieldLayout {
+    pub fn total_size(&self) -> usize {
+        self.fields.iter().map(|f| f.size()).sum()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FieldInfo {
+    pub name: &'static str,
+    pub field_type: FieldType,
+}
+
+#[derive(Debug, Clone)]
+pub enum FieldType {
+    U8(usize),                           // offset
+    U16(usize),                          // offset
+    U32(usize),                          // offset  
+    U64(usize),                          // offset
+    ByteArray { offset: usize, len: usize }, // offset, length
+}
+
+impl FieldInfo {
+    pub fn size(&self) -> usize {
+        match self.field_type {
+            FieldType::U8(_) => 1,
+            FieldType::U16(_) => 2,
+            FieldType::U32(_) => 4,
+            FieldType::U64(_) => 8,
+            FieldType::ByteArray { len, .. } => len,
+        }
+    }
+}
+
+/// Macro to automatically generate field layout for SMBIOS records
+macro_rules! impl_smbios_field_layout {
+    ($struct_name:ident, $($field_name:ident: $field_type:ident),* $(,)?) => {
+        impl SmbiosFieldLayout for $struct_name {
+            fn field_layout() -> FieldLayout {
+                use core::mem::{offset_of, size_of};
+                
+                FieldLayout {
+                    fields: vec![
+                        $(
+                            impl_smbios_field_layout!(@field_info $struct_name, $field_name, $field_type),
+                        )*
+                    ],
+                }
+            }
+        }
+    };
+    
+    (@field_info $struct_name:ident, $field_name:ident, u8) => {
+        FieldInfo {
+            name: stringify!($field_name),
+            field_type: FieldType::U8(offset_of!($struct_name, $field_name)),
+        }
+    };
+    
+    (@field_info $struct_name:ident, $field_name:ident, u16) => {
+        FieldInfo {
+            name: stringify!($field_name),
+            field_type: FieldType::U16(offset_of!($struct_name, $field_name)),
+        }
+    };
+    
+    (@field_info $struct_name:ident, $field_name:ident, u32) => {
+        FieldInfo {
+            name: stringify!($field_name),
+            field_type: FieldType::U32(offset_of!($struct_name, $field_name)),
+        }
+    };
+    
+    (@field_info $struct_name:ident, $field_name:ident, u64) => {
+        FieldInfo {
+            name: stringify!($field_name),
+            field_type: FieldType::U64(offset_of!($struct_name, $field_name)),
+        }
+    };
+    
+    (@field_info $struct_name:ident, $field_name:ident, uuid) => {
+        FieldInfo {
+            name: stringify!($field_name),
+            field_type: FieldType::ByteArray { 
+                offset: offset_of!($struct_name, $field_name), 
+                len: 16 
+            },
+        }
+    };
+}
+
+/// Type 0: Platform Firmware Information (BIOS Information)
+#[repr(C, packed)]
+pub struct Type0PlatformFirmwareInformation {
+    pub header: SmbiosTableHeader,
+    pub vendor: u8,                           // String index
+    pub firmware_version: u8,                 // String index
+    pub bios_starting_address_segment: u16,
+    pub firmware_release_date: u8,            // String index
+    pub firmware_rom_size: u8,
+    pub characteristics: u64,
+    pub characteristics_ext1: u8,
+    pub characteristics_ext2: u8,
+    pub system_bios_major_release: u8,
+    pub system_bios_minor_release: u8,
+    pub embedded_controller_major_release: u8,
+    pub embedded_controller_minor_release: u8,
+    pub extended_bios_rom_size: u16,
+    
+    // Integrated string pool
+    pub string_pool: Vec<String>,
+}
+
+// Generic field layout - much simpler than custom to_bytes()!
+impl_smbios_field_layout!(Type0PlatformFirmwareInformation,
+    vendor: u8,
+    firmware_version: u8,
+    bios_starting_address_segment: u16,
+    firmware_release_date: u8,
+    firmware_rom_size: u8,
+    characteristics: u64,
+    characteristics_ext1: u8,
+    characteristics_ext2: u8,
+    system_bios_major_release: u8,
+    system_bios_minor_release: u8,
+    embedded_controller_major_release: u8,
+    embedded_controller_minor_release: u8,
+    extended_bios_rom_size: u16,
+);
+
+impl Type0PlatformFirmwareInformation {
+    /// Create a new Type 0 record with default values
+    pub fn new() -> Self {
+        Self {
+            header: SmbiosTableHeader {
+                record_type: 0,
+                length: 0, // Will be calculated in to_bytes()
+                handle: SMBIOS_HANDLE_PI_RESERVED,
+            },
+            vendor: 1,                           // First string in pool
+            firmware_version: 2,                 // Second string in pool
+            bios_starting_address_segment: 0xE000,
+            firmware_release_date: 3,            // Third string in pool
+            firmware_rom_size: 0x0F,            // Default: 1MB
+            characteristics: 0x08,              // PCI supported
+            characteristics_ext1: 0x01,         // ACPI supported
+            characteristics_ext2: 0x00,
+            system_bios_major_release: 1,
+            system_bios_minor_release: 0,
+            embedded_controller_major_release: 0xFF, // Not supported
+            embedded_controller_minor_release: 0xFF, // Not supported
+            extended_bios_rom_size: 0x0000,
+            string_pool: vec![
+                "Default Vendor".to_string(),
+                "1.0.0".to_string(),
+                "01/01/2025".to_string(),
+            ],
+        }
+    }
+    
+    /// Set vendor information (updates both string pool and index)
+    pub fn with_vendor(mut self, vendor: String) -> Result<Self, SmbiosError> {
+        Self::validate_string(&vendor)?;
+        if self.string_pool.is_empty() {
+            self.string_pool.push(vendor);
+            self.vendor = 1;
+        } else {
+            self.string_pool[0] = vendor;
+        }
+        Ok(self)
+    }
+    
+    /// Set firmware version (updates both string pool and index)
+    pub fn with_firmware_version(mut self, version: String) -> Result<Self, SmbiosError> {
+        Self::validate_string(&version)?;
+        while self.string_pool.len() < 2 {
+            self.string_pool.push(String::new());
+        }
+        self.string_pool[1] = version;
+        self.firmware_version = 2;
+        Ok(self)
+    }
+    
+    /// Set release date (updates both string pool and index)
+    pub fn with_release_date(mut self, date: String) -> Result<Self, SmbiosError> {
+        Self::validate_string(&date)?;
+        while self.string_pool.len() < 3 {
+            self.string_pool.push(String::new());
+        }
+        self.string_pool[2] = date;
+        self.firmware_release_date = 3;
+        Ok(self)
+    }
+    
+    fn validate_string(s: &str) -> Result<(), SmbiosError> {
+        if s.len() > SMBIOS_STRING_MAX_LENGTH {
+            return Err(SmbiosError::StringTooLong);
+        }
+        if s.contains('\0') {
+            return Err(SmbiosError::InvalidParameter);
+        }
+        Ok(())
+    }
+}
+
+impl SmbiosRecordStructure for Type0PlatformFirmwareInformation {
+    const RECORD_TYPE: u8 = 0;
+    
+    // to_bytes() is provided by default implementation using generic serializer!
+    
+    fn validate(&self) -> Result<(), SmbiosError> {
+        // Validate all strings
+        for string in &self.string_pool {
+            Self::validate_string(string)?;
+        }
+        
+        // Validate string indices point to valid strings
+        if self.vendor > 0 && (self.vendor as usize) > self.string_pool.len() {
+            return Err(SmbiosError::InvalidParameter);
+        }
+        if self.firmware_version > 0 && (self.firmware_version as usize) > self.string_pool.len() {
+            return Err(SmbiosError::InvalidParameter);
+        }
+        if self.firmware_release_date > 0 && (self.firmware_release_date as usize) > self.string_pool.len() {
+            return Err(SmbiosError::InvalidParameter);
+        }
+        
+        Ok(())
+    }
+    
+    fn string_pool(&self) -> &[String] {
+        &self.string_pool
+    }
+    
+    fn string_pool_mut(&mut self) -> &mut Vec<String> {
+        &mut self.string_pool
+    }
+}
+
+/// Type 1: System Information
+#[repr(C, packed)]
+pub struct Type1SystemInformation {
+    pub header: SmbiosTableHeader,
+    pub manufacturer: u8,         // String index
+    pub product_name: u8,         // String index
+    pub version: u8,              // String index
+    pub serial_number: u8,        // String index
+    pub uuid: [u8; 16],
+    pub wake_up_type: u8,
+    pub sku_number: u8,           // String index
+    pub family: u8,               // String index
+    
+    // Integrated string pool
+    pub string_pool: Vec<String>,
+}
+
+impl Type1SystemInformation {
+    pub fn new() -> Self {
+        Self {
+            header: SmbiosTableHeader {
+                record_type: 1,
+                length: 0, // Will be calculated
+                handle: SMBIOS_HANDLE_PI_RESERVED,
+            },
+            manufacturer: 1,
+            product_name: 2,
+            version: 3,
+            serial_number: 4,
+            uuid: [0; 16], // Should be set by implementation
+            wake_up_type: 0x06, // Power switch
+            sku_number: 5,
+            family: 6,
+            string_pool: vec![
+                "System Manufacturer".to_string(),
+                "System Product".to_string(),
+                "1.0".to_string(),
+                "SystemSerial123".to_string(),
+                "SystemSKU".to_string(),
+                "System Family".to_string(),
+            ],
+        }
+    }
+}
+
+// With the generic serializer, Type 1 becomes trivial to implement:
+impl_smbios_field_layout!(Type1SystemInformation,
+    manufacturer: u8,
+    product_name: u8,
+    version: u8,
+    serial_number: u8,
+    uuid: uuid,           // Special uuid type handles 16-byte arrays
+    wake_up_type: u8,
+    sku_number: u8,
+    family: u8,
+);
+
+impl SmbiosRecordStructure for Type1SystemInformation {
+    const RECORD_TYPE: u8 = 1;
+    
+    fn validate(&self) -> Result<(), SmbiosError> {
+        // Standard string validation (could even be provided by a derive macro)
+        for string in &self.string_pool {
+            if string.len() > SMBIOS_STRING_MAX_LENGTH {
+                return Err(SmbiosError::StringTooLong);
+            }
+            if string.contains('\0') {
+                return Err(SmbiosError::InvalidParameter);
+            }
+        }
+        Ok(())
+    }
+    
+    fn string_pool(&self) -> &[String] {
+        &self.string_pool
+    }
+    
+    fn string_pool_mut(&mut self) -> &mut Vec<String> {
+        &mut self.string_pool
+    }
+}
+
+/// Even Better: Derive Macro Approach
+/// 
+/// For maximum scalability, we could provide derive macros that generate 
+/// everything automatically:
+
+use smbios_derive::SmbiosRecord;
+
+#[derive(SmbiosRecord)]
+#[smbios(record_type = 2)]
+pub struct Type2BaseboardInformation {
+    pub manufacturer: u8,        // String index
+    pub product: u8,             // String index  
+    pub version: u8,             // String index
+    pub serial_number: u8,       // String index
+    pub asset_tag: u8,           // String index
+    pub feature_flags: u8,
+    pub location_in_chassis: u8, // String index
+    pub chassis_handle: u16,
+    pub board_type: u8,
+    pub contained_object_handles: u8,
+    
+    #[smbios(string_pool)]
+    pub strings: Vec<String>,
+}
+
+// The derive macro would automatically generate:
+// - impl SmbiosFieldLayout 
+// - impl SmbiosRecordStructure with proper RECORD_TYPE
+// - Standard validation for strings
+// - String pool accessors
+
+/// Type 3: System Enclosure - another example showing how simple it becomes
+#[derive(SmbiosRecord)] 
+#[smbios(record_type = 3)]
+pub struct Type3SystemEnclosure {
+    pub manufacturer: u8,         // String index
+    pub enclosure_type: u8,
+    pub version: u8,              // String index
+    pub serial_number: u8,        // String index
+    pub asset_tag_number: u8,     // String index
+    pub bootup_state: u8,
+    pub power_supply_state: u8,
+    pub thermal_state: u8,
+    pub security_status: u8,
+    pub oem_defined: u32,
+    pub height: u8,
+    pub number_of_power_cords: u8,
+    pub contained_element_count: u8,
+    pub contained_element_record_length: u8,
+    
+    #[smbios(string_pool)]
+    pub strings: Vec<String>,
+}
+
+// That's it! No manual serialization code needed.
+
+/// OEM Record becomes equally simple:
+#[derive(SmbiosRecord)]
+#[smbios(record_type = 0x80)]
+pub struct OemCustomRecord {
+    pub oem_field1: u32,
+    pub oem_field2: u16,
+    pub oem_string_ref: u8,       // String index
+    #[smbios(array_len = 8)]
+    pub reserved: [u8; 8],
+    
+    #[smbios(string_pool)]
+    pub strings: Vec<String>,
+}
+```
+
+### Enhanced Validation in Service Implementation
+
+With this approach, the service focuses on validation rather than complex type management:
+
+```rust
+impl SmbiosRecords for SmbiosManager {
+    fn add_from_bytes(
+        &mut self,
+        producer_handle: Option<Handle>,
+        record_data: &[u8],
+    ) -> Result<SmbiosHandle, SmbiosError> {
+        let _lock = self.lock.lock().unwrap();
+
+        // Enhanced validation as suggested in the comment
+        
+        // 1. Validate minimum size for header (at least 4 bytes)
+        if record_data.len() < core::mem::size_of::<SmbiosTableHeader>() {
+            return Err(SmbiosError::BufferTooSmall);
+        }
+
+        // 2. Parse and validate header
+        let header = unsafe {
+            &*(record_data.as_ptr() as *const SmbiosTableHeader)
+        };
+        
+        // 3. Validate header->length is <= (record_data.length - 2) for string pool
+        if (header.length as usize + 2) > record_data.len() {
+            return Err(SmbiosError::BufferTooSmall);
+        }
+        
+        // 4. Validate string pool area (from header.length to end of data)
+        let string_pool_start = header.length as usize;
+        let string_pool_area = &record_data[string_pool_start..];
+        
+        if string_pool_area.len() < 2 {
+            return Err(SmbiosError::InvalidParameter);
+        }
+        
+        // 5. Validate only single nulls in string pool (no embedded nulls except terminators)
+        let mut null_count = 0;
+        let mut in_string = false;
+        
+        for &byte in &string_pool_area[..string_pool_area.len()-1] { // Exclude final byte
+            if byte == 0 {
+                null_count += 1;
+                in_string = false;
+            } else {
+                // Reset null count when we see a non-null byte
+                if !in_string {
+                    null_count = 0;
+                    in_string = true;
+                }
+                
+                // Check for consecutive nulls (invalid except at the very end)
+                if null_count > 1 {
+                    return Err(SmbiosError::InvalidParameter);
+                }
+            }
+        }
+        
+        // 6. Validate double NULL at end of record_data
+        if !record_data.ends_with(&[0, 0]) {
+            return Err(SmbiosError::InvalidParameter);
+        }
+        
+        // If all validation passes, proceed with record addition
+        let smbios_handle = self.allocate_handle()?;
+        
+        let mut record_header = *header;
+        record_header.handle = smbios_handle;
+        
+        // Update the handle in the actual data
+        let mut data = record_data.to_vec();
+        let handle_bytes = smbios_handle.to_le_bytes();
+        data[2] = handle_bytes[0]; // Handle is at offset 2 in header
+        data[3] = handle_bytes[1];
+
+        let smbios_record = SmbiosRecord {
+            header: record_header,
+            producer_handle,
+            data,
+            string_count: Self::count_strings(&string_pool_area),
+            smbios32_table: true,
+            smbios64_table: true,
+        };
+
+        self.records.push(smbios_record);
+        Ok(smbios_handle)
+    }
+    
+    // Helper method to count strings in the string pool
+    fn count_strings(string_pool_area: &[u8]) -> usize {
+        if string_pool_area.len() < 2 {
+            return 0;
+        }
+        
+        let mut count = 0;
+        let mut in_string = false;
+        
+        // Don't count the final double-null
+        for &byte in &string_pool_area[..string_pool_area.len()-1] {
+            if byte == 0 {
+                if in_string {
+                    count += 1;
+                    in_string = false;
+                }
+            } else if !in_string {
+                in_string = true;
+            }
+        }
+        
+        count
+    }
+}
+```
+
+### Usage Examples
+
+#### Creating a Type 0 Record: Complete Example
+
+Here's a comprehensive example showing how a Type 0 (BIOS Information) record gets created step by step:
+
+```rust
+use patina_smbios::{SmbiosRecords, Type0PlatformFirmwareInformation, SmbiosRecordStructure};
+
+/// Configuration structure for BIOS information
+pub struct BiosConfig {
+    pub vendor: String,
+    pub firmware_version: String,
+    pub release_date: String,
+    pub major_release: u8,
+    pub minor_release: u8,
+    pub rom_size: u8,
+    pub characteristics: u64,
+}
+
+/// Step-by-step Type 0 record creation
+fn create_and_add_type0_record(
+    smbios_records: &mut dyn SmbiosRecords,
+    config: BiosConfig,
+) -> Result<SmbiosHandle, SmbiosError> {
+    
+    // Step 1: Create the basic structure with defaults
+    let mut bios_info = Type0PlatformFirmwareInformation::new();
+    
+    // Step 2: Customize the structure with your specific data
+    bios_info = bios_info
+        .with_vendor(config.vendor)?
+        .with_firmware_version(config.firmware_version)?
+        .with_release_date(config.release_date)?;
+    
+    // Step 3: Set additional fields directly
+    bios_info.system_bios_major_release = config.major_release;
+    bios_info.system_bios_minor_release = config.minor_release;
+    bios_info.firmware_rom_size = config.rom_size;
+    bios_info.characteristics = config.characteristics;
+    
+    // Step 4: Validate the structure
+    bios_info.validate()?;
+    
+    // Step 5: Convert to bytes (this is where the magic happens)
+    let record_bytes = bios_info.to_bytes();
+    
+    // Step 6: Add via the simple byte array interface
+    let handle = smbios_records.add_from_bytes(None, &record_bytes)?;
+    
+    log::info!("Created Type 0 record with handle: {}", handle);
+    log::debug!("Record size: {} bytes", record_bytes.len());
+    
+    Ok(handle)
+}
+
+/// Example usage in a component
+#[derive(IntoComponent)]
+struct BiosInfoComponent;
+
+impl BiosInfoComponent {
+    fn entry_point(
+        self,
+        smbios_records: Service<dyn SmbiosRecords>,
+    ) -> patina_sdk::error::Result<()> {
+        let bios_config = BiosConfig {
+            vendor: "Patina Firmware Corp".to_string(),
+            firmware_version: "v2.5.1-patina".to_string(),
+            release_date: "09/18/2025".to_string(),
+            major_release: 2,
+            minor_release: 5,
+            rom_size: 0x10, // 2MB (calculated as (size in KB / 64KB) - 1)
+            characteristics: 0x08 | 0x10, // PCI supported + PnP supported
+        };
+        
+        let handle = create_and_add_type0_record(&mut *smbios_records, bios_config)?;
+        
+        log::info!("Successfully installed BIOS Information record with handle: {}", handle);
+        Ok(())
+    }
+}
+```
+
+#### What Happens Under the Hood: Data Flow
+
+Let's trace through what happens when `to_bytes()` is called:
+
+```rust
+impl Type0PlatformFirmwareInformation {
+    // This method creates the actual byte array that gets sent to add_from_bytes()
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        
+        // Step 1: Calculate structured data size (everything except strings)
+        let structured_size = 
+            4 +    // SmbiosTableHeader (type, length, handle) 
+            1 +    // vendor (string index)
+            1 +    // firmware_version (string index) 
+            2 +    // bios_starting_address_segment
+            1 +    // firmware_release_date (string index)
+            1 +    // firmware_rom_size
+            8 +    // characteristics (u64)
+            1 +    // characteristics_ext1
+            1 +    // characteristics_ext2  
+            1 +    // system_bios_major_release
+            1 +    // system_bios_minor_release
+            1 +    // embedded_controller_major_release
+            1 +    // embedded_controller_minor_release
+            2;     // extended_bios_rom_size
+        // Total: 25 bytes of structured data
+        
+        // Step 2: Create header with correct length
+        let mut header = self.header;
+        header.length = structured_size as u8; // 25
+        header.record_type = 0; // Type 0
+        
+        // Step 3: Add header bytes [0x00, 0x19, 0xFE, 0xFF]
+        //   0x00 = Type 0
+        //   0x19 = Length (25 decimal)  
+        //   0xFE, 0xFF = Handle (SMBIOS_HANDLE_PI_RESERVED)
+        bytes.extend_from_slice(&[
+            header.record_type,
+            header.length, 
+            (header.handle & 0xFF) as u8,
+            ((header.handle >> 8) & 0xFF) as u8,
+        ]);
+        
+        // Step 4: Add structured data fields in SMBIOS spec order
+        bytes.push(self.vendor);                    // 0x01 (first string)
+        bytes.push(self.firmware_version);          // 0x02 (second string) 
+        bytes.extend_from_slice(&self.bios_starting_address_segment.to_le_bytes()); // 0x00, 0xE0
+        bytes.push(self.firmware_release_date);     // 0x03 (third string)
+        bytes.push(self.firmware_rom_size);         // 0x10
+        bytes.extend_from_slice(&self.characteristics.to_le_bytes()); // 8 bytes
+        bytes.push(self.characteristics_ext1);      // 0x01
+        bytes.push(self.characteristics_ext2);      // 0x00
+        bytes.push(self.system_bios_major_release); // 0x02
+        bytes.push(self.system_bios_minor_release); // 0x05
+        bytes.push(self.embedded_controller_major_release); // 0xFF
+        bytes.push(self.embedded_controller_minor_release); // 0xFF
+        bytes.extend_from_slice(&self.extended_bios_rom_size.to_le_bytes()); // 0x00, 0x00
+        
+        // Step 5: Add string pool
+        // Strings: ["Patina Firmware Corp", "v2.5.1-patina", "09/18/2025"]
+        for string in &self.string_pool {
+            if !string.is_empty() {
+                bytes.extend_from_slice(string.as_bytes());
+            }
+            bytes.push(0); // Null terminator for each string
+        }
+        bytes.push(0); // Double null terminator
+        
+        bytes
+    }
+}
+```
+
+#### Final Byte Array Structure
+
+For the example above, the final byte array would look like this:
+
+```text
+Offset | Bytes                           | Description
+-------|--------------------------------|------------------------
+0x00   | 00 19 FE FF                    | Header: Type=0, Len=25, Handle=0xFFFE
+0x04   | 01                             | Vendor string index (1st string)
+0x05   | 02                             | Version string index (2nd string)  
+0x06   | 00 E0                          | BIOS segment (0xE000)
+0x08   | 03                             | Release date string index (3rd string)
+0x09   | 10                             | ROM size (2MB)
+0x0A   | 18 00 00 00 00 00 00 00        | Characteristics (0x18 = PCI+PnP)
+0x12   | 01                             | Extension 1 (ACPI supported)
+0x13   | 00                             | Extension 2
+0x14   | 02                             | BIOS Major (2)
+0x15   | 05                             | BIOS Minor (5)  
+0x16   | FF                             | EC Major (not supported)
+0x17   | FF                             | EC Minor (not supported)
+0x18   | 00 00                          | Extended ROM size
+-------|--------------------------------|------------------------
+0x1A   | 50 61 74 69 6E 61 20 46 69... | "Patina Firmware Corp\0"
+       | 76 32 2E 35 2E 31 2D 70 61... | "v2.5.1-patina\0"  
+       | 30 39 2F 31 38 2F 32 30 32... | "09/18/2025\0"
+       | 00                             | Double null terminator
+```
+
+#### Validation During add_from_bytes()
+
+When this byte array is passed to `add_from_bytes()`, it performs the validation requested in the comment:
+
+```rust
+impl SmbiosManager {
+    fn add_from_bytes(&mut self, producer_handle: Option<Handle>, record_data: &[u8]) 
+        -> Result<SmbiosHandle, SmbiosError> {
+        
+        // 1. ✅ Check record_data is at least 4 bytes for header
+        if record_data.len() < 4 {
+            return Err(SmbiosError::BufferTooSmall);
+        }
+        
+        // 2. ✅ Parse header and validate length field
+        let header_length = record_data[1] as usize; // 25 in our example
+        if (header_length + 2) > record_data.len() {
+            return Err(SmbiosError::BufferTooSmall); 
+        }
+        
+        // 3. ✅ Check string pool area (from offset 25 to end)
+        let string_area = &record_data[header_length..];
+        
+        // 4. ✅ Validate only single nulls in string pool
+        let mut consecutive_nulls = 0;
+        for &byte in &string_area[..string_area.len()-1] {
+            if byte == 0 {
+                consecutive_nulls += 1;
+                if consecutive_nulls > 1 {
+                    return Err(SmbiosError::InvalidParameter);
+                }
+            } else {
+                consecutive_nulls = 0;
+            }
+        }
+        
+        // 5. ✅ Validate double NULL at end
+        if !record_data.ends_with(&[0, 0]) {
+            return Err(SmbiosError::InvalidParameter);
+        }
+        
+        // All validation passed - proceed with adding the record
+        // ...
+    }
+}
+```
+
+This approach gives you:
+
+- **Type safety** during construction (the struct prevents many errors)
+- **Flexibility** for OEMs to define custom structures  
+- **Comprehensive validation** at the service boundary
+- **Simple interface** (single `add_from_bytes` method)
+
+#### Adding a System Information Record
+
+```rust
+fn add_system_information(
+    smbios_records: &mut dyn SmbiosRecords,
+    config: &SystemConfig,
+) -> Result<SmbiosHandle, SmbiosError> {
+    let mut system_info = Type1SystemInformation::new();
+    
+    // Update string pool with actual system information
+    system_info.string_pool = vec![
+        config.manufacturer.clone(),
+        config.product_name.clone(), 
+        config.version.clone(),
+        config.serial_number.clone(),
+        config.sku_number.clone(),
+        config.family.clone(),
+    ];
+    
+    // Set UUID from configuration
+    system_info.uuid = config.system_uuid;
+    
+    system_info.validate()?;
+    let record_bytes = system_info.to_bytes();
+    smbios_records.add_from_bytes(None, &record_bytes)
+}
+```
+
+#### OEM Custom Record (Type 0x80-0xFE)
+
+```rust
+/// Example OEM-specific record structure
+#[repr(C, packed)]  
+pub struct OemCustomRecord {
+    pub header: SmbiosTableHeader,
+    pub oem_field1: u32,
+    pub oem_field2: u16, 
+    pub oem_string_ref: u8,     // String index
+    pub reserved: [u8; 8],
+    
+    pub string_pool: Vec<String>,
+}
+
+impl SmbiosRecordStructure for OemCustomRecord {
+    const RECORD_TYPE: u8 = 0x80; // OEM-specific type
+    
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        
+        let structured_size = core::mem::size_of::<SmbiosTableHeader>() +
+                             core::mem::size_of::<u32>() +     // oem_field1
+                             core::mem::size_of::<u16>() +     // oem_field2
+                             core::mem::size_of::<u8>() +      // oem_string_ref
+                             8; // reserved
+        
+        let mut header = self.header;
+        header.length = structured_size as u8;
+        header.record_type = Self::RECORD_TYPE;
+        
+        // Serialize header
+        let header_bytes = unsafe {
+            core::slice::from_raw_parts(
+                &header as *const _ as *const u8,
+                core::mem::size_of::<SmbiosTableHeader>(),
+            )
+        };
+        bytes.extend_from_slice(header_bytes);
+        
+        // Serialize fields
+        bytes.extend_from_slice(&self.oem_field1.to_le_bytes());
+        bytes.extend_from_slice(&self.oem_field2.to_le_bytes());
+        bytes.push(self.oem_string_ref);
+        bytes.extend_from_slice(&self.reserved);
+        
+        // Add string pool
+        if self.string_pool.is_empty() {
+            bytes.extend_from_slice(&[0, 0]);
+        } else {
+            for string in &self.string_pool {
+                if !string.is_empty() {
+                    bytes.extend_from_slice(string.as_bytes());
+                }
+                bytes.push(0);
+            }
+            bytes.push(0);
+        }
+        
+        bytes
+    }
+    
+    fn validate(&self) -> Result<(), SmbiosError> {
+        // OEM-specific validation
+        for string in &self.string_pool {
+            if string.len() > SMBIOS_STRING_MAX_LENGTH {
+                return Err(SmbiosError::StringTooLong);
+            }
+            if string.contains('\0') {
+                return Err(SmbiosError::InvalidParameter);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl OemCustomRecord {
+    pub fn new(oem_data: u32, description: String) -> Result<Self, SmbiosError> {
+        if description.len() > SMBIOS_STRING_MAX_LENGTH {
+            return Err(SmbiosError::StringTooLong);
+        }
+        
+        Ok(Self {
+            header: SmbiosTableHeader {
+                record_type: Self::RECORD_TYPE,
+                length: 0, // Will be calculated
+                handle: SMBIOS_HANDLE_PI_RESERVED,
+            },
+            oem_field1: oem_data,
+            oem_field2: 0x1234, // OEM-specific value
+            oem_string_ref: 1,   // First string
+            reserved: [0; 8],
+            string_pool: vec![description],
+        })
+    }
+}
+
+// Usage:
+fn add_oem_record(
+    smbios_records: &mut dyn SmbiosRecords
+) -> Result<SmbiosHandle, SmbiosError> {
+    let oem_record = OemCustomRecord::new(
+        0xDEADBEEF, 
+        "OEM Custom Data Record".to_string()
+    )?;
+    
+    oem_record.validate()?;
+    let bytes = oem_record.to_bytes();
+    smbios_records.add_from_bytes(None, &bytes)
+}
+```
+
+### Scalability Benefits of Generic Serialization
+
+#### Code Reduction Comparison
+
+| Approach | Lines of Code per Record Type | Maintenance Burden |
+|----------|------------------------------|-------------------|
+| **Custom to_bytes()** | ~80-120 lines | High - repetitive, error-prone |
+| **Generic + Macro** | ~15-25 lines | Low - declarative field layout |
+| **Derive Macro** | ~8-12 lines | Minimal - just struct definition |
+
+#### Performance Characteristics
+
+```rust
+// The generic serializer is zero-cost at runtime:
+// - Field layouts are computed at compile time
+// - No dynamic dispatch or reflection
+// - Unsafe code is isolated and well-tested
+// - Memory layout matches exactly what manual code would produce
+
+#[cfg(test)]
+mod benchmarks {
+    use super::*;
+    
+    #[bench]
+    fn bench_generic_serialization(b: &mut Bencher) {
+        let bios_info = Type0PlatformFirmwareInformation::new();
+        
+        b.iter(|| {
+            // This compiles to the same assembly as hand-written serialization
+            black_box(bios_info.to_bytes())
+        });
+    }
+    
+    #[bench] 
+    fn bench_validation(b: &mut Bencher) {
+        let record_bytes = create_test_type0_bytes();
+        
+        b.iter(|| {
+            // Validation is O(n) where n is record size, not number of types
+            black_box(validate_smbios_record(&record_bytes))
+        });
+    }
+}
+```
+
+#### Supporting 50+ Record Types
+
+With this approach, adding all standard SMBIOS types becomes manageable:
+
+```rust
+// Standard SMBIOS types become trivial to add:
+
+#[derive(SmbiosRecord)]
+#[smbios(record_type = 4)]
+pub struct Type4ProcessorInformation {
+    pub socket_designation: u8,      // String index
+    pub processor_type: u8,
+    pub processor_family: u8,
+    pub processor_manufacturer: u8,  // String index  
+    pub processor_id: u64,
+    pub processor_version: u8,       // String index
+    pub voltage: u8,
+    pub external_clock: u16,
+    pub max_speed: u16,
+    pub current_speed: u16,
+    pub status: u8,
+    pub processor_upgrade: u8,
+    pub l1_cache_handle: u16,
+    pub l2_cache_handle: u16,
+    pub l3_cache_handle: u16,
+    pub serial_number: u8,           // String index
+    pub asset_tag: u8,              // String index
+    pub part_number: u8,            // String index
+    pub core_count: u8,
+    pub core_enabled: u8,
+    pub thread_count: u8,
+    pub processor_characteristics: u16,
+    pub processor_family_2: u16,
+    pub core_count_2: u16,
+    pub core_enabled_2: u16,
+    pub thread_count_2: u16,
+    
+    #[smbios(string_pool)]
+    pub strings: Vec<String>,
+}
+
+// Memory Device (Type 17) - one of the most complex types
+#[derive(SmbiosRecord)]
+#[smbios(record_type = 17)]
+pub struct Type17MemoryDevice {
+    pub physical_memory_array_handle: u16,
+    pub memory_error_information_handle: u16,
+    pub total_width: u16,
+    pub data_width: u16,
+    pub size: u16,
+    pub form_factor: u8,
+    pub device_set: u8,
+    pub device_locator: u8,          // String index
+    pub bank_locator: u8,            // String index
+    pub memory_type: u8,
+    pub type_detail: u16,
+    pub speed: u16,
+    pub manufacturer: u8,            // String index
+    pub serial_number: u8,           // String index
+    pub asset_tag: u8,              // String index
+    pub part_number: u8,            // String index
+    pub attributes: u8,
+    pub extended_size: u32,
+    pub configured_memory_speed: u16,
+    pub minimum_voltage: u16,
+    pub maximum_voltage: u16,
+    pub configured_voltage: u16,
+    pub memory_technology: u8,
+    pub memory_operating_mode_capability: u16,
+    pub firmware_version: u8,        // String index
+    pub module_manufacturer_id: u16,
+    pub module_product_id: u16,
+    pub memory_subsystem_controller_manufacturer_id: u16,
+    pub memory_subsystem_controller_product_id: u16,
+    pub non_volatile_size: u64,
+    pub volatile_size: u64,
+    pub cache_size: u64,
+    pub logical_size: u64,
+    
+    #[smbios(string_pool)]
+    pub strings: Vec<String>,
+}
+
+// Even the most complex types require minimal code!
+```
+
+#### Factory Pattern for Dynamic Type Support
+
+```rust
+/// Registry of all supported SMBIOS record types
+pub struct SmbiosTypeRegistry;
+
+impl SmbiosTypeRegistry {
+    /// Create a record structure from type ID (useful for dynamic scenarios)
+    pub fn create_default_record(record_type: u8) -> Result<Box<dyn SmbiosRecordStructure>, SmbiosError> {
+        match record_type {
+            0 => Ok(Box::new(Type0PlatformFirmwareInformation::new())),
+            1 => Ok(Box::new(Type1SystemInformation::new())),
+            2 => Ok(Box::new(Type2BaseboardInformation::new())),
+            3 => Ok(Box::new(Type3SystemEnclosure::new())),
+            4 => Ok(Box::new(Type4ProcessorInformation::new())),
+            // ... all 50+ types
+            17 => Ok(Box::new(Type17MemoryDevice::new())),
+            0x80..=0xFE => Err(SmbiosError::UnsupportedRecordType), // OEM-specific, must be created explicitly
+            _ => Err(SmbiosError::UnsupportedRecordType),
+        }
+    }
+    
+    /// Validate any record type generically
+    pub fn validate_record_bytes(record_bytes: &[u8]) -> Result<(), SmbiosError> {
+        if record_bytes.len() < 4 {
+            return Err(SmbiosError::BufferTooSmall);
+        }
+        
+        let record_type = record_bytes[0];
+        let header_length = record_bytes[1] as usize;
+        
+        // Generic validation works for all types!
+        SmbiosSerializer::validate_generic_record(record_bytes, record_type, header_length)
+    }
+}
+```
+
+### Benefits of This Scalable Alternative Approach
+
+1. **Massive Code Reduction**: 80+ lines per type → 8-12 lines per type
+2. **Consistency**: All types serialized identically, no per-type bugs
+3. **Maintainability**: Adding new SMBIOS spec versions requires minimal changes
+4. **Performance**: Zero-cost abstractions, identical assembly to manual code
+5. **Type Safety**: Compile-time field layout verification
+6. **OEM Extensibility**: Same simple pattern works for custom record types
+7. **Testing**: Generic serializer can be thoroughly tested once vs. 50+ custom implementations
+
+### Comparison with Versioned Typed Interfaces
+
+| Aspect | Sized Structures + Byte Arrays | Versioned Typed Interfaces |
+|--------|--------------------------------|----------------------------|
+| **API Complexity** | Simple, single method | More complex trait system |
+| **Version Handling** | Manual, per-structure | Automatic, built-in |
+| **OEM Extensibility** | Excellent, clear pattern | Good, but more complex |
+| **Validation** | Explicit, comprehensive | Implicit in parsing |
+| **Forward Compatibility** | Manual handling required | Automatic preservation |
+| **Learning Curve** | Gentle, familiar patterns | Steeper, more abstractions |
+
+Both approaches have merit, and the choice depends on whether the implementation prioritizes simplicity
+and explicit control (sized structures + byte arrays) or automatic version handling and forward compatibility
+(versioned typed interfaces).
+
 ## Unresolved Questions
 
-- Should we provide typed interfaces for specific SMBIOS record types (Type 0, Type 1, etc.)?
+No remaining unresolved questions.
 
 ## Prior Art (Existing PI C Implementation)
 
@@ -915,7 +2545,10 @@ The service automatically handles:
 
 ### BIOS Information Example (Type 0)
 
-Below is an example of creating and installing a BIOS Information (Type 0) SMBIOS record:
+Below is an example of creating and installing a BIOS Information (Type 0) SMBIOS record using both the
+traditional byte-based approach and the new versioned typed record interface:
+
+#### Traditional Byte-Based Approach
 
 ```rust
 use std::mem::size_of;
@@ -956,12 +2589,171 @@ impl SmbiosBiosInfoManager {
             )?
         };
 
-        // Use the safe add_from_bytes method instead
+        // Use the safe add_from_bytes method
         let handle = smbios_records.add_from_bytes(None, &record_data)?;
 
         log::info!("Added BIOS Information record with handle: {}", handle);
         Ok(())
     }
+}
+```
+
+#### Versioned Typed Record Approach (Recommended)
+
+```rust
+#[derive(IntoComponent)]
+struct SmbiosVersionedBiosInfoManager;
+
+impl SmbiosVersionedBiosInfoManager {
+    fn entry_point(
+        self,
+        config: Config<BiosInfoConfig>,
+        smbios_records: Service<dyn SmbiosRecords>,
+    ) -> patina_sdk::error::Result<()> {
+        // Create a version-appropriate BIOS Information record
+        let smbios_version = smbios_records.version();
+        let mut bios_info = BiosInformation::new_for_version(smbios_version);
+        
+        // Set configuration values based on spec version capabilities
+        if smbios_version >= (2, 4) {
+            bios_info.major_release = Some(config.major_release);
+            bios_info.minor_release = Some(config.minor_release);
+        }
+        
+        // Use the typed record interface
+        let handle = smbios_records.add_typed_record(None, &bios_info)?;
+
+        log::info!(
+            "Added BIOS Information record (SMBIOS {}.{}) with handle: {}", 
+            smbios_version.0, 
+            smbios_version.1,
+            handle
+        );
+        
+        // Demonstrate reading back the typed record
+        let retrieved_bios_info: BiosInformation = 
+            smbios_records.get_typed_record(handle)?;
+        
+        log::info!(
+            "Retrieved BIOS info - parsed version: {}.{}, has extended fields: {}",
+            retrieved_bios_info.parsed_version().0,
+            retrieved_bios_info.parsed_version().1,
+            retrieved_bios_info.major_release.is_some()
+        );
+
+        Ok(())
+    }
+}
+
+/// Example of handling version compatibility scenarios
+impl SmbiosVersionedBiosInfoManager {
+    /// Demonstrate forward compatibility: newer record format on older implementation
+    fn handle_forward_compatibility_example(
+        &self,
+        smbios_records: &dyn SmbiosRecords,
+    ) -> Result<(), SmbiosError> {
+        // Simulate receiving a SMBIOS 3.2 Type 0 record with unknown fields
+        let future_bios_data = vec![
+            // Standard SMBIOS 3.0 fields
+            0x00, 0x20, 0x01, 0x00,  // Header: Type 0, Length 32, Handle 1
+            0x01, 0x02, 0x00, 0xE0,  // Vendor, Version, Segment
+            0x03, 0x0F,              // Date, Size
+            0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Characteristics
+            0x01, 0x00,              // Extension bytes
+            0x01, 0x00,              // Major/Minor release
+            0xFF, 0xFF,              // EC releases
+            0x00, 0x00,              // Extended BIOS size
+            // Future fields our implementation doesn't recognize
+            0xAB, 0xCD, 0xEF, 0x12,
+        ];
+        
+        // Our implementation can safely parse this
+        let current_version = smbios_records.version();
+        let bios_info = BiosInformation::from_bytes(&future_bios_data, current_version)?;
+        
+        // Known fields are accessible
+        assert_eq!(bios_info.vendor, 1);
+        assert_eq!(bios_info.major_release, Some(1));
+        
+        // Unknown data is preserved
+        assert_eq!(bios_info.unknown_data, vec![0xAB, 0xCD, 0xEF, 0x12]);
+        
+        // When we convert back to bytes, future fields are preserved
+        let preserved_bytes = bios_info.to_bytes();
+        let handle = smbios_records.add_from_bytes(None, &preserved_bytes)?;
+        
+        log::info!("Successfully handled future SMBIOS record format with handle: {}", handle);
+        Ok(())
+    }
+    
+    /// Demonstrate backward compatibility: older record on newer implementation  
+    fn handle_backward_compatibility_example(
+        &self,
+        smbios_records: &dyn SmbiosRecords,
+    ) -> Result<(), SmbiosError> {
+        // Simulate an old SMBIOS 2.0 Type 0 record (minimal fields)
+        let legacy_bios_data = vec![
+            0x00, 0x12, 0x01, 0x00,  // Header: Type 0, Length 18, Handle 1
+            0x01, 0x02, 0x00, 0xE0,  // Vendor, Version, Segment
+            0x03, 0x0F,              // Date, Size
+            0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Characteristics
+            // No extended fields (pre-SMBIOS 2.4)
+        ];
+        
+        // Parse as SMBIOS 2.0 format
+        let bios_info = BiosInformation::from_bytes(&legacy_bios_data, (2, 0))?;
+        
+        // Extended fields should be None for older format
+        assert_eq!(bios_info.major_release, None);
+        assert_eq!(bios_info.characteristics_ext1, None);
+        
+        // But we can still work with the record
+        let handle = smbios_records.add_typed_record(None, &bios_info)?;
+        
+        log::info!("Successfully handled legacy SMBIOS 2.0 record with handle: {}", handle);
+        Ok(())
+    }
+}
+```
+
+#### Iteration Over Typed Records
+
+```rust
+/// Example of iterating over typed BIOS Information records
+fn enumerate_bios_info_records(
+    smbios_records: &dyn SmbiosRecords
+) -> Result<(), SmbiosError> {
+    log::info!("Enumerating all BIOS Information records:");
+    
+    for (index, result) in smbios_records.iter_typed_records::<BiosInformation>().enumerate() {
+        match result {
+            Ok(bios_info) => {
+                log::info!(
+                    "  BIOS Info #{}: Parsed as SMBIOS {}.{}, Vendor string index: {}",
+                    index,
+                    bios_info.parsed_version().0,
+                    bios_info.parsed_version().1,
+                    bios_info.vendor
+                );
+                
+                if let Some(major) = bios_info.major_release {
+                    log::info!("    BIOS Release: {}.{}", 
+                              major, 
+                              bios_info.minor_release.unwrap_or(0));
+                }
+                
+                if !bios_info.unknown_data.is_empty() {
+                    log::info!("    Contains {} bytes of future/unknown data", 
+                              bios_info.unknown_data.len());
+                }
+            }
+            Err(e) => {
+                log::error!("  Failed to parse BIOS Info record #{}: {:?}", index, e);
+            }
+        }
+    }
+    
+    Ok(())
 }
 
 #[derive(IntoComponent)]
