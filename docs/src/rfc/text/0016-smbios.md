@@ -14,6 +14,8 @@ integration for components.
 - 2025-07-28: Initial RFC created.
 - 2025-09-16: Updated `add` method signature to return handle and marked unsafe to address memory safety concerns.
   Added safe `add_from_bytes` alternative.
+- 2025-09-18: Revised to support only SMBIOS 3.0+ with 64-bit entry point structures for improved UEFI compatibility
+  and simplified architecture. Removed 32-bit format support and related API complexity.
 
 ## Motivation
 
@@ -43,8 +45,15 @@ to convey system hardware configuration information to the operating system.
 This information is organized into a set of structured tables containing details about
 the system's hardware components, configuration, and capabilities.
 
-SMBIOS supports both 32-bit (SMBIOS 2.x) and 64-bit (SMBIOS 3.x) table formats,
-with different size limitations and entry point structures.
+This implementation supports SMBIOS 3.0+ which uses 64-bit entry point structures,
+allowing the UEFI configuration table to point to entry point structures anywhere in
+addressable space and enabling all structures to reside in memory above 4GB.
+This differs from SMBIOS 2.x which required entry point structures to be paragraph
+aligned in Segment 0xF000 (below 1MB) with structure arrays limited to RAM below 4GB.
+
+Since SMBIOS 3.0 is designed specifically to support UEFI environments and can be
+configured to support legacy constraints when needed, this implementation focuses
+exclusively on SMBIOS 3.0+ to provide the most robust and future-compatible solution.
 
 For more information on the format and arrangement of these tables,
 see the SMBIOS specification and the UEFI specification on SMBIOS protocols.
@@ -65,8 +74,37 @@ Create an idiomatic Rust API for SMBIOS-related protocols (*see [Motivation - Sc
 1. The API should provide all necessary SMBIOS functionality as a service to components
 2. The API should utilize Rust best practices, particularly memory safety and error handling
 3. The SMBIOS service should produce protocols equivalent to the current C implementations, preserving existing C functionality
-4. Support both SMBIOS 2.x (32-bit) and SMBIOS 3.x (64-bit) table formats
+4. Support SMBIOS 3.0+ (64-bit) table format exclusively for maximum UEFI compatibility and future-proofing
 5. Provide safe string manipulation for SMBIOS records
+
+## Rationale for SMBIOS 3.0+ Only Support
+
+This implementation supports exclusively SMBIOS version 3.0 and later for the following reasons:
+
+**UEFI Compatibility**: SMBIOS 3.0+ was specifically designed to support UEFI environments. The 64-bit entry
+point structure allows the UEFI configuration table to point to entry point structures anywhere in addressable
+memory space, removing the constraints of legacy BIOS environments.
+
+**Memory Layout Flexibility**: Unlike SMBIOS 2.x which requires:
+
+- Entry point structures to be paragraph-aligned in Segment 0xF000 (below 1MB)
+- Structure arrays limited to RAM below 4GB
+
+SMBIOS 3.0+ enables:
+
+- Entry point structures anywhere in addressable space
+- All structures to reside in memory above 4GB
+- Full utilization of modern system memory layouts
+
+**Backward Compatibility**: SMBIOS 3.0 can be configured to support the 1MB and 4GB constraints when required
+for legacy compatibility, making it a superset of SMBIOS 2.x capabilities.
+
+**Future-Proofing**: By focusing on the modern specification, this implementation avoids the complexity of
+supporting multiple entry point formats while providing the most robust foundation for future enhancements.
+
+**Simplified Architecture**: Supporting only the 64-bit entry point structure eliminates the need for dual
+code paths and reduces the potential for format-specific bugs, resulting in a cleaner and more maintainable
+implementation.
 
 ## Memory Safety Considerations
 
@@ -104,120 +142,37 @@ record_bytes.extend_from_slice(&structured_data_bytes);
 let handle = smbios.add_from_bytes(None, &record_bytes)?;
 ```
 
-## Unresolved Questions
+## Design Decisions
 
-Should the API expose separate interfaces for 32-bit and 64-bit SMBIOS tables, or handle this internally?
-Summary: Prefer a unified public API that handles 32/64 internally, plus an opt-in low-level escape hatch for experts.
+### SMBIOS Version Support
 
-Separate interfaces (explicit 32-bit and 64-bit APIs)
+**Decision**: Support only SMBIOS 3.0+ with 64-bit entry point structures.
 
-Pros:
+**Rationale**: SMBIOS 3.0+ was designed specifically for UEFI environments and provides superior memory layout
+flexibility while maintaining backward compatibility through configuration. This eliminates the complexity of dual
+format support while providing the most robust foundation for modern firmware implementations.
 
-- Strong correctness and clarity: callers pick the exact format.
-- Compile-time signal for address sizes and layout differences.
-- Easier format-specific validation and optimizations.
-- Good for low-level tooling that needs precise control.
-
-Cons:
-
-- Larger, duplicated API surface; more to maintain and test.
-- Forces agnostic consumers to write wrappers or choose formats.
-- Encourages fragmented code paths and potential divergence.
-- Harder to support mixed (publish both) scenarios.
-
-Unified API that handles 32/64 internally
-
-Pros:
-
-- Ergonomic: most users don’t need to care about table width.
-- Simpler docs and adoption; fewer call-site code paths.
-- Stable logical model with internal format translation.
-- Easier to evolve for future SMBIOS updates.
-
-Cons:
-
-- More internal complexity and runtime branching.
-- Advanced users lose direct control without escape hatches.
-- Version-specific constraints can be hidden/surprising.
-- Requires thorough tests to catch format-specific bugs.
-
-Recommendation
-
-Patina exposes a single, ergonomic SMBIOS API that's format-agnostic by default. The SmbiosRecords service lets
-components add, update, remove, and enumerate records without choosing between SMBIOS 2.x (32-bit) and 3.x (64-bit).
-
-The service selects and publishes the appropriate tables per platform and policy. For advanced firmware tooling, an
-opt-in "raw" module provides explicit 32/64 entry-point construction and publishing primitives, so experts retain
-full control when needed.
-
-Tiny API sketch
+**Impact**: The API provides a unified interface without the need for format-specific code paths or version
+selection. All records use the modern 64-bit addressing model, simplifying both implementation and usage.
 
 ```rust
-  /// Optional hint when you need to force a target format.
-  #[derive(Copy, Clone, Debug)]
-  pub enum SmbiosTarget {
-      Auto,     // default: publish per platform policy (may publish both)
-      Force32,  // SMBIOS 2.x entry point and table
-      Force64,  // SMBIOS 3.x entry point and table
-  }
-
-  pub trait SmbiosRecordsExt: SmbiosRecords {
-      /// Same as `add`, but allows callers to influence the target format.
-      ///
-      /// # Safety
-      /// 
-      /// This method is unsafe for the same reasons as `add` - it assumes that `record`
-      /// points to a complete SMBIOS record structure with valid memory following it.
-      unsafe fn add_with_target(
-          &mut self,
-          producer_handle: Option<Handle>,
-          record: &SmbiosTableHeader,
-          target: SmbiosTarget,
-      ) -> Result<SmbiosHandle, SmbiosError>;
-  }
-
-// Public, ergonomic usage (format-agnostic by default)
-fn produce_record(smbios: &mut dyn SmbiosRecords) -> Result<(), SmbiosError> {
-    let record = SmbiosTableHeader {
-        record_type: 0,
-        length: core::mem::size_of::<SmbiosTableHeader>() as u8,
-        handle: SMBIOS_HANDLE_PI_RESERVED,
-    };
-
-    // Unsafe path (requires complete record in memory)
-    // SAFETY: record must point to a complete SMBIOS record structure
-    let handle = unsafe { smbios.add(None, &record)? };
-    
-    // Safe alternative using byte slice
-    // let record_bytes = &[/* complete SMBIOS record data */];
-    // let handle = smbios.add_from_bytes(None, record_bytes)?;
-
-    // Advanced path (explicit control via extension)
-    // let handle = unsafe { smbios.add_with_target(None, &record, SmbiosTarget::Force64)? };
-    Ok(())
-}
-
-// Advanced, low-level escape hatch
+// Advanced, low-level escape hatch for expert users
 pub mod smbios {
     pub mod raw {
         #[repr(C, packed)]
-        pub struct SmbiosEntryPoint32 { /* _SM_, checksums, 32-bit table addr, etc. */ }
-        #[repr(C, packed)]
         pub struct SmbiosEntryPoint64 { /* _SM3_, checksums, 64-bit table addr, etc. */ }
-
-        /// Build a 32-bit SMBIOS entry-point from a serialized table buffer.
-        pub fn build_entry_point32(_table: &[u8]) -> SmbiosEntryPoint32 { unimplemented!() }
 
         /// Build a 64-bit SMBIOS entry-point from a serialized table buffer.
         pub fn build_entry_point64(_table: &[u8]) -> SmbiosEntryPoint64 { unimplemented!() }
 
-        /// Publish entry-points to the system configuration table (unsafe by nature).
-        pub unsafe fn install_config_table_32(_ep: &SmbiosEntryPoint32) -> Result<(), ()> { unimplemented!() }
+        /// Publish entry-point to the system configuration table (unsafe by nature).
         pub unsafe fn install_config_table_64(_ep: &SmbiosEntryPoint64) -> Result<(), ()> { unimplemented!() }
     }
 }
-- Is there value in exposing lower-level table construction functionality to advanced users?
-- Should we provide typed interfaces for specific SMBIOS record types (Type 0, Type 1, etc.)?
+```
+
+## Unresolved Questions
+
 - Is there value in exposing lower-level table construction functionality to advanced users?
 - Should we provide typed interfaces for specific SMBIOS record types (Type 0, Type 1, etc.)?
 
@@ -916,7 +871,7 @@ The service automatically handles:
 - SMBIOS table construction and checksums
 - Handle allocation and deduplication
 - String parsing and validation
-- Memory management for both 32-bit and 64-bit tables
+- Memory management for 64-bit SMBIOS 3.0+ tables
 - Installation of system configuration tables
 
 ### BIOS Information Example (Type 0)
