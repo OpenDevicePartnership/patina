@@ -1173,7 +1173,7 @@ impl SmbiosRecords for SmbiosManager {
             return Err(SmbiosError::BufferTooSmall);
         }
         
-        // 4. Validate string pool area (from header.length to end of data)
+        // 4. Validate and count strings in a single efficient pass
         let string_pool_start = header.length as usize;
         let string_pool_area = &record_data[string_pool_start..];
         
@@ -1181,32 +1181,8 @@ impl SmbiosRecords for SmbiosManager {
             return Err(SmbiosError::InvalidParameter);
         }
         
-        // 5. Validate only single nulls in string pool (no embedded nulls except terminators)
-        let mut null_count = 0;
-        let mut in_string = false;
-        
-        for &byte in &string_pool_area[..string_pool_area.len()-1] { // Exclude final byte
-            if byte == 0 {
-                null_count += 1;
-                in_string = false;
-            } else {
-                // Reset null count when we see a non-null byte
-                if !in_string {
-                    null_count = 0;
-                    in_string = true;
-                }
-                
-                // Check for consecutive nulls (invalid except at the very end)
-                if null_count > 1 {
-                    return Err(SmbiosError::InvalidParameter);
-                }
-            }
-        }
-        
-        // 6. Validate double NULL at end of record_data
-        if !record_data.ends_with(&[0, 0]) {
-            return Err(SmbiosError::InvalidParameter);
-        }
+        // 5. Validate string pool format and count strings in one pass
+        let string_count = Self::validate_and_count_strings(string_pool_area)?;
         
         // If all validation passes, proceed with record addition
         let smbios_handle = self.allocate_handle()?;
@@ -1224,7 +1200,7 @@ impl SmbiosRecords for SmbiosManager {
             header: record_header,
             producer_handle,
             data,
-            string_count: Self::count_strings(&string_pool_area),
+            string_count,
             smbios32_table: true,
             smbios64_table: true,
         };
@@ -1233,28 +1209,46 @@ impl SmbiosRecords for SmbiosManager {
         Ok(smbios_handle)
     }
     
-    // Helper method to count strings in the string pool
-    fn count_strings(string_pool_area: &[u8]) -> usize {
-        if string_pool_area.len() < 2 {
-            return 0;
+    /// Efficiently validate string pool format and count strings in a single pass
+    /// This combines validation and counting for better performance
+    fn validate_and_count_strings(string_pool_area: &[u8]) -> Result<usize, SmbiosError> {
+        let len = string_pool_area.len();
+        
+        // Must end with double null
+        if len < 2 || string_pool_area[len - 1] != 0 || string_pool_area[len - 2] != 0 {
+            return Err(SmbiosError::InvalidParameter);
+        }
+        
+        // Handle empty string pool (just double null)
+        if len == 2 {
+            return Ok(0);
         }
         
         let mut count = 0;
-        let mut in_string = false;
+        let mut i = 0;
+        let data_end = len - 2; // Exclude the final double-null
         
-        // Don't count the final double-null
-        for &byte in &string_pool_area[..string_pool_area.len()-1] {
-            if byte == 0 {
-                if in_string {
-                    count += 1;
-                    in_string = false;
-                }
-            } else if !in_string {
-                in_string = true;
+        while i < data_end {
+            let start = i;
+            
+            // Find the next null terminator (end of current string)
+            while i < data_end && string_pool_area[i] != 0 {
+                i += 1;
             }
+            
+            // If we found content before the null, it's a valid string
+            if i > start {
+                count += 1;
+            } else if i == start {
+                // Found null at start position = consecutive nulls (invalid)
+                return Err(SmbiosError::InvalidParameter);
+            }
+            
+            // Move past the null terminator
+            i += 1;
         }
         
-        count
+        Ok(count)
     }
 }
 ```
