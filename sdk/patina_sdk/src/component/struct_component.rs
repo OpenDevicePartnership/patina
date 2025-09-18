@@ -89,7 +89,12 @@ where
 
         let param_value = unsafe { Func::Param::get_param(param_state, storage) };
 
-        self.func.run(self.input.take().unwrap(), param_value).map(|_| true)
+        debug_assert!(
+            self.input.is_some(),
+            "{} `input` is `None` during run. Did this component already run?",
+            core::any::type_name::<Self>()
+        );
+        self.func.run(&mut self.input, param_value).map(|_| true)
     }
 
     /// Returns the metadata of the Component.
@@ -230,5 +235,56 @@ mod tests {
     fn test_generic_struct_with_where_clause_can_be_component() {
         let test_struct = GenericStruct2 { _x: 5 };
         let _ = test_struct.into_component();
+    }
+
+    #[test]
+    /// A test that will stop compiling if we lose the ability to take self by value (self).
+    fn test_component_entry_point_that_take_by_value_works() {
+        #[derive(patina_sdk::component::IntoComponent)]
+        struct ByValue {
+            _x: u32,
+        }
+
+        impl ByValue {
+            fn entry_point(self, _cfg: Config<u32>) -> patina_sdk::error::Result<()> {
+                Ok(())
+            }
+        }
+
+        let _ = ByValue { _x: 5 }.into_component();
+    }
+
+    #[test]
+    /// A test that will stop compiling if we lose the ability to take self by ref (&self).
+    fn test_component_entry_point_that_take_by_ref_works() {
+        #[derive(patina_sdk::component::IntoComponent)]
+        struct ByRef {
+            _x: u32,
+        }
+
+        impl ByRef {
+            fn entry_point(&self, _cfg: Config<u32>) -> patina_sdk::error::Result<()> {
+                Ok(())
+            }
+        }
+
+        let _ = ByRef { _x: 5 }.into_component();
+    }
+
+    #[test]
+    /// A test that will stop compiling if we lose the ability to take self by ref (&mut self).
+    fn test_component_entry_point_that_take_by_mut_works() {
+        #[derive(patina_sdk::component::IntoComponent)]
+        struct ByMut {
+            _x: u32,
+        }
+
+        impl ByMut {
+            fn entry_point(&mut self, _cfg: Config<u32>) -> patina_sdk::error::Result<()> {
+                Ok(())
+            }
+        }
+
+        let _ = ByMut { _x: 5 }.into_component();
     }
 }
