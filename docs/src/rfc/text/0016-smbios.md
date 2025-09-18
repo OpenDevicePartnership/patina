@@ -2059,7 +2059,7 @@ A `SmbiosManager` struct provides the core SMBIOS functionality and maintains th
 ```rust
 pub struct SmbiosManager {
     records: Vec<SmbiosRecord>,
-    allocated_handles: HashSet<SmbiosHandle>,
+    next_handle: SmbiosHandle,
     major_version: u8,
     minor_version: u8,
     entry_point_32: Option<Box<SmbiosEntryPoint>>,
@@ -2073,7 +2073,7 @@ impl SmbiosManager {
     pub fn new(major_version: u8, minor_version: u8) -> Self {
         Self {
             records: Vec::new(),
-            allocated_handles: HashSet::new(),
+            next_handle: 1,
             major_version,
             minor_version,
             entry_point_32: None,
@@ -2082,6 +2082,15 @@ impl SmbiosManager {
             table_64_address: None,
             lock: Mutex::new(()),
         }
+    }
+    
+    /// Check if a handle is already in use by scanning the records Vec.
+    /// 
+    /// This approach eliminates the need for a separate HashSet, reducing memory
+    /// overhead and implementation complexity. Since SMBIOS typically has a small
+    /// number of records (usually < 100), the O(n) scan is acceptable.
+    fn is_handle_allocated(&self, handle: SmbiosHandle) -> bool {
+        self.records.iter().any(|r| r.header.handle == handle)
     }
 
     fn validate_string(s: &str) -> Result<(), SmbiosError> {
@@ -2135,17 +2144,37 @@ impl SmbiosManager {
         Ok(record)
     }
 
+    /// Allocates a unique SMBIOS handle using a pure counter-based approach.
+    ///
+    /// Performance characteristics:
+    /// - O(1) average case when handles are allocated sequentially
+    /// - O(n) average case when handles are sparse, where n = number of records
+    /// - O(n²) worst case when handle space is nearly full
+    /// 
+    /// The algorithm uses a simple counter (`next_handle`) that tracks the likely
+    /// next available handle. When a collision occurs, it searches the records Vec
+    /// to find the next available handle, eliminating the need for a separate HashSet.
     fn allocate_handle(&mut self) -> Result<SmbiosHandle, SmbiosError> {
-        for handle in 1..0xFF00 {
-
-            if !self.allocated_handles.contains(&handle) {
-                self.allocated_handles.insert(handle);
+        let start_handle = self.next_handle;
+        
+        // Try sequential allocation first (O(1) in common case)
+        for offset in 0..0xFEFF {
+            // Calculate handle with wraparound: 1-based, wraps from 0xFEFF to 1
+            let handle = if start_handle + offset >= 0xFF00 {
+                (start_handle + offset) - 0xFEFF + 1
+            } else {
+                start_handle + offset
+            };
+            
+            // Check if handle is already in use
+            if !self.is_handle_allocated(handle) {
+                // Update next_handle for next allocation
+                self.next_handle = if handle >= 0xFEFF { 1 } else { handle + 1 };
                 return Ok(handle);
             }
         }
-
+        
         Err(SmbiosError::OutOfResources)
-
     }
 
     fn install_configuration_table(&self) -> Result<(), SmbiosError> {
@@ -2311,7 +2340,13 @@ impl SmbiosRecords for SmbiosManager {
             .ok_or(SmbiosError::NotFound)?;
 
         self.records.remove(pos);
-        self.allocated_handles.remove(&smbios_handle);
+        
+        // Optimization: if we removed a handle lower than next_handle, 
+        // we can potentially reuse it sooner by updating next_handle
+        if smbios_handle < self.next_handle {
+            self.next_handle = smbios_handle;
+        }
+        
         Ok(())
     }
 
