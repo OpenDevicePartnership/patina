@@ -15,7 +15,8 @@ integration for components.
 - 2025-09-16: Updated `add` method signature to return handle and marked unsafe to address memory safety concerns.
   Added safe `add_from_bytes` alternative.
 - 2025-09-18: Revised to support only SMBIOS 3.0+ with 64-bit entry point structures for improved UEFI compatibility
-  and simplified architecture. Removed 32-bit format support and related API complexity.
+  and simplified architecture. Removed 32-bit format support and related API complexity. Removed low-level construction
+  functionality based on security feedback to ensure specification compliance and prevent malformed SMBIOS structures.
 
 ## Motivation
 
@@ -108,34 +109,46 @@ implementation.
 
 ## Memory Safety Considerations
 
-Some methods in this API are marked as `unsafe` because they work with raw pointers and make assumptions about memory layout:
+**Security-First Approach**: This implementation prioritizes memory safety and specification compliance. While some
+methods are marked as `unsafe` to maintain compatibility with existing UEFI protocols, **the safe alternatives should be
+strongly preferred** for all new implementations.
+
+### Unsafe Methods (Use with Extreme Caution)
+
+The following methods are provided only for compatibility with existing UEFI protocol patterns:
 
 - **`add()`**: Takes a `&SmbiosTableHeader` but assumes it points to a complete SMBIOS record with the structured data
   following the header in memory. This is dangerous because a caller could pass just a header struct without the actual
-  record data, leading to buffer overruns.
+  record data, leading to buffer overruns and potential security vulnerabilities.
 
 - **`build_record_with_strings()`**: Similar issue - assumes the header parameter points to the complete structured
   portion of the record.
 
-**Safe alternatives:**
+### Recommended Safe Alternatives
 
-- **`add_from_bytes()`**: Takes the complete record as a byte slice, avoiding unsafe pointer arithmetic
-- Create the complete record data as a byte vector before passing to the API
+**Always prefer these methods for new code:**
 
-**Example of unsafe usage that could cause memory corruption:**
+- **`add_from_bytes()`**: Takes the complete record as a byte slice, avoiding unsafe pointer arithmetic and ensuring
+  specification compliance
+- Create complete record data as validated byte vectors before passing to the API
+- Use structured builders that validate SMBIOS record format during construction
+
+### Security Impact of Unsafe Usage
+
+**Example of unsafe usage that could cause memory corruption and security vulnerabilities:**
 
 ```rust
 // DANGEROUS: This only creates a header, not a complete record
 let bogus_header = SmbiosTableHeader { length: 0x1234, /* other fields */ };
 let record_data = unsafe { 
     SmbiosManager::build_record_with_strings(&bogus_header, strings) 
-}; // This will read beyond the header, potentially corrupting memory
+}; // This will read beyond the header, potentially corrupting memory and compromising system security
 ```
 
-**Safe alternative:**
+### Recommended Safe Pattern
 
 ```rust
-// SAFE: Create complete record as bytes first
+// SAFE: Create complete record as validated bytes first
 let mut record_bytes = Vec::new();
 record_bytes.extend_from_slice(&header_bytes);
 record_bytes.extend_from_slice(&structured_data_bytes);
@@ -155,25 +168,41 @@ format support while providing the most robust foundation for modern firmware im
 **Impact**: The API provides a unified interface without the need for format-specific code paths or version
 selection. All records use the modern 64-bit addressing model, simplifying both implementation and usage.
 
-```rust
-// Advanced, low-level escape hatch for expert users
-pub mod smbios {
-    pub mod raw {
-        #[repr(C, packed)]
-        pub struct SmbiosEntryPoint64 { /* _SM3_, checksums, 64-bit table addr, etc. */ }
+### No Low-Level Construction Access
 
-        /// Build a 64-bit SMBIOS entry-point from a serialized table buffer.
-        pub fn build_entry_point64(_table: &[u8]) -> SmbiosEntryPoint64 { unimplemented!() }
+**Decision**: This implementation will NOT expose lower-level table construction functionality to advanced users.
 
-        /// Publish entry-point to the system configuration table (unsafe by nature).
-        pub unsafe fn install_config_table_64(_ep: &SmbiosEntryPoint64) -> Result<(), ()> { unimplemented!() }
-    }
-}
-```
+**Rationale**: The SMBIOS entry point structure is only 24 bytes long and contains specific, standardized data including:
+
+- Spec version supported
+- Table address
+- Other specification-defined fields
+
+The SMBIOS tables themselves follow a clearly defined structure:
+
+- 4-byte header indicating the length of fixed-size values
+- Double NULL-terminated string pool following the specification
+
+**Security Considerations**: Providing access to low-level construction could compromise system security by allowing:
+
+- Malformed entry point structures
+- Invalid table headers
+- Corrupted string pools
+- Non-compliant SMBIOS data structures
+
+**Flexibility for OEMs**: If an OEM needs to diverge from the SMBIOS specification for specific requirements, they can
+create a local override of this crate rather than compromising the security of the standard implementation.
+
+**Alternative**: The safe `add_from_bytes()` method provides sufficient flexibility for adding compliant SMBIOS records
+while maintaining specification adherence and memory safety.
+
+**Note on Remaining Unsafe Methods**: The `unsafe fn add()` method remains in the trait definition solely for
+compatibility with existing UEFI protocol patterns. However, **it should be strongly discouraged in favor of the safe
+`add_from_bytes()` alternative** for all new implementations. The unsafe method exists only to support legacy code
+migration scenarios.
 
 ## Unresolved Questions
 
-- Is there value in exposing lower-level table construction functionality to advanced users?
 - Should we provide typed interfaces for specific SMBIOS record types (Type 0, Type 1, etc.)?
 
 ## Prior Art (Existing PI C Implementation)
@@ -208,13 +237,22 @@ pub trait SmbiosRecords {
     ///
     /// # Safety
     /// 
-    /// This method is unsafe because it assumes that `record` points to a complete
-    /// SMBIOS record structure where the header is followed by the record data.
+    /// **WARNING: This method is unsafe and should be avoided in favor of `add_from_bytes`.**
+    /// 
+    /// This method assumes that `record` points to a complete SMBIOS record structure 
+    /// where the header is followed by the record data. Incorrect usage can lead to:
+    /// - Memory corruption
+    /// - Security vulnerabilities
+    /// - System instability
+    /// - Non-compliant SMBIOS structures
+    ///
     /// The caller must ensure that `record` points to a valid, complete SMBIOS record
     /// with at least `record.length` bytes of valid memory following the header.
     ///
-    /// Consider using `add_from_bytes` for a safer alternative that takes the complete
-    /// record data as a byte slice.
+    /// # Recommendation
+    /// 
+    /// **Use `add_from_bytes` instead** - it provides the same functionality with better
+    /// memory safety and specification compliance guarantees.
     unsafe fn add(
         &mut self,
         producer_handle: Option<Handle>,
@@ -223,8 +261,9 @@ pub trait SmbiosRecords {
 
     /// Adds an SMBIOS record to the SMBIOS table from a complete byte representation.
     ///
-    /// This is the safe alternative to `add` that takes the complete record data
-    /// as a byte slice, avoiding the unsafe pointer arithmetic.
+    /// **This is the recommended method for adding SMBIOS records.** It provides memory safety
+    /// and specification compliance by taking the complete record data as a validated byte slice,
+    /// avoiding unsafe pointer arithmetic and potential security vulnerabilities.
     fn add_from_bytes(
         &mut self,
         producer_handle: Option<Handle>,
