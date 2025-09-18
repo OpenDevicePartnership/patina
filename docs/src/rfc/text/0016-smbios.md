@@ -1209,8 +1209,83 @@ impl SmbiosRecords for SmbiosManager {
         Ok(smbios_handle)
     }
     
+    /// Count strings in a complete SMBIOS record data array
+    /// 
+    /// This method parses the string pool section of an SMBIOS record and counts
+    /// the number of valid strings. The string pool begins after the structured
+    /// data (at offset header.length) and ends with a double null terminator.
+    ///
+    /// # Arguments
+    /// * `record_data` - Complete SMBIOS record including header, structured data, and strings
+    ///
+    /// # Returns
+    /// * `Ok(count)` - Number of non-empty strings found
+    /// * `Err(SmbiosError)` - If the record format is invalid
+    ///
+    /// # Examples
+    /// ```
+    /// // Record with 3 strings: "Vendor", "Version", "Date"
+    /// // Byte layout: [header][structured_data]["Vendor\0Version\0Date\0\0"]
+    /// let count = SmbiosManager::count_strings_in_record(&record_data)?;
+    /// assert_eq!(count, 3);
+    /// 
+    /// // Record with no strings: [header][structured_data]["\0\0"]
+    /// let count = SmbiosManager::count_strings_in_record(&empty_record)?;
+    /// assert_eq!(count, 0);
+    /// ```
+    fn count_strings_in_record(record_data: &[u8]) -> Result<usize, SmbiosError> {
+        // Validate minimum record size (4-byte header minimum)
+        if record_data.len() < 4 {
+            return Err(SmbiosError::BufferTooSmall);
+        }
+        
+        // Extract header length from byte 1 (0-indexed)
+        let header_length = record_data[1] as usize;
+        
+        // Validate that record has at least the claimed header length
+        if record_data.len() < header_length {
+            return Err(SmbiosError::BufferTooSmall);
+        }
+        
+        // String pool starts after the structured data
+        let string_pool_start = header_length;
+        
+        // Validate that there's space for at least the required double-null terminator
+        if record_data.len() < string_pool_start + 2 {
+            return Err(SmbiosError::InvalidParameter);
+        }
+        
+        // Extract string pool section
+        let string_pool = &record_data[string_pool_start..];
+        
+        // Delegate to the specialized string pool validator/counter
+        Self::validate_and_count_strings(string_pool)
+    }
+    
     /// Efficiently validate string pool format and count strings in a single pass
     /// This combines validation and counting for better performance
+    ///
+    /// # String Pool Format
+    /// SMBIOS string pools have a specific format:
+    /// - Each string is null-terminated ('\0')
+    /// - The entire pool ends with double null ("\0\0") 
+    /// - Empty string pool is just double null ("\0\0")
+    /// - String indices in the record start at 1 (not 0)
+    ///
+    /// # Examples
+    /// ```
+    /// // Three strings: "Patina\0Firmware\0v1.0\0\0"
+    /// let pool = b"Patina\0Firmware\0v1.0\0\0";
+    /// let count = validate_and_count_strings(pool)?; // Returns 3
+    ///
+    /// // Empty pool: "\0\0"  
+    /// let empty = b"\0\0";
+    /// let count = validate_and_count_strings(empty)?; // Returns 0
+    ///
+    /// // Invalid pool (single null): "\0"
+    /// let invalid = b"\0";
+    /// validate_and_count_strings(invalid); // Returns Err(InvalidParameter)
+    /// ```
     fn validate_and_count_strings(string_pool_area: &[u8]) -> Result<usize, SmbiosError> {
         let len = string_pool_area.len();
         
@@ -1238,6 +1313,11 @@ impl SmbiosRecords for SmbiosManager {
             
             // If we found content before the null, it's a valid string
             if i > start {
+                // Validate string length doesn't exceed SMBIOS spec limit
+                let string_len = i - start;
+                if string_len > SMBIOS_STRING_MAX_LENGTH {
+                    return Err(SmbiosError::StringTooLong);
+                }
                 count += 1;
             } else if i == start {
                 // Found null at start position = consecutive nulls (invalid)
@@ -2234,11 +2314,14 @@ impl SmbiosRecords for SmbiosManager {
         let mut record_header = *record;
         record_header.handle = smbios_handle;
 
+        // Calculate string count from the data
+        let string_count = Self::count_strings_in_record(&data)?;
+
         let smbios_record = SmbiosRecord {
             header: record_header,
             producer_handle,
             data,
-            string_count: 0, // Would be calculated from actual strings
+            string_count,
             smbios32_table: true,
             smbios64_table: true,
         };
@@ -2286,11 +2369,14 @@ impl SmbiosRecords for SmbiosManager {
         let mut record_header = *header;
         record_header.handle = smbios_handle;
 
+        // Calculate string count from the data
+        let string_count = Self::count_strings_in_record(&data)?;
+
         let smbios_record = SmbiosRecord {
             header: record_header,
             producer_handle,
             data,
-            string_count: 0, // Would be calculated from actual strings
+            string_count,
             smbios32_table: true,
             smbios64_table: true,
         };
@@ -2822,6 +2908,205 @@ This example demonstrates:
 - Automatic handle assignment
 - String management and null termination
 
+## String Count Calculation Examples
+
+Here are practical examples showing how `string_count` is calculated for different SMBIOS record types:
+
+### Example 1: Type 0 (BIOS Information) with 3 strings
+
+```rust
+// Create a Type 0 record with vendor, version, and release date
+let bios_record = Type0PlatformFirmwareInformation::new()
+    .with_vendor("Patina Firmware Corp".to_string())?
+    .with_firmware_version("v2.5.1-patina".to_string())?
+    .with_release_date("09/18/2025".to_string())?;
+
+let record_bytes = bios_record.to_bytes();
+
+// Byte layout:
+// [0x00, 0x19, 0xFE, 0xFF] - Header (Type=0, Length=25, Handle=0xFFFE)
+// [0x01] - Vendor string index (1st string)
+// [0x02] - Version string index (2nd string)  
+// [0x00, 0xE0] - BIOS segment
+// [0x03] - Release date string index (3rd string)
+// ... (additional structured fields)
+// ["Patina Firmware Corp\0"] - String 1 (21 bytes + null)
+// ["v2.5.1-patina\0"] - String 2 (14 bytes + null) 
+// ["09/18/2025\0"] - String 3 (10 bytes + null)
+// [0x00] - Double null terminator
+
+// String counting process:
+let string_count = SmbiosManager::count_strings_in_record(&record_bytes)?;
+assert_eq!(string_count, 3); // Found 3 non-empty strings
+```
+
+### Example 2: Type 1 (System Information) with 6 strings
+
+```rust
+let mut system_info = Type1SystemInformation::new();
+system_info.string_pool = vec![
+    "ACME Corp".to_string(),           // String 1 - Manufacturer
+    "SuperServer X123".to_string(),    // String 2 - Product Name
+    "Rev 2.1".to_string(),            // String 3 - Version
+    "SN123456789".to_string(),        // String 4 - Serial Number
+    "SKU-X123-BASE".to_string(),      // String 5 - SKU Number
+    "Server Family".to_string(),       // String 6 - Family
+];
+
+let record_bytes = system_info.to_bytes();
+
+// The string pool section would be:
+// ["ACME Corp\0SuperServer X123\0Rev 2.1\0SN123456789\0SKU-X123-BASE\0Server Family\0\0"]
+//      ^1         ^2              ^3        ^4           ^5             ^6           ^^
+//                                                                                   ||
+//                                                                        String end ||
+//                                                                     Double null --+
+
+let string_count = SmbiosManager::count_strings_in_record(&record_bytes)?;
+assert_eq!(string_count, 6); // Found 6 non-empty strings
+```
+
+### Example 3: Record with no strings (empty string pool)
+
+```rust
+// A record type that doesn't use strings (e.g., some OEM records)
+let oem_record = OemCustomRecord {
+    header: SmbiosTableHeader { 
+        record_type: 0x80, 
+        length: 16, 
+        handle: SMBIOS_HANDLE_PI_RESERVED 
+    },
+    oem_field1: 0x12345678,
+    oem_field2: 0xABCD,
+    reserved: [0; 8],
+    string_pool: Vec::new(), // No strings
+};
+
+let record_bytes = oem_record.to_bytes();
+
+// Byte layout:
+// [0x80, 0x10, 0xFE, 0xFF] - Header
+// [0x78, 0x56, 0x34, 0x12] - OEM field 1 (little-endian)
+// [0xCD, 0xAB] - OEM field 2 (little-endian)  
+// [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] - Reserved
+// [0x00, 0x00] - Empty string pool (just double null)
+
+let string_count = SmbiosManager::count_strings_in_record(&record_bytes)?;
+assert_eq!(string_count, 0); // No strings found
+```
+
+### Example 4: Step-by-step string counting algorithm
+
+```rust
+fn demonstrate_string_counting(record_data: &[u8]) -> Result<usize, SmbiosError> {
+    println!("=== String Counting Demonstration ===");
+    
+    // Step 1: Extract header length
+    let header_length = record_data[1] as usize;
+    println!("Header length: {} bytes", header_length);
+    
+    // Step 2: Find string pool start
+    let string_pool_start = header_length;
+    println!("String pool starts at offset: {}", string_pool_start);
+    
+    // Step 3: Extract string pool
+    let string_pool = &record_data[string_pool_start..];
+    println!("String pool size: {} bytes", string_pool.len());
+    
+    // Step 4: Validate double null terminator
+    let len = string_pool.len();
+    if len < 2 || string_pool[len - 1] != 0 || string_pool[len - 2] != 0 {
+        return Err(SmbiosError::InvalidParameter);
+    }
+    println!("✓ Valid double null terminator found");
+    
+    // Step 5: Count strings
+    let mut count = 0;
+    let mut i = 0;
+    let data_end = len - 2; // Exclude final double-null
+    
+    while i < data_end {
+        let start = i;
+        
+        // Find null terminator
+        while i < data_end && string_pool[i] != 0 {
+            i += 1;
+        }
+        
+        if i > start {
+            let string_bytes = &string_pool[start..i];
+            let string_text = String::from_utf8_lossy(string_bytes);
+            println!("String {}: \"{}\" ({} bytes)", count + 1, string_text, i - start);
+            count += 1;
+        }
+        
+        i += 1; // Skip null terminator
+    }
+    
+    println!("Total strings found: {}", count);
+    Ok(count)
+}
+
+// Example usage:
+let bios_bytes = create_bios_record_with_strings();
+let count = demonstrate_string_counting(&bios_bytes)?;
+// Output:
+// === String Counting Demonstration ===
+// Header length: 25 bytes
+// String pool starts at offset: 25
+// String pool size: 48 bytes
+// ✓ Valid double null terminator found
+// String 1: "Patina Firmware Corp" (20 bytes)
+// String 2: "v2.5.1-patina" (14 bytes)  
+// String 3: "09/18/2025" (10 bytes)
+// Total strings found: 3
+```
+
+### Error Cases in String Counting
+
+```rust
+// Case 1: Invalid - single null (missing double null)
+let invalid_single_null = vec![
+    0x00, 0x04, 0xFE, 0xFF,  // Header
+    0x00                      // Single null (invalid)
+];
+let result = SmbiosManager::count_strings_in_record(&invalid_single_null);
+assert_eq!(result, Err(SmbiosError::InvalidParameter));
+
+// Case 2: Invalid - string too long
+let invalid_long_string = {
+    let mut data = vec![0x00, 0x04, 0xFE, 0xFF]; // Header
+    data.extend_from_slice(&vec![b'A'; SMBIOS_STRING_MAX_LENGTH + 1]); // Too long
+    data.extend_from_slice(&[0x00, 0x00]); // Double null
+    data
+};
+let result = SmbiosManager::count_strings_in_record(&invalid_long_string);
+assert_eq!(result, Err(SmbiosError::StringTooLong));
+
+// Case 3: Invalid - consecutive nulls in middle
+let invalid_consecutive_nulls = vec![
+    0x00, 0x04, 0xFE, 0xFF,           // Header
+    b'H', b'i', 0x00,                // "Hi"
+    0x00,                             // Second null (creates consecutive nulls)
+    b'B', b'y', b'e', 0x00,          // "Bye"
+    0x00                              // Final null
+];
+let result = SmbiosManager::count_strings_in_record(&invalid_consecutive_nulls);
+assert_eq!(result, Err(SmbiosError::InvalidParameter));
+```
+
+### String Counting Performance
+
+The string counting algorithm is designed for efficiency:
+
+- **Single Pass**: Validation and counting happen in one pass through the data
+- **Early Validation**: Header and format validation before string processing
+- **Minimal Allocations**: No string copies or temporary allocations during counting  
+- **Bounds Checking**: All array accesses are bounds-checked
+- **O(n) Complexity**: Linear time complexity where n = string pool size
+
+For typical SMBIOS records with 0-10 strings totaling <500 bytes, string counting takes microseconds.
+
 ## Testing Strategy
 
 ```rust
@@ -2905,6 +3190,146 @@ mod tests {
         let result2 = manager.add_from_bytes(None, &record_data);
         assert!(result2.is_ok());
         assert_ne!(result1.unwrap(), result2.unwrap());
+    }
+
+    #[test]
+    fn test_count_strings_in_record_basic() {
+        // Test with 3 strings: "Vendor", "Version", "Date"
+        let record_data = vec![
+            0x00, 0x04, 0xFE, 0xFF,           // Header: Type=0, Length=4, Handle=0xFFFE
+            b'V', b'e', b'n', b'd', b'o', b'r', 0x00,  // "Vendor\0"
+            b'V', b'e', b'r', b's', b'i', b'o', b'n', 0x00, // "Version\0" 
+            b'D', b'a', b't', b'e', 0x00,     // "Date\0"
+            0x00                              // Double null terminator
+        ];
+        
+        let count = SmbiosManager::count_strings_in_record(&record_data).unwrap();
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_count_strings_in_record_empty() {
+        // Test with no strings (empty string pool)
+        let record_data = vec![
+            0x00, 0x04, 0xFE, 0xFF,  // Header: Type=0, Length=4, Handle=0xFFFE
+            0x00, 0x00               // Empty string pool (double null)
+        ];
+        
+        let count = SmbiosManager::count_strings_in_record(&record_data).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_count_strings_in_record_single_string() {
+        // Test with single string: "OnlyOne"
+        let record_data = vec![
+            0x01, 0x08, 0x01, 0x00,           // Header: Type=1, Length=8, Handle=0x0001
+            0x01, 0x02, 0x03, 0x04,           // Additional structured data
+            b'O', b'n', b'l', b'y', b'O', b'n', b'e', 0x00, // "OnlyOne\0"
+            0x00                              // Double null terminator
+        ];
+        
+        let count = SmbiosManager::count_strings_in_record(&record_data).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_count_strings_validation_errors() {
+        // Test buffer too small
+        let tiny_buffer = vec![0x00, 0x04]; // Only 2 bytes, need at least 4
+        let result = SmbiosManager::count_strings_in_record(&tiny_buffer);
+        assert_eq!(result, Err(SmbiosError::BufferTooSmall));
+        
+        // Test header length exceeds buffer
+        let invalid_header = vec![
+            0x00, 0xFF, 0xFE, 0xFF,  // Header claims length=255 but buffer is only 6 bytes
+            0x00, 0x00
+        ];
+        let result = SmbiosManager::count_strings_in_record(&invalid_header);
+        assert_eq!(result, Err(SmbiosError::BufferTooSmall));
+        
+        // Test missing double null terminator (single null)
+        let single_null = vec![
+            0x00, 0x04, 0xFE, 0xFF,  // Header
+            0x00                      // Single null instead of double
+        ];
+        let result = SmbiosManager::count_strings_in_record(&single_null);
+        assert_eq!(result, Err(SmbiosError::InvalidParameter));
+        
+        // Test string too long
+        let mut long_string_data = vec![0x00, 0x04, 0xFE, 0xFF]; // Header
+        long_string_data.extend_from_slice(&vec![b'A'; SMBIOS_STRING_MAX_LENGTH + 1]); // Too long
+        long_string_data.extend_from_slice(&[0x00, 0x00]); // Double null
+        let result = SmbiosManager::count_strings_in_record(&long_string_data);
+        assert_eq!(result, Err(SmbiosError::StringTooLong));
+    }
+
+    #[test]
+    fn test_validate_and_count_strings_edge_cases() {
+        // Test consecutive nulls in middle (invalid)
+        let consecutive_nulls = vec![
+            b'H', b'i', 0x00,        // "Hi\0"
+            0x00,                     // Second null (creates consecutive nulls)
+            b'B', b'y', b'e', 0x00,  // "Bye\0"  
+            0x00                      // Final null
+        ];
+        let result = SmbiosManager::validate_and_count_strings(&consecutive_nulls);
+        assert_eq!(result, Err(SmbiosError::InvalidParameter));
+        
+        // Test minimal valid empty pool
+        let empty_pool = vec![0x00, 0x00];
+        let count = SmbiosManager::validate_and_count_strings(&empty_pool).unwrap();
+        assert_eq!(count, 0);
+        
+        // Test multiple strings with varying lengths
+        let multi_strings = vec![
+            b'A', 0x00,                      // "A\0" - 1 char
+            b'H', b'e', b'l', b'l', b'o', 0x00, // "Hello\0" - 5 chars
+            b'W', b'o', b'r', b'l', b'd', b'!', 0x00, // "World!\0" - 6 chars
+            0x00                              // Double null
+        ];
+        let count = SmbiosManager::validate_and_count_strings(&multi_strings).unwrap();
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_string_counting_with_real_bios_record() {
+        // Create a realistic BIOS Information record
+        let mut bios_info = BiosInformation::new();
+        let strings = vec!["Patina Firmware Corp", "v2.5.1-patina", "09/18/2025"];
+        
+        let record_data = unsafe {
+            SmbiosManager::build_record_with_strings(&bios_info.header, &strings).unwrap()
+        };
+        
+        // Count strings in the generated record
+        let count = SmbiosManager::count_strings_in_record(&record_data).unwrap();
+        assert_eq!(count, 3);
+        
+        // Verify the record can be added successfully
+        let mut manager = SmbiosManager::new(3, 0);
+        let handle = manager.add_from_bytes(None, &record_data).unwrap();
+        
+        // Verify the stored record has correct string count
+        let stored_record = manager.records.iter().find(|r| r.header.handle == handle).unwrap();
+        assert_eq!(stored_record.string_count, 3);
+    }
+
+    #[test]
+    fn test_string_counting_performance_characteristics() {
+        // Test with maximum allowed string count and lengths
+        let mut large_strings = Vec::new();
+        for i in 0..20 { // 20 strings
+            // Each string is near the maximum length (64 chars)
+            let mut string_data = vec![b'A' + (i % 26) as u8; 60]; // 60 'A's, 'B's, etc.
+            string_data.push(0x00); // Null terminator
+            large_strings.extend_from_slice(&string_data);
+        }
+        large_strings.push(0x00); // Double null terminator
+        
+        // This should complete quickly even with many long strings
+        let count = SmbiosManager::validate_and_count_strings(&large_strings).unwrap();
+        assert_eq!(count, 20);
     }
 }
 ```
