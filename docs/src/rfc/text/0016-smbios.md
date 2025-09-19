@@ -133,27 +133,42 @@ The following methods are provided only for compatibility with existing UEFI pro
 - Create complete record data as validated byte vectors before passing to the API
 - Use structured builders that validate SMBIOS record format during construction
 
-### Security Impact of Unsafe Usage
+### Security Impact of Corrupted Headers
 
-**Example of unsafe usage that could cause memory corruption and security vulnerabilities:**
+**Critical Vulnerability**: If external code can pass in a `SmbiosTableHeader` with a corrupted `length` field,
+there is no safe way to parse the record without risking buffer overruns and memory corruption.
+
+**Example of the dangerous pattern this design avoids:**
 
 ```rust
-// DANGEROUS: This only creates a header, not a complete record
+// DANGEROUS: External header construction with potentially corrupted length
 let bogus_header = SmbiosTableHeader { length: 0x1234, /* other fields */ };
 let record_data = unsafe { 
     SmbiosManager::build_record_with_strings(&bogus_header, strings) 
-}; // This will read beyond the header, potentially corrupting memory and compromising system security
+}; // Could read beyond valid memory if length field is corrupted
 ```
 
-### Recommended Safe Pattern
+### Safe Design Solution
+
+**This implementation eliminates the vulnerability by ensuring the SMBIOS service constructs all headers internally:**
 
 ```rust
-// SAFE: Create complete record as validated bytes first
+// SAFE: Service-controlled header construction
 let mut record_bytes = Vec::new();
-record_bytes.extend_from_slice(&header_bytes);
+// Application provides only structured data and string pool as validated bytes
 record_bytes.extend_from_slice(&structured_data_bytes);
+record_bytes.extend_from_slice(&string_pool_bytes);
+
+// Service validates data and constructs header with correct length field
 let handle = smbios.add_from_bytes(None, &record_bytes)?;
 ```
+
+**Security Guarantees:**
+
+1. **Service-controlled headers**: All `SmbiosTableHeader` instances are constructed by the trusted SMBIOS service
+2. **Length validation**: The service calculates the length field based on actual validated data
+3. **No external header input**: Applications cannot provide potentially corrupted headers
+4. **Complete buffer validation**: All parsing operations are bounds-checked against provided buffers
 
 ## Design Decisions
 
@@ -611,8 +626,7 @@ between type safety and simplicity.
 
 ### Scalable Record Structure Pattern
 
-You're absolutely right about scalability concerns! Custom `to_bytes()` for 50+ record types would be
-unmaintainable. Here's a better approach using generic serialization:
+Approach that uses generic serialization:
 
 ```rust
 /// Base trait for SMBIOS record structures with generic serialization
