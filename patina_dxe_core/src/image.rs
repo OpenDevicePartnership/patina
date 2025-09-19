@@ -814,6 +814,13 @@ fn get_buffer_by_file_path(
     Err(EfiError::NotFound)
 }
 
+
+///
+/// I'm still trying to figure out how things work, but should we maybe update the /core/patina_internal_device_path
+/// crate to define the MediaFwVol struct and produce the name GUID?
+///
+
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct MediaFwVolFilePathDevicePath {
