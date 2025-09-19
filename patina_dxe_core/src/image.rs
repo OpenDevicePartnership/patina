@@ -43,7 +43,16 @@ use uefi_corosensei::{
     Coroutine, CoroutineResult, Yielder,
     stack::{MIN_STACK_SIZE, STACK_ALIGNMENT, Stack, StackPointer},
 };
+
+
+///
+/// Anh, I thought the Patina group was trying to get away from using MU resources.  I just sent a message to the whole
+///      group asking what the general consensus is for using MU and the Tianocore PI spec.  Looks like it has useful
+///      protocol support, so not sure how it should be implemented if mu is not used
+///
 use mu_pi::{protocols::firmware_volume};
+
+
 
 pub const EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION: u16 = 10;
 pub const EFI_IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER: u16 = 11;
@@ -754,6 +763,19 @@ extern "efiapi" fn runtime_image_protection_fixup_ebs(event: efi::Event, _contex
         log::error!("Failed to close image EBS event with status {status:#X?}. This should be okay.");
     }
 }
+
+
+
+///
+/// Anh, is this comment wrong from the way the code is written?  It looks like the Result return should
+///      be (image_buffer, from_fv, device_handle, authentication_status); switching the from_fv and device_handle.
+///
+///      Not sure if you are trying to keep the change to a minimum, but I'd go ahead and change the function comments
+///      along with removing the "TODO: EDK2 core has support..." comment.  I'm sure someone will pipe up with suggestions
+///      if they think it should stay.
+///
+
+
 
 // Reads an image buffer using simple file system or load file protocols.
 // Return value is (image_buffer, device_handle, from_fv, authentication_status).
