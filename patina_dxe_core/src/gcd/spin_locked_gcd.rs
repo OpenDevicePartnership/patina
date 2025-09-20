@@ -2423,11 +2423,12 @@ impl SpinLockedGcd {
                     res = Err(EfiError::NotReady);
                 }
                 Ok(()) => {}
-                _ => {
+                Err(other_error) => {
                     log::error!(
-                        "Failed to set GCD memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}",
+                        "Failed to set GCD memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}: {other_error:?}",
                     );
                     debug_assert!(false);
+                    error!(other_error);
                 }
             }
 
@@ -2441,11 +2442,12 @@ impl SpinLockedGcd {
                     // make sure any attribute updates across descriptors update the full range and not error out here.
                     res = Err(EfiError::NotReady);
                 }
-                _ => {
+                Err(other_error) => {
                     log::error!(
-                        "Failed to set page table memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}",
+                        "Failed to set page table memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}: {other_error:?}",
                     );
                     debug_assert!(false);
+                    error!(other_error);
                 }
             }
 
