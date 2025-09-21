@@ -32,7 +32,7 @@ patina_paging = { workspace = true }
 r-efi = { workspace = true }
 scroll = { workspace = true, features = ["derive"] }
 spin = { workspace = true }
-corosensei = { workspace = true  }
+uefi_corosensei = { workspace = true  }
 uuid = { workspace = true  }
 patina_sdk = { workspace = true, features = ["core", "enable_patina_tests"] }
 patina_ffs = { workspace = true }

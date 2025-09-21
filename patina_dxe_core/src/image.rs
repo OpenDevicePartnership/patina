@@ -39,7 +39,7 @@ use crate::{
     tpl_lock,
 };
 
-use corosensei::{
+use uefi_corosensei::{
     Coroutine, CoroutineResult, Yielder,
     stack::{MIN_STACK_SIZE, STACK_ALIGNMENT, Stack, StackPointer},
 };
