@@ -173,20 +173,6 @@ impl<T: SerialIO> PatinaDebugger<T> {
             None => return Err(DebugError::Reentry),
         };
 
-        // Suspend or disable logging. If suspended, logging will resume when the struct is dropped.
-        let _log_suspend;
-        match self.log_policy {
-            DebuggerLoggingPolicy::SuspendLogging => {
-                _log_suspend = LoggingSuspender::suspend();
-            }
-            DebuggerLoggingPolicy::DisableLogging => {
-                log::set_max_level(log::LevelFilter::Off);
-            }
-            DebuggerLoggingPolicy::FullLogging => {
-                // No action needed.
-            }
-        }
-
         let mut target = PatinaTarget::new(exception_info, &self.system_state);
 
         // Either take the existing state machine, or start one if this is the first break.
@@ -228,7 +214,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
                     let byte = loop {
                         match gdb.borrow_conn().read() {
                             Ok(0x0) => {
-                                log::error!(
+                                log::warn!(
                                     "Debugger: Read 0x00 from the transport. This is unexpected and will be ignored."
                                 );
                                 continue;
@@ -393,22 +379,47 @@ impl<T: SerialIO> InterruptHandler for PatinaDebugger<T> {
         exception_type: ExceptionType,
         context: &mut patina_internal_cpu::interrupts::ExceptionContext,
     ) {
+        // Suspend or disable logging. If suspended, logging will resume when the struct is dropped.
+        let _log_suspend;
+        match self.log_policy {
+            DebuggerLoggingPolicy::SuspendLogging => {
+                _log_suspend = LoggingSuspender::suspend();
+            }
+            DebuggerLoggingPolicy::DisableLogging => {
+                log::set_max_level(log::LevelFilter::Off);
+            }
+            DebuggerLoggingPolicy::FullLogging => {
+                // No action needed.
+            }
+        }
+
         // Check for a poke test before continuing
         if SystemArch::check_memory_poke_test(context) {
             log::info!("Memory poke test triggered, ignoring exception.");
             return;
         }
 
-        let mut exception_info = SystemArch::process_entry(exception_type as u64, context);
+        let mut exception_info = loop {
+            let exception_info = SystemArch::process_entry(exception_type as u64, context);
+            let result = self.enter_debugger(exception_info);
 
-        let result = self.enter_debugger(exception_info);
-
-        exception_info = result.unwrap_or_else(|error| {
-            // In the future, this could be make more robust by trying
-            // to re-enter the debugger, re-initializing the stub. This
-            // may require a new communication buffer though.
-            debugger_crash(error, exception_type);
-        });
+            match result {
+                Ok(info) => break info,
+                Err(DebugError::GdbStubError(gdb_error)) => {
+                    // Restarting the debugger will reset any changes made to the
+                    // context due to the way that information is owned in the stub,
+                    // but this is better than crashing. If this proves problematic,
+                    // a more robust solution could be explored. This will also
+                    // resend the break packet to the client.
+                    log::error!("GDB Stub error, restarting debugger. {gdb_error:?}");
+                    continue;
+                }
+                Err(error) => {
+                    // Other errors are not currently recoverable.
+                    debugger_crash(error, exception_type);
+                }
+            }
+        };
 
         SystemArch::process_exit(&mut exception_info);
         *context = exception_info.context;
