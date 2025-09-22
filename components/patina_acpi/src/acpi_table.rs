@@ -19,6 +19,7 @@ use patina_sdk::efi_types::EfiMemoryType;
 use crate::error::AcpiError;
 use crate::signature::{self};
 
+use core::alloc::Layout;
 use core::any::TypeId;
 use core::mem::ManuallyDrop;
 use core::ptr::{self, NonNull};
@@ -256,7 +257,7 @@ pub struct AcpiTableHeader {
 }
 
 impl AcpiTableHeader {
-    /// Serialize `self` into a `Vec<u8>` in ACPI's canonical layout.
+    /// Serialize an `AcpiTableHeader` into a `Vec<u8>` in ACPI's canonical layout.
     pub fn hdr_to_bytes(&self) -> Vec<u8> {
         // Pre‑allocate exactly the right length
         let mut buf = Vec::with_capacity(mem::size_of::<Self>());
@@ -367,11 +368,26 @@ impl AcpiTable {
             _ => EfiMemoryType::ACPIReclaimMemory,
         };
 
-        let table = NonNull::from(Box::leak(Box::new_in(
-            table,
-            mm.get_allocator(allocator_type).map_err(|_e| AcpiError::AllocationFailed)?,
-        )))
-        .cast::<Table>();
+        let total_len = unsafe { table.header.length } as usize;
+        let data_len = total_len - mem::size_of::<AcpiTableHeader>();
+        // Table is header followed by trailing data.
+        // `header.length` specifies the full length of the table, including the header.
+        let tbl_layout = Layout::new::<AcpiTableHeader>()
+            .extend(Layout::array::<u8>(data_len).map_err(|_e| AcpiError::InvalidTableFormat)?)
+            .map_err(|_e| AcpiError::InvalidTableFormat)?
+            .0;
+        // Allocate memory in apporpriate ACPI region.
+        let mm_allocator = mm.get_allocator(allocator_type).map_err(|_e| AcpiError::AllocationFailed)?;
+        let tbl_alloc = mm_allocator.allocate(tbl_layout).map_err(|_e| AcpiError::AllocationFailed)?;
+
+        // Get table source data as a slice.
+        let tbl_src = unsafe { slice::from_raw_parts((table.as_ref() as *const T).cast::<u8>(), total_len) };
+
+        // Get newly allocated memory destination as a slice.
+        let tbl_alloc_dst = unsafe { slice::from_raw_parts_mut(tbl_alloc.as_ptr().cast::<u8>(), total_len) };
+        tbl_alloc_dst.copy_from_slice(tbl_src);
+
+        let table = NonNull::new(tbl_alloc.as_ptr().cast::<Table>()).ok_or(AcpiError::NullTablePtr)?;
 
         // Store the type ID for convenience.
         let type_id = core::any::TypeId::of::<T>();
