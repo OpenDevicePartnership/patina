@@ -66,6 +66,12 @@ As previously stated, modern systems necessitate a powerful language that can su
 maximum performance, reliability, and safety. While C has provided the flexibility needed to implement relatively
 efficient firmware code, it has failed to prevent recurring problems around memory safety.
 
+To get a better idea of the memory safety challenges in firmware written in C and to see real-world examples of where
+this has been a problem, refer to:
+
+- [Patina DXE Core Memory Strategy](background/memory_safety_strategy.md)
+- [Real World Case Study: UEFI Memory Safety Issues Preventable by Rust](background/uefi_memory_safety_case_studies.md)
+
 ### Stringent Safety
 
 Common pitfalls in C such as null pointer dereferences, buffer and stack overflows, and pointer mismanagement continue

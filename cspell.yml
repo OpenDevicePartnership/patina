@@ -65,6 +65,7 @@ words:
   - guids
   - gwrite
   - hresult
+  - htons
   - icfgr
   - inmodule
   - intid
@@ -85,6 +86,8 @@ words:
   - nomem
   - noopt
   - ntdll
+  - ntohl
+  - ntohs
   - nvdimm
   - oleaut
   - openvmm
