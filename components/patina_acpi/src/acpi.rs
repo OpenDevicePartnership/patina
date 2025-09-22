@@ -1061,7 +1061,7 @@ mod tests {
 
     #[test]
     fn test_delete_table_facs() {
-        let provider: StandardAcpiProvider<MockBootServices> = StandardAcpiProvider::new_uninit();
+        let provider = StandardAcpiProvider::new_uninit();
         provider.initialize(MockBootServices::new(), Service::mock(Box::new(StdMemoryManager::new()))).unwrap();
 
         // Create a dummy XSDT.
@@ -1099,7 +1099,7 @@ mod tests {
         let result = provider.delete_table(facs_addr, signature::FACS);
         assert!(result.is_ok());
 
-        // // FACS should be removed
+        // FACS should be removed
         assert!(matches!(provider.get_acpi_table(facs_key).unwrap_err(), AcpiError::InvalidTableKey));
 
         // FADT's x_firmware_ctrl should be zero
