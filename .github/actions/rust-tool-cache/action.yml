@@ -13,7 +13,7 @@ description: "This action loads rust tools and toolchains from cache, or install
 
 inputs:
   rust-toolchain-file:
-    description: 'The path to the rust-toolchain.toml file. Defaults to rust-toolchain.toml in the root of the repository.'
+    description: 'The path to the rust-toolchain.toml file. Default: `rust-toolchain.toml`'
     required: false
     default: 'rust-toolchain.toml'
 
