@@ -85,7 +85,7 @@ jobs:
             - [ ] All team members have sufficient review time for the change
             - [ ] CI/CD pipelines support the new Rust version
             - [ ] Documentation is updated if needed
-            - [ ] The `rust-version` field in Cargo.toml is updated if the minimum supported Rust version must change.
+            - [ ] The \`rust-version\` field in Cargo.toml is updated if the minimum supported Rust version must change.
               - See the "Updating the Minimum Supported Rust Version" section in the readme for more details.
             - [ ] The PR meets the requirements in the [Rust Version Update Policy](https://github.com/OpenDevicePartnership/patina/blob/main/README.md)
             ---
@@ -97,3 +97,4 @@ jobs:
               repo: context.repo.repo,
               body: comment
             });
+
