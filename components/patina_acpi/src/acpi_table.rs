@@ -361,6 +361,7 @@ impl AcpiTable {
     pub unsafe fn new<T: 'static>(table: T, mm: &Service<dyn MemoryManager>) -> Result<Self, AcpiError> {
         // SAFETY: If the caller preconditions are met, the signature, header, and table fields of the union are valid.
         let table = unsafe { Table::new(table) }?;
+        let total_len = unsafe { table.header.length } as usize;
 
         // FACS and UEFI tables must always be located in NVS (by spec).
         let allocator_type = match table.signature() {
@@ -368,7 +369,28 @@ impl AcpiTable {
             _ => EfiMemoryType::ACPIReclaimMemory,
         };
 
-        let total_len = unsafe { table.header.length } as usize;
+        // The current Windows implementation uses the legacy 32-bit FACS pointer in the FADT.
+        // As such, the FACS must be allocated in the lower 32-bit address space.
+        // This workaround can be removed when Windows no longer relies on this field.
+        // The FACS is always allocated in NVS memory.
+        if unsafe { table.signature } == signature::FACS {
+            let facs_alloc = mm
+                .allocate_pages(
+                    1,
+                    AllocationOptions::new()
+                        .with_memory_type(EfiMemoryType::ACPIMemoryNVS)
+                        .with_strategy(PageAllocationStrategy::MaxAddress(0x1000_0000)),
+                )
+                .map_err(|_e| AcpiError::AllocationFailed)?;
+            let new_facs_ptr = facs_alloc.into_raw_ptr().unwrap();
+            unsafe { ptr::copy_nonoverlapping(table.as_ref() as *const T as *const u8, new_facs_ptr, total_len) };
+
+            return Ok(Self {
+                table: NonNull::new(new_facs_ptr).ok_or(AcpiError::NullTablePtr)?.cast::<Table>(),
+                type_id: TypeId::of::<AcpiFacs>(),
+            });
+        }
+
         let data_len = total_len - mem::size_of::<AcpiTableHeader>();
         // Table is header followed by trailing data.
         // `header.length` specifies the full length of the table, including the header.
@@ -376,7 +398,7 @@ impl AcpiTable {
             .extend(Layout::array::<u8>(data_len).map_err(|_e| AcpiError::InvalidTableFormat)?)
             .map_err(|_e| AcpiError::InvalidTableFormat)?
             .0;
-        // Allocate memory in apporpriate ACPI region.
+        // Allocate memory in appropriate ACPI region.
         let mm_allocator = mm.get_allocator(allocator_type).map_err(|_e| AcpiError::AllocationFailed)?;
         let tbl_alloc = mm_allocator.allocate(tbl_layout).map_err(|_e| AcpiError::AllocationFailed)?;
 
