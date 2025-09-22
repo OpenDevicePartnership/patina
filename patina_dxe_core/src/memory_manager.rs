@@ -102,7 +102,7 @@ impl MemoryManager for CoreMemoryManager {
             return Err(MemoryError::InvalidPageCount);
         }
 
-        if address % UEFI_PAGE_SIZE != 0 {
+        if !address.is_multiple_of(UEFI_PAGE_SIZE) {
             return Err(MemoryError::UnalignedAddress);
         }
 
@@ -165,7 +165,7 @@ impl MemoryManager for CoreMemoryManager {
             return Err(MemoryError::InvalidPageCount);
         }
 
-        if address % UEFI_PAGE_SIZE != 0 {
+        if !address.is_multiple_of(UEFI_PAGE_SIZE) {
             return Err(MemoryError::UnalignedAddress);
         }
 

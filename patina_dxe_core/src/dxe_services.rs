@@ -448,7 +448,7 @@ pub fn init_dxe_services(system_table: &mut EfiSystemTable) {
 
     let _ = config_tables::core_install_configuration_table(
         dxe_services::DXE_SERVICES_TABLE_GUID,
-        Box::into_raw(dxe_system_table) as *mut c_void,
+        Box::into_raw_with_allocator(dxe_system_table).0 as *mut c_void,
         system_table,
     );
 }

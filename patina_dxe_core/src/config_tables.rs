@@ -83,7 +83,8 @@ pub fn core_install_configuration_table(
                     //entry does not exist, we can't delete it. We have to put the original box back
                     //in the config table so it doesn't get dropped though. Pointer should be the same
                     //so we should not need to recompute CRC.
-                    system_table.configuration_table = Box::into_raw(cfg_table) as *mut efi::ConfigurationTable;
+                    system_table.configuration_table =
+                        Box::into_raw_with_allocator(cfg_table).0 as *mut efi::ConfigurationTable;
                     return Err(EfiError::NotFound);
                 }
             }
@@ -111,7 +112,7 @@ pub fn core_install_configuration_table(
         //when old_cfg_table goes out of scope at the end of the function.
         system_table.number_of_table_entries = new_table.len();
         let new_table = new_table.to_vec_in(&EFI_RUNTIME_SERVICES_DATA_ALLOCATOR).into_boxed_slice();
-        system_table.configuration_table = Box::into_raw(new_table) as *mut efi::ConfigurationTable;
+        system_table.configuration_table = Box::into_raw_with_allocator(new_table).0 as *mut efi::ConfigurationTable;
     }
     //since we modified the system table, re-calculate CRC.
     efi_system_table.checksum();

@@ -113,7 +113,9 @@ impl AdvancedLog<'static> {
     /// The caller is responsible for ensuring that the provided address is appropriately
     /// allocated and accessible.
     pub unsafe fn initialize_memory_log(address: efi::PhysicalAddress, length: u32) -> Option<Self> {
-        if length < size_of::<AdvLoggerInfo>() as u32 || address % core::mem::align_of::<AdvLoggerInfo>() as u64 != 0 {
+        if length < size_of::<AdvLoggerInfo>() as u32
+            || !address.is_multiple_of(core::mem::align_of::<AdvLoggerInfo>() as u64)
+        {
             return None;
         }
 
