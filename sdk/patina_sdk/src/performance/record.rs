@@ -41,24 +41,30 @@ impl PerformanceRecordHeader {
         Self { record_type, length, revision }
     }
 
-    /// Try to parse a header from the beginning of a byte slice
-    pub fn try_from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < Self::SIZE {
-            return None;
-        }
-
-        Some(Self { record_type: u16::from_le_bytes([bytes[0], bytes[1]]), length: bytes[2], revision: bytes[3] })
-    }
-
-    /// Convert the header to little-endian bytes.
-    pub fn to_le_bytes(self) -> [u8; mem::size_of::<Self>()] {
-        let le_header = self.to_le();
-        le_header.as_bytes().try_into().expect("Size mismatch in to_le_bytes")
-    }
-
     /// Convert the header to little-endian format.
     pub fn to_le(self) -> Self {
         Self { record_type: self.record_type.to_le(), length: self.length, revision: self.revision }
+    }
+}
+
+impl TryFrom<&[u8]> for PerformanceRecordHeader {
+    type Error = &'static str;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        if bytes.len() < Self::SIZE {
+            return Err("Insufficient bytes for PerformanceRecordHeader");
+        }
+
+        Self::read_from_prefix(bytes)
+            .map_err(|_| "Failed to parse PerformanceRecordHeader from bytes")
+            .map(|(header, _)| header.to_le())
+    }
+}
+
+impl From<PerformanceRecordHeader> for [u8; mem::size_of::<PerformanceRecordHeader>()] {
+    fn from(header: PerformanceRecordHeader) -> Self {
+        let le_header = header.to_le();
+        le_header.as_bytes().try_into().expect("Size mismatch in From implementation")
     }
 }
 
@@ -108,7 +114,7 @@ pub trait PerformanceRecord {
         header.length = record_size as u8;
 
         // Write the complete header
-        let header_bytes = header.to_le_bytes();
+        let header_bytes: [u8; mem::size_of::<PerformanceRecordHeader>()] = header.into();
         buff[start..start + PERFORMANCE_RECORD_HEADER_SIZE].copy_from_slice(&header_bytes);
 
         Ok(record_size)
@@ -418,5 +424,112 @@ mod tests {
                 _ => unreachable!(),
             }
         }
+    }
+
+    #[test]
+    fn test_performance_record_header_try_from_valid_bytes() {
+        let original_header = PerformanceRecordHeader::new(0x1234, 42, 1);
+        let bytes: [u8; 4] = original_header.into();
+
+        let parsed_header = PerformanceRecordHeader::try_from(bytes.as_slice()).unwrap();
+
+        // Copy values locally since `PerformanceRecordHeader` is packed
+        let parsed_type = parsed_header.record_type;
+        let parsed_length = parsed_header.length;
+        let parsed_revision = parsed_header.revision;
+
+        assert_eq!(parsed_type, 0x1234);
+        assert_eq!(parsed_length, 42);
+        assert_eq!(parsed_revision, 1);
+    }
+
+    #[test]
+    fn test_performance_record_header_try_from_insufficient_bytes() {
+        let bytes = [0x34, 0x12]; // Only 2 bytes instead of 4
+        let result = PerformanceRecordHeader::try_from(bytes.as_slice());
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Insufficient bytes for PerformanceRecordHeader");
+    }
+
+    #[test]
+    fn test_performance_record_header_try_from_empty_bytes() {
+        let bytes: &[u8] = &[];
+        let result = PerformanceRecordHeader::try_from(bytes);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Insufficient bytes for PerformanceRecordHeader");
+    }
+
+    #[test]
+    fn test_performance_record_header_from_trait_conversion_le() {
+        let header = PerformanceRecordHeader::new(0xABCD, 100, 2);
+        let bytes: [u8; mem::size_of::<PerformanceRecordHeader>()] = header.into();
+
+        // Check little-endian order
+        assert_eq!(bytes[0], 0xCD); // Low byte of 0xABCD
+        assert_eq!(bytes[1], 0xAB); // High byte of 0xABCD
+        assert_eq!(bytes[2], 100); // Length
+        assert_eq!(bytes[3], 2); // Revision
+    }
+
+    #[test]
+    fn test_performance_record_header_roundtrip_conversion() {
+        // Test that we can convert header -> bytes -> header and get the same result
+        let original_header = PerformanceRecordHeader::new(0x5678, 200, 3);
+
+        let bytes: [u8; mem::size_of::<PerformanceRecordHeader>()] = original_header.into();
+        let parsed_header = PerformanceRecordHeader::try_from(bytes.as_slice()).unwrap();
+
+        let orig_type = original_header.record_type;
+        let orig_length = original_header.length;
+        let orig_revision = original_header.revision;
+        let parsed_type = parsed_header.record_type;
+        let parsed_length = parsed_header.length;
+        let parsed_revision = parsed_header.revision;
+
+        assert_eq!(orig_type, parsed_type);
+        assert_eq!(orig_length, parsed_length);
+        assert_eq!(orig_revision, parsed_revision);
+    }
+
+    #[test]
+    fn test_performance_record_header_le_handling() {
+        // Test that little-endian conversion works correctly for multi-byte fields
+        let header = PerformanceRecordHeader::new(0x0102, 50, 1);
+        let bytes: [u8; mem::size_of::<PerformanceRecordHeader>()] = header.into();
+
+        assert_eq!(bytes[0], 0x02);
+        assert_eq!(bytes[1], 0x01);
+        assert_eq!(bytes[2], 50);
+        assert_eq!(bytes[3], 1);
+
+        // Parse it back
+        let parsed = PerformanceRecordHeader::try_from(bytes.as_slice()).unwrap();
+
+        let parsed_type = parsed.record_type;
+        let parsed_length = parsed.length;
+        let parsed_revision = parsed.revision;
+
+        assert_eq!(parsed_type, 0x0102);
+        assert_eq!(parsed_length, 50);
+        assert_eq!(parsed_revision, 1);
+    }
+
+    #[test]
+    fn test_performance_record_header_try_from_extra_bytes() {
+        // Test with more bytes than needed (should still work)
+        let mut bytes = vec![0x34, 0x12, 42, 1]; // Valid header
+        bytes.extend_from_slice(&[0xFF, 0xFF, 0xFF]); // Extra bytes
+
+        let parsed_header = PerformanceRecordHeader::try_from(bytes.as_slice()).unwrap();
+
+        let parsed_type = parsed_header.record_type;
+        let parsed_length = parsed_header.length;
+        let parsed_revision = parsed_header.revision;
+
+        assert_eq!(parsed_type, 0x1234);
+        assert_eq!(parsed_length, 42);
+        assert_eq!(parsed_revision, 1);
     }
 }

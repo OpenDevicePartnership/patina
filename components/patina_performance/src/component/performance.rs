@@ -290,11 +290,11 @@ impl<'a> Iterator for PerformanceRecordIterator<'a> {
             return None;
         }
 
-        let header = match PerformanceRecordHeader::try_from_bytes(self.bytes) {
-            Some(h) => h,
-            None => {
+        let header = match PerformanceRecordHeader::try_from(self.bytes) {
+            Ok(h) => h,
+            Err(err) => {
                 self.bytes = &self.bytes[1..];
-                return Some(Err(MmPerformanceError::RecordError("Failed to parse record header".into())));
+                return Some(Err(MmPerformanceError::RecordError(err.into())));
             }
         };
 
