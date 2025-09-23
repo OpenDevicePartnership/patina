@@ -401,7 +401,7 @@ impl AcpiTable {
         // Allocate memory in appropriate ACPI region, up to page granularity.
         let table_page_alloc = mm
             .allocate_pages(
-                (table_length + UEFI_PAGE_SIZE - 1) / UEFI_PAGE_SIZE,
+                uefi_size_to_pages!(table_length),
                 AllocationOptions::new().with_memory_type(allocator_type).with_strategy(allocation_strategy),
             )
             .map_err(|_e| AcpiError::AllocationFailed)?;
