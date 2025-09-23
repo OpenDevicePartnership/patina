@@ -20,11 +20,9 @@ If you are trying to understand why a **programming language** matters for firmw
 
 ### Document Structure
 
-This document covers the memory safety aspects of the Patina approach:
-
-1. **The Problem**: Memory safety challenges in current C-based UEFI firmware
-2. **The Solution**: Rust's memory safety advantages and guarantees
-3. **Implementation Focus**: Why the DXE Core provides maximum memory safety impact
+1. **Problem**: Memory safety challenges in current C-based UEFI firmware
+2. **Solution**: Rust's memory safety advantages and guarantees
+3. **Implementation Prioritization**: Why the DXE Core provides maximum memory safety impact
 
 ## 1. The Problem: Memory Safety Challenges in C Firmware
 
@@ -215,7 +213,7 @@ executed during a typical boot, and how many of these services are now implement
 | **Event** | CheckEvent() | **Yes** | 27,347 |
 | | CloseEvent() | **Yes** | 2,082 |
 | | CreateEvent() | **Yes** | 2,153 |
-| | CreateEventEx() | **Yes** | (combined with ext()) |
+| | CreateEventEx() | **Yes** | (combined with CreateEvent()) |
 | | SetTimer() | No (Depends on Timer Arch Protocol) | 4,063 |
 | | SignalEvent() | **Yes** | 230,045 |
 | | WaitForEvent() | **Yes** | 0 |
