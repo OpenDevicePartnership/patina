@@ -9,6 +9,15 @@
 use r_efi::efi;
 use zerocopy::{FromBytes, Immutable, IntoBytes, LittleEndian, U64};
 
+/// Errors that may occur when parsing MM structures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseError {
+    /// Buffer is too small to contain the required data.
+    BufferTooSmall { required: usize, available: usize },
+    /// Function ID in the header doesn't match expected value.
+    InvalidFunctionId { expected: u64, found: u64 },
+}
+
 /// SMM communication header wire format.
 /// This represents the 5 64-bit fields used for communication with the MM Performance module.
 #[repr(C)]
@@ -52,14 +61,17 @@ impl SmmCommHeader {
     }
 
     /// Read a header from the source buffer, validating the expected function ID.
-    pub fn read_from(src: &[u8], expected_function_id: u64) -> Option<(Self, usize)> {
+    pub fn read_from(src: &[u8], expected_function_id: u64) -> Result<(Self, usize), ParseError> {
         if src.len() < SMM_COMM_HEADER_SIZE {
-            return None;
+            return Err(ParseError::BufferTooSmall { required: SMM_COMM_HEADER_SIZE, available: src.len() });
         }
         // SAFETY: The length is validated. SmmCommHeader is repr(C) and plain data.
         let header = unsafe { &*(src.as_ptr() as *const SmmCommHeader) };
-        debug_assert_eq!(header.function_id.get(), expected_function_id);
-        Some((*header, SMM_COMM_HEADER_SIZE))
+        let found_function_id = header.function_id.get();
+        if found_function_id != expected_function_id {
+            return Err(ParseError::InvalidFunctionId { expected: expected_function_id, found: found_function_id });
+        }
+        Ok((*header, SMM_COMM_HEADER_SIZE))
     }
 
     /// Get the return status as an efi::Status.
@@ -116,9 +128,9 @@ impl GetRecordSize {
         header.write_into(dest)
     }
 
-    pub fn read_from(src: &[u8]) -> Option<(Self, usize)> {
+    pub fn read_from(src: &[u8]) -> Result<(Self, usize), ParseError> {
         let (header, consumed) = SmmCommHeader::read_from(src, Self::FUNCTION_ID)?;
-        Some((Self { boot_record_size: header.boot_record_size(), return_status: header.return_status() }, consumed))
+        Ok((Self { boot_record_size: header.boot_record_size(), return_status: header.return_status() }, consumed))
     }
 }
 
@@ -157,7 +169,7 @@ impl GetRecordDataByOffset<SMM_FETCH_CHUNK_BYTES> {
 
     /// Reads from buffer using the default buffer size.
     /// This is a convenience method made available to avoid having to specify the const generic parameter.
-    pub fn read_from_default(src: &[u8]) -> Option<(Self, usize)> {
+    pub fn read_from_default(src: &[u8]) -> Result<(Self, usize), ParseError> {
         Self::read_from(src)
     }
 }
@@ -174,7 +186,7 @@ impl<const BUFFER_SIZE: usize> GetRecordDataByOffset<BUFFER_SIZE> {
         header.write_into(dest)
     }
 
-    pub fn read_from(src: &[u8]) -> Option<(Self, usize)> {
+    pub fn read_from(src: &[u8]) -> Result<(Self, usize), ParseError> {
         let (header, header_consumed) = SmmCommHeader::read_from(src, Self::FUNCTION_ID)?;
 
         let mut boot_record_data = [0u8; BUFFER_SIZE];
@@ -182,7 +194,7 @@ impl<const BUFFER_SIZE: usize> GetRecordDataByOffset<BUFFER_SIZE> {
         let take = core::cmp::min(remaining, BUFFER_SIZE);
         boot_record_data[..take].copy_from_slice(&src[header_consumed..header_consumed + take]);
 
-        Some((
+        Ok((
             Self {
                 return_status: header.return_status(),
                 boot_record_data,

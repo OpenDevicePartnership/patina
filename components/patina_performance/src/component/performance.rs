@@ -204,7 +204,7 @@ fn fetch_mm_record_size(comm_service: &Service<dyn MmCommunication>) -> Result<u
         .communicate(0, &size_req_buf, mm::EFI_FIRMWARE_PERFORMANCE_GUID)
         .map_err(MmPerformanceError::Communication)?;
 
-    let (size_resp, _) = mm::GetRecordSize::read_from(&size_resp_bytes).ok_or(MmPerformanceError::ParseError)?;
+    let (size_resp, _) = mm::GetRecordSize::read_from(&size_resp_bytes).map_err(|_| MmPerformanceError::ParseError)?;
 
     if size_resp.return_status != r_efi::efi::Status::SUCCESS {
         return Err(MmPerformanceError::StatusError(size_resp.return_status));
@@ -231,7 +231,7 @@ fn fetch_mm_record_chunk(
         .map_err(MmPerformanceError::Communication)?;
 
     let (data_resp, _) =
-        mm::GetRecordDataByOffset::read_from_default(&data_resp_bytes).ok_or(MmPerformanceError::ParseError)?;
+        mm::GetRecordDataByOffset::read_from_default(&data_resp_bytes).map_err(|_| MmPerformanceError::ParseError)?;
 
     if data_resp.return_status != r_efi::efi::Status::SUCCESS {
         return Err(MmPerformanceError::StatusError(data_resp.return_status));
