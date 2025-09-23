@@ -378,17 +378,17 @@ impl Core<Alloc> {
         len != self.components.len()
     }
 
-    /// Performs a combined dispatch of core components and UEFI drivers.
+    /// Performs a combined dispatch of Patina components and UEFI drivers.
     ///
     /// This function will continue to loop and perform dispatching until no components have been dispatched in a full
     /// iteration. The dispatching process involves a loop of two distinct dispatch phases:
     ///
-    /// 1. A single iteration of dispatching core components, retaining those that were not dispatched.
+    /// 1. A single iteration of dispatching Patina components, retaining those that were not dispatched.
     /// 2. A single iteration of dispatching UEFI drivers via the dispatcher module.
     fn core_dispatcher(&mut self) -> Result<()> {
         perf_function_begin(function!(), &CALLER_ID, create_performance_measurement);
         loop {
-            // Core component dispatch
+            // Patina component dispatch
             let dispatched = self.dispatch_components();
 
             // UEFI driver dispatch
