@@ -292,11 +292,15 @@ impl<'a> Iterator for PerformanceRecordIterator<'a> {
 
         let header = match PerformanceRecordHeader::try_from_bytes(self.bytes) {
             Some(h) => h,
-            None => return Some(Err(MmPerformanceError::RecordError("Failed to parse record header".into()))),
+            None => {
+                self.bytes = &self.bytes[1..];
+                return Some(Err(MmPerformanceError::RecordError("Failed to parse record header".into())));
+            }
         };
 
         let rec_len = header.length as usize;
         if rec_len < PerformanceRecordHeader::SIZE {
+            self.bytes = &self.bytes[PerformanceRecordHeader::SIZE..];
             return Some(Err(MmPerformanceError::RecordError(alloc::format!(
                 "Record reports too small length {} (< {})",
                 rec_len,
@@ -305,6 +309,9 @@ impl<'a> Iterator for PerformanceRecordIterator<'a> {
         }
 
         if rec_len > self.bytes.len() {
+            // Consume all remaining bytes since the record claims to be longer
+            // than what we have available (truncated data)
+            self.bytes = &[];
             return Some(Err(MmPerformanceError::RecordError(alloc::format!(
                 "Truncated record (needed {}, had {})",
                 rec_len,
@@ -738,5 +745,62 @@ mod tests {
             Box::new((boot_services.clone(), fbpt_ref, mm_service)),
         );
         assert_eq!(TOTAL_RECORD_BYTES, TOTAL_RECORD_BYTES, "expected total record bytes mismatch");
+    }
+
+    /// Verifies that malformed record data doesn't cause infinite loops.
+    #[test]
+    fn test_performance_record_iterator_infinite_loop_does_not_occur_truncation() {
+        use zerocopy::IntoBytes;
+
+        // Truncated record - header claims more bytes of data than are actually available
+        // Claims 100 bytes, but only 6 bytes are present (4-byte header + 2 extra bytes)
+        let truncated_header =
+            PerformanceRecordHeader::new(TEST_PERFORMANCE_RECORD_TYPE, 100, TEST_PERFORMANCE_RECORD_REVISION);
+
+        let mut truncated_data = vec![0u8; 6];
+        truncated_data[..PerformanceRecordHeader::SIZE].copy_from_slice(truncated_header.as_bytes());
+
+        let mut iter = PerformanceRecordIterator::new(&truncated_data);
+        let mut iterations = 0;
+        let mut error_occurred = false;
+
+        while let Some(result) = iter.next() {
+            iterations += 1;
+            assert!(iterations < 10, "Iterator did not terminate - infinite loop detected!");
+
+            if result.is_err() {
+                error_occurred = true;
+            }
+        }
+
+        assert!(error_occurred, "Expected error for truncated record");
+        assert_eq!(iterations, 1, "Should terminate after one error");
+    }
+
+    #[test]
+    fn test_performance_record_iterator_infinite_loop_does_not_occur_invalid_len() {
+        use zerocopy::IntoBytes;
+
+        // Invalid: length=1 < header size=4
+        let invalid_length_header =
+            PerformanceRecordHeader::new(TEST_PERFORMANCE_RECORD_TYPE, 1, TEST_PERFORMANCE_RECORD_REVISION);
+        let mut invalid_length_data = vec![0u8; 20];
+        invalid_length_data[..PerformanceRecordHeader::SIZE].copy_from_slice(invalid_length_header.as_bytes());
+
+        let mut iter = PerformanceRecordIterator::new(&invalid_length_data);
+        let mut iterations = 0;
+        let mut error_occurred = false;
+
+        while let Some(result) = iter.next() {
+            iterations += 1;
+            assert!(iterations < 10, "Iterator did not terminate - infinite loop detected!");
+
+            if result.is_err() {
+                error_occurred = true;
+            }
+        }
+
+        assert!(error_occurred, "Expected error for invalid length");
+        assert!(iterations <= 5, "Should terminate quickly without infinite loop");
     }
 }
