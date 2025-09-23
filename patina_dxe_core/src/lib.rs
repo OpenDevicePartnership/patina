@@ -354,25 +354,22 @@ impl Core<Alloc> {
     /// Attempts to dispatch all components.
     ///
     /// This method will exit once no components remain or no components were dispatched during a full iteration.
-    fn dispatch(&mut self) -> bool {
+    fn dispatch_components(&mut self) -> bool {
         let len = self.components.len();
         self.components.retain_mut(|component| {
             // Ok(true): Dispatchable and dispatched returning success
             // Ok(false): Not dispatchable at this time.
             // Err(e): Dispatchable and dispatched returning failure
             let name = component.metadata().name();
-            log::info!("DISPATCH_ATTEMPT BEGIN: Id = [{:?}]", name);
+            log::trace!("Dispatch Start: Id = [{name:?}]");
             !match component.run(&mut self.storage) {
                 Ok(true) => {
-                    log::info!("DISPATCH_ATTEMPT END: Id = [{name:?}] Status = [Success]");
+                    log::info!("Dispatched: Id = [{name:?}] Status = [Success]");
                     true
                 }
-                Ok(false) => {
-                    log::info!("DISPATCH_ATTEMPT END: Id = [{name:?}] Status = [Skipped]");
-                    false
-                }
+                Ok(false) => false,
                 Err(err) => {
-                    log::error!("DISPATCH_ATTEMPT END: Id = [{name:?}] Status = [Failed] Error = [{err:?}]");
+                    log::error!("Dispatched: Id = [{name:?}] Status = [Failed] Error = [{err:?}]");
                     debug_assert!(false);
                     true // Component dispatched, even if it did fail, so remove from self.components to avoid re-dispatch.
                 }
@@ -392,11 +389,11 @@ impl Core<Alloc> {
         perf_function_begin(function!(), &CALLER_ID, create_performance_measurement);
         loop {
             // Core component dispatch
-            let dispatched = self.dispatch();
+            let dispatched = self.dispatch_components();
 
             // UEFI driver dispatch
             let dispatched = dispatched
-                | dispatcher::dispatch().inspect_err(|err| log::error!("UEFI Driver Dispatch error: {err:?}"))?;
+                || dispatcher::dispatch().inspect_err(|err| log::error!("UEFI Driver Dispatch error: {err:?}"))?;
 
             if !dispatched {
                 break;
