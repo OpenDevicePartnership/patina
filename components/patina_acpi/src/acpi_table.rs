@@ -401,7 +401,7 @@ impl AcpiTable {
         // Allocate memory in appropriate ACPI region, up to page granularity.
         let table_page_alloc = mm
             .allocate_pages(
-                table_length / UEFI_PAGE_SIZE + 1,
+                (table_length + UEFI_PAGE_SIZE - 1) / UEFI_PAGE_SIZE,
                 AllocationOptions::new().with_memory_type(allocator_type).with_strategy(allocation_strategy),
             )
             .map_err(|_e| AcpiError::AllocationFailed)?;
@@ -422,7 +422,7 @@ impl AcpiTable {
 
         // Store the table type for convenience.
         // If the type is unknown (for example, coming over C FFI interface), use AcpiTableHeader as a fallback.
-        let type_id = if let Some(tid) = type_id { tid } else { TypeId::of::<AcpiTableHeader>() };
+        let type_id = type_id.unwrap_or(TypeId::of::<AcpiTableHeader>());
 
         Ok(Self { table, type_id })
     }
