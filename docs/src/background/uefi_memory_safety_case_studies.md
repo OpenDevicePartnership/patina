@@ -42,235 +42,6 @@ vulnerability classes:
 
 ## Detailed CVE Analysis
 
-### CVE-2022-36765: Integer Overflow in CreateHob()
-
-- **CVE Details**: [CVE-2022-36765](https://nvd.nist.gov/vuln/detail/CVE-2022-36765)
-- **CVSS Score**: 7.0 (HIGH)
-- **Vulnerability Type**: [CWE-680](https://cwe.mitre.org/data/definitions/680.html)
-  (Integer Overflow to Buffer Overflow)
-- [Integer Overflow in CreateHob() could lead to HOB OOB R/W](https://github.com/tianocore/edk2/security/advisories/GHSA-ch4w-v7m3-g8wx)
-
-**The Vulnerability**: "EDK2's `CreateHob()` function was susceptible to integer overflow when calculating HOB
-alignment, allowing attackers to trigger buffer overflows."
-
-**Attack Scenario**: An attacker provides `HobLength = 0xFFFA`:
-
-1. `HobLength + 0x7 = 0x10001` (65537) - overflows UINT16 to `0x0001`
-2. `(0x0001) & (~0x7) = 0x0000` - aligned length becomes 0
-3. Function allocates 0 bytes but caller expects 65530 bytes
-4. Subsequent HOB access overflows the HOB buffer
-
-**C Problem**:
-
-```c
-EFI_STATUS
-PeiCreateHob (
-  IN CONST EFI_PEI_SERVICES  **PeiServices,
-  IN UINT16                  Type,
-  IN UINT16                  Length,
-  IN OUT VOID                **Hob
-  )
-{
-  // Vulnerable: No overflow checking
-  HobLength = (UINT16) ((Length + 0x7) & (~0x7));
-  // ... buffer overflow when accessing memory beyond allocated size
-}
-```
-
-**How Rust Prevents This (Quick Defensive Translation)**:
-
-If a similar function signature were retained in a relatively straightforward port of the C code, the code could be
-more defensively written as:
-
-```rust
-impl HobAllocator {
-    pub fn create_hob(&mut self, hob_type: u16, length: u16) -> Result<*mut HobHeader, HobError> {
-        // Checked arithmetic prevents overflow
-        let aligned_length = length
-            .checked_add(7)
-            .ok_or(HobError::LengthOverflow)?
-            & !7;
-
-        // Bounds checking ensures allocation safety
-        let total_size = self.free_memory_bottom
-            .checked_add(aligned_length as u64)
-            .ok_or(HobError::LengthOverflow)?;
-
-        if total_size > self.free_memory_top {
-            return Err(HobError::OutOfMemory);
-        }
-
-        // Safe allocation with verified bounds
-        Ok(/* ... */)
-    }
-}
-```
-
-**Idiomatic Rust Design (Prevention by Design)**:
-
-However, the goal of writing firmware in Rust is to not write it like C code and litter the implementation with bounds
-checks and defensive programming bloat. The goal is to write code that is correct by construction (safe to use) and
-those checks **are not needed**. A more idiomatic Rust design eliminates the vulnerability entirely through type safety
-and ownership.
-
-Some sample types in this example can help accomplish this:
-
-- `HobLength`: A type-safe wrapper that guarantees no overflow can occur when creating HOB lengths
-- `HobBuilder<T>`: A way to build HOBs that ensures only valid lengths can be used
-- `HobRef<T>`: A type-safe reference that owns its memory region, preventing use-after-free
-
-```rust
-/// A type-safe HOB length that cannot overflow
-#[derive(Debug, Clone, Copy)]
-pub struct HobLength {
-    // Note: The maximum size of HOB data is 64k
-    value: u16,
-    aligned: u16,
-}
-
-impl HobLength {
-    /// Creates a HOB length with safety guaranteed at compile time
-    pub const fn new(length: u16) -> Option<Self> {
-        // Compile-time overflow detection
-        match length.checked_add(7) {
-            Some(sum) => Some(Self {
-                value: length,
-                aligned: sum & !7,
-            }),
-            None => None,
-        }
-    }
-
-    pub const fn aligned_value(self) -> u16 {
-        self.aligned
-    }
-}
-
-/// Type-safe HOB builder that owns its memory
-pub struct HobBuilder<T> {
-    hob_type: u16,
-    length: HobLength,
-    _phantom: PhantomData<T>,
-}
-
-impl<T> HobBuilder<T> {
-    /// Creates a HOB with guaranteed valid length
-    pub fn new(hob_type: u16, length: HobLength) -> Self {
-        Self {
-            hob_type,
-            length,
-            _phantom: PhantomData,
-        }
-    }
-
-    /// Allocates and initializes HOB with type safety
-    pub fn build(self, allocator: &mut HobAllocator) -> Result<HobRef<T>, HobError> {
-        // Length is guaranteed valid by type system
-        let aligned_length = self.length.aligned_value();
-
-        // Use safe allocation that returns owned memory
-        let memory = allocator.allocate_aligned(aligned_length as usize)?;
-
-        // Initialize the HOB header safely
-        let hob_ref = HobRef::new(memory, self.hob_type)?;
-
-        Ok(hob_ref)
-    }
-}
-
-/// Type-safe HOB reference that owns its memory region
-pub struct HobRef<T> {
-    data: NonNull<u8>,
-    size: usize,
-    _phantom: PhantomData<T>,
-}
-
-impl<T> HobRef<T> {
-    /// Safe HOB creation with automatic cleanup
-    fn new(memory: AlignedMemory, hob_type: u16) -> Result<Self, HobError> {
-        let size = memory.size();
-        let data = memory.into_raw();
-
-        // Limit unsafe code for initialization so others can create HOBs in safe code
-        unsafe {
-            let header = data.cast::<HobHeader>();
-            header.as_ptr().write(HobHeader {
-                hob_type,
-                length: size as u16,
-            });
-        }
-
-        Ok(Self {
-            data,
-            size,
-            _phantom: PhantomData,
-        })
-    }
-
-    /// Provides safe access to HOB data in a byte slice
-    pub fn data(&self) -> &[u8] {
-        unsafe {
-            slice::from_raw_parts(self.data.as_ptr(), self.size)
-        }
-    }
-}
-
-// Usage example - overflow is prevented by design:
-let length = HobLength::new(0xFFFA).ok_or(HobError::LengthTooLarge)?;
-let builder = HobBuilder::<CustomHob>::new(HOB_TYPE_CUSTOM, length);
-let hob = builder.build(&mut allocator)?;
-```
-
-**How This Helps**:
-
-1. **Compile-Time Overflow Prevention**: `HobLength::new()` uses `checked_add()`, preventing overflows
-2. **Type-Level Guarantees**: The type system ensures only valid lengths can be used to create HOBs
-3. **Ownership-Based Safety**: `HobRef<T>` *owns* its memory region, preventing use-after-free
-
-#### What is `PhantomData` and Why is it Needed Here?
-
-If you haven't worked in Rust, the use of [`PhantomData<T>`](https://doc.rust-lang.org/core/marker/struct.PhantomData.html)
-in the `HobBuilder<T>` and `HobRef<T>` structs may be confusing. It is explained within the context of this example in
-a bit more detail here to give more insight into Rust type safety.
-
-1. **Type Association Without Storage**: These structs don't actually store a `T` value - they store raw bytes. But we
-   want the type system to track what *type* of HOB this represents (e.g., `HobRef<CustomHob>` vs `HobRef<MemoryHob>`).
-
-   > `T` is a [generic type](https://doc.rust-lang.org/book/ch10-00-generics.html) parameter representing the specific
-   > HOB type (like `CustomHob` or `MemoryHob`).
-
-2. **Generic Parameter Usage**: Without `PhantomData<T>`, the compiler would error because the generic type `T` appears
-   in the struct declaration but isn't actually used in any fields. Rust requires all generic parameters to be "used"
-   somehow.
-
-3. **Drop Check Safety**: `PhantomData<T>` tells the compiler that this struct "owns" data of type `T` for the purposes
-   of drop checking, even though it's stored as raw bytes. This ensures proper cleanup order if `T` has a custom
-   [`Drop` trait](https://doc.rust-lang.org/core/ops/trait.Drop.html) implementation.
-
-4. **Auto Trait Behavior**: The presence of `PhantomData<T>` makes the struct inherit auto traits
-   (like [`Send`](https://doc.rust-lang.org/core/marker/trait.Send.html)/[`Sync`](https://doc.rust-lang.org/core/marker/trait.Sync.html))
-   based on whether `T` implements them.
-
-5. **Variance**: `PhantomData<T>` is invariant over `T`, which prevents dangerous type coercions that could violate
-   memory safety when dealing with raw pointers.
-
-**Example of the Type Safety This Provides**:
-
-```rust
-// These are distinct types that cannot be confused:
-let custom_hob: HobRef<CustomHob> = create_custom_hob()?;
-let memory_hob: HobRef<MemoryHob> = create_memory_hob()?;
-
-// Compile error - cannot assign different HOB types:
-// let bad: HobRef<CustomHob> = memory_hob;  // Type mismatch
-
-// Safe typed access:
-let custom_data: &CustomHob = custom_hob.as_typed()?;  // Type-safe
-```
-
-In summary, without `PhantomData<T>`, we'd lose impportant type safety and end up with untyped `HobRef` structs that
-could be confused with each other, defeating the purpose of the safe abstraction.
-
 ### CVE-2023-45230: Buffer Overflow in DHCPv6 Client
 
 - **CVE Details**: [CVE-2023-45230](https://nvd.nist.gov/vuln/detail/CVE-2023-45230)
@@ -1154,7 +925,236 @@ this class of vulnerability by preventing invalid accesses in safe code - you ca
 indices, and iterators automatically handle bounds checking. The `zerocopy` approach also ensures that binary layout
 parsing matches C structures while providing memory safety.
 
-## Additional CVEs Prevented by Rust's Safety Guarantees
+### CVE-2022-36765: Integer Overflow in CreateHob()
+
+- **CVE Details**: [CVE-2022-36765](https://nvd.nist.gov/vuln/detail/CVE-2022-36765)
+- **CVSS Score**: 7.0 (HIGH)
+- **Vulnerability Type**: [CWE-680](https://cwe.mitre.org/data/definitions/680.html)
+  (Integer Overflow to Buffer Overflow)
+- [Integer Overflow in CreateHob() could lead to HOB OOB R/W](https://github.com/tianocore/edk2/security/advisories/GHSA-ch4w-v7m3-g8wx)
+
+**The Vulnerability**: "EDK2's `CreateHob()` function was susceptible to integer overflow when calculating HOB
+alignment, allowing attackers to trigger buffer overflows."
+
+**Attack Scenario**: An attacker provides `HobLength = 0xFFFA`:
+
+1. `HobLength + 0x7 = 0x10001` (65537) - overflows UINT16 to `0x0001`
+2. `(0x0001) & (~0x7) = 0x0000` - aligned length becomes 0
+3. Function allocates 0 bytes but caller expects 65530 bytes
+4. Subsequent HOB access overflows the HOB buffer
+
+**C Problem**:
+
+```c
+EFI_STATUS
+PeiCreateHob (
+  IN CONST EFI_PEI_SERVICES  **PeiServices,
+  IN UINT16                  Type,
+  IN UINT16                  Length,
+  IN OUT VOID                **Hob
+  )
+{
+  // Vulnerable: No overflow checking
+  HobLength = (UINT16) ((Length + 0x7) & (~0x7));
+  // ... buffer overflow when accessing memory beyond allocated size
+}
+```
+
+**How Rust Prevents This (Quick Defensive Translation)**:
+
+If a similar function signature were retained in a relatively straightforward port of the C code, the code could be
+more defensively written as:
+
+```rust
+impl HobAllocator {
+    pub fn create_hob(&mut self, hob_type: u16, length: u16) -> Result<*mut HobHeader, HobError> {
+        // Checked arithmetic prevents overflow
+        let aligned_length = length
+            .checked_add(7)
+            .ok_or(HobError::LengthOverflow)?
+            & !7;
+
+        // Bounds checking ensures allocation safety
+        let total_size = self.free_memory_bottom
+            .checked_add(aligned_length as u64)
+            .ok_or(HobError::LengthOverflow)?;
+
+        if total_size > self.free_memory_top {
+            return Err(HobError::OutOfMemory);
+        }
+
+        // Safe allocation with verified bounds
+        Ok(/* ... */)
+    }
+}
+```
+
+**Idiomatic Rust Design (Prevention by Design)**:
+
+However, the goal of writing firmware in Rust is to not write it like C code and litter the implementation with bounds
+checks and defensive programming bloat. The goal is to write code that is correct by construction (safe to use) and
+those checks **are not needed**. A more idiomatic Rust design eliminates the vulnerability entirely through type safety
+and ownership.
+
+Some sample types in this example can help accomplish this:
+
+- `HobLength`: A type-safe wrapper that guarantees no overflow can occur when creating HOB lengths
+- `HobBuilder<T>`: A way to build HOBs that ensures only valid lengths can be used
+- `HobRef<T>`: A type-safe reference that owns its memory region, preventing use-after-free
+
+```rust
+/// A type-safe HOB length that cannot overflow
+#[derive(Debug, Clone, Copy)]
+pub struct HobLength {
+    // Note: The maximum size of HOB data is 64k
+    value: u16,
+    aligned: u16,
+}
+
+impl HobLength {
+    /// Creates a HOB length with safety guaranteed at compile time
+    pub const fn new(length: u16) -> Option<Self> {
+        // Compile-time overflow detection
+        match length.checked_add(7) {
+            Some(sum) => Some(Self {
+                value: length,
+                aligned: sum & !7,
+            }),
+            None => None,
+        }
+    }
+
+    pub const fn aligned_value(self) -> u16 {
+        self.aligned
+    }
+}
+
+/// Type-safe HOB builder that owns its memory
+pub struct HobBuilder<T> {
+    hob_type: u16,
+    length: HobLength,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> HobBuilder<T> {
+    /// Creates a HOB with guaranteed valid length
+    pub fn new(hob_type: u16, length: HobLength) -> Self {
+        Self {
+            hob_type,
+            length,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Allocates and initializes HOB with type safety
+    pub fn build(self, allocator: &mut HobAllocator) -> Result<HobRef<T>, HobError> {
+        // Length is guaranteed valid by type system
+        let aligned_length = self.length.aligned_value();
+
+        // Use safe allocation that returns owned memory
+        let memory = allocator.allocate_aligned(aligned_length as usize)?;
+
+        // Initialize the HOB header safely
+        let hob_ref = HobRef::new(memory, self.hob_type)?;
+
+        Ok(hob_ref)
+    }
+}
+
+/// Type-safe HOB reference that owns its memory region
+pub struct HobRef<T> {
+    data: NonNull<u8>,
+    size: usize,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> HobRef<T> {
+    /// Safe HOB creation with automatic cleanup
+    fn new(memory: AlignedMemory, hob_type: u16) -> Result<Self, HobError> {
+        let size = memory.size();
+        let data = memory.into_raw();
+
+        // Limit unsafe code for initialization so others can create HOBs in safe code
+        unsafe {
+            let header = data.cast::<HobHeader>();
+            header.as_ptr().write(HobHeader {
+                hob_type,
+                length: size as u16,
+            });
+        }
+
+        Ok(Self {
+            data,
+            size,
+            _phantom: PhantomData,
+        })
+    }
+
+    /// Provides safe access to HOB data in a byte slice
+    pub fn data(&self) -> &[u8] {
+        unsafe {
+            slice::from_raw_parts(self.data.as_ptr(), self.size)
+        }
+    }
+}
+
+// Usage example - overflow is prevented by design:
+let length = HobLength::new(0xFFFA).ok_or(HobError::LengthTooLarge)?;
+let builder = HobBuilder::<CustomHob>::new(HOB_TYPE_CUSTOM, length);
+let hob = builder.build(&mut allocator)?;
+```
+
+**How This Helps**:
+
+1. **Compile-Time Overflow Prevention**: `HobLength::new()` uses `checked_add()`, preventing overflows
+2. **Type-Level Guarantees**: The type system ensures only valid lengths can be used to create HOBs
+3. **Ownership-Based Safety**: `HobRef<T>` *owns* its memory region, preventing use-after-free
+
+#### What is `PhantomData` and Why is it Needed Here?
+
+If you haven't worked in Rust, the use of [`PhantomData<T>`](https://doc.rust-lang.org/core/marker/struct.PhantomData.html)
+in the `HobBuilder<T>` and `HobRef<T>` structs may be confusing. It is explained within the context of this example in
+a bit more detail here to give more insight into Rust type safety.
+
+1. **Type Association Without Storage**: These structs don't actually store a `T` value - they store raw bytes. But we
+   want the type system to track what *type* of HOB this represents (e.g., `HobRef<CustomHob>` vs `HobRef<MemoryHob>`).
+
+   > `T` is a [generic type](https://doc.rust-lang.org/book/ch10-00-generics.html) parameter representing the specific
+   > HOB type (like `CustomHob` or `MemoryHob`).
+
+2. **Generic Parameter Usage**: Without `PhantomData<T>`, the compiler would error because the generic type `T` appears
+   in the struct declaration but isn't actually used in any fields. Rust requires all generic parameters to be "used"
+   somehow.
+
+3. **Drop Check Safety**: `PhantomData<T>` tells the compiler that this struct "owns" data of type `T` for the purposes
+   of drop checking, even though it's stored as raw bytes. This ensures proper cleanup order if `T` has a custom
+   [`Drop` trait](https://doc.rust-lang.org/core/ops/trait.Drop.html) implementation.
+
+4. **Auto Trait Behavior**: The presence of `PhantomData<T>` makes the struct inherit auto traits
+   (like [`Send`](https://doc.rust-lang.org/core/marker/trait.Send.html)/[`Sync`](https://doc.rust-lang.org/core/marker/trait.Sync.html))
+   based on whether `T` implements them.
+
+5. **Variance**: `PhantomData<T>` is invariant over `T`, which prevents dangerous type coercions that could violate
+   memory safety when dealing with raw pointers.
+
+**Example of the Type Safety This Provides**:
+
+```rust
+// These are distinct types that cannot be confused:
+let custom_hob: HobRef<CustomHob> = create_custom_hob()?;
+let memory_hob: HobRef<MemoryHob> = create_memory_hob()?;
+
+// Compile error - cannot assign different HOB types:
+// let bad: HobRef<CustomHob> = memory_hob;  // Type mismatch
+
+// Safe typed access:
+let custom_data: &CustomHob = custom_hob.as_typed()?;  // Type-safe
+```
+
+In summary, without `PhantomData<T>`, we'd lose impportant type safety and end up with untyped `HobRef` structs that
+could be confused with each other, defeating the purpose of the safe abstraction.
+
+## Additional CVEs Preventable by Rust's Safety Guarantees
 
 These are additional instances of classes of vulnerabilities that Rust's safety guarantees can help prevent:
 
