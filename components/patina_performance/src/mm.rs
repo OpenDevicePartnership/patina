@@ -134,7 +134,7 @@ impl GetRecordSize {
     }
 }
 
-/// MM communicate function to return a BUFFER_SIZE about of byte at an offset.
+/// MM communicate helper to get a BUFFER_SIZE of bytes at an offset.
 #[derive(Debug, Copy, Clone)]
 pub struct GetRecordDataByOffset<const BUFFER_SIZE: usize = SMM_FETCH_CHUNK_BYTES> {
     pub return_status: efi::Status,
