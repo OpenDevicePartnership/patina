@@ -77,7 +77,14 @@ use mu_rust_helpers::{function, guid::CALLER_ID};
 use patina_ffs::section::SectionExtractor;
 use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
 use patina_sdk::{
-    boot_services::StandardBootServices, component::{service::IntoService, Component, IntoComponent, Storage}, error::{self, Result}, performance::{logging::{perf_function_begin, perf_function_end}, measurement::create_performance_measurement}, runtime_services::StandardRuntimeServices
+    boot_services::StandardBootServices,
+    component::{Component, IntoComponent, Storage, service::IntoService},
+    error::{self, Result},
+    performance::{
+        logging::{perf_function_begin, perf_function_end},
+        measurement::create_performance_measurement,
+    },
+    runtime_services::StandardRuntimeServices,
 };
 use protocols::PROTOCOL_DB;
 use r_efi::efi;
@@ -375,10 +382,10 @@ impl Core<Alloc> {
     }
 
     /// Performs a combined dispatch of core components and UEFI drivers.
-    /// 
+    ///
     /// This function will continue to loop and perform dispatching until no components have been dispatched in a full
     /// iteration. The dispatching process involves a loop of two distinct dispatch phases:
-    /// 
+    ///
     /// 1. A single iteration of dispatching core components, retaining those that were not dispatched.
     /// 2. A single iteration of dispatching UEFI drivers via the dispatcher module.
     fn core_dispatcher(&mut self) -> Result<()> {
@@ -388,8 +395,8 @@ impl Core<Alloc> {
             let dispatched = self.dispatch();
 
             // UEFI driver dispatch
-            let dispatched = dispatched | dispatcher::dispatch()
-                .inspect_err(|err| log::error!("UEFI Driver Dispatch error: {err:?}"))?;
+            let dispatched = dispatched
+                | dispatcher::dispatch().inspect_err(|err| log::error!("UEFI Driver Dispatch error: {err:?}"))?;
 
             if !dispatched {
                 break;
