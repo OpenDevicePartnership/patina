@@ -104,9 +104,7 @@ impl GetRecordSize {
     pub fn new() -> Self {
         Self::default()
     }
-}
 
-impl GetRecordSize {
     pub fn write_into(self, dest: &mut [u8]) -> Result<usize, ()> {
         let header = SmmCommHeader::new(
             Self::FUNCTION_ID,
