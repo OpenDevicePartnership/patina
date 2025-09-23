@@ -12,6 +12,7 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use patina_sdk::base::{SIZE_4GB, UEFI_PAGE_SIZE};
 use patina_sdk::component::service::Service;
 use patina_sdk::component::service::memory::{AllocationOptions, MemoryManager, PageAllocationStrategy};
 use patina_sdk::efi_types::EfiMemoryType;
@@ -19,7 +20,6 @@ use patina_sdk::efi_types::EfiMemoryType;
 use crate::error::AcpiError;
 use crate::signature::{self};
 
-use core::alloc::Layout;
 use core::any::TypeId;
 use core::mem::ManuallyDrop;
 use core::ptr::{self, NonNull};
@@ -361,60 +361,11 @@ impl AcpiTable {
     pub unsafe fn new<T: 'static>(table: T, mm: &Service<dyn MemoryManager>) -> Result<Self, AcpiError> {
         // SAFETY: If the caller preconditions are met, the signature, header, and table fields of the union are valid.
         let table = unsafe { Table::new(table) }?;
-        let total_len = unsafe { table.header.length } as usize;
 
-        // FACS and UEFI tables must always be located in NVS (by spec).
-        let allocator_type = match table.signature() {
-            signature::FACS | signature::UEFI => EfiMemoryType::ACPIMemoryNVS,
-            _ => EfiMemoryType::ACPIReclaimMemory,
-        };
-
-        // The current Windows implementation uses the legacy 32-bit FACS pointer in the FADT.
-        // As such, the FACS must be allocated in the lower 32-bit address space.
-        // This workaround can be removed when Windows no longer relies on this field.
-        // The FACS is always allocated in NVS memory.
-        if unsafe { table.signature } == signature::FACS {
-            let facs_alloc = mm
-                .allocate_pages(
-                    1,
-                    AllocationOptions::new()
-                        .with_memory_type(EfiMemoryType::ACPIMemoryNVS)
-                        .with_strategy(PageAllocationStrategy::MaxAddress(0x1000_0000)),
-                )
-                .map_err(|_e| AcpiError::AllocationFailed)?;
-            let new_facs_ptr = facs_alloc.into_raw_ptr().unwrap();
-            unsafe { ptr::copy_nonoverlapping(table.as_ref() as *const T as *const u8, new_facs_ptr, total_len) };
-
-            return Ok(Self {
-                table: NonNull::new(new_facs_ptr).ok_or(AcpiError::NullTablePtr)?.cast::<Table>(),
-                type_id: TypeId::of::<AcpiFacs>(),
-            });
+        // SAFETY: If caller preconditions are met, the table is valid and points to a valid ACPI table header.
+        unsafe {
+            AcpiTable::new_from_ptr(table.as_ref() as *const T as *const AcpiTableHeader, Some(TypeId::of::<T>()), mm)
         }
-
-        let data_len = total_len - mem::size_of::<AcpiTableHeader>();
-        // Table is header followed by trailing data.
-        // `header.length` specifies the full length of the table, including the header.
-        let tbl_layout = Layout::new::<AcpiTableHeader>()
-            .extend(Layout::array::<u8>(data_len).map_err(|_e| AcpiError::InvalidTableFormat)?)
-            .map_err(|_e| AcpiError::InvalidTableFormat)?
-            .0;
-        // Allocate memory in appropriate ACPI region.
-        let mm_allocator = mm.get_allocator(allocator_type).map_err(|_e| AcpiError::AllocationFailed)?;
-        let tbl_alloc = mm_allocator.allocate(tbl_layout).map_err(|_e| AcpiError::AllocationFailed)?;
-
-        // Get table source data as a slice.
-        let tbl_src = unsafe { slice::from_raw_parts((table.as_ref() as *const T).cast::<u8>(), total_len) };
-
-        // Get newly allocated memory destination as a slice.
-        let tbl_alloc_dst = unsafe { slice::from_raw_parts_mut(tbl_alloc.as_ptr().cast::<u8>(), total_len) };
-        tbl_alloc_dst.copy_from_slice(tbl_src);
-
-        let table = NonNull::new(tbl_alloc.as_ptr().cast::<Table>()).ok_or(AcpiError::NullTablePtr)?;
-
-        // Store the type ID for convenience.
-        let type_id = core::any::TypeId::of::<T>();
-
-        Ok(AcpiTable { table, type_id })
     }
 
     /// Creates a new AcpiTable from a raw pointer.
@@ -426,53 +377,54 @@ impl AcpiTable {
     /// - Caller must ensure `table_length` is correctly specifies the length of the table, including the header and any trailing data bytes.
     pub unsafe fn new_from_ptr(
         header_ptr: *const AcpiTableHeader,
+        type_id: Option<TypeId>,
         mm: &Service<dyn MemoryManager>,
     ) -> Result<Self, AcpiError> {
         // SAFETY: If function preconditions are met, the pointer is valid and points to a valid ACPI table header.
         let (table_signature, table_length) = unsafe { ((*header_ptr).signature, (*header_ptr).length as usize) };
 
+        // FACS and UEFI tables must always be located in NVS (by spec).
+        let allocator_type = match table_signature {
+            signature::FACS | signature::UEFI => EfiMemoryType::ACPIMemoryNVS,
+            _ => EfiMemoryType::ACPIReclaimMemory,
+        };
+
         // The current Windows implementation uses the legacy 32-bit FACS pointer in the FADT.
         // As such, the FACS must be allocated in the lower 32-bit address space.
         // This workaround can be removed when Windows no longer relies on this field.
-        // The FACS is always allocated in NVS memory.
-        if table_signature == signature::FACS {
-            let facs_alloc = mm
-                .allocate_pages(
-                    1,
-                    AllocationOptions::new()
-                        .with_memory_type(EfiMemoryType::ACPIMemoryNVS)
-                        .with_strategy(PageAllocationStrategy::MaxAddress(0x1000_0000)),
-                )
-                .map_err(|_e| AcpiError::AllocationFailed)?;
-            let new_facs_ptr = facs_alloc.into_raw_ptr().unwrap();
-            unsafe { ptr::copy_nonoverlapping(header_ptr as *const u8, new_facs_ptr, table_length) };
+        let allocation_strategy = if table_signature == signature::FACS {
+            PageAllocationStrategy::MaxAddress(SIZE_4GB)
+        } else {
+            PageAllocationStrategy::Any
+        };
 
-            return Ok(Self {
-                table: NonNull::new(new_facs_ptr).ok_or(AcpiError::NullTablePtr)?.cast::<Table>(),
-                type_id: TypeId::of::<AcpiFacs>(),
-            });
-        }
+        // Allocate memory in appropriate ACPI region, up to page granularity.
+        let table_page_alloc = mm
+            .allocate_pages(
+                table_length / UEFI_PAGE_SIZE + 1,
+                AllocationOptions::new().with_memory_type(allocator_type).with_strategy(allocation_strategy),
+            )
+            .map_err(|_e| AcpiError::AllocationFailed)?;
 
-        // Allocate table based on the length given in the header field.
-        let allocator = mm.get_allocator(EfiMemoryType::ACPIReclaimMemory).map_err(|_e| AcpiError::AllocationFailed)?;
-        let mut table_bytes = Vec::with_capacity_in(table_length, allocator);
+        // Get the raw pointer to the allocated memory for copying.
+        let dest_alloc = table_page_alloc.into_raw_ptr().ok_or(AcpiError::AllocationFailed)? as *mut u8;
 
         // Copy entire table into the new allocation.
         // SAFETY: If function preconditions are met, the pointer is valid and points to a valid ACPI table header.
         // SAFETY: If function preconditions are met, the table length is guaranteed to be correct.
-        // SAFETY: If allocation succeeds, `table_bytes` is guaranteed to be valid and have enough space.
+        // SAFETY: If allocation succeeds, the destination is valid for writes of `table_length` bytes.
         unsafe {
-            ptr::copy_nonoverlapping(header_ptr as *const u8, table_bytes.as_mut_ptr(), table_length);
-            table_bytes.set_len(table_length);
+            ptr::copy_nonoverlapping(header_ptr as *const u8, dest_alloc, table_length);
         }
 
         // Leak the allocated bytes.
-        let raw_header = Box::into_raw(table_bytes.into_boxed_slice()) as *mut AcpiTableHeader;
+        let table = NonNull::new(dest_alloc.cast::<Table>()).ok_or(AcpiError::NullTablePtr)?;
 
-        Ok(Self {
-            table: NonNull::new(raw_header).ok_or(AcpiError::NullTablePtr)?.cast::<Table>(),
-            type_id: TypeId::of::<AcpiTableHeader>(), // Unknown type, so we use the header type.
-        })
+        // Store the table type for convenience.
+        // If the type is unknown (for example, coming over C FFI interface), use AcpiTableHeader as a fallback.
+        let type_id = if let Some(tid) = type_id { tid } else { TypeId::of::<AcpiTableHeader>() };
+
+        Ok(Self { table, type_id })
     }
 
     pub fn signature(&self) -> u32 {
@@ -639,7 +591,9 @@ mod tests {
         let mm: Service<dyn MemoryManager> = Service::mock(Box::new(StdMemoryManager::new()));
 
         // SAFETY: raw_ptr points to a valid TestTable with a valid header.
-        let acpi_table = unsafe { AcpiTable::new_from_ptr(raw_ptr as *const AcpiTableHeader, &mm) }.unwrap();
+        let acpi_table =
+            unsafe { AcpiTable::new_from_ptr(raw_ptr as *const AcpiTableHeader, Some(TypeId::of::<TestTable>()), &mm) }
+                .unwrap();
 
         // Check signature and header fields.
         assert_eq!(acpi_table.signature(), TEST_SIGNATURE);
