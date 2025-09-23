@@ -163,7 +163,11 @@ unsafe impl Send for DispatcherContext {}
 static DISPATCHER_CONTEXT: TplMutex<DispatcherContext> =
     TplMutex::new(efi::TPL_NOTIFY, DispatcherContext::new(), "Dispatcher Context");
 
-fn dispatch() -> Result<bool, EfiError> {
+pub fn dispatch() -> Result<bool, EfiError> {
+    if DISPATCHER_CONTEXT.lock().executing {
+        return Err(EfiError::AlreadyStarted);
+    }
+
     let scheduled: Vec<PendingDriver>;
     {
         let mut dispatcher = DISPATCHER_CONTEXT.lock();
