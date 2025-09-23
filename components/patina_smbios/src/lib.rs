@@ -1,5 +1,6 @@
 #![no_std]
 pub mod smbios_derive;
+pub mod smbios_record;
 // #![no_std]
 // use hashbrown::HashSet;
 // extern crate alloc;
