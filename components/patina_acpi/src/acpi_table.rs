@@ -408,7 +408,7 @@ impl AcpiTable {
             .map_err(|_e| AcpiError::AllocationFailed)?;
 
         // Get the raw pointer to the allocated memory for copying.
-        let dest_alloc = table_page_alloc.into_raw_ptr().ok_or(AcpiError::AllocationFailed)? as *mut u8;
+        let dest_alloc = table_page_alloc.into_raw_ptr().ok_or(AcpiError::AllocationFailed)?;
 
         // Copy entire table into the new allocation.
         // SAFETY: If function preconditions are met, the pointer is valid and points to a valid ACPI table header.
