@@ -1,14 +1,14 @@
 use hashbrown::HashSet;
 extern crate alloc;
-use alloc::vec::Vec;
 use alloc::boxed::Box;
 use alloc::string::String;
-use r_efi::efi;
-use r_efi::efi::PhysicalAddress;
-use r_efi::efi::Handle;
-use spin::Mutex;
+use alloc::vec::Vec;
 use core::ffi::c_char;
 use patina_sdk::uefi_protocol::ProtocolInterface;
+use r_efi::efi;
+use r_efi::efi::Handle;
+use r_efi::efi::PhysicalAddress;
+use spin::Mutex;
 
 pub type SmbiosHandle = u16;
 
@@ -140,27 +140,20 @@ impl SmbiosManager {
         }
         Ok(())
     }
-    
-    fn build_record_with_strings(
-        header: &SmbiosTableHeader,
-        strings: &[&str],
-    ) -> Result<Vec<u8>, SmbiosError> {
+
+    fn build_record_with_strings(header: &SmbiosTableHeader, strings: &[&str]) -> Result<Vec<u8>, SmbiosError> {
         // Validate all strings first
         for s in strings {
             Self::validate_string(s)?;
         }
-        
+
         let mut record = Vec::new();
-        
+
         // Add the structured data
-        let header_bytes = unsafe {
-            core::slice::from_raw_parts(
-                header as *const _ as *const u8,
-                header.length as usize,
-            )
-        };
+        let header_bytes =
+            unsafe { core::slice::from_raw_parts(header as *const _ as *const u8, header.length as usize) };
         record.extend_from_slice(header_bytes);
-        
+
         // Add strings
         if strings.is_empty() {
             // No strings - add double null terminator
@@ -172,7 +165,7 @@ impl SmbiosManager {
             }
             record.push(0); // Double null terminator
         }
-        
+
         Ok(record)
     }
 
@@ -190,17 +183,17 @@ impl SmbiosManager {
         // This would interact with UEFI Boot Services to install
         // the SMBIOS table in the system configuration table
         // Implementation depends on your UEFI framework
-        
+
         // For SMBIOS 2.x
         if let Some(_entry_point_32) = &self.entry_point_32 {
             // Install with SMBIOS 2.x GUID
         }
-        
-        // For SMBIOS 3.x  
+
+        // For SMBIOS 3.x
         if let Some(_entry_point_64) = &self.entry_point_64 {
             // Install with SMBIOS 3.x GUID
         }
-        
+
         Ok(())
     }
 }
@@ -227,20 +220,21 @@ impl SmbiosRecords<'static> for SmbiosManager {
         // let record_size = record.len() as usize;
         let record_size = core::mem::size_of::<SmbiosTableHeader>();
         let mut data = Vec::with_capacity(record_size + 2); // +2 for double null
-        
+
         unsafe {
-            let bytes = core::slice::from_raw_parts(
-                &record as *const _ as *const u8,
-                record_size,
-            );
+            let bytes = core::slice::from_raw_parts(&record as *const _ as *const u8, record_size);
             data.extend_from_slice(bytes);
         }
-        
+
         // Add double null terminator (simplified)
         data.extend_from_slice(&[0, 0]);
 
+        // Ensure the stored header uses the (possibly allocated) handle so lookups return it
+        let mut stored_header = record.clone();
+        stored_header.handle = *smbios_handle;
+
         let smbios_record = SmbiosRecord {
-            header: record.clone(),
+            header: stored_header,
             producer_handle,
             data,
             string_count: 0, // Would be calculated from actual strings
@@ -261,12 +255,10 @@ impl SmbiosRecords<'static> for SmbiosManager {
     ) -> Result<(), SmbiosError> {
         Self::validate_string(string)?;
         //TODO fix build error let _lock = self.lock.lock().unwrap();
-        
+
         // Find the record
-        let record = self.records
-            .iter_mut()
-            .find(|r| r.header.handle == smbios_handle)
-            .ok_or(SmbiosError::HandleNotFound)?;
+        let record =
+            self.records.iter_mut().find(|r| r.header.handle == smbios_handle).ok_or(SmbiosError::HandleNotFound)?;
 
         if string_number == 0 || string_number > record.string_count {
             return Err(SmbiosError::InvalidHandle);
@@ -279,11 +271,9 @@ impl SmbiosRecords<'static> for SmbiosManager {
 
     fn remove(&mut self, smbios_handle: SmbiosHandle) -> Result<(), SmbiosError> {
         //TODO fix build error let _lock = self.lock.lock().unwrap();
-        
-        let pos = self.records
-            .iter()
-            .position(|r| r.header.handle == smbios_handle)
-            .ok_or(SmbiosError::HandleNotFound)?;
+
+        let pos =
+            self.records.iter().position(|r| r.header.handle == smbios_handle).ok_or(SmbiosError::HandleNotFound)?;
 
         self.records.remove(pos);
         self.allocated_handles.remove(&smbios_handle);
@@ -296,7 +286,7 @@ impl SmbiosRecords<'static> for SmbiosManager {
         record_type: Option<SmbiosType>,
     ) -> Result<(&SmbiosTableHeader, Option<Handle>), SmbiosError> {
         //TODO fix build error let _lock = self.lock.lock().unwrap();
-        
+
         let start_idx = if *smbios_handle == SMBIOS_HANDLE_PI_RESERVED {
             0
         } else {
@@ -313,7 +303,7 @@ impl SmbiosRecords<'static> for SmbiosManager {
                     continue;
                 }
             }
-            
+
             *smbios_handle = record.header.handle;
             return Ok((&record.header, record.producer_handle));
         }
@@ -363,7 +353,6 @@ impl SmbiosTableHeader {
     //         size += 1;
     //         ptr += 1;
     //     }
-        
 
     // }
 }
@@ -387,51 +376,39 @@ pub struct SmbiosRecordBuilder {
 
 impl SmbiosRecordBuilder {
     pub fn new(record_type: u8) -> Self {
-        Self {
-            record_type,
-            data: Vec::new(),
-            strings: Vec::new(),
-        }
+        Self { record_type, data: Vec::new(), strings: Vec::new() }
     }
-    
+
     pub fn add_field<T: Copy>(mut self, value: T) -> Self {
-        let bytes = unsafe {
-            core::slice::from_raw_parts(
-                &value as *const T as *const u8,
-                core::mem::size_of::<T>(),
-            )
-        };
+        let bytes = unsafe { core::slice::from_raw_parts(&value as *const T as *const u8, core::mem::size_of::<T>()) };
         self.data.extend_from_slice(bytes);
         self
     }
-    
+
     pub fn add_string(mut self, s: String) -> Result<Self, SmbiosError> {
         SmbiosManager::validate_string(&s)?;
         self.strings.push(s);
         Ok(self)
     }
-    
+
     pub fn build(self) -> Result<Vec<u8>, SmbiosError> {
         let mut record = Vec::new();
-        
+
         // Add header
         let header = SmbiosTableHeader {
             record_type: self.record_type,
             length: (core::mem::size_of::<SmbiosTableHeader>() + self.data.len()) as u8,
             handle: SMBIOS_HANDLE_PI_RESERVED,
         };
-        
+
         let header_bytes = unsafe {
-            core::slice::from_raw_parts(
-                &header as *const _ as *const u8,
-                core::mem::size_of::<SmbiosTableHeader>(),
-            )
+            core::slice::from_raw_parts(&header as *const _ as *const u8, core::mem::size_of::<SmbiosTableHeader>())
         };
         record.extend_from_slice(header_bytes);
-        
+
         // Add data
         record.extend_from_slice(&self.data);
-        
+
         // Add strings
         if self.strings.is_empty() {
             record.extend_from_slice(&[0, 0]);
@@ -442,7 +419,7 @@ impl SmbiosRecordBuilder {
             }
             record.push(0);
         }
-        
+
         Ok(record)
     }
 }
@@ -468,24 +445,13 @@ unsafe impl ProtocolInterface for SmbiosProtocol {
     );
 }
 
-type SmbiosAdd = extern "efiapi" fn(
-    *const SmbiosProtocol,
-    efi::Handle,
-    *mut SmbiosHandle,
-    *const SmbiosTableHeader,
-) -> efi::Status;
+type SmbiosAdd =
+    extern "efiapi" fn(*const SmbiosProtocol, efi::Handle, *mut SmbiosHandle, *const SmbiosTableHeader) -> efi::Status;
 
-type SmbiosUpdateString = extern "efiapi" fn(
-    *const SmbiosProtocol,
-    *mut SmbiosHandle,
-    *mut usize,
-    *const c_char,
-) -> efi::Status;
+type SmbiosUpdateString =
+    extern "efiapi" fn(*const SmbiosProtocol, *mut SmbiosHandle, *mut usize, *const c_char) -> efi::Status;
 
-type SmbiosRemove = extern "efiapi" fn(
-    *const SmbiosProtocol,
-    SmbiosHandle,
-) -> efi::Status;
+type SmbiosRemove = extern "efiapi" fn(*const SmbiosProtocol, SmbiosHandle) -> efi::Status;
 
 type SmbiosGetNext = extern "efiapi" fn(
     *const SmbiosProtocol,
@@ -533,10 +499,7 @@ impl SmbiosProtocol {
         efi::Status::SUCCESS
     }
 
-    extern "efiapi" fn remove_ext(
-        _protocol: *const SmbiosProtocol,
-        smbios_handle: SmbiosHandle,
-    ) -> efi::Status {
+    extern "efiapi" fn remove_ext(_protocol: *const SmbiosProtocol, smbios_handle: SmbiosHandle) -> efi::Status {
         // Implementation similar to add_ext
         efi::Status::SUCCESS
     }
@@ -556,14 +519,62 @@ impl SmbiosProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::smbios_record::SmbiosRecordStructure;
+    use crate::smbios_record::Type0PlatformFirmwareInformation;
+    #[test]
+    fn test_smbios_record_builder_builds_bytes() {
+        // Ensure builder returns a non-empty record buffer for a minimal System Information record
+        let record = SmbiosRecordBuilder::new(1) // System Information
+            .add_field(1u8) // manufacturer string index
+            .add_field(2u8) // product name string index
+            .add_string(String::from("ACME Corp"))
+            .expect("add_string failed")
+            .add_string(String::from("SuperServer 3000"))
+            .expect("add_string failed")
+            .build()
+            .expect("build failed");
+
+        assert!(record.len() > core::mem::size_of::<SmbiosTableHeader>());
+        // First byte is the record type
+        assert_eq!(record[0], 1u8);
+    }
 
     #[test]
-    fn test_SmbiosRecordBuilder() {
-        let record = SmbiosRecordBuilder::new(1) // System Information
-            .add_field(1u8)  // manufacturer string index
-            .add_field(2u8)  // product name string index
-            .add_string("ACME Corp".to_string())?
-            .add_string("SuperServer 3000".to_string())?
-            .build()?;
+    fn test_add_type0_platform_firmware_information_to_manager() {
+        // Create a manager and a Type0 record
+        let mut manager = SmbiosManager::new(3, 8);
+
+        let mut type0 = Type0PlatformFirmwareInformation::new();
+        // customize some strings so we can assert later
+        type0 = type0.with_vendor(String::from("TestVendor")).expect("with_vendor failed");
+        type0 = type0.with_firmware_version(String::from("9.9.9")).expect("with_firmware_version failed");
+        type0 = type0.with_release_date(String::from("09/24/2025")).expect("with_release_date failed");
+
+        // Serialize into bytes using the generic serializer
+        let record_bytes = type0.to_bytes();
+
+        // Build a SmbiosTableHeader from the serialized bytes header area
+        // We can read the header from the bytes since serialization places header first
+        let header_size = core::mem::size_of::<SmbiosTableHeader>();
+        assert!(record_bytes.len() >= header_size + 2);
+
+        let header_slice = &record_bytes[..header_size];
+        let record_header: SmbiosTableHeader = unsafe {
+            // Transmute the first bytes into a header (safe in test because sizes match)
+            core::ptr::read_unaligned(header_slice.as_ptr() as *const SmbiosTableHeader)
+        };
+
+        // Add to manager
+        let mut handle = SMBIOS_HANDLE_PI_RESERVED;
+        manager.add(None, &mut handle, &record_header).expect("add failed");
+
+        // Retrieve using get_next
+        let mut search_handle = SMBIOS_HANDLE_PI_RESERVED;
+        let (found_header, _producer) = manager
+            .get_next(&mut search_handle, Some(Type0PlatformFirmwareInformation::RECORD_TYPE))
+            .expect("get_next failed");
+
+        assert_eq!(found_header.record_type, Type0PlatformFirmwareInformation::RECORD_TYPE);
+        assert_eq!(search_handle, handle);
     }
 }
