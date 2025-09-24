@@ -1,3 +1,11 @@
+//! DXE Core Memory Attributes Protocol
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
 #![allow(unused)]
 /// Architecture independent public C EFI Memory Attributes Protocol definition.
 use crate::{dxe_services, protocol_db, protocols::PROTOCOL_DB};
@@ -209,7 +217,7 @@ pub(crate) fn install_memory_attributes_protocol() {
             MEMORY_ATTRIBUTES_PROTOCOL_HANDLE.store(handle, Ordering::SeqCst);
         },
         Err(e) => {
-            log::error!("Failed to install MEMORY_ATTRIBUTES_PROTOCOL_GUID: {:?}", e);
+            log::error!("Failed to install MEMORY_ATTRIBUTES_PROTOCOL_GUID: {e:?}");
         }
     }
 }
@@ -232,7 +240,7 @@ pub(crate) fn uninstall_memory_attributes_protocol() {
                         log::info!("uninstalled MEMORY_ATTRIBUTES_PROTOCOL_GUID");
                     }
                     Err(e) => {
-                        log::error!("Failed to uninstall MEMORY_ATTRIBUTES_PROTOCOL_GUID: {:?}", e);
+                        log::error!("Failed to uninstall MEMORY_ATTRIBUTES_PROTOCOL_GUID: {e:?}");
                     }
                 }
             }

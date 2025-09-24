@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::{boxed::Box, vec::Vec};
 use core::{
@@ -12,9 +12,10 @@ use core::{
     mem,
     slice::{self, from_raw_parts},
 };
+use patina_ffs::volume::VolumeRef;
 use patina_sdk::error::EfiError;
 
-use mu_pi::{dxe_services, fw_fs::FirmwareVolume};
+use mu_pi::dxe_services;
 use r_efi::efi;
 
 use crate::{
@@ -388,11 +389,13 @@ extern "efiapi" fn process_firmware_volume(
 
     // construct a FirmwareVolume to verify sanity
     let fv_slice = unsafe { slice::from_raw_parts(firmware_volume_header as *const u8, size) };
-    if let Err(_err) = FirmwareVolume::new(fv_slice) {
-        return efi::Status::VOLUME_CORRUPTED;
+    if let Err(err) = VolumeRef::new(fv_slice) {
+        return err.into();
     }
-
-    let handle = match core_install_firmware_volume(firmware_volume_header as u64, None) {
+    // Safety: caller must ensure that firmware_volume_header is a valid firmware volume that will not be freed
+    // or moved after being sent to the core for processing.
+    let res = unsafe { core_install_firmware_volume(firmware_volume_header as u64, None) };
+    let handle = match res {
         Ok(handle) => handle,
         Err(err) => return err.into(),
     };
@@ -526,7 +529,7 @@ mod tests {
                     0,
                 );
 
-                assert_eq!(result, efi::Status::SUCCESS, "Adding memory space for type {:?} failed", mem_type);
+                assert_eq!(result, efi::Status::SUCCESS, "Adding memory space for type {mem_type:?} failed");
             }
         });
     }
@@ -717,7 +720,7 @@ mod tests {
                     core::ptr::null_mut(),
                 );
 
-                assert_eq!(result, efi::Status::SUCCESS, "Allocation for memory type {:?} should succeed", mem_type);
+                assert_eq!(result, efi::Status::SUCCESS, "Allocation for memory type {mem_type:?} should succeed");
             }
         });
     }
@@ -941,9 +944,9 @@ mod tests {
                     core::ptr::null_mut(),
                 );
 
-                assert_eq!(allocate_result, efi::Status::SUCCESS, "Cycle {} allocate should succeed", i);
+                assert_eq!(allocate_result, efi::Status::SUCCESS, "Cycle {i} allocate should succeed");
                 let free_result = free_memory_space(allocated_address, 0x1000);
-                assert_eq!(free_result, efi::Status::SUCCESS, "Cycle {} free should succeed", i);
+                assert_eq!(free_result, efi::Status::SUCCESS, "Cycle {i} free should succeed");
             }
         });
     }
@@ -1041,11 +1044,11 @@ mod tests {
                 let base = 0xE00000 + (i as u64 * 0x100000);
                 let length = 0x10000;
                 let result = add_memory_space(*mem_type, base, length, efi::MEMORY_WB);
-                assert_eq!(result, efi::Status::SUCCESS, "Adding memory space for type {:?} failed", mem_type);
+                assert_eq!(result, efi::Status::SUCCESS, "Adding memory space for type {mem_type:?} failed");
 
                 // Remove the memory space
                 let result = remove_memory_space(base, length);
-                assert_eq!(result, efi::Status::SUCCESS, "Removing memory type {:?} should succeed", mem_type);
+                assert_eq!(result, efi::Status::SUCCESS, "Removing memory type {mem_type:?} should succeed");
             }
         });
     }
@@ -1097,10 +1100,10 @@ mod tests {
 
             for i in 0..3 {
                 let add_result = add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB);
-                assert_eq!(add_result, efi::Status::SUCCESS, "Cycle {} add should succeed", i);
+                assert_eq!(add_result, efi::Status::SUCCESS, "Cycle {i} add should succeed");
 
                 let remove_result = remove_memory_space(base, length);
-                assert_eq!(remove_result, efi::Status::SUCCESS, "Cycle {} remove should succeed", i);
+                assert_eq!(remove_result, efi::Status::SUCCESS, "Cycle {i} remove should succeed");
             }
         });
     }
@@ -1112,7 +1115,7 @@ mod tests {
 
             for (base, length) in regions {
                 let result = add_memory_space(GcdMemoryType::SystemMemory, base, length, efi::MEMORY_WB);
-                assert_eq!(result, efi::Status::SUCCESS, "Should add region at 0x{:x}", base);
+                assert_eq!(result, efi::Status::SUCCESS, "Should add region at 0x{base:x}");
             }
 
             let remove_result = remove_memory_space(regions[1].0, regions[1].1);
@@ -1202,7 +1205,7 @@ mod tests {
             // Add different memory types
             for (mem_type, base) in memory_types.iter() {
                 let result = add_memory_space(*mem_type, *base, 0x10000, efi::MEMORY_WB);
-                assert_eq!(result, efi::Status::SUCCESS, "Should add memory space for type {:?}", mem_type);
+                assert_eq!(result, efi::Status::SUCCESS, "Should add memory space for type {mem_type:?}");
             }
 
             // Verify each memory type can be retrieved correctly
@@ -1210,11 +1213,11 @@ mod tests {
                 let mut descriptor = core::mem::MaybeUninit::<dxe_services::MemorySpaceDescriptor>::uninit();
                 let result = get_memory_space_descriptor(*base, descriptor.as_mut_ptr());
 
-                assert_eq!(result, efi::Status::SUCCESS, "Should get descriptor for type {:?}", expected_type);
+                assert_eq!(result, efi::Status::SUCCESS, "Should get descriptor for type {expected_type:?}");
 
                 let descriptor = unsafe { descriptor.assume_init() };
-                assert_eq!(descriptor.memory_type, *expected_type, "Memory type should match for {:?}", expected_type);
-                assert_eq!(descriptor.base_address, *base, "Base address should match for type {:?}", expected_type);
+                assert_eq!(descriptor.memory_type, *expected_type, "Memory type should match for {expected_type:?}");
+                assert_eq!(descriptor.base_address, *base, "Base address should match for type {expected_type:?}");
             }
         });
     }
@@ -1236,8 +1239,7 @@ mod tests {
                 assert_eq!(
                     result,
                     efi::Status::SUCCESS,
-                    "Should add memory space with capabilities 0x{:x}",
-                    capabilities
+                    "Should add memory space with capabilities 0x{capabilities:x}",
                 );
             }
 
@@ -1249,8 +1251,7 @@ mod tests {
                 assert_eq!(
                     result,
                     efi::Status::SUCCESS,
-                    "Should get descriptor for capabilities 0x{:x}",
-                    expected_capabilities
+                    "Should get descriptor for capabilities 0x{expected_capabilities:x}",
                 );
 
                 let descriptor = unsafe { descriptor.assume_init() };
@@ -2100,7 +2101,7 @@ mod tests {
             unsafe { crate::test_support::init_test_protocol_db() };
 
             // Install the FV to obtain a real handle
-            let _handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let _handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             // Wrapper should still surface NOT_FOUND (no pending drivers to dispatch in tests)
             let s = dispatch();
@@ -2141,7 +2142,7 @@ mod tests {
             unsafe { crate::test_support::init_test_protocol_db() };
 
             // Install the FV to obtain a real handle
-            let handle = crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap();
+            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             // Use the same GUID as the dispatcher tests; wrapper should map NotFound correctly
             let file_guid = efi::Guid::from_bytes(Uuid::from_u128(0x1fa1f39e_feff_4aae_bd7b_38a070a3b609).as_bytes());

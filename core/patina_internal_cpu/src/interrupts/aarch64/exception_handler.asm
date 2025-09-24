@@ -3,7 +3,7 @@
 # Portion of Copyright (c) 2014 NVIDIA Corporation. All rights reserved.<BR>
 # Copyright (c) 2016 HP Development Company, L.P.
 #
-# SPDX-License-Identifier: BSD-2-Clause-Patent
+# SPDX-License-Identifier: Apache-2.0
 #
 #------------------------------------------------------------------------------
 

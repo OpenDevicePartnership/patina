@@ -12,10 +12,11 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use patina_sdk::base::{SIZE_4GB, UEFI_PAGE_SIZE};
+use patina_sdk::base::SIZE_4GB;
 use patina_sdk::component::service::Service;
 use patina_sdk::component::service::memory::{AllocationOptions, MemoryManager, PageAllocationStrategy};
 use patina_sdk::efi_types::EfiMemoryType;
+use patina_sdk::uefi_size_to_pages;
 
 use crate::error::AcpiError;
 use crate::signature::{self};

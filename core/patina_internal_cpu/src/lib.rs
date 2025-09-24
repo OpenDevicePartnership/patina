@@ -4,9 +4,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
 #![feature(abi_x86_interrupt)]

@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -179,7 +179,7 @@ where
 
     /// Searches for a value in the tree, returning a mutable reference to it if it exists.
     ///
-    /// Returns `Some(&D)` if the value was found.
+    /// Returns `Some(&mut D)` if the value was found.
     ///
     /// Returns `None` if the value was not found.
     ///
@@ -192,7 +192,7 @@ where
     /// The caller must ensure that the mutable reference is not used to modify any value that
     /// affects the value of the key.
     ///
-    pub unsafe fn get_mut(&self, key: &D::Key) -> Option<&mut D> {
+    pub unsafe fn get_mut(&mut self, key: &D::Key) -> Option<&mut D> {
         match self.get_node(key) {
             Some(node) => Some(unsafe { &mut (*node.as_mut_ptr()).data }),
             None => None,

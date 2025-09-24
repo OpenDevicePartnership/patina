@@ -89,7 +89,7 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 #![cfg_attr(not(test), no_std)]
 #![feature(coverage_attribute)]
@@ -282,11 +282,11 @@ impl core::fmt::Display for ExceptionType {
         match self {
             ExceptionType::Step => write!(f, "Debug Step"),
             ExceptionType::Breakpoint => write!(f, "Breakpoint"),
-            ExceptionType::AccessViolation(addr) => write!(f, "Access Violation at {:#X}", addr),
+            ExceptionType::AccessViolation(addr) => write!(f, "Access Violation at {addr:#X}"),
             ExceptionType::GeneralProtectionFault(data) => {
-                write!(f, "General Protection Fault. Exception data: {:#X}", data)
+                write!(f, "General Protection Fault. Exception data: {data:#X}")
             }
-            ExceptionType::Other(exception_type) => write!(f, "Unknown. Architecture code: {:#X}", exception_type),
+            ExceptionType::Other(exception_type) => write!(f, "Unknown. Architecture code: {exception_type:#X}"),
         }
     }
 }
