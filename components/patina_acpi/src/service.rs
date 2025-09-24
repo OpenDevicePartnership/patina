@@ -16,7 +16,8 @@ use patina_sdk::component::service::{IntoService, Service};
 use r_efi::efi;
 
 use crate::acpi_table::{AcpiTable, AcpiTableHeader};
-use crate::error::AcpiError;
+use crate::aml::{AmlData, AmlHandle};
+use crate::error::{AcpiError, AmlError};
 
 /// Represents an opaque reference to an installed ACPI table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -157,4 +158,16 @@ pub(crate) trait AcpiProvider {
 
     /// Returns all currently installed tables in an iterable format.
     fn iter_tables(&self) -> Vec<AcpiTable>;
+}
+
+pub(crate) trait AmlParser {
+    fn open_sdt(&self, table_key: TableKey) -> Result<AmlHandle, AmlError>;
+
+    fn close_sdt(&self, handle: AmlHandle) -> Result<(), AmlError>;
+
+    fn iter_options(&self, handle: AmlHandle) -> Result<AmlData, AmlError>;
+
+    fn get_child(&self, handle: AmlHandle) -> Result<AmlHandle, AmlError>;
+
+    fn get_sibling(&self, handle: AmlHandle) -> Result<AmlHandle, AmlError>;
 }

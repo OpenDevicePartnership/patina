@@ -11,7 +11,7 @@
 
 use r_efi::efi;
 
-/// Custom errors for ACPI operations
+/// Custom errors for ACPI operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcpiError {
     /// Memory allocation failed (usually because the system is out of memory).
@@ -98,6 +98,21 @@ impl From<AcpiError> for efi::Status {
             AcpiError::XsdtAlreadyInstalled => efi::Status::NOT_STARTED,
             AcpiError::InvalidChecksumOffset => efi::Status::INVALID_PARAMETER,
             AcpiError::InvalidTableFormat => efi::Status::INVALID_PARAMETER,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AmlError {
+    InvalidHandle,
+    CloseFailedChecksumUpdate,
+}
+
+impl From<AmlError> for efi::Status {
+    fn from(err: AmlError) -> Self {
+        match err {
+            AmlError::InvalidHandle => efi::Status::INVALID_PARAMETER,
+            AmlError::CloseFailedChecksumUpdate => efi::Status::COMPROMISED_DATA,
         }
     }
 }
