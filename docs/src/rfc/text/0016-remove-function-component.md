@@ -6,6 +6,7 @@ A request for comments regarding the removal of the `FunctionComponent` implemen
 ## Change Log
 
 - 2025-09-15: Initial RFC created.
+- 2026-09-24: Finialize RFC.
 
 ## Motivation
 
