@@ -1,7 +1,8 @@
 extern crate alloc;
 use alloc::vec::Vec;
 use alloc::string::String;
-use crate::smbios_derive::{SmbiosTableHeader, SmbiosError, SMBIOS_HANDLE_PI_RESERVED};
+use crate::smbios_derive::{SmbiosTableHeader, SmbiosError, SMBIOS_HANDLE_PI_RESERVED, SMBIOS_STRING_MAX_LENGTH};
+
 
 macro_rules! vec {
     () => {
@@ -32,10 +33,13 @@ pub trait SmbiosRecordStructure {
     const RECORD_TYPE: u8;
     
     /// Convert the structure to a complete SMBIOS record byte array
-    fn to_bytes(&self) -> Vec<u8>;
-    // fn to_bytes(&self) -> Vec<u8> {
-    //     SmbiosSerializer::serialize(self)
-    // }
+    // fn to_bytes(&self) -> Vec<u8>;
+    fn to_bytes(&self) -> Vec<u8> 
+        // where Self: SmbiosFieldLayout
+        where Self: SmbiosFieldLayout, Self: Sized
+    {
+        SmbiosSerializer::serialize(self)
+    }
     
     /// Validate the structure before serialization
     fn validate(&self) -> Result<(), SmbiosError>;
@@ -254,7 +258,7 @@ macro_rules! impl_smbios_field_layout {
 }
 
 /// Type 0: Platform Firmware Information (BIOS Information)
-#[repr(C, packed)]
+// #[repr(C, packed)]
 pub struct Type0PlatformFirmwareInformation {
     pub header: SmbiosTableHeader,
     pub vendor: u8,                           // String index
@@ -292,114 +296,114 @@ impl_smbios_field_layout!(Type0PlatformFirmwareInformation,
     extended_bios_rom_size: u16,
 );
 
-// impl Type0PlatformFirmwareInformation {
-//     /// Create a new Type 0 record with default values
-//     pub fn new() -> Self {
-//         Self {
-//             header: SmbiosTableHeader {
-//                 record_type: 0,
-//                 length: 0, // Will be calculated in to_bytes()
-//                 handle: SMBIOS_HANDLE_PI_RESERVED,
-//             },
-//             vendor: 1,                           // First string in pool
-//             firmware_version: 2,                 // Second string in pool
-//             bios_starting_address_segment: 0xE000,
-//             firmware_release_date: 3,            // Third string in pool
-//             firmware_rom_size: 0x0F,            // Default: 1MB
-//             characteristics: 0x08,              // PCI supported
-//             characteristics_ext1: 0x01,         // ACPI supported
-//             characteristics_ext2: 0x00,
-//             system_bios_major_release: 1,
-//             system_bios_minor_release: 0,
-//             embedded_controller_major_release: 0xFF, // Not supported
-//             embedded_controller_minor_release: 0xFF, // Not supported
-//             extended_bios_rom_size: 0x0000,
-//             string_pool: vec![
-//                 "Default Vendor".to_string(),
-//                 "1.0.0".to_string(),
-//                 "01/01/2025".to_string(),
-//             ],
-//         }
-//     }
+impl Type0PlatformFirmwareInformation {
+    /// Create a new Type 0 record with default values
+    pub fn new() -> Self {
+        Self {
+            header: SmbiosTableHeader {
+                record_type: 0,
+                length: 0, // Will be calculated in to_bytes()
+                handle: SMBIOS_HANDLE_PI_RESERVED,
+            },
+            vendor: 1,                           // First string in pool
+            firmware_version: 2,                 // Second string in pool
+            bios_starting_address_segment: 0xE000,
+            firmware_release_date: 3,            // Third string in pool
+            firmware_rom_size: 0x0F,            // Default: 1MB
+            characteristics: 0x08,              // PCI supported
+            characteristics_ext1: 0x01,         // ACPI supported
+            characteristics_ext2: 0x00,
+            system_bios_major_release: 1,
+            system_bios_minor_release: 0,
+            embedded_controller_major_release: 0xFF, // Not supported
+            embedded_controller_minor_release: 0xFF, // Not supported
+            extended_bios_rom_size: 0x0000,
+            string_pool: vec![
+                String::from("Default Vendor"),
+                String::from("1.0.0"),
+                String::from("01/01/2025"),
+            ],
+        }
+    }
     
-//     /// Set vendor information (updates both string pool and index)
-//     pub fn with_vendor(mut self, vendor: String) -> Result<Self, SmbiosError> {
-//         Self::validate_string(&vendor)?;
-//         if self.string_pool.is_empty() {
-//             self.string_pool.push(vendor);
-//             self.vendor = 1;
-//         } else {
-//             self.string_pool[0] = vendor;
-//         }
-//         Ok(self)
-//     }
-    
-//     /// Set firmware version (updates both string pool and index)
-//     pub fn with_firmware_version(mut self, version: String) -> Result<Self, SmbiosError> {
-//         Self::validate_string(&version)?;
-//         while self.string_pool.len() < 2 {
-//             self.string_pool.push(String::new());
-//         }
-//         self.string_pool[1] = version;
-//         self.firmware_version = 2;
-//         Ok(self)
-//     }
-    
-//     /// Set release date (updates both string pool and index)
-//     pub fn with_release_date(mut self, date: String) -> Result<Self, SmbiosError> {
-//         Self::validate_string(&date)?;
-//         while self.string_pool.len() < 3 {
-//             self.string_pool.push(String::new());
-//         }
-//         self.string_pool[2] = date;
-//         self.firmware_release_date = 3;
-//         Ok(self)
-//     }
-    
-//     fn validate_string(s: &str) -> Result<(), SmbiosError> {
-//         if s.len() > SMBIOS_STRING_MAX_LENGTH {
-//             return Err(SmbiosError::StringTooLong);
-//         }
-//         if s.contains('\0') {
-//             return Err(SmbiosError::InvalidParameter);
-//         }
-//         Ok(())
-//     }
-// }
+    /// Set vendor information (updates both string pool and index)
+    pub fn with_vendor(mut self, vendor: String) -> Result<Self, SmbiosError> {
+        Self::validate_string(&vendor)?;
+        if self.string_pool.is_empty() {
+            self.string_pool.push(vendor);
+            self.vendor = 1;
+        } else {
+            self.string_pool[0] = vendor;
+        }
+        Ok(self)
+    }
 
-// impl SmbiosRecordStructure for Type0PlatformFirmwareInformation {
-//     const RECORD_TYPE: u8 = 0;
+    /// Set firmware version (updates both string pool and index)
+    pub fn with_firmware_version(mut self, version: String) -> Result<Self, SmbiosError> {
+        Self::validate_string(&version)?;
+        while self.string_pool.len() < 2 {
+            self.string_pool.push(String::new());
+        }
+        self.string_pool[1] = version;
+        self.firmware_version = 2;
+        Ok(self)
+    }
     
-//     // to_bytes() is provided by default implementation using generic serializer!
+    /// Set release date (updates both string pool and index)
+    pub fn with_release_date(mut self, date: String) -> Result<Self, SmbiosError> {
+        Self::validate_string(&date)?;
+        while self.string_pool.len() < 3 {
+            self.string_pool.push(String::new());
+        }
+        self.string_pool[2] = date;
+        self.firmware_release_date = 3;
+        Ok(self)
+    }
     
-//     fn validate(&self) -> Result<(), SmbiosError> {
-//         // Validate all strings
-//         for string in &self.string_pool {
-//             Self::validate_string(string)?;
-//         }
+    fn validate_string(s: &str) -> Result<(), SmbiosError> {
+        if s.len() > SMBIOS_STRING_MAX_LENGTH {
+            return Err(SmbiosError::StringTooLong);
+        }
+        if s.contains('\0') {
+            return Err(SmbiosError::InvalidParameter);
+        }
+        Ok(())
+    }
+}
+
+impl SmbiosRecordStructure for Type0PlatformFirmwareInformation {
+    const RECORD_TYPE: u8 = 0;
+    
+    // to_bytes() is provided by default implementation using generic serializer!
+    
+    fn validate(&self) -> Result<(), SmbiosError> {
+        // Validate all strings
+        for string in &self.string_pool {
+            Self::validate_string(string)?;
+        }
         
-//         // Validate string indices point to valid strings
-//         if self.vendor > 0 && (self.vendor as usize) > self.string_pool.len() {
-//             return Err(SmbiosError::InvalidParameter);
-//         }
-//         if self.firmware_version > 0 && (self.firmware_version as usize) > self.string_pool.len() {
-//             return Err(SmbiosError::InvalidParameter);
-//         }
-//         if self.firmware_release_date > 0 && (self.firmware_release_date as usize) > self.string_pool.len() {
-//             return Err(SmbiosError::InvalidParameter);
-//         }
+        // Validate string indices point to valid strings
+        if self.vendor > 0 && (self.vendor as usize) > self.string_pool.len() {
+            return Err(SmbiosError::InvalidParameter);
+        }
+        if self.firmware_version > 0 && (self.firmware_version as usize) > self.string_pool.len() {
+            return Err(SmbiosError::InvalidParameter);
+        }
+        if self.firmware_release_date > 0 && (self.firmware_release_date as usize) > self.string_pool.len() {
+            return Err(SmbiosError::InvalidParameter);
+        }
         
-//         Ok(())
-//     }
+        Ok(())
+    }
     
-//     fn string_pool(&self) -> &[String] {
-//         &self.string_pool
-//     }
+    fn string_pool(&self) -> &[String] {
+        &self.string_pool
+    }
     
-//     fn string_pool_mut(&mut self) -> &mut Vec<String> {
-//         &mut self.string_pool
-//     }
-// }
+    fn string_pool_mut(&mut self) -> &mut Vec<String> {
+        &mut self.string_pool
+    }
+}
 
 // /// Type 1: System Information
 // #[repr(C, packed)]
