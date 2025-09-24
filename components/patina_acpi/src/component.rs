@@ -92,7 +92,7 @@ impl AcpiProviderManager {
         let header_bytes = xsdt_info.header.hdr_to_bytes();
         xsdt_allocated_bytes.extend(header_bytes);
         // Fill in trailing space with zeros so it is accessible (Vec length != Vec capacity).
-        xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(xsdt_capacity - ACPI_HEADER_LEN));
+        xsdt_allocated_bytes.extend(core::iter::repeat_n(0u8, xsdt_capacity - ACPI_HEADER_LEN));
 
         // // Get pointer to the XSDT in memory for RSDP and metadata.
         let xsdt_ptr = xsdt_allocated_bytes.as_mut_ptr();

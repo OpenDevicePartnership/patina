@@ -491,7 +491,7 @@ where
             // Copy over existing data.
             xsdt_allocated_bytes.extend_from_slice(&xsdt_data.slice);
             // Fill in trailing space with zeros so it is accessible (Vec length != Vec capacity).
-            xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(num_bytes_new - num_bytes_original));
+            xsdt_allocated_bytes.extend(core::iter::repeat_n(0u8, num_bytes_new - num_bytes_original));
 
             // Update the RSDP with the new XSDT address.
             let xsdt_ptr = xsdt_allocated_bytes.as_mut_ptr();
@@ -863,7 +863,7 @@ mod tests {
         };
         xsdt_allocated_bytes.extend(xsdt_info.header.hdr_to_bytes());
         // Add some extra space after the XSDT so it's safe to write the entry.
-        xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(100));
+        xsdt_allocated_bytes.extend(core::iter::repeat_n(0u8, 100));
         let xsdt_metadata = AcpiXsdtMetadata {
             n_entries: 0,
             max_capacity: MAX_INITIAL_ENTRIES,
@@ -969,7 +969,7 @@ mod tests {
         };
         xsdt_allocated_bytes.extend(xsdt_info.header.hdr_to_bytes());
         // Add some extra space after the XSDT so it's safe to write the entry.
-        xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(100));
+        xsdt_allocated_bytes.extend(core::iter::repeat_n(0u8, 100));
         let xsdt_metadata = AcpiXsdtMetadata {
             n_entries: 0,
             max_capacity: MAX_INITIAL_ENTRIES,
@@ -1022,7 +1022,7 @@ mod tests {
             },
         };
         xsdt_allocated_bytes.extend(xsdt_info.header.hdr_to_bytes());
-        xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(initial_capacity * ACPI_XSDT_ENTRY_SIZE));
+        xsdt_allocated_bytes.extend(core::iter::repeat_n(0u8, initial_capacity * ACPI_XSDT_ENTRY_SIZE));
         let xsdt_metadata = AcpiXsdtMetadata {
             n_entries: 0,
             max_capacity: initial_capacity,
@@ -1075,7 +1075,7 @@ mod tests {
             },
         };
         xsdt_allocated_bytes.extend(xsdt_info.header.hdr_to_bytes());
-        xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(100));
+        xsdt_allocated_bytes.extend(core::iter::repeat_n(0u8, 100));
         let xsdt_metadata = AcpiXsdtMetadata {
             n_entries: 0,
             max_capacity: crate::signature::MAX_INITIAL_ENTRIES,
@@ -1123,7 +1123,7 @@ mod tests {
             },
         };
         xsdt_allocated_bytes.extend(xsdt_info.header.hdr_to_bytes());
-        xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(100));
+        xsdt_allocated_bytes.extend(core::iter::repeat_n(0u8, 100));
         let xsdt_metadata = AcpiXsdtMetadata {
             n_entries: 0,
             max_capacity: crate::signature::MAX_INITIAL_ENTRIES,
@@ -1385,7 +1385,7 @@ mod tests {
             },
         };
         xsdt_allocated_bytes.extend(xsdt_info.header.hdr_to_bytes());
-        xsdt_allocated_bytes.extend(core::iter::repeat(0u8).take(initial_capacity * ACPI_XSDT_ENTRY_SIZE));
+        xsdt_allocated_bytes.extend(core::iter::repeat_n(0u8, initial_capacity * ACPI_XSDT_ENTRY_SIZE));
         let xsdt_metadata = AcpiXsdtMetadata {
             n_entries: 0,
             max_capacity: initial_capacity,
