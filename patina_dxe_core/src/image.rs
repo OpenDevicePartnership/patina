@@ -872,24 +872,6 @@ fn get_file_buffer_from_load_protocol(
     EfiError::status_to_result(status).map(|_| (file_buffer, handle))
 }
 
-/// Relocates all runtime images to their virtual memory address. This function must only be called
-/// after the Runtime Service SetVirtualAddressMap() has been called by the OS.
-pub fn core_relocate_runtime_images() {
-    let mut private_data = PRIVATE_IMAGE_DATA.lock();
-
-    for image in private_data.private_image_data.values_mut() {
-        if image.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
-            let loaded_image = unsafe { image.image_buffer.as_mut().unwrap() };
-            let loaded_image_addr = image.image_info.image_base as usize;
-            let mut loaded_image_virt_addr = loaded_image_addr;
-
-            let _ = runtime::convert_pointer(0, core::ptr::addr_of_mut!(loaded_image_virt_addr) as *mut *mut c_void);
-            let _ =
-                pecoff::relocate_image(&image.pe_info, loaded_image_virt_addr, loaded_image, &image.relocation_data);
-        }
-    }
-}
-
 // authenticate the given image against the Security and Security2 Architectural Protocols
 fn authenticate_image(
     device_path: *mut efi::protocols::device_path::Protocol,
@@ -1073,6 +1055,17 @@ pub fn core_load_image(
                 .map_err(|status| EfiError::status_to_result(status).unwrap_err())?,
         ) as *mut u8
     };
+
+    // Register runtime images with the runtime module.
+    if private_info.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
+        runtime::add_runtime_image(
+            private_info.image_info.image_base,
+            private_info.image_info.image_size,
+            &private_info.relocation_data,
+            handle,
+        )
+        .inspect_err(|err| log::error!("failed to load image: register runtime image failed: {err:?}"))?;
+    }
 
     core_install_protocol_interface(
         Some(handle),
@@ -1352,6 +1345,13 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
         efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
         private_image_data.image_device_path_ptr,
     );
+
+    // Remove runtime image if it is one.
+    if private_image_data.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER
+        && let Err(err) = runtime::remove_runtime_image(image_handle)
+    {
+        log::error!("Failed to remove runtime image for handle {image_handle:?}: {err:?}");
+    }
 
     // we have to remove the memory protections from the image sections before freeing the image buffer, because
     // core_free_pages expects the memory being freed to be in a single continuous memory descriptor, which is not

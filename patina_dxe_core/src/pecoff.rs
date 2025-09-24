@@ -314,6 +314,46 @@ pub fn relocate_image(
     Ok(relocation_block)
 }
 
+/// Converts a vector of relocation blocks into a flat buffer suitable for use in the runtime protocol.
+pub fn flatten_runtime_relocation_data(relocation_data: &[RelocationBlock]) -> &'static mut [u8] {
+    // The runtime protocol expects linearly appended values, determine how much space
+    // is needed to store this.
+
+    let mut size = 0;
+    for block in relocation_data {
+        for reloc in &block.relocations {
+            let fixup_type = reloc.type_and_offset >> 12;
+            size += match fixup_type {
+                IMAGE_REL_BASED_ABSOLUTE => 0,
+                IMAGE_REL_BASED_HIGHLOW => core::mem::size_of::<u32>(),
+                IMAGE_REL_BASED_DIR64 => core::mem::size_of::<u64>(),
+                _ => todo!(), // Other fixups not implemented at this time
+            }
+        }
+    }
+
+    let mut flat_data = Vec::with_capacity_in(size, &crate::allocator::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR);
+    for block in relocation_data {
+        for reloc in &block.relocations {
+            let fixup_type = reloc.type_and_offset >> 12;
+            match fixup_type {
+                IMAGE_REL_BASED_ABSOLUTE => {}
+                IMAGE_REL_BASED_HIGHLOW => {
+                    flat_data.extend_from_slice(&(reloc.value as u32).to_le_bytes());
+                }
+                IMAGE_REL_BASED_DIR64 => {
+                    flat_data.extend_from_slice(&reloc.value.to_le_bytes());
+                }
+                _ => todo!(), // Other fixups not implemented at this time
+            }
+        }
+    }
+
+    // Double check that the capacity calculation was correct.
+    debug_assert!(flat_data.capacity() == size && flat_data.len() == size);
+    flat_data.leak()
+}
+
 /// Attempts to load the HII resource section data for a given PE32 image.
 ///
 /// Extracts the HII resource section data from the provided image, returning None

@@ -637,6 +637,7 @@ impl EfiSystemTable {
         self.system_table.as_ref()
     }
 
+    #[allow(dead_code)]
     pub fn system_table_mut(&mut self) -> &mut efi::SystemTable {
         self.system_table.as_mut()
     }
