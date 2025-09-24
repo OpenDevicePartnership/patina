@@ -1,7 +1,7 @@
 extern crate alloc;
 use alloc::vec::Vec;
 use alloc::string::String;
-use crate::smbios_derive::SmbiosTableHeader;
+use crate::smbios_derive::{SmbiosTableHeader, SmbiosError, SMBIOS_HANDLE_PI_RESERVED};
 
 macro_rules! vec {
     () => {
@@ -26,132 +26,133 @@ macro_rules! vec {
     }};
 }
 
-// /// Base trait for SMBIOS record structures with generic serialization
-// pub trait SmbiosRecordStructure {
-//     /// The SMBIOS record type number
-//     const RECORD_TYPE: u8;
+/// Base trait for SMBIOS record structures with generic serialization
+pub trait SmbiosRecordStructure {
+    /// The SMBIOS record type number
+    const RECORD_TYPE: u8;
     
-//     /// Convert the structure to a complete SMBIOS record byte array
-//     fn to_bytes(&self) -> Vec<u8> {
-//         SmbiosSerializer::serialize(self)
-//     }
+    /// Convert the structure to a complete SMBIOS record byte array
+    fn to_bytes(&self) -> Vec<u8>;
+    // fn to_bytes(&self) -> Vec<u8> {
+    //     SmbiosSerializer::serialize(self)
+    // }
     
-//     /// Validate the structure before serialization
-//     fn validate(&self) -> Result<(), SmbiosError>;
+    /// Validate the structure before serialization
+    fn validate(&self) -> Result<(), SmbiosError>;
     
-//     /// Get the string pool for this record
-//     fn string_pool(&self) -> &[String];
+    /// Get the string pool for this record
+    fn string_pool(&self) -> &[String];
     
-//     /// Get mutable access to the string pool
-//     fn string_pool_mut(&mut self) -> &mut Vec<String>;
-// }
+    /// Get mutable access to the string pool
+    fn string_pool_mut(&mut self) -> &mut Vec<String>;
+}
 
-// /// Generic SMBIOS record serializer using reflection-like techniques
-// pub struct SmbiosSerializer;
+/// Generic SMBIOS record serializer using reflection-like techniques
+pub struct SmbiosSerializer;
 
-// impl SmbiosSerializer {
-//     /// Serialize any SMBIOS record structure to bytes
-//     pub fn serialize<T: SmbiosRecordStructure + SmbiosFieldLayout>(record: &T) -> Vec<u8> {
-//         let mut bytes = Vec::new();
+impl SmbiosSerializer {
+    /// Serialize any SMBIOS record structure to bytes
+    pub fn serialize<T: SmbiosRecordStructure + SmbiosFieldLayout>(record: &T) -> Vec<u8> {
+        let mut bytes = Vec::new();
         
-//         // Step 1: Calculate structured data size using field layout
-//         let field_layout = T::field_layout();
-//         let structured_size = core::mem::size_of::<SmbiosTableHeader>() + field_layout.total_size();
+        // Step 1: Calculate structured data size using field layout
+        let field_layout = T::field_layout();
+        let structured_size = core::mem::size_of::<SmbiosTableHeader>() + field_layout.total_size();
         
-//         // Step 2: Create header
-//         let header = SmbiosTableHeader {
-//             record_type: T::RECORD_TYPE,
-//             length: structured_size as u8,
-//             handle: SMBIOS_HANDLE_PI_RESERVED,
-//         };
+        // Step 2: Create header
+        let header = SmbiosTableHeader {
+            record_type: T::RECORD_TYPE,
+            length: structured_size as u8,
+            handle: SMBIOS_HANDLE_PI_RESERVED,
+        };
         
-//         // Step 3: Serialize header
-//         bytes.extend_from_slice(&Self::serialize_header(&header));
+        // Step 3: Serialize header
+        bytes.extend_from_slice(&Self::serialize_header(&header));
         
-//         // Step 4: Serialize structured fields using generic field serialization
-//         bytes.extend_from_slice(&Self::serialize_fields(record, &field_layout));
+        // Step 4: Serialize structured fields using generic field serialization
+        bytes.extend_from_slice(&Self::serialize_fields(record, &field_layout));
         
-//         // Step 5: Serialize string pool
-//         bytes.extend_from_slice(&Self::serialize_string_pool(record.string_pool()));
+        // Step 5: Serialize string pool
+        bytes.extend_from_slice(&Self::serialize_string_pool(record.string_pool()));
         
-//         bytes
-//     }
+        bytes
+    }
     
-//     fn serialize_header(header: &SmbiosTableHeader) -> [u8; 4] {
-//         [
-//             header.record_type,
-//             header.length,
-//             (header.handle & 0xFF) as u8,
-//             ((header.handle >> 8) & 0xFF) as u8,
-//         ]
-//     }
+    fn serialize_header(header: &SmbiosTableHeader) -> [u8; 4] {
+        [
+            header.record_type,
+            header.length,
+            (header.handle & 0xFF) as u8,
+            ((header.handle >> 8) & 0xFF) as u8,
+        ]
+    }
     
-//     fn serialize_fields<T: SmbiosRecordStructure + SmbiosFieldLayout>(
-//         record: &T, 
-//         layout: &FieldLayout
-//     ) -> Vec<u8> {
-//         let mut bytes = Vec::new();
+    fn serialize_fields<T: SmbiosRecordStructure + SmbiosFieldLayout>(
+        record: &T, 
+        layout: &FieldLayout
+    ) -> Vec<u8> {
+        let mut bytes = Vec::new();
         
-//         // Use the field layout to serialize each field generically
-//         for field_info in &layout.fields {
-//             match field_info.field_type {
-//                 FieldType::U8(offset) => {
-//                     let value = unsafe { 
-//                         *((record as *const T as *const u8).add(offset) as *const u8)
-//                     };
-//                     bytes.push(value);
-//                 }
-//                 FieldType::U16(offset) => {
-//                     let value = unsafe { 
-//                         *((record as *const T as *const u8).add(offset) as *const u16)
-//                     };
-//                     bytes.extend_from_slice(&value.to_le_bytes());
-//                 }
-//                 FieldType::U32(offset) => {
-//                     let value = unsafe { 
-//                         *((record as *const T as *const u8).add(offset) as *const u32)
-//                     };
-//                     bytes.extend_from_slice(&value.to_le_bytes());
-//                 }
-//                 FieldType::U64(offset) => {
-//                     let value = unsafe { 
-//                         *((record as *const T as *const u8).add(offset) as *const u64)
-//                     };
-//                     bytes.extend_from_slice(&value.to_le_bytes());
-//                 }
-//                 FieldType::ByteArray { offset, len } => {
-//                     let slice = unsafe {
-//                         core::slice::from_raw_parts(
-//                             (record as *const T as *const u8).add(offset),
-//                             len
-//                         )
-//                     };
-//                     bytes.extend_from_slice(slice);
-//                 }
-//             }
-//         }
+        // Use the field layout to serialize each field generically
+        for field_info in &layout.fields {
+            match field_info.field_type {
+                FieldType::U8(offset) => {
+                    let value = unsafe { 
+                        *((record as *const T as *const u8).add(offset) as *const u8)
+                    };
+                    bytes.push(value);
+                }
+                FieldType::U16(offset) => {
+                    let value = unsafe { 
+                        *((record as *const T as *const u8).add(offset) as *const u16)
+                    };
+                    bytes.extend_from_slice(&value.to_le_bytes());
+                }
+                FieldType::U32(offset) => {
+                    let value = unsafe { 
+                        *((record as *const T as *const u8).add(offset) as *const u32)
+                    };
+                    bytes.extend_from_slice(&value.to_le_bytes());
+                }
+                FieldType::U64(offset) => {
+                    let value = unsafe { 
+                        *((record as *const T as *const u8).add(offset) as *const u64)
+                    };
+                    bytes.extend_from_slice(&value.to_le_bytes());
+                }
+                FieldType::ByteArray { offset, len } => {
+                    let slice = unsafe {
+                        core::slice::from_raw_parts(
+                            (record as *const T as *const u8).add(offset),
+                            len
+                        )
+                    };
+                    bytes.extend_from_slice(slice);
+                }
+            }
+        }
         
-//         bytes
-//     }
+        bytes
+    }
     
-//     fn serialize_string_pool(strings: &[String]) -> Vec<u8> {
-//         let mut bytes = Vec::new();
+    fn serialize_string_pool(strings: &[String]) -> Vec<u8> {
+        let mut bytes = Vec::new();
         
-//         if strings.is_empty() {
-//             bytes.extend_from_slice(&[0, 0]);
-//         } else {
-//             for string in strings {
-//                 if !string.is_empty() {
-//                     bytes.extend_from_slice(string.as_bytes());
-//                 }
-//                 bytes.push(0);
-//             }
-//             bytes.push(0); // Double null terminator
-//         }
+        if strings.is_empty() {
+            bytes.extend_from_slice(&[0, 0]);
+        } else {
+            for string in strings {
+                if !string.is_empty() {
+                    bytes.extend_from_slice(string.as_bytes());
+                }
+                bytes.push(0);
+            }
+            bytes.push(0); // Double null terminator
+        }
         
-//         bytes
-//     }
-// }
+        bytes
+    }
+}
 
 /// Field layout description for generic serialization
 pub trait SmbiosFieldLayout {
