@@ -90,7 +90,8 @@ impl AcpiTableProtocol {
 
         // SAFETY: acpi_table_buffer is checked non-null and large enough to read an AcpiTableHeader.
         if let Some(global_mm) = ACPI_TABLE_INFO.memory_manager.get() {
-            let acpi_table = unsafe { AcpiTable::new_from_ptr(acpi_table_buffer as *const AcpiTableHeader, global_mm) };
+            let acpi_table =
+                unsafe { AcpiTable::new_from_ptr(acpi_table_buffer as *const AcpiTableHeader, None, global_mm) };
 
             if let Ok(table) = acpi_table {
                 let install_result = match table.signature() {
