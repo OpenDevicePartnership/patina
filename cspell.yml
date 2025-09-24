@@ -4,7 +4,7 @@
 #
 ##
 # Copyright (c) Microsoft Corporation
-# SPDX-License-Identifier: BSD-2-Clause-Patent
+# SPDX-License-Identifier: Apache-2.0
 ##
 version: "0.2"
 language: en
@@ -36,6 +36,7 @@ words:
   - cdrom
   - corosensei
   - ctypes
+  - ruint
   - dbgwcr
   - dbgwvr
   - deassertion
@@ -44,16 +45,20 @@ words:
   - distros
   - dllcharacteristics
   - docsrs
+  - dword
   - dxefv
   - edkii
   - efiapi
   - efierror
   - eflags
   - fnent
+  - fvmain
   - gantt
   - gdbstub
+  - genfw
   - getrsp
   - getsp
+  - gigantor
   - granularities
   - grcov
   - gread
@@ -68,6 +73,7 @@ words:
   - isenabler
   - linkme
   - longjmp
+  - lzmatest
   - mdbook
   - mdscr
   - mmram
@@ -87,12 +93,16 @@ words:
   - oslsr
   - pacibsp
   - pccard
+  - pcddxe
   - pdata
   - pdbhelper
   - pread
   - psapi
   - pterror
   - pwrite
+  - pyserial
+  - pywin
+  - qword
   - reentrancy
   - regsvr
   - relia
@@ -106,7 +116,9 @@ words:
   - swmmis
   - sysreg
   - tiano
+  - tianocore
   - typer
+  - uefiext
   - uintn
   - unaccepte
   - uncacheable

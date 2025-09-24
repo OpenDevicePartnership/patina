@@ -143,7 +143,7 @@ impl Display for UnknownDevicePathNode<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_fmt(format_args!("Path({}, {},", &self.header.r#type, &self.header.sub_type))?;
         for b in self.data {
-            f.write_fmt(format_args!(" {:02X}", b))?;
+            f.write_fmt(format_args!(" {b:02X}"))?;
         }
         f.write_char(')')
     }

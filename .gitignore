@@ -2,3 +2,4 @@
 *.profraw
 Cargo.lock
 docs/book/
+**/pdbhelper.dll

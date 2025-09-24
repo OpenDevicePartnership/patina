@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 extern crate alloc;
 
@@ -281,8 +281,7 @@ impl Storage {
     /// Registers a config type with the storage and returns its global id.
     pub(crate) fn register_config<C: Default + 'static>(&mut self) -> usize {
         let idx = self.config_indices.len();
-        let idx = *self.config_indices.entry(TypeId::of::<C>()).or_insert(idx);
-        idx
+        *self.config_indices.entry(TypeId::of::<C>()).or_insert(idx)
     }
 
     /// Adds a default valued config datum to the storage if it does not exist.
@@ -301,32 +300,32 @@ impl Storage {
     }
 
     /// Attempts to retrieve a config datum from the storage.
-    pub fn get_config<C: Default + 'static>(&self) -> Option<crate::component::params::Config<C>> {
+    pub fn get_config<C: Default + 'static>(&self) -> Option<crate::component::params::Config<'_, C>> {
         let id = self.config_indices.get(&TypeId::of::<C>())?;
         let untyped = self.get_raw_config(*id);
         Some(crate::component::params::Config::from(untyped))
     }
 
     /// Attempts to retrieve a mutable config datum from the storage.
-    pub fn get_config_mut<C: Default + 'static>(&mut self) -> Option<crate::component::params::ConfigMut<C>> {
+    pub fn get_config_mut<C: Default + 'static>(&mut self) -> Option<crate::component::params::ConfigMut<'_, C>> {
         let id = self.config_indices.get(&TypeId::of::<C>())?;
         let untyped = self.get_raw_config_mut(*id);
         Some(crate::component::params::ConfigMut::from(untyped))
     }
 
     /// Retrieves a config from the storage.
-    pub(crate) fn get_raw_config(&self, id: usize) -> Ref<ConfigRaw> {
+    pub(crate) fn get_raw_config(&self, id: usize) -> Ref<'_, ConfigRaw> {
         self.configs
             .get(id)
-            .unwrap_or_else(|| panic!("Could not find Config value when with id [{}] it should always exist.", id))
+            .unwrap_or_else(|| panic!("Could not find Config value when with id [{id}] it should always exist."))
             .borrow()
     }
 
     /// Retrieves a mutable config from the storage.
-    pub(crate) fn get_raw_config_mut(&self, id: usize) -> RefMut<ConfigRaw> {
+    pub(crate) fn get_raw_config_mut(&self, id: usize) -> RefMut<'_, ConfigRaw> {
         self.configs
             .get(id)
-            .unwrap_or_else(|| panic!("Could not find Config value when with id [{}] it should always exist.", id))
+            .unwrap_or_else(|| panic!("Could not find Config value when with id [{id}] it should always exist."))
             .borrow_mut()
     }
 
@@ -404,11 +403,11 @@ impl Storage {
     pub(crate) fn get_raw_hob(&self, id: usize) -> &[Box<dyn Any>] {
         self.hobs
             .get(id)
-            .unwrap_or_else(|| panic!("Could not find Hob value when with id [{}] it should always exist.", id))
+            .unwrap_or_else(|| panic!("Could not find Hob value when with id [{id}] it should always exist."))
     }
 
     /// Attempts to retrieve a HOB datum from the storage.
-    pub fn get_hob<T: FromHob>(&self) -> Option<Hob<T>> {
+    pub fn get_hob<T: FromHob>(&self) -> Option<Hob<'_, T>> {
         let id = self.hob_indices.get(&TypeId::of::<T>())?;
         self.hobs.get(*id).and_then(|hob| {
             if hob.is_empty() {
@@ -477,8 +476,8 @@ impl<'s> UnsafeStorageCell<'s> {
     /// - The returned `&mut Storage` *must* by unique: it must never be allowed to exists at the
     ///   same time as any other borrows of the storage or any accesses to its data.
     ///   - `&mut Storage` *may* exist at the same time as instances of `UnsafeStorageCell`, so
-    ///      long as none of those instances are used to access storage data in any way while the
-    ///      mutable borrow is active.
+    ///     long as none of those instances are used to access storage data in any way while the
+    ///     mutable borrow is active.
     #[inline]
     pub unsafe fn storage_mut(self) -> &'s mut Storage {
         // Safety:

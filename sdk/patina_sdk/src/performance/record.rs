@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 pub mod extended;
@@ -147,7 +147,7 @@ impl PerformanceRecordBuffer {
     }
 
     /// Return a performance record iterator.
-    pub fn iter(&self) -> Iter {
+    pub fn iter(&self) -> Iter<'_> {
         Iter::new(self.buffer())
     }
 
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn test_performance_record_buffer_new() {
         let performance_record_buffer = PerformanceRecordBuffer::new();
-        println!("{:?}", performance_record_buffer);
+        println!("{performance_record_buffer:?}");
         assert_eq!(0, performance_record_buffer.size());
     }
 

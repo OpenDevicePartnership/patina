@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 mod interrupt_manager;
@@ -14,6 +14,7 @@ use patina_sdk::error::EfiError;
 
 /// Null implementation of the EfiSystemContextFactory and EfiExceptionStackTrace traits.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ExceptionContextNull;
 
 impl super::EfiSystemContextFactory for ExceptionContextNull {

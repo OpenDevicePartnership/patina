@@ -7,7 +7,7 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 use core::{fmt::Write, str::SplitWhitespace};
@@ -129,7 +129,7 @@ impl PatinaTarget {
                 }
                 let _ = out.write_str("Module breakpoints:\n");
                 for module in state.modules.get_module_breakpoints().iter() {
-                    let _ = writeln!(out, "\t{}", module);
+                    let _ = writeln!(out, "\t{module}");
                 }
             }
             #[cfg(not(feature = "alloc"))]

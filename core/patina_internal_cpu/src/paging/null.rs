@@ -4,9 +4,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::boxed::Box;
 use patina_paging::{MemoryAttributes, PageTable, PtError, PtResult};
@@ -15,6 +15,7 @@ use patina_paging::page_allocator::PageAllocator;
 use r_efi::efi;
 
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct EfiCpuPagingNull<A>
 where
     A: PageAllocator,
