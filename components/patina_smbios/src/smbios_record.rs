@@ -405,87 +405,87 @@ impl SmbiosRecordStructure for Type0PlatformFirmwareInformation {
     }
 }
 
-// /// Type 1: System Information
+/// Type 1: System Information
 // #[repr(C, packed)]
-// pub struct Type1SystemInformation {
-//     pub header: SmbiosTableHeader,
-//     pub manufacturer: u8,         // String index
-//     pub product_name: u8,         // String index
-//     pub version: u8,              // String index
-//     pub serial_number: u8,        // String index
-//     pub uuid: [u8; 16],
-//     pub wake_up_type: u8,
-//     pub sku_number: u8,           // String index
-//     pub family: u8,               // String index
+pub struct Type1SystemInformation {
+    pub header: SmbiosTableHeader,
+    pub manufacturer: u8,         // String index
+    pub product_name: u8,         // String index
+    pub version: u8,              // String index
+    pub serial_number: u8,        // String index
+    pub uuid: [u8; 16],
+    pub wake_up_type: u8,
+    pub sku_number: u8,           // String index
+    pub family: u8,               // String index
     
-//     // Integrated string pool
-//     pub string_pool: Vec<String>,
-// }
+    // Integrated string pool
+    pub string_pool: Vec<String>,
+}
 
-// impl Type1SystemInformation {
-//     pub fn new() -> Self {
-//         Self {
-//             header: SmbiosTableHeader {
-//                 record_type: 1,
-//                 length: 0, // Will be calculated
-//                 handle: SMBIOS_HANDLE_PI_RESERVED,
-//             },
-//             manufacturer: 1,
-//             product_name: 2,
-//             version: 3,
-//             serial_number: 4,
-//             uuid: [0; 16], // Should be set by implementation
-//             wake_up_type: 0x06, // Power switch
-//             sku_number: 5,
-//             family: 6,
-//             string_pool: vec![
-//                 "System Manufacturer".to_string(),
-//                 "System Product".to_string(),
-//                 "1.0".to_string(),
-//                 "SystemSerial123".to_string(),
-//                 "SystemSKU".to_string(),
-//                 "System Family".to_string(),
-//             ],
-//         }
-//     }
-// }
+impl Type1SystemInformation {
+    pub fn new() -> Self {
+        Self {
+            header: SmbiosTableHeader {
+                record_type: 1,
+                length: 0, // Will be calculated
+                handle: SMBIOS_HANDLE_PI_RESERVED,
+            },
+            manufacturer: 1,
+            product_name: 2,
+            version: 3,
+            serial_number: 4,
+            uuid: [0; 16], // Should be set by implementation
+            wake_up_type: 0x06, // Power switch
+            sku_number: 5,
+            family: 6,
+            string_pool: vec![
+                String::from("System Manufacturer"),
+                String::from("System Product"),
+                String::from("1.0"),
+                String::from("SystemSerial123"),
+                String::from("SystemSKU"),
+                String::from("System Family"),
+            ],
+        }
+    }
+}
 
-// // With the generic serializer, Type 1 becomes trivial to implement:
-// impl_smbios_field_layout!(Type1SystemInformation,
-//     manufacturer: u8,
-//     product_name: u8,
-//     version: u8,
-//     serial_number: u8,
-//     uuid: uuid,           // Special uuid type handles 16-byte arrays
-//     wake_up_type: u8,
-//     sku_number: u8,
-//     family: u8,
-// );
+// With the generic serializer, Type 1 becomes trivial to implement:
+impl_smbios_field_layout!(Type1SystemInformation,
+    manufacturer: u8,
+    product_name: u8,
+    version: u8,
+    serial_number: u8,
+    uuid: uuid,           // Special uuid type handles 16-byte arrays
+    wake_up_type: u8,
+    sku_number: u8,
+    family: u8,
+);
 
-// impl SmbiosRecordStructure for Type1SystemInformation {
-//     const RECORD_TYPE: u8 = 1;
+impl SmbiosRecordStructure for Type1SystemInformation {
+    const RECORD_TYPE: u8 = 1;
     
-//     fn validate(&self) -> Result<(), SmbiosError> {
-//         // Standard string validation (could even be provided by a derive macro)
-//         for string in &self.string_pool {
-//             if string.len() > SMBIOS_STRING_MAX_LENGTH {
-//                 return Err(SmbiosError::StringTooLong);
-//             }
-//             if string.contains('\0') {
-//                 return Err(SmbiosError::InvalidParameter);
-//             }
-//         }
-//         Ok(())
-//     }
+    fn validate(&self) -> Result<(), SmbiosError> {
+        // Standard string validation (could even be provided by a derive macro)
+        for string in &self.string_pool {
+            if string.len() > SMBIOS_STRING_MAX_LENGTH {
+                return Err(SmbiosError::StringTooLong);
+            }
+            if string.contains('\0') {
+                return Err(SmbiosError::InvalidParameter);
+            }
+        }
+        Ok(())
+    }
     
-//     fn string_pool(&self) -> &[String] {
-//         &self.string_pool
-//     }
+    fn string_pool(&self) -> &[String] {
+        &self.string_pool
+    }
     
-//     fn string_pool_mut(&mut self) -> &mut Vec<String> {
-//         &mut self.string_pool
-//     }
-// }
+    fn string_pool_mut(&mut self) -> &mut Vec<String> {
+        &mut self.string_pool
+    }
+}
 
 // /// Even Better: Derive Macro Approach
 // /// 
