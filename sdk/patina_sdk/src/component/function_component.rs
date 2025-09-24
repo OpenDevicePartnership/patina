@@ -9,9 +9,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 extern crate alloc;
 
@@ -58,7 +58,7 @@ where
 
         let param_value = unsafe { Func::Param::get_param(param_state, storage) };
 
-        self.func.run((), param_value).map(|_| true)
+        self.func.run(&mut Some(()), param_value).map(|_| true)
     }
 
     /// Returns the metadata of the Component.

@@ -21,7 +21,7 @@ log = { workspace=true }
 [dev-dependencies]
 rand = { workspace = true }
 criterion = { workspace = true }
-uint = { workspace = true }
+ruint = { workspace = true }
 
 [[bench]]
 name = "bench_add"

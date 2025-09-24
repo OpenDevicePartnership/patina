@@ -148,6 +148,11 @@ latter as it simplifies mocking functionality for host-based unit tests, however
 two main drawbacks are (1) functionality is accessed via a v-table, causing some performance degradation, and (2) dyn
 trait objects do not support generics in their function interfaces.
 
+Service implementations can be registered in two distinct ways. If the service implementation can be directly
+instantiated with no other dependencies, then it can be registered directly during core instantiation with [Core::with_service](https://github.com/OpenDevicePartnership/patina),
+which makes the service immediately available. If the service implementation does have dependencies, then a component
+will be used to request those dependencies, instantiate the service, and pass it to the storage with [Storage::add_service](https://github.com/OpenDevicePartnership/patina).
+
 If function generics are needed / wanted, it is suggested that most functionality be provided via a typical, mockable
 trait object service, with a lightweight concrete struct Service Wrapper to support generics. This allows for easy
 mocking of the underlying functionality, but provides an easy to use interface as seen below:

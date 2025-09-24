@@ -104,6 +104,38 @@ Use the test command to invoke a test build and execute all unit tests.
 cargo make test
 ```
 
+## Rust Version Updates
+
+Rust is released on a regular six week cadence. The Rust project maintains a site with
+[dates for upcoming releases](https://forge.rust-lang.org/). While there is no hard requirement to update the Rust
+version used by Patina in a given timeframe, it is recommended to do so at least once per quarter. Updates to the
+latest stable version should not happen immediately after the stable version release as Patina consumers may need time
+to update their internal toolchains to migrate to the latest stable version.
+
+A pull request that updates the Rust version should always be created against the `main` branch. The pull request should
+include the `OpenDevicePartnership/patina-contributors` team as reviewers and remain open for at least three full
+business days to ensure that stakeholders have an opportunity to review and provide feedback.
+
+### Updating the Minimum Supported Rust Version
+
+The Rust toolchain used in this repo is specified in `rust-toolchain.toml`. The minimum supported Rust version for the
+crates in the workspace is specified in the `rust-version` field of each crate's `Cargo.toml` file. When updating the
+Rust toolchain version, the minimum supported Rust version should be evaluated to determine if it also needs to be
+updated.
+
+A non-exhaustive list of reasons the minimum version might need to change includes:
+
+1. An unstable feature has been stabilized and the corresponding `#![feature(...)]` has been removed
+2. A feature introduced in the release is immediately being used in the repository
+
+> Note: If the minimum supported Rust version does need to change, please add a comment explaining wny. Note that
+> formatting and linting changes to satisfy tools like rustfmt or clippy do not alone necessitate a minimum Rust
+> version change.
+
+A quick way to check if the minimum supported Rust version needs to change is to keep the changes made for the new
+release in your workspace and then revert the Rust toolchain to the previous version. If the project fails to build,
+then the minimum supported Rust version needs to be updated.
+
 ## Coverage
 
 The coverage command will generate test coverage data for all crates in the project.  To target a single crate, the
@@ -135,6 +167,41 @@ following the same layout as existing benchmarks, and adding the benchmark to th
 - This project uses a makefile that sets the "RUSTC_BOOTSTRAP=1" environment variable due to internal requirements which
 puts us in parity with the nightly features that exist on the toolchain targeted.  The "nightly" toolchain may be used
 in place of this.
+
+## High-Level Patina Roadmap
+
+Patina's upcoming work falls into three main categories:
+
+1. **Stabilization** - Bug fixes, performance improvements, and feature completion for existing functionality. This
+   work is focused on ensuring that everything in Patina's main branch is stable and ready for production use. This is
+   the primary focus for the next several months.
+2. **Expansion** - Expansion of Patina's capabilities and this falls into two sub-categories:
+   1. **Component Growth** - Adding new components to Patina to replace equivalent C-based UEFI components. As new
+      components are made available, it is expected that platforms adopting Patina will incrementally remove their
+      C-based UEFI components as the equivalent Rust-based functionality is now available in their Patina build.
+   2. **MM Core Support** - Similar to the DXE Core support in Patina today, adding a Patina Standalone MM Core such
+      that the Management Mode (MM) core environment is written in Rust and a larger portion of MM drivers can be
+      ported to Patina MM components.
+3. **Ecosystem Integration** - This is broken down into two sub-categories:
+    1. **Firmware Ecosystem** - Patina adopters working together to ensure Patina works in their platforms and use
+        cases. This includes things like platform bring-up, integration with existing firmware components, and
+        validation against various hardware configurations.
+    2. **Rust Ecosystem** - Engaging with the broader Rust community to ensure Patina aligns with Rust's best
+        practices and leverages the latest Rust features. This includes things like contributing to Rust libraries,
+        participating in Rust forums, and collaborating with other Rust projects.
+
+### Status
+
+1. **Stabilization** - In Progress
+2. **Expansion**
+    1. **Component Growth** - In Progress
+    2. **MM Core Support** - Planned
+3. **Ecosystem Integration**
+    1. **Firmware Ecosystem** - In Progress
+    2. **Rust Ecosystem** - In Progress
+
+Patina welcomes and encourages community contributions to help accelerate progress in these focus areas. We also value
+your ideas and feedback on additional priorities that matter to the community.
 
 ## Contributing
 

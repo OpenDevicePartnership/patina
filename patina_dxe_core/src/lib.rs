@@ -6,17 +6,12 @@
 //! ## Examples
 //!
 //! ``` rust,no_run
-//! use patina_sdk::error::EfiError;
+//! # use patina_sdk::component::prelude::*;
 //! # fn example_component() -> patina_sdk::error::Result<()> { Ok(()) }
-//! # #[derive(Default, Clone, Copy)]
-//! # struct SectionExtractExample;
-//! # impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
-//! #     fn extract(&self, _: &mu_pi::fw_fs::Section) -> Result<Box<[u8]>, r_efi::base::Status> { Ok(Box::new([0])) }
-//! # }
 //! # let physical_hob_list = core::ptr::null();
 //! patina_dxe_core::Core::default()
-//!   .with_section_extractor(SectionExtractExample::default())
 //!   .init_memory(physical_hob_list)
+//!   .with_service(patina_ffs_extractors::CompositeSectionExtractor::default())
 //!   .with_component(example_component)
 //!   .start()
 //!   .unwrap();
@@ -24,16 +19,16 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
 #![feature(alloc_error_handler)]
 #![feature(c_variadic)]
 #![feature(allocator_api)]
+#![feature(btreemap_alloc)]
 #![feature(slice_ptr_get)]
-#![feature(get_many_mut)]
 #![feature(coverage_attribute)]
 
 extern crate alloc;
@@ -41,6 +36,7 @@ extern crate alloc;
 mod allocator;
 mod config_tables;
 mod cpu_arch_protocol;
+mod decompress;
 mod dispatcher;
 mod driver_services;
 mod dxe_services;
@@ -73,16 +69,21 @@ use alloc::{boxed::Box, vec::Vec};
 use gcd::SpinLockedGcd;
 use memory_manager::CoreMemoryManager;
 use mu_pi::{
-    fw_fs,
     hob::{HobList, get_c_hob_list_size},
     protocols::{bds, status_code},
     status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
 };
+use mu_rust_helpers::{function, guid::CALLER_ID};
+use patina_ffs::section::SectionExtractor;
 use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
 use patina_sdk::{
     boot_services::StandardBootServices,
-    component::{Component, IntoComponent, Storage},
+    component::{Component, IntoComponent, Storage, service::IntoService},
     error::{self, Result},
+    performance::{
+        logging::{perf_function_begin, perf_function_end},
+        measurement::create_performance_measurement,
+    },
     runtime_services::StandardRuntimeServices,
 };
 use protocols::PROTOCOL_DB;
@@ -116,16 +117,10 @@ pub(crate) static GCD: SpinLockedGcd = SpinLockedGcd::new(Some(events::gcd_map_c
 ///
 /// ```rust,no_run
 /// use patina_dxe_core::{Core, GicBases};
-/// # #[derive(Default, Clone, Copy)]
-/// # struct SectionExtractExample;
-/// # impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
-/// #     fn extract(&self, _: &mu_pi::fw_fs::Section) -> Result<Box<[u8]>, r_efi::base::Status> { Ok(Box::new([0])) }
-/// # }
 /// # let physical_hob_list = core::ptr::null();
 ///
 /// let gic_bases = GicBases::new(0x1E000000, 0x1E010000);
 /// let core = Core::default()
-///    .with_section_extractor(SectionExtractExample::default())
 ///    .init_memory(physical_hob_list)
 ///    .with_config(gic_bases)
 ///    .start()
@@ -171,45 +166,42 @@ pub struct NoAlloc;
 /// which provides methods for adding configuration and components with the DXE core, and eventually starting the
 /// dispatching process and eventual handoff to the BDS phase.
 ///
+/// ## Soft Service Dependencies
+///
+/// The core may take a soft dependency on some services, which are described in the below table. These services must
+/// be directly registered with the [Core::with_service] method. If not, there is no guarantee that the service will
+/// be available before the core needs it.
+///
+/// | Service Trait                           | Description                                      |
+/// |-----------------------------------------|--------------------------------------------------|
+/// | [patina_ffs::section::SectionExtractor] | FW volume section extraction w/ decompression    |
+///
 /// ## Examples
 ///
 /// ``` rust,no_run
-/// use patina_sdk::error::EfiError;
+/// # use patina_sdk::component::prelude::*;
 /// # fn example_component() -> patina_sdk::error::Result<()> { Ok(()) }
-/// # #[derive(Default, Clone, Copy)]
-/// # struct SectionExtractExample;
-/// # impl mu_pi::fw_fs::SectionExtractor for SectionExtractExample {
-/// #     fn extract(&self, _: &mu_pi::fw_fs::Section) -> Result<Box<[u8]>, r_efi::base::Status> { Ok(Box::new([0])) }
-/// # }
 /// # let physical_hob_list = core::ptr::null();
 /// patina_dxe_core::Core::default()
-///   .with_section_extractor(SectionExtractExample::default())
 ///   .init_memory(physical_hob_list)
+///   .with_service(patina_ffs_extractors::CompositeSectionExtractor::default())
 ///   .with_component(example_component)
 ///   .start()
 ///   .unwrap();
 /// ```
-pub struct Core<SectionExtractor, MemoryState>
-where
-    SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
-{
+pub struct Core<MemoryState> {
     physical_hob_list: *const c_void,
     hob_list: HobList<'static>,
-    section_extractor: SectionExtractor,
     components: Vec<Box<dyn Component>>,
     storage: Storage,
     _memory_state: core::marker::PhantomData<MemoryState>,
 }
 
-impl<SectionExtractor> Default for Core<SectionExtractor, NoAlloc>
-where
-    SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
-{
+impl Default for Core<NoAlloc> {
     fn default() -> Self {
         Core {
             physical_hob_list: core::ptr::null(),
             hob_list: HobList::default(),
-            section_extractor: SectionExtractor::default(),
             components: Vec::new(),
             storage: Storage::new(),
             _memory_state: core::marker::PhantomData,
@@ -217,18 +209,9 @@ where
     }
 }
 
-impl<SectionExtractor> Core<SectionExtractor, NoAlloc>
-where
-    SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
-{
-    /// Registers the section extractor with it's own configuration.
-    pub fn with_section_extractor(mut self, section_extractor: SectionExtractor) -> Self {
-        self.section_extractor = section_extractor;
-        self
-    }
-
+impl Core<NoAlloc> {
     /// Initializes the core with the given configuration, including GCD initialization, enabling allocations.
-    pub fn init_memory(mut self, physical_hob_list: *const c_void) -> Core<SectionExtractor, Alloc> {
+    pub fn init_memory(mut self, physical_hob_list: *const c_void) -> Core<Alloc> {
         log::info!("DXE Core Crate v{}", env!("CARGO_PKG_VERSION"));
 
         let mut cpu = EfiCpu::default();
@@ -245,7 +228,7 @@ where
 
         gcd::init_gcd(physical_hob_list);
 
-        log::trace!("Initial GCD:\n{}", GCD);
+        log::trace!("Initial GCD:\n{GCD}");
 
         // After this point Rust Heap usage is permitted (since GCD is initialized with a single known-free region).
         // Relocate the hobs from the input list pointer into a Vec.
@@ -266,13 +249,13 @@ where
         // Add custom monitor commands to the debugger before initializing so that
         // they are available in the initial breakpoint.
         patina_debugger::add_monitor_command("gcd", "Prints the GCD", |_, out| {
-            let _ = write!(out, "GCD -\n{}", GCD);
+            let _ = write!(out, "GCD -\n{GCD}");
         });
 
         // Initialize the debugger if it is enabled.
         patina_debugger::initialize(&mut interrupt_manager);
 
-        log::info!("GCD - After memory init:\n{}", GCD);
+        log::info!("GCD - After memory init:\n{GCD}");
 
         self.storage.add_service(cpu);
         self.storage.add_service(interrupt_manager);
@@ -281,18 +264,49 @@ where
         Core {
             physical_hob_list,
             hob_list: self.hob_list,
-            section_extractor: self.section_extractor,
             components: self.components,
             storage: self.storage,
             _memory_state: core::marker::PhantomData,
         }
     }
+
+    /// Informs the core that it should prioritize allocating 32-bit memory when
+    /// not otherwise specified.
+    ///
+    /// This should only be used as a workaround in environments where address width
+    /// bugs exist in uncontrollable dependent software. For example, when booting
+    /// to an OS that puts any addresses from UEFI into a uint32.
+    ///
+    /// Must be called prior to [`Core::init_memory`].
+    ///
+    /// ## Example
+    ///
+    /// ``` rust,no_run
+    /// # use patina_sdk::component::prelude::*;
+    /// # fn example_component() -> patina_sdk::error::Result<()> { Ok(()) }
+    /// # let physical_hob_list = core::ptr::null();
+    /// patina_dxe_core::Core::default()
+    ///   .prioritize_32_bit_memory()
+    ///   .init_memory(physical_hob_list)
+    ///   .start()
+    ///   .unwrap();
+    /// ```
+    pub fn prioritize_32_bit_memory(self) -> Self {
+        // This doesn't actually alter the core's state, but uses the same model
+        // for consistent abstraction.
+        GCD.prioritize_32_bit_memory(true);
+        self
+    }
 }
 
-impl<SectionExtractor> Core<SectionExtractor, Alloc>
-where
-    SectionExtractor: fw_fs::SectionExtractor + Default + Copy + 'static,
-{
+impl Core<Alloc> {
+    /// Directly registers an instantiated service with the core, making it available immediately.
+    #[inline(always)]
+    pub fn with_service(mut self, service: impl IntoService + 'static) -> Self {
+        self.storage.add_service(service);
+        self
+    }
+
     /// Registers a component with the core, that will be dispatched during the driver execution phase.
     #[inline(always)]
     pub fn with_component<I>(mut self, component: impl IntoComponent<I>) -> Self {
@@ -340,38 +354,54 @@ where
     /// Attempts to dispatch all components.
     ///
     /// This method will exit once no components remain or no components were dispatched during a full iteration.
-    fn dispatch_components(&mut self) {
-        loop {
-            let len = self.components.len();
-            self.components.retain_mut(|component| {
-                // Ok(true): Dispatchable and dispatched returning success
-                // Ok(false): Not dispatchable at this time.
-                // Err(e): Dispatchable and dispatched returning failure
-                log::info!("DISPATCH_ATTEMPT BEGIN: Id = [{:?}]", component.metadata().name());
-                !match component.run(&mut self.storage) {
-                    Ok(true) => {
-                        log::info!("DISPATCH_ATTEMPT END: Id = [{:?}] Status = [Success]", component.metadata().name());
-                        true
-                    }
-                    Ok(false) => {
-                        log::info!("DISPATCH_ATTEMPT END: Id = [{:?}] Status = [Skipped]", component.metadata().name());
-                        false
-                    }
-                    Err(err) => {
-                        log::error!(
-                            "DISPATCH_ATTEMPT END: Id = [{:?}] Status = [Failed] Error = [{:?}]",
-                            component.metadata().name(),
-                            err
-                        );
-                        debug_assert!(false);
-                        true // Component dispatched, even if it did fail, so remove from self.components to avoid re-dispatch.
-                    }
+    fn dispatch_components(&mut self) -> bool {
+        let len = self.components.len();
+        self.components.retain_mut(|component| {
+            // Ok(true): Dispatchable and dispatched returning success
+            // Ok(false): Not dispatchable at this time.
+            // Err(e): Dispatchable and dispatched returning failure
+            let name = component.metadata().name();
+            log::trace!("Dispatch Start: Id = [{name:?}]");
+            !match component.run(&mut self.storage) {
+                Ok(true) => {
+                    log::info!("Dispatched: Id = [{name:?}] Status = [Success]");
+                    true
                 }
-            });
-            if self.components.len() == len {
+                Ok(false) => false,
+                Err(err) => {
+                    log::error!("Dispatched: Id = [{name:?}] Status = [Failed] Error = [{err:?}]");
+                    debug_assert!(false);
+                    true // Component dispatched, even if it did fail, so remove from self.components to avoid re-dispatch.
+                }
+            }
+        });
+        len != self.components.len()
+    }
+
+    /// Performs a combined dispatch of Patina components and UEFI drivers.
+    ///
+    /// This function will continue to loop and perform dispatching until no components have been dispatched in a full
+    /// iteration. The dispatching process involves a loop of two distinct dispatch phases:
+    ///
+    /// 1. A single iteration of dispatching Patina components, retaining those that were not dispatched.
+    /// 2. A single iteration of dispatching UEFI drivers via the dispatcher module.
+    fn core_dispatcher(&mut self) -> Result<()> {
+        perf_function_begin(function!(), &CALLER_ID, create_performance_measurement);
+        loop {
+            // Patina component dispatch
+            let dispatched = self.dispatch_components();
+
+            // UEFI driver dispatch
+            let dispatched = dispatched
+                || dispatcher::dispatch().inspect_err(|err| log::error!("UEFI Driver Dispatch error: {err:?}"))?;
+
+            if !dispatched {
                 break;
             }
         }
+        perf_function_end(function!(), &CALLER_ID, create_performance_measurement);
+
+        Ok(())
     }
 
     fn display_components_not_dispatched(&self) {
@@ -432,8 +462,7 @@ where
             config_tables::init_config_tables_support(st.boot_services_mut());
             runtime::init_runtime_support(st.runtime_services_mut());
             image::init_image_support(&self.hob_list, st);
-            dispatcher::init_dispatcher(Box::from(self.section_extractor));
-            fv::init_fv_support(&self.hob_list, Box::from(self.section_extractor));
+            dispatcher::init_dispatcher();
             dxe_services::init_dxe_services(st);
             driver_services::init_driver_services(st.boot_services_mut());
 
@@ -484,6 +513,7 @@ where
 
     /// Registers core provided components
     fn add_core_components(&mut self) {
+        self.insert_component(0, decompress::install_decompress_protocol.into_component());
         self.insert_component(0, systemtables::register_checksum_on_protocol_install_events.into_component());
         self.insert_component(0, cpu_arch_protocol::install_cpu_arch_protocol.into_component());
         #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
@@ -504,14 +534,23 @@ where
         self.parse_hobs();
         log::info!("Finished.");
 
-        log::info!("Dispatching Local Drivers");
-        self.dispatch_components();
-        self.storage.lock_configs();
-        self.dispatch_components();
-        log::info!("Finished Dispatching Local Drivers");
-        self.display_components_not_dispatched();
+        if let Some(extractor) = self.storage.get_service::<dyn SectionExtractor>() {
+            log::debug!("Section Extractor service found, registering with FV and Dispatcher.");
+            dispatcher::register_section_extractor(extractor.clone());
+            fv::register_section_extractor(extractor);
+        }
 
-        dispatcher::core_dispatcher().expect("initial dispatch failed.");
+        log::info!("Parsing FVs from FV HOBs");
+        fv::parse_hob_fvs(&self.hob_list)?;
+        log::info!("Finished.");
+
+        log::info!("Dispatching Drivers");
+        self.core_dispatcher()?;
+        self.storage.lock_configs();
+        self.core_dispatcher()?;
+        log::info!("Finished Dispatching Drivers");
+
+        self.display_components_not_dispatched();
 
         core_display_missing_arch_protocols();
 
@@ -544,19 +583,13 @@ fn core_display_missing_arch_protocols() {
     for (uuid, name) in ARCH_PROTOCOLS {
         let guid = efi::Guid::from_bytes(&uuid.to_bytes_le());
         if protocols::PROTOCOL_DB.locate_protocol(guid).is_err() {
-            log::warn!("Missing architectural protocol: {:?}, {:?}", uuid, name);
+            log::warn!("Missing architectural protocol: {uuid:?}, {name:?}");
         }
     }
 }
 
 fn call_bds() {
-    if let Ok(protocol) = protocols::PROTOCOL_DB.locate_protocol(bds::PROTOCOL_GUID) {
-        let bds = protocol as *mut bds::Protocol;
-        unsafe {
-            ((*bds).entry)(bds);
-        }
-    }
-
+    // Enable status code capability in Firmware Performance DXE.
     match protocols::PROTOCOL_DB.locate_protocol(status_code::PROTOCOL_GUID) {
         Ok(status_code_ptr) => {
             let status_code_protocol = unsafe { (status_code_ptr as *mut status_code::Protocol).as_mut() }.unwrap();
@@ -568,6 +601,15 @@ fn call_bds() {
                 ptr::null(),
             );
         }
-        Err(err) => log::error!("Unable to locate status code runtime protocol: {:?}", err),
+        Err(err) => log::error!("Unable to locate status code runtime protocol: {err:?}"),
     };
+
+    if let Ok(protocol) = protocols::PROTOCOL_DB.locate_protocol(bds::PROTOCOL_GUID) {
+        let bds = protocol as *mut bds::Protocol;
+        unsafe {
+            // If bds entry returns: then the dispatcher must be invoked again,
+            // if it never returns: then an operating system or a system utility have been invoked.
+            ((*bds).entry)(bds);
+        }
+    }
 }

@@ -6,9 +6,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 use core::fmt;
 use fixedbitset::FixedBitSet;
 
@@ -185,7 +185,7 @@ mod tests {
         access.writes_all_configs();
 
         assert_eq!(
-            std::format!("{:?}", access),
+            std::format!("{access:?}"),
             "Access { reads_all_configs: true, writes_all_configs: true, config_writes: [0], config_reads: [1] }"
         );
     }

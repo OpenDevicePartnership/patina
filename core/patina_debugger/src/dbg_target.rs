@@ -7,7 +7,7 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 mod breakpoint;
@@ -75,7 +75,7 @@ impl Target for PatinaTarget {
     type Arch = SystemArch;
     type Error = ();
 
-    fn base_ops(&mut self) -> gdbstub::target::ext::base::BaseOps<Self::Arch, Self::Error> {
+    fn base_ops(&mut self) -> gdbstub::target::ext::base::BaseOps<'_, Self::Arch, Self::Error> {
         gdbstub::target::ext::base::BaseOps::SingleThread(self)
     }
 

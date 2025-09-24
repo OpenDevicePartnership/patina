@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::{collections::BTreeMap, collections::BTreeSet, vec::Vec};
 use core::{ptr::NonNull, slice::from_raw_parts_mut};
@@ -277,10 +277,10 @@ fn core_connect_single_controller(
         return Ok(());
     }
 
-    if let Some(device_path) = remaining_device_path {
-        if unsafe { (*device_path).r#type == efi::protocols::device_path::TYPE_END } {
-            return Ok(());
-        }
+    if let Some(device_path) = remaining_device_path
+        && unsafe { (*device_path).r#type == efi::protocols::device_path::TYPE_END }
+    {
+        return Ok(());
     }
 
     Err(EfiError::NotFound)
@@ -441,10 +441,10 @@ pub unsafe fn core_disconnect_controller(
                     if (info.attributes & efi::OPEN_PROTOCOL_BY_DRIVER) != 0 {
                         driver_valid = true;
                     }
-                    if (info.attributes & efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER) != 0 {
-                        if let Some(handle) = info.controller_handle {
-                            child_handles.push(handle);
-                        }
+                    if (info.attributes & efi::OPEN_PROTOCOL_BY_CHILD_CONTROLLER) != 0
+                        && let Some(handle) = info.controller_handle
+                    {
+                        child_handles.push(handle);
                     }
                 }
             }
@@ -1536,7 +1536,7 @@ mod tests {
 
             // Verify stop was called at least once
             let call_count = STOP_CALL_COUNT.load(Ordering::SeqCst);
-            assert!(call_count > 0, "stop should be called at least once, but was called {} times", call_count);
+            assert!(call_count > 0, "stop should be called at least once, but was called {call_count} times");
 
             // Just verify that the function executed the child handling logic
             // The exact behavior depends on the protocol database implementation
@@ -1658,7 +1658,7 @@ mod tests {
             let total_calls = STOP_CALLS.load(Ordering::SeqCst);
             let driver_stops = DRIVER_STOP_CALLED.load(Ordering::SeqCst);
 
-            println!("Total stop calls: {}, Driver stops (num_children=0): {}", total_calls, driver_stops);
+            println!("Total stop calls: {total_calls}, Driver stops (num_children=0): {driver_stops}");
 
             // Since we specified the only child, the driver should be disconnected completely
             assert!(driver_stops > 0, "Driver should be fully stopped when specified child is the only child");

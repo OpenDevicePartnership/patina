@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 mod fixed_size_block_allocator;
 mod uefi_allocator;
@@ -14,6 +14,7 @@ use core::{
     fmt::Debug,
     mem,
     ops::Range,
+    ptr::NonNull,
     slice::{self, from_raw_parts_mut},
 };
 
@@ -35,10 +36,7 @@ use mu_pi::{
     hob::{self, EFiMemoryTypeInformation, Hob, HobList, MEMORY_TYPE_INFO_HOB_GUID},
 };
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
-use uefi_allocator::UefiAllocator;
-
-//FixedSizeBlockAllocator is passed as a reference to the callbacks on page allocations
-pub use fixed_size_block_allocator::FixedSizeBlockAllocator;
+pub use uefi_allocator::UefiAllocator;
 
 use patina_sdk::{
     base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
@@ -74,9 +72,8 @@ cfg_if::cfg_if! {
 #[cfg_attr(target_os = "uefi", global_allocator)]
 pub(crate) static EFI_BOOT_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
-    efi::BOOT_SERVICES_DATA,
+    NonNull::from_ref(GCD.memory_type_info(efi::BOOT_SERVICES_DATA)),
     protocol_db::EFI_BOOT_SERVICES_DATA_ALLOCATOR_HANDLE,
-    page_change_callback,
     DEFAULT_PAGE_ALLOCATION_GRANULARITY,
 );
 
@@ -85,17 +82,15 @@ pub(crate) static EFI_BOOT_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocato
 // the other allocators use.
 pub static EFI_LOADER_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
-    efi::LOADER_CODE,
+    NonNull::from_ref(GCD.memory_type_info(efi::LOADER_CODE)),
     protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE,
-    page_change_callback,
     DEFAULT_PAGE_ALLOCATION_GRANULARITY,
 );
 
 pub static EFI_BOOT_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
-    efi::BOOT_SERVICES_CODE,
+    NonNull::from_ref(GCD.memory_type_info(efi::BOOT_SERVICES_CODE)),
     protocol_db::EFI_BOOT_SERVICES_CODE_ALLOCATOR_HANDLE,
-    page_change_callback,
     DEFAULT_PAGE_ALLOCATION_GRANULARITY,
 );
 
@@ -103,9 +98,8 @@ pub static EFI_BOOT_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
 // passed in
 pub static EFI_RUNTIME_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
-    efi::RUNTIME_SERVICES_CODE,
+    NonNull::from_ref(GCD.memory_type_info(efi::RUNTIME_SERVICES_CODE)),
     protocol_db::EFI_RUNTIME_SERVICES_CODE_ALLOCATOR_HANDLE,
-    page_change_callback,
     RUNTIME_PAGE_ALLOCATION_GRANULARITY,
 );
 
@@ -113,9 +107,8 @@ pub static EFI_RUNTIME_SERVICES_CODE_ALLOCATOR: UefiAllocator = UefiAllocator::n
 // passed in
 pub static EFI_RUNTIME_SERVICES_DATA_ALLOCATOR: UefiAllocator = UefiAllocator::new(
     &GCD,
-    efi::RUNTIME_SERVICES_DATA,
+    NonNull::from_ref(GCD.memory_type_info(efi::RUNTIME_SERVICES_DATA)),
     protocol_db::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR_HANDLE,
-    page_change_callback,
     RUNTIME_PAGE_ALLOCATION_GRANULARITY,
 );
 
@@ -189,7 +182,7 @@ fn memory_attributes_to_str(f: &mut core::fmt::Formatter<'_>, attributes: u64) -
     }
 
     if string_len + attrs.len() > 20 || attrs.is_empty() {
-        write!(f, "{:<#20X}", attributes)?;
+        write!(f, "{attributes:<#20X}")?;
         return Ok(());
     }
 
@@ -216,7 +209,7 @@ fn memory_type_to_str(f: &mut core::fmt::Formatter<'_>, memory_type: efi::Memory
         _ => "Unknown Memory Type",
     };
 
-    write!(f, "{:<25}", string)
+    write!(f, "{string:<25}")
 }
 
 pub struct MemoryDescriptorSlice<'a>(pub &'a [efi::MemoryDescriptor]);
@@ -320,7 +313,17 @@ impl AllocatorMap {
                 | efi::ACPI_MEMORY_NVS => RUNTIME_PAGE_ALLOCATION_GRANULARITY,
                 _ => UEFI_PAGE_SIZE,
             };
-            Box::leak(Box::new(UefiAllocator::new(&GCD, memory_type, handle, page_change_callback, granularity)))
+
+            // If this is one of the memory types tracked by the system table, we will use the memory type info struct
+            // from the GCD. Otherwise, we will just leak a new memory type info struct with the given memory type and
+            // have the allocator use it.
+            let memory_type_info = if (memory_type as usize) <= GCD.memory_type_info_table().len() {
+                NonNull::from_ref(GCD.memory_type_info(memory_type))
+            } else {
+                NonNull::from_ref(Box::leak(Box::new(EFiMemoryTypeInformation { memory_type, number_of_pages: 0 })))
+            };
+
+            Box::leak(Box::new(UefiAllocator::new(&GCD, memory_type_info, handle, granularity)))
         })
     }
 
@@ -479,7 +482,7 @@ pub fn core_allocate_pages(
                 efi::ALLOCATE_ANY_PAGES => allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages, alignment),
                 efi::ALLOCATE_MAX_ADDRESS => {
                     let address = unsafe { memory.as_ref().expect("checked non-null is null") };
-                    allocator.allocate_pages(AllocationStrategy::BottomUp(Some(*address as usize)), pages, alignment)
+                    allocator.allocate_pages(AllocationStrategy::TopDown(Some(*address as usize)), pages, alignment)
                 }
                 efi::ALLOCATE_ADDRESS => {
                     let address = unsafe { memory.as_ref().expect("checked non-null is null") };
@@ -590,14 +593,13 @@ fn merge_blocks(
     current: efi::MemoryDescriptor,
 ) -> Vec<efi::MemoryDescriptor> {
     //if current can be merged with the last block of the previous blocks, merge it.
-    if let Some(descriptor) = previous_blocks.last_mut() {
-        if descriptor.r#type == current.r#type
-            && descriptor.attribute == current.attribute
-            && descriptor.physical_start + descriptor.number_of_pages * UEFI_PAGE_SIZE as u64 == current.physical_start
-        {
-            descriptor.number_of_pages += current.number_of_pages;
-            return previous_blocks;
-        }
+    if let Some(descriptor) = previous_blocks.last_mut()
+        && descriptor.r#type == current.r#type
+        && descriptor.attribute == current.attribute
+        && descriptor.physical_start + descriptor.number_of_pages * UEFI_PAGE_SIZE as u64 == current.physical_start
+    {
+        descriptor.number_of_pages += current.number_of_pages;
+        return previous_blocks;
     }
     //otherwise, just add the new block on the end of the list.
     previous_blocks.push(current);
@@ -762,63 +764,9 @@ pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
     if map_key == current_map_key { Ok(()) } else { Err(EfiError::InvalidParameter) }
 }
 
-static mut MEMORY_TYPE_INFO_TABLE: [EFiMemoryTypeInformation; 17] = [
-    EFiMemoryTypeInformation { memory_type: efi::RESERVED_MEMORY_TYPE, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::LOADER_CODE, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::LOADER_DATA, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::BOOT_SERVICES_CODE, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::BOOT_SERVICES_DATA, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::RUNTIME_SERVICES_CODE, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::RUNTIME_SERVICES_DATA, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::CONVENTIONAL_MEMORY, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::UNUSABLE_MEMORY, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::ACPI_RECLAIM_MEMORY, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::ACPI_MEMORY_NVS, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::MEMORY_MAPPED_IO, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::MEMORY_MAPPED_IO_PORT_SPACE, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::PAL_CODE, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::PERSISTENT_MEMORY, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: efi::UNACCEPTED_MEMORY_TYPE, number_of_pages: 0 },
-    EFiMemoryTypeInformation { memory_type: 16 /*EfiMaxMemoryType*/, number_of_pages: 0 },
-];
-
-// This callback is invoked whenever the allocator performs an operation that would potentially allocate or free pages
-// from the GCD and thus change the memory map. It receives a mutable reference to the allocator that is performing
-// the operation.
-//
-// ## Safety
-// (copied from patina_dxe_core::fixed_size_block_allocator::PageChangeCallback)
-// This callback has several constraints and cautions on its usage:
-// 1. The callback is invoked while the allocator in question is locked. This means that to avoid a re-entrant lock
-//    on the allocator, any operations required from the allocator must be invoked via the given reference, and not
-//    via other means (such as global allocation routines that target this same allocator).
-// 2. The allocator could potentially be the "global" allocator (i.e. EFI_BOOT_SERVICES_DATA). Extra care should be
-//    taken to avoid implicit heap usage (e.g. `Box::new()`) if that's the case.
-//
-// Generally - be very cautious about any allocations performed with this callback. There be dragons.
-//
-fn page_change_callback(allocator: &mut FixedSizeBlockAllocator) {
-    // Update MEMORY_TYPE_INFO_TABLE.
-    unsafe {
-        // Custom Memory types (higher than EfiMaxMemoryType) are not tracked.
-        let idx = allocator.memory_type() as usize;
-        #[allow(static_mut_refs)]
-        if idx < MEMORY_TYPE_INFO_TABLE.len() {
-            let stats = allocator.stats();
-            let reserved_free = uefi_size_to_pages!(stats.reserved_size - stats.reserved_used);
-            MEMORY_TYPE_INFO_TABLE[idx].number_of_pages = (stats.claimed_pages - reserved_free) as u32;
-        }
-    }
-}
-
 pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), EfiError> {
-    // SAFETY: This is safe because we are initializing the table with a static array
-    #[allow(static_mut_refs)]
-    config_tables::core_install_configuration_table(
-        guid::MEMORY_TYPE_INFORMATION,
-        unsafe { MEMORY_TYPE_INFO_TABLE.as_mut_ptr() as *mut c_void },
-        system_table,
-    )
+    let table_ptr = NonNull::from(GCD.memory_type_info_table()).cast::<c_void>().as_ptr();
+    config_tables::core_install_configuration_table(guid::MEMORY_TYPE_INFORMATION, table_ptr, system_table)
 }
 
 fn process_hob_allocations(hob_list: &HobList) {
@@ -846,14 +794,13 @@ fn process_hob_allocations(hob_list: &HobList) {
                 }
 
                 if desc.memory_length == 0 {
-                    log::warn!("Memory Allocation HOB has a 0 length, ignoring.\n{:#x?}", hob);
+                    log::warn!("Memory Allocation HOB has a 0 length, ignoring.\n{hob:#x?}");
                     continue;
                 }
 
                 if desc.memory_base_address == 0 {
                     log::warn!(
-                        "Memory Allocation HOB has a 0 base address, ignoring. Page 0 cannot be allocated:\n{:#x?}",
-                        hob
+                        "Memory Allocation HOB has a 0 base address, ignoring. Page 0 cannot be allocated:\n{hob:#x?}"
                     );
                     continue;
                 }
@@ -865,7 +812,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                 if (desc.memory_base_address & UEFI_PAGE_MASK as u64) != 0
                     || (desc.memory_length & UEFI_PAGE_MASK as u64) != 0
                 {
-                    log::warn!("Memory Allocation HOB has invalid address or length granularity:\n{:#x?}", hob);
+                    log::warn!("Memory Allocation HOB has invalid address or length granularity:\n{hob:#x?}");
                     continue;
                 }
 
@@ -942,9 +889,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                     }
                     Err(_) => {
                         log::error!(
-                            "Failed to get memory descriptor for address {:#x?} in GCD specified in Memory Allocation HOB:\n{:#x?}. Cannot allocate memory.",
-                            address,
-                            hob
+                            "Failed to get memory descriptor for address {address:#x?} in GCD specified in Memory Allocation HOB:\n{hob:#x?}. Cannot allocate memory."
                         );
                         continue;
                     }
@@ -973,17 +918,14 @@ fn process_hob_allocations(hob_list: &HobList) {
                 //corresponding resource descriptor. Check the current region in the GCD to see whether a resource
                 //descriptor of the appropriate type has been reported. If not, print a warning and skip attempting
                 //to reserve it in the GCD.
-                if let Ok(existing_desc) = GCD.get_memory_descriptor_for_address(*base_address) {
-                    if existing_desc.memory_type != dxe_services::GcdMemoryType::MemoryMappedIo
-                        || existing_desc.image_handle != INVALID_HANDLE
-                    {
-                        log::info!(
-                            "Skipping FV HOB at {:#x?} of length {:#x?}. Containing region is not MMIO.",
-                            base_address,
-                            length,
-                        );
-                        continue;
-                    }
+                if let Ok(existing_desc) = GCD.get_memory_descriptor_for_address(*base_address)
+                    && (existing_desc.memory_type != dxe_services::GcdMemoryType::MemoryMappedIo
+                        || existing_desc.image_handle != INVALID_HANDLE)
+                {
+                    log::info!(
+                        "Skipping FV HOB at {base_address:#x?} of length {length:#x?}. Containing region is not MMIO."
+                    );
+                    continue;
                 }
 
                 //The 4K granularity rule does not apply to FV hobs, so allocate_pages cannot be used.
@@ -997,10 +939,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                     None)
                     .inspect_err(|err|{
                         log::error!(
-                            "Failed to allocate memory space for firmware volume HOB at {:#x?} of length {:#x?}. Error: {:x?}",
-                            base_address,
-                            length,
-                            err
+                            "Failed to allocate memory space for firmware volume HOB at {base_address:#x?} of length {length:#x?}. Error: {err:#x?}",
                         );
                     });
             }
@@ -1514,18 +1453,6 @@ mod tests {
                 efi::Status::SUCCESS
             );
             free_pages(buffer_ptr as u64, 0x10);
-
-            //test unsuccessful allocate_max where max is less than the address that was just freed.
-            buffer_ptr = buffer_ptr.wrapping_sub(0x12 * 0x1000);
-            assert_eq!(
-                allocate_pages(
-                    efi::ALLOCATE_MAX_ADDRESS,
-                    efi::BOOT_SERVICES_DATA,
-                    0x10,
-                    core::ptr::addr_of_mut!(buffer_ptr) as *mut efi::PhysicalAddress
-                ),
-                efi::Status::NOT_FOUND
-            );
 
             //test invalid allocation type
             assert_eq!(
