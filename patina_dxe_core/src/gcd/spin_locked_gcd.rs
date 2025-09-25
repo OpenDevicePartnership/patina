@@ -2431,21 +2431,27 @@ impl SpinLockedGcd {
                 }
             }
 
-            match self.set_paging_attributes(current_base as usize, current_len as usize, attributes) {
-                Ok(_) => {}
-                Err(EfiError::NotReady) => {
-                    // before the page table is installed, we expect to get a return of NotReady. This means the GCD
-                    // has been updated with the attributes, but the page table is not installed yet. In init_paging, the
-                    // page table will be updated with the current state of the GCD. The code that calls into this expects
-                    // NotReady to be returned, so we must catch that error and report it. However, we also need to
-                    // make sure any attribute updates across descriptors update the full range and not error out here.
-                    res = Err(EfiError::NotReady);
-                }
-                _ => {
-                    log::error!(
-                        "Failed to set page table memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}",
-                    );
-                    debug_assert!(false);
+            // 0 is a valid value for paging attributes: it means RWX. 0 is invalid for cache attributes. edk2 has a
+            // behavior where if the caller passes 0 for cache and paging attributes, then 0 (RWX) is not applied to
+            // the page table and only the virtual attribute(s) are applied to the GCD, such as EFI_RUNTIME. In order
+            // to maintain compatibility with existing drivers, we preserve this poor paradigm.
+            if attributes & (efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK) != 0 {
+                match self.set_paging_attributes(current_base as usize, current_len as usize, attributes) {
+                    Ok(_) => {}
+                    Err(EfiError::NotReady) => {
+                        // before the page table is installed, we expect to get a return of NotReady. This means the GCD
+                        // has been updated with the attributes, but the page table is not installed yet. In init_paging, the
+                        // page table will be updated with the current state of the GCD. The code that calls into this expects
+                        // NotReady to be returned, so we must catch that error and report it. However, we also need to
+                        // make sure any attribute updates across descriptors update the full range and not error out here.
+                        res = Err(EfiError::NotReady);
+                    }
+                    _ => {
+                        log::error!(
+                            "Failed to set page table memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}",
+                        );
+                        debug_assert!(false);
+                    }
                 }
             }
 
