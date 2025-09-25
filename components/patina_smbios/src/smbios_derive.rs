@@ -517,10 +517,13 @@ impl SmbiosProtocol {
 }
 
 #[cfg(test)]
+
 mod tests {
+    extern crate std;
     use super::*;
     use crate::smbios_record::SmbiosRecordStructure;
     use crate::smbios_record::Type0PlatformFirmwareInformation;
+    use std::{print, println, format};
     #[test]
     fn test_smbios_record_builder_builds_bytes() {
         // Ensure builder returns a non-empty record buffer for a minimal System Information record
@@ -537,6 +540,8 @@ mod tests {
         assert!(record.len() > core::mem::size_of::<SmbiosTableHeader>());
         // First byte is the record type
         assert_eq!(record[0], 1u8);
+        println!("record - {:?}", record);
+        // assert_eq!(record, b"\x01\x06\xfe\xff\x01\x02ACME Corp\x00SuperServer 3000\x00\x00");
     }
 
     #[test]
@@ -574,6 +579,8 @@ mod tests {
             .get_next(&mut search_handle, Some(Type0PlatformFirmwareInformation::RECORD_TYPE))
             .expect("get_next failed");
 
+        println!("Type0PlatformFirmwareInformation - {:02x?}", record_bytes);
+        println!("{}", record_bytes.iter().map(|b| format!(" 0x{:02x}", b)).collect::<String>());
         assert_eq!(found_header.record_type, Type0PlatformFirmwareInformation::RECORD_TYPE);
         assert_eq!(search_handle, handle);
     }
