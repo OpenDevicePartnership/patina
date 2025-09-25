@@ -1,4 +1,9 @@
 #![no_std]
+
+// Allow using the standard library inside test configuration so tests can print
+// bytes to stdout. This keeps the crate `no_std` for normal builds.
+#[cfg(test)]
+extern crate std;
 pub mod smbios_derive;
 pub mod smbios_record;
 // #![no_std]
@@ -160,7 +165,7 @@ pub mod smbios_record;
 //         }
 //         Ok(())
 //     }
-    
+
 //     fn build_record_with_strings(
 //         header: &SmbiosTableHeader,
 //         strings: &[&str],
@@ -169,9 +174,9 @@ pub mod smbios_record;
 //         for s in strings {
 //             Self::validate_string(s)?;
 //         }
-        
+
 //         let mut record = Vec::new();
-        
+
 //         // Add the structured data
 //         let header_bytes = unsafe {
 //             core::slice::from_raw_parts(
@@ -180,7 +185,7 @@ pub mod smbios_record;
 //             )
 //         };
 //         record.extend_from_slice(header_bytes);
-        
+
 //         // Add strings
 //         if strings.is_empty() {
 //             // No strings - add double null terminator
@@ -192,7 +197,7 @@ pub mod smbios_record;
 //             }
 //             record.push(0); // Double null terminator
 //         }
-        
+
 //         Ok(record)
 //     }
 
@@ -210,17 +215,17 @@ pub mod smbios_record;
 //         // This would interact with UEFI Boot Services to install
 //         // the SMBIOS table in the system configuration table
 //         // Implementation depends on your UEFI framework
-        
+
 //         // For SMBIOS 2.x
 //         if let Some(_entry_point_32) = &self.entry_point_32 {
 //             // Install with SMBIOS 2.x GUID
 //         }
-        
-//         // For SMBIOS 3.x  
+
+//         // For SMBIOS 3.x
 //         if let Some(_entry_point_64) = &self.entry_point_64 {
 //             // Install with SMBIOS 3.x GUID
 //         }
-        
+
 //         Ok(())
 //     }
 // }
@@ -247,7 +252,7 @@ pub mod smbios_record;
 //         // let record_size = record.len() as usize;
 //         let record_size = core::mem::size_of::<SmbiosTableHeader>();
 //         let mut data = Vec::with_capacity(record_size + 2); // +2 for double null
-        
+
 //         unsafe {
 //             let bytes = core::slice::from_raw_parts(
 //                 &record as *const _ as *const u8,
@@ -255,7 +260,7 @@ pub mod smbios_record;
 //             );
 //             data.extend_from_slice(bytes);
 //         }
-        
+
 //         // Add double null terminator (simplified)
 //         data.extend_from_slice(&[0, 0]);
 
@@ -281,7 +286,7 @@ pub mod smbios_record;
 //     ) -> Result<(), SmbiosError> {
 //         Self::validate_string(string)?;
 //         //TODO fix build error let _lock = self.lock.lock().unwrap();
-        
+
 //         // Find the record
 //         let record = self.records
 //             .iter_mut()
@@ -299,7 +304,7 @@ pub mod smbios_record;
 
 //     fn remove(&mut self, smbios_handle: SmbiosHandle) -> Result<(), SmbiosError> {
 //         //TODO fix build error let _lock = self.lock.lock().unwrap();
-        
+
 //         let pos = self.records
 //             .iter()
 //             .position(|r| r.header.handle == smbios_handle)
@@ -316,7 +321,7 @@ pub mod smbios_record;
 //         record_type: Option<SmbiosType>,
 //     ) -> Result<(&SmbiosTableHeader, Option<Handle>), SmbiosError> {
 //         //TODO fix build error let _lock = self.lock.lock().unwrap();
-        
+
 //         let start_idx = if *smbios_handle == SMBIOS_HANDLE_PI_RESERVED {
 //             0
 //         } else {
@@ -333,7 +338,7 @@ pub mod smbios_record;
 //                     continue;
 //                 }
 //             }
-            
+
 //             *smbios_handle = record.header.handle;
 //             return Ok((&record.header, record.producer_handle));
 //         }
@@ -383,7 +388,6 @@ pub mod smbios_record;
 // //             size += 1;
 // //             ptr += 1;
 // //         }
-        
 
 // //     }
 // // }
@@ -399,6 +403,45 @@ pub mod smbios_record;
 //     pub smbios64_table: bool,
 // }
 
+// Simplified test: construct a header, serialize it to bytes, append data and print
+#[cfg(test)]
+mod tests {
+    // Bring test-friendly std items into scope
+    use std::{print, println, vec::Vec};
+
+    #[test]
+    fn print_record_bytes() {
+        // Use the SmbiosTableHeader defined in the smbios_derive module
+        let header = crate::smbios_derive::SmbiosTableHeader {
+            record_type: 0x01,
+            length: core::mem::size_of::<crate::smbios_derive::SmbiosTableHeader>() as u8,
+            handle: 0x1234,
+        };
+
+        let data: Vec<u8> = Vec::from([0xAAu8, 0xBBu8, 0x00u8, 0x00u8]);
+
+        // Serialize header bytes
+        let header_size = core::mem::size_of::<crate::smbios_derive::SmbiosTableHeader>();
+        let mut bytes: Vec<u8> = Vec::with_capacity(header_size + data.len());
+        unsafe {
+            let hb = core::slice::from_raw_parts(&header as *const _ as *const u8, header_size);
+            bytes.extend_from_slice(hb);
+        }
+        bytes.extend_from_slice(&data);
+
+        // Print bytes as hex; run tests with `-- --nocapture` to see this output
+        print!("Record bytes ({}):", bytes.len());
+        for b in &bytes {
+            print!(" {:02X}", b);
+        }
+        println!("");
+
+        // Verify the handle (0x1234) little-endian bytes are present
+        assert!(bytes.contains(&0x34));
+        assert!(bytes.contains(&0x12));
+    }
+}
+
 // pub struct SmbiosRecordBuilder {
 //     record_type: u8,
 //     data: Vec<u8>,
@@ -413,7 +456,7 @@ pub mod smbios_record;
 //             strings: Vec::new(),
 //         }
 //     }
-    
+
 //     pub fn add_field<T: Copy>(mut self, value: T) -> Self {
 //         let bytes = unsafe {
 //             core::slice::from_raw_parts(
@@ -424,23 +467,23 @@ pub mod smbios_record;
 //         self.data.extend_from_slice(bytes);
 //         self
 //     }
-    
+
 //     pub fn add_string(mut self, s: String) -> Result<Self, SmbiosError> {
 //         SmbiosManager::validate_string(&s)?;
 //         self.strings.push(s);
 //         Ok(self)
 //     }
-    
+
 //     pub fn build(self) -> Result<Vec<u8>, SmbiosError> {
 //         let mut record = Vec::new();
-        
+
 //         // Add header
 //         let header = SmbiosTableHeader {
 //             record_type: self.record_type,
 //             length: (core::mem::size_of::<SmbiosTableHeader>() + self.data.len()) as u8,
 //             handle: SMBIOS_HANDLE_PI_RESERVED,
 //         };
-        
+
 //         let header_bytes = unsafe {
 //             core::slice::from_raw_parts(
 //                 &header as *const _ as *const u8,
@@ -448,10 +491,10 @@ pub mod smbios_record;
 //             )
 //         };
 //         record.extend_from_slice(header_bytes);
-        
+
 //         // Add data
 //         record.extend_from_slice(&self.data);
-        
+
 //         // Add strings
 //         if self.strings.is_empty() {
 //             record.extend_from_slice(&[0, 0]);
@@ -462,7 +505,7 @@ pub mod smbios_record;
 //             }
 //             record.push(0);
 //         }
-        
+
 //         Ok(record)
 //     }
 // }
