@@ -336,25 +336,6 @@ impl SmbiosTableHeader {
     pub fn new(record_type: SmbiosType, length: u8, handle: SmbiosHandle) -> Self {
         Self { record_type, length, handle }
     }
-
-    // fn get_smbios_structure_size(&self) -> (usize, usize) {
-    //     let size = self.length as usize;
-    //     let num_of_string = 0 as usize;
-    //     let mut header_bytes = unsafe {
-    //         core::slice::from_raw_parts(
-    //             header as *const _ as *const u8,
-    //             header.length as usize,
-    //         )
-    //     };
-    //     let mut ptr = *self + self.length;
-    //     let mut byte = *ptr;
-    //     let mut next_byte = unsafe {ptr.offset(1)};
-    //     while byte != 0 || next_byte != 0 {
-    //         size += 1;
-    //         ptr += 1;
-    //     }
-
-    // }
 }
 
 /// Internal SMBIOS record representation
