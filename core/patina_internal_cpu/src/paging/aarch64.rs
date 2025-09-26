@@ -4,9 +4,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::boxed::Box;
 use patina_paging::{MemoryAttributes, PageTable, PagingType, PtError, PtResult, aarch64::AArch64PageTable};
@@ -66,6 +66,7 @@ pub fn create_cpu_aarch64_paging<A: PageAllocator + 'static>(
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use std::alloc::alloc;
 

@@ -12,11 +12,12 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 #![cfg_attr(all(not(feature = "std"), not(test), not(feature = "mockall")), no_std)]
 #![cfg_attr(any(test, feature = "alloc"), feature(allocator_api))]
 #![allow(static_mut_refs)]
+#![feature(coverage_attribute)]
 
 extern crate alloc;
 
@@ -34,6 +35,7 @@ pub mod log;
 pub mod performance;
 pub mod runtime_services;
 pub mod serial;
+#[coverage(off)]
 pub mod test;
 pub mod tpl_mutex;
 pub mod uefi_protocol;

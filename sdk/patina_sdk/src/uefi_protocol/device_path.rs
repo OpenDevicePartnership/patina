@@ -4,9 +4,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 pub mod device_path_node;
@@ -337,12 +337,11 @@ impl Display for DevicePath {
         while let Some(node) = nodes.next() {
             f.write_fmt(format_args!("{}", &node))?;
 
-            if let Some(next) = nodes.peek() {
-                if node.header().r#type != DevicePathType::End as u8
-                    && next.header().r#type != DevicePathType::End as u8
-                {
-                    f.write_char('/')?;
-                }
+            if let Some(next) = nodes.peek()
+                && node.header().r#type != DevicePathType::End as u8
+                && next.header().r#type != DevicePathType::End as u8
+            {
+                f.write_char('/')?;
             };
         }
 
@@ -351,7 +350,8 @@ impl Display for DevicePath {
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use core::assert_eq;
 
     use super::{

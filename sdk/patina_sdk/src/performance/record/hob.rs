@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 #[cfg(any(test, feature = "mockall"))]
@@ -57,7 +57,7 @@ impl FromHob for HobPerformanceData {
 }
 
 impl HobPerformanceDataExtractor for Hob<'_, HobPerformanceData> {
-    #[cfg(not(tarpaulin_include))]
+    #[coverage(off)]
     fn extract_hob_perf_data(&self) -> Result<(u32, PerformanceRecordBuffer), Error> {
         merge_hob_performance_buffer(self.iter())
     }
@@ -80,7 +80,8 @@ where
 }
 
 #[cfg(test)]
-pub mod test {
+#[coverage(off)]
+pub mod tests {
     use core::assert_eq;
 
     use scroll::Pwrite;

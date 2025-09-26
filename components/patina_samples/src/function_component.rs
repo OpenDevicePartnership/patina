@@ -4,9 +4,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use log::info;
 use patina_sdk::{component::params::Config, error::Result};
@@ -22,6 +22,7 @@ pub fn log_hello(name: Config<Name>) -> Result<()> {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use patina_sdk::component::IntoComponent;

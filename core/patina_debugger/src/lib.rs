@@ -42,7 +42,7 @@
 //!     patina_debugger::set_debugger(&DEBUGGER);
 //!
 //!     // Setup a custom monitor command for this platform.
-//!     patina_debugger::add_monitor_command("my_command", |args, writer| {
+//!     patina_debugger::add_monitor_command("my_command", "Description of my_command", |args, writer| {
 //!         // Parse the arguments from _args, which is a SplitWhitespace iterator.
 //!         let _ = write!(writer, "Executed my_command with args: {:?}", args);
 //!     });
@@ -89,9 +89,10 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 #![cfg_attr(not(test), no_std)]
+#![feature(coverage_attribute)]
 
 mod arch;
 mod dbg_target;
@@ -147,7 +148,7 @@ trait Debugger: Sync {
     fn poll_debugger(&'static self);
 
     /// Adds a monitor command to the debugger.
-    fn add_monitor_command(&'static self, cmd: &'static str, function: MonitorCommandFn);
+    fn add_monitor_command(&'static self, cmd: &'static str, description: &'static str, function: MonitorCommandFn);
 }
 
 #[derive(Debug)]
@@ -165,6 +166,8 @@ enum DebugError {
     GdbStubError(gdbstub::stub::GdbStubError<(), patina_sdk::error::EfiError>),
     /// Failure to reboot the system.
     RebootFailure,
+    /// Failure in the transport layer.
+    TransportFailure,
 }
 
 /// Policy for how the debugger will handle logging on the system.
@@ -235,30 +238,31 @@ pub fn enabled() -> bool {
 /// ## Example
 ///
 /// ```rust
-/// patina_debugger::add_monitor_command("my_command", |args, writer| {
+/// patina_debugger::add_monitor_command("my_command", "Description of my_command", |args, writer| {
 ///     // Parse the arguments from _args, which is a SplitWhitespace iterator.
 ///     let _ = write!(writer, "Executed my_command with args: {:?}", args);
 /// });
 /// ```
 ///
-pub fn add_monitor_command(cmd: &'static str, function: MonitorCommandFn) {
+pub fn add_monitor_command(cmd: &'static str, description: &'static str, function: MonitorCommandFn) {
     if let Some(debugger) = DEBUGGER.get() {
-        debugger.add_monitor_command(cmd, function);
+        debugger.add_monitor_command(cmd, description, function);
     }
 }
 
 /// Exception information for the debugger.
-#[derive(Debug)]
 #[allow(dead_code)]
 struct ExceptionInfo {
     /// The type of exception that occurred.
     pub exception_type: ExceptionType,
+    /// The instruction pointer address.
+    pub instruction_pointer: u64,
     /// The system context at the time of the exception.
     pub context: ExceptionContext,
 }
 
 /// Exception type information.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 #[allow(dead_code)]
 enum ExceptionType {
     /// A break due to a completed instruction step.
@@ -271,4 +275,18 @@ enum ExceptionType {
     GeneralProtectionFault(u64),
     /// A break due to an exception type not handled by the debugger. The exception type is provided.
     Other(u64),
+}
+
+impl core::fmt::Display for ExceptionType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ExceptionType::Step => write!(f, "Debug Step"),
+            ExceptionType::Breakpoint => write!(f, "Breakpoint"),
+            ExceptionType::AccessViolation(addr) => write!(f, "Access Violation at {addr:#X}"),
+            ExceptionType::GeneralProtectionFault(data) => {
+                write!(f, "General Protection Fault. Exception data: {data:#X}")
+            }
+            ExceptionType::Other(exception_type) => write!(f, "Unknown. Architecture code: {exception_type:#X}"),
+        }
+    }
 }

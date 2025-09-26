@@ -1,3 +1,11 @@
+//! DXE Core Memory Manager
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
 use alloc::boxed::Box;
 use patina_sdk::test::patina_test;
 use patina_sdk::{
@@ -45,6 +53,10 @@ impl MemoryManager for CoreMemoryManager {
 
                 address = requested_address as efi::PhysicalAddress;
                 efi::ALLOCATE_ADDRESS
+            }
+            PageAllocationStrategy::MaxAddress(max_address) => {
+                address = max_address as efi::PhysicalAddress;
+                efi::ALLOCATE_MAX_ADDRESS
             }
         };
 
@@ -118,7 +130,7 @@ impl MemoryManager for CoreMemoryManager {
                 match crate::dxe_services::core_get_memory_space_descriptor(current_base as efi::PhysicalAddress) {
                     Ok(descriptor) => descriptor,
                     Err(e) => {
-                        log::error!("Memory descriptor fetching failed with error {:#x?} for {:#x}", e, current_base,);
+                        log::error!("Memory descriptor fetching failed with error {e:?} for {current_base:#x}");
                         return Err(MemoryError::InvalidAddress);
                     }
                 };
@@ -162,13 +174,13 @@ impl MemoryManager for CoreMemoryManager {
         let attributes = match dxe_services::core_get_memory_space_descriptor(base_address) {
             Ok(descriptor) => {
                 if base_address + length > descriptor.base_address + descriptor.length {
-                    log::error!("Inconsistent attributes for: base_address {:#x} length {:#x}", base_address, length);
+                    log::error!("Inconsistent attributes for: base_address {base_address:#x} length {length:#x}");
                     return Err(MemoryError::InconsistentRangeAttributes);
                 }
                 descriptor.attributes
             }
             Err(status) => {
-                log::error!("Failed to get memory descriptor for address {:#x}: {:?}", base_address, status,);
+                log::error!("Failed to get memory descriptor for address {base_address:#x}: {status:?}");
                 return Err(MemoryError::InvalidAddress);
             }
         };
@@ -210,16 +222,16 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_sdk
     data[0] = 42;
     drop(data);
 
-    // allocate a page, free it then allocate the address.
+    // Allocate a page, free it then allocate the address.
     let result = mm.allocate_pages(1, AllocationOptions::new());
     u_assert!(result.is_ok(), "Failed to allocate single page.");
     let allocation = result.unwrap();
-    let address = allocation.into_raw_ptr::<u8>() as usize;
+    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
     let result = unsafe { mm.free_pages(address, 1) };
     u_assert!(result.is_ok(), "Failed to free page.");
     let result = mm.allocate_pages(1, AllocationOptions::new().with_strategy(PageAllocationStrategy::Address(address)));
     u_assert!(result.is_ok(), "Failed to allocate page by address");
-    u_assert_eq!(result.unwrap().into_raw_ptr::<u8>() as usize, address, "Failed to allocate correct address");
+    u_assert_eq!(result.unwrap().into_raw_ptr::<u8>().unwrap() as usize, address, "Failed to allocate correct address");
 
     // Allocate an aligned address.
     const TEST_ALIGNMENT: usize = 0x400000;
@@ -227,12 +239,21 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_sdk
     u_assert!(result.is_ok(), "Failed to allocate single aligned pages.");
     let allocation = result.unwrap();
     u_assert_eq!(allocation.page_count(), 8);
-    let address = allocation.into_raw_ptr::<u8>() as usize;
+    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
     u_assert_eq!(address % TEST_ALIGNMENT, 0, "Allocated page not correctly aligned.");
     let result = unsafe { mm.free_pages(address, 8) };
     u_assert!(result.is_ok(), "Failed to free page.");
 
-    // Get an allocator
+    // Allocate with a max address limit.
+    let max_address = 0x1000_0000;
+    let result =
+        mm.allocate_pages(1, AllocationOptions::new().with_strategy(PageAllocationStrategy::MaxAddress(max_address)));
+    u_assert!(result.is_ok(), "Failed to allocate with max address limit.");
+    let allocation = result.unwrap();
+    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
+    u_assert!((address + UEFI_PAGE_SIZE - 1) <= max_address, "Allocated address exceeds max address limit.");
+
+    // Get an allocator.
     let result = mm.get_allocator(EfiMemoryType::BootServicesData);
     u_assert!(result.is_ok(), "Failed to get allocator.");
     let allocator = result.unwrap();
@@ -242,7 +263,7 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_sdk
     u_assert_eq!(*boxed_struct, 42, "Failed to allocate boxed struct from allocator.");
     drop(boxed_struct);
 
-    // Get a dynamic allocator
+    // Get a dynamic allocator.
     let result = mm.get_allocator(EfiMemoryType::ACPIReclaimMemory);
     u_assert!(result.is_ok(), "Failed to get dynamic allocator.");
     let allocator = result.unwrap();
@@ -261,7 +282,7 @@ fn memory_manager_attributes_test(mm: Service<dyn MemoryManager>) -> patina_sdk:
     let result = mm.allocate_pages(1, AllocationOptions::new());
     u_assert!(result.is_ok(), "Failed to allocate single page.");
     let allocation = result.unwrap();
-    let address = allocation.into_raw_ptr::<u8>() as usize;
+    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
     let result = mm.get_page_attributes(address, 1);
     u_assert!(result.is_ok(), "Failed to get original page attributes.");
     let (access, caching) = result.unwrap();

@@ -113,6 +113,7 @@
 //! More reference test cases are in `src\x64\tests\*.rs`
 
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
+#![feature(coverage_attribute)]
 
 extern crate alloc;
 

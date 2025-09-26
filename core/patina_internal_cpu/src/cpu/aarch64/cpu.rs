@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::cpu::Cpu;
 #[cfg(all(not(test), target_arch = "aarch64"))]
@@ -48,6 +48,7 @@ impl EfiCpuAarch64 {
 
         #[cfg(all(not(test), target_arch = "aarch64"))]
         {
+            // we have a data barrier after all cache lines have had the operation performed on them as an optimization
             unsafe {
                 asm!("dsb sy", options(nostack));
             }
@@ -120,6 +121,7 @@ impl Cpu for EfiCpuAarch64 {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
 

@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
@@ -98,12 +98,11 @@ impl Component {
         // else is found. This makes for less code to change if we add more config.
         #[allow(clippy::never_loop)]
         for meta in parser.parse2(meta_list.tokens.clone())? {
-            if let Meta::NameValue(ref nv) = meta {
-                if nv.path.is_ident("path") {
-                    if let syn::Expr::Path(path) = &nv.value {
-                        return Ok(quote!(#path));
-                    }
-                }
+            if let Meta::NameValue(ref nv) = meta
+                && nv.path.is_ident("path")
+                && let syn::Expr::Path(path) = &nv.value
+            {
+                return Ok(quote!(#path));
             }
             return Err(syn::Error::new_spanned(meta, "Expected `path = ...`"));
         }
@@ -175,6 +174,7 @@ pub(crate) fn component2(item: proc_macro2::TokenStream) -> proc_macro2::TokenSt
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use quote::quote;

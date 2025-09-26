@@ -1,4 +1,8 @@
-use core::{arch::asm, fmt::Write, num::NonZeroUsize};
+use core::{
+    arch::asm,
+    num::NonZeroUsize,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use gdbstub::{
     arch::{RegId, Registers},
@@ -8,10 +12,12 @@ use patina_internal_cpu::interrupts::ExceptionContext;
 use patina_paging::PagingType;
 
 use super::{DebuggerArch, UefiArchRegs};
-use crate::{ExceptionInfo, ExceptionType, memory, transport::BufferWriter};
+use crate::{ExceptionInfo, ExceptionType, memory};
 
 /// The "int 3" instruction.
 const INT_3: u8 = 0xCC;
+
+static POKE_TEST_MARKER: AtomicBool = AtomicBool::new(false);
 
 /// The uninhabitable type for implementing X64 architecture.
 pub enum X64Arch {}
@@ -53,6 +59,7 @@ impl DebuggerArch for X64Arch {
                 14 => ExceptionType::AccessViolation(context.cr2 as usize),
                 _ => ExceptionType::Other(exception_type),
             },
+            instruction_pointer: context.rip,
             context: *context,
         }
     }
@@ -71,9 +78,7 @@ impl DebuggerArch for X64Arch {
         // by the write according to the Intel SDM Vol 3 section 11.6. The CR3
         // write is also serializing so no barriers are needed.
         unsafe {
-            let cr3: usize;
-            asm!("mov {}, cr3", out(reg) cr3);
-            asm!("mov cr3, {}", in(reg) cr3);
+            asm!("mov {0}, cr3", "mov cr3, {0}", out(reg) _);
         }
     }
 
@@ -124,10 +129,14 @@ impl DebuggerArch for X64Arch {
     }
 
     fn reboot() {
-        // Reset the system through the keyboard controller IO port.
+        // Reset the system through the Reset Control Register.
         unsafe {
-            asm!("cli");
-            asm!("out dx, al", in("dx") 0x64, in("al") 0xFE_u8);
+            asm!("cli",
+                 "out dx, al",
+                 in("dx") 0xCF9,
+                 in("al") 0x06_u8);
+
+            // this is kept in a separate loop because we don't anticipate returning from this
             loop {
                 asm!("hlt");
             }
@@ -151,7 +160,7 @@ impl DebuggerArch for X64Arch {
         }
     }
 
-    fn monitor_cmd(tokens: &mut core::str::SplitWhitespace, out: &mut BufferWriter) {
+    fn monitor_cmd(tokens: &mut core::str::SplitWhitespace, out: &mut dyn core::fmt::Write) {
         match tokens.next() {
             Some("regs") => {
                 let mut gdtr: u64 = 0;
@@ -162,12 +171,39 @@ impl DebuggerArch for X64Arch {
                         options(nostack, preserves_flags)
                     );
                 }
-                let _ = write!(out, "GDT: {:#x?}", gdtr);
+                let _ = write!(out, "GDT: {gdtr:#x?}");
             }
             _ => {
                 let _ = out.write_str("Unknown X64 monitor command. Supported commands: regs");
             }
         }
+    }
+
+    #[inline(never)]
+    fn memory_poke_test(address: u64) -> Result<(), ()> {
+        POKE_TEST_MARKER.store(true, Ordering::SeqCst);
+
+        // Attempt to read the address to check if it is accessible.
+        // This will raise a page fault if the address is not accessible.
+
+        let _value: u64;
+        // SAFETY: The safety of this is dubious and may cause a page fault, but
+        // the exception handler will catch it and resolve it by stepping beyond
+        // the exception.
+        unsafe { asm!("mov {}, [{}]", out(reg) _value, in(reg) address, options(nostack)) };
+
+        // Check if the marker was cleared, indicating a page fault. Reset either way.
+        if POKE_TEST_MARKER.swap(false, Ordering::SeqCst) { Ok(()) } else { Err(()) }
+    }
+
+    fn check_memory_poke_test(context: &mut ExceptionContext) -> bool {
+        let poke_test = POKE_TEST_MARKER.swap(false, Ordering::SeqCst);
+        if poke_test {
+            // We need to increment the instruction pointer to step past the load
+            context.rip += 3;
+        }
+
+        poke_test
     }
 }
 
