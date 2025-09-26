@@ -106,6 +106,8 @@ impl From<AcpiError> for efi::Status {
 pub enum AmlError {
     InvalidHandle,
     CloseFailedChecksumUpdate,
+    InvalidAcpiTable,
+    OutOfBounds,
 }
 
 impl From<AmlError> for efi::Status {
@@ -113,6 +115,8 @@ impl From<AmlError> for efi::Status {
         match err {
             AmlError::InvalidHandle => efi::Status::INVALID_PARAMETER,
             AmlError::CloseFailedChecksumUpdate => efi::Status::COMPROMISED_DATA,
+            AmlError::InvalidAcpiTable => efi::Status::NOT_FOUND,
+            AmlError::OutOfBounds => efi::Status::COMPROMISED_DATA,
         }
     }
 }

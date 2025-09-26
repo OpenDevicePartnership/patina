@@ -1,3 +1,5 @@
+use core::option;
+
 use alloc::{string::String, vec::Vec};
 use patina_sdk::{boot_services::BootServices, component::service::IntoService};
 use spin::RwLock;
@@ -89,8 +91,21 @@ where
         }
     }
 
-    fn iter_options(&self, handle: AmlHandle) -> Result<AmlData, crate::error::AmlError> {
-        todo!()
+    fn iter_options(&self, handle: AmlHandle) -> Result<Vec<AmlData>, crate::error::AmlError> {
+        let table = self.acpi_table_manager.get_acpi_table(handle.table_key).map_err(|_| AmlError::InvalidHandle)?;
+        let table_bytes = unsafe { table.as_bytes() };
+        let aml_stream =
+            table_bytes.get(handle.offset..handle.offset + handle.size).ok_or(AmlError::InvalidAcpiTable)?;
+        let mut options_offset = 0; // SHERRY: skip past the opcode and pkglength
+        let mut all_options = Vec::new();
+        while options_offset < aml_stream.len() {
+            let option_size = 1; // SHERRY: figure out how to actually parse this
+            let option = aml_stream.get(options_offset..options_offset + option_size).ok_or(AmlError::OutOfBounds)?;
+            let option_data = AmlData::None; // SHERRY: parse the option into AmlData
+            options_offset += option_size;
+            all_options.push(option_data);
+        }
+        Ok(all_options)
     }
 
     fn get_child(&self, handle: AmlHandle) -> Result<AmlHandle, crate::error::AmlError> {
@@ -98,6 +113,12 @@ where
     }
 
     fn get_sibling(&self, handle: AmlHandle) -> Result<AmlHandle, crate::error::AmlError> {
-        todo!()
+        let table = self.acpi_table_manager.get_acpi_table(handle.table_key).map_err(|_| AmlError::InvalidHandle)?;
+        let table_bytes = unsafe { table.as_bytes() };
+        let sibling_start = handle.offset + handle.size;
+        let sibling = table_bytes.get(sibling_start..).ok_or(AmlError::OutOfBounds)?;
+        let sibling_size = 1; // SHERRY: figure out how to actually parse this
+        let sibling_handle = AmlHandle::new(handle.table_key, sibling_start, sibling_size);
+        Ok(sibling_handle)
     }
 }

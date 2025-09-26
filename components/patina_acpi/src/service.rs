@@ -165,7 +165,7 @@ pub(crate) trait AmlParser {
 
     fn close_sdt(&self, handle: AmlHandle) -> Result<(), AmlError>;
 
-    fn iter_options(&self, handle: AmlHandle) -> Result<AmlData, AmlError>;
+    fn iter_options(&self, handle: AmlHandle) -> Result<Vec<AmlData>, crate::error::AmlError>;
 
     fn get_child(&self, handle: AmlHandle) -> Result<AmlHandle, AmlError>;
 
