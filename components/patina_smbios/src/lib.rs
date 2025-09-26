@@ -5,6 +5,9 @@
 pub mod smbios_derive;
 pub mod smbios_record;
 
+// Re-export the derive macro from the macro crate
+pub use patina_smbios_macro::SmbiosRecord;
+
 // Simplified test: construct a header, serialize it to bytes, append data and print
 #[cfg(test)]
 mod tests {

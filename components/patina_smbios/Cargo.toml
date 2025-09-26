@@ -14,6 +14,7 @@ patina_sdk = {workspace = true}
 r-efi = {workspace = true}
 spin = {workspace = true}
 hashbrown = "0.11.2"
+patina_smbios_macro = { path = "../patina_smbios_macro" }
 
 # [features]
 # default = []

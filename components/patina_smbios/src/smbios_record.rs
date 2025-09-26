@@ -1,5 +1,6 @@
 extern crate alloc;
 use crate::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SMBIOS_STRING_MAX_LENGTH, SmbiosError, SmbiosTableHeader};
+use crate::SmbiosRecord;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -463,7 +464,8 @@ impl SmbiosRecordStructure for Type1SystemInformation {
 }
 
 /// Type 2: Baseboard Information
-// #[repr(C, packed)]
+#[derive(SmbiosRecord)]
+#[smbios(record_type = 2)]
 pub struct Type2BaseboardInformation {
     pub header: SmbiosTableHeader,
     pub manufacturer: u8,  // String index
@@ -479,36 +481,6 @@ pub struct Type2BaseboardInformation {
 
     // Integrated string pool
     pub string_pool: Vec<String>,
-}
-
-impl_smbios_field_layout!(Type2BaseboardInformation,
-    manufacturer: u8,
-    product: u8,
-    version: u8,
-    serial_number: u8,
-    asset_tag: u8,
-    feature_flags: u8,
-    location_in_chassis: u8,
-    chassis_handle: u16,
-    board_type: u8,
-    contained_object_handles: u8,
-);
-
-impl SmbiosRecordStructure for Type2BaseboardInformation {
-    const RECORD_TYPE: u8 = 2;
-
-    fn validate(&self) -> Result<(), crate::smbios_derive::SmbiosError> {
-        // Basic validation for Type 2 record
-        Ok(())
-    }
-
-    fn string_pool(&self) -> &[String] {
-        &self.string_pool
-    }
-
-    fn string_pool_mut(&mut self) -> &mut Vec<String> {
-        &mut self.string_pool
-    }
 }
 
 // /// Type 3: System Enclosure - another example showing how simple it becomes
