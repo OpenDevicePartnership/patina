@@ -15,17 +15,19 @@ pub(crate) struct AmlSdtHandleInternal {
     modified: bool,
     table_key: TableKey,
     // SHERRY: the idea would be to use zerocopy to read opcodes and stuff from the AML Stream
-    offset: u32,
-    size: u32,
+    offset: usize,
+    size: usize,
 }
 
 impl AmlSdtHandleInternal {
-    fn new(table_key: TableKey) -> Self {
-        Self { modified: false, table_key }
+    fn new(table_key: TableKey, offset: usize, size: usize) -> Self {
+        Self { modified: false, table_key, offset, size }
     }
 }
 
-const ROOT_NODE: AmlSdtHandleInternal = AmlSdtHandleInternal { modified: false, table_key: TableKey(0) };
+// Sentinel
+const ROOT_NODE: AmlSdtHandleInternal =
+    AmlSdtHandleInternal { modified: false, table_key: TableKey(0), offset: 0, size: 0 };
 
 pub type AmlHandle = AmlSdtHandleInternal;
 
@@ -65,7 +67,8 @@ where
     B: BootServices,
 {
     fn open_sdt(&self, table_key: crate::service::TableKey) -> Result<AmlHandle, crate::error::AmlError> {
-        let handle = AmlHandle::new(table_key);
+        let size = 0; // SHERRY: there should be some function here that parses the size
+        let handle = AmlHandle::new(table_key, 0, size);
         self.open_handles.write().push(handle);
         Ok(handle)
     }
