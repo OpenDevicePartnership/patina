@@ -14,6 +14,9 @@ use crate::{
 pub(crate) struct AmlSdtHandleInternal {
     modified: bool,
     table_key: TableKey,
+    // SHERRY: the idea would be to use zerocopy to read opcodes and stuff from the AML Stream
+    offset: u32,
+    size: u32,
 }
 
 impl AmlSdtHandleInternal {
