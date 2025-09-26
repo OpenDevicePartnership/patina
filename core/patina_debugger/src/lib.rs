@@ -106,6 +106,7 @@ extern crate alloc;
 pub use debugger::PatinaDebugger;
 
 use arch::{DebuggerArch, SystemArch};
+use gdbstub::target::ext::breakpoints;
 use patina_internal_cpu::interrupts::{ExceptionContext, InterruptManager};
 use patina_sdk::serial::SerialIO;
 
@@ -229,6 +230,22 @@ pub fn enabled() -> bool {
         Some(debugger) => debugger.enabled(),
         None => false,
     }
+}
+
+pub fn add_watchpoint(address: u64, length: u64, write_only: bool) -> bool {
+    SystemArch::add_watchpoint(
+        address,
+        length,
+        if write_only { breakpoints::WatchKind::Write } else { breakpoints::WatchKind::ReadWrite },
+    )
+}
+
+pub fn remove_watchpoint(address: u64, length: u64, write_only: bool) -> bool {
+    SystemArch::remove_watchpoint(
+        address,
+        length,
+        if write_only { breakpoints::WatchKind::Write } else { breakpoints::WatchKind::ReadWrite },
+    )
 }
 
 /// Adds a monitor command to the debugger. This may be called before initialization,
