@@ -523,7 +523,7 @@ mod tests {
     use super::*;
     use crate::smbios_record::SmbiosRecordStructure;
     use crate::smbios_record::Type0PlatformFirmwareInformation;
-    use std::{print, println, format};
+    use std::{format, print, println};
     #[test]
     fn test_smbios_record_builder_builds_bytes() {
         // Ensure builder returns a non-empty record buffer for a minimal System Information record
