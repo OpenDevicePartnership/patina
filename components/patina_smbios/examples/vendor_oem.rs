@@ -1,6 +1,7 @@
-use patina_smbios::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SmbiosManager, SmbiosRecords, SmbiosTableHeader};
+use patina_smbios::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SmbiosManager, SmbiosTableHeader};
 use patina_smbios::smbios_record::{
-    FieldInfo, FieldLayout, FieldType, SmbiosFieldLayout, SmbiosRecordStructure, Type2BaseboardInformation,
+    FieldInfo, FieldLayout, FieldType, SmbiosFieldLayout, SmbiosRecordStructure, Type0PlatformFirmwareInformation,
+    Type1SystemInformation, Type2BaseboardInformation, Type3SystemEnclosure,
 };
 use std::string::String;
 use std::vec::Vec;
@@ -63,7 +64,61 @@ fn main() {
 
     manager.add(None, &mut handle, &record_header).expect("add failed");
 
-    // Example 2: Type 2 Baseboard Information Record
+    // Example 2: Type 0 BIOS Information Record
+    let bios_rec = Type0PlatformFirmwareInformation {
+        header: SmbiosTableHeader::new(0, 0, SMBIOS_HANDLE_PI_RESERVED),
+        vendor: 1,                             // String 1: "ACME BIOS Corp"
+        firmware_version: 2,                   // String 2: "v2.4.1"
+        bios_starting_address_segment: 0xE000, // Standard BIOS segment
+        firmware_release_date: 3,              // String 3: "09/26/2025"
+        firmware_rom_size: 0x0F,               // 1MB ROM size
+        characteristics: 0x08,                 // PCI supported
+        characteristics_ext1: 0x03,            // ACPI supported + USB legacy
+        characteristics_ext2: 0x01,            // UEFI specification supported
+        system_bios_major_release: 2,          // BIOS major version
+        system_bios_minor_release: 4,          // BIOS minor version
+        embedded_controller_major_release: 1,  // EC major version
+        embedded_controller_minor_release: 0,  // EC minor version
+        extended_bios_rom_size: 0x0000,        // No extended size needed
+        string_pool: vec![String::from("ACME BIOS Corp"), String::from("v2.4.1"), String::from("09/26/2025")],
+    };
+
+    let bios_bytes = bios_rec.to_bytes();
+    let bios_header: SmbiosTableHeader =
+        unsafe { core::ptr::read_unaligned(bios_bytes[..header_size].as_ptr() as *const SmbiosTableHeader) };
+
+    let mut bios_handle = SMBIOS_HANDLE_PI_RESERVED;
+    manager.add(None, &mut bios_handle, &bios_header).expect("bios add failed");
+
+    // Example 3: Type 1 System Information Record
+    let system_rec = Type1SystemInformation {
+        header: SmbiosTableHeader::new(1, 0, SMBIOS_HANDLE_PI_RESERVED),
+        manufacturer: 1,  // String 1: "ACME Corporation"
+        product_name: 2,  // String 2: "SuperServer 5000"
+        version: 3,       // String 3: "Rev 2.0"
+        serial_number: 4, // String 4: "SYS123456789"
+        uuid: [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0], // System UUID
+        wake_up_type: 0x06, // Power switch
+        sku_number: 5,      // String 5: "SKU-5000-01"
+        family: 6,          // String 6: "SuperServer Family"
+        string_pool: vec![
+            String::from("ACME Corporation"),
+            String::from("SuperServer 5000"),
+            String::from("Rev 2.0"),
+            String::from("SYS123456789"),
+            String::from("SKU-5000-01"),
+            String::from("SuperServer Family"),
+        ],
+    };
+
+    let system_bytes = system_rec.to_bytes();
+    let system_header: SmbiosTableHeader =
+        unsafe { core::ptr::read_unaligned(system_bytes[..header_size].as_ptr() as *const SmbiosTableHeader) };
+
+    let mut system_handle = SMBIOS_HANDLE_PI_RESERVED;
+    manager.add(None, &mut system_handle, &system_header).expect("system add failed");
+
+    // Example 4: Type 2 Baseboard Information Record
     let baseboard_rec = Type2BaseboardInformation {
         header: SmbiosTableHeader::new(2, 0, SMBIOS_HANDLE_PI_RESERVED),
         manufacturer: 1,             // String 1: "ACME Corporation"
@@ -93,14 +148,61 @@ fn main() {
     let mut baseboard_handle = SMBIOS_HANDLE_PI_RESERVED;
     manager.add(None, &mut baseboard_handle, &baseboard_header).expect("baseboard add failed");
 
-    // Verify both records were added
+    // Example 5: Type 3 System Enclosure Record
+    let enclosure_rec = Type3SystemEnclosure {
+        header: SmbiosTableHeader::new(3, 0, SMBIOS_HANDLE_PI_RESERVED),
+        manufacturer: 1,                       // String 1: "ACME Corporation"
+        enclosure_type: 0x03,                  // Desktop
+        version: 2,                            // String 2: "Chassis v2.1"
+        serial_number: 3,                      // String 3: "CH987654321"
+        asset_tag_number: 4,                   // String 4: "ChassisAsset001"
+        bootup_state: 0x03,                    // Safe
+        power_supply_state: 0x03,              // Safe
+        thermal_state: 0x03,                   // Safe
+        security_status: 0x02,                 // Unknown
+        oem_defined: 0x12345678,               // OEM specific data
+        height: 0x04,                          // 4 rack units
+        number_of_power_cords: 0x01,           // Single power cord
+        contained_element_count: 0x00,         // No contained elements for this example
+        contained_element_record_length: 0x00, // No contained elements
+        string_pool: vec![
+            String::from("ACME Corporation"),
+            String::from("Chassis v2.1"),
+            String::from("CH987654321"),
+            String::from("ChassisAsset001"),
+        ],
+    };
+
+    let enclosure_bytes = enclosure_rec.to_bytes();
+    let enclosure_header: SmbiosTableHeader =
+        unsafe { core::ptr::read_unaligned(enclosure_bytes[..header_size].as_ptr() as *const SmbiosTableHeader) };
+
+    let mut enclosure_handle = SMBIOS_HANDLE_PI_RESERVED;
+    manager.add(None, &mut enclosure_handle, &enclosure_header).expect("enclosure add failed");
+
+    // Verify all five records were added
     let mut search = SMBIOS_HANDLE_PI_RESERVED;
     let (found, _) = manager.get_next(&mut search, Some(VendorOemRecord::RECORD_TYPE)).expect("get_next failed");
     assert_eq!(found.record_type, VendorOemRecord::RECORD_TYPE);
     println!("Added vendor record handle: {}", search);
 
     search = SMBIOS_HANDLE_PI_RESERVED;
+    let (found_bios, _) = manager.get_next(&mut search, Some(0)).expect("get_next failed for bios");
+    assert_eq!(found_bios.record_type, 0);
+    println!("Added Type 0 BIOS record handle: {}", search);
+
+    search = SMBIOS_HANDLE_PI_RESERVED;
+    let (found_system, _) = manager.get_next(&mut search, Some(1)).expect("get_next failed for system");
+    assert_eq!(found_system.record_type, 1);
+    println!("Added Type 1 system record handle: {}", search);
+
+    search = SMBIOS_HANDLE_PI_RESERVED;
     let (found_baseboard, _) = manager.get_next(&mut search, Some(2)).expect("get_next failed for baseboard");
     assert_eq!(found_baseboard.record_type, 2);
     println!("Added Type 2 baseboard record handle: {}", search);
+
+    search = SMBIOS_HANDLE_PI_RESERVED;
+    let (found_enclosure, _) = manager.get_next(&mut search, Some(3)).expect("get_next failed for enclosure");
+    assert_eq!(found_enclosure.record_type, 3);
+    println!("Added Type 3 enclosure record handle: {}", search);
 }

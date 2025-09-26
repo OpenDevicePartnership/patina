@@ -1,12 +1,10 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{
-    parse_macro_input, Attribute, Data, DeriveInput, Fields, Ident, Type, Meta, MetaNameValue, Expr, Lit
-};
+use syn::{Attribute, Data, DeriveInput, Expr, Fields, Ident, Lit, Meta, MetaNameValue, Type, parse_macro_input};
 
 /// Derive macro for SMBIOS record structures
-/// 
+///
 /// Usage:
 /// ```rust
 /// #[derive(SmbiosRecord)]
@@ -21,13 +19,12 @@ use syn::{
 #[proc_macro_derive(SmbiosRecord, attributes(smbios))]
 pub fn derive_smbios_record(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    
+
     let name = &input.ident;
-    
+
     // Parse the #[smbios(record_type = N)] attribute
-    let record_type = extract_record_type(&input.attrs)
-        .expect("Missing #[smbios(record_type = N)] attribute");
-    
+    let record_type = extract_record_type(&input.attrs).expect("Missing #[smbios(record_type = N)] attribute");
+
     // Parse the struct fields
     let fields = match &input.data {
         Data::Struct(data_struct) => match &data_struct.fields {
@@ -36,18 +33,18 @@ pub fn derive_smbios_record(input: TokenStream) -> TokenStream {
         },
         _ => panic!("SmbiosRecord derive only supports structs"),
     };
-    
+
     // Generate field layout implementation using the existing macro
     let field_layout_impl = generate_field_layout_impl_macro(name, fields);
-    
+
     // Generate SmbiosRecordStructure implementation
     let record_structure_impl = generate_record_structure_impl(name, record_type, fields);
-    
+
     let expanded = quote! {
         #field_layout_impl
         #record_structure_impl
     };
-    
+
     TokenStream::from(expanded)
 }
 
@@ -73,21 +70,24 @@ fn extract_record_type(attrs: &[Attribute]) -> Option<u8> {
     None
 }
 
-fn generate_field_layout_impl_macro(name: &Ident, fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>) -> TokenStream2 {
+fn generate_field_layout_impl_macro(
+    name: &Ident,
+    fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
+) -> TokenStream2 {
     let mut field_specs = Vec::new();
-    
+
     for field in fields {
         if let Some(field_name) = &field.ident {
             // Skip header and string_pool fields
             if field_name == "header" || field_name == "string_pool" || field_name == "strings" {
                 continue;
             }
-            
+
             let field_type_ident = get_field_type_ident(&field.ty);
             field_specs.push(quote! { #field_name: #field_type_ident });
         }
     }
-    
+
     quote! {
         impl_smbios_field_layout!(#name,
             #(#field_specs),*
@@ -100,7 +100,7 @@ fn get_field_type_ident(ty: &Type) -> proc_macro2::Ident {
         Type::Path(type_path) => {
             let last_segment = type_path.path.segments.last().unwrap();
             let type_name = &last_segment.ident;
-            
+
             match type_name.to_string().as_str() {
                 "u8" => proc_macro2::Ident::new("u8", proc_macro2::Span::call_site()),
                 "u16" => proc_macro2::Ident::new("u16", proc_macro2::Span::call_site()),
@@ -113,24 +113,25 @@ fn get_field_type_ident(ty: &Type) -> proc_macro2::Ident {
     }
 }
 
-fn generate_record_structure_impl(name: &Ident, record_type: u8, fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>) -> TokenStream2 {
+fn generate_record_structure_impl(
+    name: &Ident,
+    record_type: u8,
+    fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
+) -> TokenStream2 {
     // Find the string pool field name
-    let string_pool_field = fields.iter()
+    let string_pool_field = fields
+        .iter()
         .find(|f| {
-            if let Some(field_name) = &f.ident {
-                field_name == "string_pool" || field_name == "strings"
-            } else {
-                false
-            }
+            if let Some(field_name) = &f.ident { field_name == "string_pool" || field_name == "strings" } else { false }
         })
         .and_then(|f| f.ident.as_ref());
-    
+
     let string_pool_field = string_pool_field.expect("No string_pool or strings field found");
-    
+
     quote! {
         impl SmbiosRecordStructure for #name {
             const RECORD_TYPE: u8 = #record_type;
-            
+
             fn validate(&self) -> Result<(), crate::smbios_derive::SmbiosError> {
                 // Basic validation for strings
                 for string in &self.#string_pool_field {
@@ -140,11 +141,11 @@ fn generate_record_structure_impl(name: &Ident, record_type: u8, fields: &syn::p
                 }
                 Ok(())
             }
-            
+
             fn string_pool(&self) -> &[alloc::string::String] {
                 &self.#string_pool_field
             }
-            
+
             fn string_pool_mut(&mut self) -> &mut alloc::vec::Vec<alloc::string::String> {
                 &mut self.#string_pool_field
             }
