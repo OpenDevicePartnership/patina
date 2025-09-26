@@ -5,6 +5,11 @@
 [Core Concepts](concepts.md)
 [Code Organization](dev/code_organization.md)
 
+# Background Information
+
+- [Patina DXE Core Memory Safety Strategy](background/memory_safety_strategy.md)
+- [UEFI Memory Safety Case Studies](background/uefi_memory_safety_case_studies.md)
+
 # Best Practices
 
 - [Abstractions](dev/principles/abstractions.md)
