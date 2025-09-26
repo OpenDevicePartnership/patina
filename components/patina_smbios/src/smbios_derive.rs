@@ -523,7 +523,7 @@ mod tests {
     use super::*;
     use crate::smbios_record::SmbiosRecordStructure;
     use crate::smbios_record::Type0PlatformFirmwareInformation;
-    use std::{format, print, println};
+    use std::{format, print, println, vec};
     #[test]
     fn test_smbios_record_builder_builds_bytes() {
         // Ensure builder returns a non-empty record buffer for a minimal System Information record
@@ -549,11 +549,23 @@ mod tests {
         // Create a manager and a Type0 record
         let mut manager = SmbiosManager::new(3, 8);
 
-        let mut type0 = Type0PlatformFirmwareInformation::new();
-        // customize some strings so we can assert later
-        type0 = type0.with_vendor(String::from("TestVendor")).expect("with_vendor failed");
-        type0 = type0.with_firmware_version(String::from("9.9.9")).expect("with_firmware_version failed");
-        type0 = type0.with_release_date(String::from("09/24/2025")).expect("with_release_date failed");
+        let type0 = Type0PlatformFirmwareInformation {
+            header: SmbiosTableHeader::new(0, 0, SMBIOS_HANDLE_PI_RESERVED),
+            vendor: 1,                               // String 1: "TestVendor"
+            firmware_version: 2,                     // String 2: "9.9.9"
+            bios_starting_address_segment: 0xE000,   // Standard BIOS segment
+            firmware_release_date: 3,                // String 3: "09/24/2025"
+            firmware_rom_size: 0x0F,                 // 1MB ROM size
+            characteristics: 0x08,                   // PCI supported
+            characteristics_ext1: 0x01,              // ACPI supported
+            characteristics_ext2: 0x00,              // No extended features
+            system_bios_major_release: 9,            // BIOS major version
+            system_bios_minor_release: 9,            // BIOS minor version
+            embedded_controller_major_release: 0xFF, // Not supported
+            embedded_controller_minor_release: 0xFF, // Not supported
+            extended_bios_rom_size: 0x0000,          // No extended size needed
+            string_pool: vec![String::from("TestVendor"), String::from("9.9.9"), String::from("09/24/2025")],
+        };
 
         // Serialize into bytes using the generic serializer
         let record_bytes = type0.to_bytes();
