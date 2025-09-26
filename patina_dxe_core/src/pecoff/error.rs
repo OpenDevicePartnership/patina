@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 pub type Result<T> = core::result::Result<T, Error>;
 
@@ -36,6 +36,7 @@ impl From<goblin::error::Error> for Error {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
 
@@ -50,10 +51,10 @@ mod tests {
     fn test_convert_error() {
         let goblin_error = goblin::error::Error::Malformed("test".to_string());
         let e: Error = goblin_error.into();
-        assert_eq!(format!("{:?}", e), "Goblin(Malformed(\"test\"))");
+        assert_eq!(format!("{e:?}"), "Goblin(Malformed(\"test\"))");
 
         let scroll_error = scroll::Error::TooBig { size: 50, len: 40 };
         let e: Error = scroll_error.into();
-        assert_eq!(format!("{:?}", e), "Parse(TooBig { size: 50, len: 40 })");
+        assert_eq!(format!("{e:?}"), "Parse(TooBig { size: 50, len: 40 })");
     }
 }

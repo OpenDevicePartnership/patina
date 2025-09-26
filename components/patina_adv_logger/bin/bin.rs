@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 use clap::Parser;
@@ -39,7 +39,12 @@ fn main() -> io::Result<()> {
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
 
-    let parser = patina_adv_logger::parser::Parser::new(&buffer).with_entry_metadata(args.entry_metadata);
+    let mut parser = patina_adv_logger::parser::Parser::open(&buffer).map_err(|e| {
+        eprintln!("Error opening log data: {e}");
+        io::Error::new(io::ErrorKind::InvalidData, e)
+    })?;
+
+    parser.configure_print_entry_metadata(args.entry_metadata);
     // Write to standard if no output file is specified.
     match args.output_path {
         Some(path) => {
@@ -59,14 +64,14 @@ fn parse_log<W: std::io::Write>(
 ) -> io::Result<()> {
     if header {
         parser.write_header(out).map_err(|e| {
-            eprintln!("Error writing log: {}", e);
-            io::Error::new(io::ErrorKind::Other, e)
+            eprintln!("Error writing log: {e}");
+            io::Error::other(e)
         })?;
     }
 
     parser.write_log(out).map_err(|e| {
-        eprintln!("Error writing log: {}", e);
-        io::Error::new(io::ErrorKind::Other, e)
+        eprintln!("Error writing log: {e}");
+        io::Error::other(e)
     })?;
 
     Ok(())

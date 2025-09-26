@@ -39,7 +39,7 @@ impl StackTrace {
         let mut sp = sp;
         let mut i = 0;
 
-        log::info!("Dumping stack trace with PC: {:#x}, SP: {:#x}", pc, sp);
+        log::info!("Dumping stack trace with PC: {pc:#x}, SP: {sp:#x}");
 
         log::info!("      # Child-SP              Return Address         Call Site");
 
@@ -56,7 +56,7 @@ impl StackTrace {
             let unwind_info = runtime_function.get_unwind_info()?;
             let (curr_sp, _curr_pc, prev_sp, prev_pc) = unwind_info.get_current_stack_frame(sp, pc)?;
 
-            log::info!("      {} {:016X}      {:016X}       {}+{:X}", i, curr_sp, prev_pc, image_name, pc_rva);
+            log::info!("      {i} {curr_sp:016X}      {prev_pc:016X}       {image_name}+{pc_rva:X}");
 
             sp = prev_sp;
             pc = prev_pc;

@@ -1,0 +1,28 @@
+[package]
+name = "patina_ffs_extractors"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+readme = "README.md"
+description = "UEFI section extractor implementations."
+
+[dependencies]
+log = { workspace = true }
+mu_pi = { workspace = true }
+patina_sdk = { workspace = true }
+patina_ffs = { workspace = true }
+r-efi = {workspace = true}
+brotli-decompressor = { workspace = true, optional = true }
+alloc-no-stdlib = { workspace = true, optional = true }
+crc32fast = { workspace = true, optional = true }
+patina_lzma_rs = { workspace = true, optional = true, default-features = false }
+
+[features]
+default = ["brotli", "crc32", "lzma"]
+std = []
+brotli = ["dep:brotli-decompressor", "dep:alloc-no-stdlib"]
+crc32 = ["dep:crc32fast"]
+lzma = ["dep:patina_lzma_rs"]

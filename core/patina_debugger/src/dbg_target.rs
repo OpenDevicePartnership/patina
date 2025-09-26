@@ -7,7 +7,7 @@
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 mod breakpoint;
@@ -28,7 +28,6 @@ use crate::{
     arch::{DebuggerArch, SystemArch, UefiArchRegs},
     memory,
     system::SystemState,
-    transport::BufferWriter,
 };
 
 /// Addresses that windbg will attempt to read in a loop, reads from these addresses
@@ -48,25 +47,12 @@ pub struct PatinaTarget {
     disable_checks: bool,
     /// Tracks external system state.
     system_state: &'static Mutex<SystemState>,
-    /// Buffer used for monitor calls.
-    monitor_buffer: BufferWriter<'static>,
 }
 
 impl PatinaTarget {
     /// Create a new Patina target.
-    pub fn new(
-        exception_info: ExceptionInfo,
-        system_state: &'static Mutex<SystemState>,
-        monitor_buffer: &'static mut [u8],
-    ) -> Self {
-        PatinaTarget {
-            exception_info,
-            resume: false,
-            reboot: false,
-            disable_checks: false,
-            system_state,
-            monitor_buffer: BufferWriter::new(monitor_buffer),
-        }
+    pub fn new(exception_info: ExceptionInfo, system_state: &'static Mutex<SystemState>) -> Self {
+        PatinaTarget { exception_info, resume: false, reboot: false, disable_checks: false, system_state }
     }
 
     /// Checks if the target has been resumed.
@@ -89,7 +75,7 @@ impl Target for PatinaTarget {
     type Arch = SystemArch;
     type Error = ();
 
-    fn base_ops(&mut self) -> gdbstub::target::ext::base::BaseOps<Self::Arch, Self::Error> {
+    fn base_ops(&mut self) -> gdbstub::target::ext::base::BaseOps<'_, Self::Arch, Self::Error> {
         gdbstub::target::ext::base::BaseOps::SingleThread(self)
     }
 

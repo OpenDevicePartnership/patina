@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 #![cfg_attr(test, allow(dead_code))]
 #![cfg_attr(test, allow(unused_imports))]
@@ -208,7 +208,8 @@ pub fn init() {
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use super::GDT;
     use super::{
         LINEAR_CODE_SEL, LINEAR_CODE64_SEL, LINEAR_DATA64_SEL, LINEAR_SEL, SPARE5_SEL, SYS_CODE_SEL, SYS_CODE16_SEL,

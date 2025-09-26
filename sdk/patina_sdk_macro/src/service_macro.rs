@@ -2,9 +2,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
@@ -190,6 +190,7 @@ pub(crate) fn service2(item: proc_macro2::TokenStream) -> proc_macro2::TokenStre
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
     use quote::quote;

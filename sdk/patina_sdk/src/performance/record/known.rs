@@ -3,9 +3,9 @@
 //!
 //! ## License
 //!
-//! Copyright (C) Microsoft Corporation. All rights reserved.
+//! Copyright (c) Microsoft Corporation.
 //!
-//! SPDX-License-Identifier: BSD-2-Clause-Patent
+//! SPDX-License-Identifier: Apache-2.0
 //!
 
 use alloc::string::String;
@@ -248,7 +248,8 @@ impl TryFrom<u16> for KnownPerfId {
 }
 
 #[cfg(test)]
-mod test {
+#[coverage(off)]
+mod tests {
     use core::{assert_eq, convert::From, ptr};
 
     use super::*;

@@ -79,7 +79,7 @@ fn test_unwind_info_full() {
             return;
         }
 
-        log::info!("Thread created successfully! Thread ID: {}", thread_id);
+        log::info!("Thread created successfully! Thread ID: {thread_id}");
 
         execute_frame_transitions(&ffi_function_pointers);
         WaitForSingleObject(thread_handle, winapi::um::winbase::INFINITE);
@@ -121,7 +121,7 @@ unsafe fn execute_frame_transitions(ffi_function_pointers: &FfiFunctionPointers)
 
     log::info!("\n[+] Unwinding the stack one frame at a time. Querying the actual Rsp/Return Rip...");
     log::info!("[+] # Current RSP  Return RIP");
-    log::info!("    0 {:X}   {:X}", current_rsp, return_rip);
+    log::info!("    0 {current_rsp:X}   {return_rip:X}");
 
     // At Frame 2 - func2() - Unwind frame 1:
     // This should trigger completion of func1() and func2() will loop
@@ -133,7 +133,7 @@ unsafe fn execute_frame_transitions(ffi_function_pointers: &FfiFunctionPointers)
     // current_rip = (ffi_function_pointers.get_current_rip)();
     current_rsp = unsafe { (ffi_function_pointers.get_current_rsp)() };
     return_rip = unsafe { (ffi_function_pointers.get_return_rip)() };
-    log::info!("    1 {:X}   {:X}", current_rsp, return_rip);
+    log::info!("    1 {current_rsp:X}   {return_rip:X}");
 
     // At Frame 3 - func3() - Unwind frame 2:
     // This should trigger completion of func2() and func3() will loop
@@ -145,7 +145,7 @@ unsafe fn execute_frame_transitions(ffi_function_pointers: &FfiFunctionPointers)
     // current_rip = (ffi_function_pointers.get_current_rip)();
     current_rsp = unsafe { (ffi_function_pointers.get_current_rsp)() };
     return_rip = unsafe { (ffi_function_pointers.get_return_rip)() };
-    log::info!("    2 {:X}   {:X}", current_rsp, return_rip);
+    log::info!("    2 {current_rsp:X}   {return_rip:X}");
 
     // At Frame 4 - func4() - Unwind frame 3:
     // This should trigger completion of func3() and func4() will loop
@@ -157,7 +157,7 @@ unsafe fn execute_frame_transitions(ffi_function_pointers: &FfiFunctionPointers)
     // current_rip = (ffi_function_pointers.get_current_rip)();
     current_rsp = unsafe { (ffi_function_pointers.get_current_rsp)() };
     return_rip = unsafe { (ffi_function_pointers.get_return_rip)() };
-    log::info!("    3 {:X}   {:X}", current_rsp, return_rip);
+    log::info!("    3 {current_rsp:X}   {return_rip:X}");
 
     // Unwind frame 4:
     // This should trigger completion of func4()

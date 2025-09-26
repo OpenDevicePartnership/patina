@@ -1,0 +1,37 @@
+total_number_of_files: 166
+files_to_test:
+  # GUID of the File (need to be uppercase)
+  "23C9322F-2AF2-476A-BC4C-26BC88266C71":
+    file_type: 0x5
+    attributes: 0x0
+    # Body size in UEFITool
+    data_size: 0x14CA26
+    # Full size in UEFITool
+    size: 0x14CA3E
+    # Number of section that the file has
+    number_of_sections: 3
+    sections:
+      # Index of the section in the file (Not required to defined every section)
+      0:
+        section_type: 0x10 #PE32
+        size: 0x14CA00
+      1:
+        section_type: 0x15 #USER_INTERFACE
+        size: 0x10
+        # Needed only if the file has a text information.
+        text: "DxeRust"
+      2:
+        section_type: 0x14 #VERSION
+        size: 0x8
+
+  "E3624086-4FCD-446E-9D07-B6B913792071":
+    base_address: 0x4B6830
+    file_type: 0x9
+    attributes: 0x0
+    data_size: 0x11C9F
+    size: 0x11CB7
+    number_of_sections: 1
+    sections:
+      0:
+        section_type: 0x01 #COMPRESSION
+        size: 0x11C96

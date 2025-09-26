@@ -49,6 +49,23 @@ sequenceDiagram
   ExceptionHandler->>Patina: Return from exception
 ```
 
+## Prerequisites
+
+The debugger relies on exception table information being preserved in order to get an accurate stack trace. Two
+flags are needed to tell the toolchain to preserve this information, one for Rust, one for C code.
+
+Rust:
+
+This needs to be set in the environment variables for the build.
+
+`RUSTFLAGS=-Cforce-unwind-tables`
+
+C:
+
+This needs to be set in the platform DSC's build options section:
+
+`*_*_*_GENFW_FLAGS   = --keepexceptiontable`
+
 ## Structures
 
 The debugger consists of two high-level structures: the debugger struct itself and
