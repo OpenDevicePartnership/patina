@@ -134,7 +134,7 @@ impl<'a> EfiHardwareInterruptProtocol<'a> {
             hw_interrupt_protocol.hw_interrupt_handler.aarch64_int.lock().get_interrupt_source_state(interrupt_source);
         match enable {
             Ok(enable) => {
-                unsafe { *state = enable }
+                unsafe { state.write_unaligned(enable) }
                 efi::Status::SUCCESS
             }
             Err(err) => err.into(),

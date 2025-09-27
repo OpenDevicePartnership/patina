@@ -83,10 +83,13 @@ extern "efiapi" fn disable_interrupt(this: *const Protocol) -> efi::Status {
 }
 
 extern "efiapi" fn get_interrupt_state(this: *const Protocol, state: *mut bool) -> efi::Status {
+    if state.is_null() {
+        return efi::Status::INVALID_PARAMETER;
+    }
     interrupts::get_interrupt_state()
         .map(|interrupt_state| {
             unsafe {
-                *state = interrupt_state;
+                state.write_unaligned(interrupt_state);
             }
             efi::Status::SUCCESS
         })
@@ -128,6 +131,9 @@ extern "efiapi" fn get_timer_value(
     timer_value: *mut u64,
     timer_period: *mut u64,
 ) -> efi::Status {
+    if timer_value.is_null() || timer_period.is_null() {
+        return efi::Status::INVALID_PARAMETER;
+    }
     let cpu = &get_impl_ref(this).cpu;
 
     let result = cpu.get_timer_value(timer_index);
@@ -135,8 +141,8 @@ extern "efiapi" fn get_timer_value(
     match result {
         Ok((value, period)) => {
             unsafe {
-                *timer_value = value;
-                *timer_period = period;
+                timer_value.write_unaligned(value);
+                timer_period.write_unaligned(period);
             }
             efi::Status::SUCCESS
         }

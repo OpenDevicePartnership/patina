@@ -53,7 +53,7 @@ extern "efiapi" fn get_memory_attributes(
                 );
                 return efi::Status::NO_MAPPING;
             }
-            unsafe { *attributes = descriptor.attributes & efi::MEMORY_ACCESS_MASK };
+            unsafe { attributes.write_unaligned(descriptor.attributes & efi::MEMORY_ACCESS_MASK) };
             efi::Status::SUCCESS
         }
         Err(status) => {

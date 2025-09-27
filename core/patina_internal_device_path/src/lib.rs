@@ -75,7 +75,7 @@ pub fn device_path_node_count(
         return Err(efi::Status::INVALID_PARAMETER);
     }
     loop {
-        let current_node = unsafe { *current_node_ptr };
+        let current_node = unsafe { current_node_ptr.read_unaligned() };
         let current_length: usize = u16::from_le_bytes(current_node.length).into();
         node_count += 1;
         dev_path_size += current_length;

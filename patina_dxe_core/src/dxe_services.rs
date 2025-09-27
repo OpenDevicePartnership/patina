@@ -57,17 +57,17 @@ extern "efiapi" fn allocate_memory_space(
 
     let allocate_type = match gcd_allocate_type {
         dxe_services::GcdAllocateType::Address => {
-            let desired_address = unsafe { *base_address };
+            let desired_address = unsafe { base_address.read_unaligned() };
             gcd::AllocateType::Address(desired_address as usize)
         }
         dxe_services::GcdAllocateType::AnySearchBottomUp => gcd::AllocateType::BottomUp(None),
         dxe_services::GcdAllocateType::AnySearchTopDown => gcd::AllocateType::TopDown(None),
         dxe_services::GcdAllocateType::MaxAddressSearchBottomUp => {
-            let limit = unsafe { *base_address };
+            let limit = unsafe { base_address.read_unaligned() };
             gcd::AllocateType::BottomUp(Some(limit as usize))
         }
         dxe_services::GcdAllocateType::MaxAddressSearchTopDown => {
-            let limit = unsafe { *base_address };
+            let limit = unsafe { base_address.read_unaligned() };
             gcd::AllocateType::TopDown(Some(limit as usize))
         }
         _ => return efi::Status::INVALID_PARAMETER,
@@ -84,7 +84,7 @@ extern "efiapi" fn allocate_memory_space(
 
     match result {
         Ok(allocated_addr) => {
-            unsafe { base_address.write(allocated_addr as u64) };
+            unsafe { base_address.write_unaligned(allocated_addr as u64) };
             efi::Status::SUCCESS
         }
         Err(err) => efi::Status::from(err),
@@ -119,7 +119,7 @@ extern "efiapi" fn get_memory_space_descriptor(
     match core_get_memory_space_descriptor(base_address) {
         Err(err) => return err.into(),
         Ok(target_descriptor) => unsafe {
-            descriptor.write(target_descriptor);
+            descriptor.write_unaligned(target_descriptor);
         },
     }
     efi::Status::SUCCESS
@@ -206,9 +206,10 @@ extern "efiapi" fn get_memory_space_map(
     match core_allocate_pool(efi::BOOT_SERVICES_DATA, buffer_size) {
         Err(err) => err.into(),
         Ok(allocation) => unsafe {
-            memory_space_map.write(allocation as *mut dxe_services::MemorySpaceDescriptor);
-            number_of_descriptors.write(descriptors.len());
-            slice::from_raw_parts_mut(*memory_space_map, descriptors.len()).copy_from_slice(&descriptors);
+            memory_space_map.write_unaligned(allocation as *mut dxe_services::MemorySpaceDescriptor);
+            number_of_descriptors.write_unaligned(descriptors.len());
+            slice::from_raw_parts_mut(memory_space_map.read_unaligned(), descriptors.len())
+                .copy_from_slice(&descriptors);
             efi::Status::SUCCESS
         },
     }
@@ -241,17 +242,17 @@ extern "efiapi" fn allocate_io_space(
 
     let allocate_type = match gcd_allocate_type {
         dxe_services::GcdAllocateType::Address => {
-            let desired_address = unsafe { *base_address };
+            let desired_address = unsafe { base_address.read_unaligned() };
             gcd::AllocateType::Address(desired_address as usize)
         }
         dxe_services::GcdAllocateType::AnySearchBottomUp => gcd::AllocateType::BottomUp(None),
         dxe_services::GcdAllocateType::AnySearchTopDown => gcd::AllocateType::TopDown(None),
         dxe_services::GcdAllocateType::MaxAddressSearchBottomUp => {
-            let limit = unsafe { *base_address };
+            let limit = unsafe { base_address.read_unaligned() };
             gcd::AllocateType::BottomUp(Some(limit as usize))
         }
         dxe_services::GcdAllocateType::MaxAddressSearchTopDown => {
-            let limit = unsafe { *base_address };
+            let limit = unsafe { base_address.read_unaligned() };
             gcd::AllocateType::TopDown(Some(limit as usize))
         }
         _ => return efi::Status::INVALID_PARAMETER,
@@ -268,7 +269,7 @@ extern "efiapi" fn allocate_io_space(
 
     match result {
         Ok(allocated_addr) => {
-            unsafe { base_address.write(allocated_addr as u64) };
+            unsafe { base_address.write_unaligned(allocated_addr as u64) };
             efi::Status::SUCCESS
         }
         Err(err) => efi::Status::from(err),
@@ -312,7 +313,7 @@ extern "efiapi" fn get_io_space_descriptor(
         descriptors.iter().find(|x| (x.base_address <= base_address) && (base_address < (x.base_address + x.length)));
 
     if let Some(target_descriptor) = target_descriptor {
-        unsafe { descriptor.write(*target_descriptor) };
+        unsafe { descriptor.write_unaligned(*target_descriptor) };
         efi::Status::SUCCESS
     } else {
         efi::Status::NOT_FOUND
@@ -341,9 +342,9 @@ extern "efiapi" fn get_io_space_map(
     match core_allocate_pool(efi::BOOT_SERVICES_DATA, buffer_size) {
         Err(err) => err.into(),
         Ok(allocation) => unsafe {
-            io_space_map.write(allocation as *mut dxe_services::IoSpaceDescriptor);
-            number_of_descriptors.write(descriptors.len());
-            slice::from_raw_parts_mut(*io_space_map, descriptors.len()).copy_from_slice(&descriptors);
+            io_space_map.write_unaligned(allocation as *mut dxe_services::IoSpaceDescriptor);
+            number_of_descriptors.write_unaligned(descriptors.len());
+            slice::from_raw_parts_mut(io_space_map.read_unaligned(), descriptors.len()).copy_from_slice(&descriptors);
             efi::Status::SUCCESS
         },
     }
@@ -357,22 +358,25 @@ extern "efiapi" fn dispatch() -> efi::Status {
 }
 
 extern "efiapi" fn schedule(firmware_volume_handle: efi::Handle, file_name: *const efi::Guid) -> efi::Status {
-    let Some(file_name) = (unsafe { file_name.as_ref() }) else {
+    if file_name.is_null() {
         return efi::Status::INVALID_PARAMETER;
-    };
+    }
+    let file_name = unsafe { file_name.read_unaligned() };
 
-    match core_schedule(firmware_volume_handle, file_name) {
+    match core_schedule(firmware_volume_handle, &file_name) {
         Err(status) => status.into(),
         Ok(_) => efi::Status::SUCCESS,
     }
 }
 
 extern "efiapi" fn trust(firmware_volume_handle: efi::Handle, file_name: *const efi::Guid) -> efi::Status {
-    let Some(file_name) = (unsafe { file_name.as_ref() }) else {
+    if file_name.is_null() {
         return efi::Status::INVALID_PARAMETER;
-    };
+    }
 
-    match core_trust(firmware_volume_handle, file_name) {
+    let file_name = unsafe { file_name.read_unaligned() };
+
+    match core_trust(firmware_volume_handle, &file_name) {
         Err(status) => status.into(),
         Ok(_) => efi::Status::SUCCESS,
     }
@@ -401,7 +405,7 @@ extern "efiapi" fn process_firmware_volume(
     };
 
     unsafe {
-        firmware_volume_handle.write(handle);
+        firmware_volume_handle.write_unaligned(handle);
     }
 
     efi::Status::SUCCESS

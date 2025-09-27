@@ -1141,7 +1141,7 @@ extern "efiapi" fn load_image(
     match core_load_image(boot_policy.into(), parent_image_handle, device_path, image) {
         Err(err) => err.into(),
         Ok((handle, security_status)) => unsafe {
-            image_handle.write(handle);
+            image_handle.write_unaligned(handle);
             match security_status {
                 Ok(()) => efi::Status::SUCCESS,
                 Err(err) => err.into(),
@@ -1171,8 +1171,8 @@ extern "efiapi" fn start_image(
             && let Some(image_exit_data) = image_data.exit_data
         {
             unsafe {
-                exit_data_size.write(image_exit_data.0);
-                exit_data.write(image_exit_data.1);
+                exit_data_size.write_unaligned(image_exit_data.0);
+                exit_data.write_unaligned(image_exit_data.1);
             }
         }
     }

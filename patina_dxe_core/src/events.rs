@@ -51,7 +51,7 @@ extern "efiapi" fn create_event(
 
     match EVENT_DB.create_event(event_type, notify_tpl, notify_function, notify_context, event_group) {
         Ok(new_event) => {
-            unsafe { *event = new_event };
+            unsafe { event.write_unaligned(new_event) };
             efi::Status::SUCCESS
         }
         Err(err) => err.into(),
@@ -79,11 +79,11 @@ extern "efiapi" fn create_event_ex(
         _ => (),
     }
 
-    let event_group = if !event_group.is_null() { Some(unsafe { *event_group }) } else { None };
+    let event_group = if !event_group.is_null() { Some(unsafe { event_group.read_unaligned() }) } else { None };
 
     match EVENT_DB.create_event(event_type, notify_tpl, notify_function, notify_context, event_group) {
         Ok(new_event) => {
-            unsafe { *event = new_event };
+            unsafe { event.write_unaligned(new_event) };
             efi::Status::SUCCESS
         }
         Err(err) => err.into(),
@@ -126,19 +126,21 @@ extern "efiapi" fn wait_for_event(
         return efi::Status::UNSUPPORTED;
     }
 
-    //get the events list as a slice
-    let event_list = unsafe { core::slice::from_raw_parts(event_array, number_of_events) };
-
     //spin on the list
     loop {
-        for (index, event) in event_list.iter().enumerate() {
-            match check_event(*event) {
+        let mut event_ptr = event_array;
+        for index in 0..number_of_events {
+            let event = unsafe { event_ptr.read_unaligned() };
+            match check_event(event) {
                 efi::Status::NOT_READY => (),
                 status => {
-                    unsafe { *out_index = index };
+                    unsafe {
+                        out_index.write_unaligned(index);
+                    };
                     return status;
                 }
             }
+            event_ptr = unsafe { event_ptr.add(1) };
         }
     }
 }

@@ -401,7 +401,7 @@ extern "efiapi" fn allocate_pool(pool_type: efi::MemoryType, size: usize, buffer
     match core_allocate_pool(pool_type, size) {
         Err(err) => err.into(),
         Ok(allocation) => unsafe {
-            buffer.write(allocation);
+            buffer.write_unaligned(allocation);
             efi::Status::SUCCESS
         },
     }
@@ -481,18 +481,18 @@ pub fn core_allocate_pages(
             let result = match allocation_type {
                 efi::ALLOCATE_ANY_PAGES => allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages, alignment),
                 efi::ALLOCATE_MAX_ADDRESS => {
-                    let address = unsafe { memory.as_ref().expect("checked non-null is null") };
-                    allocator.allocate_pages(AllocationStrategy::TopDown(Some(*address as usize)), pages, alignment)
+                    let address = unsafe { memory.read_unaligned() };
+                    allocator.allocate_pages(AllocationStrategy::TopDown(Some(address as usize)), pages, alignment)
                 }
                 efi::ALLOCATE_ADDRESS => {
-                    let address = unsafe { memory.as_ref().expect("checked non-null is null") };
-                    allocator.allocate_pages(AllocationStrategy::Address(*address as usize), pages, alignment)
+                    let address = unsafe { memory.read_unaligned() };
+                    allocator.allocate_pages(AllocationStrategy::Address(address as usize), pages, alignment)
                 }
                 _ => Err(EfiError::InvalidParameter),
             };
 
             if let Ok(ptr) = result {
-                unsafe { memory.write(ptr.cast::<u8>().as_ptr().expose_provenance() as u64) }
+                unsafe { memory.write_unaligned(ptr.cast::<u8>().as_ptr().expose_provenance() as u64) }
                 Ok(())
             } else {
                 result.map(|_| ())
@@ -576,12 +576,12 @@ pub fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Result<(),
 }
 
 extern "efiapi" fn copy_mem(destination: *mut c_void, source: *mut c_void, length: usize) {
-    //nothing about this is safe.
+    // Safety: caller must ensure that the source and destination are valid for length bytes.
     unsafe { core::ptr::copy(source as *mut u8, destination as *mut u8, length) }
 }
 
 extern "efiapi" fn set_mem(buffer: *mut c_void, size: usize, value: u8) {
-    //nothing about this is safe.
+    // Safety: caller must ensure that the buffer is valid for size bytes.
     unsafe {
         let dst_buffer = from_raw_parts_mut(buffer as *mut u8, size);
         dst_buffer.fill(value);
@@ -709,14 +709,14 @@ extern "efiapi" fn get_memory_map(
     }
 
     if !descriptor_size.is_null() {
-        unsafe { descriptor_size.write(mem::size_of::<efi::MemoryDescriptor>()) };
+        unsafe { descriptor_size.write_unaligned(mem::size_of::<efi::MemoryDescriptor>()) };
     }
 
     if !descriptor_version.is_null() {
-        unsafe { descriptor_version.write(efi::MEMORY_DESCRIPTOR_VERSION) };
+        unsafe { descriptor_version.write_unaligned(efi::MEMORY_DESCRIPTOR_VERSION) };
     }
 
-    let map_size = unsafe { *memory_map_size };
+    let map_size = unsafe { memory_map_size.read_unaligned() };
 
     let efi_descriptors = match get_memory_map_descriptors(false) {
         Ok(descriptors) => descriptors,
@@ -727,7 +727,7 @@ extern "efiapi" fn get_memory_map(
 
     let required_map_size = efi_descriptors.len() * mem::size_of::<efi::MemoryDescriptor>();
 
-    unsafe { memory_map_size.write(required_map_size) };
+    unsafe { memory_map_size.write_unaligned(required_map_size) };
 
     if map_size < required_map_size {
         return efi::Status::BUFFER_TOO_SMALL;
@@ -746,7 +746,7 @@ extern "efiapi" fn get_memory_map(
 
         if !map_key.is_null() {
             let memory_map_as_bytes = slice::from_raw_parts(memory_map as *mut u8, required_map_size);
-            map_key.write(crc32fast::hash(memory_map_as_bytes) as usize);
+            map_key.write_unaligned(crc32fast::hash(memory_map_as_bytes) as usize);
         }
     }
 
