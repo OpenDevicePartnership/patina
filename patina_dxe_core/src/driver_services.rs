@@ -350,10 +350,9 @@ extern "efiapi" fn connect_controller(
         slice.to_vec().clone()
     };
 
-    let device_path = NonNull::new(remaining_device_path).map(|x| x.as_ptr());
-    // make a copy of the driver path on the heap
-    let device_path_ptr = if let Some(dp) = device_path {
-        match copy_device_path_to_boxed_slice(dp) {
+    // make a copy of the remaining_device_path on the heap
+    let device_path = if !remaining_device_path.is_null() {
+        match copy_device_path_to_boxed_slice(remaining_device_path) {
             Ok(boxed_slice) => {
                 let ptr = boxed_slice.as_ptr() as *mut efi::protocols::device_path::Protocol;
                 core::mem::forget(boxed_slice); // prevent deallocation
@@ -365,7 +364,7 @@ extern "efiapi" fn connect_controller(
         None
     };
     unsafe {
-        match core_connect_controller(handle, driver_handles, device_path_ptr, recursive.into()) {
+        match core_connect_controller(handle, driver_handles, device_path, recursive.into()) {
             Err(err) => err.into(),
             _ => efi::Status::SUCCESS,
         }
