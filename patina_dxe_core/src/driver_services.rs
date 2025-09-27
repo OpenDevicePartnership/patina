@@ -351,8 +351,21 @@ extern "efiapi" fn connect_controller(
     };
 
     let device_path = NonNull::new(remaining_device_path).map(|x| x.as_ptr());
+    // make a copy of the driver path on the heap
+    let device_path_ptr = if let Some(dp) = device_path {
+        match copy_device_path_to_boxed_slice(dp) {
+            Ok(boxed_slice) => {
+                let ptr = boxed_slice.as_ptr() as *mut efi::protocols::device_path::Protocol;
+                core::mem::forget(boxed_slice); // prevent deallocation
+                Some(ptr)
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
     unsafe {
-        match core_connect_controller(handle, driver_handles, device_path, recursive.into()) {
+        match core_connect_controller(handle, driver_handles, device_path_ptr, recursive.into()) {
             Err(err) => err.into(),
             _ => efi::Status::SUCCESS,
         }
