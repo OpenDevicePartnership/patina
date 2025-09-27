@@ -88,5 +88,16 @@
   Once these issues were worked around in the silicon code, the platform was able to boot normally and no special testing was required
   to make sure the Patina core is executing properly.  All drivers that were dispatched from the firmware volume behaved the same as
   if dispatched from the Tianocore DXE core.
-  
 
+
+# Next Steps
+
+???
+
+## SMBIOS overview?
+
+???
+
+## Platform sample overview?
+
+???
