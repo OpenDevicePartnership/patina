@@ -11,6 +11,7 @@ you 1 ..., 2 ..., 3 ..., here is how to do it, and here is how to verify"
     - If OEM took this change, what is minimal verification needed?
   - Remove the thought process of "next steps" after core, focus only on starting
   - Found errors at end, more like an appendix to not distract on process
+  - Pictures?
  
 ========8<=============================================
    
