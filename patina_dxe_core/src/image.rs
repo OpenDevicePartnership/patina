@@ -1141,6 +1141,7 @@ extern "efiapi" fn load_image(
     match core_load_image(boot_policy.into(), parent_image_handle, device_path, image) {
         Err(err) => err.into(),
         Ok((handle, security_status)) => unsafe {
+            // Safety: Caller must ensure that image_handle is a valid pointer. It is null-checked above.
             image_handle.write_unaligned(handle);
             match security_status {
                 Ok(()) => efi::Status::SUCCESS,
@@ -1169,7 +1170,10 @@ extern "efiapi" fn start_image(
         let private_data = PRIVATE_IMAGE_DATA.lock();
         if let Some(image_data) = private_data.private_image_data.get(&image_handle)
             && let Some(image_exit_data) = image_data.exit_data
+            && !exit_data_size.is_null()
+            && !exit_data.is_null()
         {
+            // Safety: Caller must ensure that exit_data_size and exit_data are valid pointers if they are non-null.
             unsafe {
                 exit_data_size.write_unaligned(image_exit_data.0);
                 exit_data.write_unaligned(image_exit_data.1);

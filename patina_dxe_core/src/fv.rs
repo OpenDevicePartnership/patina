@@ -71,7 +71,7 @@ extern "efiapi" fn fvb_get_attributes(
 
     match core_fvb_get_attributes(this) {
         Err(err) => return err.into(),
-        // SAFETY: caller must provide a valid pointer to receive the attributes. It is null-checked above.
+        // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
         Ok(fvb_attributes) => unsafe { attributes.write_unaligned(fvb_attributes) },
     };
 
@@ -115,7 +115,7 @@ extern "efiapi" fn fvb_get_physical_address(
         return efi::Status::NOT_FOUND;
     };
 
-    // SAFETY: caller must provide a valid pointer to receive the address. It is null-checked above.
+    // Safety: caller must provide a valid pointer to receive the address. It is null-checked above.
     unsafe { address.write_unaligned(fvb_data.physical_address) };
 
     efi::Status::SUCCESS
@@ -136,7 +136,7 @@ extern "efiapi" fn fvb_get_block_size(
         Ok((size, remaining_blocks)) => (size, remaining_blocks),
     };
 
-    // SAFETY: caller must provide valid pointers to receive the block size and number of blocks. They are null-checked above.
+    // Safety: caller must provide valid pointers to receive the block size and number of blocks. They are null-checked above.
     unsafe {
         block_size.write_unaligned(size);
         number_of_blocks.write_unaligned(remaining_blocks);
@@ -299,7 +299,7 @@ extern "efiapi" fn fv_get_volume_attributes(
         Ok(attrs) => attrs,
     };
 
-    // SAFETY: caller must provide a valid pointer to receive the attributes. It is null-checked above.
+    // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
     unsafe { fv_attributes.write_unaligned(fv_attributes_data) };
 
     efi::Status::SUCCESS

@@ -25,6 +25,7 @@ extern "efiapi" fn install_configuration_table(table_guid: *mut efi::Guid, table
         return efi::Status::INVALID_PARAMETER;
     }
 
+    // Safety: caller must ensure that table_guid is a valid pointer. It is null-checked above.
     let table_guid = unsafe { table_guid.read_unaligned() };
 
     let mut st_guard = SYSTEM_TABLE.lock();

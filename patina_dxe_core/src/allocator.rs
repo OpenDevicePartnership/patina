@@ -400,6 +400,7 @@ extern "efiapi" fn allocate_pool(pool_type: efi::MemoryType, size: usize, buffer
 
     match core_allocate_pool(pool_type, size) {
         Err(err) => err.into(),
+        // Safety: caller must ensure that buffer is a valid pointer. It is null-checked above.
         Ok(allocation) => unsafe {
             buffer.write_unaligned(allocation);
             efi::Status::SUCCESS
@@ -481,10 +482,12 @@ pub fn core_allocate_pages(
             let result = match allocation_type {
                 efi::ALLOCATE_ANY_PAGES => allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages, alignment),
                 efi::ALLOCATE_MAX_ADDRESS => {
+                    // Safety: caller must ensure that "memory" is a valid pointer. It is null-checked above.
                     let address = unsafe { memory.read_unaligned() };
                     allocator.allocate_pages(AllocationStrategy::TopDown(Some(address as usize)), pages, alignment)
                 }
                 efi::ALLOCATE_ADDRESS => {
+                    // Safety: caller must ensure that "memory" is a valid pointer. It is null-checked above.
                     let address = unsafe { memory.read_unaligned() };
                     allocator.allocate_pages(AllocationStrategy::Address(address as usize), pages, alignment)
                 }
@@ -492,6 +495,7 @@ pub fn core_allocate_pages(
             };
 
             if let Ok(ptr) = result {
+                // Safety: caller must ensure that "memory" is a valid pointer. It is null-checked above.
                 unsafe { memory.write_unaligned(ptr.cast::<u8>().as_ptr().expose_provenance() as u64) }
                 Ok(())
             } else {
@@ -709,13 +713,16 @@ extern "efiapi" fn get_memory_map(
     }
 
     if !descriptor_size.is_null() {
+        // Safety: caller must ensure that descriptor_size is a valid pointer if it is not null.
         unsafe { descriptor_size.write_unaligned(mem::size_of::<efi::MemoryDescriptor>()) };
     }
 
     if !descriptor_version.is_null() {
+        // Safety: caller must ensure that descriptor_version is a valid pointer if it is not null.
         unsafe { descriptor_version.write_unaligned(efi::MEMORY_DESCRIPTOR_VERSION) };
     }
 
+    // Safety: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
     let map_size = unsafe { memory_map_size.read_unaligned() };
 
     let efi_descriptors = match get_memory_map_descriptors(false) {
@@ -727,6 +734,7 @@ extern "efiapi" fn get_memory_map(
 
     let required_map_size = efi_descriptors.len() * mem::size_of::<efi::MemoryDescriptor>();
 
+    // Safety: caller must ensure that memory_map_size is a valid pointer. It is null-checked above.
     unsafe { memory_map_size.write_unaligned(required_map_size) };
 
     if map_size < required_map_size {
@@ -741,6 +749,8 @@ extern "efiapi" fn get_memory_map(
     // treat the slice as a u8 slice and copy the bytes.
     let efi_descriptors_ptr = efi_descriptors.as_ptr() as *mut u8;
 
+    // Safety: caller must ensure that memory_map is a valid pointer. It is null-checked above.
+    //         caller must ensure that map_key is a valid pointer if it is not null.
     unsafe {
         core::ptr::copy(efi_descriptors_ptr, memory_map as *mut u8, required_map_size);
 

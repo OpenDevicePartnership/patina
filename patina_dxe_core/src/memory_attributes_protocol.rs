@@ -53,6 +53,7 @@ extern "efiapi" fn get_memory_attributes(
                 );
                 return efi::Status::NO_MAPPING;
             }
+            // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
             unsafe { attributes.write_unaligned(descriptor.attributes & efi::MEMORY_ACCESS_MASK) };
             efi::Status::SUCCESS
         }

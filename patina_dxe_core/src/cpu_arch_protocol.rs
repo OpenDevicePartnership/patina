@@ -88,6 +88,7 @@ extern "efiapi" fn get_interrupt_state(this: *const Protocol, state: *mut bool) 
     }
     interrupts::get_interrupt_state()
         .map(|interrupt_state| {
+            // Safety: caller must ensure that state is a valid pointer. It is null-checked above.
             unsafe {
                 state.write_unaligned(interrupt_state);
             }
@@ -140,6 +141,7 @@ extern "efiapi" fn get_timer_value(
 
     match result {
         Ok((value, period)) => {
+            // Safety: caller must ensure that timer_value and timer_period are valid pointers. They are null-checked above.
             unsafe {
                 timer_value.write_unaligned(value);
                 timer_period.write_unaligned(period);
