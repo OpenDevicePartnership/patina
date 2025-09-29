@@ -1,7 +1,11 @@
 ========8<=============================================
 
 FEEDBACK/NOTES:
-  - Change title to represent something more like "quick start guide".  Primary focus is "You can get much better security if fully adopted, but just taking DXE core will give you 1 ..., 2 ..., 3 ..., here is how to do it, and here is how to verify"
+
+Primary goal to communicate: "You can get much better security if fully adopted, but just taking DXE core will give 
+you 1 ..., 2 ..., 3 ..., here is how to do it, and here is how to verify"
+
+  - Change title to represent something more like "quick start guide".
   - Focus on short/simple, starting to get a little long
   - New section on "how to ensure these simple steps didn't break anything", replace the "next steps" with this
     - If OEM took this change, what is minimal verification needed?
