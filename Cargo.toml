@@ -39,7 +39,7 @@ patina_internal_depex = { version = "11.0.0", path = "core/patina_internal_depex
 patina_internal_device_path = { version = "11.0.0", path = "core/patina_internal_device_path", registry = "patina-fw" }
 patina_lzma_rs = { version = "0.3.1", default-features = false, registry = "patina-fw" }
 patina_mtrr = { version = "1.0.0", registry = "patina-fw" }
-patina_paging = { version = "8", registry = "patina-fw" }
+patina_paging = { version = "9", registry = "patina-fw" }
 patina_performance = { version = "11.0.0", path = "components/patina_performance", registry = "patina-fw" }
 patina = { version = "11.0.0", path = "sdk/patina", registry = "patina-fw" }
 patina_ffs = { version = "11.0.0", path = "sdk/patina_ffs", registry = "patina-fw" }

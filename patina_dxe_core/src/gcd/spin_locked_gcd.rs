@@ -1873,9 +1873,55 @@ impl SpinLockedGcd {
             let paging_attrs = MemoryAttributes::from_bits_truncate(attributes)
                 & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask);
 
+            let mut region_attributes = None;
+            let mut unmapped = false;
+
+            // we assume that the page table and GCD are in sync. If not, we will debug_assert and return an error here
+            // as this indicates a critical error
+            match page_table.query_memory_region(base_address as u64, len as u64) {
+                Ok(region_attrs) => {
+                    region_attributes = Some(region_attrs);
+                }
+                Err(PtError::NoMapping) => {
+                    // it is not an error if the range is fully not mapped, we just need to map it, unless we are
+                    // trying to unmap the region, which we will check for below
+                    unmapped = true;
+                }
+                Err(e) => {
+                    log::error!(
+                        "query memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
+                    );
+                    log::error!("GCD and page table are out of sync. This is a critical error.");
+                    log::info!("GCD {GCD}");
+                    debug_assert!(false);
+                    return Err(EfiError::InvalidParameter);
+                }
+            }
+
+            // if this region already has the attributes we want, we don't need to do anything
+            // in the page table.
+            if let Some(region_attrs) = region_attributes
+                && (region_attrs & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask))
+                    == paging_attrs
+            {
+                log::trace!(
+                    target: "paging",
+                    "Memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. No paging action taken: Region already mapped with these attributes.",
+                );
+                return Ok(());
+            }
+
             // EFI_MEMORY_RP is a special case, we don't actually want to set it in the page table, we want to unmap
             // the region
             if paging_attrs & MemoryAttributes::ReadProtect == MemoryAttributes::ReadProtect {
+                if unmapped {
+                    // the region is already unmapped, this indicates that the GCD and page table are out of sync
+                    log::error!(
+                        "Memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?} already unmapped. GCD and page table are out of sync. This is a critical error.",
+                    );
+                    debug_assert!(false);
+                    return Ok(());
+                }
                 match page_table.unmap_memory_region(base_address as u64, len as u64) {
                     Ok(_) => {
                         log::trace!(
@@ -1894,89 +1940,50 @@ impl SpinLockedGcd {
                 }
             }
 
-            // we assume that the page table and GCD are in sync. If not, we will debug_assert and return an error here
-            // as such, we only need to query the first page of this region to get the attributes. This will tell us
-            // whether the region is mapped or not and if so, what cache attributes to persist.
-            // If the first page is unmapped, we will call map_memory_region to map it. If it finds a page that is
-            // mapped inside of there, it will fail and we will debug_assert and return an error.
-            // If the first page is mapped, we will call remap_memory_region to remap it. It queries the range already
-            // so will catch the rest of the range and return an error if it is inconsistently mapped.
-            match page_table.query_memory_region(base_address as u64, UEFI_PAGE_SIZE as u64) {
-                Ok(region_attrs) => {
-                    // if this region already has the attributes we want, we don't need to do anything
-                    // in the page table. The GCD already got updated before we got here (this may have been a virtual
-                    // attribute update)
-                    if region_attrs & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask)
-                        != paging_attrs
+            match page_table.map_memory_region(base_address as u64, len as u64, paging_attrs) {
+                Ok(_) => {
+                    // if the cache attributes changed, we need to publish an event, as some architectures
+                    // (such as x86) need to populate APs with the caching information
+                    if let Some(region_attrs) = region_attributes
+                        && (region_attrs & MemoryAttributes::CacheAttributesMask)
+                            != (paging_attrs & MemoryAttributes::CacheAttributesMask)
+                        && (paging_attrs & MemoryAttributes::CacheAttributesMask) != MemoryAttributes::empty()
                     {
-                        match page_table.remap_memory_region(base_address as u64, len as u64, paging_attrs) {
-                            Ok(_) => {
-                                // if the cache attributes changed, we need to publish an event, as some architectures
-                                // (such as x86) need to populate APs with the caching information
-                                if (region_attrs & MemoryAttributes::CacheAttributesMask
-                                    != paging_attrs & MemoryAttributes::CacheAttributesMask)
-                                    && paging_attrs & MemoryAttributes::CacheAttributesMask != MemoryAttributes::empty()
-                                {
-                                    log::trace!(
-                                        target: "paging",
-                                        "Attributes for memory region {base_address:#x?} of length {len:#x?} were updated to {paging_attrs:#x?} from {region_attrs:#x?}, sending cache attributes changed event",
-                                    );
+                        log::trace!(
+                            target: "paging",
+                            "Attributes for memory region {base_address:#x?} of length {len:#x?} were updated to {paging_attrs:#x?} from {region_attrs:#x?}, sending cache attributes changed event",
+                        );
 
-                                    EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
-                                }
-                            }
-                            Err(e) => {
-                                // this indicates the GCD and page table are out of sync
-                                log::error!(
-                                    "Failed to remap memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
-                                );
-                                log::error!("GCD and page table are out of sync. This is a critical error.");
-                                log::error!("GCD {GCD}");
-                                debug_assert!(false);
-                                match e {
-                                    PtError::OutOfResources => EfiError::OutOfResources,
-                                    PtError::NoMapping => EfiError::NotFound,
-                                    _ => EfiError::InvalidParameter,
-                                };
-                            }
-                        }
+                        EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
+                    } else if unmapped
+                        && (paging_attrs & MemoryAttributes::CacheAttributesMask) != MemoryAttributes::empty()
+                    {
+                        log::trace!(
+                            target: "paging",
+                            "Memory region {base_address:#x?} of length {len:#x?} mapped, sending cache attributes changed event",
+                        );
+
+                        EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
                     }
+
+                    log::trace!(
+                        target: "paging",
+                        "Memory region {base_address:#x?} of length {len:#x?} mapped with attributes {paging_attrs:#x?}",
+                    );
                     Ok(())
                 }
-                Err(PtError::NoMapping) => {
-                    // if this isn't mapped yet, we need to map the range
-                    match page_table.map_memory_region(base_address as u64, len as u64, paging_attrs) {
-                        Ok(_) => {
-                            // we are setting the cache attributes for the first time, we need to publish an event,
-                            // as some architectures (such as x86) need to populate APs with the caching information
-                            if paging_attrs & MemoryAttributes::CacheAttributesMask != MemoryAttributes::empty() {
-                                log::trace!(
-                                    target: "paging",
-                                    "Memory region {base_address:#x?} of length {len:#x?} mapped with attrs {attributes:#x?}, sending cache attributes changed event",
-                                );
-
-                                EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
-                            }
-                            Ok(())
-                        }
-                        Err(e) => {
-                            // this indicates the GCD and page table are out of sync
-                            log::error!(
-                                "Failed to map memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
-                            );
-                            log::error!("GCD and page table are out of sync. This is a critical error.");
-                            log::error!("GCD {GCD}");
-                            debug_assert!(false);
-                            Err(EfiError::InvalidParameter)?
-                        }
-                    }
-                }
                 Err(e) => {
+                    // this indicates the GCD and page table are out of sync
                     log::error!(
-                        "Failed to query memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
+                        "Failed to map memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
                     );
+
                     debug_assert!(false);
-                    Err(EfiError::InvalidParameter)?
+                    match e {
+                        PtError::OutOfResources => Err(EfiError::OutOfResources),
+                        PtError::NoMapping => Err(EfiError::NotFound),
+                        _ => Err(EfiError::InvalidParameter),
+                    }
                 }
             }
         } else {
@@ -2414,18 +2421,10 @@ impl SpinLockedGcd {
                 current_len as usize,
                 attributes,
             ) {
-                Err(EfiError::NotReady) => {
-                    // before the page table is installed, we expect to get a return of NotReady. This means the GCD
-                    // has been updated with the attributes, but the page table is NotReady yet. In init_paging, the
-                    // page table will be updated with the current state of the GCD. The code that calls into this expects
-                    // NotReady to be returned, so we must catch that error and report it. However, we also need to
-                    // make sure any attribute updates across descriptors update the full range and not error out here.
-                    res = Err(EfiError::NotReady);
-                }
                 Ok(()) => {}
-                _ => {
+                Err(e) => {
                     log::error!(
-                        "Failed to set GCD memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}",
+                        "Failed to set GCD memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
                     );
                     debug_assert!(false);
                 }
@@ -2446,11 +2445,29 @@ impl SpinLockedGcd {
                         // make sure any attribute updates across descriptors update the full range and not error out here.
                         res = Err(EfiError::NotReady);
                     }
-                    _ => {
+                    Err(e) => {
                         log::error!(
-                            "Failed to set page table memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}",
+                            "Failed to set page table memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
                         );
                         debug_assert!(false);
+
+                        // if we failed here, we shouldn't leave the GCD and the page table out of sync. Roll the GCD back
+                        // to the previous attributes for this range. We may have partially updated this range in the GCD
+                        // and the page table, but they will be in sync. We could attempt to continue here, but we need
+                        // to return an error to the caller, so we might as well stop here.
+                        if let Err(rollback_err) = self.memory.lock().set_memory_space_attributes(
+                            current_base as usize,
+                            current_len as usize,
+                            descriptor.attributes,
+                        ) {
+                            // well, we did our best. The GCD and page table are now out of sync, which is a critical error.
+                            log::error!(
+                                "Failed to roll back GCD attributes after page table attribute set failure. This is a critical error. GCD and page table are now out of sync. Rollback error: {:?}",
+                                rollback_err
+                            );
+                        }
+
+                        return Err(e);
                     }
                 }
             }
