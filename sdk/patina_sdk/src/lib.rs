@@ -21,6 +21,8 @@
 
 extern crate alloc;
 
+pub use base::guid::Guid;
+
 #[macro_use]
 pub mod macros;
 
