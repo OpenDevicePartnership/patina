@@ -195,6 +195,7 @@ mod tests {
 
     use super::*;
     use crate as patina_sdk;
+    use crate::{Guid, OwnedGuid};
     use crate::{
         component::{
             hob::{FromHob, Hob},
@@ -202,7 +203,6 @@ mod tests {
         },
         error::{EfiError, Result},
     };
-    use r_efi::base::Guid;
 
     #[derive(IntoComponent)]
     struct ComponentSuccess;
@@ -269,8 +269,8 @@ mod tests {
 
     #[test]
     fn test_component_run_return_handling() {
-        const HOB_GUID: Guid =
-            Guid::from_fields(0xd4ffc718, 0xfb82, 0x4274, 0x9a, 0xfc, &[0xaa, 0x8b, 0x1e, 0xef, 0x52, 0x93]);
+        const HOB_GUID: OwnedGuid =
+            Guid::from_fields(0xd4ffc718, 0xfb82, 0x4274, 0x9a, 0xfc, [0xaa, 0x8b, 0x1e, 0xef, 0x52, 0x93]);
 
         let mut storage = storage::Storage::new();
 

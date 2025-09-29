@@ -41,7 +41,7 @@ impl HobConfig {
         let [d2, d3, d4, d5, d6, d7] = *node;
 
         Ok(quote! {
-            patina_sdk::component::service::Guid::from_fields(#a, #b, #c, #d0, #d1, &[#d2, #d3, #d4, #d5, #d6, #d7])
+            patina_sdk::OwnedGuid::from_fields(#a, #b, #c, #d0, #d1, [#d2, #d3, #d4, #d5, #d6, #d7])
         })
     }
 
@@ -122,7 +122,7 @@ pub fn hob_config2(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
 
     quote! {
         impl #lhs patina_sdk::component::hob::FromHob for #name #rhs #where_clause {
-            const HOB_GUID: patina_sdk::component::service::Guid = #hob_guid;
+            const HOB_GUID: patina_sdk::OwnedGuid = #hob_guid;
 
             fn parse(bytes: &[u8]) -> Self {
                 assert!(
@@ -143,7 +143,6 @@ mod tests {
     use quote::quote;
     extern crate alloc;
     use alloc::format;
-    use patina_sdk::component;
 
     #[test]
     fn test_config_basic() {
@@ -153,17 +152,17 @@ mod tests {
             struct MyStruct(u32);
         };
 
-        const TEST_HOB_GUID: component::service::Guid = component::service::Guid::from_fields(
+        const TEST_HOB_GUID: patina_sdk::OwnedGuid = patina_sdk::OwnedGuid::from_fields(
             2347032417u32,
             37834u16,
             4562u16,
             170u8,
             13u8,
-            &[0u8, 224u8, 152u8, 3u8, 43u8, 140u8],
+            [0u8, 224u8, 152u8, 3u8, 43u8, 140u8],
         );
         let expected = quote! {
             impl patina_sdk::component::hob::FromHob for MyStruct {
-                const HOB_GUID: patina_sdk::component::service::Guid = patina_sdk::component::service::Guid::from_fields(2347032417u32, 37834u16, 4562u16, 170u8, 13u8, &[0u8, 224u8, 152u8, 3u8, 43u8, 140u8]);
+                const HOB_GUID: patina_sdk::OwnedGuid = patina_sdk::OwnedGuid::from_fields(2347032417u32, 37834u16, 4562u16, 170u8, 13u8, [0u8, 224u8, 152u8, 3u8, 43u8, 140u8]);
                 fn parse(bytes: &[u8]) -> Self {
                     assert!(
                         bytes.len() >= core::mem::size_of::<Self>(),
@@ -191,18 +190,18 @@ mod tests {
             struct MyStruct(u32);
         };
 
-        const TEST_HOB_GUID: component::service::Guid = component::service::Guid::from_fields(
+        const TEST_HOB_GUID: patina_sdk::OwnedGuid = patina_sdk::OwnedGuid::from_fields(
             0xea296d92u32,
             0x0b69u16,
             0x423cu16,
             0x8cu8,
             0x28u8,
-            &[0x33u8, 0xb4u8, 0xe0u8, 0xa9u8, 0x12u8, 0x68u8],
+            [0x33u8, 0xb4u8, 0xe0u8, 0xa9u8, 0x12u8, 0x68u8],
         );
         let expected = quote! {
             impl patina_sdk::component::hob::FromHob for MyStruct {
 
-                const HOB_GUID: patina_sdk::component::service::Guid = patina_sdk::component::service::Guid::from_fields(3928583570u32, 2921u16, 16956u16, 140u8, 40u8, &[51u8, 180u8, 224u8, 169u8, 18u8, 104u8]);
+                const HOB_GUID: patina_sdk::OwnedGuid = patina_sdk::OwnedGuid::from_fields(3928583570u32, 2921u16, 16956u16, 140u8, 40u8, [51u8, 180u8, 224u8, 169u8, 18u8, 104u8]);
                 fn parse(bytes: &[u8]) -> Self {
                     assert!(
                         bytes.len() >= core::mem::size_of::<Self>(),
@@ -233,7 +232,7 @@ mod tests {
         };
         let expected = quote! {
             impl<T> patina_sdk::component::hob::FromHob for MyStruct<T> {
-                const HOB_GUID: patina_sdk::component::service::Guid = patina_sdk::component::service::Guid::from_fields(2347032417u32, 37834u16, 4562u16, 170u8, 13u8, &[0u8, 224u8, 152u8, 3u8, 43u8, 140u8]);
+                const HOB_GUID: patina_sdk::OwnedGuid = patina_sdk::OwnedGuid::from_fields(2347032417u32, 37834u16, 4562u16, 170u8, 13u8, [0u8, 224u8, 152u8, 3u8, 43u8, 140u8]);
                 fn parse(bytes: &[u8]) -> Self {
                     assert!(
                         bytes.len() >= core::mem::size_of::<Self>(),

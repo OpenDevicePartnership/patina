@@ -339,7 +339,7 @@ impl Core<Alloc> {
     fn parse_hobs(&mut self) {
         for hob in self.hob_list.iter() {
             if let mu_pi::hob::Hob::GuidHob(guid, data) = hob {
-                let parser_funcs = self.storage.get_hob_parsers(&guid.name);
+                let parser_funcs = self.storage.get_hob_parsers(&patina_sdk::OwnedGuid::from(guid.name));
                 if parser_funcs.is_empty() {
                     let (f0, f1, f2, f3, f4, &[f5, f6, f7, f8, f9, f10]) = guid.name.as_fields();
                     let name = alloc::format!(

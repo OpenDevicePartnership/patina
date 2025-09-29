@@ -13,6 +13,7 @@ use crate::{
     runtime_services::StandardRuntimeServices,
 };
 
+use crate::OwnedGuid;
 use crate::boot_services::StandardBootServices;
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{
@@ -23,14 +24,13 @@ use core::{
     ops::{Deref, DerefMut},
     ptr,
 };
-use r_efi::efi::Guid;
 
 use super::{
     hob::{FromHob, Hob},
     service::{IntoService, Service},
 };
 
-type HobParsers = BTreeMap<Guid, BTreeMap<TypeId, fn(&[u8], &mut Storage)>>;
+type HobParsers = BTreeMap<OwnedGuid, BTreeMap<TypeId, fn(&[u8], &mut Storage)>>;
 
 /// A vector whose elements are sparsely populated.
 #[derive(Debug)]
@@ -418,7 +418,7 @@ impl Storage {
     }
 
     /// Attempts to retrieve a HOB parser from the storage.
-    pub fn get_hob_parsers(&self, guid: &Guid) -> Vec<fn(&[u8], &mut Storage)> {
+    pub fn get_hob_parsers(&self, guid: &OwnedGuid) -> Vec<fn(&[u8], &mut Storage)> {
         self.hob_parsers.get(guid).map(|type_map| type_map.values().copied().collect()).unwrap_or_default()
     }
 }

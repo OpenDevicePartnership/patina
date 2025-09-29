@@ -16,6 +16,7 @@
 //! initialization is to parse the HOB list and use any registered parsers to parse a GUIDed HOB.
 use patina_sdk::component::prelude::*;
 use patina_sdk::component::{IntoComponent, Storage};
+use patina_sdk::{Guid, OwnedGuid};
 
 /// This struct represents a custom HOB that is a simple cast and does not require any special handling or parsing.
 /// Due to this, The `FromHob` trait can be derived automatically. The `Copy` trait is required for this type so that
@@ -39,8 +40,7 @@ pub struct CustomHob1 {
 pub struct CustomHob2(String);
 
 impl FromHob for CustomHob2 {
-    const HOB_GUID: r_efi::efi::Guid =
-        r_efi::efi::Guid::from_fields(0x0, 0x0, 0x0, 0x0, 0x0, &[0x00, 0x00, 0x00, 0x0, 0x0, 0x02]);
+    const HOB_GUID: OwnedGuid = Guid::from_fields(0x0, 0x0, 0x0, 0x0, 0x0, [0x00, 0x00, 0x00, 0x0, 0x0, 0x02]);
 
     fn parse(bytes: &[u8]) -> Self {
         let out = String::from_utf8(bytes.to_vec()).expect("Failed to parse string from bytes");
@@ -162,7 +162,7 @@ mod util {
         for hob in hob_list.iter() {
             match hob {
                 mu_pi::hob::Hob::GuidHob(hob, data) => {
-                    for parser in storage.get_hob_parsers(&hob.name) {
+                    for parser in storage.get_hob_parsers(&patina_sdk::Guid::from(hob.name)) {
                         parser(data, storage);
                     }
                 }
@@ -206,7 +206,7 @@ mod util {
                 length: std::mem::size_of::<CustomHob2>() as u16,
                 reserved: 0,
             },
-            name: CustomHob2::HOB_GUID,
+            name: CustomHob2::HOB_GUID.to_efi_guid(),
         }));
         hob_list.push(mu_pi::hob::Hob::GuidHob(hob, as_slice));
     }

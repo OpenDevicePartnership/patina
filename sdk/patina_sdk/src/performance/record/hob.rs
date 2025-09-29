@@ -15,7 +15,6 @@ use core::iter::Iterator;
 
 use crate::{
     component::hob::{FromHob, Hob},
-    guids::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
     performance::{
         error::Error,
         record::{Iter, PerformanceRecordBuffer},
@@ -31,7 +30,7 @@ pub trait HobPerformanceDataExtractor {
     fn extract_hob_perf_data(&self) -> Result<(u32, PerformanceRecordBuffer), Error>;
 }
 
-/// Data inside an [`EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE`] guid hob.
+/// Data inside an [`crate::guids::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE`] guid hob.
 #[derive(Debug, Default)]
 pub struct HobPerformanceData {
     /// Number of images loaded.
@@ -41,7 +40,8 @@ pub struct HobPerformanceData {
 }
 
 impl FromHob for HobPerformanceData {
-    const HOB_GUID: r_efi::efi::Guid = EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE;
+    const HOB_GUID: crate::OwnedGuid =
+        crate::Guid::from_fields(0x3b387bfd, 0x7abc, 0x4cf2, 0xa0, 0xca, [0xb6, 0xa1, 0x6c, 0x1b, 0x1b, 0x25]);
 
     fn parse(bytes: &[u8]) -> HobPerformanceData {
         let mut offset = 0;

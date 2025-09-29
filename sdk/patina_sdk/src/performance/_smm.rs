@@ -18,7 +18,7 @@ use core::{debug_assert_eq, ptr, slice};
 
 use r_efi::efi;
 
-use crate::{base::UEFI_PAGE_SIZE, component::hob::FromHob, uefi_protocol::ProtocolInterface};
+use crate::{Guid, OwnedGuid, base::UEFI_PAGE_SIZE, component::hob::FromHob, uefi_protocol::ProtocolInterface};
 use scroll::{
     Endian, Pread, Pwrite,
     ctx::{TryFromCtx, TryIntoCtx},
@@ -36,8 +36,8 @@ pub struct MmCommRegion {
 }
 
 impl FromHob for MmCommRegion {
-    const HOB_GUID: efi::Guid =
-        efi::Guid::from_fields(0xd4ffc718, 0xfb82, 0x4274, 0x9a, 0xfc, &[0xaa, 0x8b, 0x1e, 0xef, 0x52, 0x93]);
+    const HOB_GUID: OwnedGuid =
+        Guid::from_fields(0xd4ffc718, 0xfb82, 0x4274, 0x9a, 0xfc, [0xaa, 0x8b, 0x1e, 0xef, 0x52, 0x93]);
 
     fn parse(bytes: &[u8]) -> Self {
         bytes.pread(0).unwrap()
