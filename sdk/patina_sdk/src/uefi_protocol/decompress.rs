@@ -64,7 +64,7 @@ impl EfiDecompressProtocol {
         // SAFETY: The data the pointer points to is at least 8 bytes long, as checked above.
         let compressed_size = unsafe { src.cast::<u32>().read_unaligned() };
 
-        if (src_size < compressed_size + 8) | compressed_size.checked_add(8).is_none() {
+        if (src_size < compressed_size + 8) || compressed_size.checked_add(8).is_none() {
             return efi::Status::INVALID_PARAMETER;
         }
 
@@ -95,7 +95,7 @@ impl EfiDecompressProtocol {
         let src = unsafe { core::slice::from_raw_parts(source_buffer as *const u8, source_size as usize) };
         let dst = unsafe { core::slice::from_raw_parts_mut(destination_buffer as *mut u8, destination_size as usize) };
 
-        match decompress_into_with_algo(src, dst, DecompressionAlgorithm::TianoDecompress) {
+        match decompress_into_with_algo(src, dst, DecompressionAlgorithm::UefiDecompress) {
             Ok(()) => efi::Status::SUCCESS,
             Err(_) => efi::Status::INVALID_PARAMETER,
         }
