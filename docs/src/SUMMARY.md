@@ -8,6 +8,7 @@
 # Background Information
 
 - [Patina DXE Core Memory Safety Strategy](background/memory_safety_strategy.md)
+- [Rust Tooling in Patina](background/rust_tools.md)
 - [UEFI Memory Safety Case Studies](background/uefi_memory_safety_case_studies.md)
 
 # Best Practices
