@@ -21,7 +21,7 @@ use core::{
 use crate::{
     boot_services::BootServices,
     error::EfiError,
-    guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
+    guids::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
     performance::{
         self,
         _smm::{CommunicateProtocol, MmCommRegion, SmmGetRecordDataByOffset, SmmGetRecordSize},

@@ -19,7 +19,7 @@ use mu_rust_helpers::function;
 use patina_internal_collections::{Error as SliceError, Rbt, SliceKey, node_size};
 use patina_sdk::{
     base::{SIZE_4GB, UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, align_up},
-    guid::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP,
+    guids::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP,
     uefi_pages_to_size,
 };
 use r_efi::efi;

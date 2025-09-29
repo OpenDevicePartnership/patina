@@ -16,7 +16,7 @@ use mu_pi::{
     status_code,
 };
 use patina_internal_cpu::interrupts;
-use patina_sdk::guid;
+use patina_sdk::guids;
 use r_efi::efi;
 
 use crate::{
@@ -169,7 +169,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
         Err(err) => {
             log::error!("Failed to terminate memory map: {err:?}");
             GCD.unlock_memory_space();
-            EVENT_DB.signal_group(guid::EBS_FAILED);
+            EVENT_DB.signal_group(guids::EBS_FAILED);
             return err.into();
         }
     }
@@ -186,7 +186,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
                 status_code::EFI_PROGRESS_CODE,
                 status_code::EFI_SOFTWARE_EFI_BOOT_SERVICE | status_code::EFI_SW_BS_PC_EXIT_BOOT_SERVICES,
                 0,
-                &guid::DXE_CORE,
+                &guids::DXE_CORE,
                 core::ptr::null(),
             );
         }

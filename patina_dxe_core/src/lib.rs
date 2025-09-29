@@ -606,7 +606,7 @@ fn call_bds() {
                 EFI_PROGRESS_CODE,
                 EFI_SOFTWARE_DXE_CORE | EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT,
                 0,
-                &patina_sdk::guid::DXE_CORE,
+                &patina_sdk::guids::DXE_CORE,
                 ptr::null(),
             );
         }

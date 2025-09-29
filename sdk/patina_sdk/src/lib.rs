@@ -30,7 +30,7 @@ pub mod component;
 pub mod driver_binding;
 pub mod efi_types;
 pub mod error;
-pub mod guid;
+pub mod guids;
 pub mod log;
 pub mod performance;
 pub mod runtime_services;

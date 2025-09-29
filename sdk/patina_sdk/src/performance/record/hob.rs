@@ -15,7 +15,7 @@ use core::iter::Iterator;
 
 use crate::{
     component::hob::{FromHob, Hob},
-    guid::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
+    guids::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
     performance::{
         error::Error,
         record::{Iter, PerformanceRecordBuffer},
