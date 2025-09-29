@@ -1,11 +1,9 @@
 #![no_std]
 
-// Allow using the standard library inside test configuration so tests can print
-// bytes to stdout. This keeps the crate `no_std` for normal builds.
+mod component;
 pub mod smbios_derive;
 pub mod smbios_record;
 
-// Re-export the derive macro from the macro crate
 pub use patina_smbios_macro::SmbiosRecord;
 
 // Simplified test: construct a header, serialize it to bytes, append data and print
