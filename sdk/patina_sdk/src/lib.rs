@@ -21,7 +21,7 @@
 
 extern crate alloc;
 
-pub use base::guid::Guid;
+pub use base::guid::{Guid, GuidError, OwnedGuid};
 
 #[macro_use]
 pub mod macros;
