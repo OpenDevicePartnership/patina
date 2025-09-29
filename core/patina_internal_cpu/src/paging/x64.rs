@@ -63,22 +63,6 @@ where
         self.paging.unmap_memory_region(address, size)
     }
 
-    fn remap_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError> {
-        let cache_attributes = attributes & MemoryAttributes::CacheAttributesMask;
-        let memory_attributes = attributes & MemoryAttributes::AccessAttributesMask;
-
-        if attributes != (cache_attributes | memory_attributes) {
-            return Err(PtError::InvalidParameter);
-        }
-
-        match apply_caching_attributes(address, size, cache_attributes, &mut self.mtrr) {
-            Ok(_) => {
-                self.paging.remap_memory_region(address, size, attributes & MemoryAttributes::AccessAttributesMask)
-            }
-            Err(status) => Err(efierror_to_pterror(status)),
-        }
-    }
-
     fn install_page_table(&mut self) -> Result<(), PtError> {
         self.paging.install_page_table()
     }
