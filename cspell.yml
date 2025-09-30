@@ -35,8 +35,8 @@ words:
   - cdecl
   - cdrom
   - corosensei
+  - coverity
   - ctypes
-  - ruint
   - dbgwcr
   - dbgwvr
   - deassertion
@@ -72,6 +72,7 @@ words:
   - irouter
   - iscsi
   - isenabler
+  - keccak
   - linkme
   - longjmp
   - lzmatest
@@ -111,6 +112,7 @@ words:
   - relia
   - reloc
   - rposition
+  - ruint
   - rwlock
   - sctlr
   - smcport
@@ -125,6 +127,7 @@ words:
   - uintn
   - unaccepte
   - uncacheable
+  - uncrustify
   - unregisters
   - unspec
   - vcvarsamd

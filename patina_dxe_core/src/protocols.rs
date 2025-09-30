@@ -56,9 +56,9 @@ extern "efiapi" fn install_protocol_interface(
     if handle.is_null() || protocol.is_null() || interface_type != efi::NATIVE_INTERFACE {
         return efi::Status::INVALID_PARAMETER;
     }
-
-    let caller_handle = unsafe { *handle };
-    let caller_protocol = unsafe { *protocol };
+    // Safety: Caller must ensure that handle and protocol are valid pointers. They are null-checked above.
+    let caller_handle = unsafe { handle.read_unaligned() };
+    let caller_protocol = unsafe { protocol.read_unaligned() };
 
     let caller_handle = if caller_handle.is_null() { None } else { Some(caller_handle) };
 
@@ -168,7 +168,8 @@ extern "efiapi" fn uninstall_protocol_interface(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let caller_protocol = *(unsafe { protocol.as_mut().expect("previously null-checked pointer is null") });
+    // Safety: Caller must ensure that protocol is a valid pointer. It is null-checked above.
+    let caller_protocol = unsafe { protocol.read_unaligned() };
 
     core_uninstall_protocol_interface(handle, caller_protocol, interface)
         .map(|_| efi::Status::SUCCESS)
@@ -218,7 +219,8 @@ extern "efiapi" fn reinstall_protocol_interface(
         }
     }
 
-    let protocol = *(unsafe { protocol.as_mut().expect("previously null-checked pointer is null") });
+    // Safety: Caller must ensure that protocol is a valid pointer. It is null-checked above.
+    let protocol = unsafe { protocol.read_unaligned() };
 
     // Call install to install the new interface and trigger any notifies
     if let Err(err) = core_install_protocol_interface(Some(handle), protocol, new_interface) {
@@ -248,8 +250,8 @@ extern "efiapi" fn register_protocol_notify(
     if protocol.is_null() || registration.is_null() || !EVENT_DB.is_valid(event) {
         return efi::Status::INVALID_PARAMETER;
     }
-
-    match PROTOCOL_DB.register_protocol_notify(unsafe { *protocol }, event) {
+    // Safety: Caller must ensure that protocol is a valid pointer. It is null-checked above.
+    match PROTOCOL_DB.register_protocol_notify(unsafe { protocol.read_unaligned() }, event) {
         Err(err) => err.into(),
         Ok(new_registration) => {
             unsafe { *registration = new_registration };
@@ -281,7 +283,8 @@ extern "efiapi" fn locate_handle(
             if protocol.is_null() {
                 return efi::Status::INVALID_PARAMETER;
             }
-            PROTOCOL_DB.locate_handles(Some(unsafe { *protocol }))
+            // Safety: Caller must ensure that protocol is a valid pointer. It is null-checked above.
+            PROTOCOL_DB.locate_handles(Some(unsafe { protocol.read_unaligned() }))
         }
         _ => return efi::Status::INVALID_PARAMETER,
     };
@@ -297,9 +300,11 @@ extern "efiapi" fn locate_handle(
             }
 
             list.shrink_to_fit();
-            let input_size = unsafe { *buffer_size };
+            // Safety: Caller must ensure that buffer_size is a valid pointer. It is null-checked above.
+            let input_size = unsafe { buffer_size.read_unaligned() };
+            // Safety: Caller must ensure that buffer_size is a valid pointer. It is null-checked above.
             unsafe {
-                *buffer_size = list.len() * size_of::<efi::Handle>();
+                buffer_size.write_unaligned(list.len() * size_of::<efi::Handle>());
             }
             if input_size < list.len() * size_of::<efi::Handle>() {
                 return efi::Status::BUFFER_TOO_SMALL;
@@ -308,8 +313,14 @@ extern "efiapi" fn locate_handle(
                 return efi::Status::INVALID_PARAMETER;
             }
 
-            //copy handle list into output buffer
-            unsafe { slice::from_raw_parts_mut(handle_buffer, list.len()).copy_from_slice(&list) };
+            // Caller must ensure that handle_buffer is valid for writes of list.len() handles. It is null-checked above.
+            unsafe {
+                core::ptr::copy(
+                    list.as_ptr() as *const u8,
+                    handle_buffer as *mut u8,
+                    list.len() * core::mem::size_of::<efi::Handle>(),
+                );
+            }
 
             efi::Status::SUCCESS
         }
@@ -343,10 +354,8 @@ extern "efiapi" fn open_protocol(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let protocol = match unsafe { protocol.as_ref() } {
-        Some(protocol) => *protocol,
-        None => return efi::Status::INVALID_PARAMETER,
-    };
+    // Safety: Caller must ensure that protocol is a valid pointer. It is null-checked above.
+    let protocol = unsafe { protocol.read_unaligned() };
 
     if interface.is_null() && attributes != efi::OPEN_PROTOCOL_TEST_PROTOCOL {
         return efi::Status::INVALID_PARAMETER;
@@ -370,6 +379,7 @@ extern "efiapi" fn open_protocol(
                 && (x.attributes & efi::OPEN_PROTOCOL_EXCLUSIVE) == 0
                 && x.agent_handle != agent_handle
         }) {
+            // Safety: handles are validated above.
             unsafe {
                 if core_disconnect_controller(handle, usage.agent_handle, None).is_err() {
                     return efi::Status::ACCESS_DENIED;
@@ -381,7 +391,8 @@ extern "efiapi" fn open_protocol(
     match PROTOCOL_DB.add_protocol_usage(handle, protocol, agent_handle, controller_handle, attributes) {
         Err(EfiError::Unsupported) => {
             if !interface.is_null() {
-                unsafe { interface.write(core::ptr::null_mut()) };
+                // Safety: Caller must ensure that interface is a valid pointer if it is non-null.
+                unsafe { interface.write_unaligned(core::ptr::null_mut()) };
             }
             return efi::Status::UNSUPPORTED;
         }
@@ -391,7 +402,8 @@ extern "efiapi" fn open_protocol(
                 .get_interface_for_handle(handle, protocol)
                 .expect("Already Started can't happen if protocol doesn't exist.");
             if !interface.is_null() {
-                unsafe { interface.write(desired_interface) };
+                // Safety: Caller must ensure that interface is a valid pointer if it is non-null.
+                unsafe { interface.write_unaligned(desired_interface) };
             }
             return efi::Status::ALREADY_STARTED;
         }
@@ -406,7 +418,8 @@ extern "efiapi" fn open_protocol(
     };
 
     if attributes != efi::OPEN_PROTOCOL_TEST_PROTOCOL {
-        unsafe { interface.write(desired_interface) };
+        // Safety: Caller must ensure that interface is a valid pointer if it is non-null.
+        unsafe { interface.write_unaligned(desired_interface) };
     }
     efi::Status::SUCCESS
 }
@@ -435,7 +448,14 @@ extern "efiapi" fn close_protocol(
         }
     };
 
-    match PROTOCOL_DB.remove_protocol_usage(handle, unsafe { *protocol }, Some(agent_handle), controller_handle, None) {
+    match PROTOCOL_DB.remove_protocol_usage(
+        handle,
+        // Safety: Caller must ensure that protocol is a valid pointer. It is null-checked above.
+        unsafe { protocol.read_unaligned() },
+        Some(agent_handle),
+        controller_handle,
+        None,
+    ) {
         Err(err) => err.into(),
         Ok(_) => efi::Status::SUCCESS,
     }
@@ -447,12 +467,13 @@ extern "efiapi" fn open_protocol_information(
     entry_buffer: *mut *mut efi::OpenProtocolInformationEntry,
     entry_count: *mut usize,
 ) -> efi::Status {
-    if protocol.is_null() {
+    if protocol.is_null() || entry_buffer.is_null() || entry_count.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
 
     let mut open_info: Vec<efi::OpenProtocolInformationEntry> =
-        match PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, unsafe { *protocol }) {
+        // Safety: Caller must ensure that protocol is a valid pointer. It is null-checked above.
+        match PROTOCOL_DB.get_open_protocol_information_by_protocol(handle, unsafe { protocol.read_unaligned() }) {
             Err(err) => return err.into(),
             Ok(info) => info.into_iter().map(efi::OpenProtocolInformationEntry::from).collect(),
         };
@@ -463,10 +484,16 @@ extern "efiapi" fn open_protocol_information(
     //caller is supposed to free the entry buffer using FreePool, so we need to allocate it using allocate pool.
     match core_allocate_pool(efi::BOOT_SERVICES_DATA, buffer_size) {
         Err(err) => err.into(),
-        Ok(allocation) => unsafe {
-            entry_buffer.write(allocation as *mut efi::OpenProtocolInformationEntry);
-            *entry_count = open_info.len();
-            slice::from_raw_parts_mut(*entry_buffer, open_info.len()).copy_from_slice(&open_info);
+        Ok(allocation) =>
+        // Safety: Caller must ensure that entry_buffer and entry_count are valid pointers. They are null-checked above.
+        unsafe {
+            entry_buffer.write_unaligned(allocation as *mut efi::OpenProtocolInformationEntry);
+            entry_count.write_unaligned(open_info.len());
+            core::ptr::copy(
+                open_info.as_ptr() as *const u8,
+                allocation as *mut u8,
+                open_info.len() * size_of::<efi::OpenProtocolInformationEntry>(),
+            );
             efi::Status::SUCCESS
         },
     }
@@ -587,16 +614,18 @@ extern "efiapi" fn protocols_per_handle(
     //caller is supposed to free the entry buffer using free pool, so we need to allocate it using allocate pool.
     match core_allocate_pool(efi::BOOT_SERVICES_DATA, ptr_buffer_size + guid_buffer_size) {
         Err(err) => err.into(),
+        // Safety: Caller must ensure that protocol_buffer and protocol_buffer_count are valid pointers. They are null-checked above.
         Ok(allocation) => unsafe {
-            protocol_buffer.write(allocation as *mut *mut efi::Guid);
-            protocol_buffer_count.write(protocol_list.len());
+            protocol_buffer.write_unaligned(allocation as *mut *mut efi::Guid);
+            protocol_buffer_count.write_unaligned(protocol_list.len());
 
-            let guid_buffer = (*protocol_buffer as usize + ptr_buffer_size) as *mut efi::Guid;
+            let guid_buffer = (allocation as usize + ptr_buffer_size) as *mut efi::Guid;
             let guids = slice::from_raw_parts_mut(guid_buffer, protocol_list.len());
             guids.copy_from_slice(&protocol_list);
 
             let guid_ptrs: Vec<*mut efi::Guid> = guids.iter_mut().map(|x| x as *mut efi::Guid).collect();
-            slice::from_raw_parts_mut(*protocol_buffer, protocol_list.len()).copy_from_slice(&guid_ptrs);
+            slice::from_raw_parts_mut(protocol_buffer.read_unaligned(), protocol_list.len())
+                .copy_from_slice(&guid_ptrs);
             efi::Status::SUCCESS
         },
     }
@@ -615,9 +644,10 @@ extern "efiapi" fn locate_handle_buffer(
 
     //EDK2 C reference code unconditionally sets no_handles and buffer to default values regardless of success or failure
     //of the function, and some callers expect this behavior (and don't check return status before using no_handles).
+    // Safety: Caller must ensure that no_handles and buffer are valid pointers. They are null-checked above.
     unsafe {
-        no_handles.write(0);
-        buffer.write(core::ptr::null_mut());
+        no_handles.write_unaligned(0);
+        buffer.write_unaligned(core::ptr::null_mut());
     }
 
     let handles = match search_type {
@@ -636,7 +666,8 @@ extern "efiapi" fn locate_handle_buffer(
             if protocol.is_null() {
                 return efi::Status::INVALID_PARAMETER;
             }
-            unsafe { PROTOCOL_DB.locate_handles(Some(*protocol)) }
+            // Safety: Caller must ensure that protocol is a valid pointer. It is null-checked above.
+            unsafe { PROTOCOL_DB.locate_handles(Some(protocol.read_unaligned())) }
         }
         _ => return efi::Status::INVALID_PARAMETER,
     };
@@ -652,10 +683,11 @@ extern "efiapi" fn locate_handle_buffer(
         let buffer_size = handles.len() * size_of::<efi::Handle>();
         match core_allocate_pool(efi::BOOT_SERVICES_DATA, buffer_size) {
             Err(err) => err.into(),
+            // Safety: Caller must ensure that no_handles and buffer are valid pointers. They are null-checked above.
             Ok(allocation) => unsafe {
-                buffer.write(allocation as *mut efi::Handle);
-                no_handles.write(handles.len());
-                slice::from_raw_parts_mut(*buffer, handles.len()).copy_from_slice(&handles);
+                buffer.write_unaligned(allocation as *mut efi::Handle);
+                no_handles.write_unaligned(handles.len());
+                slice::from_raw_parts_mut(buffer.read_unaligned(), handles.len()).copy_from_slice(&handles);
                 efi::Status::SUCCESS
             },
         }
@@ -673,20 +705,23 @@ extern "efiapi" fn locate_protocol(
 
     if !registration.is_null() {
         if let Some(handle) = PROTOCOL_DB.next_handle_for_registration(registration) {
+            // Safety: Caller must ensure that protocol and interface are valid pointers. They are null-checked above.
             let i_face = PROTOCOL_DB
-                .get_interface_for_handle(handle, unsafe { *protocol })
+                .get_interface_for_handle(handle, unsafe { protocol.read_unaligned() })
                 .expect("Protocol should exist on handle if it is returned for registration key.");
-            unsafe { interface.write(i_face) };
+            unsafe { interface.write_unaligned(i_face) };
         } else {
             return efi::Status::NOT_FOUND;
         }
     } else {
-        match PROTOCOL_DB.locate_protocol(unsafe { *protocol }) {
+        match PROTOCOL_DB.locate_protocol(unsafe { protocol.read_unaligned() }) {
             Err(err) => {
-                unsafe { interface.write(core::ptr::null_mut()) };
+                // Safety: Caller must ensure that interface is a valid pointer. It is null-checked above.
+                unsafe { interface.write_unaligned(core::ptr::null_mut()) };
                 return err.into();
             }
-            Ok(i_face) => unsafe { interface.write(i_face) },
+            // Safety: Caller must ensure that interface is a valid pointer. It is null-checked above.
+            Ok(i_face) => unsafe { interface.write_unaligned(i_face) },
         }
     }
     efi::Status::SUCCESS
@@ -739,21 +774,24 @@ extern "efiapi" fn locate_device_path(
     device_path: *mut *mut r_efi::protocols::device_path::Protocol,
     device: *mut efi::Handle,
 ) -> efi::Status {
-    if protocol.is_null() || device_path.is_null() || unsafe { *device_path }.is_null() {
+    // Safety: Caller must ensure that protocol, device_path, and device are valid pointers. They are null-checked below.
+    if protocol.is_null() || device_path.is_null() || unsafe { device_path.read_unaligned() }.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
 
     let (best_remaining_path, best_device) =
-        match core_locate_device_path(unsafe { *protocol }, unsafe { *device_path }) {
+        // Safety: Caller must ensure that protocol and device_path are valid pointers. They are null-checked above.
+        match core_locate_device_path(unsafe { protocol.read_unaligned() }, unsafe { device_path.read_unaligned() }) {
             Err(err) => return err.into(),
             Ok((path, device)) => (path, device),
         };
     if device.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
+    // Safety: Caller must ensure that device_path and device are valid pointers. They are null-checked above.
     unsafe {
-        device.write(best_device);
-        device_path.write(best_remaining_path);
+        device.write_unaligned(best_device);
+        device_path.write_unaligned(best_remaining_path);
     }
 
     efi::Status::SUCCESS

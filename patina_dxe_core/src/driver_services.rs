@@ -7,7 +7,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::{collections::BTreeMap, collections::BTreeSet, vec::Vec};
-use core::{ptr::NonNull, slice::from_raw_parts_mut};
+use core::ptr::NonNull;
 use patina_internal_device_path::{concat_device_path_to_boxed_slice, copy_device_path_to_boxed_slice};
 use patina_sdk::{
     error::EfiError,
@@ -277,8 +277,9 @@ fn core_connect_single_controller(
         return Ok(());
     }
 
+    // Safety: caller must ensure that the pointer contained in remaining_device_path is valid if it is Some(_).
     if let Some(device_path) = remaining_device_path
-        && unsafe { (*device_path).r#type == efi::protocols::device_path::TYPE_END }
+        && unsafe { (device_path.read_unaligned()).r#type == efi::protocols::device_path::TYPE_END }
     {
         return Ok(());
     }
@@ -336,21 +337,26 @@ extern "efiapi" fn connect_controller(
     let driver_handles = if driver_image_handle.is_null() {
         Vec::new()
     } else {
-        let mut count = 0;
         let mut current_ptr = driver_image_handle;
+        let mut handles: Vec<efi::Handle> = Vec::new();
         loop {
-            let current_val = unsafe { *current_ptr };
+            // Safety: caller must ensure that driver_image_handle is a valid pointer to a null-terminated list of
+            // handles if it is not null.
+            let current_val = unsafe { current_ptr.read_unaligned() };
             if current_val.is_null() {
                 break;
             }
-            count += 1;
+            handles.push(current_val);
+            // Safety: caller guarantees a null-terminated list, so safe to advance to the next pointer as the null-terminator
+            // has just been checked above.
             current_ptr = unsafe { current_ptr.add(1) };
         }
-        let slice = unsafe { from_raw_parts_mut(driver_image_handle, count) };
-        slice.to_vec().clone()
+        handles
     };
+    // remaining_device_path is passed in and may not have proper alignment.
+    let device_path = if remaining_device_path.is_null() { None } else { Some(remaining_device_path) };
 
-    let device_path = NonNull::new(remaining_device_path).map(|x| x.as_ptr());
+    // Safety: caller must ensure that device_path is a valid pointer to a device path structure if it is not null.
     unsafe {
         match core_connect_controller(handle, driver_handles, device_path, recursive.into()) {
             Err(err) => err.into(),

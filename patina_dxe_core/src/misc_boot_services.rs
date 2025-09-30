@@ -41,10 +41,10 @@ extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, crc_32: 
     if data.is_null() || data_size == 0 || crc_32.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
-
+    // Safety: caller must ensure that data and crc_32 are valid pointers. They are null-checked above.
     unsafe {
         let buffer = from_raw_parts(data as *mut u8, data_size);
-        crc_32.write(crc32fast::hash(buffer));
+        crc_32.write_unaligned(crc32fast::hash(buffer));
     }
 
     efi::Status::SUCCESS
