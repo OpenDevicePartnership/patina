@@ -22,7 +22,6 @@ Other repositories related to the patina project.
 | [patina-mtrr](https://github.com/OpenDevicePartnership/patina-mtrr) | Memory Type Range Registers for x86_64. |
 | [patina-paging](https://github.com/OpenDevicePartnership/patina-paging) | Paging implementation. |
 | [r-efi](https://github.com/r-efi/r-efi) | UEFI reference specification protocol constants and definitions. |
-| [mu_rust_pi](https://github.com/microsoft/mu_rust_pi) | Platform initialization (PI) specification definitions and support code. |
 
 ## Books
 

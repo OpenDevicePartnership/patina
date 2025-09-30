@@ -9,8 +9,8 @@
 use crate::cpu::Cpu;
 #[cfg(all(not(test), target_arch = "aarch64"))]
 use core::arch::asm;
-use mu_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType};
 use patina::{component::service::IntoService, error::EfiError};
+use patina_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType};
 use r_efi::efi;
 
 /// Struct to implement AArch64 Cpu Init.

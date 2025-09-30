@@ -15,7 +15,7 @@ use core::{
 use patina::error::EfiError;
 use patina_ffs::volume::VolumeRef;
 
-use mu_pi::dxe_services;
+use patina_pi::dxe_services;
 use r_efi::efi;
 
 use crate::{

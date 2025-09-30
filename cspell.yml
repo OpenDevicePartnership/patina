@@ -41,12 +41,15 @@ words:
   - dbgwvr
   - deassertion
   - depex
+  - deque
   - descs
   - distros
   - dllcharacteristics
+  - dnested
   - docsrs
   - dword
   - dxefv
+  - dxeipl
   - edkii
   - efiapi
   - eficall
@@ -95,6 +98,7 @@ words:
   - oleaut
   - openvmm
   - opinfo
+  - oprom
   - oslar
   - oslsr
   - pacibsp
@@ -117,6 +121,7 @@ words:
   - ruint
   - rwlock
   - sctlr
+  - smbus
   - smcport
   - smiport
   - smram
@@ -129,7 +134,9 @@ words:
   - uintn
   - unaccepte
   - uncacheable
+  - uncontained
   - uncrustify
+  - unrecovered
   - unregisters
   - unspec
   - vcvarsamd

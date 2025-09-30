@@ -8,8 +8,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use mu_pi::protocols::cpu_arch::EfiExceptionType;
 use patina::error::EfiError;
+use patina_pi::protocols::cpu_arch::EfiExceptionType;
 use spin::rwlock::RwLock;
 
 use crate::interrupts::EfiExceptionStackTrace;
@@ -119,7 +119,7 @@ extern "efiapi" fn exception_handler(exception_type: usize, context: &mut Except
 mod tests {
     extern crate std;
 
-    use mu_pi::protocols::cpu_arch::EfiSystemContext;
+    use patina_pi::protocols::cpu_arch::EfiSystemContext;
 
     use super::*;
     use core::sync::atomic::AtomicBool;

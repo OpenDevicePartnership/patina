@@ -11,12 +11,9 @@ use core::{
     slice::from_raw_parts,
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
-use mu_pi::{
-    protocols::{self},
-    status_code,
-};
 use patina::guids;
 use patina_internal_cpu::interrupts;
+use patina_pi::{protocols, status_code};
 use r_efi::efi;
 
 use crate::{

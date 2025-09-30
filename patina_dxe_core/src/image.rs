@@ -9,7 +9,6 @@
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
 use goblin::pe::section_table;
-use mu_pi::hob::{Hob, HobList};
 use patina::base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up};
 use patina::error::EfiError;
 use patina::performance::{
@@ -18,6 +17,7 @@ use patina::performance::{
 };
 use patina::{guids, uefi_pages_to_size, uefi_size_to_pages};
 use patina_internal_device_path::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count};
+use patina_pi::hob::{Hob, HobList};
 use r_efi::efi;
 
 use crate::{
@@ -881,8 +881,8 @@ fn authenticate_image(
     authentication_status: u32,
 ) -> Result<(), EfiError> {
     let security2_protocol = unsafe {
-        match PROTOCOL_DB.locate_protocol(mu_pi::protocols::security2::PROTOCOL_GUID) {
-            Ok(protocol) => (protocol as *mut mu_pi::protocols::security2::Protocol).as_ref(),
+        match PROTOCOL_DB.locate_protocol(patina_pi::protocols::security2::PROTOCOL_GUID) {
+            Ok(protocol) => (protocol as *mut patina_pi::protocols::security2::Protocol).as_ref(),
             //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
             //Firmware Volume.
             Err(_) => None,
@@ -890,8 +890,8 @@ fn authenticate_image(
     };
 
     let security_protocol = unsafe {
-        match PROTOCOL_DB.locate_protocol(mu_pi::protocols::security::PROTOCOL_GUID) {
-            Ok(protocol) => (protocol as *mut mu_pi::protocols::security::Protocol).as_ref(),
+        match PROTOCOL_DB.locate_protocol(patina_pi::protocols::security::PROTOCOL_GUID) {
+            Ok(protocol) => (protocol as *mut patina_pi::protocols::security::Protocol).as_ref(),
             //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
             //Firmware Volume.
             Err(_) => None,
@@ -901,7 +901,7 @@ fn authenticate_image(
     let mut security_status = efi::Status::SUCCESS;
     if let Some(security2) = security2_protocol {
         security_status = (security2.file_authentication)(
-            security2 as *const _ as *mut mu_pi::protocols::security2::Protocol,
+            security2 as *const _ as *mut patina_pi::protocols::security2::Protocol,
             device_path,
             image.as_ptr() as *const _ as *mut c_void,
             image.len(),
@@ -910,14 +910,14 @@ fn authenticate_image(
         if security_status == efi::Status::SUCCESS && from_fv {
             let security = security_protocol.expect("Security Arch must be installed if Security2 Arch is installed");
             security_status = (security.file_authentication_state)(
-                security as *const _ as *mut mu_pi::protocols::security::Protocol,
+                security as *const _ as *mut patina_pi::protocols::security::Protocol,
                 authentication_status,
                 device_path,
             );
         }
     } else if let Some(security) = security_protocol {
         security_status = (security.file_authentication_state)(
-            security as *const _ as *mut mu_pi::protocols::security::Protocol,
+            security as *const _ as *mut patina_pi::protocols::security::Protocol,
             authentication_status,
             device_path,
         );
@@ -1570,7 +1570,7 @@ mod tests {
             // Mock Security Arch protocol
             static SECURITY_CALL_EXECUTED: AtomicBool = AtomicBool::new(false);
             extern "efiapi" fn mock_file_authentication_state(
-                this: *mut mu_pi::protocols::security::Protocol,
+                this: *mut patina_pi::protocols::security::Protocol,
                 authentication_status: u32,
                 file: *mut efi::protocols::device_path::Protocol,
             ) -> efi::Status {
@@ -1582,12 +1582,12 @@ mod tests {
             }
 
             let security_protocol =
-                mu_pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
+                patina_pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
 
             PROTOCOL_DB
                 .install_protocol_interface(
                     None,
-                    mu_pi::protocols::security::PROTOCOL_GUID,
+                    patina_pi::protocols::security::PROTOCOL_GUID,
                     &security_protocol as *const _ as *mut _,
                 )
                 .unwrap();
@@ -1627,7 +1627,7 @@ mod tests {
 
             // Mock Security Arch protocol
             extern "efiapi" fn mock_file_authentication_state(
-                _this: *mut mu_pi::protocols::security::Protocol,
+                _this: *mut patina_pi::protocols::security::Protocol,
                 _authentication_status: u32,
                 _file: *mut efi::protocols::device_path::Protocol,
             ) -> efi::Status {
@@ -1637,12 +1637,12 @@ mod tests {
             }
 
             let security_protocol =
-                mu_pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
+                patina_pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
 
             PROTOCOL_DB
                 .install_protocol_interface(
                     None,
-                    mu_pi::protocols::security::PROTOCOL_GUID,
+                    patina_pi::protocols::security::PROTOCOL_GUID,
                     &security_protocol as *const _ as *mut _,
                 )
                 .unwrap();
@@ -1650,7 +1650,7 @@ mod tests {
             // Mock Security2 Arch protocol
             static SECURITY2_CALL_EXECUTED: AtomicBool = AtomicBool::new(false);
             extern "efiapi" fn mock_file_authentication(
-                this: *mut mu_pi::protocols::security2::Protocol,
+                this: *mut patina_pi::protocols::security2::Protocol,
                 file: *mut efi::protocols::device_path::Protocol,
                 file_buffer: *mut c_void,
                 file_size: usize,
@@ -1666,12 +1666,12 @@ mod tests {
             }
 
             let security2_protocol =
-                mu_pi::protocols::security2::Protocol { file_authentication: mock_file_authentication };
+                patina_pi::protocols::security2::Protocol { file_authentication: mock_file_authentication };
 
             PROTOCOL_DB
                 .install_protocol_interface(
                     None,
-                    mu_pi::protocols::security2::PROTOCOL_GUID,
+                    patina_pi::protocols::security2::PROTOCOL_GUID,
                     &security2_protocol as *const _ as *mut _,
                 )
                 .unwrap();

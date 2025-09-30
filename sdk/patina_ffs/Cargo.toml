@@ -10,7 +10,7 @@ description = "Support for Firmware File System as described in the UEFI Platfor
 
 [dependencies]
 patina = {workspace = true}
-mu_pi = {workspace = true}
+patina_pi = {workspace = true}
 r-efi = {workspace = true}
 log = {workspace = true}
 

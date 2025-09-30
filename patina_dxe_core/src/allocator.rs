@@ -31,7 +31,7 @@ use crate::{
     systemtables::EfiSystemTable,
     tpl_lock,
 };
-use mu_pi::{
+use patina_pi::{
     dxe_services::{self, GcdMemoryType, MemorySpaceDescriptor},
     hob::{self, EFiMemoryTypeInformation, Hob, HobList, MEMORY_TYPE_INFO_HOB_GUID},
 };
@@ -1016,7 +1016,7 @@ pub fn init_memory_support(hob_list: &HobList) {
     // If memory type info HOB is available, then pre-allocate the corresponding buckets.
     if let Some(memory_type_info) = hob_list.iter().find_map(|x| {
         match x {
-            mu_pi::hob::Hob::GuidHob(hob, data) if hob.name == MEMORY_TYPE_INFO_HOB_GUID => {
+            patina_pi::hob::Hob::GuidHob(hob, data) if hob.name == MEMORY_TYPE_INFO_HOB_GUID => {
                 let memory_type_slice_ptr = data.as_ptr() as *const EFiMemoryTypeInformation;
                 let memory_type_slice_len = data.len() / mem::size_of::<EFiMemoryTypeInformation>();
 
@@ -1090,7 +1090,7 @@ mod tests {
     };
 
     use super::*;
-    use mu_pi::hob::{GUID_EXTENSION, GuidHob, Hob, header};
+    use patina_pi::hob::{GUID_EXTENSION, GuidHob, Hob, header};
     use r_efi::efi;
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(gcd_size: usize, f: F) {

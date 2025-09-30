@@ -30,7 +30,6 @@ lazy_static = { version = "^1" }
 linked_list_allocator = { version = "^0.10" }
 linkme = { version = "^0.3.29" }
 log = { version = "0.4", default-features = false }
-mu_pi = { version = "^6.0.2" }
 mu_rust_helpers = { version = "3.0.2" }
 num-traits = { version = "0.2", default-features = false }
 patina_debugger = { version = "11.0.0", path = "core/patina_debugger", registry = "patina-fw" }
@@ -43,6 +42,7 @@ patina_mtrr = { version = "1.0.0", registry = "patina-fw" }
 patina_paging = { version = "9", registry = "patina-fw" }
 patina_performance = { version = "11.0.0", path = "components/patina_performance", registry = "patina-fw" }
 patina = { version = "11.0.0", path = "sdk/patina", registry = "patina-fw" }
+patina_pi = { version = "11.0.0", path = "sdk/patina_pi", registry = "patina-fw" }
 patina_ffs = { version = "11.0.0", path = "sdk/patina_ffs", registry = "patina-fw" }
 patina_ffs_extractors = { version = "11.0.0", path = "sdk/patina_ffs_extractors", registry = "patina-fw" }
 patina_macro = { version = "11.0.0", path = "sdk/patina_macro", registry = "patina-fw" }

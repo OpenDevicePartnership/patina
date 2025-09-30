@@ -11,10 +11,6 @@ use alloc::{boxed::Box, slice, vec, vec::Vec};
 use core::{fmt::Display, ptr};
 use patina::{base::DEFAULT_CACHE_ATTR, error::EfiError};
 
-use mu_pi::{
-    dxe_services::{self, GcdMemoryType},
-    hob::{self, EFiMemoryTypeInformation},
-};
 use mu_rust_helpers::function;
 use patina::{
     base::{SIZE_4GB, UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, align_up},
@@ -22,6 +18,10 @@ use patina::{
     uefi_pages_to_size,
 };
 use patina_internal_collections::{Error as SliceError, Rbt, SliceKey, node_size};
+use patina_pi::{
+    dxe_services::{self, GcdMemoryType},
+    hob::{self, EFiMemoryTypeInformation},
+};
 use r_efi::efi;
 
 use crate::{
@@ -31,7 +31,7 @@ use crate::{
 use patina_internal_cpu::paging::create_cpu_paging;
 use patina_paging::{MemoryAttributes, PageTable, PtError, PtResult, page_allocator::PageAllocator};
 
-use mu_pi::hob::{Hob, HobList};
+use patina_pi::hob::{Hob, HobList};
 
 use super::{
     io_block::{self, Error as IoBlockError, IoBlock, IoBlockSplit, StateTransition as IoStateTransition},

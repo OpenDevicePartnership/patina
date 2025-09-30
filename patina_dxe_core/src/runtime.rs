@@ -15,7 +15,7 @@ use r_efi::efi;
 use spin::Mutex;
 
 use crate::{events::EVENT_DB, pecoff::relocation::RelocationBlock, protocols::PROTOCOL_DB};
-use mu_pi::{list_entry, protocols::runtime};
+use patina_pi::{list_entry, protocols::runtime};
 
 struct RuntimeData {
     runtime_arch_ptr: *mut runtime::Protocol,
