@@ -25,6 +25,7 @@ fallible-streaming-iterator = { version = "0.1.9" }
 fixedbitset = { version = "^0.5", default-features = false }
 gdbstub = { version = "0.7.3", default-features = false }
 goblin = { version = "0.10", default-features = false }
+indoc = { version = "2.0" }
 lazy_static = { version = "^1" }
 linked_list_allocator = { version = "^0.10" }
 linkme = { version = "^0.3.29" }
@@ -65,8 +66,9 @@ mockall = { version = "0.13.0" }
 rand = { version = "0.8" }
 ruint = { version = "1" }
 winapi = { version = "0.3" }
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_yaml = { version = "0.9" }
+serde_json = { version = "1.0", default-features = false }
 lzma-rs = { version = "0.3" }
 
 [profile.release]

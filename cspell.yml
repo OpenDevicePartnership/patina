@@ -49,6 +49,7 @@ words:
   - dxefv
   - edkii
   - efiapi
+  - eficall
   - efierror
   - eflags
   - fnent
@@ -67,6 +68,7 @@ words:
   - hresult
   - htons
   - icfgr
+  - indoc
   - inmodule
   - intid
   - irouter
