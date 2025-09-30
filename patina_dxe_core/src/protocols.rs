@@ -30,7 +30,7 @@ pub fn core_install_protocol_interface(
     protocol: efi::Guid,
     interface: *mut c_void,
 ) -> Result<efi::Handle, EfiError> {
-    log::debug!("InstallProtocolInterface: {:?} @ {:#x?}", guid_fmt!(protocol), interface);
+    log::info!("InstallProtocolInterface: {:?} @ {:#x?}", guid_fmt!(protocol), interface);
     let (handle, notifies) = PROTOCOL_DB.install_protocol_interface(handle, protocol, interface)?;
 
     let mut closed_events = Vec::new();
@@ -77,7 +77,7 @@ pub fn core_uninstall_protocol_interface(
     protocol: efi::Guid,
     interface: *mut c_void,
 ) -> Result<(), EfiError> {
-    log::debug!("UninstallProtocolInterface: {:?} @ {:#x?}", guid_fmt!(protocol), interface);
+    log::info!("UninstallProtocolInterface: {:?} @ {:#x?}", guid_fmt!(protocol), interface);
 
     // Check if the handle/protocol/interface triple is legitimate
     match PROTOCOL_DB.get_interface_for_handle(handle, protocol) {
