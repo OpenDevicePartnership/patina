@@ -718,7 +718,7 @@ pub fn init_system_table() {
 
 /// A component to register a callback that recalculates the CRC32 checksum of the system table
 /// when certain protocols are installed.
-#[derive(IntoComponent)]
+#[derive(IntoComponent, Default)]
 pub(crate) struct SystemTableChecksumInstaller;
 
 impl SystemTableChecksumInstaller {

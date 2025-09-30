@@ -188,7 +188,7 @@ impl EfiCpuArchProtocolImpl {
 }
 
 /// This component installs the cpu arch protocol
-#[derive(IntoComponent)]
+#[derive(IntoComponent, Default)]
 pub(crate) struct CpuArchProtocolInstaller;
 
 impl CpuArchProtocolInstaller {

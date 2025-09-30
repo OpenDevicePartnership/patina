@@ -520,12 +520,13 @@ impl Core<Alloc> {
     }
 
     /// Registers core provided components
+    #[allow(clippy::default_constructed_unit_structs)]
     fn add_core_components(&mut self) {
-        self.insert_component(0, decompress::DecompressProtocolInstaller.into_component());
-        self.insert_component(0, systemtables::SystemTableChecksumInstaller.into_component());
-        self.insert_component(0, cpu_arch_protocol::CpuArchProtocolInstaller.into_component());
+        self.insert_component(0, decompress::DecompressProtocolInstaller::default().into_component());
+        self.insert_component(0, systemtables::SystemTableChecksumInstaller::default().into_component());
+        self.insert_component(0, cpu_arch_protocol::CpuArchProtocolInstaller::default().into_component());
         #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
-        self.insert_component(0, hw_interrupt_protocol::HwInterruptProtocolInstaller.into_component());
+        self.insert_component(0, hw_interrupt_protocol::HwInterruptProtocolInstaller::default().into_component());
     }
 
     /// Starts the core, dispatching all drivers.

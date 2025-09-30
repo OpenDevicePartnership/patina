@@ -451,7 +451,7 @@ impl HwInterruptProtocolHandler {
     }
 }
 
-#[derive(IntoComponent)]
+#[derive(IntoComponent, Default)]
 /// A component to install the two hardware interrupt protocols.
 pub(crate) struct HwInterruptProtocolInstaller;
 

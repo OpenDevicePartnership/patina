@@ -27,7 +27,7 @@ use patina_ffs::{
 use patina_sdk::component::prelude::Service;
 
 /// Component to install the UEFI Decompress Protocol.
-#[derive(IntoComponent)]
+#[derive(IntoComponent, Default)]
 pub(crate) struct DecompressProtocolInstaller;
 
 impl DecompressProtocolInstaller {
