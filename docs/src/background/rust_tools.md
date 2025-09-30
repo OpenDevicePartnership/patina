@@ -275,18 +275,19 @@ the codebase:
 
 ```c
 /**
-  Detects FAT file system on Disk and set relevant fields of Volume.
+  Processes a buffer by zeroing all elements.
 
-  @param[in] Volume             The volume structure.
+  @param[in,out] Buffer         Pointer to the buffer to process.
+  @param[in]     BufferSize     Size of the buffer in bytes.
 
-  @retval EFI_SUCCESS           The Fat File System is detected successfully
-  @retval EFI_UNSUPPORTED       The volume is not FAT file system.
-  @retval EFI_VOLUME_CORRUPTED  The volume is corrupted.
+  @retval EFI_SUCCESS           The buffer was processed successfully.
+  @retval EFI_INVALID_PARAMETER Buffer is NULL or BufferSize is 0.
 
 **/
 EFI_STATUS
-FatOpenDevice (
-  IN OUT FAT_VOLUME  *Volume
+ProcessBuffer (
+  IN OUT UINT8  *Buffer,
+  IN     UINTN  BufferSize
   );
 ```
 
