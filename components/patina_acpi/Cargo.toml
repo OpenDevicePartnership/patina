@@ -16,6 +16,7 @@ patina_sdk = { workspace = true, features = ["alloc"] }
 r-efi = { workspace = true }
 scroll = { workspace = true }
 spin = { workspace = true }
+phf = { version = "0.13.1", features = ["macros"] }
 
 [dev-dependencies]
 mockall = { workspace = true }
@@ -24,4 +25,3 @@ patina_sdk = { workspace = true, features = ["mockall"] }
 [features]
 mockall = ["dep:mockall"]
  
-

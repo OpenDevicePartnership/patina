@@ -58,4 +58,5 @@ mod acpi_protocol;
 mod acpi_table;
 mod aml;
 mod integration_test;
+mod opcode;
 mod signature;

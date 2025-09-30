@@ -108,6 +108,7 @@ pub enum AmlError {
     CloseFailedChecksumUpdate,
     InvalidAcpiTable,
     OutOfBounds,
+    InvalidOpcode,
 }
 
 impl From<AmlError> for efi::Status {
@@ -117,6 +118,7 @@ impl From<AmlError> for efi::Status {
             AmlError::CloseFailedChecksumUpdate => efi::Status::COMPROMISED_DATA,
             AmlError::InvalidAcpiTable => efi::Status::NOT_FOUND,
             AmlError::OutOfBounds => efi::Status::COMPROMISED_DATA,
+            AmlError::InvalidOpcode => efi::Status::UNSUPPORTED,
         }
     }
 }
