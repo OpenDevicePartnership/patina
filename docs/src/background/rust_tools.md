@@ -484,11 +484,11 @@ args = ["clippy", "--all-targets", "--all-features", "--", "-D", "warnings"]
 
 - [Clippy Lints](https://rust-lang.github.io/rust-clippy/master/index.html)
 
-### cargo miri (Undefined Behavior Detection for Unsafe Code)
+### cargo miri (Undefined Behavior Detection)
 
 **Purpose**: Executes tests under the [Miri](https://github.com/rust-lang/miri) interpreter to detect memory safety
-issues resulting in undefined behavior (UB) in `unsafe` code. For example, out-of-bounds pointer arithmetic,
-use-after-free, invalid use of uninitialized data, alignment violations, etc.
+issues resulting in undefined behavior (UB). This is particularly useful in `unsafe` code. For example, out-of-bounds
+pointer arithmetic, use-after-free, invalid use of uninitialized data, alignment violations, etc.
 
 In Patina, the goal is to write as little `unsafe` code as possible, but some low-level operations require it. Patina
 then builds safe abstractions on top of that `unsafe` code that all other Rust code in Patina uses. Miri helps ensure
