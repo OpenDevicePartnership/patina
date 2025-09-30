@@ -4,6 +4,7 @@ pub(crate) const AML_OPCODE_EXTENDED_PREFIX: u8 = 0x5B;
 pub(crate) const AML_OPCODE_EXTENDED_BYTE_SIZE: usize = 2;
 pub(crate) const AML_OPCODE_BYTE_SIZE: usize = 1;
 
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct OpcodeInfo {
     pub(crate) has_pkg_length: bool,
     pub(crate) operands: &'static [OperandType],
@@ -24,41 +25,121 @@ pub enum OperandType {
 
 pub(crate) static FIXED_SIZE_OPCODES: phf::Map<u16, OpcodeInfo> = phf_map! {};
 
-// this definitely needs more ops in it
+// this might need more ops in it
 pub static OPCODE_TABLE: phf::Map<u16, OpcodeInfo> = phf_map! {
-    // DeviceOp: ExtOpPrefix 0x82
-    0x5B82u16 => OpcodeInfo {
+    // -------------------------
+    // Namespace / Definition Ops
+    // -------------------------
+    0x08u16 => OpcodeInfo { // NameOp
+        has_pkg_length: false,
+        operands: &[OperandType::NameString, OperandType::DataRefObject],
+    },
+    0x09u16 => OpcodeInfo { // AliasOp
+        has_pkg_length: false,
+        operands: &[OperandType::NameString, OperandType::NameString],
+    },
+    0x10u16 => OpcodeInfo { // ScopeOp
+        has_pkg_length: true,
+        operands: &[OperandType::NameString, OperandType::TermList],
+    },
+    0x5B82u16 => OpcodeInfo { // DeviceOp
+        has_pkg_length: true,
+        operands: &[OperandType::NameString, OperandType::TermList],
+    },
+    0x5B14u16 => OpcodeInfo { // MethodOp
+        has_pkg_length: true,
+        operands: &[OperandType::NameString, OperandType::Byte, OperandType::TermList],
+    },
+    0x12u16 => OpcodeInfo { // PackageOp
+        has_pkg_length: true,
+        operands: &[OperandType::Byte, OperandType::DataRefObject /* repeated */],
+    },
+    0x13u16 => OpcodeInfo { // VarPackageOp
+        has_pkg_length: true,
+        operands: &[OperandType::DataRefObject /* count */, OperandType::DataRefObject /* repeated */],
+    },
+    0x5B80u16 => OpcodeInfo { // RegionOp
+        has_pkg_length: true,
+        operands: &[OperandType::NameString, OperandType::Byte, OperandType::DataRefObject, OperandType::DataRefObject, OperandType::TermList],
+    },
+    0x5B81u16 => OpcodeInfo { // FieldOp
+        has_pkg_length: true,
+        operands: &[OperandType::NameString, OperandType::TermList],
+    },
+    0x5B83u16 => OpcodeInfo { // ProcessorOp
+        has_pkg_length: true,
+        operands: &[OperandType::NameString, OperandType::Byte, OperandType::DWord, OperandType::Byte, OperandType::TermList],
+    },
+    0x5B84u16 => OpcodeInfo { // PowerResOp
+        has_pkg_length: true,
+        operands: &[OperandType::NameString, OperandType::Byte, OperandType::Word, OperandType::TermList],
+    },
+    0x5B85u16 => OpcodeInfo { // ThermalZoneOp
         has_pkg_length: true,
         operands: &[OperandType::NameString, OperandType::TermList],
     },
 
-    // MethodOp: ExtOpPrefix 0x14
-    0x5B14u16 => OpcodeInfo {
-        has_pkg_length: true,
-        operands: &[OperandType::NameString, OperandType::Byte, OperandType::TermList],
-    },
-
-    // IfOp
-    0xA0u16 => OpcodeInfo {
+    // -------------------------
+    // Control Flow Ops
+    // -------------------------
+    0xA0u16 => OpcodeInfo { // IfOp
         has_pkg_length: true,
         operands: &[OperandType::DataRefObject, OperandType::TermList],
     },
+    0xA1u16 => OpcodeInfo { // ElseOp
+        has_pkg_length: true,
+        operands: &[OperandType::TermList],
+    },
+    0xA2u16 => OpcodeInfo { // WhileOp
+        has_pkg_length: true,
+        operands: &[OperandType::DataRefObject, OperandType::TermList],
+    },
+    0xA4u16 => OpcodeInfo { // ReturnOp
+        has_pkg_length: false,
+        operands: &[OperandType::DataRefObject],
+    },
+    0xA5u16 => OpcodeInfo { // BreakOp
+        has_pkg_length: false,
+        operands: &[],
+    },
+    0xA6u16 => OpcodeInfo { // ContinueOp
+        has_pkg_length: false,
+        operands: &[],
+    },
 
-    // ByteConst
-    0x0Au16 => OpcodeInfo {
+    // -------------------------
+    // Constants / Literals
+    // -------------------------
+    0x00u16 => OpcodeInfo { // ZeroOp
+        has_pkg_length: false,
+        operands: &[],
+    },
+    0x01u16 => OpcodeInfo { // OneOp
+        has_pkg_length: false,
+        operands: &[],
+    },
+    0xFFu16 => OpcodeInfo { // OnesOp
+        has_pkg_length: false,
+        operands: &[],
+    },
+    0x0Au16 => OpcodeInfo { // ByteConst
         has_pkg_length: false,
         operands: &[OperandType::Byte],
     },
-
-    // DWordConst
-    0x0Cu16 => OpcodeInfo {
+    0x0Bu16 => OpcodeInfo { // WordConst
+        has_pkg_length: false,
+        operands: &[OperandType::Word],
+    },
+    0x0Cu16 => OpcodeInfo { // DWordConst
         has_pkg_length: false,
         operands: &[OperandType::DWord],
     },
-
-    // NameOp
-    0x08u16 => OpcodeInfo {
+    0x0Eu16 => OpcodeInfo { // QWordConst
         has_pkg_length: false,
-        operands: &[OperandType::NameString, OperandType::DataRefObject],
+        operands: &[OperandType::QWord],
+    },
+    0x0Du16 => OpcodeInfo { // StringOp
+        has_pkg_length: false,
+        operands: &[OperandType::String],
     },
 };
