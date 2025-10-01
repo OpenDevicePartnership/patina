@@ -49,7 +49,7 @@ flowchart LR
     A["Create a <br> Tracking Issue"] --> B["Create RFC"]
     B --> C{"Accepted?"}
     C -- Yes --> D["Create and Merge <br> Implementation"]
-    D --> E["Stabalize or Remove <br> Feature"]
+    D --> E["Stabilize or Remove <br> Feature"]
     E --> Z["Close Tracking Issue"]
     C -- No --> Z
 ```
