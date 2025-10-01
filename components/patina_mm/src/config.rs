@@ -81,7 +81,7 @@ impl fmt::Display for MmCommunicationConfiguration {
 /// - This only supports V1 and V2 of the MM Communicate header format.
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
-pub(crate) struct EfiMmCommunicateHeader {
+pub struct EfiMmCommunicateHeader {
     /// Allows for disambiguation of the message format.
     /// Used to identify the registered MM handlers that should be given the message.
     header_guid: efi::Guid,
