@@ -38,7 +38,7 @@ use mu_pi::{
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
 pub use uefi_allocator::UefiAllocator;
 
-use patina_sdk::{
+use patina::{
     base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     error::EfiError,
     guids, uefi_size_to_pages,
@@ -59,7 +59,7 @@ pub(crate) const DEFAULT_PAGE_ALLOCATION_GRANULARITY: usize = SIZE_4KB;
 // granularity requirements for them.
 cfg_if::cfg_if! {
     if #[cfg(target_arch = "aarch64")] {
-        pub(crate) const RUNTIME_PAGE_ALLOCATION_GRANULARITY: usize = patina_sdk::base::SIZE_64KB;
+        pub(crate) const RUNTIME_PAGE_ALLOCATION_GRANULARITY: usize = patina::base::SIZE_64KB;
     } else {
         pub(crate) const RUNTIME_PAGE_ALLOCATION_GRANULARITY: usize = DEFAULT_PAGE_ALLOCATION_GRANULARITY;
     }

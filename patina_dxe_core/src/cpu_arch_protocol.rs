@@ -11,15 +11,15 @@
 use crate::{dxe_services, protocols::PROTOCOL_DB};
 use alloc::boxed::Box;
 use core::ffi::c_void;
-use patina_internal_cpu::{
-    cpu::Cpu,
-    interrupts::{self, ExceptionType, HandlerType, InterruptManager},
-};
-use patina_sdk::{
+use patina::{
     boot_services::{BootServices, StandardBootServices},
     component::{IntoComponent, service::Service},
     error::{EfiError, Result},
     uefi_protocol::ProtocolInterface,
+};
+use patina_internal_cpu::{
+    cpu::Cpu,
+    interrupts::{self, ExceptionType, HandlerType, InterruptManager},
 };
 use r_efi::efi;
 

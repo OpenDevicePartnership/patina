@@ -15,7 +15,7 @@ use core::{
     ptr, slice,
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
-use patina_sdk::{
+use patina::{
     base::align_up,
     error::{EfiError, Result},
 };

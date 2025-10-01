@@ -7,8 +7,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::boxed::Box;
-use patina_sdk::test::patina_test;
-use patina_sdk::{
+use patina::test::patina_test;
+use patina::{
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     component::service::{
         IntoService, Service,
@@ -21,7 +21,7 @@ use patina_sdk::{
     error::EfiError,
     uefi_pages_to_size,
 };
-use patina_sdk::{u_assert, u_assert_eq};
+use patina::{u_assert, u_assert_eq};
 use r_efi::efi;
 
 use crate::{
@@ -212,7 +212,7 @@ fn allow_allocations_for_type(memory_type: EfiMemoryType) -> Result<(), MemoryEr
 }
 
 #[patina_test]
-fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_sdk::test::Result {
+fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina::test::Result {
     // Allocate a page, and make sure it is accessible.
     let result = mm.allocate_pages(1, AllocationOptions::new());
     u_assert!(result.is_ok(), "Failed to allocate single page.");
@@ -277,7 +277,7 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_sdk
 }
 
 #[patina_test]
-fn memory_manager_attributes_test(mm: Service<dyn MemoryManager>) -> patina_sdk::test::Result {
+fn memory_manager_attributes_test(mm: Service<dyn MemoryManager>) -> patina::test::Result {
     // The default attributes for memory should be read/write.
     let result = mm.allocate_pages(1, AllocationOptions::new());
     u_assert!(result.is_ok(), "Failed to allocate single page.");

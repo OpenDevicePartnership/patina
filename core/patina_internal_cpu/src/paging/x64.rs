@@ -9,11 +9,11 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::boxed::Box;
+use patina::error::EfiError;
 use patina_mtrr::{Mtrr, create_mtrr_lib, error::MtrrError, structs::MtrrMemoryCacheType};
 use patina_paging::{
     MemoryAttributes, PageTable, PagingType, PtError, PtResult, page_allocator::PageAllocator, x64::X64PageTable,
 };
-use patina_sdk::error::EfiError;
 use r_efi::efi;
 
 /// The x86_64 paging implementation. It acts as a bridge between the EFI CPU

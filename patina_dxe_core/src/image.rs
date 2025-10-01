@@ -10,14 +10,14 @@ use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
 use goblin::pe::section_table;
 use mu_pi::hob::{Hob, HobList};
-use patina_internal_device_path::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count};
-use patina_sdk::base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up};
-use patina_sdk::error::EfiError;
-use patina_sdk::performance::{
+use patina::base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up};
+use patina::error::EfiError;
+use patina::performance::{
     logging::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end},
     measurement::create_performance_measurement,
 };
-use patina_sdk::{guids, uefi_pages_to_size, uefi_size_to_pages};
+use patina::{guids, uefi_pages_to_size, uefi_size_to_pages};
+use patina_internal_device_path::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count};
 use r_efi::efi;
 
 use crate::{
@@ -494,7 +494,7 @@ fn install_dxe_core_image(hob_list: &HobList, system_table: &mut EfiSystemTable)
             Hob::MemoryAllocationModule(module) if module.module_name == guids::DXE_CORE => Some(module),
             _ => None,
         })
-        .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use patina_sdk::guid::DXE_CORE as FFS GUID.");
+        .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use patina::guid::DXE_CORE as FFS GUID.");
 
     // get exclusive access to the global private data.
     let mut private_data = PRIVATE_IMAGE_DATA.lock();
@@ -694,7 +694,7 @@ fn activate_compatibility_mode(private_info: &PrivateImageData) -> Result<(), Ef
         .unwrap_or(DEFAULT_CACHE_ATTR);
     if dxe_services::core_set_memory_space_attributes(
         private_info.image_base_page,
-        patina_sdk::uefi_pages_to_size!(private_info.image_num_pages) as u64,
+        patina::uefi_pages_to_size!(private_info.image_num_pages) as u64,
         stripped_attrs,
     )
     .is_err()
@@ -1477,7 +1477,7 @@ mod tests {
         test_collateral, test_support,
     };
     use core::{ffi::c_void, sync::atomic::AtomicBool};
-    use patina_sdk::error::EfiError;
+    use patina::error::EfiError;
     use r_efi::efi;
     use std::{fs::File, io::Read};
 

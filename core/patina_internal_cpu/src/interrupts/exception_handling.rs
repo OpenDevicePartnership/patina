@@ -9,7 +9,7 @@
 //!
 
 use mu_pi::protocols::cpu_arch::EfiExceptionType;
-use patina_sdk::error::EfiError;
+use patina::error::EfiError;
 use spin::rwlock::RwLock;
 
 use crate::interrupts::EfiExceptionStackTrace;

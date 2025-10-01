@@ -10,11 +10,11 @@
 use core::arch::global_asm;
 use lazy_static::lazy_static;
 use mu_pi::protocols::cpu_arch::EfiSystemContext;
+use patina::base::SIZE_4GB;
+use patina::base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE};
+use patina::{component::service::IntoService, error::EfiError};
 use patina_paging::page_allocator::PageAllocator;
 use patina_paging::{MemoryAttributes, PageTable, PagingType};
-use patina_sdk::base::SIZE_4GB;
-use patina_sdk::base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE};
-use patina_sdk::{component::service::IntoService, error::EfiError};
 use patina_stacktrace::StackTrace;
 use x86_64::VirtAddr;
 use x86_64::structures::idt::InterruptDescriptorTable;

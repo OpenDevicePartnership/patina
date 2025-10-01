@@ -10,7 +10,7 @@
 //!
 use crate::gcd::SpinLockedGcd;
 use mu_pi::hob::EFiMemoryTypeInformation;
-use patina_sdk::error::EfiError;
+use patina::error::EfiError;
 use r_efi::efi;
 
 use super::{
@@ -271,7 +271,7 @@ mod tests {
     use std::alloc::{GlobalAlloc, System};
 
     use mu_pi::dxe_services;
-    use patina_sdk::base::{SIZE_4KB, SIZE_64KB, UEFI_PAGE_SIZE};
+    use patina::base::{SIZE_4KB, SIZE_64KB, UEFI_PAGE_SIZE};
 
     use crate::{
         allocator::{DEFAULT_ALLOCATION_STRATEGY, DEFAULT_PAGE_ALLOCATION_GRANULARITY},

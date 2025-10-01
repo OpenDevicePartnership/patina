@@ -18,9 +18,9 @@ use mu_pi::{
     hob,
 };
 
+use patina::{component::service::Service, error::EfiError};
 use patina_ffs::{section::SectionExtractor, volume::VolumeRef};
 use patina_internal_device_path::concat_device_path_to_boxed_slice;
-use patina_sdk::{component::service::Service, error::EfiError};
 use r_efi::efi;
 
 use crate::{

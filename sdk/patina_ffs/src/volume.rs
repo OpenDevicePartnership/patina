@@ -18,7 +18,7 @@ use core::{
     fmt, iter, mem, ptr,
     slice::{self, from_raw_parts},
 };
-use patina_sdk::base::align_up;
+use patina::base::align_up;
 use r_efi::efi;
 
 use mu_pi::fw_fs::{

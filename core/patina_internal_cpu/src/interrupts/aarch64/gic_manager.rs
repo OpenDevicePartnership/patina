@@ -2,7 +2,7 @@ use arm_gic::{
     IntId, Trigger,
     gicv3::{GicV3, InterruptGroup},
 };
-use patina_sdk::error::EfiError;
+use patina::error::EfiError;
 use safe_mmio::field;
 
 use crate::interrupts::aarch64::sysreg::{read_sysreg, write_sysreg};

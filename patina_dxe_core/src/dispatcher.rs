@@ -14,13 +14,7 @@ use alloc::{
 use core::{cmp::Ordering, ffi::c_void};
 use mu_pi::{fw_fs::ffs, protocols::firmware_volume_block};
 use mu_rust_helpers::{function, guid::guid_fmt};
-use patina_ffs::{
-    section::{Section, SectionExtractor},
-    volume::VolumeRef,
-};
-use patina_internal_depex::{AssociatedDependency, Depex, Opcode};
-use patina_internal_device_path::concat_device_path_to_boxed_slice;
-use patina_sdk::{
+use patina::{
     component::service::Service,
     error::EfiError,
     performance::{
@@ -28,6 +22,12 @@ use patina_sdk::{
         measurement::create_performance_measurement,
     },
 };
+use patina_ffs::{
+    section::{Section, SectionExtractor},
+    volume::VolumeRef,
+};
+use patina_internal_depex::{AssociatedDependency, Depex, Opcode};
+use patina_internal_device_path::concat_device_path_to_boxed_slice;
 use r_efi::efi;
 
 use mu_rust_helpers::guid::CALLER_ID;

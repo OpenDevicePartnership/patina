@@ -8,8 +8,7 @@
 //!
 use alloc::{collections::BTreeMap, collections::BTreeSet, vec::Vec};
 use core::ptr::NonNull;
-use patina_internal_device_path::{concat_device_path_to_boxed_slice, copy_device_path_to_boxed_slice};
-use patina_sdk::{
+use patina::{
     error::EfiError,
     performance::{
         logging::{
@@ -19,6 +18,7 @@ use patina_sdk::{
         measurement::create_performance_measurement,
     },
 };
+use patina_internal_device_path::{concat_device_path_to_boxed_slice, copy_device_path_to_boxed_slice};
 
 use r_efi::efi;
 

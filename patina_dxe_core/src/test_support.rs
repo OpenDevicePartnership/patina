@@ -344,7 +344,7 @@ mod tests {
     use crate::test_support::header;
     use crate::test_support::hob;
     use mu_pi::hob::Hob::MemoryAllocationModule;
-    use patina_sdk::guids;
+    use patina::guids;
 
     // Compact Hoblist with DXE core Alloction hob. Use this when DXE core hob is required.
     pub(crate) fn build_test_hob_list_compact(mem_size: u64) -> *const c_void {

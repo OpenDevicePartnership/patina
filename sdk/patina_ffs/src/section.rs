@@ -11,7 +11,7 @@
 //!
 use alloc::{boxed::Box, vec, vec::Vec};
 use mu_pi::fw_fs::ffs::{self, section};
-use patina_sdk::{base::align_up, boot_services::c_ptr::CPtr};
+use patina::{base::align_up, boot_services::c_ptr::CPtr};
 
 use core::{fmt, iter, mem, ptr, slice::from_raw_parts};
 

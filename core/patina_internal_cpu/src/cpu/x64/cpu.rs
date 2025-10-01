@@ -12,7 +12,7 @@ use crate::{cpu::Cpu, interrupts};
 #[cfg(not(test))]
 use core::arch::asm;
 use mu_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType};
-use patina_sdk::{component::service::IntoService, error::EfiError};
+use patina::{component::service::IntoService, error::EfiError};
 use r_efi::efi;
 
 /// Struct to implement X64 Cpu Init.
@@ -116,7 +116,7 @@ impl EfiCpuX64 {
                 temp = out(reg) _,
                 FPU_CONTROL_WORD = sym FPU_CONTROL_WORD,
                 MMX_CONTROL_WORD = sym MMX_CONTROL_WORD,
-                BIT9 = const patina_sdk::bit!(9),
+                BIT9 = const patina::bit!(9),
                 options(nostack, preserves_flags)
             );
         }

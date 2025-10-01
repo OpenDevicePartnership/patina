@@ -10,7 +10,7 @@
 use core::{ffi::c_void, ptr};
 
 use alloc::collections::LinkedList;
-use patina_sdk::error::EfiError;
+use patina::error::EfiError;
 use r_efi::efi;
 use spin::Mutex;
 

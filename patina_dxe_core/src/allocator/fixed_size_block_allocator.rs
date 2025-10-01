@@ -28,7 +28,7 @@ use core::{
 };
 use linked_list_allocator::{align_down_size, align_up_size};
 use mu_pi::{dxe_services::GcdMemoryType, hob::EFiMemoryTypeInformation};
-use patina_sdk::{
+use patina::{
     base::{UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, align_up},
     error::EfiError,
     uefi_pages_to_size, uefi_size_to_pages,
@@ -855,7 +855,7 @@ mod tests {
     use core::{alloc::GlobalAlloc, ffi::c_void, panic};
     use std::alloc::System;
 
-    use patina_sdk::{
+    use patina::{
         base::{SIZE_64KB, UEFI_PAGE_SIZE},
         uefi_pages_to_size,
     };

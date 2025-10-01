@@ -12,7 +12,7 @@ use patina_ffs::{
     section::{SectionExtractor, SectionHeader},
 };
 
-use patina_sdk::component::prelude::IntoService;
+use patina::component::prelude::IntoService;
 
 /// Provides extraction for CRC32 sections.
 #[derive(Default, Clone, Copy, IntoService)]

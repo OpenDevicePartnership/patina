@@ -10,7 +10,7 @@
 //!
 use crate::config::{MmCommunicationConfiguration, MmiPort};
 use crate::service::platform_mm_control::PlatformMmControl;
-use patina_sdk::component::{
+use patina::component::{
     IntoComponent,
     params::{Commands, Config},
     service::{IntoService, Service},
@@ -41,7 +41,7 @@ pub unsafe trait SwMmiTrigger {
     ///
     /// This function is unsafe because it may cause the system to enter a state where MMIs are not handled correctly.
     /// It is the caller's responsibility to ensure that the system is in a safe state before calling this function.
-    unsafe fn trigger_sw_mmi(&self, cmd_port_value: u8, data_port_value: u8) -> patina_sdk::error::Result<()>;
+    unsafe fn trigger_sw_mmi(&self, cmd_port_value: u8, data_port_value: u8) -> patina::error::Result<()>;
 }
 
 /// A component that provides the `SwMmiTrigger` service.
@@ -68,7 +68,7 @@ impl SwMmiManager {
         config: Config<MmCommunicationConfiguration>,
         platform_mm_control: Option<Service<dyn PlatformMmControl>>,
         mut commands: Commands,
-    ) -> patina_sdk::error::Result<()> {
+    ) -> patina::error::Result<()> {
         log::debug!("Initializing SwMmiManager...");
 
         if platform_mm_control.is_some() {
@@ -85,7 +85,7 @@ impl SwMmiManager {
 }
 
 unsafe impl SwMmiTrigger for SwMmiManager {
-    unsafe fn trigger_sw_mmi(&self, _cmd_port_value: u8, _data_port_value: u8) -> patina_sdk::error::Result<()> {
+    unsafe fn trigger_sw_mmi(&self, _cmd_port_value: u8, _data_port_value: u8) -> patina::error::Result<()> {
         log::debug!("Triggering SW MMI...");
 
         match self.inner_config.cmd_port {
@@ -134,7 +134,7 @@ mod tests {
     use super::*;
     use crate::config::MmCommunicationConfiguration;
     use crate::service::platform_mm_control::{MockPlatformMmControl, PlatformMmControl};
-    use patina_sdk::component::params::Commands;
+    use patina::component::params::Commands;
 
     #[test]
     fn test_sw_mmi_manager_without_platform_mm_control() {

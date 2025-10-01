@@ -9,19 +9,19 @@
 use crate::pecoff::{self, UefiPeInfo};
 use alloc::{boxed::Box, slice, vec, vec::Vec};
 use core::{fmt::Display, ptr};
-use patina_sdk::{base::DEFAULT_CACHE_ATTR, error::EfiError};
+use patina::{base::DEFAULT_CACHE_ATTR, error::EfiError};
 
 use mu_pi::{
     dxe_services::{self, GcdMemoryType},
     hob::{self, EFiMemoryTypeInformation},
 };
 use mu_rust_helpers::function;
-use patina_internal_collections::{Error as SliceError, Rbt, SliceKey, node_size};
-use patina_sdk::{
+use patina::{
     base::{SIZE_4GB, UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, align_up},
     guids::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP,
     uefi_pages_to_size,
 };
+use patina_internal_collections::{Error as SliceError, Rbt, SliceKey, node_size};
 use r_efi::efi;
 
 use crate::{
@@ -2639,7 +2639,7 @@ unsafe impl Send for SpinLockedGcd {}
 mod tests {
     extern crate std;
     use core::{alloc::Layout, sync::atomic::AtomicBool};
-    use patina_sdk::base::align_up;
+    use patina::base::align_up;
 
     use crate::test_support;
 

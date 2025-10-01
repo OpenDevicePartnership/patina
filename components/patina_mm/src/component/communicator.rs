@@ -12,7 +12,7 @@ use crate::{
     component::sw_mmi_manager::SwMmiTrigger,
     config::{CommunicateBuffer, EfiMmCommunicateHeader, MmCommunicationConfiguration},
 };
-use patina_sdk::component::{
+use patina::component::{
     IntoComponent, Storage,
     service::{IntoService, Service},
 };
@@ -68,7 +68,7 @@ pub trait MmCommunication {
     /// ```rust
     /// use r_efi::efi;
     /// use patina_mm::component::communicator::MmCommunication;
-    /// use patina_sdk::component::service::Service;
+    /// use patina::component::service::Service;
     ///
     /// fn component(comm_service: Service<dyn MmCommunication>) {
     ///     let data = [0x01, 0x02, 0x03];
@@ -107,7 +107,7 @@ impl MmCommunicator {
         mut self,
         storage: &mut Storage,
         sw_mmi_trigger: Service<dyn SwMmiTrigger>,
-    ) -> patina_sdk::error::Result<()> {
+    ) -> patina::error::Result<()> {
         log::debug!("MM Communicator entry...");
 
         self.sw_mmi_trigger_service = Some(sw_mmi_trigger);
@@ -182,7 +182,7 @@ mod tests {
     use crate::config::{
         CommunicateBuffer, CommunicateBufferStatus, EfiMmCommunicateHeader, MmCommunicationConfiguration,
     };
-    use patina_sdk::component::{IntoComponent, Storage};
+    use patina::component::{IntoComponent, Storage};
 
     use core::cell::RefCell;
     use core::pin::Pin;
@@ -266,7 +266,7 @@ mod tests {
         mock_sw_mmi_trigger
             .expect_trigger_sw_mmi()
             .times(1)
-            .returning(|_, _| Err(patina_sdk::error::EfiError::DeviceError));
+            .returning(|_, _| Err(patina::error::EfiError::DeviceError));
 
         let communicator = get_test_communicator!(1024, mock_sw_mmi_trigger);
 

@@ -15,8 +15,8 @@ use mu_pi::{
     protocols::{self},
     status_code,
 };
+use patina::guids;
 use patina_internal_cpu::interrupts;
-use patina_sdk::guids;
 use r_efi::efi;
 
 use crate::{

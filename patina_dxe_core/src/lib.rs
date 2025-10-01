@@ -6,11 +6,11 @@
 //! ## Examples
 //!
 //! ``` rust,no_run
-//! # use patina_sdk::component::prelude::*;
+//! # use patina::component::prelude::*;
 //! # #[derive(IntoComponent, Default)]
 //! # struct ExampleComponent;
 //! # impl ExampleComponent {
-//! #     fn entry_point(self) -> patina_sdk::error::Result<()> { Ok(()) }
+//! #     fn entry_point(self) -> patina::error::Result<()> { Ok(()) }
 //! # }
 //! # let physical_hob_list = core::ptr::null();
 //! patina_dxe_core::Core::default()
@@ -76,9 +76,7 @@ use mu_pi::{
     status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
 };
 use mu_rust_helpers::{function, guid::CALLER_ID};
-use patina_ffs::section::SectionExtractor;
-use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
-use patina_sdk::{
+use patina::{
     boot_services::StandardBootServices,
     component::{Component, IntoComponent, Storage, service::IntoService},
     error::{self, Result},
@@ -88,6 +86,8 @@ use patina_sdk::{
     },
     runtime_services::StandardRuntimeServices,
 };
+use patina_ffs::section::SectionExtractor;
+use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
 use protocols::PROTOCOL_DB;
 use r_efi::efi;
 
@@ -181,11 +181,11 @@ pub struct NoAlloc;
 /// ## Examples
 ///
 /// ``` rust,no_run
-/// # use patina_sdk::component::prelude::*;
+/// # use patina::component::prelude::*;
 /// # #[derive(IntoComponent, Default)]
 /// # struct ExampleComponent;
 /// # impl ExampleComponent {
-/// #     fn entry_point(self) -> patina_sdk::error::Result<()> { Ok(()) }
+/// #     fn entry_point(self) -> patina::error::Result<()> { Ok(()) }
 /// # }
 /// # let physical_hob_list = core::ptr::null();
 /// patina_dxe_core::Core::default()
@@ -288,8 +288,8 @@ impl Core<NoAlloc> {
     /// ## Example
     ///
     /// ``` rust,no_run
-    /// # use patina_sdk::component::prelude::*;
-    /// # fn example_component() -> patina_sdk::error::Result<()> { Ok(()) }
+    /// # use patina::component::prelude::*;
+    /// # fn example_component() -> patina::error::Result<()> { Ok(()) }
     /// # let physical_hob_list = core::ptr::null();
     /// patina_dxe_core::Core::default()
     ///   .prioritize_32_bit_memory()
@@ -337,7 +337,7 @@ impl Core<Alloc> {
     fn parse_hobs(&mut self) {
         for hob in self.hob_list.iter() {
             if let mu_pi::hob::Hob::GuidHob(guid, data) = hob {
-                let parser_funcs = self.storage.get_hob_parsers(&patina_sdk::OwnedGuid::from(guid.name));
+                let parser_funcs = self.storage.get_hob_parsers(&patina::OwnedGuid::from(guid.name));
                 if parser_funcs.is_empty() {
                     let (f0, f1, f2, f3, f4, &[f5, f6, f7, f8, f9, f10]) = guid.name.as_fields();
                     let name = alloc::format!(
@@ -604,7 +604,7 @@ fn call_bds() {
                 EFI_PROGRESS_CODE,
                 EFI_SOFTWARE_DXE_CORE | EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT,
                 0,
-                &patina_sdk::guids::DXE_CORE,
+                &patina::guids::DXE_CORE,
                 ptr::null(),
             );
         }
