@@ -285,3 +285,15 @@ DLL Characteristics set. With the flag enabled, the Patina DXE Core will enable
 > Note: The Patina QEMU documentation provides an overview of where binary size comes from, and how to reduce it using the
 Patina QEMU DXE Core binary as an example. You can find those details in
 [Patina DXE Core Release Binary Composition and Size Optimization](https://github.com/OpenDevicePartnership/patina-qemu/blob/main/Platforms/Docs/Common/patina_dxe_core_release_binary_size.md).
+
+### 32 bit memory compatibility
+
+By default, the Patina core will prioritize using high memory. This has proven
+beneficial in catching bugs in many different external components which did not properly
+handle 64 bit addresses in all cases. It is recommended that platforms leave this default
+behavior. However, for platforms that must support this buggy software the core
+exposes a `prioritize_32_bit_memory()` option on it's pre-memory phase. When this
+configuration is set, the core will attempt to prioritize 32 bit addressable allocations
+first. For platforms that decide to use this option, it is still a good idea to leave
+the default allocation scheme on debug or development builds to catch address width
+bugs during development.

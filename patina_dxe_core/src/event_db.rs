@@ -20,7 +20,7 @@ use core::{cmp::Ordering, ffi::c_void, fmt};
 use patina_sdk::error::EfiError;
 use r_efi::efi;
 
-use crate::tpl_lock;
+use crate::{runtime, tpl_lock};
 
 /// Defines the supported UEFI event types
 #[repr(u32)]
@@ -205,6 +205,11 @@ struct Event {
     period: Option<u64>,
 }
 
+// SAFETY: This structure is used within a lock on a single core and is not mutated
+// after creation. It is safe to share references to it.
+unsafe impl Sync for crate::event_db::Event {}
+unsafe impl Send for crate::event_db::Event {}
+
 impl fmt::Debug for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut notify_func = 0;
@@ -266,6 +271,10 @@ impl Event {
             period: None,
         })
     }
+
+    pub fn efi_event(&self) -> efi::Event {
+        self.event_id as efi::Event
+    }
 }
 
 struct EventDb {
@@ -280,6 +289,9 @@ struct EventDb {
 }
 
 impl EventDb {
+    /// Tag used for runtime event IDs.
+    const RT_EVENT: usize = 1 << (usize::BITS - 1);
+
     const fn new() -> Self {
         EventDb { events: BTreeMap::new(), next_event_id: 1, pending_notifies: BTreeSet::new(), notify_tags: 0 }
     }
@@ -292,16 +304,44 @@ impl EventDb {
         notify_context: Option<*mut c_void>,
         event_group: Option<efi::Guid>,
     ) -> Result<efi::Event, EfiError> {
-        let id = self.next_event_id;
+        if self.next_event_id == Self::RT_EVENT {
+            debug_assert!(false, "Event ID space exhausted.");
+            return Err(EfiError::OutOfResources);
+        }
+
+        let runtime =
+            (event_type & efi::EVT_RUNTIME) != 0 || event_group == Some(efi::EVENT_GROUP_VIRTUAL_ADDRESS_CHANGE);
+
+        // Tag runtime event specially as they are tracked seperately.
+        let id = if runtime { self.next_event_id | Self::RT_EVENT } else { self.next_event_id };
         self.next_event_id += 1;
-        let event = Event::new(id, event_type, notify_tpl, notify_function, notify_context, event_group)?;
-        self.events.insert(id, event);
+
+        if runtime {
+            // Runtime events are managed by the runtime module.
+            runtime::add_runtime_event(
+                id as efi::Event,
+                event_type,
+                notify_tpl,
+                notify_function,
+                event_group,
+                notify_context,
+            )?;
+        } else {
+            let event = Event::new(id, event_type, notify_tpl, notify_function, notify_context, event_group)?;
+            self.events.insert(id, event);
+        }
+
         Ok(id as efi::Event)
     }
 
     fn close_event(&mut self, event: efi::Event) -> Result<(), EfiError> {
         let id = event as usize;
-        self.events.remove(&id).ok_or(EfiError::InvalidParameter)?;
+        if (id & Self::RT_EVENT) != 0 {
+            runtime::remove_runtime_event(id as efi::Event)?;
+        } else {
+            self.events.remove(&id).ok_or(EfiError::InvalidParameter)?;
+        }
+
         Ok(())
     }
 
@@ -310,7 +350,7 @@ impl EventDb {
         if event.event_type.is_notify_signal() || event.event_type.is_notify_wait() {
             pending_notifies.insert(TaggedEventNotification(
                 EventNotification {
-                    event: event.event_id as efi::Event,
+                    event: event.efi_event(),
                     notify_tpl: event.notify_tpl,
                     notify_function: event.notify_function,
                     notify_context: event.notify_context,

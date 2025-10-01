@@ -57,11 +57,13 @@ enum InternalError {
 
 #[derive(Debug, Clone, Copy)]
 pub enum AllocateType {
-    // Allocate from the lowest address to the highest address or until the specify address is reached (max address).
+    /// Allocate from the lowest address to the highest address or until the specify address is reached (max address).
     BottomUp(Option<usize>),
-    // Allocate from the highest address to the lowest address or until the specify address is reached (min address).
+    /// Allocate from the highest address to the lowest address.
+    /// Some(address) => Start at the specified address (inclusive max address).
+    /// None => Start at top of memory.
     TopDown(Option<usize>),
-    // Allocate at this address.
+    /// Allocate at this address.
     Address(usize),
 }
 
@@ -285,6 +287,8 @@ struct GCD {
     /// Default attributes for memory allocations
     /// This is efi::MEMORY_XP unless we have entered compatibility mode, in which case it is 0, e.g. no protection
     default_attributes: u64,
+    /// Whether to prioritize 32-bit memory allocations
+    prioritize_32_bit_memory: bool,
 }
 
 impl GCD {
@@ -314,6 +318,7 @@ impl GCD {
             allocate_memory_space_fn: Self::allocate_memory_space_internal,
             free_memory_space_fn: Self::free_memory_space_worker,
             default_attributes: efi::MEMORY_XP,
+            prioritize_32_bit_memory: false,
         }
     }
 
@@ -536,13 +541,13 @@ impl GCD {
                 device_handle,
                 max_address.unwrap_or(usize::MAX),
             ),
-            AllocateType::TopDown(min_address) => gcd.allocate_top_down(
+            AllocateType::TopDown(max_address) => gcd.allocate_top_down(
                 memory_type,
                 alignment,
                 len,
                 image_handle,
                 device_handle,
-                min_address.unwrap_or(0),
+                max_address.unwrap_or(usize::MAX),
             ),
             AllocateType::Address(address) => {
                 ensure!(address + len <= gcd.maximum_address, EfiError::NotFound);
@@ -717,52 +722,61 @@ impl GCD {
         len: usize,
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
-        min_address: usize,
+        max_address: usize,
     ) -> Result<usize, EfiError> {
         ensure!(len > 0, EfiError::InvalidParameter);
 
+        // For top down requests specifically, if prioritize 32 bit memory is set, then first
+        // try with an artificial max.
+        if self.prioritize_32_bit_memory && max_address > u32::MAX as usize {
+            match self.allocate_top_down(memory_type, align_shift, len, image_handle, device_handle, u32::MAX as usize)
+            {
+                Ok(addr) => return Ok(addr),
+                Err(error) => {
+                    log::trace!(target: "allocations", "[{}] Top down GCD low memory attempt failed: {:?}", function!(), error);
+                }
+            }
+        }
+
         log::trace!(target: "allocations", "[{}] Top down GCD allocation: {:#?}", function!(), memory_type);
-        log::trace!(target: "allocations", "[{}]   Min Address: {:#x}", function!(), min_address);
+        log::trace!(target: "allocations", "[{}]   Max Address: {:#x}", function!(), max_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
         log::trace!(target: "allocations", "[{}]   Align Shift: {:#x}", function!(), align_shift);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
         log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
         let memory_blocks = &mut self.memory_blocks;
-        let alignment = 1 << align_shift;
 
         log::trace!(target: "gcd_measure", "search");
-        let mut current = memory_blocks.last_idx();
+        let mut current = memory_blocks.get_closest_idx(&(max_address as u64));
         while let Some(idx) = current {
             let mb = memory_blocks.get_with_idx(idx).expect("idx is valid from prev_idx");
-            if mb.len() < len {
+
+            // Account for if the block is truncated by the max_address. Max address
+            // is inclusive, but end() is exclusive so subtract 1 from end.
+            let usable_len =
+                if mb.end() - 1 > max_address { max_address.checked_sub(mb.start()).unwrap() + 1 } else { mb.len() };
+            if usable_len < len {
                 current = memory_blocks.prev_idx(idx);
                 continue;
             }
-            let mut addr = mb.end() - len;
+
+            // Find the last suitable aligned range in the memory block.
+            let addr = (mb.start() + usable_len - len) & (usize::MAX << align_shift);
             if addr < mb.start() {
                 current = memory_blocks.prev_idx(idx);
                 continue;
             }
-            addr &= usize::MAX << align_shift;
-            ensure!(addr >= min_address, EfiError::NotFound);
 
             if mb.as_ref().memory_type != memory_type {
                 current = memory_blocks.prev_idx(idx);
                 continue;
             }
 
-            // We don't allow allocations on page 0, to allow for null pointer detection. If this block starts at 0,
-            // attempt to move forward a page + alignment to find a valid address. If there is not enough space in this
-            // block, move to the next one.
+            // We don't allow allocations on page 0, to allow for null pointer detection. As this is a top down
+            // search this means that we have already traversed all higher values, so bail.
             if addr == 0 {
-                addr = align_up(UEFI_PAGE_SIZE, alignment)?;
-                // we don't check against the min_address here because it was already checked above
-                // we can do mb.len() - addr here because we know this block starts from 0
-                if mb.len() - addr < len {
-                    current = memory_blocks.prev_idx(idx);
-                    continue;
-                }
+                break;
             }
 
             match Self::split_state_transition_at_idx(
@@ -781,7 +795,7 @@ impl GCD {
                 Err(e) => panic!("{e:?}"),
             }
         }
-        if min_address == 0 { Err(EfiError::OutOfResources) } else { Err(EfiError::NotFound) }
+        if max_address == usize::MAX { Err(EfiError::OutOfResources) } else { Err(EfiError::NotFound) }
     }
 
     fn allocate_address(
@@ -1381,9 +1395,14 @@ impl IoGCD {
                 device_handle,
                 max_address.unwrap_or(usize::MAX),
             ),
-            AllocateType::TopDown(min_address) => {
-                self.allocate_top_down(io_type, alignment, len, image_handle, device_handle, min_address.unwrap_or(0))
-            }
+            AllocateType::TopDown(max_address) => self.allocate_top_down(
+                io_type,
+                alignment,
+                len,
+                image_handle,
+                device_handle,
+                max_address.unwrap_or(usize::MAX),
+            ),
             AllocateType::Address(address) => {
                 ensure!(address + len <= self.maximum_address, EfiError::Unsupported);
                 self.allocate_address(io_type, alignment, len, image_handle, device_handle, address)
@@ -1456,18 +1475,18 @@ impl IoGCD {
     fn allocate_top_down(
         &mut self,
         io_type: dxe_services::GcdIoType,
-        alignment: usize,
+        align_shift: usize,
         len: usize,
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
-        min_address: usize,
+        max_address: usize,
     ) -> Result<usize, EfiError> {
         ensure!(len > 0, EfiError::InvalidParameter);
 
-        log::trace!(target: "allocations", "[{}] Top dowm IO allocation: {:#?}", function!(), io_type);
-        log::trace!(target: "allocations", "[{}]   Min Address: {:#x}", function!(), min_address);
+        log::trace!(target: "allocations", "[{}] Top down IO allocation: {:#?}", function!(), io_type);
+        log::trace!(target: "allocations", "[{}]   Max Address: {:#x}", function!(), max_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
-        log::trace!(target: "allocations", "[{}]   Alignment: {:#x}", function!(), alignment);
+        log::trace!(target: "allocations", "[{}]   Align Shift: {:#x}", function!(), align_shift);
         log::trace!(target: "allocations", "[{}]   Image Handle: {:#x?}", function!(), image_handle);
         log::trace!(target: "allocations", "[{}]   Device Handle: {:#x?}\n", function!(), device_handle.unwrap_or(ptr::null_mut()));
 
@@ -1478,20 +1497,24 @@ impl IoGCD {
         let io_blocks = &mut self.io_blocks;
 
         log::trace!(target: "gcd_measure", "search");
-        let mut current = io_blocks.last_idx();
+        let mut current = io_blocks.get_closest_idx(&(max_address as u64));
         while let Some(idx) = current {
             let ib = io_blocks.get_with_idx(idx).expect("idx is valid from prev_idx");
-            if ib.len() < len {
+
+            // Account for if the block is truncated by the max_address. Max address
+            // is inclusive, but end() is exclusive so subtract 1 from end.
+            let usable_len = if ib.end() - 1 > max_address { max_address - ib.start() + 1 } else { ib.len() };
+            if usable_len < len {
                 current = io_blocks.prev_idx(idx);
                 continue;
             }
-            let mut addr = ib.end() - len;
+
+            // Find the last suitable aligned range in the IO block.
+            let addr = (ib.start() + usable_len - len) & (usize::MAX << align_shift);
             if addr < ib.start() {
                 current = io_blocks.prev_idx(idx);
                 continue;
             }
-            addr &= usize::MAX << alignment;
-            ensure!(addr >= min_address, EfiError::NotFound);
 
             if ib.as_ref().io_type != io_type {
                 current = io_blocks.prev_idx(idx);
@@ -1797,6 +1820,7 @@ impl SpinLockedGcd {
                     allocate_memory_space_fn: GCD::allocate_memory_space_internal,
                     free_memory_space_fn: GCD::free_memory_space_worker,
                     default_attributes: efi::MEMORY_XP,
+                    prioritize_32_bit_memory: false,
                 },
                 "GcdMemLock",
             ),
@@ -1827,6 +1851,10 @@ impl SpinLockedGcd {
             ],
             page_table: tpl_lock::TplMutex::new(efi::TPL_HIGH_LEVEL, None, "GcdPageTableLock"),
         }
+    }
+
+    pub fn prioritize_32_bit_memory(&self, value: bool) {
+        self.memory.lock().prioritize_32_bit_memory = value;
     }
 
     /// Returns a reference to the memory type information table.
@@ -2403,21 +2431,27 @@ impl SpinLockedGcd {
                 }
             }
 
-            match self.set_paging_attributes(current_base as usize, current_len as usize, attributes) {
-                Ok(_) => {}
-                Err(EfiError::NotReady) => {
-                    // before the page table is installed, we expect to get a return of NotReady. This means the GCD
-                    // has been updated with the attributes, but the page table is not installed yet. In init_paging, the
-                    // page table will be updated with the current state of the GCD. The code that calls into this expects
-                    // NotReady to be returned, so we must catch that error and report it. However, we also need to
-                    // make sure any attribute updates across descriptors update the full range and not error out here.
-                    res = Err(EfiError::NotReady);
-                }
-                _ => {
-                    log::error!(
-                        "Failed to set page table memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}",
-                    );
-                    debug_assert!(false);
+            // 0 is a valid value for paging attributes: it means RWX. 0 is invalid for cache attributes. edk2 has a
+            // behavior where if the caller passes 0 for cache and paging attributes, then 0 (RWX) is not applied to
+            // the page table and only the virtual attribute(s) are applied to the GCD, such as EFI_RUNTIME. In order
+            // to maintain compatibility with existing drivers, we preserve this poor paradigm.
+            if attributes & (efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK) != 0 {
+                match self.set_paging_attributes(current_base as usize, current_len as usize, attributes) {
+                    Ok(_) => {}
+                    Err(EfiError::NotReady) => {
+                        // before the page table is installed, we expect to get a return of NotReady. This means the GCD
+                        // has been updated with the attributes, but the page table is not installed yet. In init_paging, the
+                        // page table will be updated with the current state of the GCD. The code that calls into this expects
+                        // NotReady to be returned, so we must catch that error and report it. However, we also need to
+                        // make sure any attribute updates across descriptors update the full range and not error out here.
+                        res = Err(EfiError::NotReady);
+                    }
+                    _ => {
+                        log::error!(
+                            "Failed to set page table memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}",
+                        );
+                        debug_assert!(false);
+                    }
                 }
             }
 
@@ -3572,6 +3606,7 @@ mod tests {
             allocate_memory_space_fn: GCD::allocate_memory_space_internal,
             free_memory_space_fn: GCD::free_memory_space_worker,
             default_attributes: efi::MEMORY_XP,
+            prioritize_32_bit_memory: false,
         };
         assert_eq!(Err(EfiError::NotReady), gcd.set_memory_space_attributes(0, 0x50000, 0b1111));
 
@@ -3797,7 +3832,7 @@ mod tests {
         );
         assert_eq!(
             Err(EfiError::OutOfResources),
-            gcd.allocate_top_down(dxe_services::GcdIoType::Io, 0, 5, 2 as _, None, 0)
+            gcd.allocate_top_down(dxe_services::GcdIoType::Io, 0, 5, 2 as _, None, usize::MAX)
         );
         assert_eq!(
             Err(EfiError::OutOfResources),
@@ -3840,7 +3875,7 @@ mod tests {
         // Cannot allocate if no blocks have been added
         assert_eq!(
             Err(EfiError::NotFound),
-            gcd.allocate_bottom_up(dxe_services::GcdIoType::Io, 0, 0x100, 1 as _, None, 0x4000)
+            gcd.allocate_top_down(dxe_services::GcdIoType::Io, 0, 0x100, 1 as _, None, 0x4000)
         );
 
         // Setup some io_space for the following tests
@@ -3853,11 +3888,11 @@ mod tests {
         // i.e. we skip the 0x0 block because it is not big enough. Since going top down,
         // The address is in the middle of the 0x200 Block such tha
         // 0xB0 (start addr) + 0x150 (size)= 0x200
-        assert_eq!(Ok(0xB0), gcd.allocate_top_down(dxe_services::GcdIoType::Io, 0, 0x150, 1 as _, None, 0));
+        assert_eq!(Ok(0xB0), gcd.allocate_top_down(dxe_services::GcdIoType::Io, 0, 0x150, 1 as _, None, usize::MAX));
 
         assert_eq!(
             Err(EfiError::NotFound),
-            gcd.allocate_top_down(dxe_services::GcdIoType::Reserved, 0, 0x150, 1 as _, None, 0)
+            gcd.allocate_top_down(dxe_services::GcdIoType::Reserved, 0, 0x150, 1 as _, None, usize::MAX)
         );
     }
 
@@ -4232,5 +4267,51 @@ mod tests {
             None,
         );
         assert_eq!(res.unwrap(), 0x0, "Should be able to allocate page 0 by address");
+    }
+
+    #[test]
+    fn test_prioritize_32_bit_memory_top_down() {
+        let (mut gcd, _) = create_gcd();
+        gcd.prioritize_32_bit_memory = true;
+
+        // Test with a contiguous 8gb without a gap.
+        unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0, 2 * SIZE_4GB, 0) }.unwrap();
+
+        // make sure it prioritizes 32 bit addresses.
+        let res = gcd.allocate_memory_space(
+            AllocateType::TopDown(None),
+            dxe_services::GcdMemoryType::SystemMemory,
+            UEFI_PAGE_SHIFT,
+            0x10000,
+            1 as _,
+            None,
+        );
+        assert_eq!(res.unwrap(), SIZE_4GB - 0x10000, "Should allocate below 4GB when prioritizing 32-bit memory");
+
+        // check that it will fall back to >32 bits.
+        let res = gcd.allocate_memory_space(
+            AllocateType::TopDown(None),
+            dxe_services::GcdMemoryType::SystemMemory,
+            UEFI_PAGE_SHIFT,
+            SIZE_4GB,
+            1 as _,
+            None,
+        );
+        assert_eq!(res.unwrap(), SIZE_4GB, "Failed to fall back to higher memory as expected");
+
+        // Free the memory to check the next condition.
+        gcd.free_memory_space(SIZE_4GB - 0x10000, 0x10000).unwrap();
+        gcd.free_memory_space(SIZE_4GB, SIZE_4GB).unwrap();
+
+        // Check that a sufficiently large allocation will straddle the boundary.
+        let res = gcd.allocate_memory_space(
+            AllocateType::TopDown(None),
+            dxe_services::GcdMemoryType::SystemMemory,
+            UEFI_PAGE_SHIFT,
+            SIZE_4GB + 0x1000,
+            1 as _,
+            None,
+        );
+        assert!(res.is_ok(), "Failed to fallback to higher memory as expected");
     }
 }

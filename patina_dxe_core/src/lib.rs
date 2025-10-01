@@ -27,6 +27,7 @@
 #![feature(alloc_error_handler)]
 #![feature(c_variadic)]
 #![feature(allocator_api)]
+#![feature(btreemap_alloc)]
 #![feature(slice_ptr_get)]
 #![feature(coverage_attribute)]
 
@@ -72,12 +73,17 @@ use mu_pi::{
     protocols::{bds, status_code},
     status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
 };
+use mu_rust_helpers::{function, guid::CALLER_ID};
 use patina_ffs::section::SectionExtractor;
 use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
 use patina_sdk::{
     boot_services::StandardBootServices,
     component::{Component, IntoComponent, Storage, service::IntoService},
     error::{self, Result},
+    performance::{
+        logging::{perf_function_begin, perf_function_end},
+        measurement::create_performance_measurement,
+    },
     runtime_services::StandardRuntimeServices,
 };
 use protocols::PROTOCOL_DB;
@@ -263,6 +269,34 @@ impl Core<NoAlloc> {
             _memory_state: core::marker::PhantomData,
         }
     }
+
+    /// Informs the core that it should prioritize allocating 32-bit memory when
+    /// not otherwise specified.
+    ///
+    /// This should only be used as a workaround in environments where address width
+    /// bugs exist in uncontrollable dependent software. For example, when booting
+    /// to an OS that puts any addresses from UEFI into a uint32.
+    ///
+    /// Must be called prior to [`Core::init_memory`].
+    ///
+    /// ## Example
+    ///
+    /// ``` rust,no_run
+    /// # use patina_sdk::component::prelude::*;
+    /// # fn example_component() -> patina_sdk::error::Result<()> { Ok(()) }
+    /// # let physical_hob_list = core::ptr::null();
+    /// patina_dxe_core::Core::default()
+    ///   .prioritize_32_bit_memory()
+    ///   .init_memory(physical_hob_list)
+    ///   .start()
+    ///   .unwrap();
+    /// ```
+    pub fn prioritize_32_bit_memory(self) -> Self {
+        // This doesn't actually alter the core's state, but uses the same model
+        // for consistent abstraction.
+        GCD.prioritize_32_bit_memory(true);
+        self
+    }
 }
 
 impl Core<Alloc> {
@@ -320,38 +354,54 @@ impl Core<Alloc> {
     /// Attempts to dispatch all components.
     ///
     /// This method will exit once no components remain or no components were dispatched during a full iteration.
-    fn dispatch_components(&mut self) {
-        loop {
-            let len = self.components.len();
-            self.components.retain_mut(|component| {
-                // Ok(true): Dispatchable and dispatched returning success
-                // Ok(false): Not dispatchable at this time.
-                // Err(e): Dispatchable and dispatched returning failure
-                log::info!("DISPATCH_ATTEMPT BEGIN: Id = [{:?}]", component.metadata().name());
-                !match component.run(&mut self.storage) {
-                    Ok(true) => {
-                        log::info!("DISPATCH_ATTEMPT END: Id = [{:?}] Status = [Success]", component.metadata().name());
-                        true
-                    }
-                    Ok(false) => {
-                        log::info!("DISPATCH_ATTEMPT END: Id = [{:?}] Status = [Skipped]", component.metadata().name());
-                        false
-                    }
-                    Err(err) => {
-                        log::error!(
-                            "DISPATCH_ATTEMPT END: Id = [{:?}] Status = [Failed] Error = [{:?}]",
-                            component.metadata().name(),
-                            err
-                        );
-                        debug_assert!(false);
-                        true // Component dispatched, even if it did fail, so remove from self.components to avoid re-dispatch.
-                    }
+    fn dispatch_components(&mut self) -> bool {
+        let len = self.components.len();
+        self.components.retain_mut(|component| {
+            // Ok(true): Dispatchable and dispatched returning success
+            // Ok(false): Not dispatchable at this time.
+            // Err(e): Dispatchable and dispatched returning failure
+            let name = component.metadata().name();
+            log::trace!("Dispatch Start: Id = [{name:?}]");
+            !match component.run(&mut self.storage) {
+                Ok(true) => {
+                    log::info!("Dispatched: Id = [{name:?}] Status = [Success]");
+                    true
                 }
-            });
-            if self.components.len() == len {
+                Ok(false) => false,
+                Err(err) => {
+                    log::error!("Dispatched: Id = [{name:?}] Status = [Failed] Error = [{err:?}]");
+                    debug_assert!(false);
+                    true // Component dispatched, even if it did fail, so remove from self.components to avoid re-dispatch.
+                }
+            }
+        });
+        len != self.components.len()
+    }
+
+    /// Performs a combined dispatch of Patina components and UEFI drivers.
+    ///
+    /// This function will continue to loop and perform dispatching until no components have been dispatched in a full
+    /// iteration. The dispatching process involves a loop of two distinct dispatch phases:
+    ///
+    /// 1. A single iteration of dispatching Patina components, retaining those that were not dispatched.
+    /// 2. A single iteration of dispatching UEFI drivers via the dispatcher module.
+    fn core_dispatcher(&mut self) -> Result<()> {
+        perf_function_begin(function!(), &CALLER_ID, create_performance_measurement);
+        loop {
+            // Patina component dispatch
+            let dispatched = self.dispatch_components();
+
+            // UEFI driver dispatch
+            let dispatched = dispatched
+                || dispatcher::dispatch().inspect_err(|err| log::error!("UEFI Driver Dispatch error: {err:?}"))?;
+
+            if !dispatched {
                 break;
             }
         }
+        perf_function_end(function!(), &CALLER_ID, create_performance_measurement);
+
+        Ok(())
     }
 
     fn display_components_not_dispatched(&self) {
@@ -484,13 +534,6 @@ impl Core<Alloc> {
         self.parse_hobs();
         log::info!("Finished.");
 
-        log::info!("Dispatching Local Drivers");
-        self.dispatch_components();
-        self.storage.lock_configs();
-        self.dispatch_components();
-        log::info!("Finished Dispatching Local Drivers");
-        self.display_components_not_dispatched();
-
         if let Some(extractor) = self.storage.get_service::<dyn SectionExtractor>() {
             log::debug!("Section Extractor service found, registering with FV and Dispatcher.");
             dispatcher::register_section_extractor(extractor.clone());
@@ -501,7 +544,13 @@ impl Core<Alloc> {
         fv::parse_hob_fvs(&self.hob_list)?;
         log::info!("Finished.");
 
-        dispatcher::core_dispatcher().expect("initial dispatch failed.");
+        log::info!("Dispatching Drivers");
+        self.core_dispatcher()?;
+        self.storage.lock_configs();
+        self.core_dispatcher()?;
+        log::info!("Finished Dispatching Drivers");
+
+        self.display_components_not_dispatched();
 
         core_display_missing_arch_protocols();
 

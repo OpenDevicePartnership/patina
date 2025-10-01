@@ -49,7 +49,7 @@ impl<'a> RuntimeFunction<'a> {
     }
 
     /// Parse the Unwind Info data pointed by RuntimeFunction
-    pub fn get_unwind_info(&self) -> StResult<UnwindInfo> {
+    pub fn get_unwind_info(&self) -> StResult<UnwindInfo<'_>> {
         UnwindInfo::parse(self.image_base, self.unwind_info, self.image_name)
             .map_err(|_| Error::UnwindInfoNotFound(self.image_name, self.image_base.as_ptr() as u64, self.unwind_info))
     }

@@ -66,6 +66,12 @@ As previously stated, modern systems necessitate a powerful language that can su
 maximum performance, reliability, and safety. While C has provided the flexibility needed to implement relatively
 efficient firmware code, it has failed to prevent recurring problems around memory safety.
 
+To get a better idea of the memory safety challenges in firmware written in C and to see real-world examples of where
+this has been a problem, refer to:
+
+- [Patina DXE Core Memory Strategy](background/memory_safety_strategy.md)
+- [Real World Case Study: UEFI Memory Safety Issues Preventable by Rust](background/uefi_memory_safety_case_studies.md)
+
 ### Stringent Safety
 
 Common pitfalls in C such as null pointer dereferences, buffer and stack overflows, and pointer mismanagement continue
@@ -227,11 +233,12 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     patina_debugger::set_debugger(&DEBUGGER);
 
     Core::default()
-        .with_section_extractor(patina_ffs_extractors::CompositeSectionExtractor::default()) // Section extractor can be customized or use default
-        .init_memory(physical_hob_list)                                                  // DXE Core initializes GCD with the HOB list
+        .init_memory(physical_hob_list)                                                 // DXE Core initializes GCD with the HOB list
+        .with_service(patina_ffs_extractors::CompositeSectionExtractor::default()) // A trait implementation that can be consumed by any component
         .with_component(adv_logger_component)                                            // The "advanced logger" Rust component is added for dispatch
         .start()
         .unwrap();
+}
 ```
 
 ``` admonish note
