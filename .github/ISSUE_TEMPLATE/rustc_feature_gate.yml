@@ -25,6 +25,14 @@ body:
       placeholder: "generic_associated_types"
     validations:
       required: true
+  - type: input
+    id: feature_link
+    attributes:
+      label: Unstable rustc feature issue link
+      description: The link to the unstable rust feature tracking issue (github).
+      placeholder: https://github.com/rust-lang/rfcs/pull/1598
+    validations:
+      required: true
   - type: checkboxes
     id: status
     attributes:
