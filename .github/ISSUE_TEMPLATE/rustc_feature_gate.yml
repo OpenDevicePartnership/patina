@@ -16,7 +16,7 @@ body:
       value: >
         👋 Thanks for taking the time to reccomend usage of an unstable rustc feature. If you have not already, please
         review the [documentation](https://opendevicepartnership.github.io/patina/dev/unstable.html) on this overall
-        process.
+        process. You will be expected to keep this issue up to date, specifically the checkboxes below.
   - type: input
     id: feature_name
     attributes:
