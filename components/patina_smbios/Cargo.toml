@@ -14,3 +14,6 @@ r-efi = { workspace = true }
 spin = { workspace = true }
 hashbrown = "0.11.2"
 patina_smbios_macro = { path = "patina_smbios_macro" }
+
+[features]
+enable_patina_tests = []
