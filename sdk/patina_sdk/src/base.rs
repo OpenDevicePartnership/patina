@@ -11,7 +11,7 @@
 use num_traits;
 use r_efi::efi;
 
-use crate::{bit, error::EfiError};
+use crate::error::EfiError;
 
 pub mod guid;
 
