@@ -23,6 +23,7 @@ here, but are not in scope for this RFC.
   can be used as injected dependencies in a component.
 - 2025-10-1: Update the section about Patina component and C driver dispatch to reflect recent changes that interleave
   component and C driver dispatch.
+-2025-10-1: Add mocking note to service interfaces section.
 
 ## Motivation
 
@@ -306,6 +307,9 @@ impl MyComponent {
     }
 }
 ```
+
+> Note: Mocking support via [`mockall`](https://docs.rs/mockall/latest/mockall/index.html) will be implemented on
+> service interfaces.
 
 ## Guide-Level Explanation
 
