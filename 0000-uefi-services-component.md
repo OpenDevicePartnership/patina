@@ -21,6 +21,8 @@ here, but are not in scope for this RFC.
 - 2025-09-22: Updated RFC to add proposed groups of UEFI services (addressing a previously unresolved question),
   and adding layout detail for the `patina_uefi_services` crate. Also add a usage example showing how the services
   can be used as injected dependencies in a component.
+- 2025-10-1: Update the section about Patina component and C driver dispatch to reflect recent changes that interleave
+  component and C driver dispatch.
 
 ## Motivation
 
@@ -52,12 +54,12 @@ components from C-based constructs such as the services tables to:
         }
    ```
 
-   Components are also dispatched prior to C drivers. However, some subsets of services such as variable services in
-   the Runtime Services table are not available until after the C drivers are dispatched and the C driver has updated
-   the pointers for variable functions in the Runtime Services table. If instead, a "UEFI Variable Service" is provided,
-   then the component can depend on that service and be dispatched at the proper time. If that service moves to Rust,
-   there is no change needed in the component code, it continues to depend on the "UEFI Variable Service" and dispatch
-   when it is available.
+   Components can be dispatched prior to a C driver that produces functionality that the component depends on. For
+   example, services such as variable services in the Runtime Services table are not currently available until after
+   the UEFI variable C driver has dispatched and updated the pointers for variable functions in the Runtime Services
+   table. If a "UEFI Variable Service" is provided, then the component can depend on that service and be dispatched at
+   the proper time. If that service moves to Rust, there is no change needed in the component code, it continues to
+   depend on the "UEFI Variable Service" and dispatch when it is available.
 
 ## Technology Background
 
