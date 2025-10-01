@@ -344,7 +344,7 @@ mod tests {
     use crate::test_support::header;
     use crate::test_support::hob;
     use mu_pi::hob::Hob::MemoryAllocationModule;
-    use patina_sdk::guid;
+    use patina_sdk::guids;
 
     // Compact Hoblist with DXE core Alloction hob. Use this when DXE core hob is required.
     pub(crate) fn build_test_hob_list_compact(mem_size: u64) -> *const c_void {
@@ -405,7 +405,7 @@ mod tests {
                 memory_type: efi::LOADER_CODE,
                 reserved: Default::default(),
             },
-            module_name: guid::DXE_CORE,
+            module_name: guids::DXE_CORE,
             entry_point: 0,
         };
 
@@ -449,7 +449,7 @@ mod tests {
                 allocation_hob_template.alloc_descriptor.memory_base_address =
                     resource_descriptor1.physical_start + idx as u64 * 0x1000;
                 allocation_hob_template.alloc_descriptor.memory_type = *memory_type;
-                allocation_hob_template.module_name = guid::DXE_CORE;
+                allocation_hob_template.module_name = guids::DXE_CORE;
 
                 core::ptr::copy(&allocation_hob_template, cursor as *mut hob::MemoryAllocationModule, 1);
                 cursor = cursor.offset(allocation_hob_template.header.length as isize);
@@ -473,7 +473,7 @@ mod tests {
         let dxe_core_hob = hob_list
             .iter()
             .find_map(|hob| match hob {
-                MemoryAllocationModule(module) if module.module_name == guid::DXE_CORE => Some(module),
+                MemoryAllocationModule(module) if module.module_name == guids::DXE_CORE => Some(module),
                 _ => None,
             })
             .ok_or("DXE Core MemoryAllocationModule HOB not found")?;

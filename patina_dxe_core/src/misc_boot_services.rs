@@ -11,9 +11,12 @@ use core::{
     slice::from_raw_parts,
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
-use mu_pi::{protocols, status_code};
+use mu_pi::{
+    protocols::{self},
+    status_code,
+};
 use patina_internal_cpu::interrupts;
-use patina_sdk::guid;
+use patina_sdk::guids;
 use r_efi::efi;
 
 use crate::{
@@ -38,10 +41,10 @@ extern "efiapi" fn calculate_crc32(data: *mut c_void, data_size: usize, crc_32: 
     if data.is_null() || data_size == 0 || crc_32.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
-
+    // Safety: caller must ensure that data and crc_32 are valid pointers. They are null-checked above.
     unsafe {
         let buffer = from_raw_parts(data as *mut u8, data_size);
-        crc_32.write(crc32fast::hash(buffer));
+        crc_32.write_unaligned(crc32fast::hash(buffer));
     }
 
     efi::Status::SUCCESS
@@ -166,7 +169,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
         Err(err) => {
             log::error!("Failed to terminate memory map: {err:?}");
             GCD.unlock_memory_space();
-            EVENT_DB.signal_group(guid::EBS_FAILED);
+            EVENT_DB.signal_group(guids::EBS_FAILED);
             return err.into();
         }
     }
@@ -183,7 +186,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
                 status_code::EFI_PROGRESS_CODE,
                 status_code::EFI_SOFTWARE_EFI_BOOT_SERVICE | status_code::EFI_SW_BS_PC_EXIT_BOOT_SERVICES,
                 0,
-                &guid::DXE_CORE,
+                &guids::DXE_CORE,
                 core::ptr::null(),
             );
         }
@@ -209,6 +212,7 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
         Err(err) => log::error!("Unable to locate runtime architectural protocol: {err:?}"),
     };
 
+    crate::runtime::finalize_runtime_support();
     log::info!("EBS completed successfully.");
 
     efi::Status::SUCCESS

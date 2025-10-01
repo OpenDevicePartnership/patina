@@ -12,6 +12,7 @@
 //! use patina_sdk::{
 //!    error::Result,
 //!    component::hob::{Hob, FromHob},
+//!    Guid, OwnedGuid
 //! };
 //!
 //! /// A HOB that is a simple pointer cast from byte array to a struct.
@@ -33,7 +34,7 @@
 //! }
 //!
 //! impl FromHob for MyComplexHobStruct {
-//!     const HOB_GUID: r_efi::efi::Guid = r_efi::efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
+//!     const HOB_GUID: OwnedGuid = Guid::from_fields(0, 0, 0, 0, 0, [0; 6]);
 //!
 //!    fn parse(bytes: &[u8]) -> Self {
 //!        Self::default() // Simple for example
@@ -60,8 +61,8 @@ extern crate alloc;
 
 use alloc::{boxed::Box, vec::Vec};
 
+use crate::OwnedGuid;
 use core::{any::Any, ops::Deref};
-use r_efi::efi::Guid;
 
 use super::{
     metadata::MetaData,
@@ -81,6 +82,7 @@ use super::{
 ///
 /// ```rust
 /// use patina_sdk::component::hob::FromHob;
+/// use patina_sdk::{Guid, OwnedGuid};
 ///
 /// #[derive(Default, Clone, Copy)]
 /// #[repr(C)]
@@ -90,7 +92,7 @@ use super::{
 /// }
 ///
 /// impl FromHob for MyConfig {
-///     const HOB_GUID: r_efi::efi::Guid = r_efi::efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
+///     const HOB_GUID: OwnedGuid = Guid::from_fields(0, 0, 0, 0, 0, [0; 6]);
 ///
 ///     fn parse(bytes: &[u8]) -> Self {
 ///         // SAFETY: Specification defined requirement that the byte array is this underlying C type.
@@ -108,7 +110,7 @@ use super::{
 /// ```
 pub trait FromHob: Sized + 'static {
     /// The guid value associated with the guided HOB to parse.
-    const HOB_GUID: Guid;
+    const HOB_GUID: OwnedGuid;
 
     /// Registers the parsed hob with the provided [Storage] instance.
     fn register(bytes: &[u8], storage: &mut Storage) {
@@ -134,7 +136,7 @@ pub use patina_sdk_macro::FromHob;
 /// # #[derive(Debug)]
 /// # struct MyStruct{ value: u32 };
 /// # impl FromHob for MyStruct {
-/// #     const HOB_GUID: r_efi::efi::Guid = r_efi::efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
+/// #     const HOB_GUID: patina_sdk::OwnedGuid = patina_sdk::Guid::from_fields(0, 0, 0, 0, 0, [0; 6]);
 /// #     fn parse(bytes: &[u8]) -> Self {
 /// #         MyStruct { value: 5 }
 /// #     }
@@ -162,12 +164,12 @@ impl<'h, T: FromHob + 'static> Hob<'h, T> {
     ///
     /// ```rust
     /// use patina_sdk::component::hob::{FromHob, Hob};
-    /// use r_efi::efi::Guid;
+    /// use patina_sdk::{Guid, OwnedGuid};
     ///
     /// struct MyStruct;
     ///
     /// impl FromHob for MyStruct {
-    ///     const HOB_GUID: Guid = Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
+    ///     const HOB_GUID: OwnedGuid = Guid::from_fields(0, 0, 0, 0, 0, [0; 6]);
     ///
     ///    fn parse(bytes: &[u8]) -> Self {
     ///        MyStruct
@@ -242,7 +244,7 @@ unsafe impl<T: FromHob + 'static> Param for Hob<'_, T> {
 /// # use patina_sdk::component::hob::{FromHob, Hob};
 /// # struct MyStruct(u32);
 /// # impl FromHob for MyStruct {
-/// #     const HOB_GUID: r_efi::efi::Guid = r_efi::efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
+/// #     const HOB_GUID: patina_sdk::OwnedGuid = patina_sdk::Guid::from_fields(0, 0, 0, 0, 0, [0; 6]);
 /// #     fn parse(bytes: &[u8]) -> Self {
 /// #         MyStruct(5)
 /// #     }
@@ -285,7 +287,9 @@ impl<'h, T: FromHob + 'static> IntoIterator for &Hob<'h, T> {
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
+    use crate as patina_sdk;
     use crate::{
+        Guid, OwnedGuid,
         component::IntoComponent,
         error::{EfiError, Result},
     };
@@ -298,7 +302,7 @@ mod tests {
     }
 
     impl FromHob for MyStruct {
-        const HOB_GUID: Guid = Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
+        const HOB_GUID: OwnedGuid = Guid::ZERO;
 
         fn parse(_bytes: &[u8]) -> Self {
             MyStruct::default()
@@ -351,7 +355,11 @@ mod tests {
 
     #[test]
     fn test_component_flow() {
-        fn my_component(hob: Hob<MyStruct>) -> Result<()> {
+        #[derive(IntoComponent)]
+        #[entry_point(path = my_component)]
+        struct MyComponent;
+
+        fn my_component(_: MyComponent, hob: Hob<MyStruct>) -> Result<()> {
             if hob.unused == 0 {
                 return Err(EfiError::NotReady);
             }
@@ -363,7 +371,7 @@ mod tests {
 
         let mut storage = Storage::new();
 
-        let mut comp = my_component.into_component();
+        let mut comp = MyComponent.into_component();
         comp.initialize(&mut storage);
 
         assert!(!Hob::<MyStruct>::validate(&0, UnsafeStorageCell::from(&storage)));
@@ -372,9 +380,12 @@ mod tests {
 
         let x = unsafe { Hob::<MyStruct>::get_param(&0, UnsafeStorageCell::from(&storage)) };
 
-        assert!(my_component(x).is_err_and(|e| e == EfiError::NotReady));
+        assert!(my_component(MyComponent, x).is_err_and(|e| e == EfiError::NotReady));
 
-        assert!(my_component(Hob::mock(vec![MyStruct { unused: 5 }])).is_ok());
-        assert!(my_component(Hob::mock(vec![MyStruct { unused: 10 }])).is_err_and(|e| e == EfiError::InvalidParameter));
+        assert!(my_component(MyComponent, Hob::mock(vec![MyStruct { unused: 5 }])).is_ok());
+        assert!(
+            my_component(MyComponent, Hob::mock(vec![MyStruct { unused: 10 }]))
+                .is_err_and(|e| e == EfiError::InvalidParameter)
+        );
     }
 }

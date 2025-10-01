@@ -71,8 +71,8 @@ extern "efiapi" fn fvb_get_attributes(
 
     match core_fvb_get_attributes(this) {
         Err(err) => return err.into(),
-        // SAFETY: caller must provide a valid pointer to receive the attributes. It is null-checked above.
-        Ok(fvb_attributes) => unsafe { attributes.write(fvb_attributes) },
+        // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
+        Ok(fvb_attributes) => unsafe { attributes.write_unaligned(fvb_attributes) },
     };
 
     efi::Status::SUCCESS
@@ -115,8 +115,8 @@ extern "efiapi" fn fvb_get_physical_address(
         return efi::Status::NOT_FOUND;
     };
 
-    // SAFETY: caller must provide a valid pointer to receive the address. It is null-checked above.
-    unsafe { address.write(fvb_data.physical_address) };
+    // Safety: caller must provide a valid pointer to receive the address. It is null-checked above.
+    unsafe { address.write_unaligned(fvb_data.physical_address) };
 
     efi::Status::SUCCESS
 }
@@ -136,10 +136,10 @@ extern "efiapi" fn fvb_get_block_size(
         Ok((size, remaining_blocks)) => (size, remaining_blocks),
     };
 
-    // SAFETY: caller must provide valid pointers to receive the block size and number of blocks. They are null-checked above.
+    // Safety: caller must provide valid pointers to receive the block size and number of blocks. They are null-checked above.
     unsafe {
-        block_size.write(size);
-        number_of_blocks.write(remaining_blocks);
+        block_size.write_unaligned(size);
+        number_of_blocks.write_unaligned(remaining_blocks);
     }
 
     efi::Status::SUCCESS
@@ -187,7 +187,7 @@ extern "efiapi" fn fvb_read(
 
     if data.len() > bytes_to_read {
         // Safety: caller must provide a valid pointer for num_bytes. It is null-checked above.
-        unsafe { num_bytes.write(data.len()) };
+        unsafe { num_bytes.write_unaligned(data.len()) };
         return efi::Status::BUFFER_TOO_SMALL;
     }
 
@@ -197,7 +197,7 @@ extern "efiapi" fn fvb_read(
     unsafe {
         let dest_buffer = slice::from_raw_parts_mut(buffer as *mut u8, data.len());
         dest_buffer.copy_from_slice(data);
-        num_bytes.write(data.len());
+        num_bytes.write_unaligned(data.len());
     }
 
     if data.len() != bytes_to_read { efi::Status::BAD_BUFFER_SIZE } else { efi::Status::SUCCESS }
@@ -299,8 +299,8 @@ extern "efiapi" fn fv_get_volume_attributes(
         Ok(attrs) => attrs,
     };
 
-    // SAFETY: caller must provide a valid pointer to receive the attributes. It is null-checked above.
-    unsafe { fv_attributes.write(fv_attributes_data) };
+    // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
+    unsafe { fv_attributes.write_unaligned(fv_attributes_data) };
 
     efi::Status::SUCCESS
 }
@@ -347,8 +347,8 @@ extern "efiapi" fn fv_read_file(
     }
 
     // Safety: caller must provide valid pointers for buffer_size and name_guid. They are null-checked above.
-    let local_buffer_size = unsafe { *buffer_size };
-    let local_name_guid = unsafe { *name_guid };
+    let local_buffer_size = unsafe { buffer_size.read_unaligned() };
+    let local_name_guid = unsafe { name_guid.read_unaligned() };
 
     // for this routine, the file data should be copied into the output buffer directly from the FileRef
     // constructed here. If this logic was moved into a `core_fv_read_file()` routine as with other functions
@@ -381,10 +381,10 @@ extern "efiapi" fn fv_read_file(
     // update file metadata output pointers.
     // Safety: caller must provide valid pointers for found_type, file_attributes, and buffer_size. They are null-checked above.
     unsafe {
-        found_type.write(file.file_type_raw());
-        file_attributes.write(file.fv_attributes());
+        found_type.write_unaligned(file.file_type_raw());
+        file_attributes.write_unaligned(file.fv_attributes());
         //TODO: Authentication status is not yet supported.
-        buffer_size.write(file.content().len());
+        buffer_size.write_unaligned(file.content().len());
     }
 
     if buffer.is_null() {
@@ -393,7 +393,7 @@ extern "efiapi" fn fv_read_file(
     }
 
     // Safety: caller must provide a valid pointer for buffer. It is null-checked above.
-    let mut local_buffer_ptr = unsafe { *buffer };
+    let mut local_buffer_ptr = unsafe { buffer.read_unaligned() };
 
     if local_buffer_size > 0 {
         //caller indicates they have allocated a buffer to receive the file data.
@@ -413,7 +413,7 @@ extern "efiapi" fn fv_read_file(
             // Safety: caller must provide a valid pointer for buffer. It is null-checked above.
             Ok(allocation) => unsafe {
                 local_buffer_ptr = allocation;
-                buffer.write(local_buffer_ptr);
+                buffer.write_unaligned(local_buffer_ptr);
             },
         }
     }
@@ -441,7 +441,7 @@ extern "efiapi" fn fv_read_section(
     }
 
     // Safety: caller must provide valid pointer for name_guid. It is null-checked above.
-    let local_name_guid = unsafe { *name_guid };
+    let local_name_guid = unsafe { name_guid.read_unaligned() };
 
     let section = match core_fv_read_section(this, local_name_guid, section_type, section_instance) {
         Ok(section) => section,
@@ -456,8 +456,8 @@ extern "efiapi" fn fv_read_section(
     // get the buffer_size and buffer parameters from caller.
     // Safety: null-checks are at the start of the routine, but caller is required to guarantee that buffer_size and
     // buffer are valid.
-    let mut local_buffer_size = unsafe { *buffer_size };
-    let mut local_buffer_ptr = unsafe { *buffer };
+    let mut local_buffer_size = unsafe { buffer_size.read_unaligned() };
+    let mut local_buffer_ptr = unsafe { buffer.read_unaligned() };
 
     if local_buffer_ptr.is_null() {
         //caller indicates that they wish to receive section data, but that this
@@ -470,15 +470,15 @@ extern "efiapi" fn fv_read_section(
             Ok(allocation) => unsafe {
                 local_buffer_size = section_data.len();
                 local_buffer_ptr = allocation;
-                buffer_size.write(local_buffer_size);
-                buffer.write(local_buffer_ptr);
+                buffer_size.write_unaligned(local_buffer_size);
+                buffer.write_unaligned(local_buffer_ptr);
             },
         }
     } else {
         // update buffer size output for the caller
         // Safety: null-checked at the start of the routine, but caller is required to guarantee buffer_size is valid.
         unsafe {
-            buffer_size.write(section_data.len());
+            buffer_size.write_unaligned(section_data.len());
         }
     }
 
@@ -555,8 +555,8 @@ extern "efiapi" fn fv_get_next_file(
     }
 
     // Safety: caller must provide valid pointers for key and file_type. They are null-checked above.
-    let local_key = unsafe { *(key as *mut usize) };
-    let local_file_type = unsafe { *(file_type) };
+    let local_key = unsafe { (key as *mut usize).read_unaligned() };
+    let local_file_type = unsafe { file_type.read_unaligned() };
 
     if local_file_type >= ffs::file::raw::r#type::FFS_MIN {
         return efi::Status::NOT_FOUND;
@@ -570,15 +570,15 @@ extern "efiapi" fn fv_get_next_file(
     // found matching file. Update the key and outputs.
     // Safety: caller must provide valid pointers for key, file_type, name_guid, attributes, and size. They are null-checked above.
     unsafe {
-        (key as *mut usize).write(local_key + 1);
-        name_guid.write(file_name);
+        (key as *mut usize).write_unaligned(local_key + 1);
+        name_guid.write_unaligned(file_name);
         if (fv_attributes & fvb::attributes::raw::fvb2::MEMORY_MAPPED) == fvb::attributes::raw::fvb2::MEMORY_MAPPED {
-            attributes.write(fv_attributes | fv::file::raw::attribute::MEMORY_MAPPED);
+            attributes.write_unaligned(fv_attributes | fv::file::raw::attribute::MEMORY_MAPPED);
         } else {
-            attributes.write(fv_attributes);
+            attributes.write_unaligned(fv_attributes);
         }
-        size.write(file_size);
-        file_type.write(found_file_type);
+        size.write_unaligned(file_size);
+        file_type.write_unaligned(found_file_type);
     }
 
     efi::Status::SUCCESS

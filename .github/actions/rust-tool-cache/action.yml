@@ -11,6 +11,12 @@
 name: "Install Rust Tools"
 description: "This action loads rust tools and toolchains from cache, or installs them."
 
+inputs:
+  rust-toolchain-file:
+    description: 'The path to the rust-toolchain.toml file. Default: `rust-toolchain.toml`'
+    required: false
+    default: 'rust-toolchain.toml'
+
 runs:
   using: composite
   steps:
@@ -21,7 +27,7 @@ runs:
         path: |
           ~/.cargo/bin/
           ~/.rustup/toolchains/
-        key: ${{ runner.os }}-rust-tools-${{ hashFiles('**/rust-toolchain.toml' )}}
+        key: ${{ runner.os }}-rust-tools-${{ hashFiles('${{ inputs.rust-toolchain-file }}') }}
 
     # Installs the toolchain specified in the rust-toolchain.toml file if rustup >= 1.28.0
     #
@@ -43,7 +49,7 @@ runs:
     - name: Install Rust Tools
       shell: bash
       run: |
-        FILE="rust-toolchain.toml"
+        FILE="${{ inputs.rust-toolchain-file }}"
 
         if [ ! -f "$FILE" ]; then
           echo "::error::File $FILE not found."

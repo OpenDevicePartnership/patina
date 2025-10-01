@@ -11,8 +11,10 @@
 //! ```rust
 //! use patina_sdk::component::service::{ Service, memory::*};
 //!
-//! use std::boxed::Box;
+//! # #[cfg(any(test, feature = "mockall"))]
+//! # use std::boxed::Box;
 //!
+//! # #[cfg(any(test, feature = "mockall"))]
 //! fn test_that_needs_memory_manager() {
 //!     let memory_manager = StdMemoryManager::new();
 //!

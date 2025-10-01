@@ -16,6 +16,10 @@ harness = false
 name = "bench_service"
 harness = false
 
+[[bench]]
+name = "bench_guid"
+harness = false
+
 [[example]]
 name = "basic_hob_usage"
 

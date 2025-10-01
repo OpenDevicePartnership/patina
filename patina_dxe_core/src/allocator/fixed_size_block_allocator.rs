@@ -57,7 +57,7 @@ const ALIGNMENT: usize = 0x1000;
 const BLOCK_SIZES: &[usize] = &[8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
 
 // Compile-time check to ensure the MIN_EXPANSION is a multiple of RUNTIME_PAGE_ALLOCATION_GRANULARITY.
-const _: () = assert!(MIN_EXPANSION % super::RUNTIME_PAGE_ALLOCATION_GRANULARITY == 0);
+const _: () = assert!(MIN_EXPANSION.is_multiple_of(super::RUNTIME_PAGE_ALLOCATION_GRANULARITY));
 
 // Returns the index in the block list for the minimum size block that will
 // satisfy allocation for the given layout
@@ -633,7 +633,7 @@ impl SpinLockedFixedSizeBlockAllocator {
         // Ensure that the requested number of pages is a multiple of the granularity
         let required_pages = align_up(pages, uefi_size_to_pages!(granularity))?;
 
-        if address % granularity != 0 {
+        if !address.is_multiple_of(granularity) {
             return Err(EfiError::InvalidParameter);
         }
 
@@ -764,8 +764,8 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
             Err(FixedSizeBlockAllocatorError::OutOfMemory(additional_mem_required)) => {
                 // Compile-time check to ensure ALIGNMENT is compatible with the alignment requirements
                 // of `expand()` and `page_shift_from_alignment()`
-                const _: () = assert!(ALIGNMENT % align_of::<AllocatorListNode>() == 0);
-                const _: () = assert!(ALIGNMENT % UEFI_PAGE_SIZE == 0 && ALIGNMENT > 0);
+                const _: () = assert!(ALIGNMENT.is_multiple_of(align_of::<AllocatorListNode>()));
+                const _: () = assert!(ALIGNMENT.is_multiple_of(UEFI_PAGE_SIZE) && ALIGNMENT > 0);
 
                 // As a matter of policy, allocate at least `MIN_EXPANSION` memory and ensure the size is
                 // aligned to `ALIGNMENT`.

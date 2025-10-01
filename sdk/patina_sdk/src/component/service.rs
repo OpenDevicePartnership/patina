@@ -129,8 +129,6 @@ use crate::component::{
 pub mod memory;
 
 pub use patina_sdk_macro::IntoService;
-#[doc(hidden)]
-pub use r_efi::efi::Guid;
 
 /// A trait that allows the implementor to register a service with the underlying [Storage].
 pub trait IntoService {

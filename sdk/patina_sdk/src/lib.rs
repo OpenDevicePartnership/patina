@@ -21,6 +21,15 @@
 
 extern crate alloc;
 
+pub use base::guid::{Guid, GuidError, OwnedGuid};
+
+/// Common GUID constants
+pub mod guid_constants {
+    pub use super::base::guid::OwnedGuid;
+    /// Zero GUID constant (00000000-0000-0000-0000-000000000000)
+    pub const ZERO_GUID: OwnedGuid = OwnedGuid::ZERO;
+}
+
 #[macro_use]
 pub mod macros;
 
@@ -30,7 +39,7 @@ pub mod component;
 pub mod driver_binding;
 pub mod efi_types;
 pub mod error;
-pub mod guid;
+pub mod guids;
 pub mod log;
 pub mod performance;
 pub mod runtime_services;
