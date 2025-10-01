@@ -416,14 +416,14 @@ unsafe impl<T: Default + 'static> Param for Config<'_, T> {
         if !meta.access().has_writes_all_configs() {
             assert!(
                 !meta.access().has_config_write(id),
-                "Config<{0}> in system {1} conflicts with a previous ConfigMut<{0}> access.",
+                "Config<{0}> in component {1} conflicts with a previous ConfigMut<{0}> access.",
                 core::any::type_name::<T>(),
                 meta.name(),
             );
         } else {
             assert!(
                 !meta.access().has_config_write(id),
-                "Config<{0}> in system {1} conflicts with a previous &mut Storage access.",
+                "Config<{0}> in component {1} conflicts with a previous &mut Storage access.",
                 core::any::type_name::<T>(),
                 meta.name(),
             );
@@ -522,26 +522,26 @@ unsafe impl<T: Default + 'static> Param for ConfigMut<'_, T> {
         if !meta.access().has_writes_all_configs() {
             assert!(
                 !meta.access().has_config_write(id),
-                "ConfigMut<{0}> in system {1} conflicts with a previous ConfigMut<{0}> access.",
+                "ConfigMut<{0}> in component {1} conflicts with a previous ConfigMut<{0}> access.",
                 core::any::type_name::<T>(),
                 meta.name(),
             );
             assert!(
                 !meta.access().has_config_read(id),
-                "ConfigMut<{0}> in system {1} conflicts with a previous Config<{0}> access.",
+                "ConfigMut<{0}> in component {1} conflicts with a previous Config<{0}> access.",
                 core::any::type_name::<T>(),
                 meta.name(),
             );
         } else {
             assert!(
                 !meta.access().has_config_write(id),
-                "ConfigMut<{0}> in system {1} conflicts with a previous &mut Storage access.",
+                "ConfigMut<{0}> in component {1} conflicts with a previous &mut Storage access.",
                 core::any::type_name::<T>(),
                 meta.name(),
             );
             assert!(
                 !meta.access().has_config_read(id),
-                "ConfigMut<{0}> in system {1} conflicts with a previous &Storage access.",
+                "ConfigMut<{0}> in component {1} conflicts with a previous &Storage access.",
                 core::any::type_name::<T>(),
                 meta.name(),
             );
@@ -631,7 +631,7 @@ unsafe impl Param for Commands<'_> {
     fn init_state(_storage: &mut Storage, meta: &mut MetaData) -> Self::State {
         assert!(
             !meta.access().has_deferred(),
-            "Commands in system {0} conflicts with a previous Commands access.",
+            "Commands in component {0} conflicts with a previous Commands access.",
             meta.name(),
         );
         meta.access_mut().deferred();
@@ -728,102 +728,132 @@ mod tests {
         error::Result,
     };
 
+    use crate as patina_sdk;
+
     use super::*;
 
     #[test]
     #[should_panic(
-        expected = "ConfigMut<usize> in system patina_sdk::component::params::tests::test_two_mutable_config_access_to_same_type_fails::test_fn conflicts with a previous ConfigMut<usize> access."
+        expected = "ConfigMut<usize> in component patina_sdk::component::params::tests::test_two_mutable_config_access_to_same_type_fails::TestComponent conflicts with a previous ConfigMut<usize> access."
     )]
     fn test_two_mutable_config_access_to_same_type_fails() {
-        fn test_fn(_config: ConfigMut<usize>, _config2: ConfigMut<usize>) -> Result<()> {
-            todo!()
+        #[derive(IntoComponent)]
+        struct TestComponent;
+        impl TestComponent {
+            fn entry_point(self, _config: ConfigMut<usize>, _config2: ConfigMut<usize>) -> Result<()> {
+                todo!()
+            }
         }
 
         let mut storage = Storage::new();
 
-        let mut component = test_fn.into_component();
+        let mut component = TestComponent.into_component();
         component.initialize(&mut storage);
     }
 
     #[test]
     #[should_panic(
-        expected = "Config<usize> in system patina_sdk::component::params::tests::test_mutable_and_immutable_config_access_to_same_type_fails1::test_fn conflicts with a previous ConfigMut<usize> access."
+        expected = "Config<usize> in component patina_sdk::component::params::tests::test_mutable_and_immutable_config_access_to_same_type_fails1::TestComponent conflicts with a previous ConfigMut<usize> access."
     )]
     fn test_mutable_and_immutable_config_access_to_same_type_fails1() {
-        fn test_fn(_config: ConfigMut<usize>, _config2: Config<usize>) -> Result<()> {
-            todo!()
+        #[derive(IntoComponent)]
+        struct TestComponent;
+        impl TestComponent {
+            fn entry_point(self, _config: ConfigMut<usize>, _config2: Config<usize>) -> Result<()> {
+                todo!()
+            }
         }
 
         let mut storage = Storage::new();
 
-        let mut component = test_fn.into_component();
+        let mut component = TestComponent.into_component();
         component.initialize(&mut storage);
     }
 
     #[test]
     #[should_panic(
-        expected = "ConfigMut<usize> in system patina_sdk::component::params::tests::test_mutable_and_immutable_config_access_to_same_type_fails2::test_fn conflicts with a previous Config<usize> access."
+        expected = "ConfigMut<usize> in component patina_sdk::component::params::tests::test_mutable_and_immutable_config_access_to_same_type_fails2::TestComponent conflicts with a previous Config<usize> access."
     )]
     fn test_mutable_and_immutable_config_access_to_same_type_fails2() {
-        fn test_fn(_config: Config<usize>, _config2: ConfigMut<usize>) -> Result<()> {
-            todo!()
+        #[derive(IntoComponent)]
+        struct TestComponent;
+        impl TestComponent {
+            fn entry_point(self, _config: Config<usize>, _config2: ConfigMut<usize>) -> Result<()> {
+                todo!()
+            }
         }
 
         let mut storage = Storage::new();
 
-        let mut component = test_fn.into_component();
+        let mut component = TestComponent.into_component();
         component.initialize(&mut storage);
     }
 
     #[test]
     #[should_panic(
-        expected = "Config<usize> in system patina_sdk::component::params::tests::test_mutable_storage_and_immutable_config_fail::test_fn conflicts with a previous &mut Storage access."
+        expected = "Config<usize> in component patina_sdk::component::params::tests::test_mutable_storage_and_immutable_config_fail::TestComponent conflicts with a previous &mut Storage access."
     )]
     fn test_mutable_storage_and_immutable_config_fail() {
-        fn test_fn(_storage: &mut Storage, _config: Config<usize>) -> Result<()> {
-            todo!()
+        #[derive(IntoComponent)]
+        struct TestComponent;
+        impl TestComponent {
+            fn entry_point(self, _storage: &mut Storage, _config: Config<usize>) -> Result<()> {
+                todo!()
+            }
         }
 
-        let mut component = test_fn.into_component();
+        let mut component = TestComponent.into_component();
         component.initialize(&mut Storage::new());
     }
 
     #[test]
     #[should_panic(
-        expected = "ConfigMut<usize> in system patina_sdk::component::params::tests::test_mutable_storage_and_mutable_config_fail::test_fn conflicts with a previous &mut Storage access."
+        expected = "ConfigMut<usize> in component patina_sdk::component::params::tests::test_mutable_storage_and_mutable_config_fail::TestComponent conflicts with a previous &mut Storage access."
     )]
     fn test_mutable_storage_and_mutable_config_fail() {
-        fn test_fn(_storage: &mut Storage, _config: ConfigMut<usize>) -> Result<()> {
-            todo!()
+        #[derive(IntoComponent)]
+        struct TestComponent;
+        impl TestComponent {
+            fn entry_point(self, _storage: &mut Storage, _config: ConfigMut<usize>) -> Result<()> {
+                todo!()
+            }
         }
 
-        let mut component = test_fn.into_component();
+        let mut component = TestComponent.into_component();
         component.initialize(&mut Storage::new());
     }
 
     #[test]
     #[should_panic(
-        expected = "&mut Storage in system patina_sdk::component::params::tests::test_config_and_mutable_storage_fail::test_fn conflicts with a previous Config<T> access."
+        expected = "&mut Storage in component patina_sdk::component::params::tests::test_config_and_mutable_storage_fail::TestComponent conflicts with a previous Config<T> access."
     )]
     fn test_config_and_mutable_storage_fail() {
-        fn test_fn(_config: Config<usize>, _storage: &mut Storage) -> Result<()> {
-            todo!()
+        #[derive(IntoComponent)]
+        struct TestComponent;
+        impl TestComponent {
+            fn entry_point(self, _config: Config<usize>, _storage: &mut Storage) -> Result<()> {
+                todo!()
+            }
         }
 
-        let mut component = test_fn.into_component();
+        let mut component = TestComponent.into_component();
         component.initialize(&mut Storage::new());
     }
 
     #[test]
     #[should_panic(
-        expected = "&mut Storage in system patina_sdk::component::params::tests::test_mutable_config_and_mutable_storage_fail::test_fn conflicts with a previous ConfigMut<T> access."
+        expected = "&mut Storage in component patina_sdk::component::params::tests::test_mutable_config_and_mutable_storage_fail::TestComponent conflicts with a previous ConfigMut<T> access."
     )]
     fn test_mutable_config_and_mutable_storage_fail() {
-        fn test_fn(_config: ConfigMut<usize>, _storage: &mut Storage) -> Result<()> {
-            todo!()
+        #[derive(IntoComponent)]
+        struct TestComponent;
+        impl TestComponent {
+            fn entry_point(self, _config: ConfigMut<usize>, _storage: &mut Storage) -> Result<()> {
+                todo!()
+            }
         }
 
-        let mut component = test_fn.into_component();
+        let mut component = TestComponent.into_component();
         component.initialize(&mut Storage::new());
     }
 
@@ -1025,13 +1055,17 @@ mod tests {
     #[test]
     /// Ensure the common story of "Create service from Config" works
     fn test_deferred_and_config_compatability() {
-        fn test_component(_cmds: Commands, _config: Config<i32>, _config2: ConfigMut<u32>) -> Result<()> {
-            Ok(())
+        #[derive(IntoComponent)]
+        struct TestComponent;
+        impl TestComponent {
+            fn entry_point(self, _cmds: Commands, _config: Config<i32>, _config2: ConfigMut<u32>) -> Result<()> {
+                Ok(())
+            }
         }
 
         let mut storage = Storage::new();
 
-        let mut component = test_component.into_component();
+        let mut component = TestComponent.into_component();
         component.initialize(&mut storage);
     }
 }

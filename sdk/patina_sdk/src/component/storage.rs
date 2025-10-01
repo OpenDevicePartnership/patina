@@ -13,6 +13,7 @@ use crate::{
     runtime_services::StandardRuntimeServices,
 };
 
+use crate::OwnedGuid;
 use crate::boot_services::StandardBootServices;
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{
@@ -23,14 +24,13 @@ use core::{
     ops::{Deref, DerefMut},
     ptr,
 };
-use r_efi::efi::Guid;
 
 use super::{
     hob::{FromHob, Hob},
     service::{IntoService, Service},
 };
 
-type HobParsers = BTreeMap<Guid, BTreeMap<TypeId, fn(&[u8], &mut Storage)>>;
+type HobParsers = BTreeMap<OwnedGuid, BTreeMap<TypeId, fn(&[u8], &mut Storage)>>;
 
 /// A vector whose elements are sparsely populated.
 #[derive(Debug)]
@@ -418,7 +418,7 @@ impl Storage {
     }
 
     /// Attempts to retrieve a HOB parser from the storage.
-    pub fn get_hob_parsers(&self, guid: &Guid) -> Vec<fn(&[u8], &mut Storage)> {
+    pub fn get_hob_parsers(&self, guid: &OwnedGuid) -> Vec<fn(&[u8], &mut Storage)> {
         self.hob_parsers.get(guid).map(|type_map| type_map.values().copied().collect()).unwrap_or_default()
     }
 }
@@ -526,13 +526,13 @@ unsafe impl Param for &mut Storage {
         // registered, and set ourselves as exclusive.
         assert!(
             !meta.access().has_any_config_write(),
-            "&mut Storage in system {} conflicts with a previous ConfigMut<T> access.",
+            "&mut Storage in component {} conflicts with a previous ConfigMut<T> access.",
             meta.name()
         );
 
         assert!(
             !meta.access().has_any_config_read(),
-            "&mut Storage in system {} conflicts with a previous Config<T> access.",
+            "&mut Storage in component {} conflicts with a previous Config<T> access.",
             meta.name()
         );
         meta.access_mut().writes_all_configs();
@@ -558,7 +558,7 @@ unsafe impl Param for &Storage {
     fn init_state(_storage: &mut Storage, meta: &mut MetaData) -> Self::State {
         assert!(
             !meta.access().has_any_config_write(),
-            "&mut Storage in system {} conflicts with a previous ConfigMut<T> access.",
+            "&mut Storage in component {} conflicts with a previous ConfigMut<T> access.",
             meta.name()
         );
 

@@ -19,7 +19,7 @@ use patina_sdk::{
     boot_services::{BootServices, StandardBootServices, event::EventType, tpl::Tpl},
     component::{IntoComponent, hob::Hob, params::Config},
     error::EfiError,
-    guid::{EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
+    guids::{EVENT_GROUP_END_OF_DXE, PERFORMANCE_PROTOCOL},
     performance::{
         _smm::MmCommRegion,
         globals::{get_static_state, set_load_image_count, set_perf_measurement_mask, set_static_state},

@@ -144,10 +144,53 @@ pub struct ProtocolNotify {
     fresh_handles: BTreeSet<efi::Handle>,
 }
 
+struct Handle {
+    order: usize,
+    protocols: BTreeMap<OrdGuid, ProtocolInstance>,
+}
+
+impl Handle {
+    fn new(order: usize) -> Self {
+        Handle { order, protocols: BTreeMap::new() }
+    }
+
+    fn keys(&self) -> impl Iterator<Item = &OrdGuid> {
+        self.protocols.keys()
+    }
+
+    fn contains_key(&self, key: &OrdGuid) -> bool {
+        self.protocols.contains_key(key)
+    }
+
+    fn insert(&mut self, key: OrdGuid, value: ProtocolInstance) -> Option<ProtocolInstance> {
+        self.protocols.insert(key, value)
+    }
+
+    fn get(&self, key: &OrdGuid) -> Option<&ProtocolInstance> {
+        self.protocols.get(key)
+    }
+
+    fn get_mut(&mut self, key: &OrdGuid) -> Option<&mut ProtocolInstance> {
+        self.protocols.get_mut(key)
+    }
+
+    fn remove(&mut self, key: &OrdGuid) -> Option<ProtocolInstance> {
+        self.protocols.remove(key)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.protocols.is_empty()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&OrdGuid, &ProtocolInstance)> {
+        self.protocols.iter()
+    }
+}
+
 // This is the main implementation of the protocol database, but public
 // interaction with the database should be via [`SpinLockedProtocolDb`] below.
 struct ProtocolDb {
-    handles: BTreeMap<usize, BTreeMap<OrdGuid, ProtocolInstance>>,
+    handles: BTreeMap<usize, Handle>,
     notifications: BTreeMap<OrdGuid, Vec<ProtocolNotify>>,
     hash_new_handles: bool,
     next_handle: usize,
@@ -170,7 +213,9 @@ impl ProtocolDb {
     }
 
     fn registered_protocols(&self) -> Vec<efi::Guid> {
-        self.handles.iter().flat_map(|(_, handle)| handle.keys().map(|x| x.0)).collect()
+        let protocols: BTreeSet<efi::Guid> =
+            self.handles.iter().flat_map(|(_, handle)| handle.keys().map(|&OrdGuid(guid)| guid)).collect();
+        protocols.into_iter().collect()
     }
 
     fn install_protocol_interface(
@@ -206,7 +251,7 @@ impl ProtocolDb {
                     self.next_handle += 1;
                 }
 
-                self.handles.insert(key, BTreeMap::new());
+                self.handles.insert(key, Handle::new(self.next_handle));
                 let handle = key as efi::Handle;
                 (handle, key)
             }
@@ -276,21 +321,28 @@ impl ProtocolDb {
     }
 
     fn locate_handles(&mut self, protocol: Option<efi::Guid>) -> Result<Vec<efi::Handle>, EfiError> {
-        let handles: Vec<efi::Handle> = self
+        let mut handles: Vec<_> = self
             .handles
             .iter()
             .filter_map(|(key, handle_data)| {
                 match protocol {
-                    None => Some(*key as efi::Handle), //"None" means return all handles.
-                    Some(protocol) if handle_data.contains_key(&OrdGuid(protocol)) => Some(*key as efi::Handle),
+                    None => Some((*key as efi::Handle, handle_data.order)), //"None" means return all handles.
+                    Some(protocol) if handle_data.contains_key(&OrdGuid(protocol)) => {
+                        Some((*key as efi::Handle, handle_data.order))
+                    }
                     _ => None,
                 }
             })
             .collect();
+
         if handles.is_empty() {
             return Err(EfiError::NotFound);
         }
-        Ok(handles)
+
+        //sort by order of creation.
+        handles.sort_by(|a, b| a.1.cmp(&b.1));
+
+        Ok(handles.iter().map(|(handle, _)| *handle).collect())
     }
 
     fn locate_protocol(&mut self, protocol: efi::Guid) -> Result<*mut c_void, EfiError> {
@@ -302,12 +354,12 @@ impl ProtocolDb {
         }
     }
 
-    fn get_interface_for_handle(&mut self, handle: efi::Handle, protocol: efi::Guid) -> Result<*mut c_void, EfiError> {
+    fn get_interface_for_handle(&self, handle: efi::Handle, protocol: efi::Guid) -> Result<*mut c_void, EfiError> {
         self.validate_handle(handle)?;
 
         let key = handle as usize;
-        let handle_instance = self.handles.get_mut(&key).ok_or(EfiError::NotFound)?;
-        let instance = handle_instance.get_mut(&OrdGuid(protocol)).ok_or(EfiError::NotFound)?;
+        let handle_instance = self.handles.get(&key).ok_or(EfiError::NotFound)?;
+        let instance = handle_instance.get(&OrdGuid(protocol)).ok_or(EfiError::NotFound)?;
         Ok(instance.interface)
     }
 
@@ -465,7 +517,7 @@ impl ProtocolDb {
         self.validate_handle(handle)?;
 
         let key = handle as usize;
-        Ok(self.handles[&key].keys().clone().map(|x| x.0).collect())
+        Ok(self.handles[&key].keys().map(|&OrdGuid(guid)| guid).collect())
     }
 
     fn register_protocol_notify(&mut self, protocol: efi::Guid, event: efi::Event) -> Result<*mut c_void, EfiError> {
@@ -1034,6 +1086,28 @@ mod tests {
             }
 
             assert_eq!(SPIN_LOCKED_PROTOCOL_DB.locate_handles(Some(guid3)), Err(EfiError::NotFound));
+        });
+    }
+
+    #[test]
+    fn locate_handles_should_return_handles_in_creation_order() {
+        with_locked_state(|| {
+            static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
+
+            SPIN_LOCKED_PROTOCOL_DB.lock().enable_handle_hashing();
+
+            let uuid1 = Uuid::from_str("0e896c7a-57dc-4987-bc22-abc3a8263210").unwrap();
+            let guid1 = efi::Guid::from_bytes(uuid1.as_bytes());
+            let interface1: *mut c_void = 0x1234 as *mut c_void;
+
+            let mut created_handles = Vec::new();
+            for _ in 0..100 {
+                let (handle, _) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
+                created_handles.push(handle);
+            }
+
+            let handles = SPIN_LOCKED_PROTOCOL_DB.locate_handles(Some(guid1)).unwrap();
+            assert_eq!(handles, created_handles);
         });
     }
 

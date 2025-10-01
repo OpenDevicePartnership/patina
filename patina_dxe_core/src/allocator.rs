@@ -41,7 +41,7 @@ pub use uefi_allocator::UefiAllocator;
 use patina_sdk::{
     base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     error::EfiError,
-    guid, uefi_size_to_pages,
+    guids, uefi_size_to_pages,
 };
 
 // Allocation Strategy when not specified by caller.
@@ -776,7 +776,7 @@ pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
 
 pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), EfiError> {
     let table_ptr = NonNull::from(GCD.memory_type_info_table()).cast::<c_void>().as_ptr();
-    config_tables::core_install_configuration_table(guid::MEMORY_TYPE_INFORMATION, table_ptr, system_table)
+    config_tables::core_install_configuration_table(guids::MEMORY_TYPE_INFORMATION, table_ptr, system_table)
 }
 
 fn process_hob_allocations(hob_list: &HobList) {
@@ -875,7 +875,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                         };
 
                         if let Err(err) = alloc_res {
-                            if err == EfiError::NotFound && desc.name != guid::ZERO {
+                            if err == EfiError::NotFound && desc.name != guids::ZERO {
                                 // Guided Memory Allocation Hobs are typically MemoryAllocationModule or
                                 // MemoryAllocationStack HOBs which have corresponding non-guided allocation HOBs
                                 // associated with them; they are rejected as duplicates if we attempt to log them.

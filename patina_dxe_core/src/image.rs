@@ -17,7 +17,7 @@ use patina_sdk::performance::{
     logging::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end},
     measurement::create_performance_measurement,
 };
-use patina_sdk::{guid, uefi_pages_to_size, uefi_size_to_pages};
+use patina_sdk::{guids, uefi_pages_to_size, uefi_size_to_pages};
 use r_efi::efi;
 
 use crate::{
@@ -491,7 +491,7 @@ fn install_dxe_core_image(hob_list: &HobList, system_table: &mut EfiSystemTable)
     let dxe_core_hob = hob_list
         .iter()
         .find_map(|x| match x {
-            Hob::MemoryAllocationModule(module) if module.module_name == guid::DXE_CORE => Some(module),
+            Hob::MemoryAllocationModule(module) if module.module_name == guids::DXE_CORE => Some(module),
             _ => None,
         })
         .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use patina_sdk::guid::DXE_CORE as FFS GUID.");

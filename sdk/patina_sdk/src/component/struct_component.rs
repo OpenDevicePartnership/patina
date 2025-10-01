@@ -1,11 +1,8 @@
 //! A [Component] implementation for Structs who specify a function whose parameters implement [Param].
 //!
-//! The `StructComponent` is a component that allows for private internal configuration, unlike the
-//! `FunctionComponent` which requires all configuration to be public.
-//!
-//! Unlike the `FunctionComponent` blanket implementation, this implementation requires the use of an attribute macro
-//! to be used on the struct or enum to implement necessary traits and specify the entry point function for the
-//! component.
+//! The `StructComponent` is a component that allows for private internal configuration and requires the use of an
+//! derive proc-macro to be used on the struct or enum to implement necessary traits and specify the entry point
+//! function for the component.
 //!
 //! A derive macro, [IntoComponent](crate::component::IntoComponent) is provided to automatically implement the
 //! necessary traits for a struct or enum to be used as a component. This trait expects that a default entry point

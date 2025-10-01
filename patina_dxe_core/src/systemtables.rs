@@ -11,7 +11,7 @@
 use core::{ffi::c_void, mem::size_of, slice::from_raw_parts};
 
 use alloc::{alloc::Allocator, boxed::Box};
-use patina_sdk::boot_services::BootServices;
+use patina_sdk::{boot_services::BootServices, component::IntoComponent};
 use r_efi::efi;
 
 use crate::{allocator::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR, tpl_lock};
@@ -718,44 +718,47 @@ pub fn init_system_table() {
 
 /// A component to register a callback that recalculates the CRC32 checksum of the system table
 /// when certain protocols are installed.
-pub fn register_checksum_on_protocol_install_events(
-    bs: patina_sdk::boot_services::StandardBootServices,
-) -> patina_sdk::error::Result<()> {
-    extern "efiapi" fn callback(_event: efi::Event, _: *mut c_void) {
-        SYSTEM_TABLE.lock().as_mut().expect("System Table is initialized").checksum_all();
+#[derive(IntoComponent, Default)]
+pub(crate) struct SystemTableChecksumInstaller;
+
+impl SystemTableChecksumInstaller {
+    fn entry_point(self, bs: patina_sdk::boot_services::StandardBootServices) -> patina_sdk::error::Result<()> {
+        extern "efiapi" fn callback(_event: efi::Event, _: *mut c_void) {
+            SYSTEM_TABLE.lock().as_mut().expect("System Table is initialized").checksum_all();
+        }
+
+        const GUIDS: [efi::Guid; 16] = [
+            efi::Guid::from_bytes(&uuid::uuid!("1DA97072-BDDC-4B30-99F1-72A0B56FFF2A").to_bytes_le()), // gEfiMonotonicCounterArchProtocolGuid
+            efi::Guid::from_bytes(&uuid::uuid!("1E5668E2-8481-11D4-BCF1-0080C73C8881").to_bytes_le()), // gEfiVariableArchProtocolGuid
+            efi::Guid::from_bytes(&uuid::uuid!("26BACCB1-6F42-11D4-BC7E-0080C73C8881").to_bytes_le()), // gEfiCpuArchProtocolGuid
+            efi::Guid::from_bytes(&uuid::uuid!("26BACCB2-6F42-11D4-BCE7-0080C73C8881").to_bytes_le()), // gEfiMetronomeArchProtocolGuid
+            efi::Guid::from_bytes(&uuid::uuid!("26BACCB3-6F42-11D4-BCE7-0080C73C8881").to_bytes_le()), // gEfiTimerArchProtocolGuid
+            efi::Guid::from_bytes(&uuid::uuid!("27CFAC87-46CC-11D4-9A38-0090273FC14D").to_bytes_le()), // gEfiRealTimeClockArchProtocolGuid
+            efi::Guid::from_bytes(&uuid::uuid!("27CFAC88-46CC-11D4-9A38-0090273FC14D").to_bytes_le()), // gEfiResetArchProtocolGuid
+            efi::Guid::from_bytes(&uuid::uuid!("5053697E-2CBC-4819-90D9-0580DEEE5754").to_bytes_le()), // gEfiCapsuleArchProtocolGuid
+            efi::Guid::from_bytes(&uuid::uuid!("55198405-26c0-4765-8b7d-be1df5f99712").to_bytes_le()), // gEfiCpu2ProtocolGuid
+            efi::Guid::from_bytes(&uuid::uuid!("6441F818-6362-4E44-B570-7DBA31DD2453").to_bytes_le()), // gEfiVariableWriteArchProtocolGuid
+            efi::Guid::from_bytes(&uuid::uuid!("665E3FF5-46CC-11D4-9A38-0090273FC14D").to_bytes_le()), // gEfiWatchdogTimerArchProtocolGuid
+            efi::Guid::from_bytes(&uuid::uuid!("665E3FF6-46CC-11D4-9A38-0090273FC14D").to_bytes_le()), // gEfiBdsArchProtocolGuid
+            efi::Guid::from_bytes(&uuid::uuid!("94AB2F58-1438-4EF1-9152-18941894A3A0").to_bytes_le()), // gEfiSecurity2ArchProtocolGuid
+            efi::Guid::from_bytes(&uuid::uuid!("A46423E3-4617-49F1-B9FF-D1BFA9115839").to_bytes_le()), // gEfiSecurityArchProtocolGuid
+            efi::Guid::from_bytes(&uuid::uuid!("B7DFB4E1-052F-449F-87BE-9818FC91B733").to_bytes_le()), // gEfiRuntimeArchProtocolGuid
+            efi::Guid::from_bytes(&uuid::uuid!("F4CCBFB7-F6E0-47FD-9DD4-10A8F150C191").to_bytes_le()), // gEfiSmmBase2ProtocolGuid
+        ];
+
+        for guid in &GUIDS {
+            let event = bs.create_event(
+                patina_sdk::boot_services::event::EventType::NOTIFY_SIGNAL,
+                patina_sdk::boot_services::tpl::Tpl::CALLBACK,
+                Some(callback),
+                core::ptr::null_mut(),
+            )?;
+
+            bs.register_protocol_notify(guid, event)?;
+        }
+
+        Ok(())
     }
-
-    const GUIDS: [efi::Guid; 16] = [
-        efi::Guid::from_bytes(&uuid::uuid!("1DA97072-BDDC-4B30-99F1-72A0B56FFF2A").to_bytes_le()), // gEfiMonotonicCounterArchProtocolGuid
-        efi::Guid::from_bytes(&uuid::uuid!("1E5668E2-8481-11D4-BCF1-0080C73C8881").to_bytes_le()), // gEfiVariableArchProtocolGuid
-        efi::Guid::from_bytes(&uuid::uuid!("26BACCB1-6F42-11D4-BC7E-0080C73C8881").to_bytes_le()), // gEfiCpuArchProtocolGuid
-        efi::Guid::from_bytes(&uuid::uuid!("26BACCB2-6F42-11D4-BCE7-0080C73C8881").to_bytes_le()), // gEfiMetronomeArchProtocolGuid
-        efi::Guid::from_bytes(&uuid::uuid!("26BACCB3-6F42-11D4-BCE7-0080C73C8881").to_bytes_le()), // gEfiTimerArchProtocolGuid
-        efi::Guid::from_bytes(&uuid::uuid!("27CFAC87-46CC-11D4-9A38-0090273FC14D").to_bytes_le()), // gEfiRealTimeClockArchProtocolGuid
-        efi::Guid::from_bytes(&uuid::uuid!("27CFAC88-46CC-11D4-9A38-0090273FC14D").to_bytes_le()), // gEfiResetArchProtocolGuid
-        efi::Guid::from_bytes(&uuid::uuid!("5053697E-2CBC-4819-90D9-0580DEEE5754").to_bytes_le()), // gEfiCapsuleArchProtocolGuid
-        efi::Guid::from_bytes(&uuid::uuid!("55198405-26c0-4765-8b7d-be1df5f99712").to_bytes_le()), // gEfiCpu2ProtocolGuid
-        efi::Guid::from_bytes(&uuid::uuid!("6441F818-6362-4E44-B570-7DBA31DD2453").to_bytes_le()), // gEfiVariableWriteArchProtocolGuid
-        efi::Guid::from_bytes(&uuid::uuid!("665E3FF5-46CC-11D4-9A38-0090273FC14D").to_bytes_le()), // gEfiWatchdogTimerArchProtocolGuid
-        efi::Guid::from_bytes(&uuid::uuid!("665E3FF6-46CC-11D4-9A38-0090273FC14D").to_bytes_le()), // gEfiBdsArchProtocolGuid
-        efi::Guid::from_bytes(&uuid::uuid!("94AB2F58-1438-4EF1-9152-18941894A3A0").to_bytes_le()), // gEfiSecurity2ArchProtocolGuid
-        efi::Guid::from_bytes(&uuid::uuid!("A46423E3-4617-49F1-B9FF-D1BFA9115839").to_bytes_le()), // gEfiSecurityArchProtocolGuid
-        efi::Guid::from_bytes(&uuid::uuid!("B7DFB4E1-052F-449F-87BE-9818FC91B733").to_bytes_le()), // gEfiRuntimeArchProtocolGuid
-        efi::Guid::from_bytes(&uuid::uuid!("F4CCBFB7-F6E0-47FD-9DD4-10A8F150C191").to_bytes_le()), // gEfiSmmBase2ProtocolGuid
-    ];
-
-    for guid in &GUIDS {
-        let event = bs.create_event(
-            patina_sdk::boot_services::event::EventType::NOTIFY_SIGNAL,
-            patina_sdk::boot_services::tpl::Tpl::CALLBACK,
-            Some(callback),
-            core::ptr::null_mut(),
-        )?;
-
-        bs.register_protocol_notify(guid, event)?;
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

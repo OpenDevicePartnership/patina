@@ -25,16 +25,14 @@ graph TD
     C --> F[Remove from Dispatch Queue]
 ```
 
-In the Patina DXE Core, a component is simply a trait implementation. So long as a struct implements
-[IntoComponent][patina_sdk], it can be consumed and executed by the Patina DXE Core. [patina_sdk][patina_sdk] currently
-provides two implementations for `Component`:
+In the Patina DXE Core, a component is simply a trait implementation. So long as a struct implements the
+[Component][patina_sdk] trait and the [IntoComponent][patina_sdk] (Used to convert it to `Box<dyn Component>`), then it
+can be consumed and executed by the Patina DXE Core. While a developer can elect to create their own implementation of
+[Component][patina_sdk] if they wish, [patina_sdk][patina_sdk] currently provides a single implementation that makes it
+easy to turn any struct or enum into a Component.
 
-1. [FunctionComponent][patina_sdk]: this type cannot be instantiated manually, but a blanket implementation of the
-`IntoComponent` trait allows any function whose parameters support dependency injection to be converted into a
-`FunctionComponent`.
-
-2. [StructComponent][patina_sdk]: this type cannot be instantiated manually, but a derive proc-macro of
-`IntoComponent` is provided that allows any struct or enum to be used as a component. This derive proc-macro
+This single implementation is the [StructComponent][patina_sdk], which cannot be instantiated manually; a derive
+proc-macro of `IntoComponent` is provided that allows any struct or enum to be used as a component. This derive proc-macro
 expects that a `Self::entry_point(self, ...) -> patina_sdk::error::Result<()> { ... }` exists, where the `...` in the
 function definition can be any number of parameters that support dependency injection as shown below. The function
 name can be overwritten with the attribute macro `#[entry_point(path = path::to::func)]` on the same struct.
@@ -214,49 +212,6 @@ the given parameter is actually available, even if it would have been made avail
 The [patina_sdk](https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patina_sdk) crate has multiple example
 binaries in it's `example` folder that can be compiled and executed. These show implementations of common use cases and
 usage models for components and their parameters.
-
-### FunctionComponent Examples
-
-```rust
-use patina_sdk::{
-    boot_services::BootServices,
-    component::params::{Config, ConfigMut},
-    error::Result,
-};
-
-// Note: This uncommented code is valid for demonstration, but the function
-// will not be registered with the core where actual implementations must be
-// specified such as the wrapper function shown in the example below.
-//
-// The wrapper function:
-// fn actual_driver(bs: StandardBootServices, data: Config<f32>,
-//                  expected_crc32: Config<u32>) -> Result<()> {
-//     validate_random_data_driver(bs, data, expected_crc32)
-// }
-fn validate_random_data_driver<T: Default>(
-    bs: impl BootServices,
-    data: Config<T>,
-    expected_crc32: Config<u32>
-) -> Result<()> {
-    assert_eq!(bs.calculate_crc_32(&*data), Ok(*expected_crc32));
-    Ok(())
-}
-
-#[cfg(test)]
-#[coverage(off)]
-mod tests {
-    use patina_sdk::component::IntoComponent;
-    use super::validate_random_data_driver;
-
-    #[test]
-    fn ensure_function_implements_into_component() {
-        // If this test compiles, `validate_random_data_driver` correctly implements `Component` via the blanket
-        // implementation. Changing the function interface could unknowingly break this expectation, so we want to test
-        // it.
-        let _ = validate_random_data_driver.into_component();
-    }
-}
-```
 
 ### StructComponent Examples
 

@@ -17,7 +17,7 @@ use patina_internal_cpu::{
 };
 use patina_sdk::{
     boot_services::{BootServices, StandardBootServices},
-    component::service::Service,
+    component::{IntoComponent, service::Service},
     error::{EfiError, Result},
     uefi_protocol::ProtocolInterface,
 };
@@ -188,21 +188,27 @@ impl EfiCpuArchProtocolImpl {
 }
 
 /// This component installs the cpu arch protocol
-pub(crate) fn install_cpu_arch_protocol(
-    cpu: Service<dyn Cpu>,
-    interrupt_manager: Service<dyn InterruptManager>,
-    bs: StandardBootServices,
-) -> Result<()> {
-    let protocol = EfiCpuArchProtocolImpl::new(cpu, interrupt_manager);
+#[derive(IntoComponent, Default)]
+pub(crate) struct CpuArchProtocolInstaller;
 
-    // Convert the protocol to a raw pointer and store it in to protocol DB
-    let interface = Box::leak(Box::new(protocol));
+impl CpuArchProtocolInstaller {
+    fn entry_point(
+        self,
+        cpu: Service<dyn Cpu>,
+        interrupt_manager: Service<dyn InterruptManager>,
+        bs: StandardBootServices,
+    ) -> Result<()> {
+        let protocol = EfiCpuArchProtocolImpl::new(cpu, interrupt_manager);
 
-    bs.install_protocol_interface(None, interface)
-        .inspect_err(|_| log::error!("Failed to install EFI_CPU_ARCH_PROTOCOL"))?;
-    log::info!("installed EFI_CPU_ARCH_PROTOCOL_GUID");
+        // Convert the protocol to a raw pointer and store it in to protocol DB
+        let interface = Box::leak(Box::new(protocol));
 
-    Ok(())
+        bs.install_protocol_interface(None, interface)
+            .inspect_err(|_| log::error!("Failed to install EFI_CPU_ARCH_PROTOCOL"))?;
+        log::info!("installed EFI_CPU_ARCH_PROTOCOL_GUID");
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
