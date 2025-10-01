@@ -116,7 +116,7 @@ impl EfiCpuX64 {
                 temp = out(reg) _,
                 FPU_CONTROL_WORD = sym FPU_CONTROL_WORD,
                 MMX_CONTROL_WORD = sym MMX_CONTROL_WORD,
-                BIT9 = const 1 << 9,
+                BIT9 = const patina_sdk::bit!(9),
                 options(nostack, preserves_flags)
             );
         }
