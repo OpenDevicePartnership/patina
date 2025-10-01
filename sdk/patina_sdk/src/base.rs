@@ -11,7 +11,7 @@
 use num_traits;
 use r_efi::efi;
 
-use crate::error::EfiError;
+use crate::{bit, error::EfiError};
 
 pub mod guid;
 
@@ -27,124 +27,132 @@ pub const UEFI_PAGE_MASK: usize = UEFI_PAGE_SIZE - 1;
 pub const UEFI_PAGE_SHIFT: usize = 12;
 
 /// 1KB, 1024 bytes, 0x400, 2^10
-pub const SIZE_1KB: usize = 0x400;
+pub const SIZE_1KB: usize = bit!(10);
 
 /// 2KB, 2048 bytes, 0x800, 2^11
-pub const SIZE_2KB: usize = 0x800;
+pub const SIZE_2KB: usize = bit!(11);
 
 /// 4KB, 4096 bytes, 0x1000, 2^12
-pub const SIZE_4KB: usize = 0x1000;
+pub const SIZE_4KB: usize = bit!(12);
 
 /// 8KB, 8192 bytes, 0x2000, 2^13
-pub const SIZE_8KB: usize = 0x2000;
+pub const SIZE_8KB: usize = bit!(13);
 
 /// 16KB, 16384 bytes, 0x4000, 2^14
-pub const SIZE_16KB: usize = 0x4000;
+pub const SIZE_16KB: usize = bit!(14);
 
 /// 32KB, 32768 bytes, 0x8000, 2^15
-pub const SIZE_32KB: usize = 0x8000;
+pub const SIZE_32KB: usize = bit!(15);
 
 /// 64KB, 65536 bytes, 0x10000, 2^16
-pub const SIZE_64KB: usize = 0x10000;
+pub const SIZE_64KB: usize = bit!(16);
 
 /// 128KB, 0x20000, 2^17
-pub const SIZE_128KB: usize = 0x20000;
+pub const SIZE_128KB: usize = bit!(17);
 
 /// 256KB, 0x40000, 2^18
-pub const SIZE_256KB: usize = 0x40000;
+pub const SIZE_256KB: usize = bit!(18);
 
 /// 512KB, 0x80000, 2^19
-pub const SIZE_512KB: usize = 0x80000;
+pub const SIZE_512KB: usize = bit!(19);
 
 /// 1MB, 0x100000, 2^20
-pub const SIZE_1MB: usize = 0x100000;
+pub const SIZE_1MB: usize = bit!(20);
 
 /// 2MB, 0x200000, 2^21
-pub const SIZE_2MB: usize = 0x200000;
+pub const SIZE_2MB: usize = bit!(21);
 
 /// 4MB, 0x400000, 2^22
-pub const SIZE_4MB: usize = 0x400000;
+pub const SIZE_4MB: usize = bit!(22);
 
 /// 8MB, 0x800000, 2^23
-pub const SIZE_8MB: usize = 0x800000;
+pub const SIZE_8MB: usize = bit!(23);
 
 /// 16MB, 0x1000000, 2^24
-pub const SIZE_16MB: usize = 0x1000000;
+pub const SIZE_16MB: usize = bit!(24);
 
 /// 32MB, 0x2000000, 2^25
-pub const SIZE_32MB: usize = 0x2000000;
+pub const SIZE_32MB: usize = bit!(25);
 
 /// 64MB, 0x4000000, 2^26
-pub const SIZE_64MB: usize = 0x4000000;
+pub const SIZE_64MB: usize = bit!(26);
 
 /// 128MB, 0x8000000, 2^27
-pub const SIZE_128MB: usize = 0x8000000;
+pub const SIZE_128MB: usize = bit!(27);
 
 /// 256MB, 0x10000000, 2^28
-pub const SIZE_256MB: usize = 0x10000000;
+pub const SIZE_256MB: usize = bit!(28);
 
 /// 512MB, 0x20000000, 2^29
-pub const SIZE_512MB: usize = 0x20000000;
+pub const SIZE_512MB: usize = bit!(29);
 
 /// 1GB, 0x40000000, 2^30
-pub const SIZE_1GB: usize = 0x40000000;
+pub const SIZE_1GB: usize = bit!(30);
 
 /// 2GB, 0x80000000, 2^31
-pub const SIZE_2GB: usize = 0x80000000;
+pub const SIZE_2GB: usize = bit!(31);
 
 /// 4GB, 0x100000000, 2^32
-pub const SIZE_4GB: usize = 0x100000000;
+pub const SIZE_4GB: usize = bit!(32);
 
 /// 8GB, 0x200000000, 2^33
-pub const SIZE_8GB: usize = 0x200000000;
+pub const SIZE_8GB: usize = bit!(33);
 
 /// 16GB, 0x400000000, 2^34
-pub const SIZE_16GB: usize = 0x400000000;
+pub const SIZE_16GB: usize = bit!(34);
 
 /// 32GB, 0x800000000, 2^35
-pub const SIZE_32GB: usize = 0x800000000;
+pub const SIZE_32GB: usize = bit!(35);
 
 /// 64GB, 0x1000000000, 2^36
-pub const SIZE_64GB: usize = 0x1000000000;
+pub const SIZE_64GB: usize = bit!(36);
 
 /// 128GB, 0x2000000000, 2^37
-pub const SIZE_128GB: usize = 0x2000000000;
+pub const SIZE_128GB: usize = bit!(37);
 
 /// 256GB, 0x4000000000, 2^38
-pub const SIZE_256GB: usize = 0x4000000000;
+pub const SIZE_256GB: usize = bit!(38);
 
 /// 512GB, 0x8000000000, 2^39
-pub const SIZE_512GB: usize = 0x8000000000;
+pub const SIZE_512GB: usize = bit!(39);
 
 /// 1TB, 0x10000000000, 2^40
-pub const SIZE_1TB: usize = 0x10000000000;
+pub const SIZE_1TB: usize = bit!(40);
 
 /// 2TB, 0x20000000000, 2^41
-pub const SIZE_2TB: usize = 0x20000000000;
+pub const SIZE_2TB: usize = bit!(41);
 
 /// 4TB, 0x40000000000, 2^42
-pub const SIZE_4TB: usize = 0x40000000000;
+pub const SIZE_4TB: usize = bit!(42);
 
 /// 8TB, 0x80000000000, 2^43
-pub const SIZE_8TB: usize = 0x80000000000;
+pub const SIZE_8TB: usize = bit!(43);
 
 /// 16TB, 0x100000000000, 2^44
-pub const SIZE_16TB: usize = 0x100000000000;
+pub const SIZE_16TB: usize = bit!(44);
 
 /// 32TB, 0x200000000000, 2^45
-pub const SIZE_32TB: usize = 0x200000000000;
+pub const SIZE_32TB: usize = bit!(45);
 
 /// 64TB, 0x400000000000, 2^46
-pub const SIZE_64TB: usize = 0x400000000000;
+pub const SIZE_64TB: usize = bit!(46);
 
 /// 128TB, 0x800000000000, 2^47
-pub const SIZE_128TB: usize = 0x800000000000;
+pub const SIZE_128TB: usize = bit!(47);
 
 /// 256TB, 0x1000000000000, 2^48
-pub const SIZE_256TB: usize = 0x1000000000000;
+pub const SIZE_256TB: usize = bit!(48);
 
 /// Patina uses write back as the default cache attribute for memory allocations.
 pub const DEFAULT_CACHE_ATTR: u64 = efi::MEMORY_WB;
+
+/// A macro to generate a bit mask with the nth bit set.
+#[macro_export]
+macro_rules! bit {
+    ($n:expr) => {
+        1 << $n
+    };
+}
 
 /// Checks if the given value is a power of two.
 /// This function checks if the value `x` is greater than zero and if it is a power of two.
@@ -451,5 +459,50 @@ mod tests {
 
         const TEST7: u64 = signature!('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H');
         assert_eq!(TEST7, 0x4847464544434241);
+    }
+
+    #[test]
+    fn test_bit_macro_simple() {
+        assert_eq!(bit!(0), 0b1);
+        assert_eq!(bit!(1), 0b10);
+        assert_eq!(bit!(2), 0b100);
+        assert_eq!(bit!(3), 0b1000);
+        assert_eq!(bit!(4), 0b1_0000);
+        assert_eq!(bit!(5), 0b10_0000);
+        assert_eq!(bit!(6), 0b100_0000);
+        assert_eq!(bit!(7), 0b1000_0000);
+        assert_eq!(bit!(8), 0b1_0000_0000);
+        assert_eq!(bit!(9), 0b10_0000_0000);
+        assert_eq!(bit!(10), 0b100_0000_0000);
+        assert_eq!(bit!(20), 0b1_0000_0000_0000_0000_0000);
+        assert_eq!(bit!(30), 0b100_0000_0000_0000_0000_0000_0000_0000u64);
+        assert_eq!(bit!(63), 0x8000_0000_0000_0000u64);
+    }
+
+    #[test]
+    fn test_bit_macro_or() {
+        let combined = bit!(1) | bit!(3) | bit!(5);
+        assert_eq!(combined, 0b101010);
+
+        let combined = bit!(0) | bit!(2) | bit!(4) | bit!(6) | bit!(8);
+        assert_eq!(combined, 0b101010101);
+    }
+
+    #[test]
+    fn test_bit_with_types_specified_works() {
+        let b1: u8 = bit!(3);
+        assert_eq!(b1, 0b0000_1000u8);
+
+        let b2: u16 = bit!(10);
+        assert_eq!(b2, 0b0000_0100_0000_0000u16);
+
+        let b3: u32 = bit!(20);
+        assert_eq!(b3, 0x0010_0000u32);
+
+        let b4: u64 = bit!(40);
+        assert_eq!(b4, 0x0100_0000_0000u64);
+
+        let b5: u128 = bit!(50);
+        assert_eq!(b5, 0x0004_0000_0000_0000u128);
     }
 }
