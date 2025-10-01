@@ -7,10 +7,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use core::{
-    mem,
-    ptr::NonNull,
-    slice,
-    sync::atomic::{AtomicBool, AtomicPtr, Ordering},
+    cell::UnsafeCell, mem, ptr::NonNull, slice
 };
 
 use crate::{Error, Result, SliceKey};
@@ -35,7 +32,7 @@ where
     /// The number of nodes in the tree.
     length: usize,
     /// A linked list of free nodes in the storage container.
-    available: AtomicPtr<Node<D>>,
+    available: UnsafeCell<*mut Node<D>>,
 }
 
 impl<'a, D> Storage<'a, D>
@@ -48,7 +45,7 @@ where
         Self {
             data: unsafe { slice::from_raw_parts_mut(ptr.as_ptr(), 0) },
             length: 0,
-            available: AtomicPtr::new(core::ptr::null_mut()),
+            available: UnsafeCell::new(core::ptr::null_mut()),
         }
     }
 
@@ -62,11 +59,11 @@ where
                 )
             },
             length: 0,
-            available: AtomicPtr::default(),
+            available: UnsafeCell::new(core::ptr::null_mut()),
         };
 
         Self::build_linked_list(storage.data);
-        storage.available.store(storage.data[0].as_mut_ptr(), Ordering::SeqCst);
+        unsafe { storage.available.get().write_volatile(storage.data[0].as_mut_ptr()) };
         storage
     }
 
@@ -96,10 +93,10 @@ where
     /// O(1)
     ///
     pub fn add(&mut self, data: D) -> Result<(usize, &mut Node<D>)> {
-        let available_ptr = self.available.load(Ordering::SeqCst);
+        let available_ptr = unsafe { self.available.get().read_volatile() };
         if !available_ptr.is_null() && self.length != self.capacity() {
             let node = unsafe { &mut *available_ptr };
-            self.available.store(node.right_ptr(), Ordering::SeqCst);
+            unsafe { self.available.get().write_volatile(node.right_ptr()) };
             node.set_left(None);
             node.set_right(None);
             node.set_parent(None);
@@ -124,7 +121,7 @@ where
         let node = unsafe { &mut *node };
         node.set_parent(None);
         node.set_left(None);
-        let available_ptr = self.available.load(Ordering::SeqCst);
+        let available_ptr = unsafe { self.available.get().read_volatile() };
         if !available_ptr.is_null() {
             let root = unsafe { &mut *available_ptr };
             node.set_right(Some(root));
@@ -133,7 +130,7 @@ where
             node.set_right(None);
         }
 
-        self.available.store(node.as_mut_ptr(), Ordering::SeqCst);
+        unsafe { self.available.get().write_volatile(node.as_mut_ptr()) };
         self.length -= 1;
     }
 
@@ -194,7 +191,7 @@ where
         if self.capacity() == 0 {
             self.data = buffer;
             Self::build_linked_list(self.data);
-            self.available.store(self.data[0].as_mut_ptr(), Ordering::SeqCst);
+            unsafe { self.available.get().write_volatile(self.data[0].as_mut_ptr()) };
             return;
         }
 
@@ -227,14 +224,14 @@ where
             }
         }
 
-        let idx = if !self.available.load(Ordering::SeqCst).is_null() {
-            self.idx(self.available.load(Ordering::SeqCst))
+        let idx = if !unsafe { self.available.get().read_volatile() }.is_null() {
+            self.idx(unsafe { self.available.get().read_volatile() })
         } else {
             self.len()
         };
 
         Self::build_linked_list(&buffer[idx..]);
-        self.available.store(buffer[idx].as_mut_ptr(), Ordering::SeqCst);
+        unsafe { self.available.get().write_volatile(buffer[idx].as_mut_ptr()) };
 
         self.data = buffer;
     }
@@ -275,23 +272,23 @@ where
     D: SliceKey,
 {
     fn set_color(&self, color: bool) {
-        self.color.store(color, Ordering::SeqCst);
+        unsafe { self.color.get().write_volatile(color) };
     }
 
     fn is_red(&self) -> bool {
-        self.color.load(Ordering::SeqCst) == RED
+        unsafe { self.color.get().read_volatile()  == RED }
     }
 
     fn is_black(&self) -> bool {
-        self.color.load(Ordering::SeqCst) == BLACK
+        unsafe { self.color.get().read_volatile() == BLACK }
     }
 
     fn color(&self) -> bool {
-        self.color.load(Ordering::SeqCst)
+        unsafe { self.color.get().read_volatile() }
     }
 
     fn parent(&self) -> Option<&Node<D>> {
-        let node = self.parent.load(Ordering::SeqCst);
+        let node = unsafe { self.parent.get().read_volatile() };
         match node.is_null() {
             true => None,
             false => Some(unsafe { &*node }),
@@ -299,22 +296,22 @@ where
     }
 
     fn parent_ptr(&self) -> *mut Node<D> {
-        self.parent.load(Ordering::SeqCst)
+        unsafe { self.parent.get().read_volatile() }
     }
 
     fn set_parent(&self, node: Option<&Node<D>>) {
         match node {
             None => {
-                self.parent.store(core::ptr::null_mut(), Ordering::SeqCst);
+                unsafe { self.parent.get().write_volatile(core::ptr::null_mut()) };
             }
             Some(node) => {
-                self.parent.store(node.as_mut_ptr(), Ordering::SeqCst);
+                unsafe { self.parent.get().write_volatile(node.as_mut_ptr()) };
             }
         }
     }
 
     fn left(&self) -> Option<&Node<D>> {
-        let node = self.left.load(Ordering::SeqCst);
+        let node = unsafe { self.left.get().read_volatile() };
         match node.is_null() {
             true => None,
             false => Some(unsafe { &*node }),
@@ -322,22 +319,22 @@ where
     }
 
     fn left_ptr(&self) -> *mut Node<D> {
-        self.left.load(Ordering::SeqCst)
+        unsafe { self.left.get().read_volatile() }
     }
 
     fn set_left(&self, node: Option<&Node<D>>) {
         match node {
             None => {
-                self.left.store(core::ptr::null_mut(), Ordering::SeqCst);
+                unsafe { self.left.get().write_volatile(core::ptr::null_mut()) };
             }
             Some(node) => {
-                self.left.store(node.as_mut_ptr(), Ordering::SeqCst);
+                unsafe { self.left.get().write_volatile(node.as_mut_ptr()) };
             }
         }
     }
 
     fn right(&self) -> Option<&Node<D>> {
-        let node = self.right.load(Ordering::SeqCst);
+        let node = unsafe { self.right.get().read_volatile() };
         match node.is_null() {
             true => None,
             false => Some(unsafe { &*node }),
@@ -345,16 +342,16 @@ where
     }
 
     fn right_ptr(&self) -> *mut Node<D> {
-        self.right.load(Ordering::SeqCst)
+        unsafe { self.right.get().read_volatile() }
     }
 
     fn set_right(&self, node: Option<&Node<D>>) {
         match node {
             None => {
-                self.right.store(core::ptr::null_mut(), Ordering::SeqCst);
+                unsafe { self.right.get().write_volatile(core::ptr::null_mut()) };
             }
             Some(node) => {
-                self.right.store(node.as_mut_ptr(), Ordering::SeqCst);
+                unsafe { self.right.get().write_volatile(node.as_mut_ptr()) };
             }
         }
     }
@@ -460,10 +457,10 @@ where
     D: SliceKey,
 {
     pub data: D,
-    color: AtomicBool,
-    parent: AtomicPtr<Node<D>>,
-    left: AtomicPtr<Node<D>>,
-    right: AtomicPtr<Node<D>>,
+    color: UnsafeCell<bool>,
+    parent: UnsafeCell<*mut Node<D>>,
+    left: UnsafeCell<*mut Node<D>>,
+    right: UnsafeCell<*mut Node<D>>,
 }
 
 impl<D> Node<D>
@@ -473,10 +470,10 @@ where
     pub fn new(data: D) -> Self {
         Node {
             data,
-            color: AtomicBool::new(RED),
-            parent: AtomicPtr::default(),
-            left: AtomicPtr::default(),
-            right: AtomicPtr::default(),
+            color: UnsafeCell::new(RED),
+            parent: UnsafeCell::new(core::ptr::null_mut()),
+            left: UnsafeCell::new(core::ptr::null_mut()),
+            right: UnsafeCell::new(core::ptr::null_mut()),
         }
     }
 
@@ -535,24 +532,24 @@ where
         }
 
         // Swap the colors
-        let tmp_color = node1.color.load(Ordering::SeqCst);
-        node1.color.store(node2.color.load(Ordering::SeqCst), Ordering::SeqCst);
-        node2.color.store(tmp_color, Ordering::SeqCst);
+        let tmp_color = unsafe { node1.color.get().read_volatile() };
+        unsafe { node1.color.get().write_volatile(node2.color.get().read_volatile()) };
+        unsafe { node2.color.get().write_volatile(tmp_color) };
 
         // Swap the parent pointers
-        let tmp_parent = node1.parent.load(Ordering::SeqCst);
-        node1.parent.store(node2.parent.load(Ordering::SeqCst), Ordering::SeqCst);
-        node2.parent.store(tmp_parent, Ordering::SeqCst);
+        let tmp_parent = unsafe { node1.parent.get().read_volatile() };
+        unsafe { node1.parent.get().write_volatile(node2.parent.get().read_volatile()) };
+        unsafe { node2.parent.get().write_volatile(tmp_parent) };
 
         // Swap the left pointers
-        let tmp_left = node1.left.load(Ordering::SeqCst);
-        node1.left.store(node2.left.load(Ordering::SeqCst), Ordering::SeqCst);
-        node2.left.store(tmp_left, Ordering::SeqCst);
+        let tmp_left = unsafe { node1.left.get().read_volatile() };
+        unsafe { node1.left.get().write_volatile(node2.left.get().read_volatile()) };
+        unsafe { node2.left.get().write_volatile(tmp_left) };
 
         // Swap the right pointers
-        let tmp_right = node1.right.load(Ordering::SeqCst);
-        node1.right.store(node2.right.load(Ordering::SeqCst), Ordering::SeqCst);
-        node2.right.store(tmp_right, Ordering::SeqCst);
+        let tmp_right = unsafe { node1.right.get().read_volatile() };
+        unsafe { node1.right.get().write_volatile(node2.right.get().read_volatile()) };
+        unsafe { node2.right.get().write_volatile(tmp_right) };
 
         // Update the parent pointers of the children
         if let Some(left) = node1.left() {

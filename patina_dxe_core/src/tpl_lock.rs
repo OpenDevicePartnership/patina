@@ -11,12 +11,12 @@ use core::{
     cell::UnsafeCell,
     fmt,
     ops::{Deref, DerefMut},
-    sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
 
+use patina_internal_cpu::interrupts;
 use r_efi::efi;
 
-static BOOT_SERVICES_PTR: AtomicPtr<efi::BootServices> = AtomicPtr::new(core::ptr::null_mut());
+static mut BOOT_SERVICES_PTR: *mut efi::BootServices = core::ptr::null_mut();
 
 /// Called to initialize the global TplLock BootServices pointer. Prior to this call, TPL locks are collapsed to a basic
 /// lock with no TPL interaction. Afterwards, all TPL locks will adjust TPL according to the TPL they were initialized
@@ -29,25 +29,29 @@ static BOOT_SERVICES_PTR: AtomicPtr<efi::BootServices> = AtomicPtr::new(core::pt
 // before boot services creation. Since these locks are used in many of the structures that are used to implement boot
 // services, this would introduce a cyclical dependency.
 pub fn init_boot_services(boot_services: *mut efi::BootServices) {
-    BOOT_SERVICES_PTR.store(boot_services, Ordering::SeqCst);
+    // Safety: This function should only be called once, during system initialization, before any
+    // interrupts can occur; so concurrent access is not possible.
+    unsafe { BOOT_SERVICES_PTR = boot_services };
 }
 
 fn boot_services() -> Option<&'static mut efi::BootServices> {
-    let boot_services_ptr = BOOT_SERVICES_PTR.load(Ordering::SeqCst);
-    unsafe { boot_services_ptr.as_mut() }
+    // Safety: BOOT_SERVICES_PTR is only set during system initialization, before any interrupts can occur;
+    // so concurrent access is not possible. After initialization, it is never modified again, so
+    // it is safe to return a mutable reference to its contents.
+    unsafe { BOOT_SERVICES_PTR.as_mut() }
 }
 
 /// Used to guard data with a locked MUTEX and TPL level.
 pub struct TplMutex<T: ?Sized> {
     tpl_lock_level: efi::Tpl,
-    lock: AtomicBool,
+    lock: UnsafeCell<bool>,
     name: &'static str,
     data: UnsafeCell<T>,
 }
 /// Wrapper for guarded data, which can be accessed by Deref or DerefMut on this object.
 pub struct TplGuard<'a, T: ?Sized + 'a> {
     release_tpl: Option<efi::Tpl>,
-    lock: &'a AtomicBool,
+    lock: &'a UnsafeCell<bool>,
     name: &'static str,
     data: *mut T,
 }
@@ -61,7 +65,7 @@ unsafe impl<T: ?Sized + Send> Send for TplGuard<'_, T> {}
 impl<T> TplMutex<T> {
     /// Instantiates a new TplMutex with the given TPL level, data object, and name string.
     pub const fn new(tpl_lock_level: efi::Tpl, data: T, name: &'static str) -> Self {
-        Self { tpl_lock_level, lock: AtomicBool::new(false), data: UnsafeCell::new(data), name }
+        Self { tpl_lock_level, lock: UnsafeCell::new(false), data: UnsafeCell::new(data), name }
     }
 }
 
@@ -78,15 +82,27 @@ impl<T: ?Sized> TplMutex<T> {
     pub fn try_lock(&self) -> Option<TplGuard<'_, T>> {
         let boot_services = boot_services();
         let release_tpl = boot_services.as_ref().map(|bs| (bs.raise_tpl)(self.tpl_lock_level));
-        if self.lock.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
-            Some(TplGuard { release_tpl, lock: &self.lock, name: self.name, data: unsafe { &mut *self.data.get() } })
-        } else {
+
+        let interrupts = interrupts::get_interrupt_state().unwrap();
+        interrupts::disable_interrupts();
+        let lock = unsafe {self.lock.get().read_volatile()};
+
+        if lock {
+            if interrupts {
+                interrupts::enable_interrupts();
+            }
             if let Some(release_tpl) = release_tpl
                 && let Some(bs) = boot_services
             {
                 (bs.restore_tpl)(release_tpl);
             }
             None
+        } else {
+            unsafe {self.lock.get().write_volatile(true)};
+            if interrupts {
+                interrupts::enable_interrupts();
+            }
+            Some(TplGuard { release_tpl, lock: &self.lock, name: self.name, data: unsafe { &mut *self.data.get() } })
         }
     }
 }
@@ -129,7 +145,13 @@ impl<'a, T: ?Sized> DerefMut for TplGuard<'a, T> {
 
 impl<T: ?Sized> Drop for TplGuard<'_, T> {
     fn drop(&mut self) {
-        self.lock.store(false, Ordering::Release);
+        let interrupts = interrupts::get_interrupt_state().unwrap();
+        interrupts::disable_interrupts();
+        let lock = self.lock.get();
+        unsafe { lock.write_volatile(false); };
+        if interrupts {
+            interrupts::enable_interrupts();
+        }
         if let Some(tpl) = self.release_tpl {
             let bs = boot_services()
                 .unwrap_or_else(|| panic!("Valid release TPL for {:?}, but invalid Boot Services", self.name));

@@ -16,9 +16,7 @@ use crate::{
 
 use super::{Error, Result};
 use core::{
-    cmp::Ordering,
-    ptr,
-    sync::atomic::{self, AtomicPtr},
+    cell::UnsafeCell, cmp::Ordering, ptr
 };
 
 /// A red-black tree that can hold up to `SIZE` nodes.
@@ -29,7 +27,7 @@ where
     D: SliceKey,
 {
     storage: Storage<'a, D>,
-    root: AtomicPtr<Node<D>>,
+    root: UnsafeCell<*mut Node<D>>,
 }
 
 impl<'a, D> Rbt<'a, D>
@@ -42,12 +40,12 @@ where
     /// [with_capacity](Self::with_capacity) to create a tree with a given slice of memory immediately. Otherwise use
     /// [resize](Self::resize) to replace the memory later.
     pub const fn new() -> Self {
-        Rbt { storage: Storage::new(), root: AtomicPtr::new(core::ptr::null_mut()) }
+        Rbt { storage: Storage::new(), root: UnsafeCell::new(core::ptr::null_mut()) }
     }
 
     /// Creates a new binary tree with a given slice of memory.
     pub fn with_capacity(slice: &'a mut [u8]) -> Self {
-        Rbt { storage: Storage::with_capacity(slice), root: AtomicPtr::default() }
+        Rbt { storage: Storage::with_capacity(slice), root: UnsafeCell::new(core::ptr::null_mut()) }
     }
 
     /// Returns the number of elements in the tree.
@@ -73,7 +71,7 @@ where
 
     /// Returns the root of the tree.
     fn root(&self) -> Option<&Node<D>> {
-        let root_ptr = self.root.load(atomic::Ordering::SeqCst);
+        let root_ptr = unsafe {self.root.get().read_volatile()};
         if root_ptr.is_null() {
             return None;
         }
@@ -96,13 +94,13 @@ where
         let (idx, node) = self.storage.add(data)?;
         node.set_red();
 
-        if self.root.load(atomic::Ordering::SeqCst).is_null() {
+        if unsafe {self.root.get().read_volatile().is_null() } {
             node.set_black();
-            self.root.store(node, atomic::Ordering::SeqCst);
+            unsafe {self.root.get().write_volatile(node)};
             return Ok(idx);
         }
 
-        let root = unsafe { &mut *self.root.load(atomic::Ordering::SeqCst) };
+        let root = unsafe { &mut *self.root.get().read_volatile() };
 
         Self::add_node(root, node)?;
         Self::fixup_add(&self.root, node);
@@ -554,7 +552,7 @@ where
     }
 
     /// Removes a node in the tree.
-    fn remove_node_from_tree<'b>(root: &'b AtomicPtr<Node<D>>, to_delete: &'b Node<D>) {
+    fn remove_node_from_tree<'b>(root: &'b UnsafeCell<*mut Node<D>>, to_delete: &'b Node<D>) {
         //} -> &'b Node<D> {
         // if both children are null, fixup the tree first so rotates work as expected,
         // then remove the node.
@@ -562,7 +560,7 @@ where
             Self::fixup_delete(root, Some(to_delete));
             Self::remove_node_with_zero_or_one_child(to_delete);
             if to_delete.parent().is_none() {
-                root.store(ptr::null_mut(), atomic::Ordering::SeqCst);
+                unsafe { root.get().write_volatile(ptr::null_mut()) };
             }
             return;
         }
@@ -572,7 +570,7 @@ where
         if to_delete.left().is_none() || to_delete.right().is_none() {
             moved_up = Self::remove_node_with_zero_or_one_child(to_delete);
             if to_delete.parent().is_none() {
-                root.store(moved_up.as_mut_ptr(), atomic::Ordering::SeqCst);
+                unsafe { root.get().write_volatile(moved_up.as_mut_ptr()) };
                 moved_up.set_parent(None);
             }
         }
@@ -582,7 +580,7 @@ where
 
             Node::swap(to_delete, successor);
             if successor.parent().is_none() {
-                root.store(successor.as_mut_ptr(), atomic::Ordering::SeqCst);
+                unsafe { root.get().write_volatile(successor.as_mut_ptr()) };
                 successor.set_parent(None);
             }
 
@@ -669,7 +667,7 @@ where
     }
 
     /// Updates the tree after a node has been added, to meet the red-black tree properties.
-    fn fixup_add(head: &AtomicPtr<Node<D>>, node: &Node<D>) {
+    fn fixup_add(head: &UnsafeCell<*mut Node<D>>, node: &Node<D>) {
         // Case 1: The node is the root of the tree, no fixups needed.
         let Some(mut parent) = node.parent() else {
             node.set_black();
@@ -701,7 +699,7 @@ where
                 if let Some(root) = Self::rotate_left(parent)
                     && root.parent().is_none()
                 {
-                    head.store(root.as_mut_ptr(), atomic::Ordering::SeqCst);
+                    unsafe { head.get().write_volatile(root.as_mut_ptr()) };
                     root.set_parent(None);
                 }
                 parent = node;
@@ -710,7 +708,7 @@ where
             if let Some(root) = Self::rotate_right(grandparent)
                 && root.parent().is_none()
             {
-                head.store(root.as_mut_ptr(), atomic::Ordering::SeqCst);
+                unsafe { head.get().write_volatile(root.as_mut_ptr()) };
                 root.set_parent(None);
             }
             parent.set_black();
@@ -723,7 +721,7 @@ where
                 if let Some(root) = Self::rotate_right(parent)
                     && root.parent().is_none()
                 {
-                    head.store(root.as_mut_ptr(), atomic::Ordering::SeqCst);
+                    unsafe { head.get().write_volatile(root.as_mut_ptr()) };
                     root.set_parent(None);
                 }
                 parent = node;
@@ -731,7 +729,7 @@ where
             if let Some(root) = Self::rotate_left(grandparent)
                 && root.parent().is_none()
             {
-                head.store(root.as_mut_ptr(), atomic::Ordering::SeqCst);
+                unsafe { head.get().write_volatile(root.as_mut_ptr()) };
                 root.set_parent(None);
             }
 
@@ -744,7 +742,7 @@ where
     }
 
     /// Updates the tree after a node has been deleted, to meet the red-black tree properties.
-    fn fixup_delete(root: &AtomicPtr<Node<D>>, node: Option<&Node<D>>) {
+    fn fixup_delete(root: &UnsafeCell<*mut Node<D>>, node: Option<&Node<D>>) {
         // Case 1: The node is the root of the tree, no fixups needed.
         if node.parent().is_none() {
             node.set_black();
@@ -763,13 +761,13 @@ where
                 if let Some(subtree_root) = Self::rotate_left(node.parent().expect("Parent exists"))
                     && subtree_root.parent().is_none()
                 {
-                    root.store(subtree_root.as_mut_ptr(), atomic::Ordering::SeqCst);
+                    unsafe { root.get().write_volatile(subtree_root.as_mut_ptr()) };
                     subtree_root.set_parent(None);
                 }
             } else if let Some(subtree_root) = Self::rotate_right(node.parent().expect("Parent exists"))
                 && subtree_root.parent().is_none()
             {
-                root.store(subtree_root.as_mut_ptr(), atomic::Ordering::SeqCst);
+                unsafe { root.get().write_volatile(subtree_root.as_mut_ptr()) };
                 subtree_root.set_parent(None);
             }
 
@@ -801,7 +799,7 @@ where
                 if let Some(subtree_root) = Self::rotate_right(sibling.unwrap())
                     && subtree_root.parent().is_none()
                 {
-                    root.store(subtree_root.as_mut_ptr(), atomic::Ordering::SeqCst);
+                    unsafe { root.get().write_volatile(subtree_root.as_mut_ptr()) };
                     subtree_root.set_parent(None);
                 }
                 sibling = Node::sibling(node); // should be parent.right
@@ -811,7 +809,7 @@ where
                 if let Some(subtree_root) = Self::rotate_left(sibling.unwrap())
                     && subtree_root.parent().is_none()
                 {
-                    root.store(subtree_root.as_mut_ptr(), atomic::Ordering::SeqCst);
+                    unsafe { root.get().write_volatile(subtree_root.as_mut_ptr()) };
                     subtree_root.set_parent(None);
                 }
                 sibling = Node::sibling(node); // should be parent.left
@@ -828,7 +826,7 @@ where
                 if let Some(subtree_root) = Self::rotate_left(node.parent().unwrap())
                     && subtree_root.parent().is_none()
                 {
-                    root.store(subtree_root.as_mut_ptr(), atomic::Ordering::SeqCst);
+                    unsafe { root.get().write_volatile(subtree_root.as_mut_ptr()) };
                     subtree_root.set_parent(None);
                 }
             } else {
@@ -836,7 +834,7 @@ where
                 if let Some(subtree_root) = Self::rotate_right(node.parent().unwrap())
                     && subtree_root.parent().is_none()
                 {
-                    root.store(subtree_root.as_mut_ptr(), atomic::Ordering::SeqCst);
+                    unsafe { root.get().write_volatile(subtree_root.as_mut_ptr()) };
                     subtree_root.set_parent(None);
                 }
             }
@@ -850,13 +848,13 @@ where
 {
     /// Replaces the memory of the tree with a new slice, copying the data from the old slice to the new slice.
     pub fn resize(&mut self, slice: &'a mut [u8]) {
-        let root = (!self.root.load(atomic::Ordering::SeqCst).is_null())
-            .then(|| self.storage.idx(self.root.load(atomic::Ordering::SeqCst)));
+        let root = (!unsafe {self.root.get().read_volatile()}.is_null())
+            .then(|| self.storage.idx(unsafe {self.root.get().read_volatile()}));
 
         self.storage.resize(slice);
 
         if let Some(idx) = root {
-            self.root.store(self.storage.get_mut(idx).expect("Pointer Exists."), atomic::Ordering::SeqCst);
+            unsafe { self.root.get().write_volatile(self.storage.get_mut(idx).expect("Pointer Exists.")) };
         }
     }
 
@@ -914,7 +912,6 @@ mod tests {
 
     use core::{
         ptr::null_mut,
-        sync::atomic::{AtomicPtr, Ordering},
     };
 
     const RBT_MAX_SIZE: usize = 0x1000;
@@ -1244,10 +1241,10 @@ mod tests {
         right.set_right(Some(right_r));
         right_r.set_parent(Some(right));
 
-        let root_ptr = AtomicPtr::new(root.as_mut_ptr());
+        let root_ptr = UnsafeCell::new(root.as_mut_ptr());
         Rbt::<i32>::remove_node_from_tree(&root_ptr, left);
 
-        let new_root = unsafe { &*root_ptr.load(Ordering::SeqCst) };
+        let new_root = unsafe { &*(root_ptr.into_inner()) };
 
         // Validate the new root
         assert_eq!(new_root.as_mut_ptr(), right.as_mut_ptr());
@@ -1328,11 +1325,11 @@ mod tests {
         right.set_right(Some(right_r));
         right_r.set_parent(Some(right));
 
-        let root_ptr = AtomicPtr::new(root.as_mut_ptr());
+        let root_ptr = UnsafeCell::new(root.as_mut_ptr());
 
         Rbt::<i32>::remove_node_from_tree(&root_ptr, right_r);
 
-        let new_root = unsafe { &*root_ptr.load(Ordering::SeqCst) };
+        let new_root = unsafe { &*(root_ptr.into_inner()) };
         assert_eq!(new_root.as_mut_ptr(), root.as_mut_ptr());
         assert_eq!(new_root.data, 17);
         assert!(new_root.is_black());
@@ -1420,11 +1417,11 @@ mod tests {
         right.set_right(Some(right_r));
         right_r.set_parent(Some(right));
 
-        let root_ptr = AtomicPtr::new(root.as_mut_ptr());
+        let root_ptr = UnsafeCell::new(root.as_mut_ptr());
 
         Rbt::<i32>::remove_node_from_tree(&root_ptr, right_l);
 
-        let new_root = unsafe { &*root_ptr.load(Ordering::SeqCst) };
+        let new_root = unsafe { &*(root_ptr.into_inner()) };
         assert_eq!(new_root.as_mut_ptr(), root.as_mut_ptr());
         assert_eq!(new_root.data, 17);
         assert!(new_root.is_black());
@@ -1507,10 +1504,10 @@ mod tests {
         right_r.set_left(Some(right_r_l));
         right_r_l.set_parent(Some(right_r));
 
-        let root_ptr = AtomicPtr::new(root.as_mut_ptr());
+        let root_ptr = UnsafeCell::new(root.as_mut_ptr());
         Rbt::<i32>::remove_node_from_tree(&root_ptr, right_l);
 
-        let new_root = unsafe { &*root_ptr.load(Ordering::SeqCst) };
+        let new_root = unsafe { &*(root_ptr.into_inner()) };
 
         assert_eq!(new_root.as_mut_ptr(), root.as_mut_ptr());
         assert_eq!(new_root.data, 17);
@@ -1594,10 +1591,10 @@ mod tests {
         right_r.set_right(Some(right_r_r));
         right_r_r.set_parent(Some(right_r));
 
-        let root_ptr = AtomicPtr::new(root.as_mut_ptr());
+        let root_ptr = UnsafeCell::new(root.as_mut_ptr());
         Rbt::<i32>::remove_node_from_tree(&root_ptr, right_l);
 
-        let new_root = unsafe { &*root_ptr.load(Ordering::SeqCst) };
+        let new_root = unsafe { &*(root_ptr.into_inner()) };
 
         assert_eq!(new_root.as_mut_ptr(), root.as_mut_ptr());
         assert_eq!(new_root.data, 17);
