@@ -1893,6 +1893,8 @@ impl SpinLockedGcd {
                     );
                     log::error!("GCD and page table are out of sync. This is a critical error.");
                     log::error!("GCD {GCD}");
+                    log::error!("Page Table Dump:");
+                    let _ = page_table.dump_page_tables(base_address as u64, len as u64);
                     debug_assert!(false);
                     return Err(EfiError::InvalidParameter);
                 }
@@ -2201,6 +2203,10 @@ impl SpinLockedGcd {
         }
 
         self.page_table.lock().as_mut().unwrap().install_page_table().expect("Failed to install the page table");
+
+        let _ = self.page_table.lock().as_mut().unwrap().unmap_memory_region(0x4000000, 0x1000);
+        let addr = 0x4000000 as *mut u8;
+        unsafe { core::ptr::write_volatile(addr, 0xFF) };
 
         log::info!("Paging initialized for the GCD");
     }

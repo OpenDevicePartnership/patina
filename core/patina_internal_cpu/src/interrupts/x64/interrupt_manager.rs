@@ -200,9 +200,7 @@ extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystem
     let paging_type =
         { if x64_context.cr4 & (1 << 12) != 0 { PagingType::Paging5Level } else { PagingType::Paging4Level } };
 
-    if let Some(attrs) = get_fault_attributes(x64_context.cr2, x64_context.cr3, paging_type) {
-        log::error!("Page Attributes: {attrs:?}");
-    }
+    dump_pte(x64_context.cr2, x64_context.cr3, paging_type);
 
     log::error!(
         "General-Purpose Registers\n \
@@ -303,9 +301,10 @@ fn interpret_gp_fault_exception_data(exception_data: u64) {
     }
 }
 
-fn get_fault_attributes(cr2: u64, cr3: u64, paging_type: PagingType) -> Option<MemoryAttributes> {
-    let pt = unsafe { patina_paging::x64::X64PageTable::from_existing(cr3, FaultAllocator {}, paging_type).ok()? };
-    pt.query_memory_region(cr2 & !(UEFI_PAGE_MASK as u64), UEFI_PAGE_SIZE as u64).ok()
+fn dump_pte(cr2: u64, cr3: u64, paging_type: PagingType) {
+    if let Ok(pt) = unsafe { patina_paging::x64::X64PageTable::from_existing(cr3, FaultAllocator {}, paging_type) } {
+        let _ = pt.dump_page_tables(cr2 & !(UEFI_PAGE_MASK as u64), UEFI_PAGE_SIZE as u64);
+    }
 }
 
 pub struct FaultAllocator {}
