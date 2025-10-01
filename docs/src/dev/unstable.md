@@ -87,15 +87,15 @@ either be accepted or denied and then merged.
 
 If the RFC is merged, it is now your responsibility to implement it's usage and create a pull-request for review. The
 pull-request should reference that this is the implementation for your accepted RFC. Once merged, **you must continue**
-**to monitor** the stability of the feature. Notably, if any changes to the feature's API occur, you will be responsible for
-adjusting the usage of the feature in the codebase.
+**to monitor** the stability of the feature. Notably, if any changes to the feature's API occur, you will be responsible
+for adjusting the usage of the feature in the codebase.
 
 ### Stabilization
 
 The final step of the process is stabilization (or removal, either from our codebase or from rustc) of the feature. If
 the feature is stabilized, then this step is short. The `#![feature(...)]` must be removed on the next rustc version
 update in this project that includes the feature stabilization. If any final changes need to be made, they will be made
-here. 
+here.
 
 ```admonish warning
 Stabilization of a feature also requires an update to the workspace `Cargo.toml`'s `rust-version` value. This is the
