@@ -178,6 +178,9 @@ impl MmCommunication for MmCommunicator {
             return Err(Status::CommBufferTooSmall);
         }
 
+        log::trace!(target: "mm_comm", "Resetting the comm buffer and internal tracking state");
+        comm_buffer.reset();
+
         log::trace!(target: "mm_comm", "Setting up communication buffer for MM request");
         comm_buffer.set_message_info(recipient).map_err(|err| {
             log::error!(target: "mm_comm", "Failed to set message info: {:?}", err);
