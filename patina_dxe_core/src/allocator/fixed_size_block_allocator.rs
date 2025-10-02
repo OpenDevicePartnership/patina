@@ -1350,10 +1350,8 @@ mod tests {
 
                 let pages = 4;
 
-                let allocation = fsb
-                    .allocate_pages(gcd::AllocateType::BottomUp(None), pages, UEFI_PAGE_SIZE)
-                    .unwrap()
-                    .cast::<u8>();
+                let allocation =
+                    fsb.allocate_pages(gcd::AllocateType::BottomUp(None), pages, UEFI_PAGE_SIZE).unwrap().cast::<u8>();
 
                 assert!(allocation.as_ptr() as u64 >= address);
                 assert!((allocation.as_ptr() as u64) < address + 0x1000000);
