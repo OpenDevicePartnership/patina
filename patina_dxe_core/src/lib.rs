@@ -31,7 +31,6 @@
 #![feature(alloc_error_handler)]
 #![feature(c_variadic)]
 #![feature(allocator_api)]
-#![feature(slice_ptr_get)]
 #![feature(coverage_attribute)]
 
 extern crate alloc;
