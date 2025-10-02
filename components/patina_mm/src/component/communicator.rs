@@ -200,7 +200,7 @@ mod tests {
         ($size:expr, $sw_mmi_trigger_instance:expr) => {{
             let buffer: &'static mut [u8; $size] = Box::leak(Box::new([0u8; $size]));
             MmCommunicator {
-                comm_buffers: RefCell::new(vec![unsafe { CommunicateBuffer::new(Pin::new(buffer), 0) }]),
+                comm_buffers: RefCell::new(vec![CommunicateBuffer::new(Pin::new(buffer), 0)]),
                 sw_mmi_trigger_service: Some(Service::mock(Box::new($sw_mmi_trigger_instance))),
             }
         }};
@@ -319,15 +319,9 @@ mod tests {
 
         let comm_buffer_ids = [COMM_BUFFER_1_ID, COMM_BUFFER_2_ID, COMM_BUFFER_3_ID];
         let comm_buffers = [
-            unsafe {
-                CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; COMM_BUFFER_SIZE]))), comm_buffer_ids[0])
-            },
-            unsafe {
-                CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; COMM_BUFFER_SIZE]))), comm_buffer_ids[1])
-            },
-            unsafe {
-                CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; COMM_BUFFER_SIZE]))), comm_buffer_ids[2])
-            },
+            CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; COMM_BUFFER_SIZE]))), comm_buffer_ids[0]),
+            CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; COMM_BUFFER_SIZE]))), comm_buffer_ids[1]),
+            CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; COMM_BUFFER_SIZE]))), comm_buffer_ids[2]),
         ];
 
         // Cleat the buffer added by the macro and add the new buffers

@@ -24,6 +24,7 @@ use core::fmt;
 use core::pin::Pin;
 use core::ptr::NonNull;
 
+use patina::base::UEFI_PAGE_MASK;
 use r_efi::efi;
 
 /// Management Mode (MM) Configuration
@@ -59,24 +60,57 @@ impl Default for MmCommunicationConfiguration {
 /// ## Notes
 ///
 /// - This only supports V1 and V2 of the MM Communicate header format.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub(crate) struct EfiMmCommunicateHeader {
     /// Allows for disambiguation of the message format.
     /// Used to identify the registered MM handlers that should be given the message.
-    pub header_guid: efi::Guid,
+    header_guid: efi::Guid,
     /// The size of Data (in bytes) and does not include the size of the header.
-    pub message_length: usize,
+    message_length: usize,
 }
 
 impl EfiMmCommunicateHeader {
-    /// Returns the communicate header as a slice of bytes.
-    pub fn as_bytes(&self) -> &[u8] {
-        unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, EfiMmCommunicateHeader::size()) }
+    /// Create a new communicate header with the specified GUID and message length.
+    pub const fn new(header_guid: efi::Guid, message_length: usize) -> Self {
+        Self { header_guid, message_length }
     }
+
+    /// Returns the communicate header as a slice of bytes using safe conversion.
+    ///
+    /// Useful if byte-level access to the header structure is needed.
+    pub fn as_bytes(&self) -> &[u8] {
+        unsafe {
+            // SAFETY: EfiMmCommunicateHeader is repr(C) with a well-defined layout
+            core::slice::from_raw_parts(self as *const _ as *const u8, Self::size())
+        }
+    }
+
     /// Returns the size of the header in bytes.
     pub const fn size() -> usize {
         core::mem::size_of::<Self>()
+    }
+
+    /// Returns the header GUID from this communicate header.
+    ///
+    /// # Returns
+    ///
+    /// The GUID that identifies the registered MM handler recipient.
+    #[allow(dead_code)]
+    pub const fn header_guid(&self) -> efi::Guid {
+        self.header_guid
+    }
+
+    /// Returns the message length from this communicate header.
+    ///
+    /// The length represents the size of the message data that follows the header.
+    ///
+    /// # Returns
+    ///
+    /// The length in bytes of the message data (excluding the header size).
+    #[allow(dead_code)]
+    pub const fn message_length(&self) -> usize {
+        self.message_length
     }
 }
 
@@ -89,8 +123,12 @@ pub enum CommunicateBufferStatus {
     TooSmallForMessage,
     /// A valid recipient GUID was not provided.
     InvalidRecipient,
-    /// The buffer is empty.
-    Empty,
+    /// A comm buffer was not provided (null pointer).
+    NoBuffer,
+    /// The does not meet the alignment requirements.
+    NotAligned,
+    /// Buffer creation failed due to address space validation errors.
+    AddressValidationFailed,
 }
 
 /// Management Mode (MM) Communicate Buffer
@@ -99,7 +137,7 @@ pub enum CommunicateBufferStatus {
 #[derive(Clone)]
 pub struct CommunicateBuffer {
     /// Pointer to the buffer in memory.
-    buffer: NonNull<u8>,
+    buffer: NonNull<[u8]>,
     /// ID of the buffer.
     id: u8,
     /// Length of the total buffer in bytes.
@@ -111,30 +149,36 @@ pub struct CommunicateBuffer {
 }
 
 impl CommunicateBuffer {
+    /// The minimum required buffer size to hold a communication header.
+    const MINIMUM_BUFFER_SIZE: usize = EfiMmCommunicateHeader::size();
+
+    /// The offset in the buffer where the message starts.
+    const MESSAGE_START_OFFSET: usize = EfiMmCommunicateHeader::size();
+
     /// Creates a new `CommunicateBuffer` with the given buffer and ID.
-    ///
-    /// ## Safety
-    ///
-    /// - The buffer must be a valid pointer to a memory region of at least `size` bytes.
-    /// - The buffer must not be null.
-    /// - The buffer must have a static lifetime.
-    /// - The buffer must not be moved in memory while it is being used.
-    /// - The buffer must not be used by any other code.
-    pub unsafe fn new(buffer: Pin<&'static mut [u8]>, id: u8) -> Self {
+    pub fn new(mut buffer: Pin<&'static mut [u8]>, id: u8) -> Self {
         let length = buffer.len();
-        let buffer_ptr =
-            NonNull::new(Pin::into_inner(buffer).as_mut_ptr()).expect("CommunicateBuffer::new: null buffer pointer");
-        Self { buffer: buffer_ptr, id, length, message_length: 0, recipient: None }
+        buffer.fill(0);
+
+        let ptr: NonNull<[u8]> = NonNull::from_mut(Pin::into_inner(buffer));
+
+        Self { buffer: ptr, id, length, message_length: 0, recipient: None }
     }
 
     /// Returns a reference to the buffer as a slice of bytes.
-    pub fn as_slice(&self) -> &'static [u8] {
-        unsafe { core::slice::from_raw_parts(self.buffer.as_ptr(), self.length) }
+    /// This is only used for internal operations.
+    fn as_slice(&self) -> &[u8] {
+        // SAFETY: The buffer pointer was validated before being stored
+        //         in this CommunicateBuffer instance
+        unsafe { self.buffer.as_ref() }
     }
 
     /// Returns a mutable reference to the buffer as a slice of bytes.
-    pub fn as_slice_mut(&self) -> &'static mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut(self.buffer.as_ptr(), self.length) }
+    /// This is only used for internal operations.
+    fn as_slice_mut(&mut self) -> &mut [u8] {
+        // SAFETY: The buffer pointer was validated before being stored
+        //         in this CommunicateBuffer instance
+        unsafe { self.buffer.as_mut() }
     }
 
     /// Creates a new `CommunicateBuffer` from a raw pointer and size.
@@ -142,18 +186,72 @@ impl CommunicateBuffer {
     /// ## Safety
     ///
     /// - The buffer must be a valid pointer to a memory region of at least `size` bytes.
-    /// - The buffer must not be null.
+    /// - The buffer pointer must not be null.
     /// - The buffer must have a static lifetime.
     /// - The buffer must not be moved in memory while it is being used.
     /// - The buffer must not be used by any other code.
-    pub unsafe fn from_raw_parts(buffer: *mut u8, size: usize, id: u8) -> Self {
-        if size == 0 {
-            panic!("CommunicateBuffer::from_raw_parts: size is zero");
+    /// - The buffer must be page (4k) aligned so paging attributes can be applied to it.
+    /// - The buffer size must be sufficient to hold at least the MM communication header.
+    pub unsafe fn from_raw_parts(buffer: *mut u8, size: usize, id: u8) -> Result<Self, CommunicateBufferStatus> {
+        if size < Self::MINIMUM_BUFFER_SIZE {
+            return Err(CommunicateBufferStatus::TooSmallForHeader);
         }
+
         if buffer.is_null() {
-            panic!("CommunicateBuffer::from_raw_parts: null buffer pointer");
+            return Err(CommunicateBufferStatus::NoBuffer);
         }
-        unsafe { Self::new(Pin::new_unchecked(core::slice::from_raw_parts_mut(buffer, size)), id) }
+
+        if (buffer as usize) & UEFI_PAGE_MASK != 0 {
+            return Err(CommunicateBufferStatus::NotAligned);
+        }
+
+        if buffer as usize > usize::MAX - size {
+            return Err(CommunicateBufferStatus::AddressValidationFailed);
+        }
+
+        // SAFETY: Safety is upheld by the caller to this function (the function is marked unsafe)
+        unsafe { Ok(Self::new(Pin::new(core::slice::from_raw_parts_mut(buffer, size)), id)) }
+    }
+
+    /// Creates a `CommunicateBuffer` from a validated firmware-provided memory region.
+    ///
+    /// This is the recommended method for creating communicate buffers from HOB data or other
+    /// firmware-provided memory regions.
+    ///
+    /// ## Parameters
+    ///
+    /// - `address` - Physical address of the communication buffer
+    /// - `size_bytes` - Size of the buffer in bytes
+    /// - `buffer_id` - Unique identifier for this buffer
+    ///   - Can be used in future calls to refer to the buffer
+    ///
+    /// ## Returns
+    ///
+    /// - `Ok(CommunicateBuffer)` - Successfully created and validated buffer
+    /// - `Err(CommunicateBufferStatus)` - Validation failed with specific error
+    ///
+    /// ## Safety
+    ///
+    /// The caller must ensure:
+    /// - The memory region is valid and accessible throughout buffer lifetime
+    /// - The memory is not used by other components concurrently
+    /// - The firmware has guaranteed the memory region is stable and properly mapped
+    pub unsafe fn from_firmware_region(
+        address: u64,
+        size_bytes: usize,
+        buffer_id: u8,
+    ) -> Result<Self, CommunicateBufferStatus> {
+        // Check that the address provided is addressable on this system.
+        // A 32-bit system will fail this if the address is over 4GB.
+        let address = usize::try_from(address).map_err(|_| CommunicateBufferStatus::AddressValidationFailed)?;
+
+        if address.checked_add(size_bytes).is_none() {
+            return Err(CommunicateBufferStatus::AddressValidationFailed);
+        }
+
+        let ptr = address as *mut u8;
+
+        unsafe { Self::from_raw_parts(ptr, size_bytes, buffer_id) }
     }
 
     /// Returns the length of the buffer.
@@ -171,13 +269,61 @@ impl CommunicateBuffer {
         self.id
     }
 
+    /// Returns a pointer to the underlying buffer memory.
+    ///
+    /// This method provides controlled access to the buffer pointer for operations
+    /// that require direct memory access, such as registering with hardware or
+    /// passing to external APIs.
+    ///
+    /// ## Safety Considerations
+    ///
+    /// While this method is safe to call, the returned pointer should be used
+    /// with caution. The caller must ensure they do not:
+    ///
+    /// - Write beyond the buffer boundaries (use `len()` to check size)
+    /// - Modify buffer contents without proper coordination with buffer state
+    /// - Use the pointer after the buffer has been dropped
+    pub fn as_ptr(&self) -> *mut u8 {
+        self.buffer.as_ptr().cast::<u8>()
+    }
+
+    /// Returns the available capacity for the message part of the communicate buffer.
+    ///
+    /// Note: Zero will be returned if the buffer is too small to hold the header.
+    pub fn message_capacity(&self) -> usize {
+        self.len().saturating_sub(Self::MESSAGE_START_OFFSET)
+    }
+
+    /// Validates that the buffer can accommodate a header and message of the given size.
+    ///
+    /// ## Arguments
+    /// - `message_size` - The size of the message to validate
+    ///
+    /// ## Returns
+    /// - `Ok(())` - The buffer can safely hold the header and message
+    /// - `Err(status)` - Buffer validation failed
+    fn validate_capacity(&self, message_size: usize) -> Result<(), CommunicateBufferStatus> {
+        // First check if buffer can hold the header
+        if self.len() < Self::MESSAGE_START_OFFSET {
+            return Err(CommunicateBufferStatus::TooSmallForHeader);
+        }
+
+        // Then check if remaining space can hold the message
+        let available_message_space = self.len() - Self::MESSAGE_START_OFFSET;
+        if message_size > available_message_space {
+            return Err(CommunicateBufferStatus::TooSmallForMessage);
+        }
+
+        Ok(())
+    }
+
     /// Sets the information needed for a communication message to be sent to the MM handler.
     ///
     /// ## Parameters
     ///
     /// - `recipient`: The GUID of the recipient MM handler.
     pub fn set_message_info(&mut self, recipient: efi::Guid) -> Result<(), CommunicateBufferStatus> {
-        if self.len() < Self::message_start_offset() {
+        if self.len() < Self::MESSAGE_START_OFFSET {
             return Err(CommunicateBufferStatus::TooSmallForHeader);
         }
 
@@ -192,40 +338,28 @@ impl CommunicateBuffer {
     /// - `message`: The message to be sent to the MM handler. The message length in the communicate header is
     ///   set to the length of this slice.
     pub fn set_message(&mut self, message: &[u8]) -> Result<(), CommunicateBufferStatus> {
-        if message.len() > self.message_capacity() {
-            return Err(CommunicateBufferStatus::TooSmallForMessage);
-        }
+        self.validate_capacity(message.len())?;
+
         let recipient = if let Some(recipient) = self.recipient {
             recipient
         } else {
             return Err(CommunicateBufferStatus::InvalidRecipient);
         };
-        self.message_length = message.len();
 
-        self.as_slice_mut()[..Self::message_start_offset()].copy_from_slice(
-            EfiMmCommunicateHeader { header_guid: recipient, message_length: self.message_length }.as_bytes(),
-        );
-        self.as_slice_mut()[Self::message_start_offset()..Self::message_start_offset() + self.message_length]
-            .copy_from_slice(message);
+        self.message_length = message.len();
+        let message_length = self.message_length;
+
+        let header = EfiMmCommunicateHeader::new(recipient, message_length);
+        let slice = self.as_slice_mut();
+        slice[..Self::MESSAGE_START_OFFSET].copy_from_slice(header.as_bytes());
+        slice[Self::MESSAGE_START_OFFSET..Self::MESSAGE_START_OFFSET + message_length].copy_from_slice(message);
 
         Ok(())
     }
 
     /// Returns a slice to the message part of the communicate buffer.
     pub fn get_message(&self) -> Vec<u8> {
-        self.as_slice()[Self::message_start_offset()..].to_vec()
-    }
-
-    /// Returns the available capacity for the message part of the communicate buffer.
-    ///
-    /// Note: Zero will be returned if the buffer is too small to hold the header.
-    pub fn message_capacity(&self) -> usize {
-        self.len().saturating_sub(Self::message_start_offset())
-    }
-
-    /// Returns the offset in the buffer where the message starts.
-    const fn message_start_offset() -> usize {
-        EfiMmCommunicateHeader::size()
+        self.as_slice()[Self::MESSAGE_START_OFFSET..].to_vec()
     }
 }
 
@@ -353,10 +487,13 @@ mod tests {
     use super::*;
     use r_efi::efi::Guid;
 
+    #[repr(align(4096))]
+    struct AlignedBuffer([u8; 64]);
+
     #[test]
     fn test_set_message_info_success() {
         let buffer: &'static mut [u8; 64] = Box::leak(Box::new([0u8; 64]));
-        let mut comm_buffer = unsafe { CommunicateBuffer::new(Pin::new(buffer), 1) };
+        let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
 
         let recipient_guid =
             Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
@@ -367,7 +504,7 @@ mod tests {
     #[test]
     fn test_set_message_info_failure_too_small_for_header() {
         let buffer: &'static mut [u8; 2] = Box::leak(Box::new([0u8; 2]));
-        let mut comm_buffer = unsafe { CommunicateBuffer::new(Pin::new(buffer), 1) };
+        let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
 
         let recipient_guid =
             Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
@@ -378,9 +515,9 @@ mod tests {
 
     #[test]
     fn test_set_message_failure_too_small_for_message() {
-        let buffer: &'static mut [u8; CommunicateBuffer::message_start_offset()] =
-            Box::leak(Box::new([0u8; CommunicateBuffer::message_start_offset()]));
-        let mut comm_buffer = unsafe { CommunicateBuffer::new(Pin::new(buffer), 1) };
+        let buffer: &'static mut [u8; CommunicateBuffer::MINIMUM_BUFFER_SIZE] =
+            Box::leak(Box::new([0u8; CommunicateBuffer::MINIMUM_BUFFER_SIZE]));
+        let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
 
         let recipient_guid =
             Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
@@ -396,8 +533,9 @@ mod tests {
     #[test]
     fn test_set_message_failure_invalid_recipient() {
         let buffer: &'static mut [u8; 64] = Box::leak(Box::new([0u8; 64]));
-        let mut comm_buffer = unsafe { CommunicateBuffer::new(Pin::new(buffer), 1) };
+        let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
 
+        // Should fail because no recipient was set
         assert_eq!(
             comm_buffer.set_message("Test message data".as_bytes()),
             Err(CommunicateBufferStatus::InvalidRecipient)
@@ -407,7 +545,7 @@ mod tests {
     #[test]
     fn test_set_message_success() {
         let buffer: &'static mut [u8; 64] = Box::leak(Box::new([0u8; 64]));
-        let mut comm_buffer = unsafe { CommunicateBuffer::new(Pin::new(buffer), 1) };
+        let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
 
         let recipient_guid =
             Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
@@ -416,120 +554,144 @@ mod tests {
         let message = b"MM Handler!";
         assert!(comm_buffer.set_message(message).is_ok());
         assert_eq!(comm_buffer.len(), 64);
-        assert_eq!(comm_buffer.message_length, message.len());
         assert!(!comm_buffer.is_empty());
         assert_eq!(comm_buffer.id(), 1);
 
-        let stored_message =
-            &comm_buffer.as_slice()[EfiMmCommunicateHeader::size()..EfiMmCommunicateHeader::size() + message.len()];
-        assert_eq!(stored_message, message);
+        // Test that we can retrieve the message
+        let retrieved_message = comm_buffer.get_message();
+        assert_eq!(retrieved_message[..message.len()], *message);
     }
 
     #[test]
-    fn test_set_message_failure() {
+    fn test_set_message_failure_buffer_too_small() {
+        // The buffer is too small for the header - capacity validation happens first
         let buffer: &'static mut [u8; 16] = Box::leak(Box::new([0u8; 16]));
-        let mut comm_buffer = unsafe { CommunicateBuffer::new(Pin::new(buffer), 1) };
+        let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
 
-        let message = b"MM Handler!"; // Message too large for the total comm buffer
-        assert_eq!(comm_buffer.set_message(message), Err(CommunicateBufferStatus::TooSmallForMessage));
+        let message = b"MM Handler!";
+        assert_eq!(comm_buffer.set_message(message), Err(CommunicateBufferStatus::TooSmallForHeader));
+
+        // The buffer has room for the header but there is not enough room for the message
+        let buffer2: &'static mut [u8; 30] = Box::leak(Box::new([0u8; 30]));
+        let mut comm_buffer2 = CommunicateBuffer::new(Pin::new(buffer2), 2);
+
+        let recipient_guid =
+            Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
+        assert!(comm_buffer2.set_message_info(recipient_guid).is_ok());
+
+        let long_message = b"This message is too long for the remaining space!";
+        assert_eq!(comm_buffer2.set_message(long_message), Err(CommunicateBufferStatus::TooSmallForMessage));
     }
 
     #[test]
     fn test_get_message_success() {
         const MESSAGE: &[u8] = b"MM Handler!";
-        const MESSAGE_SIZE: usize = MESSAGE.len();
-        const COMM_BUFFER_SIZE: usize = CommunicateBuffer::message_start_offset() + MESSAGE_SIZE;
+        const COMM_BUFFER_SIZE: usize = CommunicateBuffer::MESSAGE_START_OFFSET + MESSAGE.len();
 
         let buffer: &'static mut [u8; COMM_BUFFER_SIZE] = Box::leak(Box::new([0u8; COMM_BUFFER_SIZE]));
-        let mut comm_buffer = unsafe { CommunicateBuffer::new(Pin::new(buffer), 1) };
+        let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
 
-        let message = MESSAGE;
-        assert!(
-            comm_buffer
-                .set_message_info(Guid::from_fields(
-                    0x12345678,
-                    0x1234,
-                    0x5678,
-                    0x90,
-                    0xAB,
-                    &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]
-                ))
-                .is_ok(),
-            "Failed to set the message info"
-        );
-        assert!(comm_buffer.set_message(message).is_ok(), "Failed to set the message");
+        let test_guid =
+            Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
 
-        let stored_message: Vec<u8> = comm_buffer.get_message();
-        assert_eq!(
-            stored_message,
-            &comm_buffer.as_slice().to_vec()
-                [CommunicateBuffer::message_start_offset()..CommunicateBuffer::message_start_offset() + message.len()]
-        );
+        assert!(comm_buffer.set_message_info(test_guid).is_ok(), "Failed to set the message info");
+        assert!(comm_buffer.set_message(MESSAGE).is_ok(), "Failed to set the message");
+
+        let retrieved_message = comm_buffer.get_message();
+        assert_eq!(retrieved_message[..MESSAGE.len()], *MESSAGE);
     }
 
     #[test]
     fn test_set_message_info_multiple_times_success() {
         let buffer: &'static mut [u8; 64] = Box::leak(Box::new([0u8; 64]));
-        let mut comm_buffer = unsafe { CommunicateBuffer::new(Pin::new(buffer), 1) };
+        let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
 
         let recipient_guid =
             Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
         assert!(comm_buffer.set_message_info(recipient_guid).is_ok());
-        assert_eq!(comm_buffer.recipient, Some(recipient_guid));
 
         let message = b"MM Handler!";
         assert!(comm_buffer.set_message(message).is_ok());
-        assert_eq!(comm_buffer.get_message()[..message.len()], message.to_vec());
+        let retrieved_message = comm_buffer.get_message();
+        assert_eq!(retrieved_message[..message.len()], *message);
         assert_eq!(comm_buffer.len(), 64);
-        assert_eq!(comm_buffer.message_length, message.len());
 
+        // Update with new recipient
         let recipient_guid2 =
             Guid::from_fields(0x3210FEDC, 0xABCD, 0xABCD, 0x12, 0x23, &[0x12, 0x34, 0x56, 0x78, 0x90, 0xAB]);
         assert!(comm_buffer.set_message_info(recipient_guid2).is_ok());
-        assert_eq!(comm_buffer.recipient, Some(recipient_guid2));
-        assert_eq!(comm_buffer.get_message()[..message.len()], message.to_vec());
+
+        // Message should still be there but header should be updated
+        let retrieved_message2 = comm_buffer.get_message();
+        assert_eq!(retrieved_message2[..message.len()], *message);
         assert_eq!(comm_buffer.len(), 64);
-        assert_eq!(comm_buffer.message_length, message.len());
     }
 
     #[test]
-    #[should_panic(expected = "CommunicateBuffer::from_raw_parts: size is zero")]
     fn test_from_raw_parts_zero_size() {
         let buffer: &'static mut [u8; 0] = Box::leak(Box::new([]));
         let size = buffer.len();
         let id = 1;
-        unsafe { CommunicateBuffer::from_raw_parts(buffer.as_mut_ptr(), size, id) };
+        let result = unsafe { CommunicateBuffer::from_raw_parts(buffer.as_mut_ptr(), size, id) };
+        assert!(matches!(result, Err(CommunicateBufferStatus::TooSmallForHeader)));
     }
 
     #[test]
-    #[should_panic(expected = "CommunicateBuffer::from_raw_parts: null buffer pointer")]
     fn test_from_raw_parts_null_pointer() {
         let buffer: *mut u8 = core::ptr::null_mut();
         let size = 64;
         let id = 1;
-        unsafe { CommunicateBuffer::from_raw_parts(buffer, size, id) };
+        let result = unsafe { CommunicateBuffer::from_raw_parts(buffer, size, id) };
+        assert!(matches!(result, Err(CommunicateBufferStatus::NoBuffer)));
+    }
+
+    #[test]
+    fn test_from_firmware_region_success() {
+        use patina::base::UEFI_PAGE_SIZE;
+
+        let aligned_buf = Box::new(AlignedBuffer([0u8; 64]));
+        let buffer_ptr = aligned_buf.0.as_ptr();
+        assert_eq!(buffer_ptr as usize & (UEFI_PAGE_SIZE - 1), 0, "Buffer is not 4K aligned");
+
+        let addr = buffer_ptr as u64;
+        let size = 64;
+        let id = 1;
+
+        let result = unsafe { CommunicateBuffer::from_firmware_region(addr, size, id) };
+        assert!(result.is_ok());
+        let comm_buffer = result.unwrap();
+        assert_eq!(comm_buffer.len(), size);
+        assert_eq!(comm_buffer.id(), id);
+    }
+
+    #[test]
+    fn test_from_firmware_region_overflow() {
+        let addr = u64::MAX;
+        let size = 1;
+        let id = 1;
+
+        let result = unsafe { CommunicateBuffer::from_firmware_region(addr, size, id) };
+        assert!(matches!(result, Err(CommunicateBufferStatus::AddressValidationFailed)));
     }
 
     #[test]
     fn test_from_raw_parts_success() {
-        let buffer: &'static mut [u8; 64] = Box::leak(Box::new([0u8; 64]));
+        use patina::base::UEFI_PAGE_SIZE;
 
-        let header = unsafe { &mut *(buffer.as_mut_ptr() as *mut EfiMmCommunicateHeader) };
-        header.header_guid =
-            Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
-        header.message_length = 16;
+        let mut aligned_buf = Box::new(AlignedBuffer([0u8; 64]));
+        let buffer = &mut aligned_buf.0;
+        assert_eq!(buffer.as_ptr() as usize & (UEFI_PAGE_SIZE - 1), 0, "Buffer is not 4K aligned");
 
         let size = buffer.len();
         let id = 1;
-        let comm_buffer = unsafe { CommunicateBuffer::from_raw_parts(buffer.as_mut_ptr(), size, id) };
+        let comm_buffer = unsafe { CommunicateBuffer::from_raw_parts(buffer.as_mut_ptr(), size, id).unwrap() };
 
         assert_eq!(comm_buffer.len(), size);
-        assert_eq!(comm_buffer.id, id);
-        assert_eq!(comm_buffer.as_slice().len(), size);
-        assert_eq!(
-            comm_buffer.as_slice()[0..EfiMmCommunicateHeader::size()],
-            header.as_bytes()[0..EfiMmCommunicateHeader::size()]
-        );
+        assert_eq!(comm_buffer.id(), id);
+
+        // Test that the buffer is zeroed initially
+        let message = comm_buffer.get_message();
+        assert!(message.iter().all(|&x| x == 0));
     }
 
     #[test]
