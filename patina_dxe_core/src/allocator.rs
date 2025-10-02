@@ -968,7 +968,7 @@ fn process_hob_allocations(hob_list: &HobList) {
             if core_allocate_pages(
                 efi::ALLOCATE_ADDRESS,
                 efi::BOOT_SERVICES_DATA,
-                UEFI_PAGE_SIZE,
+                1,
                 &mut address as *mut efi::PhysicalAddress,
                 None,
             )
