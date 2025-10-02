@@ -353,6 +353,7 @@ fn add_from_bytes(
 **Unsafe Legacy API** - `add()`:
 
 Retained for UEFI protocol compatibility but strongly discouraged. Requires caller to guarantee:
+
 - Complete SMBIOS record structure
 - Valid memory at pointer location
 - Proper string pool formatting
