@@ -10,7 +10,7 @@
 //!
 use crate::gcd::SpinLockedGcd;
 use mu_pi::hob::EFiMemoryTypeInformation;
-use patina_sdk::error::EfiError;
+use patina::error::EfiError;
 use r_efi::efi;
 
 use super::{
@@ -129,7 +129,7 @@ impl UefiAllocator {
 
         match self.allocator.allocate(allocation_info.layout) {
             Ok(ptr) => {
-                let alloc_info_ptr = ptr.as_mut_ptr() as *mut AllocationInfo;
+                let alloc_info_ptr = ptr.cast::<AllocationInfo>().as_ptr();
                 unsafe {
                     alloc_info_ptr.write(allocation_info);
                     buffer.write((ptr.as_ptr() as *mut u8 as usize + offset) as *mut c_void);
@@ -271,7 +271,7 @@ mod tests {
     use std::alloc::{GlobalAlloc, System};
 
     use mu_pi::dxe_services;
-    use patina_sdk::base::{SIZE_4KB, SIZE_64KB, UEFI_PAGE_SIZE};
+    use patina::base::{SIZE_4KB, SIZE_64KB, UEFI_PAGE_SIZE};
 
     use crate::{
         allocator::{DEFAULT_ALLOCATION_STRATEGY, DEFAULT_PAGE_ALLOCATION_GRANULARITY},
@@ -521,7 +521,7 @@ mod tests {
             );
 
             let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-            let allocation = ua.allocate(layout).unwrap().as_non_null_ptr();
+            let allocation = ua.allocate(layout).unwrap().cast::<u8>();
             assert!(ua.contains(allocation));
         });
     }

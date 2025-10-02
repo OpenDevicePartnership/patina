@@ -9,19 +9,19 @@
 use crate::pecoff::{self, UefiPeInfo};
 use alloc::{boxed::Box, slice, vec, vec::Vec};
 use core::{fmt::Display, ptr};
-use patina_sdk::{base::DEFAULT_CACHE_ATTR, error::EfiError};
+use patina::{base::DEFAULT_CACHE_ATTR, error::EfiError};
 
 use mu_pi::{
     dxe_services::{self, GcdMemoryType},
     hob::{self, EFiMemoryTypeInformation},
 };
 use mu_rust_helpers::function;
-use patina_internal_collections::{Error as SliceError, Rbt, SliceKey, node_size};
-use patina_sdk::{
+use patina::{
     base::{SIZE_4GB, UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, align_up},
-    guid::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP,
+    guids::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP,
     uefi_pages_to_size,
 };
+use patina_internal_collections::{Error as SliceError, Rbt, SliceKey, node_size};
 use r_efi::efi;
 
 use crate::{
@@ -2431,21 +2431,27 @@ impl SpinLockedGcd {
                 }
             }
 
-            match self.set_paging_attributes(current_base as usize, current_len as usize, attributes) {
-                Ok(_) => {}
-                Err(EfiError::NotReady) => {
-                    // before the page table is installed, we expect to get a return of NotReady. This means the GCD
-                    // has been updated with the attributes, but the page table is not installed yet. In init_paging, the
-                    // page table will be updated with the current state of the GCD. The code that calls into this expects
-                    // NotReady to be returned, so we must catch that error and report it. However, we also need to
-                    // make sure any attribute updates across descriptors update the full range and not error out here.
-                    res = Err(EfiError::NotReady);
-                }
-                _ => {
-                    log::error!(
-                        "Failed to set page table memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}",
-                    );
-                    debug_assert!(false);
+            // 0 is a valid value for paging attributes: it means RWX. 0 is invalid for cache attributes. edk2 has a
+            // behavior where if the caller passes 0 for cache and paging attributes, then 0 (RWX) is not applied to
+            // the page table and only the virtual attribute(s) are applied to the GCD, such as EFI_RUNTIME. In order
+            // to maintain compatibility with existing drivers, we preserve this poor paradigm.
+            if attributes & (efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK) != 0 {
+                match self.set_paging_attributes(current_base as usize, current_len as usize, attributes) {
+                    Ok(_) => {}
+                    Err(EfiError::NotReady) => {
+                        // before the page table is installed, we expect to get a return of NotReady. This means the GCD
+                        // has been updated with the attributes, but the page table is not installed yet. In init_paging, the
+                        // page table will be updated with the current state of the GCD. The code that calls into this expects
+                        // NotReady to be returned, so we must catch that error and report it. However, we also need to
+                        // make sure any attribute updates across descriptors update the full range and not error out here.
+                        res = Err(EfiError::NotReady);
+                    }
+                    _ => {
+                        log::error!(
+                            "Failed to set page table memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}",
+                        );
+                        debug_assert!(false);
+                    }
                 }
             }
 
@@ -2633,7 +2639,7 @@ unsafe impl Send for SpinLockedGcd {}
 mod tests {
     extern crate std;
     use core::{alloc::Layout, sync::atomic::AtomicBool};
-    use patina_sdk::base::align_up;
+    use patina::base::align_up;
 
     use crate::test_support;
 

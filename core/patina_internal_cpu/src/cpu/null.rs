@@ -8,7 +8,7 @@
 //!
 use crate::cpu::Cpu;
 use mu_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType};
-use patina_sdk::{component::service::IntoService, error::EfiError};
+use patina::{component::service::IntoService, error::EfiError};
 use r_efi::efi;
 
 /// Struct to implement Null Cpu Init.

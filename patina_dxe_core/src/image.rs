@@ -10,14 +10,14 @@ use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
 use goblin::pe::section_table;
 use mu_pi::hob::{Hob, HobList};
-use patina_internal_device_path::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count};
-use patina_sdk::base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up};
-use patina_sdk::error::EfiError;
-use patina_sdk::performance::{
+use patina::base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up};
+use patina::error::EfiError;
+use patina::performance::{
     logging::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end},
     measurement::create_performance_measurement,
 };
-use patina_sdk::{guid, uefi_pages_to_size, uefi_size_to_pages};
+use patina::{guids, uefi_pages_to_size, uefi_size_to_pages};
+use patina_internal_device_path::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count};
 use r_efi::efi;
 
 use crate::{
@@ -491,10 +491,10 @@ fn install_dxe_core_image(hob_list: &HobList, system_table: &mut EfiSystemTable)
     let dxe_core_hob = hob_list
         .iter()
         .find_map(|x| match x {
-            Hob::MemoryAllocationModule(module) if module.module_name == guid::DXE_CORE => Some(module),
+            Hob::MemoryAllocationModule(module) if module.module_name == guids::DXE_CORE => Some(module),
             _ => None,
         })
-        .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use patina_sdk::guid::DXE_CORE as FFS GUID.");
+        .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use patina::guid::DXE_CORE as FFS GUID.");
 
     // get exclusive access to the global private data.
     let mut private_data = PRIVATE_IMAGE_DATA.lock();
@@ -595,7 +595,7 @@ fn core_load_pe_image(
     let size = pe_info.size_of_image as usize;
 
     // the section alignment must be at least the size of a page
-    if alignment % UEFI_PAGE_SIZE != 0 || alignment == 0 {
+    if !alignment.is_multiple_of(UEFI_PAGE_SIZE) || alignment == 0 {
         log::error!(
             "core_load_pe_image_failed: section alignment of {alignment:#x?} is not a (non-zero) multiple of page size {UEFI_PAGE_SIZE:#x?}",
         );
@@ -604,7 +604,7 @@ fn core_load_pe_image(
     }
 
     // the size of the image must be a multiple of the section alignment per PE/COFF spec
-    if size % alignment != 0 {
+    if !size.is_multiple_of(alignment) {
         log::error!("core_load_pe_image_failed: size of image is not a multiple of the section alignment");
         debug_assert!(false);
         return Err(EfiError::LoadError);
@@ -694,7 +694,7 @@ fn activate_compatibility_mode(private_info: &PrivateImageData) -> Result<(), Ef
         .unwrap_or(DEFAULT_CACHE_ATTR);
     if dxe_services::core_set_memory_space_attributes(
         private_info.image_base_page,
-        patina_sdk::uefi_pages_to_size!(private_info.image_num_pages) as u64,
+        patina::uefi_pages_to_size!(private_info.image_num_pages) as u64,
         stripped_attrs,
     )
     .is_err()
@@ -870,24 +870,6 @@ fn get_file_buffer_from_load_protocol(
     );
 
     EfiError::status_to_result(status).map(|_| (file_buffer, handle))
-}
-
-/// Relocates all runtime images to their virtual memory address. This function must only be called
-/// after the Runtime Service SetVirtualAddressMap() has been called by the OS.
-pub fn core_relocate_runtime_images() {
-    let mut private_data = PRIVATE_IMAGE_DATA.lock();
-
-    for image in private_data.private_image_data.values_mut() {
-        if image.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
-            let loaded_image = unsafe { image.image_buffer.as_mut().unwrap() };
-            let loaded_image_addr = image.image_info.image_base as usize;
-            let mut loaded_image_virt_addr = loaded_image_addr;
-
-            let _ = runtime::convert_pointer(0, core::ptr::addr_of_mut!(loaded_image_virt_addr) as *mut *mut c_void);
-            let _ =
-                pecoff::relocate_image(&image.pe_info, loaded_image_virt_addr, loaded_image, &image.relocation_data);
-        }
-    }
 }
 
 // authenticate the given image against the Security and Security2 Architectural Protocols
@@ -1074,6 +1056,17 @@ pub fn core_load_image(
         ) as *mut u8
     };
 
+    // Register runtime images with the runtime module.
+    if private_info.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
+        runtime::add_runtime_image(
+            private_info.image_info.image_base,
+            private_info.image_info.image_size,
+            &private_info.relocation_data,
+            handle,
+        )
+        .inspect_err(|err| log::error!("failed to load image: register runtime image failed: {err:?}"))?;
+    }
+
     core_install_protocol_interface(
         Some(handle),
         efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
@@ -1141,7 +1134,8 @@ extern "efiapi" fn load_image(
     match core_load_image(boot_policy.into(), parent_image_handle, device_path, image) {
         Err(err) => err.into(),
         Ok((handle, security_status)) => unsafe {
-            image_handle.write(handle);
+            // Safety: Caller must ensure that image_handle is a valid pointer. It is null-checked above.
+            image_handle.write_unaligned(handle);
             match security_status {
                 Ok(()) => efi::Status::SUCCESS,
                 Err(err) => err.into(),
@@ -1169,10 +1163,13 @@ extern "efiapi" fn start_image(
         let private_data = PRIVATE_IMAGE_DATA.lock();
         if let Some(image_data) = private_data.private_image_data.get(&image_handle)
             && let Some(image_exit_data) = image_data.exit_data
+            && !exit_data_size.is_null()
+            && !exit_data.is_null()
         {
+            // Safety: Caller must ensure that exit_data_size and exit_data are valid pointers if they are non-null.
             unsafe {
-                exit_data_size.write(image_exit_data.0);
-                exit_data.write(image_exit_data.1);
+                exit_data_size.write_unaligned(image_exit_data.0);
+                exit_data.write_unaligned(image_exit_data.1);
             }
         }
     }
@@ -1353,6 +1350,13 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
         private_image_data.image_device_path_ptr,
     );
 
+    // Remove runtime image if it is one.
+    if private_image_data.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER
+        && let Err(err) = runtime::remove_runtime_image(image_handle)
+    {
+        log::error!("Failed to remove runtime image for handle {image_handle:?}: {err:?}");
+    }
+
     // we have to remove the memory protections from the image sections before freeing the image buffer, because
     // core_free_pages expects the memory being freed to be in a single continuous memory descriptor, which is not
     // true when we've changed the attributes per section
@@ -1473,7 +1477,7 @@ mod tests {
         test_collateral, test_support,
     };
     use core::{ffi::c_void, sync::atomic::AtomicBool};
-    use patina_sdk::error::EfiError;
+    use patina::error::EfiError;
     use r_efi::efi;
     use std::{fs::File, io::Read};
 

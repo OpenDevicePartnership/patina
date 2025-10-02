@@ -16,9 +16,9 @@ uuid = { workspace = true }
 
 mu_pi = { workspace = true }
 mu_rust_helpers = { workspace = true }
-patina_sdk = { workspace = true }
+patina = { workspace = true }
 patina_internal_device_path = { workspace = true }
 
 [dev-dependencies]
-patina_sdk = { path = "../../sdk/patina_sdk", features = ["mockall"] }
+patina = { path = "../../sdk/patina", features = ["mockall"] }
 mockall = { workspace = true }

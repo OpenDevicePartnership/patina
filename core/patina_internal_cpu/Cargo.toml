@@ -15,7 +15,7 @@ features = ["doc", "std"]
 lazy_static = { workspace = true, features = ["spin_no_std"] }
 log = { workspace = true }
 r-efi = { workspace = true }
-patina_sdk = { workspace = true }
+patina = { workspace = true }
 spin = { workspace = true, features = ["rwlock"] }
 patina_paging = { workspace = true }
 mu_pi = { workspace = true }

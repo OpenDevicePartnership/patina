@@ -16,7 +16,7 @@
 //!
 
 use mu_pi::protocols::cpu_arch::EfiSystemContext;
-use patina_sdk::error::EfiError;
+use patina::error::EfiError;
 
 mod exception_handling;
 

@@ -18,18 +18,18 @@ use patina_dxe_core::Core;
 use r_efi::efi;
 use std::ffi::c_void;
 
-static LOGGER: patina_sdk::log::SerialLogger<patina_sdk::serial::Terminal> = patina_sdk::log::SerialLogger::new(
-    patina_sdk::log::Format::Standard,
+static LOGGER: patina::log::SerialLogger<patina::serial::Terminal> = patina::log::SerialLogger::new(
+    patina::log::Format::Standard,
     &[
         ("goblin", log::LevelFilter::Off),
         ("patina_internal_depex", log::LevelFilter::Off),
         ("gcd_measure", log::LevelFilter::Off),
     ],
     log::LevelFilter::Trace,
-    patina_sdk::serial::Terminal {},
+    patina::serial::Terminal {},
 );
 
-fn main() -> patina_sdk::error::Result<()> {
+fn main() -> patina::error::Result<()> {
     if log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).is_err() {
         log::warn!("Global logger has already been set.");
     }
@@ -41,9 +41,7 @@ fn main() -> patina_sdk::error::Result<()> {
         .init_memory(hob_list) // We can make allocations now!
         // Add any config knob functions for post-gcd-init Core
         // .with_some_config(true)
-        .with_config(patina_samples::Name("World"))
         .with_service(patina_ffs_extractors::CompositeSectionExtractor::default())
-        .with_component(patina_samples::log_hello)
         .start()
 }
 

@@ -6,7 +6,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use patina_sdk::error::EfiError;
+use patina::error::EfiError;
 use r_efi::efi;
 
 /// Error definitions for Firmware File System

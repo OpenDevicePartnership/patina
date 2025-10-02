@@ -10,11 +10,11 @@
 use core::arch::global_asm;
 use lazy_static::lazy_static;
 use mu_pi::protocols::cpu_arch::EfiSystemContext;
+use patina::base::SIZE_4GB;
+use patina::base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE};
+use patina::{component::service::IntoService, error::EfiError};
 use patina_paging::page_allocator::PageAllocator;
 use patina_paging::{MemoryAttributes, PageTable, PagingType};
-use patina_sdk::base::SIZE_4GB;
-use patina_sdk::base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE};
-use patina_sdk::{component::service::IntoService, error::EfiError};
 use patina_stacktrace::StackTrace;
 use x86_64::VirtAddr;
 use x86_64::structures::idt::InterruptDescriptorTable;
@@ -46,7 +46,7 @@ lazy_static! {
         // means external caller cannot register for double fault call backs.
         // Fix it: Below line is excluded from std builds because rustc fails to
         //        compile with following error "offset is not a multiple of 16"
-        unsafe { idt.double_fault.set_handler_fn(double_fault_handler).set_stack_index(0) };
+        unsafe { idt.double_fault.set_handler_addr(VirtAddr::new(double_fault_handler as *const () as u64)).set_stack_index(0) };
 
         // Initialize the error code vectors. the x86_64 crate does not allow these
         // to be indexed.
@@ -113,11 +113,11 @@ impl InterruptManager for InterruptsX64 {}
 
 /// Handler for double faults.
 ///
-/// Handler for doubel faults that is configured to run as a direct interrupt
+/// Handler for double faults that is configured to run as a direct interrupt
 /// handler without using the normal handler assembly or stack. This is done to
 /// increase the diagnosability of faults in the interrupt handling code.
 ///
-extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) -> ! {
+extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
     panic!("EXCEPTION: DOUBLE FAULT\n{stack_frame:#x?}");
 }
 

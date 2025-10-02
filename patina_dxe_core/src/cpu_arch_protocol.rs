@@ -11,15 +11,15 @@
 use crate::{dxe_services, protocols::PROTOCOL_DB};
 use alloc::boxed::Box;
 use core::ffi::c_void;
+use patina::{
+    boot_services::{BootServices, StandardBootServices},
+    component::{IntoComponent, service::Service},
+    error::{EfiError, Result},
+    uefi_protocol::ProtocolInterface,
+};
 use patina_internal_cpu::{
     cpu::Cpu,
     interrupts::{self, ExceptionType, HandlerType, InterruptManager},
-};
-use patina_sdk::{
-    boot_services::{BootServices, StandardBootServices},
-    component::service::Service,
-    error::{EfiError, Result},
-    uefi_protocol::ProtocolInterface,
 };
 use r_efi::efi;
 
@@ -83,10 +83,14 @@ extern "efiapi" fn disable_interrupt(this: *const Protocol) -> efi::Status {
 }
 
 extern "efiapi" fn get_interrupt_state(this: *const Protocol, state: *mut bool) -> efi::Status {
+    if state.is_null() {
+        return efi::Status::INVALID_PARAMETER;
+    }
     interrupts::get_interrupt_state()
         .map(|interrupt_state| {
+            // Safety: caller must ensure that state is a valid pointer. It is null-checked above.
             unsafe {
-                *state = interrupt_state;
+                state.write_unaligned(interrupt_state);
             }
             efi::Status::SUCCESS
         })
@@ -128,15 +132,19 @@ extern "efiapi" fn get_timer_value(
     timer_value: *mut u64,
     timer_period: *mut u64,
 ) -> efi::Status {
+    if timer_value.is_null() || timer_period.is_null() {
+        return efi::Status::INVALID_PARAMETER;
+    }
     let cpu = &get_impl_ref(this).cpu;
 
     let result = cpu.get_timer_value(timer_index);
 
     match result {
         Ok((value, period)) => {
+            // Safety: caller must ensure that timer_value and timer_period are valid pointers. They are null-checked above.
             unsafe {
-                *timer_value = value;
-                *timer_period = period;
+                timer_value.write_unaligned(value);
+                timer_period.write_unaligned(period);
             }
             efi::Status::SUCCESS
         }
@@ -180,21 +188,27 @@ impl EfiCpuArchProtocolImpl {
 }
 
 /// This component installs the cpu arch protocol
-pub(crate) fn install_cpu_arch_protocol(
-    cpu: Service<dyn Cpu>,
-    interrupt_manager: Service<dyn InterruptManager>,
-    bs: StandardBootServices,
-) -> Result<()> {
-    let protocol = EfiCpuArchProtocolImpl::new(cpu, interrupt_manager);
+#[derive(IntoComponent, Default)]
+pub(crate) struct CpuArchProtocolInstaller;
 
-    // Convert the protocol to a raw pointer and store it in to protocol DB
-    let interface = Box::leak(Box::new(protocol));
+impl CpuArchProtocolInstaller {
+    fn entry_point(
+        self,
+        cpu: Service<dyn Cpu>,
+        interrupt_manager: Service<dyn InterruptManager>,
+        bs: StandardBootServices,
+    ) -> Result<()> {
+        let protocol = EfiCpuArchProtocolImpl::new(cpu, interrupt_manager);
 
-    bs.install_protocol_interface(None, interface)
-        .inspect_err(|_| log::error!("Failed to install EFI_CPU_ARCH_PROTOCOL"))?;
-    log::info!("installed EFI_CPU_ARCH_PROTOCOL_GUID");
+        // Convert the protocol to a raw pointer and store it in to protocol DB
+        let interface = Box::leak(Box::new(protocol));
 
-    Ok(())
+        bs.install_protocol_interface(None, interface)
+            .inspect_err(|_| log::error!("Failed to install EFI_CPU_ARCH_PROTOCOL"))?;
+        log::info!("installed EFI_CPU_ARCH_PROTOCOL_GUID");
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

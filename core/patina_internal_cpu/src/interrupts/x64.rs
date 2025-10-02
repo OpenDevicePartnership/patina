@@ -9,7 +9,7 @@
 
 use core::arch::asm;
 use mu_pi::protocols::cpu_arch::EfiSystemContext;
-use patina_sdk::error::EfiError;
+use patina::error::EfiError;
 use patina_stacktrace::StackTrace;
 
 cfg_if::cfg_if! {

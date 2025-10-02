@@ -8,7 +8,7 @@
 //!
 extern crate alloc;
 use alloc::{boxed::Box, vec, vec::Vec};
-use patina_sdk::base::UEFI_PAGE_SIZE;
+use patina::base::UEFI_PAGE_SIZE;
 
 use core::{
     ffi::c_void,

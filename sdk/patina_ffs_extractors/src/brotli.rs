@@ -15,7 +15,7 @@ use patina_ffs::{
     section::{Section, SectionExtractor, SectionHeader},
 };
 
-use patina_sdk::component::prelude::IntoService;
+use patina::component::prelude::IntoService;
 
 //Rebox and HeapAllocator exist to satisfy BrotliDecompress custom allocation requirements.
 //They essentially wrap Box for heap allocations.

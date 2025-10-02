@@ -16,7 +16,7 @@ use r_efi::efi;
 
 use patina_lzma_rs::io::Cursor;
 
-use patina_sdk::component::prelude::IntoService;
+use patina::component::prelude::IntoService;
 
 pub const LZMA_SECTION_GUID: efi::Guid =
     efi::Guid::from_fields(0xEE4E5898, 0x3914, 0x4259, 0x9D, 0x6E, &[0xDC, 0x7B, 0xD7, 0x94, 0x03, 0xCF]);

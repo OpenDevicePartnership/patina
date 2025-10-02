@@ -34,7 +34,7 @@ scroll = { workspace = true, features = ["derive"] }
 spin = { workspace = true }
 uefi_corosensei = { workspace = true  }
 uuid = { workspace = true  }
-patina_sdk = { workspace = true, features = ["core", "enable_patina_tests"] }
+patina = { workspace = true, features = ["core", "enable_patina_tests"] }
 patina_ffs = { workspace = true }
 patina_internal_collections = { workspace = true  }
 patina_internal_cpu = { workspace = true }
@@ -58,6 +58,6 @@ arm-gic = { workspace = true }
 
 [features]
 default = []
-std = ["patina_sdk/std"]
+std = ["patina/std"]
 doc = ["patina_internal_cpu/doc"]
 compatibility_mode_allowed = []

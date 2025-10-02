@@ -15,13 +15,13 @@ use mu_pi::{
     dxe_services::{GcdIoType, GcdMemoryType},
     hob::{self, Hob, HobList, PhaseHandoffInformationTable, ResourceDescriptorV2},
 };
+use patina::base::{align_down, align_up};
+use patina::error::EfiError;
 use patina_paging::MemoryAttributes;
-use patina_sdk::base::{align_down, align_up};
-use patina_sdk::error::EfiError;
 use r_efi::efi;
 
 #[cfg(feature = "compatibility_mode_allowed")]
-use patina_sdk::base::{UEFI_PAGE_SIZE, align_range};
+use patina::base::{UEFI_PAGE_SIZE, align_range};
 
 use crate::GCD;
 

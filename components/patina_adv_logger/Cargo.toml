@@ -15,7 +15,7 @@ required-features = ['std']
 
 [dependencies]
 log = { workspace = true }
-patina_sdk = { workspace = true, features = ["enable_patina_tests"] }
+patina = { workspace = true, features = ["enable_patina_tests"] }
 mu_pi = { workspace = true }
 r-efi = { workspace = true }
 spin = { workspace = true }

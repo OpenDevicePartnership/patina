@@ -28,7 +28,7 @@ use core::{
 };
 use linked_list_allocator::{align_down_size, align_up_size};
 use mu_pi::{dxe_services::GcdMemoryType, hob::EFiMemoryTypeInformation};
-use patina_sdk::{
+use patina::{
     base::{UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, align_up},
     error::EfiError,
     uefi_pages_to_size, uefi_size_to_pages,
@@ -57,7 +57,7 @@ const ALIGNMENT: usize = 0x1000;
 const BLOCK_SIZES: &[usize] = &[8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
 
 // Compile-time check to ensure the MIN_EXPANSION is a multiple of RUNTIME_PAGE_ALLOCATION_GRANULARITY.
-const _: () = assert!(MIN_EXPANSION % super::RUNTIME_PAGE_ALLOCATION_GRANULARITY == 0);
+const _: () = assert!(MIN_EXPANSION.is_multiple_of(super::RUNTIME_PAGE_ALLOCATION_GRANULARITY));
 
 // Returns the index in the block list for the minimum size block that will
 // satisfy allocation for the given layout
@@ -239,7 +239,7 @@ impl FixedSizeBlockAllocator {
         let node = AllocatorListNode { next: None, allocator: linked_list_allocator::Heap::empty() };
         unsafe {
             alloc_node_ptr.write(node);
-            (*alloc_node_ptr).allocator.init(heap_region.as_mut_ptr(), heap_region.len());
+            (*alloc_node_ptr).allocator.init(heap_region.cast::<u8>().as_ptr(), heap_region.len());
             (*alloc_node_ptr).next = self.allocators;
         }
 
@@ -633,7 +633,7 @@ impl SpinLockedFixedSizeBlockAllocator {
         // Ensure that the requested number of pages is a multiple of the granularity
         let required_pages = align_up(pages, uefi_size_to_pages!(granularity))?;
 
-        if address % granularity != 0 {
+        if !address.is_multiple_of(granularity) {
             return Err(EfiError::InvalidParameter);
         }
 
@@ -764,8 +764,8 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
             Err(FixedSizeBlockAllocatorError::OutOfMemory(additional_mem_required)) => {
                 // Compile-time check to ensure ALIGNMENT is compatible with the alignment requirements
                 // of `expand()` and `page_shift_from_alignment()`
-                const _: () = assert!(ALIGNMENT % align_of::<AllocatorListNode>() == 0);
-                const _: () = assert!(ALIGNMENT % UEFI_PAGE_SIZE == 0 && ALIGNMENT > 0);
+                const _: () = assert!(ALIGNMENT.is_multiple_of(align_of::<AllocatorListNode>()));
+                const _: () = assert!(ALIGNMENT.is_multiple_of(UEFI_PAGE_SIZE) && ALIGNMENT > 0);
 
                 // As a matter of policy, allocate at least `MIN_EXPANSION` memory and ensure the size is
                 // aligned to `ALIGNMENT`.
@@ -855,7 +855,7 @@ mod tests {
     use core::{alloc::GlobalAlloc, ffi::c_void, panic};
     use std::alloc::System;
 
-    use patina_sdk::{
+    use patina::{
         base::{SIZE_64KB, UEFI_PAGE_SIZE},
         uefi_pages_to_size,
     };
@@ -914,12 +914,12 @@ mod tests {
                 );
 
                 let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-                let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+                let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
 
                 unsafe { fsb.deallocate(allocation, layout) };
 
                 let layout = Layout::from_size_align(0x20, 0x20).unwrap();
-                let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+                let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
 
                 unsafe { fsb.deallocate(allocation, layout) };
             });
@@ -1289,7 +1289,7 @@ mod tests {
                 );
 
                 let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-                let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+                let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
                 let allocation_ptr = allocation.as_ptr();
 
                 unsafe { fsb.deallocate(allocation, layout) };
@@ -1298,7 +1298,7 @@ mod tests {
                 assert_eq!(free_block_ptr, allocation_ptr);
 
                 let layout = Layout::from_size_align(0x20, 0x20).unwrap();
-                let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+                let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
                 let allocation_ptr = allocation.as_ptr();
 
                 unsafe { fsb.deallocate(allocation, layout) };
@@ -1326,7 +1326,7 @@ mod tests {
             );
 
             let layout = Layout::from_size_align(0x8, 0x8).unwrap();
-            let allocation = fsb.allocate(layout).unwrap().as_non_null_ptr();
+            let allocation = fsb.allocate(layout).unwrap().cast::<u8>();
             assert!(fsb.contains(allocation));
         });
     }
@@ -1350,10 +1350,8 @@ mod tests {
 
                 let pages = 4;
 
-                let allocation = fsb
-                    .allocate_pages(gcd::AllocateType::BottomUp(None), pages, UEFI_PAGE_SIZE)
-                    .unwrap()
-                    .as_non_null_ptr();
+                let allocation =
+                    fsb.allocate_pages(gcd::AllocateType::BottomUp(None), pages, UEFI_PAGE_SIZE).unwrap().cast::<u8>();
 
                 assert!(allocation.as_ptr() as u64 >= address);
                 assert!((allocation.as_ptr() as u64) < address + 0x1000000);
@@ -1396,7 +1394,7 @@ mod tests {
                 let allocation = fsb
                     .allocate_pages(gcd::AllocateType::Address(target_address as usize), pages, UEFI_PAGE_SIZE)
                     .unwrap()
-                    .as_non_null_ptr();
+                    .cast::<u8>();
 
                 assert_eq!(allocation.as_ptr() as u64, target_address);
 
@@ -1430,7 +1428,7 @@ mod tests {
                 let allocation = fsb
                     .allocate_pages(gcd::AllocateType::BottomUp(Some(target_address as usize)), pages, UEFI_PAGE_SIZE)
                     .unwrap()
-                    .as_non_null_ptr();
+                    .cast::<u8>();
                 assert!((allocation.as_ptr() as u64) < target_address);
 
                 unsafe {
@@ -1463,7 +1461,7 @@ mod tests {
                 let allocation = fsb
                     .allocate_pages(gcd::AllocateType::TopDown(Some(target_address as usize)), pages, UEFI_PAGE_SIZE)
                     .unwrap()
-                    .as_non_null_ptr();
+                    .cast::<u8>();
                 assert!((allocation.as_ptr() as usize + uefi_pages_to_size!(pages)) <= target_address as usize);
 
                 unsafe {

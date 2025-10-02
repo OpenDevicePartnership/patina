@@ -11,7 +11,7 @@ description = "Debugger implementation for a Patina Core."
 [dependencies]
 cfg-if = { workspace = true }
 gdbstub = { workspace = true }
-patina_sdk = { workspace = true }
+patina = { workspace = true }
 patina_internal_cpu = { workspace = true }
 log = { workspace = true }
 spin = { workspace = true }

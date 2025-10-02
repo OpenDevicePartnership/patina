@@ -17,7 +17,7 @@
 extern crate alloc;
 
 use crate::config;
-use patina_sdk::component::{
+use patina::component::{
     IntoComponent,
     hob::{FromHob, Hob},
     params::ConfigMut,
@@ -41,7 +41,7 @@ pub struct PerformanceConfigHob {
     /// The enabled measurements for the Patina Performance component.
     ///
     /// This is a bitmask of `Measurement` values that indicate which performance measurements are enabled. The
-    /// bits correspond to the [`patina_sdk::performance::Measurement`] enum values.
+    /// bits correspond to the [`patina::performance::Measurement`] enum values.
     enabled_measurements: u32,
 }
 
@@ -57,13 +57,13 @@ impl PerformanceConfigurationProvider {
     /// ## Returns
     ///
     /// - `Ok(())` if the entry point was successful.
-    /// - `Err(patina_sdk::error::Result)` if the entry point failed.
+    /// - `Err(patina::error::Result)` if the entry point failed.
     ///
     pub fn entry_point(
         self,
         perf_config_hob: Hob<PerformanceConfigHob>,
         mut config_mut: ConfigMut<config::PerfConfig>,
-    ) -> patina_sdk::error::Result<()> {
+    ) -> patina::error::Result<()> {
         log::trace!("Patina Performance Configuration Provider Entry Point");
 
         log::trace!("Incoming Patina Performance Component Configuration: {:?}", *config_mut);

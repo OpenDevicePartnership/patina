@@ -21,7 +21,7 @@ ignorePaths:
   - "Makefile.toml"
   - "**/patina_debugger/src/arch/xml/**"
 # ignore hex numbers, asm blocks and patterns like xxxx'xxxxx used in describing bit patterns
-ignoreRegExpList: ["/0x[0-9a-fA-F]+/", "asm!\\(.*?\\);", ".*'x*"]
+ignoreRegExpList: ["/0x[0-9a-fA-F]+/", ".*asm!\\([\\s\\S]*?\\);", ".*'x*"]
 minWordLength: 5
 caseSensitive: false
 allowCompoundWords: true
@@ -35,8 +35,8 @@ words:
   - cdecl
   - cdrom
   - corosensei
+  - coverity
   - ctypes
-  - ruint
   - dbgwcr
   - dbgwvr
   - deassertion
@@ -65,12 +65,14 @@ words:
   - guids
   - gwrite
   - hresult
+  - htons
   - icfgr
   - inmodule
   - intid
   - irouter
   - iscsi
   - isenabler
+  - keccak
   - linkme
   - longjmp
   - lzmatest
@@ -85,6 +87,8 @@ words:
   - nomem
   - noopt
   - ntdll
+  - ntohl
+  - ntohs
   - nvdimm
   - oleaut
   - openvmm
@@ -108,6 +112,7 @@ words:
   - relia
   - reloc
   - rposition
+  - ruint
   - rwlock
   - sctlr
   - smcport
@@ -122,6 +127,7 @@ words:
   - uintn
   - unaccepte
   - uncacheable
+  - uncrustify
   - unregisters
   - unspec
   - vcvarsamd

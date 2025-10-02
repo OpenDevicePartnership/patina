@@ -12,7 +12,7 @@
 
 use core::result::Result;
 use gdbstub::conn::{Connection, ConnectionExt};
-use patina_sdk::serial::SerialIO;
+use patina::serial::SerialIO;
 
 /// Serial Connection for use with GdbStub
 ///
@@ -33,7 +33,7 @@ impl<'a, T: SerialIO> SerialConnection<'a, T> {
 }
 
 impl<T: SerialIO> Connection for SerialConnection<'_, T> {
-    type Error = patina_sdk::error::EfiError;
+    type Error = patina::error::EfiError;
 
     /// Write a byte to the serial transport.
     fn write(&mut self, byte: u8) -> Result<(), Self::Error> {
