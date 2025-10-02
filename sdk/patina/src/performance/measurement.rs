@@ -41,8 +41,8 @@ use crate::{
     uefi_protocol::{performance_measurement::PerfAttribute, status_code::StatusCodeRuntimeProtocol},
 };
 
-use mu_pi::status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_BS_DRIVER};
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
+use patina_pi::status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_BS_DRIVER};
 
 use r_efi::{
     efi::{self, Guid},
@@ -550,7 +550,7 @@ mod tests {
             _b: u32,
             _c: u32,
             _d: *const efi::Guid,
-            _e: *const mu_pi::protocols::status_code::EfiStatusCodeData,
+            _e: *const patina_pi::protocols::status_code::EfiStatusCodeData,
         ) -> efi::Status {
             REPORT_STATUS_CODE_CALLED.store(true, Ordering::Relaxed);
             efi::Status::SUCCESS

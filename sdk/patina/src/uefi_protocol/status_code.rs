@@ -17,7 +17,9 @@ use core::{mem, ptr, slice};
 
 use r_efi::efi;
 
-use mu_pi::protocols::status_code::{self, EfiStatusCodeData, EfiStatusCodeType, EfiStatusCodeValue, ReportStatusCode};
+use patina_pi::protocols::status_code::{
+    self, EfiStatusCodeData, EfiStatusCodeType, EfiStatusCodeValue, ReportStatusCode,
+};
 
 use super::ProtocolInterface;
 

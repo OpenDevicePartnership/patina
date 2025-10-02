@@ -13,7 +13,7 @@ use core::{
 };
 
 use alloc::{boxed::Box, collections::BTreeMap};
-use mu_pi::{
+use patina_pi::{
     fw_fs::{ffs, fv, fvb},
     hob,
 };
@@ -31,12 +31,12 @@ use crate::{
 };
 
 struct PrivateFvbData {
-    _interface: Box<mu_pi::protocols::firmware_volume_block::Protocol>,
+    _interface: Box<patina_pi::protocols::firmware_volume_block::Protocol>,
     physical_address: u64,
 }
 
 struct PrivateFvData {
-    _interface: Box<mu_pi::protocols::firmware_volume::Protocol>,
+    _interface: Box<patina_pi::protocols::firmware_volume::Protocol>,
     physical_address: u64,
 }
 
@@ -62,7 +62,7 @@ static PRIVATE_FV_DATA: tpl_lock::TplMutex<PrivateGlobalData> = tpl_lock::TplMut
 
 // FVB Protocol Functions
 extern "efiapi" fn fvb_get_attributes(
-    this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     attributes: *mut fvb::attributes::EfiFvbAttributes2,
 ) -> efi::Status {
     if attributes.is_null() {
@@ -79,7 +79,7 @@ extern "efiapi" fn fvb_get_attributes(
 }
 
 fn core_fvb_get_attributes(
-    this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
 ) -> Result<fvb::attributes::EfiFvbAttributes2, EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
 
@@ -95,14 +95,14 @@ fn core_fvb_get_attributes(
 }
 
 extern "efiapi" fn fvb_set_attributes(
-    _this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    _this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     _attributes: *mut fvb::attributes::EfiFvbAttributes2,
 ) -> efi::Status {
     efi::Status::UNSUPPORTED
 }
 
 extern "efiapi" fn fvb_get_physical_address(
-    this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     address: *mut efi::PhysicalAddress,
 ) -> efi::Status {
     if address.is_null() {
@@ -122,7 +122,7 @@ extern "efiapi" fn fvb_get_physical_address(
 }
 
 extern "efiapi" fn fvb_get_block_size(
-    this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     lba: efi::Lba,
     block_size: *mut usize,
     number_of_blocks: *mut usize,
@@ -146,7 +146,7 @@ extern "efiapi" fn fvb_get_block_size(
 }
 
 fn core_fvb_get_block_size(
-    this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     lba: efi::Lba,
 ) -> Result<(usize, usize), EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
@@ -167,7 +167,7 @@ fn core_fvb_get_block_size(
 }
 
 extern "efiapi" fn fvb_read(
-    this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     lba: efi::Lba,
     offset: usize,
     num_bytes: *mut usize,
@@ -204,7 +204,7 @@ extern "efiapi" fn fvb_read(
 }
 
 fn core_fvb_read(
-    this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     lba: efi::Lba,
     offset: usize,
     num_bytes: usize,
@@ -239,7 +239,7 @@ fn core_fvb_read(
 }
 
 extern "efiapi" fn fvb_write(
-    _this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    _this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     _lba: efi::Lba,
     _offset: usize,
     _num_bytes: *mut usize,
@@ -249,7 +249,7 @@ extern "efiapi" fn fvb_write(
 }
 
 extern "efiapi" fn fvb_erase_blocks(
-    _this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    _this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     //... TODO: this should be variadic; however, variadic and eficall don't mix well presently.
 ) -> efi::Status {
     efi::Status::UNSUPPORTED
@@ -260,7 +260,7 @@ fn install_fvb_protocol(
     parent_handle: Option<efi::Handle>,
     base_address: u64,
 ) -> Result<efi::Handle, EfiError> {
-    let mut fvb_interface = Box::from(mu_pi::protocols::firmware_volume_block::Protocol {
+    let mut fvb_interface = Box::from(patina_pi::protocols::firmware_volume_block::Protocol {
         get_attributes: fvb_get_attributes,
         set_attributes: fvb_set_attributes,
         get_physical_address: fvb_get_physical_address,
@@ -274,7 +274,7 @@ fn install_fvb_protocol(
         },
     });
 
-    let fvb_ptr = fvb_interface.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
+    let fvb_ptr = fvb_interface.as_mut() as *mut patina_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
 
     let private_data = PrivateFvbData { _interface: fvb_interface, physical_address: base_address };
 
@@ -282,12 +282,12 @@ fn install_fvb_protocol(
     PRIVATE_FV_DATA.lock().fv_information.insert(fvb_ptr, PrivateDataItem::FvbData(private_data));
 
     // install the protocol and return status
-    core_install_protocol_interface(handle, mu_pi::protocols::firmware_volume_block::PROTOCOL_GUID, fvb_ptr)
+    core_install_protocol_interface(handle, patina_pi::protocols::firmware_volume_block::PROTOCOL_GUID, fvb_ptr)
 }
 
 // Firmware Volume protocol functions
 extern "efiapi" fn fv_get_volume_attributes(
-    this: *const mu_pi::protocols::firmware_volume::Protocol,
+    this: *const patina_pi::protocols::firmware_volume::Protocol,
     fv_attributes: *mut fv::attributes::EfiFvAttributes,
 ) -> efi::Status {
     if fv_attributes.is_null() {
@@ -306,7 +306,7 @@ extern "efiapi" fn fv_get_volume_attributes(
 }
 
 fn core_fv_get_volume_attributes(
-    this: *const mu_pi::protocols::firmware_volume::Protocol,
+    this: *const patina_pi::protocols::firmware_volume::Protocol,
 ) -> Result<fv::attributes::EfiFvAttributes, EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
 
@@ -322,14 +322,14 @@ fn core_fv_get_volume_attributes(
 }
 
 extern "efiapi" fn fv_set_volume_attributes(
-    _this: *const mu_pi::protocols::firmware_volume::Protocol,
+    _this: *const patina_pi::protocols::firmware_volume::Protocol,
     _fv_attributes: *mut fv::attributes::EfiFvAttributes,
 ) -> efi::Status {
     efi::Status::UNSUPPORTED
 }
 
 extern "efiapi" fn fv_read_file(
-    this: *const mu_pi::protocols::firmware_volume::Protocol,
+    this: *const patina_pi::protocols::firmware_volume::Protocol,
     name_guid: *const efi::Guid,
     buffer: *mut *mut c_void,
     buffer_size: *mut usize,
@@ -428,7 +428,7 @@ extern "efiapi" fn fv_read_file(
 }
 
 extern "efiapi" fn fv_read_section(
-    this: *const mu_pi::protocols::firmware_volume::Protocol,
+    this: *const patina_pi::protocols::firmware_volume::Protocol,
     name_guid: *const efi::Guid,
     section_type: ffs::section::EfiSectionType,
     section_instance: usize,
@@ -497,7 +497,7 @@ extern "efiapi" fn fv_read_section(
 }
 
 fn core_fv_read_section(
-    this: *const mu_pi::protocols::firmware_volume::Protocol,
+    this: *const patina_pi::protocols::firmware_volume::Protocol,
     name_guid: efi::Guid,
     section_type: ffs::section::EfiSectionType,
     section_instance: usize,
@@ -534,16 +534,16 @@ fn core_fv_read_section(
 }
 
 extern "efiapi" fn fv_write_file(
-    _this: *const mu_pi::protocols::firmware_volume::Protocol,
+    _this: *const patina_pi::protocols::firmware_volume::Protocol,
     _number_of_files: u32,
-    _write_policy: mu_pi::protocols::firmware_volume::EfiFvWritePolicy,
-    _file_data: *mut mu_pi::protocols::firmware_volume::EfiFvWriteFileData,
+    _write_policy: patina_pi::protocols::firmware_volume::EfiFvWritePolicy,
+    _file_data: *mut patina_pi::protocols::firmware_volume::EfiFvWriteFileData,
 ) -> efi::Status {
     efi::Status::UNSUPPORTED
 }
 
 extern "efiapi" fn fv_get_next_file(
-    this: *const mu_pi::protocols::firmware_volume::Protocol,
+    this: *const patina_pi::protocols::firmware_volume::Protocol,
     key: *mut c_void,
     file_type: *mut fv::EfiFvFileType,
     name_guid: *mut efi::Guid,
@@ -585,7 +585,7 @@ extern "efiapi" fn fv_get_next_file(
 }
 
 fn core_fv_get_next_file(
-    this: *const mu_pi::protocols::firmware_volume::Protocol,
+    this: *const patina_pi::protocols::firmware_volume::Protocol,
     file_type: fv::EfiFvFileType,
     key: usize,
 ) -> Result<(efi::Guid, fv::file::EfiFvFileAttributes, usize, fv::EfiFvFileType), EfiError> {
@@ -631,7 +631,7 @@ fn core_fv_get_next_file(
 }
 
 extern "efiapi" fn fv_get_info(
-    _this: *const mu_pi::protocols::firmware_volume::Protocol,
+    _this: *const patina_pi::protocols::firmware_volume::Protocol,
     _information_type: *const efi::Guid,
     _buffer_size: *mut usize,
     _buffer: *mut c_void,
@@ -640,7 +640,7 @@ extern "efiapi" fn fv_get_info(
 }
 
 extern "efiapi" fn fv_set_info(
-    _this: *const mu_pi::protocols::firmware_volume::Protocol,
+    _this: *const patina_pi::protocols::firmware_volume::Protocol,
     _information_type: *const efi::Guid,
     _buffer_size: usize,
     _buffer: *const c_void,
@@ -653,7 +653,7 @@ fn install_fv_protocol(
     parent_handle: Option<efi::Handle>,
     base_address: u64,
 ) -> Result<efi::Handle, EfiError> {
-    let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
+    let mut fv_interface = Box::from(patina_pi::protocols::firmware_volume::Protocol {
         get_volume_attributes: fv_get_volume_attributes,
         set_volume_attributes: fv_set_volume_attributes,
         read_file: fv_read_file,
@@ -669,7 +669,7 @@ fn install_fv_protocol(
         set_info: fv_set_info,
     });
 
-    let fv_ptr = fv_interface.as_mut() as *mut mu_pi::protocols::firmware_volume::Protocol as *mut c_void;
+    let fv_ptr = fv_interface.as_mut() as *mut patina_pi::protocols::firmware_volume::Protocol as *mut c_void;
 
     let private_data = PrivateFvData { _interface: fv_interface, physical_address: base_address };
 
@@ -677,7 +677,7 @@ fn install_fv_protocol(
     PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr, PrivateDataItem::FvData(private_data));
 
     // install the protocol and return status
-    core_install_protocol_interface(handle, mu_pi::protocols::firmware_volume::PROTOCOL_GUID, fv_ptr)
+    core_install_protocol_interface(handle, patina_pi::protocols::firmware_volume::PROTOCOL_GUID, fv_ptr)
 }
 
 //Firmware Volume device path structures and functions
@@ -840,12 +840,12 @@ pub fn register_section_extractor(extractor: Service<dyn SectionExtractor>) {
 mod tests {
     use super::*;
     use crate::test_support;
-    use mu_pi::hob::Hob;
     use patina_ffs_extractors::CompositeSectionExtractor;
+    use patina_pi::hob::Hob;
     extern crate alloc;
     use crate::test_collateral;
-    use mu_pi::hob::HobList;
-    use mu_pi::{BootMode, hob};
+    use patina_pi::hob::HobList;
+    use patina_pi::{BootMode, hob};
     use std::alloc::{Layout, alloc, dealloc};
     use std::ffi::c_void;
     use std::ptr;
@@ -975,7 +975,7 @@ mod tests {
             assert!(PRIVATE_FV_DATA.lock().fv_information.is_empty());
 
             /* Create Firmware Interface, this will be used by the whole test module */
-            let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
+            let mut fv_interface = Box::from(patina_pi::protocols::firmware_volume::Protocol {
                 get_volume_attributes: fv_get_volume_attributes,
                 set_volume_attributes: fv_set_volume_attributes,
                 read_file: fv_read_file,
@@ -991,16 +991,16 @@ mod tests {
                 set_info: fv_set_info,
             });
 
-            let fv_ptr = fv_interface.as_mut() as *mut mu_pi::protocols::firmware_volume::Protocol as *mut c_void;
+            let fv_ptr = fv_interface.as_mut() as *mut patina_pi::protocols::firmware_volume::Protocol as *mut c_void;
 
             let private_data = PrivateFvData { _interface: fv_interface, physical_address: base_address };
             // save the protocol structure we're about to install in the private data.
             PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr, PrivateDataItem::FvData(private_data));
-            let fv_ptr1: *const mu_pi::protocols::firmware_volume::Protocol =
-                fv_ptr as *const mu_pi::protocols::firmware_volume::Protocol;
+            let fv_ptr1: *const patina_pi::protocols::firmware_volume::Protocol =
+                fv_ptr as *const patina_pi::protocols::firmware_volume::Protocol;
 
             /* Build Firmware Volume Block Interface*/
-            let mut fvb_interface = Box::from(mu_pi::protocols::firmware_volume_block::Protocol {
+            let mut fvb_interface = Box::from(patina_pi::protocols::firmware_volume_block::Protocol {
                 get_attributes: fvb_get_attributes,
                 set_attributes: fvb_set_attributes,
                 get_physical_address: fvb_get_physical_address,
@@ -1014,8 +1014,8 @@ mod tests {
                 },
             });
             let fvb_ptr =
-                fvb_interface.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
-            let fvb_ptr_mut_prot = fvb_interface.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol;
+                fvb_interface.as_mut() as *mut patina_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
+            let fvb_ptr_mut_prot = fvb_interface.as_mut() as *mut patina_pi::protocols::firmware_volume_block::Protocol;
 
             /* Build Private Data */
             let private_data = PrivateFvbData { _interface: fvb_interface, physical_address: base_address };
@@ -1025,7 +1025,7 @@ mod tests {
             //let fv_attributes3: *mut fw_fs::EfiFvAttributes = &mut fv_att;
 
             /* Instance 2 - Create a FV  interface with Bad physical address to handle Error cases. */
-            let mut fv_interface3 = Box::from(mu_pi::protocols::firmware_volume::Protocol {
+            let mut fv_interface3 = Box::from(patina_pi::protocols::firmware_volume::Protocol {
                 get_volume_attributes: fv_get_volume_attributes,
                 set_volume_attributes: fv_set_volume_attributes,
                 read_file: fv_read_file,
@@ -1041,9 +1041,9 @@ mod tests {
                 set_info: fv_set_info,
             });
 
-            let fv_ptr3 = fv_interface3.as_mut() as *mut mu_pi::protocols::firmware_volume::Protocol as *mut c_void;
-            let fv_ptr3_const: *const mu_pi::protocols::firmware_volume::Protocol =
-                fv_ptr3 as *const mu_pi::protocols::firmware_volume::Protocol;
+            let fv_ptr3 = fv_interface3.as_mut() as *mut patina_pi::protocols::firmware_volume::Protocol as *mut c_void;
+            let fv_ptr3_const: *const patina_pi::protocols::firmware_volume::Protocol =
+                fv_ptr3 as *const patina_pi::protocols::firmware_volume::Protocol;
 
             /* Corrupt the base address to cover error conditions  */
             let base_no2: u64 = fv.as_ptr() as u64 + 0x1000;
@@ -1052,7 +1052,7 @@ mod tests {
             PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr3, PrivateDataItem::FvData(private_data2));
 
             /* Create an interface with No physical address and no private data - cover Error Conditions */
-            let fv_interface_no_data = mu_pi::protocols::firmware_volume::Protocol {
+            let fv_interface_no_data = patina_pi::protocols::firmware_volume::Protocol {
                 get_volume_attributes: fv_get_volume_attributes,
                 set_volume_attributes: fv_set_volume_attributes,
                 read_file: fv_read_file,
@@ -1066,10 +1066,10 @@ mod tests {
                 set_info: fv_set_info,
             };
 
-            let fv_ptr_no_data = &fv_interface_no_data as *const mu_pi::protocols::firmware_volume::Protocol;
+            let fv_ptr_no_data = &fv_interface_no_data as *const patina_pi::protocols::firmware_volume::Protocol;
 
             /* Create a Firmware Volume Block Interface with Invalid Physical Address */
-            let mut fvb_intf_invalid = Box::from(mu_pi::protocols::firmware_volume_block::Protocol {
+            let mut fvb_intf_invalid = Box::from(patina_pi::protocols::firmware_volume_block::Protocol {
                 get_attributes: fvb_get_attributes,
                 set_attributes: fvb_set_attributes,
                 get_physical_address: fvb_get_physical_address,
@@ -1083,9 +1083,9 @@ mod tests {
                 },
             });
             let fvb_intf_invalid_void =
-                fvb_intf_invalid.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
+                fvb_intf_invalid.as_mut() as *mut patina_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
             let fvb_intf_invalid_mutpro =
-                fvb_intf_invalid.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol;
+                fvb_intf_invalid.as_mut() as *mut patina_pi::protocols::firmware_volume_block::Protocol;
             let base_no: u64 = fv.as_ptr() as u64 + 0x1000;
 
             let private_data4 = PrivateFvbData { _interface: fvb_intf_invalid, physical_address: base_no };
@@ -1096,7 +1096,7 @@ mod tests {
                 .insert(fvb_intf_invalid_void, PrivateDataItem::FvbData(private_data4));
 
             /* Create a Firmware Volume Block Interface without Physical address populated  */
-            let mut fvb_intf_data_n = Box::from(mu_pi::protocols::firmware_volume_block::Protocol {
+            let mut fvb_intf_data_n = Box::from(patina_pi::protocols::firmware_volume_block::Protocol {
                 get_attributes: fvb_get_attributes,
                 set_attributes: fvb_set_attributes,
                 get_physical_address: fvb_get_physical_address,
@@ -1110,7 +1110,7 @@ mod tests {
                 },
             });
             let fvb_intf_data_n_mut =
-                fvb_intf_data_n.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol;
+                fvb_intf_data_n.as_mut() as *mut patina_pi::protocols::firmware_volume_block::Protocol;
 
             // Safety: the following test code must uphold the safety expectations of the unsafe
             // functions it calls. It uses direct memory allocations to create buffers for testing FFI
@@ -1214,7 +1214,7 @@ mod tests {
                 };
                 let fvb_test_write_file = || {
                     let number_of_files: u32 = 0;
-                    let write_policy: mu_pi::protocols::firmware_volume::EfiFvWritePolicy = 0;
+                    let write_policy: patina_pi::protocols::firmware_volume::EfiFvWritePolicy = 0;
                     fv_write_file(fv_ptr1, number_of_files, write_policy, std::ptr::null_mut());
                 };
 
@@ -1542,7 +1542,7 @@ mod tests {
                 .section_extractor
                 .set_extractor(Service::mock(Box::new(patina_ffs_extractors::BrotliSectionExtractor)));
 
-            let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
+            let mut fv_interface = Box::from(patina_pi::protocols::firmware_volume::Protocol {
                 get_volume_attributes: fv_get_volume_attributes,
                 set_volume_attributes: fv_set_volume_attributes,
                 read_file: fv_read_file,
@@ -1558,13 +1558,13 @@ mod tests {
                 set_info: fv_set_info,
             });
 
-            let fv_ptr = fv_interface.as_mut() as *mut mu_pi::protocols::firmware_volume::Protocol as *mut c_void;
+            let fv_ptr = fv_interface.as_mut() as *mut patina_pi::protocols::firmware_volume::Protocol as *mut c_void;
 
             let private_data = PrivateFvData { _interface: fv_interface, physical_address: base_address };
             // save the protocol structure we're about to install in the private data.
             PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr, PrivateDataItem::FvData(private_data));
-            let fv_ptr1: *const mu_pi::protocols::firmware_volume::Protocol =
-                fv_ptr as *const mu_pi::protocols::firmware_volume::Protocol;
+            let fv_ptr1: *const patina_pi::protocols::firmware_volume::Protocol =
+                fv_ptr as *const patina_pi::protocols::firmware_volume::Protocol;
 
             // Safety: the following test code must uphold the safety expectations of the unsafe
             // functions it calls. It uses direct memory management to test fv FFI primitives.

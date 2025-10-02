@@ -8,8 +8,8 @@
 //!
 
 use core::arch::asm;
-use mu_pi::protocols::cpu_arch::EfiSystemContext;
 use patina::error::EfiError;
+use patina_pi::protocols::cpu_arch::EfiSystemContext;
 use patina_stacktrace::StackTrace;
 
 cfg_if::cfg_if! {

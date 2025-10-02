@@ -6,11 +6,11 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use mu_pi::fw_fs;
 use patina_ffs::{
     FirmwareFileSystemError,
     section::{SectionExtractor, SectionHeader},
 };
+use patina_pi::fw_fs;
 
 use patina::component::prelude::IntoService;
 

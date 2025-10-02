@@ -297,7 +297,6 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
                 }
                 else {
                     internal.gdb_buffer = unsafe { Some(&*(GDB_BUFFER.as_ptr() as *mut [u8; GDB_BUFF_LEN])) };
-                    internal.monitor_buffer = unsafe { Some(&*(MONITOR_BUFFER.as_ptr() as *mut [u8; MONITOR_BUFF_LEN])) };
                 }
             }
         }

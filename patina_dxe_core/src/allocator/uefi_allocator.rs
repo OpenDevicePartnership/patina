@@ -9,8 +9,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::gcd::SpinLockedGcd;
-use mu_pi::hob::EFiMemoryTypeInformation;
 use patina::error::EfiError;
+use patina_pi::hob::EFiMemoryTypeInformation;
 use r_efi::efi;
 
 use super::{
@@ -270,8 +270,8 @@ mod tests {
     use core::cmp::max;
     use std::alloc::{GlobalAlloc, System};
 
-    use mu_pi::dxe_services;
     use patina::base::{SIZE_4KB, SIZE_64KB, UEFI_PAGE_SIZE};
+    use patina_pi::dxe_services;
 
     use crate::{
         allocator::{DEFAULT_ALLOCATION_STRATEGY, DEFAULT_PAGE_ALLOCATION_GRANULARITY},

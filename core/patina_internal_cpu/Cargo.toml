@@ -18,7 +18,7 @@ r-efi = { workspace = true }
 patina = { workspace = true }
 spin = { workspace = true, features = ["rwlock"] }
 patina_paging = { workspace = true }
-mu_pi = { workspace = true }
+patina_pi = { workspace = true }
 cfg-if = { workspace = true }
 patina_stacktrace = { workspace = true }
 

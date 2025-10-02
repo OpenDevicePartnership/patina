@@ -26,7 +26,7 @@ name = "basic_hob_usage"
 [dependencies]
 patina_macro = { workspace = true }
 fixedbitset = { workspace = true }
-mu_pi = { workspace = true }
+patina_pi = { workspace = true }
 
 cfg-if = { workspace = true }
 log = { workspace = true }

@@ -126,8 +126,8 @@ fn main() {
 
 // Users reviewing this example can skip the following module, as it is not relevant to the example itself.
 mod util {
-    use mu_pi::hob::GuidHob;
     use patina::component::Component;
+    use patina_pi::hob::GuidHob;
 
     use super::{CustomHob1, CustomHob2, FromHob, IntoComponent, Storage};
 
@@ -137,7 +137,7 @@ mod util {
     }
 
     impl Custom {
-        fn insert(self, hob_list: &mut mu_pi::hob::HobList) {
+        fn insert(self, hob_list: &mut patina_pi::hob::HobList) {
             match self {
                 Custom::Hob1(hob) => insert_custom_hob1(hob_list, hob),
                 Custom::Hob2(hob) => insert_custom_hob2(hob_list, hob),
@@ -152,7 +152,7 @@ mod util {
     }
 
     pub fn setup_storage(storage: &mut Storage, hobs: Vec<Custom>) {
-        let mut hob_list = mu_pi::hob::HobList::new();
+        let mut hob_list = patina_pi::hob::HobList::new();
 
         for hob in hobs {
             hob.insert(&mut hob_list);
@@ -161,7 +161,7 @@ mod util {
         // Parse HOBs, which is done automatically by the component system.
         for hob in hob_list.iter() {
             match hob {
-                mu_pi::hob::Hob::GuidHob(hob, data) => {
+                patina_pi::hob::Hob::GuidHob(hob, data) => {
                     for parser in storage.get_hob_parsers(&patina::Guid::from(hob.name)) {
                         parser(data, storage);
                     }
@@ -172,7 +172,7 @@ mod util {
     }
 
     /// A helper function to insert a custom HOB into the HOB list.
-    fn insert_custom_hob1(hob_list: &mut mu_pi::hob::HobList, hob: CustomHob1) {
+    fn insert_custom_hob1(hob_list: &mut patina_pi::hob::HobList, hob: CustomHob1) {
         let mut data = Vec::new();
         data.extend_from_slice(&hob.data1.to_le_bytes());
         data.extend_from_slice(&hob.data2.to_le_bytes());
@@ -183,31 +183,31 @@ mod util {
         let as_slice = Box::leak(data.into_boxed_slice());
 
         let hob = Box::leak(Box::new(GuidHob {
-            header: mu_pi::hob::header::Hob {
-                r#type: mu_pi::hob::GUID_EXTENSION,
+            header: patina_pi::hob::header::Hob {
+                r#type: patina_pi::hob::GUID_EXTENSION,
                 length: std::mem::size_of::<CustomHob1>() as u16,
                 reserved: 0,
             },
             name: r_efi::efi::Guid::from_fields(0x0, 0x0, 0x0, 0x0, 0x0, &[0x00, 0x00, 0x00, 0x0, 0x0, 0x01]),
         }));
-        hob_list.push(mu_pi::hob::Hob::GuidHob(hob, as_slice));
+        hob_list.push(patina_pi::hob::Hob::GuidHob(hob, as_slice));
     }
 
     /// A helper function to insert a custom HOB into the HOB list.
-    fn insert_custom_hob2(hob_list: &mut mu_pi::hob::HobList, hob: CustomHob2) {
+    fn insert_custom_hob2(hob_list: &mut patina_pi::hob::HobList, hob: CustomHob2) {
         let mut data = Vec::new();
         data.extend_from_slice(hob.0.as_bytes());
 
         let as_slice = Box::leak(data.into_boxed_slice());
 
         let hob = Box::leak(Box::new(GuidHob {
-            header: mu_pi::hob::header::Hob {
-                r#type: mu_pi::hob::GUID_EXTENSION,
+            header: patina_pi::hob::header::Hob {
+                r#type: patina_pi::hob::GUID_EXTENSION,
                 length: std::mem::size_of::<CustomHob2>() as u16,
                 reserved: 0,
             },
             name: CustomHob2::HOB_GUID.to_efi_guid(),
         }));
-        hob_list.push(mu_pi::hob::Hob::GuidHob(hob, as_slice));
+        hob_list.push(patina_pi::hob::Hob::GuidHob(hob, as_slice));
     }
 }

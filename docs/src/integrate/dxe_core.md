@@ -101,7 +101,7 @@ not meant to be exhaustive, but rather a starting example for showing how to set
 `SectionExtractor` is an abstraction point that allows a platform to specify the specific section extraction methods it
 supports. As an example, a platform may only compress its sections with brotli, so it only needs to support brotli
 extractions. A platform may create their own extractor; it only needs to implement the
-[SectionExtractor](https://docs.rs/mu_pi/latest/mu_pi/fw_fs/trait.SectionExtractor.html) trait. However, multiple
+[SectionExtractor](https://docs.rs/patina_pi/latest/patina_pi/fw_fs/trait.SectionExtractor.html) trait. However, multiple
 implementations are provided via [patina_ffs_extractors](https://github.com/OpenDevicePartnership/patina/tree/main/core/patina_ffs_extractors)
 such as brotli, crc32, etc.
 
