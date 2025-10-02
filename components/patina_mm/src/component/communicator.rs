@@ -191,6 +191,8 @@ impl MmCommunication for MmCommunicator {
         log::trace!(target: "mm_comm", "Comm buffer before request: {:?}", comm_buffer);
 
         log::debug!(target: "mm_comm", "Triggering SW MMI for MM communication");
+        // SAFETY: The SW MMI trigger service will use configuration that requires
+        //         the user to have upheld the safety requirements for the service.
         unsafe {
             sw_smi_trigger_service.trigger_sw_mmi(0xFF, 0).map_err(|err| {
                 log::error!(target: "mm_comm", "SW MMI trigger failed: {:?}", err);
