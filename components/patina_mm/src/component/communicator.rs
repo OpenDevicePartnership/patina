@@ -2,16 +2,18 @@
 //!
 //! Provides a MM communication service that can be used to send and receive messages to MM handlers.
 //!
+//! ## Logging
+//!
+//! Detailed logging is available for this component using the `mm_comm` log target.
+//!
 //! ## License
 //!
 //! Copyright (C) Microsoft Corporation.
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use crate::{
-    component::sw_mmi_manager::SwMmiTrigger,
-    config::{CommunicateBuffer, EfiMmCommunicateHeader, MmCommunicationConfiguration},
-};
+use crate::config::{CommunicateBuffer, EfiMmCommunicateHeader, MmCommunicationConfiguration};
+use crate::service::SwMmiTrigger;
 use patina::component::{
     IntoComponent, Storage,
     service::{IntoService, Service},
@@ -108,16 +110,21 @@ impl MmCommunicator {
         storage: &mut Storage,
         sw_mmi_trigger: Service<dyn SwMmiTrigger>,
     ) -> patina::error::Result<()> {
-        log::debug!("MM Communicator entry...");
+        log::info!(target: "mm_comm", "MM Communicator entry...");
 
         self.sw_mmi_trigger_service = Some(sw_mmi_trigger);
-        self.comm_buffers = RefCell::new(
-            storage
+
+        let comm_buffers = {
+            let config = storage
                 .get_config::<MmCommunicationConfiguration>()
-                .expect("Failed to get MM Configuration Config from storage")
-                .comm_buffers
-                .clone(),
-        );
+                .expect("Failed to get MM Configuration Config from storage");
+
+            log::trace!(target: "mm_comm", "Retrieved MM configuration: comm_buffers_count={}", config.comm_buffers.len());
+            config.comm_buffers.clone()
+        };
+
+        self.comm_buffers = RefCell::new(comm_buffers);
+        log::info!(target: "mm_comm", "MM Communicator initialized with {} communication buffers", self.comm_buffers.borrow().len());
 
         storage.add_service(self);
 
@@ -138,32 +145,64 @@ impl Debug for MmCommunicator {
 
 impl MmCommunication for MmCommunicator {
     fn communicate(&self, id: u8, data_buffer: &[u8], recipient: efi::Guid) -> Result<Vec<u8>, Status> {
+        log::debug!(target: "mm_comm", "Starting MM communication: buffer_id={}, data_size={}, recipient={:?}", id, data_buffer.len(), recipient);
+
         if self.comm_buffers.borrow().is_empty() {
+            log::warn!(target: "mm_comm", "No communication buffers available");
             return Err(Status::NoCommBuffer);
         }
 
         if data_buffer.is_empty() {
+            log::warn!(target: "mm_comm", "Invalid data buffer: empty");
             return Err(Status::InvalidDataBuffer);
         }
 
-        let sw_smi_trigger_service = self.sw_mmi_trigger_service.as_ref().ok_or(Status::SwMmiServiceNotAvailable)?;
+        let sw_smi_trigger_service = self.sw_mmi_trigger_service.as_ref().ok_or_else(|| {
+            log::error!(target: "mm_comm", "SW MMI Trigger service not available");
+            Status::SwMmiServiceNotAvailable
+        })?;
 
         let mut comm_buffers = self.comm_buffers.borrow_mut();
-        let comm_buffer: &mut CommunicateBuffer =
-            comm_buffers.iter_mut().find(|x| x.id() == id).ok_or(Status::CommBufferNotFound)?;
+        let comm_buffer: &mut CommunicateBuffer = comm_buffers.iter_mut().find(|x| x.id() == id).ok_or_else(|| {
+            log::warn!(target: "mm_comm", "Communication buffer not found: id={}", id);
+            Status::CommBufferNotFound
+        })?;
 
         let total_required_comm_buffer_length = EfiMmCommunicateHeader::size() + data_buffer.len();
+        log::trace!(target: "mm_comm", "Buffer validation: buffer_len={}, required_len={}", comm_buffer.len(), total_required_comm_buffer_length);
 
         if comm_buffer.len() < total_required_comm_buffer_length {
+            log::warn!(target: "mm_comm", "Communication buffer too small: available={}, required={}", comm_buffer.len(), total_required_comm_buffer_length);
             return Err(Status::CommBufferTooSmall);
         }
 
-        comm_buffer.set_message_info(recipient).map_err(|_| Status::CommBufferInitError)?;
-        comm_buffer.set_message(data_buffer).map_err(|_| Status::CommBufferInitError)?;
+        log::trace!(target: "mm_comm", "Setting up communication buffer for MM request");
+        comm_buffer.set_message_info(recipient).map_err(|err| {
+            log::error!(target: "mm_comm", "Failed to set message info: {:?}", err);
+            Status::CommBufferInitError
+        })?;
+        comm_buffer.set_message(data_buffer).map_err(|err| {
+            log::error!(target: "mm_comm", "Failed to set message data: {:?}", err);
+            Status::CommBufferInitError
+        })?;
 
-        unsafe { sw_smi_trigger_service.trigger_sw_mmi(0xFF, 0).map_err(|_| Status::SwMmiFailed)? };
+        log::debug!(target: "mm_comm", "Outgoing MM communication request: buffer_id={}, data_size={}, recipient={:?}", id, data_buffer.len(), recipient);
+        log::debug!(target: "mm_comm", "Request Data (hex): {:02X?}", &data_buffer[..core::cmp::min(data_buffer.len(), 64)]);
+        log::trace!(target: "mm_comm", "Comm buffer before request: {:?}", comm_buffer);
 
-        Ok(comm_buffer.get_message())
+        log::debug!(target: "mm_comm", "Triggering SW MMI for MM communication");
+        unsafe {
+            sw_smi_trigger_service.trigger_sw_mmi(0xFF, 0).map_err(|err| {
+                log::error!(target: "mm_comm", "SW MMI trigger failed: {:?}", err);
+                Status::SwMmiFailed
+            })?
+        };
+
+        log::trace!(target: "mm_comm", "MM communication completed successfully, retrieving response");
+        let response = comm_buffer.get_message();
+        log::debug!(target: "mm_comm", "MM communication response received: size={}", response.len());
+
+        Ok(response)
     }
 }
 
@@ -179,9 +218,7 @@ mod tests {
     use super::*;
     use crate::component::communicator::MmCommunicator;
     use crate::component::sw_mmi_manager::{MockSwMmiTrigger, SwMmiManager};
-    use crate::config::{
-        CommunicateBuffer, CommunicateBufferStatus, EfiMmCommunicateHeader, MmCommunicationConfiguration,
-    };
+    use crate::config::{CommunicateBuffer, CommunicateBufferStatus, MmCommunicationConfiguration};
     use patina::component::{IntoComponent, Storage};
 
     use core::cell::RefCell;
@@ -277,7 +314,6 @@ mod tests {
     #[test]
     fn test_communicate_sw_mmi_get_and_set_message_are_consistent() {
         const COMM_BUFFER_SIZE: usize = 64;
-        const DATA_BUFFFER_SIZE: usize = COMM_BUFFER_SIZE - EfiMmCommunicateHeader::size();
 
         let mut mock_sw_mmi_trigger = MockSwMmiTrigger::new();
 
@@ -292,11 +328,9 @@ mod tests {
         let result = communicator.comm_buffers.borrow_mut()[0].set_message(&TEST_RESPONSE);
         assert_eq!(result, Ok(()), "Expected message to be set successfully, but got: {result:?}");
 
-        let message = communicator.comm_buffers.borrow_mut()[0].get_message();
-        let mut expected_data = vec![0u8; DATA_BUFFFER_SIZE];
-        expected_data[..TEST_RESPONSE.len()].copy_from_slice(&TEST_RESPONSE);
+        let message = communicator.comm_buffers.borrow_mut()[0].get_message().unwrap();
         assert!(!message.is_empty(), "Expected message to be set, but got empty message: {message:?}");
-        assert_eq!(message, *expected_data, "Expected message to be set correctly, but got: {message:?}");
+        assert_eq!(message, TEST_RESPONSE, "Expected message to be set correctly, but got: {message:?}");
     }
 
     #[test]
@@ -354,17 +388,18 @@ mod tests {
             );
             comm_buffer.set_message(data).unwrap();
             assert_eq!(
-                comm_buffer.get_message()[..data.len()],
+                comm_buffer.get_message().unwrap()[..data.len()],
                 *data,
                 "Failed to set message for comm buffer with ID: {}",
                 comm_buffer.id()
             );
-            comm_buffer_test_data.push(comm_buffer.get_message());
+            comm_buffer_test_data.push(comm_buffer.get_message().unwrap());
         }
 
         // Verify that the correct comm buffer is used for the first ID (which matches after the comm data is written)
         let result = communicator.communicate(comm_buffer_ids[0], &TEST_DATA, TEST_RECIPIENT);
-        assert_eq!(result, Ok(comm_buffer_test_data[0].clone()), "Comm buffer 1 failed to return the expected data");
+
+        assert_eq!(result, Ok(TEST_DATA.to_vec()), "Comm buffer 1 failed to return the expected data");
     }
 
     #[test]
