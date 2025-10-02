@@ -323,6 +323,16 @@ impl CommunicateBuffer {
         self.buffer.as_ptr().cast::<u8>()
     }
 
+    /// Resets the communication buffer by clearing all data and resetting internal state.
+    pub fn reset(&mut self) {
+        // Zero out the entire buffer
+        self.as_slice_mut().fill(0);
+
+        // Reset internal state
+        self.private_message_length = 0;
+        self.private_recipient = None;
+    }
+
     /// Returns the available capacity for the message part of the communicate buffer.
     ///
     /// Note: Zero will be returned if the buffer is too small to hold the header.
