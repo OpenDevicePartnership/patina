@@ -1,4 +1,4 @@
-# RFC: `SMBIOS`
+# RFC 0018: `SMBIOS`
 
 This RFC proposes a Rust-based interface for SMBIOS table management, providing the functionality described in the
 `EFI_SMBIOS_PROTOCOL` service defined in the UEFI Specification.
@@ -17,6 +17,9 @@ integration for components.
 - 2025-09-18: Revised to support only SMBIOS 3.0+ with 64-bit entry point structures for improved UEFI compatibility
   and simplified architecture. Removed 32-bit format support and related API complexity. Removed low-level construction
   functionality based on security feedback to ensure specification compliance and prevent malformed SMBIOS structures.
+- 2025-10-02: Updated RFC to reflect actual implementation status. Moved advanced versioned record interfaces to Future
+  Work section. Added documentation for component/service pattern, counter-based handle allocation, and comprehensive
+  string validation features that are implemented.
 
 ## Motivation
 
@@ -216,12 +219,201 @@ compatibility with existing UEFI protocol patterns. However, **it should be stro
 `add_from_bytes()` alternative** for all new implementations. The unsafe method exists only to support legacy code
 migration scenarios.
 
-## Versioned Typed Record Interfaces
+## Current Implementation Status
+
+### Implemented Features
+
+The current implementation provides a complete, production-ready SMBIOS service with the following features:
+
+#### Core Service Architecture
+
+**Component Pattern**: The SMBIOS implementation follows Patina's component/service pattern:
+
+```rust
+#[derive(IntoComponent, IntoService)]
+#[service(dyn SmbiosRecords<'static>)]
+pub struct SmbiosProviderManager {
+    manager: SmbiosManager,
+}
+```
+
+**Service Registration**: The service is registered using the Commands pattern in the entry point:
+
+```rust
+fn entry_point(
+    mut self,
+    config: Option<Config<SmbiosConfiguration>>,
+    mut commands: Commands,
+) -> Result<()> {
+    // Configure SMBIOS version
+    let cfg = config.map(|c| (*c).clone()).unwrap_or_default();
+    self.manager = SmbiosManager::new(cfg.major_version, cfg.minor_version);
+    
+    // Register service for consumption by other components
+    commands.add_service(self);
+    Ok(())
+}
+```
+
+**Configuration**: Platforms can configure the SMBIOS version:
+
+```rust
+pub struct SmbiosConfiguration {
+    pub major_version: u8,  // Defaults to 3
+    pub minor_version: u8,  // Defaults to 0
+}
+```
+
+#### Handle Allocation
+
+**Counter-Based Algorithm**: Implements an optimized counter-based handle allocation strategy:
+
+- **O(1) average case** performance vs HashSet lookup overhead
+- **Sequential allocation** from `next_handle` counter (starts at 1)
+- **Wraparound logic** from 0xFEFF back to 1 when exhausted
+- **Skip reserved handles** (0, 0xFFFE, 0xFFFF)
+- **Reuse optimization** in `remove()` - resets counter to freed handle if lower
+
+```rust
+fn allocate_handle(&mut self) -> Result<SmbiosHandle, SmbiosError> {
+    let mut attempts = 0u32;
+    const MAX_ATTEMPTS: u32 = 0xFEFF;
+
+    loop {
+        let candidate = self.next_handle;
+        
+        // Skip reserved handles
+        if candidate == 0 || candidate >= 0xFEFF {
+            self.next_handle = 1;
+            attempts += 1;
+            if attempts >= MAX_ATTEMPTS {
+                return Err(SmbiosError::OutOfResources);
+            }
+            continue;
+        }
+
+        if !self.is_handle_allocated(candidate) {
+            let allocated = candidate;
+            self.next_handle = candidate + 1;
+            return Ok(allocated);
+        }
+
+        self.next_handle += 1;
+        attempts += 1;
+
+        if attempts >= MAX_ATTEMPTS {
+            return Err(SmbiosError::OutOfResources);
+        }
+    }
+}
+```
+
+#### String Validation
+
+**Comprehensive String Validation**: Multiple layers of string validation ensure SMBIOS compliance:
+
+1. **Individual String Validation** - `validate_string()`:
+   - Maximum length check (64 bytes per SMBIOS spec)
+   - Null byte prohibition (strings are null-terminated)
+
+2. **String Pool Validation** - `validate_and_count_strings()`:
+   - Single-pass O(n) algorithm
+   - Validates double-null termination
+   - Counts strings while validating
+   - Detects empty vs non-empty pools
+   - Per-string length enforcement
+
+3. **Complete Record Validation** - `count_strings_in_record()`:
+   - Validates minimum buffer size
+   - Extracts and validates header length
+   - Ensures string pool has required space
+   - Delegates to string pool validator
+
+#### Safe API
+
+**Primary Safe Interface** - `add_from_bytes()`:
+
+The recommended API for adding SMBIOS records performs comprehensive validation:
+
+```rust
+fn add_from_bytes(
+    &mut self,
+    producer_handle: Option<Handle>,
+    record_data: &[u8],
+) -> Result<SmbiosHandle, SmbiosError> {
+    // Step 1: Validate minimum size for header
+    // Step 2: Parse and validate header
+    // Step 3: Validate header->length vs buffer size
+    // Step 4: Extract string pool area
+    // Step 5: Validate string pool format and count strings
+    // If all validation passes, allocate handle and store record
+}
+```
+
+**Unsafe Legacy API** - `add()`:
+
+Retained for UEFI protocol compatibility but strongly discouraged. Requires caller to guarantee:
+- Complete SMBIOS record structure
+- Valid memory at pointer location
+- Proper string pool formatting
+
+#### String Updates
+
+**Complete String Update Implementation** - `update_string()`:
+
+Full implementation that parses, updates, and rebuilds record data:
+
+1. Validates string format and index bounds
+2. Parses existing string pool from record data
+3. Extracts all current null-terminated strings
+4. Replaces the target string (1-indexed per SMBIOS spec)
+5. Rebuilds complete record with:
+   - Original structured header data
+   - Updated string pool
+   - Proper null terminators
+
+#### Thread Safety
+
+**Mutex Protection**: All mutable operations are protected by a spin::Mutex:
+
+```rust
+fn update_string(...) -> Result<(), SmbiosError> {
+    let _lock = self.lock.lock();  // Guard held for operation duration
+    // ... operation ...
+}
+```
+
+#### Trait Object Safety
+
+**Service Compatibility**: The `SmbiosRecords` trait is designed for use as a trait object:
+
+- Returns `Box<dyn Iterator>` instead of associated type for `iter()`
+- Enables `dyn SmbiosRecords<'static>` for service registration
+- Compatible with Patina's service injection system
+
+### Not Yet Implemented
+
+The following features are documented in this RFC but not yet implemented:
+
+- Versioned typed record interfaces (`VersionedSmbiosRecord` trait)
+- Typed record methods (`add_typed_record()`, `get_typed_record()`, `iter_typed_records()`)
+- Forward/backward compatibility with version-aware parsing
+- Field layout introspection and generic serialization
+- SMBIOS protocol FFI bindings (C ABI extern functions)
+- Installation of SMBIOS configuration tables
+
+These features are described below as future enhancements.
+
+## Future Work: Versioned Typed Record Interfaces
+
+> **Note**: The features described in this section represent future planned enhancements and are not currently implemented.
+> The current implementation provides a complete byte-based API that is production-ready. These typed interfaces would
+> provide additional convenience and type safety for specific use cases.
 
 ### Design Philosophy
 
-This RFC proposes a versioned approach to typed SMBIOS record interfaces that addresses the challenge of
-specification evolution while maintaining forward and backward compatibility. Each SMBIOS record type can have
+A versioned approach to typed SMBIOS record interfaces would address the challenge of
+specification evolution while maintaining forward and backward compatibility. Each SMBIOS record type could have
 multiple versions corresponding to different SMBIOS specification releases.
 
 ### Key Design Principles
@@ -601,19 +793,22 @@ assert!(preserved_bytes.ends_with(&[0xAB, 0xCD, 0xEF, 0x12]));
 3. **Version Detection**: Automatic detection of appropriate record versions based on SMBIOS spec version
 4. **Compatibility Testing**: Comprehensive tests ensure new versions don't break existing functionality
 
-This approach addresses the core concern raised in the comment by providing:
+This approach would address version compatibility by providing:
 
 - **Version Awareness**: Each record type can handle multiple SMBIOS specification versions
 - **Forward Compatibility**: Unknown fields are preserved, allowing older implementations to work with newer records
 - **Backward Compatibility**: Newer implementations can gracefully handle older record formats
 - **Safety**: All parsing is bounds-checked and error-handling is explicit
 
-## Alternative Approach: Sized Structures with Byte Array Interface
+## Future Work: Sized Structures with Byte Array Interface (Alternative Approach)
+
+> **Note**: This section describes an alternative design approach for future consideration. Neither this approach nor
+> the versioned typed interfaces above are currently implemented.
 
 ### Alternative Design Philosophy
 
-An alternative to the versioned typed interfaces above is to provide sized structures for SMBIOS records
-while maintaining a simple byte array interface at the service level. This approach offers a middle ground
+An alternative to the versioned typed interfaces above would be to provide sized structures for SMBIOS records
+while maintaining a simple byte array interface at the service level. This approach would offer a middle ground
 between type safety and simplicity.
 
 ### Alternative Design Principles
@@ -1945,11 +2140,10 @@ This must also be eventually reimplemented in Rust to achieve a pure Rust SMBIOS
 ### SMBIOS Records Service
 
 Integrated functionality for adding, updating, removing, and retrieving SMBIOS records
-will be provided through the `SmbiosRecords` service.
+is provided through the `SmbiosRecords` service.
 
 ```rust
-pub trait SmbiosRecords {
-    type Iter: Iterator<Item = &SmbiosRecord>;
+pub trait SmbiosRecords<'a> {
 
     /// Adds an SMBIOS record to the SMBIOS table.
     ///
@@ -2007,7 +2201,9 @@ pub trait SmbiosRecords {
     ) -> Result<(&SmbiosTableHeader, Option<Handle>), SmbiosError>;
 
     /// Provides an iterator over all SMBIOS records.
-    fn iter(&self) -> Self::Iter;
+    /// 
+    /// Returns a boxed iterator to maintain trait object safety for service registration.
+    fn iter(&self) -> Box<dyn Iterator<Item = &'a SmbiosRecord> + 'a>;
 
     /// Gets the SMBIOS version information.
     fn version(&self) -> (u8, u8); // (major, minor)
@@ -2289,15 +2485,14 @@ impl SmbiosManager {
     }
 }
 
-impl SmbiosRecords for SmbiosManager {
-    type Iter = std::slice::Iter<'static, SmbiosRecord>;
+impl SmbiosRecords<'static> for SmbiosManager {
 
     unsafe fn add(
         &mut self,
         producer_handle: Option<Handle>,
         record: &SmbiosTableHeader,
     ) -> Result<SmbiosHandle, SmbiosError> {
-        let _lock = self.lock.lock().unwrap();
+        let _lock = self.lock.lock();
 
         // Assign handle 
         let smbios_handle = self.allocate_handle()?;
@@ -2408,7 +2603,7 @@ impl SmbiosRecords for SmbiosManager {
     ) -> Result<(), SmbiosError> {
         Self::validate_string(string)?;
         
-        let _lock = self.lock.lock().unwrap();
+        let _lock = self.lock.lock();
         
         // Find the record
         let record = self.records
@@ -2426,7 +2621,7 @@ impl SmbiosRecords for SmbiosManager {
     }
 
     fn remove(&mut self, smbios_handle: SmbiosHandle) -> Result<(), SmbiosError> {
-        let _lock = self.lock.lock().unwrap();
+        let _lock = self.lock.lock();
         
         let pos = self.records
             .iter()
@@ -2449,7 +2644,7 @@ impl SmbiosRecords for SmbiosManager {
         smbios_handle: &mut SmbiosHandle,
         record_type: Option<SmbiosType>,
     ) -> Result<(&SmbiosTableHeader, Option<Handle>), SmbiosError> {
-        let _lock = self.lock.lock().unwrap();
+        let _lock = self.lock.lock();
         
         let start_idx = if *smbios_handle == SMBIOS_HANDLE_PI_RESERVED {
             0
@@ -2476,10 +2671,13 @@ impl SmbiosRecords for SmbiosManager {
         Err(SmbiosError::NotFound)
     }
 
-    fn iter(&self) -> Self::Iter {
-        // This is a simplified implementation
-        // Real implementation would need proper lifetime management
-        unsafe { std::mem::transmute(self.records.iter()) }
+    fn iter(&self) -> Box<dyn Iterator<Item = &'static SmbiosRecord> + 'static> {
+        // Return boxed iterator for trait object safety
+        // This extends the lifetime using unsafe pointer arithmetic
+        // Safe because SmbiosManager is 'static and records are only modified via &mut
+        let records_ptr = self.records.as_ptr();
+        let len = self.records.len();
+        Box::new((0..len).map(move |i| unsafe { &*records_ptr.add(i) }))
     }
 
     fn version(&self) -> (u8, u8) {
