@@ -330,6 +330,60 @@ impl CommunicateBuffer {
         self.len().saturating_sub(Self::MESSAGE_START_OFFSET)
     }
 
+    /// Verifies that the internal state matches what is in the memory buffer.
+    /// This is intended to catch corruption and ensure the buffer actually matches what has
+    /// been requested through the MM Communication API.
+    ///
+    /// Returns `Ok(())` if state verification passes, otherwise returns the appropriate error.
+    fn verify_state_consistency(&self) -> Result<(), CommunicateBufferStatus> {
+        if self.len() < Self::MESSAGE_START_OFFSET {
+            log::error!(target: "mm_comm", "Buffer {} is too small for the communicate header", self.id);
+            return Err(CommunicateBufferStatus::TooSmallForHeader);
+        }
+
+        let header_slice = &self.as_slice()[..Self::MESSAGE_START_OFFSET];
+
+        let memory_guid = unsafe {
+            // SAFETY: We've validated the buffer has at least MESSAGE_START_OFFSET bytes
+            // and efi::Guid has a stable #[repr(C)] layout
+            core::ptr::read(header_slice.as_ptr() as *const efi::Guid)
+        };
+
+        let memory_message_length = unsafe {
+            // SAFETY: We've validated the buffer has sufficient bytes for usize at correct offset
+            core::ptr::read(header_slice.as_ptr().add(16) as *const usize)
+        };
+
+        // Verify that thee recipient matches
+        match self.private_recipient {
+            Some(expected_guid) => {
+                if memory_guid != expected_guid {
+                    log::error!(target: "mm_comm", "Buffer {} GUID mismatch: private={:?}, memory={:?}",
+                        self.id, expected_guid, memory_guid);
+                    return Err(CommunicateBufferStatus::InvalidRecipient);
+                }
+            }
+            None => {
+                // If no recipient is set privately, the memory should contain all zeros for the GUID
+                let zero_guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
+                if memory_guid != zero_guid {
+                    log::error!(target: "mm_comm", "Buffer {} unexpected GUID in memory when none set privately", self.id);
+                    return Err(CommunicateBufferStatus::InvalidRecipient);
+                }
+            }
+        }
+
+        // Verify message length matches
+        if memory_message_length != self.private_message_length {
+            log::error!(target: "mm_comm", "Buffer {} message length mismatch: private={}, memory={}",
+                self.id, self.private_message_length, memory_message_length);
+            return Err(CommunicateBufferStatus::TooSmallForMessage);
+        }
+
+        log::trace!(target: "mm_comm", "Buffer {} state consistency was verified successfully", self.id);
+        Ok(())
+    }
+
     /// Validates that the buffer can accommodate a header and message of the given size.
     ///
     /// ## Arguments
@@ -381,6 +435,9 @@ impl CommunicateBuffer {
         let header_bytes = header.as_bytes();
         self.as_slice_mut()[..Self::MESSAGE_START_OFFSET].copy_from_slice(header_bytes);
 
+        // Verify state consistency after update
+        self.verify_state_consistency()?;
+
         log::trace!(target: "mm_comm", "Message info set successfully for buffer {}", self.id);
         Ok(())
     }
@@ -416,6 +473,9 @@ impl CommunicateBuffer {
         self.as_slice_mut()[Self::MESSAGE_START_OFFSET..Self::MESSAGE_START_OFFSET + message.len()]
             .copy_from_slice(message);
 
+        // Verify state consistency after update
+        self.verify_state_consistency()?;
+
         log::debug!(target: "mm_comm", "Buffer {} message set successfully: header_size={}, message_size={}",
             self.id, Self::MESSAGE_START_OFFSET, message.len());
         Ok(())
@@ -426,6 +486,9 @@ impl CommunicateBuffer {
     ///
     /// Note: This method extracts the actual message content using verified state tracking.
     pub fn get_message(&self) -> Result<Vec<u8>, CommunicateBufferStatus> {
+        // Verify state consistency before proceeding
+        self.verify_state_consistency()?;
+
         if self.private_message_length == 0 {
             log::trace!(target: "mm_comm", "Buffer {} has zero-length message", self.id);
             return Ok(Vec::new());
@@ -444,6 +507,29 @@ impl CommunicateBuffer {
         let message = self.as_slice()[start_offset..end_offset].to_vec();
         log::trace!(target: "mm_comm", "Retrieved message from buffer {}: message_size={}", self.id, message.len());
         Ok(message)
+    }
+
+    /// Returns the header GUID from the current communicate buffer.
+    /// This method uses the internal state and verifies consistency with memory.
+    ///
+    /// Returns `None` if no recipient has been set.
+    pub fn get_header_guid(&self) -> Result<Option<efi::Guid>, CommunicateBufferStatus> {
+        // Verify state consistency first
+        self.verify_state_consistency()?;
+
+        log::trace!(target: "mm_comm", "Buffer {} header GUID retrieved from private state", self.id);
+        Ok(self.private_recipient)
+    }
+
+    /// Returns the message length from the current communicate buffer.
+    /// This method uses the internal state and verifies consistency with memory.
+    pub fn get_message_length(&self) -> Result<usize, CommunicateBufferStatus> {
+        // Verify state consistency first
+        self.verify_state_consistency()?;
+
+        log::trace!(target: "mm_comm", "Buffer {} message length retrieved from private state: len={}",
+            self.id, self.private_message_length);
+        Ok(self.private_message_length)
     }
 }
 
@@ -601,6 +687,10 @@ mod tests {
             Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
 
         assert!(comm_buffer.set_message_info(recipient_guid).is_ok());
+
+        // Test that state verification works
+        assert!(comm_buffer.get_header_guid().is_ok());
+        assert_eq!(comm_buffer.get_header_guid().unwrap(), Some(recipient_guid));
     }
 
     #[test]
@@ -661,7 +751,10 @@ mod tests {
 
         // Test that we can retrieve the message
         let retrieved_message = comm_buffer.get_message().unwrap();
-        assert_eq!(retrieved_message[..message.len()], *message);
+        assert_eq!(retrieved_message, message);
+
+        // Test that state verification is successful
+        assert_eq!(comm_buffer.get_message_length().unwrap(), message.len());
     }
 
     #[test]
@@ -700,7 +793,7 @@ mod tests {
         assert!(comm_buffer.set_message(MESSAGE).is_ok(), "Failed to set the message");
 
         let retrieved_message = comm_buffer.get_message().unwrap();
-        assert_eq!(retrieved_message[..MESSAGE.len()], *MESSAGE);
+        assert_eq!(retrieved_message, MESSAGE.to_vec());
     }
 
     #[test]
@@ -711,22 +804,24 @@ mod tests {
         let recipient_guid =
             Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
         assert!(comm_buffer.set_message_info(recipient_guid).is_ok());
+        assert_eq!(comm_buffer.get_header_guid().unwrap(), Some(recipient_guid));
 
         let message = b"MM Handler!";
         assert!(comm_buffer.set_message(message).is_ok());
-        let retrieved_message = comm_buffer.get_message().unwrap();
-        assert_eq!(retrieved_message[..message.len()], *message);
+        assert_eq!(comm_buffer.get_message().unwrap(), message.to_vec());
         assert_eq!(comm_buffer.len(), 64);
+        assert_eq!(comm_buffer.get_message_length().unwrap(), message.len());
 
         // Update with new recipient
         let recipient_guid2 =
             Guid::from_fields(0x3210FEDC, 0xABCD, 0xABCD, 0x12, 0x23, &[0x12, 0x34, 0x56, 0x78, 0x90, 0xAB]);
         assert!(comm_buffer.set_message_info(recipient_guid2).is_ok());
+        assert_eq!(comm_buffer.get_header_guid().unwrap(), Some(recipient_guid2));
 
         // Message should still be there but header should be updated
-        let retrieved_message2 = comm_buffer.get_message().unwrap();
-        assert_eq!(retrieved_message2[..message.len()], *message);
+        assert_eq!(comm_buffer.get_message().unwrap(), message.to_vec());
         assert_eq!(comm_buffer.len(), 64);
+        assert_eq!(comm_buffer.get_message_length().unwrap(), message.len());
     }
 
     #[test]
@@ -792,10 +887,40 @@ mod tests {
         assert_eq!(comm_buffer.id(), id);
 
         // Test that the buffer is zeroed initially
-        let message = comm_buffer.get_message().unwrap();
-        assert!(message.iter().all(|&x| x == 0));
+        assert_eq!(comm_buffer.get_header_guid().unwrap(), None);
+        assert_eq!(comm_buffer.get_message_length().unwrap(), 0);
     }
 
+    #[test]
+    fn test_state_consistency_verification() {
+        let buffer: &'static mut [u8; 64] = Box::leak(Box::new([0u8; 64]));
+        let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
+
+        let test_guid =
+            Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
+        let test_message = b"test message";
+
+        assert!(comm_buffer.set_message_info(test_guid).is_ok());
+        assert!(comm_buffer.set_message(test_message).is_ok());
+
+        // Test that the getters pass consistency checks and return the expected values
+        assert_eq!(comm_buffer.get_header_guid().unwrap(), Some(test_guid));
+        assert_eq!(comm_buffer.get_message_length().unwrap(), test_message.len());
+        assert_eq!(comm_buffer.get_message().unwrap(), test_message.to_vec());
+    }
+
+    #[test]
+    fn test_buffer_too_small_for_header_operations() {
+        let buffer: &'static mut [u8; 2] = Box::leak(Box::new([0u8; 2]));
+        let comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
+
+        // All operations should fail with appropriate errors for undersized buffers
+        assert!(matches!(comm_buffer.get_header_guid(), Err(CommunicateBufferStatus::TooSmallForHeader)));
+        assert!(matches!(comm_buffer.get_message_length(), Err(CommunicateBufferStatus::TooSmallForHeader)));
+        assert!(matches!(comm_buffer.get_message(), Err(CommunicateBufferStatus::TooSmallForHeader)));
+    }
+
+    // Tests for other structures remain the same as they don't depend on CommunicateBuffer
     #[test]
     fn test_smiport_debug_msg() {
         let smi_port = MmiPort::Smi(0xFF);
