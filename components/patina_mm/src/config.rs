@@ -19,7 +19,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 extern crate alloc;
-use alloc::vec::Vec;
+use alloc::{format, string::String, vec::Vec};
 use core::fmt;
 use core::pin::Pin;
 use core::ptr::NonNull;
@@ -50,6 +50,39 @@ impl Default for MmCommunicationConfiguration {
             data_port: MmiPort::Smi(0x00),
             comm_buffers: Vec::new(),
         }
+    }
+}
+
+impl fmt::Display for MmCommunicationConfiguration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "MM Communication Configuration:")?;
+        writeln!(f, "  ACPI Base: {}", format_acpi_base(&self.acpi_base))?;
+        writeln!(f, "  Command Port: {}", format_mmi_port(&self.cmd_port))?;
+        writeln!(f, "  Data Port: {}", format_mmi_port(&self.data_port))?;
+        writeln!(f, "  Communication Buffers ({}):", self.comm_buffers.len())?;
+
+        if self.comm_buffers.is_empty() {
+            writeln!(f, "    <none>")
+        } else {
+            for buffer in &self.comm_buffers {
+                writeln!(f, "    Buffer {:#04X}: ptr={:p}, len=0x{:X}", buffer.id(), buffer.as_ptr(), buffer.len(),)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn format_mmi_port(port: &MmiPort) -> String {
+    match port {
+        MmiPort::Smi(value) => format!("SMI(0x{value:04X})"),
+        MmiPort::Smc(value) => format!("SMC(0x{value:08X})"),
+    }
+}
+
+fn format_acpi_base(base: &AcpiBase) -> String {
+    match base {
+        AcpiBase::Mmio(addr) => format!("MMIO(0x{addr:X})"),
+        AcpiBase::Io(port) => format!("IO(0x{port:04X})"),
     }
 }
 
