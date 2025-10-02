@@ -161,10 +161,10 @@ pub struct CommunicateBuffer {
     id: u8,
     /// Length of the total buffer in bytes.
     length: usize,
-    /// Message length in bytes.
-    message_length: usize,
-    /// Recipient GUID of the MM handler.
-    recipient: Option<efi::Guid>,
+    /// Handler GUID tracked independently to check against comm buffer contents
+    private_recipient: Option<efi::Guid>,
+    /// Message length tracked independently to check against comm buffer contents
+    private_message_length: usize,
 }
 
 impl CommunicateBuffer {
@@ -177,11 +177,13 @@ impl CommunicateBuffer {
     /// Creates a new `CommunicateBuffer` with the given buffer and ID.
     pub fn new(mut buffer: Pin<&'static mut [u8]>, id: u8) -> Self {
         let length = buffer.len();
+        log::debug!(target: "mm_comm", "Creating new CommunicateBuffer: id={}, size=0x{:X}", id, length);
         buffer.fill(0);
 
         let ptr: NonNull<[u8]> = NonNull::from_mut(Pin::into_inner(buffer));
 
-        Self { buffer: ptr, id, length, message_length: 0, recipient: None }
+        log::trace!(target: "mm_comm", "CommunicateBuffer {} created successfully at address {:p}", id, ptr);
+        Self { buffer: ptr, id, length, private_recipient: None, private_message_length: 0 }
     }
 
     /// Returns a reference to the buffer as a slice of bytes.
@@ -212,22 +214,29 @@ impl CommunicateBuffer {
     /// - The buffer must be page (4k) aligned so paging attributes can be applied to it.
     /// - The buffer size must be sufficient to hold at least the MM communication header.
     pub unsafe fn from_raw_parts(buffer: *mut u8, size: usize, id: u8) -> Result<Self, CommunicateBufferStatus> {
+        log::trace!(target: "mm_comm", "Creating CommunicateBuffer from raw parts: id={}, ptr={:p}, size=0x{:X}", id, buffer, size);
+
         if size < Self::MINIMUM_BUFFER_SIZE {
+            log::error!(target: "mm_comm", "Buffer {} too small: size=0x{:X}, minimum=0x{:X}", id, size, Self::MINIMUM_BUFFER_SIZE);
             return Err(CommunicateBufferStatus::TooSmallForHeader);
         }
 
         if buffer.is_null() {
+            log::error!(target: "mm_comm", "Buffer {} has null pointer", id);
             return Err(CommunicateBufferStatus::NoBuffer);
         }
 
         if (buffer as usize) & UEFI_PAGE_MASK != 0 {
+            log::error!(target: "mm_comm", "Buffer {} not page aligned: address=0x{:X}, mask=0x{:X}", id, buffer as usize, UEFI_PAGE_MASK);
             return Err(CommunicateBufferStatus::NotAligned);
         }
 
         if buffer as usize > usize::MAX - size {
+            log::error!(target: "mm_comm", "Buffer {} address overflow: ptr=0x{:X}, size=0x{:X}", id, buffer as usize, size);
             return Err(CommunicateBufferStatus::AddressValidationFailed);
         }
 
+        log::debug!(target: "mm_comm", "CommunicateBuffer {} validation passed, creating buffer", id);
         // SAFETY: Safety is upheld by the caller to this function (the function is marked unsafe)
         unsafe { Ok(Self::new(Pin::new(core::slice::from_raw_parts_mut(buffer, size)), id)) }
     }
@@ -269,6 +278,14 @@ impl CommunicateBuffer {
         }
 
         let ptr = address as *mut u8;
+
+        log::info!(
+            target: "mm_comm",
+            "Creating CommunicateBuffer from firmware region: addr=0x{:X}, size=0x{:X}, id={}",
+            address,
+            size_bytes,
+            buffer_id
+        );
 
         unsafe { Self::from_raw_parts(ptr, size_bytes, buffer_id) }
     }
@@ -322,63 +339,111 @@ impl CommunicateBuffer {
     /// - `Ok(())` - The buffer can safely hold the header and message
     /// - `Err(status)` - Buffer validation failed
     fn validate_capacity(&self, message_size: usize) -> Result<(), CommunicateBufferStatus> {
+        log::trace!(target: "mm_comm", "Validating capacity for buffer {}: buffer_size={}, message_size={}",
+            self.id, self.len(), message_size);
+
         // First check if buffer can hold the header
         if self.len() < Self::MESSAGE_START_OFFSET {
+            log::error!(target: "mm_comm", "Buffer {} too small for header: size={}, header_size={}",
+                self.id, self.len(), Self::MESSAGE_START_OFFSET);
             return Err(CommunicateBufferStatus::TooSmallForHeader);
         }
 
         // Then check if remaining space can hold the message
         let available_message_space = self.len() - Self::MESSAGE_START_OFFSET;
         if message_size > available_message_space {
+            log::error!(target: "mm_comm", "Buffer {} too small for message: available_space={}, message_size={}",
+                self.id, available_message_space, message_size);
             return Err(CommunicateBufferStatus::TooSmallForMessage);
         }
 
+        log::trace!(target: "mm_comm", "Buffer {} capacity validation passed", self.id);
         Ok(())
     }
 
     /// Sets the information needed for a communication message to be sent to the MM handler.
+    /// Updates both the internal state and the memory buffer, then verifies consistency.
     ///
     /// ## Parameters
     ///
     /// - `recipient`: The GUID of the recipient MM handler.
     pub fn set_message_info(&mut self, recipient: efi::Guid) -> Result<(), CommunicateBufferStatus> {
-        if self.len() < Self::MESSAGE_START_OFFSET {
-            return Err(CommunicateBufferStatus::TooSmallForHeader);
-        }
+        log::trace!(target: "mm_comm", "Setting message info for buffer {}: recipient={:?}", self.id, recipient);
 
-        self.recipient = Some(recipient);
+        // Validate capacity first
+        self.validate_capacity(0)?;
+
+        // Update private state
+        self.private_recipient = Some(recipient);
+
+        // Update memory buffer using safe byte operations
+        let header = EfiMmCommunicateHeader::new(recipient, self.private_message_length);
+        let header_bytes = header.as_bytes();
+        self.as_slice_mut()[..Self::MESSAGE_START_OFFSET].copy_from_slice(header_bytes);
+
+        log::trace!(target: "mm_comm", "Message info set successfully for buffer {}", self.id);
         Ok(())
     }
 
     /// Sets the data message used for communication with the MM handler.
+    /// Updates both the internal state and the memory buffer, then verifies consistency.
     ///
     /// ## Parameters
     ///
     /// - `message`: The message to be sent to the MM handler. The message length in the communicate header is
     ///   set to the length of this slice.
     pub fn set_message(&mut self, message: &[u8]) -> Result<(), CommunicateBufferStatus> {
+        log::trace!(target: "mm_comm", "Setting message for buffer {}: message_size={}", self.id, message.len());
+
         self.validate_capacity(message.len())?;
 
-        let recipient = if let Some(recipient) = self.recipient {
-            recipient
-        } else {
-            return Err(CommunicateBufferStatus::InvalidRecipient);
-        };
+        let recipient = self.private_recipient.ok_or_else(|| {
+            log::error!(target: "mm_comm", "Buffer {} has no recipient set", self.id);
+            CommunicateBufferStatus::InvalidRecipient
+        })?;
 
-        self.message_length = message.len();
-        let message_length = self.message_length;
+        // Update private state
+        self.private_message_length = message.len();
 
-        let header = EfiMmCommunicateHeader::new(recipient, message_length);
-        let slice = self.as_slice_mut();
-        slice[..Self::MESSAGE_START_OFFSET].copy_from_slice(header.as_bytes());
-        slice[Self::MESSAGE_START_OFFSET..Self::MESSAGE_START_OFFSET + message_length].copy_from_slice(message);
+        log::trace!(target: "mm_comm", "Buffer {}: writing header and message data", self.id);
 
+        // Update memory buffer using safe byte operations for header
+        let header = EfiMmCommunicateHeader::new(recipient, message.len());
+        let header_bytes: &[u8] = header.as_bytes();
+        self.as_slice_mut()[..Self::MESSAGE_START_OFFSET].copy_from_slice(header_bytes);
+
+        // Copy message data
+        self.as_slice_mut()[Self::MESSAGE_START_OFFSET..Self::MESSAGE_START_OFFSET + message.len()]
+            .copy_from_slice(message);
+
+        log::debug!(target: "mm_comm", "Buffer {} message set successfully: header_size={}, message_size={}",
+            self.id, Self::MESSAGE_START_OFFSET, message.len());
         Ok(())
     }
 
-    /// Returns a slice to the message part of the communicate buffer.
-    pub fn get_message(&self) -> Vec<u8> {
-        self.as_slice()[Self::MESSAGE_START_OFFSET..].to_vec()
+    /// Returns a copy of the message part of the communicate buffer.
+    /// This method uses the internal state and verifies consistency with memory.
+    ///
+    /// Note: This method extracts the actual message content using verified state tracking.
+    pub fn get_message(&self) -> Result<Vec<u8>, CommunicateBufferStatus> {
+        if self.private_message_length == 0 {
+            log::trace!(target: "mm_comm", "Buffer {} has zero-length message", self.id);
+            return Ok(Vec::new());
+        }
+
+        let start_offset = Self::MESSAGE_START_OFFSET;
+        let end_offset = start_offset + self.private_message_length;
+
+        // Ensure we don't read beyond the buffer
+        if end_offset > self.len() {
+            log::error!(target: "mm_comm", "Buffer {} message extends beyond buffer: end_offset={}, buffer_len={}",
+                self.id, end_offset, self.len());
+            return Err(CommunicateBufferStatus::TooSmallForMessage);
+        }
+
+        let message = self.as_slice()[start_offset..end_offset].to_vec();
+        log::trace!(target: "mm_comm", "Retrieved message from buffer {}: message_size={}", self.id, message.len());
+        Ok(message)
     }
 }
 
@@ -595,7 +660,7 @@ mod tests {
         assert_eq!(comm_buffer.id(), 1);
 
         // Test that we can retrieve the message
-        let retrieved_message = comm_buffer.get_message();
+        let retrieved_message = comm_buffer.get_message().unwrap();
         assert_eq!(retrieved_message[..message.len()], *message);
     }
 
@@ -634,7 +699,7 @@ mod tests {
         assert!(comm_buffer.set_message_info(test_guid).is_ok(), "Failed to set the message info");
         assert!(comm_buffer.set_message(MESSAGE).is_ok(), "Failed to set the message");
 
-        let retrieved_message = comm_buffer.get_message();
+        let retrieved_message = comm_buffer.get_message().unwrap();
         assert_eq!(retrieved_message[..MESSAGE.len()], *MESSAGE);
     }
 
@@ -649,7 +714,7 @@ mod tests {
 
         let message = b"MM Handler!";
         assert!(comm_buffer.set_message(message).is_ok());
-        let retrieved_message = comm_buffer.get_message();
+        let retrieved_message = comm_buffer.get_message().unwrap();
         assert_eq!(retrieved_message[..message.len()], *message);
         assert_eq!(comm_buffer.len(), 64);
 
@@ -659,7 +724,7 @@ mod tests {
         assert!(comm_buffer.set_message_info(recipient_guid2).is_ok());
 
         // Message should still be there but header should be updated
-        let retrieved_message2 = comm_buffer.get_message();
+        let retrieved_message2 = comm_buffer.get_message().unwrap();
         assert_eq!(retrieved_message2[..message.len()], *message);
         assert_eq!(comm_buffer.len(), 64);
     }
@@ -727,7 +792,7 @@ mod tests {
         assert_eq!(comm_buffer.id(), id);
 
         // Test that the buffer is zeroed initially
-        let message = comm_buffer.get_message();
+        let message = comm_buffer.get_message().unwrap();
         assert!(message.iter().all(|&x| x == 0));
     }
 

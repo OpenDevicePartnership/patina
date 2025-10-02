@@ -45,6 +45,8 @@ pub enum Status {
     SwMmiServiceNotAvailable,
     /// The SW MMI Trigger failed.
     SwMmiFailed,
+    /// Failed to retrieve a valid response from the communication buffer.
+    InvalidResponse,
 }
 
 /// MM Communication Trait
@@ -201,7 +203,10 @@ impl MmCommunication for MmCommunicator {
         };
 
         log::trace!(target: "mm_comm", "MM communication completed successfully, retrieving response");
-        let response = comm_buffer.get_message();
+        let response = comm_buffer.get_message().map_err(|_| {
+            log::error!(target: "mm_comm", "Failed to retrieve response from communication buffer");
+            Status::InvalidResponse
+        })?;
         log::debug!(target: "mm_comm", "MM communication response received: size={}", response.len());
 
         Ok(response)
