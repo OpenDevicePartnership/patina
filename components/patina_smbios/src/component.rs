@@ -9,15 +9,120 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
-use patina_sdk::{component::IntoComponent, error::Result};
+extern crate alloc;
+use crate::smbios_derive::{
+    SmbiosError, SmbiosHandle, SmbiosManager, SmbiosRecord, SmbiosRecords, SmbiosTableHeader, SmbiosType,
+};
+use alloc::boxed::Box;
+use patina_sdk::{
+    component::{
+        IntoComponent,
+        params::{Commands, Config},
+        service::IntoService,
+    },
+    error::Result,
+};
+
+/// Configuration for SMBIOS service
+#[derive(Debug, Clone)]
+pub struct SmbiosConfiguration {
+    /// SMBIOS major version (e.g., 3 for SMBIOS 3.x)
+    pub major_version: u8,
+    /// SMBIOS minor version (e.g., 0 for SMBIOS 3.0)
+    pub minor_version: u8,
+}
+
+impl Default for SmbiosConfiguration {
+    fn default() -> Self {
+        Self { major_version: 3, minor_version: 0 }
+    }
+}
 
 /// Initializes the SMBIOS provider service
-#[derive(IntoComponent)]
-pub struct SmbiosProviderManager;
+///
+/// This component provides the `SmbiosRecords` service that allows other components
+/// to add, update, remove, and query SMBIOS records in the system firmware.
+#[derive(IntoComponent, IntoService)]
+#[service(dyn SmbiosRecords<'static>)]
+pub struct SmbiosProviderManager {
+    manager: SmbiosManager,
+}
 
 impl SmbiosProviderManager {
-    fn entry_point(self) -> Result<()> {
-        log::info!("Hello from SmbiosProviderManager");
+    /// Create a new SMBIOS provider manager with default SMBIOS 3.0 version
+    pub fn new() -> Self {
+        Self { manager: SmbiosManager::new(3, 0) }
+    }
+
+    /// Initialize the SMBIOS provider and register it as a service
+    fn entry_point(mut self, config: Option<Config<SmbiosConfiguration>>, mut commands: Commands) -> Result<()> {
+        log::info!("Initializing SMBIOS Provider...");
+
+        let cfg = config.map(|c| (*c).clone()).unwrap_or_default();
+
+        // Update manager with configured version
+        self.manager = SmbiosManager::new(cfg.major_version, cfg.minor_version);
+
+        log::info!("SMBIOS version {}.{}", cfg.major_version, cfg.minor_version);
+
+        // Register the service so other components can consume it
+        commands.add_service(self);
+
+        log::info!("SMBIOS Provider initialized successfully");
         Ok(())
+    }
+}
+
+impl Default for SmbiosProviderManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// Delegate the SmbiosRecords trait implementation to the inner manager
+impl SmbiosRecords<'static> for SmbiosProviderManager {
+    unsafe fn add(
+        &mut self,
+        producer_handle: Option<r_efi::efi::Handle>,
+        record: &SmbiosTableHeader,
+    ) -> core::result::Result<SmbiosHandle, SmbiosError> {
+        unsafe { self.manager.add(producer_handle, record) }
+    }
+
+    fn add_from_bytes(
+        &mut self,
+        producer_handle: Option<r_efi::efi::Handle>,
+        record_data: &[u8],
+    ) -> core::result::Result<SmbiosHandle, SmbiosError> {
+        self.manager.add_from_bytes(producer_handle, record_data)
+    }
+
+    fn update_string(
+        &mut self,
+        smbios_handle: SmbiosHandle,
+        string_number: usize,
+        string: &str,
+    ) -> core::result::Result<(), SmbiosError> {
+        self.manager.update_string(smbios_handle, string_number, string)
+    }
+
+    fn remove(&mut self, smbios_handle: SmbiosHandle) -> core::result::Result<(), SmbiosError> {
+        self.manager.remove(smbios_handle)
+    }
+
+    fn get_next(
+        &self,
+        smbios_handle: &mut SmbiosHandle,
+        record_type: Option<SmbiosType>,
+    ) -> core::result::Result<(&SmbiosTableHeader, Option<r_efi::efi::Handle>), SmbiosError> {
+        self.manager.get_next(smbios_handle, record_type)
+    }
+
+    fn iter(&self) -> Box<dyn Iterator<Item = &'static SmbiosRecord> + 'static> {
+        self.manager.iter()
+    }
+
+    fn version(&self) -> (u8, u8) {
+        self.manager.version()
     }
 }
