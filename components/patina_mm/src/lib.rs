@@ -97,13 +97,13 @@
 //!                         &mm_supv_req_header as *const _ as *const u8,
 //!                         core::mem::size_of::<MmSupervisorRequestHeader>(),
 //!                     ),
-//!                     efi::Guid::from_fields(
+//!                     patina::Guid::from_fields(
 //!                         0x8c633b23,
 //!                         0x1260,
 //!                         0x4ea6,
 //!                         0x83,
 //!                         0x0F,
-//!                         &[0x7d, 0xdc, 0x97, 0x38, 0x21, 0x11],
+//!                         [0x7d, 0xdc, 0x97, 0x38, 0x21, 0x11],
 //!                     ),
 //!                 )
 //!                 .map_err(|_| {
