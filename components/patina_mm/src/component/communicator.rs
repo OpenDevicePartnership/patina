@@ -14,11 +14,11 @@
 //!
 use crate::config::{CommunicateBuffer, EfiMmCommunicateHeader, MmCommunicationConfiguration};
 use crate::service::SwMmiTrigger;
+use patina::Guid;
 use patina::component::{
     IntoComponent, Storage,
     service::{IntoService, Service},
 };
-use r_efi::efi;
 extern crate alloc;
 use alloc::{boxed::Box, vec::Vec};
 
@@ -120,11 +120,12 @@ pub trait MmCommunication {
     /// use r_efi::efi;
     /// use patina_mm::component::communicator::MmCommunication;
     /// use patina::component::service::Service;
+    /// use patina::Guid;
     ///
     /// fn component(comm_service: Service<dyn MmCommunication>) {
     ///     let data = [0x01, 0x02, 0x03];
     ///     let recipient = efi::Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x90, 0xab, 0xcd, 0xef]);
-    ///     let result = comm_service.communicate(0, &data, recipient);
+    ///     let result = comm_service.communicate(0, &data, Guid::from_ref(&recipient));
     ///
     ///     match result {
     ///         Ok(response) => println!("Received response: {:?}", response),
@@ -132,7 +133,7 @@ pub trait MmCommunication {
     ///     }
     /// }
     /// ```
-    fn communicate(&self, id: u8, data_buffer: &[u8], recipient: efi::Guid) -> Result<Vec<u8>, Status>;
+    fn communicate<'a>(&self, id: u8, data_buffer: &[u8], recipient: Guid<'a>) -> Result<Vec<u8>, Status>;
 }
 
 /// MM Communicator Service
@@ -204,7 +205,7 @@ impl Debug for MmCommunicator {
 }
 
 impl MmCommunication for MmCommunicator {
-    fn communicate(&self, id: u8, data_buffer: &[u8], recipient: efi::Guid) -> Result<Vec<u8>, Status> {
+    fn communicate<'a>(&self, id: u8, data_buffer: &[u8], recipient: Guid<'a>) -> Result<Vec<u8>, Status> {
         log::debug!(target: "mm_comm", "Starting MM communication: buffer_id={}, data_size={}, recipient={:?}", id, data_buffer.len(), recipient);
 
         if self.comm_buffers.borrow().is_empty() {
@@ -240,7 +241,7 @@ impl MmCommunication for MmCommunicator {
         comm_buffer.reset();
 
         log::trace!(target: "mm_comm", "Setting up communication buffer for MM request");
-        comm_buffer.set_message_info(recipient).map_err(|err| {
+        comm_buffer.set_message_info(recipient.clone()).map_err(|err| {
             log::error!(target: "mm_comm", "Failed to set message info: {:?}", err);
             Status::CommBufferInitError
         })?;
@@ -303,11 +304,13 @@ mod tests {
             // For test purposes, just echo the request data back as the response
             // In a real MM environment, the MM handlers would process the request and update the buffer
             // Reset and set the same data back (simulating MM handler processing)
-            let recipient = comm_buffer
+            let recipient_bytes = comm_buffer
                 .get_header_guid()
                 .map_err(|_| Status::CommBufferInitError)?
-                .ok_or(Status::CommBufferInitError)?;
+                .ok_or(Status::CommBufferInitError)?
+                .as_bytes();
             comm_buffer.reset();
+            let recipient = patina::Guid::from_bytes(&recipient_bytes);
             comm_buffer.set_message_info(recipient).map_err(|_| Status::CommBufferInitError)?;
             comm_buffer.set_message(&request_data).map_err(|_| Status::CommBufferInitError)?;
 
@@ -319,6 +322,10 @@ mod tests {
     static TEST_RESPONSE: [u8; 4] = [0x04, 0x03, 0x02, 0x1];
     static TEST_RECIPIENT: efi::Guid =
         efi::Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x90, 0xab, 0xcd, 0xef]);
+
+    fn test_recipient() -> Guid<'static> {
+        Guid::from_ref(&TEST_RECIPIENT)
+    }
 
     macro_rules! get_test_communicator {
         ($size:expr, $mock_executor:expr) => {{
@@ -350,7 +357,7 @@ mod tests {
 
         let communicator: MmCommunicator =
             MmCommunicator { comm_buffers: RefCell::new(vec![]), mm_executor: Some(Box::new(mock_executor)) };
-        let result = communicator.communicate(0, &TEST_DATA, TEST_RECIPIENT);
+        let result = communicator.communicate(0, &TEST_DATA, test_recipient());
         assert_eq!(result, Err(Status::NoCommBuffer));
     }
 
@@ -361,7 +368,7 @@ mod tests {
 
         let communicator = get_test_communicator!(0, mock_executor);
         let data = [];
-        let result = communicator.communicate(0, &data, TEST_RECIPIENT);
+        let result = communicator.communicate(0, &data, test_recipient());
         assert_eq!(result, Err(Status::InvalidDataBuffer));
     }
 
@@ -372,7 +379,7 @@ mod tests {
 
         let communicator = get_test_communicator!(4, mock_executor);
         let data = [0x01, 0x02, 0x03, 0x04, 0x05];
-        let result = communicator.communicate(0, &data, TEST_RECIPIENT);
+        let result = communicator.communicate(0, &data, test_recipient());
         assert_eq!(result, Err(Status::CommBufferTooSmall));
     }
 
@@ -385,7 +392,7 @@ mod tests {
 
         let communicator = get_test_communicator!(1024, mock_mm_executor);
 
-        let result = communicator.communicate(0, &TEST_DATA, TEST_RECIPIENT);
+        let result = communicator.communicate(0, &TEST_DATA, test_recipient());
         assert!(result.is_ok(), "Expected successful communication, but got: {:?}", result.err());
     }
 
@@ -398,7 +405,7 @@ mod tests {
 
         let communicator = get_test_communicator!(1024, mock_mm_executor);
 
-        let result = communicator.communicate(0, &TEST_DATA, TEST_RECIPIENT);
+        let result = communicator.communicate(0, &TEST_DATA, test_recipient());
         assert_eq!(result, Err(Status::SwMmiFailed), "Expected `Status::SwMmiFailed`, but got: {result:?}");
     }
 
@@ -414,7 +421,7 @@ mod tests {
 
         let result = communicator.comm_buffers.borrow_mut()[0].set_message(&TEST_RESPONSE);
         assert_eq!(result, Err(CommunicateBufferStatus::InvalidRecipient));
-        let result = communicator.comm_buffers.borrow_mut()[0].set_message_info(TEST_RECIPIENT);
+        let result = communicator.comm_buffers.borrow_mut()[0].set_message_info(&test_recipient());
         assert_eq!(result, Ok(()), "Expected message info to be set successfully, but got: {result:?}");
         let result = communicator.comm_buffers.borrow_mut()[0].set_message(&TEST_RESPONSE);
         assert_eq!(result, Ok(()), "Expected message to be set successfully, but got: {result:?}");
@@ -473,7 +480,7 @@ mod tests {
                 comm_buffer.id()
             );
             assert!(
-                comm_buffer.set_message_info(TEST_RECIPIENT).is_ok(),
+                comm_buffer.set_message_info(&test_recipient()).is_ok(),
                 "Failed to set message info for comm buffer with ID: {}",
                 comm_buffer.id()
             );
@@ -488,7 +495,7 @@ mod tests {
         }
 
         // Verify that the correct comm buffer is used for the first ID (which matches after the comm data is written)
-        let result = communicator.communicate(comm_buffer_ids[0], &TEST_DATA, TEST_RECIPIENT);
+        let result = communicator.communicate(comm_buffer_ids[0], &TEST_DATA, test_recipient());
 
         assert_eq!(result, Ok(TEST_DATA.to_vec()), "Comm buffer 1 failed to return the expected data");
     }
