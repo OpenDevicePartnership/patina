@@ -5,7 +5,8 @@ license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
-publish.workspace = true
+publish = false
+description = "Procedural macros for SMBIOS record structures"
 
 [lib]
 proc-macro = true
