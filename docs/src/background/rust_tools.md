@@ -112,12 +112,13 @@ The tools available with cargo make development simple and consistent across all
 
 ```bash
 # Standard cargo commands work universally
-cargo make check      # Fast compilation check
-cargo make build      # Full compilation
-cargo make test       # Run test suite
-cargo make doc        # Generate documentation
-cargo make cov        # Generate unit test code coverage
-cargo make deny       # Check for security and license compliance in dependencies
+cargo make check        # Fast compilation check
+cargo make build        # Full compilation
+cargo make test         # Run test suite
+cargo make patina-test  # Build with Patina test features enabled for on-platform tests
+cargo make doc          # Generate documentation
+cargo make cov          # Generate unit test code coverage
+cargo make deny         # Check for security and license compliance in dependencies
 
 cargo make all   # Run the same commands used in CI/CD
 ```

@@ -5,8 +5,7 @@ default_to_workspace = false
 RUSTC_BOOTSTRAP = 1
 NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
-TEST_FLAGS = { value = "--features enable_patina_tests", condition = { env_not_set = ["TEST_FLAGS"] } }
-COV_FLAGS = { value = "--features enable_patina_tests --workspace --lcov --profile test --ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
+COV_FLAGS = { value = "--workspace --lcov --profile test --ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
 RUSTDOCFLAGS = "-D warnings -D missing_docs"
 
 [env.development]
@@ -133,10 +132,16 @@ clear = true
 run_task = [{ name = ["check_no_std", "check_std", "check_tests"], parallel = true }]
 
 [tasks.test]
-description = "Builds all rust tests in the workspace. Example `cargo make test`"
+description = "Runs tests with native cargo test behavior. Example `cargo make test` or `cargo make test -p package_name -- --nocapture`"
 clear = true
 command = "cargo"
-args = ["test", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(TEST_FLAGS, )"]
+args = ["test", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
+
+[tasks.patina-test]
+description = "Builds crates with Patina tests enabled. Example `cargo make patina-test`"
+clear = true
+command = "cargo"
+args = ["build", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "@@split(STD_FLAGS, )", "--features", "enable_patina_tests"]
 dependencies = ["individual-package-targets"]
 
 [tasks.coverage]
@@ -277,6 +282,7 @@ dependencies = [
     "build-x64",
     "build-aarch64",
     "test",
+    "patina-test",
     "coverage",
     "fmt",
     "doc",

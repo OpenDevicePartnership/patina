@@ -98,10 +98,28 @@ cargo make -p release build-aarch64
 
 ## Test
 
-Use the test command to invoke a test build and execute all unit tests.
+- Run all unit tests in the workspace:
 
 ```shell
 cargo make test
+```
+
+- Run tests in an individual package:
+
+```shell
+cargo make test -p patina
+```
+
+Build on-platform tests in the workspace:
+
+```shell
+cargo make patina-test
+```
+
+- Build on-platform tests in an individual package:
+
+```shell
+cargo make patina-test -p patina
 ```
 
 ## Rust Version Updates
