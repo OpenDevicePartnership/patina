@@ -30,8 +30,8 @@ use mockall::automock;
 
 /// Trait for handling MM execution behavior.
 ///
-/// This trait abstracts the actual MM execution logic to enable testing
-/// of the communication flow without requiring real MM handlers.
+/// This trait abstracts the actual MM execution logic so testing can
+/// be performed without invoking real MM transitions.
 #[cfg_attr(any(test, feature = "mockall"), automock)]
 pub trait MmExecutor {
     /// Execute MM with the given communication buffer.
@@ -64,6 +64,7 @@ impl RealMmExecutor {
 }
 
 impl MmExecutor for RealMmExecutor {
+    #[coverage(off)]
     fn execute_mm(&self, _comm_buffer: &mut CommunicateBuffer) -> Result<(), Status> {
         log::debug!(target: "mm_comm", "Triggering SW MMI for MM communication");
         unsafe {
@@ -280,7 +281,7 @@ mod tests {
     use super::*;
     use crate::component::communicator::{MmCommunicator, MockMmExecutor};
     use crate::component::sw_mmi_manager::SwMmiManager;
-    use crate::config::{CommunicateBuffer, CommunicateBufferStatus, MmCommunicationConfiguration};
+    use crate::config::{CommunicateBuffer, MmCommunicationConfiguration};
     use patina::component::{IntoComponent, Storage};
 
     use core::cell::RefCell;
@@ -290,20 +291,15 @@ mod tests {
     extern crate alloc;
     use alloc::vec::Vec;
 
-    /// Test MM Executor that simulates successful MM execution
-    /// This simply echoes back the request data as the response
-    #[allow(dead_code)] // Usage in integration tests is not found
-    struct TestMmExecutor;
+    /// Simple MM Executor for unit tests that simulates MM handlers echoing request data back as the response
+    struct EchoMmExecutor;
 
-    #[allow(dead_code)]
-    impl MmExecutor for TestMmExecutor {
+    impl MmExecutor for EchoMmExecutor {
         fn execute_mm(&self, comm_buffer: &mut CommunicateBuffer) -> Result<(), Status> {
-            // Get the current message data
+            // Get the current message data to echo back
             let request_data = comm_buffer.get_message().map_err(|_| Status::InvalidDataBuffer)?;
 
-            // For test purposes, just echo the request data back as the response
-            // In a real MM environment, the MM handlers would process the request and update the buffer
-            // Reset and set the same data back (simulating MM handler processing)
+            // Simulate MM handler processing by echoing the data back
             let recipient_bytes = comm_buffer
                 .get_header_guid()
                 .map_err(|_| Status::CommBufferInitError)?
@@ -318,8 +314,41 @@ mod tests {
         }
     }
 
+    /// Transform MM Executor that simulates MM handlers transforming request data
+    struct TransformMmExecutor {
+        transform_fn: fn(&[u8]) -> Vec<u8>,
+    }
+
+    impl TransformMmExecutor {
+        fn new(transform_fn: fn(&[u8]) -> Vec<u8>) -> Self {
+            Self { transform_fn }
+        }
+    }
+
+    impl MmExecutor for TransformMmExecutor {
+        fn execute_mm(&self, comm_buffer: &mut CommunicateBuffer) -> Result<(), Status> {
+            // Get the current message data
+            let request_data = comm_buffer.get_message().map_err(|_| Status::InvalidDataBuffer)?;
+
+            // Transform the data using the provided function
+            let response_data = (self.transform_fn)(&request_data);
+
+            // Set the transformed response back in the buffer
+            let recipient_bytes = comm_buffer
+                .get_header_guid()
+                .map_err(|_| Status::CommBufferInitError)?
+                .ok_or(Status::CommBufferInitError)?
+                .as_bytes();
+            comm_buffer.reset();
+            let recipient = patina::Guid::from_bytes(&recipient_bytes);
+            comm_buffer.set_message_info(recipient).map_err(|_| Status::CommBufferInitError)?;
+            comm_buffer.set_message(&response_data).map_err(|_| Status::CommBufferInitError)?;
+
+            Ok(())
+        }
+    }
+
     static TEST_DATA: [u8; 3] = [0x01, 0x02, 0x03];
-    static TEST_RESPONSE: [u8; 4] = [0x04, 0x03, 0x02, 0x1];
     static TEST_RECIPIENT: efi::Guid =
         efi::Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x90, 0xab, 0xcd, 0xef]);
 
@@ -337,13 +366,19 @@ mod tests {
         }};
     }
 
+    fn create_communicator_with_buffers(
+        buffers: Vec<CommunicateBuffer>,
+        executor: Box<dyn MmExecutor>,
+    ) -> MmCommunicator {
+        MmCommunicator { comm_buffers: RefCell::new(buffers), mm_executor: Some(executor) }
+    }
+
     #[test]
-    fn communicator_runs_with_deps_satisfied() {
+    fn test_communicator_runs_with_deps_satisfied() {
         let mut storage = Storage::new();
         storage.add_config(MmCommunicationConfiguration::default());
         storage.add_service(SwMmiManager::new());
 
-        // A MmCommunicationConfiguration  instance is required.
         let mut communicator = MmCommunicator::new().into_component();
 
         communicator.initialize(&mut storage);
@@ -355,166 +390,169 @@ mod tests {
         let mut mock_executor = MockMmExecutor::new();
         mock_executor.expect_execute_mm().never();
 
-        let communicator: MmCommunicator =
+        let communicator =
             MmCommunicator { comm_buffers: RefCell::new(vec![]), mm_executor: Some(Box::new(mock_executor)) };
         let result = communicator.communicate(0, &TEST_DATA, test_recipient());
         assert_eq!(result, Err(Status::NoCommBuffer));
     }
 
     #[test]
-    fn test_communicate_invalid_data_buffer() {
+    fn test_communicate_empty_data_buffer() {
         let mut mock_executor = MockMmExecutor::new();
         mock_executor.expect_execute_mm().never();
 
-        let communicator = get_test_communicator!(0, mock_executor);
-        let data = [];
-        let result = communicator.communicate(0, &data, test_recipient());
+        let communicator = get_test_communicator!(1024, mock_executor);
+        let result = communicator.communicate(0, &[], test_recipient());
         assert_eq!(result, Err(Status::InvalidDataBuffer));
     }
 
     #[test]
-    fn test_communicate_comm_buffer_too_small() {
+    fn test_communicate_no_mm_executor() {
+        let communicator = MmCommunicator {
+            comm_buffers: RefCell::new(vec![CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 1024]))), 0)]),
+            mm_executor: None,
+        };
+        let result = communicator.communicate(0, &TEST_DATA, test_recipient());
+        assert_eq!(result, Err(Status::SwMmiServiceNotAvailable));
+    }
+
+    #[test]
+    fn test_communicate_buffer_not_found() {
         let mut mock_executor = MockMmExecutor::new();
         mock_executor.expect_execute_mm().never();
 
-        let communicator = get_test_communicator!(4, mock_executor);
-        let data = [0x01, 0x02, 0x03, 0x04, 0x05];
-        let result = communicator.communicate(0, &data, test_recipient());
+        let communicator = get_test_communicator!(1024, mock_executor);
+        let result = communicator.communicate(99, &TEST_DATA, test_recipient()); // ID 99 doesn't exist
+        assert_eq!(result, Err(Status::CommBufferNotFound));
+    }
+
+    #[test]
+    fn test_communicate_buffer_too_small() {
+        let mut mock_executor = MockMmExecutor::new();
+        mock_executor.expect_execute_mm().never();
+
+        // Create a buffer that's too small for header + data
+        let communicator = get_test_communicator!(10, mock_executor);
+        let large_data = vec![0x42; 100];
+        let result = communicator.communicate(0, &large_data, test_recipient());
         assert_eq!(result, Err(Status::CommBufferTooSmall));
     }
 
     #[test]
-    fn test_communicate_sw_mmi_is_triggered_once() {
-        let mut mock_mm_executor = MockMmExecutor::new();
-
-        // Verify that MM execution is only triggered once
-        mock_mm_executor.expect_execute_mm().once().returning(|_| Ok(()));
-
-        let communicator = get_test_communicator!(1024, mock_mm_executor);
+    fn test_communicate_successful_echo() {
+        let communicator = get_test_communicator!(1024, EchoMmExecutor);
 
         let result = communicator.communicate(0, &TEST_DATA, test_recipient());
-        assert!(result.is_ok(), "Expected successful communication, but got: {:?}", result.err());
+        assert!(result.is_ok(), "Communication should succeed: {:?}", result.err());
+        assert_eq!(result.unwrap(), TEST_DATA.to_vec());
     }
 
     #[test]
-    fn test_communicate_sw_mmi_is_returns_mmi_error() {
-        let mut mock_mm_executor = MockMmExecutor::new();
+    fn test_communicate_successful_transform() {
+        // Create a transform function that reverses the data
+        let reverse_transform = |data: &[u8]| -> Vec<u8> {
+            let mut reversed = data.to_vec();
+            reversed.reverse();
+            reversed
+        };
 
-        // Verify that MM execution failure returns `Status::SwMmiFailed`
-        mock_mm_executor.expect_execute_mm().times(1).returning(|_| Err(Status::SwMmiFailed));
+        let communicator = get_test_communicator!(1024, TransformMmExecutor::new(reverse_transform));
 
-        let communicator = get_test_communicator!(1024, mock_mm_executor);
+        let test_data = vec![1, 2, 3, 4, 5];
+        let expected_response = vec![5, 4, 3, 2, 1];
 
+        let result = communicator.communicate(0, &test_data, test_recipient());
+        assert!(result.is_ok(), "Communication should succeed: {:?}", result.err());
+        assert_eq!(result.unwrap(), expected_response);
+    }
+
+    #[test]
+    fn test_communicate_mm_executor_error() {
+        let mut mock_executor = MockMmExecutor::new();
+        mock_executor.expect_execute_mm().times(1).returning(|_| Err(Status::SwMmiFailed));
+
+        let communicator = get_test_communicator!(1024, mock_executor);
         let result = communicator.communicate(0, &TEST_DATA, test_recipient());
-        assert_eq!(result, Err(Status::SwMmiFailed), "Expected `Status::SwMmiFailed`, but got: {result:?}");
+        assert_eq!(result, Err(Status::SwMmiFailed));
     }
 
     #[test]
-    fn test_communicate_sw_mmi_get_and_set_message_are_consistent() {
-        const COMM_BUFFER_SIZE: usize = 64;
-
-        let mut mock_mm_executor = MockMmExecutor::new();
-
-        mock_mm_executor.expect_execute_mm().returning(|_| Ok(()));
-
-        let communicator = get_test_communicator!(COMM_BUFFER_SIZE, mock_mm_executor);
-
-        let result = communicator.comm_buffers.borrow_mut()[0].set_message(&TEST_RESPONSE);
-        assert_eq!(result, Err(CommunicateBufferStatus::InvalidRecipient));
-        let result = communicator.comm_buffers.borrow_mut()[0].set_message_info(&test_recipient());
-        assert_eq!(result, Ok(()), "Expected message info to be set successfully, but got: {result:?}");
-        let result = communicator.comm_buffers.borrow_mut()[0].set_message(&TEST_RESPONSE);
-        assert_eq!(result, Ok(()), "Expected message to be set successfully, but got: {result:?}");
-
-        let message = communicator.comm_buffers.borrow_mut()[0].get_message().unwrap();
-        assert!(!message.is_empty(), "Expected message to be set, but got empty message: {message:?}");
-        assert_eq!(message, TEST_RESPONSE, "Expected message to be set correctly, but got: {message:?}");
-    }
-
-    #[test]
-    fn test_communicate_uses_correct_comm_buffer() {
-        const COMM_BUFFER_SIZE: usize = 64;
-
-        const COMM_BUFFER_1_ID: u8 = 1;
-        const COMM_BUFFER_2_ID: u8 = 20;
-        const COMM_BUFFER_3_ID: u8 = 30;
-
-        const COMM_RESPONSE_TEST_BYTE_LEN: usize = 4;
-
-        let mut mock_mm_executor = MockMmExecutor::new();
-
-        // Verify that MM execution is only triggered once
-        mock_mm_executor.expect_execute_mm().once().returning(|_| Ok(()));
-
-        // Note: This macro creates a comm buffer of size 0 with ID 0
-        let communicator = get_test_communicator!(64, mock_mm_executor);
-
-        let comm_buffer_ids = [COMM_BUFFER_1_ID, COMM_BUFFER_2_ID, COMM_BUFFER_3_ID];
-        let comm_buffers = [
-            CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; COMM_BUFFER_SIZE]))), comm_buffer_ids[0]),
-            CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; COMM_BUFFER_SIZE]))), comm_buffer_ids[1]),
-            CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; COMM_BUFFER_SIZE]))), comm_buffer_ids[2]),
+    fn test_communicate_with_multiple_buffers() {
+        // Create multiple buffers with different IDs
+        let buffers = vec![
+            CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 512]))), 1),
+            CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 1024]))), 5),
+            CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 256]))), 10),
         ];
 
-        // Clear the buffer added by the macro and add the new buffers
-        communicator.comm_buffers.borrow_mut().clear();
-        comm_buffers.iter().cloned().for_each(|b| {
-            communicator.comm_buffers.borrow_mut().push(b);
-        });
+        let communicator = create_communicator_with_buffers(buffers, Box::new(EchoMmExecutor));
 
-        let mut comm_buffer_test_data: Vec<Vec<u8>> = Vec::new();
-        for (i, comm_buffer) in communicator.comm_buffers.borrow_mut().iter_mut().enumerate() {
-            let data = &(0..COMM_RESPONSE_TEST_BYTE_LEN).map(|x| (i + x + 1) as u8).collect::<Vec<_>>()[..];
-            assert!(
-                comm_buffers.iter().any(|b| b.id() == comm_buffer.id()),
-                "Comm buffer ID {} is not an expected ID",
-                comm_buffer.id()
-            );
+        // Test communication with each buffer
+        let test_data1 = b"Buffer 1 test";
+        let result1 = communicator.communicate(1, test_data1, test_recipient());
+        assert_eq!(result1.unwrap(), test_data1.to_vec());
 
-            let local_comm_buffer = comm_buffers.iter().find(|b| b.id() == comm_buffer.id()).unwrap();
-            assert_eq!(
-                local_comm_buffer.id(),
-                comm_buffer.id(),
-                "Comm buffer ID mismatch: expected {}, got {}",
-                local_comm_buffer.id(),
-                comm_buffer.id()
-            );
-            assert!(
-                comm_buffer.set_message_info(&test_recipient()).is_ok(),
-                "Failed to set message info for comm buffer with ID: {}",
-                comm_buffer.id()
-            );
-            comm_buffer.set_message(data).unwrap();
-            assert_eq!(
-                comm_buffer.get_message().unwrap()[..data.len()],
-                *data,
-                "Failed to set message for comm buffer with ID: {}",
-                comm_buffer.id()
-            );
-            comm_buffer_test_data.push(comm_buffer.get_message().unwrap());
-        }
+        let test_data5 = b"Buffer 5 test with more data";
+        let result5 = communicator.communicate(5, test_data5, test_recipient());
+        assert_eq!(result5.unwrap(), test_data5.to_vec());
 
-        // Verify that the correct comm buffer is used for the first ID (which matches after the comm data is written)
-        let result = communicator.communicate(comm_buffer_ids[0], &TEST_DATA, test_recipient());
-
-        assert_eq!(result, Ok(TEST_DATA.to_vec()), "Comm buffer 1 failed to return the expected data");
+        let test_data10 = b"Buffer 10";
+        let result10 = communicator.communicate(10, test_data10, test_recipient());
+        assert_eq!(result10.unwrap(), test_data10.to_vec());
     }
 
     #[test]
-    fn test_communicate_debug_formatting() {
-        let mut mock_mm_executor = MockMmExecutor::new();
-        mock_mm_executor.expect_execute_mm().never();
+    fn test_communicate_large_message() {
+        let communicator = get_test_communicator!(4096, EchoMmExecutor);
 
-        let communicator = get_test_communicator!(64, mock_mm_executor);
+        // Test with maximum size message (buffer size - header size)
+        let max_message_size = 4096 - EfiMmCommunicateHeader::size();
+        let large_data = vec![0x55; max_message_size];
 
-        let debug_output = format!("{communicator:?}");
-        assert!(
-            debug_output.contains("MM Communicator:"),
-            "Expected debug output to contain 'MM Communicator', but got: {debug_output:?}"
-        );
-        assert!(
-            debug_output.contains("MM Executor Set: true"),
-            "Expected debug output to contain 'MM Executor Set: true', but got: {debug_output:?}",
-        );
+        let result = communicator.communicate(0, &large_data, test_recipient());
+        assert!(result.is_ok(), "Large message communication should succeed");
+        assert_eq!(result.unwrap(), large_data);
+    }
+
+    #[test]
+    fn test_communicate_buffer_state_tracking() {
+        let communicator = get_test_communicator!(1024, EchoMmExecutor);
+
+        // First communication
+        let data1 = b"First message";
+        let result1 = communicator.communicate(0, data1, test_recipient());
+        assert_eq!(result1.unwrap(), data1.to_vec());
+
+        // Second communication with different data
+        let data2 = b"Second different message";
+        let result2 = communicator.communicate(0, data2, test_recipient());
+        assert_eq!(result2.unwrap(), data2.to_vec());
+
+        // Verify buffer was properly reset between communications
+        let buffer = &communicator.comm_buffers.borrow()[0];
+        let current_message = buffer.get_message().unwrap();
+        assert_eq!(current_message, data2.to_vec());
+    }
+
+    #[test]
+    fn test_communicate_verifies_buffer_consistency() {
+        // Test that the communicate method properly verifies buffer state consistency
+        let mut mock_executor = MockMmExecutor::new();
+        mock_executor.expect_execute_mm().times(1).returning(|comm_buffer| {
+            // Simulate MM handler corrupting the buffer state by directly writing to memory
+            // This should be caught by the state verification
+            unsafe {
+                let ptr = comm_buffer.as_ptr();
+                *ptr = 0xFF; // Corrupt the first byte of the header
+            }
+            Ok(())
+        });
+
+        let communicator = get_test_communicator!(1024, mock_executor);
+        let result = communicator.communicate(0, &TEST_DATA, test_recipient());
+
+        // Should return an error because the buffer state is inconsistent after MM execution
+        assert!(result.is_err(), "Should detect buffer corruption");
+        assert_eq!(result.unwrap_err(), Status::InvalidResponse);
     }
 }
