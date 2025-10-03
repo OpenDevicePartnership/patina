@@ -19,7 +19,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 extern crate alloc;
-use alloc::{format, string::String, vec::Vec};
+use alloc::vec::Vec;
 use core::fmt;
 use core::pin::Pin;
 use core::ptr::NonNull;
@@ -56,9 +56,9 @@ impl Default for MmCommunicationConfiguration {
 impl fmt::Display for MmCommunicationConfiguration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "MM Communication Configuration:")?;
-        writeln!(f, "  ACPI Base: {}", format_acpi_base(&self.acpi_base))?;
-        writeln!(f, "  Command Port: {}", format_mmi_port(&self.cmd_port))?;
-        writeln!(f, "  Data Port: {}", format_mmi_port(&self.data_port))?;
+        writeln!(f, "  ACPI Base: {}", self.acpi_base)?;
+        writeln!(f, "  Command Port: {}", self.cmd_port)?;
+        writeln!(f, "  Data Port: {}", self.data_port)?;
         writeln!(f, "  Communication Buffers ({}):", self.comm_buffers.len())?;
 
         if self.comm_buffers.is_empty() {
@@ -69,20 +69,6 @@ impl fmt::Display for MmCommunicationConfiguration {
             }
             Ok(())
         }
-    }
-}
-
-fn format_mmi_port(port: &MmiPort) -> String {
-    match port {
-        MmiPort::Smi(value) => format!("SMI(0x{value:04X})"),
-        MmiPort::Smc(value) => format!("SMC(0x{value:08X})"),
-    }
-}
-
-fn format_acpi_base(base: &AcpiBase) -> String {
-    match base {
-        AcpiBase::Mmio(addr) => format!("MMIO(0x{addr:X})"),
-        AcpiBase::Io(port) => format!("IO(0x{port:04X})"),
     }
 }
 
@@ -449,6 +435,15 @@ impl fmt::Debug for MmiPort {
     }
 }
 
+impl fmt::Display for MmiPort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MmiPort::Smi(value) => write!(f, "SMI(0x{value:04X})"),
+            MmiPort::Smc(value) => write!(f, "SMC(0x{value:08X})"),
+        }
+    }
+}
+
 /// ACPI Base Address
 ///
 /// Represents the base address for ACPI MMIO or IO ports. This is the address used to access the ACPI Fixed hardware
@@ -466,6 +461,15 @@ impl fmt::Debug for AcpiBase {
         match self {
             AcpiBase::Mmio(addr) => write!(f, "AcpiBase::Mmio(0x{addr:X})"),
             AcpiBase::Io(port) => write!(f, "AcpiBase::Io(0x{port:04X})"),
+        }
+    }
+}
+
+impl fmt::Display for AcpiBase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AcpiBase::Mmio(addr) => write!(f, "MMIO(0x{addr:X})"),
+            AcpiBase::Io(port) => write!(f, "IO(0x{port:04X})"),
         }
     }
 }
@@ -750,6 +754,28 @@ mod tests {
         let acpi_base_io = AcpiBase::Io(0x1234);
         let debug_msg_io = format!("{acpi_base_io:?}");
         assert_eq!(debug_msg_io, "AcpiBase::Io(0x1234)");
+    }
+
+    #[test]
+    fn test_acpibase_display_msg() {
+        let acpi_base_mmio = AcpiBase::Mmio(0x12345678);
+        let display_msg_mmio = format!("{acpi_base_mmio}");
+        assert_eq!(display_msg_mmio, "MMIO(0x12345678)");
+
+        let acpi_base_io = AcpiBase::Io(0x1234);
+        let display_msg_io = format!("{acpi_base_io}");
+        assert_eq!(display_msg_io, "IO(0x1234)");
+    }
+
+    #[test]
+    fn test_mmiport_display_msg() {
+        let smi_port = MmiPort::Smi(0xFF);
+        let display_msg_smi = format!("{smi_port}");
+        assert_eq!(display_msg_smi, "SMI(0x00FF)");
+
+        let smc_port = MmiPort::Smc(0x12345678);
+        let display_msg_smc = format!("{smc_port}");
+        assert_eq!(display_msg_smc, "SMC(0x12345678)");
     }
 
     #[test]
