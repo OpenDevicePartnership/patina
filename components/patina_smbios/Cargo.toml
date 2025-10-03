@@ -14,7 +14,7 @@ patina_sdk = { workspace = true }
 r-efi = { workspace = true }
 spin = { workspace = true }
 hashbrown = "0.11.2"
-patina_smbios_macro = { version = "8.0.0", path = "patina_smbios_macro" }
+patina_smbios_macro = { workspace = true }
 
 [features]
 enable_patina_tests = []
