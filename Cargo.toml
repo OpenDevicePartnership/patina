@@ -46,7 +46,6 @@ patina_sdk = { version = "8.0.0", path = "sdk/patina_sdk", registry = "patina-fw
 patina_ffs = { version = "8.0.0", path = "sdk/patina_ffs", registry = "patina-fw" }
 patina_ffs_extractors = { version = "8.0.0", path = "sdk/patina_ffs_extractors", registry = "patina-fw" }
 patina_sdk_macro = { version = "8.0.0", path = "sdk/patina_sdk_macro", registry = "patina-fw" }
-patina_smbios_macro = { version = "8.0.0", path = "components/patina_smbios/patina_smbios_macro", registry = "patina-fw" }
 patina_stacktrace = { version = "8.0.0", path = "core/patina_stacktrace", registry = "patina-fw" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }

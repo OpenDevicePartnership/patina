@@ -1,5 +1,4 @@
 extern crate alloc;
-use crate::SmbiosRecord;
 use crate::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SmbiosError, SmbiosTableHeader};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -183,19 +182,40 @@ impl FieldInfo {
     }
 }
 
-/// Macro to automatically generate field layout for SMBIOS records
-macro_rules! impl_smbios_field_layout {
-    ($struct_name:ident, $($field_name:ident: $field_type:ident),* $(,)?) => {
+/// Macro to automatically generate both field layout and SmbiosRecordStructure implementation
+macro_rules! impl_smbios_record {
+    ($struct_name:ident, $record_type:expr, $string_pool_field:ident, $($field_name:ident: $field_type:ident),* $(,)?) => {
         impl SmbiosFieldLayout for $struct_name {
             fn field_layout() -> FieldLayout {
                 use core::mem::{offset_of};
-                // use core::mem::{offset_of, size_of};
 
                 FieldLayout {
                     fields: vec![
-                        $(impl_smbios_field_layout!(@field_info $struct_name, $field_name, $field_type),)*
+                        $(impl_smbios_record!(@field_info $struct_name, $field_name, $field_type),)*
                     ],
                 }
+            }
+        }
+
+        impl SmbiosRecordStructure for $struct_name {
+            const RECORD_TYPE: u8 = $record_type;
+
+            fn validate(&self) -> Result<(), SmbiosError> {
+                // Basic validation for strings
+                for string in &self.$string_pool_field {
+                    if string.len() > crate::smbios_derive::SMBIOS_STRING_MAX_LENGTH {
+                        return Err(SmbiosError::StringTooLong);
+                    }
+                }
+                Ok(())
+            }
+
+            fn string_pool(&self) -> &[String] {
+                &self.$string_pool_field
+            }
+
+            fn string_pool_mut(&mut self) -> &mut Vec<String> {
+                &mut self.$string_pool_field
             }
         }
     };
@@ -240,8 +260,6 @@ macro_rules! impl_smbios_field_layout {
 }
 
 /// Type 0: Platform Firmware Information (BIOS Information)
-#[derive(SmbiosRecord)]
-#[smbios(record_type = 0)]
 pub struct Type0PlatformFirmwareInformation {
     pub header: SmbiosTableHeader,
     pub vendor: u8,           // String index
@@ -262,9 +280,26 @@ pub struct Type0PlatformFirmwareInformation {
     pub string_pool: Vec<String>,
 }
 
+impl_smbios_record!(
+    Type0PlatformFirmwareInformation,
+    0,
+    string_pool,
+    vendor: u8,
+    firmware_version: u8,
+    bios_starting_address_segment: u16,
+    firmware_release_date: u8,
+    firmware_rom_size: u8,
+    characteristics: u64,
+    characteristics_ext1: u8,
+    characteristics_ext2: u8,
+    system_bios_major_release: u8,
+    system_bios_minor_release: u8,
+    embedded_controller_major_release: u8,
+    embedded_controller_minor_release: u8,
+    extended_bios_rom_size: u16
+);
+
 /// Type 1: System Information
-#[derive(SmbiosRecord)]
-#[smbios(record_type = 1)]
 pub struct Type1SystemInformation {
     pub header: SmbiosTableHeader,
     pub manufacturer: u8,  // String index
@@ -280,9 +315,21 @@ pub struct Type1SystemInformation {
     pub string_pool: Vec<String>,
 }
 
+impl_smbios_record!(
+    Type1SystemInformation,
+    1,
+    string_pool,
+    manufacturer: u8,
+    product_name: u8,
+    version: u8,
+    serial_number: u8,
+    uuid: uuid,
+    wake_up_type: u8,
+    sku_number: u8,
+    family: u8
+);
+
 /// Type 2: Baseboard Information
-#[derive(SmbiosRecord)]
-#[smbios(record_type = 2)]
 pub struct Type2BaseboardInformation {
     pub header: SmbiosTableHeader,
     pub manufacturer: u8,  // String index
@@ -300,9 +347,23 @@ pub struct Type2BaseboardInformation {
     pub string_pool: Vec<String>,
 }
 
+impl_smbios_record!(
+    Type2BaseboardInformation,
+    2,
+    string_pool,
+    manufacturer: u8,
+    product: u8,
+    version: u8,
+    serial_number: u8,
+    asset_tag: u8,
+    feature_flags: u8,
+    location_in_chassis: u8,
+    chassis_handle: u16,
+    board_type: u8,
+    contained_object_handles: u8
+);
+
 /// Type 3: System Enclosure - another example showing how simple it becomes
-#[derive(SmbiosRecord)]
-#[smbios(record_type = 3)]
 pub struct Type3SystemEnclosure {
     pub header: SmbiosTableHeader,
     pub manufacturer: u8, // String index
@@ -323,3 +384,23 @@ pub struct Type3SystemEnclosure {
     // Integrated string pool
     pub string_pool: Vec<String>,
 }
+
+impl_smbios_record!(
+    Type3SystemEnclosure,
+    3,
+    string_pool,
+    manufacturer: u8,
+    enclosure_type: u8,
+    version: u8,
+    serial_number: u8,
+    asset_tag_number: u8,
+    bootup_state: u8,
+    power_supply_state: u8,
+    thermal_state: u8,
+    security_status: u8,
+    oem_defined: u32,
+    height: u8,
+    number_of_power_cords: u8,
+    contained_element_count: u8,
+    contained_element_record_length: u8
+);

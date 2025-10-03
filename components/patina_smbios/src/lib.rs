@@ -12,7 +12,6 @@ pub mod smbios_derive;
 pub mod smbios_record;
 
 pub use component::SmbiosConfiguration;
-pub use patina_smbios_macro::SmbiosRecord;
 
 // Simplified test: construct a header, serialize it to bytes, append data and print
 #[cfg(test)]
