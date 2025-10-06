@@ -2,7 +2,7 @@
 
 Typically small to medium changes such as bugfixes, existing implementation improvements, and documentation are handled
 via pull requests. Depending on the size they may also have an associated github issue or discussion. These are
-expected to be simple changes without much contrivoursy.
+expected to be simple changes without much controversy.
 
 The RFC processes comes into play when a particular change become large, introduce new features, or break existing
 interfaces. In these scenarios, the developer is expected to follow the RFC process outlined below to ensure not only
