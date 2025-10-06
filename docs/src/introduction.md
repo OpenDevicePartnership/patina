@@ -21,7 +21,7 @@ In addition, here are some of the more commonly referenced documentation in this
 5. [Developer Guides](dev/documenting.md)
 
 ```admonish note
-This book assumes you already have prerequisite knowledge of the [EDK II](https://github.com/tianocore/edk2) ecosystem,
-and the necessary tools installed for building EDK II packages. Familiarity with Rust and its ecosystem is also
-helpful, but this documentation does not assume it.
+This documentation aims to be as detailed as possible, not assuming any previous knowledge. However some general Rust
+knowledge is beneficial throughout the book, and some EDKII knowledge is beneficial to understanding how consume the
+final pure-Rust platform Patina DXE core in EDKII style firmware.
 ```
