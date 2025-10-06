@@ -4,7 +4,7 @@ Typically small to medium changes such as bugfixes, existing implementation impr
 via pull requests. Depending on the size they may also have an associated github issue or discussion. These are
 expected to be simple changes without much controversy.
 
-The RFC processes comes into play when a particular change become large, introduce new features, or break existing
+The RFC processes comes into play when a particular change become large, introduce new features, or breaks existing
 interfaces. In these scenarios, the developer is expected to follow the RFC process outlined below to ensure not only
 proper involvement from maintainers, but also from the community as a whole. The goal is to reach a community consensus
 before introducing large changes as described above.
