@@ -2,7 +2,6 @@
 
 [Introduction](introduction.md)
 [Patina Background](patina.md)
-[Core Concepts](concepts.md)
 [Code Organization](dev/code_organization.md)
 
 # Background Information
@@ -40,9 +39,6 @@
 
 - [Patina DXE Core Requirements](integrate/patina_dxe_core_requirements.md)
 - [Setting up the Patina DXE Core](integrate/dxe_core.md)
-- [Compiling External to the Platform](integrate/compile_external.md)
-- [Compiling Local to the Platform (Deprecated)](integrate/compile_local.md)
-- [Integrating an Externally Compiled EFI Binary to the Platform](integrate/platform_external.md)
 
 # Patina Component Model
 
