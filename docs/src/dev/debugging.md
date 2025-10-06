@@ -50,7 +50,7 @@ static DEBUGGER: patina_debugger::PatinaDebugger<UartPl011> =
         .with_force_enabled(false);
 ```
 
-Debugging configuration is critical to proper functionality. Read the [Patina Debugger documentation](TODO)
+Debugging configuration is critical to proper functionality. Read the [Patina Debugger documentation](https://github.com/OpenDevicePartnership/patina/blob/main/core/patina_debugger/src/debugger.rs)
 for full configuration options.
 
 ### Step 2: Install the debugger
