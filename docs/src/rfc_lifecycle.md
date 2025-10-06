@@ -1,4 +1,5 @@
 # The Request For Change (RFC) Lifecycle
+
 Major features are proposed through [RFCs](rfc/template.md). The RFC template should be completed and submitted as a PR.
 
 The complete RFC process is:
