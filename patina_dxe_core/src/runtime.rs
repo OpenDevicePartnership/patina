@@ -211,6 +211,8 @@ mod tests {
 
     #[test]
     fn test_image_list_consistency() {
+        // Runtime tests require global synchronization due to shared static allocators
+        // that use TPL locks, which cannot be acquired concurrently
         with_global_lock(|| {
             let mut data = setup_protocol_and_data();
             let link_offset = size_of::<u64>() * 4;
@@ -269,11 +271,13 @@ mod tests {
                 assert_eq!(count, 5, "Not all entries were found in the image list.");
             }
         })
-        .unwrap();
+        .unwrap_or_else(|e| panic!("Test failed with runtime allocator conflict: {:?}", e));
     }
 
     #[test]
     fn test_event_list_consistency() {
+        // Runtime tests require global synchronization due to shared static allocators
+        // that use TPL locks, which cannot be acquired concurrently
         with_global_lock(|| {
             let mut data = setup_protocol_and_data();
             let link_offset = size_of::<u64>() * 5;
@@ -332,6 +336,6 @@ mod tests {
                 assert_eq!(count, 5, "Not all entries were found in the event list.");
             }
         })
-        .unwrap();
+        .unwrap_or_else(|e| panic!("Test failed with runtime allocator conflict: {:?}", e));
     }
 }
