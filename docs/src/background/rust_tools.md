@@ -6,6 +6,28 @@ The Patina project relies on Rust's tooling ecosystem to maintain consistent qua
 UEFI firmware development. This document summarizes the tooling in use, highlights how it is integrated into Patina's
 workflow, and contrasts the approach with common practices in C-based firmware projects where relevant.
 
+As noted throughout this documentation, this is a pure rust project, So lets briefely talk about rust and it's tooling.
+The rust installer provided multiple tools including `rustc` (the compiler), `rustup` (the toolchain mananger), and
+`cargo` (The package manager).
+
+These tools are all downloaded when running the installer here: [Getting Started - Rust Programming Language (rust-lang.org)](https://www.rust-lang.org/learn/get-started).
+This may require a restart of your command line terminal.
+
+The specific toolchains and components that are required to be installed can be found in the `rust-toolchain.toml`
+file. and will automatically be installed by `cargo` upon your first `cargo` command. The file will look something like
+this:
+
+```toml
+[toolchain]
+version = "1.80.0"
+targets = ["x86_64-unknown-uefi", "aarch64-unknown-uefi"]
+components = ["rust-src"]
+```
+
+Some of the core tooling mentioned below are either provided by cargo (e.g. `cargo bench`) or are open source tools
+(plugins) installed and managed by cargo (e.g. `cargo make`). See the table and further documentation regarding each
+tool used by Patina below.
+
 ## Summary Table
 
 The table below shows the comprehensive tool suite used in Patina compared to traditional C firmware development tools:
