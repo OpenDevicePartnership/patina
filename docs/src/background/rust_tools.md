@@ -6,6 +6,8 @@ The Patina project relies on Rust's tooling ecosystem to maintain consistent qua
 UEFI firmware development. This document summarizes the tooling in use, highlights how it is integrated into Patina's
 workflow, and contrasts the approach with common practices in C-based firmware projects where relevant.
 
+For first-time rust tooling setup instructions, please review the project's [README](https://github.com/OpenDevicePartnership/patina?tab=readme-ov-file#first-time-tool-setup-instructions).
+
 ## Summary Table
 
 The table below shows the comprehensive tool suite used in Patina compared to traditional C firmware development tools:

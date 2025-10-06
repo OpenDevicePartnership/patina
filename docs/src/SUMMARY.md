@@ -2,6 +2,7 @@
 
 [Introduction](introduction.md)
 [Patina Background](patina.md)
+[RFC Lifecycle](rfc_lifecycle.md)
 [Code Organization](dev/code_organization.md)
 
 # Background Information
