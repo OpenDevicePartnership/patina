@@ -1,15 +1,22 @@
-# The Request For Change (RFC) Lifecycle
+# The Request For Comments (RFC) Lifecycle
 
-Major features are proposed through [RFCs](rfc/template.md). Use your best judgement for if you should fill out an RFC
-or not. Maintainers have the right to ask that an RFC based on a submitted pull-request, or request a RFC be converted
-directly to a pull-request, depending on the proposal.
+Typically small to medium changes such as bugfixes, existing implementation improvements, and documentation are handled
+via pull requests. Depending on the size they may also have an associated github issue or discussion. These are
+expected to be simple changes without much contrivoursy.
 
-The RFC template should be completed and submitted as a PR.
+The RFC processes comes into play when a particular change become large, introduce new features, or break existing
+interfaces. In these scenarios, the developer is expected to follow the RFC process outlined below to ensure not only
+proper involvement from maintainers, but also from the community as a whole. The goal is to reach a community consensus
+before introducing large changes as described above.
+
+As a developer, you should use your best judgement to determine if a RFC is required or not. Maintainers have the right
+to ask that an RFC based on a submitted pull-request, or request a RFC be converted directly to a pull-request,
+depending on the proposal.
 
 The complete RFC process is:
 
 1. **Create** a new branch for your RFC.
-2. **Copy** the template from `docs/src/rfc/template.md` to a new file in the `docs/src/rfc/text` directory named
+2. **Copy** the template from `docs/src/rfc/template.md` Ito a new file in the `docs/src/rfc/text` directory named
    `0000-<feature-name>.md` where `0000` is a placeholder until the RFC is accepted (so use `0000` in your PR) and
    `<feature-name>` is a short name for the feature.
 3. **Fill out** the RFC template with your proposal.
