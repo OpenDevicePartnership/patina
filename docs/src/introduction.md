@@ -22,6 +22,6 @@ In addition, here are some of the more commonly referenced documentation in this
 
 ```admonish note
 This documentation aims to be as detailed as possible, not assuming any previous knowledge. However some general Rust
-knowledge is beneficial throughout the book, and some EDKII knowledge is beneficial to understanding how consume the
-final pure-Rust platform Patina DXE core in EDKII style firmware.
+knowledge is beneficial throughout the book, and some EDK II knowledge is beneficial to understanding how consume the
+final pure-Rust platform Patina DXE core in EDK II style firmware.
 ```
