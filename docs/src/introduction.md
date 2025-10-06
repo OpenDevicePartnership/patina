@@ -18,7 +18,7 @@ In addition, here are some of the more commonly referenced documentation in this
 2. [RFC Lifecycle](rfc_lifecycle.md)
 3. [Platform Integration](integrate/patina_dxe_core_requirements.html)
 4. [Component Development](component/getting_started.html)
-5. [Developer Guides](http://localhost:3000/dev/documenting.html)
+5. [Developer Guides](dev/documenting.md)
 
 ```admonish note
 This book assumes you already have prerequisite knowledge of the [EDK II](https://github.com/tianocore/edk2) ecosystem,
