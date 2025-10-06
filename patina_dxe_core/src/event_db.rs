@@ -165,12 +165,17 @@ impl PartialOrd for TaggedEventNotification {
 
 impl Ord for TaggedEventNotification {
     fn cmp(&self, other: &Self) -> Ordering {
-        if self.0.event == other.0.event {
-            Ordering::Equal
-        } else if self.0.notify_tpl == other.0.notify_tpl {
-            self.1.cmp(&other.1)
-        } else {
-            other.0.notify_tpl.cmp(&self.0.notify_tpl)
+        match self.0.event.cmp(&other.0.event) {
+            // events are unique - so if event ids match, they are the same event.
+            Ordering::Equal => Ordering::Equal,
+            _ =>
+            // Higher TPL has precedence; if TPLs are equal, then earlier insertion has precedence.
+            {
+                match other.0.notify_tpl.cmp(&self.0.notify_tpl) {
+                    Ordering::Equal => self.1.cmp(&other.1),
+                    non_eq => non_eq,
+                }
+            }
         }
     }
 }
@@ -384,7 +389,7 @@ impl EventDb {
     }
 
     fn signal_group(&mut self, group: efi::Guid) {
-        for member_event in self.events.values_mut().filter(|e| e.event_group == Some(group) && !e.signaled) {
+        for member_event in self.events.values_mut().rev().filter(|e| e.event_group == Some(group) && !e.signaled) {
             member_event.signaled = true;
 
             if member_event.event_type.is_notify_signal() {
@@ -481,7 +486,7 @@ impl EventDb {
         // the debugger is not enabled.
         patina_debugger::poll_debugger();
 
-        let events: Vec<usize> = self.events.keys().cloned().collect();
+        let events: Vec<usize> = self.events.keys().rev().cloned().collect();
         for event in events {
             let current_event = if let Some(current) = self.events.get_mut(&event) {
                 current
@@ -736,6 +741,7 @@ mod tests {
     use core::str::FromStr;
 
     use alloc::{vec, vec::Vec};
+    use patina::Guid;
     use r_efi::efi;
     use uuid::Uuid;
 
@@ -1070,6 +1076,37 @@ mod tests {
                 assert!(!SPIN_LOCKED_EVENT_DB.is_signaled(event));
             }
         });
+    }
+
+    #[test]
+    fn events_signaled_in_a_group_should_queue_in_reverse_creation_order() {
+        with_locked_state(|| {
+            let group_guid = Guid::try_from_string("4a7eafb6-2f5e-48d7-b8c4-44a48f341c6f").unwrap();
+            static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
+            let mut group_events: Vec<efi::Event> = Vec::new();
+            for _ in 0..10 {
+                group_events.push(
+                    SPIN_LOCKED_EVENT_DB
+                        .create_event(
+                            efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
+                            efi::TPL_NOTIFY,
+                            Some(test_notify_function),
+                            None,
+                            Some(group_guid.to_efi_guid()),
+                        )
+                        .unwrap(),
+                );
+            }
+            SPIN_LOCKED_EVENT_DB.signal_event(group_events[9]).unwrap();
+            // verify that events are queued in reverse order of creation (assuming they are signaled at same time with
+            // same notify_tpl).
+            let mut event_db = SPIN_LOCKED_EVENT_DB.lock();
+            let queue = &mut event_db.pending_notifies;
+            assert_eq!(queue.len(), 10);
+            for (group_item, queue_item) in iter::zip(group_events.iter().rev(), queue.iter()) {
+                assert_eq!(group_item, &queue_item.0.event);
+            }
+        })
     }
 
     #[test]
@@ -1693,8 +1730,8 @@ mod tests {
             let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
             let events = event_iter.collect::<Vec<EventNotification>>();
             assert_eq!(events.len(), 2);
-            assert_eq!(events[0].event, event);
-            assert_eq!(events[1].event, event2);
+            assert_eq!(events[0].event, event2);
+            assert_eq!(events[1].event, event);
             let _ = SPIN_LOCKED_EVENT_DB.clear_signal(events[0].event);
             let _ = SPIN_LOCKED_EVENT_DB.clear_signal(events[1].event);
 
