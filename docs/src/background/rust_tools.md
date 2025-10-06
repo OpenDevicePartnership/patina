@@ -21,8 +21,9 @@ The table below shows the comprehensive tool suite used in Patina compared to tr
 | **Security & License Auditing** | `cargo-deny` | Manual tracking and spreadsheets | Automated vulnerability and license policy enforcement |
 | **Spell Checking** | `cspell` | Manual proofreading | Automated technical dictionary |
 | **Static Analysis** | `clippy` | PC-lint, PVS-Studio, Coverity | Compiler-integrated, zero-config |
-| **Undefined Behavior Analysis** | `cargo miri` | Valgrind, UBSan | Catches memory safety issues in unsafe code |
+| **Supply Chain Auditing** | `cargo vet` | Manual review processes | Web-of-trust based dependency auditing |
 | **Test Coverage** | `cargo-llvm-cov` | gcov, OpenCppCoverage | Integrated coverage collection |
+| **Undefined Behavior Analysis** | `cargo miri` | Valgrind, UBSan | Catches memory safety issues in unsafe code |
 
 ## The cargo Ecosystem: Central Command Hub
 
@@ -387,6 +388,43 @@ deny = [
 ```
 
 **Key Documentation**: [cargo-deny Book](https://embarkstudios.github.io/cargo-deny/)
+
+### cargo vet (Supply Chain Auditing)
+
+**Purpose**: Supply chain security tool that provides a web-of-trust based auditing system for Rust dependencies,
+to check that dependencies have been reviewed by trusted auditors.
+
+**Value**:
+
+- **Audit Sharing**: Leverages existing audits from Mozilla, Google, and other organizations to reduce audit burden
+  - Open Device Partnership shares audits across the organization in
+    [OpenDevicePartnership/rust-crate-audits](https://github.com/OpenDevicePartnership/rust-crate-audits)
+- **Delta Auditing**: Focuses audit effort on changes between versions rather than full re-audits
+- **Import Management**: Allows importing audits from other projects and organizations
+- **Policy Enforcement**: Requires explicit audits or exemptions for all dependencies
+- **Web of Trust**: Builds on audits from trusted organizations and maintainers in the Rust ecosystem
+
+**Comparison to cargo-deny**:
+
+[cargo vet](https://mozilla.github.io/cargo-vet/) provides a different approach to supply chain security compared to
+`cargo-deny`. While `cargo-deny` focuses on known vulnerabilities and license compliance, `cargo vet` ensures that
+dependencies have been reviewed by trusted auditors before they can be used and it tracks unaudited dependencies
+so they can be prioritized for review.
+
+`cargo-deny` is reactive - it flags known issues after they're discovered. `cargo vet` is proactive - it requires
+confirmation that dependencies are safe before they can be used.
+
+**Usage in Patina**:
+
+```bash
+cargo vet                    # Check all dependencies are audited
+cargo vet check             # Check without updating imports
+cargo vet certify           # Certify a new dependency
+cargo vet add-exemption     # Add temporary exemption for unaudited dependency
+cargo vet prune             # Remove unused audits
+```
+
+**Key Documentation**: [cargo vet Book](https://mozilla.github.io/cargo-vet/)
 
 ### cspell (Spell Checking)
 
