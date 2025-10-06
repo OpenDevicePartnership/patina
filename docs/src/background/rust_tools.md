@@ -6,8 +6,8 @@ The Patina project relies on Rust's tooling ecosystem to maintain consistent qua
 UEFI firmware development. This document summarizes the tooling in use, highlights how it is integrated into Patina's
 workflow, and contrasts the approach with common practices in C-based firmware projects where relevant.
 
-As noted throughout this documentation, this is a pure rust project, So lets briefely talk about rust and it's tooling.
-The rust installer provided multiple tools including `rustc` (the compiler), `rustup` (the toolchain mananger), and
+As noted throughout this documentation, this is a pure Rust project, So lets briefely talk about Rust and it's tooling.
+The Rust installer provided multiple tools including `rustc` (the compiler), `rustup` (the toolchain mananger), and
 `cargo` (The package manager).
 
 These tools are all downloaded when running the installer here: [Getting Started - Rust Programming Language (rust-lang.org)](https://www.rust-lang.org/learn/get-started).
