@@ -66,6 +66,7 @@ words:
   - efierror
   - eflags
   - epage
+  - fastrlp
   - fnent
   - funty
   - fvmain
@@ -119,6 +120,7 @@ words:
   - openvmm
   - opinfo
   - oprom
+  - ordinalize
   - oslar
   - oslsr
   - pacibsp
@@ -151,10 +153,12 @@ words:
   - tiano
   - tianocore
   - tolnay
+  - typenum
   - typer
   - uefiext
   - uintn
   - unaccepte
+  - unarray
   - uncacheable
   - uncontained
   - uncrustify
@@ -172,4 +176,5 @@ words:
   - xdata
   - xtask
   - zbuild
+  - zeroize
   - zunstable
