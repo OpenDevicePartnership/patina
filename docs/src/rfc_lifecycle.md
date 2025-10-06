@@ -1,6 +1,10 @@
 # The Request For Change (RFC) Lifecycle
 
-Major features are proposed through [RFCs](rfc/template.md). The RFC template should be completed and submitted as a PR.
+Major features are proposed through [RFCs](rfc/template.md). Use your best judgement for if you should fill out an RFC
+or not. Maintainers have the right to ask that an RFC based on a submitted pull-request, or request a RFC be converted
+directly to a pull-request, depending on the proposal.
+
+The RFC template should be completed and submitted as a PR.
 
 The complete RFC process is:
 

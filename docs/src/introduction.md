@@ -12,7 +12,7 @@ Patina itself.
 Before getting started, you may want to read the [Patina Background](patina.md), which outlines the project's goals
 and design philosophy.
 
-In addition, here are some of the morecommonly referenced documentation in this book:
+In addition, here are some of the more commonly referenced documentation in this book:
 
 1. [Patina Background](patina.md)
 2. [RFC Lifecycle](rfc_lifecycle.md)
