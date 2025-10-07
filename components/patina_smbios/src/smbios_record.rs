@@ -42,7 +42,13 @@ pub trait SmbiosRecordStructure {
     fn string_pool_mut(&mut self) -> &mut Vec<String>;
 }
 
-/// Generic SMBIOS record serializer using reflection-like techniques
+/// Generic SMBIOS record serializer using compile-time field introspection
+///
+/// This serializer uses a reflection-like pattern implemented via traits and macros
+/// to introspect struct fields at compile-time. Each SMBIOS record type implements
+/// `SmbiosFieldLayout` which provides metadata about field types and offsets, allowing
+/// the serializer to generically extract and serialize primitive fields while handling
+/// the `Vec<String>` string pool separately.
 pub struct SmbiosSerializer;
 
 impl SmbiosSerializer {
@@ -87,10 +93,6 @@ impl SmbiosSerializer {
         // This field layout mechanism only extracts the primitive fields (u8, u16, u32, u64, uuid)
         // that form the structured portion of the SMBIOS table. The string pool is handled separately
         // by serialize_string_pool().
-        //
-        // This is why we can't use zerocopy::IntoBytes on the entire struct - it contains non-primitive
-        // types. The field layout approach allows us to selectively serialize only the C-compatible
-        // primitive fields while keeping the convenient Vec<String> API for users.
         for field_info in &layout.fields {
             match field_info.field_type {
                 FieldType::U8(offset) => {
@@ -101,19 +103,16 @@ impl SmbiosSerializer {
                 FieldType::U16(offset) => {
                     let ptr = (record as *const T as *const u8).wrapping_add(offset);
                     let value = unsafe { core::ptr::read_unaligned(ptr as *const u16) };
-                    // Use zerocopy for endian-safe serialization
                     bytes.extend_from_slice(value.as_bytes());
                 }
                 FieldType::U32(offset) => {
                     let ptr = (record as *const T as *const u8).wrapping_add(offset);
                     let value = unsafe { core::ptr::read_unaligned(ptr as *const u32) };
-                    // Use zerocopy for endian-safe serialization
                     bytes.extend_from_slice(value.as_bytes());
                 }
                 FieldType::U64(offset) => {
                     let ptr = (record as *const T as *const u8).wrapping_add(offset);
                     let value = unsafe { core::ptr::read_unaligned(ptr as *const u64) };
-                    // Use zerocopy for endian-safe serialization
                     bytes.extend_from_slice(value.as_bytes());
                 }
                 FieldType::ByteArray { offset, len } => {
