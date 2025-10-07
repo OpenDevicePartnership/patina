@@ -95,23 +95,25 @@ impl SmbiosSerializer {
             match field_info.field_type {
                 FieldType::U8(offset) => {
                     let ptr = (record as *const T as *const u8).wrapping_add(offset);
-                    let value = unsafe { *ptr };
+                    let value = unsafe { core::ptr::read_unaligned(ptr) };
                     bytes.push(value);
                 }
                 FieldType::U16(offset) => {
                     let ptr = (record as *const T as *const u8).wrapping_add(offset);
-                    // Use zerocopy for the conversion once we've read the value
-                    let value = unsafe { *(ptr as *const u16) };
+                    let value = unsafe { core::ptr::read_unaligned(ptr as *const u16) };
+                    // Use zerocopy for endian-safe serialization
                     bytes.extend_from_slice(value.as_bytes());
                 }
                 FieldType::U32(offset) => {
                     let ptr = (record as *const T as *const u8).wrapping_add(offset);
-                    let value = unsafe { *(ptr as *const u32) };
+                    let value = unsafe { core::ptr::read_unaligned(ptr as *const u32) };
+                    // Use zerocopy for endian-safe serialization
                     bytes.extend_from_slice(value.as_bytes());
                 }
                 FieldType::U64(offset) => {
                     let ptr = (record as *const T as *const u8).wrapping_add(offset);
-                    let value = unsafe { *(ptr as *const u64) };
+                    let value = unsafe { core::ptr::read_unaligned(ptr as *const u64) };
+                    // Use zerocopy for endian-safe serialization
                     bytes.extend_from_slice(value.as_bytes());
                 }
                 FieldType::ByteArray { offset, len } => {
