@@ -10,8 +10,11 @@
 //!
 
 extern crate alloc;
-use crate::smbios_derive::{SmbiosError, SmbiosHandle, SmbiosManager, SmbiosRecords, SmbiosTableHeader, SmbiosType};
+use crate::smbios_derive::{
+    install_smbios_protocol, SmbiosError, SmbiosHandle, SmbiosManager, SmbiosRecords, SmbiosTableHeader, SmbiosType,
+};
 use patina_sdk::{
+    boot_services::StandardBootServices,
     component::{
         IntoComponent,
         params::{Commands, Config},
@@ -62,6 +65,7 @@ impl SmbiosProviderManager {
         mut self,
         config: Option<Config<SmbiosConfiguration>>,
         mut commands: Commands,
+        boot_services: StandardBootServices,
     ) -> Result<()> {
         log::trace!("Initializing SMBIOS Provider...");
 
@@ -72,9 +76,16 @@ impl SmbiosProviderManager {
 
         log::trace!("SMBIOS version {}.{}", cfg.major_version, cfg.minor_version);
 
-        // Note: C protocol installation would need to happen after boot services are available.
-        // For now, the Rust service provides the primary interface.
-        // TODO: Add protocol installation when boot services parameter support is added.
+        // Install the C protocol for EDKII compatibility
+        match install_smbios_protocol(&self.manager, &boot_services) {
+            Ok(handle) => {
+                log::info!("SMBIOS C protocol installed successfully at handle {:?}", handle);
+            }
+            Err(e) => {
+                log::warn!("Failed to install SMBIOS C protocol: {:?}", e);
+                // Continue anyway - the Rust service will still work
+            }
+        }
 
         // Register the service so other components can consume it
         commands.add_service(self);
