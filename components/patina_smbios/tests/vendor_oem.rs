@@ -2,6 +2,7 @@ use patina_smbios::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SmbiosManager, Smb
 use patina_smbios::smbios_record::{FieldInfo, FieldLayout, FieldType, SmbiosFieldLayout, SmbiosRecordStructure};
 use std::string::String;
 use std::vec::Vec;
+use zerocopy::FromBytes;
 
 // Recreate example's minimal OEM record in test form
 pub struct VendorOemRecord {
@@ -46,10 +47,10 @@ fn example_vendor_oem_adds_to_manager() {
 
     let bytes = rec.to_bytes();
     let header_size = core::mem::size_of::<SmbiosTableHeader>();
-    let record_header: SmbiosTableHeader =
-        unsafe { core::ptr::read_unaligned(bytes[..header_size].as_ptr() as *const SmbiosTableHeader) };
+    let record_header =
+        SmbiosTableHeader::ref_from_bytes(&bytes[..header_size]).expect("Failed to parse SMBIOS header");
 
-    let _handle = unsafe { manager.add(None, &record_header).expect("add failed") };
+    let _handle = unsafe { manager.add(None, record_header).expect("add failed") };
 
     let mut search = SMBIOS_HANDLE_PI_RESERVED;
     let (found, _) = manager.get_next(&mut search, Some(VendorOemRecord::RECORD_TYPE)).expect("get_next failed");

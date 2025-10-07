@@ -8,6 +8,7 @@ use r_efi::efi;
 use r_efi::efi::Handle;
 use r_efi::efi::PhysicalAddress;
 use spin::Mutex;
+use zerocopy_derive::{FromBytes, Immutable, KnownLayout};
 
 pub type SmbiosHandle = u16;
 
@@ -676,7 +677,7 @@ impl SmbiosRecords<'static> for SmbiosManager {
 
 /// SMBIOS table header structure
 #[repr(C, packed)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, FromBytes, Immutable, KnownLayout)]
 pub struct SmbiosTableHeader {
     pub record_type: SmbiosType,
     pub length: u8,
@@ -884,6 +885,7 @@ mod tests {
     use crate::smbios_record::SmbiosRecordStructure;
     use crate::smbios_record::Type0PlatformFirmwareInformation;
     use std::{format, println, vec};
+    use zerocopy::FromBytes;
     #[test]
     fn test_smbios_record_builder_builds_bytes() {
         // Ensure builder returns a non-empty record buffer for a minimal System Information record
@@ -936,13 +938,10 @@ mod tests {
         assert!(record_bytes.len() >= header_size + 2);
 
         let header_slice = &record_bytes[..header_size];
-        let record_header: SmbiosTableHeader = unsafe {
-            // Transmute the first bytes into a header (safe in test because sizes match)
-            core::ptr::read_unaligned(header_slice.as_ptr() as *const SmbiosTableHeader)
-        };
+        let record_header = SmbiosTableHeader::ref_from_bytes(header_slice).expect("Failed to parse SMBIOS header");
 
         // Add to manager and get the assigned handle
-        let handle = unsafe { manager.add(None, &record_header).expect("add failed") };
+        let handle = unsafe { manager.add(None, record_header).expect("add failed") };
 
         // Retrieve using get_next
         let mut search_handle = SMBIOS_HANDLE_PI_RESERVED;

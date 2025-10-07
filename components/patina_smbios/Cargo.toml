@@ -14,6 +14,8 @@ patina_sdk = { workspace = true }
 r-efi = { workspace = true }
 spin = { workspace = true }
 hashbrown = "0.11.2"
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
 
 [features]
 enable_patina_tests = []
