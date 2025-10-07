@@ -145,6 +145,7 @@ pub struct Smbios30EntryPoint {
 pub struct SmbiosManager {
     records: Vec<SmbiosRecord>,
     next_handle: SmbiosHandle,
+    freed_handles: Vec<SmbiosHandle>,
     major_version: u8,
     minor_version: u8,
     #[allow(dead_code)]
@@ -159,6 +160,7 @@ impl Clone for SmbiosManager {
         Self {
             records: self.records.clone(),
             next_handle: self.next_handle,
+            freed_handles: self.freed_handles.clone(),
             major_version: self.major_version,
             minor_version: self.minor_version,
             entry_point_64: self.entry_point_64.as_ref().map(|ep| Box::new(**ep)),
@@ -173,6 +175,7 @@ impl SmbiosManager {
         Self {
             records: Vec::new(),
             next_handle: 1,
+            freed_handles: Vec::new(),
             major_version,
             minor_version,
             entry_point_64: None,
@@ -321,45 +324,32 @@ impl SmbiosManager {
         Ok(record)
     }
 
-    /// Check if a handle is already allocated by scanning the records vector
-    fn is_handle_allocated(&self, handle: SmbiosHandle) -> bool {
-        self.records.iter().any(|r| r.header.handle == handle)
-    }
-
+    /// Allocate a new handle using a free list for efficient O(1) allocation
+    ///
+    /// This implementation maintains a free list of previously freed handles to avoid
+    /// O(n) searches through all records. The allocation strategy is:
+    /// 1. If freed_handles is non-empty, pop and reuse a freed handle
+    /// 2. Otherwise, use next_handle and increment it
+    /// 3. If next_handle reaches the reserved range (0xFFFE), wrap to 1
+    /// 4. If all handles are exhausted, return OutOfResources
     fn allocate_handle(&mut self) -> Result<SmbiosHandle, SmbiosError> {
-        // Counter-based allocation with wraparound per RFC:
-        // Start from next_handle, try sequential allocation up to 0xFEFF
-        // If all are allocated, wrap around from 1
-        let mut attempts = 0u32;
-        const MAX_ATTEMPTS: u32 = 0xFEFF;
-
-        loop {
-            let candidate = self.next_handle;
-
-            // Skip reserved handles (0xFFFE, 0xFFFF, 0)
-            if candidate == 0 || candidate >= 0xFFFE {
-                self.next_handle = 1;
-                attempts += 1;
-                if attempts >= MAX_ATTEMPTS {
-                    return Err(SmbiosError::OutOfResources);
-                }
-                continue;
-            }
-
-            if !self.is_handle_allocated(candidate) {
-                let allocated = candidate;
-                self.next_handle = candidate + 1;
-                return Ok(allocated);
-            }
-
-            self.next_handle += 1;
-            attempts += 1;
-
-            // Prevent infinite loop - if we've wrapped around to start
-            if attempts >= MAX_ATTEMPTS {
-                return Err(SmbiosError::OutOfResources);
-            }
+        // First, try to reuse a freed handle (most efficient)
+        if let Some(handle) = self.freed_handles.pop() {
+            return Ok(handle);
         }
+
+        // No freed handles available, use next_handle
+        let candidate = self.next_handle;
+
+        // Check if we've exhausted the handle space
+        // Valid handles are 1..=0xFEFF (0xFFFE and 0xFFFF are reserved)
+        if candidate >= 0xFFFE {
+            // All handles exhausted
+            return Err(SmbiosError::OutOfResources);
+        }
+
+        self.next_handle = candidate + 1;
+        Ok(candidate)
     }
 
     #[allow(dead_code)]
@@ -516,10 +506,10 @@ impl SmbiosRecords<'static> for SmbiosManager {
 
         self.records.remove(pos);
 
-        // Optimization: If we removed a handle lower than next_handle,
-        // reset next_handle to reuse the freed handle sooner
-        if smbios_handle < self.next_handle && (1..0xFEFF).contains(&smbios_handle) {
-            self.next_handle = smbios_handle;
+        // Add the freed handle to the free list for reuse
+        // Only add valid handles (1..0xFFFE) to the free list
+        if (1..0xFFFE).contains(&smbios_handle) {
+            self.freed_handles.push(smbios_handle);
         }
 
         Ok(())
