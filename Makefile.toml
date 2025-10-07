@@ -5,7 +5,7 @@ default_to_workspace = false
 RUSTC_BOOTSTRAP = 1
 NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
-COV_FLAGS = { value = "--workspace --lcov --profile test --ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
+COV_FLAGS = { value = "--workspace --profile test --ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
 RUSTDOCFLAGS = "-D warnings -D missing_docs"
 
 [env.development]
@@ -150,13 +150,32 @@ private = true
 command = "cargo"
 args = ["generate-lockfile"]
 
-[tasks.coverage]
-description = "Build and run all tests and calculate coverage."
+[tasks.coverage-collect]
+description = "Run tests and collect coverage data without generating reports."
 install_crate = false
 clear = true
 command = "cargo"
-args = ["llvm-cov", "@@split(COV_FLAGS, )", "--output-path", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/lcov.info"]
+args = ["llvm-cov", "@@split(COV_FLAGS, )", "--no-report"]
 dependencies = ["individual-package-targets"]
+
+[tasks.coverage-lcov]
+description = "Generate an LCOV coverage report from collected data."
+install_crate = false
+clear = true
+command = "cargo"
+args = ["llvm-cov", "report", "--lcov", "--output-path", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/lcov.info"]
+
+[tasks.coverage-html]
+description = "Generate an HTML coverage report from collected data."
+install_crate = false
+clear = true
+command = "cargo"
+args = ["llvm-cov", "report", "--html", "--output-dir", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/coverage"]
+
+[tasks.coverage]
+description = "Build and run all tests and calculate coverage (runs test once and generates LCOV and HTML reports)."
+dependencies = ["coverage-collect", "coverage-lcov", "coverage-html"]
+clear = true
 
 [tasks.coverage-filter]
 description = "Generates the coverage filter to ignore coverage data for other packages."

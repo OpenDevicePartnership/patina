@@ -43,9 +43,9 @@ must have CI that fails if any code added to the repository has less than 80% co
 whole is below 80% coverage.
 
 By default, cargo-llvm-cov will produced an lcov report, which is easily consumable in various processing tools like
-[Coverage Gutters](https://marketplace.visualstudio.com/items?itemName=ryanluker.vscode-coverage-gutters). To view the
-report in HTML format, `cargo llvm-cov report --html` can be run to generate the report from the already produced lcov
-report.
+[Coverage Gutters](https://marketplace.visualstudio.com/items?itemName=ryanluker.vscode-coverage-gutters). The
+`cargo make coverage` command in Patina also produces an HTML report. This is available in the
+`target/coverage/html` folder.
 
 ```mermaid
 ---

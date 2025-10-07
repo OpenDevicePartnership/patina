@@ -603,17 +603,17 @@ mod tests {
 
 **Configuration in Patina**:
 
-```toml
-# Makefile.toml - Coverage with failure thresholds
-[tasks.coverage-fail-package]
-command = "cargo"
-args = ["llvm-cov", "--package", "${PACKAGE}", "--fail-under-lines", "80",
-        "--ignore-filename-regex", "${PACKAGE_COVERAGE_FILTER}"]
+Patina has several tasks defined in `Makefile.toml` to collect coverage data and generate reports in different formats:
 
+- `cargo make coverage-collect`: Runs tests and collects coverage data without generating reports. This allows
+  multiple report formats to be generated from the same data efficiently.
+- `cargo make coverage-lcov`: Generates an LCOV coverage report from the collected data.
+- `cargo make coverage-html`: Generates an HTML coverage report from the collected data.
+
+```toml
 [tasks.coverage]
-command = "cargo"
-args = ["llvm-cov", "@@split(COV_FLAGS, )", "--output-path",
-        "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/lcov.info"]
+description = "Build and run all tests and calculate coverage (generates both LCOV and HTML outputs efficiently)."
+dependencies = ["coverage-collect", "coverage-lcov", "coverage-html"]
 ```
 
 > Note: Patina previously used [`tarpaulin`](https://github.com/xd009642/tarpaulin) for coverage, but switched to
