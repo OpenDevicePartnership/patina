@@ -20,12 +20,10 @@ pub mod smbios_record;
 
 pub use component::SmbiosConfiguration;
 
-// Simplified test: construct a header, serialize it to bytes, append data and print
 #[cfg(test)]
 mod tests {
-    extern crate std;
-    // Bring test-friendly std items into scope
-    use std::{print, println, vec::Vec};
+    extern crate alloc;
+    use alloc::vec::Vec;
 
     #[test]
     fn print_record_bytes() {
@@ -46,13 +44,6 @@ mod tests {
             bytes.extend_from_slice(hb);
         }
         bytes.extend_from_slice(&data);
-
-        // Print bytes as hex; run tests with `-- --nocapture` to see this output
-        print!("Record bytes ({}):", bytes.len());
-        for b in &bytes {
-            print!(" {:02X}", b);
-        }
-        println!();
 
         // Verify the handle (0x1234) little-endian bytes are present
         assert!(bytes.contains(&0x34));

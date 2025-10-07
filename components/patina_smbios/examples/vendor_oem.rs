@@ -1,11 +1,13 @@
-use core::string::String;
+extern crate alloc;
+
+use alloc::string::String;
+use alloc::vec::Vec;
 use log::info;
 use patina_smbios::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SmbiosManager, SmbiosTableHeader};
 use patina_smbios::smbios_record::{
     FieldInfo, FieldLayout, FieldType, SmbiosFieldLayout, SmbiosRecordStructure, Type0PlatformFirmwareInformation,
     Type1SystemInformation, Type2BaseboardInformation, Type3SystemEnclosure,
 };
-use std::vec::Vec;
 use zerocopy::FromBytes;
 
 // Minimal OEM record example (record types 0x80-0xFF reserved for vendor specific records)
