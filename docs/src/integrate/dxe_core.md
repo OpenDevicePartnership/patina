@@ -264,9 +264,14 @@ Modify the `DEBUGGER` static to match your platform's debug serial infrastructur
 
 ```rust
 #[cfg(feature = "enable_debugger")]
+const _ENABLE_DEBUGGER: bool = true;
+#[cfg(not(feature = "enable_debugger"))]
+const _ENABLE_DEBUGGER: bool = false;
+
+#[cfg(feature = "build_debugger")]
 static DEBUGGER: patina_debugger::PatinaDebugger<Uart16550> =
     patina_debugger::PatinaDebugger::new(Uart16550::Io { base: 0x3F8 })  // <- Update for your platform
-        .with_force_enable(true)
+        .with_force_enable(_ENABLE_DEBUGGER)
         .with_log_policy(patina_debugger::DebuggerLoggingPolicy::FullLogging);
 ```
 
@@ -274,9 +279,14 @@ static DEBUGGER: patina_debugger::PatinaDebugger<Uart16550> =
 
 ```rust
 #[cfg(feature = "enable_debugger")]
+const _ENABLE_DEBUGGER: bool = true;
+#[cfg(not(feature = "enable_debugger"))]
+const _ENABLE_DEBUGGER: bool = false;
+
+#[cfg(feature = "build_debugger")]
 static DEBUGGER: patina_debugger::PatinaDebugger<UartPl011> =
     patina_debugger::PatinaDebugger::new(UartPl011::new(0x6000_0000))  // <- Update for your platform
-        .with_force_enable(true);
+        .with_force_enable(_ENABLE_DEBUGGER);
 ```
 
 #### Adding a Logger Example
