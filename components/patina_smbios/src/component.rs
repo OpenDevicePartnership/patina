@@ -11,7 +11,7 @@
 
 extern crate alloc;
 use crate::smbios_derive::{
-    install_smbios_protocol, SmbiosError, SmbiosHandle, SmbiosManager, SmbiosRecords, SmbiosTableHeader, SmbiosType,
+    SmbiosError, SmbiosHandle, SmbiosManager, SmbiosRecords, SmbiosTableHeader, SmbiosType, install_smbios_protocol,
 };
 use patina_sdk::{
     boot_services::StandardBootServices,

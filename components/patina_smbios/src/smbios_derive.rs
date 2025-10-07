@@ -28,14 +28,8 @@ pub type SmbiosHandle = u16;
 pub const SMBIOS_HANDLE_PI_RESERVED: SmbiosHandle = 0xFFFE;
 
 /// SMBIOS Protocol GUID: 03583ff6-cb36-4940-947e-b9b39f4afaf7
-pub const SMBIOS_PROTOCOL_GUID: efi::Guid = efi::Guid::from_fields(
-    0x03583ff6,
-    0xcb36,
-    0x4940,
-    0x94,
-    0x7e,
-    &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7],
-);
+pub const SMBIOS_PROTOCOL_GUID: efi::Guid =
+    efi::Guid::from_fields(0x03583ff6, 0xcb36, 0x4940, 0x94, 0x7e, &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7]);
 
 /// SMBIOS record type
 pub type SmbiosType = u8;
@@ -275,8 +269,30 @@ impl SmbiosManager {
         Ok(count)
     }
 
+    /// Build a complete SMBIOS record from a header and string array
+    ///
+    /// This is a helper function for creating SMBIOS records when you have
+    /// the structured data (header) and want to attach strings.
+    ///
+    /// # Arguments
+    ///
+    /// * `header` - The SMBIOS table header and structured data
+    /// * `strings` - Array of string slices to include in the string pool
+    ///
+    /// # Returns
+    ///
+    /// Returns a complete SMBIOS record byte array ready to be added via `add_from_bytes`
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let header = SmbiosTableHeader::new(1, size_of::<MyStruct>(), SMBIOS_HANDLE_PI_RESERVED);
+    /// let strings = &["Manufacturer", "Product Name", "Version"];
+    /// let record = SmbiosManager::build_record_with_strings(&header, strings)?;
+    /// manager.add_from_bytes(None, &record)?;
+    /// ```
     #[allow(dead_code)]
-    fn build_record_with_strings(header: &SmbiosTableHeader, strings: &[&str]) -> Result<Vec<u8>, SmbiosError> {
+    pub fn build_record_with_strings(header: &SmbiosTableHeader, strings: &[&str]) -> Result<Vec<u8>, SmbiosError> {
         // Validate all strings first
         for s in strings {
             Self::validate_string(s)?;
@@ -370,8 +386,11 @@ impl SmbiosRecords<'static> for SmbiosManager {
             return Err(SmbiosError::BufferTooSmall);
         }
 
-        // Step 2: Parse and validate header
-        let header = unsafe { &*(record_data.as_ptr() as *const SmbiosTableHeader) };
+        // Step 2: Parse and validate header using zerocopy
+        use zerocopy::Ref;
+        let (header_ref, _rest) =
+            Ref::<&[u8], SmbiosTableHeader>::from_prefix(record_data).map_err(|_| SmbiosError::InvalidParameter)?;
+        let header: &SmbiosTableHeader = &header_ref;
 
         // Step 3: Validate header->length is <= (record_data.length - 2) for string pool
         // The string pool needs at least 2 bytes for the double-null terminator
@@ -584,9 +603,11 @@ impl SmbiosRecordBuilder {
         Self { record_type, data: Vec::new(), strings: Vec::new() }
     }
 
-    pub fn add_field<T: Copy>(mut self, value: T) -> Self {
-        let bytes = unsafe { core::slice::from_raw_parts(&value as *const T as *const u8, core::mem::size_of::<T>()) };
-        self.data.extend_from_slice(bytes);
+    pub fn add_field<T>(mut self, value: T) -> Self
+    where
+        T: Copy + zerocopy::IntoBytes + zerocopy::Immutable,
+    {
+        self.data.extend_from_slice(value.as_bytes());
         self
     }
 
@@ -628,9 +649,9 @@ impl SmbiosRecordBuilder {
 }
 
 /// Global storage for the SMBIOS manager instance that the C protocol will use
-/// 
+///
 /// # Safety
-/// 
+///
 /// This is safe because:
 /// - UEFI runs in a single-threaded environment during DXE phase
 /// - The pointer is only set once during component initialization
@@ -656,14 +677,8 @@ struct SmbiosProtocol {
 }
 
 unsafe impl ProtocolInterface for SmbiosProtocol {
-    const PROTOCOL_GUID: efi::Guid = efi::Guid::from_fields(
-        0x03583ff6,
-        0xcb36,
-        0x4940,
-        0x94,
-        0x7e,
-        &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7],
-    );
+    const PROTOCOL_GUID: efi::Guid =
+        efi::Guid::from_fields(0x03583ff6, 0xcb36, 0x4940, 0x94, 0x7e, &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7]);
 }
 
 #[allow(dead_code)]
@@ -736,12 +751,12 @@ impl SmbiosProtocol {
 
             // Scan for the string pool terminator (double null)
             let base_ptr = record as *const u8;
-            
+
             // Scan for double null terminator
             let mut consecutive_nulls = 0;
             let mut offset = record_length;
             const MAX_STRING_POOL_SIZE: usize = 4096; // Safety limit
-            
+
             while consecutive_nulls < 2 && offset < record_length + MAX_STRING_POOL_SIZE {
                 let byte = *base_ptr.add(offset);
                 if byte == 0 {
@@ -751,27 +766,23 @@ impl SmbiosProtocol {
                 }
                 offset += 1;
             }
-            
+
             if consecutive_nulls < 2 {
                 // Malformed record - no double null terminator found
                 return efi::Status::INVALID_PARAMETER;
             }
-            
+
             let total_size = offset;
 
             // Create a slice of the complete record
             let full_record_bytes = core::slice::from_raw_parts(base_ptr, total_size);
-            
+
             // SAFETY: manager_ptr is guaranteed to be valid (checked above)
             let manager = &*manager_ptr;
             let mut manager_lock = manager.lock();
 
             // Convert handle
-            let producer_opt = if producer_handle.is_null() {
-                None
-            } else {
-                Some(producer_handle)
-            };
+            let producer_opt = if producer_handle.is_null() { None } else { Some(producer_handle) };
 
             // Add the record
             match manager_lock.add_from_bytes(producer_opt, full_record_bytes) {
@@ -808,7 +819,7 @@ impl SmbiosProtocol {
         unsafe {
             let handle = *smbios_handle;
             let str_num = *string_number;
-            
+
             // Convert C string to Rust str
             let c_str = core::ffi::CStr::from_ptr(string);
             let rust_str = match c_str.to_str() {
@@ -869,11 +880,7 @@ impl SmbiosProtocol {
 
         unsafe {
             let mut handle = *smbios_handle;
-            let type_filter = if record_type.is_null() {
-                None
-            } else {
-                Some(*record_type)
-            };
+            let type_filter = if record_type.is_null() { None } else { Some(*record_type) };
 
             // SAFETY: manager_ptr is guaranteed to be valid
             let manager = &*manager_ptr;
@@ -916,10 +923,10 @@ pub fn install_smbios_protocol(
     // Clone the manager and wrap it in a Mutex for thread-safe access
     let manager_clone = manager.clone();
     let manager_mutex = Box::new(Mutex::new(manager_clone));
-    
+
     // Leak the mutex to get a 'static reference
     let manager_ptr = Box::into_raw(manager_mutex);
-    
+
     // Store the manager pointer globally
     SMBIOS_MANAGER.store(manager_ptr, Ordering::SeqCst);
 
@@ -930,14 +937,14 @@ pub fn install_smbios_protocol(
     let protocol = SmbiosProtocol::new(major, minor);
     let interface = Box::into_raw(Box::new(protocol));
     let interface_void = interface as *mut c_void;
-    
+
     // Store the interface pointer for lifetime management
     SMBIOS_PROTOCOL_INTERFACE.store(interface_void, Ordering::SeqCst);
 
     // Install the protocol using the unchecked interface since we have a raw pointer
     let handle = unsafe {
         boot_services.install_protocol_interface_unchecked(
-            None,  // Let UEFI create a new handle
+            None, // Let UEFI create a new handle
             &SMBIOS_PROTOCOL_GUID,
             interface_void,
         )
@@ -971,7 +978,7 @@ mod tests {
     use crate::smbios_record::SmbiosRecordStructure;
     use crate::smbios_record::Type0PlatformFirmwareInformation;
     use std::vec;
-    
+
     #[test]
     fn test_smbios_record_builder_builds_bytes() {
         // Ensure builder returns a non-empty record buffer for a minimal System Information record
