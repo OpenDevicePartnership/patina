@@ -106,9 +106,6 @@ pub trait SmbiosRecords<'a> {
         record_type: Option<SmbiosType>,
     ) -> Result<(&SmbiosTableHeader, Option<Handle>), SmbiosError>;
 
-    /// Provides an iterator over all SMBIOS records.
-    fn iter(&self) -> Box<dyn Iterator<Item = &'a SmbiosRecord> + 'a>;
-
     /// Gets the SMBIOS version information.
     fn version(&self) -> (u8, u8); // (major, minor)
 }
@@ -536,15 +533,6 @@ impl SmbiosRecords<'static> for SmbiosManager {
 
         *smbios_handle = SMBIOS_HANDLE_PI_RESERVED;
         Err(SmbiosError::HandleNotFound)
-    }
-
-    fn iter(&self) -> Box<dyn Iterator<Item = &'static SmbiosRecord> + 'static> {
-        // We need to use unsafe here because we're extending the lifetime of the iterator.
-        // This is safe because the SmbiosManager is 'static and the records vector
-        // is only modified through &mut self methods.
-        let records_ptr = self.records.as_ptr();
-        let len = self.records.len();
-        Box::new((0..len).map(move |i| unsafe { &*records_ptr.add(i) }))
     }
 
     fn version(&self) -> (u8, u8) {

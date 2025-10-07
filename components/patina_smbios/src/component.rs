@@ -10,10 +10,7 @@
 //!
 
 extern crate alloc;
-use crate::smbios_derive::{
-    SmbiosError, SmbiosHandle, SmbiosManager, SmbiosRecord, SmbiosRecords, SmbiosTableHeader, SmbiosType,
-};
-use alloc::boxed::Box;
+use crate::smbios_derive::{SmbiosError, SmbiosHandle, SmbiosManager, SmbiosRecords, SmbiosTableHeader, SmbiosType};
 use patina_sdk::{
     component::{
         IntoComponent,
@@ -108,10 +105,6 @@ impl SmbiosRecords<'static> for SmbiosProviderManager {
         record_type: Option<SmbiosType>,
     ) -> core::result::Result<(&SmbiosTableHeader, Option<r_efi::efi::Handle>), SmbiosError> {
         self.manager.get_next(smbios_handle, record_type)
-    }
-
-    fn iter(&self) -> Box<dyn Iterator<Item = &'static SmbiosRecord> + 'static> {
-        self.manager.iter()
     }
 
     fn version(&self) -> (u8, u8) {
