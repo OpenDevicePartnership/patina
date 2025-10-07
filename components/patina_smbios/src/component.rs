@@ -56,19 +56,19 @@ impl SmbiosProviderManager {
 
     /// Initialize the SMBIOS provider and register it as a service
     fn entry_point(mut self, config: Option<Config<SmbiosConfiguration>>, mut commands: Commands) -> Result<()> {
-        log::info!("Initializing SMBIOS Provider...");
+        log::trace!("Initializing SMBIOS Provider...");
 
         let cfg = config.map(|c| (*c).clone()).unwrap_or_default();
 
         // Update manager with configured version
         self.manager = SmbiosManager::new(cfg.major_version, cfg.minor_version);
 
-        log::info!("SMBIOS version {}.{}", cfg.major_version, cfg.minor_version);
+        log::trace!("SMBIOS version {}.{}", cfg.major_version, cfg.minor_version);
 
         // Register the service so other components can consume it
         commands.add_service(self);
 
-        log::info!("SMBIOS Provider initialized successfully");
+        log::trace!("SMBIOS Provider initialized successfully");
         Ok(())
     }
 }
