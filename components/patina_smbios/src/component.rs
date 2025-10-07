@@ -49,9 +49,9 @@ pub struct SmbiosProviderManager {
 }
 
 impl SmbiosProviderManager {
-    /// Create a new SMBIOS provider manager with default SMBIOS 3.0 version
+    /// Create a new SMBIOS provider manager with default SMBIOS 3.9 version
     pub fn new() -> Self {
-        Self { manager: SmbiosManager::new(3, 0) }
+        Self { manager: SmbiosManager::new(3, 9) }
     }
 
     /// Initialize the SMBIOS provider and register it as a service
