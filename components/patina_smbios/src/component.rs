@@ -58,7 +58,11 @@ impl SmbiosProviderManager {
     }
 
     /// Initialize the SMBIOS provider and register it as a service
-    fn entry_point(mut self, config: Option<Config<SmbiosConfiguration>>, mut commands: Commands) -> Result<()> {
+    fn entry_point(
+        mut self,
+        config: Option<Config<SmbiosConfiguration>>,
+        mut commands: Commands,
+    ) -> Result<()> {
         log::trace!("Initializing SMBIOS Provider...");
 
         let cfg = config.map(|c| (*c).clone()).unwrap_or_default();
@@ -67,6 +71,10 @@ impl SmbiosProviderManager {
         self.manager = SmbiosManager::new(cfg.major_version, cfg.minor_version);
 
         log::trace!("SMBIOS version {}.{}", cfg.major_version, cfg.minor_version);
+
+        // Note: C protocol installation would need to happen after boot services are available.
+        // For now, the Rust service provides the primary interface.
+        // TODO: Add protocol installation when boot services parameter support is added.
 
         // Register the service so other components can consume it
         commands.add_service(self);
