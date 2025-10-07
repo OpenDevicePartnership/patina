@@ -73,12 +73,6 @@ impl SmbiosProviderManager {
     }
 }
 
-impl Default for SmbiosProviderManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 // Delegate the SmbiosRecords trait implementation to the inner manager
 impl SmbiosRecords<'static> for SmbiosProviderManager {
     unsafe fn add(

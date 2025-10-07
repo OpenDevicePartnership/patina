@@ -1,10 +1,10 @@
+use core::string::String;
 use log::info;
 use patina_smbios::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SmbiosManager, SmbiosTableHeader};
 use patina_smbios::smbios_record::{
     FieldInfo, FieldLayout, FieldType, SmbiosFieldLayout, SmbiosRecordStructure, Type0PlatformFirmwareInformation,
     Type1SystemInformation, Type2BaseboardInformation, Type3SystemEnclosure,
 };
-use core::string::String;
 use std::vec::Vec;
 use zerocopy::FromBytes;
 
