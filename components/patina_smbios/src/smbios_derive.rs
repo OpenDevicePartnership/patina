@@ -458,7 +458,7 @@ impl SmbiosRecords<'static> for SmbiosManager {
         data[2] = handle_bytes[0]; // Handle is at offset 2 in header
         data[3] = handle_bytes[1];
 
-        let smbios_record = SmbiosRecord::new(record_header, producer_handle, data, string_count, true);
+        let smbios_record = SmbiosRecord::new(record_header, producer_handle, data, string_count);
 
         self.records.push(smbios_record);
         Ok(smbios_handle)
@@ -592,24 +592,19 @@ impl SmbiosTableHeader {
 }
 
 /// Internal SMBIOS record representation
+///
+/// This implementation is for SMBIOS 3.0+ specification which uses 64-bit addressing.
 #[derive(Clone)]
 pub struct SmbiosRecord {
     pub header: SmbiosTableHeader,
     pub producer_handle: Option<Handle>,
     pub data: Vec<u8>, // Complete record including strings
     string_count: usize,
-    pub smbios64_table: bool,
 }
 
 impl SmbiosRecord {
-    pub fn new(
-        header: SmbiosTableHeader,
-        producer_handle: Option<Handle>,
-        data: Vec<u8>,
-        string_count: usize,
-        smbios64_table: bool,
-    ) -> Self {
-        Self { header, producer_handle, data, string_count, smbios64_table }
+    pub fn new(header: SmbiosTableHeader, producer_handle: Option<Handle>, data: Vec<u8>, string_count: usize) -> Self {
+        Self { header, producer_handle, data, string_count }
     }
 }
 
