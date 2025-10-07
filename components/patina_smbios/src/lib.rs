@@ -1,6 +1,13 @@
 //! SMBIOS (System Management BIOS) component for Patina
 //!
 //! This crate provides safe Rust abstractions for working with SMBIOS tables in UEFI environments.
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
 
 #![no_std]
 #![allow(missing_docs)] // TODO: Add comprehensive documentation
