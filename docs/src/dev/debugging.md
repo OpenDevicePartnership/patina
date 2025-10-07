@@ -44,14 +44,19 @@ for examples.
 Example setup:
 
 ```rust
+#[cfg(feature = "enable_debugger")]
 static DEBUGGER: patina_debugger::PatinaDebugger<UartPl011> =
     patina_debugger::PatinaDebugger::new(UartPl011::new(0x6000_0000))
         .without_transport_init()
-        .with_force_enabled(false);
+        .with_force_enabled(true);
 ```
 
 Debugging configuration is critical to proper functionality. Read the [Patina Debugger documentation](https://github.com/OpenDevicePartnership/patina/blob/main/core/patina_debugger/src/debugger.rs)
 for full configuration options.
+
+> Note: It is recommended to use a compile time feature flag to enable/disable the debugger, including instantiating the
+> static struct, as this saves significant file space when the debugger is not enabled. It has been shown to save
+> 60k - 200k of binary size depending on the platform.
 
 ### Step 2: Install the debugger
 
@@ -60,6 +65,7 @@ In the platform initialization routine, call `set_debugger` to install the debug
 it is available in the core.
 
 ```rust
+#[cfg(feature = "enable_debugger")]
 patina_debugger::set_debugger(&DEBUGGER);
 ```
 
@@ -68,7 +74,8 @@ or active. Installing is a no-op without enablement.
 
 ### Step 3: Enable the debugger
 
-Enable the debugger at compile time with `.with_force_enabled(true)`. This causes Patina to
+Enable the debugger at compile time by enabling the debugger feature, e.g. in the examples above this would be
+`cargo make build -- --features enable_debugger`. This causes Patina to
 break early and wait for the debugger. If successful, on boot you should see the following
 (if error logging is enabled) followed by a hang.
 
