@@ -1,3 +1,14 @@
+//! Vendor OEM SMBIOS Record Example
+//!
+//! Demonstrates how to create custom vendor-specific SMBIOS records.
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
+
 extern crate alloc;
 
 use alloc::string::String;

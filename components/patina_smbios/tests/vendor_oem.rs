@@ -1,3 +1,14 @@
+//! Vendor OEM SMBIOS Record Tests
+//!
+//! Tests for custom vendor-specific SMBIOS record creation.
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
+
 use patina_smbios::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SmbiosManager, SmbiosRecords, SmbiosTableHeader};
 use patina_smbios::smbios_record::{FieldInfo, FieldLayout, FieldType, SmbiosFieldLayout, SmbiosRecordStructure};
 use std::string::String;

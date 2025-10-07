@@ -1,3 +1,14 @@
+//! SMBIOS Record Structures and Builders
+//!
+//! Provides type-safe SMBIOS record structures and builder patterns.
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
+
 extern crate alloc;
 use crate::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SmbiosError, SmbiosTableHeader};
 use alloc::string::String;

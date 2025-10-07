@@ -1,3 +1,14 @@
+//! SMBIOS Type Definitions
+//!
+//! Contains SMBIOS structure type definitions and field layouts.
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
+
 #![allow(unused_doc_comments)]
 #![allow(dead_code)]
 #![allow(private_interfaces)]

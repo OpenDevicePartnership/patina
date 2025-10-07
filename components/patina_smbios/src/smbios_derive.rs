@@ -1,3 +1,14 @@
+//! SMBIOS Core Implementation
+//!
+//! Provides the core SMBIOS manager and protocol implementations.
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
+
 extern crate alloc;
 use alloc::boxed::Box;
 use alloc::string::String;
