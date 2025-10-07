@@ -110,25 +110,7 @@ pub trait SmbiosRecords<'a> {
     fn version(&self) -> (u8, u8); // (major, minor)
 }
 
-/// SMBIOS entry point structures
-#[repr(C, packed)]
-pub struct SmbiosEntryPoint {
-    pub anchor_string: [u8; 4], // "_SM_"
-    pub checksum: u8,
-    pub length: u8,
-    pub major_version: u8,
-    pub minor_version: u8,
-    pub max_structure_size: u16,
-    pub revision: u8,
-    pub formatted_area: [u8; 5],
-    pub intermediate_anchor: [u8; 5], // "_DMI_"
-    pub intermediate_checksum: u8,
-    pub table_length: u16,
-    pub table_address: u32,
-    pub structure_count: u16,
-    pub bcd_revision: u8,
-}
-
+/// SMBIOS 3.0 entry point structure (64-bit)
 #[repr(C, packed)]
 pub struct Smbios30EntryPoint {
     pub anchor_string: [u8; 5], // "_SM3_"
@@ -149,11 +131,7 @@ pub struct SmbiosManager {
     major_version: u8,
     minor_version: u8,
     #[allow(dead_code)]
-    entry_point_32: Option<Box<SmbiosEntryPoint>>,
-    #[allow(dead_code)]
     entry_point_64: Option<Box<Smbios30EntryPoint>>,
-    #[allow(dead_code)]
-    table_32_address: Option<PhysicalAddress>,
     #[allow(dead_code)]
     table_64_address: Option<PhysicalAddress>,
     lock: Mutex<()>,
@@ -166,9 +144,7 @@ impl SmbiosManager {
             next_handle: 1,
             major_version,
             minor_version,
-            entry_point_32: None,
             entry_point_64: None,
-            table_32_address: None,
             table_64_address: None,
             lock: Mutex::new(()),
         }
@@ -335,17 +311,12 @@ impl SmbiosManager {
     #[allow(dead_code)]
     fn install_configuration_table(&self) -> Result<(), SmbiosError> {
         // This would interact with UEFI Boot Services to install
-        // the SMBIOS table in the system configuration table
+        // the SMBIOS 3.0+ table in the system configuration table
         // Implementation depends on your UEFI framework
 
-        // For SMBIOS 2.x
-        if let Some(_entry_point_32) = &self.entry_point_32 {
-            // Install with SMBIOS 2.x GUID
-        }
-
-        // For SMBIOS 3.x
+        // For SMBIOS 3.0+
         if let Some(_entry_point_64) = &self.entry_point_64 {
-            // Install with SMBIOS 3.x GUID
+            // Install with SMBIOS 3.0 GUID
         }
 
         Ok(())
