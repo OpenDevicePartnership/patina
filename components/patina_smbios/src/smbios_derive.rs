@@ -20,7 +20,7 @@ use r_efi::efi;
 use r_efi::efi::Handle;
 use r_efi::efi::PhysicalAddress;
 use spin::Mutex;
-use zerocopy_derive::{FromBytes, Immutable, KnownLayout};
+use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 pub type SmbiosHandle = u16;
 
@@ -284,10 +284,9 @@ impl SmbiosManager {
 
         let mut record = Vec::new();
 
-        // Add the structured data
-        let header_bytes =
-            unsafe { core::slice::from_raw_parts(header as *const _ as *const u8, header.length as usize) };
-        record.extend_from_slice(header_bytes);
+        // Add the structured data using zerocopy
+        use zerocopy::IntoBytes;
+        record.extend_from_slice(header.as_bytes());
 
         // Add strings
         if strings.is_empty() {
@@ -550,7 +549,7 @@ impl SmbiosRecords<'static> for SmbiosManager {
 
 /// SMBIOS table header structure
 #[repr(C, packed)]
-#[derive(Debug, Clone, FromBytes, Immutable, KnownLayout)]
+#[derive(Debug, Clone, FromBytes, IntoBytes, Immutable, KnownLayout)]
 pub struct SmbiosTableHeader {
     pub record_type: SmbiosType,
     pub length: u8,
@@ -600,17 +599,15 @@ impl SmbiosRecordBuilder {
     pub fn build(self) -> Result<Vec<u8>, SmbiosError> {
         let mut record = Vec::new();
 
-        // Add header
+        // Add header using zerocopy
         let header = SmbiosTableHeader {
             record_type: self.record_type,
             length: (core::mem::size_of::<SmbiosTableHeader>() + self.data.len()) as u8,
             handle: SMBIOS_HANDLE_PI_RESERVED,
         };
 
-        let header_bytes = unsafe {
-            core::slice::from_raw_parts(&header as *const _ as *const u8, core::mem::size_of::<SmbiosTableHeader>())
-        };
-        record.extend_from_slice(header_bytes);
+        use zerocopy::IntoBytes;
+        record.extend_from_slice(header.as_bytes());
 
         // Add data
         record.extend_from_slice(&self.data);

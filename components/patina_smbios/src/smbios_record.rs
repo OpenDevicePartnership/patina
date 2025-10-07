@@ -14,6 +14,7 @@ use crate::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SmbiosError, SmbiosTableHe
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use zerocopy::IntoBytes;
 
 /// Base trait for SMBIOS record structures with generic serialization
 pub trait SmbiosRecordStructure {
@@ -72,35 +73,45 @@ impl SmbiosSerializer {
         bytes
     }
 
-    fn serialize_header(header: &SmbiosTableHeader) -> [u8; 4] {
-        [header.record_type, header.length, (header.handle & 0xFF) as u8, ((header.handle >> 8) & 0xFF) as u8]
+    fn serialize_header(header: &SmbiosTableHeader) -> Vec<u8> {
+        header.as_bytes().to_vec()
     }
 
     fn serialize_fields<T: SmbiosRecordStructure + SmbiosFieldLayout>(record: &T, layout: &FieldLayout) -> Vec<u8> {
         let mut bytes = Vec::new();
 
         // Use the field layout to serialize each field generically
+        // Note: While we use zerocopy for the header, the structured data portion
+        // contains a mix of primitive types and the string pool Vec, making it
+        // incompatible with zerocopy's IntoBytes derive. We could restructure
+        // to separate data-only structs, but that would require significant
+        // API changes. For now, we use direct memory access with proper alignment.
         for field_info in &layout.fields {
             match field_info.field_type {
                 FieldType::U8(offset) => {
-                    let value = unsafe { *(record as *const T as *const u8).add(offset) };
+                    let ptr = (record as *const T as *const u8).wrapping_add(offset);
+                    let value = unsafe { *ptr };
                     bytes.push(value);
                 }
                 FieldType::U16(offset) => {
-                    let value = unsafe { *((record as *const T as *const u8).add(offset) as *const u16) };
-                    bytes.extend_from_slice(&value.to_le_bytes());
+                    let ptr = (record as *const T as *const u8).wrapping_add(offset);
+                    // Use zerocopy for the conversion once we've read the value
+                    let value = unsafe { *(ptr as *const u16) };
+                    bytes.extend_from_slice(value.as_bytes());
                 }
                 FieldType::U32(offset) => {
-                    let value = unsafe { *((record as *const T as *const u8).add(offset) as *const u32) };
-                    bytes.extend_from_slice(&value.to_le_bytes());
+                    let ptr = (record as *const T as *const u8).wrapping_add(offset);
+                    let value = unsafe { *(ptr as *const u32) };
+                    bytes.extend_from_slice(value.as_bytes());
                 }
                 FieldType::U64(offset) => {
-                    let value = unsafe { *((record as *const T as *const u8).add(offset) as *const u64) };
-                    bytes.extend_from_slice(&value.to_le_bytes());
+                    let ptr = (record as *const T as *const u8).wrapping_add(offset);
+                    let value = unsafe { *(ptr as *const u64) };
+                    bytes.extend_from_slice(value.as_bytes());
                 }
                 FieldType::ByteArray { offset, len } => {
-                    let slice =
-                        unsafe { core::slice::from_raw_parts((record as *const T as *const u8).add(offset), len) };
+                    let ptr = (record as *const T as *const u8).wrapping_add(offset);
+                    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
                     bytes.extend_from_slice(slice);
                 }
             }
