@@ -251,36 +251,24 @@ impl SmbiosManager {
             return Ok(0);
         }
 
-        let mut count = 0;
-        let mut i = 0;
-        let data_end = len - 2; // Exclude the final double-null
+        // Remove the final double-null terminator and split by null bytes
+        let data_without_terminator = &string_pool_area[..len - 2];
 
-        while i < data_end {
-            let start = i;
+        // Split by null bytes to get individual strings
+        let strings: Vec<&[u8]> = data_without_terminator.split(|&b| b == 0).collect();
 
-            // Find the next null terminator (end of current string)
-            while i < data_end && string_pool_area[i] != 0 {
-                i += 1;
-            }
-
-            // If we found content before the null, it's a valid string
-            if i > start {
-                // Validate string length doesn't exceed SMBIOS spec limit
-                let string_len = i - start;
-                if string_len > SMBIOS_STRING_MAX_LENGTH {
-                    return Err(SmbiosError::StringTooLong);
-                }
-                count += 1;
-            } else if i == start {
-                // Found null at start position = consecutive nulls (invalid)
+        // Validate each string
+        for string_bytes in &strings {
+            if string_bytes.is_empty() {
+                // Empty slice means consecutive nulls (invalid)
                 return Err(SmbiosError::InvalidParameter);
             }
-
-            // Move past the null terminator
-            i += 1;
+            if string_bytes.len() > SMBIOS_STRING_MAX_LENGTH {
+                return Err(SmbiosError::StringTooLong);
+            }
         }
 
-        Ok(count)
+        Ok(strings.len())
     }
 
     /// Build a complete SMBIOS record from a header and string array
