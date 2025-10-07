@@ -422,14 +422,8 @@ impl SmbiosRecords<'static> for SmbiosManager {
         data[2] = handle_bytes[0]; // Handle is at offset 2 in header
         data[3] = handle_bytes[1];
 
-        let smbios_record = SmbiosRecord {
-            header: record_header,
-            producer_handle,
-            data,
-            string_count,
-            smbios32_table: true,
-            smbios64_table: true,
-        };
+        let smbios_record =
+            SmbiosRecord { header: record_header, producer_handle, data, string_count, smbios64_table: true };
 
         self.records.push(smbios_record);
         Ok(smbios_handle)
@@ -588,7 +582,6 @@ pub struct SmbiosRecord {
     pub producer_handle: Option<Handle>,
     pub data: Vec<u8>, // Complete record including strings
     string_count: usize,
-    pub smbios32_table: bool,
     pub smbios64_table: bool,
 }
 
