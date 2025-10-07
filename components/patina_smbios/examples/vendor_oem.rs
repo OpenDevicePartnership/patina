@@ -1,3 +1,4 @@
+use log::info;
 use patina_smbios::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SmbiosManager, SmbiosTableHeader};
 use patina_smbios::smbios_record::{
     FieldInfo, FieldLayout, FieldType, SmbiosFieldLayout, SmbiosRecordStructure, Type0PlatformFirmwareInformation,
@@ -180,25 +181,25 @@ fn main() {
     let mut search = SMBIOS_HANDLE_PI_RESERVED;
     let (found, _) = manager.get_next(&mut search, Some(VendorOemRecord::RECORD_TYPE)).expect("get_next failed");
     assert_eq!(found.record_type, VendorOemRecord::RECORD_TYPE);
-    println!("Added vendor record handle: {}", search);
+    info!("Added vendor record handle: {}", search);
 
     search = SMBIOS_HANDLE_PI_RESERVED;
     let (found_bios, _) = manager.get_next(&mut search, Some(0)).expect("get_next failed for bios");
     assert_eq!(found_bios.record_type, 0);
-    println!("Added Type 0 BIOS record handle: {}", search);
+    info!("Added Type 0 BIOS record handle: {}", search);
 
     search = SMBIOS_HANDLE_PI_RESERVED;
     let (found_system, _) = manager.get_next(&mut search, Some(1)).expect("get_next failed for system");
     assert_eq!(found_system.record_type, 1);
-    println!("Added Type 1 system record handle: {}", search);
+    info!("Added Type 1 system record handle: {}", search);
 
     search = SMBIOS_HANDLE_PI_RESERVED;
     let (found_baseboard, _) = manager.get_next(&mut search, Some(2)).expect("get_next failed for baseboard");
     assert_eq!(found_baseboard.record_type, 2);
-    println!("Added Type 2 baseboard record handle: {}", search);
+    info!("Added Type 2 baseboard record handle: {}", search);
 
     search = SMBIOS_HANDLE_PI_RESERVED;
     let (found_enclosure, _) = manager.get_next(&mut search, Some(3)).expect("get_next failed for enclosure");
     assert_eq!(found_enclosure.record_type, 3);
-    println!("Added Type 3 enclosure record handle: {}", search);
+    info!("Added Type 3 enclosure record handle: {}", search);
 }
