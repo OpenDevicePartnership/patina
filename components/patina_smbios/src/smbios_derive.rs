@@ -274,6 +274,50 @@ impl SmbiosManager {
         Ok(strings.len())
     }
 
+    /// Parse strings from an SMBIOS string pool
+    ///
+    /// Extracts all strings from the string pool area, converting them to Rust Strings.
+    /// This is a higher-level companion to `validate_and_count_strings` that returns
+    /// the actual string data instead of just counting.
+    ///
+    /// # Arguments
+    ///
+    /// * `string_pool_area` - The string pool portion of an SMBIOS record
+    ///
+    /// # Returns
+    ///
+    /// Returns a Vec of Strings extracted from the pool, or an error if the pool is malformed
+    fn parse_strings_from_pool(string_pool_area: &[u8]) -> Result<Vec<String>, SmbiosError> {
+        let len = string_pool_area.len();
+
+        // Must end with double null
+        if len < 2 || string_pool_area[len - 1] != 0 || string_pool_area[len - 2] != 0 {
+            return Err(SmbiosError::InvalidParameter);
+        }
+
+        // Handle empty string pool (just double null)
+        if len == 2 {
+            return Ok(Vec::new());
+        }
+
+        // Remove the final double-null terminator and split by null bytes
+        let data_without_terminator = &string_pool_area[..len - 2];
+
+        // Split by null bytes to get individual strings
+        data_without_terminator
+            .split(|&b| b == 0)
+            .map(|string_bytes| {
+                if string_bytes.is_empty() {
+                    // Empty slice means consecutive nulls (invalid)
+                    Err(SmbiosError::InvalidParameter)
+                } else {
+                    // Convert bytes to String using UTF-8 lossy conversion
+                    Ok(String::from_utf8_lossy(string_bytes).into_owned())
+                }
+            })
+            .collect()
+    }
+
     /// Build a complete SMBIOS record from a header and string array
     ///
     /// This is a helper function for creating SMBIOS records when you have
@@ -443,29 +487,10 @@ impl SmbiosRecords<'static> for SmbiosManager {
             return Err(SmbiosError::BufferTooSmall);
         }
 
-        // Extract existing strings from the string pool
+        // Extract existing strings from the string pool using the helper function
         let string_pool_start = header_length;
         let string_pool = &record.data[string_pool_start..];
-
-        let mut existing_strings = Vec::new();
-        let mut current_string = Vec::new();
-        let mut null_count = 0;
-
-        for &byte in string_pool {
-            if byte == 0 {
-                if !current_string.is_empty() {
-                    existing_strings.push(String::from_utf8_lossy(&current_string).into_owned());
-                    current_string.clear();
-                }
-                null_count += 1;
-                if null_count >= 2 {
-                    break;
-                }
-            } else {
-                null_count = 0;
-                current_string.push(byte);
-            }
-        }
+        let mut existing_strings = Self::parse_strings_from_pool(string_pool)?;
 
         // Validate that we have enough strings
         if string_number > existing_strings.len() {
