@@ -58,7 +58,7 @@ impl SmbiosProviderManager {
     fn entry_point(mut self, config: Option<Config<SmbiosConfiguration>>, mut commands: Commands) -> Result<()> {
         log::trace!("Initializing SMBIOS Provider...");
 
-        let cfg = config.map(|c| (*c).clone()).unwrap_or_default();
+        let cfg = config.map(|c| (*c).clone()).unwrap_or(SmbiosConfiguration::default());
 
         // Update manager with configured version
         self.manager = SmbiosManager::new(cfg.major_version, cfg.minor_version);
