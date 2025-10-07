@@ -1,30 +1,8 @@
 extern crate alloc;
 use crate::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SmbiosError, SmbiosTableHeader};
 use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
-
-macro_rules! vec {
-    () => {
-        Vec::new()
-    };
-    ( $( $x:expr ),* ) => {{
-        let mut temp_vec = Vec::new();
-        $(
-            temp_vec.push($x);
-        )*
-        temp_vec
-    }};
-    ( $( $x:expr ),+ , ) => {
-        vec![ $( $x ),* ]
-    };
-    ( $element:expr ; $n:expr ) => {{
-        let mut temp_vec = Vec::with_capacity($n);
-        for _ in 0..$n {
-            temp_vec.push($element);
-        }
-        temp_vec
-    }};
-}
 
 /// Base trait for SMBIOS record structures with generic serialization
 pub trait SmbiosRecordStructure {
