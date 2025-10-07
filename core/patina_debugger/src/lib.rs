@@ -35,8 +35,7 @@
 //! fn entry() {
 //!
 //!     // Configure the debugger. This is used for dynamic configuration of the debugger.
-//!     // For static configuration use the with_config method on construction.
-//!     DEBUGGER.configure(true, true, 0);
+//!     DEBUGGER.enable(true);
 //!
 //!     // Set the global debugger instance. This can only be done once.
 //!     patina_debugger::set_debugger(&DEBUGGER);

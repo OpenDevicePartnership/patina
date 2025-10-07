@@ -90,6 +90,7 @@ then confirm that the debugger is enabled and installed prior to calling the cor
 
 You can also enable the debugger at runtime using the `enable` routine, but use caution.
 Dynamic enablement should be carefully thought through to ensure proper platform security.
+See the [Security Considerations section](#security-considerations) for more details.
 
 ### Step 4: Verify the transport
 
@@ -127,6 +128,16 @@ if patina_debugger::enabled() {
 
 As an aside, `patina_debugger::breakpoint()` can be useful to placing in other locations
 of interest while debugging to ensure you catch a specific function or scenario.
+
+### Security Considerations
+
+When enabling the debugger through any runtime enablement mechanism, it is critical
+that the platform consider the security impacts. The platform should be certain
+that the configuration or policy that is used to enable the debugger comes from
+an authenticated source and that the enablement of the debugger is properly captured
+in the TPM measurements through the appropriate `EV_EFI_ACTION` measurement **BEFORE**
+enabling the debugger. Allowing the debugger to be dynamically enabled in production
+in an unauthenticated or unmeasured way would be a significant security bypass.
 
 ## Debugger Functionality
 
