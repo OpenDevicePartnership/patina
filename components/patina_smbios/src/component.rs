@@ -48,6 +48,12 @@ pub struct SmbiosProviderManager {
     manager: SmbiosManager,
 }
 
+impl Default for SmbiosProviderManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SmbiosProviderManager {
     /// Create a new SMBIOS provider manager with default SMBIOS 3.9 version
     pub fn new() -> Self {
@@ -58,7 +64,7 @@ impl SmbiosProviderManager {
     fn entry_point(mut self, config: Option<Config<SmbiosConfiguration>>, mut commands: Commands) -> Result<()> {
         log::trace!("Initializing SMBIOS Provider...");
 
-        let cfg = config.map(|c| (*c).clone()).unwrap_or(SmbiosConfiguration::default());
+        let cfg = config.map(|c| (*c).clone()).unwrap_or_default();
 
         // Update manager with configured version
         self.manager = SmbiosManager::new(cfg.major_version, cfg.minor_version);
