@@ -81,14 +81,6 @@ impl SmbiosProviderManager {
 
 // Delegate the SmbiosRecords trait implementation to the inner manager
 impl SmbiosRecords<'static> for SmbiosProviderManager {
-    unsafe fn add(
-        &mut self,
-        producer_handle: Option<r_efi::efi::Handle>,
-        record: &SmbiosTableHeader,
-    ) -> core::result::Result<SmbiosHandle, SmbiosError> {
-        unsafe { self.manager.add(producer_handle, record) }
-    }
-
     fn add_from_bytes(
         &mut self,
         producer_handle: Option<r_efi::efi::Handle>,

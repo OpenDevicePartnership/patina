@@ -8,7 +8,6 @@ use patina_smbios::smbios_record::{
     FieldInfo, FieldLayout, FieldType, SmbiosFieldLayout, SmbiosRecordStructure, Type0PlatformFirmwareInformation,
     Type1SystemInformation, Type2BaseboardInformation, Type3SystemEnclosure,
 };
-use zerocopy::FromBytes;
 
 // Minimal OEM record example (record types 0x80-0xFF reserved for vendor specific records)
 pub struct VendorOemRecord {
@@ -56,16 +55,13 @@ fn main() {
         string_pool: vec![String::from("Vendor Extra")],
     };
 
-    // Serialize and add (pattern same as unit test)
+    // Serialize and add using the safe add_from_bytes method
     let bytes = rec.to_bytes();
-    let header_size = core::mem::size_of::<SmbiosTableHeader>();
-    let record_header =
-        SmbiosTableHeader::ref_from_bytes(&bytes[..header_size]).expect("Failed to parse SMBIOS header");
 
-    // Bring trait into scope so `add` and `get_next` methods are available on the manager
+    // Bring trait into scope so `add_from_bytes` and `get_next` methods are available on the manager
     use patina_smbios::smbios_derive::SmbiosRecords;
 
-    let _handle = unsafe { manager.add(None, record_header).expect("add failed") };
+    let _handle = manager.add_from_bytes(None, &bytes).expect("add_from_bytes failed");
 
     // Example 2: Type 0 BIOS Information Record
     let bios_rec = Type0PlatformFirmwareInformation {
@@ -87,10 +83,7 @@ fn main() {
     };
 
     let bios_bytes = bios_rec.to_bytes();
-    let bios_header =
-        SmbiosTableHeader::ref_from_bytes(&bios_bytes[..header_size]).expect("Failed to parse BIOS SMBIOS header");
-
-    let _bios_handle = unsafe { manager.add(None, bios_header).expect("bios add failed") };
+    let _bios_handle = manager.add_from_bytes(None, &bios_bytes).expect("bios add_from_bytes failed");
 
     // Example 3: Type 1 System Information Record
     let system_rec = Type1SystemInformation {
@@ -114,10 +107,7 @@ fn main() {
     };
 
     let system_bytes = system_rec.to_bytes();
-    let system_header =
-        SmbiosTableHeader::ref_from_bytes(&system_bytes[..header_size]).expect("Failed to parse system SMBIOS header");
-
-    let _system_handle = unsafe { manager.add(None, system_header).expect("system add failed") };
+    let _system_handle = manager.add_from_bytes(None, &system_bytes).expect("system add_from_bytes failed");
 
     // Example 4: Type 2 Baseboard Information Record
     let baseboard_rec = Type2BaseboardInformation {
@@ -143,10 +133,7 @@ fn main() {
     };
 
     let baseboard_bytes = baseboard_rec.to_bytes();
-    let baseboard_header = SmbiosTableHeader::ref_from_bytes(&baseboard_bytes[..header_size])
-        .expect("Failed to parse baseboard SMBIOS header");
-
-    let _baseboard_handle = unsafe { manager.add(None, baseboard_header).expect("baseboard add failed") };
+    let _baseboard_handle = manager.add_from_bytes(None, &baseboard_bytes).expect("baseboard add_from_bytes failed");
 
     // Example 5: Type 3 System Enclosure Record
     let enclosure_rec = Type3SystemEnclosure {
@@ -174,10 +161,7 @@ fn main() {
     };
 
     let enclosure_bytes = enclosure_rec.to_bytes();
-    let enclosure_header = SmbiosTableHeader::ref_from_bytes(&enclosure_bytes[..header_size])
-        .expect("Failed to parse enclosure SMBIOS header");
-
-    let _enclosure_handle = unsafe { manager.add(None, enclosure_header).expect("enclosure add failed") };
+    let _enclosure_handle = manager.add_from_bytes(None, &enclosure_bytes).expect("enclosure add_from_bytes failed");
 
     // Verify all five records were added
     let mut search = SMBIOS_HANDLE_PI_RESERVED;
