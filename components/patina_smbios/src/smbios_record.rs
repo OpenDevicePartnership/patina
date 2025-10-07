@@ -80,12 +80,17 @@ impl SmbiosSerializer {
     fn serialize_fields<T: SmbiosRecordStructure + SmbiosFieldLayout>(record: &T, layout: &FieldLayout) -> Vec<u8> {
         let mut bytes = Vec::new();
 
-        // Use the field layout to serialize each field generically
-        // Note: While we use zerocopy for the header, the structured data portion
-        // contains a mix of primitive types and the string pool Vec, making it
-        // incompatible with zerocopy's IntoBytes derive. We could restructure
-        // to separate data-only structs, but that would require significant
-        // API changes. For now, we use direct memory access with proper alignment.
+        // Use the field layout to serialize each field generically.
+        //
+        // IMPORTANT: The SMBIOS record structs (Type0, Type1, etc.) contain a `string_pool: Vec<String>`
+        // field which is Rust metadata (fat pointers) and NOT part of the SMBIOS binary format.
+        // This field layout mechanism only extracts the primitive fields (u8, u16, u32, u64, uuid)
+        // that form the structured portion of the SMBIOS table. The string pool is handled separately
+        // by serialize_string_pool().
+        //
+        // This is why we can't use zerocopy::IntoBytes on the entire struct - it contains non-primitive
+        // types. The field layout approach allows us to selectively serialize only the C-compatible
+        // primitive fields while keeping the convenient Vec<String> API for users.
         for field_info in &layout.fields {
             match field_info.field_type {
                 FieldType::U8(offset) => {
@@ -260,6 +265,27 @@ macro_rules! impl_smbios_record {
 }
 
 /// Type 0: Platform Firmware Information (BIOS Information)
+///
+/// # Important: Not C-Compatible
+///
+/// This struct is **NOT** `#[repr(C)]` and should **NEVER** be directly cast to bytes
+/// or used in FFI contexts. The `string_pool` field contains Rust-native `String` types
+/// (which are fat pointers) and is **NOT** part of the SMBIOS table binary format.
+///
+/// ## Proper Usage
+///
+/// Always use [`SmbiosSerializer::serialize()`] to convert this struct to bytes for the
+/// SMBIOS table. The serializer:
+/// - Extracts only the primitive fields (u8, u16, u64) for the structured portion
+/// - Converts the `string_pool` to null-terminated byte sequences in the SMBIOS format
+/// - Properly handles all alignment and padding requirements
+///
+/// ## String Pool
+///
+/// The `string_pool` field is metadata that holds the actual string content. The primitive
+/// string fields (e.g., `vendor`, `firmware_version`) contain 1-based indices into this pool.
+/// During serialization, the string pool is converted to the SMBIOS null-terminated string
+/// format and appended after the structured data.
 pub struct Type0PlatformFirmwareInformation {
     pub header: SmbiosTableHeader,
     pub vendor: u8,           // String index
@@ -276,7 +302,12 @@ pub struct Type0PlatformFirmwareInformation {
     pub embedded_controller_minor_release: u8,
     pub extended_bios_rom_size: u16,
 
-    // Integrated string pool
+    /// String pool containing the actual string content.
+    ///
+    /// **IMPORTANT**: This field is NOT part of the SMBIOS table binary layout.
+    /// It is Rust metadata that gets converted to null-terminated bytes during serialization.
+    /// Never attempt to directly cast this struct to bytes or use it in FFI - always use
+    /// `SmbiosSerializer::serialize()`.
     pub string_pool: Vec<String>,
 }
 
@@ -300,6 +331,14 @@ impl_smbios_record!(
 );
 
 /// Type 1: System Information
+///
+/// # Important: Not C-Compatible
+///
+/// This struct contains a `string_pool: Vec<String>` field which is Rust metadata and
+/// **NOT** part of the SMBIOS table binary format. Never cast this struct to bytes directly.
+/// Always use [`SmbiosSerializer::serialize()`] to convert to proper SMBIOS format.
+///
+/// See [`Type0PlatformFirmwareInformation`] for detailed documentation on proper usage.
 pub struct Type1SystemInformation {
     pub header: SmbiosTableHeader,
     pub manufacturer: u8,  // String index
@@ -311,7 +350,7 @@ pub struct Type1SystemInformation {
     pub sku_number: u8, // String index
     pub family: u8,     // String index
 
-    // Integrated string pool
+    /// String pool (NOT part of binary SMBIOS format - see struct documentation)
     pub string_pool: Vec<String>,
 }
 
@@ -330,6 +369,14 @@ impl_smbios_record!(
 );
 
 /// Type 2: Baseboard Information
+///
+/// # Important: Not C-Compatible
+///
+/// This struct contains a `string_pool: Vec<String>` field which is Rust metadata and
+/// **NOT** part of the SMBIOS table binary format. Never cast this struct to bytes directly.
+/// Always use [`SmbiosSerializer::serialize()`] to convert to proper SMBIOS format.
+///
+/// See [`Type0PlatformFirmwareInformation`] for detailed documentation on proper usage.
 pub struct Type2BaseboardInformation {
     pub header: SmbiosTableHeader,
     pub manufacturer: u8,  // String index
@@ -343,7 +390,7 @@ pub struct Type2BaseboardInformation {
     pub board_type: u8,
     pub contained_object_handles: u8,
 
-    // Integrated string pool
+    /// String pool (NOT part of binary SMBIOS format - see struct documentation)
     pub string_pool: Vec<String>,
 }
 
@@ -363,7 +410,15 @@ impl_smbios_record!(
     contained_object_handles: u8
 );
 
-/// Type 3: System Enclosure - another example showing how simple it becomes
+/// Type 3: System Enclosure
+///
+/// # Important: Not C-Compatible
+///
+/// This struct contains a `string_pool: Vec<String>` field which is Rust metadata and
+/// **NOT** part of the SMBIOS table binary format. Never cast this struct to bytes directly.
+/// Always use [`SmbiosSerializer::serialize()`] to convert to proper SMBIOS format.
+///
+/// See [`Type0PlatformFirmwareInformation`] for detailed documentation on proper usage.
 pub struct Type3SystemEnclosure {
     pub header: SmbiosTableHeader,
     pub manufacturer: u8, // String index
@@ -381,7 +436,7 @@ pub struct Type3SystemEnclosure {
     pub contained_element_count: u8,
     pub contained_element_record_length: u8,
 
-    // Integrated string pool
+    /// String pool (NOT part of binary SMBIOS format - see struct documentation)
     pub string_pool: Vec<String>,
 }
 
