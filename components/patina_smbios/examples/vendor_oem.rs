@@ -4,7 +4,7 @@ use patina_smbios::smbios_record::{
     FieldInfo, FieldLayout, FieldType, SmbiosFieldLayout, SmbiosRecordStructure, Type0PlatformFirmwareInformation,
     Type1SystemInformation, Type2BaseboardInformation, Type3SystemEnclosure,
 };
-use std::string::String;
+use core::string::String;
 use std::vec::Vec;
 use zerocopy::FromBytes;
 
