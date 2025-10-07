@@ -337,7 +337,7 @@ impl SmbiosManager {
             let candidate = self.next_handle;
 
             // Skip reserved handles (0xFFFE, 0xFFFF, 0)
-            if candidate == 0 || candidate >= 0xFEFF {
+            if candidate == 0 || candidate >= 0xFFFE {
                 self.next_handle = 1;
                 attempts += 1;
                 if attempts >= MAX_ATTEMPTS {
