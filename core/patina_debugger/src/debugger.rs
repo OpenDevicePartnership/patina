@@ -102,11 +102,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
             log_policy: DebuggerLoggingPolicy::SuspendLogging,
             no_transport_init: false,
             exception_types: SystemArch::DEFAULT_EXCEPTION_TYPES,
-            config: spin::RwLock::new(DebuggerConfig {
-                enabled: false,
-                initial_break: false,
-                initial_break_timeout: 0,
-            }),
+            config: spin::RwLock::new(DebuggerConfig { enabled: false, initial_break: true, initial_break_timeout: 0 }),
             internal: Mutex::new(DebuggerInternal { gdb_buffer: None, gdb: None }),
             system_state: Mutex::new(SystemState::new()),
         }
@@ -148,22 +144,16 @@ impl<T: SerialIO> PatinaDebugger<T> {
         self
     }
 
-    /// Configure the debugger.
+    /// Enables the debugger.
     ///
-    /// Allows runtime configuration of some of the debugger settings.
+    /// Allows runtime enablement of the debugger. This should be called before the Patina
+    /// core is invoked.
     ///
     /// Enabled - Whether the debugger is enabled, and will install itself into the system.
     ///
-    /// Initial Break - Whether the debugger should break on initialization.
-    ///
-    /// Initial Break Timeout - A duration in seconds for the debugger to wait for a connection.
-    /// 0 indicates no timeout and will wait indefinitely
-    ///
-    pub fn configure(&self, enabled: bool, _initial_break: bool, _initial_break_timeout: u32) {
+    pub fn enable(&self, enabled: bool) {
         let mut config = self.config.write();
         config.enabled = enabled;
-        // Intentionally ignoring initial_break config until configuration is thought out.
-        config.initial_break = true;
     }
 
     /// Enters the debugger from an exception.

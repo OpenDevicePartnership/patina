@@ -88,9 +88,8 @@ ERROR - ************************************
 This means the debugger is waiting for a connection. If you do not see this hang,
 then confirm that the debugger is enabled and installed prior to calling the core.
 
-You can also enable the debugger at runtime using the `Configure` routine, but use caution.
-Runtime enablement can skip the initial breakpoint and may cause security issues. For development,
-prefer force enablement.
+You can also enable the debugger at runtime using the `enable` routine, but use caution.
+Dynamic enablement should be carefully thought through to ensure proper platform security.
 
 ### Step 4: Verify the transport
 
