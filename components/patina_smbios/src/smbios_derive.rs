@@ -181,10 +181,24 @@ impl SmbiosManager {
         }
     }
 
+    /// Validate a string for use in SMBIOS records
+    ///
+    /// Ensures the string meets SMBIOS specification requirements:
+    /// - Does not exceed SMBIOS_STRING_MAX_LENGTH (64 bytes)
+    /// - Does not contain null terminators (they are added during serialization)
+    ///
+    /// # Arguments
+    ///
+    /// * `s` - The string to validate
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if valid, or an appropriate error if validation fails
     fn validate_string(s: &str) -> Result<(), SmbiosError> {
         if s.len() > SMBIOS_STRING_MAX_LENGTH {
             return Err(SmbiosError::StringTooLong);
         }
+        // Strings must NOT contain null terminators - they are added during serialization
         if s.contains('\0') {
             return Err(SmbiosError::InvalidParameter);
         }
