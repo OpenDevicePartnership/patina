@@ -4,6 +4,7 @@
 [![release]][_release]
 [![commit]][_commit]
 [![ci]][_ci]
+[![cov]][_cov]
 
 This repository hosts the Patina project - a Rust implementation of UEFI firmware.
 
@@ -237,3 +238,5 @@ directory.
 [_commit]: https://github.com/OpenDevicePartnership/patina/commits/main/
 [ci]: https://github.com/OpenDevicePartnership/patina/actions/workflows/ci-workflow.yml/badge.svg?branch=main&event=push
 [_ci]: https://github.com/OpenDevicePartnership/patina/actions/workflows/ci-workflow.yml
+[cov]: https://codecov.io/gh/OpenDevicePartnership/patina/graph/badge.svg?token=CWHWOUUGY6
+[_cov]: https://codecov.io/gh/OpenDevicePartnership/patina

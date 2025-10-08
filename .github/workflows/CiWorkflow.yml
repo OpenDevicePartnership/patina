@@ -125,11 +125,11 @@ jobs:
         run: cargo make doc
 
       - name: Upload Coverage Report
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: target/cobertura.xml
-          fail_ci_if_error: false # Expect it to fail while repository is private
+          files: target/lcov.info
+          fail_ci_if_error: true
 
       - name: Build std
         run: cargo make build
