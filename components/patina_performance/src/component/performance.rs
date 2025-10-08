@@ -12,9 +12,9 @@
 extern crate alloc;
 
 use crate::config;
+use crate::perf_timer::{Arch, ArchFunctionality};
 use alloc::boxed::Box;
 use core::{clone::Clone, convert::AsRef};
-use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 use patina_sdk::{
     boot_services::{BootServices, StandardBootServices, event::EventType, tpl::Tpl},
     component::{IntoComponent, hob::Hob, params::Config},

@@ -35,3 +35,4 @@
 
 pub mod component;
 pub mod config;
+pub mod perf_timer;
