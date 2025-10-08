@@ -9,9 +9,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-// Link `no_std` in normal builds but allow `std` during `cargo test` so the
-// default Rust test harness can run.
-#![cfg_attr(not(test), no_std)]
+#![no_std]
 
 //! # Patina SMBIOS Component
 //!
@@ -60,14 +58,6 @@
 //! * String updates rebuild only the string region, preserving structured bytes.
 //! * Handle allocation reuses freed handles in O(1) time (free list) avoiding
 //!   unbounded growth.
-//!
-//! ## Future Enhancements
-//! * Feature gate for installing C protocol
-//! * Additional high‑level typed records
-//! * Optional checksum / structural verification helpers
-//!
-//! Contributions & issues welcome.
-
 pub mod component;
 /// SMBIOS derive functionality and manager
 pub mod smbios_derive;
@@ -79,8 +69,8 @@ pub use component::SmbiosConfiguration;
 #[cfg(test)]
 mod tests {
     extern crate alloc;
+    use crate::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SmbiosManager, SmbiosRecords};
     use alloc::vec::Vec;
-    use crate::smbios_derive::{SmbiosManager, SmbiosRecords, SMBIOS_HANDLE_PI_RESERVED};
 
     // Helper to create a minimal record (no strings) of given type.
     fn minimal_record(record_type: u8) -> [u8; 6] {
@@ -122,20 +112,20 @@ mod tests {
 
         // Enumerate starting from reserved value
         let mut enum_handle = SMBIOS_HANDLE_PI_RESERVED;
-    let (hdr, _prod) = mgr.get_next(&mut enum_handle, None).expect("get_next should find record");
-    // Copy out of packed struct to avoid unaligned reference errors
-    let rt = hdr.record_type;
-    let h_copy = hdr.handle;
-    assert_eq!(rt, 1);
-    assert_eq!(h_copy, handle);
-        assert_eq!(mgr.version(), (3,9));
+        let (hdr, _prod) = mgr.get_next(&mut enum_handle, None).expect("get_next should find record");
+        // Copy out of packed struct to avoid unaligned reference errors
+        let rt = hdr.record_type;
+        let h_copy = hdr.handle;
+        assert_eq!(rt, 1);
+        assert_eq!(h_copy, handle);
+        assert_eq!(mgr.version(), (3, 9));
     }
 
     #[test]
     fn add_with_string_and_update() {
         let mut mgr = SmbiosManager::new(3, 9);
         // Type 1 + one string "Old" => header(4 bytes) + "Old\0" + final \0
-        let rec = [1,4,0,0,b'O',b'l',b'd',0,0];
+        let rec = [1, 4, 0, 0, b'O', b'l', b'd', 0, 0];
         let h = mgr.add_from_bytes(None, &rec).unwrap();
         // Update first string
         mgr.update_string(h, 1, "NewName").expect("update string 1");
@@ -148,7 +138,7 @@ mod tests {
         let mut mgr = SmbiosManager::new(3, 9);
         let h1 = mgr.add_from_bytes(None, &minimal_record(1)).unwrap();
         let h2 = mgr.add_from_bytes(None, &minimal_record(2)).unwrap();
-        assert_eq!((h1,h2),(1,2));
+        assert_eq!((h1, h2), (1, 2));
         mgr.remove(h1).expect("remove first");
         let h3 = mgr.add_from_bytes(None, &minimal_record(3)).unwrap();
         assert_eq!(h3, h1, "Expect freed handle to be reused");
