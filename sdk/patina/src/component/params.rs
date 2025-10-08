@@ -520,16 +520,24 @@ unsafe impl<T: Default + 'static> Param for ConfigMut<'_, T> {
         storage.unlock_config(id);
 
         if meta.access().has_writes_all_configs() {
-            assert!(false, "ConfigMut<{0}> in component {1} conflicts with a previous &mut Storage access.", core::any::type_name::<T>(), meta.name());
+            panic!(
+                "ConfigMut<{0}> in component {1} conflicts with a previous &mut Storage access.",
+                core::any::type_name::<T>(),
+                meta.name()
+            );
         } else if meta.access().has_reads_all_configs() {
-            assert!(false, "ConfigMut<{0}> in component {1} conflicts with a previous &Storage access.", core::any::type_name::<T>(), meta.name());
+            panic!(
+                "ConfigMut<{0}> in component {1} conflicts with a previous &Storage access.",
+                core::any::type_name::<T>(),
+                meta.name()
+            );
         }
         assert!(
             !meta.access().has_config_write(id),
             "ConfigMut<{0}> in component {1} conflicts with a previous ConfigMut<{0}> access.",
             core::any::type_name::<T>(),
             meta.name(),
-        );  
+        );
         assert!(
             !meta.access().has_config_read(id),
             "ConfigMut<{0}> in component {1} conflicts with a previous Config<{0}> access.",
@@ -716,7 +724,7 @@ mod tests {
     use core::sync::atomic::AtomicBool;
 
     use crate::{
-        component::{storage::Storage, IntoComponent},
+        component::{IntoComponent, storage::Storage},
         error::Result,
     };
 
@@ -1083,7 +1091,9 @@ mod tests {
 
         let state = <Option<Config<u32>> as Param>::init_state(&mut storage, &mut mock_metadata);
         assert!(<Option<Config<u32>> as Param>::try_validate(&state, (&storage).into()).is_ok());
-        assert!(unsafe { <Option<Config<u32>> as Param>::get_param(&state, (&storage).into()).is_some_and(|v| *v == 42) });
+        assert!(unsafe {
+            <Option<Config<u32>> as Param>::get_param(&state, (&storage).into()).is_some_and(|v| *v == 42)
+        });
     }
 
     #[test]
@@ -1093,10 +1103,7 @@ mod tests {
         <(StandardBootServices, Config<i32>) as Param>::init_state(&mut storage, &mut mock_meadata);
         // This will always return true, because this function is not used with tuples. The tuple implementations
         // override the next level up, `try_validate`.
-        assert_eq!(
-            true,
-            <(StandardBootServices, Config<i32>) as Param>::validate(&((), 0), (&storage).into())
-        );
+        assert!(<(StandardBootServices, Config<i32>) as Param>::validate(&((), 0), (&storage).into()));
         assert_eq!(
             Err("patina::boot_services::StandardBootServices"),
             <(StandardBootServices, Config<i32>) as Param>::try_validate(&((), 1), (&storage).into())
@@ -1183,7 +1190,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Commands in component patina::component::params::tests::test_cannot_have_two_commands_in_same_function::TestComponent conflicts with a previous Commands access.")]
+    #[should_panic(
+        expected = "Commands in component patina::component::params::tests::test_cannot_have_two_commands_in_same_function::TestComponent conflicts with a previous Commands access."
+    )]
     fn test_cannot_have_two_commands_in_same_function() {
         #[derive(IntoComponent)]
         struct TestComponent;
@@ -1243,7 +1252,7 @@ mod tests {
     #[test]
     fn test_param_function_consume_mut_ref_self_runs_successfully() {
         static DID_RUN: AtomicBool = AtomicBool::new(false);
-    
+
         #[derive(IntoComponent)]
         struct TestComponent;
         impl TestComponent {
