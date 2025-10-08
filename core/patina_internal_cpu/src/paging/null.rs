@@ -35,10 +35,6 @@ where
         Ok(())
     }
 
-    fn remap_memory_region(&mut self, _address: u64, _size: u64, _attributes: MemoryAttributes) -> Result<(), PtError> {
-        Ok(())
-    }
-
     fn install_page_table(&mut self) -> Result<(), PtError> {
         Ok(())
     }

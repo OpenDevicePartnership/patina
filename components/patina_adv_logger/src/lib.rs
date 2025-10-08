@@ -26,14 +26,14 @@
 //! # use core::ffi::c_void;
 //! use patina_adv_logger::{component::AdvancedLoggerComponent, logger::AdvancedLogger};
 //!
-//! static LOGGER: AdvancedLogger<patina_sdk::serial::uart::UartNull> = AdvancedLogger::new(
-//!      patina_sdk::log::Format::Standard,
+//! static LOGGER: AdvancedLogger<patina::serial::uart::UartNull> = AdvancedLogger::new(
+//!      patina::log::Format::Standard,
 //!      &[("goblin", log::LevelFilter::Off), ("patina_internal_depex", log::LevelFilter::Off)],
 //!      log::LevelFilter::Trace,
-//!      patina_sdk::serial::uart::UartNull{},
+//!      patina::serial::uart::UartNull{},
 //! );
 //!
-//! static ADV_LOGGER: AdvancedLoggerComponent<patina_sdk::serial::uart::UartNull> = AdvancedLoggerComponent::new(&LOGGER);
+//! static ADV_LOGGER: AdvancedLoggerComponent<patina::serial::uart::UartNull> = AdvancedLoggerComponent::new(&LOGGER);
 //!
 //! fn _start(physical_hob_list: *const c_void) {
 //!     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();

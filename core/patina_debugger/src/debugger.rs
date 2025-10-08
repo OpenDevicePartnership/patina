@@ -17,8 +17,8 @@ use gdbstub::{
     conn::ConnectionExt,
     stub::{GdbStubBuilder, SingleThreadStopReason, state_machine::GdbStubStateMachine},
 };
+use patina::serial::SerialIO;
 use patina_internal_cpu::interrupts::{ExceptionType, HandlerType, InterruptHandler, InterruptManager};
-use patina_sdk::serial::SerialIO;
 use spin::Mutex;
 
 use crate::{
@@ -102,11 +102,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
             log_policy: DebuggerLoggingPolicy::SuspendLogging,
             no_transport_init: false,
             exception_types: SystemArch::DEFAULT_EXCEPTION_TYPES,
-            config: spin::RwLock::new(DebuggerConfig {
-                enabled: false,
-                initial_break: false,
-                initial_break_timeout: 0,
-            }),
+            config: spin::RwLock::new(DebuggerConfig { enabled: false, initial_break: true, initial_break_timeout: 0 }),
             internal: Mutex::new(DebuggerInternal { gdb_buffer: None, gdb: None }),
             system_state: Mutex::new(SystemState::new()),
         }
@@ -148,22 +144,16 @@ impl<T: SerialIO> PatinaDebugger<T> {
         self
     }
 
-    /// Configure the debugger.
+    /// Enables the debugger.
     ///
-    /// Allows runtime configuration of some of the debugger settings.
+    /// Allows runtime enablement of the debugger. This should be called before the Patina
+    /// core is invoked.
     ///
     /// Enabled - Whether the debugger is enabled, and will install itself into the system.
     ///
-    /// Initial Break - Whether the debugger should break on initialization.
-    ///
-    /// Initial Break Timeout - A duration in seconds for the debugger to wait for a connection.
-    /// 0 indicates no timeout and will wait indefinitely
-    ///
-    pub fn configure(&self, enabled: bool, _initial_break: bool, _initial_break_timeout: u32) {
+    pub fn enable(&self, enabled: bool) {
         let mut config = self.config.write();
         config.enabled = enabled;
-        // Intentionally ignoring initial_break config until configuration is thought out.
-        config.initial_break = true;
     }
 
     /// Enters the debugger from an exception.
@@ -172,20 +162,6 @@ impl<T: SerialIO> PatinaDebugger<T> {
             Some(inner) => inner,
             None => return Err(DebugError::Reentry),
         };
-
-        // Suspend or disable logging. If suspended, logging will resume when the struct is dropped.
-        let _log_suspend;
-        match self.log_policy {
-            DebuggerLoggingPolicy::SuspendLogging => {
-                _log_suspend = LoggingSuspender::suspend();
-            }
-            DebuggerLoggingPolicy::DisableLogging => {
-                log::set_max_level(log::LevelFilter::Off);
-            }
-            DebuggerLoggingPolicy::FullLogging => {
-                // No action needed.
-            }
-        }
 
         let mut target = PatinaTarget::new(exception_info, &self.system_state);
 
@@ -228,7 +204,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
                     let byte = loop {
                         match gdb.borrow_conn().read() {
                             Ok(0x0) => {
-                                log::error!(
+                                log::warn!(
                                     "Debugger: Read 0x00 from the transport. This is unexpected and will be ignored."
                                 );
                                 continue;
@@ -311,7 +287,6 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
                 }
                 else {
                     internal.gdb_buffer = unsafe { Some(&*(GDB_BUFFER.as_ptr() as *mut [u8; GDB_BUFF_LEN])) };
-                    internal.monitor_buffer = unsafe { Some(&*(MONITOR_BUFFER.as_ptr() as *mut [u8; MONITOR_BUFF_LEN])) };
                 }
             }
         }
@@ -393,22 +368,47 @@ impl<T: SerialIO> InterruptHandler for PatinaDebugger<T> {
         exception_type: ExceptionType,
         context: &mut patina_internal_cpu::interrupts::ExceptionContext,
     ) {
+        // Suspend or disable logging. If suspended, logging will resume when the struct is dropped.
+        let _log_suspend;
+        match self.log_policy {
+            DebuggerLoggingPolicy::SuspendLogging => {
+                _log_suspend = LoggingSuspender::suspend();
+            }
+            DebuggerLoggingPolicy::DisableLogging => {
+                log::set_max_level(log::LevelFilter::Off);
+            }
+            DebuggerLoggingPolicy::FullLogging => {
+                // No action needed.
+            }
+        }
+
         // Check for a poke test before continuing
         if SystemArch::check_memory_poke_test(context) {
             log::info!("Memory poke test triggered, ignoring exception.");
             return;
         }
 
-        let mut exception_info = SystemArch::process_entry(exception_type as u64, context);
+        let mut exception_info = loop {
+            let exception_info = SystemArch::process_entry(exception_type as u64, context);
+            let result = self.enter_debugger(exception_info);
 
-        let result = self.enter_debugger(exception_info);
-
-        exception_info = result.unwrap_or_else(|error| {
-            // In the future, this could be make more robust by trying
-            // to re-enter the debugger, re-initializing the stub. This
-            // may require a new communication buffer though.
-            debugger_crash(error, exception_type);
-        });
+            match result {
+                Ok(info) => break info,
+                Err(DebugError::GdbStubError(gdb_error)) => {
+                    // Restarting the debugger will reset any changes made to the
+                    // context due to the way that information is owned in the stub,
+                    // but this is better than crashing. If this proves problematic,
+                    // a more robust solution could be explored. This will also
+                    // resend the break packet to the client.
+                    log::error!("GDB Stub error, restarting debugger. {gdb_error:?}");
+                    continue;
+                }
+                Err(error) => {
+                    // Other errors are not currently recoverable.
+                    debugger_crash(error, exception_type);
+                }
+            }
+        };
 
         SystemArch::process_exit(&mut exception_info);
         *context = exception_info.context;

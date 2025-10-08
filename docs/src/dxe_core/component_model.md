@@ -38,7 +38,7 @@ custom configuration, which is cascaded to all components that have `Config<T>` 
 interface.
 
 ```rust
-DxeCore::default()
+Core::default()
     .init_memory(physical_hob_list)
     .with_config(52_u32)
     .with_config(...)
@@ -109,12 +109,12 @@ config:
   look: handDrawn
 ---
 graph LR
-    A[DxeCore::dispatch_components] --> B[Storage::lock_configs]
-    B --> C[DxeCore::dispatch_components]
-    C --> D[DxeCore::display_components_not_dispatched]
+    A[Core::core_dispatcher] --> B[Storage::lock_configs]
+    B --> C[Core::core_dispatcher]
+    C --> D[Core::display_components_not_dispatched]
 ```
 
-Below is the flow chart for `DxeCore::dispatch_components`.
+Below is the flow chart for `Core::core_dispatcher`.
 
 ```mermaid
 ---
@@ -163,19 +163,13 @@ graph LR
 ### Traits
 
 - `Component`: The trait every component must implement.
-- `IntoComponent`: A trait for converting non-components (such as functions) into their expected component struct
-  (such as `FunctionComponent`)
+- `IntoComponent`: A trait for converting non-components into a `Box<dyn Component>` for dynamic dispatch
 - `Param`: A trait implemented on various types that allow them to be used as a function parameter for dependency
   injection
 
-### Default Component Implementations
-
-- `FunctionComponent`: A function whose parameters all implement `Param`. A blanket `IntoComponent` implementation
-  allows for converting this type of function into a `FunctionComponent`.
-
 ### Default Param implementations
 
-See [Component Interface](../driver/interface.md) for the list of default `Param` implementations.
+See [Component Interface](../component/interface.md#component-params) for the list of default `Param` implementations.
 
 ### Naming Conventions
 
@@ -189,7 +183,7 @@ the amount of repetitive naming across the codebase. This is not a rule, but a r
 - **Non-breaking interface**: `Param` implementations can be added at any time without directly breaking existing
 interfaces. This means extending functionality and adding additional abstractions and functionality can be done at
 any time without breaking existing drivers. Additionally, new implementations of `Component` can be added that could be
-completely different that existing implementations such as `FunctionComponent`. They may not even use dependency
+completely different that existing implementations such as `StructComponent`. They may not even use dependency
 injection!
 
 - **Configuration**: A single location exists for all configuration for the platform. This prevents configuration from
@@ -197,7 +191,7 @@ being duplicated across multiple drivers as with Static PCDs. This also allows f
 supported type, unlike the limited configuration of EDK II. Finally, any component is able to hook any configuration
 value it wants, so long as it is public configuration.
 
-- **Testing**: Testing is made easy, particularly with `FunctionComponent`. Simply create an instance / mock for each
-`param` your component expects, and test it! No complex levels of indirection and setup necessary to test the function.
+- **Testing**: Testing is made easy. Simply create an instance / mock for each `param` your component expects, and test
+it! No complex levels of indirection and setup necessary to test the function.
 
 - **Dependency Expression**: No need to define a dependency expression, the interface is the dependency expression!

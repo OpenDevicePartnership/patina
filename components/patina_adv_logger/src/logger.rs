@@ -13,7 +13,7 @@ use crate::memory_log::{self, AdvancedLog, LogEntry};
 use core::marker::Send;
 use log::Level;
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
-use patina_sdk::{log::Format, serial::SerialIO};
+use patina::{log::Format, serial::SerialIO};
 use r_efi::efi;
 use spin::Once;
 
