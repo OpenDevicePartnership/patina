@@ -13,7 +13,7 @@ extern crate alloc;
 use crate::smbios_derive::{
     SmbiosError, SmbiosHandle, SmbiosManager, SmbiosRecords, SmbiosTableHeader, SmbiosType, install_smbios_protocol,
 };
-use patina_sdk::{
+use patina::{
     boot_services::StandardBootServices,
     component::{
         IntoComponent,
@@ -38,10 +38,12 @@ impl Default for SmbiosConfiguration {
     }
 }
 
-/// Initializes the SMBIOS provider service
+/// Initializes and exposes an SMBIOS provider service.
 ///
-/// This component provides the `SmbiosRecords` service that allows other components
-/// to add, update, remove, and query SMBIOS records in the system firmware.
+/// The provider wraps an internal [`SmbiosManager`] and registers a
+/// `SmbiosRecords` implementation for other components. It also attempts to
+/// install a C/EDKII compatible protocol (best‑effort; non‑fatal on failure)
+/// for mixed Rust/C driver ecosystems.
 #[derive(IntoComponent, IntoService)]
 #[service(dyn SmbiosRecords<'static>)]
 pub struct SmbiosProviderManager {

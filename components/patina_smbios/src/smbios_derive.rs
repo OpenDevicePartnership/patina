@@ -15,7 +15,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::ffi::{c_char, c_void};
 use core::sync::atomic::{AtomicPtr, Ordering};
-use patina_sdk::uefi_protocol::ProtocolInterface;
+use patina::uefi_protocol::ProtocolInterface;
 use r_efi::efi;
 use r_efi::efi::Handle;
 use r_efi::efi::PhysicalAddress;
@@ -28,8 +28,14 @@ pub type SmbiosHandle = u16;
 pub const SMBIOS_HANDLE_PI_RESERVED: SmbiosHandle = 0xFFFE;
 
 /// SMBIOS Protocol GUID: 03583ff6-cb36-4940-947e-b9b39f4afaf7
-pub const SMBIOS_PROTOCOL_GUID: efi::Guid =
-    efi::Guid::from_fields(0x03583ff6, 0xcb36, 0x4940, 0x94, 0x7e, &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7]);
+pub const SMBIOS_PROTOCOL_GUID: efi::Guid = efi::Guid::from_fields(
+    0x03583ff6,
+    0xcb36,
+    0x4940,
+    0x94,
+    0x7e,
+    &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7],
+);
 
 /// SMBIOS record type
 pub type SmbiosType = u8;
@@ -145,7 +151,6 @@ pub struct Smbios30EntryPoint {
 pub struct SmbiosManager {
     records: Vec<SmbiosRecord>,
     next_handle: SmbiosHandle,
-    freed_handles: Vec<SmbiosHandle>,
     major_version: u8,
     minor_version: u8,
     #[allow(dead_code)]
@@ -160,7 +165,6 @@ impl Clone for SmbiosManager {
         Self {
             records: self.records.clone(),
             next_handle: self.next_handle,
-            freed_handles: self.freed_handles.clone(),
             major_version: self.major_version,
             minor_version: self.minor_version,
             entry_point_64: self.entry_point_64.as_ref().map(|ep| Box::new(**ep)),
@@ -175,7 +179,6 @@ impl SmbiosManager {
         Self {
             records: Vec::new(),
             next_handle: 1,
-            freed_handles: Vec::new(),
             major_version,
             minor_version,
             entry_point_64: None,
@@ -184,24 +187,10 @@ impl SmbiosManager {
         }
     }
 
-    /// Validate a string for use in SMBIOS records
-    ///
-    /// Ensures the string meets SMBIOS specification requirements:
-    /// - Does not exceed SMBIOS_STRING_MAX_LENGTH (64 bytes)
-    /// - Does not contain null terminators (they are added during serialization)
-    ///
-    /// # Arguments
-    ///
-    /// * `s` - The string to validate
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` if valid, or an appropriate error if validation fails
     fn validate_string(s: &str) -> Result<(), SmbiosError> {
         if s.len() > SMBIOS_STRING_MAX_LENGTH {
             return Err(SmbiosError::StringTooLong);
         }
-        // Strings must NOT contain null terminators - they are added during serialization
         if s.contains('\0') {
             return Err(SmbiosError::InvalidParameter);
         }
@@ -254,94 +243,40 @@ impl SmbiosManager {
             return Ok(0);
         }
 
-        // Remove the final double-null terminator and split by null bytes
-        let data_without_terminator = &string_pool_area[..len - 2];
+        let mut count = 0;
+        let mut i = 0;
+        let data_end = len - 2; // Exclude the final double-null
 
-        // Split by null bytes to get individual strings
-        let strings: Vec<&[u8]> = data_without_terminator.split(|&b| b == 0).collect();
+        while i < data_end {
+            let start = i;
 
-        // Validate each string
-        for string_bytes in &strings {
-            if string_bytes.is_empty() {
-                // Empty slice means consecutive nulls (invalid)
+            // Find the next null terminator (end of current string)
+            while i < data_end && string_pool_area[i] != 0 {
+                i += 1;
+            }
+
+            // If we found content before the null, it's a valid string
+            if i > start {
+                // Validate string length doesn't exceed SMBIOS spec limit
+                let string_len = i - start;
+                if string_len > SMBIOS_STRING_MAX_LENGTH {
+                    return Err(SmbiosError::StringTooLong);
+                }
+                count += 1;
+            } else if i == start {
+                // Found null at start position = consecutive nulls (invalid)
                 return Err(SmbiosError::InvalidParameter);
             }
-            if string_bytes.len() > SMBIOS_STRING_MAX_LENGTH {
-                return Err(SmbiosError::StringTooLong);
-            }
+
+            // Move past the null terminator
+            i += 1;
         }
 
-        Ok(strings.len())
+        Ok(count)
     }
 
-    /// Parse strings from an SMBIOS string pool
-    ///
-    /// Extracts all strings from the string pool area, converting them to Rust Strings.
-    /// This is a higher-level companion to `validate_and_count_strings` that returns
-    /// the actual string data instead of just counting.
-    ///
-    /// # Arguments
-    ///
-    /// * `string_pool_area` - The string pool portion of an SMBIOS record
-    ///
-    /// # Returns
-    ///
-    /// Returns a Vec of Strings extracted from the pool, or an error if the pool is malformed
-    fn parse_strings_from_pool(string_pool_area: &[u8]) -> Result<Vec<String>, SmbiosError> {
-        let len = string_pool_area.len();
-
-        // Must end with double null
-        if len < 2 || string_pool_area[len - 1] != 0 || string_pool_area[len - 2] != 0 {
-            return Err(SmbiosError::InvalidParameter);
-        }
-
-        // Handle empty string pool (just double null)
-        if len == 2 {
-            return Ok(Vec::new());
-        }
-
-        // Remove the final double-null terminator and split by null bytes
-        let data_without_terminator = &string_pool_area[..len - 2];
-
-        // Split by null bytes to get individual strings
-        data_without_terminator
-            .split(|&b| b == 0)
-            .map(|string_bytes| {
-                if string_bytes.is_empty() {
-                    // Empty slice means consecutive nulls (invalid)
-                    Err(SmbiosError::InvalidParameter)
-                } else {
-                    // Convert bytes to String using UTF-8 lossy conversion
-                    Ok(String::from_utf8_lossy(string_bytes).into_owned())
-                }
-            })
-            .collect()
-    }
-
-    /// Build a complete SMBIOS record from a header and string array
-    ///
-    /// This is a helper function for creating SMBIOS records when you have
-    /// the structured data (header) and want to attach strings.
-    ///
-    /// # Arguments
-    ///
-    /// * `header` - The SMBIOS table header and structured data
-    /// * `strings` - Array of string slices to include in the string pool
-    ///
-    /// # Returns
-    ///
-    /// Returns a complete SMBIOS record byte array ready to be added via `add_from_bytes`
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let header = SmbiosTableHeader::new(1, size_of::<MyStruct>(), SMBIOS_HANDLE_PI_RESERVED);
-    /// let strings = &["Manufacturer", "Product Name", "Version"];
-    /// let record = SmbiosManager::build_record_with_strings(&header, strings)?;
-    /// manager.add_from_bytes(None, &record)?;
-    /// ```
     #[allow(dead_code)]
-    pub fn build_record_with_strings(header: &SmbiosTableHeader, strings: &[&str]) -> Result<Vec<u8>, SmbiosError> {
+    fn build_record_with_strings(header: &SmbiosTableHeader, strings: &[&str]) -> Result<Vec<u8>, SmbiosError> {
         // Validate all strings first
         for s in strings {
             Self::validate_string(s)?;
@@ -349,9 +284,10 @@ impl SmbiosManager {
 
         let mut record = Vec::new();
 
-        // Add the structured data using zerocopy
-        use zerocopy::IntoBytes;
-        record.extend_from_slice(header.as_bytes());
+        // Add the structured data
+        let header_bytes =
+            unsafe { core::slice::from_raw_parts(header as *const _ as *const u8, header.length as usize) };
+        record.extend_from_slice(header_bytes);
 
         // Add strings
         if strings.is_empty() {
@@ -368,32 +304,45 @@ impl SmbiosManager {
         Ok(record)
     }
 
-    /// Allocate a new handle using a free list for efficient O(1) allocation
-    ///
-    /// This implementation maintains a free list of previously freed handles to avoid
-    /// O(n) searches through all records. The allocation strategy is:
-    /// 1. If freed_handles is non-empty, pop and reuse a freed handle
-    /// 2. Otherwise, use next_handle and increment it
-    /// 3. If next_handle reaches the reserved range (0xFFFE), wrap to 1
-    /// 4. If all handles are exhausted, return OutOfResources
+    /// Check if a handle is already allocated by scanning the records vector
+    fn is_handle_allocated(&self, handle: SmbiosHandle) -> bool {
+        self.records.iter().any(|r| r.header.handle == handle)
+    }
+
     fn allocate_handle(&mut self) -> Result<SmbiosHandle, SmbiosError> {
-        // First, try to reuse a freed handle (most efficient)
-        if let Some(handle) = self.freed_handles.pop() {
-            return Ok(handle);
+        // Counter-based allocation with wraparound per RFC:
+        // Start from next_handle, try sequential allocation up to 0xFEFF
+        // If all are allocated, wrap around from 1
+        let mut attempts = 0u32;
+        const MAX_ATTEMPTS: u32 = 0xFEFF;
+
+        loop {
+            let candidate = self.next_handle;
+
+            // Skip reserved handles (0xFFFE, 0xFFFF, 0)
+            if candidate == 0 || candidate >= 0xFEFF {
+                self.next_handle = 1;
+                attempts += 1;
+                if attempts >= MAX_ATTEMPTS {
+                    return Err(SmbiosError::OutOfResources);
+                }
+                continue;
+            }
+
+            if !self.is_handle_allocated(candidate) {
+                let allocated = candidate;
+                self.next_handle = candidate + 1;
+                return Ok(allocated);
+            }
+
+            self.next_handle += 1;
+            attempts += 1;
+
+            // Prevent infinite loop - if we've wrapped around to start
+            if attempts >= MAX_ATTEMPTS {
+                return Err(SmbiosError::OutOfResources);
+            }
         }
-
-        // No freed handles available, use next_handle
-        let candidate = self.next_handle;
-
-        // Check if we've exhausted the handle space
-        // Valid handles are 1..=0xFEFF (0xFFFE and 0xFFFF are reserved)
-        if candidate >= 0xFFFE {
-            // All handles exhausted
-            return Err(SmbiosError::OutOfResources);
-        }
-
-        self.next_handle = candidate + 1;
-        Ok(candidate)
     }
 
     #[allow(dead_code)]
@@ -422,11 +371,8 @@ impl SmbiosRecords<'static> for SmbiosManager {
             return Err(SmbiosError::BufferTooSmall);
         }
 
-        // Step 2: Parse and validate header using zerocopy
-        use zerocopy::Ref;
-        let (header_ref, _rest) =
-            Ref::<&[u8], SmbiosTableHeader>::from_prefix(record_data).map_err(|_| SmbiosError::InvalidParameter)?;
-        let header: &SmbiosTableHeader = &header_ref;
+        // Step 2: Parse and validate header
+        let header = unsafe { &*(record_data.as_ptr() as *const SmbiosTableHeader) };
 
         // Step 3: Validate header->length is <= (record_data.length - 2) for string pool
         // The string pool needs at least 2 bytes for the double-null terminator
@@ -458,7 +404,14 @@ impl SmbiosRecords<'static> for SmbiosManager {
         data[2] = handle_bytes[0]; // Handle is at offset 2 in header
         data[3] = handle_bytes[1];
 
-        let smbios_record = SmbiosRecord::new(record_header, producer_handle, data, string_count);
+        let smbios_record = SmbiosRecord {
+            header: record_header,
+            producer_handle,
+            data,
+            string_count,
+            smbios32_table: true,
+            smbios64_table: true,
+        };
 
         self.records.push(smbios_record);
         Ok(smbios_handle)
@@ -487,10 +440,29 @@ impl SmbiosRecords<'static> for SmbiosManager {
             return Err(SmbiosError::BufferTooSmall);
         }
 
-        // Extract existing strings from the string pool using the helper function
+        // Extract existing strings from the string pool
         let string_pool_start = header_length;
         let string_pool = &record.data[string_pool_start..];
-        let mut existing_strings = Self::parse_strings_from_pool(string_pool)?;
+
+        let mut existing_strings = Vec::new();
+        let mut current_string = Vec::new();
+        let mut null_count = 0;
+
+        for &byte in string_pool {
+            if byte == 0 {
+                if !current_string.is_empty() {
+                    existing_strings.push(String::from_utf8_lossy(&current_string).into_owned());
+                    current_string.clear();
+                }
+                null_count += 1;
+                if null_count >= 2 {
+                    break;
+                }
+            } else {
+                null_count = 0;
+                current_string.push(byte);
+            }
+        }
 
         // Validate that we have enough strings
         if string_number > existing_strings.len() {
@@ -530,10 +502,10 @@ impl SmbiosRecords<'static> for SmbiosManager {
 
         self.records.remove(pos);
 
-        // Add the freed handle to the free list for reuse
-        // Only add valid handles (1..0xFFFE) to the free list
-        if (1..0xFFFE).contains(&smbios_handle) {
-            self.freed_handles.push(smbios_handle);
+        // Optimization: If we removed a handle lower than next_handle,
+        // reset next_handle to reuse the freed handle sooner
+        if smbios_handle < self.next_handle && (1..0xFEFF).contains(&smbios_handle) {
+            self.next_handle = smbios_handle;
         }
 
         Ok(())
@@ -592,20 +564,14 @@ impl SmbiosTableHeader {
 }
 
 /// Internal SMBIOS record representation
-///
-/// This implementation is for SMBIOS 3.0+ specification which uses 64-bit addressing.
 #[derive(Clone)]
 pub struct SmbiosRecord {
     pub header: SmbiosTableHeader,
     pub producer_handle: Option<Handle>,
     pub data: Vec<u8>, // Complete record including strings
     string_count: usize,
-}
-
-impl SmbiosRecord {
-    pub fn new(header: SmbiosTableHeader, producer_handle: Option<Handle>, data: Vec<u8>, string_count: usize) -> Self {
-        Self { header, producer_handle, data, string_count }
-    }
+    pub smbios32_table: bool,
+    pub smbios64_table: bool,
 }
 
 pub struct SmbiosRecordBuilder {
@@ -619,11 +585,9 @@ impl SmbiosRecordBuilder {
         Self { record_type, data: Vec::new(), strings: Vec::new() }
     }
 
-    pub fn add_field<T>(mut self, value: T) -> Self
-    where
-        T: Copy + zerocopy::IntoBytes + zerocopy::Immutable,
-    {
-        self.data.extend_from_slice(value.as_bytes());
+    pub fn add_field<T: Copy>(mut self, value: T) -> Self {
+        let bytes = unsafe { core::slice::from_raw_parts(&value as *const T as *const u8, core::mem::size_of::<T>()) };
+        self.data.extend_from_slice(bytes);
         self
     }
 
@@ -636,15 +600,17 @@ impl SmbiosRecordBuilder {
     pub fn build(self) -> Result<Vec<u8>, SmbiosError> {
         let mut record = Vec::new();
 
-        // Add header using zerocopy
+        // Add header
         let header = SmbiosTableHeader {
             record_type: self.record_type,
             length: (core::mem::size_of::<SmbiosTableHeader>() + self.data.len()) as u8,
             handle: SMBIOS_HANDLE_PI_RESERVED,
         };
 
-        use zerocopy::IntoBytes;
-        record.extend_from_slice(header.as_bytes());
+        let header_bytes = unsafe {
+            core::slice::from_raw_parts(&header as *const _ as *const u8, core::mem::size_of::<SmbiosTableHeader>())
+        };
+        record.extend_from_slice(header_bytes);
 
         // Add data
         record.extend_from_slice(&self.data);
@@ -665,9 +631,9 @@ impl SmbiosRecordBuilder {
 }
 
 /// Global storage for the SMBIOS manager instance that the C protocol will use
-///
+/// 
 /// # Safety
-///
+/// 
 /// This is safe because:
 /// - UEFI runs in a single-threaded environment during DXE phase
 /// - The pointer is only set once during component initialization
@@ -693,8 +659,14 @@ struct SmbiosProtocol {
 }
 
 unsafe impl ProtocolInterface for SmbiosProtocol {
-    const PROTOCOL_GUID: efi::Guid =
-        efi::Guid::from_fields(0x03583ff6, 0xcb36, 0x4940, 0x94, 0x7e, &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7]);
+    const PROTOCOL_GUID: efi::Guid = efi::Guid::from_fields(
+        0x03583ff6,
+        0xcb36,
+        0x4940,
+        0x94,
+        0x7e,
+        &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7],
+    );
 }
 
 #[allow(dead_code)]
@@ -767,12 +739,12 @@ impl SmbiosProtocol {
 
             // Scan for the string pool terminator (double null)
             let base_ptr = record as *const u8;
-
+            
             // Scan for double null terminator
             let mut consecutive_nulls = 0;
             let mut offset = record_length;
             const MAX_STRING_POOL_SIZE: usize = 4096; // Safety limit
-
+            
             while consecutive_nulls < 2 && offset < record_length + MAX_STRING_POOL_SIZE {
                 let byte = *base_ptr.add(offset);
                 if byte == 0 {
@@ -782,23 +754,27 @@ impl SmbiosProtocol {
                 }
                 offset += 1;
             }
-
+            
             if consecutive_nulls < 2 {
                 // Malformed record - no double null terminator found
                 return efi::Status::INVALID_PARAMETER;
             }
-
+            
             let total_size = offset;
 
             // Create a slice of the complete record
             let full_record_bytes = core::slice::from_raw_parts(base_ptr, total_size);
-
+            
             // SAFETY: manager_ptr is guaranteed to be valid (checked above)
             let manager = &*manager_ptr;
             let mut manager_lock = manager.lock();
 
             // Convert handle
-            let producer_opt = if producer_handle.is_null() { None } else { Some(producer_handle) };
+            let producer_opt = if producer_handle.is_null() {
+                None
+            } else {
+                Some(producer_handle)
+            };
 
             // Add the record
             match manager_lock.add_from_bytes(producer_opt, full_record_bytes) {
@@ -835,7 +811,7 @@ impl SmbiosProtocol {
         unsafe {
             let handle = *smbios_handle;
             let str_num = *string_number;
-
+            
             // Convert C string to Rust str
             let c_str = core::ffi::CStr::from_ptr(string);
             let rust_str = match c_str.to_str() {
@@ -896,7 +872,11 @@ impl SmbiosProtocol {
 
         unsafe {
             let mut handle = *smbios_handle;
-            let type_filter = if record_type.is_null() { None } else { Some(*record_type) };
+            let type_filter = if record_type.is_null() {
+                None
+            } else {
+                Some(*record_type)
+            };
 
             // SAFETY: manager_ptr is guaranteed to be valid
             let manager = &*manager_ptr;
@@ -934,15 +914,15 @@ impl SmbiosProtocol {
 /// The protocol will remain installed for the lifetime of the system.
 pub fn install_smbios_protocol(
     manager: &SmbiosManager,
-    boot_services: &impl patina_sdk::boot_services::BootServices,
+    boot_services: &impl patina::boot_services::BootServices,
 ) -> Result<efi::Handle, SmbiosError> {
     // Clone the manager and wrap it in a Mutex for thread-safe access
     let manager_clone = manager.clone();
     let manager_mutex = Box::new(Mutex::new(manager_clone));
-
+    
     // Leak the mutex to get a 'static reference
     let manager_ptr = Box::into_raw(manager_mutex);
-
+    
     // Store the manager pointer globally
     SMBIOS_MANAGER.store(manager_ptr, Ordering::SeqCst);
 
@@ -953,14 +933,14 @@ pub fn install_smbios_protocol(
     let protocol = SmbiosProtocol::new(major, minor);
     let interface = Box::into_raw(Box::new(protocol));
     let interface_void = interface as *mut c_void;
-
+    
     // Store the interface pointer for lifetime management
     SMBIOS_PROTOCOL_INTERFACE.store(interface_void, Ordering::SeqCst);
 
     // Install the protocol using the unchecked interface since we have a raw pointer
     let handle = unsafe {
         boot_services.install_protocol_interface_unchecked(
-            None, // Let UEFI create a new handle
+            None,  // Let UEFI create a new handle
             &SMBIOS_PROTOCOL_GUID,
             interface_void,
         )
@@ -994,7 +974,7 @@ mod tests {
     use crate::smbios_record::SmbiosRecordStructure;
     use crate::smbios_record::Type0PlatformFirmwareInformation;
     use std::vec;
-
+    
     #[test]
     fn test_smbios_record_builder_builds_bytes() {
         // Ensure builder returns a non-empty record buffer for a minimal System Information record
