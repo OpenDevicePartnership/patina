@@ -12,16 +12,16 @@ use lazy_static::lazy_static;
 use patina::base::SIZE_4GB;
 use patina::base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE};
 use patina::{component::service::IntoService, error::EfiError};
-use patina_paging::page_allocator::PageAllocator;
-use patina_paging::{MemoryAttributes, PageTable, PagingType};
+use patina_paging::{PageTable, PagingType};
 use patina_pi::protocols::cpu_arch::EfiSystemContext;
 use patina_stacktrace::StackTrace;
 use x86_64::VirtAddr;
 use x86_64::structures::idt::InterruptDescriptorTable;
 use x86_64::structures::idt::InterruptStackFrame;
 
-use crate::interrupts::HandlerType;
-use crate::interrupts::InterruptManager;
+use crate::interrupts::{
+    EfiExceptionStackTrace, HandlerType, InterruptManager, exception_handling::FaultAllocator, x64::ExceptionContextX64,
+};
 
 global_asm!(include_str!("interrupt_handler.asm"));
 
@@ -118,66 +118,39 @@ impl InterruptManager for InterruptsX64 {}
 /// increase the diagnosability of faults in the interrupt handling code.
 ///
 extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
-    panic!("EXCEPTION: DOUBLE FAULT\n{stack_frame:#x?}");
+    panic!("EXCEPTION: DOUBLE FAULT\n{stack_frame:#X?}");
 }
 
 /// Default handler for GP faults.
 extern "efiapi" fn general_protection_fault_handler(_exception_type: isize, context: EfiSystemContext) {
+    // SAFETY: We don't have any choice here, we are in an exception and have to do our best
+    // to report. The system is dead anyway.
     let x64_context = unsafe { context.system_context_x64.as_ref().unwrap() };
     log::error!("EXCEPTION: GP FAULT");
-    log::error!("Instruction Pointer: {:#x?}", x64_context.rip);
-    log::error!("Code Segment: 0x{:x?}", x64_context.cs);
-    log::error!("RFLAGS: 0x{:x?}", x64_context.rflags);
-    log::error!("Stack Segment: 0x{:x?}", x64_context.ss);
-    log::error!("Stack Pointer: 0x{:x?}", x64_context.rsp);
-    log::error!("Data Segment: 0x{:x?}", x64_context.ds);
+    log::error!("Instruction Pointer: {:#X?}", x64_context.rip);
+    log::error!("Code Segment: {:#X?}", x64_context.cs);
+    log::error!("RFLAGS: {:#X?}", x64_context.rflags);
+    log::error!("Stack Segment: {:#X?}", x64_context.ss);
+    log::error!("Stack Pointer: {:#X?}", x64_context.rsp);
+    log::error!("Data Segment: {:#X?}", x64_context.ds);
     log::error!("Paging Enable: {}", x64_context.cr0 & 0x80000000 != 0);
     log::error!("Protection Enable: {}", x64_context.cr0 & 0x00000001 != 0);
-    log::error!("Page Directory Base: 0x{:x?}", x64_context.cr3);
-    log::error!("Control Flags (cr4): 0x{:x?}", x64_context.cr4);
+    log::error!("Page Directory Base: {:#X?}", x64_context.cr3);
+    log::error!("Control Flags (cr4): {:#X?}", x64_context.cr4);
     interpret_gp_fault_exception_data(x64_context.exception_data);
 
-    log::error!(
-        "General-Purpose Registers\n \
-                RAX: {:x?}\n \
-                RBX: {:x?}\n \
-                RCX: {:x?}\n \
-                RDX: {:x?}\n \
-                RSI: {:x?}\n \
-                RDI: {:x?}\n \
-                RBP: {:x?}\n \
-                R8: {:x?}\n \
-                R9: {:x?}\n \
-                R10: {:x?}\n \
-                R11: {:x?}\n \
-                R12: {:x?}\n \
-                R13: {:x?}\n \
-                R14: {:x?}\n \
-                R15: {:x?}",
-        x64_context.rax,
-        x64_context.rbx,
-        x64_context.rcx,
-        x64_context.rdx,
-        x64_context.rsi,
-        x64_context.rdi,
-        x64_context.rbp,
-        x64_context.r8,
-        x64_context.r9,
-        x64_context.r10,
-        x64_context.r11,
-        x64_context.r12,
-        x64_context.r13,
-        x64_context.r14,
-        x64_context.r15
-    );
+    log::error!("");
 
-    log::debug!("Full Context: {x64_context:#x?}");
+    (x64_context as &ExceptionContextX64).dump_system_context_registers();
 
+    log::error!("Dumping Exception Stack Trace:");
+    // SAFETY: As before, we don't have any choice. The stacktrace module will do its best to not cause a
+    // recursive exception.
     if let Err(err) = unsafe { StackTrace::dump_with(x64_context.rip, x64_context.rsp) } {
         log::error!("StackTrace: {err}");
     }
 
-    panic!("EXCEPTION: GP FAULT\n");
+    panic!("EXCEPTION: GP FAULT");
 }
 
 /// Default handler for page faults.
@@ -185,61 +158,28 @@ extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystem
     let x64_context = unsafe { context.system_context_x64.as_ref().unwrap() };
 
     log::error!("EXCEPTION: PAGE FAULT");
-    log::error!("Accessed Address: 0x{:x?}", x64_context.cr2);
+    log::error!("Accessed Address: {:#X?}", x64_context.cr2);
     log::error!("Paging Enabled: {}", x64_context.cr0 & 0x80000000 != 0);
-    log::error!("Instruction Pointer: 0x{:x?}", x64_context.rip);
-    log::error!("Code Segment: 0x{:x?}", x64_context.cs);
-    log::error!("RFLAGS: 0x{:x?}", x64_context.rflags);
-    log::error!("Stack Segment: 0x{:x?}", x64_context.ss);
-    log::error!("Data Segment: 0x{:x?}", x64_context.ds);
-    log::error!("Stack Pointer: 0x{:x?}", x64_context.rsp);
-    log::error!("Page Directory Base: 0x{:x?}", x64_context.cr3);
-    log::error!("Paging Features (cr4): 0x{:x?}", x64_context.cr4);
+    log::error!("Instruction Pointer: {:#X?}", x64_context.rip);
+    log::error!("Code Segment: {:#X?}", x64_context.cs);
+    log::error!("RFLAGS: {:#X?}", x64_context.rflags);
+    log::error!("Stack Segment: {:#X?}", x64_context.ss);
+    log::error!("Data Segment: {:#X?}", x64_context.ds);
+    log::error!("Stack Pointer: {:#X?}", x64_context.rsp);
+    log::error!("Page Directory Base: {:#X?}", x64_context.cr3);
+    log::error!("Paging Features (cr4): {:#X?}", x64_context.cr4);
     interpret_page_fault_exception_data(x64_context.exception_data);
+
+    log::error!("");
+
+    (x64_context as &ExceptionContextX64).dump_system_context_registers();
 
     let paging_type =
         { if x64_context.cr4 & (1 << 12) != 0 { PagingType::Paging5Level } else { PagingType::Paging4Level } };
 
-    if let Some(attrs) = get_fault_attributes(x64_context.cr2, x64_context.cr3, paging_type) {
-        log::error!("Page Attributes: {attrs:?}");
-    }
+    dump_pte(x64_context.cr2, x64_context.cr3, paging_type);
 
-    log::error!(
-        "General-Purpose Registers\n \
-                RAX: {:x?}\n \
-                RBX: {:x?}\n \
-                RCX: {:x?}\n \
-                RDX: {:x?}\n \
-                RSI: {:x?}\n \
-                RDI: {:x?}\n \
-                RBP: {:x?}\n \
-                R8: {:x?}\n \
-                R9: {:x?}\n \
-                R10: {:x?}\n \
-                R11: {:x?}\n \
-                R12: {:x?}\n \
-                R13: {:x?}\n \
-                R14: {:x?}\n \
-                R15: {:x?}",
-        x64_context.rax,
-        x64_context.rbx,
-        x64_context.rcx,
-        x64_context.rdx,
-        x64_context.rsi,
-        x64_context.rdi,
-        x64_context.rbp,
-        x64_context.r8,
-        x64_context.r9,
-        x64_context.r10,
-        x64_context.r11,
-        x64_context.r12,
-        x64_context.r13,
-        x64_context.r14,
-        x64_context.r15
-    );
-
-    log::debug!("Full Context: {x64_context:#x?}");
-
+    log::error!("Dumping Exception Stack Trace:");
     if let Err(err) = unsafe { StackTrace::dump_with(x64_context.rip, x64_context.rsp) } {
         log::error!("StackTrace: {err}");
     }
@@ -251,67 +191,60 @@ extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystem
 fn get_vector_address(index: usize) -> VirtAddr {
     // Verify the index is in [0-255]
     if index >= 256 {
-        panic!("Invalid vector index! 0x{index:x}");
+        panic!("Invalid vector index! 0x{index:#X?}");
     }
 
     unsafe { VirtAddr::from_ptr(AsmGetVectorAddress(index) as *const ()) }
 }
 
 fn interpret_page_fault_exception_data(exception_data: u64) {
-    log::error!("Error Code: 0x{exception_data:x}\n");
+    log::error!("Error Code: {exception_data:#X?}");
     if (exception_data & 0x1) == 0 {
-        log::error!("Page not present\n");
+        log::error!("Page not present");
     } else {
-        log::error!("Page-level protection violation\n");
+        log::error!("Page-level protection violation");
     }
 
     if (exception_data & 0x2) == 0 {
-        log::error!("R/W: Read\n");
+        log::error!("R/W: Read");
     } else {
-        log::error!("R/W: Write\n");
+        log::error!("R/W: Write");
     }
 
     if (exception_data & 0x4) == 0 {
-        log::error!("Mode: Supervisor\n");
+        log::error!("Mode: Supervisor");
     } else {
-        log::error!("Mode: User\n");
+        log::error!("Mode: User");
     }
 
     if (exception_data & 0x8) == 0 {
-        log::error!("Reserved bit violation\n");
+        log::error!("Reserved bit violation");
     }
 
     if (exception_data & 0x10) == 0 {
-        log::error!("Instruction fetch access\n");
+        log::error!("Instruction fetch access");
     }
 }
 
 fn interpret_gp_fault_exception_data(exception_data: u64) {
-    log::error!("Error Code: 0x{exception_data:x}\n");
+    log::error!("Error Code: {exception_data:#X?}");
     if (exception_data & 0x1) != 0 {
-        log::error!("Invalid segment\n");
+        log::error!("Invalid segment");
     }
 
     if (exception_data & 0x2) != 0 {
-        log::error!("Invalid write access\n");
+        log::error!("Invalid write access");
     }
 
     if (exception_data & 0x4) == 0 {
-        log::error!("Mode: Supervisor\n");
+        log::error!("Mode: Supervisor");
     } else {
-        log::error!("Mode: User\n");
+        log::error!("Mode: User");
     }
 }
 
-fn get_fault_attributes(cr2: u64, cr3: u64, paging_type: PagingType) -> Option<MemoryAttributes> {
-    let pt = unsafe { patina_paging::x64::X64PageTable::from_existing(cr3, FaultAllocator {}, paging_type).ok()? };
-    pt.query_memory_region(cr2 & !(UEFI_PAGE_MASK as u64), UEFI_PAGE_SIZE as u64).ok()
-}
-
-pub struct FaultAllocator {}
-
-impl PageAllocator for FaultAllocator {
-    fn allocate_page(&mut self, _align: u64, _size: u64, _contiguous: bool) -> patina_paging::PtResult<u64> {
-        unimplemented!()
+fn dump_pte(cr2: u64, cr3: u64, paging_type: PagingType) {
+    if let Ok(pt) = unsafe { patina_paging::x64::X64PageTable::from_existing(cr3, FaultAllocator {}, paging_type) } {
+        let _ = pt.dump_page_tables(cr2 & !(UEFI_PAGE_MASK as u64), UEFI_PAGE_SIZE as u64);
     }
 }

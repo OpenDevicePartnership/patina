@@ -1893,6 +1893,8 @@ impl SpinLockedGcd {
                     );
                     log::error!("GCD and page table are out of sync. This is a critical error.");
                     log::info!("GCD {GCD}");
+                    log::info!("Page Table Dump:");
+                    let _ = page_table.dump_page_tables(base_address as u64, len as u64);
                     debug_assert!(false);
                     return Err(EfiError::InvalidParameter);
                 }

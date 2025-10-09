@@ -26,6 +26,7 @@ impl super::EfiSystemContextFactory for ExceptionContextNull {
 
 impl super::EfiExceptionStackTrace for ExceptionContextNull {
     fn dump_stack_trace(&self) {}
+    fn dump_system_context_registers(&self) {}
 }
 
 /// A function that does nothing as this is a null implementation.
