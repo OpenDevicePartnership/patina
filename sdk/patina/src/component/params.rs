@@ -519,19 +519,18 @@ unsafe impl<T: Default + 'static> Param for ConfigMut<'_, T> {
         // it to be mutable.
         storage.unlock_config(id);
 
-        if meta.access().has_writes_all_configs() {
-            panic!(
-                "ConfigMut<{0}> in component {1} conflicts with a previous &mut Storage access.",
-                core::any::type_name::<T>(),
-                meta.name()
-            );
-        } else if meta.access().has_reads_all_configs() {
-            panic!(
-                "ConfigMut<{0}> in component {1} conflicts with a previous &Storage access.",
-                core::any::type_name::<T>(),
-                meta.name()
-            );
-        }
+        assert!(
+            !meta.access().has_writes_all_configs(),
+            "ConfigMut<{0}> in component {1} conflicts with a previous &mut Storage access.",
+            core::any::type_name::<T>(),
+            meta.name(),
+        );
+        assert!(
+            !meta.access().has_reads_all_configs(),
+            "ConfigMut<{0}> in component {1} conflicts with a previous &Storage access.",
+            core::any::type_name::<T>(),
+            meta.name(),
+        );
         assert!(
             !meta.access().has_config_write(id),
             "ConfigMut<{0}> in component {1} conflicts with a previous ConfigMut<{0}> access.",
