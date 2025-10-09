@@ -47,6 +47,7 @@ patina_mtrr = { version = "1.0.0", registry = "patina-fw" }
 patina_paging = { version = "9", registry = "patina-fw" }
 patina_performance = { version = "11.2.0", path = "components/patina_performance", registry = "patina-fw" }
 patina_pi = { version = "11.2.0", path = "sdk/patina_pi", registry = "patina-fw" }
+patina_smbios = { version = "11.2.0", path = "components/patina_smbios", registry = "patina-fw" }
 patina_stacktrace = { version = "11.2.0", path = "core/patina_stacktrace", registry = "patina-fw" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
