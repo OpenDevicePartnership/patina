@@ -524,13 +524,13 @@ unsafe impl Param for &mut Storage {
         // Storage provides global access to configuration. That means by manipulating the storage,
         // we can invalidate any config access, so we make sure no other config access has been
         // registered, and set ourselves as exclusive.
-        assert!(
+        debug_assert!(
             !meta.access().has_any_config_write(),
             "&mut Storage in component {} conflicts with a previous ConfigMut<T> access.",
             meta.name()
         );
 
-        assert!(
+        debug_assert!(
             !meta.access().has_any_config_read(),
             "&mut Storage in component {} conflicts with a previous Config<T> access.",
             meta.name()
@@ -556,7 +556,7 @@ unsafe impl Param for &Storage {
     }
 
     fn init_state(_storage: &mut Storage, meta: &mut MetaData) -> Self::State {
-        assert!(
+        debug_assert!(
             !meta.access().has_any_config_write(),
             "&mut Storage in component {} conflicts with a previous ConfigMut<T> access.",
             meta.name()
