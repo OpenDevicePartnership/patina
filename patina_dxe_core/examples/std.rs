@@ -13,7 +13,7 @@ extern crate alloc;
 use patina_dxe_core::Core;
 use patina_pi::{
     BootMode,
-    hob::{self, header, ResourceDescriptorV2},
+    hob::{self, ResourceDescriptorV2, header},
 };
 use r_efi::efi;
 use std::ffi::c_void;
