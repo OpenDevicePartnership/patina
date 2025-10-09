@@ -45,7 +45,7 @@
 //!
 //! Note: there is an arbitrary parameter count limit of 5, but this can be changed in the future if needed. See the
 //! [params] module for more information.
-//! 
+//!
 //! Note: Certain combinations of parameters may lead to undefined behavior as they can allow multiple mutable
 //! accesses to the same data. Each parameter type checks for conflicts with previously registered accesses, but
 //! **ONLY** on debug builds. In release builds, these checks are disabled for performance and size reasons.
