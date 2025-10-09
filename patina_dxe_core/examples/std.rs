@@ -109,7 +109,6 @@ fn build_hob_list() -> *const c_void {
         reserved: Default::default(),
     };
 
-    // GitHub issue #519: Example HOBs converted from ResourceDescriptor v1 to v2
     // This demonstrates proper usage of ResourceDescriptorV2 HOBs with cache attributes
     // MEMORY_WB for system memory, MEMORY_UC for MMIO/IO resources
     let resource_descriptor1 = ResourceDescriptorV2 {

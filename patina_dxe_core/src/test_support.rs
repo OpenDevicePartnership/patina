@@ -142,7 +142,6 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
         reserved: Default::default(),
     };
 
-    // GitHub issue #519: Create ResourceDescriptorV2 HOBs instead of v1
     // V2 HOBs include cache attributes for better memory management and security
     // MEMORY_WB is used for system memory (write-back caching)
     // MEMORY_UC is used for MMIO and I/O resources (uncached)
@@ -344,7 +343,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
         }
 
         // memory allocation HOB for MMIO space
-        allocation_hob_template.alloc_descriptor.memory_base_address = resource_descriptor3.physical_start;
+        allocation_hob_template.alloc_descriptor.memory_base_address = resource_descriptor3.v1.physical_start;
         allocation_hob_template.alloc_descriptor.memory_length = 0x2000;
         allocation_hob_template.alloc_descriptor.memory_type = efi::MEMORY_MAPPED_IO;
         core::ptr::copy(&allocation_hob_template, cursor as *mut hob::MemoryAllocation, 1);

@@ -107,7 +107,6 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         let mut resource_attributes: u32 = 0;
 
         let mut res_desc_op = None;
-        // GitHub issue #519: Only process ResourceDescriptorV2 HOBs
         // This removes support for v1 ResourceDescriptor HOBs for security and architectural improvements
         if let Hob::ResourceDescriptorV2(t_res_desc) = hob {
             res_desc_op = Some(**t_res_desc);
