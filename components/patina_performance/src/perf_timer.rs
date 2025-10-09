@@ -1,238 +1,251 @@
-// use core::sync::atomic::AtomicU64;
+use core::{
+    sync::atomic::{AtomicBool, AtomicU64},
+};
 
-// #[cfg(target_arch = "x86_64")]
-// pub use x64::X64 as Arch;
+#[cfg(target_arch = "x86_64")]
+pub use x64::X64 as Arch;
 
-// #[cfg(target_arch = "aarch64")]
-// pub use aarch64::Aarch64 as Arch;
+#[cfg(target_arch = "aarch64")]
+pub use aarch64::Aarch64 as Arch;
 
-// // The PM timer can be read through I/O or MMIO, depending on the platform.
-// // PM timer information is specified in the FADT's X_PM_TMR_BLK field.
-// #[derive(Debug, Clone, Copy)]
-// pub enum PmTimer {
-//     IoPort { port: u16 },
-//     Mmio { base: u64 },
-// }
+#[derive(Debug, Clone, Copy)]
+pub enum PmTimer {
+    IoPort { port: u16 },
+    Mmio { base: u64 },
+}
 
-// // QEMU uses the ACPI frequency when CPUID-based frequency determination is not available.
-// const DEFAULT_ACPI_TIMER_FREQUENCY: u64 = 3_579_545; // 3.579545 MHz
+pub trait ArchFunctionality {
+    /// Value of the counter.
+    fn cpu_count() -> u64;
+    /// Value in Hz of how often the counter increment.
+    fn perf_frequency(rsdp_address: usize) -> u64;
+    /// Value that the performance counter ends with before it rolls over.
+    fn cpu_count_end(used_acpi_fallback: bool) -> u64;
+}
 
-// // current idea to fix: maybe this should be a component which we set in start
-// // kind of like https://github.com/OpenDevicePartnership/patina-readiness-tool/blob/main/dxe_readiness_capture/src/bin/qemu_dxe_readiness_capture.rs
+pub struct PerformanceTimer {
+    rsdp_address: usize,
+    perf_frequency: AtomicU64, // Frequency should be consistent across a single instance + boot, so calculate once and cache.
+    used_acpi_fallback: AtomicBool, // The ACPI PM timer has a different max value than TSC.
+}
 
-// pub trait ArchFunctionality {
-//     /// Value of the counter.
-//     fn cpu_count() -> u64;
-//     /// Value in Hz of how often the counter increment.
-//     fn perf_frequency() -> u64;
-//     /// Value the performance counter starts with when it rolls over.
-//     fn cpu_count_start() -> u64 {
-//         0
-//     }
-//     /// Value that the performance counter ends with before it rolls over.
-//     fn cpu_count_end() -> u64 {
-//         u64::MAX
-//     }
-// }
+/// Timer functionality.
+impl PerformanceTimer {
+    const DEFAULT_PM_PORT: u16 = 0x608; // This is a good default because this is the default port on Q35, which is most likely the only platform that will use the ACPI PM timer.
 
-// #[cfg(target_arch = "x86_64")]
-// pub(crate) mod x64 {
-//     use patina_acpi::{acpi::StandardAcpiProvider, acpi_table::AcpiTableHeader, signature::ACPI_HEADER_LEN};
-//     use patina_sdk::boot_services::{BootServices, StandardBootServices};
+    pub fn new(rsdp_address: usize) -> Self {
+        Self { rsdp_address, perf_frequency: AtomicU64::new(0), used_acpi_fallback: AtomicBool::new(false) }
+    }
 
-//     use super::*;
-//     use core::{
-//         arch::x86_64::{self, CpuidResult},
-//         mem,
-//         sync::atomic::Ordering,
-//     };
+    pub fn cpu_count(&self) -> u64 {
+        Arch::cpu_count()
+    }
 
-//     pub struct X64;
-//     impl ArchFunctionality for X64 {
-//         fn cpu_count() -> u64 {
-//             #[cfg(feature = "validate_cpu_features")]
-//             {
-//                 // TSC support in bit 4.
-//                 if (unsafe { x86_64::__cpuid(0x01) }.edx & 0x10) != 0x10 {
-//                     panic!("CPU does not support TSC");
-//                 }
-//                 // Invariant TSC support in bit 8.
-//                 if (unsafe { x86_64::__cpuid(0x80000007) }.edx & 0x100) != 0x100 {
-//                     panic!("CPU does not support Invariant TSC");
-//                 }
-//             }
-//             unsafe { x86_64::_rdtsc() }
-//         }
+    pub fn perf_frequency(&self) -> u64 {
+        use core::sync::atomic::Ordering;
 
-//         fn perf_frequency(rsdp_address: usize) -> u64 {
-//             let cached = PERF_FREQUENCY.load(Ordering::Relaxed);
-//             if cached != 0 {
-//                 return cached;
-//             }
+        let cached = self.perf_frequency.load(Ordering::Relaxed);
+        if cached != 0 {
+            return cached;
+        }
 
-//             let hypervisor_leaf = unsafe { x86_64::__cpuid(0x1) };
-//             let is_vm = (hypervisor_leaf.ecx & (1 << 31)) != 0;
+        let freq = Arch::perf_frequency(self.rsdp_address);
+        self.perf_frequency.store(freq, Ordering::Relaxed);
+        freq
+    }
 
-//             if is_vm {
-//                 log::warn!("Running in a VM - CPUID-based frequency may not be reliable.");
-//             }
+    pub fn cpu_count_start() -> u64 {
+        0
+    }
 
-//             let CpuidResult {
-//                 eax, // Ratio of TSC frequency to Core Crystal Clock frequency, denominator.
-//                 ebx, // Ratio of TSC frequency to Core Crystal Clock frequency, numerator.
-//                 ecx, // Core Crystal Clock frequency, in units of Hz.
-//                 ..
-//             } = unsafe { x86_64::__cpuid(0x15) };
+    pub fn cpu_count_end(&self) -> u64 {
+        Arch::cpu_count_end(self.used_acpi_fallback.load(core::sync::atomic::Ordering::Relaxed))
+    }
+}
 
-//             // If not a VM, attempt to use CPUID leaf 0x15
-//             if !is_vm && ecx != 0 && eax != 0 && ebx != 0 {
-//                 let frequency = (ecx as u64 * ebx as u64) / eax as u64;
-//                 PERF_FREQUENCY.store(frequency, Ordering::Relaxed);
-//                 log::trace!("Used CPUID leaf 0x15 to determine CPU frequency: {}", frequency);
-//                 return frequency;
-//             }
+mod x64 {
+    use core::{arch::x86_64, mem};
 
-//             // If VM or CPUID 0x15 fails, attempt to use CPUID 0x16
-//             // Based on testing in QEMU, leaf 0x16 is generally more reliable on VMs
-//             let CpuidResult { eax, .. } = unsafe { x86_64::__cpuid(0x16) };
-//             if eax != 0 {
-//                 // Leaf 0x16 gives the frequency in MHz.
-//                 let frequency = (eax * 1_000_000) as u64;
-//                 PERF_FREQUENCY.store(frequency, Ordering::Relaxed);
-//                 log::trace!("Used CPUID leaf 0x16 to determine CPU frequency: {}", frequency);
-//                 return frequency;
-//             }
+    use patina_acpi::{
+        acpi::StandardAcpiProvider,
+        acpi_table::AcpiTableHeader,
+        signature::{self, ACPI_HEADER_LEN},
+    };
 
-//             log::warn!("Unable to determine CPU frequency using CPUID leaves, using default ACPI timer frequency");
-//             let pm_timer = read_fadt_timer_info(rsdp_address).expect("ACPI PM timer unavailable");
-//             let alt_freq = calibrate_tsc_frequency(pm_timer);
+    use crate::perf_timer::{ArchFunctionality, PerformanceTimer, PmTimer};
 
-//             alt_freq
-//         }
-//     }
+    pub struct X64;
 
-//     pub fn read_fadt_timer_info(rsdp_address: usize) -> Option<PmTimer> {
-//         let xsdt_address =
-//             StandardAcpiProvider::<StandardBootServices>::get_xsdt_address_from_rsdp(rsdp_address as u64).ok()?;
-//         let xsdt_ptr = xsdt_address as *const AcpiTableHeader;
-//         let xsdt_length = (unsafe { *xsdt_ptr }).length;
+    impl ArchFunctionality for X64 {
+        fn cpu_count() -> u64 {
+            unsafe { x86_64::_rdtsc() }
+        }
 
-//         let entries = (xsdt_length as usize - ACPI_HEADER_LEN) / mem::size_of::<u64>();
-//         for i in 0..entries {
-//             // Find the address value of the next XSDT entry.
-//             let entry_addr = StandardAcpiProvider::<StandardBootServices>::get_xsdt_entry_from_hob(
-//                 i,
-//                 xsdt_address as *const u8,
-//                 xsdt_length as usize,
-//             )
-//             .ok()?;
-//             let tbl_header = unsafe { *(entry_addr as *const AcpiTableHeader) };
-//             if tbl_header.signature == signature::FACP {
-//                 let fadt = unsafe { *(entry_addr as *const patina_acpi::acpi_table::AcpiFadt) };
-//                 if let Some(tmr_info) = fadt.x_pm_timer_blk() {
-//                     if tmr_info.address_space_id == 0 {
-//                         // MMIO case.
-//                         return Some(PmTimer::Mmio { base: tmr_info.address });
-//                     } else if tmr_info.address_space_id == 1 {
-//                         // I/O Port case. Mask to 16 bits.
-//                         return Some(PmTimer::IoPort { port: (tmr_info.address & 0xFFFF) as u16 });
-//                     } else {
-//                         log::warn!(
-//                             "FADT PM Timer Block has unsupported address space ID: {}",
-//                             tmr_info.address_space_id
-//                         );
-//                         return None;
-//                     }
-//                 } else {
-//                     log::warn!("FADT PM Timer Block not found or invalid.");
-//                     return None;
-//                 }
-//             }
-//         }
+        fn perf_frequency(rsdp_address: usize) -> u64 {
+            use core::arch::x86_64::CpuidResult;
+            let mut frequency = 0u64;
 
-//         log::warn!("FADT table not found in XSDT.");
-//         None
-//     }
+            // CPUID leaf 0x15
+            let CpuidResult { eax, ebx, ecx, .. } = unsafe { x86_64::__cpuid(0x15) };
+            if eax != 0 && ebx != 0 && ecx != 0 {
+                frequency = (ecx as u64 * ebx as u64) / eax as u64;
+            } else {
+                let CpuidResult { eax, .. } = unsafe { x86_64::__cpuid(0x16) };
+                if eax != 0 {
+                    frequency = (eax * 1_000_000) as u64;
+                }
+            }
 
-//     fn read_pm_timer(pm_timer: PmTimer) -> u32 {
-//         match pm_timer {
-//             PmTimer::IoPort { port } => {
-//                 let value: u32;
-//                 unsafe {
-//                     core::arch::asm!(
-//                         "inl %dx, %eax",
-//                         in("dx") port,
-//                         out("eax") value,
-//                         options(nomem, nostack, preserves_flags),
-//                     );
-//                 }
-//                 value
-//             }
-//             PmTimer::Mmio { base } => unsafe { core::ptr::read_volatile(base as *const u32) },
-//         }
-//     }
+            if frequency == 0 {
+                // fallback to calibration
+                let pm_timer = Self::read_fadt_timer_info(rsdp_address)
+                    .unwrap_or(PmTimer::IoPort { port: PerformanceTimer::DEFAULT_PM_PORT });
+                frequency = Self::calibrate_tsc_frequency(pm_timer);
+            }
 
-//     pub fn calibrate_tsc_frequency(pm_timer: PmTimer) -> u64 {
-//         unsafe {
-//             // Wait for a PM timer edge to avoid partial intervals
-//             let mut start_pm = read_pm_timer(pm_timer);
-//             let mut next_pm;
-//             loop {
-//                 next_pm = read_pm_timer(pm_timer);
-//                 if next_pm != start_pm {
-//                     break;
-//                 }
-//             }
-//             start_pm = next_pm;
+            frequency
+        }
 
-//             // Record starting TSC
-//             let start_tsc = x86_64::_rdtsc();
+        fn cpu_count_end(used_acpi_fallback: bool) -> u64 {
+            if used_acpi_fallback {
+                0x1_0000_0000 // 32-bit wraparound
+            } else {
+                u64::MAX
+            }
+        }
+    }
 
-//             // Hz = ticks/second. Divided by 20 ~ ticks / 50 ms
-//             const TARGET_INTERVAL_SIZE: u64 = 20;
-//             let target_ticks = (DEFAULT_ACPI_TIMER_FREQUENCY / TARGET_INTERVAL_SIZE) as u32;
+    impl X64 {
+        pub fn calibrate_tsc_frequency(pm_timer: PmTimer) -> u64 {
+            unsafe {
+                // Wait for a PM timer edge to avoid partial intervals
+                use patina_acpi::signature::DEFAULT_ACPI_TIMER_FREQUENCY;
+                let mut start_pm = Self::read_pm_timer(pm_timer);
+                let mut next_pm;
+                loop {
+                    next_pm = Self::read_pm_timer(pm_timer);
+                    if next_pm != start_pm {
+                        break;
+                    }
+                }
+                start_pm = next_pm;
 
-//             let mut end_pm;
-//             loop {
-//                 end_pm = read_pm_timer(pm_timer);
-//                 let delta = end_pm.wrapping_sub(start_pm);
-//                 if delta >= target_ticks {
-//                     break;
-//                 }
-//             }
+                // Record starting TSC
+                let start_tsc = x86_64::_rdtsc();
 
-//             // Record ending TSC
-//             let end_tsc = x86_64::_rdtsc();
+                // Hz = ticks/second. Divided by 20 ~ ticks / 50 ms
+                const TARGET_INTERVAL_SIZE: u64 = 20;
+                let target_ticks = (DEFAULT_ACPI_TIMER_FREQUENCY / TARGET_INTERVAL_SIZE) as u32;
 
-//             // Time elapsed based on PM timer ticks
-//             let delta_pm = end_pm.wrapping_sub(start_pm) as u64;
-//             let delta_time_ns = (delta_pm * 1_000_000_000) / DEFAULT_ACPI_TIMER_FREQUENCY;
+                let mut end_pm;
+                loop {
+                    end_pm = Self::read_pm_timer(pm_timer);
+                    let delta = end_pm.wrapping_sub(start_pm);
+                    if delta >= target_ticks {
+                        break;
+                    }
+                }
 
-//             // Rdtsc ticks
-//             let delta_tsc = end_tsc - start_tsc;
+                // Record ending TSC
+                let end_tsc = x86_64::_rdtsc();
 
-//             // Frequency = Rdstc ticks / elapsed time
-//             let freq_hz = (delta_tsc * 1_000_000_000) / delta_time_ns;
+                // Time elapsed based on PM timer ticks
+                let delta_pm = end_pm.wrapping_sub(start_pm) as u64;
+                let delta_time_ns = (delta_pm * 1_000_000_000) / DEFAULT_ACPI_TIMER_FREQUENCY;
 
-//             log::info!("Calibrated TSC frequency: {} Hz over {} ns ({} PM ticks)", freq_hz, delta_time_ns, delta_pm);
-//             freq_hz
-//         }
-//     }
-// }
+                // Rdtsc ticks
+                let delta_tsc = end_tsc - start_tsc;
 
-// #[cfg(target_arch = "aarch64")]
-// pub(crate) mod aarch64 {
-//     use super::*;
-//     use aarch64_cpu::registers::{self, Readable};
-//     pub struct Aarch64;
-//     impl ArchFunctionality for Aarch64 {
-//         fn cpu_count() -> u64 {
-//             registers::CNTPCT_EL0.get()
-//         }
+                // Frequency = Rdstc ticks / elapsed time
+                let freq_hz = (delta_tsc * 1_000_000_000) / delta_time_ns;
 
-//         // this can also use the ACPI PM timer but probably not necessary?
-//         fn perf_frequency(_rsdp_address: usize) -> u64 {
-//             registers::CNTFRQ_EL0.get()
-//         }
-//     }
-// }
+                log::info!(
+                    "Calibrated TSC frequency: {} Hz over {} ns ({} PM ticks)",
+                    freq_hz,
+                    delta_time_ns,
+                    delta_pm
+                );
+                freq_hz
+            }
+        }
+
+        pub fn read_fadt_timer_info(rsdp_address: usize) -> Option<PmTimer> {
+            let xsdt_address = StandardAcpiProvider::get_xsdt_address_from_rsdp(rsdp_address as u64).ok()?;
+            let xsdt_ptr = xsdt_address as *const AcpiTableHeader;
+            let xsdt_length = (unsafe { *xsdt_ptr }).length;
+
+            let entries = (xsdt_length as usize - ACPI_HEADER_LEN) / mem::size_of::<u64>();
+            for i in 0..entries {
+                // Find the address value of the next XSDT entry.
+                let entry_addr =
+                    StandardAcpiProvider::get_xsdt_entry_from_hob(i, xsdt_address as *const u8, xsdt_length as usize)
+                        .ok()?;
+                let tbl_header = unsafe { *(entry_addr as *const AcpiTableHeader) };
+                if tbl_header.signature == signature::FACP {
+                    let fadt = unsafe { *(entry_addr as *const patina_acpi::acpi_table::AcpiFadt) };
+                    if let Some(tmr_info) = fadt.x_pm_timer_blk() {
+                        if tmr_info.address_space_id == 0 {
+                            // MMIO case.
+                            return Some(PmTimer::Mmio { base: tmr_info.address });
+                        } else if tmr_info.address_space_id == 1 {
+                            // I/O Port case. Mask to 16 bits.
+                            return Some(PmTimer::IoPort { port: (tmr_info.address & 0xFFFF) as u16 });
+                        } else {
+                            log::warn!(
+                                "FADT PM Timer Block has unsupported address space ID: {}",
+                                tmr_info.address_space_id
+                            );
+                            return None;
+                        }
+                    } else {
+                        log::warn!("FADT PM Timer Block not found or invalid.");
+                        return None;
+                    }
+                }
+            }
+
+            log::warn!("FADT table not found in XSDT.");
+            None
+        }
+
+        fn read_pm_timer(pm_timer: PmTimer) -> u32 {
+            match pm_timer {
+                PmTimer::IoPort { port } => {
+                    let value: u32;
+                    unsafe {
+                        core::arch::asm!(
+                            "in eax, dx",
+                            in("dx") port,
+                            out("eax") value,
+                            options(nomem, nostack, preserves_flags),
+                        );
+                    }
+                    value
+                }
+                PmTimer::Mmio { base } => unsafe { core::ptr::read_volatile(base as *const u32) },
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+mod aarch64 {
+    use crate::perf_timer::ArchFunctionality;
+
+    pub struct Aarch64;
+    use aarch64_cpu::registers::{self, Readable};
+
+    impl ArchFunctionality for Aarch64 {
+        fn cpu_count() -> u64 {
+            registers::CNTPCT_EL0.get()
+        }
+
+        fn perf_frequency(_: usize) -> u64 {
+            registers::CNTFRQ_EL0.get()
+        }
+
+        fn cpu_count_end(_: bool) -> u64 {
+            u64::MAX
+        }
+    }
+}

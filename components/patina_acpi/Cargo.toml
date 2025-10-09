@@ -24,4 +24,3 @@ patina_sdk = { workspace = true, features = ["mockall"] }
 [features]
 mockall = ["dep:mockall"]
  
-

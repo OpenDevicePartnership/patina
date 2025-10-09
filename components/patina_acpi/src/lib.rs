@@ -44,17 +44,9 @@
 #![feature(allocator_api)]
 extern crate alloc;
 
-/// Component that provides initialization of ACPI functionality in the core.
-pub mod component;
 /// Errors associated with operation of the ACPI protocol.
 pub mod error;
-/// Definition for ACPI HOB, which transfers existing ACPI tables from the PEI phase through the RSDP.
-pub mod hob;
-/// Public service interface for the ACPI protocol.
-pub mod service;
 
 pub mod acpi;
-mod acpi_protocol;
 pub mod acpi_table;
-mod integration_test;
 pub mod signature;
