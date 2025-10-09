@@ -249,7 +249,7 @@ version = "0.2.16"
 criteria = "safe-to-run"
 
 [[exemptions.half]]
-version = "2.6.0"
+version = "2.7.0"
 criteria = "safe-to-run"
 
 [[exemptions.hashbrown]]

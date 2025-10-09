@@ -20,8 +20,9 @@ platform.
 At a high-level, the integration process consists of:
 
 1. Selecting required Patina crates (core runtime plus optional capability modules)
-2. Providing platform-specific configuration (UART base addresses,
-   [MM communication](../dxe_core/mm_communication.md) ports, interrupt controller bases, etc.)
+2. Providing platform-specific configuration (UART base addresses, [MM
+   communication](https://github.com/OpenDevicePartnership/patina/blob/main/components/patina_mm/src/component/communicator.rs)
+   ports, interrupt controller bases, etc.)
 3. Registering [services and components](../component/interface.md) to extend DXE Core functionality
 4. Enabling optional features ([compatibility mode](#91-compatibility-mode),
    [performance tracing](#73-performance-monitoring-optional),
@@ -226,7 +227,7 @@ you would provide any configuration to the Patina DXE Core.
 The DXE Core logging model builds on the standard [`log` crate](https://crates.io/crates/log). Patina currently
 provides two logger implementations:
 
-- [`serial_logger`](https://github.com/OpenDevicePartnership/patina/blob/main/sdk/patina_sdk/src/log/serial_logger.rs)
+- [`serial_logger`](https://github.com/OpenDevicePartnership/patina/blob/main/sdk/patina/src/log/serial_logger.rs)
 - [`patina_adv_logger`](https://github.com/OpenDevicePartnership/patina/tree/main/components/patina_adv_logger)
 
 Select or implement a logger early to obtain diagnostic output during bring‑up. Configure UART parameters for your
@@ -374,10 +375,9 @@ For [AArch64 platforms using GIC](https://developer.arm.com/documentation/ihi006
 
 ### 7.3 Performance Monitoring (Optional)
 
-The [`patina_performance`](https://github.com/OpenDevicePartnership/patina/tree/main/components/patina_performance)
-component provides detailed
-[UEFI performance measurement](https://uefi.org/specs/UEFI/2.10/33_Performance_Measurement_Infrastructure.html)
-capabilities:
+The
+[`patina_performance`](https://github.com/OpenDevicePartnership/patina/tree/main/components/patina_performance)
+component provides detailed UEFI performance measurement capabilities:
 
 ```rust
 .with_config(patina_performance::config::PerfConfig {
@@ -647,9 +647,6 @@ files, or hardcoded values.
 In Patina, we use [Traits](https://blog.rust-lang.org/2015/05/11/traits.html) for abstractions and
 [Crates](https://doc.rust-lang.org/book/ch07-01-packages-and-crates.html) for code reuse. To learn how to use these,
 review the [Abstractions](../dev/principles/abstractions.md) and [Code reuse](../dev/principles/reuse.md) sections.
-
-For more information about Patina configuration, also review the [Configuration in Code](../dev/principles/config.md)
-section.
 
 ## Why Isn't Patina Built as Part of the EDK II Build?
 
