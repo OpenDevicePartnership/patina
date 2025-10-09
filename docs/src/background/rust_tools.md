@@ -6,6 +6,8 @@ The Patina project relies on Rust's tooling ecosystem to maintain consistent qua
 UEFI firmware development. This document summarizes the tooling in use, highlights how it is integrated into Patina's
 workflow, and contrasts the approach with common practices in C-based firmware projects where relevant.
 
+For first-time rust tooling setup instructions, please review the project's [README](https://github.com/OpenDevicePartnership/patina?tab=readme-ov-file#first-time-tool-setup-instructions).
+
 ## Summary Table
 
 The table below shows the comprehensive tool suite used in Patina compared to traditional C firmware development tools:
@@ -19,8 +21,9 @@ The table below shows the comprehensive tool suite used in Patina compared to tr
 | **Security & License Auditing** | `cargo-deny` | Manual tracking and spreadsheets | Automated vulnerability and license policy enforcement |
 | **Spell Checking** | `cspell` | Manual proofreading | Automated technical dictionary |
 | **Static Analysis** | `clippy` | PC-lint, PVS-Studio, Coverity | Compiler-integrated, zero-config |
-| **Undefined Behavior Analysis** | `cargo miri` | Valgrind, UBSan | Catches memory safety issues in unsafe code |
+| **Supply Chain Auditing** | `cargo vet` | Manual review processes | Web-of-trust based dependency auditing |
 | **Test Coverage** | `cargo-llvm-cov` | gcov, OpenCppCoverage | Integrated coverage collection |
+| **Undefined Behavior Analysis** | `cargo miri` | Valgrind, UBSan | Catches memory safety issues in unsafe code |
 
 ## The cargo Ecosystem: Central Command Hub
 
@@ -112,12 +115,13 @@ The tools available with cargo make development simple and consistent across all
 
 ```bash
 # Standard cargo commands work universally
-cargo make check      # Fast compilation check
-cargo make build      # Full compilation
-cargo make test       # Run test suite
-cargo make doc        # Generate documentation
-cargo make cov        # Generate unit test code coverage
-cargo make deny       # Check for security and license compliance in dependencies
+cargo make check        # Fast compilation check
+cargo make build        # Full compilation
+cargo make test         # Run test suite
+cargo make patina-test  # Build with Patina test features enabled for on-platform tests
+cargo make doc          # Generate documentation
+cargo make cov          # Generate unit test code coverage
+cargo make deny         # Check for security and license compliance in dependencies
 
 cargo make all   # Run the same commands used in CI/CD
 ```
@@ -385,6 +389,43 @@ deny = [
 
 **Key Documentation**: [cargo-deny Book](https://embarkstudios.github.io/cargo-deny/)
 
+### cargo vet (Supply Chain Auditing)
+
+**Purpose**: Supply chain security tool that provides a web-of-trust based auditing system for Rust dependencies,
+to check that dependencies have been reviewed by trusted auditors.
+
+**Value**:
+
+- **Audit Sharing**: Leverages existing audits from Mozilla, Google, and other organizations to reduce audit burden
+  - Open Device Partnership shares audits across the organization in
+    [OpenDevicePartnership/rust-crate-audits](https://github.com/OpenDevicePartnership/rust-crate-audits)
+- **Delta Auditing**: Focuses audit effort on changes between versions rather than full re-audits
+- **Import Management**: Allows importing audits from other projects and organizations
+- **Policy Enforcement**: Requires explicit audits or exemptions for all dependencies
+- **Web of Trust**: Builds on audits from trusted organizations and maintainers in the Rust ecosystem
+
+**Comparison to cargo-deny**:
+
+[cargo vet](https://mozilla.github.io/cargo-vet/) provides a different approach to supply chain security compared to
+`cargo-deny`. While `cargo-deny` focuses on known vulnerabilities and license compliance, `cargo vet` ensures that
+dependencies have been reviewed by trusted auditors before they can be used and it tracks unaudited dependencies
+so they can be prioritized for review.
+
+`cargo-deny` is reactive - it flags known issues after they're discovered. `cargo vet` is proactive - it requires
+confirmation that dependencies are safe before they can be used.
+
+**Usage in Patina**:
+
+```bash
+cargo vet                    # Check all dependencies are audited
+cargo vet check             # Check without updating imports
+cargo vet certify           # Certify a new dependency
+cargo vet add-exemption     # Add temporary exemption for unaudited dependency
+cargo vet prune             # Remove unused audits
+```
+
+**Key Documentation**: [cargo vet Book](https://mozilla.github.io/cargo-vet/)
+
 ### cspell (Spell Checking)
 
 **Purpose**: Spell checker that is applied against all technical documentation and source code with the ability to use
@@ -562,17 +603,17 @@ mod tests {
 
 **Configuration in Patina**:
 
-```toml
-# Makefile.toml - Coverage with failure thresholds
-[tasks.coverage-fail-package]
-command = "cargo"
-args = ["llvm-cov", "--package", "${PACKAGE}", "--fail-under-lines", "80",
-        "--ignore-filename-regex", "${PACKAGE_COVERAGE_FILTER}"]
+Patina has several tasks defined in `Makefile.toml` to collect coverage data and generate reports in different formats:
 
+- `cargo make coverage-collect`: Runs tests and collects coverage data without generating reports. This allows
+  multiple report formats to be generated from the same data efficiently.
+- `cargo make coverage-lcov`: Generates an LCOV coverage report from the collected data.
+- `cargo make coverage-html`: Generates an HTML coverage report from the collected data.
+
+```toml
 [tasks.coverage]
-command = "cargo"
-args = ["llvm-cov", "@@split(COV_FLAGS, )", "--output-path",
-        "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/lcov.info"]
+description = "Build and run all tests and calculate coverage (generates both LCOV and HTML outputs efficiently)."
+dependencies = ["coverage-collect", "coverage-lcov", "coverage-html"]
 ```
 
 > Note: Patina previously used [`tarpaulin`](https://github.com/xd009642/tarpaulin) for coverage, but switched to

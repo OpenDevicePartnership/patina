@@ -27,7 +27,7 @@ runs:
         path: |
           ~/.cargo/bin/
           ~/.rustup/toolchains/
-        key: ${{ runner.os }}-rust-tools-${{ hashFiles('${{ inputs.rust-toolchain-file }}') }}
+        key: ${{ runner.os }}-rust-tools-${{ hashFiles(inputs.rust-toolchain-file) }}
 
     # Installs the toolchain specified in the rust-toolchain.toml file if rustup >= 1.28.0
     #

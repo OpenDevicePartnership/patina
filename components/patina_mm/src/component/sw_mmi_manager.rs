@@ -2,6 +2,10 @@
 //!
 //! Provides the `SwMmiTrigger` service to trigger software management mode interrupts (SWMMIs) in the MM environment.
 //!
+//! ## Logging
+//!
+//! Detailed logging is available for this component using the `sw_mmi` log target.
+//!
 //! ## License
 //!
 //! Copyright (C) Microsoft Corporation.
@@ -69,16 +73,25 @@ impl SwMmiManager {
         platform_mm_control: Option<Service<dyn PlatformMmControl>>,
         mut commands: Commands,
     ) -> patina::error::Result<()> {
-        log::debug!("Initializing SwMmiManager...");
+        log::info!(target: "sw_mmi", "Initializing SwMmiManager...");
+        log::debug!(target: "sw_mmi", "MM config - cmd_port: {:?}, data_port: {:?}, acpi_base: {:?}",
+            config.cmd_port, config.data_port, config.acpi_base);
 
         if platform_mm_control.is_some() {
-            log::debug!("Platform MM Control is available. Calling platform-specific init...");
-            platform_mm_control.unwrap().init()?;
+            log::debug!(target: "sw_mmi", "Platform MM Control is available. Calling platform-specific init...");
+            platform_mm_control.unwrap().init().inspect_err(|&err| {
+                log::error!(target: "sw_mmi", "Platform MM Control initialization failed: {:?}", err);
+            })?;
+            log::trace!(target: "sw_mmi", "Platform MM Control initialization completed successfully");
+        } else {
+            log::trace!(target: "sw_mmi", "No platform MM Control service available - using default initialization");
         }
 
         self.inner_config = config.clone();
+        log::debug!(target: "sw_mmi", "SwMmiManager configuration applied successfully");
 
         commands.add_service(self);
+        log::info!(target: "sw_mmi", "SwMmiManager service registered and ready");
 
         Ok(())
     }
@@ -86,38 +99,49 @@ impl SwMmiManager {
 
 unsafe impl SwMmiTrigger for SwMmiManager {
     unsafe fn trigger_sw_mmi(&self, _cmd_port_value: u8, _data_port_value: u8) -> patina::error::Result<()> {
-        log::debug!("Triggering SW MMI...");
+        log::debug!(target: "sw_mmi", "Triggering SW MMI with cmd_port_value=0x{:02X}, data_port_value=0x{:02X}", _cmd_port_value, _data_port_value);
 
+        log::trace!(target: "sw_mmi", "Writing to MMI command port...");
         match self.inner_config.cmd_port {
             MmiPort::Smi(_port) => {
+                log::trace!(target: "sw_mmi", "Using SMI command port: 0x{:04X}", _port);
                 cfg_if::cfg_if! {
                     if #[cfg(any(feature = "doc", all(target_os = "uefi", target_arch = "x86_64")))] {
-                        log::trace!("Writing SMI command port: {_port:#X}");
+                        log::trace!(target: "sw_mmi", "Writing SMI command port: {_port:#X}");
                         unsafe { port::Port::new(_port).write(_cmd_port_value); }
+                        log::trace!(target: "sw_mmi", "SMI command port write completed");
+                    } else {
+                        log::trace!(target: "sw_mmi", "SMI command port write skipped (not on target platform)");
                     }
                 }
             }
             MmiPort::Smc(_smc_port) => {
+                log::warn!(target: "sw_mmi", "SMC communication not implemented yet for port: 0x{:08X}", _smc_port);
                 todo!("SMC communication not implemented yet.");
             }
         }
 
+        log::trace!(target: "sw_mmi", "Writing to MMI data port...");
         match self.inner_config.data_port {
             MmiPort::Smi(_port) => {
+                log::trace!(target: "sw_mmi", "Using SMI data port: 0x{:04X}", _port);
                 cfg_if::cfg_if! {
                     if #[cfg(any(feature = "doc", all(target_os = "uefi", target_arch = "x86_64")))] {
-                        log::trace!("Writing SMI data port: {_port:#X}");
+                        log::trace!(target: "sw_mmi", "Writing SMI data port: {_port:#X}");
                         unsafe { port::Port::new(_port).write(_data_port_value); }
+                        log::trace!(target: "sw_mmi", "SMI data port write completed");
+                    } else {
+                        log::trace!(target: "sw_mmi", "SMI data port write skipped (not on target platform)");
                     }
                 }
             }
             MmiPort::Smc(_smc_port) => {
+                log::warn!(target: "sw_mmi", "SMC communication not implemented yet for port: 0x{:08X}", _smc_port);
                 todo!("SMC communication not implemented yet.");
             }
         }
 
-        log::debug!("SW MMI triggered.");
-
+        log::debug!(target: "sw_mmi", "SW MMI triggered successfully");
         Ok(())
     }
 }

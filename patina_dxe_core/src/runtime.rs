@@ -164,6 +164,7 @@ pub fn remove_runtime_image(image_handle: efi::Handle) -> Result<(), EfiError> {
 #[coverage(off)]
 mod tests {
     use super::*;
+    use crate::test_support::with_global_lock;
     use core::{ptr, sync::atomic::AtomicBool};
 
     fn setup_protocol_and_data() -> RuntimeData {
@@ -210,121 +211,131 @@ mod tests {
 
     #[test]
     fn test_image_list_consistency() {
-        let mut data = setup_protocol_and_data();
-        let link_offset = size_of::<u64>() * 4;
+        // Runtime tests require global synchronization due to shared static allocators
+        // that use TPL locks, which cannot be acquired concurrently
+        with_global_lock(|| {
+            let mut data = setup_protocol_and_data();
+            let link_offset = size_of::<u64>() * 4;
 
-        // Add images
-        for i in 0..10 {
-            data.runtime_images.push_back(new_image(i));
-        }
-        data.update_protocol_lists();
-
-        // SAFETY: Parsing a C-style linked list is inherently unsafe, but if the
-        //         update_protocol_lists function is correct, this should be safe.
-        unsafe {
-            // Walk the linked list starting from the head and make sure all entries are present.
-            let mut protocol_link = (*data.runtime_arch_ptr).image_head.forward_link;
-            let mut count = 0;
-            let mut prev = &*(&(*data.runtime_arch_ptr).image_head as *const _) as *const list_entry::Entry;
-            while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).image_head as *mut _) {
-                let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::ImageEntry)
-                    .as_ref()
-                    .unwrap();
-                assert_eq!(entry.handle as usize, count);
-                assert_eq!(entry.link.back_link, prev as *mut _);
-                count += 1;
-                protocol_link = entry.link.forward_link;
-                prev = &entry.link as *const _;
-                assert!(count <= 10, "Too many entries in the image list.");
+            // Add images
+            for i in 0..10 {
+                data.runtime_images.push_back(new_image(i));
             }
-            assert_eq!(count, 10, "Not all entries were found in the image list.");
-        }
+            data.update_protocol_lists();
 
-        // Remove all the odd images
-        for i in (0..10).filter(|x| x % 2 == 1) {
-            for _ in data.runtime_images.extract_if(|entry| entry.handle == i as efi::Handle) {}
-        }
-        data.update_protocol_lists();
-
-        // SAFETY: Parsing a C-style linked list is inherently unsafe, but if the
-        //         update_protocol_lists function is correct, this should be safe.
-        unsafe {
-            // Walk the linked list starting from the head and make sure all entries are present.
-            let mut protocol_link = (*data.runtime_arch_ptr).image_head.forward_link;
-            let mut count = 0;
-            let mut prev = &*(&(*data.runtime_arch_ptr).image_head as *const _) as *const list_entry::Entry;
-            while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).image_head as *mut _) {
-                let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::ImageEntry)
-                    .as_ref()
-                    .unwrap();
-                assert_eq!(entry.handle as usize, count * 2);
-                assert_eq!(entry.link.back_link, prev as *mut _);
-                count += 1;
-                protocol_link = entry.link.forward_link;
-                prev = &entry.link as *const _;
-                assert!(count <= 5, "Too many entries in the image list.");
+            // SAFETY: Parsing a C-style linked list is inherently unsafe, but if the
+            //         update_protocol_lists function is correct, this should be safe.
+            unsafe {
+                // Walk the linked list starting from the head and make sure all entries are present.
+                let mut protocol_link = (*data.runtime_arch_ptr).image_head.forward_link;
+                let mut count = 0;
+                let mut prev = &*(&(*data.runtime_arch_ptr).image_head as *const _) as *const list_entry::Entry;
+                while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).image_head as *mut _) {
+                    let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::ImageEntry)
+                        .as_ref()
+                        .unwrap();
+                    assert_eq!(entry.handle as usize, count);
+                    assert_eq!(entry.link.back_link, prev as *mut _);
+                    count += 1;
+                    protocol_link = entry.link.forward_link;
+                    prev = &entry.link as *const _;
+                    assert!(count <= 10, "Too many entries in the image list.");
+                }
+                assert_eq!(count, 10, "Not all entries were found in the image list.");
             }
-            assert_eq!(count, 5, "Not all entries were found in the image list.");
-        }
+
+            // Remove all the odd images
+            for i in (0..10).filter(|x| x % 2 == 1) {
+                for _ in data.runtime_images.extract_if(|entry| entry.handle == i as efi::Handle) {}
+            }
+            data.update_protocol_lists();
+
+            // SAFETY: Parsing a C-style linked list is inherently unsafe, but if the
+            //         update_protocol_lists function is correct, this should be safe.
+            unsafe {
+                // Walk the linked list starting from the head and make sure all entries are present.
+                let mut protocol_link = (*data.runtime_arch_ptr).image_head.forward_link;
+                let mut count = 0;
+                let mut prev = &*(&(*data.runtime_arch_ptr).image_head as *const _) as *const list_entry::Entry;
+                while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).image_head as *mut _) {
+                    let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::ImageEntry)
+                        .as_ref()
+                        .unwrap();
+                    assert_eq!(entry.handle as usize, count * 2);
+                    assert_eq!(entry.link.back_link, prev as *mut _);
+                    count += 1;
+                    protocol_link = entry.link.forward_link;
+                    prev = &entry.link as *const _;
+                    assert!(count <= 5, "Too many entries in the image list.");
+                }
+                assert_eq!(count, 5, "Not all entries were found in the image list.");
+            }
+        })
+        .unwrap_or_else(|e| panic!("Test failed with runtime allocator conflict: {:?}", e));
     }
 
     #[test]
     fn test_event_list_consistency() {
-        let mut data = setup_protocol_and_data();
-        let link_offset = size_of::<u64>() * 5;
+        // Runtime tests require global synchronization due to shared static allocators
+        // that use TPL locks, which cannot be acquired concurrently
+        with_global_lock(|| {
+            let mut data = setup_protocol_and_data();
+            let link_offset = size_of::<u64>() * 5;
 
-        // Add events
-        for i in 0..10 {
-            data.runtime_events.push_back(new_event(i));
-        }
-        data.update_protocol_lists();
-
-        // SAFETY: Parsing a C-style linked list is inherently unsafe, but if the
-        //         update_protocol_lists function is correct, this should be safe.
-        unsafe {
-            // Walk the linked list starting from the head and make sure all entries are present.
-            let mut protocol_link = (*data.runtime_arch_ptr).event_head.forward_link;
-            let mut count = 0;
-            let mut prev = &*(&(*data.runtime_arch_ptr).event_head as *const _) as *const list_entry::Entry;
-            while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).event_head as *mut _) {
-                let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::EventEntry)
-                    .as_ref()
-                    .unwrap();
-                assert_eq!(entry.event as usize, count);
-                assert_eq!(entry.link.back_link, prev as *mut _);
-                count += 1;
-                protocol_link = entry.link.forward_link;
-                prev = &entry.link as *const _;
-                assert!(count <= 10, "Too many entries in the event list.");
+            // Add events
+            for i in 0..10 {
+                data.runtime_events.push_back(new_event(i));
             }
-            assert_eq!(count, 10, "Not all entries were found in the event list.");
-        }
+            data.update_protocol_lists();
 
-        // Remove all the odd events
-        for i in (0..10).filter(|x| x % 2 == 1) {
-            for _ in data.runtime_events.extract_if(|entry| entry.event == i as efi::Event) {}
-        }
-        data.update_protocol_lists();
-
-        // SAFETY: Parsing a C-style linked list is inherently unsafe, but if the
-        //         update_protocol_lists function is correct, this should be safe.
-        unsafe {
-            // Walk the linked list starting from the head and make sure all entries are present.
-            let mut protocol_link = (*data.runtime_arch_ptr).event_head.forward_link;
-            let mut count = 0;
-            let mut prev = &*(&(*data.runtime_arch_ptr).event_head as *const _) as *const list_entry::Entry;
-            while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).event_head as *mut _) {
-                let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::EventEntry)
-                    .as_ref()
-                    .unwrap();
-                assert_eq!(entry.event as usize, count * 2);
-                assert_eq!(entry.link.back_link, prev as *mut _);
-                count += 1;
-                protocol_link = entry.link.forward_link;
-                prev = &entry.link as *const _;
-                assert!(count <= 5, "Too many entries in the event list.");
+            // SAFETY: Parsing a C-style linked list is inherently unsafe, but if the
+            //         update_protocol_lists function is correct, this should be safe.
+            unsafe {
+                // Walk the linked list starting from the head and make sure all entries are present.
+                let mut protocol_link = (*data.runtime_arch_ptr).event_head.forward_link;
+                let mut count = 0;
+                let mut prev = &*(&(*data.runtime_arch_ptr).event_head as *const _) as *const list_entry::Entry;
+                while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).event_head as *mut _) {
+                    let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::EventEntry)
+                        .as_ref()
+                        .unwrap();
+                    assert_eq!(entry.event as usize, count);
+                    assert_eq!(entry.link.back_link, prev as *mut _);
+                    count += 1;
+                    protocol_link = entry.link.forward_link;
+                    prev = &entry.link as *const _;
+                    assert!(count <= 10, "Too many entries in the event list.");
+                }
+                assert_eq!(count, 10, "Not all entries were found in the event list.");
             }
-            assert_eq!(count, 5, "Not all entries were found in the event list.");
-        }
+
+            // Remove all the odd events
+            for i in (0..10).filter(|x| x % 2 == 1) {
+                for _ in data.runtime_events.extract_if(|entry| entry.event == i as efi::Event) {}
+            }
+            data.update_protocol_lists();
+
+            // SAFETY: Parsing a C-style linked list is inherently unsafe, but if the
+            //         update_protocol_lists function is correct, this should be safe.
+            unsafe {
+                // Walk the linked list starting from the head and make sure all entries are present.
+                let mut protocol_link = (*data.runtime_arch_ptr).event_head.forward_link;
+                let mut count = 0;
+                let mut prev = &*(&(*data.runtime_arch_ptr).event_head as *const _) as *const list_entry::Entry;
+                while !core::ptr::eq(protocol_link, &mut (*data.runtime_arch_ptr).event_head as *mut _) {
+                    let entry = ((protocol_link as *const u8).byte_sub(link_offset) as *const runtime::EventEntry)
+                        .as_ref()
+                        .unwrap();
+                    assert_eq!(entry.event as usize, count * 2);
+                    assert_eq!(entry.link.back_link, prev as *mut _);
+                    count += 1;
+                    protocol_link = entry.link.forward_link;
+                    prev = &entry.link as *const _;
+                    assert!(count <= 5, "Too many entries in the event list.");
+                }
+                assert_eq!(count, 5, "Not all entries were found in the event list.");
+            }
+        })
+        .unwrap_or_else(|e| panic!("Test failed with runtime allocator conflict: {:?}", e));
     }
 }

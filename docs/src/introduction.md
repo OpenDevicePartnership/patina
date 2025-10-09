@@ -1,124 +1,27 @@
 
 # Introduction
 
-This book is a getting started guide for:
+**Welcome to Patina** - a pure Rust project dedicated to evolving and modernizing UEFI firmware with a strong focus on
+security, performance, and reliability. This book serves as high-level documentation for developers and platform
+owners working with or contributing to Patina.
 
-1. Developing UEFI firmware in a `no_std` environment
-2. Integrating the Patina DXE Core into a platform
-3. Developing a pure-Rust Patina component
-4. Working in the Patina codebase
+It provides guidance on building firmware in a `no_std` Rust environment, integrating the Patina DXE Core, developing
+pure-Rust Patina components, and contributing to the ecosystem - all without assuming prior experience with
+Patina itself.
 
-Before getting started, read about the [Patina](patina.md) project and its high-level background and goals.
+Before getting started, you may want to read the [Patina Background](patina.md), which outlines the project's goals
+and design philosophy.
 
-This book assumes you already have prerequisite knowledge of the [EDK II](https://github.com/tianocore/edk2) ecosystem,
-and the necessary tools installed for building EDK II packages.
+In addition, here are some of the more commonly referenced documentation in this book:
 
-Major features are proposed through [RFCs](rfc/template.md). The RFC template should be completed and submitted as a PR.
-
-The complete RFC process is:
-
-1. **Create** a new branch for your RFC.
-2. **Copy** the template from `docs/src/rfc/template.md` to a new file in the `docs/src/rfc/text` directory named
-   `0000-<feature-name>.md` where `0000` is a placeholder until the RFC is accepted (so use `0000` in your PR) and
-   `<feature-name>` is a short name for the feature.
-3. **Fill out** the RFC template with your proposal.
-4. Submit a **pull request** (PR) with your RFC.
-5. The PR will be discussed, reviewed, and may be iteratively updated.
-6. Once there is consensus, one of the following will occur:
-   - If approved, the RFC will be **merged** and assigned an official number.
-   - If rejected, the RFC will be **merged** to the rejected directory and assigned an official number.
-
-## The RFC Life Cycle
-
-Each RFC goes through these stages:
-
-- **Draft**: The initial state when a PR is opened. The community and relevant teams provide feedback.
-- **Final Comment Period (FCP)**: Once there is rough consensus, an FCP of 7–10 days starts. During this time, final
-  objections can be raised.
-- **Merged**: After FCP with no blocking concerns, the RFC is merged and becomes official.
-- **Postponed**: RFCs may be deferred due to lack of clarity, priority, or readiness.
-- **Rejected**: With strong reasoning and community consensus, RFCs can be declined.
-
-```mermaid
----
-config:
-  layout: elk
-  look: handDrawn
----
-graph TD;
-    Draft --> FCP --> Merged;
-    Draft --> Postponed;
-    Draft --> Rejected;
-```
-
-## Implementing and Maintaining an RFC
-
-Once accepted:
-
-- The implementation is tracked through linked issues or repositories.
-- Any changes during implementation that deviate from the RFC must go through a **follow-up RFC** or an **amendment**
-  process.
-- An RFC can be **revised** in-place via a new RFC that supersedes or modifies the previous one.
-
-## Rejected RFCs
-
-Due to community feedback, some RFCs may be rejected. In order to track these and be able to reference back to them,
-these RFCs are maintained in the Patina repo as files in `docs/src/rfc/rejected`. Each merged RFC in Patina will have
-a unique number to reference it by, whether it was merged to the `text` (approved) or `rejected` directories; that is
-RFC numbers shall be unique in Patina regardless of whether the RFC was approved or rejected.
-
-Rejected RFCs must contain a new section that summarizes the community's decision to reject the RFC. The PR remains
-the source of the full community discussion.
-
-Following the rejection of an RFC, that RFC may be raised to the community again at some point in the future. In this
-case, a new RFC should be created that points back to the original RFC and explains what is different about the new
-proposal or why the original proposal is appropriate to bring back to the community.
-
-## Tools and Prerequisites
-
-This section describes the tools that need to be installed before working with the contents of this book.
-
-### Rust
-
-The Rust installer provides multiple tools including `rustc` (the compiler), `rustup` (the toolchain installer), and
-`cargo` (the package manager).
-
-These tools are all downloaded when running the installer here: [Getting Started - Rust Programming Language (rust-lang.org)](https://www.rust-lang.org/learn/get-started).
-This may require a restart of your command line terminal.
-
-The specific toolchains and components that are required to be installed can be found in the `rust-toolchain.toml`
-file and will automatically be installed by `cargo` upon your first `cargo` command. The file will look something like
-this:
-
-```toml
-[toolchain]
-version = "1.80.0"
-targets = ["x86_64-unknown-uefi", "aarch64-unknown-uefi"]
-components = ["rust-src"]
-```
-
-There are additional cargo plugins (installables) that will need to be installed depending on what you are doing. You
-can find a list of all tools in the same file under the `[tools]` section. At a minimum, you will need `cargo-make` for
-compilation and `cargo-llvm-cov` for code coverage. You should install these tools at the version specified via
-`cargo install --force $(tool_name) --version $(version)`, but it is best to install all of them.
+1. [Patina Background](patina.md)
+2. [RFC Lifecycle](rfc_lifecycle.md)
+3. [Platform Integration](integrate/patina_dxe_core_requirements.html)
+4. [Component Development](component/getting_started.html)
+5. [Developer Guides](dev/documenting.md)
 
 ```admonish note
-`cargo install` will download and compile these tools locally. If you first install `cargo-binstall` with
-`cargo install cargo-binstall` you can change the command from `install` to `binstall` which will simply download the
-pre-compiled binary and will be much faster.
+This documentation aims to be as detailed as possible, not assuming any previous knowledge. However some general Rust
+knowledge is beneficial throughout the book, and some EDK II knowledge is beneficial to understanding how consume the
+final pure-Rust platform Patina DXE core in EDK II style firmware.
 ```
-
-### Cargo Make
-
-Due to building in a `no_std` environment while also supporting multiple Rust [UEFI target triples](https://doc.rust-lang.org/nightly/rustc/platform-support/unknown-uefi.html#-unknown-uefi),
-the command line flags to successfully run any Rust commands can be complex and verbose. To counter this problem and
-simplify the developer experience, we use [cargo-make](https://github.com/sagiegurari/cargo-make) as the drop-in
-replacement for cargo commands. Instead of running `cargo build`, you would now run `cargo make build`. Many other
-commands exist, and will exist on a per-repository basis.
-
-### Cargo LLVM-Cov
-
-[cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) is our tool for generating code coverage results. Our
-requirement is that any crate being developed must have at least 80% code coverage, so developers will want to use
-`cargo llvm-cov` to calculate code coverage. In an existing repository, a developer will use `cargo make coverage` to
-generate coverage results and a line-coverage HTML report.

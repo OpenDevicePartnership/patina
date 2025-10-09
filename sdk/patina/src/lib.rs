@@ -1,7 +1,7 @@
-//! UEFI Software Development Kit (SDK) for Rust
+//! Software Development Kit (SDK) for Patina
 //!
-//! This crate implements common functionality for building and executing UEFI
-//! binaries in Rust.
+//! This crate implements the core SDK for Patina and is only part of the Patina
+//! solution. For general knowledge on Patina, refer to the [Patina book](https://opendevicepartnership.github.io/patina/).
 //!
 //! ## Features
 //!
