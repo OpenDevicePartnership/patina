@@ -14,6 +14,7 @@ scroll = { workspace = true }
 log = { workspace = true }
 uuid = { workspace = true }
 
+patina_acpi = {workspace = true}
 mu_pi = { workspace = true }
 mu_rust_helpers = { workspace = true }
 patina_sdk = { workspace = true }

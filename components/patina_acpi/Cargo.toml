@@ -1,0 +1,27 @@
+[package]
+name = "patina_acpi"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "UEFI ACPI services that provide common types and functionality used in ACPI development."
+
+[dependencies]
+log = { workspace = true }
+memoffset = { workspace = true }
+mockall = { workspace = true, optional = true }
+patina_sdk = { workspace = true, features = ["alloc"] }
+r-efi = { workspace = true }
+scroll = { workspace = true }
+spin = { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }
+patina_sdk = { workspace = true, features = ["mockall"] }
+
+[features]
+mockall = ["dep:mockall"]
+ 
+

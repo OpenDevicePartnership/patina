@@ -20,7 +20,8 @@
 //!        | patina_sdk::performance::Measurement::DriverBindingSupport     // Adds driver binding support measurements.
 //!        | patina_sdk::performance::Measurement::LoadImage                // Adds load image measurements.
 //!        | patina_sdk::performance::Measurement::StartImage               // Adds start image measurements.
-//!     }
+//!     },
+//!    rsdp_address: 0xEE00000, // Obtain from System Table HOB or other platform-specific method.
 //! })
 //! .with_component(patina_performance::component::Performance)
 //! .start()
@@ -43,4 +44,7 @@ pub struct PerfConfig {
     pub enable_component: bool,
     /// A wrapper to generate a mask of all enabled measurements.
     pub enabled_measurements: u32,
+    /// The physical address of the RSDP.
+    /// Used to read configuration details from primarily the FADT.
+    pub rsdp_address: usize,
 }
