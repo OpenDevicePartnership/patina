@@ -280,10 +280,6 @@ criteria = "safe-to-run"
 version = "0.3.81"
 criteria = "safe-to-run"
 
-[[exemptions.libc]]
-version = "0.2.171"
-criteria = "safe-to-run"
-
 [[exemptions.libm]]
 version = "0.2.15"
 criteria = "safe-to-deploy"
