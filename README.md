@@ -1,6 +1,10 @@
 
 # Patina
 
+[![release]][_release]
+[![commit]][_commit]
+[![ci]][_ci]
+
 This repository hosts the Patina project - a Rust implementation of UEFI firmware.
 
 The goal of this project is to serve as a replacement for core UEFI firmware components so they are written in Pure
@@ -98,10 +102,28 @@ cargo make -p release build-aarch64
 
 ## Test
 
-Use the test command to invoke a test build and execute all unit tests.
+- Run all unit tests in the workspace:
 
 ```shell
 cargo make test
+```
+
+- Run tests in an individual package:
+
+```shell
+cargo make test -p patina
+```
+
+Build on-platform tests in the workspace:
+
+```shell
+cargo make patina-test
+```
+
+- Build on-platform tests in an individual package:
+
+```shell
+cargo make patina-test -p patina
 ```
 
 ## Rust Version Updates
@@ -208,3 +230,10 @@ your ideas and feedback on additional priorities that matter to the community.
 - Review Rust Documentation in the [/docs](https://github.com/OpenDevicePartnership/patina/blob/HEAD/docs/src/introduction.md)
 directory.
 - Run unit tests and ensure all pass.
+
+[release]: https://img.shields.io/crates/v/patina
+[_release]: https://github.com/OpenDevicePartnership/patina/releases/latest
+[commit]: https://img.shields.io/github/commits-since/OpenDevicePartnership/patina/latest/main?include_prereleases
+[_commit]: https://github.com/OpenDevicePartnership/patina/commits/main/
+[ci]: https://github.com/OpenDevicePartnership/patina/actions/workflows/ci-workflow.yml/badge.svg?branch=main&event=push
+[_ci]: https://github.com/OpenDevicePartnership/patina/actions/workflows/ci-workflow.yml

@@ -11,7 +11,7 @@ use patina_ffs::{
     section::{Section, SectionExtractor},
 };
 
-use patina_sdk::component::prelude::IntoService;
+use patina::component::prelude::IntoService;
 
 #[cfg(feature = "brotli")]
 use crate::BrotliSectionExtractor;

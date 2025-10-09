@@ -24,19 +24,18 @@
 //! debugger is either not set or not enabled, the static routines will be no-ops.
 //!
 //! ```rust
-//! extern crate patina_sdk;
+//! extern crate patina;
 //! extern crate patina_internal_cpu;
 //!
 //! use patina_internal_cpu::interrupts::{Interrupts, InterruptManager};
 //!
-//! static DEBUGGER: patina_debugger::PatinaDebugger<patina_sdk::serial::uart::UartNull> =
-//!     patina_debugger::PatinaDebugger::new(patina_sdk::serial::uart::UartNull{});
+//! static DEBUGGER: patina_debugger::PatinaDebugger<patina::serial::uart::UartNull> =
+//!     patina_debugger::PatinaDebugger::new(patina::serial::uart::UartNull{});
 //!
 //! fn entry() {
 //!
 //!     // Configure the debugger. This is used for dynamic configuration of the debugger.
-//!     // For static configuration use the with_config method on construction.
-//!     DEBUGGER.configure(true, true, 0);
+//!     DEBUGGER.enable(true);
 //!
 //!     // Set the global debugger instance. This can only be done once.
 //!     patina_debugger::set_debugger(&DEBUGGER);
@@ -106,8 +105,8 @@ extern crate alloc;
 pub use debugger::PatinaDebugger;
 
 use arch::{DebuggerArch, SystemArch};
+use patina::serial::SerialIO;
 use patina_internal_cpu::interrupts::{ExceptionContext, InterruptManager};
-use patina_sdk::serial::SerialIO;
 
 /// Global instance of the debugger.
 ///
@@ -163,7 +162,7 @@ enum DebugError {
     /// Failure from the GDB stub initialization.
     GdbStubInit,
     /// Failure from the GDB stub.
-    GdbStubError(gdbstub::stub::GdbStubError<(), patina_sdk::error::EfiError>),
+    GdbStubError(gdbstub::stub::GdbStubError<(), patina::error::EfiError>),
     /// Failure to reboot the system.
     RebootFailure,
     /// Failure in the transport layer.

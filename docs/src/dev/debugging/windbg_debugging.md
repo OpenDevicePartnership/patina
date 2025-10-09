@@ -21,7 +21,7 @@ issues with older versions.
 
 Windbg currently only supports connecting to the TCP-based GDB server. To support
 COM and named pipe-based transports, use the forwarding script
-[ComToTcpServer.py](https://github.com/microsoft/mu_feature_debugger/blob/main/Scripts/ComToTcpServer.py)
+[ComToTcpServer.py](https://github.com/microsoft/uefi_debug_tools/blob/main/Scripts/ComToTcpServer.py)
 to forward traffic between a serial device and a TCP server. This can also be useful
 if you want to debug from a different machine than the one connected to the device.
 
@@ -97,7 +97,7 @@ symbols to be automatically resolved on connection.
 ### Installing the Extension
 
 To install the extension, download it from the most recent
-[mu_feature_debugger release](https://github.com/microsoft/mu_feature_debugger/releases/latest)
+[uefi_debug_tools release](https://github.com/microsoft/uefi_debug_tools/releases/latest)
 and add it to the extension path for the debugger. This can be done using the
 PowerShell commands below. Note that the architecture is the architecture of the
 host machine running Windbg, not the device being debugged.
@@ -105,13 +105,13 @@ host machine running Windbg, not the device being debugged.
 #### Installing for X64 Host
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/microsoft/mu_feature_debugger/releases/latest/download/uefiext_x64.zip" -OutFile "$env:TEMP\uefiext.zip"; Expand-Archive "$env:TEMP\uefiext.zip" -DestinationPath "$env:TEMP\uefiext" -Force; Copy-Item "$env:TEMP\uefiext\uefiext.dll" -Destination "C:\Users\$Env:UserName\AppData\Local\DBG\EngineExtensions\UefiExt.dll"
+Invoke-WebRequest -Uri "https://github.com/microsoft/uefi_debug_tools/releases/latest/download/uefiext_x64.zip" -OutFile "$env:TEMP\uefiext.zip"; Expand-Archive "$env:TEMP\uefiext.zip" -DestinationPath "$env:TEMP\uefiext" -Force; Copy-Item "$env:TEMP\uefiext\uefiext.dll" -Destination "C:\Users\$Env:UserName\AppData\Local\DBG\EngineExtensions\UefiExt.dll"
 ```
 
 #### Installing for AArch64 Host
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/microsoft/mu_feature_debugger/releases/latest/download/uefiext_arm64.zip" -OutFile "$env:TEMP\uefiext.zip"; Expand-Archive "$env:TEMP\uefiext.zip" -DestinationPath "$env:TEMP\uefiext" -Force; Copy-Item "$env:TEMP\uefiext\uefiext.dll" -Destination "C:\Users\$Env:UserName\AppData\Local\DBG\EngineExtensions\UefiExt.dll"
+Invoke-WebRequest -Uri "https://github.com/microsoft/uefi_debug_tools/releases/latest/download/uefiext_arm64.zip" -OutFile "$env:TEMP\uefiext.zip"; Expand-Archive "$env:TEMP\uefiext.zip" -DestinationPath "$env:TEMP\uefiext" -Force; Copy-Item "$env:TEMP\uefiext\uefiext.dll" -Destination "C:\Users\$Env:UserName\AppData\Local\DBG\EngineExtensions\UefiExt.dll"
 ```
 
 ## Symbols

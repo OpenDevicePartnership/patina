@@ -91,6 +91,9 @@ jobs:
       - name: Login to Registry
         run: cargo login "${{ secrets.PATINA_FW_TOKEN }}" --registry patina-fw
 
+      - name: Run cargo-vet
+        run: cargo make vet
+
       - name: Run cargo-fmt
         run: cargo fmt --all --check
         env:

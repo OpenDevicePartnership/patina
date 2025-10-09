@@ -15,7 +15,7 @@ use core::{
     sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
 use mu_rust_helpers::function;
-use patina_sdk::{base::UEFI_PAGE_MASK, error::EfiError};
+use patina::{base::UEFI_PAGE_MASK, error::EfiError};
 use r_efi::efi;
 
 #[repr(C)]
@@ -53,7 +53,8 @@ extern "efiapi" fn get_memory_attributes(
                 );
                 return efi::Status::NO_MAPPING;
             }
-            unsafe { *attributes = descriptor.attributes & efi::MEMORY_ACCESS_MASK };
+            // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
+            unsafe { attributes.write_unaligned(descriptor.attributes & efi::MEMORY_ACCESS_MASK) };
             efi::Status::SUCCESS
         }
         Err(status) => {

@@ -11,8 +11,8 @@ use super::gdt;
 use crate::{cpu::Cpu, interrupts};
 #[cfg(not(test))]
 use core::arch::asm;
-use mu_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType};
-use patina_sdk::{component::service::IntoService, error::EfiError};
+use patina::{component::service::IntoService, error::EfiError};
+use patina_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType};
 use r_efi::efi;
 
 /// Struct to implement X64 Cpu Init.
@@ -35,6 +35,7 @@ impl EfiCpuX64 {
     /// This function initializes the CPU for the x86_64 architecture.
     pub fn initialize(&mut self) -> Result<(), EfiError> {
         // Initialize floating point units
+        self.initialize_fpu();
 
         // disable interrupts
         interrupts::disable_interrupts();
@@ -90,6 +91,35 @@ impl EfiCpuX64 {
 
     fn microsecond_delay(&self, _microseconds: u64) {
         // unimplemented!();
+    }
+
+    fn initialize_fpu(&self) {
+        #[cfg(all(not(test), target_arch = "x86_64"))]
+        // Safety: This assembly writes only hard coded values to CR4 register, and MMX and FPU control words. No
+        // inputs are used that could violate memory safety.
+        unsafe {
+            // sdm vol. 1, x87 FPU Control Word configuration
+            static FPU_CONTROL_WORD: u16 = 0x037F;
+
+            // sdm vol. 1, MMX Control Status Register configuration
+            static MMX_CONTROL_WORD: u32 = 0x1F80;
+            asm!(
+                "finit",
+                "fldcw [{FPU_CONTROL_WORD}]",
+
+                // Set OSFXSR (bit 9) in CR4 to enable SSE instructions
+                "mov {temp}, cr4",
+                "or {temp}, {BIT9}",
+                "mov cr4, {temp}",
+
+                "ldmxcsr [{MMX_CONTROL_WORD}]",
+                temp = out(reg) _,
+                FPU_CONTROL_WORD = sym FPU_CONTROL_WORD,
+                MMX_CONTROL_WORD = sym MMX_CONTROL_WORD,
+                BIT9 = const patina::bit!(9),
+                options(nostack, preserves_flags)
+            );
+        }
     }
 }
 

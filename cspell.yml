@@ -21,7 +21,7 @@ ignorePaths:
   - "Makefile.toml"
   - "**/patina_debugger/src/arch/xml/**"
 # ignore hex numbers, asm blocks and patterns like xxxx'xxxxx used in describing bit patterns
-ignoreRegExpList: ["/0x[0-9a-fA-F]+/", "asm!\\(.*?\\);", ".*'x*"]
+ignoreRegExpList: ["/0x[0-9a-fA-F]+/", ".*asm!\\([\\s\\S]*?\\);", ".*'x*"]
 minWordLength: 5
 caseSensitive: false
 allowCompoundWords: true
@@ -29,55 +29,60 @@ words:
   - aarch
   - acpibase
   - addrs
+  - amanieu
+  - anstream
+  - anstyle
+  - antras
   - armasm
-  - athlon
+  - autocfg
+  - bitvec
   - bucketize
+  - bumpalo
   - cbindgen
   - cdecl
   - cdram
   - cdrom
-  - celeron
-  - centronics
-  - clflush
-  - clfsh
-  - cmpxchg
-  - corem
+  - clangpdb
   - corosensei
+  - coverity
+  - cpuid
   - ctypes
-  - ruint
+  - cuviper
   - dbgwcr
   - dbgwvr
   - deassertion
   - depex
+  - deque
   - descs
   - distros
   - dllcharacteristics
+  - dnested
   - docsrs
+  - dtolnay
   - dword
-  - duron
   - dxefv
+  - dxeipl
   - edkii
   - edram
   - eeprom
   - efficeon
   - efiapi
+  - eficall
   - efierror
   - eflags
-  - eprom
-  - familyi
-  - familyz
-  - fbdimm
-  - feprom
+  - epage
+  - fastrlp
   - fnent
+  - funty
   - fvmain
-  - fxrstor
-  - fxsave
   - gantt
   - gdbstub
   - genfw
   - getrsp
   - getsp
   - gigantor
+  - gnullvm
+  - gohman
   - granularities
   - grcov
   - gread
@@ -85,37 +90,45 @@ words:
   - gwrite
   - hireso
   - hresult
+  - htons
   - icfgr
+  - indoc
   - inmodule
   - intid
   - irouter
   - iscsi
   - isenabler
+  - itertools
+  - jhpratt
+  - joshlf
+  - keccak
+  - libyaml
   - linkme
   - longjmp
-  - loong
-  - loongson
-  - lpddr
   - lzmatest
   - mdbook
   - mdscr
-  - mipsr
+  - mmiport
   - mmram
   - mpidr
   - msdia
   - mtrrs
   - mutil
   - nestedfv
+  - nocapture
   - nologo
   - nomem
   - noopt
   - ntdll
-  - numberof
+  - ntohl
+  - ntohs
   - nvdimm
   - oleaut
+  - oorandom
   - openvmm
   - opinfo
-  - opteron
+  - oprom
+  - ordinalize
   - oslar
   - oslsr
   - pacibsp
@@ -123,6 +136,7 @@ words:
   - pcddxe
   - pdata
   - pdbhelper
+  - powerfmt
   - pread
   - priorto
   - proprietar
@@ -132,7 +146,6 @@ words:
   - pyserial
   - pywin
   - qword
-  - rdram
   - reentrancy
   - regsvr
   - relia
@@ -142,8 +155,6 @@ words:
   - ruint
   - rwlock
   - sctlr
-  - sgram
-  - sigle
   - smbus
   - smcport
   - smiport
@@ -158,19 +169,24 @@ words:
   - sysreg
   - tiano
   - tianocore
-  - turion
+  - tolnay
+  - typenum
   - typer
   - uefiext
   - uintn
   - unaccepte
+  - unarray
   - uncacheable
-  - uncorrect
+  - uncontained
+  - uncrustify
+  - unrecovered
   - unregisters
   - unspec
   - vcvarsamd
   - vcvarsarm
   - vtable
   - wakeup
+  - wasip
   - wbinvd
   - weitek
   - windbg
@@ -178,4 +194,5 @@ words:
   - xdata
   - xtask
   - zbuild
+  - zeroize
   - zunstable

@@ -13,11 +13,11 @@ cfg-if = { workspace = true }
 log = { workspace = true }
 mockall = { workspace = true, optional = true }
 r-efi = { workspace = true }
-patina_sdk = { workspace = true }
+patina = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
-patina_sdk = { workspace = true, features = ["mockall"] }
+patina = { workspace = true, features = ["mockall"] }
 
 [target.'cfg(target_arch="x86_64")'.dependencies]
 x86_64 = { workspace = true, features = [

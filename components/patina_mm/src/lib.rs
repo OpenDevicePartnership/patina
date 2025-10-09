@@ -32,7 +32,7 @@
 //!
 //! ```rust
 //! use patina_mm::service::MmCommunication;
-//! use patina_sdk::component::{IntoComponent, service::Service};
+//! use patina::component::{IntoComponent, service::Service};
 //! use r_efi::efi;
 //!
 //! /// MM Supervisor Request Header
@@ -80,7 +80,7 @@
 //!     ///
 //!     /// Uses the `MmCommunication` service to send a request version information from the MM Supervisor. The MM
 //!     /// Supervisor is expected to be the Standalone MM environment used on the QEMU Q35 platform.
-//!     pub fn entry_point(self, mm_comm: Service<dyn MmCommunication>) -> patina_sdk::error::Result<()> {
+//!     pub fn entry_point(self, mm_comm: Service<dyn MmCommunication>) -> patina::error::Result<()> {
 //!         let mm_supv_req_header = MmSupervisorRequestHeader {
 //!             signature: u32::from_le_bytes([b'M', b'S', b'U', b'P']),
 //!             revision: 1,
@@ -108,7 +108,7 @@
 //!                 )
 //!                 .map_err(|_| {
 //!                     log::error!("MM Communication failed");
-//!                     patina_sdk::error::EfiError::DeviceError // Todo: Map actual codes
+//!                     patina::error::EfiError::DeviceError // Todo: Map actual codes
 //!                 })?
 //!         };
 //!

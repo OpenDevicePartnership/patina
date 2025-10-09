@@ -7,17 +7,21 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
-use core::{convert::TryInto, ffi::c_void, mem::transmute, slice::from_raw_parts};
+use core::{convert::TryInto, ffi::c_void, mem::transmute, slice, slice::from_raw_parts};
 use goblin::pe::section_table;
-use mu_pi::hob::{Hob, HobList};
-use patina_internal_device_path::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count};
-use patina_sdk::base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up};
-use patina_sdk::error::EfiError;
-use patina_sdk::performance::{
+use patina::base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up};
+use patina::error::EfiError;
+use patina::performance::{
     logging::{perf_image_start_begin, perf_image_start_end, perf_load_image_begin, perf_load_image_end},
     measurement::create_performance_measurement,
 };
-use patina_sdk::{guid, uefi_pages_to_size, uefi_size_to_pages};
+use patina::{guids, uefi_pages_to_size, uefi_size_to_pages};
+use patina_internal_device_path::{DevicePathWalker, copy_device_path_to_boxed_slice, device_path_node_count};
+use patina_pi::{
+    fw_fs::FfsSectionRawType::PE32,
+    hob::{Hob, HobList},
+    protocols::firmware_volume,
+};
 use r_efi::efi;
 
 use crate::{
@@ -39,6 +43,7 @@ use crate::{
     tpl_lock,
 };
 
+use efi::Guid;
 use uefi_corosensei::{
     Coroutine, CoroutineResult, Yielder,
     stack::{MIN_STACK_SIZE, STACK_ALIGNMENT, Stack, StackPointer},
@@ -491,10 +496,10 @@ fn install_dxe_core_image(hob_list: &HobList, system_table: &mut EfiSystemTable)
     let dxe_core_hob = hob_list
         .iter()
         .find_map(|x| match x {
-            Hob::MemoryAllocationModule(module) if module.module_name == guid::DXE_CORE => Some(module),
+            Hob::MemoryAllocationModule(module) if module.module_name == guids::DXE_CORE => Some(module),
             _ => None,
         })
-        .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use patina_sdk::guid::DXE_CORE as FFS GUID.");
+        .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use patina::guid::DXE_CORE as FFS GUID.");
 
     // get exclusive access to the global private data.
     let mut private_data = PRIVATE_IMAGE_DATA.lock();
@@ -595,7 +600,7 @@ fn core_load_pe_image(
     let size = pe_info.size_of_image as usize;
 
     // the section alignment must be at least the size of a page
-    if alignment % UEFI_PAGE_SIZE != 0 || alignment == 0 {
+    if !alignment.is_multiple_of(UEFI_PAGE_SIZE) || alignment == 0 {
         log::error!(
             "core_load_pe_image_failed: section alignment of {alignment:#x?} is not a (non-zero) multiple of page size {UEFI_PAGE_SIZE:#x?}",
         );
@@ -604,7 +609,7 @@ fn core_load_pe_image(
     }
 
     // the size of the image must be a multiple of the section alignment per PE/COFF spec
-    if size % alignment != 0 {
+    if !size.is_multiple_of(alignment) {
         log::error!("core_load_pe_image_failed: size of image is not a multiple of the section alignment");
         debug_assert!(false);
         return Err(EfiError::LoadError);
@@ -694,7 +699,7 @@ fn activate_compatibility_mode(private_info: &PrivateImageData) -> Result<(), Ef
         .unwrap_or(DEFAULT_CACHE_ATTR);
     if dxe_services::core_set_memory_space_attributes(
         private_info.image_base_page,
-        patina_sdk::uefi_pages_to_size!(private_info.image_num_pages) as u64,
+        patina::uefi_pages_to_size!(private_info.image_num_pages) as u64,
         stripped_attrs,
     )
     .is_err()
@@ -765,8 +770,9 @@ fn get_buffer_by_file_path(
         Err(EfiError::InvalidParameter)?;
     }
 
-    //TODO: EDK2 core has support for loading an image from an FV device path which is not presently supported here.
-    //this is the only case that Ok((buffer, true, authentication_status)) would be returned.
+    if let Ok((buffer, device_handle)) = get_file_buffer_from_fw(file_path) {
+        return Ok((buffer, true, device_handle, 0));
+    }
 
     if let Ok((buffer, device_handle)) = get_file_buffer_from_sfs(file_path) {
         return Ok((buffer, false, device_handle, 0));
@@ -786,6 +792,57 @@ fn get_buffer_by_file_path(
     }
 
     Err(EfiError::NotFound)
+}
+
+fn get_file_guid_from_device_path(path: *mut efi::protocols::device_path::Protocol) -> Result<Guid, EfiError> {
+    let mut walker = unsafe { DevicePathWalker::new(path) };
+    let file_path_node = walker.next().ok_or(EfiError::InvalidParameter)?;
+    if file_path_node.header().r#type != efi::protocols::device_path::TYPE_MEDIA
+        || file_path_node.header().sub_type != efi::protocols::device_path::Media::SUBTYPE_PIWG_FIRMWARE_FILE
+    {
+        return Err(EfiError::InvalidParameter);
+    }
+    Ok(Guid::from_bytes(file_path_node.data().try_into().map_err(|_| EfiError::BadBufferSize)?))
+}
+
+fn get_file_buffer_from_fw(
+    file_path: *mut efi::protocols::device_path::Protocol,
+) -> Result<(Vec<u8>, efi::Handle), EfiError> {
+    // Locate the handles to a device on the file_path that supports the firmware volume protocol
+    let (remaining_file_path, handle) = core_locate_device_path(firmware_volume::PROTOCOL_GUID, file_path)?;
+
+    // For FwVol File system there is only a single file name that is a GUID.
+    let fv_name_guid = get_file_guid_from_device_path(remaining_file_path)?;
+
+    // Get the firmware volume protocol
+    let fv_ptr =
+        PROTOCOL_DB.get_interface_for_handle(handle, firmware_volume::PROTOCOL_GUID)? as *mut firmware_volume::Protocol;
+    if fv_ptr.is_null() {
+        debug_assert!(!fv_ptr.is_null(), "ERROR: get_interface_for_handle returned NULL ptr for FirmwareVolume!");
+        return Err(EfiError::InvalidParameter);
+    }
+    let fw_vol = unsafe { fv_ptr.as_ref().unwrap() };
+
+    // Read image from the firmware file
+    let mut buffer: *mut u8 = core::ptr::null_mut();
+    let buffer_ptr: *mut *mut c_void = &mut buffer as *mut _ as *mut *mut c_void;
+    let mut buffer_size = 0;
+    let mut authentication_status = 0;
+    let authentication_status_ptr = &mut authentication_status;
+    let status = (fw_vol.read_section)(
+        fw_vol,
+        &fv_name_guid,
+        PE32,
+        0, // Instance
+        buffer_ptr,
+        core::ptr::addr_of_mut!(buffer_size),
+        authentication_status_ptr,
+    );
+
+    EfiError::status_to_result(status)?;
+
+    let section_slice = unsafe { slice::from_raw_parts(buffer, buffer_size) };
+    Ok((section_slice.to_vec(), handle))
 }
 
 fn get_file_buffer_from_sfs(
@@ -872,24 +929,6 @@ fn get_file_buffer_from_load_protocol(
     EfiError::status_to_result(status).map(|_| (file_buffer, handle))
 }
 
-/// Relocates all runtime images to their virtual memory address. This function must only be called
-/// after the Runtime Service SetVirtualAddressMap() has been called by the OS.
-pub fn core_relocate_runtime_images() {
-    let mut private_data = PRIVATE_IMAGE_DATA.lock();
-
-    for image in private_data.private_image_data.values_mut() {
-        if image.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
-            let loaded_image = unsafe { image.image_buffer.as_mut().unwrap() };
-            let loaded_image_addr = image.image_info.image_base as usize;
-            let mut loaded_image_virt_addr = loaded_image_addr;
-
-            let _ = runtime::convert_pointer(0, core::ptr::addr_of_mut!(loaded_image_virt_addr) as *mut *mut c_void);
-            let _ =
-                pecoff::relocate_image(&image.pe_info, loaded_image_virt_addr, loaded_image, &image.relocation_data);
-        }
-    }
-}
-
 // authenticate the given image against the Security and Security2 Architectural Protocols
 fn authenticate_image(
     device_path: *mut efi::protocols::device_path::Protocol,
@@ -899,8 +938,8 @@ fn authenticate_image(
     authentication_status: u32,
 ) -> Result<(), EfiError> {
     let security2_protocol = unsafe {
-        match PROTOCOL_DB.locate_protocol(mu_pi::protocols::security2::PROTOCOL_GUID) {
-            Ok(protocol) => (protocol as *mut mu_pi::protocols::security2::Protocol).as_ref(),
+        match PROTOCOL_DB.locate_protocol(patina_pi::protocols::security2::PROTOCOL_GUID) {
+            Ok(protocol) => (protocol as *mut patina_pi::protocols::security2::Protocol).as_ref(),
             //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
             //Firmware Volume.
             Err(_) => None,
@@ -908,8 +947,8 @@ fn authenticate_image(
     };
 
     let security_protocol = unsafe {
-        match PROTOCOL_DB.locate_protocol(mu_pi::protocols::security::PROTOCOL_GUID) {
-            Ok(protocol) => (protocol as *mut mu_pi::protocols::security::Protocol).as_ref(),
+        match PROTOCOL_DB.locate_protocol(patina_pi::protocols::security::PROTOCOL_GUID) {
+            Ok(protocol) => (protocol as *mut patina_pi::protocols::security::Protocol).as_ref(),
             //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
             //Firmware Volume.
             Err(_) => None,
@@ -919,7 +958,7 @@ fn authenticate_image(
     let mut security_status = efi::Status::SUCCESS;
     if let Some(security2) = security2_protocol {
         security_status = (security2.file_authentication)(
-            security2 as *const _ as *mut mu_pi::protocols::security2::Protocol,
+            security2 as *const _ as *mut patina_pi::protocols::security2::Protocol,
             device_path,
             image.as_ptr() as *const _ as *mut c_void,
             image.len(),
@@ -928,14 +967,14 @@ fn authenticate_image(
         if security_status == efi::Status::SUCCESS && from_fv {
             let security = security_protocol.expect("Security Arch must be installed if Security2 Arch is installed");
             security_status = (security.file_authentication_state)(
-                security as *const _ as *mut mu_pi::protocols::security::Protocol,
+                security as *const _ as *mut patina_pi::protocols::security::Protocol,
                 authentication_status,
                 device_path,
             );
         }
     } else if let Some(security) = security_protocol {
         security_status = (security.file_authentication_state)(
-            security as *const _ as *mut mu_pi::protocols::security::Protocol,
+            security as *const _ as *mut patina_pi::protocols::security::Protocol,
             authentication_status,
             device_path,
         );
@@ -1074,6 +1113,17 @@ pub fn core_load_image(
         ) as *mut u8
     };
 
+    // Register runtime images with the runtime module.
+    if private_info.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
+        runtime::add_runtime_image(
+            private_info.image_info.image_base,
+            private_info.image_info.image_size,
+            &private_info.relocation_data,
+            handle,
+        )
+        .inspect_err(|err| log::error!("failed to load image: register runtime image failed: {err:?}"))?;
+    }
+
     core_install_protocol_interface(
         Some(handle),
         efi::protocols::loaded_image_device_path::PROTOCOL_GUID,
@@ -1141,7 +1191,8 @@ extern "efiapi" fn load_image(
     match core_load_image(boot_policy.into(), parent_image_handle, device_path, image) {
         Err(err) => err.into(),
         Ok((handle, security_status)) => unsafe {
-            image_handle.write(handle);
+            // Safety: Caller must ensure that image_handle is a valid pointer. It is null-checked above.
+            image_handle.write_unaligned(handle);
             match security_status {
                 Ok(()) => efi::Status::SUCCESS,
                 Err(err) => err.into(),
@@ -1169,10 +1220,13 @@ extern "efiapi" fn start_image(
         let private_data = PRIVATE_IMAGE_DATA.lock();
         if let Some(image_data) = private_data.private_image_data.get(&image_handle)
             && let Some(image_exit_data) = image_data.exit_data
+            && !exit_data_size.is_null()
+            && !exit_data.is_null()
         {
+            // Safety: Caller must ensure that exit_data_size and exit_data are valid pointers if they are non-null.
             unsafe {
-                exit_data_size.write(image_exit_data.0);
-                exit_data.write(image_exit_data.1);
+                exit_data_size.write_unaligned(image_exit_data.0);
+                exit_data.write_unaligned(image_exit_data.1);
             }
         }
     }
@@ -1353,6 +1407,13 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
         private_image_data.image_device_path_ptr,
     );
 
+    // Remove runtime image if it is one.
+    if private_image_data.pe_info.image_type == EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER
+        && let Err(err) = runtime::remove_runtime_image(image_handle)
+    {
+        log::error!("Failed to remove runtime image for handle {image_handle:?}: {err:?}");
+    }
+
     // we have to remove the memory protections from the image sections before freeing the image buffer, because
     // core_free_pages expects the memory being freed to be in a single continuous memory descriptor, which is not
     // true when we've changed the attributes per section
@@ -1473,7 +1534,7 @@ mod tests {
         test_collateral, test_support,
     };
     use core::{ffi::c_void, sync::atomic::AtomicBool};
-    use patina_sdk::error::EfiError;
+    use patina::error::EfiError;
     use r_efi::efi;
     use std::{fs::File, io::Read};
 
@@ -1566,7 +1627,7 @@ mod tests {
             // Mock Security Arch protocol
             static SECURITY_CALL_EXECUTED: AtomicBool = AtomicBool::new(false);
             extern "efiapi" fn mock_file_authentication_state(
-                this: *mut mu_pi::protocols::security::Protocol,
+                this: *mut patina_pi::protocols::security::Protocol,
                 authentication_status: u32,
                 file: *mut efi::protocols::device_path::Protocol,
             ) -> efi::Status {
@@ -1578,12 +1639,12 @@ mod tests {
             }
 
             let security_protocol =
-                mu_pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
+                patina_pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
 
             PROTOCOL_DB
                 .install_protocol_interface(
                     None,
-                    mu_pi::protocols::security::PROTOCOL_GUID,
+                    patina_pi::protocols::security::PROTOCOL_GUID,
                     &security_protocol as *const _ as *mut _,
                 )
                 .unwrap();
@@ -1623,7 +1684,7 @@ mod tests {
 
             // Mock Security Arch protocol
             extern "efiapi" fn mock_file_authentication_state(
-                _this: *mut mu_pi::protocols::security::Protocol,
+                _this: *mut patina_pi::protocols::security::Protocol,
                 _authentication_status: u32,
                 _file: *mut efi::protocols::device_path::Protocol,
             ) -> efi::Status {
@@ -1633,12 +1694,12 @@ mod tests {
             }
 
             let security_protocol =
-                mu_pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
+                patina_pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
 
             PROTOCOL_DB
                 .install_protocol_interface(
                     None,
-                    mu_pi::protocols::security::PROTOCOL_GUID,
+                    patina_pi::protocols::security::PROTOCOL_GUID,
                     &security_protocol as *const _ as *mut _,
                 )
                 .unwrap();
@@ -1646,7 +1707,7 @@ mod tests {
             // Mock Security2 Arch protocol
             static SECURITY2_CALL_EXECUTED: AtomicBool = AtomicBool::new(false);
             extern "efiapi" fn mock_file_authentication(
-                this: *mut mu_pi::protocols::security2::Protocol,
+                this: *mut patina_pi::protocols::security2::Protocol,
                 file: *mut efi::protocols::device_path::Protocol,
                 file_buffer: *mut c_void,
                 file_size: usize,
@@ -1662,12 +1723,12 @@ mod tests {
             }
 
             let security2_protocol =
-                mu_pi::protocols::security2::Protocol { file_authentication: mock_file_authentication };
+                patina_pi::protocols::security2::Protocol { file_authentication: mock_file_authentication };
 
             PROTOCOL_DB
                 .install_protocol_interface(
                     None,
-                    mu_pi::protocols::security2::PROTOCOL_GUID,
+                    patina_pi::protocols::security2::PROTOCOL_GUID,
                     &security2_protocol as *const _ as *mut _,
                 )
                 .unwrap();

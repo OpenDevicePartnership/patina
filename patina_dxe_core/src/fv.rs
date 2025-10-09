@@ -13,14 +13,14 @@ use core::{
 };
 
 use alloc::{boxed::Box, collections::BTreeMap};
-use mu_pi::{
+use patina_pi::{
     fw_fs::{ffs, fv, fvb},
     hob,
 };
 
+use patina::{component::service::Service, error::EfiError};
 use patina_ffs::{section::SectionExtractor, volume::VolumeRef};
 use patina_internal_device_path::concat_device_path_to_boxed_slice;
-use patina_sdk::{component::service::Service, error::EfiError};
 use r_efi::efi;
 
 use crate::{
@@ -31,12 +31,12 @@ use crate::{
 };
 
 struct PrivateFvbData {
-    _interface: Box<mu_pi::protocols::firmware_volume_block::Protocol>,
+    _interface: Box<patina_pi::protocols::firmware_volume_block::Protocol>,
     physical_address: u64,
 }
 
 struct PrivateFvData {
-    _interface: Box<mu_pi::protocols::firmware_volume::Protocol>,
+    _interface: Box<patina_pi::protocols::firmware_volume::Protocol>,
     physical_address: u64,
 }
 
@@ -50,7 +50,7 @@ struct PrivateGlobalData {
     section_extractor: CoreExtractor,
 }
 
-//access to private global data is only through mutex guard, so safe to mark sync/send.
+// Safety: access to private global data is only through mutex guard, so safe to mark sync/send.
 unsafe impl Sync for PrivateGlobalData {}
 unsafe impl Send for PrivateGlobalData {}
 
@@ -62,39 +62,47 @@ static PRIVATE_FV_DATA: tpl_lock::TplMutex<PrivateGlobalData> = tpl_lock::TplMut
 
 // FVB Protocol Functions
 extern "efiapi" fn fvb_get_attributes(
-    this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     attributes: *mut fvb::attributes::EfiFvbAttributes2,
 ) -> efi::Status {
     if attributes.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let private_data = PRIVATE_FV_DATA.lock();
-
-    let fvb_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvbData(fvb_data)) => fvb_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
-    };
-
-    let fv = match unsafe { VolumeRef::new_from_address(fvb_data.physical_address) } {
-        Ok(fv) => fv,
+    match core_fvb_get_attributes(this) {
         Err(err) => return err.into(),
+        // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
+        Ok(fvb_attributes) => unsafe { attributes.write_unaligned(fvb_attributes) },
     };
-
-    unsafe { attributes.write(fv.attributes()) };
 
     efi::Status::SUCCESS
 }
 
+fn core_fvb_get_attributes(
+    this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
+) -> Result<fvb::attributes::EfiFvbAttributes2, EfiError> {
+    let private_data = PRIVATE_FV_DATA.lock();
+
+    let Some(PrivateDataItem::FvbData(fvb_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return Err(EfiError::NotFound);
+    };
+
+    // Safety: fvb_data.physical_address must point to a valid FV (i.e. private_data is correctly constructed and
+    // its invariants - like not removing fv once installed - are upheld).
+    let fv = unsafe { VolumeRef::new_from_address(fvb_data.physical_address)? };
+
+    Ok(fv.attributes())
+}
+
 extern "efiapi" fn fvb_set_attributes(
-    _this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    _this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     _attributes: *mut fvb::attributes::EfiFvbAttributes2,
 ) -> efi::Status {
     efi::Status::UNSUPPORTED
 }
 
 extern "efiapi" fn fvb_get_physical_address(
-    this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     address: *mut efi::PhysicalAddress,
 ) -> efi::Status {
     if address.is_null() {
@@ -103,18 +111,18 @@ extern "efiapi" fn fvb_get_physical_address(
 
     let private_data = PRIVATE_FV_DATA.lock();
 
-    let fvb_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvbData(fvb_data)) => fvb_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
+    let Some(PrivateDataItem::FvbData(fvb_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return efi::Status::NOT_FOUND;
     };
 
-    unsafe { address.write(fvb_data.physical_address) };
+    // Safety: caller must provide a valid pointer to receive the address. It is null-checked above.
+    unsafe { address.write_unaligned(fvb_data.physical_address) };
 
     efi::Status::SUCCESS
 }
 
 extern "efiapi" fn fvb_get_block_size(
-    this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     lba: efi::Lba,
     block_size: *mut usize,
     number_of_blocks: *mut usize,
@@ -123,38 +131,43 @@ extern "efiapi" fn fvb_get_block_size(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let private_data = PRIVATE_FV_DATA.lock();
-
-    let fvb_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvbData(fvb_data)) => fvb_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
-    };
-
-    let fv = match unsafe { VolumeRef::new_from_address(fvb_data.physical_address) } {
-        Ok(fv) => fv,
+    let (size, remaining_blocks) = match core_fvb_get_block_size(this, lba) {
         Err(err) => return err.into(),
+        Ok((size, remaining_blocks)) => (size, remaining_blocks),
     };
 
-    let lba: u32 = match lba.try_into() {
-        Ok(lba) => lba,
-        _ => return efi::Status::INVALID_PARAMETER,
-    };
-
-    let (size, remaining_blocks) = match fv.lba_info(lba) {
-        Err(err) => return err.into(),
-        Ok((_, size, remaining_blocks)) => (size, remaining_blocks),
-    };
-
+    // Safety: caller must provide valid pointers to receive the block size and number of blocks. They are null-checked above.
     unsafe {
-        block_size.write(size as usize);
-        number_of_blocks.write(remaining_blocks as usize);
+        block_size.write_unaligned(size);
+        number_of_blocks.write_unaligned(remaining_blocks);
     }
 
     efi::Status::SUCCESS
 }
 
+fn core_fvb_get_block_size(
+    this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
+    lba: efi::Lba,
+) -> Result<(usize, usize), EfiError> {
+    let private_data = PRIVATE_FV_DATA.lock();
+
+    let Some(PrivateDataItem::FvbData(fvb_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return Err(EfiError::NotFound);
+    };
+
+    // Safety: fvb_data.physical_address must point to a valid FV (i.e. private_data is correctly constructed and
+    // its invariants - like not removing fv once installed - are upheld).
+    let fv = unsafe { VolumeRef::new_from_address(fvb_data.physical_address)? };
+
+    let lba: u32 = lba.try_into().map_err(|_| EfiError::InvalidParameter)?;
+
+    let (block_size, remaining_blocks, _) = fv.lba_info(lba)?;
+
+    Ok((block_size as usize, remaining_blocks as usize))
+}
+
 extern "efiapi" fn fvb_read(
-    this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     lba: efi::Lba,
     offset: usize,
     num_bytes: *mut usize,
@@ -164,52 +177,69 @@ extern "efiapi" fn fvb_read(
         return efi::Status::INVALID_PARAMETER;
     }
 
+    // Safety: caller must provide valid pointers for num_bytes and buffer. They are null-checked above.
+    let bytes_to_read = unsafe { *num_bytes };
+
+    let data = match core_fvb_read(this, lba, offset, bytes_to_read) {
+        Err(err) => return err.into(),
+        Ok(data) => data,
+    };
+
+    if data.len() > bytes_to_read {
+        // Safety: caller must provide a valid pointer for num_bytes. It is null-checked above.
+        unsafe { num_bytes.write_unaligned(data.len()) };
+        return efi::Status::BUFFER_TOO_SMALL;
+    }
+
+    // copy from memory into the destination buffer to do the read.
+    // Safety: buffer must be valid for writes of at least bytes_to_read length. It is null-checked above, and
+    // the caller must ensure that the buffer is large enough to hold the data being read.
+    unsafe {
+        let dest_buffer = slice::from_raw_parts_mut(buffer as *mut u8, data.len());
+        dest_buffer.copy_from_slice(data);
+        num_bytes.write_unaligned(data.len());
+    }
+
+    if data.len() != bytes_to_read { efi::Status::BAD_BUFFER_SIZE } else { efi::Status::SUCCESS }
+}
+
+fn core_fvb_read(
+    this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
+    lba: efi::Lba,
+    offset: usize,
+    num_bytes: usize,
+) -> Result<&'static [u8], EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
 
-    let fvb_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvbData(fvb_data)) => fvb_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
+    let Some(PrivateDataItem::FvbData(fvb_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return Err(EfiError::NotFound);
     };
 
-    let fv = match unsafe { VolumeRef::new_from_address(fvb_data.physical_address) } {
-        Ok(fv) => fv,
-        Err(err) => return err.into(),
+    // Safety: fvb_data.physical_address must point to a valid FV (i.e. private_data is correctly constructed and
+    // its invariants - like not removing fv once installed - are upheld).
+    let fv = unsafe { VolumeRef::new_from_address(fvb_data.physical_address) }?;
+
+    let Ok(lba) = lba.try_into() else {
+        return Err(EfiError::InvalidParameter);
     };
 
-    let lba: u32 = match lba.try_into() {
-        Ok(lba) => lba,
-        _ => return efi::Status::INVALID_PARAMETER,
-    };
+    let (lba_base_addr, block_size) = fv.lba_info(lba).map(|(addr, size, _)| (addr as usize, size as usize))?;
 
-    let (lba_base_addr, block_size) = match fv.lba_info(lba) {
-        Err(err) => return err.into(),
-        Ok((base, block, _)) => (base as usize, block as usize),
-    };
-
-    let mut status = efi::Status::SUCCESS;
-
-    let mut bytes_to_read = unsafe { *num_bytes };
+    let mut bytes_to_read = num_bytes;
     if offset + bytes_to_read > block_size {
+        debug_assert!(offset + bytes_to_read <= block_size); // caller should not request to read beyond the block.
         bytes_to_read = block_size - offset;
-        status = efi::Status::BAD_BUFFER_SIZE;
     }
 
     let lba_start = (fvb_data.physical_address as usize + lba_base_addr + offset) as *mut u8;
-
-    // copy from memory into the destination buffer to do the read.
-    unsafe {
-        let source_buffer = slice::from_raw_parts(lba_start, bytes_to_read);
-        let dest_buffer = slice::from_raw_parts_mut(buffer as *mut u8, bytes_to_read);
-        dest_buffer.copy_from_slice(source_buffer);
-
-        num_bytes.write(bytes_to_read);
-    }
-
-    status
+    // Safety: lba_start is calculated from the base address of a valid FV, plus an offset and offset+num_bytes.
+    // consistency of this data is guaranteed by checks on instantiation of the VolumeRef.
+    // The FV data is expected to be 'static (i.e. permanently mapped) for the lifetime of the system.
+    unsafe { Ok(slice::from_raw_parts(lba_start, bytes_to_read)) }
 }
 
 extern "efiapi" fn fvb_write(
-    _this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    _this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     _lba: efi::Lba,
     _offset: usize,
     _num_bytes: *mut usize,
@@ -219,7 +249,7 @@ extern "efiapi" fn fvb_write(
 }
 
 extern "efiapi" fn fvb_erase_blocks(
-    _this: *mut mu_pi::protocols::firmware_volume_block::Protocol,
+    _this: *mut patina_pi::protocols::firmware_volume_block::Protocol,
     //... TODO: this should be variadic; however, variadic and eficall don't mix well presently.
 ) -> efi::Status {
     efi::Status::UNSUPPORTED
@@ -230,7 +260,7 @@ fn install_fvb_protocol(
     parent_handle: Option<efi::Handle>,
     base_address: u64,
 ) -> Result<efi::Handle, EfiError> {
-    let mut fvb_interface = Box::from(mu_pi::protocols::firmware_volume_block::Protocol {
+    let mut fvb_interface = Box::from(patina_pi::protocols::firmware_volume_block::Protocol {
         get_attributes: fvb_get_attributes,
         set_attributes: fvb_set_attributes,
         get_physical_address: fvb_get_physical_address,
@@ -244,7 +274,7 @@ fn install_fvb_protocol(
         },
     });
 
-    let fvb_ptr = fvb_interface.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
+    let fvb_ptr = fvb_interface.as_mut() as *mut patina_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
 
     let private_data = PrivateFvbData { _interface: fvb_interface, physical_address: base_address };
 
@@ -252,44 +282,54 @@ fn install_fvb_protocol(
     PRIVATE_FV_DATA.lock().fv_information.insert(fvb_ptr, PrivateDataItem::FvbData(private_data));
 
     // install the protocol and return status
-    core_install_protocol_interface(handle, mu_pi::protocols::firmware_volume_block::PROTOCOL_GUID, fvb_ptr)
+    core_install_protocol_interface(handle, patina_pi::protocols::firmware_volume_block::PROTOCOL_GUID, fvb_ptr)
 }
 
 // Firmware Volume protocol functions
 extern "efiapi" fn fv_get_volume_attributes(
-    this: *const mu_pi::protocols::firmware_volume::Protocol,
+    this: *const patina_pi::protocols::firmware_volume::Protocol,
     fv_attributes: *mut fv::attributes::EfiFvAttributes,
 ) -> efi::Status {
     if fv_attributes.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let private_data = PRIVATE_FV_DATA.lock();
-
-    let fv_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvData(fv_data)) => fv_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
-    };
-
-    let fv = match unsafe { VolumeRef::new_from_address(fv_data.physical_address) } {
-        Ok(fv) => fv,
+    let fv_attributes_data = match core_fv_get_volume_attributes(this) {
         Err(err) => return err.into(),
+        Ok(attrs) => attrs,
     };
 
-    unsafe { fv_attributes.write(fv.attributes() as fv::attributes::EfiFvAttributes) };
+    // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
+    unsafe { fv_attributes.write_unaligned(fv_attributes_data) };
 
     efi::Status::SUCCESS
 }
 
+fn core_fv_get_volume_attributes(
+    this: *const patina_pi::protocols::firmware_volume::Protocol,
+) -> Result<fv::attributes::EfiFvAttributes, EfiError> {
+    let private_data = PRIVATE_FV_DATA.lock();
+
+    let Some(PrivateDataItem::FvData(fv_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return Err(EfiError::NotFound);
+    };
+
+    // Safety: fvb_data.physical_address must point to a valid FV (i.e. private_data is correctly constructed and
+    // its invariants - like not removing fv once installed - are upheld).
+    let fv = unsafe { VolumeRef::new_from_address(fv_data.physical_address)? };
+
+    Ok(fv.attributes() as fv::attributes::EfiFvAttributes)
+}
+
 extern "efiapi" fn fv_set_volume_attributes(
-    _this: *const mu_pi::protocols::firmware_volume::Protocol,
+    _this: *const patina_pi::protocols::firmware_volume::Protocol,
     _fv_attributes: *mut fv::attributes::EfiFvAttributes,
 ) -> efi::Status {
     efi::Status::UNSUPPORTED
 }
 
 extern "efiapi" fn fv_read_file(
-    this: *const mu_pi::protocols::firmware_volume::Protocol,
+    this: *const patina_pi::protocols::firmware_volume::Protocol,
     name_guid: *const efi::Guid,
     buffer: *mut *mut c_void,
     buffer_size: *mut usize,
@@ -306,16 +346,23 @@ extern "efiapi" fn fv_read_file(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let local_buffer_size = unsafe { *buffer_size };
-    let local_name_guid = unsafe { *name_guid };
+    // Safety: caller must provide valid pointers for buffer_size and name_guid. They are null-checked above.
+    let local_buffer_size = unsafe { buffer_size.read_unaligned() };
+    let local_name_guid = unsafe { name_guid.read_unaligned() };
 
+    // for this routine, the file data should be copied into the output buffer directly from the FileRef
+    // constructed here. If this logic was moved into a `core_fv_read_file()` routine as with other functions
+    // in this file, the FileRef would be local to that routine and the data slice could not be returned without
+    // making a copy of the data (or otherwise working around the lifetime issues with e.g. unpalatable raw ptr
+    // shenanigans).
     let private_data = PRIVATE_FV_DATA.lock();
 
-    let fv_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvData(fv_data)) => fv_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
+    let Some(PrivateDataItem::FvData(fv_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return efi::Status::NOT_FOUND;
     };
 
+    // Safety: fvb_data.physical_address must point to a valid FV (i.e. private_data is correctly constructed and
+    // its invariants - like not removing fv once installed - are upheld).
     let fv = match unsafe { VolumeRef::new_from_address(fv_data.physical_address) } {
         Ok(fv) => fv,
         Err(err) => return err.into(),
@@ -332,11 +379,12 @@ extern "efiapi" fn fv_read_file(
     };
 
     // update file metadata output pointers.
+    // Safety: caller must provide valid pointers for found_type, file_attributes, and buffer_size. They are null-checked above.
     unsafe {
-        found_type.write(file.file_type_raw());
-        file_attributes.write(file.fv_attributes());
+        found_type.write_unaligned(file.file_type_raw());
+        file_attributes.write_unaligned(file.fv_attributes());
         //TODO: Authentication status is not yet supported.
-        buffer_size.write(file.content().len());
+        buffer_size.write_unaligned(file.content().len());
     }
 
     if buffer.is_null() {
@@ -344,7 +392,8 @@ extern "efiapi" fn fv_read_file(
         return efi::Status::SUCCESS;
     }
 
-    let mut local_buffer_ptr = unsafe { *buffer };
+    // Safety: caller must provide a valid pointer for buffer. It is null-checked above.
+    let mut local_buffer_ptr = unsafe { buffer.read_unaligned() };
 
     if local_buffer_size > 0 {
         //caller indicates they have allocated a buffer to receive the file data.
@@ -361,14 +410,17 @@ extern "efiapi" fn fv_read_file(
         //allocate it via allocate_pool.
         match core_allocate_pool(efi::BOOT_SERVICES_DATA, file.content().len()) {
             Err(err) => return err.into(),
+            // Safety: caller must provide a valid pointer for buffer. It is null-checked above.
             Ok(allocation) => unsafe {
                 local_buffer_ptr = allocation;
-                buffer.write(local_buffer_ptr);
+                buffer.write_unaligned(local_buffer_ptr);
             },
         }
     }
 
-    //convert pointer+size into a slice and copy the file data.
+    // convert pointer+size into a slice and copy the file data.
+    // Safety: local_buffer_ptr is either provided by the caller (and null-checked above), or allocated via allocate pool
+    // and is of sufficient size to contian the data.
     let out_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, file.content().len()) };
     out_buffer.copy_from_slice(file.content());
 
@@ -376,7 +428,7 @@ extern "efiapi" fn fv_read_file(
 }
 
 extern "efiapi" fn fv_read_section(
-    this: *const mu_pi::protocols::firmware_volume::Protocol,
+    this: *const patina_pi::protocols::firmware_volume::Protocol,
     name_guid: *const efi::Guid,
     section_type: ffs::section::EfiSectionType,
     section_instance: usize,
@@ -388,55 +440,24 @@ extern "efiapi" fn fv_read_section(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let local_name_guid = unsafe { *name_guid };
+    // Safety: caller must provide valid pointer for name_guid. It is null-checked above.
+    let local_name_guid = unsafe { name_guid.read_unaligned() };
 
-    let private_data = PRIVATE_FV_DATA.lock();
-
-    let fv_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvData(fv_data)) => fv_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
-    };
-
-    let fv = match unsafe { VolumeRef::new_from_address(fv_data.physical_address) } {
-        Ok(fv) => fv,
+    let section = match core_fv_read_section(this, local_name_guid, section_type, section_instance) {
+        Ok(section) => section,
         Err(err) => return err.into(),
     };
 
-    if (fv.attributes() & fvb::attributes::raw::fvb2::READ_STATUS) == 0 {
-        return efi::Status::ACCESS_DENIED;
-    }
-
-    let file = match fv.files().find(|f| f.as_ref().is_ok_and(|f| f.name() == local_name_guid) || f.is_err()) {
-        Some(Ok(result)) => result,
-        Some(Err(err)) => return err.into(),
-        _ => return efi::Status::NOT_FOUND,
-    };
-
-    let sections; //ensure that section data lifetime is long enough by assigning to section outside match scope.
-    let section_data = match section_type {
-        ffs::section::raw_type::ALL => file.data(),
-        x => {
-            let extractor = &private_data.section_extractor;
-            sections = match file.sections_with_extractor(extractor) {
-                Ok(sections) => sections,
-                Err(err) => return err.into(),
-            };
-
-            match sections.iter().filter(|sec| sec.section_type_raw() == x).nth(section_instance) {
-                Some(sec) => match sec.try_content_as_slice() {
-                    Ok(data) => data,
-                    Err(err) => return err.into(),
-                },
-                _ => return efi::Status::NOT_FOUND,
-            }
-        }
+    let section_data = match section.try_content_as_slice() {
+        Ok(data) => data,
+        Err(err) => return err.into(),
     };
 
     // get the buffer_size and buffer parameters from caller.
     // Safety: null-checks are at the start of the routine, but caller is required to guarantee that buffer_size and
     // buffer are valid.
-    let mut local_buffer_size = unsafe { *buffer_size };
-    let mut local_buffer_ptr = unsafe { *buffer };
+    let mut local_buffer_size = unsafe { buffer_size.read_unaligned() };
+    let mut local_buffer_ptr = unsafe { buffer.read_unaligned() };
 
     if local_buffer_ptr.is_null() {
         //caller indicates that they wish to receive section data, but that this
@@ -445,24 +466,28 @@ extern "efiapi" fn fv_read_section(
         //allocate it via allocate_pool.
         match core_allocate_pool(efi::BOOT_SERVICES_DATA, section_data.len()) {
             Err(err) => return err.into(),
+            // Safety: caller is required to guarantee that buffer_size and buffer are valid.
             Ok(allocation) => unsafe {
                 local_buffer_size = section_data.len();
                 local_buffer_ptr = allocation;
-                buffer_size.write(local_buffer_size);
-                buffer.write(local_buffer_ptr);
+                buffer_size.write_unaligned(local_buffer_size);
+                buffer.write_unaligned(local_buffer_ptr);
             },
         }
     } else {
         // update buffer size output for the caller
         // Safety: null-checked at the start of the routine, but caller is required to guarantee buffer_size is valid.
         unsafe {
-            buffer_size.write(section_data.len());
+            buffer_size.write_unaligned(section_data.len());
         }
     }
 
     //copy bytes to output. Caller-provided buffer may be shorter than section
     //data. If so, copy to fill the destination buffer, and return
     //WARN_BUFFER_TOO_SMALL.
+
+    // Safety: local_buffer_ptr is either provided by the caller (and null-checked above), or allocated via allocate pool and
+    // is of sufficient size to contain the data.
     let dest_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, local_buffer_size) };
     dest_buffer.copy_from_slice(&section_data[0..dest_buffer.len()]);
 
@@ -471,17 +496,54 @@ extern "efiapi" fn fv_read_section(
     if dest_buffer.len() < section_data.len() { efi::Status::WARN_BUFFER_TOO_SMALL } else { efi::Status::SUCCESS }
 }
 
+fn core_fv_read_section(
+    this: *const patina_pi::protocols::firmware_volume::Protocol,
+    name_guid: efi::Guid,
+    section_type: ffs::section::EfiSectionType,
+    section_instance: usize,
+) -> Result<patina_ffs::section::Section, EfiError> {
+    let private_data = PRIVATE_FV_DATA.lock();
+
+    let Some(PrivateDataItem::FvData(fv_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return Err(EfiError::NotFound);
+    };
+
+    // Safety: fvb_data.physical_address must point to a valid FV (i.e. private_data is correctly constructed and
+    // its invariants - like not removing fv once installed - are upheld).
+    let fv = unsafe { VolumeRef::new_from_address(fv_data.physical_address) }?;
+
+    if (fv.attributes() & fvb::attributes::raw::fvb2::READ_STATUS) == 0 {
+        return Err(EfiError::AccessDenied);
+    }
+
+    let file = match fv.files().find(|f| f.as_ref().is_ok_and(|f| f.name() == name_guid) || f.is_err()) {
+        Some(Ok(result)) => result,
+        Some(Err(err)) => return Err(err.into()),
+        _ => return Err(EfiError::NotFound),
+    };
+
+    let extractor = &private_data.section_extractor;
+    let sections = file.sections_with_extractor(extractor)?;
+
+    sections
+        .iter()
+        .filter(|sec| sec.section_type_raw() == section_type)
+        .nth(section_instance)
+        .cloned()
+        .ok_or(EfiError::NotFound)
+}
+
 extern "efiapi" fn fv_write_file(
-    _this: *const mu_pi::protocols::firmware_volume::Protocol,
+    _this: *const patina_pi::protocols::firmware_volume::Protocol,
     _number_of_files: u32,
-    _write_policy: mu_pi::protocols::firmware_volume::EfiFvWritePolicy,
-    _file_data: *mut mu_pi::protocols::firmware_volume::EfiFvWriteFileData,
+    _write_policy: patina_pi::protocols::firmware_volume::EfiFvWritePolicy,
+    _file_data: *mut patina_pi::protocols::firmware_volume::EfiFvWriteFileData,
 ) -> efi::Status {
     efi::Status::UNSUPPORTED
 }
 
 extern "efiapi" fn fv_get_next_file(
-    this: *const mu_pi::protocols::firmware_volume::Protocol,
+    this: *const patina_pi::protocols::firmware_volume::Protocol,
     key: *mut c_void,
     file_type: *mut fv::EfiFvFileType,
     name_guid: *mut efi::Guid,
@@ -492,64 +554,84 @@ extern "efiapi" fn fv_get_next_file(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let local_key = unsafe { *(key as *mut usize) };
-    let local_file_type = unsafe { *(file_type) };
+    // Safety: caller must provide valid pointers for key and file_type. They are null-checked above.
+    let local_key = unsafe { (key as *mut usize).read_unaligned() };
+    let local_file_type = unsafe { file_type.read_unaligned() };
 
     if local_file_type >= ffs::file::raw::r#type::FFS_MIN {
         return efi::Status::NOT_FOUND;
     }
 
+    let (file_name, fv_attributes, file_size, found_file_type) =
+        match core_fv_get_next_file(this, local_file_type, local_key) {
+            Err(err) => return err.into(),
+            Ok((name, attrs, size, file_type)) => (name, attrs, size, file_type),
+        };
+    // found matching file. Update the key and outputs.
+    // Safety: caller must provide valid pointers for key, file_type, name_guid, attributes, and size. They are null-checked above.
+    unsafe {
+        (key as *mut usize).write_unaligned(local_key + 1);
+        name_guid.write_unaligned(file_name);
+        if (fv_attributes & fvb::attributes::raw::fvb2::MEMORY_MAPPED) == fvb::attributes::raw::fvb2::MEMORY_MAPPED {
+            attributes.write_unaligned(fv_attributes | fv::file::raw::attribute::MEMORY_MAPPED);
+        } else {
+            attributes.write_unaligned(fv_attributes);
+        }
+        size.write_unaligned(file_size);
+        file_type.write_unaligned(found_file_type);
+    }
+
+    efi::Status::SUCCESS
+}
+
+fn core_fv_get_next_file(
+    this: *const patina_pi::protocols::firmware_volume::Protocol,
+    file_type: fv::EfiFvFileType,
+    key: usize,
+) -> Result<(efi::Guid, fv::file::EfiFvFileAttributes, usize, fv::EfiFvFileType), EfiError> {
     let private_data = PRIVATE_FV_DATA.lock();
 
-    let fv_data = match private_data.fv_information.get(&(this as *mut c_void)) {
-        Some(PrivateDataItem::FvData(fv_data)) => fv_data,
-        Some(_) | None => return efi::Status::NOT_FOUND,
+    let Some(PrivateDataItem::FvData(fv_data)) = private_data.fv_information.get(&(this as *mut c_void)) else {
+        return Err(EfiError::NotFound);
     };
 
-    let fv = match unsafe { VolumeRef::new_from_address(fv_data.physical_address) } {
-        Ok(fv) => fv,
-        Err(err) => return err.into(),
-    };
+    // Safety: fvb_data.physical_address must point to a valid FV (i.e. private_data is correctly constructed and
+    // its invariants - like not removing fv once installed - are upheld).
+    let fv = unsafe { VolumeRef::new_from_address(fv_data.physical_address) }?;
 
     let fv_attributes = fv.attributes();
 
     if (fv_attributes & fvb::attributes::raw::fvb2::READ_STATUS) == 0 {
-        return efi::Status::ACCESS_DENIED;
+        return Err(EfiError::AccessDenied);
     }
 
     let file_candidate = fv
         .files()
         .filter(|f| {
             f.is_err()
-                || local_file_type == ffs::file::raw::r#type::ALL
-                || f.as_ref().is_ok_and(|f| f.file_type_raw() == local_file_type)
+                || file_type == ffs::file::raw::r#type::ALL
+                || f.as_ref().is_ok_and(|f| f.file_type_raw() == file_type)
         })
-        .nth(local_key);
+        .nth(key);
 
     let file = match file_candidate {
-        Some(Err(err)) => return err.into(),
+        Some(Err(err)) => return Err(err.into()),
         Some(Ok(file)) => file,
-        _ => return efi::Status::NOT_FOUND,
+        _ => return Err(EfiError::NotFound),
     };
 
-    // found matching file. Update the key and outputs.
-    unsafe {
-        (key as *mut usize).write(local_key + 1);
-        name_guid.write(file.name());
+    let attributes =
         if (fv_attributes & fvb::attributes::raw::fvb2::MEMORY_MAPPED) == fvb::attributes::raw::fvb2::MEMORY_MAPPED {
-            attributes.write(file.fv_attributes() | fv::file::raw::attribute::MEMORY_MAPPED);
+            file.fv_attributes() | fv::file::raw::attribute::MEMORY_MAPPED
         } else {
-            attributes.write(file.fv_attributes());
-        }
-        size.write(file.data().len());
-        file_type.write(file.file_type_raw());
-    }
+            file.fv_attributes()
+        };
 
-    efi::Status::SUCCESS
+    Ok((file.name(), attributes, file.data().len(), file.file_type_raw()))
 }
 
 extern "efiapi" fn fv_get_info(
-    _this: *const mu_pi::protocols::firmware_volume::Protocol,
+    _this: *const patina_pi::protocols::firmware_volume::Protocol,
     _information_type: *const efi::Guid,
     _buffer_size: *mut usize,
     _buffer: *mut c_void,
@@ -558,7 +640,7 @@ extern "efiapi" fn fv_get_info(
 }
 
 extern "efiapi" fn fv_set_info(
-    _this: *const mu_pi::protocols::firmware_volume::Protocol,
+    _this: *const patina_pi::protocols::firmware_volume::Protocol,
     _information_type: *const efi::Guid,
     _buffer_size: usize,
     _buffer: *const c_void,
@@ -571,7 +653,7 @@ fn install_fv_protocol(
     parent_handle: Option<efi::Handle>,
     base_address: u64,
 ) -> Result<efi::Handle, EfiError> {
-    let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
+    let mut fv_interface = Box::from(patina_pi::protocols::firmware_volume::Protocol {
         get_volume_attributes: fv_get_volume_attributes,
         set_volume_attributes: fv_set_volume_attributes,
         read_file: fv_read_file,
@@ -587,7 +669,7 @@ fn install_fv_protocol(
         set_info: fv_set_info,
     });
 
-    let fv_ptr = fv_interface.as_mut() as *mut mu_pi::protocols::firmware_volume::Protocol as *mut c_void;
+    let fv_ptr = fv_interface.as_mut() as *mut patina_pi::protocols::firmware_volume::Protocol as *mut c_void;
 
     let private_data = PrivateFvData { _interface: fv_interface, physical_address: base_address };
 
@@ -595,7 +677,7 @@ fn install_fv_protocol(
     PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr, PrivateDataItem::FvData(private_data));
 
     // install the protocol and return status
-    core_install_protocol_interface(handle, mu_pi::protocols::firmware_volume::PROTOCOL_GUID, fv_ptr)
+    core_install_protocol_interface(handle, patina_pi::protocols::firmware_volume::PROTOCOL_GUID, fv_ptr)
 }
 
 //Firmware Volume device path structures and functions
@@ -667,6 +749,7 @@ unsafe fn install_fv_device_path_protocol(
     handle: Option<efi::Handle>,
     base_address: u64,
 ) -> Result<efi::Handle, EfiError> {
+    // Safety: caller must ensure that base_address is valid.
     let fv = unsafe { VolumeRef::new_from_address(base_address) }?;
 
     let device_path_ptr = match fv.fv_name() {
@@ -710,10 +793,12 @@ unsafe fn install_fv_device_path_protocol(
     core_install_protocol_interface(handle, efi::protocols::device_path::PROTOCOL_GUID, device_path_ptr)
 }
 
+// Safety: base_address must point to a valid firmware volume.
 pub unsafe fn core_install_firmware_volume(
     base_address: u64,
     parent_handle: Option<efi::Handle>,
 ) -> Result<efi::Handle, EfiError> {
+    // Safety: caller must ensure that base_address is valid.
     let handle = unsafe { install_fv_device_path_protocol(None, base_address)? };
     install_fvb_protocol(Some(handle), parent_handle, base_address)?;
     install_fv_protocol(Some(handle), parent_handle, base_address)?;
@@ -736,6 +821,7 @@ pub fn parse_hob_fvs(hob_list: &hob::HobList) -> Result<(), efi::Status> {
 
     for fv in fv_hobs {
         // construct a FirmwareVolume struct to verify sanity.
+        // Safety: base addresses of FirmwareVolume HOBs are assumed to be valid and accessible.
         let fv_slice = unsafe { slice::from_raw_parts(fv.base_address as *const u8, fv.length as usize) };
         VolumeRef::new(fv_slice)?;
         // Safety: base addresses of FirmwareVolume HOBs are assumed to be valid and accessible.
@@ -754,12 +840,12 @@ pub fn register_section_extractor(extractor: Service<dyn SectionExtractor>) {
 mod tests {
     use super::*;
     use crate::test_support;
-    use mu_pi::hob::Hob;
     use patina_ffs_extractors::CompositeSectionExtractor;
+    use patina_pi::hob::Hob;
     extern crate alloc;
     use crate::test_collateral;
-    use mu_pi::hob::HobList;
-    use mu_pi::{BootMode, hob};
+    use patina_pi::hob::HobList;
+    use patina_pi::{BootMode, hob};
     use std::alloc::{Layout, alloc, dealloc};
     use std::ffi::c_void;
     use std::ptr;
@@ -771,6 +857,8 @@ mod tests {
     const SECTION_TYPE: ffs::section::EfiSectionType = 0;
     const SECTION_INSTANCE: usize = 0;
 
+    // Safety: resets all the private data; so caller must ensure that no code exists that
+    // assumes the private data is valid (i.e. that FVs that it describes still exist).
     pub unsafe fn fv_private_data_reset() {
         // Clear inserted elements
         PRIVATE_FV_DATA.lock().fv_information.clear();
@@ -783,6 +871,7 @@ mod tests {
              * for test_fv_functionality.
              * In case other functions/modules are written, clear the private global data again.
              */
+            // Safety: global lock ensures exclusive access to the private data.
             unsafe {
                 fv_private_data_reset();
             }
@@ -879,13 +968,14 @@ mod tests {
              * for test_fv_functionality.
              * In case other functions/modules are written, clear the private global data again.
              */
+            // Safety: global lock ensures exclusive access to the private data.
             unsafe {
                 fv_private_data_reset();
             }
             assert!(PRIVATE_FV_DATA.lock().fv_information.is_empty());
 
             /* Create Firmware Interface, this will be used by the whole test module */
-            let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
+            let mut fv_interface = Box::from(patina_pi::protocols::firmware_volume::Protocol {
                 get_volume_attributes: fv_get_volume_attributes,
                 set_volume_attributes: fv_set_volume_attributes,
                 read_file: fv_read_file,
@@ -901,16 +991,16 @@ mod tests {
                 set_info: fv_set_info,
             });
 
-            let fv_ptr = fv_interface.as_mut() as *mut mu_pi::protocols::firmware_volume::Protocol as *mut c_void;
+            let fv_ptr = fv_interface.as_mut() as *mut patina_pi::protocols::firmware_volume::Protocol as *mut c_void;
 
             let private_data = PrivateFvData { _interface: fv_interface, physical_address: base_address };
             // save the protocol structure we're about to install in the private data.
             PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr, PrivateDataItem::FvData(private_data));
-            let fv_ptr1: *const mu_pi::protocols::firmware_volume::Protocol =
-                fv_ptr as *const mu_pi::protocols::firmware_volume::Protocol;
+            let fv_ptr1: *const patina_pi::protocols::firmware_volume::Protocol =
+                fv_ptr as *const patina_pi::protocols::firmware_volume::Protocol;
 
             /* Build Firmware Volume Block Interface*/
-            let mut fvb_interface = Box::from(mu_pi::protocols::firmware_volume_block::Protocol {
+            let mut fvb_interface = Box::from(patina_pi::protocols::firmware_volume_block::Protocol {
                 get_attributes: fvb_get_attributes,
                 set_attributes: fvb_set_attributes,
                 get_physical_address: fvb_get_physical_address,
@@ -924,8 +1014,8 @@ mod tests {
                 },
             });
             let fvb_ptr =
-                fvb_interface.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
-            let fvb_ptr_mut_prot = fvb_interface.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol;
+                fvb_interface.as_mut() as *mut patina_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
+            let fvb_ptr_mut_prot = fvb_interface.as_mut() as *mut patina_pi::protocols::firmware_volume_block::Protocol;
 
             /* Build Private Data */
             let private_data = PrivateFvbData { _interface: fvb_interface, physical_address: base_address };
@@ -935,7 +1025,7 @@ mod tests {
             //let fv_attributes3: *mut fw_fs::EfiFvAttributes = &mut fv_att;
 
             /* Instance 2 - Create a FV  interface with Bad physical address to handle Error cases. */
-            let mut fv_interface3 = Box::from(mu_pi::protocols::firmware_volume::Protocol {
+            let mut fv_interface3 = Box::from(patina_pi::protocols::firmware_volume::Protocol {
                 get_volume_attributes: fv_get_volume_attributes,
                 set_volume_attributes: fv_set_volume_attributes,
                 read_file: fv_read_file,
@@ -951,9 +1041,9 @@ mod tests {
                 set_info: fv_set_info,
             });
 
-            let fv_ptr3 = fv_interface3.as_mut() as *mut mu_pi::protocols::firmware_volume::Protocol as *mut c_void;
-            let fv_ptr3_const: *const mu_pi::protocols::firmware_volume::Protocol =
-                fv_ptr3 as *const mu_pi::protocols::firmware_volume::Protocol;
+            let fv_ptr3 = fv_interface3.as_mut() as *mut patina_pi::protocols::firmware_volume::Protocol as *mut c_void;
+            let fv_ptr3_const: *const patina_pi::protocols::firmware_volume::Protocol =
+                fv_ptr3 as *const patina_pi::protocols::firmware_volume::Protocol;
 
             /* Corrupt the base address to cover error conditions  */
             let base_no2: u64 = fv.as_ptr() as u64 + 0x1000;
@@ -962,7 +1052,7 @@ mod tests {
             PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr3, PrivateDataItem::FvData(private_data2));
 
             /* Create an interface with No physical address and no private data - cover Error Conditions */
-            let fv_interface_no_data = mu_pi::protocols::firmware_volume::Protocol {
+            let fv_interface_no_data = patina_pi::protocols::firmware_volume::Protocol {
                 get_volume_attributes: fv_get_volume_attributes,
                 set_volume_attributes: fv_set_volume_attributes,
                 read_file: fv_read_file,
@@ -976,10 +1066,10 @@ mod tests {
                 set_info: fv_set_info,
             };
 
-            let fv_ptr_no_data = &fv_interface_no_data as *const mu_pi::protocols::firmware_volume::Protocol;
+            let fv_ptr_no_data = &fv_interface_no_data as *const patina_pi::protocols::firmware_volume::Protocol;
 
             /* Create a Firmware Volume Block Interface with Invalid Physical Address */
-            let mut fvb_intf_invalid = Box::from(mu_pi::protocols::firmware_volume_block::Protocol {
+            let mut fvb_intf_invalid = Box::from(patina_pi::protocols::firmware_volume_block::Protocol {
                 get_attributes: fvb_get_attributes,
                 set_attributes: fvb_set_attributes,
                 get_physical_address: fvb_get_physical_address,
@@ -993,9 +1083,9 @@ mod tests {
                 },
             });
             let fvb_intf_invalid_void =
-                fvb_intf_invalid.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
+                fvb_intf_invalid.as_mut() as *mut patina_pi::protocols::firmware_volume_block::Protocol as *mut c_void;
             let fvb_intf_invalid_mutpro =
-                fvb_intf_invalid.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol;
+                fvb_intf_invalid.as_mut() as *mut patina_pi::protocols::firmware_volume_block::Protocol;
             let base_no: u64 = fv.as_ptr() as u64 + 0x1000;
 
             let private_data4 = PrivateFvbData { _interface: fvb_intf_invalid, physical_address: base_no };
@@ -1006,7 +1096,7 @@ mod tests {
                 .insert(fvb_intf_invalid_void, PrivateDataItem::FvbData(private_data4));
 
             /* Create a Firmware Volume Block Interface without Physical address populated  */
-            let mut fvb_intf_data_n = Box::from(mu_pi::protocols::firmware_volume_block::Protocol {
+            let mut fvb_intf_data_n = Box::from(patina_pi::protocols::firmware_volume_block::Protocol {
                 get_attributes: fvb_get_attributes,
                 set_attributes: fvb_set_attributes,
                 get_physical_address: fvb_get_physical_address,
@@ -1020,8 +1110,11 @@ mod tests {
                 },
             });
             let fvb_intf_data_n_mut =
-                fvb_intf_data_n.as_mut() as *mut mu_pi::protocols::firmware_volume_block::Protocol;
+                fvb_intf_data_n.as_mut() as *mut patina_pi::protocols::firmware_volume_block::Protocol;
 
+            // Safety: the following test code must uphold the safety expectations of the unsafe
+            // functions it calls. It uses direct memory allocations to create buffers for testing FFI
+            // functions.
             unsafe {
                 let fv_test_set_info = || {
                     fv_set_info(ptr::null(), ptr::null(), BUFFER_SIZE_EMPTY, ptr::null());
@@ -1121,7 +1214,7 @@ mod tests {
                 };
                 let fvb_test_write_file = || {
                     let number_of_files: u32 = 0;
-                    let write_policy: mu_pi::protocols::firmware_volume::EfiFvWritePolicy = 0;
+                    let write_policy: patina_pi::protocols::firmware_volume::EfiFvWritePolicy = 0;
                     fv_write_file(fv_ptr1, number_of_files, write_policy, std::ptr::null_mut());
                 };
 
@@ -1438,6 +1531,7 @@ mod tests {
              * for test_fv_functionality.
              * In case other functions/modules are written, clear the private global data again.
              */
+            // Safety: global lock ensures exclusive access to the private data.
             unsafe {
                 fv_private_data_reset();
             }
@@ -1448,7 +1542,7 @@ mod tests {
                 .section_extractor
                 .set_extractor(Service::mock(Box::new(patina_ffs_extractors::BrotliSectionExtractor)));
 
-            let mut fv_interface = Box::from(mu_pi::protocols::firmware_volume::Protocol {
+            let mut fv_interface = Box::from(patina_pi::protocols::firmware_volume::Protocol {
                 get_volume_attributes: fv_get_volume_attributes,
                 set_volume_attributes: fv_set_volume_attributes,
                 read_file: fv_read_file,
@@ -1464,14 +1558,16 @@ mod tests {
                 set_info: fv_set_info,
             });
 
-            let fv_ptr = fv_interface.as_mut() as *mut mu_pi::protocols::firmware_volume::Protocol as *mut c_void;
+            let fv_ptr = fv_interface.as_mut() as *mut patina_pi::protocols::firmware_volume::Protocol as *mut c_void;
 
             let private_data = PrivateFvData { _interface: fv_interface, physical_address: base_address };
             // save the protocol structure we're about to install in the private data.
             PRIVATE_FV_DATA.lock().fv_information.insert(fv_ptr, PrivateDataItem::FvData(private_data));
-            let fv_ptr1: *const mu_pi::protocols::firmware_volume::Protocol =
-                fv_ptr as *const mu_pi::protocols::firmware_volume::Protocol;
+            let fv_ptr1: *const patina_pi::protocols::firmware_volume::Protocol =
+                fv_ptr as *const patina_pi::protocols::firmware_volume::Protocol;
 
+            // Safety: the following test code must uphold the safety expectations of the unsafe
+            // functions it calls. It uses direct memory management to test fv FFI primitives.
             unsafe {
                 let layout = Layout::from_size_align(1000, 8).unwrap();
                 let mut buffer = alloc(layout) as *mut c_void;

@@ -1,3 +1,14 @@
+//! SMBIOS Type Definitions
+//!
+//! Contains SMBIOS structure type definitions and field layouts.
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
+
 #![allow(unused_doc_comments)]
 #![allow(dead_code)]
 #![allow(private_interfaces)]
@@ -2736,7 +2747,7 @@ pub enum EventLogTypeData {
     /// System reconfiguration event log type
     SysReconfig = 0x14,
     /// Uncorrectable CPU error event log type
-    UncorrectCpuErr = 0x15,
+    UncorrectableCpuErr = 0x15,
     /// Area reset and clear event log type
     AreaResetAndClr = 0x16,
     /// System boot event log type

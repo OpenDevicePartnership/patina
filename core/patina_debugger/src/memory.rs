@@ -73,9 +73,7 @@ pub fn write_memory<Arch: DebuggerArch>(address: u64, buffer: &[u8]) -> Result<(
             .expect("Unexpected failure on address that was already checked.");
 
         if attributes.contains(MemoryAttributes::ReadOnly) {
-            page_table
-                .remap_memory_region(page, PAGE_SIZE, attributes & !MemoryAttributes::ReadOnly)
-                .map_err(|_| ())?;
+            page_table.map_memory_region(page, PAGE_SIZE, attributes & !MemoryAttributes::ReadOnly).map_err(|_| ())?;
         }
 
         let ptr = address as *mut u8;
@@ -87,7 +85,7 @@ pub fn write_memory<Arch: DebuggerArch>(address: u64, buffer: &[u8]) -> Result<(
             // Restore the original page attributes. Panic if this fails as the
             // debugger should not allow the system to continue if it's state cannot be restored.
             page_table
-                .remap_memory_region(page, PAGE_SIZE, attributes)
+                .map_memory_region(page, PAGE_SIZE, attributes)
                 .map_err(|_| ())
                 .expect("Failed to restore page table attributes!");
         }
@@ -180,7 +178,6 @@ mod tests {
         impl PageTable for MemPageTable {
             fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> PtResult<()>;
             fn unmap_memory_region(&mut self, address: u64, size: u64) -> PtResult<()>;
-            fn remap_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> PtResult<()>;
             fn install_page_table(&mut self) -> PtResult<()>;
             fn query_memory_region(&self, address: u64, size: u64) -> PtResult<MemoryAttributes>;
             fn dump_page_tables(&self, address: u64, size: u64) -> PtResult<()>;

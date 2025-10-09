@@ -9,11 +9,13 @@ publish.workspace = true
 description = "System Management BIOS (SMBIOS) support for UEFI components."
 
 [dependencies]
-log = {workspace = true}
-patina_sdk = {workspace = true}
-bitfield = {workspace = true} 
-r-efi = "5.3.0"
-mu_pi = {workspace = true}
+log = { workspace = true }
+patina = { workspace = true }
+r-efi = { workspace = true }
+spin = { workspace = true }
+hashbrown = "0.11.2"
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
 
 [features]
-std = []
+enable_patina_tests = []
