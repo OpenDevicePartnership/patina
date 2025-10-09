@@ -343,7 +343,7 @@ impl SmbiosManager {
         log::info!("Building SMBIOS table: {} records, {} bytes", inner.records.len(), total_table_size);
 
         // Step 2: Allocate memory for the table (using UEFI Boot Services memory allocation)
-        let table_pages = (total_table_size + 4095) / 4096; // Round up to pages
+        let table_pages = total_table_size.div_ceil(4096);
         let table_address = boot_services
             .allocate_pages(
                 AllocType::AnyPage,
@@ -1113,7 +1113,7 @@ mod tests {
     #[test]
     fn test_add_type0_platform_firmware_information_to_manager() {
         // Create a manager and a Type0 record
-        let mut manager = SmbiosManager::new(3, 8);
+        let manager = SmbiosManager::new(3, 8);
 
         let type0 = Type0PlatformFirmwareInformation {
             header: SmbiosTableHeader::new(0, 0, SMBIOS_HANDLE_PI_RESERVED),

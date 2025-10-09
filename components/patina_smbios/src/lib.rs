@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn add_minimal_and_enumerate() {
-        let mut mgr = SmbiosManager::new(3, 9);
+        let mgr = SmbiosManager::new(3, 9);
         let rec = minimal_record(1);
         let handle = mgr.add_from_bytes(None, &rec).expect("add minimal record");
         assert_eq!(handle, 1, "First allocated handle should be 1");
@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn add_with_string_and_update() {
-        let mut mgr = SmbiosManager::new(3, 9);
+        let mgr = SmbiosManager::new(3, 9);
         // Type 1 + one string "Old" => header(4 bytes) + "Old\0" + final \0
         let rec = [1, 4, 0, 0, b'O', b'l', b'd', 0, 0];
         let h = mgr.add_from_bytes(None, &rec).unwrap();
@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn handle_reuse_after_remove() {
-        let mut mgr = SmbiosManager::new(3, 9);
+        let mgr = SmbiosManager::new(3, 9);
         let h1 = mgr.add_from_bytes(None, &minimal_record(1)).unwrap();
         let h2 = mgr.add_from_bytes(None, &minimal_record(2)).unwrap();
         assert_eq!((h1, h2), (1, 2));

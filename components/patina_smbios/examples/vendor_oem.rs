@@ -57,7 +57,7 @@ impl SmbiosRecordStructure for VendorOemRecord {
 
 fn main() {
     // Build manager
-    let mut manager = SmbiosManager::new(3, 8);
+    let manager = SmbiosManager::new(3, 8);
 
     // Example 1: Vendor OEM Record
     let rec = VendorOemRecord {
