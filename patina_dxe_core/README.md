@@ -22,7 +22,7 @@ This crate contains a Pure Patina DXE Core.
 
 4. UEFI memory protections that implement best known practices and drive memory protections in UEFI firmware forward.
 
-For more information, refer to [Setting up the DXE Core](https://sturdy-adventure-nv32gqw.pages.github.io/integrate/dxe_core.html).
+For more information, refer to [Setting up the DXE Core](https://opendevicepartnership.github.io/patina/integrate/dxe_core.html).
 
 ## Contributing
 

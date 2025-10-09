@@ -16,8 +16,8 @@ In addition, here are some of the more commonly referenced documentation in this
 
 1. [Patina Background](patina.md)
 2. [RFC Lifecycle](rfc_lifecycle.md)
-3. [Platform Integration](integrate/patina_dxe_core_requirements.html)
-4. [Component Development](component/getting_started.html)
+3. [Platform Integration](integrate/patina_dxe_core_requirements.md)
+4. [Component Development](component/getting_started.md)
 5. [Developer Guides](dev/documenting.md)
 
 ```admonish note

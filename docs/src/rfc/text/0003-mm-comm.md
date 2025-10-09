@@ -170,7 +170,7 @@ copies of data such that the data resides in boot-services accessible memory.
 In order to communicate with MM, the platform DXE environment must produce a number of MM related protocols that
 abstract certain platform-specific details for MM.
 
-![PI MM Init Components](0000-mm-comm/pi_mm_init_component_overview.png)
+![PI MM Init Components](0003-mm-comm/pi_mm_init_component_overview.png)
 
 - A DXE driver produces the `EFI_MM_ACCESS_PROTOCOL`, which describes the different MMRAM regions available in the
   system.
@@ -190,7 +190,7 @@ abstract certain platform-specific details for MM.
 
 The protocols are typically produced by the following types of modules:
 
-![PI MM Protocols](0000-mm-comm/pi_mm_protocols_ia.png)
+![PI MM Protocols](0003-mm-comm/pi_mm_protocols_ia.png)
 
 - `EFI_MM_ACCESS_PROTOCOL` describes the visibility of MMRAM on the platform. Since MMRAM is configured by the memory
   reference code (MRC), this information is dependent upon runtime platform reporting of active MMRAM regions.
@@ -200,7 +200,7 @@ The protocols are typically produced by the following types of modules:
    perform MM communication. `EFI_MM_CONTROL_PROTOCOL.Trigger()` provides a periodic capability that is not included
    in this RFC but may be added in the future.
 
-![PI MMI Handler Relationships](0000-mm-comm/pi_mmi_handler_relationships.png)
+![PI MMI Handler Relationships](0003-mm-comm/pi_mmi_handler_relationships.png)
 
 ## Rust Code Design
 

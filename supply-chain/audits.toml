@@ -107,9 +107,9 @@ end = "2026-03-24"
 
 [[trusted.libc]]
 criteria = "safe-to-deploy"
-user-id = 51017
-start = "2020-03-17"
-end = "2026-03-24"
+user-id = 55123 # rust-lang-owner
+start = "2024-08-15"
+end = "2026-10-09"
 
 [[trusted.linkme]]
 criteria = "safe-to-deploy"

@@ -413,21 +413,19 @@ unsafe impl<T: Default + 'static> Param for Config<'_, T> {
     fn init_state(storage: &mut Storage, meta: &mut MetaData) -> Self::State {
         let id = storage.add_config_default_if_not_present::<T>();
 
-        if !meta.access().has_writes_all_configs() {
-            assert!(
-                !meta.access().has_config_write(id),
-                "Config<{0}> in component {1} conflicts with a previous ConfigMut<{0}> access.",
-                core::any::type_name::<T>(),
-                meta.name(),
-            );
-        } else {
-            assert!(
-                !meta.access().has_config_write(id),
-                "Config<{0}> in component {1} conflicts with a previous &mut Storage access.",
-                core::any::type_name::<T>(),
-                meta.name(),
-            );
-        }
+        assert!(
+            !meta.access().has_writes_all_configs(),
+            "Config<{0}> in component {1} conflicts with a previous &mut Storage access.",
+            core::any::type_name::<T>(),
+            meta.name(),
+        );
+
+        assert!(
+            !meta.access().has_config_write(id),
+            "Config<{0}> in component {1} conflicts with a previous ConfigMut<{0}> access.",
+            core::any::type_name::<T>(),
+            meta.name(),
+        );
 
         meta.access_mut().add_config_read(id);
         id
@@ -519,33 +517,30 @@ unsafe impl<T: Default + 'static> Param for ConfigMut<'_, T> {
         // it to be mutable.
         storage.unlock_config(id);
 
-        if !meta.access().has_writes_all_configs() {
-            assert!(
-                !meta.access().has_config_write(id),
-                "ConfigMut<{0}> in component {1} conflicts with a previous ConfigMut<{0}> access.",
-                core::any::type_name::<T>(),
-                meta.name(),
-            );
-            assert!(
-                !meta.access().has_config_read(id),
-                "ConfigMut<{0}> in component {1} conflicts with a previous Config<{0}> access.",
-                core::any::type_name::<T>(),
-                meta.name(),
-            );
-        } else {
-            assert!(
-                !meta.access().has_config_write(id),
-                "ConfigMut<{0}> in component {1} conflicts with a previous &mut Storage access.",
-                core::any::type_name::<T>(),
-                meta.name(),
-            );
-            assert!(
-                !meta.access().has_config_read(id),
-                "ConfigMut<{0}> in component {1} conflicts with a previous &Storage access.",
-                core::any::type_name::<T>(),
-                meta.name(),
-            );
-        }
+        assert!(
+            !meta.access().has_writes_all_configs(),
+            "ConfigMut<{0}> in component {1} conflicts with a previous &mut Storage access.",
+            core::any::type_name::<T>(),
+            meta.name(),
+        );
+        assert!(
+            !meta.access().has_reads_all_configs(),
+            "ConfigMut<{0}> in component {1} conflicts with a previous &Storage access.",
+            core::any::type_name::<T>(),
+            meta.name(),
+        );
+        assert!(
+            !meta.access().has_config_write(id),
+            "ConfigMut<{0}> in component {1} conflicts with a previous ConfigMut<{0}> access.",
+            core::any::type_name::<T>(),
+            meta.name(),
+        );
+        assert!(
+            !meta.access().has_config_read(id),
+            "ConfigMut<{0}> in component {1} conflicts with a previous Config<{0}> access.",
+            core::any::type_name::<T>(),
+            meta.name(),
+        );
 
         meta.access_mut().add_config_write(id);
         id
@@ -723,6 +718,8 @@ impl_component_param_tuple!(T1, T2, T3, T4, T5);
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
+    use core::sync::atomic::AtomicBool;
+
     use crate::{
         component::{IntoComponent, storage::Storage},
         error::Result,
@@ -937,7 +934,7 @@ mod tests {
     }
 
     #[test]
-    fn test_config_mut_can_always_be_retrieved() {
+    fn test_config_mut_can_always_be_retrieved_while_unlocked() {
         let mut storage = Storage::new();
         let mut mock_metadata = MetaData::new::<i32>();
 
@@ -947,6 +944,34 @@ mod tests {
 
         let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
         assert_eq!(0_i32, unsafe { *ConfigMut::<i32>::get_param(&id, cell_storage) });
+    }
+
+    #[test]
+    fn test_config_mut_lock_fn_prevents_future_config_mut_access() {
+        let mut storage = Storage::new();
+        let mut mock_metadata = MetaData::new::<i32>();
+
+        let id = ConfigMut::<i32>::init_state(&mut storage, &mut mock_metadata);
+
+        assert!(ConfigMut::<i32>::try_validate(&id, (&storage).into()).is_ok());
+
+        storage.get_config_mut::<i32>().unwrap().lock();
+
+        assert!(ConfigMut::<i32>::try_validate(&id, (&storage).into()).is_err());
+    }
+
+    #[test]
+    #[should_panic(expected = "ConfigMut<i32> in component i32 conflicts with a previous &Storage access.")]
+    fn test_config_mut_and_storage_cannot_be_requested_in_same_function() {
+        let mut storage = Storage::new();
+
+        // Mock metadata for the param function. This gets updated as you init each param.
+        // The i32 will be the component name. Typically this is the function signature.
+        let mut mock_metadata = MetaData::new::<i32>();
+
+        <&Storage as Param>::init_state(&mut storage, &mut mock_metadata);
+
+        ConfigMut::<i32>::init_state(&mut storage, &mut mock_metadata); // panic here
     }
 
     #[test]
@@ -1012,6 +1037,40 @@ mod tests {
     }
 
     #[test]
+    fn test_runtime_services_fails_to_validate_when_null() {
+        let mut storage = Storage::default(); // runtime_services is an empty pointer
+        let mut mock_metadata = MetaData::new::<i32>();
+
+        <StandardRuntimeServices as Param>::init_state(&mut storage, &mut mock_metadata);
+        assert_eq!(
+            Err("patina::runtime_services::StandardRuntimeServices"),
+            <StandardRuntimeServices as Param>::try_validate(&(), (&storage).into())
+        );
+    }
+
+    #[test]
+    fn test_runtime_services_can_be_retrieved() {
+        let mut storage = Storage::default();
+        let mut mock_metadata = MetaData::new::<i32>();
+
+        // OOF, this is bad. But I don't wan't to write dummy functions for all the boot service functions. So we do this
+        // instead, so that the pointer to the boot services table is not null.
+        #[allow(invalid_value)]
+        let efi_rt = core::mem::MaybeUninit::<r_efi::efi::RuntimeServices>::zeroed();
+
+        let rt = unsafe { StandardRuntimeServices::new(&*efi_rt.as_ptr()) };
+
+        storage.set_runtime_services(rt);
+
+        <StandardRuntimeServices as Param>::init_state(&mut storage, &mut mock_metadata);
+        assert!(<StandardRuntimeServices as Param>::try_validate(&(), (&storage).into()).is_ok());
+
+        let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
+        // does not panic
+        let _ = unsafe { <StandardRuntimeServices as Param>::get_param(&(), cell_storage) };
+    }
+
+    #[test]
     fn test_option_returns_none_when_underlying_param_is_unavailable() {
         let mut storage = Storage::default();
         let mut mock_meadata = MetaData::new::<i32>();
@@ -1022,10 +1081,26 @@ mod tests {
     }
 
     #[test]
+    fn test_option_returns_underlying_param() {
+        let mut storage = Storage::default();
+        let mut mock_metadata = MetaData::new::<i32>();
+        storage.add_config(42u32);
+
+        let state = <Option<Config<u32>> as Param>::init_state(&mut storage, &mut mock_metadata);
+        assert!(<Option<Config<u32>> as Param>::try_validate(&state, (&storage).into()).is_ok());
+        assert!(unsafe {
+            <Option<Config<u32>> as Param>::get_param(&state, (&storage).into()).is_some_and(|v| *v == 42)
+        });
+    }
+
+    #[test]
     fn test_try_validate_on_tuple_returns_underlying_param_type_not_full_tuple_name() {
         let mut storage = Storage::default();
         let mut mock_meadata = MetaData::new::<i32>();
         <(StandardBootServices, Config<i32>) as Param>::init_state(&mut storage, &mut mock_meadata);
+        // This will always return true, because this function is not used with tuples. The tuple implementations
+        // override the next level up, `try_validate`.
+        assert!(<(StandardBootServices, Config<i32>) as Param>::validate(&((), 0), (&storage).into()));
         assert_eq!(
             Err("patina::boot_services::StandardBootServices"),
             <(StandardBootServices, Config<i32>) as Param>::try_validate(&((), 1), (&storage).into())
@@ -1053,6 +1128,48 @@ mod tests {
     }
 
     #[test]
+    fn test_deferred_commands_are_applied() {
+        trait TestService {
+            #[allow(dead_code)]
+            fn test(self);
+        }
+
+        #[derive(IntoService)]
+        #[service(dyn TestService)]
+        struct TestServiceImpl;
+        impl TestService for TestServiceImpl {
+            #[allow(dead_code)]
+            fn test(self) {
+                // do nothing
+            }
+        }
+
+        #[derive(IntoComponent)]
+        struct TestComponent;
+        impl TestComponent {
+            fn entry_point(self, mut cmds: Commands) -> Result<()> {
+                cmds.add_config(42i32);
+                cmds.add_service(TestServiceImpl);
+                Ok(())
+            }
+        }
+
+        let mut storage = Storage::new();
+
+        let mut component = TestComponent.into_component();
+        component.initialize(&mut storage);
+        assert!(storage.get_config::<i32>().is_none());
+        assert_eq!(component.run(&mut storage), Ok(true));
+
+        assert!(storage.get_config::<i32>().is_none());
+        assert!(storage.get_service::<dyn TestService>().is_none());
+
+        storage.apply_deferred();
+        assert_eq!(*(storage.get_config::<i32>().unwrap()), 42);
+        assert!(storage.get_service::<dyn TestService>().is_some());
+    }
+
+    #[test]
     /// Ensure the common story of "Create service from Config" works
     fn test_deferred_and_config_compatability() {
         #[derive(IntoComponent)]
@@ -1067,5 +1184,86 @@ mod tests {
 
         let mut component = TestComponent.into_component();
         component.initialize(&mut storage);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Commands in component patina::component::params::tests::test_cannot_have_two_commands_in_same_function::TestComponent conflicts with a previous Commands access."
+    )]
+    fn test_cannot_have_two_commands_in_same_function() {
+        #[derive(IntoComponent)]
+        struct TestComponent;
+        impl TestComponent {
+            fn entry_point(self, _cmds: Commands, _cmds2: Commands) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut storage = Storage::new();
+        let mut component = TestComponent.into_component();
+        component.initialize(&mut storage);
+    }
+
+    #[test]
+    fn test_param_function_consume_self_runs_successfully() {
+        static DID_RUN: AtomicBool = AtomicBool::new(false);
+
+        #[derive(IntoComponent)]
+        struct TestComponent;
+        impl TestComponent {
+            fn entry_point(self) -> Result<()> {
+                DID_RUN.store(true, core::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let mut storage = Storage::new();
+
+        let mut component = TestComponent.into_component();
+        component.initialize(&mut storage);
+        assert_eq!(component.run(&mut storage), Ok(true));
+        assert!(DID_RUN.load(core::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_param_function_consume_ref_self_runs_successfully() {
+        static DID_RUN: AtomicBool = AtomicBool::new(false);
+
+        #[derive(IntoComponent)]
+        struct TestComponent;
+        impl TestComponent {
+            fn entry_point(&self) -> Result<()> {
+                DID_RUN.store(true, core::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let mut storage = Storage::new();
+
+        let mut component = TestComponent.into_component();
+        component.initialize(&mut storage);
+        assert_eq!(component.run(&mut storage), Ok(true));
+        assert!(DID_RUN.load(core::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_param_function_consume_mut_ref_self_runs_successfully() {
+        static DID_RUN: AtomicBool = AtomicBool::new(false);
+
+        #[derive(IntoComponent)]
+        struct TestComponent;
+        impl TestComponent {
+            fn entry_point(&mut self) -> Result<()> {
+                DID_RUN.store(true, core::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let mut storage = Storage::new();
+
+        let mut component = TestComponent.into_component();
+        component.initialize(&mut storage);
+        assert_eq!(component.run(&mut storage), Ok(true));
+        assert!(DID_RUN.load(core::sync::atomic::Ordering::SeqCst));
     }
 }

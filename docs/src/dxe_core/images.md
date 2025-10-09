@@ -175,7 +175,7 @@ is dropped and any resources associated with it (including the buffer containing
 
 ## Executing a Component
 
-The Patina DXE Core also supports dispatching Rust [`Components`](../driver/interface.md#component-interface). A
+The Patina DXE Core also supports dispatching Rust [`Components`](../component/interface.md). A
 `component` can be started by invoking `core_start_local_image`. The usage model is much simpler since `exit()` is not
 supported and neither are nested calls to `core_start_local_image`. A `Coroutine` is still instantiated with a separate
 stack for each component invocation, but the coroutine simply runs until the `Component` entry point returns at which

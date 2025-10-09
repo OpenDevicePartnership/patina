@@ -4,6 +4,7 @@
 [![release]][_release]
 [![commit]][_commit]
 [![ci]][_ci]
+[![cov]][_cov]
 
 This repository hosts the Patina project - a Rust implementation of UEFI firmware.
 
@@ -12,8 +13,8 @@ Rust as opposed to Rust wrappers around core implementation still written in C.
 
 ## Background
 
-There have been various [instances of advocacy](https://msrc-blog.microsoft.com/2019/11/07/using-rust-in-windows/) for
-building system level software in [Rust](https://www.rust-lang.org/).
+There have been various [instances of advocacy](https://www.microsoft.com/en-us/msrc/blog/2019/11/using-rust-in-windows)
+for building system level software in [Rust](https://www.rust-lang.org/).
 
 This repository contains a Rust [UEFI](https://uefi.org/) firmware implementation called Patina. We plan to enable an
 incremental migration of today's firmware components largely written in C to Rust starting with the core. The primary
@@ -237,3 +238,5 @@ directory.
 [_commit]: https://github.com/OpenDevicePartnership/patina/commits/main/
 [ci]: https://github.com/OpenDevicePartnership/patina/actions/workflows/ci-workflow.yml/badge.svg?branch=main&event=push
 [_ci]: https://github.com/OpenDevicePartnership/patina/actions/workflows/ci-workflow.yml
+[cov]: https://codecov.io/gh/OpenDevicePartnership/patina/graph/badge.svg?token=CWHWOUUGY6
+[_cov]: https://codecov.io/gh/OpenDevicePartnership/patina

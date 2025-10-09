@@ -93,7 +93,7 @@ services because of the unique integration of the debugger in core initializatio
 
 For the self-hosted debugger to communicate with the debugging software, such as
 Windbg, there needs to be a physical line of communication between the system under
-debug and the host machine. This transport should implement the [SerialIO](https://github.com/OpenDevicePartnership/patina/blob/main/sdk/patina_sdk/src/serial.rs)
+debug and the host machine. This transport should implement the [SerialIO](https://github.com/OpenDevicePartnership/patina/blob/main/sdk/patina/src/serial.rs)
 trait to provide a simple mechanism to read or write to the bus. This transport may be
 the same transport used by the logging console or it may be a dedicated UART or other
 serial connection. Most devices should be able to use a standard UART implementation
@@ -284,9 +284,7 @@ Configuring the debugger is left to the platform as the decision on when and how
 to enable the debugger has environment, security, and other considerations that
 are specific to a platform and its use case. There are two supported methods for
 enabling the debugger: hard-coded enablement through use of the enablement routines
-in the `PatinaDebugger` struct, or through use of the [Debugger Control HOB](https://github.com/microsoft/uefi_debug_tools/blob/main/DebuggerFeaturePkg/Include/DebuggerControlHob.h).
-
-> The Debugger Control HOB is planned support that is not yet available.
+in the `PatinaDebugger` struct.
 
 Direct configuration through the `PatinaDebugger` initialization can be useful for
 quick configuration during development or controlled configuration through a platform
