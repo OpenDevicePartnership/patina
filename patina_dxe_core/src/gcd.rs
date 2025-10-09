@@ -16,7 +16,7 @@ use patina::error::EfiError;
 use patina_paging::MemoryAttributes;
 use patina_pi::{
     dxe_services::{GcdIoType, GcdMemoryType},
-    hob::{self, Hob, HobList, PhaseHandoffInformationTable, ResourceDescriptorV2},
+    hob::{self, Hob, HobList, PhaseHandoffInformationTable},
 };
 use r_efi::efi;
 
@@ -107,15 +107,16 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         let mut resource_attributes: u32 = 0;
 
         let mut res_desc_op = None;
-        if let Hob::ResourceDescriptor(t_res_desc) = hob {
-            res_desc_op = Some(ResourceDescriptorV2::from(**t_res_desc));
-        } else if let Hob::ResourceDescriptorV2(t_res_desc) = hob {
+        // GitHub issue #519: Only process ResourceDescriptorV2 HOBs
+        // This removes support for v1 ResourceDescriptor HOBs for security and architectural improvements
+        if let Hob::ResourceDescriptorV2(t_res_desc) = hob {
             res_desc_op = Some(**t_res_desc);
         }
 
         match res_desc_op {
             None => (),
             Some(res_desc_v2) => {
+                // Extract the v1 data from the v2 structure for processing
                 let res_desc = res_desc_v2.v1;
                 mem_range = res_desc.physical_start
                     ..res_desc
@@ -196,6 +197,8 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
 
         if gcd_mem_type != GcdMemoryType::NonExistent {
             let memory_attributes = {
+                // GitHub issue #519: Extract cache attributes from ResourceDescriptorV2 HOBs
+                // V2 HOBs include cache attribute information not available in v1 HOBs
                 if let Hob::ResourceDescriptorV2(res_desc) = hob {
                     let mut memory_attributes = MemoryAttributes::from_bits_truncate(res_desc.attributes);
                     memory_attributes &= MemoryAttributes::CacheAttributesMask; //clear everything but caching attributes.
