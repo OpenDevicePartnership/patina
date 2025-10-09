@@ -13,11 +13,15 @@ locate and execute drivers. On initialization, the dispatcher registers an event
 which is produced for each firmware volume. This allows the dispatcher to interrogate the firmware volume and add any
 new drivers within the volume to the dispatcher queue.
 
-The core also provides an instance of the [`section extractor`](tbd) interface, which is used by the dispatcher to
-process compressed and [guided](https://uefi.org/specs/PI/1.8A/V3_Code_Definitions.html#guided-section-extraction-protocol)
-sections. The reference section extractor provided with the Patina DXE Core can extract sections compressed with the
-[UEFI Compress](https://uefi.org/specs/UEFI/2.10_A/19_Protocols_Compression_Algorithm_Specification.html) algorithm, as
-well as sections compressed with the [Brotli](https://github.com/google/brotli) compression algorithm.
+The core also provides an instance of the [`section
+extractor`](https://github.com/OpenDevicePartnership/patina/blob/main/sdk/patina_ffs/src/section.rs)
+interface, which is used by the dispatcher to process compressed and
+[guided](https://uefi.org/specs/PI/1.8A/V3_Code_Definitions.html#guided-section-extraction-protocol)
+sections. The reference section extractor provided with the Patina DXE Core can
+extract sections compressed with the [UEFI
+Compress](https://uefi.org/specs/UEFI/2.10_A/19_Protocols_Compression_Algorithm_Specification.html)
+algorithm, as well as sections compressed with the
+[Brotli](https://github.com/google/brotli) compression algorithm.
 
 As part of core initialization, any firmware volumes produced by the HOB producer phase (to include at least the
 firmware volume containing the Patina DXE Core itself) are added to the dispatcher prior to initial invocation (otherwise,
@@ -257,7 +261,7 @@ When a new firmware volume is installed in the core, the dispatcher notification
 the new firmware volume. Each new firmware volume is processed as follows:
 
 1. The physical base address of the firmware volume in memory is retrieved from the
-`EFI_FIRMWARE_VOLUME_BLOCK2_PROTOCOL` instance and used to instantiate a [`FirmwareVolume`](tbd) which allows traversal
+`EFI_FIRMWARE_VOLUME_BLOCK2_PROTOCOL` instance and used to instantiate a `FirmwareVolume` which allows traversal
 of the files within the firmware volume.
 2. The new firmware volume is authenticated using the [Security Architectural Protocol](https://uefi.org/specs/PI/1.8A/V2_DXE_Architectural_Protocols.html#security-architectural-protocols).
    If the authentication fails, the the firmware volume is ignored and not processed by the dispatcher.

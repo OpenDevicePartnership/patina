@@ -12,7 +12,7 @@ Testing in Rust can be broken up into four core categories:
    standpoint.
 3. **Platform Testing:** Tests that run on the platform, physical or virtual.
 4. **Doc Testing:** Code snippets in inline documentation can be compiled and executed. See
-   [Rust Documentation Tests](https://doc.rust-lang.org/rustdoc/write-documentation.html#doc-tests).
+   [Rust Documentation Tests](https://doc.rust-lang.org/rustdoc/write-documentation/documentation-tests.html).
 
 For more, see [Rust Book: Testing](https://doc.rust-lang.org/rust-by-example/testing.html).
 

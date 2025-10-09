@@ -125,6 +125,11 @@ impl Access {
         self.writes_all_configs
     }
 
+    /// Returns whether the component has readonly access to all config resources
+    pub fn has_reads_all_configs(&self) -> bool {
+        self.reads_all_configs
+    }
+
     /// Returns whether or not the component has the ability to register a deferred action.
     pub fn has_deferred(&self) -> bool {
         self.has_deferred
