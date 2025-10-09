@@ -413,21 +413,19 @@ unsafe impl<T: Default + 'static> Param for Config<'_, T> {
     fn init_state(storage: &mut Storage, meta: &mut MetaData) -> Self::State {
         let id = storage.add_config_default_if_not_present::<T>();
 
-        if meta.access().has_writes_all_configs() {
-            assert!(
-                !meta.access().has_config_write(id),
-                "Config<{0}> in component {1} conflicts with a previous &mut Storage access.",
-                core::any::type_name::<T>(),
-                meta.name(),
-            );
-        } else {
-            assert!(
-                !meta.access().has_config_write(id),
-                "Config<{0}> in component {1} conflicts with a previous ConfigMut<{0}> access.",
-                core::any::type_name::<T>(),
-                meta.name(),
-            );
-        }
+        assert!(
+            !meta.access().has_writes_all_configs(),
+            "Config<{0}> in component {1} conflicts with a previous &mut Storage access.",
+            core::any::type_name::<T>(),
+            meta.name(),
+        );
+
+        assert!(
+            !meta.access().has_config_write(id),
+            "Config<{0}> in component {1} conflicts with a previous ConfigMut<{0}> access.",
+            core::any::type_name::<T>(),
+            meta.name(),
+        );
 
         meta.access_mut().add_config_read(id);
         id
