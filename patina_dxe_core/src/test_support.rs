@@ -14,7 +14,7 @@ use patina_pi::hob::HobList;
 use patina_pi::{
     BootMode,
     dxe_services::GcdMemoryType,
-    hob::{self, header, ResourceDescriptorV2},
+    hob::{self, ResourceDescriptorV2, header},
 };
 use r_efi::efi;
 use std::any::Any;
