@@ -248,6 +248,10 @@ criteria = "safe-to-deploy"
 version = "0.7.7"
 criteria = "safe-to-deploy"
 
+[[exemptions.gdbstub]]
+version = "0.7.8"
+criteria = "safe-to-deploy"
+
 [[exemptions.getrandom]]
 version = "0.2.16"
 criteria = "safe-to-run"
