@@ -239,12 +239,17 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                         // will be updated with the appropriate attributes which will then be sync'd to page table
                         // once it is initialized.
                         Err(EfiError::NotReady) => (),
-                        _ => {
+                        Ok(()) => {
+                            // Success is also acceptable - means attributes were set immediately
+                            log::debug!("Memory attributes set successfully for {:#X}", split_range.start);
+                        }
+                        Err(err) => {
                             panic!(
-                                "GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}",
+                                "GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}, error: {:?}",
                                 attributes,
                                 split_range.start,
-                                split_range.end.saturating_sub(split_range.start)
+                                split_range.end.saturating_sub(split_range.start),
+                                err
                             );
                         }
                     }
