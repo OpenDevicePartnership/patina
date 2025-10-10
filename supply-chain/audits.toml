@@ -489,6 +489,12 @@ user-id = 64539 # Kenny Kerr (kennykerr)
 start = "2021-10-27"
 end = "2026-03-24"
 
+[[trusted.toml_edit]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-01-01"
+end = "2026-10-06"
+
 [[trusted.winnow]]
 criteria = "safe-to-deploy"
 user-id = 6743 # Ed Page (epage)
