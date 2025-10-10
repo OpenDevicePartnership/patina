@@ -161,4 +161,5 @@ pub const ZERO: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 
 /// # use patina_sdk::{Guid, guids::HOB_MEMORY_ALLOC_STACK};
 /// # assert_eq!("4ED4BF27-4092-42E9-807D-527B1D00C9BD", format!("{:?}", Guid::from_ref(&HOB_MEMORY_ALLOC_STACK)));
 /// ```
-pub const HOB_MEMORY_ALLOC_STACK: efi::Guid = efi::Guid::from_fields(0x4ed4bf27, 0x4092, 0x42e9, 0x80, 0x7d, &[0x52, 0x7b, 0x1d, 0x00, 0xc9, 0xbd]);
+pub const HOB_MEMORY_ALLOC_STACK: efi::Guid =
+    efi::Guid::from_fields(0x4ed4bf27, 0x4092, 0x42e9, 0x80, 0x7d, &[0x52, 0x7b, 0x1d, 0x00, 0xc9, 0xbd]);

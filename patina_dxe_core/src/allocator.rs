@@ -1004,7 +1004,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                     // Set Guard page to read protect.
                     match GCD.set_memory_space_attributes(
                         stack_address as usize,
-                        UEFI_PAGE_SIZE as usize,
+                        UEFI_PAGE_SIZE,
                         attributes | efi::MEMORY_RP,
                     ) {
                         Ok(_) => (),
@@ -1285,7 +1285,7 @@ mod tests {
             }) {
                 // Check Guard Page.
                 let mut stack_desc =
-                    GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address as u64).unwrap();
+                    GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address).unwrap();
                 assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
                 assert_eq!((stack_desc.attributes & efi::MEMORY_RP), efi::MEMORY_RP);
 

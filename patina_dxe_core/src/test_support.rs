@@ -10,13 +10,13 @@
 //!
 use crate::{GCD, protocols::PROTOCOL_DB};
 use core::ffi::c_void;
+use patina::guids::{HOB_MEMORY_ALLOC_STACK, ZERO};
 use patina_pi::hob::HobList;
 use patina_pi::{
     BootMode,
     dxe_services::GcdMemoryType,
     hob::{self, header},
 };
-use patina::guids::{HOB_MEMORY_ALLOC_STACK, ZERO};
 use r_efi::efi;
 use std::any::Any;
 use std::slice;
@@ -320,8 +320,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
         }
 
         // memory allocation hob for stack
-        allocation_hob_template.alloc_descriptor.memory_base_address =
-            resource_descriptor1.physical_start + 0x10000;
+        allocation_hob_template.alloc_descriptor.memory_base_address = resource_descriptor1.physical_start + 0x10000;
         allocation_hob_template.alloc_descriptor.memory_type = efi::BOOT_SERVICES_DATA;
         allocation_hob_template.alloc_descriptor.memory_length = 0x20000;
         allocation_hob_template.alloc_descriptor.name = HOB_MEMORY_ALLOC_STACK;
