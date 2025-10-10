@@ -186,7 +186,7 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         };
 
         if gcd_mem_type != GcdMemoryType::NonExistent {
-            assert!(res_desc.attributes_valid());
+            debug_assert!(res_desc.attributes_valid());
         }
 
         if gcd_mem_type != GcdMemoryType::NonExistent {
@@ -228,7 +228,11 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                         log::debug!("Memory attributes set successfully for {:#X}", split_range.start);
                     }
                     Err(err) => {
-                        panic!(
+                        // In debug builds, assert to catch GCD attribute setting failures during development.
+                        // In production, allow the system to continue with a potentially torn state,
+                        // matching EDK2 behavior where non-critical GCD operations can fail gracefully.
+                        debug_assert!(
+                            false,
                             "GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}, error: {:?}",
                             memory_attributes,
                             split_range.start,
