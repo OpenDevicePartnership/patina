@@ -1275,26 +1275,26 @@ mod tests {
             }
 
             // Locate stack hob.
-            let stack_hob = hob_list.iter().find_map(|x| match x {
-                patina_pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
-                    if desc.name == HOB_MEMORY_ALLOC_STACK =>
-                {
-                    Some(desc)
-                }
-                _ => None,
-            }).unwrap();
-                // Check Guard Page.
-                let mut stack_desc =
-                    GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address).unwrap();
-                assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
-                assert_eq!((stack_desc.attributes & efi::MEMORY_RP), efi::MEMORY_RP);
+            let stack_hob = hob_list
+                .iter()
+                .find_map(|x| match x {
+                    patina_pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation {
+                        header: _,
+                        alloc_descriptor: desc,
+                    }) if desc.name == HOB_MEMORY_ALLOC_STACK => Some(desc),
+                    _ => None,
+                })
+                .unwrap();
 
-                // Check rest of the stack.
-                stack_desc = GCD
-                    .get_memory_descriptor_for_address(stack_hob.memory_base_address + UEFI_PAGE_SIZE as u64)
-                    .unwrap();
-                assert_eq!((stack_desc.attributes & efi::MEMORY_XP), efi::MEMORY_XP);
-            }
+            // Check Guard Page.
+            let mut stack_desc = GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address).unwrap();
+            assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
+            assert_eq!((stack_desc.attributes & efi::MEMORY_RP), efi::MEMORY_RP);
+
+            // Check rest of the stack.
+            stack_desc =
+                GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address + UEFI_PAGE_SIZE as u64).unwrap();
+            assert_eq!((stack_desc.attributes & efi::MEMORY_XP), efi::MEMORY_XP);
 
             // confirm the MMIO memory allocation occurred in the GCD
             let mmio_desc = GCD.get_memory_descriptor_for_address(0x10000000).unwrap();
