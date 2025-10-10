@@ -44,14 +44,26 @@ for examples.
 Example setup:
 
 ```rust
+#[cfg(feature = "enable_debugger")]
+const _ENABLE_DEBUGGER: bool = true;
+#[cfg(not(feature = "enable_debugger"))]
+const _ENABLE_DEBUGGER: bool = false;
+
+#[cfg(feature = "build_debugger")]
 static DEBUGGER: patina_debugger::PatinaDebugger<UartPl011> =
     patina_debugger::PatinaDebugger::new(UartPl011::new(0x6000_0000))
         .without_transport_init()
-        .with_force_enabled(false);
+        .with_force_enabled(_ENABLE_DEBUGGER);
 ```
 
-Debugging configuration is critical to proper functionality. Read the [Patina Debugger documentation](TODO)
+Debugging configuration is critical to proper functionality. Read the [Patina Debugger documentation](https://github.com/OpenDevicePartnership/patina/blob/main/core/patina_debugger/src/debugger.rs)
 for full configuration options.
+
+> Note: It is recommended to use a compile time feature flag to build the debugger, including instantiating the
+> static struct, as this saves significant file space when the debugger is not enabled. It has been shown to save
+> 60k - 200k of binary size depending on the platform. Debug builds should default to having this feature flag enabled;
+> this helps to encourage debugger use and ensure that the platform FV is large enough to accommodate the debugger's
+> added size. A separate feature, as shown in the examples, may be used to enable the debugger.
 
 ### Step 2: Install the debugger
 
@@ -60,6 +72,7 @@ In the platform initialization routine, call `set_debugger` to install the debug
 it is available in the core.
 
 ```rust
+#[cfg(feature = "build_debugger")]
 patina_debugger::set_debugger(&DEBUGGER);
 ```
 
@@ -68,9 +81,9 @@ or active. Installing is a no-op without enablement.
 
 ### Step 3: Enable the debugger
 
-Enable the debugger at compile time with `.with_force_enabled(true)`. This causes Patina to
-break early and wait for the debugger. If successful, on boot you should see the following
-(if error logging is enabled) followed by a hang.
+Enable the debugger at compile time by enabling the debugger feature, e.g. in the examples above this would be
+`cargo make build --features enable_debugger`. This causes Patina to break early and wait for the debugger. If
+successful, on boot you should see the following (if error logging is enabled) followed by a hang.
 
 ```text
 ERROR - ************************************
@@ -81,9 +94,9 @@ ERROR - ************************************
 This means the debugger is waiting for a connection. If you do not see this hang,
 then confirm that the debugger is enabled and installed prior to calling the core.
 
-You can also enable the debugger at runtime using the `Configure` routine, but use caution.
-Runtime enablement can skip the initial breakpoint and may cause security issues. For development,
-prefer force enablement.
+You can also enable the debugger at runtime using the `enable` routine, but use caution.
+Dynamic enablement should be carefully thought through to ensure proper platform security.
+See the [Security Considerations section](#security-considerations) for more details.
 
 ### Step 4: Verify the transport
 
@@ -121,6 +134,17 @@ if patina_debugger::enabled() {
 
 As an aside, `patina_debugger::breakpoint()` can be useful to placing in other locations
 of interest while debugging to ensure you catch a specific function or scenario.
+
+### Security Considerations
+
+When enabling the debugger through any runtime enablement mechanism, it is critical
+that the platform consider the security impacts. The platform should be certain
+that the configuration or policy that is used to enable the debugger comes from
+an authenticated source and that the enablement of the debugger is properly captured
+in the TPM measurements (PCR7 is recommended) through the appropriate `EV_EFI_ACTION`
+measurement **BEFORE** enabling the debugger. Allowing the debugger to be dynamically
+enabled in production in an unauthenticated or unmeasured way would be a significant
+security bypass.
 
 ## Debugger Functionality
 

@@ -26,7 +26,8 @@ use r_efi::efi;
 ///
 /// ## Safety
 ///
-/// device_path input must be a valid pointer to a well-formed device path.
+/// device_path input must be a valid pointer (i.e. not null) that points to
+/// a well-formed device path that conforms to UEFI spec 2.11 section 10.
 ///
 /// ## Examples
 ///
@@ -75,7 +76,9 @@ pub fn device_path_node_count(
         return Err(efi::Status::INVALID_PARAMETER);
     }
     loop {
-        let current_node = unsafe { *current_node_ptr };
+        // Safety: caller must guarantee that device_path is a valid pointer to
+        // a well-formed device path as described in the function documentation above.
+        let current_node = unsafe { current_node_ptr.read_unaligned() };
         let current_length: usize = u16::from_le_bytes(current_node.length).into();
         node_count += 1;
         dev_path_size += current_length;

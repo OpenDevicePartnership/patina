@@ -87,12 +87,12 @@ jobs:
 
       - name: Cargo Release Dry Run
         if: steps.check_skip_dry_run.outputs.skip != 'true'
-        run: cargo release ${{ steps.release_tag.outputs.tag }} --no-tag --workspace --registry patina-fw
+        run: cargo release ${{ steps.release_tag.outputs.tag }} --no-tag --workspace --registry patina-fw --no-verify
         env:
           RUSTC_BOOTSTRAP: 1
 
       - name: Cargo Release
-        run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace --registry patina-fw
+        run: cargo release ${{ steps.release_tag.outputs.tag }} -x --no-tag --no-confirm --workspace --registry patina-fw --no-verify
         env:
           RUSTC_BOOTSTRAP: 1
 

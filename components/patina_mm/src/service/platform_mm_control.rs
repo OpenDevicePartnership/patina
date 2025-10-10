@@ -19,5 +19,5 @@ use mockall::automock;
 #[cfg_attr(any(test, feature = "mockall"), automock)]
 pub trait PlatformMmControl {
     /// Platform-specific initialization of the MM environment.
-    fn init(&self) -> patina_sdk::error::Result<()>;
+    fn init(&self) -> patina::error::Result<()>;
 }

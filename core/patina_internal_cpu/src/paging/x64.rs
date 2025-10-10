@@ -9,11 +9,11 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::boxed::Box;
+use patina::error::EfiError;
 use patina_mtrr::{Mtrr, create_mtrr_lib, error::MtrrError, structs::MtrrMemoryCacheType};
 use patina_paging::{
     MemoryAttributes, PageTable, PagingType, PtError, PtResult, page_allocator::PageAllocator, x64::X64PageTable,
 };
-use patina_sdk::error::EfiError;
 use r_efi::efi;
 
 /// The x86_64 paging implementation. It acts as a bridge between the EFI CPU
@@ -61,22 +61,6 @@ where
 
     fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError> {
         self.paging.unmap_memory_region(address, size)
-    }
-
-    fn remap_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError> {
-        let cache_attributes = attributes & MemoryAttributes::CacheAttributesMask;
-        let memory_attributes = attributes & MemoryAttributes::AccessAttributesMask;
-
-        if attributes != (cache_attributes | memory_attributes) {
-            return Err(PtError::InvalidParameter);
-        }
-
-        match apply_caching_attributes(address, size, cache_attributes, &mut self.mtrr) {
-            Ok(_) => {
-                self.paging.remap_memory_region(address, size, attributes & MemoryAttributes::AccessAttributesMask)
-            }
-            Err(status) => Err(efierror_to_pterror(status)),
-        }
     }
 
     fn install_page_table(&mut self) -> Result<(), PtError> {

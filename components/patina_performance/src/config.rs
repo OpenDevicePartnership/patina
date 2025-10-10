@@ -15,11 +15,11 @@
 //! .with_config(patina_performance::config::PerfConfig {
 //!     enable_component: true,
 //!     enabled_measurements: {
-//!        patina_sdk::performance::Measurement::DriverBindingStart         // Adds driver binding start measurements.
-//!        | patina_sdk::performance::Measurement::DriverBindingStop        // Adds driver binding stop measurements.
-//!        | patina_sdk::performance::Measurement::DriverBindingSupport     // Adds driver binding support measurements.
-//!        | patina_sdk::performance::Measurement::LoadImage                // Adds load image measurements.
-//!        | patina_sdk::performance::Measurement::StartImage               // Adds start image measurements.
+//!        patina::performance::Measurement::DriverBindingStart         // Adds driver binding start measurements.
+//!        | patina::performance::Measurement::DriverBindingStop        // Adds driver binding stop measurements.
+//!        | patina::performance::Measurement::DriverBindingSupport     // Adds driver binding support measurements.
+//!        | patina::performance::Measurement::LoadImage                // Adds load image measurements.
+//!        | patina::performance::Measurement::StartImage               // Adds start image measurements.
 //!     }
 //! })
 //! .with_component(patina_performance::component::Performance)

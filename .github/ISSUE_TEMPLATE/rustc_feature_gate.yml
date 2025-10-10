@@ -1,0 +1,68 @@
+# Github issue form for tracking usage of rustc unstable features that require the project to use nightly.
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: Apache-2.0
+##
+
+name: 🦀 Unstable rustc feature gate usage tracker.
+description: Tracking issue for usage of an unstable rustc feature that requires the project to use nightly.
+title: "[rustc]: Tracking Issue: `<unstable rustc feature name>`"
+labels: ["rustc-feature-gate"]
+
+body:
+  - type: markdown
+    attributes:
+      value: >
+        👋 Thanks for taking the time to reccomend usage of an unstable rustc feature. If you have not already, please
+        review the [documentation](https://opendevicepartnership.github.io/patina/dev/unstable.html) on this overall
+        process. You will be expected to keep this issue up to date, specifically the checkboxes below.
+  - type: input
+    id: feature_name
+    attributes:
+      label: Unstable rustc feature name
+      description: The name of the unstable feature that requires the project to use nightly.
+      placeholder: "generic_associated_types"
+    validations:
+      required: true
+  - type: input
+    id: feature_link
+    attributes:
+      label: Unstable rustc feature issue link
+      description: The link to the unstable rust feature tracking issue (github).
+      placeholder: https://github.com/rust-lang/rfcs/pull/1598
+    validations:
+      required: true
+  - type: checkboxes
+    id: status
+    attributes:
+      label: Current progress of the feature
+      description: Please continue to update the status as the feature progresses.
+      options:
+        - label: "Tracking issue created"
+          required: true
+        - label: "RFC created"
+        - label: "RFC accepted"
+        - label: "Implementation merged"
+        - label: "Feature stabilized"
+  - type: input
+    id: rfc_id
+    attributes:
+      label: RFC number and PR link
+      description: Associated RFC number and PR link (Update once the RFC is created).
+      placeholder: "[RFC 0001](#360)"
+  - type: textarea
+    id: justification
+    attributes:
+      label: Usage justification
+      description: "Please provide a justification for why this unstable feature must be used."
+    validations:
+      required: true
+  - type: textarea
+    id: usage
+    attributes:
+      label: Crate Usage
+      description: Please provide a list of crates and a brief description of their usage of this unstable feature.
+      placeholder: |
+        - `crate_name`: brief description of usage
+        - `crate_name`: brief description of usage
