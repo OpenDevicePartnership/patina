@@ -398,7 +398,7 @@ mod tests {
             end_of_hob_list: mem_base
                 + core::mem::size_of::<hob::PhaseHandoffInformationTable>() as u64
                 + core::mem::size_of::<hob::Cpu>() as u64
-                + (core::mem::size_of::<ResourceDescriptorV2>() as u64) * 1  // Only 1 V2 system memory HOB
+                + core::mem::size_of::<ResourceDescriptorV2>() as u64  // Only 1 V2 system memory HOB
                 + core::mem::size_of::<header::Hob>() as u64,
         };
 
