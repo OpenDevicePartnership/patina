@@ -10,7 +10,7 @@
 use crate::memory_log::{AdvancedLog, LogEntry};
 use alloc::format;
 use core::str;
-use patina_sdk::error::EfiError;
+use patina::error::EfiError;
 
 /// Parser for the Advanced Logger buffer.
 pub struct Parser<'a> {

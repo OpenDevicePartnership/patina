@@ -11,7 +11,7 @@ pub(crate) mod memory_attributes_table;
 
 use alloc::{boxed::Box, vec};
 use core::{ffi::c_void, slice::from_raw_parts_mut};
-use patina_sdk::error::EfiError;
+use patina::error::EfiError;
 use r_efi::efi;
 
 use crate::{

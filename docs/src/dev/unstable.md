@@ -10,7 +10,7 @@ and unstable state, such as: being largely no-std, implementing and using its ow
 and unsafe operations. Below are the guiding principles and practices for working with unstable Rust features in
 Patina.
 
-All active rustc feature usage is tracked with the [`state:rustc-feature-gate`](https://github.com/OpenDevicePartnership/patina/issues?q=is%3Aissue%20state%3Aopen%20label%3Astate%3Arustc-feature-gate)
+All active rustc feature usage is tracked with the [`state:rustc-feature-gate`](https://github.com/OpenDevicePartnership/patina/issues?q=is%3Aissue%20state%3Aopen%20label%3Arustc-feature-gate)
 label.
 
 ## When Unstable Rust Features May Be Used

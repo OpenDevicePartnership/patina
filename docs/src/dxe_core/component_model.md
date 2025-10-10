@@ -38,7 +38,7 @@ custom configuration, which is cascaded to all components that have `Config<T>` 
 interface.
 
 ```rust
-DxeCore::default()
+Core::default()
     .init_memory(physical_hob_list)
     .with_config(52_u32)
     .with_config(...)
@@ -109,12 +109,12 @@ config:
   look: handDrawn
 ---
 graph LR
-    A[DxeCore::dispatch_components] --> B[Storage::lock_configs]
-    B --> C[DxeCore::dispatch_components]
-    C --> D[DxeCore::display_components_not_dispatched]
+    A[Core::core_dispatcher] --> B[Storage::lock_configs]
+    B --> C[Core::core_dispatcher]
+    C --> D[Core::display_components_not_dispatched]
 ```
 
-Below is the flow chart for `DxeCore::dispatch_components`.
+Below is the flow chart for `Core::core_dispatcher`.
 
 ```mermaid
 ---
@@ -169,7 +169,7 @@ graph LR
 
 ### Default Param implementations
 
-See [Component Interface](../driver/interface.md) for the list of default `Param` implementations.
+See [Component Interface](../component/interface.md#component-params) for the list of default `Param` implementations.
 
 ### Naming Conventions
 

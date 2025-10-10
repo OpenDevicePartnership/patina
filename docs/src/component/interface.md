@@ -26,14 +26,14 @@ graph TD
 ```
 
 In the Patina DXE Core, a component is simply a trait implementation. So long as a struct implements the
-[Component][patina_sdk] trait and the [IntoComponent][patina_sdk] (Used to convert it to `Box<dyn Component>`), then it
+[Component][patina] trait and the [IntoComponent][patina] (Used to convert it to `Box<dyn Component>`), then it
 can be consumed and executed by the Patina DXE Core. While a developer can elect to create their own implementation of
-[Component][patina_sdk] if they wish, [patina_sdk][patina_sdk] currently provides a single implementation that makes it
+[Component][patina] if they wish, [patina][patina] currently provides a single implementation that makes it
 easy to turn any struct or enum into a Component.
 
-This single implementation is the [StructComponent][patina_sdk], which cannot be instantiated manually; a derive
+This single implementation is the [StructComponent][patina], which cannot be instantiated manually; a derive
 proc-macro of `IntoComponent` is provided that allows any struct or enum to be used as a component. This derive proc-macro
-expects that a `Self::entry_point(self, ...) -> patina_sdk::error::Result<()> { ... }` exists, where the `...` in the
+expects that a `Self::entry_point(self, ...) -> patina::error::Result<()> { ... }` exists, where the `...` in the
 function definition can be any number of parameters that support dependency injection as shown below. The function
 name can be overwritten with the attribute macro `#[entry_point(path = path::to::func)]` on the same struct.
 
@@ -41,7 +41,7 @@ See [Samples](https://github.com/OpenDevicePartnership/patina/tree/main/componen
 [Examples](#examples) for examples of basic components using these two methods.
 
 Due to this, developing a component is as simple as writing a function whose parameters are part of the below list of
-supported parameters (which is subject to change). Always reference the trait's [Type Implementations][patina_sdk]
+supported parameters (which is subject to change). Always reference the trait's [Type Implementations][patina]
 for a complete list, however the below information should be up to date.
 
 ## Component Execution
@@ -76,17 +76,8 @@ components have been dispatched in a single iteration.
 Writing a component is as simple as writing a function whose parameters are a part of the below list of supported
 types (which is subject to change). The `Param` trait is the interface that the dispatcher uses to (1) validate that a
 parameter is available, (2) retrieve the datum from storage, and (3) pass it to the component when executing it. Always
-reference the `Param` trait's [Type Implementations][patina_sdk] for a complete list of parameters that can be used
+reference the `Param` trait's [Type Implementations][patina] for a complete list of parameters that can be used
 in the function interface of a component.
-
-```admonish warning
-Unfortunately, the compile-time error you get when trying to register a function whose parameters do not all implement
-`ComponentParam` can be long and unclear. If you see an error similar to the below error message, just know that it is
-likely because one of your parameters does not implement `ComponentParam`. Keep in mind, the `&` (or lack thereof)
-does matter!
-
-    error[E0277]: the trait `function_component::ComponentParamFunction<_>` is not implemented for fn item `<fn_interface>`
-```
 
 <!-- markdownlint-disable -->
 | Param                        | Description                                                                                                                       |
@@ -156,7 +147,7 @@ trait object service, with a lightweight concrete struct Service Wrapper to supp
 mocking of the underlying functionality, but provides an easy to use interface as seen below:
 
 ```rust
-use patina_sdk::{
+use patina::{
     error::Result,
     component::service::Service,
 };
@@ -209,14 +200,14 @@ the given parameter is actually available, even if it would have been made avail
 
 ### Compiled Examples
 
-The [patina_sdk](https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patina_sdk) crate has multiple example
+The [patina](https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patina) crate has multiple example
 binaries in it's `example` folder that can be compiled and executed. These show implementations of common use cases and
 usage models for components and their parameters.
 
 ### StructComponent Examples
 
 ```rust
-use patina_sdk::{
+use patina::{
     boot_services::StandardBootServices,
     component::{
         IntoComponent,
@@ -231,7 +222,7 @@ struct MyComponent {
     private_config: u32,
 }
 
-fn entry_point(c: MyComponent, public_config: Config<u32>) -> patina_sdk::error::Result<()> {
+fn entry_point(c: MyComponent, public_config: Config<u32>) -> patina::error::Result<()> {
     if *public_config != c.private_config {
         return Err(EfiError::Unsupported)
     }
@@ -244,7 +235,7 @@ struct MyComponent2 {
 }
 
 impl MyComponent2 {
-    fn entry_point(self, mut public_config: ConfigMut<u32>) -> patina_sdk::error::Result<()> {
+    fn entry_point(self, mut public_config: ConfigMut<u32>) -> patina::error::Result<()> {
         *public_config += self.private_config;
         Ok(())
     }
@@ -252,7 +243,7 @@ impl MyComponent2 {
 ```
 
 <!--
-    TODO: Replace usage of patina_sdk with links to specific documentation once patina_sdk is available on
+    TODO: Replace usage of patina with links to specific documentation once patina is available on
     crates.io docs.rs.
 -->
-[patina_sdk]: https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patina_sdk
+[patina]: https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patina

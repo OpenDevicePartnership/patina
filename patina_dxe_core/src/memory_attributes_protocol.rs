@@ -15,7 +15,7 @@ use core::{
     sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
 use mu_rust_helpers::function;
-use patina_sdk::{base::UEFI_PAGE_MASK, error::EfiError};
+use patina::{base::UEFI_PAGE_MASK, error::EfiError};
 use r_efi::efi;
 
 #[repr(C)]

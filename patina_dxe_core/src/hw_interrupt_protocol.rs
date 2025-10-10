@@ -12,10 +12,10 @@ use arm_gic::{
     Trigger,
     gicv3::{GicV3, InterruptGroup},
 };
-use patina_sdk::boot_services::{BootServices, StandardBootServices};
-use patina_sdk::component::{IntoComponent, params::Config, service::Service};
-use patina_sdk::guids::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2};
-use patina_sdk::uefi_protocol::ProtocolInterface;
+use patina::boot_services::{BootServices, StandardBootServices};
+use patina::component::{IntoComponent, params::Config, service::Service};
+use patina::guids::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2};
+use patina::uefi_protocol::ProtocolInterface;
 
 pub type HwInterruptHandler = extern "efiapi" fn(u64, &mut ExceptionContext);
 
@@ -461,7 +461,7 @@ impl HwInterruptProtocolInstaller {
         interrupt_manager: Service<dyn InterruptManager>,
         gic_bases: Config<GicBases>,
         boot_services: StandardBootServices,
-    ) -> patina_sdk::error::Result<()> {
+    ) -> patina::error::Result<()> {
         log::info!("GICv3 initializing {:x?}", (gic_bases.0, gic_bases.1));
         let gic_v3 = unsafe {
             gic_initialize(gic_bases.0 as _, gic_bases.1 as _)

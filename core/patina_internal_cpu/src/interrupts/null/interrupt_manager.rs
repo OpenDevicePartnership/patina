@@ -7,7 +7,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use patina_sdk::{component::service::IntoService, error::EfiError};
+use patina::{component::service::IntoService, error::EfiError};
 
 use crate::interrupts::InterruptManager;
 

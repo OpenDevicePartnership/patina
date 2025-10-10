@@ -528,6 +528,34 @@ mod tests {
     }
 
     #[test]
+    fn msvc_pe_image_info_should_be_correct() {
+        let image = include_bytes!("../resources/test/pe32/DisplayEngine512BFileAlignment.efi");
+        let image_info = UefiPeInfo::parse(image).unwrap();
+
+        assert_eq!(image_info.image_type, 0x0B);
+        assert_eq!(image_info.section_alignment, 0x1000);
+        // Although the file name is "DisplayEngine512BFileAlignment.efi", the file
+        // name inside the debug data is "DisplayEngine.pdb"
+        assert_eq!(image_info.filename, Some(String::from("DisplayEngine.efi")));
+        assert_eq!(image_info.size_of_image, 0x19000);
+        assert_eq!(image_info.entry_point_offset, 0x11EC);
+    }
+
+    #[test]
+    fn clangpdb_pe_image_info_should_be_correct() {
+        let image = include_bytes!("../resources/test/pe32/DisplayEngine32BFileAlignment.efi");
+        let image_info = UefiPeInfo::parse(image).unwrap();
+
+        assert_eq!(image_info.image_type, 0x0B);
+        assert_eq!(image_info.section_alignment, 0x1000);
+        // Although the file name is "DisplayEngine32BFileAlignment.efi", the file
+        // name inside the debug data is "DisplayEngine.pdb"
+        assert_eq!(image_info.filename, Some(String::from("DisplayEngine.efi")));
+        assert_eq!(image_info.size_of_image, 0x12000);
+        assert_eq!(image_info.entry_point_offset, 0xBE4B);
+    }
+
+    #[test]
     fn te_load_image_should_load_the_image() {
         let image = include_bytes!("../resources/test/te/test_image.te");
         let image_info = UefiPeInfo::parse(image).unwrap();

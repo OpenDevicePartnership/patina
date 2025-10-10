@@ -15,7 +15,7 @@ use crate::config;
 use alloc::boxed::Box;
 use core::{clone::Clone, convert::AsRef};
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
-use patina_sdk::{
+use patina::{
     boot_services::{BootServices, StandardBootServices, event::EventType, tpl::Tpl},
     component::{IntoComponent, hob::Hob, params::Config},
     error::EfiError,
@@ -176,13 +176,13 @@ mod tests {
     use core::{assert_eq, ptr};
     use r_efi::efi;
 
-    use patina_sdk::{
+    use patina::{
         boot_services::{MockBootServices, c_ptr::CPtr},
         runtime_services::MockRuntimeServices,
         uefi_protocol::{ProtocolInterface, performance_measurement::EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID},
     };
 
-    use patina_sdk::performance::{
+    use patina::performance::{
         measurement::event_callback, record::PerformanceRecordBuffer, record::hob::MockHobPerformanceDataExtractor,
         table::MockFirmwareBasicBootPerfTable,
     };
