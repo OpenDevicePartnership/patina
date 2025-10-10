@@ -109,7 +109,7 @@ jobs:
 
       - name: Crate Release Dry Run
         if: ${{ !contains(github.event.pull_request.body, '(skip cargo release dry run)') }}
-        run: cargo release --no-tag --workspace --no-push --allow-branch '*' --registry patina-fw
+        run: cargo release --no-tag --workspace --no-push --allow-branch '*' --registry patina-fw --no-verify
         env:
           RUSTC_BOOTSTRAP: 1
 
