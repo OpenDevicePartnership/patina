@@ -113,8 +113,8 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.libc]]
-version = "0.2.177"
-when = "2025-10-09"
+version = "0.2.176"
+when = "2025-09-23"
 user-id = 55123
 user-login = "rust-lang-owner"
 
@@ -133,8 +133,8 @@ user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.lock_api]]
-version = "0.4.14"
-when = "2025-10-03"
+version = "0.4.13"
+when = "2025-05-29"
 user-id = 2915
 user-login = "Amanieu"
 user-name = "Amanieu d'Antras"
@@ -375,6 +375,13 @@ user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
+[[publisher.toml_edit]]
+version = "0.23.6"
+when = "2025-09-18"
+user-id = 6743
+user-login = "epage"
+user-name = "Ed Page"
+
 [[publisher.toml_parser]]
 version = "1.0.3"
 when = "2025-09-18"
@@ -467,8 +474,8 @@ user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
 [[publisher.windows-sys]]
-version = "0.61.2"
-when = "2025-10-06"
+version = "0.61.1"
+when = "2025-09-25"
 user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
@@ -481,8 +488,8 @@ user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
 [[publisher.windows-targets]]
-version = "0.53.5"
-when = "2025-10-06"
+version = "0.53.4"
+when = "2025-09-25"
 user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
@@ -495,8 +502,8 @@ user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
 [[publisher.windows_aarch64_gnullvm]]
-version = "0.53.1"
-when = "2025-10-06"
+version = "0.53.0"
+when = "2025-01-07"
 user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
@@ -509,8 +516,8 @@ user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
 [[publisher.windows_aarch64_msvc]]
-version = "0.53.1"
-when = "2025-10-06"
+version = "0.53.0"
+when = "2025-01-07"
 user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
@@ -523,8 +530,8 @@ user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
 [[publisher.windows_i686_gnu]]
-version = "0.53.1"
-when = "2025-10-06"
+version = "0.53.0"
+when = "2025-01-07"
 user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
@@ -537,8 +544,8 @@ user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
 [[publisher.windows_i686_gnullvm]]
-version = "0.53.1"
-when = "2025-10-06"
+version = "0.53.0"
+when = "2025-01-07"
 user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
@@ -551,8 +558,8 @@ user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
 [[publisher.windows_i686_msvc]]
-version = "0.53.1"
-when = "2025-10-06"
+version = "0.53.0"
+when = "2025-01-07"
 user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
@@ -565,8 +572,8 @@ user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
 [[publisher.windows_x86_64_gnu]]
-version = "0.53.1"
-when = "2025-10-06"
+version = "0.53.0"
+when = "2025-01-07"
 user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
@@ -579,8 +586,8 @@ user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
 [[publisher.windows_x86_64_gnullvm]]
-version = "0.53.1"
-when = "2025-10-06"
+version = "0.53.0"
+when = "2025-01-07"
 user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
@@ -593,8 +600,8 @@ user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
 [[publisher.windows_x86_64_msvc]]
-version = "0.53.1"
-when = "2025-10-06"
+version = "0.53.0"
+when = "2025-01-07"
 user-id = 64539
 user-login = "kennykerr"
 user-name = "Kenny Kerr"
