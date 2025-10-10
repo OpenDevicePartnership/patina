@@ -31,7 +31,6 @@
 #![feature(alloc_error_handler)]
 #![feature(c_variadic)]
 #![feature(allocator_api)]
-#![feature(btreemap_alloc)]
 #![feature(coverage_attribute)]
 
 extern crate alloc;
