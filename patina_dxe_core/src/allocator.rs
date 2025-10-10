@@ -38,10 +38,12 @@ use mu_pi::{
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
 pub use uefi_allocator::UefiAllocator;
 
+use patina_paging::MemoryAttributes;
 use patina_sdk::{
     base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     error::EfiError,
-    guids, uefi_size_to_pages,
+    guids::{self, HOB_MEMORY_ALLOC_STACK},
+    uefi_size_to_pages,
 };
 
 // Allocation Strategy when not specified by caller.
@@ -955,6 +957,79 @@ fn process_hob_allocations(hob_list: &HobList) {
             }
             _ => continue,
         };
+    }
+
+    // Find the stack hob and set attributes.
+    if let Some(stack_hob) = hob_list.iter().find_map(|x| match x {
+        mu_pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
+            if desc.name == HOB_MEMORY_ALLOC_STACK =>
+        {
+            Some(desc)
+        }
+        _ => None,
+    }) {
+        log::info!("Found stack hob {:#X?} of length {:#X?}", stack_hob.memory_base_address, stack_hob.memory_length);
+        let stack_address = stack_hob.memory_base_address;
+        let stack_length = stack_hob.memory_length;
+
+        if (stack_address == 0) || (stack_length == 0) {
+            log::error!("Stack base address and length are 0 {:#X} for len {:#X}", stack_address, stack_length);
+            debug_assert!(false);
+        } else {
+            match GCD.get_memory_descriptor_for_address(stack_address) {
+                Ok(gcd_desc) => {
+                    let attributes: u64 = gcd_desc.attributes;
+                    log::info!("Current Attributes for the stack {:#X?} \n\n", attributes);
+                    // Set Stack region to execute protect.
+                    if attributes != (attributes | (MemoryAttributes::ExecuteProtect).bits()) {
+                        match GCD.set_memory_space_attributes(
+                            stack_address as usize,
+                            stack_length as usize,
+                            attributes | (MemoryAttributes::ExecuteProtect).bits(),
+                        ) {
+                            Ok(_) => (),
+                            Err(EfiError::NotReady) => {
+                                // Expected if paging is not initialized yet.
+                            }
+                            Err(e) => {
+                                log::error!(
+                                    "Could not set NX for memory address {:#X} for len {:#X} with error {:?}",
+                                    stack_address,
+                                    stack_length,
+                                    e
+                                );
+                                debug_assert!(false);
+                            }
+                        }
+                    }
+                    // Set Guard page to read protect.
+                    match GCD.set_memory_space_attributes(
+                        stack_address as usize,
+                        UEFI_PAGE_SIZE as usize,
+                        attributes | (MemoryAttributes::ReadProtect).bits(),
+                    ) {
+                        Ok(_) => (),
+                        Err(EfiError::NotReady) => {
+                            // Expected if paging is not initialized yet.
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "Could not set RP for memory address {:#X} for len {:#X} with error {:?}",
+                                stack_address,
+                                UEFI_PAGE_SIZE,
+                                e
+                            );
+                            debug_assert!(false);
+                        }
+                    }
+                }
+                Err(_) => {
+                    log::error!("Failed to get memory descriptor for address {:#x?} in GCD", stack_address);
+                }
+            }
+        }
+    } else {
+        debug_assert!(false, "No stack hob found\n");
     }
 
     // now that we've processed HOBs, lets allocate page 0 because we are going to use it for null pointer detection
