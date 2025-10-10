@@ -24,6 +24,7 @@ use core::fmt;
 use core::pin::Pin;
 use core::ptr::NonNull;
 
+use patina::Guid;
 use patina::base::UEFI_PAGE_MASK;
 use r_efi::efi;
 
@@ -81,7 +82,7 @@ impl fmt::Display for MmCommunicationConfiguration {
 /// - This only supports V1 and V2 of the MM Communicate header format.
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
-pub(crate) struct EfiMmCommunicateHeader {
+pub struct EfiMmCommunicateHeader {
     /// Allows for disambiguation of the message format.
     /// Used to identify the registered MM handlers that should be given the message.
     header_guid: efi::Guid,
@@ -91,8 +92,8 @@ pub(crate) struct EfiMmCommunicateHeader {
 
 impl EfiMmCommunicateHeader {
     /// Create a new communicate header with the specified GUID and message length.
-    pub const fn new(header_guid: efi::Guid, message_length: usize) -> Self {
-        Self { header_guid, message_length }
+    pub fn new(header_guid: &Guid, message_length: usize) -> Self {
+        Self { header_guid: header_guid.to_efi_guid(), message_length }
     }
 
     /// Returns the communicate header as a slice of bytes using safe conversion.
@@ -110,14 +111,21 @@ impl EfiMmCommunicateHeader {
         core::mem::size_of::<Self>()
     }
 
-    /// Returns the header GUID from this communicate header.
+    /// Get the header GUID from the communication buffer.
+    ///
+    /// Returns `Some(guid)` if the buffer has been properly initialized with a GUID,
+    /// or `None` if the buffer is not initialized.
     ///
     /// # Returns
     ///
-    /// The GUID that identifies the registered MM handler recipient.
+    /// The GUID from the communication header if available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the communication buffer header cannot be read.
     #[allow(dead_code)]
-    pub const fn header_guid(&self) -> efi::Guid {
-        self.header_guid
+    pub fn header_guid(&self) -> Guid<'_> {
+        Guid::from_ref(&self.header_guid)
     }
 
     /// Returns the message length from this communicate header.
@@ -323,6 +331,16 @@ impl CommunicateBuffer {
         self.buffer.as_ptr().cast::<u8>()
     }
 
+    /// Resets the communication buffer by clearing all data and resetting internal state.
+    pub fn reset(&mut self) {
+        // Zero out the entire buffer
+        self.as_slice_mut().fill(0);
+
+        // Reset internal state
+        self.private_message_length = 0;
+        self.private_recipient = None;
+    }
+
     /// Returns the available capacity for the message part of the communicate buffer.
     ///
     /// Note: Zero will be returned if the buffer is too small to hold the header.
@@ -421,14 +439,15 @@ impl CommunicateBuffer {
     /// ## Parameters
     ///
     /// - `recipient`: The GUID of the recipient MM handler.
-    pub fn set_message_info(&mut self, recipient: efi::Guid) -> Result<(), CommunicateBufferStatus> {
-        log::trace!(target: "mm_comm", "Setting message info for buffer {}: recipient={:?}", self.id, recipient);
+    pub fn set_message_info(&mut self, recipient: &Guid) -> Result<(), CommunicateBufferStatus> {
+        log::trace!(target: "mm_comm", "Setting message info for buffer {}: recipient={}", self.id, recipient);
 
         // Validate capacity first
         self.validate_capacity(0)?;
 
         // Update private state
-        self.private_recipient = Some(recipient);
+        let recipient_efi = recipient.to_efi_guid();
+        self.private_recipient = Some(recipient_efi);
 
         // Update memory buffer using safe byte operations
         let header = EfiMmCommunicateHeader::new(recipient, self.private_message_length);
@@ -465,8 +484,8 @@ impl CommunicateBuffer {
         log::trace!(target: "mm_comm", "Buffer {}: writing header and message data", self.id);
 
         // Update memory buffer using safe byte operations for header
-        let header = EfiMmCommunicateHeader::new(recipient, message.len());
-        let header_bytes: &[u8] = header.as_bytes();
+        let header = EfiMmCommunicateHeader::new(&Guid::from_ref(&recipient), message.len());
+        let header_bytes = header.as_bytes();
         self.as_slice_mut()[..Self::MESSAGE_START_OFFSET].copy_from_slice(header_bytes);
 
         // Copy message data
@@ -513,12 +532,12 @@ impl CommunicateBuffer {
     /// This method uses the internal state and verifies consistency with memory.
     ///
     /// Returns `None` if no recipient has been set.
-    pub fn get_header_guid(&self) -> Result<Option<efi::Guid>, CommunicateBufferStatus> {
+    pub fn get_header_guid(&self) -> Result<Option<Guid<'_>>, CommunicateBufferStatus> {
         // Verify state consistency first
         self.verify_state_consistency()?;
 
         log::trace!(target: "mm_comm", "Buffer {} header GUID retrieved from private state", self.id);
-        Ok(self.private_recipient)
+        Ok(self.private_recipient.as_ref().map(Guid::from_ref))
     }
 
     /// Returns the message length from the current communicate buffer.
@@ -673,7 +692,6 @@ impl AcpiBase {
 #[coverage(off)]
 mod tests {
     use super::*;
-    use r_efi::efi::Guid;
 
     #[repr(align(4096))]
     struct AlignedBuffer([u8; 64]);
@@ -683,14 +701,14 @@ mod tests {
         let buffer: &'static mut [u8; 64] = Box::leak(Box::new([0u8; 64]));
         let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
 
-        let recipient_guid =
-            Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
+        let recipient_guid = Guid::try_from_string("12345678-1234-5678-90AB-CDEF01234567").unwrap();
 
-        assert!(comm_buffer.set_message_info(recipient_guid).is_ok());
+        assert!(comm_buffer.set_message_info(&recipient_guid).is_ok());
 
         // Test that state verification works
         assert!(comm_buffer.get_header_guid().is_ok());
-        assert_eq!(comm_buffer.get_header_guid().unwrap(), Some(recipient_guid));
+        let expected_bytes = recipient_guid.as_bytes();
+        assert_eq!(comm_buffer.get_header_guid().unwrap().as_ref().map(|g| g.as_bytes()), Some(expected_bytes));
     }
 
     #[test]
@@ -698,11 +716,10 @@ mod tests {
         let buffer: &'static mut [u8; 2] = Box::leak(Box::new([0u8; 2]));
         let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
 
-        let recipient_guid =
-            Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
+        let recipient_guid = Guid::try_from_string("12345678-1234-5678-90AB-CDEF01234567").unwrap();
 
         // The buffer is too small to hold the header, so this should fail
-        assert_eq!(comm_buffer.set_message_info(recipient_guid), Err(CommunicateBufferStatus::TooSmallForHeader));
+        assert_eq!(comm_buffer.set_message_info(&recipient_guid), Err(CommunicateBufferStatus::TooSmallForHeader));
     }
 
     #[test]
@@ -711,10 +728,9 @@ mod tests {
             Box::leak(Box::new([0u8; CommunicateBuffer::MINIMUM_BUFFER_SIZE]));
         let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
 
-        let recipient_guid =
-            Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
+        let recipient_guid = Guid::try_from_string("12345678-1234-5678-90AB-CDEF01234567").unwrap();
 
-        assert_eq!(comm_buffer.set_message_info(recipient_guid), Ok(()));
+        assert_eq!(comm_buffer.set_message_info(&recipient_guid), Ok(()));
 
         assert_eq!(
             comm_buffer.set_message("Test message data".as_bytes()),
@@ -739,9 +755,8 @@ mod tests {
         let buffer: &'static mut [u8; 64] = Box::leak(Box::new([0u8; 64]));
         let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
 
-        let recipient_guid =
-            Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
-        assert!(comm_buffer.set_message_info(recipient_guid).is_ok());
+        let recipient_guid = Guid::try_from_string("12345678-1234-5678-90AB-CDEF01234567").unwrap();
+        assert!(comm_buffer.set_message_info(&recipient_guid).is_ok());
 
         let message = b"MM Handler!";
         assert!(comm_buffer.set_message(message).is_ok());
@@ -770,9 +785,8 @@ mod tests {
         let buffer2: &'static mut [u8; 30] = Box::leak(Box::new([0u8; 30]));
         let mut comm_buffer2 = CommunicateBuffer::new(Pin::new(buffer2), 2);
 
-        let recipient_guid =
-            Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
-        assert!(comm_buffer2.set_message_info(recipient_guid).is_ok());
+        let recipient_guid = Guid::try_from_string("12345678-1234-5678-90AB-CDEF01234567").unwrap();
+        assert!(comm_buffer2.set_message_info(&recipient_guid).is_ok());
 
         let long_message = b"This message is too long for the remaining space!";
         assert_eq!(comm_buffer2.set_message(long_message), Err(CommunicateBufferStatus::TooSmallForMessage));
@@ -786,10 +800,9 @@ mod tests {
         let buffer: &'static mut [u8; COMM_BUFFER_SIZE] = Box::leak(Box::new([0u8; COMM_BUFFER_SIZE]));
         let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
 
-        let test_guid =
-            Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
+        let test_guid = Guid::try_from_string("12345678-1234-5678-90AB-CDEF01234567").unwrap();
 
-        assert!(comm_buffer.set_message_info(test_guid).is_ok(), "Failed to set the message info");
+        assert!(comm_buffer.set_message_info(&test_guid).is_ok(), "Failed to set the message info");
         assert!(comm_buffer.set_message(MESSAGE).is_ok(), "Failed to set the message");
 
         let retrieved_message = comm_buffer.get_message().unwrap();
@@ -801,10 +814,12 @@ mod tests {
         let buffer: &'static mut [u8; 64] = Box::leak(Box::new([0u8; 64]));
         let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
 
-        let recipient_guid =
-            Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
-        assert!(comm_buffer.set_message_info(recipient_guid).is_ok());
-        assert_eq!(comm_buffer.get_header_guid().unwrap(), Some(recipient_guid));
+        let recipient_guid = Guid::try_from_string("12345678-1234-5678-90AB-CDEF01234567").unwrap();
+        assert!(comm_buffer.set_message_info(&recipient_guid).is_ok());
+        assert_eq!(
+            comm_buffer.get_header_guid().unwrap().as_ref().map(|g| g.as_bytes()),
+            Some(recipient_guid.as_bytes())
+        );
 
         let message = b"MM Handler!";
         assert!(comm_buffer.set_message(message).is_ok());
@@ -814,9 +829,12 @@ mod tests {
 
         // Update with new recipient
         let recipient_guid2 =
-            Guid::from_fields(0x3210FEDC, 0xABCD, 0xABCD, 0x12, 0x23, &[0x12, 0x34, 0x56, 0x78, 0x90, 0xAB]);
-        assert!(comm_buffer.set_message_info(recipient_guid2).is_ok());
-        assert_eq!(comm_buffer.get_header_guid().unwrap(), Some(recipient_guid2));
+            Guid::from_fields(0x3210FEDC, 0xABCD, 0xABCD, 0x12, 0x23, [0x12, 0x34, 0x56, 0x78, 0x90, 0xAB]);
+        assert!(comm_buffer.set_message_info(&recipient_guid2).is_ok());
+        assert_eq!(
+            comm_buffer.get_header_guid().unwrap().as_ref().map(|g| g.as_bytes()),
+            Some(recipient_guid2.as_bytes())
+        );
 
         // Message should still be there but header should be updated
         assert_eq!(comm_buffer.get_message().unwrap(), message.to_vec());
@@ -896,15 +914,14 @@ mod tests {
         let buffer: &'static mut [u8; 64] = Box::leak(Box::new([0u8; 64]));
         let mut comm_buffer = CommunicateBuffer::new(Pin::new(buffer), 1);
 
-        let test_guid =
-            Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xAB, &[0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67]);
+        let test_guid = Guid::try_from_string("12345678-1234-5678-90AB-CDEF01234567").unwrap();
         let test_message = b"test message";
 
-        assert!(comm_buffer.set_message_info(test_guid).is_ok());
+        assert!(comm_buffer.set_message_info(&test_guid).is_ok());
         assert!(comm_buffer.set_message(test_message).is_ok());
 
         // Test that the getters pass consistency checks and return the expected values
-        assert_eq!(comm_buffer.get_header_guid().unwrap(), Some(test_guid));
+        assert_eq!(comm_buffer.get_header_guid().unwrap().as_ref().map(|g| g.as_bytes()), Some(test_guid.as_bytes()));
         assert_eq!(comm_buffer.get_message_length().unwrap(), test_message.len());
         assert_eq!(comm_buffer.get_message().unwrap(), test_message.to_vec());
     }
