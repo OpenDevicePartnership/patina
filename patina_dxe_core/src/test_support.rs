@@ -16,7 +16,7 @@ use patina_pi::{
     dxe_services::GcdMemoryType,
     hob::{self, header},
 };
-use patina_sdk::guids::{HOB_MEMORY_ALLOC_STACK, ZERO};
+use patina::guids::{HOB_MEMORY_ALLOC_STACK, ZERO};
 use r_efi::efi;
 use std::any::Any;
 use std::slice;

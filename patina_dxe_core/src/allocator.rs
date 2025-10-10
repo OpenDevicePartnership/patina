@@ -960,7 +960,7 @@ fn process_hob_allocations(hob_list: &HobList) {
 
     // Find the stack hob and set attributes.
     if let Some(stack_hob) = hob_list.iter().find_map(|x| match x {
-        mu_pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
+        patina_pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
             if desc.name == HOB_MEMORY_ALLOC_STACK =>
         {
             Some(desc)
@@ -1276,7 +1276,7 @@ mod tests {
 
             // Locate stack hob.
             if let Some(stack_hob) = hob_list.iter().find_map(|x| match x {
-                mu_pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
+                patina_pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
                     if desc.name == HOB_MEMORY_ALLOC_STACK =>
                 {
                     Some(desc)
