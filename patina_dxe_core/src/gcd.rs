@@ -13,7 +13,6 @@ mod spin_locked_gcd;
 use core::{ffi::c_void, ops::Range, panic};
 use patina::base::{align_down, align_up};
 use patina::error::EfiError;
-use patina_paging::MemoryAttributes;
 use patina_pi::{
     dxe_services::{GcdIoType, GcdMemoryType},
     hob::{self, Hob, HobList, PhaseHandoffInformationTable},
@@ -103,7 +102,6 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
     //Iterate over the hob list and map resource descriptor HOBs into the GCD.
     for hob in hob_list.iter() {
         let mut gcd_mem_type: GcdMemoryType = GcdMemoryType::NonExistent;
-        let mut mem_range: Range<u64> = 0..0;
         let mut resource_attributes: u32 = 0;
 
         // Handle different ResourceDescriptor HOB versions
@@ -123,7 +121,7 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
 
         // Extract the v1 data from the v2 structure for processing
         let res_desc = res_desc_v2.v1;
-        mem_range = res_desc.physical_start
+        let mem_range = res_desc.physical_start
             ..res_desc.physical_start.checked_add(res_desc.resource_length).expect("Invalid resource descriptor hob");
 
         match res_desc.resource_type {
