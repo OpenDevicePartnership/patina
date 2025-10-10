@@ -16,6 +16,7 @@ use mu_pi::{
     dxe_services::GcdMemoryType,
     hob::{self, header},
 };
+use patina_sdk::guids::{HOB_MEMORY_ALLOC_STACK, ZERO};
 use r_efi::efi;
 use std::any::Any;
 use std::slice;
@@ -100,7 +101,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
     // HobList:      offset base+0              HOBS
     // Empty:        offset base+HobListSize    N/A
     // SystemMemory  offset base+0xE0000        SystemMemory (resource_descriptor1)
-    // Reserved      offset base+0xF0000        Untested SystemMemory (resource_descriptor2)
+    // Reserved      offset base+0x110000       Untested SystemMemory (resource_descriptor2)
     // FreeMemory    offset base+0x100000       FreeMemory (phit)
     // End           offset base+0x200000       ************
     //
@@ -148,11 +149,11 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             length: core::mem::size_of::<hob::ResourceDescriptor>() as u16,
             reserved: 0x00000000,
         },
-        owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+        owner: ZERO,
         resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
         resource_attribute: hob::TESTED_MEMORY_ATTRIBUTES,
         physical_start: mem_base + 0xE0000,
-        resource_length: 0x10000,
+        resource_length: 0x30000,
     };
 
     let resource_descriptor2 = hob::ResourceDescriptor {
@@ -161,10 +162,10 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             length: core::mem::size_of::<hob::ResourceDescriptor>() as u16,
             reserved: 0x00000000,
         },
-        owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+        owner: ZERO,
         resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
         resource_attribute: hob::INITIALIZED_MEMORY_ATTRIBUTES,
-        physical_start: mem_base + 0xF0000,
+        physical_start: mem_base + 0x110000,
         resource_length: 0x10000,
     };
 
@@ -174,7 +175,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             length: core::mem::size_of::<hob::ResourceDescriptor>() as u16,
             reserved: 0x00000000,
         },
-        owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+        owner: ZERO,
         resource_type: hob::EFI_RESOURCE_MEMORY_MAPPED_IO,
         resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED,
         physical_start: 0x10000000,
@@ -187,7 +188,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             length: core::mem::size_of::<hob::ResourceDescriptor>() as u16,
             reserved: 0x00000000,
         },
-        owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+        owner: ZERO,
         resource_type: hob::EFI_RESOURCE_FIRMWARE_DEVICE,
         resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED,
         physical_start: 0x11000000,
@@ -200,7 +201,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             length: core::mem::size_of::<hob::ResourceDescriptor>() as u16,
             reserved: 0x00000000,
         },
-        owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+        owner: ZERO,
         resource_type: hob::EFI_RESOURCE_MEMORY_RESERVED,
         resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED,
         physical_start: 0x12000000,
@@ -213,7 +214,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             length: core::mem::size_of::<hob::ResourceDescriptor>() as u16,
             reserved: 0x00000000,
         },
-        owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+        owner: ZERO,
         resource_type: hob::EFI_RESOURCE_IO,
         resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED,
         physical_start: 0x1000,
@@ -226,7 +227,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             length: core::mem::size_of::<hob::ResourceDescriptor>() as u16,
             reserved: 0x00000000,
         },
-        owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+        owner: ZERO,
         resource_type: hob::EFI_RESOURCE_IO_RESERVED,
         resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT,
         physical_start: 0x0000,
@@ -240,7 +241,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             reserved: 0x00000000,
         },
         alloc_descriptor: header::MemoryAllocation {
-            name: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+            name: ZERO,
             memory_base_address: 0,
             memory_length: 0x1000,
             memory_type: efi::RESERVED_MEMORY_TYPE,
@@ -318,6 +319,16 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             cursor = cursor.offset(allocation_hob_template.header.length as isize);
         }
 
+        // memory allocation hob for stack
+        allocation_hob_template.alloc_descriptor.memory_base_address =
+            resource_descriptor1.physical_start + 0x10000;
+        allocation_hob_template.alloc_descriptor.memory_type = efi::BOOT_SERVICES_DATA;
+        allocation_hob_template.alloc_descriptor.memory_length = 0x20000;
+        allocation_hob_template.alloc_descriptor.name = HOB_MEMORY_ALLOC_STACK;
+
+        core::ptr::copy(&allocation_hob_template, cursor as *mut hob::MemoryAllocation, 1);
+        cursor = cursor.offset(allocation_hob_template.header.length as isize);
+
         // memory allocation HOB for MMIO space
         allocation_hob_template.alloc_descriptor.memory_base_address = resource_descriptor3.physical_start;
         allocation_hob_template.alloc_descriptor.memory_length = 0x2000;
@@ -385,7 +396,7 @@ mod tests {
                 length: core::mem::size_of::<hob::ResourceDescriptor>() as u16,
                 reserved: 0x00000000,
             },
-            owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+            owner: ZERO,
             resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
             resource_attribute: hob::TESTED_MEMORY_ATTRIBUTES,
             physical_start: mem_base + 0xE0000,
@@ -399,7 +410,7 @@ mod tests {
                 reserved: 0x00000000,
             },
             alloc_descriptor: header::MemoryAllocation {
-                name: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+                name: ZERO,
                 memory_base_address: 0,
                 memory_length: 0x1000,
                 memory_type: efi::LOADER_CODE,

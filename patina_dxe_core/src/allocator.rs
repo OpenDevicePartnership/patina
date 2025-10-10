@@ -38,7 +38,6 @@ use mu_pi::{
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
 pub use uefi_allocator::UefiAllocator;
 
-use patina_paging::MemoryAttributes;
 use patina_sdk::{
     base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     error::EfiError,
@@ -981,11 +980,11 @@ fn process_hob_allocations(hob_list: &HobList) {
                     let attributes: u64 = gcd_desc.attributes;
                     log::trace!("Current Attributes for the stack {:#X?} \n\n", attributes);
                     // Set Stack region to execute protect.
-                    if attributes != (attributes | (MemoryAttributes::ExecuteProtect).bits()) {
+                    if attributes != (attributes | efi::MEMORY_XP) {
                         match GCD.set_memory_space_attributes(
                             stack_address as usize,
                             stack_length as usize,
-                            attributes | (MemoryAttributes::ExecuteProtect).bits(),
+                            attributes | efi::MEMORY_XP,
                         ) {
                             Ok(_) => (),
                             Err(EfiError::NotReady) => {
@@ -1006,7 +1005,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                     match GCD.set_memory_space_attributes(
                         stack_address as usize,
                         UEFI_PAGE_SIZE as usize,
-                        attributes | (MemoryAttributes::ReadProtect).bits(),
+                        attributes | efi::MEMORY_RP,
                     ) {
                         Ok(_) => (),
                         Err(EfiError::NotReady) => {
@@ -1274,22 +1273,44 @@ mod tests {
                 let allocator = allocators.get_allocator(*memory_type).unwrap();
                 assert_eq!(allocator.stats().claimed_pages, 1);
             }
+
+            // Locate stack hob.
+            if let Some(stack_hob) = hob_list.iter().find_map(|x| match x {
+                mu_pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
+                    if desc.name == HOB_MEMORY_ALLOC_STACK =>
+                {
+                    Some(desc)
+                }
+                _ => None,
+            }) {
+                // Check Guard Page.
+                let mut stack_desc =
+                    GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address as u64).unwrap();
+                assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
+                assert_eq!((stack_desc.attributes & efi::MEMORY_RP), efi::MEMORY_RP);
+
+                // Check rest of the stack.
+                stack_desc = GCD
+                    .get_memory_descriptor_for_address(stack_hob.memory_base_address + UEFI_PAGE_SIZE as u64)
+                    .unwrap();
+                assert_eq!((stack_desc.attributes & efi::MEMORY_XP), efi::MEMORY_XP);
+            }
+
+            // confirm the MMIO memory allocation occurred in the GCD
+            let mmio_desc = GCD.get_memory_descriptor_for_address(0x10000000).unwrap();
+            assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
+            assert_eq!(mmio_desc.base_address, 0x10000000);
+            assert_eq!(mmio_desc.length, 0x2000);
+            assert_eq!(mmio_desc.image_handle, protocol_db::DXE_CORE_HANDLE);
+
+            // confirm the rest of the MMIO region is not allocated
+            let mmio_desc = GCD.get_memory_descriptor_for_address(0x10002000).unwrap();
+            assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
+            assert_eq!(mmio_desc.base_address, 0x10002000);
+            assert_eq!(mmio_desc.length, 0x1000000 - 0x2000);
+            assert_eq!(mmio_desc.image_handle, INVALID_HANDLE);
         })
         .unwrap();
-
-        // confirm the MMIO memory allocation occurred in the GCD
-        let mmio_desc = GCD.get_memory_descriptor_for_address(0x10000000).unwrap();
-        assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
-        assert_eq!(mmio_desc.base_address, 0x10000000);
-        assert_eq!(mmio_desc.length, 0x2000);
-        assert_eq!(mmio_desc.image_handle, protocol_db::DXE_CORE_HANDLE);
-
-        // confirm the rest of the MMIO region is not allocated
-        let mmio_desc = GCD.get_memory_descriptor_for_address(0x10002000).unwrap();
-        assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
-        assert_eq!(mmio_desc.base_address, 0x10002000);
-        assert_eq!(mmio_desc.length, 0x1000000 - 0x2000);
-        assert_eq!(mmio_desc.image_handle, INVALID_HANDLE);
     }
 
     #[test]
