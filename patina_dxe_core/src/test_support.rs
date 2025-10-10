@@ -156,7 +156,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             physical_start: mem_base + 0xE0000,
             resource_length: 0x10000,
         },
-        attributes: 0,
+        attributes: 0u64, // No cache attributes for system memory
     };
 
     let resource_descriptor2 = ResourceDescriptorV2 {
@@ -172,7 +172,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             physical_start: mem_base + 0xF0000,
             resource_length: 0x10000,
         },
-        attributes: 0,
+        attributes: 0u64, // No cache attributes for system memory
     };
 
     let resource_descriptor3 = ResourceDescriptorV2 {
@@ -422,7 +422,7 @@ mod tests {
                 physical_start: mem_base + 0xE0000,
                 resource_length: 0x10000,
             },
-            attributes: 0, // No cache attributes for system memory (same as V1 behavior)
+            attributes: 0u64, // No cache attributes for system memory (same as V1 behavior)
         };
 
         let mut allocation_hob_template: hob::MemoryAllocationModule = hob::MemoryAllocationModule {
