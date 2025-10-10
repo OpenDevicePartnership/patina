@@ -10,7 +10,7 @@ description = "Sample UEFI components for the DXE Core."
 
 [dependencies]
 log = { workspace = true }
-patina_sdk = { workspace = true }
+patina = { workspace = true }
 
 [features]
 std = []

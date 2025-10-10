@@ -12,10 +12,10 @@ use core::{
     mem,
     slice::{self, from_raw_parts},
 };
+use patina::error::EfiError;
 use patina_ffs::volume::VolumeRef;
-use patina_sdk::error::EfiError;
 
-use mu_pi::dxe_services;
+use patina_pi::dxe_services;
 use r_efi::efi;
 
 use crate::{

@@ -8,7 +8,7 @@
 //!
 extern crate alloc;
 use alloc::{boxed::Box, vec, vec::Vec};
-use patina_sdk::base::UEFI_PAGE_SIZE;
+use patina::base::UEFI_PAGE_SIZE;
 
 use core::{
     ffi::c_void,
@@ -22,7 +22,7 @@ use crate::{
     GCD, config_tables::core_install_configuration_table, gcd::AllocateType, protocol_db, systemtables::EfiSystemTable,
 };
 
-use mu_pi::dxe_services::GcdMemoryType;
+use patina_pi::dxe_services::GcdMemoryType;
 
 use r_efi::efi;
 

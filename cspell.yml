@@ -29,29 +29,47 @@ words:
   - aarch
   - acpibase
   - addrs
+  - amanieu
+  - anstream
+  - anstyle
+  - antras
   - armasm
+  - autocfg
+  - bitvec
   - bucketize
+  - bumpalo
   - cbindgen
   - cdecl
   - cdrom
+  - clangpdb
   - corosensei
   - coverity
+  - cpuid
   - ctypes
+  - cuviper
   - dbgwcr
   - dbgwvr
   - deassertion
   - depex
+  - deque
   - descs
   - distros
   - dllcharacteristics
+  - dnested
   - docsrs
+  - dtolnay
   - dword
   - dxefv
+  - dxeipl
   - edkii
   - efiapi
+  - eficall
   - efierror
   - eflags
+  - epage
+  - fastrlp
   - fnent
+  - funty
   - fvmain
   - gantt
   - gdbstub
@@ -59,6 +77,8 @@ words:
   - getrsp
   - getsp
   - gigantor
+  - gnullvm
+  - gohman
   - granularities
   - grcov
   - gread
@@ -67,17 +87,23 @@ words:
   - hresult
   - htons
   - icfgr
+  - indoc
   - inmodule
   - intid
   - irouter
   - iscsi
   - isenabler
+  - itertools
+  - jhpratt
+  - joshlf
   - keccak
+  - libyaml
   - linkme
   - longjmp
   - lzmatest
   - mdbook
   - mdscr
+  - mmiport
   - mmram
   - mpidr
   - msdia
@@ -91,8 +117,11 @@ words:
   - ntohs
   - nvdimm
   - oleaut
+  - oorandom
   - openvmm
   - opinfo
+  - oprom
+  - ordinalize
   - oslar
   - oslsr
   - pacibsp
@@ -100,6 +129,7 @@ words:
   - pcddxe
   - pdata
   - pdbhelper
+  - powerfmt
   - pread
   - psapi
   - pterror
@@ -115,6 +145,7 @@ words:
   - ruint
   - rwlock
   - sctlr
+  - smbus
   - smcport
   - smiport
   - smram
@@ -122,22 +153,29 @@ words:
   - sysreg
   - tiano
   - tianocore
+  - tolnay
+  - typenum
   - typer
   - uefiext
   - uintn
   - unaccepte
+  - unarray
   - uncacheable
+  - uncontained
   - uncrustify
+  - unrecovered
   - unregisters
   - unspec
   - vcvarsamd
   - vcvarsarm
   - vtable
   - wakeup
+  - wasip
   - wbinvd
   - windbg
   - withf
   - xdata
   - xtask
   - zbuild
+  - zeroize
   - zunstable

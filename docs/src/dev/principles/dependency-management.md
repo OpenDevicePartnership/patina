@@ -76,7 +76,7 @@ Patina uses workspace-level dependency management to:
 
 ## References
 
-- [`deny.toml`](../../../../deny.toml) - Patina's cargo-deny configuration
+- [`deny.toml`](https://github.com/OpenDevicePartnership/patina/blob/main/deny.toml) - Patina's cargo-deny configuration
 - [cargo-deny documentation](https://embarkstudios.github.io/cargo-deny/)
 - [RustSec Advisory Database](https://rustsec.org/)
 - [Cargo Workspace Documentation](https://doc.rust-lang.org/cargo/reference/workspaces.html)

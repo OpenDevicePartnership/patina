@@ -5,7 +5,8 @@ decoupled from the others. In a systems programming context, components are akin
 injection through each component's entry point function. The component's entry point defines what it requires before it
 can run. As an example, a component whose interface is `fn entry_point() -> Result<()>` has **no dependencies** where
 as a component with the interface `fn entry_point(service: Service<dyn Interface>) -> Result<()>` has a dependency on
-the `dyn Interface` service being registered. The latter service will not execute until this service has been produced.
+the `dyn Interface` service being registered. The latter component will not execute until this service has been
+produced.
 
 This architecture ensures:
 
@@ -20,13 +21,13 @@ which components are not executing and why.
 
 When it comes to understanding components and how they interact with each other, there are three main topics that you
 must understand - (1) Components, (2) Configuration, and (3) Services. Each will be discussed below in broad scopes,
-but more details can be found in this mdbook, and in the component documentation for [patina_sdk](https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patina_sdk).
+but more details can be found in this mdbook, and in the component documentation for [patina](https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patina).
 
 ## Components
 
 As mentioned above, Components are a way to attach additional functionality to the core that is executed in a
 controlled manner based off of the component function interface. Components can be used to set configuration, create
-services, communicate with physical devices, and many other things. The components section of the [patina_sdk](https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patina_sdk)
+services, communicate with physical devices, and many other things. The components section of the [patina](https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patina)
 goes into much more detail regarding components.
 
 ## Configuration

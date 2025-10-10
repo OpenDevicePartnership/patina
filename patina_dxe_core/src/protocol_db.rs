@@ -16,7 +16,7 @@ use alloc::{
     vec::Vec,
 };
 use core::{cmp::Ordering, ffi::c_void, hash::Hasher};
-use patina_sdk::error::EfiError;
+use patina::error::EfiError;
 use r_efi::efi;
 
 use crate::tpl_lock;

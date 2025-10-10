@@ -31,14 +31,14 @@ use crate::{
     systemtables::EfiSystemTable,
     tpl_lock,
 };
-use mu_pi::{
+use patina_pi::{
     dxe_services::{self, GcdMemoryType, MemorySpaceDescriptor},
     hob::{self, EFiMemoryTypeInformation, Hob, HobList, MEMORY_TYPE_INFO_HOB_GUID},
 };
 use r_efi::{efi, system::TPL_HIGH_LEVEL};
 pub use uefi_allocator::UefiAllocator;
 
-use patina_sdk::{
+use patina::{
     base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     error::EfiError,
     guids, uefi_size_to_pages,
@@ -59,7 +59,7 @@ pub(crate) const DEFAULT_PAGE_ALLOCATION_GRANULARITY: usize = SIZE_4KB;
 // granularity requirements for them.
 cfg_if::cfg_if! {
     if #[cfg(target_arch = "aarch64")] {
-        pub(crate) const RUNTIME_PAGE_ALLOCATION_GRANULARITY: usize = patina_sdk::base::SIZE_64KB;
+        pub(crate) const RUNTIME_PAGE_ALLOCATION_GRANULARITY: usize = patina::base::SIZE_64KB;
     } else {
         pub(crate) const RUNTIME_PAGE_ALLOCATION_GRANULARITY: usize = DEFAULT_PAGE_ALLOCATION_GRANULARITY;
     }
@@ -968,7 +968,7 @@ fn process_hob_allocations(hob_list: &HobList) {
             if core_allocate_pages(
                 efi::ALLOCATE_ADDRESS,
                 efi::BOOT_SERVICES_DATA,
-                UEFI_PAGE_SIZE,
+                1,
                 &mut address as *mut efi::PhysicalAddress,
                 None,
             )
@@ -1016,7 +1016,7 @@ pub fn init_memory_support(hob_list: &HobList) {
     // If memory type info HOB is available, then pre-allocate the corresponding buckets.
     if let Some(memory_type_info) = hob_list.iter().find_map(|x| {
         match x {
-            mu_pi::hob::Hob::GuidHob(hob, data) if hob.name == MEMORY_TYPE_INFO_HOB_GUID => {
+            patina_pi::hob::Hob::GuidHob(hob, data) if hob.name == MEMORY_TYPE_INFO_HOB_GUID => {
                 let memory_type_slice_ptr = data.as_ptr() as *const EFiMemoryTypeInformation;
                 let memory_type_slice_len = data.len() / mem::size_of::<EFiMemoryTypeInformation>();
 
@@ -1090,7 +1090,7 @@ mod tests {
     };
 
     use super::*;
-    use mu_pi::hob::{GUID_EXTENSION, GuidHob, Hob, header};
+    use patina_pi::hob::{GUID_EXTENSION, GuidHob, Hob, header};
     use r_efi::efi;
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(gcd_size: usize, f: F) {

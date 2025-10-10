@@ -13,7 +13,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use mu_pi::fw_fs::{
+use patina_pi::fw_fs::{
     ffs::{self, attributes, file},
     fv,
 };
@@ -56,7 +56,7 @@ impl<'a> FileRef<'a> {
     /// ```rust no_run
     /// use patina_ffs::file::{File, FileRef};
     /// use r_efi::efi;
-    /// use mu_pi::fw_fs::ffs;
+    /// use patina_pi::fw_fs::ffs;
     /// use patina_ffs::section::{Section, SectionHeader};
     ///
     /// // Build a file and then parse the resulting bytes back.
@@ -231,7 +231,7 @@ impl<'a> FileRef<'a> {
     /// ##Examples
     ///
     /// ```rust no_run
-    /// use mu_pi::fw_fs::ffs;
+    /// use patina_pi::fw_fs::ffs;
     /// use r_efi::efi;
     /// use patina_ffs::file::{File, FileRef};
     /// use patina_ffs::FirmwareFileSystemError;
@@ -316,7 +316,7 @@ impl File {
     /// ## Examples
     ///
     /// ```rust no_run
-    /// use mu_pi::fw_fs::ffs;
+    /// use patina_pi::fw_fs::ffs;
     /// use r_efi::efi;
     /// use patina_ffs::file::File;
     /// use patina_ffs::section::{Section, SectionHeader};
@@ -515,7 +515,7 @@ impl File {
     /// ## Examples
     ///
     /// ```rust no_run
-    /// use mu_pi::fw_fs::ffs;
+    /// use patina_pi::fw_fs::ffs;
     /// use r_efi::efi;
     /// use patina_ffs::file::File;
     /// use patina_ffs::section::{Section, SectionHeader, SectionComposer};
@@ -552,7 +552,7 @@ impl File {
     /// ## Examples
     ///
     /// ```rust no_run
-    /// use mu_pi::fw_fs::ffs;
+    /// use patina_pi::fw_fs::ffs;
     /// use r_efi::efi;
     /// use patina_ffs::file::File;
     /// use patina_ffs::section::{Section, SectionHeader, SectionComposer};

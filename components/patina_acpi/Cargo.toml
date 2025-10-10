@@ -12,14 +12,12 @@ description = "UEFI ACPI services that provide common types and functionality us
 log = { workspace = true }
 memoffset = { workspace = true }
 mockall = { workspace = true, optional = true }
-patina_sdk = { workspace = true, features = ["alloc"] }
 r-efi = { workspace = true }
 scroll = { workspace = true }
 spin = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
-patina_sdk = { workspace = true, features = ["mockall"] }
 
 [features]
 mockall = ["dep:mockall"]

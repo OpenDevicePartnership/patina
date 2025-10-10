@@ -11,13 +11,13 @@
 //!
 use alloc::boxed::Box;
 use core::{ffi::c_void, ptr};
-use mu_pi::hob::{Hob, PhaseHandoffInformationTable};
-use patina_sdk::{
+use patina::{
     boot_services::{BootServices, StandardBootServices},
     component::IntoComponent,
     error::{EfiError, Result},
     serial::SerialIO,
 };
+use patina_pi::hob::{Hob, PhaseHandoffInformationTable};
 use r_efi::efi;
 
 use crate::{logger::AdvancedLogger, memory_log, protocol::AdvancedLoggerProtocol};
@@ -139,15 +139,15 @@ mod tests {
     extern crate std;
     use core::mem::size_of;
 
-    use mu_pi::hob::{GUID_EXTENSION, GuidHob, header::Hob};
-    use patina_sdk::serial::uart::UartNull;
+    use patina::serial::uart::UartNull;
+    use patina_pi::hob::{GUID_EXTENSION, GuidHob, header::Hob};
 
     use crate::memory_log::AdvancedLog;
 
     use super::*;
 
     static TEST_LOGGER: AdvancedLogger<UartNull> =
-        AdvancedLogger::new(patina_sdk::log::Format::Standard, &[], log::LevelFilter::Trace, UartNull {});
+        AdvancedLogger::new(patina::log::Format::Standard, &[], log::LevelFilter::Trace, UartNull {});
 
     unsafe fn create_adv_logger_hob_list() -> *const c_void {
         const LOG_LEN: usize = 0x2000;
