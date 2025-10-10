@@ -644,11 +644,12 @@ pub(crate) fn get_memory_map_descriptors(active_attributes: bool) -> Result<Vec<
 
                     // MMIO. Note: there could also be MMIO tracked by the allocators which would not hit this case.
                     GcdMemoryType::MemoryMappedIo => {
-                        if (descriptor.attributes & efi::MEMORY_ISA_VALID) == efi::MEMORY_ISA_VALID {
-                            Some(efi::MEMORY_MAPPED_IO_PORT_SPACE)
-                        } else {
-                            Some(efi::MEMORY_MAPPED_IO)
+                        // we should only be returning runtime MMIO here
+                        if descriptor.attributes & efi::MEMORY_RUNTIME == 0 {
+                            return None;
                         }
+
+                        Some(efi::MEMORY_MAPPED_IO)
                     }
 
                     // Persistent. Note: this type is not allocatable, but might be created by agents other than the core directly
@@ -667,21 +668,35 @@ pub(crate) fn get_memory_map_descriptors(active_attributes: bool) -> Result<Vec<
                 }
             })?;
 
-            let number_of_pages = descriptor.length >> 12;
+            let number_of_pages = uefi_size_to_pages!(descriptor.length as usize) as u64;
             if number_of_pages == 0 {
+                debug_assert!(false, "GCD returned a memory descriptor smaller than a page.");
                 return None; //skip entries for things smaller than a page
             }
-            if (descriptor.base_address % 0x1000) != 0 {
+            if (descriptor.base_address % UEFI_PAGE_SIZE as u64) != 0 {
+                debug_assert!(false, "GCD returned a non-page-aligned memory descriptor.");
                 return None; //skip entries not page aligned.
             }
 
             let mut attributes = match active_attributes {
                 true => descriptor.attributes,
                 false => {
+                    // when we are building the EFI memory map, follow edk2 conventions as OSes will expect that.
                     // When using the capabilities, drop the runtime attribute and
-                    // pick it up from the active attributes.
-                    (descriptor.capabilities & !(efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME))
-                        | (descriptor.attributes & efi::MEMORY_RUNTIME)
+                    // pick it up from the active attributes. We also drop the access attributes because
+                    // some OSes think the EFI_MEMORY_MAP attribute field is actually set attributes, not
+                    // capabilities.
+                    match descriptor.memory_type {
+                        GcdMemoryType::Persistent => {
+                            (descriptor.capabilities & !(efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME))
+                                | (descriptor.attributes & efi::MEMORY_RUNTIME)
+                                | efi::MEMORY_NV
+                        }
+                        _ => {
+                            (descriptor.capabilities & !(efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME))
+                                | (descriptor.attributes & efi::MEMORY_RUNTIME)
+                        }
+                    }
                 }
             };
 
