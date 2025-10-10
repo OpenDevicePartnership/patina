@@ -66,6 +66,9 @@ jobs:
     steps:
       - name: ✅ Checkout Repository ✅
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
 
       - name: 🛠️ Download Rust Tools 🛠️
         uses: OpenDevicePartnership/patina/.github/actions/rust-tool-cache@main
@@ -93,6 +96,19 @@ jobs:
 
       - name: Run cargo-vet
         run: cargo make vet
+
+      - name: Commit generated supply-chain files
+        if: github.actor != 'github-actions[bot]' && runner.os == 'Linux'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A supply-chain || true
+          if ! git diff --cached --quiet; then
+            git commit -m "ci: update generated supply-chain files [skip ci]"
+            git push origin HEAD:${{ github.ref_name }}
+          else
+            echo "No generated supply-chain changes to commit."
+          fi
 
       - name: Run cargo-fmt
         run: cargo fmt --all --check
