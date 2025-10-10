@@ -8,7 +8,7 @@
 //!
 use core::fmt::Debug;
 
-use mu_pi::dxe_services;
+use patina_pi::dxe_services;
 use r_efi::efi;
 
 use crate::error;

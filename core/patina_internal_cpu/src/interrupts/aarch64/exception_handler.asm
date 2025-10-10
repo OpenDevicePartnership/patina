@@ -91,10 +91,10 @@
 
   .global sp_el0_end
 
-# Stack for SP_EL0 of 0x2000 bytes. Also set to 8KB aligned, which corresponds to BIT13.
+# Stack for SP_EL0 of 0x10000 bytes. Also set to 8KB aligned, which corresponds to BIT13.
   .align 13
 sp_el0_start:
-  .space 0x2000
+  .space 0x10000
 sp_el0_end:
 
   .section .text

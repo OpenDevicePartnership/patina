@@ -153,7 +153,7 @@ The below is a list of requirements for the crate, but it does not prevent addit
    contains custom errors.
 5. `hob` module: This module may optionally exist if a new guided HOB type has been created for this component. The
    HOB module and associated guided HOB(s) should be made public such that it can be consumed by others if the need
-   arises. Any common or spec defined HOBs should be added to the associated crates (such as `mu_rust_pi`,
+   arises. Any common or spec defined HOBs should be added to the associated crates (such as `patina_pi`,
    `patina_sdk`, etc.) rather than this crate. HOBs may become a common interface and should thus be moved to the
    appropriate crate. If the HOB type already exists elsewhere, the crate should consume that definition instead of
    making their own.

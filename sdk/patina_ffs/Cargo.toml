@@ -9,8 +9,8 @@ publish.workspace = true
 description = "Support for Firmware File System as described in the UEFI Platform Initialization Specification."
 
 [dependencies]
-patina_sdk = {workspace = true}
-mu_pi = {workspace = true}
+patina = {workspace = true}
+patina_pi = {workspace = true}
 r-efi = {workspace = true}
 log = {workspace = true}
 

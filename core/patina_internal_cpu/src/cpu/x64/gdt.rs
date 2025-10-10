@@ -10,7 +10,7 @@
 #![cfg_attr(test, allow(unused_imports))]
 use core::ptr::addr_of;
 use lazy_static::lazy_static;
-use patina_sdk::base::SIZE_4GB;
+use patina::base::SIZE_4GB;
 use x86_64::instructions::{
     segmentation::{CS, DS, ES, FS, GS, SS, Segment},
     tables::load_tss,

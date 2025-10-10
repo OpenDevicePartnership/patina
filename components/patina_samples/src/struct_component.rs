@@ -8,7 +8,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use patina_sdk::{
+use patina::{
     component::{IntoComponent, params::Config},
     error::Result,
 };

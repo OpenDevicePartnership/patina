@@ -24,6 +24,8 @@ This RFC proposes a process for releasing Patina crates.
     - Clarify feature branch PR details
     - Replace the `stabilization` branch concept with a `major` branch and add details
     - Indicate all previously unresolved questions have been resolved.
+- 2025-09-16:
+  - Initial draft of RFC amendment to include criteria for merging feature branches into `main`.
 
 ## Motivation
 
@@ -247,6 +249,46 @@ graph TD
   A --> M
   M --> M1 --> M2 -- Reset major branch to main --> A
 ```
+
+#### Feature Branch Merge Criteria
+
+Feature branches are meant to be short-term and merged into `main` when the feature is complete and ready for
+production. Feature branch owners should strategize how to break down their feature branch work into smaller,
+incremental changes that reduce its complexity so it is lower risk to Patina consumers, easier to review, and faster to
+merge.
+
+If necessary, a large feature can be broken down into phases where each phase has a clear goal and deliverable. Once
+a feature phase is complete, it is merged into `main` and the next phase can begin in a new feature branch. If the
+feature is broken down this way, consider whether the [unstable feature process](../../dev/unstable_feature.md) should
+be used.
+
+Regardless of feature details, the criteria to merge into `main` are consistent:
+
+1. The feature branch is up to date with the latest `main` branch.
+   - Any merge conflicts with `main` have been resolved.
+   - All automated checks pass successfully.
+2. The feature must be considered "production worthy" by the feature owner. This means:
+   - The feature content being merged is complete and ready for production.
+     - It is acceptable for a feature with a small scope that is complete to be merged that will be expanded in the
+       future. It is not acceptable for a feature with a large scope and an incomplete implementation to be merged.
+   - The feature has been tested in an environment that closely resembles production to ensure stability and
+     performance. The pull request that merges the feature must clearly document how the feature was tested
+     and the results of that testing.
+   - The feature must not compromise the security, stability, or performance of Patina. Any remaining work or
+     incomplete testing in these areas must be addressed before merging.
+3. The feature must be comprehensively documented so it is clear to Patina consumers how to use and configure the
+   feature. Documentation must describe the feature's purpose, usage instructions, configuration options, and any
+   limitations or known issues. These limitations and known issues should be tracked in a GitHub issue and must not
+   impact production usage of the feature.
+4. The feature must be integrated into patina-qemu by the feature owner unless a compelling reason exists not to do so.
+   The pull request that merges the feature into `main` must link to a patina-qemu pull request that integrates the
+   feature.
+
+   > Note: The patina-qemu PR does not necessarily need to build (due to dependencies on the patina repo) successfully
+   > prior to merging the feature branch into `main`. However, the patina-qemu PR must be opened, linked to
+   > demonstrate how a platform is expected to integrate the feature, and have been tested locally including OS boot
+   > with the feature enabled. The patina-qemu PR must be completed and merged as soon as possible after the feature
+   > branch is merged into the `main` branch in the patina repository.
 
 ## Unresolved Questions
 
