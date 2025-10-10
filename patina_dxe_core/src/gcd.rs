@@ -122,81 +122,74 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         };
 
         // Extract the v1 data from the v2 structure for processing
-                let res_desc = res_desc_v2.v1;
-                mem_range = res_desc.physical_start
-                    ..res_desc
-                        .physical_start
-                        .checked_add(res_desc.resource_length)
-                        .expect("Invalid resource descriptor hob");
+        let res_desc = res_desc_v2.v1;
+        mem_range = res_desc.physical_start
+            ..res_desc.physical_start.checked_add(res_desc.resource_length).expect("Invalid resource descriptor hob");
 
-                match res_desc.resource_type {
-                    hob::EFI_RESOURCE_SYSTEM_MEMORY => {
-                        resource_attributes = res_desc.resource_attribute;
+        match res_desc.resource_type {
+            hob::EFI_RESOURCE_SYSTEM_MEMORY => {
+                resource_attributes = res_desc.resource_attribute;
 
-                        if resource_attributes & hob::MEMORY_ATTRIBUTE_MASK == hob::TESTED_MEMORY_ATTRIBUTES {
-                            if resource_attributes & hob::EFI_RESOURCE_ATTRIBUTE_MORE_RELIABLE
-                                == hob::EFI_RESOURCE_ATTRIBUTE_MORE_RELIABLE
-                            {
-                                gcd_mem_type = GcdMemoryType::MoreReliable;
-                            } else {
-                                gcd_mem_type = GcdMemoryType::SystemMemory;
-                            }
-                        }
-
-                        if (resource_attributes & hob::MEMORY_ATTRIBUTE_MASK == (hob::INITIALIZED_MEMORY_ATTRIBUTES))
-                            || (resource_attributes & hob::MEMORY_ATTRIBUTE_MASK == (hob::PRESENT_MEMORY_ATTRIBUTES))
-                        {
-                            gcd_mem_type = GcdMemoryType::Reserved;
-                        }
-
-                        if resource_attributes & hob::EFI_RESOURCE_ATTRIBUTE_PERSISTENT
-                            == hob::EFI_RESOURCE_ATTRIBUTE_PERSISTENT
-                        {
-                            gcd_mem_type = GcdMemoryType::Persistent;
-                        }
+                if resource_attributes & hob::MEMORY_ATTRIBUTE_MASK == hob::TESTED_MEMORY_ATTRIBUTES {
+                    if resource_attributes & hob::EFI_RESOURCE_ATTRIBUTE_MORE_RELIABLE
+                        == hob::EFI_RESOURCE_ATTRIBUTE_MORE_RELIABLE
+                    {
+                        gcd_mem_type = GcdMemoryType::MoreReliable;
+                    } else {
+                        gcd_mem_type = GcdMemoryType::SystemMemory;
                     }
-                    hob::EFI_RESOURCE_MEMORY_MAPPED_IO | hob::EFI_RESOURCE_FIRMWARE_DEVICE => {
-                        resource_attributes = res_desc.resource_attribute;
-                        gcd_mem_type = GcdMemoryType::MemoryMappedIo;
-                    }
-                    hob::EFI_RESOURCE_MEMORY_MAPPED_IO_PORT | hob::EFI_RESOURCE_MEMORY_RESERVED => {
-                        resource_attributes = res_desc.resource_attribute;
-                        gcd_mem_type = GcdMemoryType::Reserved;
-                    }
-                    hob::EFI_RESOURCE_IO => {
-                        log::info!(
-                            "Mapping io range {:#x?} as {:?}",
-                            res_desc.physical_start..res_desc.resource_length,
-                            GcdIoType::Io
-                        );
-                        GCD.add_io_space(
-                            GcdIoType::Io,
-                            res_desc.physical_start as usize,
-                            res_desc.resource_length as usize,
-                        )
-                        .expect("Failed to add IO space to GCD");
-                    }
-                    hob::EFI_RESOURCE_IO_RESERVED => {
-                        log::info!(
-                            "Mapping io range {:#x?} as {:?}",
-                            res_desc.physical_start..res_desc.resource_length,
-                            GcdIoType::Reserved
-                        );
-                        GCD.add_io_space(
-                            GcdIoType::Reserved,
-                            res_desc.physical_start as usize,
-                            res_desc.resource_length as usize,
-                        )
-                        .expect("Failed to add IO space to GCD");
-                    }
-                    _ => {
-                        debug_assert!(false, "Unknown resource type in HOB");
-                    }
-                };
-
-                if gcd_mem_type != GcdMemoryType::NonExistent {
-                    assert!(res_desc.attributes_valid());
                 }
+
+                if (resource_attributes & hob::MEMORY_ATTRIBUTE_MASK == (hob::INITIALIZED_MEMORY_ATTRIBUTES))
+                    || (resource_attributes & hob::MEMORY_ATTRIBUTE_MASK == (hob::PRESENT_MEMORY_ATTRIBUTES))
+                {
+                    gcd_mem_type = GcdMemoryType::Reserved;
+                }
+
+                if resource_attributes & hob::EFI_RESOURCE_ATTRIBUTE_PERSISTENT
+                    == hob::EFI_RESOURCE_ATTRIBUTE_PERSISTENT
+                {
+                    gcd_mem_type = GcdMemoryType::Persistent;
+                }
+            }
+            hob::EFI_RESOURCE_MEMORY_MAPPED_IO | hob::EFI_RESOURCE_FIRMWARE_DEVICE => {
+                resource_attributes = res_desc.resource_attribute;
+                gcd_mem_type = GcdMemoryType::MemoryMappedIo;
+            }
+            hob::EFI_RESOURCE_MEMORY_MAPPED_IO_PORT | hob::EFI_RESOURCE_MEMORY_RESERVED => {
+                resource_attributes = res_desc.resource_attribute;
+                gcd_mem_type = GcdMemoryType::Reserved;
+            }
+            hob::EFI_RESOURCE_IO => {
+                log::info!(
+                    "Mapping io range {:#x?} as {:?}",
+                    res_desc.physical_start..res_desc.resource_length,
+                    GcdIoType::Io
+                );
+                GCD.add_io_space(GcdIoType::Io, res_desc.physical_start as usize, res_desc.resource_length as usize)
+                    .expect("Failed to add IO space to GCD");
+            }
+            hob::EFI_RESOURCE_IO_RESERVED => {
+                log::info!(
+                    "Mapping io range {:#x?} as {:?}",
+                    res_desc.physical_start..res_desc.resource_length,
+                    GcdIoType::Reserved
+                );
+                GCD.add_io_space(
+                    GcdIoType::Reserved,
+                    res_desc.physical_start as usize,
+                    res_desc.resource_length as usize,
+                )
+                .expect("Failed to add IO space to GCD");
+            }
+            _ => {
+                debug_assert!(false, "Unknown resource type in HOB");
+            }
+        };
+
+        if gcd_mem_type != GcdMemoryType::NonExistent {
+            assert!(res_desc.attributes_valid());
+        }
 
         if gcd_mem_type != GcdMemoryType::NonExistent {
             // Extract cache attributes from V2 HOB and add ReadProtect for system memory
@@ -228,24 +221,24 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                     split_range.end.saturating_sub(split_range.start) as usize,
                     memory_attributes,
                 ) {
-                        // NotReady is expected result here since page table is not yet initialized. In this case GCD
-                        // will be updated with the appropriate attributes which will then be sync'd to page table
-                        // once it is initialized.
-                        Err(EfiError::NotReady) => (),
-                        Ok(()) => {
-                            // Success is also acceptable - means attributes were set immediately
-                            log::debug!("Memory attributes set successfully for {:#X}", split_range.start);
-                        }
-                        Err(err) => {
-                            panic!(
-                                "GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}, error: {:?}",
-                                memory_attributes,
-                                split_range.start,
-                                split_range.end.saturating_sub(split_range.start),
-                                err
-                            );
-                        }
+                    // NotReady is expected result here since page table is not yet initialized. In this case GCD
+                    // will be updated with the appropriate attributes which will then be sync'd to page table
+                    // once it is initialized.
+                    Err(EfiError::NotReady) => (),
+                    Ok(()) => {
+                        // Success is also acceptable - means attributes were set immediately
+                        log::debug!("Memory attributes set successfully for {:#X}", split_range.start);
                     }
+                    Err(err) => {
+                        panic!(
+                            "GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}, error: {:?}",
+                            memory_attributes,
+                            split_range.start,
+                            split_range.end.saturating_sub(split_range.start),
+                            err
+                        );
+                    }
+                }
             }
         }
     }
