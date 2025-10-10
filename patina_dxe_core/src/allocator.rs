@@ -1275,14 +1275,14 @@ mod tests {
             }
 
             // Locate stack hob.
-            if let Some(stack_hob) = hob_list.iter().find_map(|x| match x {
+            let stack_hob = hob_list.iter().find_map(|x| match x {
                 patina_pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
                     if desc.name == HOB_MEMORY_ALLOC_STACK =>
                 {
                     Some(desc)
                 }
                 _ => None,
-            }) {
+            }).unwrap();
                 // Check Guard Page.
                 let mut stack_desc =
                     GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address).unwrap();
