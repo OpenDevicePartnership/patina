@@ -15,7 +15,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::ffi::{c_char, c_void};
 use core::sync::atomic::{AtomicPtr, Ordering};
-use patina_sdk::uefi_protocol::ProtocolInterface;
+use patina::uefi_protocol::ProtocolInterface;
 use r_efi::efi;
 use r_efi::efi::Handle;
 use r_efi::efi::PhysicalAddress;
@@ -934,7 +934,7 @@ impl SmbiosProtocol {
 /// The protocol will remain installed for the lifetime of the system.
 pub fn install_smbios_protocol(
     manager: &SmbiosManager,
-    boot_services: &impl patina_sdk::boot_services::BootServices,
+    boot_services: &impl patina::boot_services::BootServices,
 ) -> Result<efi::Handle, SmbiosError> {
     // Clone the manager and wrap it in a Mutex for thread-safe access
     let manager_clone = manager.clone();

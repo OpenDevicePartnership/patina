@@ -10,7 +10,7 @@ description = "System Management BIOS (SMBIOS) support for UEFI components."
 
 [dependencies]
 log = { workspace = true }
-patina_sdk = { workspace = true }
+patina = { workspace = true }
 r-efi = { workspace = true }
 spin = { workspace = true }
 hashbrown = "0.11.2"
