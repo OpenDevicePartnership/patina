@@ -106,6 +106,7 @@ words:
   - mtrrs
   - mutil
   - nestedfv
+  - nocapture
   - nologo
   - nomem
   - noopt
