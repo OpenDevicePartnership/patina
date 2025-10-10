@@ -643,6 +643,11 @@ pub(crate) fn get_memory_map_descriptors(active_attributes: bool) -> Result<Vec<
 
                     // MMIO. Note: there could also be MMIO tracked by the allocators which would not hit this case.
                     GcdMemoryType::MemoryMappedIo => {
+                        //
+                        if descriptor.attributes & efi::MEMORY_RUNTIME == 0 {
+                            log::info!("new filter code");
+                            return None;
+                        }
                         if (descriptor.attributes & efi::MEMORY_ISA_VALID) == efi::MEMORY_ISA_VALID {
                             Some(efi::MEMORY_MAPPED_IO_PORT_SPACE)
                         } else {
@@ -708,6 +713,7 @@ extern "efiapi" fn get_memory_map(
     descriptor_size: *mut usize,
     descriptor_version: *mut u32,
 ) -> efi::Status {
+    log::info!("ITS HERE");
     if memory_map_size.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
@@ -760,7 +766,7 @@ extern "efiapi" fn get_memory_map(
         }
     }
 
-    log::debug!(target: "efi_memory_map", "EFI_MEMORY_MAP: \n{:?}", MemoryDescriptorSlice(&efi_descriptors));
+    log::info!("EFI_MEMORY_MAP: \n{:?}", MemoryDescriptorSlice(&efi_descriptors));
 
     efi::Status::SUCCESS
 }
