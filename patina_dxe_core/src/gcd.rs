@@ -106,16 +106,22 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         let mut mem_range: Range<u64> = 0..0;
         let mut resource_attributes: u32 = 0;
 
-        let mut res_desc_op = None;
-        // This removes support for v1 ResourceDescriptor HOBs for security and architectural improvements
-        if let Hob::ResourceDescriptorV2(t_res_desc) = hob {
-            res_desc_op = Some(**t_res_desc);
-        }
+        // Handle different ResourceDescriptor HOB versions
+        let res_desc_v2 = if let Hob::ResourceDescriptor(v1_res_desc) = hob {
+            log::info!(
+                "Skipping v1 Resource Descriptor HOB at {:#x} length {:#x}",
+                v1_res_desc.physical_start,
+                v1_res_desc.resource_length
+            );
+            continue;
+        } else if let Hob::ResourceDescriptorV2(t_res_desc) = hob {
+            **t_res_desc
+        } else {
+            // Not a resource descriptor HOB
+            continue;
+        };
 
-        match res_desc_op {
-            None => (),
-            Some(res_desc_v2) => {
-                // Extract the v1 data from the v2 structure for processing
+        // Extract the v1 data from the v2 structure for processing
                 let res_desc = res_desc_v2.v1;
                 mem_range = res_desc.physical_start
                     ..res_desc
@@ -191,25 +197,13 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                 if gcd_mem_type != GcdMemoryType::NonExistent {
                     assert!(res_desc.attributes_valid());
                 }
-            }
-        }
 
         if gcd_mem_type != GcdMemoryType::NonExistent {
-            let memory_attributes = {
-                // GitHub issue #519: Extract cache attributes from ResourceDescriptorV2 HOBs
-                // V2 HOBs include cache attribute information not available in v1 HOBs
-                if let Hob::ResourceDescriptorV2(res_desc) = hob {
-                    let mut memory_attributes = MemoryAttributes::from_bits_truncate(res_desc.attributes);
-                    memory_attributes &= MemoryAttributes::CacheAttributesMask; //clear everything but caching attributes.
-                    if gcd_mem_type == GcdMemoryType::SystemMemory {
-                        memory_attributes |= MemoryAttributes::ReadProtect; //force all system memory to be RP by default (since none is allocated yet).
-                    }
-                    let memory_attributes = memory_attributes.bits();
-                    Some(memory_attributes)
-                } else {
-                    None
-                }
-            };
+            // Extract cache attributes from V2 HOB and add ReadProtect for system memory
+            let mut memory_attributes = res_desc_v2.attributes & efi::CACHE_ATTRIBUTE_MASK;
+            if gcd_mem_type == GcdMemoryType::SystemMemory {
+                memory_attributes |= efi::MEMORY_RP; // Force all system memory to be RP by default (since none is allocated yet)
+            }
 
             for split_range in
                 remove_range_overlap(&mem_range, &(free_memory_start..(free_memory_start + free_memory_size)))
@@ -229,12 +223,11 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                     )
                     .expect("Failed to add memory space to GCD");
                 }
-                if let Some(attributes) = memory_attributes {
-                    match GCD.set_memory_space_attributes(
-                        split_range.start as usize,
-                        split_range.end.saturating_sub(split_range.start) as usize,
-                        attributes,
-                    ) {
+                match GCD.set_memory_space_attributes(
+                    split_range.start as usize,
+                    split_range.end.saturating_sub(split_range.start) as usize,
+                    memory_attributes,
+                ) {
                         // NotReady is expected result here since page table is not yet initialized. In this case GCD
                         // will be updated with the appropriate attributes which will then be sync'd to page table
                         // once it is initialized.
@@ -246,14 +239,13 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                         Err(err) => {
                             panic!(
                                 "GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}, error: {:?}",
-                                attributes,
+                                memory_attributes,
                                 split_range.start,
                                 split_range.end.saturating_sub(split_range.start),
                                 err
                             );
                         }
                     }
-                }
             }
         }
     }
