@@ -968,18 +968,18 @@ fn process_hob_allocations(hob_list: &HobList) {
         }
         _ => None,
     }) {
-        log::info!("Found stack hob {:#X?} of length {:#X?}", stack_hob.memory_base_address, stack_hob.memory_length);
+        log::trace!("Found stack hob {:#X?} of length {:#X?}", stack_hob.memory_base_address, stack_hob.memory_length);
         let stack_address = stack_hob.memory_base_address;
         let stack_length = stack_hob.memory_length;
 
         if (stack_address == 0) || (stack_length == 0) {
-            log::error!("Stack base address and length are 0 {:#X} for len {:#X}", stack_address, stack_length);
+            log::error!("Stack base address {:#X} for len {:#X}", stack_address, stack_length);
             debug_assert!(false);
         } else {
             match GCD.get_memory_descriptor_for_address(stack_address) {
                 Ok(gcd_desc) => {
                     let attributes: u64 = gcd_desc.attributes;
-                    log::info!("Current Attributes for the stack {:#X?} \n\n", attributes);
+                    log::trace!("Current Attributes for the stack {:#X?} \n\n", attributes);
                     // Set Stack region to execute protect.
                     if attributes != (attributes | (MemoryAttributes::ExecuteProtect).bits()) {
                         match GCD.set_memory_space_attributes(
