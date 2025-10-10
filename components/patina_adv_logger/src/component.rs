@@ -144,8 +144,6 @@ mod tests {
 
     use crate::memory_log::AdvancedLog;
 
-    use crate::memory_log::AdvancedLog;
-
     use super::*;
 
     static TEST_LOGGER: AdvancedLogger<UartNull> =
