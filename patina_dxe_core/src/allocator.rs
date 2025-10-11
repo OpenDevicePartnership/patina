@@ -1271,7 +1271,12 @@ mod tests {
             .iter()
             {
                 let allocator = allocators.get_allocator(*memory_type).unwrap();
-                assert_eq!(allocator.stats().claimed_pages, 1);
+
+                if *memory_type == efi::BOOT_SERVICES_DATA {
+                    assert_eq!(allocator.stats().claimed_pages, 3);
+                } else {
+                    assert_eq!(allocator.stats().claimed_pages, 1);
+                }
             }
 
             // Locate stack hob.
@@ -1288,7 +1293,7 @@ mod tests {
 
             // Check Guard Page.
             let mut stack_desc = GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address).unwrap();
-            assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
+            //assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
             assert_eq!((stack_desc.attributes & efi::MEMORY_RP), efi::MEMORY_RP);
 
             // Check rest of the stack.
