@@ -150,3 +150,16 @@ pub const SMM_COMMUNICATION_PROTOCOL: efi::Guid =
 /// # assert_eq!("00000000-0000-0000-0000-000000000000", format!("{:?}", Guid::from_ref(&ZERO)));
 /// ```
 pub const ZERO: efi::Guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
+
+/// EFI_HOB_MEMORY_ALLOC_STACK_GUID
+///
+///  Describes the memory stack that is produced by the HOB producer phase and upon which all post
+///  memory-installed executable content in the HOB producer phase is executing.
+///
+/// (`4ED4BF27-4092-42E9-807D-527B1D00C9BD`)
+/// ```
+/// # use patina::{Guid, guids::HOB_MEMORY_ALLOC_STACK};
+/// # assert_eq!("4ED4BF27-4092-42E9-807D-527B1D00C9BD", format!("{:?}", Guid::from_ref(&HOB_MEMORY_ALLOC_STACK)));
+/// ```
+pub const HOB_MEMORY_ALLOC_STACK: efi::Guid =
+    efi::Guid::from_fields(0x4ed4bf27, 0x4092, 0x42e9, 0x80, 0x7d, &[0x52, 0x7b, 0x1d, 0x00, 0xc9, 0xbd]);

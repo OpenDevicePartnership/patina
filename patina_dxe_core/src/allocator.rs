@@ -41,7 +41,8 @@ pub use uefi_allocator::UefiAllocator;
 use patina::{
     base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     error::EfiError,
-    guids, uefi_size_to_pages,
+    guids::{self, HOB_MEMORY_ALLOC_STACK},
+    uefi_size_to_pages,
 };
 
 // Allocation Strategy when not specified by caller.
@@ -957,6 +958,79 @@ fn process_hob_allocations(hob_list: &HobList) {
         };
     }
 
+    // Find the stack hob and set attributes.
+    if let Some(stack_hob) = hob_list.iter().find_map(|x| match x {
+        patina_pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
+            if desc.name == HOB_MEMORY_ALLOC_STACK =>
+        {
+            Some(desc)
+        }
+        _ => None,
+    }) {
+        log::trace!("Found stack hob {:#X?} of length {:#X?}", stack_hob.memory_base_address, stack_hob.memory_length);
+        let stack_address = stack_hob.memory_base_address;
+        let stack_length = stack_hob.memory_length;
+
+        if (stack_address == 0) || (stack_length == 0) {
+            log::error!("Stack base address {:#X} for len {:#X}", stack_address, stack_length);
+            debug_assert!(false);
+        } else {
+            match GCD.get_memory_descriptor_for_address(stack_address) {
+                Ok(gcd_desc) => {
+                    let attributes: u64 = gcd_desc.attributes;
+                    log::trace!("Current Attributes for the stack {:#X?} \n\n", attributes);
+                    // Set Stack region to execute protect.
+                    if attributes != (attributes | efi::MEMORY_XP) {
+                        match GCD.set_memory_space_attributes(
+                            stack_address as usize,
+                            stack_length as usize,
+                            attributes | efi::MEMORY_XP,
+                        ) {
+                            Ok(_) => (),
+                            Err(EfiError::NotReady) => {
+                                // Expected if paging is not initialized yet.
+                            }
+                            Err(e) => {
+                                log::error!(
+                                    "Could not set NX for memory address {:#X} for len {:#X} with error {:?}",
+                                    stack_address,
+                                    stack_length,
+                                    e
+                                );
+                                debug_assert!(false);
+                            }
+                        }
+                    }
+                    // Set Guard page to read protect.
+                    match GCD.set_memory_space_attributes(
+                        stack_address as usize,
+                        UEFI_PAGE_SIZE,
+                        attributes | efi::MEMORY_RP,
+                    ) {
+                        Ok(_) => (),
+                        Err(EfiError::NotReady) => {
+                            // Expected if paging is not initialized yet.
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "Could not set RP for memory address {:#X} for len {:#X} with error {:?}",
+                                stack_address,
+                                UEFI_PAGE_SIZE,
+                                e
+                            );
+                            debug_assert!(false);
+                        }
+                    }
+                }
+                Err(_) => {
+                    log::error!("Failed to get memory descriptor for address {:#x?} in GCD", stack_address);
+                }
+            }
+        }
+    } else {
+        debug_assert!(false, "No stack hob found\n");
+    }
+
     // now that we've processed HOBs, lets allocate page 0 because we are going to use it for null pointer detection
     // if we don't allocate it, bootloaders may try to allocate it (as they often allocate by address from what the
     // EFI_MEMORY_MAP reports as EfiConventionalMemory), which will cause a failure that is unnecessary. We do this
@@ -1197,24 +1271,51 @@ mod tests {
             .iter()
             {
                 let allocator = allocators.get_allocator(*memory_type).unwrap();
-                assert_eq!(allocator.stats().claimed_pages, 1);
+
+                if *memory_type == efi::BOOT_SERVICES_DATA {
+                    assert_eq!(allocator.stats().claimed_pages, 3);
+                } else {
+                    assert_eq!(allocator.stats().claimed_pages, 1);
+                }
             }
+
+            // Locate stack hob.
+            let stack_hob = hob_list
+                .iter()
+                .find_map(|x| match x {
+                    patina_pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation {
+                        header: _,
+                        alloc_descriptor: desc,
+                    }) if desc.name == HOB_MEMORY_ALLOC_STACK => Some(desc),
+                    _ => None,
+                })
+                .unwrap();
+
+            // Check Guard Page.
+            let mut stack_desc = GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address).unwrap();
+            //assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
+            assert_eq!((stack_desc.attributes & efi::MEMORY_RP), efi::MEMORY_RP);
+
+            // Check rest of the stack.
+            stack_desc =
+                GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address + UEFI_PAGE_SIZE as u64).unwrap();
+            assert_eq!((stack_desc.attributes & efi::MEMORY_XP), efi::MEMORY_XP);
+
+            // confirm the MMIO memory allocation occurred in the GCD
+            let mmio_desc = GCD.get_memory_descriptor_for_address(0x10000000).unwrap();
+            assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
+            assert_eq!(mmio_desc.base_address, 0x10000000);
+            assert_eq!(mmio_desc.length, 0x2000);
+            assert_eq!(mmio_desc.image_handle, protocol_db::DXE_CORE_HANDLE);
+
+            // confirm the rest of the MMIO region is not allocated
+            let mmio_desc = GCD.get_memory_descriptor_for_address(0x10002000).unwrap();
+            assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
+            assert_eq!(mmio_desc.base_address, 0x10002000);
+            assert_eq!(mmio_desc.length, 0x1000000 - 0x2000);
+            assert_eq!(mmio_desc.image_handle, INVALID_HANDLE);
         })
         .unwrap();
-
-        // confirm the MMIO memory allocation occurred in the GCD
-        let mmio_desc = GCD.get_memory_descriptor_for_address(0x10000000).unwrap();
-        assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
-        assert_eq!(mmio_desc.base_address, 0x10000000);
-        assert_eq!(mmio_desc.length, 0x2000);
-        assert_eq!(mmio_desc.image_handle, protocol_db::DXE_CORE_HANDLE);
-
-        // confirm the rest of the MMIO region is not allocated
-        let mmio_desc = GCD.get_memory_descriptor_for_address(0x10002000).unwrap();
-        assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
-        assert_eq!(mmio_desc.base_address, 0x10002000);
-        assert_eq!(mmio_desc.length, 0x1000000 - 0x2000);
-        assert_eq!(mmio_desc.image_handle, INVALID_HANDLE);
     }
 
     #[test]
