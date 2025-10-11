@@ -72,6 +72,39 @@ cfg_if::cfg_if! {
 /// specific interrupt type ID.
 pub type ExceptionType = usize;
 
+#[macro_export]
+macro_rules! log_registers {
+    ( $( $name:expr, $value:expr ),+ $(,)? ) => {
+        let registers = [$(($name, $value),)+];
+        for chunk in registers.chunks(4) {
+            if chunk.len() == 4 {
+                log::error!(
+                    "{:>4}  {:#018X}   {:>4}  {:#018X}   {:>4}  {:#018X}   {:>4}  {:#018X}",
+                    chunk[0].0, chunk[0].1, chunk[1].0, chunk[1].1,
+                    chunk[2].0, chunk[2].1, chunk[3].0, chunk[3].1
+                );
+            } else if chunk.len() == 3 {
+                log::error!(
+                    "{:>4}  {:#018X}   {:>4}  {:#018X}   {:>4}  {:#018X}",
+                    chunk[0].0, chunk[0].1, chunk[1].0, chunk[1].1,
+                    chunk[2].0, chunk[2].1
+                );
+            } else if chunk.len() == 2 {
+                log::error!(
+                    "{:>4}  {:#018X}   {:>4}  {:#018X}",
+                    chunk[0].0, chunk[0].1, chunk[1].0, chunk[1].1
+                );
+            } else if chunk.len() == 1 {
+                log::error!(
+                    "{:>4}  {:#018X}",
+                    chunk[0].0, chunk[0].1
+                );
+            }
+            log::error!("");
+        }
+    };
+}
+
 /// Trait for converting the architecture specific context structures into the
 /// UEFI System Context structure.
 pub(crate) trait EfiSystemContextFactory {
@@ -83,6 +116,9 @@ pub(crate) trait EfiSystemContextFactory {
 pub(crate) trait EfiExceptionStackTrace {
     /// Dump the stack trace for architecture specific context.
     fn dump_stack_trace(&self);
+
+    /// Dump system context registers for architecture specific context.
+    fn dump_system_context_registers(&self);
 }
 
 /// Trait for structs that implement and manage interrupts.
