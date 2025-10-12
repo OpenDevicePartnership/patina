@@ -4,7 +4,7 @@ resolver = "2"
 members = ["components/*", "core/*", "sdk/*", "patina_dxe_core"]
 
 [workspace.package]
-version = "11.2.0"
+version = "11.2.1"
 license = "Apache-2.0"
 edition = "2024"
 rust-version = "1.89"
