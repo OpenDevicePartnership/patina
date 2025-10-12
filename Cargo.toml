@@ -9,7 +9,6 @@ license = "Apache-2.0"
 edition = "2024"
 rust-version = "1.89"
 repository = "https://github.com/OpenDevicePartnership/patina"
-publish = ["patina-fw"]
 
 [workspace.dependencies]
 alloc-no-stdlib = { version = "~2.0" }
@@ -32,21 +31,21 @@ linkme = { version = "^0.3.29" }
 log = { version = "0.4", default-features = false }
 mu_rust_helpers = { version = "3.0.2" }
 num-traits = { version = "0.2", default-features = false }
-patina = { version = "11.2.0", path = "sdk/patina", registry = "patina-fw" }
-patina_debugger = { version = "11.2.0", path = "core/patina_debugger", registry = "patina-fw" }
-patina_ffs = { version = "11.2.0", path = "sdk/patina_ffs", registry = "patina-fw" }
-patina_ffs_extractors = { version = "11.2.0", path = "sdk/patina_ffs_extractors", registry = "patina-fw" }
-patina_internal_collections = { version = "11.2.0", path = "core/patina_internal_collections", default-features = false, registry = "patina-fw" }
-patina_internal_cpu = { version = "11.2.0", path = "core/patina_internal_cpu", registry = "patina-fw" }
-patina_internal_depex = { version = "11.2.0", path = "core/patina_internal_depex", registry = "patina-fw" }
-patina_internal_device_path = { version = "11.2.0", path = "core/patina_internal_device_path", registry = "patina-fw" }
-patina_lzma_rs = { version = "0.3.1", default-features = false, registry = "patina-fw" }
-patina_macro = { version = "11.2.0", path = "sdk/patina_macro", registry = "patina-fw" }
-patina_mtrr = { version = "1.0.0", registry = "patina-fw" }
-patina_paging = { version = "9", registry = "patina-fw" }
-patina_performance = { version = "11.2.0", path = "components/patina_performance", registry = "patina-fw" }
-patina_pi = { version = "11.2.0", path = "sdk/patina_pi", registry = "patina-fw" }
-patina_stacktrace = { version = "11.2.0", path = "core/patina_stacktrace", registry = "patina-fw" }
+patina = { version = "11.2.0", path = "sdk/patina" }
+patina_debugger = { version = "11.2.0", path = "core/patina_debugger" }
+patina_ffs = { version = "11.2.0", path = "sdk/patina_ffs" }
+patina_ffs_extractors = { version = "11.2.0", path = "sdk/patina_ffs_extractors" }
+patina_internal_collections = { version = "11.2.0", path = "core/patina_internal_collections", default-features = false }
+patina_internal_cpu = { version = "11.2.0", path = "core/patina_internal_cpu" }
+patina_internal_depex = { version = "11.2.0", path = "core/patina_internal_depex" }
+patina_internal_device_path = { version = "11.2.0", path = "core/patina_internal_device_path" }
+patina_lzma_rs = { version = "0.3.1", default-features = false }
+patina_macro = { version = "11.2.0", path = "sdk/patina_macro" }
+patina_mtrr = { version = "1.0.0" }
+patina_paging = { version = "9" }
+patina_performance = { version = "11.2.0", path = "components/patina_performance" }
+patina_pi = { version = "11.2.0", path = "sdk/patina_pi" }
+patina_stacktrace = { version = "11.2.0", path = "core/patina_stacktrace" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
 r-efi = { version = "5.0.0", default-features = false }
@@ -54,7 +53,7 @@ scroll = { version = "0.13", default-features = false, features = ["derive"]}
 spin = { version = "^0.9" }
 syn = { version = "2" }
 uart_16550 = { version = "^0.3.2" }
-uefi_corosensei = { version = "0.1.3", default-features = false, registry = "patina-fw" }
+uefi_corosensei = { version = "0.1.3", default-features = false }
 uuid = { version = "1.8", default-features = false }
 x86_64 = { version = "=0.15.2", default-features = false }
 zerocopy = { version = "0.8" }
