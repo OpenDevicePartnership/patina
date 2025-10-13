@@ -67,4 +67,5 @@
 - [Performance Analysis](components/patina_performance.md)
 
 -----------
-[Contributors](misc/contributors.md)
+- [Contributors](misc/contributors.md)
+- [License](misc/license_history.md)

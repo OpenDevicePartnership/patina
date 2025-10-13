@@ -4,7 +4,7 @@ resolver = "2"
 members = ["components/*", "core/*", "sdk/*", "patina_dxe_core"]
 
 [workspace.package]
-version = "11.3.1"
+version = "11.3.2"
 license = "Apache-2.0"
 edition = "2024"
 rust-version = "1.89"
@@ -31,21 +31,21 @@ linkme = { version = "^0.3.29" }
 log = { version = "0.4", default-features = false }
 mu_rust_helpers = { version = "3.0.2" }
 num-traits = { version = "0.2", default-features = false }
-patina = { version = "11.3.1", path = "sdk/patina" }
-patina_debugger = { version = "11.3.1", path = "core/patina_debugger" }
-patina_ffs = { version = "11.3.1", path = "sdk/patina_ffs" }
-patina_ffs_extractors = { version = "11.3.1", path = "sdk/patina_ffs_extractors" }
-patina_internal_collections = { version = "11.3.1", path = "core/patina_internal_collections", default-features = false }
-patina_internal_cpu = { version = "11.3.1", path = "core/patina_internal_cpu" }
-patina_internal_depex = { version = "11.3.1", path = "core/patina_internal_depex" }
-patina_internal_device_path = { version = "11.3.1", path = "core/patina_internal_device_path" }
+patina = { version = "11.3.2", path = "sdk/patina" }
+patina_debugger = { version = "11.3.2", path = "core/patina_debugger" }
+patina_ffs = { version = "11.3.2", path = "sdk/patina_ffs" }
+patina_ffs_extractors = { version = "11.3.2", path = "sdk/patina_ffs_extractors" }
+patina_internal_collections = { version = "11.3.2", path = "core/patina_internal_collections", default-features = false }
+patina_internal_cpu = { version = "11.3.2", path = "core/patina_internal_cpu" }
+patina_internal_depex = { version = "11.3.2", path = "core/patina_internal_depex" }
+patina_internal_device_path = { version = "11.3.2", path = "core/patina_internal_device_path" }
 patina_lzma_rs = { version = "0.3.1", default-features = false }
-patina_macro = { version = "11.3.1", path = "sdk/patina_macro" }
+patina_macro = { version = "11.3.2", path = "sdk/patina_macro" }
 patina_mtrr = { version = "1.0.0" }
 patina_paging = { version = "9" }
-patina_performance = { version = "11.3.1", path = "components/patina_performance" }
-patina_pi = { version = "11.3.1", path = "sdk/patina_pi" }
-patina_stacktrace = { version = "11.3.1", path = "core/patina_stacktrace" }
+patina_performance = { version = "11.3.2", path = "components/patina_performance" }
+patina_pi = { version = "11.3.2", path = "sdk/patina_pi" }
+patina_stacktrace = { version = "11.3.2", path = "core/patina_stacktrace" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
 r-efi = { version = "5.0.0", default-features = false }
