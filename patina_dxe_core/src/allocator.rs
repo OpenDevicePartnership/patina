@@ -980,22 +980,20 @@ fn process_hob_allocations(hob_list: &HobList) {
                     let attributes: u64 = gcd_desc.attributes;
                     log::trace!("Current Attributes for the stack {:#X?} \n\n", attributes);
                     // Set Stack region to execute protect.
-                    if attributes != (attributes | efi::MEMORY_XP) {
-                        match GCD.set_memory_space_attributes(
-                            stack_address as usize,
-                            stack_length as usize,
-                            attributes | efi::MEMORY_XP,
-                        ) {
-                            Ok(_) | Err(EfiError::NotReady) => (),
-                            Err(e) => {
-                                log::error!(
-                                    "Could not set NX for memory address {:#X} for len {:#X} with error {:?}",
-                                    stack_address,
-                                    stack_length,
-                                    e
-                                );
-                                debug_assert!(false);
-                            }
+                    match GCD.set_memory_space_attributes(
+                        stack_address as usize,
+                        stack_length as usize,
+                        attributes | efi::MEMORY_XP,
+                    ) {
+                        Ok(_) | Err(EfiError::NotReady) => (),
+                        Err(e) => {
+                            log::error!(
+                                "Could not set NX for memory address {:#X} for len {:#X} with error {:?}",
+                                stack_address,
+                                stack_length,
+                                e
+                            );
+                            debug_assert!(false);
                         }
                     }
                     // Set Guard page to read protect.
