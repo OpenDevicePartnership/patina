@@ -1,10 +1,8 @@
-                              License-History.txt
-                              ===================
+# License History
 
 This file contains the history of Patina license changes.
 
-Key Dates
-----------
+## Key Dates
 
 * Project Inception: BSD-2-Clause-Patent License
 
@@ -18,4 +16,4 @@ Key Dates
   align with the Rust ecosystem and to provide additional protections and clarity for contributors and users.
 
   The change was made following the guidelines set forth in the project's governance documentation approved in
-  https://github.com/OpenDevicePartnership/governance/blob/main/rfc/0013-patina-apache-20-license.md.
+  [RFC: Apache 2.0 License for Patina](https://github.com/OpenDevicePartnership/governance/blob/main/rfc/0013-patina-apache-20-license.md).
