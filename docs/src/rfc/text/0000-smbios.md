@@ -305,28 +305,10 @@ These features are described in Future Work sections below.
 
 ## Future Work
 
-The current byte-based API is production-ready. Potential future enhancements include:
+The current byte-based API is production-ready. Potential future enhancement includes:
 
-### Typed Record Interfaces
-
-Two alternative approaches are under consideration for typed SMBIOS records:
-
-**1. Versioned Typed Records**:
-
-- `VersionedSmbiosRecord` trait with version-aware parsing
-- Automatic handling of SMBIOS specification evolution (e.g., Type 0 fields added in 2.4, 3.1)
-- Forward/backward compatibility via `Option<T>` fields and `unknown_data` preservation
-- Higher abstraction, automatic version handling
-
-**2. Sized Structures + Byte Arrays**:
-
-- Simple sized structures (e.g., `BiosInformation`, `SystemInformation`) with `to_bytes()`/`from_bytes()`
-- Service layer remains byte-array based for flexibility
-- Explicit validation at service boundary
-- Lower complexity, clearer OEM extension pattern
-
-**Trade-offs**: Versioned approach offers automatic compatibility handling; sized structures offer simplicity and
-explicit control. Either approach would enhance type safety while maintaining the current flexible byte-based API.
+- **SMBIOS Protocol FFI Bindings**: C ABI extern functions for legacy UEFI component integration and drop-in
+  replacement for existing C-based SMBIOS protocol implementations
 
 ## Unresolved Questions
 
