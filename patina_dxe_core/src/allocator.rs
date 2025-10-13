@@ -1212,6 +1212,25 @@ mod tests {
                 ],
             ));
 
+            // Required memory allocation hob for stack
+            let mut stack_base_address = 0xEB000;
+            stack_base_address = (physical_hob_list as u64).wrapping_add(stack_base_address);
+            let stack_hob = Hob::MemoryAllocation(&patina_pi::hob::MemoryAllocation {
+                header: patina_pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0x00000000,
+                },
+                alloc_descriptor: patina_pi::hob::header::MemoryAllocation {
+                    name: HOB_MEMORY_ALLOC_STACK,
+                    memory_base_address: stack_base_address,
+                    memory_length: 0x2000,
+                    memory_type: efi::BOOT_SERVICES_DATA,
+                    reserved: Default::default(),
+                },
+            });
+            hob_list.push(stack_hob);
+
             init_memory_support(&hob_list);
 
             let loader_range = ALLOCATORS.lock().get_allocator(efi::LOADER_DATA).unwrap().reserved_range().unwrap();
@@ -1242,6 +1261,26 @@ mod tests {
 
             let mut hob_list = HobList::default();
             hob_list.discover_hobs(physical_hob_list);
+
+            // Required memory allocation hob for stack
+            let mut stack_base_address = 0xEB000;
+            stack_base_address = (physical_hob_list as u64).wrapping_add(stack_base_address);
+
+            let stack_hob = Hob::MemoryAllocation(&patina_pi::hob::MemoryAllocation {
+                header: patina_pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0x00000000,
+                },
+                alloc_descriptor: patina_pi::hob::header::MemoryAllocation {
+                    name: HOB_MEMORY_ALLOC_STACK,
+                    memory_base_address: stack_base_address,
+                    memory_length: 0x2000,
+                    memory_type: efi::BOOT_SERVICES_DATA,
+                    reserved: Default::default(),
+                },
+            });
+            hob_list.push(stack_hob);
 
             init_memory_support(&hob_list);
 
@@ -1310,6 +1349,66 @@ mod tests {
             assert_eq!(mmio_desc.base_address, 0x10002000);
             assert_eq!(mmio_desc.length, 0x1000000 - 0x2000);
             assert_eq!(mmio_desc.image_handle, INVALID_HANDLE);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn should_have_stack_hob() {
+        test_support::with_global_lock(|| {
+            // 4 MiB of test memory is required because allocator expansion during initialization
+            // may need to handle large allocations for memory buckets and HOBs.
+            let physical_hob_list = build_test_hob_list(0x400000);
+            unsafe {
+                GCD.reset();
+                gcd::init_gcd(physical_hob_list);
+                test_support::init_test_protocol_db();
+                ALLOCATORS.lock().reset();
+            }
+
+            let mut hob_list = HobList::default();
+            hob_list.discover_hobs(physical_hob_list);
+
+            init_memory_support(&hob_list);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn should_have_non_zero_stack_base_address_length() {
+        test_support::with_global_lock(|| {
+            // 4 MiB of test memory is required because allocator expansion during initialization
+            // may need to handle large allocations for memory buckets and HOBs.
+            let physical_hob_list = build_test_hob_list(0x400000);
+            unsafe {
+                GCD.reset();
+                gcd::init_gcd(physical_hob_list);
+                test_support::init_test_protocol_db();
+                ALLOCATORS.lock().reset();
+            }
+
+            let mut hob_list = HobList::default();
+            hob_list.discover_hobs(physical_hob_list);
+
+            let stack_hob = Hob::MemoryAllocation(&patina_pi::hob::MemoryAllocation {
+                header: patina_pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0x00000000,
+                },
+                alloc_descriptor: patina_pi::hob::header::MemoryAllocation {
+                    name: HOB_MEMORY_ALLOC_STACK,
+                    memory_base_address: 0,
+                    memory_length: 0,
+                    memory_type: efi::BOOT_SERVICES_DATA,
+                    reserved: Default::default(),
+                },
+            });
+            hob_list.push(stack_hob);
+
+            init_memory_support(&hob_list);
         })
         .unwrap();
     }

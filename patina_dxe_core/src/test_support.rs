@@ -10,7 +10,7 @@
 //!
 use crate::{GCD, protocols::PROTOCOL_DB};
 use core::ffi::c_void;
-use patina::guids::{HOB_MEMORY_ALLOC_STACK, ZERO};
+use patina::guids::ZERO;
 use patina_pi::hob::HobList;
 use patina_pi::{
     BootMode,
@@ -318,15 +318,6 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             core::ptr::copy(&allocation_hob_template, cursor as *mut hob::MemoryAllocation, 1);
             cursor = cursor.offset(allocation_hob_template.header.length as isize);
         }
-
-        // memory allocation hob for stack
-        allocation_hob_template.alloc_descriptor.memory_base_address = resource_descriptor1.physical_start + 0xB000;
-        allocation_hob_template.alloc_descriptor.memory_type = efi::BOOT_SERVICES_DATA;
-        allocation_hob_template.alloc_descriptor.memory_length = 0x2000;
-        allocation_hob_template.alloc_descriptor.name = HOB_MEMORY_ALLOC_STACK;
-
-        core::ptr::copy(&allocation_hob_template, cursor as *mut hob::MemoryAllocation, 1);
-        cursor = cursor.offset(allocation_hob_template.header.length as isize);
 
         // memory allocation HOB for MMIO space
         allocation_hob_template.alloc_descriptor.memory_base_address = resource_descriptor3.physical_start;
