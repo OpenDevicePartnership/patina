@@ -41,7 +41,8 @@ pub use uefi_allocator::UefiAllocator;
 use patina::{
     base::{SIZE_4KB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     error::EfiError,
-    guids, uefi_size_to_pages,
+    guids::{self, HOB_MEMORY_ALLOC_STACK},
+    uefi_size_to_pages,
 };
 
 // Allocation Strategy when not specified by caller.
@@ -957,6 +958,71 @@ fn process_hob_allocations(hob_list: &HobList) {
         };
     }
 
+    // Find the stack hob and set attributes.
+    if let Some(stack_hob) = hob_list.iter().find_map(|x| match x {
+        patina_pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
+            if desc.name == HOB_MEMORY_ALLOC_STACK =>
+        {
+            Some(desc)
+        }
+        _ => None,
+    }) {
+        log::trace!("Found stack hob {:#X?} of length {:#X?}", stack_hob.memory_base_address, stack_hob.memory_length);
+        let stack_address = stack_hob.memory_base_address;
+        let stack_length = stack_hob.memory_length;
+
+        if (stack_address == 0) || (stack_length == 0) {
+            log::error!("Stack base address {:#X} for len {:#X}", stack_address, stack_length);
+            debug_assert!(false);
+        } else {
+            match GCD.get_memory_descriptor_for_address(stack_address) {
+                Ok(gcd_desc) => {
+                    let attributes: u64 = gcd_desc.attributes;
+                    log::trace!("Current Attributes for the stack {:#X?} \n\n", attributes);
+                    // Set Stack region to execute protect.
+                    match GCD.set_memory_space_attributes(
+                        stack_address as usize,
+                        stack_length as usize,
+                        attributes | efi::MEMORY_XP,
+                    ) {
+                        Ok(_) | Err(EfiError::NotReady) => (),
+                        Err(e) => {
+                            log::error!(
+                                "Could not set NX for memory address {:#X} for len {:#X} with error {:?}",
+                                stack_address,
+                                stack_length,
+                                e
+                            );
+                            debug_assert!(false);
+                        }
+                    }
+                    // Set Guard page to read protect.
+                    match GCD.set_memory_space_attributes(
+                        stack_address as usize,
+                        UEFI_PAGE_SIZE,
+                        attributes | efi::MEMORY_RP,
+                    ) {
+                        Ok(_) | Err(EfiError::NotReady) => (),
+                        Err(e) => {
+                            log::error!(
+                                "Could not set RP for memory address {:#X} for len {:#X} with error {:?}",
+                                stack_address,
+                                UEFI_PAGE_SIZE,
+                                e
+                            );
+                            debug_assert!(false);
+                        }
+                    }
+                }
+                Err(_) => {
+                    log::error!("Failed to get memory descriptor for address {:#x?} in GCD", stack_address);
+                }
+            }
+        }
+    } else {
+        debug_assert!(false, "No stack hob found\n");
+    }
+
     // now that we've processed HOBs, lets allocate page 0 because we are going to use it for null pointer detection
     // if we don't allocate it, bootloaders may try to allocate it (as they often allocate by address from what the
     // EFI_MEMORY_MAP reports as EfiConventionalMemory), which will cause a failure that is unnecessary. We do this
@@ -1146,6 +1212,25 @@ mod tests {
                 ],
             ));
 
+            // Required memory allocation hob for stack
+            let mut stack_base_address = 0xEB000;
+            stack_base_address = (physical_hob_list as u64).wrapping_add(stack_base_address);
+            let stack_hob = Hob::MemoryAllocation(&patina_pi::hob::MemoryAllocation {
+                header: patina_pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0x00000000,
+                },
+                alloc_descriptor: patina_pi::hob::header::MemoryAllocation {
+                    name: HOB_MEMORY_ALLOC_STACK,
+                    memory_base_address: stack_base_address,
+                    memory_length: 0x2000,
+                    memory_type: efi::BOOT_SERVICES_DATA,
+                    reserved: Default::default(),
+                },
+            });
+            hob_list.push(stack_hob);
+
             init_memory_support(&hob_list);
 
             let loader_range = ALLOCATORS.lock().get_allocator(efi::LOADER_DATA).unwrap().reserved_range().unwrap();
@@ -1177,6 +1262,26 @@ mod tests {
             let mut hob_list = HobList::default();
             hob_list.discover_hobs(physical_hob_list);
 
+            // Required memory allocation hob for stack
+            let mut stack_base_address = 0xEB000;
+            stack_base_address = (physical_hob_list as u64).wrapping_add(stack_base_address);
+
+            let stack_hob = Hob::MemoryAllocation(&patina_pi::hob::MemoryAllocation {
+                header: patina_pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0x00000000,
+                },
+                alloc_descriptor: patina_pi::hob::header::MemoryAllocation {
+                    name: HOB_MEMORY_ALLOC_STACK,
+                    memory_base_address: stack_base_address,
+                    memory_length: 0x2000,
+                    memory_type: efi::BOOT_SERVICES_DATA,
+                    reserved: Default::default(),
+                },
+            });
+            hob_list.push(stack_hob);
+
             init_memory_support(&hob_list);
 
             let allocators = ALLOCATORS.lock();
@@ -1197,24 +1302,115 @@ mod tests {
             .iter()
             {
                 let allocator = allocators.get_allocator(*memory_type).unwrap();
-                assert_eq!(allocator.stats().claimed_pages, 1);
+
+                if *memory_type == efi::BOOT_SERVICES_DATA {
+                    assert_eq!(allocator.stats().claimed_pages, 3);
+                } else {
+                    assert_eq!(allocator.stats().claimed_pages, 1);
+                }
             }
+
+            // Locate stack hob.
+            let stack_hob = hob_list
+                .iter()
+                .find_map(|x| match x {
+                    patina_pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation {
+                        header: _,
+                        alloc_descriptor: desc,
+                    }) if desc.name == HOB_MEMORY_ALLOC_STACK => Some(desc),
+                    _ => None,
+                })
+                .unwrap();
+
+            assert!(stack_hob.memory_base_address != 0);
+            assert!(stack_hob.memory_length != 0);
+
+            // Check Guard Page.
+            let mut stack_desc = GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address).unwrap();
+            assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
+            assert_eq!((stack_desc.attributes & efi::MEMORY_RP), efi::MEMORY_RP);
+
+            // Check rest of the stack.
+            stack_desc =
+                GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address + UEFI_PAGE_SIZE as u64).unwrap();
+            assert_eq!((stack_desc.attributes & efi::MEMORY_XP), efi::MEMORY_XP);
+            assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
+
+            // confirm the MMIO memory allocation occurred in the GCD
+            let mmio_desc = GCD.get_memory_descriptor_for_address(0x10000000).unwrap();
+            assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
+            assert_eq!(mmio_desc.base_address, 0x10000000);
+            assert_eq!(mmio_desc.length, 0x2000);
+            assert_eq!(mmio_desc.image_handle, protocol_db::DXE_CORE_HANDLE);
+
+            // confirm the rest of the MMIO region is not allocated
+            let mmio_desc = GCD.get_memory_descriptor_for_address(0x10002000).unwrap();
+            assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
+            assert_eq!(mmio_desc.base_address, 0x10002000);
+            assert_eq!(mmio_desc.length, 0x1000000 - 0x2000);
+            assert_eq!(mmio_desc.image_handle, INVALID_HANDLE);
         })
         .unwrap();
+    }
 
-        // confirm the MMIO memory allocation occurred in the GCD
-        let mmio_desc = GCD.get_memory_descriptor_for_address(0x10000000).unwrap();
-        assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
-        assert_eq!(mmio_desc.base_address, 0x10000000);
-        assert_eq!(mmio_desc.length, 0x2000);
-        assert_eq!(mmio_desc.image_handle, protocol_db::DXE_CORE_HANDLE);
+    #[test]
+    #[should_panic]
+    fn should_have_stack_hob() {
+        test_support::with_global_lock(|| {
+            // 4 MiB of test memory is required because allocator expansion during initialization
+            // may need to handle large allocations for memory buckets and HOBs.
+            let physical_hob_list = build_test_hob_list(0x400000);
+            unsafe {
+                GCD.reset();
+                gcd::init_gcd(physical_hob_list);
+                test_support::init_test_protocol_db();
+                ALLOCATORS.lock().reset();
+            }
 
-        // confirm the rest of the MMIO region is not allocated
-        let mmio_desc = GCD.get_memory_descriptor_for_address(0x10002000).unwrap();
-        assert_eq!(mmio_desc.memory_type, dxe_services::GcdMemoryType::MemoryMappedIo);
-        assert_eq!(mmio_desc.base_address, 0x10002000);
-        assert_eq!(mmio_desc.length, 0x1000000 - 0x2000);
-        assert_eq!(mmio_desc.image_handle, INVALID_HANDLE);
+            let mut hob_list = HobList::default();
+            hob_list.discover_hobs(physical_hob_list);
+
+            init_memory_support(&hob_list);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn should_have_non_zero_stack_base_address_length() {
+        test_support::with_global_lock(|| {
+            // 4 MiB of test memory is required because allocator expansion during initialization
+            // may need to handle large allocations for memory buckets and HOBs.
+            let physical_hob_list = build_test_hob_list(0x400000);
+            unsafe {
+                GCD.reset();
+                gcd::init_gcd(physical_hob_list);
+                test_support::init_test_protocol_db();
+                ALLOCATORS.lock().reset();
+            }
+
+            let mut hob_list = HobList::default();
+            hob_list.discover_hobs(physical_hob_list);
+
+            let stack_hob = Hob::MemoryAllocation(&patina_pi::hob::MemoryAllocation {
+                header: patina_pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0x00000000,
+                },
+                alloc_descriptor: patina_pi::hob::header::MemoryAllocation {
+                    name: HOB_MEMORY_ALLOC_STACK,
+                    memory_base_address: 0,
+                    memory_length: 0,
+                    memory_type: efi::BOOT_SERVICES_DATA,
+                    reserved: Default::default(),
+                },
+            });
+            hob_list.push(stack_hob);
+
+            init_memory_support(&hob_list);
+        })
+        .unwrap();
     }
 
     #[test]
