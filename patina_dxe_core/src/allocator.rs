@@ -986,10 +986,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                             stack_length as usize,
                             attributes | efi::MEMORY_XP,
                         ) {
-                            Ok(_) => (),
-                            Err(EfiError::NotReady) => {
-                                // Expected if paging is not initialized yet.
-                            }
+                            Ok(_) | Err(EfiError::NotReady) => (),
                             Err(e) => {
                                 log::error!(
                                     "Could not set NX for memory address {:#X} for len {:#X} with error {:?}",
@@ -1007,10 +1004,7 @@ fn process_hob_allocations(hob_list: &HobList) {
                         UEFI_PAGE_SIZE,
                         attributes | efi::MEMORY_RP,
                     ) {
-                        Ok(_) => (),
-                        Err(EfiError::NotReady) => {
-                            // Expected if paging is not initialized yet.
-                        }
+                        Ok(_) | Err(EfiError::NotReady) => (),
                         Err(e) => {
                             log::error!(
                                 "Could not set RP for memory address {:#X} for len {:#X} with error {:?}",
@@ -1291,15 +1285,19 @@ mod tests {
                 })
                 .unwrap();
 
+            assert!(stack_hob.memory_base_address != 0);
+            assert!(stack_hob.memory_length != 0);
+
             // Check Guard Page.
             let mut stack_desc = GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address).unwrap();
-            //assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
+            assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
             assert_eq!((stack_desc.attributes & efi::MEMORY_RP), efi::MEMORY_RP);
 
             // Check rest of the stack.
             stack_desc =
                 GCD.get_memory_descriptor_for_address(stack_hob.memory_base_address + UEFI_PAGE_SIZE as u64).unwrap();
             assert_eq!((stack_desc.attributes & efi::MEMORY_XP), efi::MEMORY_XP);
+            assert_eq!(stack_desc.memory_type, dxe_services::GcdMemoryType::SystemMemory);
 
             // confirm the MMIO memory allocation occurred in the GCD
             let mmio_desc = GCD.get_memory_descriptor_for_address(0x10000000).unwrap();
