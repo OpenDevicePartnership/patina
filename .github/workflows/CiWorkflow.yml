@@ -16,10 +16,6 @@ on:
         required: false
         default: ""
         type: string
-    secrets:
-      PATINA_CRATES_IO_TOKEN:
-        description: "Token to access and publish to crates.io"
-        required: true
 
 jobs:
   basic_ci:
@@ -70,27 +66,6 @@ jobs:
       - name: 🛠️ Download Rust Tools 🛠️
         uses: OpenDevicePartnership/patina/.github/actions/rust-tool-cache@main
 
-      - name: Setup Cred Provider
-        if: runner.os == 'Linux'
-        run: |
-          mkdir -p ~/.cargo
-          cat <<EOF >> ~/.cargo/config.toml
-          [registry]
-          global-credential-providers = ["cargo:token"]
-          EOF
-
-      - name: Setup Cred Provider
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $path = "$HOME\.cargo\config.toml"
-          New-Item -ItemType Directory -Force -Path "$HOME\.cargo" | Out-Null
-          "[registry]" | Out-File -Append -FilePath $path
-          'global-credential-providers = ["cargo:token"]' | Out-File -Append -FilePath $path
-
-      - name: Login to Registry
-        run: cargo login "${{ secrets.PATINA_CRATES_IO_TOKEN }}"
-
       - name: Run cargo-vet
         run: cargo make vet
 
@@ -109,7 +84,7 @@ jobs:
 
       - name: Crate Release Dry Run
         if: ${{ !contains(github.event.pull_request.body, '(skip cargo release dry run)') }}
-        run: cargo release --no-tag --workspace --no-push --allow-branch '*'
+        run: cargo release alpha --no-tag --workspace --no-push --allow-branch '*'
         env:
           RUSTC_BOOTSTRAP: 1
 
