@@ -5,7 +5,6 @@ version.workspace = true
 repository.workspace = true
 license.workspace = true
 edition.workspace = true
-publish.workspace = true
 description = "Support for Firmware File System as described in the UEFI Platform Initialization Specification."
 
 [dependencies]

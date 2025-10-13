@@ -90,6 +90,12 @@ in the function interface of a component.
 | Option\<P\>                  | An Option, where P implements `Param`. Affects each param type differently. See [Option](#optionp) section for more details.       |
 <!-- markdownlint-enable -->
 
+``` admonish warning
+Certain combinations of parameters may lead to undefined behavior as they can allow multiple mutable accesses to the
+same data. Each parameter type checks for conflicts with previously registered accesses, but **ONLY** on debug builds.
+In release builds, these checks are disabled for performance and size reasons.
+```
+
 ### Config\<T\> / ConfigMut\<T\>
 
 `Config<T>` and `ConfigMut<T>` parameters are available for a platform or a component to produce a generic configuration
