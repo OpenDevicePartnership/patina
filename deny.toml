@@ -100,6 +100,9 @@ ignore = false
 # One or more private registries that you might publish crates to, if a crate
 # is only published to private registries, and ignore is true, the crate will
 # not have its license(s) checked
+#
+# This public registry was published to prior to moving to crates.io. It is left
+# here until the crates.io transition has stabilized.
 registries = [
     "sparse+https://pkgs.dev.azure.com/patina-fw/artifacts/_packaging/temporary/Cargo/index/",
 ]
@@ -194,6 +197,9 @@ unknown-git = "deny"
 # if not specified. If it is specified but empty, no registries are allowed.
 # allow-registry = ["registry+https://github.com/rust-lang/crates.io-index"]
 # List of URLs for allowed Git repositories
+#
+# This public registry was published to prior to moving to crates.io. It is left
+# here until the crates.io transition has stabilized.
 allow-git = []
 allow-registry = [
     "registry+https://github.com/rust-lang/crates.io-index",

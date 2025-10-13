@@ -17,8 +17,8 @@ on:
         default: ""
         type: string
     secrets:
-      PATINA_FW_TOKEN:
-        description: "Token to access the patina-fw registry"
+      PATINA_CRATES_IO_TOKEN:
+        description: "Token to access and publish to crates.io"
         required: true
 
 jobs:
@@ -89,7 +89,7 @@ jobs:
           'global-credential-providers = ["cargo:token"]' | Out-File -Append -FilePath $path
 
       - name: Login to Registry
-        run: cargo login "${{ secrets.PATINA_FW_TOKEN }}" --registry patina-fw
+        run: cargo login "${{ secrets.PATINA_CRATES_IO_TOKEN }}"
 
       - name: Run cargo-vet
         run: cargo make vet
@@ -109,7 +109,7 @@ jobs:
 
       - name: Crate Release Dry Run
         if: ${{ !contains(github.event.pull_request.body, '(skip cargo release dry run)') }}
-        run: cargo release --no-tag --workspace --no-push --allow-branch '*' --registry patina-fw
+        run: cargo release --no-tag --workspace --no-push --allow-branch '*'
         env:
           RUSTC_BOOTSTRAP: 1
 
