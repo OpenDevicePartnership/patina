@@ -1022,4 +1022,96 @@ mod tests {
         let acpi_base: AcpiBase = port.into();
         assert_eq!(acpi_base, AcpiBase::Io(0x1234));
     }
+
+    #[test]
+    fn test_efi_mm_communicate_header_header_guid() {
+        let test_guid = Guid::try_from_string("12345678-1234-5678-90AB-CDEF01234567").unwrap();
+        let message_length = 42usize;
+
+        let header = EfiMmCommunicateHeader::new(test_guid.clone(), message_length);
+
+        let returned_guid = header.header_guid();
+        assert_eq!(returned_guid.as_bytes(), test_guid.as_bytes());
+
+        let test_guid2 =
+            Guid::from_fields(0xDEADBEEF, 0xCAFE, 0xDCBA, 0x12, 0x34, [0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0]);
+        let header2 = EfiMmCommunicateHeader::new(test_guid2.clone(), message_length);
+
+        let returned_guid2 = header2.header_guid();
+        assert_eq!(returned_guid2.as_bytes(), test_guid2.as_bytes());
+
+        assert_ne!(returned_guid.as_bytes(), returned_guid2.as_bytes());
+    }
+
+    #[test]
+    fn test_efi_mm_communicate_header_message_length() {
+        let test_guid = Guid::try_from_string("12345678-1234-5678-90AB-CDEF01234567").unwrap();
+
+        let test_lengths = [0usize, 1, 42, 1024, usize::MAX];
+
+        for &length in &test_lengths {
+            let header = EfiMmCommunicateHeader::new(test_guid.clone(), length);
+            assert_eq!(header.message_length(), length);
+        }
+    }
+
+    #[test]
+    fn test_efi_mm_communicate_header_size() {
+        let expected_size = core::mem::size_of::<r_efi::efi::Guid>() + core::mem::size_of::<usize>();
+        assert_eq!(EfiMmCommunicateHeader::size(), expected_size);
+
+        let test_guid = Guid::try_from_string("12345678-1234-5678-90AB-CDEF01234567").unwrap();
+        let header = EfiMmCommunicateHeader::new(test_guid, 42);
+        assert_eq!(header.as_bytes().len(), EfiMmCommunicateHeader::size());
+    }
+
+    #[test]
+    fn test_mm_communication_configuration_display() {
+        let default_config = MmCommunicationConfiguration::default();
+        let display_output = format!("{}", default_config);
+
+        let expected_lines = [
+            "MM Communication Configuration:",
+            "  ACPI Base: MMIO(0x0)",
+            "  Command Port: SMI(0x00FF)",
+            "  Data Port: SMI(0x0000)",
+            "  Communication Buffers (0):",
+            "    <none>",
+        ];
+
+        for expected_line in &expected_lines {
+            assert!(
+                display_output.contains(expected_line),
+                "Display output should contain: '{}'\nActual output:\n{}",
+                expected_line,
+                display_output
+            );
+        }
+
+        let buffer1: &'static mut [u8; 64] = Box::leak(Box::new([0u8; 64]));
+        let buffer2: &'static mut [u8; 128] = Box::leak(Box::new([0u8; 128]));
+
+        let comm_buffer1 = CommunicateBuffer::new(Pin::new(buffer1), 1);
+        let comm_buffer2 = CommunicateBuffer::new(Pin::new(buffer2), 2);
+
+        let populated_config = MmCommunicationConfiguration {
+            acpi_base: AcpiBase::Io(0x1234),
+            cmd_port: MmiPort::Smc(0x87654321),
+            data_port: MmiPort::Smi(0xABCD),
+            comm_buffers: vec![comm_buffer1, comm_buffer2],
+        };
+
+        let populated_display = format!("{}", populated_config);
+
+        assert!(populated_display.contains("MM Communication Configuration:"));
+        assert!(populated_display.contains("  ACPI Base: IO(0x1234)"));
+        assert!(populated_display.contains("  Command Port: SMC(0x87654321)"));
+        assert!(populated_display.contains("  Data Port: SMI(0xABCD)"));
+        assert!(populated_display.contains("  Communication Buffers (2):"));
+
+        assert!(populated_display.contains("Buffer 0x01:"));
+        assert!(populated_display.contains("Buffer 0x02:"));
+        assert!(populated_display.contains("len=0x40")); // 64 bytes = 0x40
+        assert!(populated_display.contains("len=0x80")); // 128 bytes = 0x80
+    }
 }
