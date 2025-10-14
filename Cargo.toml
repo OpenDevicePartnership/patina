@@ -46,6 +46,7 @@ patina_mtrr = { version = "1.0.0" }
 patina_paging = { version = "9" }
 patina_performance = { version = "11.3.1", path = "components/patina_performance" }
 patina_pi = { version = "11.3.1", path = "sdk/patina_pi" }
+patina_smbios = {version = "11.3.1", path = "components/patina_smbios" }
 patina_stacktrace = { version = "11.3.1", path = "core/patina_stacktrace" }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
