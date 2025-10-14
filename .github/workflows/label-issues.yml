@@ -31,4 +31,5 @@ jobs:
       contents: read
       pull-requests: write
 
-    uses: ./.github/workflows/Labeler.yml
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/Labeler.yml@v0.0.1
+    secrets: inherit
