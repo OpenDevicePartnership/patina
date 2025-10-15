@@ -35,6 +35,10 @@ pub const SMBIOS_PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0x03583ff6, 0xcb36, 0x4940, 0x94, 0x7e, &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7]);
 
 /// SMBIOS 3.x Configuration Table GUID: F2FD1544-9794-4A2C-992E-E5BBCF20E394
+///
+/// This GUID identifies the SMBIOS 3.0+ entry point structure in the UEFI Configuration Table.
+/// Used for SMBIOS 3.0 and later versions which support 64-bit table addresses and remove
+/// the 4GB table size limitation of SMBIOS 2.x.
 pub const SMBIOS_3_X_TABLE_GUID: efi::Guid =
     efi::Guid::from_fields(0xF2FD1544, 0x9794, 0x4A2C, 0x99, 0x2E, &[0xE5, 0xBB, 0xCF, 0x20, 0xE3, 0x94]);
 
@@ -404,12 +408,34 @@ impl SmbiosManager {
 
     /// Builds the SMBIOS table and installs it in the UEFI Configuration Table
     ///
-    /// This function:
-    /// 1. Consolidates all records into a contiguous memory buffer
-    /// 2. Creates an SMBIOS 3.0 Entry Point Structure
-    /// 3. Installs it via the UEFI Configuration Table
+    /// This function performs the following steps:
+    /// 1. Consolidates all SMBIOS records into a contiguous memory buffer
+    /// 2. Creates an SMBIOS 3.x Entry Point Structure with proper checksum
+    /// 3. Allocates ACPI Reclaim memory for both the table and entry point
+    /// 4. Installs the entry point via the UEFI Configuration Table
     ///
-    /// Returns the table address and entry point for verification
+    /// # Arguments
+    ///
+    /// * `boot_services` - UEFI Boot Services for memory allocation and table installation
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple of `(table_address, entry_point_address)` containing the physical
+    /// addresses where the SMBIOS table data and entry point structure were allocated.
+    ///
+    /// # Errors
+    ///
+    /// * `SmbiosError::InvalidParameter` - No SMBIOS records have been added
+    /// * `SmbiosError::OutOfResources` - Failed to allocate memory or install the configuration table
+    ///
+    /// # Safety
+    ///
+    /// This function uses unsafe code for:
+    /// - Creating mutable slices to allocated memory
+    /// - Writing the entry point structure to allocated memory
+    /// - Calling the UEFI `install_configuration_table` interface
+    ///
+    /// All memory allocations use UEFI Boot Services and are properly tracked by the firmware.
     pub fn install_configuration_table(
         &self,
         boot_services: &patina::boot_services::StandardBootServices,
@@ -495,7 +521,24 @@ impl SmbiosManager {
         Ok((table_address as u64, ep_address as u64))
     }
 
-    /// Calculate checksum for SMBIOS 3.0 Entry Point Structure
+    /// Calculate checksum for SMBIOS 3.x Entry Point Structure
+    ///
+    /// Computes the checksum byte value such that the sum of all bytes in the
+    /// entry point structure equals zero (modulo 256). This is required by the
+    /// SMBIOS specification for entry point validation.
+    ///
+    /// # Arguments
+    ///
+    /// * `entry_point` - Reference to the SMBIOS 3.0 Entry Point Structure
+    ///
+    /// # Returns
+    ///
+    /// The checksum byte value that makes the structure's byte sum equal to zero
+    ///
+    /// # Safety
+    ///
+    /// Uses unsafe code to reinterpret the entry point structure as a byte slice
+    /// for checksum calculation. This is safe because the structure is repr(C, packed).
     fn calculate_checksum(entry_point: &Smbios30EntryPoint) -> u8 {
         let bytes = unsafe {
             core::slice::from_raw_parts(
