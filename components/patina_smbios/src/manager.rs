@@ -93,22 +93,6 @@ pub trait SmbiosRecords<'a> {
     /// - Validates string pool format and counts strings
     /// - Checks for string length violations
     /// - Detects malformed string pools
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use patina_smbios::smbios_record::Type0PlatformFirmwareInformation;
-    ///
-    /// let mut bios_info = Type0PlatformFirmwareInformation::new();
-    /// bios_info.string_pool = vec![
-    ///     "Vendor Name".to_string(),
-    ///     "Version 1.0".to_string(),
-    ///     "01/01/2025".to_string(),
-    /// ];
-    ///
-    /// let record_bytes = bios_info.to_bytes();
-    /// let handle = smbios_records.add_from_bytes(None, &record_bytes)?;
-    /// ```
     fn add_from_bytes(&self, producer_handle: Option<Handle>, record_data: &[u8]) -> Result<SmbiosHandle, SmbiosError>;
 
     /// Updates a string in an existing SMBIOS record.
@@ -229,21 +213,6 @@ impl SmbiosManager {
     /// - Empty string pool is just double null ("\0\0")
     /// - String indices in the record start at 1 (not 0)
     ///
-    /// # Examples
-    /// ```ignore
-    /// // Three strings: "Patina\0Firmware\0v1.0\0\0"
-    /// let pool = b"Patina\0Firmware\0v1.0\0\0";
-    /// let count = validate_and_count_strings(pool)?; // Returns 3
-    ///
-    /// // Empty pool: "\0\0"
-    /// let empty = b"\0\0";
-    /// let count = validate_and_count_strings(empty)?; // Returns 0
-    ///
-    /// // Invalid pool (single null): "\0"
-    /// let invalid = b"\0";
-    /// validate_and_count_strings(invalid); // Returns Err(InvalidParameter)
-    /// ```
-    ///
     /// # Errors
     /// Returns `SmbiosError::InvalidParameter` if:
     /// - The pool doesn't end with double null
@@ -341,15 +310,6 @@ impl SmbiosManager {
     /// # Returns
     ///
     /// Returns a complete SMBIOS record byte array ready to be added via `add_from_bytes`
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let header = SmbiosTableHeader::new(1, size_of::<MyStruct>(), SMBIOS_HANDLE_PI_RESERVED);
-    /// let strings = &["Manufacturer", "Product Name", "Version"];
-    /// let record = SmbiosManager::build_record_with_strings(&header, strings)?;
-    /// manager.add_from_bytes(None, &record)?;
-    /// ```
     #[allow(dead_code)]
     pub fn build_record_with_strings(header: &SmbiosTableHeader, strings: &[&str]) -> Result<Vec<u8>, SmbiosError> {
         // Validate all strings first
