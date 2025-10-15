@@ -47,7 +47,7 @@ impl SmbiosRecordStructure for VendorOemRecord {
 
 #[test]
 fn example_vendor_oem_adds_to_manager() {
-    let manager = SmbiosManager::new(3, 8);
+    let manager = SmbiosManager::new(3, 9);
 
     let rec = VendorOemRecord {
         header: SmbiosTableHeader::new(VendorOemRecord::RECORD_TYPE, 0, SMBIOS_HANDLE_PI_RESERVED),
