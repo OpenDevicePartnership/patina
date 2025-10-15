@@ -15,6 +15,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::ffi::{c_char, c_void};
 use core::sync::atomic::{AtomicPtr, Ordering};
+use patina::boot_services::BootServices;
 use patina::uefi_protocol::ProtocolInterface;
 use r_efi::efi;
 use r_efi::efi::Handle;
@@ -30,6 +31,10 @@ pub const SMBIOS_HANDLE_PI_RESERVED: SmbiosHandle = 0xFFFE;
 /// SMBIOS Protocol GUID: 03583ff6-cb36-4940-947e-b9b39f4afaf7
 pub const SMBIOS_PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0x03583ff6, 0xcb36, 0x4940, 0x94, 0x7e, &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7]);
+
+/// SMBIOS 3.x Configuration Table GUID: F2FD1544-9794-4A2C-992E-E5BBCF20E394
+pub const SMBIOS_3_X_TABLE_GUID: efi::Guid =
+    efi::Guid::from_fields(0xF2FD1544, 0x9794, 0x4A2C, 0x99, 0x2E, &[0xE5, 0xBB, 0xCF, 0x20, 0xE3, 0x94]);
 
 /// SMBIOS record type
 pub type SmbiosType = u8;
@@ -124,6 +129,15 @@ pub trait SmbiosRecords<'a> {
 
     /// Gets the SMBIOS version information.
     fn version(&self) -> (u8, u8); // (major, minor)
+
+    /// Publishes the SMBIOS table to the UEFI Configuration Table
+    ///
+    /// This should be called after all records have been added.
+    /// Returns (table_address, entry_point_address) on success.
+    fn publish_table(
+        &self,
+        boot_services: &patina::boot_services::StandardBootServices,
+    ) -> Result<(r_efi::efi::PhysicalAddress, r_efi::efi::PhysicalAddress), SmbiosError>;
 }
 
 /// SMBIOS 3.0 entry point structure (64-bit)
@@ -148,10 +162,8 @@ pub struct SmbiosManager {
     freed_handles: Vec<SmbiosHandle>,
     major_version: u8,
     minor_version: u8,
-    #[allow(dead_code)]
-    entry_point_64: Option<Box<Smbios30EntryPoint>>,
-    #[allow(dead_code)]
-    table_64_address: Option<PhysicalAddress>,
+    entry_point_64: RefCell<Option<Box<Smbios30EntryPoint>>>,
+    table_64_address: RefCell<Option<PhysicalAddress>>,
     lock: Mutex<()>,
 }
 
@@ -163,8 +175,8 @@ impl Clone for SmbiosManager {
             freed_handles: self.freed_handles.clone(),
             major_version: self.major_version,
             minor_version: self.minor_version,
-            entry_point_64: self.entry_point_64.as_ref().map(|ep| Box::new(**ep)),
-            table_64_address: self.table_64_address,
+            entry_point_64: RefCell::new(self.entry_point_64.borrow().as_ref().map(|ep| Box::new(**ep))),
+            table_64_address: RefCell::new(*self.table_64_address.borrow()),
             lock: Mutex::new(()),
         }
     }
@@ -178,8 +190,8 @@ impl SmbiosManager {
             freed_handles: Vec::new(),
             major_version,
             minor_version,
-            entry_point_64: None,
-            table_64_address: None,
+            entry_point_64: RefCell::new(None),
+            table_64_address: RefCell::new(None),
             lock: Mutex::new(()),
         }
     }
@@ -396,18 +408,124 @@ impl SmbiosManager {
         Ok(candidate)
     }
 
-    #[allow(dead_code)]
-    fn install_configuration_table(&self) -> Result<(), SmbiosError> {
-        // This would interact with UEFI Boot Services to install
-        // the SMBIOS 3.0+ table in the system configuration table
-        // Implementation depends on your UEFI framework
+    /// Builds the SMBIOS table and installs it in the UEFI Configuration Table
+    ///
+    /// This function:
+    /// 1. Consolidates all records into a contiguous memory buffer
+    /// 2. Creates an SMBIOS 3.0 Entry Point Structure
+    /// 3. Installs it via the UEFI Configuration Table
+    ///
+    /// Returns the table address and entry point for verification
+    pub fn install_configuration_table(
+        &self,
+        boot_services: &patina::boot_services::StandardBootServices,
+    ) -> Result<(PhysicalAddress, PhysicalAddress), SmbiosError> {
+        use patina::boot_services::allocation::{AllocType, MemoryType};
 
-        // For SMBIOS 3.0+
-        if let Some(_entry_point_64) = &self.entry_point_64 {
-            // Install with SMBIOS 3.0 GUID
+        let records = self.records.borrow();
+
+        // Step 1: Calculate total table size
+        let total_table_size: usize = records.iter().map(|r| r.data.len()).sum();
+
+        if total_table_size == 0 {
+            log::warn!("No SMBIOS records to install");
+            return Err(SmbiosError::InvalidParameter);
         }
 
-        Ok(())
+        log::info!("Building SMBIOS table: {} records, {} bytes", records.len(), total_table_size);
+
+        // Step 2: Allocate memory for the table (using UEFI Boot Services memory allocation)
+        let table_pages = total_table_size.div_ceil(4096);
+        let table_address = boot_services
+            .allocate_pages(
+                AllocType::AnyPage,
+                MemoryType::ACPI_RECLAIM_MEMORY, // SMBIOS tables go in ACPI Reclaim memory
+                table_pages,
+            )
+            .map_err(|_| SmbiosError::OutOfResources)?;
+
+        log::info!("Allocated SMBIOS table at 0x{:016X} ({} pages)", table_address, table_pages);
+
+        // Step 3: Copy all records to the table
+        unsafe {
+            let table_ptr = table_address as *mut u8;
+            let mut offset = 0;
+
+            for record in records.iter() {
+                core::ptr::copy_nonoverlapping(record.data.as_ptr(), table_ptr.add(offset), record.data.len());
+                offset += record.data.len();
+            }
+
+            log::info!("Copied {} bytes of SMBIOS data", offset);
+        }
+
+        // Step 4: Create SMBIOS 3.0 Entry Point Structure
+        let mut entry_point = Smbios30EntryPoint {
+            anchor_string: *b"_SM3_",
+            checksum: 0, // Will be calculated
+            length: core::mem::size_of::<Smbios30EntryPoint>() as u8,
+            major_version: self.major_version,
+            minor_version: self.minor_version,
+            doc_rev: 0,  // SMBIOS 3.0 document revision
+            revision: 1, // Entry point structure revision (0x01 for 3.0)
+            reserved: 0,
+            table_max_size: total_table_size as u32,
+            table_address: table_address as u64,
+        };
+
+        // Calculate checksum
+        entry_point.checksum = Self::calculate_checksum(&entry_point);
+
+        log::info!("Created SMBIOS 3.0 Entry Point Structure (checksum: 0x{:02X})", entry_point.checksum);
+
+        // Step 5: Allocate memory for entry point structure
+        let ep_pages = 1; // Entry point fits in one page
+        let ep_address = boot_services
+            .allocate_pages(AllocType::AnyPage, MemoryType::ACPI_RECLAIM_MEMORY, ep_pages)
+            .map_err(|_| SmbiosError::OutOfResources)?;
+
+        log::info!("Allocated SMBIOS Entry Point at 0x{:016X}", ep_address);
+
+        // Step 6: Copy entry point to allocated memory
+        unsafe {
+            let ep_ptr = ep_address as *mut Smbios30EntryPoint;
+            core::ptr::write(ep_ptr, entry_point);
+        }
+
+        // Step 7: Install in UEFI Configuration Table
+        unsafe {
+            boot_services.install_configuration_table(&SMBIOS_3_X_TABLE_GUID, ep_address as *mut c_void).map_err(
+                |e| {
+                    log::error!("Failed to install SMBIOS configuration table: {:?}", e);
+                    SmbiosError::OutOfResources
+                },
+            )?;
+        }
+
+        log::info!("✓ SMBIOS 3.0 table installed in UEFI Configuration Table");
+        log::info!("  Entry Point: 0x{:016X}", ep_address);
+        log::info!("  Table Address: 0x{:016X}", table_address);
+        log::info!("  Table Size: {} bytes ({} records)", total_table_size, records.len());
+
+        // Store addresses for future reference
+        drop(records); // Release borrow before mutating
+        self.entry_point_64.replace(Some(Box::new(entry_point)));
+        self.table_64_address.replace(Some(table_address as u64));
+
+        Ok((table_address as u64, ep_address as u64))
+    }
+
+    /// Calculate checksum for SMBIOS 3.0 Entry Point Structure
+    fn calculate_checksum(entry_point: &Smbios30EntryPoint) -> u8 {
+        let bytes = unsafe {
+            core::slice::from_raw_parts(
+                entry_point as *const _ as *const u8,
+                core::mem::size_of::<Smbios30EntryPoint>(),
+            )
+        };
+
+        let sum: u8 = bytes.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
+        0u8.wrapping_sub(sum)
     }
 }
 
@@ -573,6 +691,13 @@ impl SmbiosRecords<'static> for SmbiosManager {
 
     fn version(&self) -> (u8, u8) {
         (self.major_version, self.minor_version)
+    }
+
+    fn publish_table(
+        &self,
+        boot_services: &patina::boot_services::StandardBootServices,
+    ) -> Result<(r_efi::efi::PhysicalAddress, r_efi::efi::PhysicalAddress), SmbiosError> {
+        self.install_configuration_table(boot_services)
     }
 }
 

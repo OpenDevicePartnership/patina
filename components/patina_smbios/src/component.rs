@@ -124,4 +124,11 @@ impl SmbiosRecords<'static> for SmbiosProviderManager {
     fn version(&self) -> (u8, u8) {
         self.manager.version()
     }
+
+    fn publish_table(
+        &self,
+        boot_services: &patina::boot_services::StandardBootServices,
+    ) -> core::result::Result<(r_efi::efi::PhysicalAddress, r_efi::efi::PhysicalAddress), SmbiosError> {
+        self.manager.publish_table(boot_services)
+    }
 }
