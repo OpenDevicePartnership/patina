@@ -9,7 +9,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use patina_smbios::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SmbiosManager, SmbiosRecords, SmbiosTableHeader};
+use patina_smbios::manager::{SMBIOS_HANDLE_PI_RESERVED, SmbiosManager, SmbiosRecords, SmbiosTableHeader};
 use patina_smbios::smbios_record::{FieldInfo, FieldLayout, FieldType, SmbiosFieldLayout, SmbiosRecordStructure};
 use std::string::String;
 use std::vec::Vec;
@@ -34,7 +34,7 @@ impl SmbiosFieldLayout for VendorOemRecord {
 
 impl SmbiosRecordStructure for VendorOemRecord {
     const RECORD_TYPE: u8 = 0x80;
-    fn validate(&self) -> Result<(), patina_smbios::smbios_derive::SmbiosError> {
+    fn validate(&self) -> Result<(), patina_smbios::manager::SmbiosError> {
         Ok(())
     }
     fn string_pool(&self) -> &[String] {

@@ -10,7 +10,7 @@
 //!
 
 extern crate alloc;
-use crate::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SmbiosError, SmbiosTableHeader};
+use crate::manager::{SMBIOS_HANDLE_PI_RESERVED, SmbiosError, SmbiosTableHeader};
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -209,7 +209,7 @@ macro_rules! impl_smbios_record {
             fn validate(&self) -> Result<(), SmbiosError> {
                 // Basic validation for strings
                 for string in &self.$string_pool_field {
-                    if string.len() > crate::smbios_derive::SMBIOS_STRING_MAX_LENGTH {
+                    if string.len() > crate::manager::SMBIOS_STRING_MAX_LENGTH {
                         return Err(SmbiosError::StringTooLong);
                     }
                 }

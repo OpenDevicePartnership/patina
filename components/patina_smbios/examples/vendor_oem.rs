@@ -14,7 +14,7 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 use log::info;
-use patina_smbios::smbios_derive::{SMBIOS_HANDLE_PI_RESERVED, SmbiosManager, SmbiosTableHeader};
+use patina_smbios::manager::{SMBIOS_HANDLE_PI_RESERVED, SmbiosManager, SmbiosTableHeader};
 use patina_smbios::smbios_record::{
     FieldInfo, FieldLayout, FieldType, SmbiosFieldLayout, SmbiosRecordStructure, Type0PlatformFirmwareInformation,
     Type1SystemInformation, Type2BaseboardInformation, Type3SystemEnclosure,
@@ -42,7 +42,7 @@ impl SmbiosFieldLayout for VendorOemRecord {
 impl SmbiosRecordStructure for VendorOemRecord {
     const RECORD_TYPE: u8 = 0x80; // vendor-specific type
 
-    fn validate(&self) -> Result<(), patina_smbios::smbios_derive::SmbiosError> {
+    fn validate(&self) -> Result<(), patina_smbios::manager::SmbiosError> {
         // basic validation
         Ok(())
     }
@@ -70,7 +70,7 @@ fn main() {
     let bytes = rec.to_bytes();
 
     // Bring trait into scope so `add_from_bytes` and `get_next` methods are available on the manager
-    use patina_smbios::smbios_derive::SmbiosRecords;
+    use patina_smbios::manager::SmbiosRecords;
 
     let _handle = manager.add_from_bytes(None, &bytes).expect("add_from_bytes failed");
 
