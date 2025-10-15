@@ -676,7 +676,7 @@ impl SmbiosRecords<'static> for SmbiosManager {
 
 /// SMBIOS table header structure
 #[repr(C, packed)]
-#[derive(Debug, Clone, FromBytes, IntoBytes, Immutable, KnownLayout)]
+#[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 pub struct SmbiosTableHeader {
     pub record_type: SmbiosType,
     pub length: u8,
@@ -1171,5 +1171,397 @@ mod tests {
 
         assert_eq!(found_header.record_type, Type0PlatformFirmwareInformation::RECORD_TYPE);
         assert_eq!(search_handle, handle);
+    }
+
+    #[test]
+    fn test_validate_string_success() {
+        // Valid string should pass
+        assert!(SmbiosManager::validate_string("Valid String").is_ok());
+        assert!(SmbiosManager::validate_string("").is_ok()); // Empty is valid
+    }
+
+    #[test]
+    fn test_validate_string_too_long() {
+        // String longer than 64 bytes should fail
+        let long_string = "a".repeat(SMBIOS_STRING_MAX_LENGTH + 1);
+        assert_eq!(SmbiosManager::validate_string(&long_string), Err(SmbiosError::StringTooLong));
+    }
+
+    #[test]
+    fn test_validate_string_with_null() {
+        // String containing null should fail
+        assert_eq!(SmbiosManager::validate_string("test\0string"), Err(SmbiosError::InvalidParameter));
+    }
+
+    #[test]
+    fn test_validate_and_count_strings_empty_pool() {
+        // Empty string pool (just double null)
+        let pool = [0u8, 0u8];
+        assert_eq!(SmbiosManager::validate_and_count_strings(&pool), Ok(0));
+    }
+
+    #[test]
+    fn test_validate_and_count_strings_single_string() {
+        // Single string: "test\0\0"
+        let pool = b"test\0\0";
+        assert_eq!(SmbiosManager::validate_and_count_strings(pool), Ok(1));
+    }
+
+    #[test]
+    fn test_validate_and_count_strings_multiple_strings() {
+        // Multiple strings: "first\0second\0third\0\0"
+        let pool = b"first\0second\0third\0\0";
+        assert_eq!(SmbiosManager::validate_and_count_strings(pool), Ok(3));
+    }
+
+    #[test]
+    fn test_validate_and_count_strings_too_short() {
+        // Pool too short (< 2 bytes)
+        let pool = [0u8];
+        assert_eq!(SmbiosManager::validate_and_count_strings(&pool), Err(SmbiosError::InvalidParameter));
+    }
+
+    #[test]
+    fn test_validate_and_count_strings_no_double_null() {
+        // Pool doesn't end with double null
+        let pool = b"test\0";
+        assert_eq!(SmbiosManager::validate_and_count_strings(pool), Err(SmbiosError::InvalidParameter));
+    }
+
+    #[test]
+    fn test_validate_and_count_strings_consecutive_nulls() {
+        // Consecutive nulls in the middle (invalid)
+        let pool = b"test\0\0extra\0\0";
+        assert_eq!(SmbiosManager::validate_and_count_strings(pool), Err(SmbiosError::InvalidParameter));
+    }
+
+    #[test]
+    fn test_validate_and_count_strings_too_long_string() {
+        // String exceeding max length
+        let mut pool = vec![b'a'; SMBIOS_STRING_MAX_LENGTH + 1];
+        pool.push(0); // null terminator
+        pool.push(0); // double null
+        assert_eq!(SmbiosManager::validate_and_count_strings(&pool), Err(SmbiosError::StringTooLong));
+    }
+
+    #[test]
+    fn test_parse_strings_from_pool() {
+        let pool = b"first\0second\0third\0\0";
+        let strings = SmbiosManager::parse_strings_from_pool(pool).expect("parse failed");
+        assert_eq!(strings.len(), 3);
+        assert_eq!(strings[0], "first");
+        assert_eq!(strings[1], "second");
+        assert_eq!(strings[2], "third");
+    }
+
+    #[test]
+    fn test_parse_strings_from_pool_empty() {
+        let pool = b"\0\0";
+        let strings = SmbiosManager::parse_strings_from_pool(pool).expect("parse failed");
+        assert_eq!(strings.len(), 0);
+    }
+
+    #[test]
+    fn test_build_record_with_strings() {
+        let header = SmbiosTableHeader::new(1, 10, SMBIOS_HANDLE_PI_RESERVED);
+        let strings = &["Manufacturer", "Product"];
+        let record = SmbiosManager::build_record_with_strings(&header, strings).expect("build failed");
+
+        // Should have header + strings + double null
+        assert!(record.len() >= core::mem::size_of::<SmbiosTableHeader>());
+        assert_eq!(record[0], 1); // record type
+    }
+
+    #[test]
+    fn test_build_record_with_no_strings() {
+        let header = SmbiosTableHeader::new(1, 10, SMBIOS_HANDLE_PI_RESERVED);
+        let strings: &[&str] = &[];
+        let record = SmbiosManager::build_record_with_strings(&header, strings).expect("build failed");
+
+        // Should end with double null
+        assert_eq!(record[record.len() - 1], 0);
+        assert_eq!(record[record.len() - 2], 0);
+    }
+
+    #[test]
+    fn test_build_record_with_invalid_string() {
+        let header = SmbiosTableHeader::new(1, 10, SMBIOS_HANDLE_PI_RESERVED);
+        let long_string = "a".repeat(SMBIOS_STRING_MAX_LENGTH + 1);
+        let strings = &[long_string.as_str()];
+        assert_eq!(SmbiosManager::build_record_with_strings(&header, strings), Err(SmbiosError::StringTooLong));
+    }
+
+    #[test]
+    fn test_version() {
+        let manager = SmbiosManager::new(3, 9);
+        assert_eq!(manager.version(), (3, 9));
+    }
+
+    #[test]
+    fn test_allocate_handle_sequential() {
+        let manager = SmbiosManager::new(3, 9);
+
+        // First allocation should be handle 1
+        let handle1 = manager.allocate_handle().expect("allocation failed");
+        assert_eq!(handle1, 1);
+
+        // Second should be 2
+        let handle2 = manager.allocate_handle().expect("allocation failed");
+        assert_eq!(handle2, 2);
+    }
+
+    #[test]
+    fn test_handle_reuse_after_remove() {
+        let manager = SmbiosManager::new(3, 9);
+
+        // Create a minimal record with proper length
+        let mut record_data = vec![1u8, 4, 0, 0]; // type, length=4 (just the header), handle placeholder
+        record_data.extend_from_slice(b"\0\0"); // Empty string pool
+
+        // Add record
+        let handle1 = manager.add_from_bytes(None, &record_data).expect("add failed");
+
+        // Remove it
+        manager.remove(handle1).expect("remove failed");
+
+        // Next allocation should reuse the freed handle
+        let mut record_data2 = vec![2u8, 4, 0, 0];
+        record_data2.extend_from_slice(b"\0\0");
+        let handle2 = manager.add_from_bytes(None, &record_data2).expect("add failed");
+
+        assert_eq!(handle1, handle2); // Should be reused
+    }
+
+    #[test]
+    fn test_update_string_success() {
+        let manager = SmbiosManager::new(3, 9);
+
+        // Create a record with strings - need proper structured length
+        let mut record_data = vec![1u8, 4, 0, 0]; // type, length=4, handle
+        record_data.extend_from_slice(b"original\0\0");
+
+        let handle = manager.add_from_bytes(None, &record_data).expect("add failed");
+
+        // Update the string
+        manager.update_string(handle, 1, "updated").expect("update failed");
+
+        // Verify the update (indirectly by checking no error)
+        assert!(manager.update_string(handle, 1, "another").is_ok());
+    }
+
+    #[test]
+    fn test_update_string_handle_not_found() {
+        let manager = SmbiosManager::new(3, 9);
+
+        // Try to update a non-existent handle
+        assert_eq!(manager.update_string(999, 1, "test"), Err(SmbiosError::HandleNotFound));
+    }
+
+    #[test]
+    fn test_update_string_invalid_string_number() {
+        let manager = SmbiosManager::new(3, 9);
+
+        // Create a record with one string
+        let mut record_data = vec![1u8, 4, 0, 0]; // Minimal header
+        record_data.extend_from_slice(b"test\0\0");
+
+        let handle = manager.add_from_bytes(None, &record_data).expect("add failed");
+
+        // Try to update string 0 (invalid)
+        assert_eq!(manager.update_string(handle, 0, "new"), Err(SmbiosError::InvalidHandle));
+
+        // Try to update string 2 (doesn't exist, only 1 string)
+        assert_eq!(manager.update_string(handle, 2, "new"), Err(SmbiosError::InvalidHandle));
+    }
+
+    #[test]
+    fn test_update_string_too_long() {
+        let manager = SmbiosManager::new(3, 9);
+
+        let mut record_data = vec![1u8, 4, 0, 0]; // Minimal header
+        record_data.extend_from_slice(b"test\0\0");
+
+        let handle = manager.add_from_bytes(None, &record_data).expect("add failed");
+
+        let long_string = "a".repeat(SMBIOS_STRING_MAX_LENGTH + 1);
+        assert_eq!(manager.update_string(handle, 1, &long_string), Err(SmbiosError::StringTooLong));
+    }
+
+    #[test]
+    fn test_remove_success() {
+        let manager = SmbiosManager::new(3, 9);
+
+        let mut record_data = vec![1u8, 4, 0, 0]; // Minimal header
+        record_data.extend_from_slice(b"\0\0");
+
+        let handle = manager.add_from_bytes(None, &record_data).expect("add failed");
+
+        // Remove should succeed
+        assert!(manager.remove(handle).is_ok());
+
+        // Second remove should fail
+        assert_eq!(manager.remove(handle), Err(SmbiosError::HandleNotFound));
+    }
+
+    #[test]
+    fn test_get_next_empty_manager() {
+        let manager = SmbiosManager::new(3, 9);
+        let mut handle = SMBIOS_HANDLE_PI_RESERVED;
+
+        // Getting next from empty manager should fail
+        assert_eq!(manager.get_next(&mut handle, None), Err(SmbiosError::HandleNotFound));
+    }
+
+    #[test]
+    fn test_get_next_iterate_all() {
+        let manager = SmbiosManager::new(3, 9);
+
+        // Add multiple records
+        for i in 1..=3 {
+            let mut record_data = vec![i, 4, 0, 0]; // type, length=4 (header only)
+            record_data.extend_from_slice(b"\0\0"); // Empty string pool
+            manager.add_from_bytes(None, &record_data).expect("add failed");
+        }
+
+        // Iterate through all records
+        let mut handle = SMBIOS_HANDLE_PI_RESERVED;
+        let mut count = 0;
+
+        while manager.get_next(&mut handle, None).is_ok() {
+            count += 1;
+        }
+
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_get_next_with_type_filter() {
+        let manager = SmbiosManager::new(3, 9);
+
+        // Add records of different types
+        for record_type in [1u8, 2, 1, 3, 1] {
+            let mut record_data = vec![record_type, 4, 0, 0]; // header only
+            record_data.extend_from_slice(b"\0\0"); // Empty string pool
+            manager.add_from_bytes(None, &record_data).expect("add failed");
+        }
+
+        // Count only type 1 records
+        let mut handle = SMBIOS_HANDLE_PI_RESERVED;
+        let mut count = 0;
+
+        while let Ok((header, _)) = manager.get_next(&mut handle, Some(1)) {
+            // Copy to avoid unaligned reference
+            let rt = header.record_type;
+            assert_eq!(rt, 1);
+            count += 1;
+        }
+
+        assert_eq!(count, 3); // Should find 3 type-1 records
+    }
+
+    #[test]
+    fn test_add_from_bytes_buffer_too_small() {
+        let manager = SmbiosManager::new(3, 9);
+
+        // Buffer smaller than header
+        let small_buffer = vec![1u8, 2];
+        assert_eq!(manager.add_from_bytes(None, &small_buffer), Err(SmbiosError::BufferTooSmall));
+    }
+
+    #[test]
+    fn test_add_from_bytes_invalid_length() {
+        let manager = SmbiosManager::new(3, 9);
+
+        // Header claims length larger than buffer
+        let invalid_data = vec![1u8, 255, 0, 0, 0, 0]; // length=255 but buffer is tiny
+        assert_eq!(manager.add_from_bytes(None, &invalid_data), Err(SmbiosError::BufferTooSmall));
+    }
+
+    #[test]
+    fn test_add_from_bytes_no_string_pool() {
+        let manager = SmbiosManager::new(3, 9);
+
+        // Valid header but no room for string pool (needs at least 2 bytes for double null)
+        let mut data = vec![1u8, 10, 0, 0]; // length=10
+        data.extend_from_slice(&[0u8; 6]); // structured data (6 bytes to reach length-4 = 6 bytes)
+        // Missing string pool (no double null) - total is 10 bytes which equals length,
+        // leaving no room for the required 2-byte string pool terminator
+
+        assert_eq!(manager.add_from_bytes(None, &data), Err(SmbiosError::BufferTooSmall));
+    }
+
+    #[test]
+    fn test_calculate_checksum() {
+        let entry_point = Smbios30EntryPoint {
+            anchor_string: *b"_SM3_",
+            checksum: 0,
+            length: 24,
+            major_version: 3,
+            minor_version: 9,
+            doc_rev: 0,
+            revision: 1,
+            reserved: 0,
+            table_max_size: 0x1000,
+            table_address: 0x80000000,
+        };
+
+        let checksum = SmbiosManager::calculate_checksum(&entry_point);
+
+        // The checksum should make the total sum equal to zero
+        let mut test_entry = entry_point;
+        test_entry.checksum = checksum;
+
+        let bytes = unsafe {
+            core::slice::from_raw_parts(
+                &test_entry as *const _ as *const u8,
+                core::mem::size_of::<Smbios30EntryPoint>(),
+            )
+        };
+
+        let sum: u8 = bytes.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
+        assert_eq!(sum, 0);
+    }
+
+    #[test]
+    fn test_smbios_record_builder_with_fields() {
+        let record = SmbiosRecordBuilder::new(3) // Enclosure type
+            .add_field(1u8) // manufacturer
+            .add_field(2u8) // type
+            .add_field(3u8) // version
+            .add_string(String::from("Chassis Manufacturer"))
+            .expect("string add failed")
+            .add_string(String::from("Tower"))
+            .expect("string add failed")
+            .add_string(String::from("v1.0"))
+            .expect("string add failed")
+            .build()
+            .expect("build failed");
+
+        assert_eq!(record[0], 3); // record type
+        assert!(record.len() > 10);
+    }
+
+    #[test]
+    fn test_smbios_error_types() {
+        // Test that error enum derives are working
+        let err1 = SmbiosError::InvalidParameter;
+        let err2 = SmbiosError::InvalidParameter;
+        assert_eq!(err1, err2);
+
+        let err3 = SmbiosError::OutOfResources;
+        assert_ne!(err1, err3);
+    }
+
+    #[test]
+    fn test_smbios_table_header_new() {
+        let header = SmbiosTableHeader::new(5, 20, 42);
+        // Copy packed fields to avoid unaligned reference
+        let record_type = header.record_type;
+        let length = header.length;
+        let handle = header.handle;
+
+        assert_eq!(record_type, 5);
+        assert_eq!(length, 20);
+        assert_eq!(handle, 42);
     }
 }
