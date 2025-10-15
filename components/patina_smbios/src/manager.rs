@@ -149,21 +149,6 @@ pub struct SmbiosManager {
     lock: Mutex<()>,
 }
 
-impl Clone for SmbiosManager {
-    fn clone(&self) -> Self {
-        Self {
-            records: RefCell::new(self.records.borrow().clone()),
-            next_handle: RefCell::new(*self.next_handle.borrow()),
-            freed_handles: RefCell::new(self.freed_handles.borrow().clone()),
-            major_version: self.major_version,
-            minor_version: self.minor_version,
-            entry_point_64: RefCell::new(self.entry_point_64.borrow().as_ref().map(|ep| Box::new(**ep))),
-            table_64_address: RefCell::new(*self.table_64_address.borrow()),
-            lock: Mutex::new(()),
-        }
-    }
-}
-
 impl SmbiosManager {
     pub fn new(major_version: u8, minor_version: u8) -> Self {
         Self {
@@ -707,7 +692,6 @@ impl SmbiosTableHeader {
 /// Internal SMBIOS record representation
 ///
 /// This implementation is for SMBIOS 3.0+ specification which uses 64-bit addressing.
-#[derive(Clone)]
 pub struct SmbiosRecord {
     pub header: SmbiosTableHeader,
     pub producer_handle: Option<Handle>,
@@ -793,6 +777,24 @@ static SMBIOS_PROTOCOL_INTERFACE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::
 
 /// Storage for the protocol handle
 static SMBIOS_PROTOCOL_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Gets a reference to the global SMBIOS manager
+///
+/// # Returns
+///
+/// Returns `Some(&Mutex<SmbiosManager>)` if the manager has been installed,
+/// `None` if `install_smbios_protocol` has not been called yet.
+///
+/// # Safety
+///
+/// This is safe because:
+/// - The manager pointer is only set once via `install_smbios_protocol`
+/// - Once set, it points to a leaked Box with 'static lifetime
+/// - The Mutex provides interior mutability and thread-safety
+pub fn get_global_smbios_manager() -> Option<&'static Mutex<SmbiosManager>> {
+    let ptr = SMBIOS_MANAGER.load(Ordering::Acquire);
+    if ptr.is_null() { None } else { Some(unsafe { &*ptr }) }
+}
 
 #[repr(C)]
 #[allow(dead_code)]
@@ -1036,33 +1038,37 @@ impl SmbiosProtocol {
 /// Installs the SMBIOS protocol for C/EDKII driver compatibility
 ///
 /// This function should be called after the SMBIOS service is registered.
-/// It creates a C-compatible protocol interface that wraps the Rust manager.
+/// It creates a C-compatible protocol interface that wraps a global manager instance.
 ///
 /// # Arguments
 ///
-/// * `manager` - A reference to the SmbiosManager that will handle protocol calls
+/// * `manager` - The SmbiosManager that will be moved into global storage
 /// * `boot_services` - The UEFI boot services for protocol installation
 ///
 /// # Safety
 ///
-/// This function leaks the manager reference (Box::leak) to ensure it has 'static lifetime.
+/// This function takes ownership of the manager and leaks it to ensure 'static lifetime.
+/// The manager must not already be installed (function will return error if called twice).
 /// The protocol will remain installed for the lifetime of the system.
 pub fn install_smbios_protocol(
-    manager: &SmbiosManager,
+    manager: SmbiosManager,
     boot_services: &impl patina::boot_services::BootServices,
 ) -> Result<efi::Handle, SmbiosError> {
-    // Clone the manager and wrap it in a Mutex for thread-safe access
-    let manager_clone = manager.clone();
-    let manager_mutex = Box::new(Mutex::new(manager_clone));
+    // Check if already installed
+    let existing = SMBIOS_MANAGER.load(Ordering::SeqCst);
+    if !existing.is_null() {
+        return Err(SmbiosError::InvalidParameter); // Already installed
+    }
 
-    // Leak the mutex to get a 'static reference
+    // Get the version before moving the manager
+    let (major, minor) = manager.version();
+
+    // Wrap in Mutex and leak to get 'static lifetime
+    let manager_mutex = Box::new(Mutex::new(manager));
     let manager_ptr = Box::into_raw(manager_mutex);
 
     // Store the manager pointer globally
     SMBIOS_MANAGER.store(manager_ptr, Ordering::SeqCst);
-
-    // Get the version from the manager
-    let (major, minor) = unsafe { (*manager_ptr).lock().version() };
 
     // Create the protocol instance
     let protocol = SmbiosProtocol::new(major, minor);
@@ -1091,7 +1097,8 @@ pub fn install_smbios_protocol(
             // Clean up on failure
             unsafe {
                 let _ = Box::from_raw(interface);
-                let _ = Box::from_raw(manager_ptr);
+                let manager_box = Box::from_raw(manager_ptr);
+                drop(manager_box); // Properly drop the manager
             }
             SMBIOS_MANAGER.store(core::ptr::null_mut(), Ordering::SeqCst);
             SMBIOS_PROTOCOL_INTERFACE.store(core::ptr::null_mut(), Ordering::SeqCst);

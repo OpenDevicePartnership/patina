@@ -11,9 +11,9 @@
 
 extern crate alloc;
 use crate::manager::{
-    SmbiosError, SmbiosHandle, SmbiosManager, SmbiosRecords, SmbiosTableHeader, SmbiosType, install_smbios_protocol,
+    SmbiosError, SmbiosHandle, SmbiosManager, SmbiosRecords, SmbiosTableHeader, SmbiosType, get_global_smbios_manager,
+    install_smbios_protocol,
 };
-use core::cell::RefCell;
 use patina::{
     boot_services::StandardBootServices,
     component::{
@@ -41,16 +41,15 @@ impl Default for SmbiosConfiguration {
 
 /// Initializes and exposes an SMBIOS provider service.
 ///
-/// The provider wraps an internal [`SmbiosManager`] in a `RefCell` for interior mutability,
-/// allowing the service to be used through immutable references while still supporting
-/// mutable operations like adding and updating records.
+/// The provider installs a global SMBIOS manager instance that is accessible throughout
+/// the boot process. This ensures a single source of truth for SMBIOS data and allows
+/// both Rust services and C/EDKII drivers to access the same SMBIOS tables.
 ///
-/// It also attempts to install a C/EDKII compatible protocol (best‑effort; non‑fatal on failure)
-/// for mixed Rust/C driver ecosystems.
+/// The global instance is thread-safe via an internal Mutex and has 'static lifetime.
 #[derive(IntoComponent, IntoService)]
 #[service(dyn SmbiosRecords<'static>)]
 pub struct SmbiosProviderManager {
-    manager: RefCell<SmbiosManager>,
+    // No internal state - uses global singleton
 }
 
 impl Default for SmbiosProviderManager {
@@ -60,9 +59,9 @@ impl Default for SmbiosProviderManager {
 }
 
 impl SmbiosProviderManager {
-    /// Create a new SMBIOS provider manager with default SMBIOS 3.9 version
+    /// Create a new SMBIOS provider manager
     pub fn new() -> Self {
-        Self { manager: RefCell::new(SmbiosManager::new(3, 9)) }
+        Self {}
     }
 
     /// Initialize the SMBIOS provider and register it as a service
@@ -74,17 +73,18 @@ impl SmbiosProviderManager {
     ) -> Result<()> {
         let cfg = config.map(|c| (*c).clone()).unwrap_or_default();
 
-        // Update manager with configured version
-        *self.manager.borrow_mut() = SmbiosManager::new(cfg.major_version, cfg.minor_version);
+        // Create the manager with configured version
+        let manager = SmbiosManager::new(cfg.major_version, cfg.minor_version);
 
-        // Install the C protocol for EDKII compatibility
-        match install_smbios_protocol(&self.manager.borrow(), &boot_services) {
+        // Install the protocol - this transfers ownership to the global singleton
+        match install_smbios_protocol(manager, &boot_services) {
             Ok(handle) => {
-                log::info!("SMBIOS C protocol installed successfully at handle {:?}", handle);
+                log::info!("SMBIOS protocol installed successfully at handle {:?}", handle);
             }
             Err(e) => {
-                log::warn!("Failed to install SMBIOS C protocol: {:?}", e);
-                // Continue anyway - the Rust service will still work
+                log::error!("Failed to install SMBIOS protocol: {:?}", e);
+                // Cannot proceed without the manager - this is a fatal error
+                panic!("SMBIOS manager installation failed");
             }
         }
 
@@ -95,14 +95,15 @@ impl SmbiosProviderManager {
     }
 }
 
-// Delegate the SmbiosRecords trait implementation to the inner manager using interior mutability
+// Delegate the SmbiosRecords trait implementation to the global manager
 impl SmbiosRecords<'static> for SmbiosProviderManager {
     fn add_from_bytes(
         &self,
         producer_handle: Option<r_efi::efi::Handle>,
         record_data: &[u8],
     ) -> core::result::Result<SmbiosHandle, SmbiosError> {
-        self.manager.borrow_mut().add_from_bytes(producer_handle, record_data)
+        let manager = get_global_smbios_manager().ok_or(SmbiosError::OutOfResources)?;
+        manager.lock().add_from_bytes(producer_handle, record_data)
     }
 
     fn update_string(
@@ -111,11 +112,13 @@ impl SmbiosRecords<'static> for SmbiosProviderManager {
         string_number: usize,
         string: &str,
     ) -> core::result::Result<(), SmbiosError> {
-        self.manager.borrow_mut().update_string(smbios_handle, string_number, string)
+        let manager = get_global_smbios_manager().ok_or(SmbiosError::OutOfResources)?;
+        manager.lock().update_string(smbios_handle, string_number, string)
     }
 
     fn remove(&self, smbios_handle: SmbiosHandle) -> core::result::Result<(), SmbiosError> {
-        self.manager.borrow_mut().remove(smbios_handle)
+        let manager = get_global_smbios_manager().ok_or(SmbiosError::OutOfResources)?;
+        manager.lock().remove(smbios_handle)
     }
 
     fn get_next(
@@ -123,17 +126,20 @@ impl SmbiosRecords<'static> for SmbiosProviderManager {
         smbios_handle: &mut SmbiosHandle,
         record_type: Option<SmbiosType>,
     ) -> core::result::Result<(SmbiosTableHeader, Option<r_efi::efi::Handle>), SmbiosError> {
-        self.manager.borrow().get_next(smbios_handle, record_type)
+        let manager = get_global_smbios_manager().ok_or(SmbiosError::OutOfResources)?;
+        manager.lock().get_next(smbios_handle, record_type)
     }
 
     fn version(&self) -> (u8, u8) {
-        self.manager.borrow().version()
+        let manager = get_global_smbios_manager().expect("SMBIOS manager not installed");
+        manager.lock().version()
     }
 
     fn publish_table(
         &self,
         boot_services: &patina::boot_services::StandardBootServices,
     ) -> core::result::Result<(r_efi::efi::PhysicalAddress, r_efi::efi::PhysicalAddress), SmbiosError> {
-        self.manager.borrow().publish_table(boot_services)
+        let manager = get_global_smbios_manager().ok_or(SmbiosError::OutOfResources)?;
+        manager.lock().publish_table(boot_services)
     }
 }

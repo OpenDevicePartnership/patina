@@ -19,6 +19,7 @@ pub mod manager;
 pub mod smbios_record;
 
 pub use component::SmbiosConfiguration;
+pub use manager::get_global_smbios_manager;
 
 #[cfg(test)]
 mod tests {
