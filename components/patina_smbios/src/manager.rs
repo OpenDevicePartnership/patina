@@ -123,19 +123,20 @@ pub trait SmbiosRecords<'a> {
 }
 
 /// SMBIOS 3.0 entry point structure (64-bit)
+/// Per SMBIOS 3.0+ specification section 5.2.2
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct Smbios30EntryPoint {
-    pub anchor_string: [u8; 5], // "_SM3_"
-    pub checksum: u8,
-    pub length: u8,
-    pub major_version: u8,
-    pub minor_version: u8,
-    pub doc_rev: u8,
-    pub revision: u8,
-    pub reserved: u8,
-    pub table_max_size: u32,
-    pub table_address: u64,
+    pub anchor_string: [u8; 5],   // 0x00: "_SM3_"
+    pub checksum: u8,             // 0x05: Entry Point Structure Checksum
+    pub length: u8,               // 0x06: Entry Point Length (0x18 = 24 bytes)
+    pub major_version: u8,        // 0x07: SMBIOS Major Version
+    pub minor_version: u8,        // 0x08: SMBIOS Minor Version
+    pub docrev: u8,               // 0x09: SMBIOS Docrev (spec revision)
+    pub entry_point_revision: u8, // 0x0A: Entry Point Structure Revision (0x01)
+    pub reserved: u8,             // 0x0B: Reserved (must be 0x00)
+    pub table_max_size: u32,      // 0x0C: Structure Table Maximum Size
+    pub table_address: u64,       // 0x10: Structure Table Address (64-bit)
 }
 
 pub struct SmbiosManager {
@@ -419,15 +420,15 @@ impl SmbiosManager {
             }
         }
 
-        // Step 4: Create SMBIOS 3.0 Entry Point Structure
+        // Step 4: Create SMBIOS 3.0+ Entry Point Structure
         let mut entry_point = Smbios30EntryPoint {
             anchor_string: *b"_SM3_",
-            checksum: 0, // Will be calculated
+            checksum: 0,
             length: core::mem::size_of::<Smbios30EntryPoint>() as u8,
             major_version: self.major_version,
             minor_version: self.minor_version,
-            doc_rev: 0,  // SMBIOS 3.0 document revision
-            revision: 1, // Entry point structure revision (0x01 for 3.0)
+            docrev: 0,
+            entry_point_revision: 1,
             reserved: 0,
             table_max_size: total_table_size as u32,
             table_address: table_address as u64,
@@ -1498,8 +1499,8 @@ mod tests {
             length: 24,
             major_version: 3,
             minor_version: 9,
-            doc_rev: 0,
-            revision: 1,
+            docrev: 0,
+            entry_point_revision: 1,
             reserved: 0,
             table_max_size: 0x1000,
             table_address: 0x80000000,
