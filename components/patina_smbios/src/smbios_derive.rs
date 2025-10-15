@@ -18,6 +18,7 @@ use core::ffi::{c_char, c_void};
 use core::sync::atomic::{AtomicPtr, Ordering};
 use patina::boot_services::BootServices;
 use patina::uefi_protocol::ProtocolInterface;
+use patina::uefi_size_to_pages;
 use r_efi::efi;
 use r_efi::efi::Handle;
 use r_efi::efi::PhysicalAddress;
@@ -436,7 +437,7 @@ impl SmbiosManager {
         log::info!("Building SMBIOS table: {} records, {} bytes", records.len(), total_table_size);
 
         // Step 2: Allocate memory for the table (using UEFI Boot Services memory allocation)
-        let table_pages = total_table_size.div_ceil(4096);
+        let table_pages = uefi_size_to_pages!(total_table_size);
         let table_address = boot_services
             .allocate_pages(
                 AllocType::AnyPage,
