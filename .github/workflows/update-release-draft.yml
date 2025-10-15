@@ -10,6 +10,7 @@
 # Copyright (c) Microsoft Corporation.
 # SPDX-License-Identifier: Apache-2.0
 ##
+
 name: Update Release Draft
 
 on:
@@ -19,18 +20,10 @@ on:
 
 jobs:
   draft:
-    name: Update Release Draft
-
-    runs-on: ubuntu-latest
 
     permissions:
       contents: write
       pull-requests: write
 
-    steps:
-      - name: Build a Release Draft
-        uses: release-drafter/release-drafter@v6
-        with:
-          config-name: release-draft-config.yml
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/UpdateReleaseDraft.yml@v0.0.1
+    secrets: inherit
