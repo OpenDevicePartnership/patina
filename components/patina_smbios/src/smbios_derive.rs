@@ -426,8 +426,6 @@ impl SmbiosManager {
             return Err(SmbiosError::InvalidParameter);
         }
 
-        log::info!("Building SMBIOS table: {} records, {} bytes", records.len(), total_table_size);
-
         // Step 2: Allocate memory for the table (using UEFI Boot Services memory allocation)
         let table_pages = uefi_size_to_pages!(total_table_size);
         let table_address = boot_services
@@ -437,8 +435,6 @@ impl SmbiosManager {
                 table_pages,
             )
             .map_err(|_| SmbiosError::OutOfResources)?;
-
-        log::info!("Allocated SMBIOS table at 0x{:016X} ({} pages)", table_address, table_pages);
 
         // Step 3: Copy all records to the table
         unsafe {
@@ -450,8 +446,6 @@ impl SmbiosManager {
                 table_slice[offset..offset + record_bytes.len()].copy_from_slice(record_bytes);
                 offset += record_bytes.len();
             }
-
-            log::info!("Copied {} bytes of SMBIOS data", offset);
         }
 
         // Step 4: Create SMBIOS 3.0 Entry Point Structure
@@ -471,15 +465,11 @@ impl SmbiosManager {
         // Calculate checksum
         entry_point.checksum = Self::calculate_checksum(&entry_point);
 
-        log::info!("Created SMBIOS 3.0 Entry Point Structure (checksum: 0x{:02X})", entry_point.checksum);
-
         // Step 5: Allocate memory for entry point structure
         let ep_pages = 1; // Entry point fits in one page
         let ep_address = boot_services
             .allocate_pages(AllocType::AnyPage, MemoryType::ACPI_RECLAIM_MEMORY, ep_pages)
             .map_err(|_| SmbiosError::OutOfResources)?;
-
-        log::info!("Allocated SMBIOS Entry Point at 0x{:016X}", ep_address);
 
         // Step 6: Copy entry point to allocated memory
         unsafe {
@@ -496,11 +486,6 @@ impl SmbiosManager {
                 },
             )?;
         }
-
-        log::info!("✓ SMBIOS 3.0 table installed in UEFI Configuration Table");
-        log::info!("  Entry Point: 0x{:016X}", ep_address);
-        log::info!("  Table Address: 0x{:016X}", table_address);
-        log::info!("  Table Size: {} bytes ({} records)", total_table_size, records.len());
 
         // Store addresses for future reference
         drop(records); // Release borrow before mutating
@@ -1097,7 +1082,6 @@ pub fn install_smbios_protocol(
         Ok(h) => {
             // Store the handle
             SMBIOS_PROTOCOL_HANDLE.store(h, Ordering::SeqCst);
-            log::info!("SMBIOS Protocol installed at handle {:?}", h);
             Ok(h)
         }
         Err(status) => {
