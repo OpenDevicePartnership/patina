@@ -13,6 +13,7 @@ extern crate alloc;
 use crate::smbios_derive::{
     SmbiosError, SmbiosHandle, SmbiosManager, SmbiosRecords, SmbiosTableHeader, SmbiosType, install_smbios_protocol,
 };
+use core::cell::RefCell;
 use patina::{
     boot_services::StandardBootServices,
     component::{
@@ -38,14 +39,18 @@ impl Default for SmbiosConfiguration {
     }
 }
 
-/// Initializes the SMBIOS provider service
+/// Initializes and exposes an SMBIOS provider service.
 ///
-/// This component provides the `SmbiosRecords` service that allows other components
-/// to add, update, remove, and query SMBIOS records in the system firmware.
+/// The provider wraps an internal [`SmbiosManager`] in a `RefCell` for interior mutability,
+/// allowing the service to be used through immutable references while still supporting
+/// mutable operations like adding and updating records.
+///
+/// It also attempts to install a C/EDKII compatible protocol (best‑effort; non‑fatal on failure)
+/// for mixed Rust/C driver ecosystems.
 #[derive(IntoComponent, IntoService)]
 #[service(dyn SmbiosRecords<'static>)]
 pub struct SmbiosProviderManager {
-    manager: SmbiosManager,
+    manager: RefCell<SmbiosManager>,
 }
 
 impl Default for SmbiosProviderManager {
@@ -57,12 +62,12 @@ impl Default for SmbiosProviderManager {
 impl SmbiosProviderManager {
     /// Create a new SMBIOS provider manager with default SMBIOS 3.9 version
     pub fn new() -> Self {
-        Self { manager: SmbiosManager::new(3, 9) }
+        Self { manager: RefCell::new(SmbiosManager::new(3, 9)) }
     }
 
     /// Initialize the SMBIOS provider and register it as a service
     fn entry_point(
-        mut self,
+        self,
         config: Option<Config<SmbiosConfiguration>>,
         mut commands: Commands,
         boot_services: StandardBootServices,
@@ -70,10 +75,10 @@ impl SmbiosProviderManager {
         let cfg = config.map(|c| (*c).clone()).unwrap_or_default();
 
         // Update manager with configured version
-        self.manager = SmbiosManager::new(cfg.major_version, cfg.minor_version);
+        *self.manager.borrow_mut() = SmbiosManager::new(cfg.major_version, cfg.minor_version);
 
         // Install the C protocol for EDKII compatibility
-        match install_smbios_protocol(&self.manager, &boot_services) {
+        match install_smbios_protocol(&self.manager.borrow(), &boot_services) {
             Ok(handle) => {
                 log::info!("SMBIOS C protocol installed successfully at handle {:?}", handle);
             }
@@ -90,45 +95,45 @@ impl SmbiosProviderManager {
     }
 }
 
-// Delegate the SmbiosRecords trait implementation to the inner manager
+// Delegate the SmbiosRecords trait implementation to the inner manager using interior mutability
 impl SmbiosRecords<'static> for SmbiosProviderManager {
     fn add_from_bytes(
-        &mut self,
+        &self,
         producer_handle: Option<r_efi::efi::Handle>,
         record_data: &[u8],
     ) -> core::result::Result<SmbiosHandle, SmbiosError> {
-        self.manager.add_from_bytes(producer_handle, record_data)
+        self.manager.borrow_mut().add_from_bytes(producer_handle, record_data)
     }
 
     fn update_string(
-        &mut self,
+        &self,
         smbios_handle: SmbiosHandle,
         string_number: usize,
         string: &str,
     ) -> core::result::Result<(), SmbiosError> {
-        self.manager.update_string(smbios_handle, string_number, string)
+        self.manager.borrow_mut().update_string(smbios_handle, string_number, string)
     }
 
-    fn remove(&mut self, smbios_handle: SmbiosHandle) -> core::result::Result<(), SmbiosError> {
-        self.manager.remove(smbios_handle)
+    fn remove(&self, smbios_handle: SmbiosHandle) -> core::result::Result<(), SmbiosError> {
+        self.manager.borrow_mut().remove(smbios_handle)
     }
 
     fn get_next(
         &self,
         smbios_handle: &mut SmbiosHandle,
         record_type: Option<SmbiosType>,
-    ) -> core::result::Result<(&SmbiosTableHeader, Option<r_efi::efi::Handle>), SmbiosError> {
-        self.manager.get_next(smbios_handle, record_type)
+    ) -> core::result::Result<(SmbiosTableHeader, Option<r_efi::efi::Handle>), SmbiosError> {
+        self.manager.borrow().get_next(smbios_handle, record_type)
     }
 
     fn version(&self) -> (u8, u8) {
-        self.manager.version()
+        self.manager.borrow().version()
     }
 
     fn publish_table(
         &self,
         boot_services: &patina::boot_services::StandardBootServices,
     ) -> core::result::Result<(r_efi::efi::PhysicalAddress, r_efi::efi::PhysicalAddress), SmbiosError> {
-        self.manager.publish_table(boot_services)
+        self.manager.borrow().publish_table(boot_services)
     }
 }

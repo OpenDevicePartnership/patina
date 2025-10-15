@@ -13,6 +13,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::cell::RefCell;
 use core::ffi::{c_char, c_void};
 use core::sync::atomic::{AtomicPtr, Ordering};
 use patina::boot_services::BootServices;
@@ -104,28 +105,28 @@ pub trait SmbiosRecords<'a> {
     /// let handle = smbios_records.add_from_bytes(None, &record_bytes)?;
     /// ```
     fn add_from_bytes(
-        &mut self,
+        &self,
         producer_handle: Option<Handle>,
         record_data: &[u8],
     ) -> Result<SmbiosHandle, SmbiosError>;
 
     /// Updates a string in an existing SMBIOS record.
     fn update_string(
-        &mut self,
+        &self,
         smbios_handle: SmbiosHandle,
         string_number: usize,
         string: &str,
     ) -> Result<(), SmbiosError>;
 
     /// Removes an SMBIOS record from the SMBIOS table.
-    fn remove(&mut self, smbios_handle: SmbiosHandle) -> Result<(), SmbiosError>;
+    fn remove(&self, smbios_handle: SmbiosHandle) -> Result<(), SmbiosError>;
 
     /// Discovers SMBIOS records, optionally filtered by type.
     fn get_next(
         &self,
         smbios_handle: &mut SmbiosHandle,
         record_type: Option<SmbiosType>,
-    ) -> Result<(&SmbiosTableHeader, Option<Handle>), SmbiosError>;
+    ) -> Result<(SmbiosTableHeader, Option<Handle>), SmbiosError>;
 
     /// Gets the SMBIOS version information.
     fn version(&self) -> (u8, u8); // (major, minor)
@@ -157,9 +158,9 @@ pub struct Smbios30EntryPoint {
 }
 
 pub struct SmbiosManager {
-    records: Vec<SmbiosRecord>,
-    next_handle: SmbiosHandle,
-    freed_handles: Vec<SmbiosHandle>,
+    records: RefCell<Vec<SmbiosRecord>>,
+    next_handle: RefCell<SmbiosHandle>,
+    freed_handles: RefCell<Vec<SmbiosHandle>>,
     major_version: u8,
     minor_version: u8,
     entry_point_64: RefCell<Option<Box<Smbios30EntryPoint>>>,
@@ -170,9 +171,9 @@ pub struct SmbiosManager {
 impl Clone for SmbiosManager {
     fn clone(&self) -> Self {
         Self {
-            records: self.records.clone(),
-            next_handle: self.next_handle,
-            freed_handles: self.freed_handles.clone(),
+            records: RefCell::new(self.records.borrow().clone()),
+            next_handle: RefCell::new(*self.next_handle.borrow()),
+            freed_handles: RefCell::new(self.freed_handles.borrow().clone()),
             major_version: self.major_version,
             minor_version: self.minor_version,
             entry_point_64: RefCell::new(self.entry_point_64.borrow().as_ref().map(|ep| Box::new(**ep))),
@@ -185,9 +186,9 @@ impl Clone for SmbiosManager {
 impl SmbiosManager {
     pub fn new(major_version: u8, minor_version: u8) -> Self {
         Self {
-            records: Vec::new(),
-            next_handle: 1,
-            freed_handles: Vec::new(),
+            records: RefCell::new(Vec::new()),
+            next_handle: RefCell::new(1),
+            freed_handles: RefCell::new(Vec::new()),
             major_version,
             minor_version,
             entry_point_64: RefCell::new(None),
@@ -388,14 +389,14 @@ impl SmbiosManager {
     /// 2. Otherwise, use next_handle and increment it
     /// 3. If next_handle reaches the reserved range (0xFFFE), wrap to 1
     /// 4. If all handles are exhausted, return OutOfResources
-    fn allocate_handle(&mut self) -> Result<SmbiosHandle, SmbiosError> {
+    fn allocate_handle(&self) -> Result<SmbiosHandle, SmbiosError> {
         // First, try to reuse a freed handle (most efficient)
-        if let Some(handle) = self.freed_handles.pop() {
+        if let Some(handle) = self.freed_handles.borrow_mut().pop() {
             return Ok(handle);
         }
 
         // No freed handles available, use next_handle
-        let candidate = self.next_handle;
+        let candidate = *self.next_handle.borrow();
 
         // Check if we've exhausted the handle space
         // Valid handles are 1..=0xFEFF (0xFFFE and 0xFFFF are reserved)
@@ -404,7 +405,7 @@ impl SmbiosManager {
             return Err(SmbiosError::OutOfResources);
         }
 
-        self.next_handle = candidate + 1;
+        *self.next_handle.borrow_mut() = candidate + 1;
         Ok(candidate)
     }
 
@@ -531,7 +532,7 @@ impl SmbiosManager {
 
 impl SmbiosRecords<'static> for SmbiosManager {
     fn add_from_bytes(
-        &mut self,
+        &self,
         producer_handle: Option<Handle>,
         record_data: &[u8],
     ) -> Result<SmbiosHandle, SmbiosError> {
@@ -578,12 +579,12 @@ impl SmbiosRecords<'static> for SmbiosManager {
 
         let smbios_record = SmbiosRecord::new(record_header, producer_handle, data, string_count);
 
-        self.records.push(smbios_record);
+        self.records.borrow_mut().push(smbios_record);
         Ok(smbios_handle)
     }
 
     fn update_string(
-        &mut self,
+        &self,
         smbios_handle: SmbiosHandle,
         string_number: usize,
         string: &str,
@@ -591,9 +592,17 @@ impl SmbiosRecords<'static> for SmbiosManager {
         Self::validate_string(string)?;
         let _lock = self.lock.lock();
 
-        // Find the record
-        let record =
-            self.records.iter_mut().find(|r| r.header.handle == smbios_handle).ok_or(SmbiosError::HandleNotFound)?;
+        // Find the record index
+        let pos = self
+            .records
+            .borrow()
+            .iter()
+            .position(|r| r.header.handle == smbios_handle)
+            .ok_or(SmbiosError::HandleNotFound)?;
+
+        // Borrow the record
+        let mut records = self.records.borrow_mut();
+        let record = &mut records[pos];
 
         if string_number == 0 || string_number > record.string_count {
             return Err(SmbiosError::InvalidHandle);
@@ -640,18 +649,22 @@ impl SmbiosRecords<'static> for SmbiosManager {
         Ok(())
     }
 
-    fn remove(&mut self, smbios_handle: SmbiosHandle) -> Result<(), SmbiosError> {
+    fn remove(&self, smbios_handle: SmbiosHandle) -> Result<(), SmbiosError> {
         let _lock = self.lock.lock();
 
-        let pos =
-            self.records.iter().position(|r| r.header.handle == smbios_handle).ok_or(SmbiosError::HandleNotFound)?;
+        let pos = self
+            .records
+            .borrow()
+            .iter()
+            .position(|r| r.header.handle == smbios_handle)
+            .ok_or(SmbiosError::HandleNotFound)?;
 
-        self.records.remove(pos);
+        self.records.borrow_mut().remove(pos);
 
         // Add the freed handle to the free list for reuse
         // Only add valid handles (1..0xFFFE) to the free list
         if (1..0xFFFE).contains(&smbios_handle) {
-            self.freed_handles.push(smbios_handle);
+            self.freed_handles.borrow_mut().push(smbios_handle);
         }
 
         Ok(())
@@ -661,20 +674,17 @@ impl SmbiosRecords<'static> for SmbiosManager {
         &self,
         smbios_handle: &mut SmbiosHandle,
         record_type: Option<SmbiosType>,
-    ) -> Result<(&SmbiosTableHeader, Option<Handle>), SmbiosError> {
+    ) -> Result<(SmbiosTableHeader, Option<Handle>), SmbiosError> {
         let _lock = self.lock.lock();
+        let records = self.records.borrow();
 
         let start_idx = if *smbios_handle == SMBIOS_HANDLE_PI_RESERVED {
             0
         } else {
-            self.records
-                .iter()
-                .position(|r| r.header.handle == *smbios_handle)
-                .map(|i| i + 1)
-                .unwrap_or(self.records.len())
+            records.iter().position(|r| r.header.handle == *smbios_handle).map(|i| i + 1).unwrap_or(records.len())
         };
 
-        for record in &self.records[start_idx..] {
+        for record in &records[start_idx..] {
             if let Some(rt) = record_type
                 && record.header.record_type != rt
             {
@@ -682,7 +692,7 @@ impl SmbiosRecords<'static> for SmbiosManager {
             }
 
             *smbios_handle = record.header.handle;
-            return Ok((&record.header, record.producer_handle));
+            return Ok((record.header.clone(), record.producer_handle));
         }
 
         *smbios_handle = SMBIOS_HANDLE_PI_RESERVED;
@@ -920,7 +930,7 @@ impl SmbiosProtocol {
 
             // SAFETY: manager_ptr is guaranteed to be valid (checked above)
             let manager = &*manager_ptr;
-            let mut manager_lock = manager.lock();
+            let manager_lock = manager.lock();
 
             // Convert handle
             let producer_opt = if producer_handle.is_null() { None } else { Some(producer_handle) };
@@ -970,7 +980,7 @@ impl SmbiosProtocol {
 
             // SAFETY: manager_ptr is guaranteed to be valid
             let manager = &*manager_ptr;
-            let mut manager_lock = manager.lock();
+            let manager_lock = manager.lock();
 
             match manager_lock.update_string(handle, str_num, rust_str) {
                 Ok(()) => efi::Status::SUCCESS,
@@ -992,7 +1002,7 @@ impl SmbiosProtocol {
         unsafe {
             // SAFETY: manager_ptr is guaranteed to be valid
             let manager = &*manager_ptr;
-            let mut manager_lock = manager.lock();
+            let manager_lock = manager.lock();
 
             match manager_lock.remove(smbios_handle) {
                 Ok(()) => efi::Status::SUCCESS,
@@ -1028,9 +1038,11 @@ impl SmbiosProtocol {
             let manager_lock = manager.lock();
 
             match manager_lock.get_next(&mut handle, type_filter) {
-                Ok((header_ref, prod_handle)) => {
+                Ok((header_value, prod_handle)) => {
                     *smbios_handle = handle;
-                    *record = header_ref as *const SmbiosTableHeader as *mut SmbiosTableHeader;
+                    // Allocate the header on the heap and return a pointer to it
+                    // Note: This leaks memory, but matches the expected C API behavior
+                    *record = Box::into_raw(Box::new(header_value));
                     if !producer_handle.is_null() {
                         *producer_handle = prod_handle.unwrap_or(core::ptr::null_mut());
                     }
