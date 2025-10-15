@@ -105,19 +105,11 @@ pub trait SmbiosRecords<'a> {
     /// let record_bytes = bios_info.to_bytes();
     /// let handle = smbios_records.add_from_bytes(None, &record_bytes)?;
     /// ```
-    fn add_from_bytes(
-        &self,
-        producer_handle: Option<Handle>,
-        record_data: &[u8],
-    ) -> Result<SmbiosHandle, SmbiosError>;
+    fn add_from_bytes(&self, producer_handle: Option<Handle>, record_data: &[u8]) -> Result<SmbiosHandle, SmbiosError>;
 
     /// Updates a string in an existing SMBIOS record.
-    fn update_string(
-        &self,
-        smbios_handle: SmbiosHandle,
-        string_number: usize,
-        string: &str,
-    ) -> Result<(), SmbiosError>;
+    fn update_string(&self, smbios_handle: SmbiosHandle, string_number: usize, string: &str)
+    -> Result<(), SmbiosError>;
 
     /// Removes an SMBIOS record from the SMBIOS table.
     fn remove(&self, smbios_handle: SmbiosHandle) -> Result<(), SmbiosError>;
@@ -533,11 +525,7 @@ impl SmbiosManager {
 }
 
 impl SmbiosRecords<'static> for SmbiosManager {
-    fn add_from_bytes(
-        &self,
-        producer_handle: Option<Handle>,
-        record_data: &[u8],
-    ) -> Result<SmbiosHandle, SmbiosError> {
+    fn add_from_bytes(&self, producer_handle: Option<Handle>, record_data: &[u8]) -> Result<SmbiosHandle, SmbiosError> {
         // Step 1: Validate minimum size for header (at least 4 bytes)
         if record_data.len() < core::mem::size_of::<SmbiosTableHeader>() {
             return Err(SmbiosError::BufferTooSmall);
