@@ -34,7 +34,7 @@ pub struct SmbiosConfiguration {
 
 impl Default for SmbiosConfiguration {
     fn default() -> Self {
-        Self { major_version: 3, minor_version: 0 }
+        Self { major_version: 3, minor_version: 9 }
     }
 }
 
