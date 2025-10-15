@@ -67,14 +67,10 @@ impl SmbiosProviderManager {
         mut commands: Commands,
         boot_services: StandardBootServices,
     ) -> Result<()> {
-        log::trace!("Initializing SMBIOS Provider...");
-
         let cfg = config.map(|c| (*c).clone()).unwrap_or_default();
 
         // Update manager with configured version
         self.manager = SmbiosManager::new(cfg.major_version, cfg.minor_version);
-
-        log::trace!("SMBIOS version {}.{}", cfg.major_version, cfg.minor_version);
 
         // Install the C protocol for EDKII compatibility
         match install_smbios_protocol(&self.manager, &boot_services) {
@@ -90,7 +86,6 @@ impl SmbiosProviderManager {
         // Register the service so other components can consume it
         commands.add_service(self);
 
-        log::trace!("SMBIOS Provider initialized successfully");
         Ok(())
     }
 }
