@@ -450,12 +450,13 @@ impl SmbiosManager {
 
         // Step 3: Copy all records to the table
         unsafe {
-            let table_ptr = table_address as *mut u8;
+            let table_slice = core::slice::from_raw_parts_mut(table_address as *mut u8, total_table_size);
             let mut offset = 0;
 
             for record in records.iter() {
-                core::ptr::copy_nonoverlapping(record.data.as_ptr(), table_ptr.add(offset), record.data.len());
-                offset += record.data.len();
+                let record_bytes = record.data.as_slice();
+                table_slice[offset..offset + record_bytes.len()].copy_from_slice(record_bytes);
+                offset += record_bytes.len();
             }
 
             log::info!("Copied {} bytes of SMBIOS data", offset);
