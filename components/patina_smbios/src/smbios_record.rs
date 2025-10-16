@@ -214,7 +214,12 @@ macro_rules! impl_smbios_record {
     ($struct_name:ident, $record_type:expr, $string_pool_field:ident, $($field_name:ident: $field_type:ident),* $(,)?) => {
         impl SmbiosFieldLayout for $struct_name {
             fn field_layout() -> FieldLayout {
-                use core::mem::{offset_of};
+                // Import offset_of for field offset calculation when fields are present.
+                // Some record variants (e.g., Type 127 end-of-table) have no additional
+                // fields, which would normally trigger an unused import warning. Silence
+                // that by allowing unused imports here.
+                #[allow(unused_imports)]
+                use core::mem::offset_of;
 
                 FieldLayout {
                     fields: vec![
@@ -529,4 +534,41 @@ impl_smbios_record!(
     number_of_power_cords: u8,
     contained_element_count: u8,
     contained_element_record_length: u8
+);
+
+/// SMBIOS Type 127: End-of-Table
+///
+/// The End-of-Table marker indicates the end of the SMBIOS structure table.
+/// This is a simple marker structure with no additional fields beyond the standard header.
+///
+/// Per SMBIOS specification 3.0+:
+/// - Type: 127
+/// - Length: 4 (header only)
+/// - No strings
+pub struct Type127EndOfTable {
+    /// SMBIOS header
+    pub header: SmbiosTableHeader,
+
+    /// String pool (always empty for Type 127)
+    pub string_pool: Vec<String>,
+}
+
+impl Type127EndOfTable {
+    /// Create a new End-of-Table marker
+    pub fn new() -> Self {
+        Self { header: SmbiosTableHeader::new(127, 4, SMBIOS_HANDLE_PI_RESERVED), string_pool: Vec::new() }
+    }
+}
+
+impl Default for Type127EndOfTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl_smbios_record!(
+    Type127EndOfTable,
+    127,
+    string_pool,
+    // No fields beyond the header
 );
