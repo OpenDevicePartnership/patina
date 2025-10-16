@@ -10,7 +10,6 @@
 //!
 
 #![no_std]
-#![allow(missing_docs)] // TODO: Add comprehensive documentation
 
 pub mod component;
 /// SMBIOS manager and protocol implementation
@@ -19,7 +18,7 @@ pub mod manager;
 pub mod smbios_record;
 
 pub use component::SmbiosConfiguration;
-pub use manager::get_global_smbios_manager;
+pub use manager::{SmbiosService, get_global_smbios_manager};
 
 #[cfg(test)]
 mod tests {

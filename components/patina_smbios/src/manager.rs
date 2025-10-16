@@ -64,10 +64,6 @@ pub enum SmbiosError {
 }
 
 pub trait SmbiosRecords<'a> {
-    // Note: The unsafe `add` method has been removed. It was only needed for C protocol
-    // compatibility, but that use case is now handled by the efiapi wrapper which converts
-    // the C pointer to a byte slice and calls `add_from_bytes` directly.
-
     /// Adds an SMBIOS record to the SMBIOS table from a complete byte representation.
     ///
     /// **This is the recommended method for adding SMBIOS records.** It provides memory safety
@@ -122,6 +118,45 @@ pub trait SmbiosRecords<'a> {
         &self,
         boot_services: &patina::boot_services::StandardBootServices,
     ) -> Result<(r_efi::efi::PhysicalAddress, r_efi::efi::PhysicalAddress), SmbiosError>;
+}
+
+pub trait SmbiosService {
+    /// Add an SMBIOS record from a structured type.
+    ///
+    /// This is a convenience method that automatically serializes the record
+    /// and handles the Service dereferencing internally.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use patina_smbios::SmbiosService;
+    ///
+    /// // Simply call .add_record() on the service
+    /// smbios_service.add_record(None, &bios_info)?;
+    /// ```
+    fn add_record<T>(
+        &self,
+        producer_handle: Option<r_efi::efi::Handle>,
+        record: &T,
+    ) -> Result<SmbiosHandle, SmbiosError>
+    where
+        T: crate::smbios_record::SmbiosRecordStructure + crate::smbios_record::SmbiosFieldLayout;
+}
+
+impl SmbiosService for patina::component::service::Service<dyn SmbiosRecords<'static>> {
+    fn add_record<T>(
+        &self,
+        producer_handle: Option<r_efi::efi::Handle>,
+        record: &T,
+    ) -> Result<SmbiosHandle, SmbiosError>
+    where
+        T: crate::smbios_record::SmbiosRecordStructure + crate::smbios_record::SmbiosFieldLayout,
+    {
+        // Dereference Service twice to get &'static (dyn SmbiosRecords)
+        let service: &'static (dyn SmbiosRecords<'static> + 'static) = **self;
+        let bytes = record.to_bytes();
+        service.add_from_bytes(producer_handle, &bytes)
+    }
 }
 
 /// SMBIOS 3.0 entry point structure (64-bit)
