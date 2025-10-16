@@ -7,6 +7,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+use crate::log_registers;
 use core::arch::asm;
 use patina::error::EfiError;
 use patina_pi::protocols::cpu_arch::EfiSystemContext;
@@ -35,6 +36,43 @@ impl super::EfiExceptionStackTrace for ExceptionContextX64 {
         if let Err(err) = unsafe { StackTrace::dump_with(self.rip, self.rsp) } {
             log::error!("StackTrace: {err}");
         }
+    }
+
+    fn dump_system_context_registers(&self) {
+        log::error!("Control Registers:");
+        log_registers!(
+            "CR0",
+            self.cr0,
+            "CR2",
+            self.cr2,
+            "CR3",
+            self.cr3,
+            "CR4",
+            self.cr4,
+            "RIP",
+            self.rip,
+            "CS",
+            self.cs,
+            "SS",
+            self.ss,
+            "DS",
+            self.ds,
+            "RSP",
+            self.rsp,
+            "RFLAGS",
+            self.rflags
+        );
+
+        log::error!("");
+
+        log::error!("General-Purpose Registers:");
+        log_registers!(
+            "RAX", self.rax, "RBX", self.rbx, "RCX", self.rcx, "RDX", self.rdx, "RSI", self.rsi, "RDI", self.rdi,
+            "RBP", self.rbp, "R8", self.r8, "R9", self.r9, "R10", self.r10, "R11", self.r11, "R12", self.r12, "R13",
+            self.r13, "R14", self.r14, "R15", self.r15
+        );
+
+        log::debug!("Full Context: {self:#X?}");
     }
 }
 

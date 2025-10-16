@@ -72,6 +72,46 @@ cfg_if::cfg_if! {
 /// specific interrupt type ID.
 pub type ExceptionType = usize;
 
+/// This macro pretty prints registers in groups of four per line.
+/// The expected input is a list of name, value pairs.
+#[macro_export]
+macro_rules! log_registers {
+    ( $( $name:expr, $value:expr ),+ $(,)? ) => {
+        let registers = [$(($name, $value),)+];
+        for chunk in registers.chunks(4) {
+            match chunk {
+                [c1, c2, c3, c4] => {
+                    log::error!(
+                        "{:>4}:  {:#018X}   {:>4}:  {:#018X}   {:>4}:  {:#018X}   {:>4}:  {:#018X}",
+                        c1.0, c1.1, c2.0, c2.1, c3.0, c3.1, c4.0, c4.1
+                    );
+                },
+                [c1, c2, c3] => {
+                    log::error!(
+                        "{:>4}:  {:#018X}   {:>4}:  {:#018X}   {:>4}:  {:#018X}",
+                        c1.0, c1.1, c2.0, c2.1, c3.0, c3.1
+                    );
+                },
+                [c1, c2] => {
+                    log::error!(
+                        "{:>4}:  {:#018X}   {:>4}:  {:#018X}",
+                        c1.0, c1.1, c2.0, c2.1,
+                    );
+                },
+                [c1] => {
+                    log::error!(
+                        "{:>4}:  {:#018X}",
+                        c1.0, c1.1
+                    );
+                },
+                _ => {
+                    log::error!("");
+                }
+            }
+        }
+    };
+}
+
 /// Trait for converting the architecture specific context structures into the
 /// UEFI System Context structure.
 pub(crate) trait EfiSystemContextFactory {
@@ -83,6 +123,9 @@ pub(crate) trait EfiSystemContextFactory {
 pub(crate) trait EfiExceptionStackTrace {
     /// Dump the stack trace for architecture specific context.
     fn dump_stack_trace(&self);
+
+    /// Dump system context registers for architecture specific context.
+    fn dump_system_context_registers(&self);
 }
 
 /// Trait for structs that implement and manage interrupts.

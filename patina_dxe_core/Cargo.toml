@@ -33,7 +33,7 @@ scroll = { workspace = true, features = ["derive"] }
 spin = { workspace = true }
 uefi_corosensei = { workspace = true  }
 uuid = { workspace = true  }
-patina = { workspace = true, features = ["core", "enable_patina_tests"] }
+patina = { workspace = true, features = ["core"] }
 patina_ffs = { workspace = true }
 patina_internal_collections = { workspace = true  }
 patina_internal_cpu = { workspace = true }

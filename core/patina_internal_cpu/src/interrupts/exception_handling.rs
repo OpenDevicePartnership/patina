@@ -9,6 +9,7 @@
 //!
 
 use patina::error::EfiError;
+use patina_paging::page_allocator::PageAllocator;
 use patina_pi::protocols::cpu_arch::EfiExceptionType;
 use spin::rwlock::RwLock;
 
@@ -106,11 +107,22 @@ extern "efiapi" fn exception_handler(exception_type: usize, context: &mut Except
             handler.handle_interrupt(exception_type, context);
         }
         HandlerType::None => {
-            log::error!("Unhandled Exception! 0x{exception_type:x}");
-            log::error!("Exception Context: {context:#x?}");
+            log::error!("Unhandled Exception! {exception_type:#X}");
+            log::error!("");
+            context.dump_system_context_registers();
+            log::error!("");
             context.dump_stack_trace();
-            panic!("Unhandled Exception! 0x{exception_type:x}");
+            panic!("Unhandled Exception! {exception_type:#X}");
         }
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) struct FaultAllocator {}
+
+impl PageAllocator for FaultAllocator {
+    fn allocate_page(&mut self, _align: u64, _size: u64, _contiguous: bool) -> patina_paging::PtResult<u64> {
+        Err(patina_paging::PtError::OutOfResources)
     }
 }
 

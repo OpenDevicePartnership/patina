@@ -13,8 +13,11 @@ log = { workspace = true }
 mockall = { workspace = true, optional = true }
 r-efi = { workspace = true }
 patina = { workspace = true }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
 
 [dev-dependencies]
+env_logger = "0.11"
 mockall = { workspace = true }
 patina = { workspace = true, features = ["mockall"] }
 

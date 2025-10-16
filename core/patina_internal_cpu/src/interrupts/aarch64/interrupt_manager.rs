@@ -8,11 +8,21 @@
 //!
 
 use core::arch::{asm, global_asm};
-use patina::{component::service::IntoService, error::EfiError};
+use patina::{
+    base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
+    bit,
+    component::service::IntoService,
+    error::EfiError,
+};
+use patina_paging::{PageTable, PagingType};
+use patina_stacktrace::StackTrace;
 
-use crate::interrupts::InterruptManager;
-#[cfg(all(not(test), target_arch = "aarch64"))]
+#[allow(unused_imports)]
 use crate::interrupts::aarch64::sysreg::{read_sysreg, write_sysreg};
+use crate::interrupts::{
+    EfiExceptionStackTrace, EfiSystemContext, HandlerType, InterruptManager, aarch64::ExceptionContextAArch64,
+    exception_handling::FaultAllocator,
+};
 use crate::interrupts::{disable_interrupts, enable_interrupts};
 
 #[cfg(all(not(test), target_arch = "aarch64"))]
@@ -46,7 +56,12 @@ impl InterruptsAarch64 {
     ///
     pub fn initialize(&mut self) -> Result<(), EfiError> {
         // Initialize exception entrypoint
-        initialize_exception()
+        initialize_exception()?;
+
+        self.register_exception_handler(0, HandlerType::UefiRoutine(synchronous_exception_handler))
+            .expect("Failed to install default exception handler!");
+
+        Ok(())
     }
 }
 
@@ -129,4 +144,65 @@ fn initialize_exception() -> Result<(), EfiError> {
     enable_async_abort();
 
     Ok(())
+}
+
+/// Default handler for synchronous exceptions.
+extern "efiapi" fn synchronous_exception_handler(_exception_type: isize, context: EfiSystemContext) {
+    // SAFETY: We don't have any choice here, we are in an exception and have to do our best
+    // to report. The system is dead anyway.
+    let aarch64_context = unsafe { context.system_context_aarch64.as_ref().unwrap() };
+
+    log::error!("");
+    log::error!("EXCEPTION: Synchronous Exception");
+
+    log::error!("");
+
+    // determine if this was a page fault
+    let ec = (aarch64_context.esr >> 26) & 0x3F;
+    let iss = aarch64_context.esr & 0xFFFFFF;
+    let page_fault = ec == 0x20 || ec == 0x21 || ec == 0x24 || ec == 0x25;
+    if ec == 0x20 || ec == 0x21 {
+        // Instruction Abort from a lower EL or same EL
+        log::error!("Page Fault (Instruction Abort)");
+    } else if ec == 0x24 || ec == 0x25 {
+        // Data Abort from a lower EL or same EL
+        log::error!("Page Fault (Data Abort)");
+    }
+
+    log::error!("");
+
+    (aarch64_context as &ExceptionContextAArch64).dump_system_context_registers();
+
+    log::error!("");
+
+    if page_fault {
+        // make sure the FAR is valid before we dump the page table
+        if iss & bit!(10) == 0 {
+            dump_pte(aarch64_context.far);
+        } else {
+            log::error!("FAR not valid, not dumping PTE");
+        }
+    }
+
+    log::debug!("Full Context: {aarch64_context:#X?}");
+
+    log::error!("Dumping Exception Stack Trace:");
+    // SAFETY: As before, we don't have any choice. The stacktrace module will do its best to not cause a
+    // recursive exception.
+    if let Err(err) = unsafe { StackTrace::dump_with(aarch64_context.elr, aarch64_context.sp) } {
+        log::error!("StackTrace: {err}");
+    }
+
+    panic!("EXCEPTION: Synchronous Exception");
+}
+
+fn dump_pte(far: u64) {
+    let ttbr0_el2 = unsafe { read_sysreg!(ttbr0_el2) };
+
+    if let Ok(pt) = unsafe {
+        patina_paging::aarch64::AArch64PageTable::from_existing(ttbr0_el2, FaultAllocator {}, PagingType::Paging4Level)
+    } {
+        let _ = pt.dump_page_tables(far & !(UEFI_PAGE_MASK as u64), UEFI_PAGE_SIZE as u64);
+        log::error!("");
+    }
 }
