@@ -17,6 +17,7 @@ use core::cell::RefCell;
 use core::ffi::{c_char, c_void};
 use core::sync::atomic::{AtomicPtr, Ordering};
 use patina::boot_services::BootServices;
+use patina::boot_services::allocation::{AllocType, MemoryType};
 use patina::uefi_protocol::ProtocolInterface;
 use patina::uefi_size_to_pages;
 use r_efi::efi;
@@ -386,8 +387,6 @@ impl SmbiosManager {
         &self,
         boot_services: &patina::boot_services::StandardBootServices,
     ) -> Result<(PhysicalAddress, PhysicalAddress), SmbiosError> {
-        use patina::boot_services::allocation::{AllocType, MemoryType};
-
         let records = self.records.borrow();
 
         // Step 1: Calculate total table size
