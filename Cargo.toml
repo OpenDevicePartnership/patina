@@ -44,6 +44,8 @@ patina_lzma_rs = { version = "0.3.1", default-features = false }
 patina_macro = { version = "11.4.0", path = "sdk/patina_macro" }
 patina_mtrr = { version = "1.0.0" }
 patina_paging = { version = "9" }
+patina_performance = { version = "11.4.0", path = "components/patina_performance" }
+patina_pi = { version = "11.4.0", path = "sdk/patina_pi" }
 patina_smbios = {version = "11.4.0", path = "components/patina_smbios" }
 patina_stacktrace = { version = "11.4.0", path = "core/patina_stacktrace" }
 proc-macro2 = { version = "1" }
