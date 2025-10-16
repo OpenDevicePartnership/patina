@@ -14,6 +14,7 @@ use crate::manager::{
     SmbiosError, SmbiosHandle, SmbiosManager, SmbiosRecords, SmbiosTableHeader, SmbiosType, get_global_smbios_manager,
     install_smbios_protocol,
 };
+use alloc::boxed::Box;
 use patina::{
     boot_services::StandardBootServices,
     component::{
@@ -76,8 +77,14 @@ impl SmbiosProviderManager {
         // Create the manager with configured version
         let manager = SmbiosManager::new(cfg.major_version, cfg.minor_version);
 
+        // Convert boot_services to 'static by leaking it
+        // SAFETY: This is safe because boot_services remains valid for the entire lifetime
+        // of the system. We leak it intentionally to get a 'static reference.
+        let boot_services_static: &'static StandardBootServices = Box::leak(Box::new(boot_services));
+
         // Install the protocol - this transfers ownership to the global singleton
-        if let Err(e) = install_smbios_protocol(manager, &boot_services) {
+        // and wraps the manager in TplMutex for TPL-aware reentrancy protection
+        if let Err(e) = install_smbios_protocol(manager, boot_services_static) {
             log::error!("Failed to install SMBIOS protocol: {:?}", e);
         }
 
@@ -89,14 +96,17 @@ impl SmbiosProviderManager {
 }
 
 // Delegate the SmbiosRecords trait implementation to the global manager
+// All methods acquire TplMutex.lock() which automatically raises TPL to CALLBACK
 impl SmbiosRecords<'static> for SmbiosProviderManager {
     fn add_from_bytes(
         &self,
         producer_handle: Option<r_efi::efi::Handle>,
         record_data: &[u8],
     ) -> core::result::Result<SmbiosHandle, SmbiosError> {
-        let manager = get_global_smbios_manager().ok_or(SmbiosError::OutOfResources)?;
-        manager.lock().add_from_bytes(producer_handle, record_data)
+        let tpl_mutex = get_global_smbios_manager().ok_or(SmbiosError::OutOfResources)?;
+        let manager = tpl_mutex.lock(); // TPL raised to CALLBACK
+        manager.add_from_bytes(producer_handle, record_data)
+        // TPL automatically restored when manager guard drops
     }
 
     fn update_string(
@@ -105,13 +115,17 @@ impl SmbiosRecords<'static> for SmbiosProviderManager {
         string_number: usize,
         string: &str,
     ) -> core::result::Result<(), SmbiosError> {
-        let manager = get_global_smbios_manager().ok_or(SmbiosError::OutOfResources)?;
-        manager.lock().update_string(smbios_handle, string_number, string)
+        let tpl_mutex = get_global_smbios_manager().ok_or(SmbiosError::OutOfResources)?;
+        let manager = tpl_mutex.lock(); // TPL raised to CALLBACK
+        manager.update_string(smbios_handle, string_number, string)
+        // TPL automatically restored when manager guard drops
     }
 
     fn remove(&self, smbios_handle: SmbiosHandle) -> core::result::Result<(), SmbiosError> {
-        let manager = get_global_smbios_manager().ok_or(SmbiosError::OutOfResources)?;
-        manager.lock().remove(smbios_handle)
+        let tpl_mutex = get_global_smbios_manager().ok_or(SmbiosError::OutOfResources)?;
+        let manager = tpl_mutex.lock(); // TPL raised to CALLBACK
+        manager.remove(smbios_handle)
+        // TPL automatically restored when manager guard drops
     }
 
     fn get_next(
@@ -119,20 +133,32 @@ impl SmbiosRecords<'static> for SmbiosProviderManager {
         smbios_handle: &mut SmbiosHandle,
         record_type: Option<SmbiosType>,
     ) -> core::result::Result<(SmbiosTableHeader, Option<r_efi::efi::Handle>), SmbiosError> {
-        let manager = get_global_smbios_manager().ok_or(SmbiosError::OutOfResources)?;
-        manager.lock().get_next(smbios_handle, record_type)
+        let tpl_mutex = get_global_smbios_manager().ok_or(SmbiosError::OutOfResources)?;
+        let manager = tpl_mutex.lock(); // TPL raised to CALLBACK
+        manager.get_next(smbios_handle, record_type)
+        // TPL automatically restored when manager guard drops
     }
 
     fn version(&self) -> (u8, u8) {
-        let manager = get_global_smbios_manager().expect("SMBIOS manager not installed");
-        manager.lock().version()
+        match get_global_smbios_manager() {
+            Some(tpl_mutex) => {
+                let manager = tpl_mutex.lock(); // TPL raised to CALLBACK
+                manager.version()
+            }
+            None => {
+                log::error!("SMBIOS manager not installed; returning version (0,0)");
+                (0, 0)
+            }
+        }
     }
 
     fn publish_table(
         &self,
         boot_services: &patina::boot_services::StandardBootServices,
     ) -> core::result::Result<(r_efi::efi::PhysicalAddress, r_efi::efi::PhysicalAddress), SmbiosError> {
-        let manager = get_global_smbios_manager().ok_or(SmbiosError::OutOfResources)?;
-        manager.lock().publish_table(boot_services)
+        let tpl_mutex = get_global_smbios_manager().ok_or(SmbiosError::OutOfResources)?;
+        let manager = tpl_mutex.lock(); // TPL raised to CALLBACK
+        manager.publish_table(boot_services)
+        // TPL automatically restored when manager guard drops
     }
 }
