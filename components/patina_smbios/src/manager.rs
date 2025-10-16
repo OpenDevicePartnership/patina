@@ -24,7 +24,8 @@ use r_efi::efi;
 use r_efi::efi::Handle;
 use r_efi::efi::PhysicalAddress;
 use spin::Mutex;
-use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout};
+use zerocopy::{IntoBytes, Ref};
+use zerocopy_derive::{FromBytes, Immutable, IntoBytes as DeriveIntoBytes, KnownLayout};
 
 pub type SmbiosHandle = u16;
 
@@ -126,7 +127,7 @@ pub trait SmbiosRecords<'a> {
 /// SMBIOS 3.0 entry point structure (64-bit)
 /// Per SMBIOS 3.0+ specification section 5.2.2
 #[repr(C, packed)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, DeriveIntoBytes, Immutable)]
 pub struct Smbios30EntryPoint {
     pub anchor_string: [u8; 5],   // 0x00: "_SM3_"
     pub checksum: u8,             // 0x05: Entry Point Structure Checksum
@@ -307,7 +308,6 @@ impl SmbiosManager {
         let mut record = Vec::new();
 
         // Add the structured data using zerocopy
-        use zerocopy::IntoBytes;
         record.extend_from_slice(header.as_bytes());
 
         // Add strings
@@ -408,15 +408,15 @@ impl SmbiosManager {
             .map_err(|_| SmbiosError::OutOfResources)?;
 
         // Step 3: Copy all records to the table
-        unsafe {
-            let table_slice = core::slice::from_raw_parts_mut(table_address as *mut u8, total_table_size);
-            let mut offset = 0;
+        let table_slice = unsafe {
+            core::slice::from_raw_parts_mut(table_address as *mut u8, total_table_size)
+        };
+        let mut offset = 0;
 
-            for record in records.iter() {
-                let record_bytes = record.data.as_slice();
-                table_slice[offset..offset + record_bytes.len()].copy_from_slice(record_bytes);
-                offset += record_bytes.len();
-            }
+        for record in records.iter() {
+            let record_bytes = record.data.as_slice();
+            table_slice[offset..offset + record_bytes.len()].copy_from_slice(record_bytes);
+            offset += record_bytes.len();
         }
 
         // Step 4: Create SMBIOS 3.0+ Entry Point Structure
@@ -443,10 +443,11 @@ impl SmbiosManager {
             .map_err(|_| SmbiosError::OutOfResources)?;
 
         // Step 6: Copy entry point to allocated memory
-        unsafe {
-            let ep_ptr = ep_address as *mut Smbios30EntryPoint;
-            core::ptr::write(ep_ptr, entry_point);
-        }
+        let ep_bytes = entry_point.as_bytes();
+        let ep_slice = unsafe {
+            core::slice::from_raw_parts_mut(ep_address as *mut u8, core::mem::size_of::<Smbios30EntryPoint>())
+        };
+        ep_slice.copy_from_slice(ep_bytes);
 
         // Step 7: Install in UEFI Configuration Table
         unsafe {
@@ -482,15 +483,10 @@ impl SmbiosManager {
     ///
     /// # Safety
     ///
-    /// Uses unsafe code to reinterpret the entry point structure as a byte slice
-    /// for checksum calculation. This is safe because the structure is repr(C, packed).
+    /// Uses zerocopy to safely convert the entry point structure to a byte slice.
+    /// This is safe because Smbios30EntryPoint derives IntoBytes.
     fn calculate_checksum(entry_point: &Smbios30EntryPoint) -> u8 {
-        let bytes = unsafe {
-            core::slice::from_raw_parts(
-                entry_point as *const _ as *const u8,
-                core::mem::size_of::<Smbios30EntryPoint>(),
-            )
-        };
+        let bytes = entry_point.as_bytes();
 
         let sum: u8 = bytes.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
         0u8.wrapping_sub(sum)
@@ -505,7 +501,6 @@ impl SmbiosRecords<'static> for SmbiosManager {
         }
 
         // Step 2: Parse and validate header using zerocopy
-        use zerocopy::Ref;
         let (header_ref, _rest) =
             Ref::<&[u8], SmbiosTableHeader>::from_prefix(record_data).map_err(|_| SmbiosError::InvalidParameter)?;
         let header: &SmbiosTableHeader = &header_ref;
@@ -676,7 +671,7 @@ impl SmbiosRecords<'static> for SmbiosManager {
 
 /// SMBIOS table header structure
 #[repr(C, packed)]
-#[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
+#[derive(Debug, Clone, PartialEq, FromBytes, DeriveIntoBytes, Immutable, KnownLayout)]
 pub struct SmbiosTableHeader {
     pub record_type: SmbiosType,
     pub length: u8,
@@ -740,7 +735,6 @@ impl SmbiosRecordBuilder {
             handle: SMBIOS_HANDLE_PI_RESERVED,
         };
 
-        use zerocopy::IntoBytes;
         record.extend_from_slice(header.as_bytes());
 
         // Add data
@@ -1511,12 +1505,7 @@ mod tests {
         let mut test_entry = entry_point;
         test_entry.checksum = checksum;
 
-        let bytes = unsafe {
-            core::slice::from_raw_parts(
-                &test_entry as *const _ as *const u8,
-                core::mem::size_of::<Smbios30EntryPoint>(),
-            )
-        };
+        let bytes = test_entry.as_bytes();
 
         let sum: u8 = bytes.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
         assert_eq!(sum, 0);
