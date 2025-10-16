@@ -2181,4 +2181,218 @@ mod tests {
         let manager2 = SmbiosManager::new(255, 255);
         assert_eq!(manager2.version(), (255, 255));
     }
+
+    #[test]
+    fn test_smbios_handle_constants() {
+        // Test the reserved handle value
+        assert_eq!(SMBIOS_HANDLE_PI_RESERVED, 0xFFFE);
+    }
+
+    #[test]
+    fn test_smbios_error_clone_and_eq() {
+        let err1 = SmbiosError::InvalidParameter;
+        let err2 = err1.clone();
+        assert_eq!(err1, err2);
+
+        let err3 = SmbiosError::OutOfResources;
+        assert_ne!(err1, err3);
+    }
+
+    #[test]
+    fn test_smbios_record_builder_multiple_fields() {
+        let record = SmbiosRecordBuilder::new(2)
+            .add_field(0x12u8)
+            .add_field(0x3456u16)
+            .add_field(0x789ABCDEu32)
+            .build()
+            .expect("build failed");
+
+        // Check type
+        assert_eq!(record[0], 2);
+        // Verify fields are present (header + u8 + u16 + u32 = 4 + 1 + 2 + 4 = 11 bytes minimum)
+        assert!(record.len() >= 11);
+    }
+
+    #[test]
+    fn test_smbios_record_builder_with_multiple_strings() {
+        let record = SmbiosRecordBuilder::new(1)
+            .add_string(String::from("String1"))
+            .expect("add failed")
+            .add_string(String::from("String2"))
+            .expect("add failed")
+            .add_string(String::from("String3"))
+            .expect("add failed")
+            .build()
+            .expect("build failed");
+
+        // Verify record type
+        assert_eq!(record[0], 1);
+
+        // Verify strings are null-terminated and present
+        let record_str = core::str::from_utf8(&record[4..]).unwrap_or("");
+        assert!(record_str.contains("String1"));
+        assert!(record_str.contains("String2"));
+        assert!(record_str.contains("String3"));
+    }
+
+    #[test]
+    fn test_build_record_with_strings_empty_string() {
+        let header = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let strings = &[""];
+        let record = SmbiosManager::build_record_with_strings(&header, strings).expect("build failed");
+
+        // Empty string should still be null-terminated
+        assert_eq!(record[4], 0); // First string terminator
+        assert_eq!(record[5], 0); // Double null terminator
+    }
+
+    #[test]
+    fn test_add_from_bytes_with_max_handle() {
+        let manager = SmbiosManager::new(3, 9);
+
+        // Create a record with handle at max valid value
+        let header = SmbiosTableHeader::new(1, 4, 0xFEFF);
+        let record_bytes = SmbiosManager::build_record_with_strings(&header, &[]).expect("build failed");
+
+        let result = manager.add_from_bytes(None, &record_bytes);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_allocate_handle_with_gaps() {
+        let manager = SmbiosManager::new(3, 9);
+
+        // Add some records and get their actual handles
+        let header1 = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let bytes1 = SmbiosManager::build_record_with_strings(&header1, &[]).expect("build failed");
+        let _h1 = manager.add_from_bytes(None, &bytes1).expect("add failed");
+
+        let header2 = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let bytes2 = SmbiosManager::build_record_with_strings(&header2, &[]).expect("build failed");
+        let h2 = manager.add_from_bytes(None, &bytes2).expect("add failed");
+
+        let header3 = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let bytes3 = SmbiosManager::build_record_with_strings(&header3, &[]).expect("build failed");
+        let _h3 = manager.add_from_bytes(None, &bytes3).expect("add failed");
+
+        // Remove middle record
+        manager.remove(h2).expect("remove failed");
+
+        // Allocate a new handle - should reuse h2
+        let header4 = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let bytes4 = SmbiosManager::build_record_with_strings(&header4, &[]).expect("build failed");
+        let h4 = manager.add_from_bytes(None, &bytes4).expect("add failed");
+
+        assert_eq!(h4, h2); // Should reuse freed handle
+    }
+
+    #[test]
+    fn test_get_next_with_nonexistent_type() {
+        let manager = SmbiosManager::new(3, 9);
+
+        // Add a Type 1 record
+        let header = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let bytes = SmbiosManager::build_record_with_strings(&header, &[]).expect("build failed");
+        manager.add_from_bytes(None, &bytes).expect("add failed");
+
+        // Try to find Type 99 (doesn't exist)
+        let mut handle = 0xFFFF; // Start from beginning
+        let result = manager.get_next(&mut handle, Some(99));
+
+        assert_eq!(result, Err(SmbiosError::HandleNotFound));
+    }
+
+    #[test]
+    fn test_update_string_with_empty_string() {
+        let manager = SmbiosManager::new(3, 9);
+
+        // Add a record with strings
+        let header = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let bytes = SmbiosManager::build_record_with_strings(&header, &["Original"]).expect("build failed");
+        let handle = manager.add_from_bytes(None, &bytes).expect("add failed");
+
+        // Update to empty string
+        let result = manager.update_string(handle, 1, "");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_remove_last_record() {
+        let manager = SmbiosManager::new(3, 9);
+
+        // Add single record
+        let header = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let bytes = SmbiosManager::build_record_with_strings(&header, &[]).expect("build failed");
+        let handle = manager.add_from_bytes(None, &bytes).expect("add failed");
+
+        // Remove it
+        manager.remove(handle).expect("remove failed");
+
+        // Verify empty
+        assert_eq!(manager.records.borrow().len(), 0);
+    }
+
+    #[test]
+    fn test_validate_string_with_valid_characters() {
+        // Test with various valid ASCII characters
+        assert!(SmbiosManager::validate_string("Hello World 123!").is_ok());
+        assert!(SmbiosManager::validate_string("Valid-String_With.Symbols").is_ok());
+        assert!(SmbiosManager::validate_string("UPPERCASE").is_ok());
+        assert!(SmbiosManager::validate_string("lowercase").is_ok());
+    }
+
+    #[test]
+    fn test_smbios_table_header_fields() {
+        let header = SmbiosTableHeader::new(42, 100, 0x1234);
+
+        // Verify all fields - copy to avoid unaligned reference
+        let record_type = header.record_type;
+        let length = header.length;
+        let handle = header.handle;
+
+        assert_eq!(record_type, 42);
+        assert_eq!(length, 100);
+        assert_eq!(handle, 0x1234);
+    }
+
+    #[test]
+    fn test_calculate_checksum_zero() {
+        // Create entry point with all zeros
+        let entry_point = Smbios30EntryPoint {
+            anchor_string: [0, 0, 0, 0, 0],
+            checksum: 0,
+            length: 0,
+            major_version: 0,
+            minor_version: 0,
+            docrev: 0,
+            entry_point_revision: 0,
+            reserved: 0,
+            table_max_size: 0,
+            table_address: 0,
+        };
+
+        let checksum = SmbiosManager::calculate_checksum(&entry_point);
+        // Sum of zeros should give checksum of 0
+        assert_eq!(checksum, 0);
+    }
+
+    #[test]
+    fn test_smbios_record_with_string_count() {
+        let header = SmbiosTableHeader::new(1, 4, 10);
+        let data = vec![1, 4, 10, 0, 0, 0]; // Minimal data
+        let record = SmbiosRecord::new(header, None, data, 5);
+
+        assert_eq!(record.string_count, 5);
+    }
+
+    #[test]
+    fn test_parse_strings_single_char_strings() {
+        let pool = b"A\0B\0C\0\0";
+        let strings = SmbiosManager::parse_strings_from_pool(pool).expect("parse failed");
+
+        assert_eq!(strings.len(), 3);
+        assert_eq!(strings[0], "A");
+        assert_eq!(strings[1], "B");
+        assert_eq!(strings[2], "C");
+    }
 }

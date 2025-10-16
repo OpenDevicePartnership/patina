@@ -572,3 +572,203 @@ impl_smbios_record!(
     string_pool,
     // No fields beyond the header
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manager::SMBIOS_STRING_MAX_LENGTH;
+
+    #[test]
+    fn test_type0_new() {
+        let type0 = Type0PlatformFirmwareInformation {
+            header: SmbiosTableHeader { record_type: 0, length: 0, handle: 0 },
+            vendor: 1,
+            firmware_version: 2,
+            bios_starting_address_segment: 0xE800,
+            firmware_release_date: 3,
+            firmware_rom_size: 0xFF,
+            characteristics: 0x08,
+            characteristics_ext1: 0x03,
+            characteristics_ext2: 0x03,
+            system_bios_major_release: 1,
+            system_bios_minor_release: 0,
+            embedded_controller_major_release: 0xFF,
+            embedded_controller_minor_release: 0xFF,
+            extended_bios_rom_size: 0,
+            string_pool: vec![String::from("Vendor"), String::from("Version"), String::from("Date")],
+        };
+
+        assert!(type0.validate().is_ok());
+        assert_eq!(type0.string_pool().len(), 3);
+        assert_eq!(Type0PlatformFirmwareInformation::RECORD_TYPE, 0);
+    }
+
+    #[test]
+    fn test_type0_validate_string_too_long() {
+        let type0 = Type0PlatformFirmwareInformation {
+            header: SmbiosTableHeader { record_type: 0, length: 0, handle: 0 },
+            vendor: 1,
+            firmware_version: 2,
+            bios_starting_address_segment: 0xE800,
+            firmware_release_date: 3,
+            firmware_rom_size: 0xFF,
+            characteristics: 0x08,
+            characteristics_ext1: 0x03,
+            characteristics_ext2: 0x03,
+            system_bios_major_release: 1,
+            system_bios_minor_release: 0,
+            embedded_controller_major_release: 0xFF,
+            embedded_controller_minor_release: 0xFF,
+            extended_bios_rom_size: 0,
+            string_pool: vec![String::from("x").repeat(SMBIOS_STRING_MAX_LENGTH + 1)],
+        };
+
+        assert_eq!(type0.validate(), Err(SmbiosError::StringTooLong));
+    }
+
+    #[test]
+    fn test_type1_new() {
+        let type1 = Type1SystemInformation {
+            header: SmbiosTableHeader { record_type: 1, length: 0, handle: 0 },
+            manufacturer: 1,
+            product_name: 2,
+            version: 3,
+            serial_number: 4,
+            uuid: [0; 16],
+            wake_up_type: 0x06,
+            sku_number: 5,
+            family: 6,
+            string_pool: vec![
+                String::from("Manufacturer"),
+                String::from("Product"),
+                String::from("Version"),
+                String::from("Serial"),
+                String::from("SKU"),
+                String::from("Family"),
+            ],
+        };
+
+        assert!(type1.validate().is_ok());
+        assert_eq!(type1.string_pool().len(), 6);
+        assert_eq!(Type1SystemInformation::RECORD_TYPE, 1);
+    }
+
+    #[test]
+    fn test_type1_string_pool_mut() {
+        let mut type1 = Type1SystemInformation {
+            header: SmbiosTableHeader { record_type: 1, length: 0, handle: 0 },
+            manufacturer: 1,
+            product_name: 2,
+            version: 3,
+            serial_number: 4,
+            uuid: [0; 16],
+            wake_up_type: 0x06,
+            sku_number: 5,
+            family: 6,
+            string_pool: vec![String::from("Initial")],
+        };
+
+        let pool = type1.string_pool_mut();
+        pool.push(String::from("Added"));
+
+        assert_eq!(type1.string_pool().len(), 2);
+        assert_eq!(type1.string_pool()[1], "Added");
+    }
+
+    #[test]
+    fn test_type127_end_of_table() {
+        let type127 = Type127EndOfTable::new();
+
+        assert_eq!(type127.header.record_type, 127);
+        assert_eq!(type127.header.length, 4);
+        // Copy to avoid unaligned reference
+        let handle = type127.header.handle;
+        assert_eq!(handle, SMBIOS_HANDLE_PI_RESERVED);
+        assert_eq!(type127.string_pool.len(), 0);
+        assert!(type127.validate().is_ok());
+        assert_eq!(Type127EndOfTable::RECORD_TYPE, 127);
+    }
+
+    #[test]
+    fn test_type127_default() {
+        let type127 = Type127EndOfTable::default();
+
+        assert_eq!(type127.header.record_type, 127);
+        assert_eq!(type127.string_pool.len(), 0);
+    }
+
+    #[test]
+    fn test_field_info_size_u8() {
+        let field = FieldInfo { name: "test", field_type: FieldType::U8(0) };
+        assert_eq!(field.size(), 1);
+    }
+
+    #[test]
+    fn test_field_info_size_u16() {
+        let field = FieldInfo { name: "test", field_type: FieldType::U16(0) };
+        assert_eq!(field.size(), 2);
+    }
+
+    #[test]
+    fn test_field_info_size_u32() {
+        let field = FieldInfo { name: "test", field_type: FieldType::U32(0) };
+        assert_eq!(field.size(), 4);
+    }
+
+    #[test]
+    fn test_field_info_size_u64() {
+        let field = FieldInfo { name: "test", field_type: FieldType::U64(0) };
+        assert_eq!(field.size(), 8);
+    }
+
+    #[test]
+    fn test_field_info_size_byte_array() {
+        let field = FieldInfo { name: "test", field_type: FieldType::ByteArray { offset: 0, len: 100 } };
+        assert_eq!(field.size(), 100);
+    }
+
+    #[test]
+    fn test_field_layout_for_type0() {
+        let layout = Type0PlatformFirmwareInformation::field_layout();
+
+        // Type0 has many fields, verify we have them
+        assert!(layout.fields.len() > 10);
+
+        // Check that field names are present
+        let field_names: Vec<&str> = layout.fields.iter().map(|f| f.name).collect();
+        assert!(field_names.contains(&"vendor"));
+        assert!(field_names.contains(&"firmware_version"));
+        assert!(field_names.contains(&"characteristics"));
+    }
+
+    #[test]
+    fn test_field_layout_for_type127() {
+        let layout = Type127EndOfTable::field_layout();
+
+        // Type127 has no fields beyond header
+        assert_eq!(layout.fields.len(), 0);
+    }
+
+    #[test]
+    fn test_smbios_record_structure_validation() {
+        // Test that validation catches string length issues
+        let mut type1 = Type1SystemInformation {
+            header: SmbiosTableHeader { record_type: 1, length: 0, handle: 0 },
+            manufacturer: 1,
+            product_name: 2,
+            version: 3,
+            serial_number: 4,
+            uuid: [0; 16],
+            wake_up_type: 0x06,
+            sku_number: 5,
+            family: 6,
+            string_pool: vec![String::from("Valid")],
+        };
+
+        assert!(type1.validate().is_ok());
+
+        // Add an invalid string
+        type1.string_pool.push("x".repeat(SMBIOS_STRING_MAX_LENGTH + 1));
+        assert_eq!(type1.validate(), Err(SmbiosError::StringTooLong));
+    }
+}
