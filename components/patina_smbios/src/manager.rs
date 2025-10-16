@@ -13,17 +13,18 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::cell::RefCell;
+use core::cell::{RefCell, UnsafeCell};
 use core::ffi::{c_char, c_void};
-use core::sync::atomic::{AtomicPtr, Ordering};
 use patina::boot_services::BootServices;
+use patina::boot_services::StandardBootServices;
 use patina::boot_services::allocation::{AllocType, MemoryType};
+use patina::boot_services::tpl::Tpl;
+use patina::tpl_mutex::TplMutex;
 use patina::uefi_protocol::ProtocolInterface;
 use patina::uefi_size_to_pages;
 use r_efi::efi;
 use r_efi::efi::Handle;
 use r_efi::efi::PhysicalAddress;
-use spin::Mutex;
 use zerocopy::{IntoBytes, Ref};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes as DeriveIntoBytes, KnownLayout};
 
@@ -210,7 +211,6 @@ pub struct SmbiosManager {
     minor_version: u8,
     entry_point_64: RefCell<Option<Box<Smbios30EntryPoint>>>,
     table_64_address: RefCell<Option<PhysicalAddress>>,
-    lock: Mutex<()>,
 }
 
 impl SmbiosManager {
@@ -229,7 +229,6 @@ impl SmbiosManager {
             minor_version,
             entry_point_64: RefCell::new(None),
             table_64_address: RefCell::new(None),
-            lock: Mutex::new(()),
         }
     }
 
@@ -613,7 +612,6 @@ impl SmbiosRecords<'static> for SmbiosManager {
         string: &str,
     ) -> Result<(), SmbiosError> {
         Self::validate_string(string)?;
-        let _lock = self.lock.lock();
 
         // Find the record index
         let pos = self
@@ -673,8 +671,6 @@ impl SmbiosRecords<'static> for SmbiosManager {
     }
 
     fn remove(&self, smbios_handle: SmbiosHandle) -> Result<(), SmbiosError> {
-        let _lock = self.lock.lock();
-
         let pos = self
             .records
             .borrow()
@@ -698,7 +694,6 @@ impl SmbiosRecords<'static> for SmbiosManager {
         smbios_handle: &mut SmbiosHandle,
         record_type: Option<SmbiosType>,
     ) -> Result<(SmbiosTableHeader, Option<Handle>), SmbiosError> {
-        let _lock = self.lock.lock();
         let records = self.records.borrow();
 
         let start_idx = if *smbios_handle == SMBIOS_HANDLE_PI_RESERVED {
@@ -834,22 +829,163 @@ impl SmbiosRecordBuilder {
     }
 }
 
-/// Global storage for the SMBIOS manager instance that the C protocol will use
+/// Global storage for boot_services reference
+///
+/// This reference is stored during protocol installation and remains valid for
+/// the lifetime of the system. Required for TplMutex construction.
 ///
 /// # Safety
 ///
-/// This is safe because:
-/// - UEFI runs in a single-threaded environment during DXE phase
-/// - The pointer is only set once during component initialization
-/// - The manager has 'static lifetime (leaked Box)
-/// - Access is protected by the Mutex inside SmbiosManager
-static SMBIOS_MANAGER: AtomicPtr<Mutex<SmbiosManager>> = AtomicPtr::new(core::ptr::null_mut());
+/// - Initialized once during `install_smbios_protocol`
+/// - The boot_services reference must have 'static lifetime
+/// - Access is thread-safe due to UEFI's single-threaded DXE model
+struct GlobalBootServices {
+    boot_services: UnsafeCell<Option<&'static StandardBootServices>>,
+}
+
+unsafe impl Sync for GlobalBootServices {}
+
+impl GlobalBootServices {
+    const fn new() -> Self {
+        Self { boot_services: UnsafeCell::new(None) }
+    }
+
+    /// Initialize with a boot_services reference
+    ///
+    /// # Safety
+    ///
+    /// Must be called exactly once during system initialization.
+    /// The boot_services reference must have 'static lifetime.
+    unsafe fn initialize(&self, boot_services: &'static StandardBootServices) {
+        unsafe { *self.boot_services.get() = Some(boot_services) };
+    }
+
+    /// Get the stored boot_services reference
+    ///
+    /// # Safety
+    ///
+    /// Returns None if not initialized
+    #[allow(dead_code)] // Reserved for future diagnostic access to raw boot services
+    unsafe fn get(&self) -> Option<&'static StandardBootServices> {
+        unsafe { *self.boot_services.get() }
+    }
+}
+
+static BOOT_SERVICES: GlobalBootServices = GlobalBootServices::new();
+
+/// Global storage for the SMBIOS manager wrapped in TplMutex
+///
+/// Uses TplMutex for TPL-aware synchronization. When locked, TPL is raised to CALLBACK
+/// level, preventing timer interrupt reentrancy. TPL is automatically restored when
+/// the lock guard is dropped.
+///
+/// # Safety
+///
+/// - The TplMutex is wrapped in UnsafeCell for static initialization
+/// - Access is protected by TplMutex.lock() which raises TPL to CALLBACK
+/// - The manager is initialized once during protocol installation
+/// - The pointer remains valid for the lifetime of the system
+struct GlobalSmbiosManager {
+    manager: UnsafeCell<Option<TplMutex<'static, SmbiosManager, StandardBootServices>>>,
+}
+
+unsafe impl Sync for GlobalSmbiosManager {}
+
+impl GlobalSmbiosManager {
+    const fn new() -> Self {
+        Self { manager: UnsafeCell::new(None) }
+    }
+
+    /// Initialize the global manager with TplMutex protection
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure this is called only once during system initialization
+    unsafe fn initialize(
+        &self,
+        tpl_mutex: TplMutex<'static, SmbiosManager, StandardBootServices>,
+    ) -> Result<(), SmbiosError> {
+        let ptr = self.manager.get();
+        if unsafe { (*ptr).is_some() } {
+            return Err(SmbiosError::InvalidParameter); // Already initialized
+        }
+        unsafe { *ptr = Some(tpl_mutex) };
+        Ok(())
+    }
+
+    /// Get a reference to the TplMutex (returns None if not initialized)
+    ///
+    /// # Safety
+    ///
+    /// Returns a raw reference to the TplMutex. Caller must call .lock()
+    /// to get TPL-protected access to the manager.
+    unsafe fn get(&self) -> Option<&'static TplMutex<'static, SmbiosManager, StandardBootServices>> {
+        unsafe { (*self.manager.get()).as_ref() }
+    }
+
+    /// Clear the manager (for cleanup on error)
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure this is only called during error cleanup
+    unsafe fn clear(&self) {
+        unsafe { *self.manager.get() = None };
+    }
+}
+
+static SMBIOS_MANAGER: GlobalSmbiosManager = GlobalSmbiosManager::new();
 
 /// Storage for the protocol interface pointer (for lifetime management)
-static SMBIOS_PROTOCOL_INTERFACE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+struct GlobalProtocolInterface {
+    interface: UnsafeCell<*mut c_void>,
+}
+
+unsafe impl Sync for GlobalProtocolInterface {}
+
+impl GlobalProtocolInterface {
+    const fn new() -> Self {
+        Self { interface: UnsafeCell::new(core::ptr::null_mut()) }
+    }
+
+    unsafe fn set(&self, ptr: *mut c_void) {
+        unsafe { *self.interface.get() = ptr };
+    }
+
+    #[allow(dead_code)]
+    unsafe fn get(&self) -> *mut c_void {
+        unsafe { *self.interface.get() }
+    }
+
+    unsafe fn clear(&self) {
+        unsafe { *self.interface.get() = core::ptr::null_mut() };
+    }
+}
+
+static SMBIOS_PROTOCOL_INTERFACE: GlobalProtocolInterface = GlobalProtocolInterface::new();
 
 /// Storage for the protocol handle
-static SMBIOS_PROTOCOL_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+struct GlobalProtocolHandle {
+    handle: UnsafeCell<efi::Handle>,
+}
+
+unsafe impl Sync for GlobalProtocolHandle {}
+
+impl GlobalProtocolHandle {
+    const fn new() -> Self {
+        Self { handle: UnsafeCell::new(core::ptr::null_mut()) }
+    }
+
+    unsafe fn set(&self, h: efi::Handle) {
+        unsafe { *self.handle.get() = h };
+    }
+
+    #[allow(dead_code)]
+    unsafe fn get(&self) -> efi::Handle {
+        unsafe { *self.handle.get() }
+    }
+}
+
+static SMBIOS_PROTOCOL_HANDLE: GlobalProtocolHandle = GlobalProtocolHandle::new();
 
 /// Wrapper for static SMBIOS header buffer that implements Sync
 ///
@@ -879,22 +1015,31 @@ impl StaticHeaderBuffer {
 static SMBIOS_HEADER_BUFFER: StaticHeaderBuffer =
     StaticHeaderBuffer::new(SmbiosTableHeader { record_type: 0, length: 0, handle: 0 });
 
-/// Gets a reference to the global SMBIOS manager
+/// Gets a reference to the global SMBIOS manager TplMutex
 ///
 /// # Returns
 ///
-/// Returns `Some(&Mutex<SmbiosManager>)` if the manager has been installed,
+/// Returns `Some(&TplMutex<SmbiosManager>)` if the manager has been installed,
 /// `None` if `install_smbios_protocol` has not been called yet.
 ///
-/// # Safety
+/// # Usage
 ///
-/// This is safe because:
-/// - The manager pointer is only set once via `install_smbios_protocol`
-/// - Once set, it points to a leaked Box with 'static lifetime
-/// - The Mutex provides interior mutability and thread-safety
-pub fn get_global_smbios_manager() -> Option<&'static Mutex<SmbiosManager>> {
-    let ptr = SMBIOS_MANAGER.load(Ordering::Acquire);
-    if ptr.is_null() { None } else { Some(unsafe { &*ptr }) }
+/// To access the manager, you must call `.lock()` on the returned TplMutex:
+///
+/// ```ignore
+/// if let Some(tpl_mutex) = get_global_smbios_manager() {
+///     let manager = tpl_mutex.lock(); // TPL raised to CALLBACK
+///     // ... use manager ...
+///     // TPL automatically restored when guard drops
+/// }
+/// ```
+///
+/// # TPL Protection
+///
+/// The TplMutex automatically raises TPL to CALLBACK level when locked, preventing
+/// timer interrupt reentrancy. The TPL is restored when the lock guard is dropped.
+pub fn get_global_smbios_manager() -> Option<&'static TplMutex<'static, SmbiosManager, StandardBootServices>> {
+    unsafe { SMBIOS_MANAGER.get() }
 }
 
 #[repr(C)]
@@ -952,6 +1097,11 @@ impl SmbiosProtocol {
     ///
     /// This function is only safe to call from the C UEFI protocol layer where the
     /// caller guarantees that `record` points to a complete, valid SMBIOS record.
+    ///
+    /// # TPL Protection
+    ///
+    /// This function uses TplMutex.lock() which automatically raises TPL to CALLBACK
+    /// level, preventing timer interrupt reentrancy during manager access.
     #[allow(dead_code)]
     extern "efiapi" fn add_ext(
         _protocol: *const SmbiosProtocol,
@@ -964,11 +1114,15 @@ impl SmbiosProtocol {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // Get the global manager
-        let manager_ptr = SMBIOS_MANAGER.load(Ordering::SeqCst);
-        if manager_ptr.is_null() {
-            return efi::Status::NOT_READY;
-        }
+        // Get the global TplMutex
+        // SAFETY: We're just checking if the TplMutex exists
+        let tpl_mutex = match unsafe { SMBIOS_MANAGER.get() } {
+            Some(m) => m,
+            None => return efi::Status::NOT_READY,
+        };
+
+        // Lock the mutex - TPL is automatically raised to CALLBACK
+        let manager = tpl_mutex.lock();
 
         // SAFETY: The C UEFI protocol caller guarantees that `record` points to a valid,
         // complete SMBIOS record. We read the length field to determine the full record size.
@@ -1009,15 +1163,11 @@ impl SmbiosProtocol {
             // Create a slice of the complete record
             let full_record_bytes = core::slice::from_raw_parts(base_ptr, total_size);
 
-            // SAFETY: manager_ptr is guaranteed to be valid (checked above)
-            let manager = &*manager_ptr;
-            let manager_lock = manager.lock();
-
             // Convert handle
             let producer_opt = if producer_handle.is_null() { None } else { Some(producer_handle) };
 
             // Add the record
-            match manager_lock.add_from_bytes(producer_opt, full_record_bytes) {
+            match manager.add_from_bytes(producer_opt, full_record_bytes) {
                 Ok(handle) => {
                     *smbios_handle = handle;
                     efi::Status::SUCCESS
@@ -1030,6 +1180,7 @@ impl SmbiosProtocol {
                 Err(_) => efi::Status::DEVICE_ERROR,
             }
         }
+        // TPL automatically restored when manager (TplMutexGuard) is dropped
     }
 
     #[allow(dead_code)]
@@ -1043,10 +1194,13 @@ impl SmbiosProtocol {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        let manager_ptr = SMBIOS_MANAGER.load(Ordering::SeqCst);
-        if manager_ptr.is_null() {
-            return efi::Status::NOT_READY;
-        }
+        // Get the global TplMutex and lock it (raises TPL to CALLBACK)
+        let tpl_mutex = match unsafe { SMBIOS_MANAGER.get() } {
+            Some(m) => m,
+            None => return efi::Status::NOT_READY,
+        };
+
+        let manager = tpl_mutex.lock();
 
         unsafe {
             let handle = *smbios_handle;
@@ -1059,11 +1213,7 @@ impl SmbiosProtocol {
                 Err(_) => return efi::Status::INVALID_PARAMETER,
             };
 
-            // SAFETY: manager_ptr is guaranteed to be valid
-            let manager = &*manager_ptr;
-            let manager_lock = manager.lock();
-
-            match manager_lock.update_string(handle, str_num, rust_str) {
+            match manager.update_string(handle, str_num, rust_str) {
                 Ok(()) => efi::Status::SUCCESS,
                 Err(SmbiosError::InvalidParameter) => efi::Status::INVALID_PARAMETER,
                 Err(SmbiosError::HandleNotFound) => efi::Status::NOT_FOUND,
@@ -1071,26 +1221,25 @@ impl SmbiosProtocol {
                 Err(_) => efi::Status::DEVICE_ERROR,
             }
         }
+        // TPL automatically restored when manager (TplMutexGuard) is dropped
     }
 
     #[allow(dead_code)]
     extern "efiapi" fn remove_ext(_protocol: *const SmbiosProtocol, smbios_handle: SmbiosHandle) -> efi::Status {
-        let manager_ptr = SMBIOS_MANAGER.load(Ordering::SeqCst);
-        if manager_ptr.is_null() {
-            return efi::Status::NOT_READY;
-        }
+        // Get the global TplMutex and lock it (raises TPL to CALLBACK)
+        let tpl_mutex = match unsafe { SMBIOS_MANAGER.get() } {
+            Some(m) => m,
+            None => return efi::Status::NOT_READY,
+        };
 
-        unsafe {
-            // SAFETY: manager_ptr is guaranteed to be valid
-            let manager = &*manager_ptr;
-            let manager_lock = manager.lock();
+        let manager = tpl_mutex.lock();
 
-            match manager_lock.remove(smbios_handle) {
-                Ok(()) => efi::Status::SUCCESS,
-                Err(SmbiosError::HandleNotFound) => efi::Status::NOT_FOUND,
-                Err(_) => efi::Status::DEVICE_ERROR,
-            }
+        match manager.remove(smbios_handle) {
+            Ok(()) => efi::Status::SUCCESS,
+            Err(SmbiosError::HandleNotFound) => efi::Status::NOT_FOUND,
+            Err(_) => efi::Status::DEVICE_ERROR,
         }
+        // TPL automatically restored when manager (TplMutexGuard) is dropped
     }
 
     #[allow(dead_code)]
@@ -1105,20 +1254,19 @@ impl SmbiosProtocol {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        let manager_ptr = SMBIOS_MANAGER.load(Ordering::SeqCst);
-        if manager_ptr.is_null() {
-            return efi::Status::NOT_READY;
-        }
+        // Get the global TplMutex and lock it (raises TPL to CALLBACK)
+        let tpl_mutex = match unsafe { SMBIOS_MANAGER.get() } {
+            Some(m) => m,
+            None => return efi::Status::NOT_READY,
+        };
+
+        let manager = tpl_mutex.lock();
 
         unsafe {
             let mut handle = *smbios_handle;
             let type_filter = if record_type.is_null() { None } else { Some(*record_type) };
 
-            // SAFETY: manager_ptr is guaranteed to be valid
-            let manager = &*manager_ptr;
-            let manager_lock = manager.lock();
-
-            match manager_lock.get_next(&mut handle, type_filter) {
+            match manager.get_next(&mut handle, type_filter) {
                 Ok((header_value, prod_handle)) => {
                     *smbios_handle = handle;
 
@@ -1138,43 +1286,57 @@ impl SmbiosProtocol {
                 Err(_) => efi::Status::DEVICE_ERROR,
             }
         }
+        // TPL automatically restored when manager (TplMutexGuard) is dropped
     }
 }
 
 /// Installs the SMBIOS protocol for C/EDKII driver compatibility
 ///
 /// This function should be called after the SMBIOS service is registered.
-/// It creates a C-compatible protocol interface that wraps a global manager instance.
+/// It creates a C-compatible protocol interface that wraps a global manager instance
+/// protected by TplMutex.
 ///
 /// # Arguments
 ///
-/// * `manager` - The SmbiosManager that will be moved into global storage
-/// * `boot_services` - The UEFI boot services for protocol installation
+/// * `manager` - The SmbiosManager that will be wrapped in TplMutex and moved into global storage
+/// * `boot_services` - The UEFI boot services for protocol installation and TPL management
 ///
 /// # Safety
 ///
-/// This function takes ownership of the manager and leaks it to ensure 'static lifetime.
-/// The manager must not already be installed (function will return error if called twice).
-/// The protocol will remain installed for the lifetime of the system.
+/// This function:
+/// - Stores the boot_services reference globally for 'static lifetime
+/// - Wraps the manager in TplMutex with CALLBACK TPL level
+/// - Moves the TplMutex into global storage for 'static lifetime
+/// - The manager must not already be installed (function will return error if called twice)
+/// - The protocol will remain installed for the lifetime of the system
+///
+/// # TPL Protection
+///
+/// The manager is protected by TplMutex at CALLBACK level. When protocol functions
+/// are called, the TplMutex.lock() automatically raises TPL to CALLBACK, preventing
+/// timer interrupt reentrancy. TPL is automatically restored when the lock guard drops.
 pub fn install_smbios_protocol(
     manager: SmbiosManager,
-    boot_services: &impl patina::boot_services::BootServices,
+    boot_services: &'static StandardBootServices,
 ) -> Result<efi::Handle, SmbiosError> {
-    // Check if already installed
-    let existing = SMBIOS_MANAGER.load(Ordering::SeqCst);
-    if !existing.is_null() {
-        return Err(SmbiosError::InvalidParameter); // Already installed
-    }
-
     // Get the version before moving the manager
     let (major, minor) = manager.version();
 
-    // Wrap in Mutex and leak to get 'static lifetime
-    let manager_mutex = Box::new(Mutex::new(manager));
-    let manager_ptr = Box::into_raw(manager_mutex);
+    // Store boot_services reference globally for TplMutex
+    // SAFETY: This function should only be called once during system initialization
+    unsafe {
+        BOOT_SERVICES.initialize(boot_services);
+    }
 
-    // Store the manager pointer globally
-    SMBIOS_MANAGER.store(manager_ptr, Ordering::SeqCst);
+    // Create TplMutex wrapping the manager with CALLBACK TPL level
+    // This ensures timer interrupts cannot cause reentrancy
+    let tpl_mutex = TplMutex::new(boot_services, Tpl::CALLBACK, manager);
+
+    // Initialize the global manager with the TplMutex
+    // SAFETY: This function should only be called once during system initialization
+    unsafe {
+        SMBIOS_MANAGER.initialize(tpl_mutex)?;
+    }
 
     // Create the protocol instance
     let protocol = SmbiosProtocol::new(major, minor);
@@ -1182,7 +1344,10 @@ pub fn install_smbios_protocol(
     let interface_void = interface as *mut c_void;
 
     // Store the interface pointer for lifetime management
-    SMBIOS_PROTOCOL_INTERFACE.store(interface_void, Ordering::SeqCst);
+    // SAFETY: We just created this pointer and it's valid
+    unsafe {
+        SMBIOS_PROTOCOL_INTERFACE.set(interface_void);
+    }
 
     // Install the protocol using the unchecked interface since we have a raw pointer
     let handle = unsafe {
@@ -1196,16 +1361,19 @@ pub fn install_smbios_protocol(
     match handle {
         Ok(h) => {
             // Store the handle
-            SMBIOS_PROTOCOL_HANDLE.store(h, Ordering::SeqCst);
+            // SAFETY: We just received this valid handle from boot_services
+            unsafe {
+                SMBIOS_PROTOCOL_HANDLE.set(h);
+            }
             Ok(h)
         }
         Err(status) => {
+            // Clean up on failure
             unsafe {
                 drop(Box::from_raw(interface));
-                drop(Box::from_raw(manager_ptr));
+                SMBIOS_MANAGER.clear();
+                SMBIOS_PROTOCOL_INTERFACE.clear();
             }
-            SMBIOS_MANAGER.store(core::ptr::null_mut(), Ordering::SeqCst);
-            SMBIOS_PROTOCOL_INTERFACE.store(core::ptr::null_mut(), Ordering::SeqCst);
             log::error!("Failed to install SMBIOS protocol: {:?}", status);
             Err(SmbiosError::OutOfResources)
         }
@@ -1879,7 +2047,8 @@ mod tests {
     #[test]
     fn test_smbios_record_builder_add_string_too_long() {
         let long_string = "a".repeat(SMBIOS_STRING_MAX_LENGTH + 1);
-        let result = SmbiosRecordBuilder::new(1).add_string(String::from(long_string));
+        // No need for String::from since repeat already returns a String
+        let result = SmbiosRecordBuilder::new(1).add_string(long_string);
 
         assert_eq!(result, Err(SmbiosError::StringTooLong));
     }
