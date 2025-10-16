@@ -78,7 +78,7 @@ impl<'a> FileRef<'a> {
             Err(FirmwareFileSystemError::InvalidHeader)?;
         }
 
-        // safety: buffer is large enough to contain file header.
+        // SAFETY: buffer is large enough to contain file header.
         let header = unsafe { ptr::read_unaligned(buffer.as_ptr() as *const file::Header) };
 
         // determine actual size and content_offset
@@ -94,7 +94,7 @@ impl<'a> FileRef<'a> {
                 if buffer.len() < mem::size_of::<file::Header2>() {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
                 }
-                // safety: buffer is large enough to contain file header.
+                // SAFETY: buffer is large enough to contain file header.
                 let header = unsafe { ptr::read_unaligned(buffer.as_ptr() as *const file::Header2) };
                 (header.extended_size as usize, mem::size_of::<file::Header2>())
             }
@@ -384,7 +384,7 @@ impl File {
         file_header.extended_size = (mem::size_of_val(&file_header) + content.len()) as u64;
 
         // calculate checksum (excludes state and integrity_check_file, set to zero)
-        // safety: file_header is repr(C), safe to represent as byte slice for checksum
+        // SAFETY: file_header is repr(C), safe to represent as byte slice for checksum
         let header_slice =
             unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
         let sum = header_slice.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
@@ -405,6 +405,7 @@ impl File {
             file_header.header.state = !file_header.header.state;
         }
 
+        // SAFETY: file_header is repr(C), safe to represent as byte slice for serialization.
         let header_slice =
             unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
         header_slice.to_vec()
@@ -425,7 +426,7 @@ impl File {
         file_header.size.copy_from_slice(&size.to_le_bytes()[0..3]);
 
         // calculate checksum (excludes state and integrity_check_file, set to zero)
-        // safety: file_header is repr(C), safe to represent as byte slice for checksum
+        // SAFETY: file_header is repr(C), safe to represent as byte slice for checksum
         let header_slice =
             unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
         let sum = header_slice.iter().fold(0u8, |sum, value| sum.wrapping_add(*value));
@@ -446,6 +447,7 @@ impl File {
             file_header.state = !file_header.state;
         }
 
+        // SAFETY: file_header is repr(C), safe to represent as byte slice for serialization.
         let header_slice =
             unsafe { from_raw_parts(&raw const file_header as *const u8, mem::size_of_val(&file_header)) };
         header_slice.to_vec()
