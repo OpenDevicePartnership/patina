@@ -527,7 +527,7 @@ fn get_module_guid_from_handle(
                 let guid_ptr = (loaded_image.file_path as *const u8)
                     .add(mem::size_of::<efi::protocols::device_path::Protocol>())
                     as *const efi::Guid;
-                guid = ptr::read_unaligned(guid_ptr);
+                guid = ptr::read(guid_ptr);
             }
         };
     }
@@ -628,6 +628,8 @@ mod tests {
         unsafe {
             media_fw_vol_file_path_device_path.assume_init_mut().header.r#type = TYPE_MEDIA;
             media_fw_vol_file_path_device_path.assume_init_mut().header.sub_type = Media::SUBTYPE_PIWG_FIRMWARE_FILE;
+            media_fw_vol_file_path_device_path.assume_init_mut().header.length =
+                (mem::size_of::<MediaFwVolFilepathDevicePath>() as u16).to_le_bytes();
             media_fw_vol_file_path_device_path.assume_init_mut().fv_file_name = efi::Guid::from_bytes(&[3; 16]);
 
             loaded_image_protocol.assume_init_mut().file_path =

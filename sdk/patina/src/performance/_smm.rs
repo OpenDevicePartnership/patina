@@ -91,7 +91,7 @@ unsafe impl ProtocolInterface for CommunicateProtocol {
 /// [`TryFromCtx`] is used to define how to read the struct as the data in communicate buffer.
 ///
 /// # Safety
-/// Make sure you write and read the struct in the expected format defined by the guid.
+/// `GUID` must match the expected layout of the struct for serialization and deserialization.
 pub unsafe trait CommunicateData:
     TryIntoCtx<Endian, Error = scroll::Error> + TryFromCtx<'static, Endian, Error = scroll::Error>
 {
@@ -103,7 +103,7 @@ impl CommunicateProtocol {
     /// Abstraction over [Communicate].
     ///
     /// # Safety
-    /// Make sure the communication_memory_region is valid.
+    /// Make sure the communication_memory_region is valid and properly aligned.
     pub unsafe fn communicate<T>(
         &mut self,
         data: T,
@@ -115,7 +115,7 @@ impl CommunicateProtocol {
         assert_ne!(0, communication_memory_region.region_address);
         assert_ne!(0, communication_memory_region.region_nb_pages);
 
-        // SAFETY: The caller must ensure that the memory region is valid and properly aligned.
+        // SAFETY: The safety contract for `communicate` must be upheld by the caller.
         let comm_buffer = unsafe { communication_memory_region.as_buffer() };
         let mut offset = 0;
 
@@ -160,7 +160,7 @@ impl SmmGetRecordSize {
     }
 }
 
-// SAFETY: The GUID matches the object being written (the firmware performance record).
+// SAFETY: `EFI_FIRMWARE_PERFORMANCE_GUID` matches layout of `SmmGetRecordSize` for serialization and deserialization.
 unsafe impl CommunicateData for SmmGetRecordSize {
     const GUID: efi::Guid = EFI_FIRMWARE_PERFORMANCE_GUID;
 }
@@ -221,7 +221,7 @@ impl<const BUFFER_SIZE: usize> SmmGetRecordDataByOffset<BUFFER_SIZE> {
     }
 }
 
-// SAFETY: The GUID matches the object being written (the firmware performance record).
+// SAFETY: `EFI_FIRMWARE_PERFORMANCE_GUID` matches layout of `SmmGetRecordDataByOffset` for serialization and deserialization.
 unsafe impl<const BUFFER_SIZE: usize> CommunicateData for SmmGetRecordDataByOffset<BUFFER_SIZE> {
     const GUID: efi::Guid = EFI_FIRMWARE_PERFORMANCE_GUID;
 }

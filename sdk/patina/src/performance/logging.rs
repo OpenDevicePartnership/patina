@@ -35,7 +35,7 @@ fn log_perf_measurement(
         .expect("String should not contain 0 bytes.")
         .map_or(ptr::null(), |s| s.into_raw());
 
-    // SAFETY: string parameter is expected to be a valid C string.
+    // SAFETY: The above check ensures that if `string` is Some, then `s` is a valid C string.
     unsafe {
         (create_performance_measurement)(
             caller_identifier,
