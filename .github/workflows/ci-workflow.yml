@@ -25,7 +25,10 @@ on:
 jobs:
   ci_workflow:
     name: Run
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/CiWorkflow.yml@v0.0.1
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/CiWorkflow.yml@v0.0.2
     with:
+      build-tasks: "build,build-x64,build-aarch64"
       mdbook-path: "docs"
+      run-cargo-vet: true
+      run-release-dry-run: ${{ !contains(github.event.pull_request.body, '(skip cargo release dry run)') }}
     secrets: inherit
