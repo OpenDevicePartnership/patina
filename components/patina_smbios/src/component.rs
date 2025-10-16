@@ -77,15 +77,8 @@ impl SmbiosProviderManager {
         let manager = SmbiosManager::new(cfg.major_version, cfg.minor_version);
 
         // Install the protocol - this transfers ownership to the global singleton
-        match install_smbios_protocol(manager, &boot_services) {
-            Ok(handle) => {
-                log::info!("SMBIOS protocol installed successfully at handle {:?}", handle);
-            }
-            Err(e) => {
-                log::error!("Failed to install SMBIOS protocol: {:?}", e);
-                // Cannot proceed without the manager - this is a fatal error
-                panic!("SMBIOS manager installation failed");
-            }
+        if let Err(e) = install_smbios_protocol(manager, &boot_services) {
+            log::error!("Failed to install SMBIOS protocol: {:?}", e);
         }
 
         // Register the service so other components can consume it
