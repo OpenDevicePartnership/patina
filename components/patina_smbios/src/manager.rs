@@ -408,9 +408,7 @@ impl SmbiosManager {
             .map_err(|_| SmbiosError::OutOfResources)?;
 
         // Step 3: Copy all records to the table
-        let table_slice = unsafe {
-            core::slice::from_raw_parts_mut(table_address as *mut u8, total_table_size)
-        };
+        let table_slice = unsafe { core::slice::from_raw_parts_mut(table_address as *mut u8, total_table_size) };
         let mut offset = 0;
 
         for record in records.iter() {
@@ -772,6 +770,34 @@ static SMBIOS_PROTOCOL_INTERFACE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::
 /// Storage for the protocol handle
 static SMBIOS_PROTOCOL_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
 
+/// Wrapper for static SMBIOS header buffer that implements Sync
+///
+/// SAFETY: This is safe because UEFI DXE runs in a single-threaded environment,
+/// so there's no actual concurrent access despite the Sync implementation.
+struct StaticHeaderBuffer(core::cell::UnsafeCell<SmbiosTableHeader>);
+
+unsafe impl Sync for StaticHeaderBuffer {}
+
+impl StaticHeaderBuffer {
+    const fn new(header: SmbiosTableHeader) -> Self {
+        Self(core::cell::UnsafeCell::new(header))
+    }
+
+    unsafe fn get(&self) -> *mut SmbiosTableHeader {
+        self.0.get()
+    }
+}
+
+/// Static storage for header returned by get_next
+///
+/// This avoids heap allocation issues. The header is stored in a static location
+/// that persists for the lifetime of the program. Since SMBIOS headers are small
+/// (4 bytes) and get_next is typically called sequentially, a single static buffer
+/// is sufficient. The caller receives a pointer to this buffer which remains valid
+/// until the next call to get_next.
+static SMBIOS_HEADER_BUFFER: StaticHeaderBuffer =
+    StaticHeaderBuffer::new(SmbiosTableHeader { record_type: 0, length: 0, handle: 0 });
+
 /// Gets a reference to the global SMBIOS manager
 ///
 /// # Returns
@@ -1014,9 +1040,14 @@ impl SmbiosProtocol {
             match manager_lock.get_next(&mut handle, type_filter) {
                 Ok((header_value, prod_handle)) => {
                     *smbios_handle = handle;
-                    // Allocate the header on the heap and return a pointer to it
-                    // Note: This leaks memory, but matches the expected C API behavior
-                    *record = Box::into_raw(Box::new(header_value));
+
+                    // Store header in static buffer and return pointer to it.
+                    // SAFETY: UEFI DXE is single-threaded, so there's no concurrent access.
+                    // The pointer remains valid until the next call to get_next (standard UEFI pattern).
+                    let buffer_ptr = SMBIOS_HEADER_BUFFER.get();
+                    *buffer_ptr = header_value;
+                    *record = buffer_ptr;
+
                     if !producer_handle.is_null() {
                         *producer_handle = prod_handle.unwrap_or(core::ptr::null_mut());
                     }
