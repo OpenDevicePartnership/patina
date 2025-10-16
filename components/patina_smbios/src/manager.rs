@@ -1154,11 +1154,9 @@ pub fn install_smbios_protocol(
             Ok(h)
         }
         Err(status) => {
-            // Clean up on failure
             unsafe {
-                let _ = Box::from_raw(interface);
-                let manager_box = Box::from_raw(manager_ptr);
-                drop(manager_box); // Properly drop the manager
+                drop(Box::from_raw(interface));
+                drop(Box::from_raw(manager_ptr));
             }
             SMBIOS_MANAGER.store(core::ptr::null_mut(), Ordering::SeqCst);
             SMBIOS_PROTOCOL_INTERFACE.store(core::ptr::null_mut(), Ordering::SeqCst);
