@@ -79,6 +79,7 @@ pub struct CommunicateProtocol {
     pub communicate: Communicate,
 }
 
+// SAFETY: The GUID matches the SMM communication protocol interface.
 unsafe impl ProtocolInterface for CommunicateProtocol {
     const PROTOCOL_GUID: efi::Guid = EFI_SMM_COMMUNICATION_PROTOCOL_GUID;
 }
@@ -114,6 +115,7 @@ impl CommunicateProtocol {
         assert_ne!(0, communication_memory_region.region_address);
         assert_ne!(0, communication_memory_region.region_nb_pages);
 
+        // SAFETY: The caller must ensure that the memory region is valid and properly aligned.
         let comm_buffer = unsafe { communication_memory_region.as_buffer() };
         let mut offset = 0;
 
@@ -158,6 +160,7 @@ impl SmmGetRecordSize {
     }
 }
 
+// SAFETY: The GUID matches the object being written (the firmware performance record).
 unsafe impl CommunicateData for SmmGetRecordSize {
     const GUID: efi::Guid = EFI_FIRMWARE_PERFORMANCE_GUID;
 }
@@ -218,6 +221,7 @@ impl<const BUFFER_SIZE: usize> SmmGetRecordDataByOffset<BUFFER_SIZE> {
     }
 }
 
+// SAFETY: The GUID matches the object being written (the firmware performance record).
 unsafe impl<const BUFFER_SIZE: usize> CommunicateData for SmmGetRecordDataByOffset<BUFFER_SIZE> {
     const GUID: efi::Guid = EFI_FIRMWARE_PERFORMANCE_GUID;
 }

@@ -13,6 +13,7 @@ use core::{
     clone::Clone,
     convert::AsRef,
     ffi::{CStr, c_char, c_void},
+    mem,
     ops::BitOr,
     ptr,
     sync::atomic::{AtomicBool, Ordering},
@@ -76,6 +77,7 @@ pub mod event_callback {
             return;
         };
 
+        // SAFETY: `p` is the only mutable reference to the `StatusCodeRuntimeProtocol` in this scope.
         let Ok(p) = (unsafe { boot_services.as_ref().locate_protocol::<StatusCodeRuntimeProtocol>(None) }) else {
             log::error!("Performance: Fail to find status code protocol.");
             return;
@@ -194,7 +196,8 @@ pub mod event_callback {
 // it not mockable.
 ///
 /// # Safety
-/// String must be a valid C string pointer.
+/// `string` must be a valid C string pointer.
+/// `caller_identifier` must be a valid image handle or GUID pointer.
 pub unsafe extern "efiapi" fn create_performance_measurement(
     caller_identifier: *const c_void,
     guid: Option<&efi::Guid>,
@@ -209,6 +212,7 @@ pub unsafe extern "efiapi" fn create_performance_measurement(
         return efi::Status::SUCCESS;
     };
 
+    // SAFETY: The caller ensures that string is a valid C string pointer (or NULL).
     let string = unsafe { string.as_ref().map(|s| CStr::from_ptr(s).to_string_lossy().to_string()) };
 
     // NOTE: If the Perf is not the known Token used in the core but have same ID with the core Token, this case will
@@ -297,6 +301,7 @@ where
         if attribute == PerfAttribute::PerfEntry {
             return Err(EfiError::InvalidParameter.into());
         }
+        // SAFETY: The caller of parent function `create_performance_measurement` ensures that `caller_identifier` is a valid image handle or GUID pointer.
         let guid = get_module_guid_from_handle(boot_services, caller_identifier as efi::Handle)
             .unwrap_or_else(|_| unsafe { *(caller_identifier as *const Guid) });
         let module_name = string.unwrap_or("unknown name");
@@ -475,13 +480,14 @@ fn get_module_guid_from_handle(
     let mut guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
 
     let loaded_image_protocol = 'find_loaded_image_protocol: {
+        // SAFETY: `loaded_image_protocol` is the only reference to the `loaded_image::Protocol` in this scope.
         if let Ok(loaded_image_protocol) =
             unsafe { boot_services.handle_protocol::<efi::protocols::loaded_image::Protocol>(handle) }
         {
             break 'find_loaded_image_protocol Some(loaded_image_protocol);
         }
 
-        // SAFETY: This is safe because the protocol is not mutated.
+        // SAFETY: `driver_binding_protocol` is the only reference to the `driver_binding::Protocol` in this scope.
         unsafe {
             if let Ok(driver_binding_protocol) = boot_services
                 .open_protocol::<efi::protocols::driver_binding::Protocol>(
@@ -505,8 +511,24 @@ fn get_module_guid_from_handle(
             && file_path.r#type == TYPE_MEDIA
             && file_path.sub_type == Media::SUBTYPE_PIWG_FIRMWARE_FILE
         {
-            // Guid is stored after the device path in memory.
-            guid = unsafe { ptr::read(loaded_image.file_path.add(1) as *const efi::Guid) }
+            // The layout of MEDIA_FW_VOL_FILEPATH_DEVICE_PATH in memory is { Protocol (header) | Guid (file name) }.
+            let node_len = u16::from_le_bytes(file_path.length);
+            let expected_len =
+                (mem::size_of::<efi::protocols::device_path::Protocol>() + mem::size_of::<efi::Guid>()) as u16;
+
+            // Sanity check that the header matches the expected size.
+            if node_len != expected_len {
+                return Err(efi::Status::NOT_FOUND);
+            }
+
+            // SAFETY: To be honest there is no way to guarantee the memory read here is valid and owned by us,
+            // but we have at least validated that the type gives a known layout and the layout of the device path matches its claimed length.
+            unsafe {
+                let guid_ptr = (loaded_image.file_path as *const u8)
+                    .add(mem::size_of::<efi::protocols::device_path::Protocol>())
+                    as *const efi::Guid;
+                guid = ptr::read_unaligned(guid_ptr);
+            }
         };
     }
 
