@@ -43,7 +43,7 @@ pub const fn align_up(addr: u64, align: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use crate::address_helper::{align_down, align_up};
+    use crate::pi::address_helper::{align_down, align_up};
 
     #[test]
     #[should_panic]

@@ -13,6 +13,7 @@ use alloc::{
 };
 use core::{cmp::Ordering, ffi::c_void};
 use mu_rust_helpers::{function, guid::guid_fmt};
+use patina::pi::{fw_fs::ffs, protocols::firmware_volume_block};
 use patina::{
     component::service::Service,
     error::EfiError,
@@ -27,7 +28,6 @@ use patina_ffs::{
 };
 use patina_internal_depex::{AssociatedDependency, Depex, Opcode};
 use patina_internal_device_path::concat_device_path_to_boxed_slice;
-use patina_pi::{fw_fs::ffs, protocols::firmware_volume_block};
 use r_efi::efi;
 
 use mu_rust_helpers::guid::CALLER_ID;
@@ -91,8 +91,8 @@ impl PendingFirmwareVolumeImage {
     // authenticate the pending firmware volume via the Security Architectural Protocol
     fn evaluate_auth(&self) -> Result<(), EfiError> {
         let security_protocol = unsafe {
-            match PROTOCOL_DB.locate_protocol(patina_pi::protocols::security::PROTOCOL_GUID) {
-                Ok(protocol) => (protocol as *mut patina_pi::protocols::security::Protocol)
+            match PROTOCOL_DB.locate_protocol(patina::pi::protocols::security::PROTOCOL_GUID) {
+                Ok(protocol) => (protocol as *mut patina::pi::protocols::security::Protocol)
                     .as_ref()
                     .expect("Security Protocol should not be null"),
                 //If security protocol is not located, then assume it has not yet been produced and implicitly trust the
@@ -107,7 +107,7 @@ impl PendingFirmwareVolumeImage {
         //authentication status, so it is hard-coded to zero here. The primary security handlers for the main usage
         //scenarios (TPM measurement and UEFI Secure Boot) do not use it.
         let status = (security_protocol.file_authentication_state)(
-            security_protocol as *const _ as *mut patina_pi::protocols::security::Protocol,
+            security_protocol as *const _ as *mut patina::pi::protocols::security::Protocol,
             0,
             file_path.as_ptr() as *const _ as *mut efi::protocols::device_path::Protocol,
         );
@@ -925,7 +925,7 @@ mod tests {
         with_locked_state(|| {
             static SECURITY_CALL_EXECUTED: AtomicBool = AtomicBool::new(false);
             extern "efiapi" fn mock_file_authentication_state(
-                this: *mut patina_pi::protocols::security::Protocol,
+                this: *mut patina::pi::protocols::security::Protocol,
                 authentication_status: u32,
                 file: *mut efi::protocols::device_path::Protocol,
             ) -> efi::Status {
@@ -960,12 +960,12 @@ mod tests {
             }
 
             let security_protocol =
-                patina_pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
+                patina::pi::protocols::security::Protocol { file_authentication_state: mock_file_authentication_state };
 
             PROTOCOL_DB
                 .install_protocol_interface(
                     None,
-                    patina_pi::protocols::security::PROTOCOL_GUID,
+                    patina::pi::protocols::security::PROTOCOL_GUID,
                     &security_protocol as *const _ as *mut _,
                 )
                 .unwrap();

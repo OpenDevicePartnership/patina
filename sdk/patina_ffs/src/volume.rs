@@ -21,7 +21,7 @@ use core::{
 use patina::base::align_up;
 use r_efi::efi;
 
-use patina_pi::fw_fs::{
+use patina::pi::fw_fs::{
     ffs::{self, file},
     fv::{self, BlockMapEntry},
     fvb,
@@ -57,7 +57,7 @@ impl<'a> VolumeRef<'a> {
     ///
     /// ```rust no_run
     /// use patina_ffs::volume::{Volume, VolumeRef};
-    /// use patina_pi::fw_fs::fv::BlockMapEntry;
+    /// use patina::pi::fw_fs::fv::BlockMapEntry;
     ///
     /// // Build a minimal FV in memory, then parse it back.
     /// let block_map = vec![BlockMapEntry { num_blocks: 1, length: 4096 }];
@@ -216,7 +216,7 @@ impl<'a> VolumeRef<'a> {
     ///
     /// ```rust no_run
     /// use patina_ffs::volume::{Volume, VolumeRef};
-    /// use patina_pi::fw_fs::fv::BlockMapEntry;
+    /// use patina::pi::fw_fs::fv::BlockMapEntry;
     ///
     /// let fv_bytes = Volume::new(vec![BlockMapEntry { num_blocks: 1, length: 4096 }])
     ///     .serialize()
@@ -280,7 +280,7 @@ impl<'a> VolumeRef<'a> {
     ///
     /// ```rust no_run
     /// use patina_ffs::volume::{Volume, VolumeRef};
-    /// use patina_pi::fw_fs::fv::BlockMapEntry;
+    /// use patina::pi::fw_fs::fv::BlockMapEntry;
     /// let fv_bytes = Volume::new(vec![BlockMapEntry { num_blocks: 1, length: 4096 }])
     ///     .serialize()
     ///     .unwrap();
@@ -461,7 +461,7 @@ impl Volume {
     /// ```rust no_run
     /// use patina_ffs::volume::Volume;
     /// use patina_ffs::file::File;
-    /// use patina_pi::fw_fs::{ffs, fv::BlockMapEntry};
+    /// use patina::pi::fw_fs::{ffs, fv::BlockMapEntry};
     /// use r_efi::efi;
     ///
     /// let mut fv = Volume::new(vec![BlockMapEntry { num_blocks: 1, length: 4096 }]);
@@ -486,7 +486,7 @@ impl Volume {
     /// use patina_ffs::volume::Volume;
     /// use patina_ffs::file::File;
     /// use patina_ffs::section::{Section, SectionHeader};
-    /// use patina_pi::fw_fs::{ffs, fv::BlockMapEntry};
+    /// use patina::pi::fw_fs::{ffs, fv::BlockMapEntry};
     /// use r_efi::efi;
     ///
     /// // Create a volume and add several files, each with a RAW section.
@@ -682,7 +682,7 @@ impl Volume {
     /// ```rust no_run
     /// use patina_ffs::volume::Volume;
     /// use patina_ffs::section::{Section, SectionComposer, SectionHeader};
-    /// use patina_pi::fw_fs::{ffs, fv::BlockMapEntry};
+    /// use patina::pi::fw_fs::{ffs, fv::BlockMapEntry};
     /// use r_efi::efi;
     ///
     /// struct Passthrough;
@@ -762,7 +762,7 @@ mod test {
     use core::{mem, sync::atomic::AtomicBool};
     use log::{self, Level, LevelFilter, Metadata, Record};
     use lzma_rs::lzma_decompress;
-    use patina_pi::fw_fs::{self, ffs, fv};
+    use patina::pi::fw_fs::{self, ffs, fv};
     use r_efi::efi;
     use serde::Deserialize;
     use std::{

@@ -1,7 +1,6 @@
-extern crate patina_pi;
 use alloc_no_stdlib::{self, SliceWrapper, SliceWrapperMut, define_index_ops_mut};
 use brotli_decompressor::{BrotliDecompressStream, BrotliResult, BrotliState, HuffmanCode};
-use patina_pi::fw_fs::{FirmwareVolume, SectionExtractor, SectionMetaData, guid};
+use patina::pi::fw_fs::{FirmwareVolume, SectionExtractor, SectionMetaData, guid};
 use r_efi::efi;
 use std::{env, error::Error, fmt::Debug, fs, path::Path};
 
@@ -43,7 +42,7 @@ impl<T: Clone> alloc_no_stdlib::Allocator<T> for HeapAllocator<T> {
 struct BrotliSectionExtractor {}
 
 impl SectionExtractor for BrotliSectionExtractor {
-    fn extract(&self, section: &patina_pi::fw_fs::Section) -> Result<Box<[u8]>, efi::Status> {
+    fn extract(&self, section: &patina::pi::fw_fs::Section) -> Result<Box<[u8]>, efi::Status> {
         if let SectionMetaData::GuidDefined(guid_header, _) = section.meta_data()
             && guid_header.section_definition_guid == guid::BROTLI_SECTION
         {

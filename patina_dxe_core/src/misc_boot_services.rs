@@ -12,8 +12,8 @@ use core::{
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
 use patina::guids;
+use patina::pi::{protocols, status_code};
 use patina_internal_cpu::interrupts;
-use patina_pi::{protocols, status_code};
 use r_efi::efi;
 
 use crate::{

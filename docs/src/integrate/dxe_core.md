@@ -238,8 +238,8 @@ target (MMIO vs I/O space). Below are platform patterns.
 #### X86_64 Example (Q35)
 
 ```rust
-use patina_sdk::log::serial_logger::SerialLogger;
-use patina_sdk::serial::uart::Uart16550;
+use patina::log::serial_logger::SerialLogger;
+use patina::serial::uart::Uart16550;
 
 static LOGGER: SerialLogger<Uart16550> = SerialLogger::new(
     Uart16550::Io { base: 0x402 },  // <- Update this I/O port for your platform
@@ -249,8 +249,8 @@ static LOGGER: SerialLogger<Uart16550> = SerialLogger::new(
 #### AARCH64 Example (SBSA)
 
 ```rust
-use patina_sdk::log::serial_logger::SerialLogger;
-use patina_sdk::serial::uart::UartPl011;
+use patina::log::serial_logger::SerialLogger;
+use patina::serial::uart::UartPl011;
 
 static LOGGER: SerialLogger<UartPl011> = SerialLogger::new(
     UartPl011::new(0x6000_0000),  // <- Update this MMIO address for your platform
@@ -295,7 +295,7 @@ static DEBUGGER: patina_debugger::PatinaDebugger<UartPl011> =
 First, add the logger dependency to your Cargo.toml file in the crate:
 
 ```toml
-patina_sdk = "$(VERSION)"  # includes serial_logger
+patina = "$(VERSION)"  # includes serial_logger
 ```
 
 Next, update main.rs with the following:
@@ -303,8 +303,8 @@ Next, update main.rs with the following:
 ```rust
 use patina_dxe_core::Core;
 use patina_ffs_extractors::BrotliSectionExtractor;
-use patina_sdk::log::serial_logger::SerialLogger;
-use patina_sdk::serial::uart::Uart16550;
+use patina::log::serial_logger::SerialLogger;
+use patina::serial::uart::Uart16550;
 
 static LOGGER: SerialLogger<Uart16550> = SerialLogger::new(
     Uart16550::Io { base: 0x402 },
@@ -408,8 +408,8 @@ crate when supported by the target architecture.
 use core::{ffi::c_void, panic::PanicInfo};
 use patina_dxe_core::Core;
 use patina_ffs_extractors::BrotliSectionExtractor;
-use patina_sdk::log::serial_logger::SerialLogger;
-use patina_sdk::serial::uart::Uart16550;
+use patina::log::serial_logger::SerialLogger;
+use patina::serial::uart::Uart16550;
 use patina_stacktrace::StackTrace;
 extern crate alloc;
 

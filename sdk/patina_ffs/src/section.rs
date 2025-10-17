@@ -10,8 +10,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::{boxed::Box, vec, vec::Vec};
+use patina::pi::fw_fs::ffs::{self, section};
 use patina::{base::align_up, boot_services::c_ptr::CPtr};
-use patina_pi::fw_fs::ffs::{self, section};
 
 use core::{fmt, iter, mem, ptr, slice::from_raw_parts};
 

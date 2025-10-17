@@ -9,8 +9,8 @@
 //!
 
 use patina::error::EfiError;
+use patina::pi::protocols::cpu_arch::EfiExceptionType;
 use patina_paging::page_allocator::PageAllocator;
-use patina_pi::protocols::cpu_arch::EfiExceptionType;
 use spin::rwlock::RwLock;
 
 use crate::interrupts::EfiExceptionStackTrace;
@@ -131,7 +131,7 @@ impl PageAllocator for FaultAllocator {
 mod tests {
     extern crate std;
 
-    use patina_pi::protocols::cpu_arch::EfiSystemContext;
+    use patina::pi::protocols::cpu_arch::EfiSystemContext;
 
     use super::*;
     use core::sync::atomic::AtomicBool;

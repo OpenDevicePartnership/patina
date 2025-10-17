@@ -8,7 +8,7 @@
 //!
 use crate::log_registers;
 use patina::error::EfiError;
-use patina_pi::protocols::cpu_arch::EfiSystemContext;
+use patina::pi::protocols::cpu_arch::EfiSystemContext;
 use patina_stacktrace::StackTrace;
 
 mod sysreg;

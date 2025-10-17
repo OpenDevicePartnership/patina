@@ -42,7 +42,7 @@ use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
 use num_traits::WrappingSub;
 use r_efi::efi;
 
-use crate::address_helper::align_up;
+use crate::pi::address_helper::align_up;
 
 pub mod guid {
     use r_efi::efi;
@@ -66,7 +66,7 @@ pub mod guid {
 /// ## Example
 ///```
 /// # use std::{env, fs, path::Path, error::Error};
-/// use patina_pi::fw_fs::{FirmwareVolume, Section, SectionExtractor};
+/// use patina::pi::fw_fs::{FirmwareVolume, Section, SectionExtractor};
 /// use r_efi::efi;
 ///
 /// struct ExampleSectionExtractor {}
@@ -140,7 +140,7 @@ impl fmt::Debug for FirmwareVolumeExtHeader<'_> {
 /// ## Example
 ///```
 /// # use std::{env, fs, path::Path, error::Error};
-/// use patina_pi::fw_fs::FirmwareVolume;
+/// use patina::pi::fw_fs::FirmwareVolume;
 /// # fn main() -> Result<(), Box<dyn Error>> {
 /// # let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
 /// # let fv_bytes = fs::read(root.join("GIGANTOR.Fv"))?;
@@ -169,7 +169,7 @@ impl<'a> FirmwareVolume<'a> {
             Err(efi::Status::INVALID_PARAMETER)?;
         }
 
-        //Safety: buffer is large enough to contain the header, so can cast to a ref.
+        // SAFETY: Buffer size was validated to contain the full Header
         let fv_header = unsafe { &*(buffer.as_ptr() as *const fv::Header) };
 
         // signature: must be ASCII '_FVH'
@@ -236,7 +236,7 @@ impl<'a> FirmwareVolume<'a> {
                     Err(efi::Status::VOLUME_CORRUPTED)?;
                 }
 
-                //Safety: previous check ensures that fv_data is large enough to contain the ext_header
+                // SAFETY: The size is validated to contain ExtHeader and slice bounds checked
                 let ext_header = unsafe { &*(buffer[ext_header_offset..].as_ptr() as *const fv::ExtHeader) };
                 let ext_header_end = ext_header_offset + ext_header.ext_header_size as usize;
                 if ext_header_end > buffer.len() {
@@ -305,16 +305,14 @@ impl<'a> FirmwareVolume<'a> {
     ///
     /// Contents of the FirmwareVolume will be cached in this instance.
     pub unsafe fn new_from_address(base_address: u64) -> Result<Self, efi::Status> {
-        // SAFETY: per function safety contract, base_address is the start of a firmware volume. The firmware volume
-        // header signature is checked for a new firmware volume is returned.
+        // SAFETY: Caller guarantees that the base_address points to a valid FV and signature verified below
         let fv_header = unsafe { &*(base_address as *const fv::Header) };
         if fv_header.signature != u32::from_le_bytes(*b"_FVH") {
             // base_address is not the start of a firmware volume.
             return Err(efi::Status::VOLUME_CORRUPTED);
         }
 
-        // SAFETY: The slice creation is considered safe if the base address for the FV header has a valid
-        // firmware volume header signature.
+        // SAFETY: The signature was validated and fv_length is used from the verified header
         let fv_buffer = unsafe { slice::from_raw_parts(base_address as *const u8, fv_header.fv_length as usize) };
         Self::new(fv_buffer)
     }
@@ -395,7 +393,7 @@ impl fmt::Debug for FirmwareVolume<'_> {
 /// ## Example
 ///```
 /// # use std::{env, fs, path::Path, error::Error};
-/// use patina_pi::fw_fs::FirmwareVolume;
+/// use patina::pi::fw_fs::FirmwareVolume;
 /// # fn main() -> Result<(), Box<dyn Error>> {
 /// # let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
 /// # let fv_bytes = fs::read(root.join("GIGANTOR.Fv"))?;
@@ -427,7 +425,7 @@ impl<'a> File<'a> {
             Err(efi::Status::INVALID_PARAMETER)?;
         }
 
-        //Safety: buffer is large enough to contain the header, so can cast to a ref.
+        // SAFETY: Buffer size was validated to at least contain a full file::Header
         let file_header = unsafe { &*(buffer.as_ptr() as *const file::Header) };
 
         // determine size and data offset
@@ -634,7 +632,7 @@ pub enum SectionMetaData {
 /// ## Example
 ///```
 /// # use std::{env, fs, path::Path, error::Error};
-/// use patina_pi::fw_fs::FirmwareVolume;
+/// use patina::pi::fw_fs::FirmwareVolume;
 /// # fn main() -> Result<(), Box<dyn Error>> {
 /// # let root = Path::new(&env::var("CARGO_MANIFEST_DIR")?).join("test_resources");
 /// # let fv_bytes = fs::read(root.join("GIGANTOR.Fv"))?;
@@ -667,7 +665,7 @@ impl Section {
             Err(efi::Status::INVALID_PARAMETER)?;
         }
 
-        //Safety: buffer is large enough to contain the header, so can cast to a ref.
+        // SAFETY: Buffer size was validated to contain full section::Header
         let section_header = unsafe { &*(buffer.as_ptr() as *const section::Header) };
 
         //determine section_size and start of section content based on whether extended size field is present.
@@ -697,7 +695,7 @@ impl Section {
                 if buffer.len() < content_offset + compression_header_size {
                     Err(efi::Status::VOLUME_CORRUPTED)?;
                 }
-                //Safety: buffer is large enough to hold compression header
+                // SAFETY: Size was validated to contain a Compression header and slice bounds is checked
                 let compression_header =
                     unsafe { &*(buffer[content_offset..].as_ptr() as *const section::header::Compression) };
                 let data: Box<[u8]> = Box::from(&buffer[content_offset + compression_header_size..section_size]);
@@ -709,7 +707,7 @@ impl Section {
                 if buffer.len() < content_offset + guid_defined_header_size {
                     Err(efi::Status::VOLUME_CORRUPTED)?;
                 }
-                //Safety: buffer is large enough to hold guid_defined header
+                // SAFETY: Size was validated to contain a GuidDefined header and slice bounds is checked
                 let guid_defined =
                     unsafe { &*(buffer[content_offset..].as_ptr() as *const section::header::GuidDefined) };
 
@@ -731,7 +729,7 @@ impl Section {
                 if buffer.len() < content_offset + version_header_size {
                     Err(efi::Status::VOLUME_CORRUPTED)?;
                 }
-                //Safety: buffer is large enough to hold version header
+                // SAFETY: Size wass validated to contain a Version header and slice bounds is checked
                 let version_header =
                     unsafe { &*(buffer[content_offset..].as_ptr() as *const section::header::Version) };
                 let data: Box<[u8]> = Box::from(&buffer[content_offset + version_header_size..section_size]);
@@ -743,7 +741,7 @@ impl Section {
                 if buffer.len() < content_offset + freeform_header_size {
                     Err(efi::Status::VOLUME_CORRUPTED)?;
                 }
-                //Safety: buffer is large enough to hold freeform header
+                // SAFETY: Size was validated to contain a FreeformSubtypeGuid header and slice bounds is checked
                 let freeform_header =
                     unsafe { &*(buffer[content_offset..].as_ptr() as *const section::header::FreeformSubtypeGuid) };
                 let data: Box<[u8]> = Box::from(&buffer[content_offset + freeform_header_size..section_size]);
@@ -947,7 +945,7 @@ mod unit_tests {
     use serde::Deserialize;
     use uuid::Uuid;
 
-    use crate::fw_fs::{SectionMetaData, guid};
+    use crate::pi::fw_fs::{SectionMetaData, guid};
 
     use super::{FfsSectionType, FirmwareVolume, NullSectionExtractor, Section, SectionExtractor, fv};
 
@@ -1117,6 +1115,7 @@ mod unit_tests {
         // bogus signature.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
         let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
             (*fv_header).signature ^= 0xdeadbeef;
         };
@@ -1125,6 +1124,7 @@ mod unit_tests {
         // bogus header_length.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
         let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
             (*fv_header).header_length = 0;
         };
@@ -1133,6 +1133,7 @@ mod unit_tests {
         // bogus checksum.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
         let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
             (*fv_header).checksum ^= 0xbeef;
         };
@@ -1141,6 +1142,7 @@ mod unit_tests {
         // bogus revision.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
         let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
             (*fv_header).revision = 1;
         };
@@ -1149,6 +1151,7 @@ mod unit_tests {
         // bogus filesystem guid.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
         let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
             (*fv_header).file_system_guid = efi::Guid::from_bytes(&[0xa5; 16]);
         };
@@ -1157,6 +1160,7 @@ mod unit_tests {
         // bogus fv length.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
         let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
             (*fv_header).fv_length = 0;
         };
@@ -1165,6 +1169,7 @@ mod unit_tests {
         // bogus ext header offset.
         let mut fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
         let fv_header = fv_bytes.as_mut_ptr() as *mut fv::Header;
+        // SAFETY: Test intentionally corrupts FV header to validate error handling
         unsafe {
             (*fv_header).fv_length = ((*fv_header).ext_header_offset - 1) as u64;
         };
@@ -1197,6 +1202,7 @@ mod unit_tests {
 
         let a_ptr = &a as *const A;
 
+        // SAFETY: Test validates pointer offset calculation for zero-size array
         unsafe {
             assert_eq!((*a_ptr).block_map.as_ptr(), a_ptr.offset(1) as *const fv::BlockMapEntry);
         }

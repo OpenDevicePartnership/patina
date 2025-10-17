@@ -14,7 +14,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use crate::protocols::status_code::{EfiStatusCodeType, EfiStatusCodeValue};
+use crate::pi::protocols::status_code::{EfiStatusCodeType, EfiStatusCodeValue};
 // Required for IA32, X64, IPF, ARM and EBC defines for CPU exception types
 use r_efi::efi::protocols::debug_support;
 
@@ -928,4 +928,5 @@ pub const EFI_SW_EC_ARM_DATA_ABORT:             EfiStatusCodeValue = debug_suppo
 pub const EFI_SW_EC_ARM_RESERVED:               EfiStatusCodeValue = debug_support::EXCEPT_ARM_RESERVED as u32;
 pub const EFI_SW_EC_ARM_IRQ:                    EfiStatusCodeValue = debug_support::EXCEPT_ARM_IRQ as u32;
 pub const EFI_SW_EC_ARM_FIQ:                    EfiStatusCodeValue = debug_support::EXCEPT_ARM_FIQ as u32;
+
 

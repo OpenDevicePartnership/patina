@@ -1,22 +1,22 @@
 # Platform Testing
 
-Platform testing is supported through the `patina_sdk::test` module, which provides a testing framework similar to
+Platform testing is supported through the `patina::test` module, which provides a testing framework similar to
 the typical Rust testing framework. The key difference is that instead of tests being collected and executed on the
-host system, they are collected and executed via a component (`patina_sdk::test::TestRunner`) provided by the same
+host system, they are collected and executed via a component (`patina::test::TestRunner`) provided by the same
 crate. The platform must register this component with the Patina DXE Core, which will then dispatch the component
 to run all registered tests.
 
-> **Note:** The most up-to-date documentation on the `patina_sdk::test` module can be found on
-> [crates.io](https://crates.io/crates/patina_sdk). For convenience, some high-level concepts are summarized below.
+> **Note:** The most up-to-date documentation on the `patina::test` module can be found on
+> [crates.io](https://crates.io/crates/patina). For convenience, some high-level concepts are summarized below.
 
 ## Writing On-Platform Tests
 
 Writing a test to be run on-platform is as simple as setting the `patina_test` attribute on a function with the
 following interface, where `...` can be any number of parameters that implement the `Param` trait from
-`patina_sdk::component::*`:
+`patina::component::*`:
 
 ```rust
-use patina_sdk::test::{Result, patina_test};
+use patina::test::{Result, patina_test};
 
 #[patina_test]
 fn my_test(...) -> Result { todo!() }
@@ -27,13 +27,13 @@ platform. Any function tagged with `#[patina_test]` will be collected and execut
 can filter out tests, but you should also be conscious of when tests should run. Using `cfg_attr` paired with the
 `skip` attribute is a great way to have tests ignored for reasons like host architecture or feature flags.
 
-> **Note:** `patina_sdk::test::Result` is simply `core::result::Result<(), &'static str>`, and you can use that
+> **Note:** `patina::test::Result` is simply `core::result::Result<(), &'static str>`, and you can use that
 > instead.
 
 This example shows how to use the `skip` attribute paired with `cfg_attr` to skip a test.
 
 ```rust
-use patina_sdk::boot_services::StandardBootServices;
+use patina::boot_services::StandardBootServices;
 
 #[patina_test]
 #[cfg_attr(target_arch = "aarch64", skip)]

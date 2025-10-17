@@ -76,7 +76,7 @@ pub struct Header {
 }
 
 pub mod header {
-    use r_efi::base::Guid;
+    use r_efi::efi;
 
     #[repr(C)]
     #[derive(Debug)]
@@ -108,7 +108,7 @@ pub mod header {
     #[repr(C)]
     #[derive(Debug, Clone, Copy)]
     pub struct GuidDefined {
-        pub section_definition_guid: Guid,
+        pub section_definition_guid: efi::Guid,
         pub data_offset: u16,
         pub attributes: u16,
         // Guid-specific header fields.
@@ -125,6 +125,6 @@ pub mod header {
     #[repr(C)]
     #[derive(Debug, Clone, Copy)]
     pub struct FreeformSubtypeGuid {
-        pub sub_type_guid: Guid,
+        pub sub_type_guid: efi::Guid,
     }
 }

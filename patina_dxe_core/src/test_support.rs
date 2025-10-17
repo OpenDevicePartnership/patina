@@ -11,8 +11,8 @@
 use crate::{GCD, protocols::PROTOCOL_DB};
 use core::ffi::c_void;
 use patina::guids::ZERO;
-use patina_pi::hob::HobList;
-use patina_pi::{
+use patina::pi::hob::HobList;
+use patina::pi::{
     BootMode,
     dxe_services::GcdMemoryType,
     hob::{self, header},
@@ -345,7 +345,7 @@ mod tests {
     use crate::test_support::header;
     use crate::test_support::hob;
     use patina::guids;
-    use patina_pi::hob::Hob::MemoryAllocationModule;
+    use patina::pi::hob::Hob::MemoryAllocationModule;
 
     // Compact Hoblist with DXE core Alloction hob. Use this when DXE core hob is required.
     pub(crate) fn build_test_hob_list_compact(mem_size: u64) -> *const c_void {

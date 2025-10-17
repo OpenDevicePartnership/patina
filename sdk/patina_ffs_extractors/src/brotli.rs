@@ -9,11 +9,11 @@
 use alloc::{boxed::Box, vec, vec::Vec};
 use alloc_no_stdlib::{self, SliceWrapper, SliceWrapperMut, define_index_ops_mut};
 use brotli_decompressor::{BrotliDecompressStream, BrotliResult, BrotliState, HuffmanCode};
+use patina::pi::fw_fs;
 use patina_ffs::{
     FirmwareFileSystemError,
     section::{Section, SectionExtractor, SectionHeader},
 };
-use patina_pi::fw_fs;
 
 use patina::component::prelude::IntoService;
 

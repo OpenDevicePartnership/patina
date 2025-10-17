@@ -23,7 +23,7 @@ use patina_internal_cpu::{
 };
 use r_efi::efi;
 
-use patina_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandler, PROTOCOL_GUID, Protocol};
+use patina::pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandler, PROTOCOL_GUID, Protocol};
 
 #[repr(C)]
 pub struct EfiCpuArchProtocolImpl {
@@ -217,7 +217,7 @@ mod tests {
     use super::*;
 
     use mockall::{mock, predicate::*};
-    use patina_pi::protocols::cpu_arch::{EfiExceptionType, EfiSystemContext};
+    use patina::pi::protocols::cpu_arch::{EfiExceptionType, EfiSystemContext};
 
     mock! {
         EfiCpuInit {}

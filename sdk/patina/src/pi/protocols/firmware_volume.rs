@@ -14,7 +14,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use crate::fw_fs;
+use crate::pi::fw_fs;
 
 use fw_fs::{
     ffs::section::EfiSectionType,

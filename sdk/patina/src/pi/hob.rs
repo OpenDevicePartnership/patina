@@ -5,7 +5,7 @@
 //!
 //! ## Example
 //! ```
-//! use patina_pi::{BootMode, hob, hob::Hob, hob::HobList};
+//! use patina::pi::{BootMode, hob, hob::Hob, hob::HobList};
 //! use core::mem::size_of;
 //!
 //! // Generate HOBs to initialize a new HOB list
@@ -67,7 +67,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use crate::{
+use crate::pi::{
     BootMode,
     address_helper::{align_down, align_up},
 };
@@ -118,7 +118,7 @@ pub const UNUSED: u16 = 0xFFFE;
 pub const END_OF_HOB_LIST: u16 = 0xFFFF;
 
 pub mod header {
-    use crate::hob::EfiPhysicalAddress;
+    use crate::pi::hob::EfiPhysicalAddress;
     use r_efi::system::MemoryType;
 
     /// Describes the format and size of the data inside the HOB.
@@ -720,12 +720,13 @@ impl HobTrait for Hob<'_> {
 ///
 /// # Safety
 ///
-/// This function is unsafe because it uses a raw pointer to traverse memory and read data.
+/// This function is unsafe because it uses a raw pointer to traverse memory and read data. The caller
+/// must ensure that the pointer is valid and points to a properly formatted HOB list.
 ///
 /// # Example
 ///
 /// ```no_run
-/// use patina_pi::hob::get_c_hob_list_size;
+/// use patina::pi::hob::get_c_hob_list_size;
 /// use core::ffi::c_void;
 ///
 /// // Assuming `hob_list` is a valid pointer to a HOB list
@@ -740,6 +741,7 @@ pub unsafe fn get_c_hob_list_size(hob_list: *const c_void) -> usize {
     let mut hob_list_len = 0;
 
     loop {
+        // SAFETY: The caller must ensure that `hob_list` is a valid pointer to a properly formatted HOB list.
         let current_header = unsafe { hob_header.cast::<header::Hob>().as_ref().expect("Could not get hob list len") };
         hob_list_len += current_header.length as usize;
         if current_header.r#type == END_OF_HOB_LIST {
@@ -764,7 +766,7 @@ impl<'a> HobList<'a> {
     ///
     /// ```no_run
     /// use core::ffi::c_void;
-    /// use patina_pi::hob::HobList;
+    /// use patina::pi::hob::HobList;
     ///
     /// fn example(hob_list: *const c_void) {
     ///     // example discovering and adding hobs to a hob list
@@ -786,7 +788,7 @@ impl<'a> HobList<'a> {
     ///
     /// ```no_run
     /// use core::ffi::c_void;
-    /// use patina_pi::hob::HobList;
+    /// use patina::pi::hob::HobList;
     ///
     /// fn example(hob_list: *const c_void) {
     ///     // example discovering and adding hobs to a hob list
@@ -807,7 +809,7 @@ impl<'a> HobList<'a> {
     ///
     /// ```no_run
     /// use core::ffi::c_void;
-    /// use patina_pi::hob::HobList;
+    /// use patina::pi::hob::HobList;
     ///
     /// fn example(hob_list: *const c_void) {
     ///     // example discovering and adding hobs to a hob list
@@ -833,7 +835,7 @@ impl<'a> HobList<'a> {
     /// # Example(s)
     /// ```no_run
     /// use core::ffi::c_void;
-    /// use patina_pi::hob::HobList;
+    /// use patina::pi::hob::HobList;
     ///
     /// fn example(hob_list: *const c_void) {
     ///    // example discovering and adding hobs to a hob list
@@ -854,7 +856,7 @@ impl<'a> HobList<'a> {
     /// # Example(s)
     /// ```no_run
     /// use core::ffi::c_void;
-    /// use patina_pi::hob::HobList;
+    /// use patina::pi::hob::HobList;
     ///
     /// fn example(hob_list: *const c_void) {
     ///    // example discovering and adding hobs to a hob list
@@ -877,7 +879,7 @@ impl<'a> HobList<'a> {
     /// # Example(s)
     /// ```no_run
     /// use core::{ffi::c_void, mem::size_of};
-    /// use patina_pi::hob::{HobList, Hob, header, FirmwareVolume, FV};
+    /// use patina::pi::hob::{HobList, Hob, header, FirmwareVolume, FV};
     ///
     /// fn example(hob_list: *const c_void) {
     ///   // example discovering and adding hobs to a hob list
@@ -912,7 +914,7 @@ impl<'a> HobList<'a> {
     ///
     /// ```no_run
     /// use core::ffi::c_void;
-    /// use patina_pi::hob::HobList;
+    /// use patina::pi::hob::HobList;
     ///
     /// fn example(hob_list: *const c_void) {
     ///     // example discovering and adding hobs to a hob list
@@ -1020,7 +1022,7 @@ impl<'a> HobList<'a> {
     ///
     /// ```no_run
     /// use core::ffi::c_void;
-    /// use patina_pi::hob::HobList;
+    /// use patina::pi::hob::HobList;
     ///
     /// fn example(hob_list: *const c_void) {
     ///     // example discovering and adding hobs to a hob list
@@ -1326,7 +1328,7 @@ pub struct EFiMemoryTypeInformation {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
+    use crate::pi::{
         BootMode, hob,
         hob::{Hob, HobList, HobTrait},
     };
@@ -1559,9 +1561,11 @@ mod tests {
     // * `len` - The length of the C array.
     //
     // # Safety
-    // This function is unsafe because it is not guaranteed that the pointer is valid.
+    //
+    // The caller must ensure that the pointer and length match a Vec originally created by to_c_array.
     pub fn manually_free_c_array(c_array_ptr: *const c_void, len: usize) {
         let ptr = c_array_ptr as *mut u8;
+        // SAFETY: Caller is responsible for ensuring the pointer and length are valid per the function contract.
         unsafe {
             drop(Vec::from_raw_parts(ptr, len, len));
         }

@@ -31,7 +31,7 @@ use crate::{
     systemtables::EfiSystemTable,
     tpl_lock,
 };
-use patina_pi::{
+use patina::pi::{
     dxe_services::{self, GcdMemoryType, MemorySpaceDescriptor},
     hob::{self, EFiMemoryTypeInformation, Hob, HobList, MEMORY_TYPE_INFO_HOB_GUID},
 };
@@ -975,7 +975,7 @@ fn process_hob_allocations(hob_list: &HobList) {
 
     // Find the stack hob and set attributes.
     if let Some(stack_hob) = hob_list.iter().find_map(|x| match x {
-        patina_pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
+        patina::pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation { header: _, alloc_descriptor: desc })
             if desc.name == HOB_MEMORY_ALLOC_STACK =>
         {
             Some(desc)
@@ -1097,7 +1097,7 @@ pub fn init_memory_support(hob_list: &HobList) {
     // If memory type info HOB is available, then pre-allocate the corresponding buckets.
     if let Some(memory_type_info) = hob_list.iter().find_map(|x| {
         match x {
-            patina_pi::hob::Hob::GuidHob(hob, data) if hob.name == MEMORY_TYPE_INFO_HOB_GUID => {
+            patina::pi::hob::Hob::GuidHob(hob, data) if hob.name == MEMORY_TYPE_INFO_HOB_GUID => {
                 let memory_type_slice_ptr = data.as_ptr() as *const EFiMemoryTypeInformation;
                 let memory_type_slice_len = data.len() / mem::size_of::<EFiMemoryTypeInformation>();
 
@@ -1171,7 +1171,7 @@ mod tests {
     };
 
     use super::*;
-    use patina_pi::hob::{GUID_EXTENSION, GuidHob, Hob, header};
+    use patina::pi::hob::{GUID_EXTENSION, GuidHob, Hob, header};
     use r_efi::efi;
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(gcd_size: usize, f: F) {
@@ -1230,13 +1230,13 @@ mod tests {
             // Required memory allocation hob for stack
             let mut stack_base_address = 0xEB000;
             stack_base_address = (physical_hob_list as u64).wrapping_add(stack_base_address);
-            let stack_hob = Hob::MemoryAllocation(&patina_pi::hob::MemoryAllocation {
-                header: patina_pi::hob::header::Hob {
+            let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
+                header: patina::pi::hob::header::Hob {
                     r#type: hob::MEMORY_ALLOCATION,
                     length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
                     reserved: 0x00000000,
                 },
-                alloc_descriptor: patina_pi::hob::header::MemoryAllocation {
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
                     name: HOB_MEMORY_ALLOC_STACK,
                     memory_base_address: stack_base_address,
                     memory_length: 0x2000,
@@ -1281,13 +1281,13 @@ mod tests {
             let mut stack_base_address = 0xEB000;
             stack_base_address = (physical_hob_list as u64).wrapping_add(stack_base_address);
 
-            let stack_hob = Hob::MemoryAllocation(&patina_pi::hob::MemoryAllocation {
-                header: patina_pi::hob::header::Hob {
+            let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
+                header: patina::pi::hob::header::Hob {
                     r#type: hob::MEMORY_ALLOCATION,
                     length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
                     reserved: 0x00000000,
                 },
-                alloc_descriptor: patina_pi::hob::header::MemoryAllocation {
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
                     name: HOB_MEMORY_ALLOC_STACK,
                     memory_base_address: stack_base_address,
                     memory_length: 0x2000,
@@ -1329,7 +1329,7 @@ mod tests {
             let stack_hob = hob_list
                 .iter()
                 .find_map(|x| match x {
-                    patina_pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation {
+                    patina::pi::hob::Hob::MemoryAllocation(hob::MemoryAllocation {
                         header: _,
                         alloc_descriptor: desc,
                     }) if desc.name == HOB_MEMORY_ALLOC_STACK => Some(desc),
@@ -1407,13 +1407,13 @@ mod tests {
             let mut hob_list = HobList::default();
             hob_list.discover_hobs(physical_hob_list);
 
-            let stack_hob = Hob::MemoryAllocation(&patina_pi::hob::MemoryAllocation {
-                header: patina_pi::hob::header::Hob {
+            let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
+                header: patina::pi::hob::header::Hob {
                     r#type: hob::MEMORY_ALLOCATION,
                     length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
                     reserved: 0x00000000,
                 },
-                alloc_descriptor: patina_pi::hob::header::MemoryAllocation {
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
                     name: HOB_MEMORY_ALLOC_STACK,
                     memory_base_address: 0,
                     memory_length: 0,

@@ -42,6 +42,7 @@ pub mod error;
 pub mod guids;
 pub mod log;
 pub mod performance;
+pub mod pi;
 pub mod runtime_services;
 pub mod serial;
 #[coverage(off)]

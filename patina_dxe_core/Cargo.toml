@@ -25,7 +25,6 @@ goblin = { workspace = true, features = ["pe32", "pe64", "te"] }
 lazy_static = { workspace = true, features = ["spin_no_std"] }
 linked_list_allocator = { workspace = true }
 log = { workspace = true }
-patina_pi = { workspace = true }
 mu_rust_helpers = { workspace = true }
 patina_paging = { workspace = true }
 r-efi = { workspace = true }

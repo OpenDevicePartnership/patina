@@ -13,9 +13,9 @@
 
 use core::cmp::Ordering;
 
-use crate::hob::Hob;
-use crate::serializable::hex_format;
-use crate::{serializable::Interval, serializable::format_guid};
+use crate::pi::hob::Hob;
+use crate::pi::serializable::hex_format;
+use crate::pi::{serializable::Interval, serializable::format_guid};
 use alloc::string::String;
 use serde::{Deserialize, Serialize};
 
@@ -199,7 +199,7 @@ impl From<&Hob<'_>> for HobSerDe {
 
 #[cfg(test)]
 mod tests {
-    use crate::{BootMode, hob};
+    use crate::pi::{BootMode, hob};
 
     use super::*;
     use serde_json::{from_str, to_string_pretty};

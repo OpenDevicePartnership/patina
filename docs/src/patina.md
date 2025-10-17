@@ -191,7 +191,7 @@ definition but many of the services are still implemented in C so it is orange.
 - Support for [Enhanced Memory Protections](https://microsoft.github.io/mu/WhatAndWhy/enhancedmemoryprotection/).
 - Source-level debugging support.
 - Built-in Brotli and EFI decompression support.
-- Infrastructure (in the `patina_sdk::test` module) for on-platform execution of unit tests.
+- Infrastructure (in the `patina::test` module) for on-platform execution of unit tests.
 
 ``` admonish important
 The Patina DXE Core otherwise supports the normal responsibilities of a DXE Core except for the design restrictions
@@ -294,9 +294,9 @@ Three main types of testing are currently supported.
   state of the module. Only the external interfaces are being tested. Cargo will detect and run these tests with the
   same command as for unit tests. More information about integration tests are available in the
   [cargo book entry](https://doc.rust-lang.org/rust-by-example/testing/integration_testing.html).
-- **On-platform tests** are supported with code in a module called `patina_sdk::test` that provides a testing framework
+- **On-platform tests** are supported with code in a module called `patina::test` that provides a testing framework
   similar to the typical rust testing framework. The key difference is that instead of tests being collected and
-  executed on the host system, they are instead collected and executed via a component (`patina_sdk::test::TestRunner`)
+  executed on the host system, they are instead collected and executed via a component (`patina::test::TestRunner`)
   provided by the same crate. The platform must register this component with the `DXE core`. The DXE core will then
   dispatch this component, which will run all registered tests.
 

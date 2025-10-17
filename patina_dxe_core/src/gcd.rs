@@ -13,11 +13,11 @@ mod spin_locked_gcd;
 use core::{ffi::c_void, ops::Range, panic};
 use patina::base::{align_down, align_up};
 use patina::error::EfiError;
-use patina_paging::MemoryAttributes;
-use patina_pi::{
+use patina::pi::{
     dxe_services::{GcdIoType, GcdMemoryType},
     hob::{self, Hob, HobList, PhaseHandoffInformationTable, ResourceDescriptorV2},
 };
+use patina_paging::MemoryAttributes;
 use r_efi::efi;
 
 #[cfg(feature = "compatibility_mode_allowed")]
@@ -91,7 +91,7 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
     let phit = hob_list
         .iter()
         .find_map(|x| match x {
-            patina_pi::hob::Hob::Handoff(handoff) => Some(*handoff),
+            patina::pi::hob::Hob::Handoff(handoff) => Some(*handoff),
             _ => None,
         })
         .expect("Failed to find PHIT Hob");
@@ -334,7 +334,7 @@ pub(crate) fn activate_compatibility_mode() {
 mod tests {
     use core::ffi::c_void;
 
-    use patina_pi::{
+    use patina::pi::{
         dxe_services::{GcdIoType, GcdMemoryType, IoSpaceDescriptor, MemorySpaceDescriptor},
         hob::{HobList, PhaseHandoffInformationTable},
     };

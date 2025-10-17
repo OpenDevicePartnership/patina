@@ -11,8 +11,8 @@ use super::gdt;
 use crate::{cpu::Cpu, interrupts};
 #[cfg(not(test))]
 use core::arch::asm;
+use patina::pi::protocols::cpu_arch::{CpuFlushType, CpuInitType};
 use patina::{component::service::IntoService, error::EfiError};
-use patina_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType};
 use r_efi::efi;
 
 /// Struct to implement X64 Cpu Init.

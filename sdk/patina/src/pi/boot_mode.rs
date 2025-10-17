@@ -15,7 +15,7 @@ use core::fmt;
 ///
 /// ## Example
 /// ```
-/// use patina_pi::BootMode;
+/// use patina::pi::BootMode;
 ///
 /// let boot_mode = BootMode::BootWithFullConfiguration;
 /// println!("Boot Mode: {}", boot_mode);

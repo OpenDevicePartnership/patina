@@ -12,7 +12,6 @@
 
 pub mod attributes;
 pub mod file;
-use r_efi::efi;
 
 pub type EfiFvFileType = u8;
 
@@ -40,7 +39,7 @@ pub enum WritePolicy {
 #[derive(Debug, Clone, Copy)]
 pub struct Header {
     pub zero_vector: [u8; 16],
-    pub file_system_guid: efi::Guid,
+    pub file_system_guid: r_efi::efi::Guid,
     pub fv_length: u64,
     pub signature: u32,
     pub attributes: u32,
@@ -63,6 +62,6 @@ pub struct BlockMapEntry {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct ExtHeader {
-    pub fv_name: efi::Guid,
+    pub fv_name: r_efi::efi::Guid,
     pub ext_header_size: u32,
 }

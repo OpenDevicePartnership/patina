@@ -42,7 +42,7 @@ cfg_if::cfg_if! {
 }
 
 use patina::error::EfiError;
-use patina_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType};
+use patina::pi::protocols::cpu_arch::{CpuFlushType, CpuInitType};
 use r_efi::efi;
 
 /// A trait to facilitate architecture-specific implementations.

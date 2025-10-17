@@ -10,7 +10,7 @@
 mod interrupt_manager;
 pub use interrupt_manager::InterruptsNull;
 use patina::error::EfiError;
-use patina_pi::protocols::cpu_arch::EfiSystemContext;
+use patina::pi::protocols::cpu_arch::EfiSystemContext;
 
 /// Null implementation of the EfiSystemContextFactory and EfiExceptionStackTrace traits.
 #[derive(Debug)]

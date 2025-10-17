@@ -13,7 +13,7 @@
 
 use core::{ffi::c_void, sync::atomic::AtomicBool};
 
-use crate::list_entry;
+use crate::pi::list_entry;
 use r_efi::efi;
 
 pub const PROTOCOL_GUID: efi::Guid =

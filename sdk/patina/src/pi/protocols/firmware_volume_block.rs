@@ -16,7 +16,7 @@
 use core::ffi::c_void;
 use r_efi::efi::{Guid, Handle, Lba, Status};
 
-use crate::{fw_fs::EfiFvbAttributes2, hob::EfiPhysicalAddress};
+use crate::pi::{fw_fs::EfiFvbAttributes2, hob::EfiPhysicalAddress};
 
 pub const PROTOCOL_GUID: Guid =
     Guid::from_fields(0x8f644fa9, 0xe850, 0x4db1, 0x9c, 0xe2, &[0xb, 0x44, 0x69, 0x8e, 0x8d, 0xa4]);

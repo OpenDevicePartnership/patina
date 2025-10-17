@@ -176,9 +176,9 @@ Various crates have benchmarks setup that can be executed using the `cargo make 
 will be passed along to the bench command:
 
 ```cmd
-cargo make bench -p patina_sdk
-cargo make bench -p patina_sdk --bench bench_component
-cargo make bench -p patina_sdk --bench bench_component -- with_component
+cargo make bench -p patina
+cargo make bench -p patina --bench bench_component
+cargo make bench -p patina --bench bench_component -- with_component
 ```
 
 Benchmarks utilize the [criterion](https://crates.io/crates/criterion) benchmarking library, so if new benchmarks are

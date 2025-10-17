@@ -22,7 +22,7 @@ use crate::{
     GCD, config_tables::core_install_configuration_table, gcd::AllocateType, protocol_db, systemtables::EfiSystemTable,
 };
 
-use patina_pi::dxe_services::GcdMemoryType;
+use patina::pi::dxe_services::GcdMemoryType;
 
 use r_efi::efi;
 
