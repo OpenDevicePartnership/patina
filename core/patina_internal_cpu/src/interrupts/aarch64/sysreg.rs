@@ -8,11 +8,15 @@ macro_rules! read_sysreg {
     ($name:ident) => {
         {
             let mut value: u64;
-            ::core::arch::asm!(
-                concat!("mrs {value:x}, ", ::core::stringify!($name)),
-                value = out(reg) value,
-                options(nomem, nostack),
-            );
+            // SAFETY: The caller must provide a valid system register name
+            // and ensure that the system is in a state where reading this register is safe.
+            unsafe {
+                core::arch::asm!(
+                    concat!("mrs {value:x}, ", core::stringify!($name)),
+                    value = out(reg) value,
+                    options(nomem, nostack),
+                );
+            }
             value
         }
     }
@@ -27,23 +31,31 @@ macro_rules! write_sysreg {
         {
             // no barrier required case
             let v: u64 = $value;
-            ::core::arch::asm!(
-                concat!("msr ", ::core::stringify!($name), ", {value:x}"),
-                value = in(reg) v,
-                options(nomem, nostack),
-            )
+            // SAFETY: The caller must provide a valid system register name
+            // and ensure that the system is in a state where writing to this register with this value is safe.
+            unsafe {
+                core::arch::asm!(
+                    concat!("msr ", core::stringify!($name), ", {value:x}"),
+                    value = in(reg) v,
+                    options(nomem, nostack),
+                )
+            }
         }
     };
     ($name:ident, $value:expr, $barrier:expr) => {
         {
             // barrier required case
             let v: u64 = $value;
-            ::core::arch::asm!(
-                concat!("msr ", ::core::stringify!($name), ", {value:x}"),
-                $barrier,
-                value = in(reg) v,
-                options(nomem, nostack),
-            )
+            // SAFETY: The caller must provide a valid system register name
+            // and ensure that the system is in a state where writing to this register with this value is safe.
+            unsafe {
+                core::arch::asm!(
+                    concat!("msr ", core::stringify!($name), ", {value:x}"),
+                    $barrier,
+                    value = in(reg) v,
+                    options(nomem, nostack),
+                )
+            }
         }
     };
 }

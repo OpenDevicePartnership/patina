@@ -191,6 +191,8 @@ pub fn init() {
         panic!("GDT above 4GB, MP services will fail");
     }
     GDT.0.load();
+
+    // SAFETY: We are constructing a well known GDT that maps all segments in a flat map
     unsafe {
         CS::set_reg(GDT.1.code_selector);
 

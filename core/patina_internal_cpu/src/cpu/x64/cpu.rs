@@ -69,6 +69,7 @@ impl EfiCpuX64 {
     fn asm_wbinvd(&self) {
         #[cfg(all(not(test), target_arch = "x86_64"))]
         {
+            // SAFETY: The caller is expected to ensure that they want to write back and invalidate the cache
             unsafe {
                 asm!("wbinvd");
             }
@@ -78,6 +79,7 @@ impl EfiCpuX64 {
     fn asm_invd(&self) {
         #[cfg(all(not(test), target_arch = "x86_64"))]
         {
+            // SAFETY: The caller is expected to ensure that they want to invalidate the cache without writing back
             unsafe {
                 asm!("invd");
             }

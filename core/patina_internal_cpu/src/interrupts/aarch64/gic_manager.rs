@@ -16,15 +16,14 @@ pub enum GicVersion {
 
 // Determine the current exception level
 pub fn get_current_el() -> u64 {
-    unsafe { read_sysreg!(CurrentEL) }
+    read_sysreg!(CurrentEL)
 }
 
 fn get_control_system_reg_enable() -> u64 {
     let current_el = get_current_el();
     match current_el {
-        0xC => unsafe { read_sysreg!(ICC_SRE_EL3) },
-        0x08 => unsafe { read_sysreg!(ICC_SRE_EL2) },
-        0x04 => unsafe { read_sysreg!(ICC_SRE_EL1) },
+        0x08 => read_sysreg!(ICC_SRE_EL2),
+        0x04 => read_sysreg!(ICC_SRE_EL1),
         _ => panic!("Invalid current EL {}", current_el),
     }
 }
@@ -32,14 +31,11 @@ fn get_control_system_reg_enable() -> u64 {
 fn set_control_system_reg_enable(icc_sre: u64) -> u64 {
     let current_el = get_current_el();
     match current_el {
-        0x0C => {
-            unsafe { write_sysreg!(ICC_SRE_EL3, icc_sre) };
-        }
         0x08 => {
-            unsafe { write_sysreg!(ICC_SRE_EL2, icc_sre) };
+            write_sysreg!(ICC_SRE_EL2, icc_sre);
         }
         0x04 => {
-            unsafe { write_sysreg!(ICC_SRE_EL1, icc_sre) };
+            write_sysreg!(ICC_SRE_EL1, icc_sre);
         }
         _ => panic!("Invalid current EL {}", current_el),
     }
@@ -48,7 +44,7 @@ fn set_control_system_reg_enable(icc_sre: u64) -> u64 {
 }
 
 fn get_system_gic_version() -> GicVersion {
-    let pfr0_el1 = unsafe { read_sysreg!(ID_AA64PFR0_EL1) };
+    let pfr0_el1 = read_sysreg!(ID_AA64PFR0_EL1);
 
     if (pfr0_el1 & (0xf << 24)) == 0 {
         return GicVersion::ArmGicV2;
@@ -105,9 +101,7 @@ pub unsafe fn gic_initialize<'a>(gicd_base: *mut u64, gicr_base: *mut u64) -> Re
     // Refer to "Arm Generic Interrupt Controller Architecture Specification GIC
     // architecture version 3 and Version 4" (Arm IHI 0069H.b ID041224)
     // 12.2.5: "ICC_BPR1_EL1, Interrupt Controller Binary Point Register 1"
-    unsafe {
-        write_sysreg!(ICC_BPR1_EL1, 0x7u64);
-    }
+    write_sysreg!(ICC_BPR1_EL1, 0x7u64);
 
     // Set priority mask reg to 0xff to allow all priorities through
     GicV3::set_priority_mask(0xff);
