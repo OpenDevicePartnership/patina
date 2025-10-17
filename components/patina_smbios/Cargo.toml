@@ -1,0 +1,30 @@
+[package]
+name = "patina_smbios"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "System Management BIOS (SMBIOS) support for Patina UEFI components."
+
+[dependencies]
+log = { workspace = true }
+mockall = { workspace = true, optional = true }
+patina = { workspace = true }
+patina_macro = { workspace = true }
+r-efi = { workspace = true }
+spin = { workspace = true }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }
+patina = { workspace = true, features = ["mockall"] }
+
+[features]
+enable_patina_tests = []
+mockall = ["dep:mockall", "std"]
+std = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }

@@ -12,6 +12,7 @@
 mod component_macro;
 mod hob_macro;
 mod service_macro;
+mod smbios_record_macro;
 mod test_macro;
 
 /// Derive Macro for implementing the `IntoComponent` trait for a type.
@@ -205,4 +206,56 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 #[proc_macro_attribute]
 pub fn patina_test(_: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     test_macro::patina_test2(item.into()).into()
+}
+
+/// Derive Macro for implementing the `SmbiosRecordStructure` trait.
+///
+/// This macro automatically generates a complete `SmbiosRecordStructure` trait  
+/// implementation, eliminating the need for manual boilerplate code.
+///
+/// ## Macro Attributes
+///
+/// - `#[smbios(record_type = N)]`: **Required**. Specifies the SMBIOS type number (0-255).
+///
+/// ## Member Attributes
+///
+/// - `#[string_pool]`: Marks a field as the string pool (must be `Vec<String>`).
+///   Only one field per struct can have this attribute.
+///
+/// ## Examples
+///
+/// ```rust, ignore
+/// use patina_macro::SmbiosRecord;
+/// use patina_smbios::{SmbiosTableHeader, SmbiosRecordStructure};
+/// use alloc::{string::String, vec::Vec};
+///
+/// // Vendor-specific OEM record (Type 0x80-0xFF)
+/// #[derive(SmbiosRecord)]
+/// #[smbios(record_type = 0x80)]
+/// pub struct VendorOemRecord {
+///     pub header: SmbiosTableHeader,
+///     pub oem_field: u32,
+///     #[string_pool]
+///     pub string_pool: Vec<String>,
+/// }
+///
+/// // Custom record without strings
+/// #[derive(SmbiosRecord)]
+/// #[smbios(record_type = 0x81)]
+/// pub struct CustomData {
+///     pub header: SmbiosTableHeader,
+///     pub value1: u16,
+///     pub value2: u32,
+/// }
+/// ```
+///
+/// The macro generates:
+/// - `const RECORD_TYPE: u8`
+/// - `fn to_bytes(&self) -> Vec<u8>` - Complete serialization
+/// - `fn validate(&self) -> Result<(), SmbiosError>` - String validation
+/// - `fn string_pool(&self) -> &[String]` - String pool accessor
+/// - `fn string_pool_mut(&mut self) -> &mut Vec<String>` - Mutable accessor
+#[proc_macro_derive(SmbiosRecord, attributes(smbios, string_pool))]
+pub fn smbios_record(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    smbios_record_macro::smbios_record_derive(item.into()).into()
 }

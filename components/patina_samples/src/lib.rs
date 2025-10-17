@@ -7,6 +7,7 @@
 //!
 //! - [`component::hello_world::HelloStruct`]: Demonstrates a struct-based component with default entry point
 //! - [`component::hello_world::GreetingsEnum`]: Demonstrates an enum-based component with custom entry point
+//! - [`smbios_platform`]: Demonstrates SMBIOS platform configuration and record creation
 //!
 //! ## License
 //!
@@ -18,3 +19,4 @@
 #![feature(coverage_attribute)]
 #![coverage(off)] // Disable all coverage instrumentation for sample code
 pub mod component;
+pub mod smbios_platform;
