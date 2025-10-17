@@ -34,6 +34,7 @@ pub fn read_memory<Arch: DebuggerArch>(address: u64, buffer: &mut [u8], unsafe_r
     }
 
     let ptr = address as *const u8;
+    // SAFETY: We have ensured these pages are readable before accessing them.
     unsafe {
         ptr::copy(ptr, buffer.as_mut_ptr(), len);
     }
@@ -77,6 +78,7 @@ pub fn write_memory<Arch: DebuggerArch>(address: u64, buffer: &[u8]) -> Result<(
         }
 
         let ptr = address as *mut u8;
+        // SAFETY: We have ensured these pages are writable before accessing them.
         unsafe {
             ptr::copy_nonoverlapping(buffer.as_ptr().offset(offset), ptr, len);
         }

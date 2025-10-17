@@ -39,6 +39,7 @@ impl DebuggerArch for X64Arch {
 
     #[inline(always)]
     fn breakpoint() {
+        // SAFETY: This is the architecturally defined breakpoint instruction.
         unsafe { asm!("int 3") };
     }
 
@@ -77,6 +78,7 @@ impl DebuggerArch for X64Arch {
         // cache doesn't need to be flushed since it should already be invalidated
         // by the write according to the Intel SDM Vol 3 section 11.6. The CR3
         // write is also serializing so no barriers are needed.
+        // SAFETY: This is an architecturally defined operation to flush the TLB.
         unsafe {
             asm!("mov {0}, cr3", "mov cr3, {0}", out(reg) _);
         }
@@ -130,6 +132,8 @@ impl DebuggerArch for X64Arch {
 
     fn reboot() {
         // Reset the system through the Reset Control Register.
+        // SAFETY: This is a well known instruction sequence to reset the system.
+        // If we fail, we simply halt, which acceptable under the debugger.
         unsafe {
             asm!("cli",
                  "out dx, al",
@@ -145,8 +149,10 @@ impl DebuggerArch for X64Arch {
 
     fn get_page_table() -> Result<Self::PageTable, ()> {
         let cr3: u64;
+        // SAFETY: This is simply reading the CR3 register, which is safe.
         unsafe { asm!("mov {}, cr3", out(reg) cr3) };
         let cr4: u64;
+        // SAFETY: This is simply reading the CR4 register, which is safe.
         unsafe { asm!("mov {}, cr4", out(reg) cr4) };
 
         // Check CR4 to determine if we are using 4-level or 5-level paging.
@@ -168,6 +174,7 @@ impl DebuggerArch for X64Arch {
         match tokens.next() {
             Some("regs") => {
                 let mut gdtr: u64 = 0;
+                // SAFETY: This is simply reading the GDTR register, which is safe.
                 unsafe {
                     asm!(
                         "sgdt [{}]",
@@ -443,11 +450,13 @@ impl X64HardwareBreakpoints {
 
     pub fn read() -> Self {
         let dr7: u64;
+        // SAFETY: This is simply reading the DR7 register, which is safe.
         unsafe { asm!("mov {}, dr7", out(reg) dr7) };
         X64HardwareBreakpoints { dr7 }
     }
 
     pub fn flush(&mut self) {
+        // SAFETY: This is simply writing the DR7 register, which is safe in this debugger context.
         unsafe { asm!("mov dr7, {}", in(reg) self.dr7) };
     }
 
@@ -493,6 +502,7 @@ impl X64HardwareBreakpoints {
 
     pub fn get_address(&self, index: usize) -> u64 {
         let mut addr = 0;
+        // SAFETY: This is simply reading the debug address registers, which is safe.
         unsafe {
             match index {
                 0 => asm!("mov {}, dr0", out(reg) addr),
@@ -506,6 +516,7 @@ impl X64HardwareBreakpoints {
     }
 
     pub fn set_address(&mut self, index: usize, addr: u64) {
+        // SAFETY: This is simply writing the debug address registers, which is safe from the debugger context.
         unsafe {
             match index {
                 0 => asm!("mov dr0, {}", in(reg) addr),
