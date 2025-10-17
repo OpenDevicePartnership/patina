@@ -1,0 +1,19 @@
+[package]
+name = "patina_smbios"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "System Management BIOS (SMBIOS) support for UEFI components."
+
+[dependencies]
+log = { workspace = true }
+patina = { workspace = true }
+r-efi = { workspace = true }
+spin = { workspace = true }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
+
+[features]
+enable_patina_tests = []

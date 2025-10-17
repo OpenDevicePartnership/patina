@@ -18,3 +18,9 @@
 #![feature(coverage_attribute)]
 
 pub mod component;
+
+#[cfg(feature = "enable_smbios_example")]
+mod smbios_platform;
+
+#[cfg(feature = "enable_smbios_example")]
+pub use smbios_platform::SmbiosExampleComponent;

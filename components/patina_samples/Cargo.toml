@@ -10,6 +10,8 @@ description = "Sample UEFI components for the DXE Core."
 [dependencies]
 log = { workspace = true }
 patina = { workspace = true }
+patina_smbios = { workspace = true, optional = true }
 
 [features]
 std = []
+enable_smbios_example = ["patina_smbios"]
