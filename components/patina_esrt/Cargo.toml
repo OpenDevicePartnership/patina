@@ -1,0 +1,33 @@
+[package]
+name = "patina_esrt"
+resolver = "2"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+description = "EFI System Resource Table (ESRT) component for firmware update support."
+
+[dependencies]
+log = { workspace = true }
+r-efi = { workspace = true }
+
+patina = { workspace = true }
+
+[dev-dependencies]
+patina = { workspace = true, features = ["mockall"] }
+mockall = { workspace = true }
+
+# Scaffold Configuration
+# This is a scaffold implementation with intentional TODOs
+# Coverage is disabled for scaffold stubs until real implementation
+[package.metadata.coverage]
+exclude = [
+    "src/config.rs",      # Scaffold stub - replace in Issue #2
+    "src/error.rs",       # Scaffold stub - replace in Issue #3  
+    "src/types.rs",       # Scaffold stub - replace in Issue #1
+    "src/repository.rs",  # Scaffold stub - replace in Issue #4
+    "src/component/esrt.rs"  # Scaffold stub - replace in Issue #6
+]
+
+[features]
+default = []
