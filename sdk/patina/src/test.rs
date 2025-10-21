@@ -218,8 +218,14 @@ impl TestRunner {
     }
 
     /// The entry point for the test runner component.
+    #[coverage(off)]
     fn entry_point(self, storage: &mut Storage) -> patina::error::Result<()> {
         let test_list: &[__private_api::TestCase] = __private_api::test_cases();
+        self.run_tests(test_list, storage)
+    }
+
+    /// Runs the provided list of test cases, applying the configuration options set on the TestRunner.
+    fn run_tests(&self, test_list: &[__private_api::TestCase], storage: &mut Storage) -> patina::error::Result<()> {
         let count = test_list.len();
         match count {
             0 => log::warn!("No Tests Found"),
@@ -259,10 +265,13 @@ mod tests {
     use crate::component::{IntoComponent, Storage, params::Config};
 
     // A test function where we mock DxeComponentInterface to return what we want for the test.
-    #[allow(unused)]
     fn test_function(config: Config<i32>) -> Result<(), &'static str> {
         assert!(*config == 1);
         Ok(())
+    }
+
+    fn test_function_fail() -> Result<(), &'static str> {
+        Err("Intentional Failure")
     }
 
     #[test]
@@ -287,8 +296,11 @@ mod tests {
         assert!(config.fail_fast);
     }
 
-    #[cfg_attr(feature = "enable_patina_tests", linkme::distributed_slice(super::__private_api::TEST_CASES))]
-    #[allow(unused)]
+    // This is mirroring the logic in __private_api.rs to ensure we do properly register test cases.
+    #[linkme::distributed_slice]
+    static TEST_TESTS: [super::__private_api::TestCase];
+
+    #[linkme::distributed_slice(TEST_TESTS)]
     static TEST_CASE1: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test",
         skip: false,
@@ -297,8 +309,7 @@ mod tests {
         func: |storage| crate::test::__private_api::FunctionTest::new(test_function).run(storage.into()),
     };
 
-    #[cfg_attr(feature = "enable_patina_tests", linkme::distributed_slice(super::__private_api::TEST_CASES))]
-    #[allow(unused)]
+    #[linkme::distributed_slice(TEST_TESTS)]
     static TEST_CASE2: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test",
         skip: true,
@@ -307,20 +318,56 @@ mod tests {
         func: |storage| crate::test::__private_api::FunctionTest::new(test_function).run(storage.into()),
     };
 
+    static TEST_CASE3: super::__private_api::TestCase = super::__private_api::TestCase {
+        name: "test_that_fails",
+        skip: false,
+        should_fail: false,
+        fail_msg: None,
+        func: |storage| crate::test::__private_api::FunctionTest::new(test_function_fail).run(storage.into()),
+    };
+
     #[test]
-    fn test_we_run_without_panicking() {
-        if cfg!(feature = "enable_patina_tests") {
-            assert_eq!(2, super::__private_api::test_cases().len());
-        } else {
-            assert_eq!(0, super::__private_api::test_cases().len());
-        }
-
+    fn test_we_can_initialize_the_component() {
         let mut storage = Storage::new();
-
-        storage.add_config(1_i32);
 
         let mut component = super::TestRunner::default().fail_fast(true).into_component();
         component.initialize(&mut storage);
-        let _ = component.run(&mut storage);
+    }
+
+    #[test]
+    fn test_we_can_collect_and_execute_tests() {
+        assert_eq!(TEST_TESTS.len(), 2);
+        let mut storage = Storage::new();
+        storage.add_config(1_i32);
+
+        let component = super::TestRunner::default().fail_fast(true);
+        let result = component.run_tests(&TEST_TESTS, &mut storage);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_handle_different_test_counts() {
+        let mut test_cases = vec![];
+        let mut storage = Storage::new();
+        storage.add_config(1_i32);
+
+        let component = super::TestRunner::default().fail_fast(true);
+        let result = component.run_tests(&test_cases, &mut storage);
+        assert!(result.is_ok());
+
+        test_cases.push(TEST_CASE1);
+        let result = component.run_tests(&test_cases, &mut storage);
+        assert!(result.is_ok());
+
+        test_cases.push(TEST_CASE2);
+        let result = component.run_tests(&test_cases, &mut storage);
+        assert!(result.is_ok());
+
+        test_cases.push(TEST_CASE3);
+        let result = component.run_tests(&test_cases, &mut storage);
+        assert!(result.is_err());
+
+        let result = component.fail_fast(false).run_tests(&test_cases, &mut storage);
+        assert!(result.is_err());
     }
 }

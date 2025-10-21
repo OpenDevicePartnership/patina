@@ -24,7 +24,7 @@ use r_efi::efi;
 ///
 /// count and size outputs both include the terminating end node.
 ///
-/// ## Safety
+/// ## SAFETY
 ///
 /// device_path input must be a valid pointer (i.e. not null) that points to
 /// a well-formed device path that conforms to UEFI spec 2.11 section 10.
@@ -76,7 +76,7 @@ pub fn device_path_node_count(
         return Err(efi::Status::INVALID_PARAMETER);
     }
     loop {
-        // Safety: caller must guarantee that device_path is a valid pointer to
+        // SAFETY: caller must guarantee that device_path is a valid pointer to
         // a well-formed device path as described in the function documentation above.
         let current_node = unsafe { current_node_ptr.read_unaligned() };
         let current_length: usize = u16::from_le_bytes(current_node.length).into();
@@ -88,6 +88,7 @@ pub fn device_path_node_count(
         }
 
         let offset = current_length.try_into().map_err(|_| efi::Status::INVALID_PARAMETER)?;
+        // SAFETY: caller must guarantee that device_path is well formed
         current_node_ptr = unsafe { current_node_ptr.byte_offset(offset) };
     }
     Ok((node_count, dev_path_size))
@@ -106,6 +107,8 @@ pub fn device_path_as_slice(
     device_path: *const efi::protocols::device_path::Protocol,
 ) -> Result<&'static [u8], efi::Status> {
     let (_, byte_count) = device_path_node_count(device_path)?;
+    // SAFETY: Caller must ensure that device_path is valid, that device_path
+    // will remain valid for lifetime of slice and that byte_count is valid
     unsafe { Ok(from_raw_parts(device_path as *const u8, byte_count)) }
 }
 
@@ -121,6 +124,8 @@ pub fn device_path_as_slice(
 /// ## Safety
 ///
 /// a and b inputs must be a valid pointers to well-formed device paths.
+/// b memory must remain valid memory for the lifetime of the returned device path.
+///
 ///
 /// ## Examples
 ///
@@ -187,7 +192,7 @@ pub fn device_path_as_slice(
 /// ];
 /// let device_path_c = device_path_c_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
 /// // a is a prefix of b.
-/// let result = remaining_device_path(device_path_a, device_path_b);
+/// let result = unsafe {remaining_device_path(device_path_a, device_path_b)};
 /// assert!(result.is_some());
 /// let result = result.unwrap();
 /// // the remaining device path of b after going past the prefix in a should start at the size of a in bytes minus the size of the end node.
@@ -199,7 +204,7 @@ pub fn device_path_as_slice(
 /// assert_eq!(result, (expected_ptr, a_path_length.0 - 1));
 ///
 /// //b is equal to b.
-/// let result = remaining_device_path(device_path_b, device_path_b);
+/// let result = unsafe {remaining_device_path(device_path_b, device_path_b)};
 /// assert!(result.is_some());
 /// let result = result.unwrap();
 /// let b_path_length = device_path_node_count(device_path_b).unwrap();
@@ -210,14 +215,14 @@ pub fn device_path_as_slice(
 /// assert_eq!(result, (expected_ptr, b_path_length.0 - 1));
 ///
 /// //a is not a prefix of c.
-/// let result = remaining_device_path(device_path_a, device_path_c);
+/// let result = unsafe {remaining_device_path(device_path_a, device_path_c)};
 /// assert!(result.is_none());
 ///
 /// //b is not a prefix of a.
-/// let result = remaining_device_path(device_path_b, device_path_a);
+/// let result = unsafe {remaining_device_path(device_path_b, device_path_a)};
 /// assert!(result.is_none());
 /// ```
-pub fn remaining_device_path(
+pub unsafe fn remaining_device_path(
     a: *const efi::protocols::device_path::Protocol,
     b: *const efi::protocols::device_path::Protocol,
 ) -> Option<(*const efi::protocols::device_path::Protocol, usize)> {
@@ -225,10 +230,10 @@ pub fn remaining_device_path(
     let mut b_ptr = b;
     let mut node_count = 0;
     loop {
-        let a_node = unsafe { *a_ptr };
-        let b_node = unsafe { *b_ptr };
+        // SAFETY: Caller must ensure pointers are valid device_paths
+        let (a_node, b_node) = unsafe { (*a_ptr, *b_ptr) };
 
-        if is_device_path_end(&a_node) {
+        if unsafe { is_device_path_end(&a_node) } {
             return Some((b_ptr, node_count));
         }
 
@@ -236,7 +241,11 @@ pub fn remaining_device_path(
 
         let a_length: usize = u16::from_le_bytes(a_node.length).into();
         let b_length: usize = u16::from_le_bytes(b_node.length).into();
+        // SAFETY: caller must assure that device path is valid
         let a_slice = unsafe { slice_from_raw_parts(a_ptr as *const u8, a_length).as_ref() };
+
+        // SAFETY: caller must assure that device path is valid and that memory will remain
+        // available for the lifetime of the slice
         let b_slice = unsafe { slice_from_raw_parts(b_ptr as *const u8, b_length).as_ref() };
 
         if a_slice != b_slice {
@@ -245,14 +254,20 @@ pub fn remaining_device_path(
 
         let a_offset: isize = a_length.try_into().ok()?;
         let b_offset: isize = b_length.try_into().ok()?;
+        // SAFETY: Caller must ensure that the device path is well formed and valid
         a_ptr = unsafe { a_ptr.byte_offset(a_offset) };
+        // SAFETY: Caller must ensure that the device path is well formed and valid
         b_ptr = unsafe { b_ptr.byte_offset(b_offset) };
     }
 }
 
 /// Determines whether the given device path points to an end-of-device-path node.
-pub fn is_device_path_end(device_path: *const efi::protocols::device_path::Protocol) -> bool {
+/// # Safety
+///
+/// Caller must ensure that the device_path is valid and aligned
+pub unsafe fn is_device_path_end(device_path: *const efi::protocols::device_path::Protocol) -> bool {
     let node_ptr = device_path;
+    // SAFETY: Caller must ensure that device_path is valid and aligned
     if let Some(device_path_node) = unsafe { node_ptr.as_ref() } {
         device_path_node.r#type == efi::protocols::device_path::TYPE_END
             && device_path_node.sub_type == efi::protocols::device_path::End::SUBTYPE_ENTIRE
@@ -294,14 +309,17 @@ impl Eq for DevicePathNode {}
 impl DevicePathNode {
     /// Create a DevicePathNode from raw pointer.
     ///
-    /// ## Safety
+    /// # Safety
     ///
     /// Caller must ensure that the raw pointer points to a valid device path node structure.
     pub unsafe fn new(node: *const efi::protocols::device_path::Protocol) -> Option<Self> {
+        // SAFETY: Caller must ensure node is a valid and well formatted device path
         let header = unsafe { core::ptr::read_unaligned(node) };
         let node_len = u16::from_le_bytes(header.length);
         let data_len = node_len.checked_sub(size_of_val(&header).try_into().ok()?)?;
+        // SAFETY: Caller must ensure node is a valid and well formatted device path
         let data_ptr = unsafe { node.byte_offset(size_of_val(&header).try_into().ok()?) } as *const u8;
+        // SAFETY: Caller must ensure node is a valid and well formatted device path
         let data = unsafe { from_raw_parts(data_ptr, data_len.into()).to_vec() };
         Some(Self { header, data })
     }
@@ -336,7 +354,7 @@ impl From<DevicePathWalker> for String {
     fn from(device_path_walker: DevicePathWalker) -> Self {
         let mut result = String::new();
         for node in device_path_walker {
-            if is_device_path_end(&node.header) {
+            if unsafe { is_device_path_end(&node.header) } {
                 break;
             }
             result.push_str(protocol_to_subtype_str(node.header));
@@ -371,10 +389,12 @@ impl Iterator for DevicePathWalker {
     fn next(&mut self) -> Option<Self::Item> {
         match self.next_node {
             Some(node) => {
+                // SAFETY: Caller must assure that node is a valid, well formatted device path
                 let current = unsafe { DevicePathNode::new(node)? };
-                if is_device_path_end(node) {
+                if unsafe { is_device_path_end(node) } {
                     self.next_node = None;
                 } else {
+                    // SAFETY: Caller must ensure that node is a valid, well formatted device path
                     self.next_node = Some(unsafe { node.byte_offset(current.len().try_into().ok()?) });
                 }
                 Some(current)
@@ -524,7 +544,7 @@ mod tests {
         let device_path_c = device_path_c_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
 
         // a is a prefix of b.
-        let result = remaining_device_path(device_path_a, device_path_b);
+        let result = unsafe { remaining_device_path(device_path_a, device_path_b) };
         assert!(result.is_some());
         let result = result.unwrap();
         // the remaining device path of b after going past the prefix in a should start at the size of a in bytes minus the size of the end node.
@@ -536,7 +556,7 @@ mod tests {
         assert_eq!(result, (expected_ptr, a_path_length.0 - 1));
 
         //b is equal to b.
-        let result = remaining_device_path(device_path_b, device_path_b);
+        let result = unsafe { remaining_device_path(device_path_b, device_path_b) };
         assert!(result.is_some());
         let result = result.unwrap();
         let b_path_length = device_path_node_count(device_path_b).unwrap();
@@ -547,11 +567,11 @@ mod tests {
         assert_eq!(result, (expected_ptr, b_path_length.0 - 1));
 
         //a is not a prefix of c.
-        let result = remaining_device_path(device_path_a, device_path_c);
+        let result = unsafe { remaining_device_path(device_path_a, device_path_c) };
         assert!(result.is_none());
 
         //b is not a prefix of a.
-        let result = remaining_device_path(device_path_b, device_path_a);
+        let result = unsafe { remaining_device_path(device_path_b, device_path_a) };
         assert!(result.is_none());
     }
 

@@ -36,6 +36,8 @@ const MDSCR_SOFTWARE_STEP: u64 = 0x1;
 const MDSCR_MDE: u64 = 0x8000;
 const MDSCR_KDE: u64 = 0x2000;
 
+const OS_LOCK_STATUS_LOCKED: u64 = 0x2;
+
 const DAIF_DEBUG_MASK: u64 = 0x200;
 
 static POKE_TEST_MARKER: AtomicBool = AtomicBool::new(false);
@@ -164,7 +166,7 @@ impl DebuggerArch for Aarch64Arch {
 
         // Clear the OS lock if needed
         let oslsr_el1 = read_sysreg!("oslsr_el1");
-        if oslsr_el1 & 1 != 0 {
+        if oslsr_el1 & OS_LOCK_STATUS_LOCKED != 0 {
             unsafe { asm!("msr oslar_el1, xzr", "isb sy") };
         }
 

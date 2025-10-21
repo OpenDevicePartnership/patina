@@ -68,6 +68,7 @@ pub struct AdvancedLog<'a> {
 //         the log. Safety here is checked by the allocation logic in add_log_entry
 //         which relies on atomics to safely allocate portions of the buffer.
 unsafe impl Send for AdvancedLog<'static> {}
+// SAFETY: See the Send safety comment
 unsafe impl Sync for AdvancedLog<'static> {}
 
 impl AdvancedLog<'static> {
@@ -533,6 +534,7 @@ mod tests {
         let address = buffer as *mut u64 as PhysicalAddress;
         let len = buffer.len() as u32;
 
+        // SAFETY: We just allocated this memory so it's valid.
         let log = unsafe { AdvancedLog::initialize_memory_log(address, len) }.unwrap();
 
         // Fill the log.
@@ -573,6 +575,7 @@ mod tests {
         let address = buffer as *const u8 as PhysicalAddress;
         let len = buffer.len() as u32;
 
+        // SAFETY: We just allocated this memory so it's valid.
         let log = unsafe { AdvancedLog::initialize_memory_log(address, len) }.unwrap();
 
         // Fill the log.
@@ -582,7 +585,7 @@ mod tests {
             log.add_log_entry(entry).unwrap();
         }
 
-        // adopt the log.
+        // SAFETY: This is the same buffer as before, still valid.
         let log = unsafe { AdvancedLog::adopt_memory_log(address) }.unwrap();
 
         // Add more entries.

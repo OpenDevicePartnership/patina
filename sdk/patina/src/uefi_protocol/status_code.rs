@@ -17,7 +17,7 @@ use core::{mem, ptr, slice};
 
 use r_efi::efi;
 
-use patina_pi::protocols::status_code::{
+use crate::pi::protocols::status_code::{
     self, EfiStatusCodeData, EfiStatusCodeType, EfiStatusCodeValue, ReportStatusCode,
 };
 

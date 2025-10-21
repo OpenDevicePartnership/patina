@@ -13,7 +13,7 @@ use core::{
 
 use r_efi::efi;
 
-use patina_pi::protocols::timer;
+use patina::pi::protocols::timer;
 
 use patina_internal_cpu::interrupts;
 

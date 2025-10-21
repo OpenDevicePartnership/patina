@@ -109,6 +109,7 @@ words:
   - msdia
   - mtrrs
   - nestedfv
+  - nocapture
   - nologo
   - nomem
   - noopt

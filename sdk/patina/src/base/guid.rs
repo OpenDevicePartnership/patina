@@ -6,9 +6,10 @@
 //!
 //! - [`Guid<'a>`] - A borrowed GUID that can reference existing data or contain parsed strings
 //! - [`OwnedGuid`] - A owned GUID with static lifetime, type alias for `Guid<'static>`
+//! - [`BinaryGuid`] - A binary-compatible GUID wrapper for use in `#[repr(C)]` structures
 //! - [`GuidError`] - Error type for GUID parsing operations
 //!
-//! ## When to use `Guid` vs `OwnedGuid`
+//! ## When to use `Guid` vs `OwnedGuid` vs `BinaryGuid`
 //!
 //! ### Use `Guid<'a>` when:
 //!
@@ -22,6 +23,28 @@
 //! - Storing GUIDs in structs or collections that need to own their data
 //! - Returning GUIDs from functions where you can't guarantee the lifetime of source data
 //! - Working with GUIDs that need to live beyond the scope of their creation
+//!
+//! ### Use `BinaryGuid` when:
+//!
+//! - Defining structure fields that must match C binary layouts (e.g., firmware headers)
+//! - Working with zerocopy parsing of binary data
+//! - Storing GUIDs in structures that will be cast from byte buffers
+//!
+//! Unlike the Guid types, BinaryGuid is designed for exact binary compatibility with
+//! C structures and does not provide as many ergonomic features as the more generic
+//! Guid and OwnedGuid types.
+//!
+//! For example, a structure that has a GUID at offset zero would expect a binary layout of:
+//!
+//! > `struct offset 0: [16 bytes = efi::Guid]`
+//!
+//! While a `patina::Guid<'static>` enum would be laid out as:
+//!
+//! > `struct offset 0: [discriminant tag] + [16 bytes efi::Guid data]`
+//!
+//! Note that the enum discriminant adds extra bytes, making it incompatible with C layouts. However, the actual
+//! GUID data inside the enum is still binary compatible with the UEFI Specification and `r_efi::efi::Guid`, it is
+//! just the enum wrapper that adds overhead.
 //!
 //! ## Examples
 //!
@@ -138,6 +161,191 @@ pub enum Guid<'a> {
 /// - Returning GUIDs from functions
 /// - Any scenario where you need to own the GUID data
 pub type OwnedGuid = Guid<'static>;
+
+/// A binary-compatible GUID wrapper for use in `#[repr(C)]` structures.
+///
+/// This type is a transparent wrapper around `r_efi::efi::Guid` that maintains binary
+/// compatibility with C structures while providing zerocopy safety through derive macros.
+///
+/// # When to use `BinaryGuid`
+///
+/// Use `BinaryGuid` when:
+/// - Defining structure fields that must match C binary layouts (e.g., firmware headers)
+/// - Working with zerocopy parsing of binary data
+/// - Storing GUIDs in structures that will be cast from byte buffers
+///
+/// Use [`Guid<'a>`] or [`OwnedGuid`] when:
+/// - Working at API boundaries for ergonomic GUID handling
+/// - Need display, parsing, or comparison operations
+/// - Want lifetime-aware borrowing semantics
+///
+/// # Examples
+///
+/// ```rust
+/// use patina::BinaryGuid;
+/// use r_efi::efi;
+///
+/// // In structure definitions
+/// #[repr(C)]
+/// struct FirmwareHeader {
+///     signature: u32,
+///     guid: BinaryGuid,  // Binary compatible with C layout
+/// }
+///
+/// // Converting to ergonomic Guid for display
+/// let header = FirmwareHeader {
+///     signature: 0x12345678,
+///     guid: BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]),
+/// };
+/// println!("Header GUID: {}", header.guid.as_guid());
+/// ```
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BinaryGuid(pub efi::Guid);
+
+impl BinaryGuid {
+    /// Create a BinaryGuid from individual GUID fields.
+    ///
+    /// This is a const function that can be used to create compile-time constants.
+    pub const fn from_fields(d1: u32, d2: u16, d3: u16, d4: u8, d5: u8, d6: &[u8; 6]) -> Self {
+        Self(efi::Guid::from_fields(d1, d2, d3, d4, d5, d6))
+    }
+
+    /// Create a BinaryGuid from a 16-byte array.
+    pub fn from_bytes(bytes: &[u8; 16]) -> Self {
+        Self(efi::Guid::from_bytes(bytes))
+    }
+
+    /// Convert to the more ergonomic `Guid` wrapper for display and API usage.
+    ///
+    /// This creates a borrowed reference to the underlying `efi::Guid`, avoiding copies.
+    pub fn as_guid(&self) -> Guid<'_> {
+        Guid::Borrowed(&self.0)
+    }
+
+    /// Convert to an owned `OwnedGuid`.
+    pub fn to_owned_guid(&self) -> OwnedGuid {
+        Guid::Owned(self.0)
+    }
+
+    /// Get the GUID value as a 16-byte array.
+    pub fn as_bytes(&self) -> &[u8; 16] {
+        self.0.as_bytes()
+    }
+
+    /// Get the GUID fields as individual components.
+    pub fn as_fields(&self) -> (u32, u16, u16, u8, u8, &[u8; 6]) {
+        self.0.as_fields()
+    }
+
+    /// Get the underlying `r_efi::efi::Guid` value.
+    pub const fn into_inner(&self) -> efi::Guid {
+        self.0
+    }
+
+    /// Get a reference to the underlying `r_efi::efi::Guid`.
+    pub const fn as_efi_guid(&self) -> &efi::Guid {
+        &self.0
+    }
+
+    /// Get a mutable reference to the underlying `r_efi::efi::Guid`.
+    pub fn as_mut_efi_guid(&mut self) -> &mut efi::Guid {
+        &mut self.0
+    }
+}
+
+// Conversions from r_efi::efi::Guid
+impl From<efi::Guid> for BinaryGuid {
+    fn from(guid: efi::Guid) -> Self {
+        Self(guid)
+    }
+}
+
+impl From<&efi::Guid> for BinaryGuid {
+    fn from(guid: &efi::Guid) -> Self {
+        Self(*guid)
+    }
+}
+
+// Conversions to r_efi::efi::Guid
+impl From<BinaryGuid> for efi::Guid {
+    fn from(guid: BinaryGuid) -> Self {
+        guid.0
+    }
+}
+
+impl From<&BinaryGuid> for efi::Guid {
+    fn from(guid: &BinaryGuid) -> Self {
+        guid.0
+    }
+}
+
+// Conversions between BinaryGuid and Guid
+impl<'a> From<&'a BinaryGuid> for Guid<'a> {
+    fn from(guid: &'a BinaryGuid) -> Self {
+        Guid::Borrowed(&guid.0)
+    }
+}
+
+impl From<BinaryGuid> for OwnedGuid {
+    fn from(guid: BinaryGuid) -> Self {
+        Guid::Owned(guid.0)
+    }
+}
+
+impl From<OwnedGuid> for BinaryGuid {
+    fn from(guid: OwnedGuid) -> Self {
+        Self(guid.to_efi_guid())
+    }
+}
+
+// Deref for convenient access to underlying efi::Guid methods
+impl core::ops::Deref for BinaryGuid {
+    type Target = efi::Guid;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+// DerefMut for convenient mutable access to the underlying efi::Guid
+impl core::ops::DerefMut for BinaryGuid {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+// PartialEq implementations for comparison
+impl PartialEq<efi::Guid> for BinaryGuid {
+    fn eq(&self, other: &efi::Guid) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<BinaryGuid> for efi::Guid {
+    fn eq(&self, other: &BinaryGuid) -> bool {
+        *self == other.0
+    }
+}
+
+impl<'a> PartialEq<Guid<'a>> for BinaryGuid {
+    fn eq(&self, other: &Guid<'a>) -> bool {
+        self.0 == other.to_efi_guid()
+    }
+}
+
+impl<'a> PartialEq<BinaryGuid> for Guid<'a> {
+    fn eq(&self, other: &BinaryGuid) -> bool {
+        self.to_efi_guid() == other.0
+    }
+}
+
+// Display using Guid's implementation
+impl core::fmt::Display for BinaryGuid {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.as_guid().fmt(f)
+    }
+}
 
 impl<'a> Guid<'a> {
     /// Create a new Guid from an `efi::Guid` reference
@@ -1004,5 +1212,550 @@ mod tests {
 
         // Verify display formatting
         assert_eq!(format!("{}", guid_from_bytes), TEST_GUID_STRING_UPPER);
+    }
+
+    #[test]
+    fn binary_guid_size_and_alignment() {
+        // BinaryGuid should have same size and alignment as efi::Guid
+        assert_eq!(size_of::<BinaryGuid>(), size_of::<efi::Guid>());
+        assert_eq!(align_of::<BinaryGuid>(), align_of::<efi::Guid>());
+        assert_eq!(size_of::<BinaryGuid>(), 16);
+    }
+
+    #[test]
+    fn binary_guid_repr_transparent() {
+        // BinaryGuid should be binary compatible with efi::Guid due to #[repr(transparent)]
+        let efi_guid = create_test_r_efi_guid();
+        let binary_guid = BinaryGuid(efi_guid);
+
+        // Verify the memory layout is identical
+        let efi_ptr = &efi_guid as *const efi::Guid as *const u8;
+        let binary_ptr = &binary_guid as *const BinaryGuid as *const u8;
+
+        unsafe {
+            let efi_bytes = core::slice::from_raw_parts(efi_ptr, 16);
+            let binary_bytes = core::slice::from_raw_parts(binary_ptr, 16);
+            assert_eq!(efi_bytes, binary_bytes);
+        }
+    }
+
+    #[test]
+    fn binary_guid_from_fields() {
+        let (time_low, time_mid, time_hi_and_version, clk_seq_hi_res, clk_seq_low, node) = TEST_GUID_FIELDS;
+        let binary_guid =
+            BinaryGuid::from_fields(time_low, time_mid, time_hi_and_version, clk_seq_hi_res, clk_seq_low, node);
+
+        let expected_fields = binary_guid.as_fields();
+        assert_eq!(expected_fields, TEST_GUID_FIELDS);
+
+        // Should be usable as const
+        const CONST_BINARY_GUID: BinaryGuid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+        assert_eq!(CONST_BINARY_GUID.as_fields(), TEST_GUID_FIELDS);
+    }
+
+    #[test]
+    fn binary_guid_from_bytes() {
+        let test_bytes = [
+            0x00, 0x84, 0x0e, 0x55, // time_low (0x550e8400) little-endian
+            0x9b, 0xe2, // time_mid (0xe29b) little-endian
+            0xd4, 0x41, // time_hi_and_version (0x41d4) little-endian
+            0xa7, // clk_seq_hi_res (0xa7)
+            0x16, // clk_seq_low (0x16)
+            0x44, 0x66, 0x55, 0x44, 0x00, 0x00, // node array
+        ];
+
+        let binary_guid = BinaryGuid::from_bytes(&test_bytes);
+        assert_eq!(binary_guid.as_bytes(), &test_bytes);
+        assert_eq!(binary_guid.as_fields(), TEST_GUID_FIELDS);
+    }
+
+    #[test]
+    fn binary_guid_as_guid_conversion() {
+        let binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+        let guid_ref = binary_guid.as_guid();
+
+        // Should create a borrowed Guid
+        match guid_ref {
+            Guid::Borrowed(_) => {}
+            _ => panic!("Expected Borrowed variant from as_guid()"),
+        }
+
+        // Should have same fields and display
+        assert_eq!(guid_ref.as_fields(), binary_guid.as_fields());
+        assert_eq!(format!("{}", guid_ref), format!("{}", binary_guid));
+    }
+
+    #[test]
+    fn binary_guid_to_owned_guid_conversion() {
+        let binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+        let owned_guid = binary_guid.to_owned_guid();
+
+        // Should create an owned Guid
+        match owned_guid {
+            Guid::Owned(_) => {}
+            _ => panic!("Expected Owned variant from to_owned_guid()"),
+        }
+
+        // Should have same fields and display
+        assert_eq!(owned_guid.as_fields(), binary_guid.as_fields());
+        assert_eq!(format!("{}", owned_guid), format!("{}", binary_guid));
+    }
+
+    #[test]
+    fn binary_guid_as_bytes() {
+        let binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+        let bytes = binary_guid.as_bytes();
+
+        let expected_bytes = [
+            0x00, 0x84, 0x0e, 0x55, // time_low (0x550e8400) little-endian
+            0x9b, 0xe2, // time_mid (0xe29b) little-endian
+            0xd4, 0x41, // time_hi_and_version (0x41d4) little-endian
+            0xa7, // clk_seq_hi_res (0xa7)
+            0x16, // clk_seq_low (0x16)
+            0x44, 0x66, 0x55, 0x44, 0x00, 0x00, // node array
+        ];
+
+        assert_eq!(bytes, &expected_bytes);
+    }
+
+    #[test]
+    fn binary_guid_as_fields() {
+        let binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+        let fields = binary_guid.as_fields();
+
+        assert_eq!(fields, TEST_GUID_FIELDS);
+    }
+
+    #[test]
+    fn binary_guid_from_efi_guid_conversions() {
+        let efi_guid = create_test_r_efi_guid();
+
+        // From efi::Guid (by value)
+        let binary_guid_from_value = BinaryGuid::from(efi_guid);
+        assert_eq!(binary_guid_from_value.as_fields(), TEST_GUID_FIELDS);
+
+        // From &efi::Guid (by reference)
+        let binary_guid_from_ref = BinaryGuid::from(&efi_guid);
+        assert_eq!(binary_guid_from_ref.as_fields(), TEST_GUID_FIELDS);
+
+        // Both should be equal
+        assert_eq!(binary_guid_from_value, binary_guid_from_ref);
+    }
+
+    #[test]
+    fn binary_guid_to_efi_guid_conversions() {
+        let binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+
+        // To efi::Guid (by value)
+        let efi_guid_from_value: efi::Guid = binary_guid.into();
+        assert_eq!(efi_guid_from_value.as_fields(), TEST_GUID_FIELDS);
+
+        // To efi::Guid (from reference)
+        let efi_guid_from_ref: efi::Guid = (&binary_guid).into();
+        assert_eq!(efi_guid_from_ref.as_fields(), TEST_GUID_FIELDS);
+
+        // Both should be equal
+        assert_eq!(efi_guid_from_value, efi_guid_from_ref);
+    }
+
+    #[test]
+    fn binary_guid_from_guid_conversions() {
+        let owned_guid = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let binary_guid_from_owned: BinaryGuid = owned_guid.into();
+
+        assert_eq!(binary_guid_from_owned.as_fields(), TEST_GUID_FIELDS);
+
+        // Test round-trip
+        let back_to_owned: OwnedGuid = binary_guid_from_owned.into();
+        assert_eq!(back_to_owned.as_fields(), TEST_GUID_FIELDS);
+        assert_eq!(format!("{}", back_to_owned), TEST_GUID_STRING_UPPER);
+    }
+
+    #[test]
+    fn binary_guid_guid_reference_conversion() {
+        let binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+
+        // Convert BinaryGuid reference to Guid (should be Borrowed)
+        let guid_from_ref: Guid = (&binary_guid).into();
+        match guid_from_ref {
+            Guid::Borrowed(_) => {}
+            _ => panic!("Expected Borrowed variant from &BinaryGuid conversion"),
+        }
+
+        assert_eq!(guid_from_ref.as_fields(), binary_guid.as_fields());
+        assert_eq!(format!("{}", guid_from_ref), format!("{}", binary_guid));
+    }
+
+    #[test]
+    fn binary_guid_deref() {
+        let binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+
+        // Should be able to call efi::Guid methods directly
+        let fields_via_deref = binary_guid.as_fields();
+        let bytes_via_deref = binary_guid.as_bytes();
+
+        assert_eq!(fields_via_deref, TEST_GUID_FIELDS);
+        assert_eq!(bytes_via_deref, binary_guid.as_bytes());
+    }
+
+    #[test]
+    fn binary_guid_partial_eq_with_efi_guid() {
+        let efi_guid = create_test_r_efi_guid();
+        let binary_guid = BinaryGuid::from(efi_guid);
+
+        // BinaryGuid == efi::Guid
+        assert_eq!(binary_guid, efi_guid);
+        // efi::Guid == BinaryGuid
+        assert_eq!(efi_guid, binary_guid);
+
+        // Test inequality
+        let different_efi_guid =
+            efi::Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xab, &[0xcd, 0xef, 0x12, 0x34, 0x56, 0x78]);
+        assert_ne!(binary_guid, different_efi_guid);
+        assert_ne!(different_efi_guid, binary_guid);
+    }
+
+    #[test]
+    fn binary_guid_partial_eq_with_guid() {
+        let binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+        let owned_guid = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+
+        // BinaryGuid == Guid
+        assert_eq!(binary_guid, owned_guid);
+        // Guid == BinaryGuid
+        assert_eq!(owned_guid, binary_guid);
+
+        // Test with borrowed Guid
+        let efi_guid = create_test_r_efi_guid();
+        let borrowed_guid = Guid::from_ref(&efi_guid);
+        assert_eq!(binary_guid, borrowed_guid);
+        assert_eq!(borrowed_guid, binary_guid);
+
+        // Test inequality
+        let different_guid = OwnedGuid::try_from_string("12345678-1234-5678-90AB-CDEF12345678").unwrap();
+        assert_ne!(binary_guid, different_guid);
+        assert_ne!(different_guid, binary_guid);
+    }
+
+    #[test]
+    fn binary_guid_display() {
+        let binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+        let display_string = format!("{}", binary_guid);
+
+        assert_eq!(display_string, TEST_GUID_STRING_UPPER);
+
+        // Should match the display of equivalent Guid types
+        let owned_guid = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        assert_eq!(format!("{}", binary_guid), format!("{}", owned_guid));
+    }
+
+    #[test]
+    fn binary_guid_debug() {
+        let binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+        let debug_string = format!("{:?}", binary_guid);
+
+        // Debug should show the full type and inner value
+        assert!(debug_string.contains("BinaryGuid"));
+    }
+
+    #[test]
+    fn binary_guid_copy_clone() {
+        let binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+
+        // Test copying
+        let copied_guid = binary_guid;
+        assert_eq!(copied_guid, binary_guid);
+
+        let copied_guid2 = binary_guid;
+        assert_eq!(copied_guid2, binary_guid);
+
+        // All should have same fields
+        assert_eq!(binary_guid.as_fields(), copied_guid.as_fields());
+        assert_eq!(binary_guid.as_fields(), copied_guid2.as_fields());
+    }
+
+    #[test]
+    fn binary_guid_hash() {
+        use core::hash::{Hash, Hasher};
+
+        // Simple hasher implementation for testing
+        struct TestHasher {
+            state: u64,
+        }
+
+        impl TestHasher {
+            fn new() -> Self {
+                Self { state: 0 }
+            }
+        }
+
+        impl Hasher for TestHasher {
+            fn finish(&self) -> u64 {
+                self.state
+            }
+
+            fn write(&mut self, bytes: &[u8]) {
+                for &byte in bytes {
+                    self.state = self.state.wrapping_mul(31).wrapping_add(byte as u64);
+                }
+            }
+        }
+
+        let binary_guid1 =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+        let binary_guid2 =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+        let binary_guid3 =
+            BinaryGuid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xab, &[0xcd, 0xef, 0x12, 0x34, 0x56, 0x78]);
+
+        let mut hasher1 = TestHasher::new();
+        let mut hasher2 = TestHasher::new();
+        let mut hasher3 = TestHasher::new();
+
+        binary_guid1.hash(&mut hasher1);
+        binary_guid2.hash(&mut hasher2);
+        binary_guid3.hash(&mut hasher3);
+
+        // Equal GUIDs should have equal hashes
+        assert_eq!(hasher1.finish(), hasher2.finish());
+        // Different GUIDs should have different hashes (with high probability)
+        assert_ne!(hasher1.finish(), hasher3.finish());
+    }
+
+    #[test]
+    fn binary_guid_in_c_struct() {
+        // Test usage in a typical C-compatible structure
+        #[repr(C)]
+        struct TestHeader {
+            signature: u32,
+            guid: BinaryGuid,
+            version: u16,
+        }
+
+        let header = TestHeader {
+            signature: 0x12345678,
+            guid: BinaryGuid::from_fields(
+                0x550e8400,
+                0xe29b,
+                0x41d4,
+                0xa7,
+                0x16,
+                &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00],
+            ),
+            version: 1,
+        };
+
+        // Should be able to access GUID fields
+        assert_eq!(header.guid.as_fields(), TEST_GUID_FIELDS);
+        assert_eq!(format!("{}", header.guid), TEST_GUID_STRING_UPPER);
+
+        // Should have expected memory layout (accounting for padding)
+        // u32 (4 bytes) + GUID (16 bytes) + u16 (2 bytes) + padding for alignment = 24 bytes
+        assert_eq!(size_of::<TestHeader>(), 24);
+    }
+
+    #[test]
+    fn binary_guid_zero_constant() {
+        // Ensure we can create common constant values
+        const ZERO_BINARY_GUID: BinaryGuid = BinaryGuid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
+
+        let zero_fields = ZERO_BINARY_GUID.as_fields();
+        assert_eq!(zero_fields, (0, 0, 0, 0, 0, &[0; 6]));
+
+        let zero_bytes = ZERO_BINARY_GUID.as_bytes();
+        assert_eq!(zero_bytes, &[0; 16]);
+
+        assert_eq!(format!("{}", ZERO_BINARY_GUID), "00000000-0000-0000-0000-000000000000");
+    }
+
+    #[test]
+    fn binary_guid_const_evaluation() {
+        // Test that from_fields works in const contexts
+        const TEST_BINARY_GUID: BinaryGuid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+
+        // Runtime verification - as_fields() is not const so we test at runtime
+        assert_eq!(TEST_BINARY_GUID.as_fields(), TEST_GUID_FIELDS);
+        assert_eq!(format!("{}", TEST_BINARY_GUID), TEST_GUID_STRING_UPPER);
+
+        // Verify that the const creation works by checking the underlying structure
+        let runtime_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+        assert_eq!(TEST_BINARY_GUID, runtime_guid);
+    }
+
+    #[test]
+    fn binary_guid_zerocopy_operations() {
+        // Create a test GUID with bytes in little-endian
+        let guid_bytes: [u8; 16] =
+            [0x00, 0x84, 0x0e, 0x55, 0x9b, 0xe2, 0xd4, 0x41, 0xa7, 0x16, 0x44, 0x66, 0x55, 0x44, 0x00, 0x00];
+
+        // 1. Verify BinaryGuid can be safely cast from bytes
+        let binary_guid_from_bytes = BinaryGuid::from_bytes(&guid_bytes);
+
+        // 2: Convert back to bytes
+        let bytes_from_guid = binary_guid_from_bytes.as_bytes();
+        assert_eq!(bytes_from_guid, &guid_bytes);
+
+        // 3: Verify the memory layout allows for safe casting (conceptually)
+        //    BinaryGuid should have the same memory layout as the underlying efi::Guid
+        assert_eq!(size_of::<BinaryGuid>(), size_of::<efi::Guid>());
+        assert_eq!(size_of::<BinaryGuid>(), 16);
+
+        // 4: Perform slice operations
+        //    Checks that multiple GUIDs can be handled in a contiguous buffer
+        let multiple_guids_bytes: [u8; 32] = [
+            // First GUID (test GUID)
+            0x00, 0x84, 0x0e, 0x55, 0x9b, 0xe2, 0xd4, 0x41, 0xa7, 0x16, 0x44, 0x66, 0x55, 0x44, 0x00, 0x00,
+            // Second GUID (zero GUID)
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+
+        // Extract first GUID (without copying)
+        let first_guid_bytes: &[u8; 16] = multiple_guids_bytes[0..16].try_into().unwrap();
+        let first_guid = BinaryGuid::from_bytes(first_guid_bytes);
+
+        // Extract second GUID (without copying)
+        let second_guid_bytes: &[u8; 16] = multiple_guids_bytes[16..32].try_into().unwrap();
+        let second_guid = BinaryGuid::from_bytes(second_guid_bytes);
+
+        // Verify that the extracted GUIDs are correct
+        assert_eq!(first_guid.as_fields(), TEST_GUID_FIELDS);
+        assert_eq!(second_guid.as_fields(), (0, 0, 0, 0, 0, &[0; 6]));
+
+        // 5: Verify pointer alignment to uphold zerocopy safety
+        //    BinaryGuid should have proper alignment for safe casting
+        let binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+        let guid_ptr = &binary_guid as *const BinaryGuid;
+        let efi_guid_ptr = &binary_guid.0 as *const efi::Guid;
+
+        // Pointers should be identical
+        assert_eq!(guid_ptr as *const u8, efi_guid_ptr as *const u8);
+
+        // 6: Check transmutation is as expected
+        //    This doesn't perform an actual transmute, but checks that the memory
+        //    representation is identical with `r_efi::efi::Guid`
+        let efi_guid = create_test_r_efi_guid();
+        let binary_guid_from_efi = BinaryGuid::from(efi_guid);
+
+        unsafe {
+            let efi_bytes = core::slice::from_raw_parts(&efi_guid as *const _ as *const u8, 16);
+            let binary_bytes = core::slice::from_raw_parts(&binary_guid_from_efi as *const _ as *const u8, 16);
+            assert_eq!(efi_bytes, binary_bytes);
+        }
+
+        // 7: Array operations without intermediate copying
+        let guid_array = [
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]),
+            BinaryGuid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xab, &[0xcd, 0xef, 0x12, 0x34, 0x56, 0x78]),
+        ];
+
+        // Access elements directly without copying
+        let first_element_bytes = guid_array[0].as_bytes();
+        let second_element_bytes = guid_array[1].as_bytes();
+
+        assert_eq!(first_element_bytes, &guid_bytes);
+        assert_ne!(first_element_bytes, second_element_bytes);
+
+        // 8: Verify that BinaryGuid can be used in firmware structures with safe code
+        #[repr(C)]
+        struct FirmwareTable {
+            signature: u32,
+            guids: [BinaryGuid; 2],
+            checksum: u32,
+        }
+
+        let table = FirmwareTable {
+            signature: 0x46495246, // "FRIF"
+            guids: guid_array,
+            checksum: 0xDEADBEEF,
+        };
+
+        // Verify that we can access GUID data without copying
+        let table_guid_bytes = table.guids[0].as_bytes();
+        assert_eq!(table_guid_bytes, &guid_bytes);
+
+        // Verify total size is as expected (no padding issues)
+        assert_eq!(size_of::<FirmwareTable>(), 4 + 32 + 4);
+    }
+
+    #[test]
+    fn binary_guid_into_inner() {
+        let binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+
+        let efi_guid = binary_guid.into_inner();
+
+        // Verify the returned efi::Guid has the same value
+        assert_eq!(efi_guid.as_fields(), TEST_GUID_FIELDS);
+        assert_eq!(efi_guid.as_bytes(), binary_guid.as_bytes());
+    }
+
+    #[test]
+    fn binary_guid_as_efi_guid() {
+        let binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+
+        let efi_guid_ref = binary_guid.as_efi_guid();
+
+        assert_eq!(efi_guid_ref.as_fields(), TEST_GUID_FIELDS);
+        assert_eq!(efi_guid_ref.as_bytes(), binary_guid.as_bytes());
+
+        let ptr1 = &binary_guid.0 as *const efi::Guid;
+        let ptr2 = efi_guid_ref as *const efi::Guid;
+        assert_eq!(ptr1, ptr2);
+    }
+
+    #[test]
+    fn binary_guid_as_mut_efi_guid() {
+        let mut binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+
+        // Get mutable reference and modify it
+        let efi_guid_mut = binary_guid.as_mut_efi_guid();
+        *efi_guid_mut =
+            efi::Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x90, 0xab, &[0xcd, 0xef, 0x12, 0x34, 0x56, 0x78]);
+
+        // Verify the BinaryGuid was modified
+        assert_eq!(
+            binary_guid.as_fields(),
+            (0x12345678, 0x1234, 0x5678, 0x90, 0xab, &[0xcd, 0xef, 0x12, 0x34, 0x56, 0x78])
+        );
+        assert_ne!(binary_guid.as_fields(), TEST_GUID_FIELDS);
+    }
+
+    #[test]
+    fn binary_guid_deref_mut() {
+        let mut binary_guid =
+            BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
+
+        // Use DerefMut to modify the underlying efi::Guid
+        *binary_guid =
+            efi::Guid::from_fields(0xAABBCCDD, 0x1122, 0x3344, 0x55, 0x66, &[0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC]);
+
+        // Verify the modification
+        assert_eq!(
+            binary_guid.as_fields(),
+            (0xAABBCCDD, 0x1122, 0x3344, 0x55, 0x66, &[0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC])
+        );
+
+        // Also test calling efi::Guid methods through DerefMut
+        let fields = binary_guid.as_fields();
+        assert_eq!(fields.0, 0xAABBCCDD);
+        assert_eq!(fields.1, 0x1122);
+        assert_eq!(fields.2, 0x3344);
     }
 }

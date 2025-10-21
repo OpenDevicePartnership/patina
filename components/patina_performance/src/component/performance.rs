@@ -152,6 +152,7 @@ impl Performance {
         }
 
         // Install configuration table for performance property.
+        // SAFETY: `install_configuration_table` requires that the data match the GUID; PERFORMANCE_PROTOCOL matches `PerformanceProperty`.
         unsafe {
             boot_services.as_ref().install_configuration_table(
                 &PERFORMANCE_PROTOCOL,

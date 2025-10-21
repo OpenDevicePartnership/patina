@@ -10,8 +10,9 @@
 //!
 use crate::{GCD, protocols::PROTOCOL_DB};
 use core::ffi::c_void;
-use patina_pi::hob::HobList;
-use patina_pi::{
+use patina::guids::ZERO;
+use patina::pi::hob::HobList;
+use patina::pi::{
     BootMode,
     dxe_services::GcdMemoryType,
     hob::{self, ResourceDescriptorV2, header},
@@ -44,7 +45,7 @@ pub(crate) fn with_global_lock<F: Fn() + std::panic::RefUnwindSafe>(f: F) -> Res
     })
 }
 
-unsafe fn get_memory(size: usize) -> &'static mut [u8] {
+pub(crate) unsafe fn get_memory(size: usize) -> &'static mut [u8] {
     let addr = unsafe { alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 0x1000).unwrap()) };
     unsafe { core::slice::from_raw_parts_mut(addr, size) }
 }
@@ -88,6 +89,11 @@ pub(crate) unsafe fn reset_allocators() {
 pub(crate) unsafe fn init_test_protocol_db() {
     unsafe { PROTOCOL_DB.reset() };
     PROTOCOL_DB.init_protocol_db();
+}
+
+/// Reset the dispatcher context to default empty state.
+pub(crate) fn reset_dispatcher_context() {
+    crate::dispatcher::reset_dispatcher_context_for_tests();
 }
 
 pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
@@ -142,7 +148,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
         reserved: Default::default(),
     };
 
-    // V2 HOBs include cache attributes for better memory management and security
+    // V2 HOBs use direct field assignments as per latest main branch
     let resource_descriptor1 = ResourceDescriptorV2 {
         v1: hob::ResourceDescriptor {
             header: header::Hob {
@@ -270,7 +276,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             reserved: 0x00000000,
         },
         alloc_descriptor: header::MemoryAllocation {
-            name: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+            name: ZERO,
             memory_base_address: 0,
             memory_length: 0x1000,
             memory_type: efi::RESERVED_MEMORY_TYPE,
@@ -374,7 +380,7 @@ mod tests {
     use crate::test_support::header;
     use crate::test_support::hob;
     use patina::guids;
-    use patina_pi::hob::Hob::MemoryAllocationModule;
+    use patina::pi::hob::Hob::MemoryAllocationModule;
 
     // Compact Hoblist with DXE core Alloction hob. Use this when DXE core hob is required.
     pub(crate) fn build_test_hob_list_compact(mem_size: u64) -> *const c_void {
@@ -432,7 +438,7 @@ mod tests {
                 reserved: 0x00000000,
             },
             alloc_descriptor: header::MemoryAllocation {
-                name: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
+                name: ZERO,
                 memory_base_address: 0,
                 memory_length: 0x1000,
                 memory_type: efi::LOADER_CODE,

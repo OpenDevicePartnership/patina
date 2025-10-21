@@ -118,7 +118,7 @@ The following are the Patina DXE Core HOB requirements.
 #### 2.1 Resource Descriptor HOB v2
 
 Patina uses the
-[Resource Descriptor HOB v2](https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patina_pi/src/hob.rs),
+[Resource Descriptor HOB v2](https://github.com/OpenDevicePartnership/patina/tree/main/sdk/patina/src/pi/hob.rs),
 which is in process of being added to the PI spec, instead of the
 [EFI_HOB_RESOURCE_DESCRIPTOR](https://uefi.org/specs/PI/1.9/V3_HOB_Code_Definitions.html#resource-descriptor-hob).
 

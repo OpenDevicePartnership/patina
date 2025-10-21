@@ -77,6 +77,7 @@ where
     /// Sets the address of the advanced logger memory log.
     pub(crate) fn set_log_info_address(&self, address: efi::PhysicalAddress) {
         assert!(!self.memory_log.is_completed());
+        // SAFETY: The caller must ensure the address is valid for an AdvancedLog.
         if let Some(log) = unsafe { AdvancedLog::adopt_memory_log(address) } {
             let memory_log = self.memory_log.call_once(|| log);
             log::info!("Advanced logger buffer initialized. Address = {:#x}", memory_log.get_address());

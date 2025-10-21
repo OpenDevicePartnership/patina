@@ -3,6 +3,7 @@
 // See LICENSE-APACHE and LICENSE-MIT for details.
 
 /// Reads and returns the value of the given aarch64 system register.
+#[allow(unused_macros)]
 macro_rules! read_sysreg {
     ($name:ident) => {
         {
@@ -16,9 +17,11 @@ macro_rules! read_sysreg {
         }
     }
 }
+#[allow(unused_imports)]
 pub(crate) use read_sysreg;
 
 /// Writes the given value to the given aarch64 system register.
+#[allow(unused_macros)]
 macro_rules! write_sysreg {
     ($name:ident, $value:expr) => {
         {
@@ -44,4 +47,5 @@ macro_rules! write_sysreg {
         }
     };
 }
+#[allow(unused_imports)]
 pub(crate) use write_sysreg;

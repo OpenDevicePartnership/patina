@@ -432,6 +432,14 @@ criteria = "safe-to-run"
 version = "0.10.3"
 criteria = "safe-to-run"
 
+[[exemptions.serial_test]]
+version = "3.2.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.serial_test_derive]]
+version = "3.2.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.spin]]
 version = "0.9.8"
 criteria = "safe-to-deploy"

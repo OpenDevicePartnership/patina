@@ -1,0 +1,24 @@
+# @file codecov.yml
+#
+# Codecov configuration file
+#
+##
+# Copyright (c) Microsoft Corporation
+# SPDX-License-Identifier: Apache-2.0
+##
+codecov:
+  require_ci_to_pass: true
+coverage:
+  precision: 2
+  round: nearest
+  range: 80..90 # 0-79% red, 80-89% yellow, 90-100% green
+  status:
+    project:
+      default:
+        target: 80% # Target 80% coverage for the project
+    patch:
+      default:
+        target: 80% # Target 80% coverage for the patch
+comment:
+  layout: "condensed_header, condensed_files, condensed_footer"
+  hide_project_coverage: true # Only show patch coverage in a PR comment

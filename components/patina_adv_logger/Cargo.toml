@@ -5,7 +5,6 @@ version.workspace = true
 repository.workspace = true
 license.workspace = true
 edition.workspace = true
-publish.workspace = true
 description = "Advanced logger support."
 
 [[bin]]
@@ -15,8 +14,7 @@ required-features = ['std']
 
 [dependencies]
 log = { workspace = true }
-patina = { workspace = true, features = ["enable_patina_tests"] }
-patina_pi = { workspace = true }
+patina = { workspace = true}
 r-efi = { workspace = true }
 spin = { workspace = true }
 mu_rust_helpers = { workspace = true }
