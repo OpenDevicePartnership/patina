@@ -52,7 +52,6 @@ use patina::pi::{
     dxe_services::{GcdIoType, GcdMemoryType},
     hob::{self, Hob, HobList, PhaseHandoffInformationTable},
 };
-use patina_paging::MemoryAttributes;
 use r_efi::efi;
 
 #[cfg(feature = "compatibility_mode_allowed")]
