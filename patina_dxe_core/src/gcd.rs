@@ -413,6 +413,84 @@ pub(crate) fn activate_compatibility_mode() {
     crate::memory_attributes_protocol::uninstall_memory_attributes_protocol();
 }
 
+// ...existing code...
+// =============================================================================
+// ResourceDescriptor HOB Parsing Functions
+// =============================================================================
+// These functions provide clean separation between V1 and V2 ResourceDescriptor
+// HOB processing using conditional compilation. Only one version is compiled
+// based on the feature flags, ensuring zero runtime overhead and clean code paths.
+//
+// Architecture Benefits:
+// - Zero runtime branching: Feature selection happens at compile time
+// - Clean code paths: V1 and V2 logic completely separated
+// - Minimal duplication: Only parsing logic is separate, GCD logic is shared
+// - Future-proof: Easy to remove V1 support when no longer needed
+// =============================================================================
+
+/// Parse ResourceDescriptor HOB for V2 platforms (default behavior)
+///
+/// This function handles both V1 and V2 HOBs on modern platforms:
+/// - V2 HOBs: Preferred, provides cache attributes for optimal performance
+/// - V1 HOBs: Supported for backward compatibility, logs migration suggestion
+///
+/// Returns: Some((ResourceDescriptor, cache_attributes)) or None if not a resource descriptor
+#[cfg(not(feature = "v1_resource_descriptor_support"))]
+fn parse_resource_descriptor_hob(hob: &Hob) -> Option<(hob::ResourceDescriptor, u64)> {
+    match hob {
+        Hob::ResourceDescriptor(v1_res_desc) => {
+            // Modern platforms: Accept V1 HOBs for backward compatibility
+            // Log informational message to encourage platform migration to V2
+            log::info!(
+                "Found v1 Resource Descriptor HOB at {:#x} length {:#x} - consider migrating platform to V2 HOBs for cache attributes support",
+                v1_res_desc.physical_start,
+                v1_res_desc.resource_length
+            );
+            Some((**v1_res_desc, 0u64)) // V1 HOBs have no cache attributes
+        }
+        Hob::ResourceDescriptorV2(v2_res_desc) => {
+            // Modern platforms: Prefer V2 HOBs with cache attributes
+            log::info!(
+                "Processing V2 Resource Descriptor HOB at {:#x} length {:#x} with cache attributes {:#x}",
+                v2_res_desc.v1.physical_start,
+                v2_res_desc.v1.resource_length,
+                v2_res_desc.attributes
+            );
+            Some((v2_res_desc.v1, v2_res_desc.attributes))
+        }
+        _ => None, // Not a resource descriptor HOB
+    }
+}
+
+/// Parse ResourceDescriptor HOB for V1 platforms (legacy platform support)
+///
+/// This function provides V1-only behavior for legacy platforms:
+/// - V1 HOBs: Processed normally without any migration suggestions
+/// - V2 HOBs: Completely ignored with warning message
+///
+/// Returns: Some((ResourceDescriptor, cache_attributes)) or None if not a V1 resource descriptor
+#[cfg(feature = "v1_resource_descriptor_support")]
+fn parse_resource_descriptor_hob(hob: &Hob) -> Option<(hob::ResourceDescriptor, u64)> {
+    match hob {
+        Hob::ResourceDescriptor(v1_res_desc) => {
+            // Legacy platforms: Process V1 HOBs normally
+            // No migration messages - this is expected behavior for V1-only platforms
+            log::info!(
+                "Processing V1 ResourceDescriptor HOB (V1-only mode active) at {:#x}",
+                v1_res_desc.physical_start
+            );
+            Some((**v1_res_desc, 0u64)) // V1 HOBs have no cache attributes
+        }
+        Hob::ResourceDescriptorV2(_) => {
+            // Legacy platforms: V2 HOBs are not supported - ignore with warning
+            // This prevents processing of newer HOB formats on legacy platforms
+            log::warn!("Ignoring V2 Resource Descriptor HOB on V1-only platform - check platform configuration");
+            None
+        }
+        _ => None, // Not a resource descriptor HOB
+    }
+}
+
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
