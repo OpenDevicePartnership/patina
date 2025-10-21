@@ -165,6 +165,8 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         //
         // Default Mode (V2 Support):
         //   - Processes V2 HOBs with cache attributes support
+        //     V2 HOBs provide enhanced memory attribute and security features for modern UEFI platforms.
+        //     This code path ensures that all V2-specific attributes are handled correctly for compatibility.
         //   - Processes V1 HOBs for backward compatibility (logs info message)
         //   - Cache attributes extracted from V2, defaulted to 0 for V1
         //
