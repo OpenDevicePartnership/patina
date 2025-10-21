@@ -435,6 +435,7 @@ pub(crate) fn activate_compatibility_mode() {
 /// - V1 HOBs: Ignored completely (logs warning)
 ///
 /// Returns: Some((ResourceDescriptor, cache_attributes)) or None if not a V2 resource descriptor
+#[cfg(not(feature = "v1_resource_descriptor_support"))]
 fn parse_resource_descriptor_hob(hob: &Hob) -> Option<(hob::ResourceDescriptor, u64)> {
     match hob {
         Hob::ResourceDescriptorV2(v2_res_desc) => {
