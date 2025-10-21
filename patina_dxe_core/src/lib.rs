@@ -220,6 +220,13 @@ impl Core<NoAlloc> {
     pub fn init_memory(mut self, physical_hob_list: *const c_void) -> Core<Alloc> {
         log::info!("DXE Core Crate v{}", env!("CARGO_PKG_VERSION"));
 
+        // Log which ResourceDescriptor HOB processing mode is compiled
+        #[cfg(feature = "v1_resource_descriptor_support")]
+        log::warn!("DXE Core compiled with V1-ONLY ResourceDescriptor HOB support - V2 HOBs will be ignored!");
+
+        #[cfg(not(feature = "v1_resource_descriptor_support"))]
+        log::info!("DXE Core compiled with V2 ResourceDescriptor HOB support + V1 backward compatibility");
+
         let mut cpu = EfiCpu::default();
         cpu.initialize().expect("Failed to initialize CPU!");
         let mut interrupt_manager = Interrupts::default();
