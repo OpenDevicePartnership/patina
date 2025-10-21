@@ -157,6 +157,7 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         let mut gcd_mem_type: GcdMemoryType = GcdMemoryType::NonExistent;
         let mut resource_attributes: u32 = 0;
 
+<<<<<<< HEAD
         // =====================================================================
         // ResourceDescriptor HOB Processing with Clean V1/V2 Separation
         // =====================================================================
@@ -219,6 +220,48 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                     gcd_mem_type = GcdMemoryType::Reserved;
                 }
 
+=======
+        // Handle different ResourceDescriptor HOB versions
+        let res_desc_v2 = if let Hob::ResourceDescriptor(v1_res_desc) = hob {
+            log::info!(
+                "Skipping v1 Resource Descriptor HOB at {:#x} length {:#x}",
+                v1_res_desc.physical_start,
+                v1_res_desc.resource_length
+            );
+            continue;
+        } else if let Hob::ResourceDescriptorV2(t_res_desc) = hob {
+            **t_res_desc
+        } else {
+            // Not a resource descriptor HOB
+            continue;
+        };
+
+        // Extract the v1 data from the v2 structure for processing
+        let res_desc = res_desc_v2.v1;
+        let mem_range = res_desc.physical_start
+            ..res_desc.physical_start.checked_add(res_desc.resource_length).expect("Invalid resource descriptor hob");
+
+        match res_desc.resource_type {
+            hob::EFI_RESOURCE_SYSTEM_MEMORY => {
+                resource_attributes = res_desc.resource_attribute;
+
+                if resource_attributes & hob::MEMORY_ATTRIBUTE_MASK == hob::TESTED_MEMORY_ATTRIBUTES {
+                    if resource_attributes & hob::EFI_RESOURCE_ATTRIBUTE_MORE_RELIABLE
+                        == hob::EFI_RESOURCE_ATTRIBUTE_MORE_RELIABLE
+                    {
+                        gcd_mem_type = GcdMemoryType::MoreReliable;
+                    } else {
+                        gcd_mem_type = GcdMemoryType::SystemMemory;
+                    }
+                }
+
+                if (resource_attributes & hob::MEMORY_ATTRIBUTE_MASK == (hob::INITIALIZED_MEMORY_ATTRIBUTES))
+                    || (resource_attributes & hob::MEMORY_ATTRIBUTE_MASK == (hob::PRESENT_MEMORY_ATTRIBUTES))
+                {
+                    gcd_mem_type = GcdMemoryType::Reserved;
+                }
+
+>>>>>>> 415b626d92bea7e895b01771ee56fefc5f262b78
                 if resource_attributes & hob::EFI_RESOURCE_ATTRIBUTE_PERSISTENT
                     == hob::EFI_RESOURCE_ATTRIBUTE_PERSISTENT
                 {
@@ -265,6 +308,7 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         }
 
         if gcd_mem_type != GcdMemoryType::NonExistent {
+<<<<<<< HEAD
             // =====================================================================
             // Memory Attributes Processing (Version-Agnostic)
             // =====================================================================
@@ -282,6 +326,12 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                 // Force all system memory to be RP by default (since none is allocated yet)
                 // This applies to both V1 and V2 HOBs for security
                 memory_attributes |= efi::MEMORY_RP;
+=======
+            // Extract cache attributes from V2 HOB and add ReadProtect for system memory
+            let mut memory_attributes = res_desc_v2.attributes & efi::CACHE_ATTRIBUTE_MASK;
+            if gcd_mem_type == GcdMemoryType::SystemMemory {
+                memory_attributes |= efi::MEMORY_RP; // Force all system memory to be RP by default (since none is allocated yet)
+>>>>>>> 415b626d92bea7e895b01771ee56fefc5f262b78
             }
 
             for split_range in

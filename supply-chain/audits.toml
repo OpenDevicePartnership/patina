@@ -333,6 +333,12 @@ user-id = 6743 # Ed Page (epage)
 start = "2022-10-21"
 end = "2026-10-06"
 
+[[trusted.toml_edit]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-01-01"
+end = "2026-10-06"
+
 [[trusted.toml_parser]]
 criteria = "safe-to-deploy"
 user-id = 6743 # Ed Page (epage)
