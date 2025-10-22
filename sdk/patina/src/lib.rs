@@ -33,6 +33,7 @@ pub mod guid_constants {
 #[macro_use]
 pub mod macros;
 
+pub mod arch;
 pub mod base;
 pub mod boot_services;
 pub mod component;

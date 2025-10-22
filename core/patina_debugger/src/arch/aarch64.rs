@@ -6,6 +6,7 @@ use core::{
 };
 
 use gdbstub::arch::{RegId, Registers};
+use patina::{read_sysreg, write_sysreg};
 use patina_internal_cpu::interrupts::ExceptionContext;
 
 use crate::{ExceptionInfo, ExceptionType};
@@ -42,39 +43,6 @@ const DAIF_DEBUG_MASK: u64 = 0x200;
 
 static POKE_TEST_MARKER: AtomicBool = AtomicBool::new(false);
 
-/// This enum is used to specify the type of barrier to use when writing to a system register and in which order.
-enum BarrierType {
-    Instruction,
-}
-
-macro_rules! read_sysreg {
-  ($reg:expr) => {{
-    let value: u64;
-    unsafe {
-      asm!(concat!("mrs {}, ", $reg), out(reg) value);
-    }
-    value
-  }};
-}
-
-macro_rules! write_sysreg {
-  ($reg:expr, $value:expr) => {
-    unsafe {
-      asm!(concat!("msr ", $reg, ", {}"), in(reg) $value);
-    }
-  };
-  ($reg:expr, $value:expr, $barrier:expr) => {
-    match $barrier {
-    // Currently only instruction barriers are used by this code, but this can be expanded in the future as needed
-      _ => {
-        unsafe {
-          asm!(concat!("msr ", $reg, ", {}"), "isb sy", in(reg) $value);
-        }
-      }
-    }
-  };
-}
-
 impl gdbstub::arch::Arch for Aarch64Arch {
     type Usize = u64;
     type Registers = Aarch64CoreRegs;
@@ -104,9 +72,9 @@ impl DebuggerArch for Aarch64Arch {
             exception_type: match exception_class {
                 EC_SW_STEP_CURRENT_EL | EC_SW_STEP_LOWER_EL => {
                     // Clear the step bit in the MDSCR
-                    let mut mdscr_el1 = read_sysreg!("mdscr_el1");
-                    mdscr_el1 &= !MDSCR_SOFTWARE_STEP;
-                    write_sysreg!("mdscr_el1", mdscr_el1);
+                    let mut mdscr_el1_reg = read_sysreg!(mdscr_el1);
+                    mdscr_el1_reg &= !MDSCR_SOFTWARE_STEP;
+                    write_sysreg!(reg mdscr_el1, mdscr_el1_reg);
 
                     ExceptionType::Step
                 }
@@ -153,27 +121,27 @@ impl DebuggerArch for Aarch64Arch {
         // Set the Software Step bit in the SPSR.
         exception_info.context.spsr |= SPSR_SOFTWARE_STEP;
         // Set the Software Step bit in the MDSCR. making sure MDE and KDE are set.
-        let mut mdscr_el1 = read_sysreg!("mdscr_el1");
-        mdscr_el1 |= MDSCR_SOFTWARE_STEP | MDSCR_MDE | MDSCR_KDE;
-        write_sysreg!("mdscr_el1", mdscr_el1);
+        let mut mdscr_el1_reg = read_sysreg!(mdscr_el1);
+        mdscr_el1_reg |= MDSCR_SOFTWARE_STEP | MDSCR_MDE | MDSCR_KDE;
+        write_sysreg!(reg mdscr_el1, mdscr_el1_reg);
     }
 
     fn initialize() {
         // Disable debug exceptions in DAIF while configuring
-        let mut daif = read_sysreg!("daif");
-        daif |= DAIF_DEBUG_MASK;
-        write_sysreg!("daif", daif, BarrierType::Instruction);
+        let mut daif_reg = read_sysreg!(daif);
+        daif_reg |= DAIF_DEBUG_MASK;
+        write_sysreg!(reg daif, daif_reg, "isb sy");
 
         // Clear the OS lock if needed
-        let oslsr_el1 = read_sysreg!("oslsr_el1");
-        if oslsr_el1 & OS_LOCK_STATUS_LOCKED != 0 {
-            unsafe { asm!("msr oslar_el1, xzr", "isb sy") };
+        let oslsr_el1_reg = read_sysreg!(oslsr_el1);
+        if oslsr_el1_reg & OS_LOCK_STATUS_LOCKED != 0 {
+            write_sysreg!(reg oslar_el1, reg xzr, "isb sy");
         }
 
         // Enable kernel and monitor debug bits
-        let mut mdscr_el1 = read_sysreg!("mdscr_el1");
-        mdscr_el1 |= MDSCR_MDE | MDSCR_KDE;
-        write_sysreg!("mdscr_el1", mdscr_el1);
+        let mut mdscr_el1_reg = read_sysreg!(mdscr_el1);
+        mdscr_el1_reg |= MDSCR_MDE | MDSCR_KDE;
+        write_sysreg!(reg mdscr_el1, mdscr_el1_reg);
 
         // Clear watchpoints
         for i in 0..NUM_WATCHPOINTS {
@@ -181,9 +149,9 @@ impl DebuggerArch for Aarch64Arch {
         }
 
         // Enable debug exceptions in DAIF
-        daif = read_sysreg!("daif");
-        daif &= !DAIF_DEBUG_MASK;
-        write_sysreg!("daif", daif, BarrierType::Instruction);
+        daif_reg = read_sysreg!(daif);
+        daif_reg &= !DAIF_DEBUG_MASK;
+        write_sysreg!(reg daif, daif_reg, "isb sy");
     }
 
     fn add_watchpoint(address: u64, length: u64, access_type: gdbstub::target::ext::breakpoints::WatchKind) -> bool {
@@ -247,7 +215,7 @@ impl DebuggerArch for Aarch64Arch {
 
     fn get_page_table() -> Result<Self::PageTable, ()> {
         // TODO: Check for EL1?
-        let ttbr0_el2 = read_sysreg!("ttbr0_el2");
+        let ttbr0_el2 = read_sysreg!(ttbr0_el2);
         unsafe {
             patina_paging::aarch64::AArch64PageTable::from_existing(
                 ttbr0_el2,
@@ -260,27 +228,22 @@ impl DebuggerArch for Aarch64Arch {
 
     fn monitor_cmd(tokens: &mut core::str::SplitWhitespace, out: &mut dyn core::fmt::Write) {
         macro_rules! print_sysreg {
-          ($reg:expr, $out:expr) => {
-            {
-              let value: u64;
-              unsafe {
-                asm!(concat!("mrs {}, ", $reg), out(reg) value);
-              }
-              let _ = writeln!($out, "{}: {:#x}", $reg, value);
-            }
-          };
+            ($reg:ident, $out:expr) => {{
+                let value = read_sysreg!($reg);
+                let _ = writeln!($out, "{}: {:#x}", stringify!($reg), value);
+            }};
         }
 
         match tokens.next() {
             Some("regs") => {
-                print_sysreg!("ttbr0_el2", out);
-                print_sysreg!("esr_el2", out);
-                print_sysreg!("far_el2", out);
-                print_sysreg!("tcr_el2", out);
-                print_sysreg!("sctlr_el2", out);
-                print_sysreg!("spsr_el2", out);
-                print_sysreg!("daif", out);
-                print_sysreg!("hcr_el2", out);
+                print_sysreg!(ttbr0_el2, out);
+                print_sysreg!(esr_el2, out);
+                print_sysreg!(far_el2, out);
+                print_sysreg!(tcr_el2, out);
+                print_sysreg!(sctlr_el2, out);
+                print_sysreg!(spsr_el2, out);
+                print_sysreg!(daif, out);
+                print_sysreg!(hcr_el2, out);
             }
             _ => {
                 let _ = out.write_str("Unknown AArch64 monitor command. Supported commands: regs");
@@ -538,10 +501,10 @@ impl Wcr {
 
 fn read_dbg_wcr(index: usize) -> Wcr {
     let value = match index {
-        0 => read_sysreg!("dbgwcr0_el1"),
-        1 => read_sysreg!("dbgwcr1_el1"),
-        2 => read_sysreg!("dbgwcr2_el1"),
-        3 => read_sysreg!("dbgwcr3_el1"),
+        0 => read_sysreg!(dbgwcr0_el1),
+        1 => read_sysreg!(dbgwcr1_el1),
+        2 => read_sysreg!(dbgwcr2_el1),
+        3 => read_sysreg!(dbgwcr3_el1),
         _ => 0,
     };
     Wcr::from(value)
@@ -550,30 +513,30 @@ fn read_dbg_wcr(index: usize) -> Wcr {
 fn write_dbg_wcr(index: usize, wcr: Wcr) {
     let value: u64 = wcr.into();
     match index {
-        0 => write_sysreg!("dbgwcr0_el1", value, BarrierType::Instruction),
-        1 => write_sysreg!("dbgwcr1_el1", value, BarrierType::Instruction),
-        2 => write_sysreg!("dbgwcr2_el1", value, BarrierType::Instruction),
-        3 => write_sysreg!("dbgwcr3_el1", value, BarrierType::Instruction),
+        0 => write_sysreg!(reg dbgwcr0_el1, value, "isb sy"),
+        1 => write_sysreg!(reg dbgwcr1_el1, value, "isb sy"),
+        2 => write_sysreg!(reg dbgwcr2_el1, value, "isb sy"),
+        3 => write_sysreg!(reg dbgwcr3_el1, value, "isb sy"),
         _ => {}
     }
 }
 
 fn read_dbg_wvr(index: usize) -> u64 {
     match index {
-        0 => read_sysreg!("dbgwvr0_el1"),
-        1 => read_sysreg!("dbgwvr1_el1"),
-        2 => read_sysreg!("dbgwvr2_el1"),
-        3 => read_sysreg!("dbgwvr3_el1"),
+        0 => read_sysreg!(dbgwvr0_el1),
+        1 => read_sysreg!(dbgwvr1_el1),
+        2 => read_sysreg!(dbgwvr2_el1),
+        3 => read_sysreg!(dbgwvr3_el1),
         _ => 0,
     }
 }
 
 fn write_dbg_wvr(index: usize, value: u64) {
     match index {
-        0 => write_sysreg!("dbgwvr0_el1", value),
-        1 => write_sysreg!("dbgwvr1_el1", value),
-        2 => write_sysreg!("dbgwvr2_el1", value),
-        3 => write_sysreg!("dbgwvr3_el1", value),
+        0 => write_sysreg!(reg dbgwvr0_el1, value),
+        1 => write_sysreg!(reg dbgwvr1_el1, value),
+        2 => write_sysreg!(reg dbgwvr2_el1, value),
+        3 => write_sysreg!(reg dbgwvr3_el1, value),
         _ => {}
     }
 }

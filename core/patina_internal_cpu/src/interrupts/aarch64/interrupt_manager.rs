@@ -17,12 +17,12 @@ use patina::{
 use patina_paging::{PageTable, PagingType};
 use patina_stacktrace::StackTrace;
 
-#[allow(unused_imports)]
-use crate::interrupts::aarch64::sysreg::{read_sysreg, write_sysreg};
 use crate::interrupts::{
     EfiExceptionStackTrace, EfiSystemContext, HandlerType, InterruptManager, aarch64::ExceptionContextAArch64,
 };
 use crate::interrupts::{disable_interrupts, enable_interrupts};
+#[cfg(all(not(test), target_arch = "aarch64"))]
+use patina::{read_sysreg, write_sysreg};
 
 #[cfg(all(not(test), target_arch = "aarch64"))]
 use crate::interrupts::aarch64::gic_manager::get_current_el;
@@ -67,11 +67,25 @@ impl InterruptsAarch64 {
 impl InterruptManager for InterruptsAarch64 {}
 
 fn enable_fiq() {
-    write_sysreg!(daifclr, 0x01, "isb sy");
+    #[cfg(all(not(test), target_arch = "aarch64"))]
+    {
+        write_sysreg!(reg daifclr, imm 0x01, "isb sy");
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        unimplemented!()
+    }
 }
 
 fn disable_fiq() {
-    write_sysreg!(daifset, 0x01, "isb sy");
+    #[cfg(all(not(test), target_arch = "aarch64"))]
+    {
+        write_sysreg!(reg daifset, imm 0x01, "isb sy");
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        unimplemented!()
+    }
 }
 
 fn get_fiq_state() -> Result<bool, EfiError> {
@@ -89,7 +103,7 @@ fn get_fiq_state() -> Result<bool, EfiError> {
 fn enable_async_abort() {
     #[cfg(all(not(test), target_arch = "aarch64"))]
     {
-        write_sysreg!(daifclr, 0x04, "isb sy");
+        write_sysreg!(reg daifclr, imm 0x04, "isb sy");
     }
     #[cfg(not(target_arch = "aarch64"))]
     {
@@ -104,11 +118,11 @@ fn initialize_exception() -> Result<(), EfiError> {
         // SAFETY: We are using the address of a symbol defined in assembly as the stack pointer for EL0.
         let mut sp_el0_reg = unsafe { &sp_el0_end as *const _ as u64 };
         sp_el0_reg &= !0x0F;
-        write_sysreg!(sp_el0, sp_el0_reg);
+        write_sysreg!(reg sp_el0, sp_el0_reg);
 
         let mut hcr = read_sysreg!(hcr_el2) as u64;
         hcr = hcr as u64 | 1 << 27; // Enable TGE
-        write_sysreg!(hcr_el2, hcr);
+        write_sysreg!(reg hcr_el2, hcr);
     }
 
     // Program VBar
@@ -118,8 +132,8 @@ fn initialize_exception() -> Result<(), EfiError> {
         let vec_base = unsafe { &exception_handlers_start as *const _ as u64 };
         let current_el = get_current_el();
         match current_el {
-            0xC => write_sysreg!(vbar_el1, vec_base, "isb sy"),
-            0x08 => write_sysreg!(vbar_el2, vec_base, "isb sy"),
+            0xC => write_sysreg!(reg vbar_el1, vec_base, "isb sy"),
+            0x08 => write_sysreg!(reg vbar_el2, vec_base, "isb sy"),
             _ => panic!("Invalid current EL {}", current_el),
         };
     }
@@ -191,7 +205,10 @@ extern "efiapi" fn synchronous_exception_handler(_exception_type: isize, context
 }
 
 fn dump_pte(far: u64) {
+    #[cfg(all(not(test), target_arch = "aarch64"))]
     let ttbr0_el2 = read_sysreg!(ttbr0_el2);
+    #[cfg(not(target_arch = "aarch64"))]
+    let ttbr0_el2 = 0;
 
     // SAFETY: TTBR0 must be valid as it is the current page table base.
     if let Ok(pt) = unsafe {

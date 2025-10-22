@@ -5,7 +5,7 @@ use arm_gic::{
 use patina::error::EfiError;
 use safe_mmio::field;
 
-use crate::interrupts::aarch64::sysreg::{read_sysreg, write_sysreg};
+use patina::{read_sysreg, write_sysreg};
 
 // Create basic enum for GIC version
 #[derive(PartialEq)]
@@ -32,10 +32,10 @@ fn set_control_system_reg_enable(icc_sre: u64) -> u64 {
     let current_el = get_current_el();
     match current_el {
         0x08 => {
-            write_sysreg!(ICC_SRE_EL2, icc_sre);
+            write_sysreg!(reg ICC_SRE_EL2, icc_sre);
         }
         0x04 => {
-            write_sysreg!(ICC_SRE_EL1, icc_sre);
+            write_sysreg!(reg ICC_SRE_EL1, icc_sre);
         }
         _ => panic!("Invalid current EL {}", current_el),
     }
@@ -101,7 +101,7 @@ pub unsafe fn gic_initialize<'a>(gicd_base: *mut u64, gicr_base: *mut u64) -> Re
     // Refer to "Arm Generic Interrupt Controller Architecture Specification GIC
     // architecture version 3 and Version 4" (Arm IHI 0069H.b ID041224)
     // 12.2.5: "ICC_BPR1_EL1, Interrupt Controller Binary Point Register 1"
-    write_sysreg!(ICC_BPR1_EL1, 0x7u64);
+    write_sysreg!(reg ICC_BPR1_EL1, 0x7u64);
 
     // Set priority mask reg to 0xff to allow all priorities through
     GicV3::set_priority_mask(0xff);
