@@ -177,7 +177,7 @@ pub fn dispatch() -> Result<bool, EfiError> {
         let driver_candidates: Vec<_> = dispatcher.pending_drivers.drain(..).collect();
         let mut scheduled_driver_candidates = Vec::new();
         for mut candidate in driver_candidates {
-            log::trace!("Evaluating depex for candidate: {:?}", guid_fmt!(candidate.file_name));
+            log::debug!(target: "patina_internal_depex", "Evaluating depex for candidate: {:?}", guid_fmt!(candidate.file_name));
             let depex_satisfied = match candidate.depex {
                 Some(ref mut depex) => depex.eval(&PROTOCOL_DB.registered_protocols()),
                 None => dispatcher.arch_protocols_available,
