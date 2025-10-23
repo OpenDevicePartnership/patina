@@ -7,7 +7,7 @@ and is designed mainly for firmware use rather than OS-level interpretation.
 It defines a structured system of AML handles for navigating AML streams and a trait-based `AmlParser` service for operations
  such as opening tables, iterating operands, modifying values, and traversing child or sibling nodes.
  The goal is to replace legacy C-based AML handling with a type-safe Rust service that supports ACPI 2.0+.
- Future extensions may include extending this infrastructure for application-side AML interpretation 
+ Future extensions may include extending this infrastructure for application-side AML interpretation
  within a `patina-acpi` crate.
 
 ## Change Log
@@ -86,6 +86,19 @@ to be more friendly to the Patina ACPI implementation.
 This conversation can be tracked through a [Github issue in the `acpi` crate](https://github.com/rust-osdev/acpi/issues/260).
 
 ## Rust Code
+
+### ACPI/AML Utility Crate
+
+While the `AmlParser` service has functionality specific only to the UEFI ACPI SDT protocol,
+it will be useful for extensibility to extract basic AML reading and patching capability into a seperate utility crate,
+`patina-acpi`. `AmlParser` will depend on this crate.
+
+For example, basic parsing functionality like reading the package length, parsing name segments, etc.,
+will be included in this utility crate.
+
+The proposed `patina-acpi` crate shares functionality with the existing `acpi` crate; as such,
+it remains to be seen if collaboration is possible to expose this shared parsing functionality,
+or if `patina-acpi` will borrow/fork from `acpi`.
 
 ### AML Handles
 
@@ -193,10 +206,10 @@ pub(crate) trait AmlParser {
   fn set_option(&self, handle: AmlHandle, idx: usize, new_val: AmlOperand) -> Result<(), AmlError>;
 
   // Returns the first child of an AML node. 
-  fn get_child(&self, handle: AmlHandle) -> Result<Option<AmlHandle>, AmlError>;
+  fn get_children(&self, handle: AmlHandle) -> Result<impl Iterator<AmlHandle>, AmlError>;
 
   // Returns the next sibling of an AML node.
-  fn get_sibling(&self, handle: AmlHandle) -> Result<Option<AmlHandle>, AmlError>;
+  fn get_sibling(&self, handle: AmlHandle) -> Result<impl Iterator<AmlHandle>, AmlError>;
 
   // The above two functions are intended to provide a complete traversal implementation.
   // For example, to get all the children of a node, find the first child through `get_child`, then use `get_sibling` on each subsequent child. In both cases, `None` indicates no child/sibling. 
@@ -214,6 +227,8 @@ struct StandardAmlParser {
 
 impl AmlParser for StandardAmlParser { ... }
 ```
+
+### Trait Implementation
 
 #### `open_table`
 
@@ -234,7 +249,20 @@ Iterates over a handle's `operands`.
 
 Sets the operand at `idx` to `new_val` and sets `modified` = `true` for the handle.
 
-#### `get_child`
+#### Iteration
+
+The iteration of AML namepsaces is complex. While other service implementations can provide any implementation of
+`get_children` and `get_siblings`, the `StandardAmlParser` will use two functions under the hood:
+
+```rust
+// Returns the first child of an AML node. 
+fn get_child(&self, handle: AmlHandle) -> Result<Option<AmlHandle>, AmlError>;
+
+// Returns the next sibling of an AML node.
+fn get_sibling(&self, handle: AmlHandle) -> Result<Option<AmlHandle>, AmlError>;
+```
+
+##### **get_child**
 
 First check if `HAS_CHILD_OBJ` is `true` in `attributes` (if there are no children, this function returns None.
 This is not to be confused with the outer `Result<Option<AmlHandle>, AmlError>`,
@@ -251,7 +279,7 @@ Once discovered this child becomes an active `AmlSdtHandleInternal`.
 
 The child derives `table_key` from its parent handle, and computes `parent_end` from the handle on which `get_child` is called.
 
-#### `get_sibling`
+##### **get_sibling**
 
 As stated above, `get_sibling` and `get_child` together provide a full set of traversal operations.
 
@@ -264,6 +292,17 @@ The only exception is the "root" node -- the node on which `open_table` is initi
 since this node has no siblings and no parent from which to derive `parent_end`.
 As such, the `parent_end` of this table is simply at the end of the table, which is `table_length - ACPI_HEADER_SIZE`.
 
+##### **Iterators: `get_children` and `get_siblings`**
+
+When `get_children(handle)` is called, it initializes the iterator state `self.current = get_child(handle)`.
+`next` advances to the next sibling of the child, i.e. `self.current = get_sibling(self.current)`.
+
+When `get_siblings(handle)` is called, it initializes the iterator state `self.current = get_sibling(handle)`.
+`next` advanced to the next sibling of the current node, i.e. `self.current = get_sibling(self.current)`.
+Note that this only gives *subsequent* siblings and not previous ones;
+it is standard in AML implementations that nodes operate like singly-linked lists
+with knowledge of their forward links (subsequent siblings) but no backward links (previous siblings).
+
 ## Guide-Level Explanation
 
 The general flow for using the `AmlParser` service will be:
@@ -274,9 +313,3 @@ The general flow for using the `AmlParser` service will be:
 4. Make necessary modifications through `set_option`.
 5. During traversal, close nodes which no longer need to be accessed through `close_handle`.
 6. When traversal / patching is complete, `close_handle` on the root node (originally opened with `open_table`).
-
-## Future Extensions
-
-Eventually, the hope is to provide not only firmware-side implementation of the ACPI SDT protocol,
-but also application-side AML interpretation and execution capabilities through an independent `patina-acpi` crate.
-This may be done with or without borrowing functionality from the existing Rust `acpi` crate.
