@@ -90,6 +90,7 @@ words:
   - hresult
   - htons
   - icfgr
+  - impls
   - indoc
   - inmodule
   - intid
