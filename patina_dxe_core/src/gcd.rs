@@ -125,14 +125,12 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
     // Test if V1 feature flag is working at all
     #[cfg(feature = "v1_resource_descriptor_support")]
     {
-        log::warn!("RUST DXE CORE: V1 FEATURE IS ACTIVE!");
-        log::warn!("DXE Core: V1-ONLY ResourceDescriptor HOB processing active - modern V2 HOBs will be ignored");
+        log::info!("RUST DXE CORE: V1 FEATURE IS ACTIVE!");
     }
 
     #[cfg(not(feature = "v1_resource_descriptor_support"))]
     {
-        log::warn!("RUST DXE CORE: V2 FEATURE IS ACTIVE!");
-        log::info!("DXE Core: V2 ResourceDescriptor HOB processing active with V1 backward compatibility");
+        log::info!("RUST DXE CORE: V2 FEATURE IS ACTIVE!");
     }
 
     let phit = hob_list
