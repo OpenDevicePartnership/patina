@@ -235,7 +235,7 @@ mod tests {
         }
     }
 
-    #[derive(FromHob, Default, Clone, Copy)]
+    #[derive(FromHob, zerocopy_derive::FromBytes)]
     #[hob = "d4ffc718-fb82-4274-9afc-aa8b1eef5293"]
     #[repr(C)]
     pub struct TestHob;
@@ -249,7 +249,7 @@ mod tests {
         }
     }
 
-    #[derive(FromHob, Default, Clone, Copy)]
+    #[derive(FromHob, zerocopy_derive::FromBytes)]
     #[hob = "d4ffc718-fb82-4274-9afc-aa8b1eef5293"]
     #[repr(C)]
     pub struct TestHob2;

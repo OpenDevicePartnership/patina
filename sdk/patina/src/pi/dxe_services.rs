@@ -21,81 +21,130 @@ use r_efi::{
     system::TableHeader,
 };
 
+/// DXE Services Table GUID identifier
+///
+/// This GUID identifies the DXE Services Table in the EFI System Table
+/// Configuration Table array. The DXE Services Table provides services for
+/// managing the Global Coherency Domain memory and I/O space maps,
+/// and dispatcher functions for managing driver execution dependencies.
 pub const DXE_SERVICES_TABLE_GUID: Guid =
     Guid::from_fields(0x5ad34ba, 0x6f02, 0x4214, 0x95, 0x2e, &[0x4d, 0xa0, 0x39, 0x8e, 0x2b, 0xb9]);
 
-/// This service adds reserved memory system memory or memory mapped IO resources to the global coherency domain of the processor.
+/// Adds memory or memory-mapped I/O resources to the Global Coherency Domain (GCD)
+///
+/// This service adds reserved memory, system memory, or memory-mapped I/O resources
+/// to the Global Coherency Domain of the processor. The memory space being added
+/// must not overlap with any existing memory space in the GCD.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.1
 pub type AddMemorySpace = extern "efiapi" fn(GcdMemoryType, PhysicalAddress, u64, u64) -> Status;
 
-/// This service allocates nonexistent memory reserved memory system memory or memory-mapped IO resources
-/// from the global coherency domain of the processor.
+/// Allocates memory space from the Global Coherency Domain (GCD)
+///
+/// This service allocates nonexistent memory, reserved memory, system memory,
+/// or memory-mapped I/O resources from the Global Coherency Domain of the processor.
+/// The allocation strategy is determined by the GcdAllocateType parameter.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.2
 pub type AllocateMemorySpace =
     extern "efiapi" fn(GcdAllocateType, GcdMemoryType, usize, u64, *mut PhysicalAddress, Handle, Handle) -> Status;
 
+/// Frees memory space from the Global Coherency Domain (GCD)
+///
 /// This service frees nonexistent memory, reserved memory, system memory,
-/// or memory-mapped I/O resources from the global coherency domain of the processor.
+/// or memory-mapped I/O resources from the Global Coherency Domain of the processor.
+/// The freed memory becomes available for future allocation.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.3
 pub type FreeMemorySpace = extern "efiapi" fn(PhysicalAddress, u64) -> Status;
 
-/// This service removes reserved memory, system memory,
-/// or memory-mapped I/O resources from the global coherency domain of the processor.
+/// Removes memory space from the Global Coherency Domain (GCD)
+///
+/// This service removes reserved memory, system memory, or memory-mapped I/O
+/// resources from the Global Coherency Domain of the processor. The removed
+/// region must not be currently allocated to any image or have any capabilities set.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.4
 pub type RemoveMemorySpace = extern "efiapi" fn(PhysicalAddress, u64) -> Status;
 
-/// This service retrieves the descriptor for a memory region containing a specified address.
+/// Retrieves the memory space descriptor for a specified address from the
+/// Global Coherency Domain (GCD)
+///
+/// This service retrieves the descriptor for a memory region containing a
+/// specified address from the Global Coherency Domain memory space map.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.5
 pub type GetMemorySpaceDescriptor = extern "efiapi" fn(PhysicalAddress, *mut MemorySpaceDescriptor) -> Status;
 
-/// This service modifies the attributes for a memory region in the global coherency domain of the processor.
+/// Sets memory space attributes in the Global Coherency Domain (GCD)
+///
+/// This service modifies the attributes for a memory region in the global
+/// coherency domain of the processor. Attributes control caching behavior
+/// and access permissions for the memory region.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.6
 pub type SetMemorySpaceAttributes = extern "efiapi" fn(PhysicalAddress, u64, u64) -> Status;
 
-/// This service modifies the capabilities for a memory region in the global coherency domain of the processor.
+/// Sets memory space capabilities in the Global Coherency Domain (GCD)
+///
+/// This service modifies the capabilities for a memory region in the global
+/// coherency domain of the processor. Capabilities define which attributes
+/// are allowed to be set for the memory region.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.7
 pub type SetMemorySpaceCapabilities = extern "efiapi" fn(PhysicalAddress, u64, u64) -> Status;
 
-/// Returns a map of the memory resources in the global coherency domain of the processor.
+/// Returns the Global Coherency Domain (GCD) memory space map
+///
+/// This service returns a map of all memory resources in the global coherency
+/// domain of the processor, including their types, attributes, and allocation status.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.8
 pub type GetMemorySpaceMap = extern "efiapi" fn(*mut usize, *mut *mut MemorySpaceDescriptor) -> Status;
 
-/// This service adds reserved I/O, or I/O resources to the global coherency domain of the processor.
+/// Adds I/O space to the Global Coherency Domain (GCD)
+///
+/// This service adds reserved I/O or I/O resources to the global coherency
+/// domain of the processor. The I/O space being added must not overlap
+/// with any existing I/O space in the Global Coherency Domain.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.9
 pub type AddIoSpace = extern "efiapi" fn(GcdIoType, PhysicalAddress, u64) -> Status;
 
-/// This service allocates nonexistent I/O, reserved I/O, or I/O resources from the global coherency domain of the processor.
+/// Allocates I/O space from the Global Coherency Domain (GCD)
+///
+/// This service allocates nonexistent I/O, reserved I/O, or I/O resources
+/// from the Global Coherency Domain of the processor. The allocation strategy
+/// is determined by the GcdAllocateType parameter.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.10
 pub type AllocateIoSpace =
     extern "efiapi" fn(GcdAllocateType, GcdIoType, usize, u64, *mut PhysicalAddress, Handle, Handle) -> Status;
 
-/// This service frees nonexistent I/O, reserved I/O, or I/O resources from the global coherency domain of the processor.
+/// Frees I/O space from the Global Coherency Domain (GCD)
+///
+/// This service frees nonexistent I/O, reserved I/O, or I/O resources
+/// from the Global Coherency Domain of the processor. The freed I/O space
+/// becomes available for future allocation.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.11
 pub type FreeIoSpace = extern "efiapi" fn(PhysicalAddress, u64) -> Status;
 
-/// This service removes reserved I/O, or I/O resources from the global coherency domain of the processor.
+/// Removes I/O space from the Global Coherency Domain (GCD)
+///
+/// This service removes reserved I/O or I/O resources from the global coherency
+/// domain of the processor. The removed I/O region must not be currently allocated.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.12
@@ -107,76 +156,119 @@ pub type RemoveIoSpace = extern "efiapi" fn(PhysicalAddress, u64) -> Status;
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.13
 pub type GetIoSpaceDescriptor = extern "efiapi" fn(PhysicalAddress, *mut IoSpaceDescriptor) -> Status;
 
-/// Returns a map of the I/O resources in the global coherency domain of the processor.
+/// Returns a map of the I/O resources in the Global Coherency Domain (GCD).
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.14
 pub type GetIoSpaceMap = extern "efiapi" fn(*mut usize, *mut *mut IoSpaceDescriptor) -> Status;
 
-/// Loads and executes DXE drivers from firmware volumes.
+/// Executes DXE drivers from firmware volumes
+///
+/// This service loads and executes DXE drivers from firmware volumes.
+/// The dispatcher uses dependency expressions to determine driver execution order.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.3.1
 pub type Dispatch = extern "efiapi" fn() -> Status;
 
-/// Clears the Schedule on Request (SOR) flag for a component that is stored in a firmware volume.
+/// Schedules a firmware file for dispatch
+///
+/// This service clears the Schedule on Request (SOR) flag for a component
+/// that is stored in a firmware volume, allowing it to be dispatched.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.3.2
 pub type Schedule = extern "efiapi" fn(Handle, *const Guid) -> Status;
 
-/// Promotes a file stored in a firmware volume from the untrusted to the trusted state.
-/// Only the Security Architectural Protocol can place a file in the untrusted state.
-/// A platform specific component may choose to use this service to promote a previously untrusted file to the trusted state.
+/// Promotes a firmware file from untrusted to trusted state
+///
+/// This service promotes a file stored in a firmware volume from the untrusted
+/// to the trusted state. Only the Security Architectural Protocol can place a file
+/// in the untrusted state initially.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.3.3
 pub type Trust = extern "efiapi" fn(Handle, *const Guid) -> Status;
 
-/// Creates a firmware volume handle for a firmware volume that is present in system memory.
+/// Creates a firmware volume handle from system memory
+///
+/// This service creates a firmware volume handle for a firmware volume
+/// that is present in system memory, making it available to the DXE dispatcher.
 ///
 /// # Documentation
-/// UEFI Platform Initialization Specification, Release 1.8, Section II-7.3. II-59 (This one does not have a section)
+/// UEFI Platform Initialization Specification, Release 1.8, Section II-7.3.II-59 (This one does not have a section)
 pub type ProcessFirmwareVolume = extern "efiapi" fn(*const c_void, usize, *mut Handle) -> Status;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-/// `EFI_GCD_MEMORY_TYPE` in specification.
+/// Global Coherency Domain (GCD) memory types
+///
+/// Defines the types of memory regions that can exist in the Global Coherency Domain.
+/// Each memory region has a specific type that determines how it can be used by the system.
 pub enum GcdMemoryType {
-    /// A memory region that is visible to the boot processor.
-    /// However, there are no system components that are currently decoding this memory region.
+    /// Memory region with no active decoder
+    ///
+    /// A memory region that is visible to the boot processor but has no system
+    /// components currently decoding this memory region.
     #[default]
     NonExistent = 0,
-    /// A memory region that is visible to the boot processor.
-    /// This memory region is being decoded by a system component,
-    /// but the memory region is not considered to be either system memory or memory-mapped I/O.
+    /// Reserved memory region
+    ///
+    /// A memory region being decoded by a system component, but not considered
+    /// to be either system memory or memory-mapped I/O.
     Reserved,
-    /// A memory region that is visible to the boot processor.
-    /// A memory controller is currently decoding this memory region
-    /// and the memory controller is producing a tested system memory region that is available to the memory services.
+    /// System memory region
+    ///
+    /// A memory region decoded by a memory controller that produces tested
+    /// system memory available to the memory services.
     SystemMemory,
-    /// A memory region that is visible to the boot processor. This memory region is currently being decoded by a
-    /// component as memory-mapped I/O that can be used to access I/O devices in the platform.
+    /// Memory-mapped I/O region
+    ///
+    /// A memory region currently being decoded as memory-mapped I/O that can
+    /// be used to access I/O devices in the platform.
     MemoryMappedIo,
-    /// A memory region that is visible to the boot processor. This memory supports byte-addressable non-volatility.
+    /// Persistent memory region
+    ///
+    /// A memory region that supports byte-addressable non-volatility,
+    /// such as non-volatile dual in-line memory modules (NVDIMM).
     Persistent,
-    /// A memory region that provides higher reliability relative to other memory in the system.
-    /// If all memory has the same reliability, then this bit is not used.
+    /// High-reliability memory region
+    ///
+    /// A memory region that provides higher reliability relative to other memory
+    /// in the system. Used when memory has varying reliability characteristics.
     MoreReliable,
-    /// A memory region that is unaccepted. This region must be accepted before it can be converted to system memory.
+    /// Unaccepted memory region
+    ///
+    /// A memory region that is unaccepted and must be accepted before it can
+    /// be converted to system memory. Used in confidential computing environments.
     Unaccepted,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
-/// `EFI_GCD_ALLOCATE_TYPE` in specification.
+/// Global Coherency Domain (GCD) allocation strategies
+///
+/// Defines the allocation strategies that can be used when allocating memory
+/// or I/O space from the Global Coherency Domain.
 pub enum GcdAllocateType {
     #[default]
+    /// Allocate any available address searching bottom-up
+    ///
+    /// Search for available space starting from the lowest addresses
     AnySearchBottomUp,
+    /// Allocate below a maximum address searching bottom-up
+    ///
+    /// Search for available space below a specified maximum address, starting from the bottom
     MaxAddressSearchBottomUp,
+    /// Allocate at a specific address
+    ///
+    /// Allocate at the exact address specified by the caller
     Address,
+    /// Search for memory from top down
     AnySearchTopDown,
+    /// Search for memory from specified max address top down
     MaxAddressSearchTopDown,
+    /// Maximum allocate type value
     MaxAllocateType,
 }
 
@@ -208,20 +300,28 @@ pub struct MemorySpaceDescriptor {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-/// `EFI_GCD_IO_TYPE` in specification.
+/// Global Coherency Domain (GCD) I/O space types
+///
+/// Defines the types of I/O regions that can exist in the Global Coherency Domain.
+/// Each I/O region has a specific type that determines how it can be accessed.
 pub enum GcdIoType {
-    /// An I/O region that is visible to the boot processor.
-    /// However, there are no system components that are currently decoding this I/O region.
+    /// I/O region with no active decoder
+    ///
+    /// An I/O region that is visible to the boot processor but has no system
+    /// components currently decoding this I/O region.
     #[default]
     NonExistent = 0,
-    /// An I/O region that is visible to the boot processor.
-    /// This I/O region is currently being decoded by a system component,
-    ///  but the I/O region cannot be used to access I/O devices.
+    /// Reserved I/O region
+    ///
+    /// An I/O region currently being decoded by a system component, but the I/O
+    /// region cannot be used to access I/O devices.
     Reserved,
-    /// An I/O region that is visible to the boot processor.
-    /// This I/O region is currently being decoded by a system component
-    /// that is producing I/O ports that can be used to access I/O devices.
+    /// Active I/O region
+    ///
+    /// An I/O region currently being decoded by a system component that produces
+    /// I/O ports that can be used to access I/O devices.
     Io,
+    /// Maximum value for GcdIoType enumeration
     Maximum,
 }
 
@@ -252,41 +352,60 @@ pub struct IoSpaceDescriptor {
 ///
 /// See <https://uefi.org/specs/PI/1.8A/V2_UEFI_System_Table.html#dxe-services-table>.
 pub struct DxeServicesTable {
+    /// Standard UEFI table header
     pub header: TableHeader,
 
     //
-    // Global Coherency
+    // Global Coherency Domain (GCD)
     //
+    /// Add memory space to GCD
     pub add_memory_space: AddMemorySpace,
+    /// Allocate memory space from GCD
     pub allocate_memory_space: AllocateMemorySpace,
+    /// Free memory space in GCD
     pub free_memory_space: FreeMemorySpace,
+    /// Remove memory space from GCD
     pub remove_memory_space: RemoveMemorySpace,
+    /// Get memory space descriptor
     pub get_memory_space_descriptor: GetMemorySpaceDescriptor,
+    /// Set memory space attributes
     pub set_memory_space_attributes: SetMemorySpaceAttributes,
+    /// Get memory space map
     pub get_memory_space_map: GetMemorySpaceMap,
+    /// Add I/O space to GCD
     pub add_io_space: AddIoSpace,
+    /// Allocate I/O space from GCD
     pub allocate_io_space: AllocateIoSpace,
+    /// Free I/O space in GCD
     pub free_io_space: FreeIoSpace,
+    /// Remove I/O space from GCD
     pub remove_io_space: RemoveIoSpace,
+    /// Get I/O space descriptor
     pub get_io_space_descriptor: GetIoSpaceDescriptor,
+    /// Get I/O space map
     pub get_io_space_map: GetIoSpaceMap,
 
     //
     // Dispatcher Services
     //
+    /// Dispatch drivers
     pub dispatch: Dispatch,
+    /// Schedule drivers for execution
     pub schedule: Schedule,
+    /// Establish trust for drivers
     pub trust: Trust,
 
     //
     // Service to process a single firmware volume found in
     // a capsule
     //
+    /// Process firmware volume from capsule
     pub process_firmware_volume: ProcessFirmwareVolume,
 
     //
-    // Extension to Global Coherency Domain Services
+    // Extension to Global Coherency Domain (GCD) Services
     //
+    /// Set memory space capabilities
     pub set_memory_space_capabilities: SetMemorySpaceCapabilities,
 }
 

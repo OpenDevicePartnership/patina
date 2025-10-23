@@ -11,15 +11,12 @@ use patina::error::EfiError;
 use patina::pi::protocols::cpu_arch::EfiSystemContext;
 use patina_stacktrace::StackTrace;
 
-mod sysreg;
-
 cfg_if::cfg_if! {
     if #[cfg(all(target_os = "uefi", target_arch = "aarch64"))] {
         mod interrupt_manager;
         pub mod gic_manager;
         pub use interrupt_manager::InterruptsAarch64;
-        use core::arch::asm;
-        use crate::interrupts::aarch64::sysreg::read_sysreg;
+        use patina::{read_sysreg, write_sysreg};
     } else if #[cfg(feature = "doc")] {
         pub use interrupt_manager::InterruptsAarch64;
         mod interrupt_manager;
@@ -36,6 +33,8 @@ impl super::EfiSystemContextFactory for ExceptionContextAArch64 {
 
 impl super::EfiExceptionStackTrace for ExceptionContextAArch64 {
     fn dump_stack_trace(&self) {
+        // SAFETY: This is called from the exception context. We have no choice but to trust the ELR and SP values.
+        // the stack trace module does its best to not cause recursive exceptions.
         if let Err(err) = unsafe { StackTrace::dump_with(self.elr, self.sp) } {
             log::error!("StackTrace: {err}");
         }
@@ -64,9 +63,7 @@ impl super::EfiExceptionStackTrace for ExceptionContextAArch64 {
 pub fn enable_interrupts() {
     #[cfg(all(not(test), target_arch = "aarch64"))]
     {
-        unsafe {
-            asm!("msr   daifclr, 0x02", "isb", options(nostack));
-        }
+        write_sysreg!(reg daifclr, imm 0x02, "isb sy");
     }
     #[cfg(not(target_arch = "aarch64"))]
     {
@@ -78,9 +75,7 @@ pub fn enable_interrupts() {
 pub fn disable_interrupts() {
     #[cfg(all(not(test), target_arch = "aarch64"))]
     {
-        unsafe {
-            asm!("msr   daifset, 0x02", "isb", options(nostack));
-        }
+        write_sysreg!(reg daifset, imm 0x02, "isb sy");
     }
     #[cfg(not(target_arch = "aarch64"))]
     {

@@ -14,6 +14,7 @@
 
 use r_efi::efi;
 
+/// Timer Arch Protocol GUID.
 pub const PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0x26BACCB3, 0x6F42, 0x11D4, 0xBC, 0xE7, &[0x00, 0x80, 0xC7, 0x3C, 0x88, 0x81]);
 
@@ -109,8 +110,12 @@ pub type EfiTimerGenerateSoftInterrupt = extern "efiapi" fn(this: *mut Protocol)
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.10.1
 #[repr(C)]
 pub struct Protocol {
+    /// Registers a handler function for timer interrupts.
     pub register_handler: EfiTimerRegisterHandler,
+    /// Sets the period of the timer interrupt.
     pub set_timer_period: EfiTimerSetTimerPeriod,
+    /// Gets the current period of the timer interrupt.
     pub get_timer_period: EfiTimerGetTimerPeriod,
+    /// Generates a software timer interrupt.
     pub generate_soft_interrupt: EfiTimerGenerateSoftInterrupt,
 }

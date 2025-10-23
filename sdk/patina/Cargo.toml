@@ -42,6 +42,7 @@ serde = { workspace = true, optional = true }
 serde_yaml = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
 
 [target.'cfg(target_arch="x86_64")'.dependencies]
 x86_64 = { workspace = true, features = ["instructions"] }

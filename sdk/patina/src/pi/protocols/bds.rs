@@ -32,5 +32,6 @@ pub type BdsEntry = extern "efiapi" fn(*mut Protocol);
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.2.1
 #[repr(C)]
 pub struct Protocol {
+    /// BDS architectural protocol entry point.
     pub entry: BdsEntry,
 }

@@ -21,13 +21,18 @@ pub const PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0x26baccb1, 0x6f42, 0x11d4, 0xbc, 0xe7, &[0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81]);
 
 #[repr(C)]
+/// CPU cache flush types.
 pub enum CpuFlushType {
+    /// Write-back and invalidate cache.
     EfiCpuFlushTypeWriteBackInvalidate,
+    /// Write-back cache only.
     EfiCpuFlushTypeWriteBack,
+    /// Invalidate cache only.
     EFiCpuFlushTypeInvalidate,
 }
 
-/// Flushes a range of the processor's data cache.
+/// Flushes a range of the processor's data cache. If the processor does not contain a data cache or the data cache is
+/// fully coherent, this function returns success.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.2
@@ -45,18 +50,21 @@ pub type EnableInterrupt = extern "efiapi" fn(*const Protocol) -> efi::Status;
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.4
 pub type DisableInterrupt = extern "efiapi" fn(*const Protocol) -> efi::Status;
 
-/// Retrieves the processor's current interrupt state.
+/// Retrieves the processor's current interrupt state. Returns `TRUE` if interrupts are enabled, `FALSE` if disabled.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.5
 pub type GetInterruptState = extern "efiapi" fn(*const Protocol, *mut bool) -> efi::Status;
 
 #[repr(C)]
+/// CPU initialization types.
 pub enum CpuInitType {
+    /// Standard CPU initialization.
     EfiCpuInit,
 }
 
-/// Generates an INIT on the processor.
+/// Generates an INIT on the processor. If successful, the processor is reset and control does not return. Returns
+/// unsupported if the processor cannot programmatically generate an INIT without external hardware.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.6
@@ -80,20 +88,23 @@ pub type EfiSystemContext = efi::protocols::debug_support::SystemContext;
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.7
 pub type InterruptHandler = extern "efiapi" fn(EfiExceptionType, EfiSystemContext);
 
-/// Registers a function to be called from the processor interrupt handler.
+/// Registers and enables a handler for a processor interrupt or exception. The handler is called once for each
+/// interrupt or exception. Pass `NULL` to uninstall a handler. Used by the timer architecture and debuggers.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.7
 pub type RegisterInterruptHandler =
     extern "efiapi" fn(*const Protocol, EfiExceptionType, InterruptHandler) -> efi::Status;
 
-/// Returns a timer value from one of the processor's internal timers.
+/// Returns a timer value from one of the processor's internal timers. Optionally returns the timer period in
+/// femtoseconds for each increment. Returns unsupported if the processor contains no readable timers.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.8
 pub type GetTimerValue = extern "efiapi" fn(*const Protocol, u32, *mut u64, *mut u64) -> efi::Status;
 
-/// Change a memory region to support specified memory attributes.
+/// Changes memory region attributes to support specified memory attributes. Used by DXE Service
+/// `SetMemorySpaceAttributes()` to modify memory region properties visible to the processor.
 ///
 /// # Documentation
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.9
@@ -105,13 +116,21 @@ pub type SetMemoryAttributes = extern "efiapi" fn(*const Protocol, efi::Physical
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.3.1
 #[repr(C)]
 pub struct Protocol {
+    /// Flushes the CPU data cache.
     pub flush_data_cache: FlushDataCache,
+    /// Enables CPU interrupts.
     pub enable_interrupt: EnableInterrupt,
+    /// Disables CPU interrupts.
     pub disable_interrupt: DisableInterrupt,
+    /// Gets the current interrupt state.
     pub get_interrupt_state: GetInterruptState,
+    /// Initializes the CPU.
     pub init: Init,
+    /// Registers an interrupt handler.
     pub register_interrupt_handler: RegisterInterruptHandler,
+    /// Gets the CPU timer value.
     pub get_timer_value: GetTimerValue,
+    /// Sets memory attributes for a range.
     pub set_memory_attributes: SetMemoryAttributes,
     /// The number of timers that are available in a processor. The value in this field is a constant that must not be
     /// modified after the CPU Architectural Protocol is installed. All consumers must treat this as a read-only field.

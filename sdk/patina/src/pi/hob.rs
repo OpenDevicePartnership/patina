@@ -1,7 +1,17 @@
-//! Hand Off Block (HOB)
+//! Hand-Off Blocks (HOB)
 //!
-//! Contains protocols defined in UEFI's Platform Initialization (PI) Specification.
-//! See <https://github.com/tianocore/edk2/blob/master/MdePkg/Include/Pi/PiHob.h>
+//! Hand-Off Blocks provide a standardized method for passing information from
+//! the pre-DXE phase to the DXE phase during the platform initialization process.
+//!
+//! HOBs describe the physical memory layout, CPU information, firmware volumes,
+//! and other platform-specific data that DXE needs to continue the boot process.
+//!
+//! The HOB list is a contiguous list of HOB structures, each with a common header
+//! followed by type-specific data. Typically, the PEI Foundation creates and manages
+//! the HOB list during the PEI phase, and it is passed to the DXE Foundation
+//! during the PEI-to-DXE handoff.
+//!
+//! Based on the UEFI Platform Initialization Specification Volume III.
 //!
 //! ## Example
 //! ```
@@ -87,14 +97,17 @@ use alloc::vec::Vec;
 
 // If the target is x86_64, then EfiPhysicalAddress is u64
 #[cfg(target_arch = "x86_64")]
+/// Type for a UEFI physical address.
 pub type EfiPhysicalAddress = u64;
 
 // If the target is aarch64, then EfiPhysicalAddress is u64
 #[cfg(target_arch = "aarch64")]
+/// Type for a UEFI physical address.
 pub type EfiPhysicalAddress = u64;
 
 // if the target is x86, then EfiPhysicalAddress is u32
 #[cfg(target_arch = "x86")]
+/// Type for a UEFI physical address.
 pub type EfiPhysicalAddress = u32;
 
 // if the target is not x86, x86_64, or aarch64, then alert the user
@@ -102,38 +115,65 @@ pub type EfiPhysicalAddress = u32;
 compile_error!("This crate only (currently) supports x86, x86_64, and aarch64 architectures");
 
 // HOB type field is a UINT16
+/// Contains general state information used by the HOB producer phase. This HOB must be the first one in the HOB list.
 pub const HANDOFF: u16 = 0x0001;
+/// Describes all memory ranges used during the HOB producer phase that exist outside the HOB list. This HOB type
+/// describes how memory is used, not the physical attributes of memory.
 pub const MEMORY_ALLOCATION: u16 = 0x0002;
+/// Describes the resource properties of all fixed, nonrelocatable resource ranges found on the processor host bus
+/// during the HOB producer phase.
 pub const RESOURCE_DESCRIPTOR: u16 = 0x0003;
+/// Allows writers of executable content in the HOB producer phase to maintain and manage HOBs whose types are not
+/// included in this specification. Specifically, writers of executable content in the HOB producer phase can generate
+/// a GUID and name their own HOB entries using this module-specific value.
 pub const GUID_EXTENSION: u16 = 0x0004;
+/// Details the location of firmware volumes that contain firmware files.
 pub const FV: u16 = 0x0005;
+/// Describes processor information, such as address space and I/O space capabilities.
 pub const CPU: u16 = 0x0006;
+/// Describes pool memory allocations.
 pub const MEMORY_POOL: u16 = 0x0007;
+/// Details the location of a firmware volume which was extracted from a file within another firmware volume.
 pub const FV2: u16 = 0x0009;
+/// HOB type for load PEIM (unused).
 pub const LOAD_PEIM_UNUSED: u16 = 0x000A;
+/// Details the location of coalesced UEFI capsule memory pages.
 pub const UEFI_CAPSULE: u16 = 0x000B;
+/// Details the location of a firmware volume including authentication information, for both standalone and extracted
+/// firmware volumes.
 pub const FV3: u16 = 0x000C;
+/// HOB type for resource descriptor v2 HOB.
 pub const RESOURCE_DESCRIPTOR2: u16 = 0x000D;
+/// Indicates that the contents of the HOB can be ignored.
 pub const UNUSED: u16 = 0xFFFE;
+/// Indicates the end of the HOB list. This HOB must be the last one in the HOB list.
 pub const END_OF_HOB_LIST: u16 = 0xFFFF;
 
+/// HOB header structures and definitions.
 pub mod header {
     use crate::pi::hob::EfiPhysicalAddress;
     use r_efi::system::MemoryType;
 
-    /// Describes the format and size of the data inside the HOB.
-    /// All HOBs must contain this generic HOB header (EFI_HOB_GENERIC_HEADER).
+    /// Describes the format and size of the data inside the HOB. All HOBs must contain
+    /// this generic HOB header.
+    ///
+    /// This header provides the foundation for traversing the HOB list by containing
+    /// the type identifier and length information. The HOB list is composed of consecutive
+    /// HOB structures that allows iteration from one HOB to the next until the end-of-list
+    /// marker is encountered.
     ///
     #[repr(C)]
     #[derive(Copy, Clone, Debug, PartialEq, Eq)]
     pub struct Hob {
         // EFI_HOB_GENERIC_HEADER
         /// Identifies the HOB data structure type.
-        ///
+        /// This field specifies which HOB structure follows this header,
+        /// such as memory allocation, resource descriptor, or firmware volume.
         pub r#type: u16,
 
         /// The length in bytes of the HOB.
-        ///
+        /// This includes the HOB header and all associated data. Used for
+        /// traversing to the next HOB in the HOB list.
         pub length: u16,
 
         /// This field must always be set to zero.
@@ -141,35 +181,40 @@ pub mod header {
         pub reserved: u32,
     }
 
-    /// MemoryAllocation (EFI_HOB_MEMORY_ALLOCATION_HEADER) describes the
-    /// various attributes of the logical memory allocation. The type field will be used for
-    /// subsequent inclusion in the UEFI memory map.
+    /// Memory allocation HOB header that describes allocated memory regions.
+    ///
+    /// This header describes memory that has been allocated during the HOB producer phase
+    /// and provides information needed for the HOB consumer phase to incorporate these
+    /// allocations into the system memory map. The Name field identifies the purpose
+    /// and allows for specific handling by components that understand the allocation type.
     ///
     #[repr(C)]
     #[derive(Copy, Clone, Debug, PartialEq, Eq)]
     pub struct MemoryAllocation {
         // EFI_HOB_MEMORY_ALLOCATION_HEADER
-        /// A GUID that defines the memory allocation region's type and purpose, as well as
-        /// other fields within the memory allocation HOB. This GUID is used to define the
-        /// additional data within the HOB that may be present for the memory allocation HOB.
-        /// Type EFI_GUID is defined in InstallProtocolInterface() in the UEFI 2.0
-        /// specification.
+        /// A GUID that defines the memory allocation region's type and purpose.
+        /// This GUID identifies the specific type of memory allocation and may
+        /// indicate additional data structures that follow this header. Well-known
+        /// GUIDs include allocations for stack, BSP store, and module images.
         ///
         pub name: r_efi::base::Guid,
 
-        /// The base address of memory allocated by this HOB. Type
-        /// EfiPhysicalAddress is defined in AllocatePages() in the UEFI 2.0
-        /// specification.
+        /// The base address of memory allocated by this HOB.
+        /// This is the physical address where the memory allocation begins,
+        /// and it will be included in the memory map during DXE phase
+        /// memory map construction.
         ///
         pub memory_base_address: EfiPhysicalAddress,
 
         /// The length in bytes of memory allocated by this HOB.
-        ///
+        /// This specifies the size of the memory region from the base address
+        /// that has been allocated and should be reflected in the memory map.
         pub memory_length: u64,
 
-        /// Defines the type of memory allocated by this HOB. The memory type definition
-        /// follows the EFI_MEMORY_TYPE definition. Type EFI_MEMORY_TYPE is defined
-        /// in AllocatePages() in the UEFI 2.0 specification.
+        /// Defines the type of memory allocated by this HOB.
+        /// The memory type follows EFI memory type definitions and determines
+        /// how this memory region will be treated in the memory map,
+        /// such as whether it's available for allocation or reserved.
         ///
         pub memory_type: MemoryType,
 
@@ -181,12 +226,23 @@ pub mod header {
 
 /// Describes pool memory allocations.
 ///
-/// The HOB generic header. Header.HobType = EFI_HOB_TYPE_MEMORY_POOL.
+/// The memory pool HOB is produced by the HOB producer phase and describes pool
+/// memory allocations. The HOB consumer phase should be able to ignore these HOBs.
+/// The purpose of this HOB is to allow for the HOB producer phase to have a simple
+/// memory allocation mechanism within the HOB list. The size of the memory allocation
+/// is stipulated by the HobLength field in the generic HOB header.
 ///
 pub type MemoryPool = header::Hob;
 
-/// Contains general state information used by the HOB producer phase.
-/// This HOB must be the first one in the HOB list.
+/// Phase Handoff Information Table (PHIT) HOB.
+///
+/// Contains general state information used by the HOB producer phase. This HOB must
+/// be the first one in the HOB list. The PHIT HOB provides essential information
+/// for the transition from the HOB producer phase to the HOB consumer phase, including
+/// boot mode, memory ranges, and the location of the HOB list end.
+///
+/// The HOB consumer phase reads the PHIT HOB during its initialization to understand
+/// the system state and available resources from the HOB producer phase.
 ///
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -202,24 +258,27 @@ pub struct PhaseHandoffInformationTable {
     pub version: u32,
 
     /// The system boot mode as determined during the HOB producer phase.
-    ///
+    /// This indicates the type of boot being performed (normal boot, S3 resume,
+    /// recovery boot, etc.) and affects how the HOB consumer phase initializes the system.
     pub boot_mode: BootMode,
 
-    /// The highest address location of memory that is allocated for use by the HOB producer
-    /// phase. This address must be 4-KB aligned to meet page restrictions of UEFI.
+    /// The highest address location of memory allocated for use by the HOB producer phase.
+    /// This address must be 4-KB aligned to meet page restrictions and represents
+    /// the upper boundary of memory available to the HOB producer phase.
     ///
     pub memory_top: EfiPhysicalAddress,
 
-    /// The lowest address location of memory that is allocated for use by the HOB producer phase.
-    ///
+    /// The lowest address location of memory allocated for use by the HOB producer phase.
+    /// This represents the lower boundary of memory available to the HOB producer phase.
     pub memory_bottom: EfiPhysicalAddress,
 
-    /// The highest address location of free memory that is currently available
-    /// for use by the HOB producer phase.
+    /// The highest address location of free memory currently available for allocation.
+    /// This address must be 4-KB aligned to meet page restrictions and represents
+    /// the upper boundary of memory that can be allocated by the HOB producer phase.
     ///
     pub free_memory_top: EfiPhysicalAddress,
 
-    /// The lowest address location of free memory that is available for use by the HOB producer phase.
+    /// The lowest address location of free memory available for use by the HOB producer phase.
     ///
     pub free_memory_bottom: EfiPhysicalAddress,
 
@@ -250,21 +309,32 @@ pub struct MemoryAllocation {
 }
 
 // EFI_HOB_MEMORY_ALLOCATION_STACK
-/// Describes the memory stack that is produced by the HOB producer
-/// phase and upon which all post-memory-installed executable
-/// content in the HOB producer phase is executing.
+/// Describes the memory stack that is produced by the HOB producer phase and upon
+/// which all post-memory-installed executable content in the HOB producer phase is executing.
+///
+/// This HOB describes the memory stack used by the HOB producer phase and is necessary
+/// for the hand-off into the HOB consumer phase to know this information so that it can
+/// appropriately map this stack into its own execution environment and describe it in
+/// any subsequent memory maps. The HOB consumer phase may elect to move or relocate
+/// the BSP's stack to meet its own requirements.
 ///
 pub type MemoryAllocationStack = MemoryAllocation;
 
 // EFI_HOB_MEMORY_ALLOCATION_BSP_STORE
-/// Defines the location of the boot-strap
-/// processor (BSP) BSPStore ("Backing Store Pointer Store").
-/// This HOB is valid for the Itanium processor family only
-/// register overflow store.
+/// Defines the location of the boot-strap processor (BSP) BSPStore register overflow store.
+///
+/// This HOB is valid for the Itanium processor family only and describes the location
+/// of the BSP's backing store pointer store register overflow area. This information
+/// is needed during the transition to the HOB consumer phase for proper processor
+/// state management.
 ///
 pub type MemoryAllocationBspStore = MemoryAllocation;
 
 /// Defines the location and entry point of the HOB consumer phase.
+///
+/// The HOB consumer phase reads the memory allocation module HOB during its
+/// initialization. This HOB describes the memory location of the HOB consumer phase
+/// and should be used by the HOB consumer phase to create the image handle for itself.
 ///
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -274,7 +344,8 @@ pub struct MemoryAllocationModule {
     pub header: header::Hob,
 
     /// An instance of the EFI_HOB_MEMORY_ALLOCATION_HEADER that describes the
-    /// various attributes of the logical memory allocation.
+    /// various attributes of the logical memory allocation. The type field will be
+    /// used for subsequent inclusion in the memory map.
     ///
     pub alloc_descriptor: header::MemoryAllocation,
 
@@ -292,12 +363,19 @@ pub struct MemoryAllocationModule {
 //
 // Value of ResourceType in EFI_HOB_RESOURCE_DESCRIPTOR.
 //
+/// System memory that persists out of the HOB producer phase.
 pub const EFI_RESOURCE_SYSTEM_MEMORY: u32 = 0x00000000;
+/// Memory-mapped I/O that is programmed in the HOB producer phase.
 pub const EFI_RESOURCE_MEMORY_MAPPED_IO: u32 = 0x00000001;
+/// Processor I/O space.
 pub const EFI_RESOURCE_IO: u32 = 0x00000002;
+/// Memory-mapped firmware devices.
 pub const EFI_RESOURCE_FIRMWARE_DEVICE: u32 = 0x00000003;
+/// Memory that is decoded to produce I/O cycles.
 pub const EFI_RESOURCE_MEMORY_MAPPED_IO_PORT: u32 = 0x00000004;
+/// Reserved memory address space.
 pub const EFI_RESOURCE_MEMORY_RESERVED: u32 = 0x00000005;
+/// Reserved I/O address space.
 pub const EFI_RESOURCE_IO_RESERVED: u32 = 0x00000006;
 
 //
@@ -309,6 +387,7 @@ pub const EFI_RESOURCE_IO_RESERVED: u32 = 0x00000006;
 // in PI spec, we will re-visit here.
 //
 // #define BZ3937_EFI_RESOURCE_MEMORY_UNACCEPTED      0x00000007
+/// Maximum memory type value.
 pub const EFI_RESOURCE_MAX_MEMORY_TYPE: u32 = 0x00000007;
 
 //
@@ -316,9 +395,13 @@ pub const EFI_RESOURCE_MAX_MEMORY_TYPE: u32 = 0x00000007;
 //
 // The following attributes are used to describe settings
 //
+/// Physical memory attribute: The memory region exists.
 pub const EFI_RESOURCE_ATTRIBUTE_PRESENT: u32 = 0x00000001;
+/// Physical memory attribute: The memory region has been initialized.
 pub const EFI_RESOURCE_ATTRIBUTE_INITIALIZED: u32 = 0x00000002;
+/// Physical memory attribute: The memory region has been tested.
 pub const EFI_RESOURCE_ATTRIBUTE_TESTED: u32 = 0x00000004;
+/// Physical memory protection attribute: The memory region is read protected.
 pub const EFI_RESOURCE_ATTRIBUTE_READ_PROTECTED: u32 = 0x00000080;
 
 //
@@ -328,8 +411,11 @@ pub const EFI_RESOURCE_ATTRIBUTE_READ_PROTECTED: u32 = 0x00000080;
 // means Memory cacheability attribute: The memory supports being programmed with
 // a writeprotected cacheable attribute.
 //
+/// Memory cacheability attribute: The memory supports being programmed with a write-protected cacheable attribute.
 pub const EFI_RESOURCE_ATTRIBUTE_WRITE_PROTECTED: u32 = 0x00000100;
+/// Physical memory protection attribute: The memory region is execution protected.
 pub const EFI_RESOURCE_ATTRIBUTE_EXECUTION_PROTECTED: u32 = 0x00000200;
+/// Physical memory persistence attribute: This memory is configured for byte-addressable non-volatility.
 pub const EFI_RESOURCE_ATTRIBUTE_PERSISTENT: u32 = 0x00800000;
 
 //
@@ -338,23 +424,37 @@ pub const EFI_RESOURCE_ATTRIBUTE_PERSISTENT: u32 = 0x00800000;
 // memory in the system. If all memory has the same
 // reliability, then this bit is not used.
 //
+/// Physical memory relative reliability attribute: This memory provides higher reliability relative to other memory in the system.
 pub const EFI_RESOURCE_ATTRIBUTE_MORE_RELIABLE: u32 = 0x02000000;
 
 //
 // The rest of the attributes are used to describe capabilities
 //
+/// Physical memory attribute: The memory region supports single-bit ECC.
 pub const EFI_RESOURCE_ATTRIBUTE_SINGLE_BIT_ECC: u32 = 0x00000008;
+/// Physical memory attribute: The memory region supports multibit ECC.
 pub const EFI_RESOURCE_ATTRIBUTE_MULTIPLE_BIT_ECC: u32 = 0x00000010;
+/// Physical memory attribute: The memory region supports reserved ECC.
 pub const EFI_RESOURCE_ATTRIBUTE_ECC_RESERVED_1: u32 = 0x00000020;
+/// Physical memory attribute: The memory region supports reserved ECC.
 pub const EFI_RESOURCE_ATTRIBUTE_ECC_RESERVED_2: u32 = 0x00000040;
+/// Memory cacheability attribute: The memory does not support caching.
 pub const EFI_RESOURCE_ATTRIBUTE_UNCACHEABLE: u32 = 0x00000400;
+/// Memory cacheability attribute: The memory supports a write-combining attribute.
 pub const EFI_RESOURCE_ATTRIBUTE_WRITE_COMBINEABLE: u32 = 0x00000800;
+/// Memory cacheability attribute: The memory supports being programmed with a write-through cacheable attribute.
 pub const EFI_RESOURCE_ATTRIBUTE_WRITE_THROUGH_CACHEABLE: u32 = 0x00001000;
+/// Memory cacheability attribute: The memory region supports being configured as cacheable with a write-back policy.
 pub const EFI_RESOURCE_ATTRIBUTE_WRITE_BACK_CACHEABLE: u32 = 0x00002000;
+/// Memory physical attribute: The memory supports 16-bit I/O.
 pub const EFI_RESOURCE_ATTRIBUTE_16_BIT_IO: u32 = 0x00004000;
+/// Memory physical attribute: The memory supports 32-bit I/O.
 pub const EFI_RESOURCE_ATTRIBUTE_32_BIT_IO: u32 = 0x00008000;
+/// Memory physical attribute: The memory supports 64-bit I/O.
 pub const EFI_RESOURCE_ATTRIBUTE_64_BIT_IO: u32 = 0x00010000;
+/// Memory cacheability attribute: The memory region is uncacheable and exported and supports the fetch and add semaphore mechanism.
 pub const EFI_RESOURCE_ATTRIBUTE_UNCACHED_EXPORTED: u32 = 0x00020000;
+/// Memory capability attribute: The memory supports being protected from processor reads.
 pub const EFI_RESOURCE_ATTRIBUTE_READ_PROTECTABLE: u32 = 0x00100000;
 
 //
@@ -364,13 +464,19 @@ pub const EFI_RESOURCE_ATTRIBUTE_READ_PROTECTABLE: u32 = 0x00100000;
 // writes, and EFI_RESOURCE_ATTRIBUTE_WRITE_PROTECTABLE TABLE means Memory cacheability attribute:
 // The memory supports being programmed with a writeprotected cacheable attribute.
 //
+/// Memory cacheability attribute: The memory supports being programmed with a write-protected cacheable attribute.
 pub const EFI_RESOURCE_ATTRIBUTE_WRITE_PROTECTABLE: u32 = 0x00200000;
+/// Memory capability attribute: The memory supports being protected from processor execution.
 pub const EFI_RESOURCE_ATTRIBUTE_EXECUTION_PROTECTABLE: u32 = 0x00400000;
+/// Memory capability attribute: This memory supports byte-addressable non-volatility.
 pub const EFI_RESOURCE_ATTRIBUTE_PERSISTABLE: u32 = 0x01000000;
 
+/// Physical memory protection attribute: The memory region is write protected.
 pub const EFI_RESOURCE_ATTRIBUTE_READ_ONLY_PROTECTED: u32 = 0x00040000;
+/// Memory capability attribute: The memory supports being protected from processor writes.
 pub const EFI_RESOURCE_ATTRIBUTE_READ_ONLY_PROTECTABLE: u32 = 0x00080000;
 
+/// Mask for memory attributes.
 pub const MEMORY_ATTRIBUTE_MASK: u32 = EFI_RESOURCE_ATTRIBUTE_PRESENT
     | EFI_RESOURCE_ATTRIBUTE_INITIALIZED
     | EFI_RESOURCE_ATTRIBUTE_TESTED
@@ -383,16 +489,21 @@ pub const MEMORY_ATTRIBUTE_MASK: u32 = EFI_RESOURCE_ATTRIBUTE_PRESENT
     | EFI_RESOURCE_ATTRIBUTE_64_BIT_IO
     | EFI_RESOURCE_ATTRIBUTE_PERSISTENT;
 
+/// Tested memory attributes mask.
 pub const TESTED_MEMORY_ATTRIBUTES: u32 =
     EFI_RESOURCE_ATTRIBUTE_PRESENT | EFI_RESOURCE_ATTRIBUTE_INITIALIZED | EFI_RESOURCE_ATTRIBUTE_TESTED;
 
+/// Initialized memory attributes mask.
 pub const INITIALIZED_MEMORY_ATTRIBUTES: u32 = EFI_RESOURCE_ATTRIBUTE_PRESENT | EFI_RESOURCE_ATTRIBUTE_INITIALIZED;
 
+/// Present memory attributes mask.
 pub const PRESENT_MEMORY_ATTRIBUTES: u32 = EFI_RESOURCE_ATTRIBUTE_PRESENT;
 
 /// Attributes for reserved memory before it is promoted to system memory
 pub const EFI_MEMORY_PRESENT: u64 = 0x0100_0000_0000_0000;
+/// Memory initialized attribute flag.
 pub const EFI_MEMORY_INITIALIZED: u64 = 0x0200_0000_0000_0000;
+/// Memory tested attribute flag.
 pub const EFI_MEMORY_TESTED: u64 = 0x0400_0000_0000_0000;
 
 ///
@@ -406,9 +517,15 @@ pub const EFI_MEMORY_NV: u64 = 0x0000_0000_0000_8000;
 ///
 pub const EFI_MEMORY_MORE_RELIABLE: u64 = 0x0000_0000_0001_0000;
 
-/// Describes the resource properties of all fixed,
-/// nonrelocatable resource ranges found on the processor
-/// host bus during the HOB producer phase.
+/// Describes the resource properties of all fixed, nonrelocatable resource ranges
+/// found on the processor host bus during the HOB producer phase.
+///
+/// The resource descriptor HOB describes the resource properties of all fixed,
+/// nonrelocatable resource ranges found on the processor host bus during the HOB
+/// producer phase. This HOB type does not describe how memory is used but instead
+/// describes the attributes of the physical memory present. The HOB consumer phase
+/// reads all resource descriptor HOBs when it establishes the initial Global
+/// Coherency Domain (GCD) map.
 ///
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -418,29 +535,33 @@ pub struct ResourceDescriptor {
     ///
     pub header: header::Hob,
 
-    /// A GUID representing the owner of the resource. This GUID is used by HOB
-    /// consumer phase components to correlate device ownership of a resource.
+    /// A GUID representing the owner of the resource.
+    /// This GUID is used by HOB consumer phase components to correlate device
+    /// ownership of a resource.
     ///
     pub owner: r_efi::base::Guid,
 
-    /// The resource type enumeration as defined by EFI_RESOURCE_TYPE.
-    ///
+    /// Resource type enumeration as defined by EFI_RESOURCE_TYPE.
+    /// Identifies whether this resource is system memory, memory-mapped I/O,
+    /// I/O ports, firmware device, or other platform-specific resource types.
     pub resource_type: u32,
 
     /// Resource attributes as defined by EFI_RESOURCE_ATTRIBUTE_TYPE.
-    ///
+    /// Includes information about cacheability, protection attributes,
+    /// persistence, reliability, and other characteristics of the resource.
     pub resource_attribute: u32,
 
-    /// The physical start address of the resource region.
+    /// Physical start address of the resource region.
     ///
     pub physical_start: EfiPhysicalAddress,
 
-    /// The number of bytes of the resource region.
+    /// Number of bytes of the resource region.
     ///
     pub resource_length: u64,
 }
 
 impl ResourceDescriptor {
+    /// Validates resource descriptor attributes.
     pub fn attributes_valid(&self) -> bool {
         (self.resource_attribute & EFI_RESOURCE_ATTRIBUTE_READ_PROTECTED == 0
             || self.resource_attribute & EFI_RESOURCE_ATTRIBUTE_READ_ONLY_PROTECTABLE != 0)
@@ -483,9 +604,11 @@ impl From<ResourceDescriptor> for ResourceDescriptorV2 {
     }
 }
 
-/// Allows writers of executable content in the HOB producer phase to
-/// maintain and manage HOBs with specific GUID.
+/// Allows writers of executable content in the HOB producer phase to maintain and
+/// manage HOBs whose types are not included in this specification.
 ///
+/// The GUID extension HOB allows code in the HOB producer phase to create custom HOB
+/// definitions using a GUID.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct GuidHob {
@@ -502,6 +625,13 @@ pub struct GuidHob {
 }
 
 /// Details the location of firmware volumes that contain firmware files.
+///
+/// The firmware volume HOB details the location of firmware volumes that contain
+/// firmware files. It includes a base address and length. In particular, the HOB
+/// consumer phase will use these HOBs to discover drivers to execute and the hand-off
+/// into the HOB consumer phase will use this HOB to discover the location of the HOB
+/// consumer phase firmware file. Firmware volumes described by the firmware volume
+/// HOB must have a firmware volume header as described in this specification.
 ///
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -520,8 +650,14 @@ pub struct FirmwareVolume {
     pub length: u64,
 }
 
-/// Details the location of a firmware volume that was extracted
-/// from a file within another firmware volume.
+/// Details the location of a firmware volume which was extracted from a file within
+/// another firmware volume.
+///
+/// The firmware volume HOB details the location of a firmware volume that was
+/// extracted prior to the HOB consumer phase from a file within a firmware volume.
+/// By recording the volume and file name, the HOB consumer phase can avoid processing
+/// the same file again. This HOB is created by a module that has loaded a firmware
+/// volume from another file into memory.
 ///
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -543,13 +679,21 @@ pub struct FirmwareVolume2 {
     ///
     pub fv_name: r_efi::base::Guid,
 
-    /// The name of the firmware file that contained this firmware volume.
+    /// The name of the firmware file which contained this firmware volume.
     ///
     pub file_name: r_efi::base::Guid,
 }
 
-/// Details the location of a firmware volume that was extracted
-/// from a file within another firmware volume.
+/// Details the location of a firmware volume including authentication information,
+/// for both standalone and extracted firmware volumes.
+///
+/// The firmware volume HOB details the location of firmware volumes that contain
+/// firmware files. It includes a base address and length. In particular, the HOB
+/// consumer phase will use these HOBs to discover drivers to execute and the hand-off
+/// into the HOB consumer phase will use this HOB to discover the location of the HOB
+/// consumer phase firmware file. The HOB consumer phase must provide appropriate
+/// authentication data reflecting AuthenticationStatus for clients accessing the
+/// corresponding firmware volumes.
 ///
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -567,7 +711,8 @@ pub struct FirmwareVolume3 {
     ///
     pub length: u64,
 
-    /// The authentication status.
+    /// The authentication status. See Related Definitions of
+    /// EFI_PEI_GUIDED_SECTION_EXTRACTION_PPI.ExtractSection() for more information.
     ///
     pub authentication_status: u32,
 
@@ -576,18 +721,23 @@ pub struct FirmwareVolume3 {
     ///
     pub extracted_fv: r_efi::efi::Boolean,
 
-    /// The name of the firmware volume.
+    /// The name GUID of the firmware volume.
     /// Valid only if IsExtractedFv is TRUE.
     ///
     pub fv_name: r_efi::base::Guid,
 
-    /// The name of the firmware file that contained this firmware volume.
+    /// The name GUID of the firmware file which contained this firmware volume.
     /// Valid only if IsExtractedFv is TRUE.
     ///
     pub file_name: r_efi::base::Guid,
 }
 
 /// Describes processor information, such as address space and I/O space capabilities.
+///
+/// The CPU HOB is produced by the processor executable content in the HOB producer
+/// phase. It describes processor information, such as address space and I/O space
+/// capabilities. The HOB consumer phase consumes this information to describe the
+/// extent of the GCD capabilities.
 ///
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -605,15 +755,17 @@ pub struct Cpu {
     ///
     pub size_of_io_space: u8,
 
-    /// This field will always be set to zero.
+    /// For this version of the specification, this field will always be set to zero.
     ///
     pub reserved: [u8; 6],
 }
 
-/// Each UEFI capsule HOB details the location of a UEFI capsule. It includes a base address and length
-/// which is based upon memory blocks with a EFI_CAPSULE_HEADER and the associated
-/// CapsuleImageSize-based payloads. These HOB's shall be created by the PEI PI firmware
-/// sometime after the UEFI UpdateCapsule service invocation with the
+/// Details the location of coalesced UEFI capsule memory pages.
+///
+/// Each UEFI capsule HOB details the location of a UEFI capsule. It includes a base
+/// address and length which is based upon memory blocks with a EFI_CAPSULE_HEADER and
+/// the associated CapsuleImageSize-based payloads. These HOBs shall be created by the
+/// PEI PI firmware sometime after the UEFI UpdateCapsule service invocation with the
 /// CAPSULE_FLAGS_POPULATE_SYSTEM_TABLE flag set in the EFI_CAPSULE_HEADER.
 ///
 #[repr(C)]
@@ -624,12 +776,12 @@ pub struct Capsule {
     ///
     pub header: header::Hob,
 
-    /// The physical memory-mapped base address of an UEFI capsule. This value is set to
+    /// The physical memory-mapped base address of a UEFI capsule. This value is set to
     /// point to the base of the contiguous memory of the UEFI capsule.
-    /// The length of the contiguous memory in bytes.
     ///
     pub base_address: EfiPhysicalAddress,
 
+    /// The length of the contiguous memory in bytes.
     pub length: u64,
 }
 
@@ -647,22 +799,37 @@ impl Default for HobList<'_> {
 ///
 #[derive(Clone, Debug)]
 pub enum Hob<'a> {
+    /// Phase handoff information table HOB.
     Handoff(&'a PhaseHandoffInformationTable),
+    /// Memory allocation HOB.
     MemoryAllocation(&'a MemoryAllocation),
+    /// Memory allocation module HOB.
     MemoryAllocationModule(&'a MemoryAllocationModule),
+    /// Capsule HOB.
     Capsule(&'a Capsule),
+    /// Resource descriptor HOB.
     ResourceDescriptor(&'a ResourceDescriptor),
+    /// GUID extension HOB.
     GuidHob(&'a GuidHob, &'a [u8]),
+    /// Firmware volume HOB.
     FirmwareVolume(&'a FirmwareVolume),
+    /// Firmware volume v2 HOB.
     FirmwareVolume2(&'a FirmwareVolume2),
+    /// Firmware volume v3 HOB.
     FirmwareVolume3(&'a FirmwareVolume3),
+    /// CPU information HOB.
     Cpu(&'a Cpu),
+    /// Resource descriptor v2 HOB.
     ResourceDescriptorV2(&'a ResourceDescriptorV2),
+    /// Miscellaneous HOB type.
     Misc(u16),
 }
 
+/// Trait for Hand-Off Block types.
 pub trait HobTrait {
+    /// Returns the size of the HOB.
     fn size(&self) -> usize;
+    /// Returns a pointer to the HOB data.
     fn as_ptr<T>(&self) -> *const T;
 }
 
@@ -1230,6 +1397,7 @@ impl fmt::Debug for HobList<'_> {
 }
 
 impl Hob<'_> {
+    /// Returns the HOB header for this Hand-Off Block
     pub fn header(&self) -> header::Hob {
         match self {
             Hob::Handoff(hob) => hob.header,
@@ -1322,7 +1490,9 @@ pub const MEMORY_TYPE_INFO_HOB_GUID: r_efi::efi::Guid =
 #[derive(Debug)]
 #[repr(C)]
 pub struct EFiMemoryTypeInformation {
+    /// Type of memory being described.
     pub memory_type: r_efi::efi::MemoryType,
+    /// Number of pages in this allocation.
     pub number_of_pages: u32,
 }
 

@@ -13,6 +13,7 @@
 
 use r_efi::efi;
 
+/// Status Code Runtime Protocol GUID.
 pub const PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0xD2B2B828, 0x0826, 0x48A7, 0xB3, 0xDF, &[0x98, 0x3C, 0x00, 0x60, 0x24, 0xF0]);
 
@@ -31,8 +32,11 @@ pub type EfiStatusCodeValue = u32;
 /// UEFI Platform Initialization Specification, Release 1.8, Section III-6.6.2.1
 #[repr(C)]
 pub struct EfiStatusCodeData {
+    /// Size of the status code data header.
     pub header_size: u16,
+    /// Size of the status code data.
     pub size: u16,
+    /// GUID identifying the type of status code data.
     pub r#type: efi::Guid,
 }
 
@@ -50,5 +54,6 @@ pub type ReportStatusCode =
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-14.2.1
 #[repr(C)]
 pub struct Protocol {
+    /// Function to report status codes.
     pub report_status_code: ReportStatusCode,
 }

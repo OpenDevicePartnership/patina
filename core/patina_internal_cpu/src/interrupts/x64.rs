@@ -33,6 +33,8 @@ impl super::EfiSystemContextFactory for ExceptionContextX64 {
 
 impl super::EfiExceptionStackTrace for ExceptionContextX64 {
     fn dump_stack_trace(&self) {
+        // SAFETY: This is called during an exception, we don't have any choice but to trust the exception context
+        // and the stack trace module will do its best to not cause a recursive exception
         if let Err(err) = unsafe { StackTrace::dump_with(self.rip, self.rsp) } {
             log::error!("StackTrace: {err}");
         }
@@ -78,6 +80,7 @@ impl super::EfiExceptionStackTrace for ExceptionContextX64 {
 
 #[allow(unused)]
 pub fn enable_interrupts() {
+    // SAFETY: The caller must ensure the system is ready to handle interrupts at this point
     unsafe {
         asm!("sti", options(nostack));
     }
@@ -85,6 +88,7 @@ pub fn enable_interrupts() {
 
 #[allow(unused)]
 pub fn disable_interrupts() {
+    // SAFETY: The caller must ensure the system is ready to disable interrupts at this point
     unsafe {
         asm!("cli", options(nostack));
     }
@@ -94,6 +98,7 @@ pub fn disable_interrupts() {
 pub fn get_interrupt_state() -> Result<bool, EfiError> {
     let eflags: u64;
     const IF: u64 = 0x200;
+    // SAFETY: The ASM below simply reads the interrupt flag to determine state, it is a safe operation
     unsafe {
         asm!("pushfq; pop {}", out(reg)eflags);
     }

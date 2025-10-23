@@ -19,9 +19,7 @@ use x86_64::VirtAddr;
 use x86_64::structures::idt::InterruptDescriptorTable;
 use x86_64::structures::idt::InterruptStackFrame;
 
-use crate::interrupts::{
-    EfiExceptionStackTrace, HandlerType, InterruptManager, exception_handling::FaultAllocator, x64::ExceptionContextX64,
-};
+use crate::interrupts::{EfiExceptionStackTrace, HandlerType, InterruptManager, x64::ExceptionContextX64};
 
 global_asm!(include_str!("interrupt_handler.asm"));
 
@@ -38,6 +36,7 @@ lazy_static! {
 
         // Initialize all of the index-able well-known entries.
         for vector in [0, 1, 2, 3, 4, 5, 6, 7, 9, 16, 19, 20, 28] {
+            // SAFETY: We are constructing the well known IDT handlers which must be present in the IDT
             unsafe { idt[vector].set_handler_addr(get_vector_address(vector.into())) };
         }
 
@@ -46,10 +45,12 @@ lazy_static! {
         // means external caller cannot register for double fault call backs.
         // Fix it: Below line is excluded from std builds because rustc fails to
         //        compile with following error "offset is not a multiple of 16"
+        // SAFETY: We are adding a double fault handler to our static IDT that already exists
         unsafe { idt.double_fault.set_handler_addr(VirtAddr::new(double_fault_handler as *const () as u64)).set_stack_index(0) };
 
         // Initialize the error code vectors. the x86_64 crate does not allow these
         // to be indexed.
+        // SAFETY: We are using a static IDT and configuring all exception handlers
         unsafe {
             idt.invalid_tss.set_handler_addr(get_vector_address(10));
             idt.segment_not_present.set_handler_addr(get_vector_address(11));
@@ -64,6 +65,7 @@ lazy_static! {
 
         // Initialize generic interrupts.
         for vector in 32..=255 {
+            // SAFETY: We are using a static IDT and configuring the expected list of generic interrupts
             unsafe { idt[vector].set_handler_addr(get_vector_address(vector.into())) };
         }
 
@@ -155,6 +157,8 @@ extern "efiapi" fn general_protection_fault_handler(_exception_type: isize, cont
 
 /// Default handler for page faults.
 extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystemContext) {
+    // SAFETY: We don't have any choice here, we are in an exception and have to do our best
+    // to report. The system is dead anyway.
     let x64_context = unsafe { context.system_context_x64.as_ref().unwrap() };
 
     log::error!("EXCEPTION: PAGE FAULT");
@@ -177,9 +181,12 @@ extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystem
     let paging_type =
         { if x64_context.cr4 & (1 << 12) != 0 { PagingType::Paging5Level } else { PagingType::Paging4Level } };
 
-    dump_pte(x64_context.cr2, x64_context.cr3, paging_type);
+    // SAFETY: CR3 and the paging type are correct as they are from the current context.
+    unsafe { dump_pte(x64_context.cr2, x64_context.cr3, paging_type) };
 
     log::error!("Dumping Exception Stack Trace:");
+    // SAFETY: As before, we don't have any choice. The stacktrace module will do its best to not cause a
+    // recursive exception.
     if let Err(err) = unsafe { StackTrace::dump_with(x64_context.rip, x64_context.rsp) } {
         log::error!("StackTrace: {err}");
     }
@@ -194,6 +201,7 @@ fn get_vector_address(index: usize) -> VirtAddr {
         panic!("Invalid vector index! 0x{index:#X?}");
     }
 
+    // SAFETY: We have validated we are using the architecturally guaranteed indices
     unsafe { VirtAddr::from_ptr(AsmGetVectorAddress(index) as *const ()) }
 }
 
@@ -243,8 +251,21 @@ fn interpret_gp_fault_exception_data(exception_data: u64) {
     }
 }
 
-fn dump_pte(cr2: u64, cr3: u64, paging_type: PagingType) {
-    if let Ok(pt) = unsafe { patina_paging::x64::X64PageTable::from_existing(cr3, FaultAllocator {}, paging_type) } {
+/// Dumps the page table entries for the given CR2 and CR3 values.
+///
+/// ## Safety
+///
+/// The caller is responsible for ensuring that the CR3 value is a valid and well-formed page table base address and
+/// matches the paging type requested.
+unsafe fn dump_pte(cr2: u64, cr3: u64, paging_type: PagingType) {
+    // SAFETY: Caller must ensure cr3 & paging type are correct.
+    if let Ok(pt) = unsafe {
+        patina_paging::x64::X64PageTable::from_existing(
+            cr3,
+            patina_paging::page_allocator::PageAllocatorStub,
+            paging_type,
+        )
+    } {
         let _ = pt.dump_page_tables(cr2 & !(UEFI_PAGE_MASK as u64), UEFI_PAGE_SIZE as u64);
     }
 }

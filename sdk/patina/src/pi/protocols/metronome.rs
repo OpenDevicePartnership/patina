@@ -37,6 +37,7 @@ pub type WaitForTick = extern "efiapi" fn(*const Protocol, tick_number: u32) -> 
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.4.1
 #[repr(C)]
 pub struct Protocol {
+    /// Waits for a specified number of ticks.
     pub wait_for_tick: WaitForTick,
     /// The period of platform’s known time source in 100 ns units. This value on any platform must not exceed 200
     /// microseconds. The value in this field is a constant that must not be modified after the Metronome architectural

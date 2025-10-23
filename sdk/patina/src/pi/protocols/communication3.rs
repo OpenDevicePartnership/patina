@@ -15,9 +15,11 @@
 use core::ffi::c_void;
 use r_efi::efi;
 
+/// MM Communication Protocol GUID.
 pub const PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0xf7234a14, 0x0df2, 0x46c0, 0xad, 0x28, &[0x90, 0xe6, 0xb8, 0x83, 0xa7, 0x2f]);
 
+/// MM Communicate Header V3 GUID.
 pub const COMMUNICATE_HEADER_V3_GUID: efi::Guid =
     efi::Guid::from_fields(0x68e8c853, 0x2ba9, 0x4dd7, 0x9a, 0xc0, &[0x91, 0xe1, 0x61, 0x55, 0xc9, 0x35]);
 
@@ -63,11 +65,15 @@ pub type Communicate3 = extern "efiapi" fn(
 ) -> efi::Status;
 
 #[repr(C)]
+/// MM Communication Protocol structure.
 pub struct Protocol {
+    /// Communicate with the MM environment (v3).
+    /// See [`Communicate3`] for more details.
     pub communicate3: Communicate3,
 }
 
 #[repr(C)]
+/// MM communication header structure.
 pub struct EfiMmCommunicateHeader {
     /// Indicator GUID for MM core that the communication buffer is compliant with this v3 header.
     /// Must be COMMUNICATE_HEADER_V3_GUID.

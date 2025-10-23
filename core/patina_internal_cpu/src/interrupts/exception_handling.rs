@@ -10,7 +10,6 @@
 
 use patina::error::EfiError;
 use patina::pi::protocols::cpu_arch::EfiExceptionType;
-use patina_paging::page_allocator::PageAllocator;
 use spin::rwlock::RwLock;
 
 use crate::interrupts::EfiExceptionStackTrace;
@@ -117,15 +116,6 @@ extern "efiapi" fn exception_handler(exception_type: usize, context: &mut Except
     }
 }
 
-#[allow(dead_code)]
-pub(crate) struct FaultAllocator {}
-
-impl PageAllocator for FaultAllocator {
-    fn allocate_page(&mut self, _align: u64, _size: u64, _contiguous: bool) -> patina_paging::PtResult<u64> {
-        Err(patina_paging::PtError::OutOfResources)
-    }
-}
-
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
@@ -153,6 +143,7 @@ mod tests {
 
     extern "efiapi" fn test_callback(exception_type: EfiExceptionType, _context: EfiSystemContext) {
         assert!(exception_type == CALLBACK_EXCEPTION as EfiExceptionType);
+        // SAFETY: This is a test only static mutable variable.
         unsafe { CALLBACK_INVOKED = true };
     }
 
@@ -167,6 +158,7 @@ mod tests {
         register_exception_handler(CALLBACK_EXCEPTION, HandlerType::UefiRoutine(test_callback))
             .expect_err("Allowed double register!");
         exception_handler(CALLBACK_EXCEPTION, &mut context);
+        // SAFETY: This is a test only static mutable variable.
         assert!(unsafe { CALLBACK_INVOKED });
         unregister_exception_handler(CALLBACK_EXCEPTION).expect("Failed to unregister handler!");
         unregister_exception_handler(CALLBACK_EXCEPTION).expect_err("Allowed double unregister!");

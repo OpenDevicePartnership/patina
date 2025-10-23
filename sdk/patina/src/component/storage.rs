@@ -603,7 +603,7 @@ mod tests {
     #[test]
     fn test_hob_functionality() {
         use crate as patina;
-        #[derive(Copy, Clone, FromHob)]
+        #[derive(FromHob, zerocopy_derive::FromBytes)]
         #[repr(C)]
         #[hob = "12345678-1234-1234-1234-123456789012"]
         struct MyStruct;

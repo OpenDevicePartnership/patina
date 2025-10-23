@@ -42,7 +42,7 @@ patina_internal_device_path = { version = "12.1.0", path = "core/patina_internal
 patina_lzma_rs = { version = "0.3.1", default-features = false }
 patina_macro = { version = "12.1.0", path = "sdk/patina_macro" }
 patina_mtrr = { version = "1.0.0" }
-patina_paging = { version = "9" }
+patina_paging = { version = "^9.0.3" }
 patina_performance = { version = "12.1.0", path = "components/patina_performance" }
 patina_stacktrace = { version = "12.1.0", path = "core/patina_stacktrace" }
 proc-macro2 = { version = "1" }

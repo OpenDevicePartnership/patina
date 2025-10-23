@@ -27,6 +27,7 @@ use core::ffi::c_void;
 
 use r_efi::efi;
 
+/// Security2 Arch Protocol GUID.
 pub const PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0x94ab2f58, 0x1438, 0x4ef1, 0x91, 0x52, &[0x18, 0x94, 0x1a, 0x3a, 0x0e, 0x68]);
 
@@ -87,5 +88,6 @@ pub type EfiSecurity2FileAuthentication = extern "efiapi" fn(
 /// or registered hashes).
 #[repr(C)]
 pub struct Protocol {
+    /// Function to check file authentication state. See [`EfiSecurity2FileAuthentication`] for more details.
     pub file_authentication: EfiSecurity2FileAuthentication,
 }

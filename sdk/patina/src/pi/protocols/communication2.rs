@@ -15,6 +15,7 @@
 use core::ffi::c_void;
 use r_efi::efi;
 
+/// MM Communication Protocol GUID.
 pub const PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0x378daedc, 0xf06b, 0x4446, 0x83, 0x14, &[0x40, 0xab, 0x93, 0x3c, 0x87, 0xa3]);
 
@@ -58,6 +59,9 @@ pub type Communicate2 = extern "efiapi" fn(
 ) -> efi::Status;
 
 #[repr(C)]
+/// MM Communication Protocol structure.
 pub struct Protocol {
+    /// Communicate with the MM environment (v2).
+    /// See [`Communicate2`] for more details.
     pub communicate2: Communicate2,
 }

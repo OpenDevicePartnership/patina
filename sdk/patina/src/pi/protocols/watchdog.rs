@@ -50,7 +50,10 @@ pub type GetTimerPeriod = extern "efiapi" fn(*const Protocol, *mut u64) -> efi::
 /// UEFI Platform Initialization Specification, Release 1.8, Section II-12.14.1
 #[repr(C)]
 pub struct Protocol {
+    /// Registers a handler function for watchdog timer expiry.
     pub register_handler: RegisterHandler,
+    /// Sets the period of the watchdog timer.
     pub set_timer_period: SetTimerPeriod,
+    /// Gets the current period of the watchdog timer.
     pub get_timer_period: GetTimerPeriod,
 }

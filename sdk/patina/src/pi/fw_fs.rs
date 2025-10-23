@@ -1,8 +1,12 @@
-//! Firmware Filesystem
+//! Firmware File System (FFS)
 //!
-//! Exports services used to interact with the Firmware Filesystem (FFS).
+//! Provides services for interacting with the Firmware File System described
+//! in the UEFI Platform Initialization spec. The FFS defines how firmware files
+//! are organized within firmware volumes, including file headers, sections,
+//! and the overall storage layout. This module enables parsing and
+//! manipulation of FFS structures for firmware volume management.
 //!
-//! See <https://uefi.org/specs/PI/1.8A/V3_Design_Discussion.html#firmware-storage-introduction>.
+//! Based on the UEFI Platform Initialization Specification Volume III.
 //!
 //! ## License
 //!
@@ -43,19 +47,29 @@ use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
 use num_traits::WrappingSub;
 use r_efi::efi;
 
+/// Well-known GUIDs for firmware file system encapsulation and compression section types.
+///
+/// These GUIDs identify the compression algorithm or encapsulation format used in GUID-defined
+/// sections within the Firmware File System. Based on the PI Specification Volume 3.
 pub mod guid {
     use r_efi::efi;
 
+    /// GUID for Brotli compressed sections.
     pub const BROTLI_SECTION: efi::Guid =
         efi::Guid::from_fields(0x3D532050, 0x5CDA, 0x4FD0, 0x87, 0x9E, &[0x0F, 0x7F, 0x63, 0x0D, 0x5A, 0xFB]);
+    /// GUID for CRC32 checksum sections.
     pub const CRC32_SECTION: efi::Guid =
         efi::Guid::from_fields(0xFC1BCDB0, 0x7D31, 0x49aa, 0x93, 0x6A, &[0xA4, 0x60, 0x0D, 0x9D, 0xD0, 0x83]);
+    /// GUID for LZMA compressed sections.
     pub const LZMA_SECTION: efi::Guid =
         efi::Guid::from_fields(0xEE4E5898, 0x3914, 0x4259, 0x9D, 0x6E, &[0xDC, 0x7B, 0xD7, 0x94, 0x03, 0xCF]);
+    /// GUID for LZMA F86 compressed sections.
     pub const LZMA_F86_SECTION: efi::Guid =
         efi::Guid::from_fields(0xD42AE6BD, 0x1352, 0x4BFB, 0x90, 0x9A, &[0xCA, 0x72, 0xA6, 0xEA, 0xE8, 0x89]);
+    /// GUID for LZMA parallel compressed sections.
     pub const LZMA_PARALLEL_SECTION: efi::Guid =
         efi::Guid::from_fields(0xBD9921EA, 0xED91, 0x404A, 0x8B, 0x2F, &[0xB4, 0xD7, 0x24, 0x74, 0x7C, 0x8C]);
+    /// GUID for Tiano decompression sections.
     pub const TIANO_DECOMPRESS_SECTION: efi::Guid =
         efi::Guid::from_fields(0xA31280AD, 0x481E, 0x41B6, 0x95, 0xE8, &[0x12, 0x7F, 0x4C, 0x98, 0x47, 0x79]);
 }
@@ -117,6 +131,13 @@ impl SectionExtractor for NullSectionExtractor {
     }
 }
 
+/// Firmware Volume Extension Header
+///
+/// Contains the firmware volume extension header information including the unique
+/// firmware volume name GUID and extension header data. The extension header
+/// provides additional metadata beyond the standard firmware volume header.
+///
+/// Based on the PI Specification Volume 3, Section 3.2.2 - EFI_FIRMWARE_VOLUME_EXT_HEADER.
 #[derive(Clone)]
 pub struct FirmwareVolumeExtHeader<'a> {
     header: fv::ExtHeader,
@@ -585,12 +606,32 @@ impl<'a> File<'a> {
         self.data
     }
 
-    // Returns an iterator over the sections of this file (without extracting encapsulation sections).
+    /// Returns an iterator over the sections of this file without extracting encapsulation sections.
+    ///
+    /// This is a convenience method that uses a null extractor, which means encapsulation sections
+    /// (compression, GUID-defined) are returned as opaque sections without extracting their contents.
+    /// For full section extraction, use [`File::section_iter_with_extractor`].
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding `Result<Section, efi::Status>` for each section found in the file.
     pub fn section_iter(&self) -> impl Iterator<Item = Result<Section, efi::Status>> + '_ {
         self.section_iter_with_extractor(&NullSectionExtractor {})
     }
 
-    // Returns an iterator over the sections of this file, extracting encapsulation sections with the given extractor.
+    /// Returns an iterator over the sections of this file, extracting encapsulation sections with the given extractor.
+    ///
+    /// Iterates through all sections in the firmware file. When an encapsulation section is encountered
+    /// (compression or GUID-defined), the provided extractor is called to decompress or extract the
+    /// encapsulated content, allowing iteration into nested sections.
+    ///
+    /// # Arguments
+    ///
+    /// * `extractor` - Implementation of [`SectionExtractor`] that handles decompression/extraction
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding `Result<Section, efi::Status>` for each section, including extracted nested sections.
     pub fn section_iter_with_extractor<'b>(
         &'b self,
         extractor: &'b dyn SectionExtractor,
@@ -617,10 +658,15 @@ impl fmt::Debug for File<'_> {
 /// Describes the meta data in the section header (if any - most section types do not have metadata).
 #[derive(Debug, Clone)]
 pub enum SectionMetaData {
+    /// No metadata present (most common section types)
     None,
+    /// Compression metadata with algorithm and uncompressed length
     Compression(FfsSectionHeader::Compression),
+    /// GUID-defined encapsulation with processing GUID and extended header data
     GuidDefined(FfsSectionHeader::GuidDefined, Box<[u8]>),
+    /// Version metadata with version string
     Version(FfsSectionHeader::Version),
+    /// Freeform subtype GUID for application-specific section identification
     FreeformSubtypeGuid(FfsSectionHeader::FreeformSubtypeGuid),
 }
 
@@ -802,6 +848,11 @@ impl Section {
     pub fn section_data(&self) -> &[u8] {
         &self.data
     }
+
+    /// Returns the total size of this section in bytes.
+    ///
+    /// The section size includes the section header and all section data. For encapsulation
+    /// sections, this is the size of the encapsulated data, not the extracted data.
     pub fn section_size(&self) -> usize {
         self.section_size
     }
@@ -825,6 +876,7 @@ struct FvFileIterator<'a> {
 }
 
 impl<'a> FvFileIterator<'a> {
+    /// Create a new firmware volume file iterator instance
     pub fn new(buffer: &'a [u8], erase_byte: u8) -> Self {
         FvFileIterator { buffer, erase_byte, next_offset: 0, error: false }
     }
@@ -874,6 +926,7 @@ struct FileSectionIterator<'a> {
 }
 
 impl<'a> FileSectionIterator<'a> {
+    /// Create a new firmware file section iterator instance
     pub fn new(buffer: &'a [u8], extractor: &'a dyn SectionExtractor) -> Self {
         FileSectionIterator {
             buffer,

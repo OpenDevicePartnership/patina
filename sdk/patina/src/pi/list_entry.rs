@@ -16,7 +16,10 @@
 
 #[repr(C)]
 #[derive(Debug)]
+/// Doubly-linked list entry.
 pub struct Entry {
+    /// Forward link pointer to the next entry in the list.
     pub forward_link: *mut Entry,
+    /// Backward link pointer to the previous entry in the list.
     pub back_link: *mut Entry,
 }

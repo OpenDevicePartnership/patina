@@ -14,9 +14,11 @@
 use core::ffi::c_void;
 use r_efi::{efi, system};
 
+/// MM Communication Protocol GUID.
 pub const PROTOCOL_GUID: efi::Guid =
     efi::Guid::from_fields(0xc68ed8e2, 0x9dc6, 0x4cbd, 0x9d, 0x94, &[0xdb, 0x65, 0xac, 0xc5, 0xc3, 0x32]);
 
+/// MM Initialization GUID.
 pub const EFI_MM_INITIALIZATION_GUID: efi::Guid =
     efi::Guid::from_fields(0x99be0d8f, 0x3548, 0x48aa, 0xb5, 0x77, &[0xfc, 0xfb, 0xa5, 0x6a, 0x67, 0xf7]);
 
@@ -78,12 +80,16 @@ pub type Communicate =
     extern "efiapi" fn(this: *const Protocol, comm_buffer: *mut c_void, comm_size: usize) -> efi::Status;
 
 #[repr(C)]
+/// MM Communication Protocol structure.
 pub struct Protocol {
+    /// Communicate with the MM environment.
+    /// See [`Communicate`] for more details.
     pub communicate: Communicate,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
+/// MM communication header structure.
 pub struct EfiMmCommunicateHeader {
     /// To avoid confusion in interpreting frames, the communication buffer should always begin with the header.
     pub header_guid: r_efi::base::Guid,
@@ -94,6 +100,7 @@ pub struct EfiMmCommunicateHeader {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
+/// MM initialization header structure.
 pub struct EfiMmInitializationHeader {
     /// To avoid confusion in interpreting frames, the communication buffer should always begin with the header.
     pub comm_header: EfiMmCommunicateHeader,

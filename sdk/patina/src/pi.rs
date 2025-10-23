@@ -27,8 +27,6 @@
 //! reflect the degree of change.
 //!
 
-#![allow(missing_docs)]
-
 mod boot_mode;
 
 pub mod dxe_services;

@@ -17,19 +17,20 @@
 use patina::component::prelude::*;
 use patina::component::{IntoComponent, Storage};
 use patina::{Guid, OwnedGuid};
+use zerocopy::FromBytes;
 
 /// This struct represents a custom HOB that is a simple cast and does not require any special handling or parsing.
 /// Due to this, The `FromHob` trait can be derived automatically. The `Copy` trait is required for this type so that
 /// the core can copy it and not worry about the underlying bytes staying valid. If a guided HOB with the below GUID is
 /// found in the HOB list, this parser will automatically run and parse the HOB into this struct.
-#[derive(Debug, Clone, Copy, FromHob)]
+#[derive(Debug, FromHob, FromBytes)]
 #[repr(C)]
 #[hob = "00000000-0000-0000-0000-000000000001"]
 pub struct CustomHob1 {
     pub data1: u32,
     pub data2: u32,
     pub data3: u64,
-    pub data4: bool,
+    pub data4: u8,
     padding: [u8; 7],
 }
 
@@ -87,7 +88,7 @@ pub struct HobToConfigConverter;
 
 impl HobToConfigConverter {
     fn entry_point(self, hob: Hob<CustomHob1>, mut cfg: ConfigMut<BooleanConfig>) -> Result<()> {
-        cfg.0 = hob.data4;
+        cfg.0 = hob.data4 != 0;
         println!("  Hob data converted to config. Config Value: {:?}", cfg.0);
 
         // Mark this configuration as final, so that it cannot be modified further. No other component that consumes this
@@ -110,8 +111,8 @@ fn main() {
     util::setup_storage(
         &mut storage,
         vec![
-            util::Custom::Hob1(CustomHob1 { data1: 42, data2: 100, data3: 50, data4: true, padding: [0; 7] }),
-            util::Custom::Hob1(CustomHob1 { data1: 43, data2: 101, data3: 10, data4: false, padding: [0; 7] }),
+            util::Custom::Hob1(CustomHob1 { data1: 42, data2: 100, data3: 50, data4: 1, padding: [0; 7] }),
+            util::Custom::Hob1(CustomHob1 { data1: 43, data2: 101, data3: 10, data4: 0, padding: [0; 7] }),
             util::Custom::Hob2(CustomHob2("Hello".to_string())),
         ],
     );
@@ -177,7 +178,7 @@ mod util {
         data.extend_from_slice(&hob.data1.to_le_bytes());
         data.extend_from_slice(&hob.data2.to_le_bytes());
         data.extend_from_slice(&hob.data3.to_le_bytes());
-        data.push(hob.data4 as u8);
+        data.push(hob.data4);
         data.extend_from_slice(&hob.padding);
 
         let as_slice = Box::leak(data.into_boxed_slice());
