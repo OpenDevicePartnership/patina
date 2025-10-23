@@ -63,19 +63,10 @@ doc = ["patina_internal_cpu/doc"]
 compatibility_mode_allowed = []
 
 # Resource Descriptor HOB Version Support
-# =======================================
+# ---------------------------------------
 # Controls which ResourceDescriptor HOB formats are supported by the DXE Core.
 #
-# Default behavior (no flags):
-#   - Process V2 ResourceDescriptor HOBs with cache attributes support
-#   - Log informational messages when V1 HOBs are encountered
-#   - V1 HOBs are processed for backward compatibility
-#
-# v1_resource_descriptor_support = true:
-#   - Process ONLY V1 ResourceDescriptor HOBs (legacy platforms)
-#   - Skip V2 HOBs completely with warning messages
-#   - No cache attributes support (V1 limitation)
-#
-# This design provides clean separation between V1 and V2 code paths
-# while maintaining shared GCD processing logic for both versions.
+# By default: Only V2 ResourceDescriptor HOBs (with cache attributes) are processed.
+# Enabling v1_resource_descriptor_support: Only V1 ResourceDescriptor HOBs are processed (legacy/compatibility mode).
+# V1 and V2 code paths are strictly separated at compile time. shared GCD logic is reused.
 v1_resource_descriptor_support = []

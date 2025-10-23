@@ -143,52 +143,22 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         })
         .expect("Failed to find PHIT Hob");
 
-    log::warn!("RUST DXE CORE: PHIT HOB found successfully");
-
     let free_memory_start = align_up(phit.free_memory_bottom, 0x1000).expect("Unaligned free memory bottom");
     let free_memory_size =
         align_down(phit.free_memory_top, 0x1000).expect("Unaligned free memory top") - free_memory_start;
 
     //Iterate over the hob list and map resource descriptor HOBs into the GCD.
     for hob in hob_list.iter() {
-        // Simple log to confirm we're processing HOBs
-        log::warn!("RUST DXE CORE: Processing a HOB in the list");
-
         let mut gcd_mem_type: GcdMemoryType = GcdMemoryType::NonExistent;
         let mut resource_attributes: u32 = 0;
 
-        // =====================================================================
-        // ResourceDescriptor HOB Processing with Clean V1/V2 Separation
-        // =====================================================================
-        // This implementation uses conditional compilation to provide clean
-        // separation between V1 and V2 ResourceDescriptor HOB processing:
-        //
-        // Default Mode (V2 Support):
-        //   - Processes V2 HOBs with cache attributes support
-        //     V2 HOBs provide enhanced memory attribute and security features for modern UEFI platforms.
-        //     This code path ensures that all V2-specific attributes are handled correctly for compatibility.
-        //   - Processes V1 HOBs for backward compatibility (logs info message)
-        //   - Cache attributes extracted from V2, defaulted to 0 for V1
-        //
-        // Legacy Mode (v1_resource_descriptor_support feature):
-        //   - Processes ONLY V1 HOBs (legacy platform support)
-        //   - Skips V2 HOBs with warning (ensures V1-only behavior)
-        //   - No cache attributes support (V1 limitation)
-        //
-        // Benefits:
-        //   - Zero runtime overhead: No if/else branching in hot path
-        //   - Clean code paths: V1 and V2 logic completely separated
-        //   - Shared business logic: GCD operations remain common
-        //   - Future-proof: Easy to deprecate V1 support later
-        // =====================================================================
+        // ResourceDescriptor HOB processing: V1/V2 logic is separated by feature flags. See module-level docs above for details.
 
         // Parse ResourceDescriptor HOB using feature-specific function
-        let (res_desc, cache_attributes) = if let Some(parsed) = parse_resource_descriptor_hob(hob) {
-            log::warn!("RUST DXE CORE: Found ResourceDescriptor HOB - processing it");
-            parsed
-        } else {
-            // Not a resource descriptor HOB or unsupported version for this build
-            continue;
+        let (res_desc, cache_attributes) = match parse_resource_descriptor_hob(hob) {
+            Some((desc, Some(attrs))) => (desc, attrs),
+            Some((desc, None)) => (desc, 0u64),
+            None => continue, // Not a resource descriptor HOB or unsupported version for this build
         };
 
         // =====================================================================
@@ -436,21 +406,15 @@ pub(crate) fn activate_compatibility_mode() {
 ///
 /// Returns: Some((ResourceDescriptor, cache_attributes)) or None if not a V2 resource descriptor
 #[cfg(not(feature = "v1_resource_descriptor_support"))]
-fn parse_resource_descriptor_hob(hob: &Hob) -> Option<(hob::ResourceDescriptor, u64)> {
+fn parse_resource_descriptor_hob(hob: &Hob) -> Option<(hob::ResourceDescriptor, Option<u64>)> {
     match hob {
         Hob::ResourceDescriptorV2(v2_res_desc) => {
             // V2 platforms: Only process V2 HOBs
-            log::info!(
-                "Processing V2 Resource Descriptor HOB at {:#x} length {:#x} with cache attributes {:#x}",
-                v2_res_desc.v1.physical_start,
-                v2_res_desc.v1.resource_length,
-                v2_res_desc.attributes
-            );
-            Some((v2_res_desc.v1, v2_res_desc.attributes))
+            let attrs = if v2_res_desc.attributes != 0 { Some(v2_res_desc.attributes) } else { None };
+            Some((v2_res_desc.v1, attrs))
         }
         Hob::ResourceDescriptor(_) => {
             // V2 platforms: Ignore V1 HOBs completely
-            log::warn!("Ignoring V1 Resource Descriptor HOB on V2-only platform");
             None
         }
         _ => None, // Not a resource descriptor HOB
@@ -465,21 +429,15 @@ fn parse_resource_descriptor_hob(hob: &Hob) -> Option<(hob::ResourceDescriptor, 
 ///
 /// Returns: Some((ResourceDescriptor, cache_attributes)) or None if not a V1 resource descriptor
 #[cfg(feature = "v1_resource_descriptor_support")]
-fn parse_resource_descriptor_hob(hob: &Hob) -> Option<(hob::ResourceDescriptor, u64)> {
+fn parse_resource_descriptor_hob(hob: &Hob) -> Option<(hob::ResourceDescriptor, Option<u64>)> {
     match hob {
         Hob::ResourceDescriptor(v1_res_desc) => {
             // Legacy platforms: Process V1 HOBs normally
             // No migration messages - this is expected behavior for V1-only platforms
-            log::info!(
-                "Processing V1 ResourceDescriptor HOB (V1-only mode active) at {:#x}",
-                v1_res_desc.physical_start
-            );
-            Some((**v1_res_desc, 0u64)) // V1 HOBs have no cache attributes
+            Some((**v1_res_desc, None)) // V1 HOBs have no cache attributes
         }
         Hob::ResourceDescriptorV2(_) => {
-            // Legacy platforms: V2 HOBs are not supported - ignore with warning
-            // This prevents processing of newer HOB formats on legacy platforms
-            log::warn!("Ignoring V2 Resource Descriptor HOB on V1-only platform - check platform configuration");
+            // Legacy platforms: V2 HOBs are not supported - ignore
             None
         }
         _ => None, // Not a resource descriptor HOB
