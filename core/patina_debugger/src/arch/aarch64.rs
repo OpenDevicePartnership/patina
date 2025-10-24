@@ -105,10 +105,10 @@ impl DebuggerArch for Aarch64Arch {
                 exception_info.context.elr += instruction_size as u64;
             }
 
-            // Always clear the ICache and TLB since the debugger may have altered
-            // instructions or the page tables.
+            // Always clear the ICache since the debugger may have altered instructions.
+            // SAFETY: This is an architecturally defined mechanism to clear the ICache.
             unsafe {
-                asm!("dsb sy", "ic iallu", "tlbi alle2", "dsb sy", "isb sy");
+                asm!("ic iallu", "isb sy");
             }
         }
     }
@@ -245,8 +245,14 @@ impl DebuggerArch for Aarch64Arch {
                 print_sysreg!(daif, out);
                 print_sysreg!(hcr_el2, out);
             }
+            Some("flush_tlb") => {
+                // SAFETY: This is the architecturally defined way to flush the TLB
+                unsafe {
+                    asm!("tlbi alle2", "dsb sy", "isb sy", options(nostack, nomem));
+                }
+            }
             _ => {
-                let _ = out.write_str("Unknown AArch64 monitor command. Supported commands: regs");
+                let _ = out.write_str("Unknown AArch64 monitor command. Supported commands: regs, flush_tlb");
             }
         }
     }
