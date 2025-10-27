@@ -122,13 +122,8 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
             None => continue, // Not a resource descriptor HOB or unsupported version for this build
         };
 
-        // =====================================================================
-        // Shared GCD Processing Logic (Common to V1 and V2)
-        // =====================================================================
-        // All memory mapping, attribute setting, and GCD operations below
-        // are identical regardless of HOB version, ensuring consistent
-        // behavior while minimizing code duplication.
-        // =====================================================================
+    // Shared GCD logic: identical for V1/V2 HOBs.
+    // This ensures consistent behavior and completeness if logic changes.
         let mem_range = res_desc.physical_start
             ..res_desc.physical_start.checked_add(res_desc.resource_length).expect("Invalid resource descriptor hob");
 
@@ -198,22 +193,12 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         }
 
         if gcd_mem_type != GcdMemoryType::NonExistent {
-            // =====================================================================
-            // Memory Attributes Processing (Version-Agnostic)
-            // =====================================================================
-            // Extract cache attributes from the parsed HOB data:
-            // - V2 HOBs: cache_attributes contains actual cache settings
-            // - V1 HOBs: cache_attributes is 0 (no cache info available)
-            //
-            // This approach ensures consistent behavior regardless of HOB version
-            // while enabling cache attribute support when available.
-            // =====================================================================
 
-            // Extract cache attributes and add ReadProtect for system memory
+            // Extract cache attributes and add ReadProtect for system memory.
+            // If we are processing V1 HOBs, the cache attributes will be 0; that information is not passed.
             let mut memory_attributes = cache_attributes & efi::CACHE_ATTRIBUTE_MASK;
             if gcd_mem_type == GcdMemoryType::SystemMemory {
                 // Force all system memory to be RP by default (since none is allocated yet)
-                // This applies to both V1 and V2 HOBs for security
                 memory_attributes |= efi::MEMORY_RP;
             }
 
@@ -344,20 +329,9 @@ pub(crate) fn activate_compatibility_mode() {
     crate::memory_attributes_protocol::uninstall_memory_attributes_protocol();
 }
 
-// ...existing code...
-// =============================================================================
-// ResourceDescriptor HOB Parsing Functions
-// =============================================================================
-// These functions provide clean separation between V1 and V2 ResourceDescriptor
-// HOB processing using conditional compilation. Only one version is compiled
-// based on the feature flags, ensuring zero runtime overhead and clean code paths.
-//
-// Architecture Benefits:
-// - Zero runtime branching: Feature selection happens at compile time
-// - Clean code paths: V1 and V2 logic completely separated
-// - Minimal duplication: Only parsing logic is separate, GCD logic is shared
-// - Future-proof: Easy to remove V1 support when no longer needed
-// =============================================================================
+
+// ResourceDescriptor HOB parsing functions.
+// V1 and V2 parsing logic is separated using feature flags and conditional compilation.
 
 /// Parse ResourceDescriptor HOB for V2 platforms (default, always compiled)
 ///
