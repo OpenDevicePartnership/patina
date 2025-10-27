@@ -16,9 +16,11 @@ coverage:
     project:
       default:
         target: 80% # Target 80% coverage for the project
+        only_pulls: true
     patch:
       default:
         target: 80% # Target 80% coverage for the patch
+        only_pulls: true
 comment:
   layout: "condensed_header, condensed_files, condensed_footer"
   hide_project_coverage: true # Only show patch coverage in a PR comment
