@@ -1,4 +1,3 @@
-
 # Patina
 
 [![release]][_release]
@@ -10,6 +9,20 @@ This repository hosts the Patina project - a Rust implementation of UEFI firmwar
 
 The goal of this project is to serve as a replacement for core UEFI firmware components so they are written in Pure
 Rust as opposed to Rust wrappers around core implementation still written in C.
+
+---
+
+<center>
+<div align="center">
+
+Unsafe Code<br />
+
+[![overall_unsafe_code]][_overall_unsafe_code] [![fn_unsafe_code]][_fn_unsafe_code] [![expr_unsafe_code]][_expr_unsafe_code]
+
+[![impl_unsafe_code]][_impl_unsafe_code] [![traits_unsafe_code]][_traits_unsafe_code] [![methods_unsafe_code]][_methods_unsafe_code]
+
+</div>
+</center>
 
 ## Background
 
@@ -240,3 +253,16 @@ directory.
 [_ci]: https://github.com/OpenDevicePartnership/patina/actions/workflows/ci-workflow.yml
 [cov]: https://codecov.io/gh/OpenDevicePartnership/patina/graph/badge.svg?token=CWHWOUUGY6
 [_cov]: https://codecov.io/gh/OpenDevicePartnership/patina
+
+[overall_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_overall.json
+[_overall_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_overall.json
+[fn_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_functions.json
+[_fn_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_functions.json
+[expr_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_exprs.json
+[_expr_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_exprs.json
+[impl_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_item_impls.json
+[_impl_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_item_impls.json
+[traits_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_item_traits.json
+[_traits_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_item_traits.json
+[methods_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_methods.json
+[_methods_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_methods.json
