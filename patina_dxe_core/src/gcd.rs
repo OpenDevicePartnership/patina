@@ -1,39 +1,5 @@
 //! DXE Core Global Coherency Domain (GCD)
 //!
-//! ## ResourceDescriptor HOB Version Support
-//!
-//! This module implements clean separation between V1 and V2 ResourceDescriptor HOB processing
-//! using conditional compilation to provide optimal performance and maintainability.
-//!
-//! ### Architecture Overview
-//!
-//! - **Default Mode** (`cargo build`): V2 platform support
-//!   - Processes V2 ResourceDescriptor HOBs with cache attributes
-//!   - Maintains backward compatibility with V1 HOBs (logs migration suggestions)
-//!   - Zero runtime overhead for V2-only platforms
-//!
-//! - **Legacy Mode** (`cargo build --features v1_resource_descriptor_support`): V1 platform support
-//!   - Processes ONLY V1 ResourceDescriptor HOBs
-//!   - Ignores V2 HOBs completely (logs warnings)
-//!   - No cache attributes support (V1 limitation)
-//!
-//! ### Design Benefits
-//!
-//! 1. **Zero Runtime Overhead**: Feature selection happens at compile time
-//! 2. **Clean Code Paths**: V1 and V2 logic completely separated
-//! 3. **Minimal Duplication**: Only HOB parsing is separate (~10% of code)
-//! 4. **Shared Business Logic**: All GCD operations remain common
-//! 5. **Future-Proof**: Easy to deprecate V1 support when no longer needed
-//!
-//! ### Usage Examples
-//!
-//! ```bash
-//! # Modern V2 platform build (default)
-//! cargo build
-//!
-//! # Legacy V1 platform build
-//! cargo build --features v1_resource_descriptor_support
-//! ```
 //!
 //! ## License
 //!
@@ -125,12 +91,12 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
     // Test if V1 feature flag is working at all
     #[cfg(feature = "v1_resource_descriptor_support")]
     {
-        log::info!("RUST DXE CORE: V1 FEATURE IS ACTIVE!");
+        log::debug!("v1_resource_descriptor_support feature is active (V1 ResourceDescriptor HOBs only)");
     }
 
     #[cfg(not(feature = "v1_resource_descriptor_support"))]
     {
-        log::info!("RUST DXE CORE: V2 FEATURE IS ACTIVE!");
+        log::debug!("v1_resource_descriptor_support feature is NOT active (V2 ResourceDescriptor HOBs only)");
     }
 
     let phit = hob_list
@@ -423,7 +389,7 @@ fn parse_resource_descriptor_hob(hob: &Hob) -> Option<(hob::ResourceDescriptor, 
 ///
 /// This function provides V1-only behavior for legacy platforms:
 /// - V1 HOBs: Processed normally without any migration suggestions
-/// - V2 HOBs: Completely ignored with warning message
+/// - V2 HOBs: Completely ignored (no per-HOB warning is logged)
 ///
 /// Returns: Some((ResourceDescriptor, cache_attributes)) or None if not a V1 resource descriptor
 #[cfg(feature = "v1_resource_descriptor_support")]

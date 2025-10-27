@@ -148,7 +148,6 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
         reserved: Default::default(),
     };
 
-    // V2 HOBs use direct field assignments as per latest main branch
     let resource_descriptor1 = ResourceDescriptorV2 {
         v1: hob::ResourceDescriptor {
             header: header::Hob {
