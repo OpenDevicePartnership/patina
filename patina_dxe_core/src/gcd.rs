@@ -115,8 +115,6 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         let mut gcd_mem_type: GcdMemoryType = GcdMemoryType::NonExistent;
         let mut resource_attributes: u32 = 0;
 
-        // ResourceDescriptor HOB processing: V1/V2 logic is separated by feature flags. See module-level docs above for details.
-
         // Parse ResourceDescriptor HOB using feature-specific function
         let (res_desc, cache_attributes) = match parse_resource_descriptor_hob(hob) {
             Some((desc, Some(attrs))) => (desc, attrs),
