@@ -506,7 +506,8 @@ logic is reused for both modes.
 
 **How to enable V1 Resource Descriptor HOB support:**
 
-You can enable V1 Resource Descriptor HOB support by setting it as the default feature in your platform binary crate's `Cargo.toml` (e.g., `platform_patina_dxe_core/Cargo.toml`):
+You can enable V1 Resource Descriptor HOB support by setting it as the default feature in your platform binary crate's `Cargo.toml`
+(e.g., `platform_patina_dxe_core/Cargo.toml`):
 
 ```toml
 [features]
@@ -514,7 +515,8 @@ default = ["v1_resource_descriptor_support"]
 v1_resource_descriptor_support = []
 ```
 
-This will build and test the V1 code path by default, without needing to specify the feature flag on the command line. For production, remove it from the default list to restore V2 as the default.
+This will build and test the V1 code path by default, without needing to specify the feature flag on the command line.
+For production, remove it from the default list to restore V2 as the default.
 
 ## 10. Build Process and Validation
 
