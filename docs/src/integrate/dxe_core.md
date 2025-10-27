@@ -502,8 +502,19 @@ with cache attributes). The version supported is selected at compile time using 
   processed (for legacy platforms). V2 HOBs are ignored in this mode.
 
 The code paths for V1 and V2 are strictly separated at compile time for performance and maintainability. Shared GCD
-logic is reused for both modes. See the `Cargo.toml` and DXE Core source for details on enabling or disabling this
-feature.
+logic is reused for both modes.
+
+**How to enable V1 Resource Descriptor HOB support:**
+
+You can enable V1 Resource Descriptor HOB support by setting it as the default feature in your platform binary crate's `Cargo.toml` (e.g., `platform_patina_dxe_core/Cargo.toml`):
+
+```toml
+[features]
+default = ["v1_resource_descriptor_support"]
+v1_resource_descriptor_support = []
+```
+
+This will build and test the V1 code path by default, without needing to specify the feature flag on the command line. For production, remove it from the default list to restore V2 as the default.
 
 ## 10. Build Process and Validation
 

@@ -218,7 +218,7 @@ with cache attributes). The version supported is selected at compile time using 
 
 The code paths for V1 and V2 are strictly separated at compile time for performance and maintainability. Shared GCD
 logic is reused for both modes. See the `Cargo.toml` and DXE Core source for details on enabling or disabling this
-feature.
+feature. For instructions on enabling or disabling V1 Resource Descriptor HOB support, see the integration guide: [How to Setup and Integrate a Platform-Specific Patina DXE Core Build](./integrate/dxe_core.md).
 
 #### Rust DXE Scaling Plan
 

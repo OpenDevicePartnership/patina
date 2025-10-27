@@ -88,7 +88,6 @@ pub fn init_paging(hob_list: &HobList) {
 }
 
 pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
-    // Test if V1 feature flag is working at all
     #[cfg(feature = "v1_resource_descriptor_support")]
     {
         log::debug!("v1_resource_descriptor_support feature is active (V1 ResourceDescriptor HOBs only)");
