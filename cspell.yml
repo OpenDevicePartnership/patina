@@ -20,8 +20,9 @@ ignorePaths:
   - "deny.toml"
   - "Makefile.toml"
   - "**/patina_debugger/src/arch/xml/**"
+  - "supply-chain/**"
 # ignore hex numbers, asm blocks and patterns like xxxx'xxxxx used in describing bit patterns
-ignoreRegExpList: 
+ignoreRegExpList:
   - "/0x[0-9a-fA-F]+/"
   - ".*asm!\\([\\s\\S]*?\\);"
   - ".*'x*"

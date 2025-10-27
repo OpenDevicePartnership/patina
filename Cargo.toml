@@ -68,7 +68,7 @@ serial_test = { version = "3.0" }
 winapi = { version = "0.3" }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_yaml = { version = "0.9" }
-serde_json = { version = "1.0", default-features = false }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 lzma-rs = { version = "0.3" }
 
 [profile.release]

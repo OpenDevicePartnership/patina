@@ -5,9 +5,6 @@
     "check",
     "--message-format=json"
   ],
-  "vscode-nmake-tools.workspaceBuildDirectories": [
-    "."
-  ],
   "rust-analyzer.cargo.targetDir": true,
   "rust-analyzer.runnables.extraEnv": {
     "RUSTC_BOOTSTRAP": "1"

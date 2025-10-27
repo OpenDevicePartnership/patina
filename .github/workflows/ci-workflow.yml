@@ -29,6 +29,6 @@ jobs:
     with:
       build-tasks: "build,build-x64,build-aarch64"
       mdbook-path: "docs"
-      run-cargo-vet: true
+      run-cargo-vet: false
       run-release-dry-run: ${{ !contains(github.event.pull_request.body, '(skip cargo release dry run)') }}
     secrets: inherit

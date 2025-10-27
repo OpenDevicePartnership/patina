@@ -74,13 +74,12 @@ impl DebuggerArch for X64Arch {
             }
         }
 
-        // Always invalidate the TLB in case mappings were changed. The instruction
-        // cache doesn't need to be flushed since it should already be invalidated
-        // by the write according to the Intel SDM Vol 3 section 11.6. The CR3
-        // write is also serializing so no barriers are needed.
-        // SAFETY: This is an architecturally defined operation to flush the TLB.
+        // Always clear the instruction cache since the debugger may have altered instructions. This has the side effect
+        // of also clearing the data cache because on x64 this cannot be done separately.
+        // SAFETY: This is an architecturally defined operation to flush the caches and wbinvd is a serializing
+        // instruction.
         unsafe {
-            asm!("mov {0}, cr3", "mov cr3, {0}", out(reg) _);
+            asm!("wbinvd");
         }
     }
 
@@ -184,8 +183,15 @@ impl DebuggerArch for X64Arch {
                 }
                 let _ = write!(out, "GDT: {gdtr:#x?}");
             }
+            Some("flush_tlb") => {
+                // SAFETY: We are simply reading and writing back the same CR3. This has the side effect of flushing
+                // the TLB.
+                unsafe {
+                    asm!("mov {0}, cr3", "mov cr3, {0}", out(reg) _, options(nostack, nomem));
+                }
+            }
             _ => {
-                let _ = out.write_str("Unknown X64 monitor command. Supported commands: regs");
+                let _ = out.write_str("Unknown X64 monitor command. Supported commands: regs, flush_tlb");
             }
         }
     }

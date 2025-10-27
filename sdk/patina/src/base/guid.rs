@@ -145,7 +145,7 @@ impl From<GuidError> for EfiError {
 /// - Use [`OwnedGuid::try_from_string`] to create owned GUIDs from string representations
 ///
 /// String construction is fallible and will return a [`GuidError`] if the input is invalid.
-#[derive(Clone)]
+#[derive(Clone, PartialOrd)]
 pub enum Guid<'a> {
     /// GUID from an existing `efi::Guid` reference with lifetime `'a`
     Borrowed(&'a efi::Guid),
@@ -214,6 +214,28 @@ impl BinaryGuid {
     /// Create a BinaryGuid from a 16-byte array.
     pub fn from_bytes(bytes: &[u8; 16]) -> Self {
         Self(efi::Guid::from_bytes(bytes))
+    }
+
+    /// Create a new Guid from a string representation
+    pub const fn try_from_string(s: &str) -> core::result::Result<BinaryGuid, GuidError> {
+        match guid_from_str(s) {
+            Ok(g) => Ok(BinaryGuid(g)),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Create a new BinaryGuid from a string representation, panicking on invalid input.
+    pub const fn from_string(s: &str) -> BinaryGuid {
+        match Self::try_from_string(s) {
+            Ok(guid) => guid,
+            Err(_) => panic!("Invalid GUID string"),
+        }
+    }
+
+    /// Get the canonical GUID representation as a formatted string.
+    pub fn to_canonical_string(&self) -> [char; EXPECTED_HEX_CHARS] {
+        // Reuse the Guid implementation since the underlying efi::Guid is the same
+        self.as_guid().to_canonical_string()
     }
 
     /// Convert to the more ergonomic `Guid` wrapper for display and API usage.
@@ -390,15 +412,6 @@ impl<'a> Guid<'a> {
         }
     }
 
-    /// Helper function to convert a character to uppercase hex if it's a valid hex digit
-    fn to_upper_hex(c: char) -> Option<char> {
-        match c {
-            '0'..='9' | 'A'..='F' => Some(c),
-            'a'..='f' => Some((c as u8 - b'a' + b'A') as char),
-            _ => None,
-        }
-    }
-
     /// Gets the canonical GUID representation as a formatted string.
     /// Provides a consistent format for both Borrowed and Owned variants.
     fn to_canonical_string(&self) -> [char; EXPECTED_HEX_CHARS] {
@@ -460,74 +473,19 @@ impl OwnedGuid {
     /// This is useful for placeholder values and comparisons.
     pub const ZERO: OwnedGuid = Self::from_fields(0, 0, 0, 0, 0, [0; 6]);
 
-    /// Create a new Guid from a string representation, validating that it contains exactly 32 hex characters
-    pub fn try_from_string(s: &str) -> core::result::Result<OwnedGuid, GuidError> {
-        // Extract hex digits and convert them to uppercase
-        let mut hex_chars = [' '; EXPECTED_HEX_CHARS];
-        let mut hex_count = 0;
-
-        for (char_position, c) in s.chars().enumerate() {
-            let char_position = char_position + 1;
-            if let Some(upper_c) = Guid::to_upper_hex(c) {
-                if hex_count < EXPECTED_HEX_CHARS {
-                    hex_chars[hex_count] = upper_c;
-                    hex_count += 1;
-                } else {
-                    // More than 32 hex chars found - this is invalid
-                    return Err(GuidError::InvalidLength { expected: EXPECTED_HEX_CHARS, actual: hex_count + 1 });
-                }
-            } else if !c.is_ascii_whitespace() && c != '-' {
-                // Invalid character that's not whitespace or a dash
-                return Err(GuidError::InvalidHexCharacter { position: char_position, character: c });
-            }
+    /// Create a new OwnedGuid from a string representation.
+    pub const fn try_from_string(s: &str) -> core::result::Result<OwnedGuid, GuidError> {
+        match guid_from_str(s) {
+            Ok(g) => Ok(OwnedGuid::Owned(g)),
+            Err(e) => Err(e),
         }
-
-        // Exactly 32 hex digits should be present
-        if hex_count != EXPECTED_HEX_CHARS {
-            return Err(GuidError::InvalidLength { expected: EXPECTED_HEX_CHARS, actual: hex_count });
-        }
-
-        // Parse the hex characters into GUID fields and convert to bytes immediately
-        let time_low = Self::parse_hex::<u32>(&hex_chars[0..8]);
-        let time_mid = Self::parse_hex::<u16>(&hex_chars[8..12]);
-        let time_hi_and_version = Self::parse_hex::<u16>(&hex_chars[12..16]);
-        let clk_seq_hi_res = Self::parse_hex::<u8>(&hex_chars[16..18]);
-        let clk_seq_low = Self::parse_hex::<u8>(&hex_chars[18..20]);
-        let node = [
-            Self::parse_hex::<u8>(&hex_chars[20..22]),
-            Self::parse_hex::<u8>(&hex_chars[22..24]),
-            Self::parse_hex::<u8>(&hex_chars[24..26]),
-            Self::parse_hex::<u8>(&hex_chars[26..28]),
-            Self::parse_hex::<u8>(&hex_chars[28..30]),
-            Self::parse_hex::<u8>(&hex_chars[30..32]),
-        ];
-
-        let efi_guid =
-            r_efi::efi::Guid::from_fields(time_low, time_mid, time_hi_and_version, clk_seq_hi_res, clk_seq_low, &node);
-
-        Ok(Guid::Owned(efi_guid))
     }
 
-    /// Parse a hex string slice into a numeric value of type T (e.g., u8, u16, u32).
-    fn parse_hex<T>(hex_chars: &[char]) -> T
-    where
-        T: From<u8> + core::ops::Shl<usize, Output = T> + core::ops::BitOr<Output = T>,
-    {
-        let mut result = T::from(0);
-        for &c in hex_chars {
-            result = (result << 4) | T::from(Self::hex_char_to_value(c));
-        }
-        result
-    }
-
-    /// Convert a hex character to its numeric value (0-15).
-    /// Assumes the character is already validated as a valid hex digit.
-    fn hex_char_to_value(c: char) -> u8 {
-        match c {
-            '0'..='9' => c as u8 - b'0',
-            'A'..='F' => c as u8 - b'A' + 10,
-            'a'..='f' => c as u8 - b'a' + 10,
-            _ => 0, // Should never happen with validated input
+    /// Creates a new OwnedGuid from a string representation, panicking on invalid input.
+    pub const fn from_string(s: &str) -> OwnedGuid {
+        match Self::try_from_string(s) {
+            Ok(guid) => guid,
+            Err(_) => panic!("Invalid GUID string"),
         }
     }
 }
@@ -560,12 +518,6 @@ impl PartialEq for Guid<'_> {
 }
 
 impl Eq for Guid<'_> {}
-
-impl PartialOrd for Guid<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
 
 impl Ord for Guid<'_> {
     /// Compares two GUIDs using byte order.
@@ -605,6 +557,80 @@ impl<'a> TryFrom<&'a str> for OwnedGuid {
 
     fn try_from(s: &'a str) -> core::result::Result<Self, Self::Error> {
         OwnedGuid::try_from_string(s)
+    }
+}
+
+/// Macro to generate the boilerplate for parsing ASCII hex strings (as byte slices) to their numeric values.
+macro_rules! parse_hex {
+    ($chars:expr, $i:expr, $count:expr, $ty:ty) => {{
+        let mut value: $ty = 0;
+        let mut j = 0;
+        while j < $count {
+            let idx = $i + j;
+            value |= (char_to_val($chars[idx]) as $ty) << (4 * (($count - 1 - j) as u32));
+            j += 1;
+        }
+        value
+    }};
+}
+
+const fn guid_from_str(s: &str) -> core::result::Result<r_efi::efi::Guid, GuidError> {
+    let mut chars = [' '; EXPECTED_HEX_CHARS];
+    let mut char_count = 0;
+    let bytes = s.as_bytes();
+
+    let mut i = 0;
+    while i < s.len() {
+        if bytes[i] == b'-' || bytes[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+
+        if char_count >= EXPECTED_HEX_CHARS {
+            return Err(GuidError::InvalidLength { expected: EXPECTED_HEX_CHARS, actual: char_count + 1 });
+        }
+
+        if !bytes[i].is_ascii_hexdigit() {
+            return Err(GuidError::InvalidHexCharacter { position: i, character: bytes[i] as char });
+        }
+
+        chars[char_count] = bytes[i] as char;
+        char_count += 1;
+        i += 1;
+    }
+
+    if char_count != EXPECTED_HEX_CHARS {
+        return Err(GuidError::InvalidLength { expected: EXPECTED_HEX_CHARS, actual: char_count });
+    }
+
+    let time_low = parse_hex!(chars, 0, 8, u32);
+    let time_mid = parse_hex!(chars, 8, 4, u16);
+    let time_hi_and_version = parse_hex!(chars, 12, 4, u16);
+    let clk_seq_hi_res = parse_hex!(chars, 16, 2, u8);
+    let clk_seq_low = parse_hex!(chars, 18, 2, u8);
+    let node = [
+        parse_hex!(chars, 20, 2, u8),
+        parse_hex!(chars, 22, 2, u8),
+        parse_hex!(chars, 24, 2, u8),
+        parse_hex!(chars, 26, 2, u8),
+        parse_hex!(chars, 28, 2, u8),
+        parse_hex!(chars, 30, 2, u8),
+    ];
+
+    Ok(r_efi::efi::Guid::from_fields(time_low, time_mid, time_hi_and_version, clk_seq_hi_res, clk_seq_low, &node))
+}
+
+/// Converts a single hex character (represented as a char) to its corresponding u8 value
+///
+/// ## Panics
+///
+/// Panics if the character is not a valid hex character.
+const fn char_to_val(c: char) -> u8 {
+    match c {
+        '0'..='9' => c as u8 - b'0',
+        'a'..='f' => c as u8 - b'a' + 10,
+        'A'..='F' => c as u8 - b'A' + 10,
+        _ => panic!("Invalid hex character"),
     }
 }
 
@@ -648,7 +674,7 @@ mod tests {
         // Note: create_test_r_efi_guid() uses TEST_GUID_FIELDS which is the same GUID as TEST_GUID_STRING
         let r_efi_guid = create_test_r_efi_guid();
         let patina_guid_from_ref = Guid::from_ref(&r_efi_guid);
-        let patina_guid_from_string = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let patina_guid_from_string = OwnedGuid::from_string(TEST_GUID_STRING);
 
         // Both variants must return exactly 16 bytes
         assert_eq!(patina_guid_from_ref.as_bytes().len(), 16);
@@ -678,11 +704,11 @@ mod tests {
     #[test]
     fn patina_guid_roundtrip_consistency() {
         // Create a Patina GUID from string
-        let original_string_guid = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let original_string_guid = OwnedGuid::from_string(TEST_GUID_STRING);
 
         // Convert to a string with Display and back to a Patina GUID
         let display_string = format!("{}", original_string_guid);
-        let roundtrip_guid = OwnedGuid::try_from_string(&display_string).unwrap();
+        let roundtrip_guid = OwnedGuid::from_string(&display_string);
 
         assert_eq!(original_string_guid.as_bytes(), roundtrip_guid.as_bytes());
         assert_eq!(original_string_guid, roundtrip_guid);
@@ -691,7 +717,7 @@ mod tests {
         let r_efi_guid = create_test_r_efi_guid();
         let ref_guid = Guid::from_ref(&r_efi_guid);
         let ref_display = format!("{}", ref_guid);
-        let bytes_guid = OwnedGuid::try_from_string(&ref_display).unwrap();
+        let bytes_guid = OwnedGuid::from_string(&ref_display);
 
         assert_eq!(ref_guid.as_bytes(), bytes_guid.as_bytes());
         assert_eq!(ref_guid, bytes_guid);
@@ -699,9 +725,9 @@ mod tests {
 
     #[test]
     fn patina_guid_api_methods() {
-        let test_guid = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let test_guid = OwnedGuid::from_string(TEST_GUID_STRING);
         let r_efi_guid = create_test_r_efi_guid();
-        let ref_guid = Guid::from_ref(&r_efi_guid);
+        let ref_guid: Guid<'static> = r_efi_guid.into();
 
         // Test as_bytes() method consistency
         let bytes_from_string = test_guid.as_bytes();
@@ -722,7 +748,7 @@ mod tests {
     #[test]
     fn patina_guid_memory_efficiency() {
         // Test that our Patina GUID wrapper doesn't add excessive overhead
-        let patina_guid = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let patina_guid = OwnedGuid::from_string(TEST_GUID_STRING);
 
         // Verify that as_bytes() is consistent
         let bytes1 = patina_guid.as_bytes();
@@ -757,7 +783,7 @@ mod tests {
             _ => panic!("Expected Borrowed variant"),
         }
 
-        let bytes_guid = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let bytes_guid = OwnedGuid::from_string(TEST_GUID_STRING);
         match bytes_guid {
             Guid::Owned(_) => {}
             _ => panic!("Expected Owned variant"),
@@ -776,6 +802,16 @@ mod tests {
         let debug_bytes = format!("{:?}", bytes_guid);
         assert_eq!(debug_ref, debug_bytes);
         assert_eq!(debug_ref, TEST_GUID_STRING_UPPER);
+    }
+
+    #[test]
+    fn test_owned_guid_from_string_construction_failure_panic() {
+        let invalid_guid_str = "invalid-guid-string";
+        let result = std::panic::catch_unwind(|| {
+            OwnedGuid::from_string(invalid_guid_str);
+        });
+
+        assert!(result.is_err_and(|e| e.downcast_ref::<&'static str>() == Some(&"Invalid GUID string")));
     }
 
     #[test]
@@ -898,8 +934,8 @@ mod tests {
 
         assert_eq!(guid1, guid2);
 
-        let guid3 = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
-        let guid4 = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let guid3 = OwnedGuid::from_string(TEST_GUID_STRING);
+        let guid4 = OwnedGuid::from_string(TEST_GUID_STRING);
 
         assert_eq!(guid3, guid4);
     }
@@ -912,7 +948,7 @@ mod tests {
         let test_cases = [TEST_GUID_STRING, TEST_GUID_STRING_UPPER, TEST_GUID_STRING_NO_DASHES, TEST_GUID_STRING_MIXED];
 
         for input in test_cases {
-            let guid_from_string = OwnedGuid::try_from_string(input).unwrap();
+            let guid_from_string = OwnedGuid::from_string(input);
             assert_eq!(guid_from_ref, guid_from_string, "Failed for input: {}", input);
         }
     }
@@ -939,25 +975,12 @@ mod tests {
     fn canonical_string_conversion() {
         let r_efi_guid = create_test_r_efi_guid();
         let guid_from_ref = Guid::from_ref(&r_efi_guid);
-        let guid_from_string = OwnedGuid::try_from_string(TEST_GUID_STRING_MIXED).unwrap();
+        let guid_from_string = OwnedGuid::from_string(TEST_GUID_STRING_MIXED);
 
         let canonical1 = guid_from_ref.to_canonical_string();
         let canonical2 = guid_from_string.to_canonical_string();
 
         assert_eq!(canonical1, canonical2);
-    }
-
-    #[test]
-    fn hex_character_validation() {
-        assert_eq!(Guid::to_upper_hex('0'), Some('0'));
-        assert_eq!(Guid::to_upper_hex('9'), Some('9'));
-        assert_eq!(Guid::to_upper_hex('a'), Some('A'));
-        assert_eq!(Guid::to_upper_hex('f'), Some('F'));
-        assert_eq!(Guid::to_upper_hex('A'), Some('A'));
-        assert_eq!(Guid::to_upper_hex('F'), Some('F'));
-        assert_eq!(Guid::to_upper_hex('g'), None);
-        assert_eq!(Guid::to_upper_hex('-'), None);
-        assert_eq!(Guid::to_upper_hex(' '), None);
     }
 
     #[test]
@@ -968,7 +991,7 @@ mod tests {
 
         assert_eq!(guid1, guid2);
 
-        let guid3 = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let guid3 = OwnedGuid::from_string(TEST_GUID_STRING);
         let guid4 = guid3.clone();
 
         assert_eq!(guid3, guid4);
@@ -1053,7 +1076,7 @@ mod tests {
 
     #[test]
     fn c_interop_from_bytes_variant() {
-        let patina_guid = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let patina_guid = OwnedGuid::from_string(TEST_GUID_STRING);
 
         let patina_bytes = patina_guid.as_bytes();
         assert_eq!(patina_bytes.len(), 16);
@@ -1092,7 +1115,7 @@ mod tests {
     fn c_interop_cross_variant_compatibility() {
         let r_efi_guid = create_test_r_efi_guid();
         let from_ref_guid = Guid::from_ref(&r_efi_guid);
-        let from_bytes_guid = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let from_bytes_guid = OwnedGuid::from_string(TEST_GUID_STRING);
 
         let ref_bytes = from_ref_guid.as_bytes();
         let bytes_bytes = from_bytes_guid.as_bytes();
@@ -1130,7 +1153,7 @@ mod tests {
     fn c_interop_memory_alignment() {
         let r_efi_guid = create_test_r_efi_guid();
         let from_ref_guid = Guid::from_ref(&r_efi_guid);
-        let from_bytes_guid = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let from_bytes_guid = OwnedGuid::from_string(TEST_GUID_STRING);
 
         assert_eq!(align_of::<r_efi_base::Guid>(), align_of::<efi::Guid>());
         assert_eq!(size_of::<r_efi_base::Guid>(), size_of::<efi::Guid>());
@@ -1159,7 +1182,7 @@ mod tests {
     fn c_interop_uefi_byte_order() {
         let r_efi_guid = create_test_r_efi_guid();
         let from_ref_guid = Guid::from_ref(&r_efi_guid);
-        let from_bytes_guid = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let from_bytes_guid = OwnedGuid::from_string(TEST_GUID_STRING);
 
         // Breaking TEST_GUID_STRING into its little-endian byte representation
         let expected_bytes = [
@@ -1194,7 +1217,7 @@ mod tests {
         ];
 
         let guid_from_bytes = Guid::from_bytes(&test_bytes);
-        let guid_from_string = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let guid_from_string = OwnedGuid::from_string(TEST_GUID_STRING);
 
         // Both should produce the same result
         assert_eq!(guid_from_bytes, guid_from_string);
@@ -1268,6 +1291,22 @@ mod tests {
         let binary_guid = BinaryGuid::from_bytes(&test_bytes);
         assert_eq!(binary_guid.as_bytes(), &test_bytes);
         assert_eq!(binary_guid.as_fields(), TEST_GUID_FIELDS);
+    }
+
+    #[test]
+    fn binary_guid_try_from_string() {
+        let test_cases = [TEST_GUID_STRING, TEST_GUID_STRING_UPPER, TEST_GUID_STRING_NO_DASHES, TEST_GUID_STRING_MIXED];
+
+        for input in test_cases {
+            let result = BinaryGuid::try_from_string(input);
+            assert!(result.is_ok(), "Failed to parse valid GUID string: {}", input);
+
+            let binary_guid = result.unwrap();
+            assert_eq!(binary_guid.as_fields(), TEST_GUID_FIELDS);
+        }
+
+        let invalid_input = "invalid-guid-string";
+        assert!(BinaryGuid::try_from_string(invalid_input).is_err(), "Should have failed for invalid input");
     }
 
     #[test]
@@ -1366,7 +1405,7 @@ mod tests {
 
     #[test]
     fn binary_guid_from_guid_conversions() {
-        let owned_guid = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let owned_guid = OwnedGuid::from_string(TEST_GUID_STRING);
         let binary_guid_from_owned: BinaryGuid = owned_guid.into();
 
         assert_eq!(binary_guid_from_owned.as_fields(), TEST_GUID_FIELDS);
@@ -1427,7 +1466,7 @@ mod tests {
     fn binary_guid_partial_eq_with_guid() {
         let binary_guid =
             BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
-        let owned_guid = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let owned_guid = OwnedGuid::from_string(TEST_GUID_STRING);
 
         // BinaryGuid == Guid
         assert_eq!(binary_guid, owned_guid);
@@ -1441,7 +1480,7 @@ mod tests {
         assert_eq!(borrowed_guid, binary_guid);
 
         // Test inequality
-        let different_guid = OwnedGuid::try_from_string("12345678-1234-5678-90AB-CDEF12345678").unwrap();
+        let different_guid = OwnedGuid::from_string("12345678-1234-5678-90AB-CDEF12345678");
         assert_ne!(binary_guid, different_guid);
         assert_ne!(different_guid, binary_guid);
     }
@@ -1455,7 +1494,7 @@ mod tests {
         assert_eq!(display_string, TEST_GUID_STRING_UPPER);
 
         // Should match the display of equivalent Guid types
-        let owned_guid = OwnedGuid::try_from_string(TEST_GUID_STRING).unwrap();
+        let owned_guid = OwnedGuid::from_string(TEST_GUID_STRING);
         assert_eq!(format!("{}", binary_guid), format!("{}", owned_guid));
     }
 
@@ -1693,6 +1732,16 @@ mod tests {
     }
 
     #[test]
+    fn test_binary_guid_from_string_construction_failure_panic() {
+        let invalid_guid_str = "invalid-guid-string";
+        let result = std::panic::catch_unwind(|| {
+            BinaryGuid::from_string(invalid_guid_str);
+        });
+
+        assert!(result.is_err_and(|e| e.downcast_ref::<&'static str>() == Some(&"Invalid GUID string")));
+    }
+
+    #[test]
     fn binary_guid_into_inner() {
         let binary_guid =
             BinaryGuid::from_fields(0x550e8400, 0xe29b, 0x41d4, 0xa7, 0x16, &[0x44, 0x66, 0x55, 0x44, 0x00, 0x00]);
@@ -1757,5 +1806,17 @@ mod tests {
         assert_eq!(fields.0, 0xAABBCCDD);
         assert_eq!(fields.1, 0x1122);
         assert_eq!(fields.2, 0x3344);
+    }
+
+    #[test]
+    fn test_to_and_from_guid() {
+        let guid = BinaryGuid::from_string(TEST_GUID_STRING);
+        let guid_string = guid.to_string();
+        let guid_from_other_string = BinaryGuid::from_string(&guid_string);
+        assert_eq!(guid, guid_from_other_string);
+
+        let guid_string2 = guid.to_canonical_string().iter().collect::<String>();
+        let guid_from_other_string2 = BinaryGuid::from_string(&guid_string2);
+        assert_eq!(*guid, *guid_from_other_string2);
     }
 }

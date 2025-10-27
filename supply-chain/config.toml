@@ -125,11 +125,11 @@ version = "1.2.3"
 criteria = "safe-to-run"
 
 [[exemptions.cfg-if]]
-version = "1.0.3"
+version = "1.0.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_derive]]
-version = "4.5.47"
+version = "4.5.49"
 criteria = "safe-to-deploy"
 
 [[exemptions.compile-time]]
@@ -212,6 +212,14 @@ criteria = "safe-to-run"
 version = "4.3.1"
 criteria = "safe-to-run"
 
+[[exemptions.env_filter]]
+version = "0.1.4"
+criteria = "safe-to-run"
+
+[[exemptions.env_logger]]
+version = "0.11.8"
+criteria = "safe-to-run"
+
 [[exemptions.fallible-streaming-iterator]]
 version = "0.1.9"
 criteria = "safe-to-deploy"
@@ -240,21 +248,37 @@ criteria = "safe-to-deploy"
 version = "2.0.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.futures]]
+version = "0.3.31"
+criteria = "safe-to-run"
+
+[[exemptions.futures-executor]]
+version = "0.3.31"
+criteria = "safe-to-run"
+
 [[exemptions.gdbstub]]
-version = "0.7.7"
+version = "0.7.8"
 criteria = "safe-to-deploy"
+
+[[exemptions.generic-array]]
+version = "0.14.9"
+criteria = "safe-to-run"
 
 [[exemptions.getrandom]]
 version = "0.2.16"
 criteria = "safe-to-run"
 
+[[exemptions.getrandom]]
+version = "0.3.4"
+criteria = "safe-to-run"
+
 [[exemptions.half]]
-version = "2.7.0"
+version = "2.7.1"
 criteria = "safe-to-run"
 
 [[exemptions.hashbrown]]
 version = "0.15.2"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.heck]]
 version = "0.5.0"
@@ -272,8 +296,20 @@ criteria = "safe-to-run"
 version = "0.2.3"
 criteria = "safe-to-run"
 
+[[exemptions.indexmap]]
+version = "2.12.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.itertools]]
 version = "0.13.0"
+criteria = "safe-to-run"
+
+[[exemptions.jiff]]
+version = "0.2.15"
+criteria = "safe-to-run"
+
+[[exemptions.jiff-static]]
+version = "0.2.15"
 criteria = "safe-to-run"
 
 [[exemptions.js-sys]]
@@ -336,6 +372,26 @@ criteria = "safe-to-run"
 version = "3.7.5"
 criteria = "safe-to-run"
 
+[[exemptions.parking_lot]]
+version = "0.12.5"
+criteria = "safe-to-run"
+
+[[exemptions.parking_lot_core]]
+version = "0.9.12"
+criteria = "safe-to-run"
+
+[[exemptions.patina_lzma_rs]]
+version = "0.3.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.patina_mtrr]]
+version = "1.1.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.patina_paging]]
+version = "9.0.3"
+criteria = "safe-to-deploy"
+
 [[exemptions.pest]]
 version = "2.8.3"
 criteria = "safe-to-run"
@@ -354,6 +410,14 @@ criteria = "safe-to-run"
 
 [[exemptions.plotters-svg]]
 version = "0.3.7"
+criteria = "safe-to-run"
+
+[[exemptions.portable-atomic]]
+version = "1.11.1"
+criteria = "safe-to-run"
+
+[[exemptions.portable-atomic-util]]
+version = "0.2.4"
 criteria = "safe-to-run"
 
 [[exemptions.primitive-types]]
@@ -396,6 +460,10 @@ criteria = "safe-to-run"
 version = "10.7.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.redox_syscall]]
+version = "0.5.18"
+criteria = "safe-to-run"
+
 [[exemptions.rlp]]
 version = "0.5.2"
 criteria = "safe-to-run"
@@ -424,6 +492,14 @@ criteria = "safe-to-deploy"
 version = "0.2.5"
 criteria = "safe-to-deploy"
 
+[[exemptions.scc]]
+version = "2.4.0"
+criteria = "safe-to-run"
+
+[[exemptions.sdd]]
+version = "3.0.10"
+criteria = "safe-to-run"
+
 [[exemptions.semver]]
 version = "0.11.0"
 criteria = "safe-to-run"
@@ -434,11 +510,15 @@ criteria = "safe-to-run"
 
 [[exemptions.serial_test]]
 version = "3.2.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 
 [[exemptions.serial_test_derive]]
 version = "3.2.0"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
+
+[[exemptions.slab]]
+version = "0.4.11"
+criteria = "safe-to-run"
 
 [[exemptions.spin]]
 version = "0.9.8"
@@ -452,16 +532,16 @@ criteria = "safe-to-deploy"
 version = "0.9.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.toml_edit]]
-version = "0.23.6"
-criteria = "safe-to-run"
-
 [[exemptions.typenum]]
 version = "1.19.0"
 criteria = "safe-to-run"
 
 [[exemptions.uart_16550]]
 version = "0.3.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.uefi_corosensei]]
+version = "0.1.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.uint]]
