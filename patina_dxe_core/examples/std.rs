@@ -194,7 +194,7 @@ fn build_hob_list() -> *const c_void {
     let resource_descriptor6 = ResourceDescriptorV2 {
         v1: hob::ResourceDescriptor {
             header: header::Hob {
-                r#type: hob::RESOURCE_DESCRIPTOR,
+                r#type: hob::RESOURCE_DESCRIPTOR2,
                 length: core::mem::size_of::<ResourceDescriptorV2>() as u16,
                 reserved: 0x00000000,
             },
@@ -210,7 +210,7 @@ fn build_hob_list() -> *const c_void {
     let resource_descriptor7 = ResourceDescriptorV2 {
         v1: hob::ResourceDescriptor {
             header: header::Hob {
-                r#type: hob::RESOURCE_DESCRIPTOR,
+                r#type: hob::RESOURCE_DESCRIPTOR2,
                 length: core::mem::size_of::<ResourceDescriptorV2>() as u16,
                 reserved: 0x00000000,
             },
