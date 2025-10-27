@@ -122,8 +122,8 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
             None => continue, // Not a resource descriptor HOB or unsupported version for this build
         };
 
-    // Shared GCD logic: identical for V1/V2 HOBs.
-    // This ensures consistent behavior and completeness if logic changes.
+        // Shared GCD logic: identical for V1/V2 HOBs.
+        // This ensures consistent behavior and completeness if logic changes.
         let mem_range = res_desc.physical_start
             ..res_desc.physical_start.checked_add(res_desc.resource_length).expect("Invalid resource descriptor hob");
 
@@ -193,7 +193,6 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         }
 
         if gcd_mem_type != GcdMemoryType::NonExistent {
-
             // Extract cache attributes and add ReadProtect for system memory.
             // If we are processing V1 HOBs, the cache attributes will be 0; that information is not passed.
             let mut memory_attributes = cache_attributes & efi::CACHE_ATTRIBUTE_MASK;
@@ -328,7 +327,6 @@ pub(crate) fn activate_compatibility_mode() {
     }
     crate::memory_attributes_protocol::uninstall_memory_attributes_protocol();
 }
-
 
 // ResourceDescriptor HOB parsing functions.
 // V1 and V2 parsing logic is separated using feature flags and conditional compilation.
