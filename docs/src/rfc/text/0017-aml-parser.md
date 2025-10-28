@@ -65,7 +65,7 @@ already provides some functionality for interpreting AML bytecode.
 However, it is incomplete and provides limited public interfaces;
 it also does not deal with firmware-side protocols or parsing.
 
-This leaves two main paths for the Patina AML implmentation:
+This leaves two main paths for the Patina AML implementation:
 
 1. Design and implement a new Rust AML service from the ground up,
 without explicitly utilizing the existing `acpi` crate.
