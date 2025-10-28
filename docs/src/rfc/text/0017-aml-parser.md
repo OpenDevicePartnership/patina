@@ -121,7 +121,14 @@ pub(crate) struct AmlSdtHandleInternal {
 
 impl AmlSdtHandleInternal {
     fn new(table_key: TableKey, offset: usize, size: usize) -> Self {
-        Self { table_key, offset, size, modified: false }
+        Self {
+            table_key,
+            offset,
+            size,
+            modified: false,
+            byte_encoding: AmlByteEncoding::default(),
+            parent_end: None,
+        }
     }
 }
 
