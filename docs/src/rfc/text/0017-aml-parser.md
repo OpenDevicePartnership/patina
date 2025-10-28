@@ -18,7 +18,7 @@ within a `patina-acpi` crate.
 
 This RFC is an extension of the [ACPI service](0005-acpi.md).
 Similar to the ACPI service, this Rust-based AML service will provide a safer and
-more ergnonic interface for parsing and modifying AML bytecode.
+more ergonomic interface for parsing and modifying AML bytecode.
 
 ## Technology Background
 
