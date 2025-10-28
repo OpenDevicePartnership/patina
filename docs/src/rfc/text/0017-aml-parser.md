@@ -105,7 +105,7 @@ or if `patina-acpi` will borrow/fork from `acpi`.
 By spec definition, an AML handle is an opaque handle returned from opening a DSDT or SSDT,
 on which AML traversal and patching operations can be performed.
 
-Internally, the each `AmlHandle` object, aliased as `AmlSdtHandleInternal`,
+Internally, each `AmlHandle` object, aliased as `AmlSdtHandleInternal`,
 represents a cursor within an AML stream. Each handle can be conceptualized as a "node"
 in the AML object tree of parent-child-relationships.
 
