@@ -13,6 +13,8 @@ It defines a structured system of AML handles for navigating AML streams and a t
 ## Change Log
 
 - 2025-10-1: Initial RFC created.
+- 2025-10-22: Update iteration interface and address prior art.
+- 2025-10-28: Move to FCP.
 
 ## Motivation
 
