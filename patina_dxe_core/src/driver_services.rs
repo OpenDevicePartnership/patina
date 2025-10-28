@@ -6,7 +6,10 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use alloc::{collections::BTreeMap, collections::BTreeSet, vec::Vec};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    vec::Vec,
+};
 use core::ptr::NonNull;
 use patina::{
     error::EfiError,
@@ -145,7 +148,7 @@ fn authenticate_connect(
         PROTOCOL_DB.get_interface_for_handle(controller_handle, efi::protocols::device_path::PROTOCOL_GUID)
     {
         let device_path = device_path as *mut efi::protocols::device_path::Protocol;
-        if let Ok(security2_ptr) = PROTOCOL_DB.locate_protocol(patina_pi::protocols::security2::PROTOCOL_GUID) {
+        if let Ok(security2_ptr) = PROTOCOL_DB.locate_protocol(patina::pi::protocols::security2::PROTOCOL_GUID) {
             let file_path = {
                 if !recursive {
                     if let Some(remaining_path) = remaining_device_path {
@@ -160,7 +163,7 @@ fn authenticate_connect(
 
             if let Ok(mut file_path) = file_path {
                 let security2 = unsafe {
-                    (security2_ptr as *mut patina_pi::protocols::security2::Protocol)
+                    (security2_ptr as *mut patina::pi::protocols::security2::Protocol)
                         .as_ref()
                         .expect("security2 should not be null")
                 };
@@ -535,13 +538,12 @@ pub fn init_driver_services(bs: &mut efi::BootServices) {
 #[coverage(off)]
 mod tests {
     use super::*;
-    use crate::protocol_db::DXE_CORE_HANDLE;
-    use crate::test_support;
-    use core::ffi::c_void;
-    use core::ptr;
-    use std::str::FromStr;
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::atomic::Ordering;
+    use crate::{protocol_db::DXE_CORE_HANDLE, test_support};
+    use core::{ffi::c_void, ptr};
+    use std::{
+        str::FromStr,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
     use uuid::Uuid;
 
     // =================== TEST HELPER STATICS ===================
@@ -877,7 +879,7 @@ mod tests {
 
             // Install the security2 protocol in the protocol database
             let (_, _) = PROTOCOL_DB
-                .install_protocol_interface(None, patina_pi::protocols::security2::PROTOCOL_GUID, security2_ptr)
+                .install_protocol_interface(None, patina::pi::protocols::security2::PROTOCOL_GUID, security2_ptr)
                 .unwrap();
 
             // Create a proper END device path that should be safe to process

@@ -24,7 +24,7 @@ pub static TEST_CASES: [TestCase];
 
 /// returns the test cases to run.
 ///
-/// [`static@TEST_CASES`] exists only when the `enable_patina_tests` feature is
+/// TEST_CASES exists only when the `enable_patina_tests` feature is
 /// explicitly enabled. This feature is opt-in and explicit because external
 /// consumers of `patina` who do not register at least one test case with
 /// the `#[patina_test]` attribute may encounter a surprising linker crash (not

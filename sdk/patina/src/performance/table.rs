@@ -94,10 +94,12 @@ impl FBPT {
 
     /// Return the size in bytes of the FBPT table.
     pub fn length(&self) -> &u32 {
+        // SAFETY: `length` is a valid field in the FBPT structure.
         unsafe { self._length.1.load(Ordering::Relaxed).as_ref() }.unwrap_or(&self._length.0)
     }
 
     fn length_mut(&mut self) -> &mut u32 {
+        // SAFETY: `length` is a valid field in the FBPT structure.
         unsafe { self._length.1.load(Ordering::Relaxed).as_mut() }.unwrap_or(&mut self._length.0)
     }
 
@@ -171,6 +173,7 @@ impl FirmwareBasicBootPerfTable for FBPT {
 
         let mut offset = 0;
         fbpt_buffer.gwrite(Self::SIGNATURE, &mut offset).map_err(|_| Error::BufferTooSmall)?;
+        // SAFETY: `allocate_table_buffer` ensures the `fbpt_buffer` is large enough to hold the FBPT structure.
         let length_ptr = unsafe { fbpt_buffer.as_ptr().byte_add(offset) } as *mut u32;
         fbpt_buffer.gwrite(*self.length(), &mut offset).map_err(|_| Error::BufferTooSmall)?;
         FirmwareBasicBootPerfDataRecord::new()

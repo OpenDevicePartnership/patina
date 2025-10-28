@@ -21,7 +21,7 @@
 
 extern crate alloc;
 
-pub use base::guid::{Guid, GuidError, OwnedGuid};
+pub use base::guid::{BinaryGuid, Guid, GuidError, OwnedGuid};
 
 /// Common GUID constants
 pub mod guid_constants {
@@ -33,6 +33,7 @@ pub mod guid_constants {
 #[macro_use]
 pub mod macros;
 
+pub mod arch;
 pub mod base;
 pub mod boot_services;
 pub mod component;
@@ -42,9 +43,9 @@ pub mod error;
 pub mod guids;
 pub mod log;
 pub mod performance;
+pub mod pi;
 pub mod runtime_services;
 pub mod serial;
-#[coverage(off)]
 pub mod test;
 pub mod tpl_mutex;
 pub mod uefi_protocol;

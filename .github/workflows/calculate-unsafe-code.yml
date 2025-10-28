@@ -1,0 +1,25 @@
+# @file calculate-unsafe-code.yml
+#
+# A workflow that counts the amount of unsafe code in the repository with data broken
+# down into various categories.
+#
+##
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: Apache-2.0
+##
+name: Calcuate Unsafe Code
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  schedule:
+    # Run daily at 6 AM UTC
+    - cron: '0 6 * * *'
+
+jobs:
+  calculate_unsafe_code:
+    name: Run
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/CalculateUnsafeCode.yml@v0.0.3
+    secrets: inherit

@@ -2,7 +2,6 @@
 default_to_workspace = false
 
 [env]
-RUSTC_BOOTSTRAP = 1
 ARCH = "X64"
 NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} --target x86_64-unknown-uefi -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
 

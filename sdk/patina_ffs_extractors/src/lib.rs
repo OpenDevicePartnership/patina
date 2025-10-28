@@ -1,6 +1,6 @@
 //! # Section Extractor Implementations
 //!
-//! This crate provides a set of Implementations for the `patina_pi::fw_fs::SectionExtractor` trait.
+//! This crate provides a set of Implementations for the `patina::pi::fw_fs::SectionExtractor` trait.
 //!
 //! ## Features
 //!

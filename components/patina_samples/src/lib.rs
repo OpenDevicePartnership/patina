@@ -1,6 +1,12 @@
-//! Hello World Sample Components
+//! Sample Patina Components
 //!
-//! A simple component used for demonstration.
+//! This crate provides example component implementations demonstrating various
+//! Patina component patterns and usage models.
+//!
+//! ## Examples
+//!
+//! - [`component::hello_world::HelloStruct`]: Demonstrates a struct-based component with default entry point
+//! - [`component::hello_world::GreetingsEnum`]: Demonstrates an enum-based component with custom entry point
 //!
 //! ## License
 //!
@@ -11,6 +17,4 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![feature(coverage_attribute)]
 
-mod struct_component;
-
-pub use struct_component::{GreetingsEnum, HelloStruct};
+pub mod component;

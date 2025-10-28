@@ -15,9 +15,13 @@ use crate::patina_mm_integration::common::{constants::*, handlers::*, message_pa
 extern crate alloc;
 use alloc::{boxed::Box, string::String, vec::Vec};
 use r_efi::efi;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 /// Test framework error types
 ///

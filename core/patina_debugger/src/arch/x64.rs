@@ -12,7 +12,7 @@ use patina_internal_cpu::interrupts::ExceptionContext;
 use patina_paging::PagingType;
 
 use super::{DebuggerArch, UefiArchRegs};
-use crate::{ExceptionInfo, ExceptionType, memory};
+use crate::{ExceptionInfo, ExceptionType};
 
 /// The "int 3" instruction.
 const INT_3: u8 = 0xCC;
@@ -35,10 +35,11 @@ impl DebuggerArch for X64Arch {
     const GDB_TARGET_XML: &'static str = r#"<?xml version="1.0"?><!DOCTYPE target SYSTEM "gdb-target.dtd"><target><architecture>i386:x86-64</architecture><xi:include href="registers.xml"/></target>"#;
     const GDB_REGISTERS_XML: &'static str = include_str!("xml/x64_registers.xml");
 
-    type PageTable = patina_paging::x64::X64PageTable<memory::DebugPageAllocator>;
+    type PageTable = patina_paging::x64::X64PageTable<patina_paging::page_allocator::PageAllocatorStub>;
 
     #[inline(always)]
     fn breakpoint() {
+        // SAFETY: This is the architecturally defined breakpoint instruction.
         unsafe { asm!("int 3") };
     }
 
@@ -73,12 +74,12 @@ impl DebuggerArch for X64Arch {
             }
         }
 
-        // Always invalidate the TLB in case mappings were changed. The instruction
-        // cache doesn't need to be flushed since it should already be invalidated
-        // by the write according to the Intel SDM Vol 3 section 11.6. The CR3
-        // write is also serializing so no barriers are needed.
+        // Always clear the instruction cache since the debugger may have altered instructions. This has the side effect
+        // of also clearing the data cache because on x64 this cannot be done separately.
+        // SAFETY: This is an architecturally defined operation to flush the caches and wbinvd is a serializing
+        // instruction.
         unsafe {
-            asm!("mov {0}, cr3", "mov cr3, {0}", out(reg) _);
+            asm!("wbinvd");
         }
     }
 
@@ -130,6 +131,8 @@ impl DebuggerArch for X64Arch {
 
     fn reboot() {
         // Reset the system through the Reset Control Register.
+        // SAFETY: This is a well known instruction sequence to reset the system.
+        // If we fail, we simply halt, which acceptable under the debugger.
         unsafe {
             asm!("cli",
                  "out dx, al",
@@ -145,8 +148,10 @@ impl DebuggerArch for X64Arch {
 
     fn get_page_table() -> Result<Self::PageTable, ()> {
         let cr3: u64;
+        // SAFETY: This is simply reading the CR3 register, which is safe.
         unsafe { asm!("mov {}, cr3", out(reg) cr3) };
         let cr4: u64;
+        // SAFETY: This is simply reading the CR4 register, which is safe.
         unsafe { asm!("mov {}, cr4", out(reg) cr4) };
 
         // Check CR4 to determine if we are using 4-level or 5-level paging.
@@ -155,8 +160,12 @@ impl DebuggerArch for X64Arch {
         // SAFETY: The CR3 is currently being should be identity mapped and so
         // should point to a valid page table.
         unsafe {
-            patina_paging::x64::X64PageTable::from_existing(cr3, memory::DebugPageAllocator {}, paging_type)
-                .map_err(|_| ())
+            patina_paging::x64::X64PageTable::from_existing(
+                cr3,
+                patina_paging::page_allocator::PageAllocatorStub,
+                paging_type,
+            )
+            .map_err(|_| ())
         }
     }
 
@@ -164,6 +173,7 @@ impl DebuggerArch for X64Arch {
         match tokens.next() {
             Some("regs") => {
                 let mut gdtr: u64 = 0;
+                // SAFETY: This is simply reading the GDTR register, which is safe.
                 unsafe {
                     asm!(
                         "sgdt [{}]",
@@ -173,8 +183,15 @@ impl DebuggerArch for X64Arch {
                 }
                 let _ = write!(out, "GDT: {gdtr:#x?}");
             }
+            Some("flush_tlb") => {
+                // SAFETY: We are simply reading and writing back the same CR3. This has the side effect of flushing
+                // the TLB.
+                unsafe {
+                    asm!("mov {0}, cr3", "mov cr3, {0}", out(reg) _, options(nostack, nomem));
+                }
+            }
             _ => {
-                let _ = out.write_str("Unknown X64 monitor command. Supported commands: regs");
+                let _ = out.write_str("Unknown X64 monitor command. Supported commands: regs, flush_tlb");
             }
         }
     }
@@ -439,11 +456,13 @@ impl X64HardwareBreakpoints {
 
     pub fn read() -> Self {
         let dr7: u64;
+        // SAFETY: This is simply reading the DR7 register, which is safe.
         unsafe { asm!("mov {}, dr7", out(reg) dr7) };
         X64HardwareBreakpoints { dr7 }
     }
 
     pub fn flush(&mut self) {
+        // SAFETY: This is simply writing the DR7 register, which is safe in this debugger context.
         unsafe { asm!("mov dr7, {}", in(reg) self.dr7) };
     }
 
@@ -489,6 +508,7 @@ impl X64HardwareBreakpoints {
 
     pub fn get_address(&self, index: usize) -> u64 {
         let mut addr = 0;
+        // SAFETY: This is simply reading the debug address registers, which is safe.
         unsafe {
             match index {
                 0 => asm!("mov {}, dr0", out(reg) addr),
@@ -502,6 +522,7 @@ impl X64HardwareBreakpoints {
     }
 
     pub fn set_address(&mut self, index: usize, addr: u64) {
+        // SAFETY: This is simply writing the debug address registers, which is safe from the debugger context.
         unsafe {
             match index {
                 0 => asm!("mov dr0, {}", in(reg) addr),

@@ -79,15 +79,15 @@ use patina::{
         logging::{perf_function_begin, perf_function_end},
         measurement::create_performance_measurement,
     },
+    pi::{
+        hob::{HobList, get_c_hob_list_size},
+        protocols::{bds, status_code},
+        status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
+    },
     runtime_services::StandardRuntimeServices,
 };
 use patina_ffs::section::SectionExtractor;
 use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
-use patina_pi::{
-    hob::{HobList, get_c_hob_list_size},
-    protocols::{bds, status_code},
-    status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_CORE, EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT},
-};
 use protocols::PROTOCOL_DB;
 use r_efi::efi;
 
@@ -336,7 +336,7 @@ impl Core<Alloc> {
     /// Parses the HOB list producing a `Hob\<T\>` struct for each guided HOB found with a registered parser.
     fn parse_hobs(&mut self) {
         for hob in self.hob_list.iter() {
-            if let patina_pi::hob::Hob::GuidHob(guid, data) = hob {
+            if let patina::pi::hob::Hob::GuidHob(guid, data) = hob {
                 let parser_funcs = self.storage.get_hob_parsers(&patina::OwnedGuid::from(guid.name));
                 if parser_funcs.is_empty() {
                     let (f0, f1, f2, f3, f4, &[f5, f6, f7, f8, f9, f10]) = guid.name.as_fields();

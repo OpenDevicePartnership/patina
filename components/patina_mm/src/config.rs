@@ -20,12 +20,9 @@
 //!
 extern crate alloc;
 use alloc::vec::Vec;
-use core::fmt;
-use core::pin::Pin;
-use core::ptr::NonNull;
+use core::{fmt, pin::Pin, ptr::NonNull};
 
-use patina::Guid;
-use patina::base::UEFI_PAGE_MASK;
+use patina::{Guid, base::UEFI_PAGE_MASK};
 use r_efi::efi;
 
 /// Management Mode (MM) Configuration
@@ -100,10 +97,8 @@ impl EfiMmCommunicateHeader {
     ///
     /// Useful if byte-level access to the header structure is needed.
     pub fn as_bytes(&self) -> &[u8] {
-        unsafe {
-            // SAFETY: EfiMmCommunicateHeader is repr(C) with a well-defined layout
-            core::slice::from_raw_parts(self as *const _ as *const u8, Self::size())
-        }
+        // SAFETY: EfiMmCommunicateHeader is repr(C) with well-defined layout and size
+        unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, Self::size()) }
     }
 
     /// Returns the size of the header in bytes.
@@ -195,16 +190,14 @@ impl CommunicateBuffer {
     /// Returns a reference to the buffer as a slice of bytes.
     /// This is only used for internal operations.
     fn as_slice(&self) -> &[u8] {
-        // SAFETY: The buffer pointer was validated before being stored
-        //         in this CommunicateBuffer instance
+        // SAFETY: The pointer was validated during CommunicateBuffer construction
         unsafe { self.buffer.as_ref() }
     }
 
     /// Returns a mutable reference to the buffer as a slice of bytes.
     /// This is only used for internal operations.
     fn as_slice_mut(&mut self) -> &mut [u8] {
-        // SAFETY: The buffer pointer was validated before being stored
-        //         in this CommunicateBuffer instance
+        // SAFETY: The pointer was validated during CommunicateBuffer construction
         unsafe { self.buffer.as_mut() }
     }
 
@@ -243,7 +236,7 @@ impl CommunicateBuffer {
         }
 
         log::debug!(target: "mm_comm", "CommunicateBuffer {} validation passed, creating buffer", id);
-        // SAFETY: Safety is upheld by the caller to this function (the function is marked unsafe)
+        // SAFETY: Caller guarantees pointer validity per function safety contract
         unsafe { Ok(Self::new(Pin::new(core::slice::from_raw_parts_mut(buffer, size)), id)) }
     }
 
@@ -293,6 +286,7 @@ impl CommunicateBuffer {
             buffer_id
         );
 
+        // SAFETY: Caller guarantees firmware memory region is valid and stable
         unsafe { Self::from_raw_parts(ptr, size_bytes, buffer_id) }
     }
 
@@ -359,16 +353,11 @@ impl CommunicateBuffer {
 
         let header_slice = &self.as_slice()[..Self::MESSAGE_START_OFFSET];
 
-        let memory_guid = unsafe {
-            // SAFETY: We've validated the buffer has at least MESSAGE_START_OFFSET bytes
-            // and efi::Guid has a stable #[repr(C)] layout
-            core::ptr::read(header_slice.as_ptr() as *const efi::Guid)
-        };
+        // SAFETY: Buffer size validated, efi::Guid is repr(C) at offset 0
+        let memory_guid = unsafe { core::ptr::read(header_slice.as_ptr() as *const efi::Guid) };
 
-        let memory_message_length = unsafe {
-            // SAFETY: We've validated the buffer has sufficient bytes for usize at correct offset
-            core::ptr::read(header_slice.as_ptr().add(16) as *const usize)
-        };
+        // SAFETY: Buffer size validated, usize at offset 16 after Guid
+        let memory_message_length = unsafe { core::ptr::read(header_slice.as_ptr().add(16) as *const usize) };
 
         // Verify that thee recipient matches
         match self.private_recipient {
@@ -845,6 +834,7 @@ mod tests {
         let buffer: &'static mut [u8; 0] = Box::leak(Box::new([]));
         let size = buffer.len();
         let id = 1;
+        // SAFETY: Test validates error handling for zero-sized buffer
         let result = unsafe { CommunicateBuffer::from_raw_parts(buffer.as_mut_ptr(), size, id) };
         assert!(matches!(result, Err(CommunicateBufferStatus::TooSmallForHeader)));
     }
@@ -854,6 +844,7 @@ mod tests {
         let buffer: *mut u8 = core::ptr::null_mut();
         let size = 64;
         let id = 1;
+        // SAFETY: Test validates error handling for null pointer
         let result = unsafe { CommunicateBuffer::from_raw_parts(buffer, size, id) };
         assert!(matches!(result, Err(CommunicateBufferStatus::NoBuffer)));
     }
@@ -870,6 +861,7 @@ mod tests {
         let size = 64;
         let id = 1;
 
+        // SAFETY: Test buffer is 4K-aligned, valid, and leaked for static lifetime
         let result = unsafe { CommunicateBuffer::from_firmware_region(addr, size, id) };
         assert!(result.is_ok());
         let comm_buffer = result.unwrap();
@@ -883,6 +875,7 @@ mod tests {
         let size = 1;
         let id = 1;
 
+        // SAFETY: Test validates error handling for address overflow
         let result = unsafe { CommunicateBuffer::from_firmware_region(addr, size, id) };
         assert!(matches!(result, Err(CommunicateBufferStatus::AddressValidationFailed)));
     }
@@ -897,6 +890,7 @@ mod tests {
 
         let size = buffer.len();
         let id = 1;
+        // SAFETY: Test buffer is 4K-aligned, valid, and owned by test
         let comm_buffer = unsafe { CommunicateBuffer::from_raw_parts(buffer.as_mut_ptr(), size, id).unwrap() };
 
         assert_eq!(comm_buffer.len(), size);

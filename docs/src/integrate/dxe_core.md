@@ -238,8 +238,8 @@ target (MMIO vs I/O space). Below are platform patterns.
 #### X86_64 Example (Q35)
 
 ```rust
-use patina_sdk::log::serial_logger::SerialLogger;
-use patina_sdk::serial::uart::Uart16550;
+use patina::log::serial_logger::SerialLogger;
+use patina::serial::uart::Uart16550;
 
 static LOGGER: SerialLogger<Uart16550> = SerialLogger::new(
     Uart16550::Io { base: 0x402 },  // <- Update this I/O port for your platform
@@ -249,8 +249,8 @@ static LOGGER: SerialLogger<Uart16550> = SerialLogger::new(
 #### AARCH64 Example (SBSA)
 
 ```rust
-use patina_sdk::log::serial_logger::SerialLogger;
-use patina_sdk::serial::uart::UartPl011;
+use patina::log::serial_logger::SerialLogger;
+use patina::serial::uart::UartPl011;
 
 static LOGGER: SerialLogger<UartPl011> = SerialLogger::new(
     UartPl011::new(0x6000_0000),  // <- Update this MMIO address for your platform
@@ -295,7 +295,7 @@ static DEBUGGER: patina_debugger::PatinaDebugger<UartPl011> =
 First, add the logger dependency to your Cargo.toml file in the crate:
 
 ```toml
-patina_sdk = "$(VERSION)"  # includes serial_logger
+patina = "$(VERSION)"  # includes serial_logger
 ```
 
 Next, update main.rs with the following:
@@ -303,8 +303,8 @@ Next, update main.rs with the following:
 ```rust
 use patina_dxe_core::Core;
 use patina_ffs_extractors::BrotliSectionExtractor;
-use patina_sdk::log::serial_logger::SerialLogger;
-use patina_sdk::serial::uart::Uart16550;
+use patina::log::serial_logger::SerialLogger;
+use patina::serial::uart::Uart16550;
 
 static LOGGER: SerialLogger<Uart16550> = SerialLogger::new(
     Uart16550::Io { base: 0x402 },
@@ -408,8 +408,8 @@ crate when supported by the target architecture.
 use core::{ffi::c_void, panic::PanicInfo};
 use patina_dxe_core::Core;
 use patina_ffs_extractors::BrotliSectionExtractor;
-use patina_sdk::log::serial_logger::SerialLogger;
-use patina_sdk::serial::uart::Uart16550;
+use patina::log::serial_logger::SerialLogger;
+use patina::serial::uart::Uart16550;
 use patina_stacktrace::StackTrace;
 extern crate alloc;
 
@@ -490,6 +490,33 @@ enable 32-bit preference for production builds requiring legacy software compati
 ```
 
 For detailed memory allocation behavior, see [DXE Core Memory Management](../dxe_core/memory_management.md).
+
+### 9.3 Resource Descriptor HOB Version Support
+
+Patina DXE Core supports two mutually exclusive formats for Resource Descriptor HOBs: V1 (legacy) and V2 (modern,
+with cache attributes). The version supported is selected at compile time using a Cargo feature flag:
+
+- **Default (V2)**: Only V2 Resource Descriptor HOBs are processed. This is the default for modern platforms and
+  enables cache attribute support.
+- **Legacy (V1)**: If the `v1_resource_descriptor_support` feature is enabled, only V1 Resource Descriptor HOBs are
+  processed (for legacy platforms). V2 HOBs are ignored in this mode.
+
+The code paths for V1 and V2 are strictly separated at compile time for performance and maintainability. Shared GCD
+logic is reused for both modes.
+
+**How to enable V1 Resource Descriptor HOB support:**
+
+You can enable V1 Resource Descriptor HOB support by setting it as the default feature in your platform binary crate's `Cargo.toml`
+(e.g., `platform_patina_dxe_core/Cargo.toml`):
+
+```toml
+[features]
+default = ["v1_resource_descriptor_support"]
+v1_resource_descriptor_support = []
+```
+
+This will build and test the V1 code path by default, without needing to specify the feature flag on the command line.
+For production, remove it from the default list to restore V2 as the default.
 
 ## 10. Build Process and Validation
 

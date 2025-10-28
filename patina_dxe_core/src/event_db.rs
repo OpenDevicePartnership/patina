@@ -737,8 +737,7 @@ unsafe impl Sync for SpinLockedEventDb {}
 #[coverage(off)]
 mod tests {
     extern crate std;
-    use core::iter;
-    use core::str::FromStr;
+    use core::{iter, str::FromStr};
 
     use alloc::{vec, vec::Vec};
     use patina::Guid;

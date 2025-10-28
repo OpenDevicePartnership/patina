@@ -527,7 +527,7 @@ unsafe extern "C" fn install_multiple_protocol_interfaces(handle: *mut efi::Hand
                 interface as *const efi::protocols::device_path::Protocol,
             )
             && PROTOCOL_DB.validate_handle(handle).is_ok()
-            && is_device_path_end(remaining_path)
+            && unsafe { is_device_path_end(remaining_path) }
         {
             return efi::Status::ALREADY_STARTED;
         }
@@ -750,7 +750,7 @@ pub fn core_locate_device_path(
             continue;
         }
 
-        let (remaining_path, matching_nodes) = match remaining_device_path(temp_device_path, device_path) {
+        let (remaining_path, matching_nodes) = match unsafe { remaining_device_path(temp_device_path, device_path) } {
             Some((remaining_path, matching_nodes)) => (remaining_path, matching_nodes as isize),
             None => continue,
         };

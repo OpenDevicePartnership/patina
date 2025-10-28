@@ -32,12 +32,12 @@ pub struct PerformanceConfigurationProvider;
 /// HOB GUID values for reference:
 /// - `{0xfd87f2d8, 0x112d, 0x4640, {0x9c, 0x00, 0xd3, 0x7d, 0x2a, 0x1f, 0xb7, 0x5d}}``
 /// - `{fd87f2d8-112d-4640-9c00-d37d2a1fb75d}``
-#[derive(FromHob, Default, Clone, Copy)]
+#[derive(FromHob, zerocopy_derive::FromBytes)]
 #[hob = "fd87f2d8-112d-4640-9c00-d37d2a1fb75d"]
 #[repr(C, packed)]
 pub struct PerformanceConfigHob {
     /// Indicates whether the Patina Performance component is enabled.
-    enable_component: bool,
+    enable_component: u8,
     /// The enabled measurements for the Patina Performance component.
     ///
     /// This is a bitmask of `Measurement` values that indicate which performance measurements are enabled. The
@@ -68,8 +68,8 @@ impl PerformanceConfigurationProvider {
 
         log::trace!("Incoming Patina Performance Component Configuration: {:?}", *config_mut);
 
-        config_mut.enable_component = perf_config_hob.enable_component;
-        if !perf_config_hob.enable_component {
+        config_mut.enable_component = perf_config_hob.enable_component != 0;
+        if !config_mut.enable_component {
             log::trace!("The Patina Performance component is disabled per HOB configuration.");
         } else {
             log::trace!("The Patina Performance component is enabled per HOB configuration.");

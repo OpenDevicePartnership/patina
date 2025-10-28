@@ -133,8 +133,7 @@ mod struct_component;
 use crate::error::Result;
 
 pub use metadata::MetaData;
-pub use storage::Storage;
-pub use storage::UnsafeStorageCell;
+pub use storage::{Storage, UnsafeStorageCell};
 
 /// A part of the private API that must be public for the component macro to work. Users should not use this directly
 /// and it is subject to change at any time.
@@ -185,11 +184,15 @@ pub trait IntoComponent<Input> {
 
 /// A prelude module that re-exports commonly used items from the `component` module.
 pub mod prelude {
-    pub use crate::component::IntoComponent;
-    pub use crate::component::hob::{FromHob, Hob};
-    pub use crate::component::params::{Commands, Config, ConfigMut};
-    pub use crate::component::service::{IntoService, Service};
-    pub use crate::error::{EfiError, Result};
+    pub use crate::{
+        component::{
+            IntoComponent,
+            hob::{FromHob, Hob},
+            params::{Commands, Config, ConfigMut},
+            service::{IntoService, Service},
+        },
+        error::{EfiError, Result},
+    };
 }
 
 #[cfg(test)]
@@ -199,8 +202,8 @@ mod tests {
 
     use super::*;
     use crate as patina;
-    use crate::{Guid, OwnedGuid};
     use crate::{
+        Guid, OwnedGuid,
         component::{
             hob::{FromHob, Hob},
             params::ConfigMut,
@@ -235,7 +238,7 @@ mod tests {
         }
     }
 
-    #[derive(FromHob, Default, Clone, Copy)]
+    #[derive(FromHob, zerocopy_derive::FromBytes)]
     #[hob = "d4ffc718-fb82-4274-9afc-aa8b1eef5293"]
     #[repr(C)]
     pub struct TestHob;
@@ -249,7 +252,7 @@ mod tests {
         }
     }
 
-    #[derive(FromHob, Default, Clone, Copy)]
+    #[derive(FromHob, zerocopy_derive::FromBytes)]
     #[hob = "d4ffc718-fb82-4274-9afc-aa8b1eef5293"]
     #[repr(C)]
     pub struct TestHob2;

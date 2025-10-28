@@ -7,8 +7,11 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::cpu::Cpu;
-use patina::{component::service::IntoService, error::EfiError};
-use patina_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType};
+use patina::{
+    component::service::IntoService,
+    error::EfiError,
+    pi::protocols::cpu_arch::{CpuFlushType, CpuInitType},
+};
 use r_efi::efi;
 
 /// Struct to implement Null Cpu Init.

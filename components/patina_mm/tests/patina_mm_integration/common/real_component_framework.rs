@@ -19,12 +19,16 @@ use crate::patina_mm_integration::common::{constants::*, handlers::*};
 extern crate alloc;
 use alloc::{boxed::Box, vec::Vec};
 use patina::Guid;
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
 
 // Import the real patina_mm components and services
-use patina_mm::component::communicator::{MmCommunication, MmCommunicator, MmExecutor, Status};
-use patina_mm::config::CommunicateBuffer;
+use patina_mm::{
+    component::communicator::{MmCommunication, MmCommunicator, MmExecutor, Status},
+    config::CommunicateBuffer,
+};
 
 /// Test MM Executor for integration testing
 ///

@@ -343,8 +343,7 @@ unsafe impl<T: ?Sized + 'static> Param for Service<T> {
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
-    use super::IntoService;
-    use super::*;
+    use super::{IntoService, *};
 
     #[test]
     fn test_service_derive_service_macro() {

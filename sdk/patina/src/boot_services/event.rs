@@ -48,7 +48,8 @@ impl EventType {
     pub const TIMER: EventType = EventType(efi::EVT_TIMER);
 
     /// The event is allocated from runtime memory.
-    /// If an event is to be signaled after the call to [`BootServices.exit_boot_services`] the event’s data structure and notification function need to be allocated from runtime memory.
+    /// If an event is to be signaled after the call to [`BootServices::exit_boot_services`](super::BootServices::exit_boot_services)
+    /// the event’s data structure and notification function need to be allocated from runtime memory.
     /// For more information, see
     /// <a href="https://uefi.org/specs/UEFI/2.10/08_Services_Runtime_Services.html#setvirtualaddressmap" target="_blank">
     ///   SetVirtualAddressMap()

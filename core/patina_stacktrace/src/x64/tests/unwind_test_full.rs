@@ -12,12 +12,16 @@
 ///  StartCallStack()
 use std::ffi::CString;
 use std::ptr;
-use winapi::ctypes::c_void;
-use winapi::shared::minwindef::{DWORD, HINSTANCE, HMODULE};
-use winapi::um::errhandlingapi::GetLastError;
-use winapi::um::libloaderapi::{FreeLibrary, GetProcAddress, LoadLibraryA};
-use winapi::um::processthreadsapi::CreateThread;
-use winapi::um::synchapi::WaitForSingleObject;
+use winapi::{
+    ctypes::c_void,
+    shared::minwindef::{DWORD, HINSTANCE, HMODULE},
+    um::{
+        errhandlingapi::GetLastError,
+        libloaderapi::{FreeLibrary, GetProcAddress, LoadLibraryA},
+        processthreadsapi::CreateThread,
+        synchapi::WaitForSingleObject,
+    },
+};
 
 use crate::stacktrace::StackTrace;
 

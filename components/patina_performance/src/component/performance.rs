@@ -152,6 +152,7 @@ impl Performance {
         }
 
         // Install configuration table for performance property.
+        // SAFETY: `install_configuration_table` requires that the data match the GUID; PERFORMANCE_PROTOCOL matches `PerformanceProperty`.
         unsafe {
             boot_services.as_ref().install_configuration_table(
                 &PERFORMANCE_PROTOCOL,
@@ -183,7 +184,8 @@ mod tests {
     };
 
     use patina::performance::{
-        measurement::event_callback, record::PerformanceRecordBuffer, record::hob::MockHobPerformanceDataExtractor,
+        measurement::event_callback,
+        record::{PerformanceRecordBuffer, hob::MockHobPerformanceDataExtractor},
         table::MockFirmwareBasicBootPerfTable,
     };
 

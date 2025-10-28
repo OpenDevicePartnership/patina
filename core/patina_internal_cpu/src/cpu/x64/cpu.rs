@@ -11,8 +11,11 @@ use super::gdt;
 use crate::{cpu::Cpu, interrupts};
 #[cfg(not(test))]
 use core::arch::asm;
-use patina::{component::service::IntoService, error::EfiError};
-use patina_pi::protocols::cpu_arch::{CpuFlushType, CpuInitType};
+use patina::{
+    component::service::IntoService,
+    error::EfiError,
+    pi::protocols::cpu_arch::{CpuFlushType, CpuInitType},
+};
 use r_efi::efi;
 
 /// Struct to implement X64 Cpu Init.
@@ -69,6 +72,7 @@ impl EfiCpuX64 {
     fn asm_wbinvd(&self) {
         #[cfg(all(not(test), target_arch = "x86_64"))]
         {
+            // SAFETY: The caller is expected to ensure that they want to write back and invalidate the cache
             unsafe {
                 asm!("wbinvd");
             }
@@ -78,6 +82,7 @@ impl EfiCpuX64 {
     fn asm_invd(&self) {
         #[cfg(all(not(test), target_arch = "x86_64"))]
         {
+            // SAFETY: The caller is expected to ensure that they want to invalidate the cache without writing back
             unsafe {
                 asm!("invd");
             }

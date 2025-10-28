@@ -12,8 +12,10 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use crate::config::{MmCommunicationConfiguration, MmiPort};
-use crate::service::platform_mm_control::PlatformMmControl;
+use crate::{
+    config::{MmCommunicationConfiguration, MmiPort},
+    service::platform_mm_control::PlatformMmControl,
+};
 use patina::component::{
     IntoComponent,
     params::{Commands, Config},
@@ -35,17 +37,15 @@ use mockall::automock;
 ///
 /// ## Safety
 ///
-/// This trait is unsafe because an implementation needs to ensure that the service is only invoked after hardware
-/// initialization for MMIs is complete and that the system is in a safe state to handle MMIs.
+/// This trait is unsafe because an implementation needs to:
+///
+/// 1. Ensure that the platform hardware is capable of handling MMIs.
+/// 2. Ensure that the service is only invoked after hardware initialization for MMIs is complete and that the
+///    system is in a safe state to handle MMIs.
 #[cfg_attr(any(test, feature = "mockall"), automock)]
 pub unsafe trait SwMmiTrigger {
     /// Triggers a software Management Mode Interrupt (MMI).
-    ///
-    /// ## Safety
-    ///
-    /// This function is unsafe because it may cause the system to enter a state where MMIs are not handled correctly.
-    /// It is the caller's responsibility to ensure that the system is in a safe state before calling this function.
-    unsafe fn trigger_sw_mmi(&self, cmd_port_value: u8, data_port_value: u8) -> patina::error::Result<()>;
+    fn trigger_sw_mmi(&self, cmd_port_value: u8, data_port_value: u8) -> patina::error::Result<()>;
 }
 
 /// A component that provides the `SwMmiTrigger` service.
@@ -77,9 +77,9 @@ impl SwMmiManager {
         log::debug!(target: "sw_mmi", "MM config - cmd_port: {:?}, data_port: {:?}, acpi_base: {:?}",
             config.cmd_port, config.data_port, config.acpi_base);
 
-        if platform_mm_control.is_some() {
+        if let Some(ctrl) = platform_mm_control {
             log::debug!(target: "sw_mmi", "Platform MM Control is available. Calling platform-specific init...");
-            platform_mm_control.unwrap().init().inspect_err(|&err| {
+            ctrl.init().inspect_err(|&err| {
                 log::error!(target: "sw_mmi", "Platform MM Control initialization failed: {:?}", err);
             })?;
             log::trace!(target: "sw_mmi", "Platform MM Control initialization completed successfully");
@@ -97,8 +97,11 @@ impl SwMmiManager {
     }
 }
 
+// SAFETY: SwMmiManager does not produce the SwMmiTrigger service until its entry point has executed after the
+//         platform has published MM configuration and had an opportunity to provide a platform-specific MM control
+//         service.
 unsafe impl SwMmiTrigger for SwMmiManager {
-    unsafe fn trigger_sw_mmi(&self, _cmd_port_value: u8, _data_port_value: u8) -> patina::error::Result<()> {
+    fn trigger_sw_mmi(&self, _cmd_port_value: u8, _data_port_value: u8) -> patina::error::Result<()> {
         log::debug!(target: "sw_mmi", "Triggering SW MMI with cmd_port_value=0x{:02X}, data_port_value=0x{:02X}", _cmd_port_value, _data_port_value);
 
         log::trace!(target: "sw_mmi", "Writing to MMI command port...");
@@ -156,8 +159,10 @@ impl Default for SwMmiManager {
 #[coverage(off)]
 mod tests {
     use super::*;
-    use crate::config::MmCommunicationConfiguration;
-    use crate::service::platform_mm_control::{MockPlatformMmControl, PlatformMmControl};
+    use crate::{
+        config::MmCommunicationConfiguration,
+        service::platform_mm_control::{MockPlatformMmControl, PlatformMmControl},
+    };
     use patina::component::params::Commands;
 
     #[test]

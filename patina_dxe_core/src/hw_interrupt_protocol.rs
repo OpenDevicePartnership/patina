@@ -1,21 +1,22 @@
-use crate::GicBases;
-use crate::tpl_lock::TplMutex;
-use alloc::boxed::Box;
-use alloc::vec;
-use alloc::vec::Vec;
+use crate::{GicBases, tpl_lock::TplMutex};
+use alloc::{boxed::Box, vec, vec::Vec};
 use core::ffi::c_void;
-use patina_internal_cpu::interrupts::gic_manager::{AArch64InterruptInitializer, gic_initialize};
-use patina_internal_cpu::interrupts::{ExceptionContext, InterruptHandler, InterruptManager};
+use patina_internal_cpu::interrupts::{
+    ExceptionContext, InterruptHandler, InterruptManager,
+    gic_manager::{AArch64InterruptInitializer, gic_initialize},
+};
 use r_efi::efi;
 
 use arm_gic::{
     Trigger,
     gicv3::{GicV3, InterruptGroup},
 };
-use patina::boot_services::{BootServices, StandardBootServices};
-use patina::component::{IntoComponent, params::Config, service::Service};
-use patina::guids::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2};
-use patina::uefi_protocol::ProtocolInterface;
+use patina::{
+    boot_services::{BootServices, StandardBootServices},
+    component::{IntoComponent, params::Config, service::Service},
+    guids::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2},
+    uefi_protocol::ProtocolInterface,
+};
 
 pub type HwInterruptHandler = extern "efiapi" fn(u64, &mut ExceptionContext);
 

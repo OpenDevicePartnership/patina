@@ -40,6 +40,7 @@ static GDB_BUFFER: [u8; GDB_BUFF_LEN] = [0; GDB_BUFF_LEN];
 // is generalized on using phantom data. This data will not actually be stored outside
 // of the appropriate stack references.
 unsafe impl Send for ExceptionInfo {}
+// SAFETY: See above comment.
 unsafe impl Sync for ExceptionInfo {}
 
 /// Patina Debugger

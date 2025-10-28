@@ -1,5 +1,6 @@
 //! DXE Core Global Coherency Domain (GCD)
 //!
+//!
 //! ## License
 //!
 //! Copyright (c) Microsoft Corporation.
@@ -10,13 +11,14 @@ mod io_block;
 mod memory_block;
 mod spin_locked_gcd;
 
-use core::{ffi::c_void, ops::Range, panic};
-use patina::base::{align_down, align_up};
-use patina::error::EfiError;
-use patina_paging::MemoryAttributes;
-use patina_pi::{
-    dxe_services::{GcdIoType, GcdMemoryType},
-    hob::{self, Hob, HobList, PhaseHandoffInformationTable, ResourceDescriptorV2},
+use core::{ffi::c_void, ops::Range};
+use patina::{
+    base::{align_down, align_up},
+    error::EfiError,
+    pi::{
+        dxe_services::{GcdIoType, GcdMemoryType},
+        hob::{self, Hob, HobList, PhaseHandoffInformationTable},
+    },
 };
 use r_efi::efi;
 
@@ -88,10 +90,20 @@ pub fn init_paging(hob_list: &HobList) {
 }
 
 pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
+    #[cfg(feature = "v1_resource_descriptor_support")]
+    {
+        log::debug!("v1_resource_descriptor_support feature is active (V1 ResourceDescriptor HOBs only)");
+    }
+
+    #[cfg(not(feature = "v1_resource_descriptor_support"))]
+    {
+        log::debug!("v1_resource_descriptor_support feature is NOT active (V2 ResourceDescriptor HOBs only)");
+    }
+
     let phit = hob_list
         .iter()
         .find_map(|x| match x {
-            patina_pi::hob::Hob::Handoff(handoff) => Some(*handoff),
+            patina::pi::hob::Hob::Handoff(handoff) => Some(*handoff),
             _ => None,
         })
         .expect("Failed to find PHIT Hob");
@@ -103,111 +115,93 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
     //Iterate over the hob list and map resource descriptor HOBs into the GCD.
     for hob in hob_list.iter() {
         let mut gcd_mem_type: GcdMemoryType = GcdMemoryType::NonExistent;
-        let mut mem_range: Range<u64> = 0..0;
         let mut resource_attributes: u32 = 0;
 
-        let mut res_desc_op = None;
-        if let Hob::ResourceDescriptor(t_res_desc) = hob {
-            res_desc_op = Some(ResourceDescriptorV2::from(**t_res_desc));
-        } else if let Hob::ResourceDescriptorV2(t_res_desc) = hob {
-            res_desc_op = Some(**t_res_desc);
-        }
+        // Parse ResourceDescriptor HOB using feature-specific function
+        let (res_desc, cache_attributes) = match parse_resource_descriptor_hob(hob) {
+            Some((desc, Some(attrs))) => (desc, attrs),
+            Some((desc, None)) => (desc, 0u64),
+            None => continue, // Not a resource descriptor HOB or unsupported version for this build
+        };
 
-        match res_desc_op {
-            None => (),
-            Some(res_desc_v2) => {
-                let res_desc = res_desc_v2.v1;
-                mem_range = res_desc.physical_start
-                    ..res_desc
-                        .physical_start
-                        .checked_add(res_desc.resource_length)
-                        .expect("Invalid resource descriptor hob");
+        // Shared GCD logic: identical for V1/V2 HOBs.
+        // This ensures consistent behavior and completeness if logic changes.
+        let mem_range = res_desc.physical_start
+            ..res_desc.physical_start.checked_add(res_desc.resource_length).expect("Invalid resource descriptor hob");
 
-                match res_desc.resource_type {
-                    hob::EFI_RESOURCE_SYSTEM_MEMORY => {
-                        resource_attributes = res_desc.resource_attribute;
+        match res_desc.resource_type {
+            hob::EFI_RESOURCE_SYSTEM_MEMORY => {
+                resource_attributes = res_desc.resource_attribute;
 
-                        if resource_attributes & hob::MEMORY_ATTRIBUTE_MASK == hob::TESTED_MEMORY_ATTRIBUTES {
-                            if resource_attributes & hob::EFI_RESOURCE_ATTRIBUTE_MORE_RELIABLE
-                                == hob::EFI_RESOURCE_ATTRIBUTE_MORE_RELIABLE
-                            {
-                                gcd_mem_type = GcdMemoryType::MoreReliable;
-                            } else {
-                                gcd_mem_type = GcdMemoryType::SystemMemory;
-                            }
-                        }
+                if resource_attributes & hob::MEMORY_ATTRIBUTE_MASK == hob::TESTED_MEMORY_ATTRIBUTES {
+                    if resource_attributes & hob::EFI_RESOURCE_ATTRIBUTE_MORE_RELIABLE
+                        == hob::EFI_RESOURCE_ATTRIBUTE_MORE_RELIABLE
+                    {
+                        gcd_mem_type = GcdMemoryType::MoreReliable;
+                    } else {
+                        gcd_mem_type = GcdMemoryType::SystemMemory;
+                    }
+                }
 
-                        if (resource_attributes & hob::MEMORY_ATTRIBUTE_MASK == (hob::INITIALIZED_MEMORY_ATTRIBUTES))
-                            || (resource_attributes & hob::MEMORY_ATTRIBUTE_MASK == (hob::PRESENT_MEMORY_ATTRIBUTES))
-                        {
-                            gcd_mem_type = GcdMemoryType::Reserved;
-                        }
+                if (resource_attributes & hob::MEMORY_ATTRIBUTE_MASK == (hob::INITIALIZED_MEMORY_ATTRIBUTES))
+                    || (resource_attributes & hob::MEMORY_ATTRIBUTE_MASK == (hob::PRESENT_MEMORY_ATTRIBUTES))
+                {
+                    gcd_mem_type = GcdMemoryType::Reserved;
+                }
 
-                        if resource_attributes & hob::EFI_RESOURCE_ATTRIBUTE_PERSISTENT
-                            == hob::EFI_RESOURCE_ATTRIBUTE_PERSISTENT
-                        {
-                            gcd_mem_type = GcdMemoryType::Persistent;
-                        }
-                    }
-                    hob::EFI_RESOURCE_MEMORY_MAPPED_IO | hob::EFI_RESOURCE_FIRMWARE_DEVICE => {
-                        resource_attributes = res_desc.resource_attribute;
-                        gcd_mem_type = GcdMemoryType::MemoryMappedIo;
-                    }
-                    hob::EFI_RESOURCE_MEMORY_MAPPED_IO_PORT | hob::EFI_RESOURCE_MEMORY_RESERVED => {
-                        resource_attributes = res_desc.resource_attribute;
-                        gcd_mem_type = GcdMemoryType::Reserved;
-                    }
-                    hob::EFI_RESOURCE_IO => {
-                        log::info!(
-                            "Mapping io range {:#x?} as {:?}",
-                            res_desc.physical_start..res_desc.resource_length,
-                            GcdIoType::Io
-                        );
-                        GCD.add_io_space(
-                            GcdIoType::Io,
-                            res_desc.physical_start as usize,
-                            res_desc.resource_length as usize,
-                        )
-                        .expect("Failed to add IO space to GCD");
-                    }
-                    hob::EFI_RESOURCE_IO_RESERVED => {
-                        log::info!(
-                            "Mapping io range {:#x?} as {:?}",
-                            res_desc.physical_start..res_desc.resource_length,
-                            GcdIoType::Reserved
-                        );
-                        GCD.add_io_space(
-                            GcdIoType::Reserved,
-                            res_desc.physical_start as usize,
-                            res_desc.resource_length as usize,
-                        )
-                        .expect("Failed to add IO space to GCD");
-                    }
-                    _ => {
-                        debug_assert!(false, "Unknown resource type in HOB");
-                    }
-                };
-
-                if gcd_mem_type != GcdMemoryType::NonExistent {
-                    assert!(res_desc.attributes_valid());
+                if resource_attributes & hob::EFI_RESOURCE_ATTRIBUTE_PERSISTENT
+                    == hob::EFI_RESOURCE_ATTRIBUTE_PERSISTENT
+                {
+                    gcd_mem_type = GcdMemoryType::Persistent;
                 }
             }
+            hob::EFI_RESOURCE_MEMORY_MAPPED_IO | hob::EFI_RESOURCE_FIRMWARE_DEVICE => {
+                resource_attributes = res_desc.resource_attribute;
+                gcd_mem_type = GcdMemoryType::MemoryMappedIo;
+            }
+            hob::EFI_RESOURCE_MEMORY_MAPPED_IO_PORT | hob::EFI_RESOURCE_MEMORY_RESERVED => {
+                resource_attributes = res_desc.resource_attribute;
+                gcd_mem_type = GcdMemoryType::Reserved;
+            }
+            hob::EFI_RESOURCE_IO => {
+                log::info!(
+                    "Mapping io range {:#x?} as {:?}",
+                    res_desc.physical_start..res_desc.resource_length,
+                    GcdIoType::Io
+                );
+                GCD.add_io_space(GcdIoType::Io, res_desc.physical_start as usize, res_desc.resource_length as usize)
+                    .expect("Failed to add IO space to GCD");
+            }
+            hob::EFI_RESOURCE_IO_RESERVED => {
+                log::info!(
+                    "Mapping io range {:#x?} as {:?}",
+                    res_desc.physical_start..res_desc.resource_length,
+                    GcdIoType::Reserved
+                );
+                GCD.add_io_space(
+                    GcdIoType::Reserved,
+                    res_desc.physical_start as usize,
+                    res_desc.resource_length as usize,
+                )
+                .expect("Failed to add IO space to GCD");
+            }
+            _ => {
+                debug_assert!(false, "Unknown resource type in HOB");
+            }
+        };
+
+        if gcd_mem_type != GcdMemoryType::NonExistent {
+            debug_assert!(res_desc.attributes_valid());
         }
 
         if gcd_mem_type != GcdMemoryType::NonExistent {
-            let memory_attributes = {
-                if let Hob::ResourceDescriptorV2(res_desc) = hob {
-                    let mut memory_attributes = MemoryAttributes::from_bits_truncate(res_desc.attributes);
-                    memory_attributes &= MemoryAttributes::CacheAttributesMask; //clear everything but caching attributes.
-                    if gcd_mem_type == GcdMemoryType::SystemMemory {
-                        memory_attributes |= MemoryAttributes::ReadProtect; //force all system memory to be RP by default (since none is allocated yet).
-                    }
-                    let memory_attributes = memory_attributes.bits();
-                    Some(memory_attributes)
-                } else {
-                    None
-                }
-            };
+            // Extract cache attributes and add ReadProtect for system memory.
+            // If we are processing V1 HOBs, the cache attributes will be 0; that information is not passed.
+            let mut memory_attributes = cache_attributes & efi::CACHE_ATTRIBUTE_MASK;
+            if gcd_mem_type == GcdMemoryType::SystemMemory {
+                // Force all system memory to be RP by default (since none is allocated yet)
+                memory_attributes |= efi::MEMORY_RP;
+            }
 
             for split_range in
                 remove_range_overlap(&mem_range, &(free_memory_start..(free_memory_start + free_memory_size)))
@@ -227,24 +221,31 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                     )
                     .expect("Failed to add memory space to GCD");
                 }
-                if let Some(attributes) = memory_attributes {
-                    match GCD.set_memory_space_attributes(
-                        split_range.start as usize,
-                        split_range.end.saturating_sub(split_range.start) as usize,
-                        attributes,
-                    ) {
-                        // NotReady is expected result here since page table is not yet initialized. In this case GCD
-                        // will be updated with the appropriate attributes which will then be sync'd to page table
-                        // once it is initialized.
-                        Err(EfiError::NotReady) => (),
-                        _ => {
-                            panic!(
-                                "GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}",
-                                attributes,
-                                split_range.start,
-                                split_range.end.saturating_sub(split_range.start)
-                            );
-                        }
+                match GCD.set_memory_space_attributes(
+                    split_range.start as usize,
+                    split_range.end.saturating_sub(split_range.start) as usize,
+                    memory_attributes,
+                ) {
+                    // NotReady is expected result here since page table is not yet initialized. In this case GCD
+                    // will be updated with the appropriate attributes which will then be sync'd to page table
+                    // once it is initialized.
+                    Err(EfiError::NotReady) => (),
+                    Ok(()) => {
+                        // Success is also acceptable - means attributes were set immediately
+                        log::debug!("Memory attributes set successfully for {:#X}", split_range.start);
+                    }
+                    Err(err) => {
+                        // In debug builds, assert to catch GCD attribute setting failures during development.
+                        // In production, allow the system to continue with a potentially torn state,
+                        // matching EDK2 behavior where non-critical GCD operations can fail gracefully.
+                        debug_assert!(
+                            false,
+                            "GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}, error: {:?}",
+                            memory_attributes,
+                            split_range.start,
+                            split_range.end.saturating_sub(split_range.start),
+                            err
+                        );
                     }
                 }
             }
@@ -329,12 +330,61 @@ pub(crate) fn activate_compatibility_mode() {
     crate::memory_attributes_protocol::uninstall_memory_attributes_protocol();
 }
 
+// ResourceDescriptor HOB parsing functions.
+// V1 and V2 parsing logic is separated using feature flags and conditional compilation.
+
+/// Parse ResourceDescriptor HOB for V2 platforms (default, always compiled)
+///
+/// This function only processes V2 HOBs:
+/// - V2 HOBs: Preferred, provides cache attributes for optimal performance
+/// - V1 HOBs: Ignored completely (logs warning)
+///
+/// Returns: Some((ResourceDescriptor, cache_attributes)) or None if not a V2 resource descriptor
+#[cfg(not(feature = "v1_resource_descriptor_support"))]
+fn parse_resource_descriptor_hob(hob: &Hob) -> Option<(hob::ResourceDescriptor, Option<u64>)> {
+    match hob {
+        Hob::ResourceDescriptorV2(v2_res_desc) => {
+            // V2 platforms: Only process V2 HOBs
+            let attrs = if v2_res_desc.attributes != 0 { Some(v2_res_desc.attributes) } else { None };
+            Some((v2_res_desc.v1, attrs))
+        }
+        Hob::ResourceDescriptor(_) => {
+            // V2 platforms: Ignore V1 HOBs completely
+            None
+        }
+        _ => None, // Not a resource descriptor HOB
+    }
+}
+
+/// Parse ResourceDescriptor HOB for V1 platforms (legacy platform support)
+///
+/// This function provides V1-only behavior for legacy platforms:
+/// - V1 HOBs: Processed normally without any migration suggestions
+/// - V2 HOBs: Completely ignored (no per-HOB warning is logged)
+///
+/// Returns: Some((ResourceDescriptor, cache_attributes)) or None if not a V1 resource descriptor
+#[cfg(feature = "v1_resource_descriptor_support")]
+fn parse_resource_descriptor_hob(hob: &Hob) -> Option<(hob::ResourceDescriptor, Option<u64>)> {
+    match hob {
+        Hob::ResourceDescriptor(v1_res_desc) => {
+            // Legacy platforms: Process V1 HOBs normally
+            // No migration messages - this is expected behavior for V1-only platforms
+            Some((**v1_res_desc, None)) // V1 HOBs have no cache attributes
+        }
+        Hob::ResourceDescriptorV2(_) => {
+            // Legacy platforms: V2 HOBs are not supported - ignore
+            None
+        }
+        _ => None, // Not a resource descriptor HOB
+    }
+}
+
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
     use core::ffi::c_void;
 
-    use patina_pi::{
+    use patina::pi::{
         dxe_services::{GcdIoType, GcdMemoryType, IoSpaceDescriptor, MemorySpaceDescriptor},
         hob::{HobList, PhaseHandoffInformationTable},
     };

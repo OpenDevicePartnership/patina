@@ -2,7 +2,6 @@
 default_to_workspace = false
 
 [env]
-RUSTC_BOOTSTRAP = 1
 NO_STD_FLAGS = "--profile ${RUSTC_PROFILE} -Zbuild-std=core,compiler_builtins,alloc -Zbuild-std-features=compiler-builtins-mem -Zunstable-options --timings=html"
 STD_FLAGS = "--profile ${RUSTC_PROFILE} --features std"
 COV_FLAGS = { value = "--workspace --profile test --ignore-filename-regex .*test.*", condition = { env_not_set = ["COV_FLAGS"] } }
@@ -304,13 +303,12 @@ clear = true
 dependencies = ["generate-lockfile"]
 command = "cargo"
 args = ["vet", "--locked"]
-ignore_errors = true
+ignore_errors = false
 
 [tasks.all]
 description = "Run all tasks for PR readiness."
 dependencies = [
     "deny",
-    "vet",
     "cspell",
     "clippy",
     "build",

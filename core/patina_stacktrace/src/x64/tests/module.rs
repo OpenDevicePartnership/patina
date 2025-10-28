@@ -1,12 +1,15 @@
-use std::os::windows::ffi::OsStrExt;
 /// `Module` struct is used for tests to manually load a binary to memory for
 /// test execution. This module is not used by the actual stack trace lib.
 use std::path::PathBuf;
-use std::ptr;
-use winapi::shared::minwindef::HINSTANCE;
-use winapi::um::libloaderapi::{FreeLibrary, LoadLibraryW};
-use winapi::um::processthreadsapi::GetCurrentProcess;
-use winapi::um::psapi::{GetModuleInformation, MODULEINFO};
+use std::{os::windows::ffi::OsStrExt, ptr};
+use winapi::{
+    shared::minwindef::HINSTANCE,
+    um::{
+        libloaderapi::{FreeLibrary, LoadLibraryW},
+        processthreadsapi::GetCurrentProcess,
+        psapi::{GetModuleInformation, MODULEINFO},
+    },
+};
 
 pub struct Module {
     pub base_address: u64,

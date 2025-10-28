@@ -12,20 +12,6 @@ Below is a currated list of resources to help get you started with Rust developm
 | [lib.rs](https://lib.rs/) | An opinionated version of crates.io. |
 | [blessed.rs](https://blessed.rs/crates) | A curated list of crates for common use-cases. |
 
-## Repositories
-
-Other repositories related to the patina project.
-
-| Repository | Description |
-|------------|-------------|
-| [patina](https://github.com/OpenDevicePartnership/patina) | A pure-Rust implementation of a UEFI DXE Core. |
-| [patina-mtrr](https://github.com/OpenDevicePartnership/patina-mtrr) | Memory Type Range Registers for x86_64. |
-| [patina-paging](https://github.com/OpenDevicePartnership/patina-paging) | Paging implementation. |
-| [patina-readiness-tool](https://github.com/OpenDevicePartnership/patina-readiness-tool) | Patina DXE Core Platform Compatibility Verifier |
-| [patina-dxe-core-qemu](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu) | Reference QEMU platform DXE Core implementations. |
-| [patina-qemu](https://github.com/OpenDevicePartnership/patina-qemu/) | Reference QEMU EDK II platform(s) for X64 and AARCH64 |
-| [r-efi](https://github.com/r-efi/r-efi) | UEFI reference specification protocol constants and definitions. |
-
 ## Books
 
 Great books to read to get started with developing bare metal code using Rust!
