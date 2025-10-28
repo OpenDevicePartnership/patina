@@ -172,7 +172,7 @@ pub enum AmlOpcode {
 }
 
 pub enum BaseOpcode {
-    ZerOp,
+    ZeroOp,
     AliasOp,
     ...
 }
