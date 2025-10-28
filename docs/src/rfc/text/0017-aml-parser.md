@@ -44,7 +44,7 @@ Secondarily, implement the rest of the ACPI SDT protocol relating to AML functio
 
 ## Requirements
 
-1. Redesign the existing C firmware AML implementation into a a safe, easy-to-use Rust service.
+1. Redesign the existing C firmware AML implementation into a safe, easy-to-use Rust service.
 2. Implement firmware-side AML parsing: traversal and patching of AML bytecode as opcodes and operands.
 3. Use the Rust service (*1.*) to implement the C ACPI SDT protocol.
 
