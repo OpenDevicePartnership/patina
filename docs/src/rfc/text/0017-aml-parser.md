@@ -5,10 +5,10 @@ providing a safe, ergonomic interface for parsing and modifying AML bytecode in 
 The implementation mirrors the ACPI SDT protocol’s functionality for AML traversal and patching
 and is designed mainly for firmware use rather than OS-level interpretation.
 It defines a structured system of AML handles for navigating AML streams and a trait-based `AmlParser` service for operations
- such as opening tables, iterating operands, modifying values, and traversing child or sibling nodes.
- The goal is to replace legacy C-based AML handling with a type-safe Rust service that supports ACPI 2.0+.
- Future extensions may include extending this infrastructure for application-side AML interpretation
- within a `patina-acpi` crate.
+such as opening tables, iterating operands, modifying values, and traversing child or sibling nodes.
+The goal is to replace legacy C-based AML handling with a type-safe Rust service that supports ACPI 2.0+.
+Future extensions may include extending this infrastructure for application-side AML interpretation 
+within a `patina-acpi` crate.
 
 ## Change Log
 
