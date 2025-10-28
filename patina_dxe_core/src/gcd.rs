@@ -1,6 +1,5 @@
 //! DXE Core Global Coherency Domain (GCD)
 //!
-//!
 //! ## License
 //!
 //! Copyright (c) Microsoft Corporation.
@@ -117,15 +116,13 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
         let mut gcd_mem_type: GcdMemoryType = GcdMemoryType::NonExistent;
         let mut resource_attributes: u32 = 0;
 
-        // Parse ResourceDescriptor HOB using feature-specific function
+        // Only process Resource Descriptor HOBs according to the selected version
         let (res_desc, cache_attributes) = match parse_resource_descriptor_hob(hob) {
             Some((desc, Some(attrs))) => (desc, attrs),
             Some((desc, None)) => (desc, 0u64),
             None => continue, // Not a resource descriptor HOB or unsupported version for this build
         };
 
-        // Shared GCD logic: identical for V1/V2 HOBs.
-        // This ensures consistent behavior and completeness if logic changes.
         let mem_range = res_desc.physical_start
             ..res_desc.physical_start.checked_add(res_desc.resource_length).expect("Invalid resource descriptor hob");
 
@@ -230,21 +227,16 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                     // will be updated with the appropriate attributes which will then be sync'd to page table
                     // once it is initialized.
                     Err(EfiError::NotReady) => (),
-                    Ok(()) => {
-                        // Success is also acceptable - means attributes were set immediately
-                        log::debug!("Memory attributes set successfully for {:#X}", split_range.start);
-                    }
-                    Err(err) => {
+                    _ => {
                         // In debug builds, assert to catch GCD attribute setting failures during development.
                         // In production, allow the system to continue with a potentially torn state,
                         // matching EDK2 behavior where non-critical GCD operations can fail gracefully.
                         debug_assert!(
                             false,
-                            "GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}, error: {:?}",
+                            "GCD failed to set memory attributes {:#X} for base: {:#X}, length: {:#X}",
                             memory_attributes,
                             split_range.start,
                             split_range.end.saturating_sub(split_range.start),
-                            err
                         );
                     }
                 }
@@ -330,52 +322,36 @@ pub(crate) fn activate_compatibility_mode() {
     crate::memory_attributes_protocol::uninstall_memory_attributes_protocol();
 }
 
-// ResourceDescriptor HOB parsing functions.
-// V1 and V2 parsing logic is separated using feature flags and conditional compilation.
-
-/// Parse ResourceDescriptor HOB for V2 platforms (default, always compiled)
+/// Parse Resource Descriptor HOB v2
 ///
-/// This function only processes V2 HOBs:
-/// - V2 HOBs: Preferred, provides cache attributes for optimal performance
-/// - V1 HOBs: Ignored completely (logs warning)
-///
-/// Returns: Some((ResourceDescriptor, cache_attributes)) or None if not a V2 resource descriptor
+/// This function takes in a HOB and returns:
+/// - Some((Resource Descriptor, Some(cache_attributes))) if cache attributes are present
+/// - Some((Resource Descriptor, None)) if no cache attributes are present
+/// - None if not a v2 resource descriptor HOB
 #[cfg(not(feature = "v1_resource_descriptor_support"))]
 fn parse_resource_descriptor_hob(hob: &Hob) -> Option<(hob::ResourceDescriptor, Option<u64>)> {
     match hob {
         Hob::ResourceDescriptorV2(v2_res_desc) => {
-            // V2 platforms: Only process V2 HOBs
             let attrs = if v2_res_desc.attributes != 0 { Some(v2_res_desc.attributes) } else { None };
             Some((v2_res_desc.v1, attrs))
         }
-        Hob::ResourceDescriptor(_) => {
-            // V2 platforms: Ignore V1 HOBs completely
-            None
-        }
-        _ => None, // Not a resource descriptor HOB
+        _ => None, // Not a resource descriptor HOB or a v1 HOB
     }
 }
 
-/// Parse ResourceDescriptor HOB for V1 platforms (legacy platform support)
+/// Parse Resource Descriptor HOB v1
 ///
-/// This function provides V1-only behavior for legacy platforms:
-/// - V1 HOBs: Processed normally without any migration suggestions
-/// - V2 HOBs: Completely ignored (no per-HOB warning is logged)
-///
-/// Returns: Some((ResourceDescriptor, cache_attributes)) or None if not a V1 resource descriptor
+/// This function takes in a HOB and returns:
+/// - Some((Resource Descriptor, None))
+/// - None if not a v1 resource descriptor HOB
 #[cfg(feature = "v1_resource_descriptor_support")]
 fn parse_resource_descriptor_hob(hob: &Hob) -> Option<(hob::ResourceDescriptor, Option<u64>)> {
     match hob {
         Hob::ResourceDescriptor(v1_res_desc) => {
-            // Legacy platforms: Process V1 HOBs normally
-            // No migration messages - this is expected behavior for V1-only platforms
-            Some((**v1_res_desc, None)) // V1 HOBs have no cache attributes
+            // Legacy platforms: Process v1 HOBs normally
+            Some((**v1_res_desc, None)) // v1 HOBs have no cache attributes
         }
-        Hob::ResourceDescriptorV2(_) => {
-            // Legacy platforms: V2 HOBs are not supported - ignore
-            None
-        }
-        _ => None, // Not a resource descriptor HOB
+        _ => None, // Not a resource descriptor HOB or a v2 HOB
     }
 }
 

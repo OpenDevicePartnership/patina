@@ -120,7 +120,7 @@ fn build_hob_list() -> *const c_void {
             },
             owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
             resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
-            resource_attribute: hob::TESTED_MEMORY_ATTRIBUTES,
+            resource_attribute: hob::TESTED_MEMORY_ATTRIBUTES | hob::EFI_RESOURCE_ATTRIBUTE_WRITE_BACK_CACHEABLE,
             physical_start: mem_base + 0xE0000,
             resource_length: 0x10000,
         },
@@ -136,7 +136,7 @@ fn build_hob_list() -> *const c_void {
             },
             owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
             resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
-            resource_attribute: hob::INITIALIZED_MEMORY_ATTRIBUTES,
+            resource_attribute: hob::INITIALIZED_MEMORY_ATTRIBUTES | hob::EFI_RESOURCE_ATTRIBUTE_WRITE_BACK_CACHEABLE,
             physical_start: mem_base + 0xF0000,
             resource_length: 0x10000,
         },
@@ -152,7 +152,9 @@ fn build_hob_list() -> *const c_void {
             },
             owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
             resource_type: hob::EFI_RESOURCE_MEMORY_MAPPED_IO,
-            resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED,
+            resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT
+                | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED
+                | hob::EFI_RESOURCE_ATTRIBUTE_UNCACHEABLE,
             physical_start: 0x10000000,
             resource_length: 0x1000000,
         },
@@ -168,11 +170,13 @@ fn build_hob_list() -> *const c_void {
             },
             owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
             resource_type: hob::EFI_RESOURCE_FIRMWARE_DEVICE,
-            resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED,
+            resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT
+                | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED
+                | hob::EFI_RESOURCE_ATTRIBUTE_UNCACHEABLE,
             physical_start: 0x11000000,
             resource_length: 0x1000000,
         },
-        attributes: efi::MEMORY_WB, // Write Back for firmware device
+        attributes: efi::MEMORY_UC, // Uncacheable for firmware device
     };
 
     let resource_descriptor5 = ResourceDescriptorV2 {
@@ -184,7 +188,9 @@ fn build_hob_list() -> *const c_void {
             },
             owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
             resource_type: hob::EFI_RESOURCE_MEMORY_RESERVED,
-            resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED,
+            resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT
+                | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED
+                | hob::EFI_RESOURCE_ATTRIBUTE_WRITE_BACK_CACHEABLE,
             physical_start: 0x12000000,
             resource_length: 0x1000000,
         },
@@ -204,7 +210,7 @@ fn build_hob_list() -> *const c_void {
             physical_start: 0x1000,
             resource_length: 0xF000,
         },
-        attributes: efi::MEMORY_UC, // Uncacheable for I/O space
+        attributes: 0, // Cacheability is not applicable for I/O space
     };
 
     let resource_descriptor7 = ResourceDescriptorV2 {
@@ -220,7 +226,7 @@ fn build_hob_list() -> *const c_void {
             physical_start: 0x0000,
             resource_length: 0x1000,
         },
-        attributes: efi::MEMORY_UC, // Uncacheable for reserved I/O space
+        attributes: 0, // Cacheability is not applicable for reserved I/O space
     };
 
     let mut allocation_hob_template = hob::MemoryAllocation {
