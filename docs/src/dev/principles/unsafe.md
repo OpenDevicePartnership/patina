@@ -23,7 +23,7 @@ As a general principle, Patina splits the idea of safety into two categories: so
 | Postconditions    | ✅            | ✅             |
 | Invariants        | ✅            | ❌             |
 
-Software safety is set of things the compiler can verify and/or the programmer can verify in a pure software
+Software safety is the set of things the compiler can verify and/or the programmer can verify in a pure software
 environment. Hardware safety is the set of things that the compiler cannot verify, the programmer may be able to verify,
 and that interacts with hardware in a direct way.
 
@@ -104,56 +104,128 @@ invariants. Of course, this is not always possible, in which case unsafe functio
 For hardware safety, we don't have invariants, necessarily. For example, in writing a system register, there is no
 invariant that must hold true for that operation. There may be preconditions or postconditions, but not an invariant.
 
-For example, take writing the CR3 register on x64 systems.
+One simple example of hardware safety is the `invld` instruction on x86_64 that invalidates caches without writing them
+back. This operation can be very dangerous if not called at a proper time, but nothing about the software can change
+that; there is no validation that can be done to indicate this is a safe time to call this. In Patina, this is
+hardware safety and does not warrant an unsafe function.
+
+We may define a wrapper function for it as:
 
 ```rust
-fn install_page_table(cr3: u64) -> () {
+fn invalidate_caches() {
+  // SAFETY: This is an architecturally defined way to invalidate caches
+  unsafe { asm!("invld") }
+}
+```
+
+Software safety could be introduced, say in the below example:
+
+```rust
+// SAFETY: Caller must ensure that `ptr` is a valid u8 pointer
+unsafe fn invalidate_caches(ptr: *mut u8) {
+  // Better set this ptr to 4 first!
+  // SAFETY: See function comment, caller assumes responsibility
+  unsafe {ptr.write(4);}
+
+  // SAFETY: This is an architecturally defined way to invalidate caches
+  unsafe { asm!("invld") } 
+}
+```
+
+However, the function could be made safe again by validating assumptions:
+
+```rust
+unsafe fn invalidate_caches(ptr: NonNull<u8>) {
+  // Better set this ptr to 4 first!
+  // SAFETY: This pointer is guaranteed to be non-null
+  unsafe {ptr.write(4);}
+
+  // SAFETY: This is an architecturally defined way to invalidate caches
+  unsafe { asm!("invld") } 
+}
+```
+
+A more complex example, is writing the CR3 register on x64 systems.
+
+```rust
+// SAFETY: Caller must ensure `cr3` points to a valid page table
+unsafe fn install_page_table(cr3: u64) {
   // SAFETY: This is an architecturally defined operation to write the page table root.
   unsafe {
-      asm!("mov cr3, {0}", in(reg) cr3);
+      asm!("mov cr3, {0}", in(reg) cr3)
   }
-
-  ()
 }
 ```
 
 There is a precondition here that `cr3` must be a u64 that is the address of a valid page table. This operation is
-unsafe because all assembly is unsafe in Rust. However, in Patina, this need not create an unsafe function.
-
-e.g. the macro that writes system registers on ARM64 is not marked as unsafe. That is because it deals with hardware
-safety, not software safety. There is nothing the compiler or programmer can do to change any outcome here or validate
-anything ahead of time. The hardware is what will validate this and either work correctly or not. It does not provide
-value to make the macro unsafe because all the programmer can do is have a safety comment that says
+unsafe because all assembly is unsafe in Rust. This is more complicated than the previous example because we are taking
+a u64 that the hardware will treat as a pointer. However, software never dereferences this. So it falls into the
+category of hardware safety. The software cannot validate that the hardware will accept this as a valid page table, no
+matter what the software has done to validate it on its end. The software also does not dereference this u64 as a
+pointer, the hardware does. The u64 does not have to be mapped (as it is the address providing the mappings to the
+hardware). So Rust's memory safety cannot be violated by this operation. Certainly the system can become unusable,
+if this did not point to a page table the hardware understands or if the mappings are incorrect. But that is the
+hardware safety aspect. When viewed through this lens, the function can be a safe function, because all a caller could
+do is provide the following safety comment:
 
 ```rust
-// SAFETY: This is a valid value to write to a system register and I hope it is right
+// SAFETY: Hopefully this works!
+unsafe { install_page_table(cr3);}
 ```
 
-From a software perspective, we have a safe function definition; it simply takes a u64 and writes it to a system
-register. However, the hardware will decide whether or not this works, no matter what the safety from the software
-side is. As such, in Patina, lack of hardware safety does not mandate an unsafe function. If software safety cannot
-be guaranteed in addition to the hardware safety, then an unsafe function should be used.
+However, when viewed from the lifetime lens, this does become a software safety issue. The caller must guarantee that
+this u64 provided, when treated as a pointer, will live for the lifetime of the time it is written to CR3. If this
+gets reallocated, we have just violated both software and hardware safety. As such, the function is marked unsafe and
+should be given the appropriate function comment describing the caller expectations.
 
-e.g.
+This function could also be written to have a safe abstraction over it, e.g.:
 
 ```rust
-unsafe fn install_page_table(cr3: u64) -> () {
-  // oops, forgot to add a mapping!
-  let root_ptr = unsafe {cr3 as *const u64};
-  unsafe {root_ptr.write(57)};
-
+// SAFETY: Caller must ensure `cr3` points to a valid page table and that that pointer lives for the lifetime of
+// being written in CR3.
+unsafe fn write_cr3(cr3: u64) {
   // SAFETY: This is an architecturally defined operation to write the page table root.
   unsafe {
-      asm!("mov cr3, {0}", in(reg) cr3);
+      asm!("mov cr3, {0}", in(reg) cr3)
   }
+}
 
-  ()
+fn install_page_table(cr3: &'static u64) {
+   // SAFETY: We have ensured the lifetime is static, that the reference is valid, and we have done our best to ensure
+   // this is a valid page table
+   unsafe { write_cr3(*cr3) }
 }
 ```
 
-Now we have introduced something that is unsafe in the software context: a raw pointer write. There is now something
-the caller can do to validate that `cr3` is safe in the software safety context, whereas it can't do anything about
-the hardware safety. As such, it is now reasonable to mark this function unsafe.
+You can take this example a step farther and refactor `write_cr3` to use a safe `write_reg` macro. This macro is
+declared as safe in Patina because writing a system register in and of itself is not necessarily unsafe. It falls into
+the hardware safety. For a given case, say the CR3 case, we may create an unsafe abstraction on top that declares this
+particular register write has memory safety implications that the caller must guarantee.
+
+```rust
+macro_rules! write_sysreg {
+  ($dest:ident, $value:expr) => {
+    // SAFETY: We have a compile time guarantee that this is a valid register to write to
+    unsafe {
+      asm!(concat!("mov ", stringify!($dest), ", {value:x}"),
+      value = in(reg) $value)
+    }
+  }
+}
+
+// SAFETY: Caller must ensure `cr3` points to a valid page table and that that pointer lives for the lifetime of
+// being written in CR3.
+unsafe fn write_cr3(cr3_reg: u64) {
+  // SAFETY: This is an architecturally defined operation to write the page table root.
+  write_sysreg!(cr3, cr3_reg)
+}
+
+fn install_page_table(cr3: &'static u64) {
+   // SAFETY: We have ensured the lifetime is static, that the reference is valid, and we have done our best to ensure
+   // this is a valid page table
+   unsafe { write_cr3(*cr3) }
+}
+```
 
 ### Unsafe Traits and Impls
 
@@ -166,5 +238,6 @@ software safety and if so, list them as unsafe and document preconditions, postc
 
 The main distinction between software safety and hardware safety is that software safety is complex and has many
 possible safe paths that can be validated by the compiler or a programmer. In hardware safety, there is only one safe
-path: interacting with the hardware as architecturally defined. As such, it does not add value to propagate unsafe
-higher than the code block level when dealing with hardware safety unless it intersects with software safety.
+path: interacting with the hardware as architecturally defined. Pragmatically speaking, it does not add value to
+propagate unsafe higher than the code block level when dealing with hardware safety unless it intersects with
+software safety.
