@@ -2,16 +2,16 @@
 
 **Overall Unsafe Percentage:** 13.0%
 
-- Total Safe: 23,418
+- Total Safe: 23,415
 - Total Unsafe: 3,503
-- Total Items: 26,921
+- Total Items: 26,918
 
 ## Category Breakdown
 
 | Category | Safe | Unsafe | Total | Unsafe % |
 |----------|------|--------|-------|----------|
 | functions | 315 | 11 | 326 | 3.4% |
-| exprs | 21,168 | 3,322 | 24,490 | 13.6% |
+| exprs | 21,165 | 3,322 | 24,487 | 13.6% |
 | item_impls | 502 | 82 | 584 | 14.0% |
 | item_traits | 32 | 8 | 40 | 20.0% |
 | methods | 1,401 | 80 | 1,481 | 5.4% |
@@ -21,16 +21,16 @@
 
 **Overall Unsafe Percentage:** 13.0%
 
-- Total Safe: 23,418
+- Total Safe: 23,415
 - Total Unsafe: 3,503
-- Total Items: 26,921
+- Total Items: 26,918
 
 ## Category Breakdown
 
 | Category | Safe | Unsafe | Total | Unsafe % |
 |----------|------|--------|-------|----------|
 | functions | 315 | 11 | 326 | 3.4% |
-| exprs | 21,168 | 3,322 | 24,490 | 13.6% |
+| exprs | 21,165 | 3,322 | 24,487 | 13.6% |
 | item_impls | 502 | 82 | 584 | 14.0% |
 | item_traits | 32 | 8 | 40 | 20.0% |
 | methods | 1,401 | 80 | 1,481 | 5.4% |
