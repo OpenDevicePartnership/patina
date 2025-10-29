@@ -15,6 +15,7 @@ It defines a structured system of AML handles for navigating AML streams and a t
 - 2025-10-1: Initial RFC created.
 - 2025-10-22: Update iteration interface and address prior art.
 - 2025-10-28: Move to FCP.
+- 2025-10-28: Add notes based on offline discussion of AML buffer parsing.
 
 ## Motivation
 
@@ -98,7 +99,13 @@ it will be useful for extensibility to extract basic AML reading and patching ca
 For example, basic parsing functionality like reading the package length, parsing name segments, etc.,
 will be included in this utility crate.
 
-The proposed `patina-acpi` crate shares functionality with the existing `acpi` crate; as such,
+Unlike the `AmlParser` struct, this crate will operate independently of the ACPI table system--
+it does not directly deal with ACPI structures like the XSDT.
+Instead, it receives a generic buffer that represents AML bytecode beginning at the start of some ACPI table.
+The advantage of this paradigm is that this code can be reused for other parsing applications,
+and can be reused partially *from* the existing Rust `acpi` crate.
+
+This proposed `patina-acpi` utility crate crate shares functionality with the Rust  `os-dev acpi` crate; as such,
 it remains to be seen if collaboration is possible to expose this shared parsing functionality,
 or if `patina-acpi` will borrow/fork from `acpi`.
 
