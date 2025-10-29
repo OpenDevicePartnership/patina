@@ -8,11 +8,12 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
+use crate::paging::{CacheAttributeValue, PatinaPageTable};
 use alloc::boxed::Box;
 use patina::error::EfiError;
 use patina_mtrr::{Mtrr, create_mtrr_lib, error::MtrrError, structs::MtrrMemoryCacheType};
 use patina_paging::{
-    MemoryAttributes, PageTable, PagingType, PtError, PtResult, page_allocator::PageAllocator, x64::X64PageTable,
+    MemoryAttributes, PageTable, PagingType, PtError, page_allocator::PageAllocator, x64::X64PageTable,
 };
 use r_efi::efi;
 
@@ -38,7 +39,7 @@ fn efierror_to_pterror(efi_error: EfiError) -> PtError {
 }
 
 /// The x86_64 paging implementation.
-impl<P, M> PageTable for EfiCpuPagingX64<P, M>
+impl<P, M> PatinaPageTable for EfiCpuPagingX64<P, M>
 where
     P: PageTable,
     M: Mtrr,
@@ -67,20 +68,31 @@ where
         self.paging.install_page_table()
     }
 
-    fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, PtError> {
-        self.paging.query_memory_region(address, size).map(|attr|
-        // We need to add the cache attributes to the memory attributes
-        attr | match self.mtrr.get_memory_attribute(address) {
-            MtrrMemoryCacheType::Uncacheable => MemoryAttributes::Uncacheable,
-            MtrrMemoryCacheType::WriteCombining => MemoryAttributes::WriteCombining,
-            MtrrMemoryCacheType::WriteThrough => MemoryAttributes::WriteThrough,
-            MtrrMemoryCacheType::WriteProtected => MemoryAttributes::WriteProtect,
-            MtrrMemoryCacheType::WriteBack => MemoryAttributes::Writeback,
-            _ => MemoryAttributes::empty(),
-        })
+    fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)> {
+        // start by getting the caching attributes as we need to return those even if the page is unmapped in the
+        // page table
+        let cache_attr = match self.mtrr.get_memory_attribute(address) {
+            MtrrMemoryCacheType::Uncacheable => CacheAttributeValue::Valid(MemoryAttributes::Uncacheable),
+            MtrrMemoryCacheType::WriteCombining => CacheAttributeValue::Valid(MemoryAttributes::WriteCombining),
+            MtrrMemoryCacheType::WriteThrough => CacheAttributeValue::Valid(MemoryAttributes::WriteThrough),
+            MtrrMemoryCacheType::WriteProtected => CacheAttributeValue::Valid(MemoryAttributes::WriteProtect),
+            MtrrMemoryCacheType::WriteBack => CacheAttributeValue::Valid(MemoryAttributes::Writeback),
+            _ => CacheAttributeValue::Unmapped,
+        };
+
+        match self.paging.query_memory_region(address, size) {
+            Ok(attr) => match cache_attr {
+                CacheAttributeValue::Valid(cache_attr_val) => Ok(attr | cache_attr_val),
+                _ => {
+                    debug_assert!(false, "Cache attributes should be valid for mapped region");
+                    Ok(attr)
+                }
+            },
+            Err(err) => Err((err, cache_attr)),
+        }
     }
 
-    fn dump_page_tables(&self, address: u64, size: u64) -> PtResult<()> {
+    fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError> {
         self.paging.dump_page_tables(address, size)
     }
 }
@@ -121,7 +133,10 @@ fn apply_caching_attributes<M: Mtrr>(
     Ok(())
 }
 
-pub fn create_cpu_x64_paging<A: PageAllocator + 'static>(page_allocator: A) -> Result<Box<dyn PageTable>, efi::Status> {
+/// Create an x86_64 paging instance under the general PatinaPageTable trait.
+pub fn create_cpu_x64_paging<A: PageAllocator + 'static>(
+    page_allocator: A,
+) -> Result<Box<dyn PatinaPageTable>, efi::Status> {
     Ok(Box::new(EfiCpuPagingX64 {
         paging: X64PageTable::new(page_allocator, PagingType::Paging4Level).unwrap(),
         mtrr: create_mtrr_lib(0),
@@ -163,11 +178,9 @@ mod tests {
         impl PageTable for PageTable {
             fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
             fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError>;
-            fn remap_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
-            fn install_page_table(&self) -> Result<(), PtError>;
+            fn install_page_table(&mut self) -> Result<(), PtError>;
             fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, PtError>;
-            fn get_page_table_pages_for_size(&self, base_address: u64, size: u64) -> Result<u64, PtError>;
-            fn dump_page_tables(&self, address: u64, size: u64);
+            fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError>;
         }
     }
 
@@ -225,14 +238,14 @@ mod tests {
         let mut mock_page_table = MockPageTable::new();
         let mut mock_mtrr = MockMtrr::new();
 
-        mock_page_table.expect_remap_memory_region().returning(|_, _, _| Ok(()));
+        mock_page_table.expect_map_memory_region().returning(|_, _, _| Ok(()));
         mock_mtrr.expect_is_supported().return_const(true);
         mock_mtrr.expect_get_memory_attribute().return_const(MtrrMemoryCacheType::Uncacheable);
         mock_mtrr.expect_set_memory_attribute().returning(|_, _, _| Ok(()));
 
         let mut paging = EfiCpuPagingX64 { paging: mock_page_table, mtrr: mock_mtrr };
 
-        let result = paging.remap_memory_region(0x1000, 0x1000, MemoryAttributes::Uncacheable);
+        let result = paging.map_memory_region(0x1000, 0x1000, MemoryAttributes::Uncacheable);
         assert!(result.is_ok());
     }
 

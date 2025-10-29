@@ -161,17 +161,17 @@ mod tests {
     use crate::*;
     use gdbstub::target::ext::breakpoints;
     use mockall::{predicate::*, *};
-    use patina_paging::{MemoryAttributes, PtResult};
+    use patina_paging::{MemoryAttributes, PtError};
 
     mock! {
         pub MemPageTable {}
 
         impl PageTable for MemPageTable {
-            fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> PtResult<()>;
-            fn unmap_memory_region(&mut self, address: u64, size: u64) -> PtResult<()>;
-            fn install_page_table(&mut self) -> PtResult<()>;
-            fn query_memory_region(&self, address: u64, size: u64) -> PtResult<MemoryAttributes>;
-            fn dump_page_tables(&self, address: u64, size: u64) -> PtResult<()>;
+            fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
+            fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError>;
+            fn install_page_table(&mut self) -> Result<(), PtError>;
+            fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, PtError>;
+            fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError>;
         }
     }
 

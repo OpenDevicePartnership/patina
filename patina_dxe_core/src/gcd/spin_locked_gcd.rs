@@ -28,8 +28,8 @@ use crate::{
     GCD, allocator::DEFAULT_ALLOCATION_STRATEGY, ensure, error, events::EVENT_DB, protocol_db,
     protocol_db::INVALID_HANDLE, tpl_lock,
 };
-use patina_internal_cpu::paging::create_cpu_paging;
-use patina_paging::{MemoryAttributes, PageTable, PtError, PtResult, page_allocator::PageAllocator};
+use patina_internal_cpu::paging::{CacheAttributeValue, PatinaPageTable, create_cpu_paging};
+use patina_paging::{MemoryAttributes, PtError, page_allocator::PageAllocator};
 
 use patina::pi::hob::{Hob, HobList};
 
@@ -193,7 +193,7 @@ impl<'a> PagingAllocator<'a> {
 }
 
 impl PageAllocator for PagingAllocator<'_> {
-    fn allocate_page(&mut self, align: u64, size: u64, is_root: bool) -> PtResult<u64> {
+    fn allocate_page(&mut self, align: u64, size: u64, is_root: bool) -> Result<u64, PtError> {
         if align != UEFI_PAGE_SIZE as u64 || size != UEFI_PAGE_SIZE as u64 {
             log::error!("Invalid alignment or size for page allocation: align: {align:#x}, size: {size:#x}");
             return Err(PtError::InvalidParameter);
@@ -1798,7 +1798,7 @@ pub struct SpinLockedGcd {
     io: tpl_lock::TplMutex<IoGCD>,
     memory_change_callback: Option<MapChangeCallback>,
     memory_type_info_table: [EFiMemoryTypeInformation; 17],
-    page_table: tpl_lock::TplMutex<Option<Box<dyn PageTable>>>,
+    page_table: tpl_lock::TplMutex<Option<Box<dyn PatinaPageTable>>>,
 }
 
 impl SpinLockedGcd {
@@ -1873,19 +1873,38 @@ impl SpinLockedGcd {
             let paging_attrs = MemoryAttributes::from_bits_truncate(attributes)
                 & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask);
 
-            let mut region_attributes = None;
             let mut unmapped = false;
+            let mut update_cache_attributes = true;
 
             // we assume that the page table and GCD are in sync. If not, we will debug_assert and return an error here
             // as this indicates a critical error
-            match page_table.query_memory_region(base_address as u64, len as u64) {
-                Ok(region_attrs) => {
-                    region_attributes = Some(region_attrs);
-                }
-                Err(PtError::NoMapping) => {
+            let region_attributes = match page_table.query_memory_region(base_address as u64, len as u64) {
+                Ok(attrs) => Some(attrs),
+                Err((PtError::NoMapping, attrs)) => {
                     // it is not an error if the range is fully not mapped, we just need to map it, unless we are
                     // trying to unmap the region, which we will check for below
                     unmapped = true;
+
+                    // we capture the returned cache attributes here in order to check if we need to send the cache
+                    // attribute update later
+                    match attrs {
+                        CacheAttributeValue::Valid(cache_attributes) => {
+                            // we got valid cache attributes for an unmapped region which means we will
+                            // need to check later if we need to send the cache attribute update event
+                            Some(cache_attributes)
+                        }
+                        CacheAttributeValue::Unmapped => {
+                            // region is unmapped with no cache attributes which means we will need to send
+                            // the cache attribute update event
+                            None
+                        }
+                        // this architecture only describes cache attributes in the page table, so don't send the
+                        // cache attribute update event
+                        CacheAttributeValue::NotSupported => {
+                            update_cache_attributes = false;
+                            None
+                        }
+                    }
                 }
                 Err(e) => {
                     log::error!(
@@ -1896,13 +1915,14 @@ impl SpinLockedGcd {
                     debug_assert!(false);
                     return Err(EfiError::InvalidParameter);
                 }
-            }
+            };
 
             // if this region already has the attributes we want, we don't need to do anything
             // in the page table.
             if let Some(region_attrs) = region_attributes
                 && (region_attrs & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask))
                     == paging_attrs
+                && !unmapped
             {
                 log::trace!(
                     target: "paging",
@@ -1942,28 +1962,33 @@ impl SpinLockedGcd {
 
             match page_table.map_memory_region(base_address as u64, len as u64, paging_attrs) {
                 Ok(_) => {
+                    let new_cache_attributes = paging_attrs & MemoryAttributes::CacheAttributesMask;
+                    let old_cache_attributes =
+                        region_attributes.map(|attrs| attrs & MemoryAttributes::CacheAttributesMask);
+
                     // if the cache attributes changed, we need to publish an event, as some architectures
                     // (such as x86) need to populate APs with the caching information
-                    if let Some(region_attrs) = region_attributes
-                        && (region_attrs & MemoryAttributes::CacheAttributesMask)
-                            != (paging_attrs & MemoryAttributes::CacheAttributesMask)
-                        && (paging_attrs & MemoryAttributes::CacheAttributesMask) != MemoryAttributes::empty()
-                    {
-                        log::trace!(
-                            target: "paging",
-                            "Attributes for memory region {base_address:#x?} of length {len:#x?} were updated to {paging_attrs:#x?} from {region_attrs:#x?}, sending cache attributes changed event",
-                        );
+                    if new_cache_attributes != MemoryAttributes::empty() && update_cache_attributes {
+                        if let Some(old_cache_attrs) = old_cache_attributes
+                            && old_cache_attrs != new_cache_attributes
+                        {
+                            // in this case, we had caching attributes for this region and they do not match the newly
+                            // set attributes
+                            log::trace!(
+                                target: "paging",
+                                "Cache attributes for memory region {base_address:#x?} of length {len:#x?} were updated to {new_cache_attributes:#x?} from {old_cache_attrs:#x?}, sending cache attributes changed event",
+                            );
 
-                        EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
-                    } else if unmapped
-                        && (paging_attrs & MemoryAttributes::CacheAttributesMask) != MemoryAttributes::empty()
-                    {
-                        log::trace!(
-                            target: "paging",
-                            "Memory region {base_address:#x?} of length {len:#x?} mapped, sending cache attributes changed event",
-                        );
+                            EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
+                        } else if unmapped && old_cache_attributes.is_none() {
+                            // in this case the region was unmapped and we had no caching attributes set up
+                            log::trace!(
+                                target: "paging",
+                                "Cache attributes for memory region {base_address:#x?} of length {len:#x?} were updated to {new_cache_attributes:#x?} from an unmapped state, sending cache attributes changed event",
+                            );
 
-                        EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
+                            EVENT_DB.signal_group(CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP);
+                        }
                     }
 
                     log::trace!(

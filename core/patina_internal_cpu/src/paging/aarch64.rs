@@ -9,13 +9,11 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::boxed::Box;
-use patina_paging::{MemoryAttributes, PageTable, PagingType, PtError, PtResult, aarch64::AArch64PageTable};
+use patina_paging::{MemoryAttributes, PageTable, PagingType, PtError, aarch64::AArch64PageTable};
 
+use crate::paging::{CacheAttributeValue, PatinaPageTable};
 use patina_paging::page_allocator::PageAllocator;
 use r_efi::efi;
-
-#[cfg(test)]
-use std::alloc::{Layout, dealloc};
 
 /// The aarch64 paging implementation. It acts as a bridge between the EFI CPU
 /// Architecture Protocol and the aarch64 paging implementation.
@@ -28,7 +26,7 @@ where
 }
 
 /// The aarch64 paging implementation.
-impl<P> PageTable for EfiCpuPagingAArch64<P>
+impl<P> PatinaPageTable for EfiCpuPagingAArch64<P>
 where
     P: PageTable,
 {
@@ -44,18 +42,21 @@ where
         self.paging.install_page_table()
     }
 
-    fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, PtError> {
-        self.paging.query_memory_region(address, size)
+    fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)> {
+        // in AARCH64, the caching attributes are managed in the page table and so we will never return just caching
+        // attributes
+        self.paging.query_memory_region(address, size).map_err(|e| (e, CacheAttributeValue::NotSupported))
     }
 
-    fn dump_page_tables(&self, address: u64, size: u64) -> PtResult<()> {
+    fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError> {
         self.paging.dump_page_tables(address, size)
     }
 }
 
+/// Create an AArch64 paging instance under the general PatinaPageTable trait.
 pub fn create_cpu_aarch64_paging<A: PageAllocator + 'static>(
     page_allocator: A,
-) -> Result<Box<dyn PageTable>, efi::Status> {
+) -> Result<Box<dyn PatinaPageTable>, efi::Status> {
     Ok(Box::new(EfiCpuPagingAArch64 {
         paging: AArch64PageTable::new(page_allocator, PagingType::Paging4Level).unwrap(),
     }))
@@ -64,7 +65,7 @@ pub fn create_cpu_aarch64_paging<A: PageAllocator + 'static>(
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
-    use std::alloc::alloc;
+    use std::alloc::{Layout, alloc, dealloc};
 
     use super::*;
     use mockall::mock;
@@ -81,11 +82,9 @@ mod tests {
         impl PageTable for PageTable {
             fn map_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
             fn unmap_memory_region(&mut self, address: u64, size: u64) -> Result<(), PtError>;
-            fn remap_memory_region(&mut self, address: u64, size: u64, attributes: MemoryAttributes) -> Result<(), PtError>;
             fn install_page_table(&self) -> Result<(), PtError>;
             fn query_memory_region(&self, address: u64, size: u64) -> Result<MemoryAttributes, PtError>;
-            fn get_page_table_pages_for_size(&self, base_address: u64, size: u64) -> Result<u64, PtError>;
-            fn dump_page_tables(&self, address: u64, size: u64);
+            fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError>;
         }
     }
 
@@ -117,11 +116,11 @@ mod tests {
     fn test_remap_memory_region() {
         let mut mock_page_table = MockPageTable::new();
 
-        mock_page_table.expect_remap_memory_region().returning(|_, _, _| Ok(()));
+        mock_page_table.expect_map_memory_region().returning(|_, _, _| Ok(()));
 
         let mut paging = EfiCpuPagingAArch64 { paging: mock_page_table };
 
-        let result = paging.remap_memory_region(0x1000, 0x1000, MemoryAttributes::Uncacheable);
+        let result = paging.map_memory_region(0x1000, 0x1000, MemoryAttributes::Uncacheable);
         assert!(result.is_ok());
     }
 
