@@ -1,6 +1,7 @@
-use crate::error::Error;
-use crate::error::StResult;
-use crate::pe::PE;
+use crate::{
+    error::{Error, StResult},
+    pe::PE,
+};
 use core::arch::asm;
 
 cfg_if::cfg_if! {

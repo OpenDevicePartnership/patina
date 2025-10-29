@@ -10,9 +10,11 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use patina::boot_services::{BootServices, StandardBootServices};
-use patina::test::patina_test;
-use patina::{u_assert, u_assert_eq};
+use patina::{
+    boot_services::{BootServices, StandardBootServices},
+    test::patina_test,
+    u_assert, u_assert_eq,
+};
 use r_efi::efi;
 
 use crate::{memory_log, protocol::AdvancedLoggerProtocol};
@@ -24,6 +26,10 @@ fn adv_logger_test(bs: StandardBootServices) -> patina::test::Result {
 
     // Get a reference to the advanced logger buffer. The actual transport does
     // not matter so use the NULL implementation as a stand-in.
+    //
+    // SAFETY: The advanced logger protocol should have been installed by the
+    //         component initialization and so should be the AdvancedLoggerProtocol protocol type definition. This search
+    //         and conversion is safe.
     let result = unsafe { bs.locate_protocol::<AdvancedLoggerProtocol>(None) };
 
     u_assert!(result.is_ok(), "adv_logger_test: Failed to locate the advanced logger protocol.");

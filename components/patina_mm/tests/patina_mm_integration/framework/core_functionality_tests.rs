@@ -10,8 +10,10 @@
 //! SPDX-License-Identifier: Apache-2.0
 
 use patina::Guid;
-use patina_mm::component::communicator::{MmCommunication, MmCommunicator, MmExecutor, Status};
-use patina_mm::config::{CommunicateBuffer, EfiMmCommunicateHeader};
+use patina_mm::{
+    component::communicator::{MmCommunication, MmCommunicator, MmExecutor, Status},
+    config::{CommunicateBuffer, EfiMmCommunicateHeader},
+};
 
 use core::pin::Pin;
 use std::collections::HashMap;

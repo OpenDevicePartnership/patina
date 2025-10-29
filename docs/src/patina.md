@@ -191,7 +191,7 @@ definition but many of the services are still implemented in C so it is orange.
 - Support for [Enhanced Memory Protections](https://microsoft.github.io/mu/WhatAndWhy/enhancedmemoryprotection/).
 - Source-level debugging support.
 - Built-in Brotli and EFI decompression support.
-- Infrastructure (in the `patina_sdk::test` module) for on-platform execution of unit tests.
+- Infrastructure (in the `patina::test` module) for on-platform execution of unit tests.
 
 ``` admonish important
 The Patina DXE Core otherwise supports the normal responsibilities of a DXE Core except for the design restrictions
@@ -205,6 +205,21 @@ and depended on by those drivers are written in Rust.
 
 | ![UEFI Boot Services Call Count 1](./media/bootserv_call_table_1.png) | ![UEFI Boot Services Call Count 2](./media/bootserv_call_table_2.png)  |
 |---|---|
+
+#### Resource Descriptor HOB Version Support
+
+Patina DXE Core supports two mutually exclusive formats for Resource Descriptor HOBs: V1 (legacy) and V2 (modern,
+with cache attributes). The version supported is selected at compile time using a Cargo feature flag:
+
+- **Default (V2)**: Only V2 Resource Descriptor HOBs are processed. This is the default for modern platforms and
+  enables cache attribute support.
+- **Legacy (V1)**: If the `v1_resource_descriptor_support` feature is enabled, only V1 Resource Descriptor HOBs are
+  processed (for legacy platforms). V2 HOBs are ignored in this mode.
+
+The code paths for V1 and V2 are strictly separated at compile time for performance and maintainability. Shared GCD
+logic is reused for both modes. See the `Cargo.toml` and DXE Core source for details on enabling or disabling this
+feature. For instructions on enabling or disabling V1 Resource Descriptor HOB support,
+see the integration guide: [How to Setup and Integrate a Platform-Specific Patina DXE Core Build](./integrate/dxe_core.md).
 
 #### Rust DXE Scaling Plan
 
@@ -294,9 +309,9 @@ Three main types of testing are currently supported.
   state of the module. Only the external interfaces are being tested. Cargo will detect and run these tests with the
   same command as for unit tests. More information about integration tests are available in the
   [cargo book entry](https://doc.rust-lang.org/rust-by-example/testing/integration_testing.html).
-- **On-platform tests** are supported with code in a module called `patina_sdk::test` that provides a testing framework
+- **On-platform tests** are supported with code in a module called `patina::test` that provides a testing framework
   similar to the typical rust testing framework. The key difference is that instead of tests being collected and
-  executed on the host system, they are instead collected and executed via a component (`patina_sdk::test::TestRunner`)
+  executed on the host system, they are instead collected and executed via a component (`patina::test::TestRunner`)
   provided by the same crate. The platform must register this component with the `DXE core`. The DXE core will then
   dispatch this component, which will run all registered tests.
 

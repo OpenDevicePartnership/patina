@@ -12,18 +12,24 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use crate::config::{CommunicateBuffer, EfiMmCommunicateHeader, MmCommunicationConfiguration};
-use crate::service::SwMmiTrigger;
-use patina::Guid;
-use patina::component::{
-    IntoComponent, Storage,
-    service::{IntoService, Service},
+use crate::{
+    config::{CommunicateBuffer, EfiMmCommunicateHeader, MmCommunicationConfiguration},
+    service::SwMmiTrigger,
+};
+use patina::{
+    Guid,
+    component::{
+        IntoComponent, Storage,
+        service::{IntoService, Service},
+    },
 };
 extern crate alloc;
 use alloc::{boxed::Box, vec::Vec};
 
-use core::cell::RefCell;
-use core::fmt::{self, Debug};
+use core::{
+    cell::RefCell,
+    fmt::{self, Debug},
+};
 
 #[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
@@ -67,12 +73,10 @@ impl MmExecutor for RealMmExecutor {
     #[coverage(off)]
     fn execute_mm(&self, _comm_buffer: &mut CommunicateBuffer) -> Result<(), Status> {
         log::debug!(target: "mm_comm", "Triggering SW MMI for MM communication");
-        unsafe {
-            self.sw_mmi_trigger_service.trigger_sw_mmi(0xFF, 0).map_err(|err| {
-                log::error!(target: "mm_comm", "SW MMI trigger failed: {:?}", err);
-                Status::SwMmiFailed
-            })
-        }
+        self.sw_mmi_trigger_service.trigger_sw_mmi(0xFF, 0).map_err(|err| {
+            log::error!(target: "mm_comm", "SW MMI trigger failed: {:?}", err);
+            Status::SwMmiFailed
+        })
     }
 }
 
@@ -279,13 +283,16 @@ impl Default for MmCommunicator {
 #[coverage(off)]
 mod tests {
     use super::*;
-    use crate::component::communicator::{MmCommunicator, MockMmExecutor};
-    use crate::component::sw_mmi_manager::SwMmiManager;
-    use crate::config::{CommunicateBuffer, MmCommunicationConfiguration};
+    use crate::{
+        component::{
+            communicator::{MmCommunicator, MockMmExecutor},
+            sw_mmi_manager::SwMmiManager,
+        },
+        config::{CommunicateBuffer, MmCommunicationConfiguration},
+    };
     use patina::component::{IntoComponent, Storage};
 
-    use core::cell::RefCell;
-    use core::pin::Pin;
+    use core::{cell::RefCell, pin::Pin};
     use r_efi::efi;
 
     extern crate alloc;
@@ -541,6 +548,7 @@ mod tests {
         mock_executor.expect_execute_mm().times(1).returning(|comm_buffer| {
             // Simulate MM handler corrupting the buffer state by directly writing to memory
             // This should be caught by the state verification
+            // SAFETY: Test intentionally corrupts buffer to verify error detection
             unsafe {
                 let ptr = comm_buffer.as_ptr();
                 *ptr = 0xFF; // Corrupt the first byte of the header

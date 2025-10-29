@@ -1,3 +1,11 @@
+//! A module containing Macro(s) implementation details for working with HOBs.
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use syn::{Attribute, Generics, ItemEnum, ItemStruct, Meta, parse::Parse, spanned::Spanned};
@@ -125,11 +133,17 @@ pub fn hob_config2(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
             const HOB_GUID: patina::OwnedGuid = #hob_guid;
 
             fn parse(bytes: &[u8]) -> Self {
-                assert!(
-                    bytes.len() >= core::mem::size_of::<Self>(),
-                    "Guided Hob [{:#?}] parse failed. Buffer to small for type {}", Self::HOB_GUID, core::any::type_name::<Self>()
-                );
-                unsafe { *(bytes.as_ptr() as *const Self) }
+                let hob = match <Self as zerocopy::FromBytes>::read_from_prefix(bytes) {
+                    Ok((hob, _)) => hob,
+                    Err(_) => {
+                        panic!(
+                            "Guided Hob [{:#?}] parse failed. Buffer to small for type {}",
+                            Self::HOB_GUID,
+                            core::any::type_name::<Self>()
+                        );
+                    }
+                };
+                hob
             }
         }
     }
@@ -164,11 +178,17 @@ mod tests {
             impl patina::component::hob::FromHob for MyStruct {
                 const HOB_GUID: patina::OwnedGuid = patina::OwnedGuid::from_fields(2347032417u32, 37834u16, 4562u16, 170u8, 13u8, [0u8, 224u8, 152u8, 3u8, 43u8, 140u8]);
                 fn parse(bytes: &[u8]) -> Self {
-                    assert!(
-                        bytes.len() >= core::mem::size_of::<Self>(),
-                        "Guided Hob [{:#?}] parse failed. Buffer to small for type {}", Self::HOB_GUID, core::any::type_name::<Self>()
-                    );
-                    unsafe { *(bytes.as_ptr() as *const Self) }
+                    let hob = match <Self as zerocopy::FromBytes>::read_from_prefix(bytes) {
+                        Ok((hob, _)) => hob,
+                        Err(_) => {
+                            panic!(
+                                "Guided Hob [{:#?}] parse failed. Buffer to small for type {}",
+                                Self::HOB_GUID,
+                                core::any::type_name::<Self>()
+                            );
+                        }
+                    };
+                    hob
                 }
             }
         };
@@ -203,11 +223,17 @@ mod tests {
 
                 const HOB_GUID: patina::OwnedGuid = patina::OwnedGuid::from_fields(3928583570u32, 2921u16, 16956u16, 140u8, 40u8, [51u8, 180u8, 224u8, 169u8, 18u8, 104u8]);
                 fn parse(bytes: &[u8]) -> Self {
-                    assert!(
-                        bytes.len() >= core::mem::size_of::<Self>(),
-                        "Guided Hob [{:#?}] parse failed. Buffer to small for type {}", Self::HOB_GUID, core::any::type_name::<Self>()
-                    );
-                    unsafe { *(bytes.as_ptr() as *const Self) }
+                    let hob = match <Self as zerocopy::FromBytes>::read_from_prefix(bytes) {
+                        Ok((hob, _)) => hob,
+                        Err(_) => {
+                            panic!(
+                                "Guided Hob [{:#?}] parse failed. Buffer to small for type {}",
+                                Self::HOB_GUID,
+                                core::any::type_name::<Self>()
+                            );
+                        }
+                    };
+                    hob
                 }
             }
         };
@@ -234,11 +260,17 @@ mod tests {
             impl<T> patina::component::hob::FromHob for MyStruct<T> {
                 const HOB_GUID: patina::OwnedGuid = patina::OwnedGuid::from_fields(2347032417u32, 37834u16, 4562u16, 170u8, 13u8, [0u8, 224u8, 152u8, 3u8, 43u8, 140u8]);
                 fn parse(bytes: &[u8]) -> Self {
-                    assert!(
-                        bytes.len() >= core::mem::size_of::<Self>(),
-                        "Guided Hob [{:#?}] parse failed. Buffer to small for type {}", Self::HOB_GUID, core::any::type_name::<Self>()
-                    );
-                    unsafe { *(bytes.as_ptr() as *const Self) }
+                    let hob = match <Self as zerocopy::FromBytes>::read_from_prefix(bytes) {
+                        Ok((hob, _)) => hob,
+                        Err(_) => {
+                            panic!(
+                                "Guided Hob [{:#?}] parse failed. Buffer to small for type {}",
+                                Self::HOB_GUID,
+                                core::any::type_name::<Self>()
+                            );
+                        }
+                    };
+                    hob
                 }
             }
         };

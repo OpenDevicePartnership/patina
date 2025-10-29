@@ -25,7 +25,6 @@ goblin = { workspace = true, features = ["pe32", "pe64", "te"] }
 lazy_static = { workspace = true, features = ["spin_no_std"] }
 linked_list_allocator = { workspace = true }
 log = { workspace = true }
-patina_pi = { workspace = true }
 mu_rust_helpers = { workspace = true }
 patina_paging = { workspace = true }
 r-efi = { workspace = true }
@@ -33,7 +32,7 @@ scroll = { workspace = true, features = ["derive"] }
 spin = { workspace = true }
 uefi_corosensei = { workspace = true  }
 uuid = { workspace = true  }
-patina = { workspace = true, features = ["core", "enable_patina_tests"] }
+patina = { workspace = true, features = ["core"] }
 patina_ffs = { workspace = true }
 patina_internal_collections = { workspace = true  }
 patina_internal_cpu = { workspace = true }
@@ -50,7 +49,9 @@ patina_performance = { workspace = true }
 patina_samples = { path = "../components/patina_samples" }
 patina_ffs_extractors = { path = "../sdk/patina_ffs_extractors" }
 patina_internal_collections = { path = "../core/patina_internal_collections" }
+env_logger = { workspace = true }
 mockall = { workspace = true }
+serial_test = { workspace = true }
 
 [target.'cfg(all(target_arch="aarch64"))'.dependencies]
 arm-gic = { workspace = true }
@@ -60,3 +61,4 @@ default = []
 std = ["patina/std"]
 doc = ["patina_internal_cpu/doc"]
 compatibility_mode_allowed = []
+v1_resource_descriptor_support = []

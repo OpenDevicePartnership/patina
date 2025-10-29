@@ -11,12 +11,12 @@
 use core::ptr::addr_of;
 use lazy_static::lazy_static;
 use patina::base::SIZE_4GB;
-use x86_64::instructions::{
-    segmentation::{CS, DS, ES, FS, GS, SS, Segment},
-    tables::load_tss,
-};
 use x86_64::{
     VirtAddr,
+    instructions::{
+        segmentation::{CS, DS, ES, FS, GS, SS, Segment},
+        tables::load_tss,
+    },
     structures::{
         gdt::{Descriptor, DescriptorFlags, GlobalDescriptorTable, SegmentSelector},
         tss::TaskStateSegment,
@@ -191,6 +191,8 @@ pub fn init() {
         panic!("GDT above 4GB, MP services will fail");
     }
     GDT.0.load();
+
+    // SAFETY: We are constructing a well known GDT that maps all segments in a flat map
     unsafe {
         CS::set_reg(GDT.1.code_selector);
 
@@ -210,10 +212,9 @@ pub fn init() {
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
-    use super::GDT;
     use super::{
-        LINEAR_CODE_SEL, LINEAR_CODE64_SEL, LINEAR_DATA64_SEL, LINEAR_SEL, SPARE5_SEL, SYS_CODE_SEL, SYS_CODE16_SEL,
-        SYS_DATA_SEL,
+        GDT, LINEAR_CODE_SEL, LINEAR_CODE64_SEL, LINEAR_DATA64_SEL, LINEAR_SEL, SPARE5_SEL, SYS_CODE_SEL,
+        SYS_CODE16_SEL, SYS_DATA_SEL,
     };
 
     #[test]

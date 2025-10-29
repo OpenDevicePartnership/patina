@@ -10,7 +10,7 @@ pub(crate) mod debug_image_info_table;
 pub(crate) mod memory_attributes_table;
 
 use alloc::{boxed::Box, vec};
-use core::{ffi::c_void, slice::from_raw_parts_mut};
+use core::{ffi::c_void, ptr::slice_from_raw_parts_mut};
 use patina::error::EfiError;
 use r_efi::efi;
 
@@ -53,7 +53,7 @@ pub fn core_install_configuration_table(
     } else {
         let ct_slice_box = unsafe {
             Box::from_raw_in(
-                from_raw_parts_mut(system_table.configuration_table, system_table.number_of_table_entries),
+                slice_from_raw_parts_mut(system_table.configuration_table, system_table.number_of_table_entries),
                 &EFI_RUNTIME_SERVICES_DATA_ALLOCATOR,
             )
         };

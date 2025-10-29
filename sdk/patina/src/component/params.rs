@@ -917,7 +917,7 @@ mod tests {
         // Trying to access it with config, validation should fail because it is unlocked.
         assert!(
             Config::<i32>::try_validate(&id, (&storage).into())
-                .is_err_and(|err| err == "patina::component::params::Config<i32>")
+                .is_err_and(|err| err == "patina::component::params::Config<'_, i32>")
         );
     }
 
@@ -929,7 +929,7 @@ mod tests {
         let id = Config::<i32>::init_state(&mut storage, &mut mock_metadata);
         assert!(
             ConfigMut::<i32>::try_validate(&id, (&storage).into())
-                .is_err_and(|err| err == "patina::component::params::ConfigMut<i32>")
+                .is_err_and(|err| err == "patina::component::params::ConfigMut<'_, i32>")
         );
     }
 

@@ -13,8 +13,7 @@ use crate::{
     runtime_services::StandardRuntimeServices,
 };
 
-use crate::OwnedGuid;
-use crate::boot_services::StandardBootServices;
+use crate::{OwnedGuid, boot_services::StandardBootServices};
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{
     any::{Any, TypeId},
@@ -603,7 +602,7 @@ mod tests {
     #[test]
     fn test_hob_functionality() {
         use crate as patina;
-        #[derive(Copy, Clone, FromHob)]
+        #[derive(FromHob, zerocopy_derive::FromBytes)]
         #[repr(C)]
         #[hob = "12345678-1234-1234-1234-123456789012"]
         struct MyStruct;

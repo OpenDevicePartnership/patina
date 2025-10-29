@@ -16,4 +16,8 @@ pub mod message_parser;
 pub mod real_component_framework;
 
 // Re-export commonly used items for test infrastructure
-pub use {constants::*, framework::*, handlers::*, message_parser::*, real_component_framework::*};
+pub use constants::*;
+pub use framework::*;
+pub use handlers::*;
+pub use message_parser::*;
+pub use real_component_framework::*;

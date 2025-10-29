@@ -13,11 +13,17 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 
-use patina::Guid;
-use patina::component::{IntoComponent, Storage};
-use patina_mm::component::communicator::{MmCommunication, MmCommunicator};
-use patina_mm::component::sw_mmi_manager::SwMmiManager;
-use patina_mm::config::{CommunicateBuffer, MmCommunicationConfiguration};
+use patina::{
+    Guid,
+    component::{IntoComponent, Storage},
+};
+use patina_mm::{
+    component::{
+        communicator::{MmCommunication, MmCommunicator},
+        sw_mmi_manager::SwMmiManager,
+    },
+    config::{CommunicateBuffer, MmCommunicationConfiguration},
+};
 use r_efi::efi;
 
 use core::pin::Pin;

@@ -11,9 +11,11 @@ use core::{
     slice::from_raw_parts,
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
-use patina::guids;
+use patina::{
+    guids,
+    pi::{protocols, status_code},
+};
 use patina_internal_cpu::interrupts;
-use patina_pi::{protocols, status_code};
 use r_efi::efi;
 
 use crate::{
@@ -244,8 +246,7 @@ pub fn init_misc_boot_services_support(bs: &mut efi::BootServices) {
 #[coverage(off)]
 mod tests {
     use super::*;
-    use crate::systemtables;
-    use crate::test_support;
+    use crate::{systemtables, test_support};
     use core::{ffi::c_void, ptr};
     use r_efi::efi;
     use std::cell::UnsafeCell;

@@ -109,8 +109,10 @@ where
 #[coverage(off)]
 mod tests {
     use crate as patina;
-    use crate::component::IntoComponent;
-    use crate::component::params::{Config, ConfigMut};
+    use crate::component::{
+        IntoComponent,
+        params::{Config, ConfigMut},
+    };
 
     #[derive(IntoComponent)]
     #[entry_point(path = TestStructSuccess::entry_point)]
@@ -189,7 +191,7 @@ mod tests {
         test_struct.initialize(&mut storage);
         storage.lock_configs(); // Lock it so the ConfigMut can't be accessed
         assert!(test_struct.run(&mut storage).is_ok_and(|res| !res));
-        assert_eq!(test_struct.metadata().failed_param(), Some("patina::component::params::ConfigMut<u32>"));
+        assert_eq!(test_struct.metadata().failed_param(), Some("patina::component::params::ConfigMut<'_, u32>"));
 
         let mut test_struct = TestStructFail { x: 5 }.into_component();
         test_struct.initialize(&mut storage);

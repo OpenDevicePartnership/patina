@@ -28,6 +28,7 @@ pub struct AdvancedLoggerProtocol {
 /// the protocol.
 type AdvancedLoggerWrite = extern "efiapi" fn(*const AdvancedLoggerProtocol, usize, *const u8, usize) -> efi::Status;
 
+// SAFETY: The AdvancedLoggerProtocol struct layout matches the protocol definition.
 unsafe impl ProtocolInterface for AdvancedLoggerProtocol {
     const PROTOCOL_GUID: efi::Guid = AdvancedLoggerProtocol::GUID;
 }

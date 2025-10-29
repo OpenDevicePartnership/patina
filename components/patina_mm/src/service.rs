@@ -9,6 +9,5 @@
 //! SPDX-License-Identifier: Apache-2.0
 pub mod platform_mm_control;
 
-pub use crate::component::communicator::MmCommunication;
-pub use crate::component::sw_mmi_manager::SwMmiTrigger;
+pub use crate::component::{communicator::MmCommunication, sw_mmi_manager::SwMmiTrigger};
 pub use platform_mm_control::PlatformMmControl;

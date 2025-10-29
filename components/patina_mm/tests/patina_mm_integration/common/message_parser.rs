@@ -65,7 +65,7 @@ impl MmCommunicateHeader {
             return Err(MmMessageParseError::BufferTooSmall);
         }
 
-        // Byte-by-byte copy to avoid alignment issues
+        // SAFETY: MmCommunicateHeader is repr(C) with well-defined size and layout
         let header_bytes = unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) };
         buffer[..Self::SIZE].copy_from_slice(header_bytes);
         Ok(())
@@ -81,6 +81,7 @@ impl MmCommunicateHeader {
         let mut header =
             MmCommunicateHeader { header_guid: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]), message_length: 0 };
 
+        // SAFETY: MmCommunicateHeader is repr(C) with well-defined size and layout
         let header_bytes = unsafe { core::slice::from_raw_parts_mut(&mut header as *mut Self as *mut u8, Self::SIZE) };
         header_bytes.copy_from_slice(&buffer[..Self::SIZE]);
         Ok(header)

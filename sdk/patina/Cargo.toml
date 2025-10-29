@@ -26,7 +26,6 @@ name = "basic_hob_usage"
 [dependencies]
 patina_macro = { workspace = true }
 fixedbitset = { workspace = true }
-patina_pi = { workspace = true }
 
 cfg-if = { workspace = true }
 log = { workspace = true }
@@ -34,9 +33,16 @@ r-efi = { workspace = true }
 mockall = { workspace = true, optional = true }
 mu_rust_helpers = { workspace = true }
 num-traits = { workspace = true }
+indoc = { workspace = true }
 fallible-streaming-iterator = { workspace = true }
 linkme = { workspace = true }
 scroll = { workspace = true }
+uuid = { workspace = true }
+serde = { workspace = true, optional = true }
+serde_yaml = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
 
 [target.'cfg(target_arch="x86_64")'.dependencies]
 x86_64 = { workspace = true, features = ["instructions"] }
@@ -45,6 +51,10 @@ uart_16550 = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 mockall = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+brotli-decompressor = { workspace = true, default-features = false }
+alloc-no-stdlib = { workspace = true }
 
 [features]
 core = ['alloc']
@@ -58,6 +68,7 @@ default = []
 # with the `#[patina_test]` attribute. Otherwise, a linker crash or failure will
 # occur!
 enable_patina_tests = ["patina_macro/enable_patina_tests"]
+serde = ["dep:serde", "dep:serde_yaml", "dep:serde_json"]
 
 unstable = ["unstable-device-path"]
 unstable-device-path = []

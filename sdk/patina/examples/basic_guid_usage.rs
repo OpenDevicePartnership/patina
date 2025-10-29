@@ -23,8 +23,10 @@
 //!
 //! The implementation avoids heap allocations, using stack-allocated buffers for formatting.
 
-use patina::base::guid::{Guid, GuidError, OwnedGuid};
-use patina::guids::*;
+use patina::{
+    base::guid::{Guid, GuidError, OwnedGuid},
+    guids::*,
+};
 
 /// Demonstrates formatting GUIDs from `efi::Guid` references.
 fn demonstrate_reference_formatting() {
@@ -111,6 +113,12 @@ fn demonstrate_string_parsing() {
         }
         Err(e) => println!("\n  Error parsing string with whitespace: {}", e),
     }
+
+    // (6) Const guid string parsing
+    const GUID: OwnedGuid = OwnedGuid::from_string("0F8FAD5B-D9CB-469F-A165-70867728950E");
+    println!("\n  From const guid string: {}", GUID);
+    println!("    Input:  \"0F8FAD5B-D9CB-469F-A165-70867728950E\"");
+    println!("    Output: \"{}\"", GUID);
 
     println!();
 }

@@ -19,12 +19,14 @@ use patina::{
 use alloc::vec;
 
 use mu_rust_helpers::uefi_decompress::{DecompressionAlgorithm, decompress_into_with_algo};
-use patina::component::prelude::Service;
+use patina::{
+    component::prelude::Service,
+    pi::fw_fs::{self, ffs},
+};
 use patina_ffs::{
     FirmwareFileSystemError,
     section::{SectionExtractor, SectionHeader},
 };
-use patina_pi::fw_fs::{self, ffs};
 
 /// Component to install the UEFI Decompress Protocol.
 #[derive(IntoComponent, Default)]

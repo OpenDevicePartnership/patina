@@ -7,7 +7,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::boxed::Box;
-use patina::test::patina_test;
 use patina::{
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
     component::service::{
@@ -19,9 +18,9 @@ use patina::{
     },
     efi_types::EfiMemoryType,
     error::EfiError,
-    uefi_pages_to_size,
+    test::patina_test,
+    u_assert, u_assert_eq, uefi_pages_to_size,
 };
-use patina::{u_assert, u_assert_eq};
 use r_efi::efi;
 
 use crate::{

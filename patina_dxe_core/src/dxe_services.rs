@@ -15,7 +15,7 @@ use core::{
 use patina::error::EfiError;
 use patina_ffs::volume::VolumeRef;
 
-use patina_pi::dxe_services;
+use patina::pi::dxe_services;
 use r_efi::efi;
 
 use crate::{
@@ -491,7 +491,9 @@ mod tests {
         test_support::with_global_lock(|| {
             unsafe {
                 crate::test_support::init_test_gcd(None);
+                crate::test_support::init_test_protocol_db();
             }
+            crate::test_support::reset_dispatcher_context();
             f();
         })
         .unwrap();
@@ -1407,8 +1409,6 @@ mod tests {
     #[test]
     fn test_get_memory_space_map_invalid_parameters() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
-
             let mut out_count: usize = 0;
             let mut out_ptr: *mut dxe_services::MemorySpaceDescriptor = core::ptr::null_mut();
 
@@ -1438,7 +1438,6 @@ mod tests {
         with_locked_state(|| {
             unsafe {
                 crate::test_support::reset_allocators();
-                crate::test_support::init_test_gcd(None);
             }
 
             let expected_count = GCD.memory_descriptor_count();
@@ -1465,7 +1464,6 @@ mod tests {
         with_locked_state(|| {
             unsafe {
                 crate::test_support::reset_allocators();
-                crate::test_support::init_test_gcd(None);
             }
 
             // Add a few extra regions of varying types
@@ -1527,7 +1525,6 @@ mod tests {
         with_locked_state(|| {
             unsafe {
                 crate::test_support::reset_allocators();
-                crate::test_support::init_test_gcd(None);
             }
 
             let expected_count = GCD.io_descriptor_count();
@@ -1554,7 +1551,6 @@ mod tests {
         with_locked_state(|| {
             unsafe {
                 crate::test_support::reset_allocators();
-                crate::test_support::init_test_gcd(None);
             }
 
             assert_eq!(add_io_space(GcdIoType::Io, 0x2000, 0x100), efi::Status::SUCCESS);
@@ -1662,9 +1658,6 @@ mod tests {
     #[test]
     fn test_add_io_space_success_io() {
         with_locked_state(|| {
-            // Initialize GCD (sets IO address bits = 16)
-            unsafe { crate::test_support::init_test_gcd(None) };
-
             let base = 0x2000u64;
             let len = 0x100u64;
             let s = add_io_space(GcdIoType::Io, base, len);
@@ -1684,8 +1677,6 @@ mod tests {
     #[test]
     fn test_add_io_space_success_reserved() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
-
             let base = 0x3000u64;
             let len = 0x80u64;
             let s = add_io_space(GcdIoType::Reserved, base, len);
@@ -1703,7 +1694,6 @@ mod tests {
     #[test]
     fn test_add_io_space_zero_length_invalid_parameter() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             let s = add_io_space(GcdIoType::Io, 0x1000, 0);
             assert_eq!(s, efi::Status::INVALID_PARAMETER);
         });
@@ -1712,7 +1702,6 @@ mod tests {
     #[test]
     fn test_add_io_space_out_of_range_unsupported() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             // IO address space is 16 bits in tests => maximum address 0x10000
             // Pick a range that exceeds the maximum
             let s = add_io_space(GcdIoType::Io, 0xFF80, 0x200);
@@ -1733,7 +1722,6 @@ mod tests {
     #[test]
     fn test_add_io_space_overlap_access_denied() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             let base = 0x4000u64;
             let len = 0x100u64;
             assert_eq!(add_io_space(GcdIoType::Io, base, len), efi::Status::SUCCESS);
@@ -1746,7 +1734,6 @@ mod tests {
     #[test]
     fn test_allocate_io_space_null_base_ptr_invalid_parameter() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             let s = allocate_io_space(
                 dxe_services::GcdAllocateType::AnySearchBottomUp,
                 GcdIoType::Io,
@@ -1781,7 +1768,6 @@ mod tests {
     #[test]
     fn test_allocate_io_space_zero_length_invalid_parameter() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             // Need an IO region present to allocate from, but length 0 should still fail early
             assert_eq!(add_io_space(GcdIoType::Io, 0x2000, 0x200), efi::Status::SUCCESS);
             let mut out: efi::PhysicalAddress = 0;
@@ -1801,7 +1787,6 @@ mod tests {
     #[test]
     fn test_allocate_io_space_null_image_handle_invalid_parameter() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             assert_eq!(add_io_space(GcdIoType::Io, 0x2200, 0x200), efi::Status::SUCCESS);
             let mut out: efi::PhysicalAddress = 0;
             let s = allocate_io_space(
@@ -1820,7 +1805,6 @@ mod tests {
     #[test]
     fn test_allocate_io_space_bottom_up_success_and_sets_base() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             // Prepare IO space to allocate from
             assert_eq!(add_io_space(GcdIoType::Io, 0x3000, 0x300), efi::Status::SUCCESS);
 
@@ -1843,7 +1827,6 @@ mod tests {
     #[test]
     fn test_allocate_io_space_top_down_success() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             assert_eq!(add_io_space(GcdIoType::Io, 0x4000, 0x400), efi::Status::SUCCESS);
 
             let mut out: efi::PhysicalAddress = 0;
@@ -1865,7 +1848,6 @@ mod tests {
     #[test]
     fn test_allocate_io_space_address_success() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             assert_eq!(add_io_space(GcdIoType::Io, 0x5000, 0x200), efi::Status::SUCCESS);
 
             let mut desired: efi::PhysicalAddress = 0x5080;
@@ -1886,7 +1868,6 @@ mod tests {
     #[test]
     fn test_allocate_io_space_address_unsupported_when_out_of_io_range() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             let mut desired: efi::PhysicalAddress = 0xFF80;
             let s = allocate_io_space(
                 dxe_services::GcdAllocateType::Address,
@@ -1904,7 +1885,6 @@ mod tests {
     #[test]
     fn test_allocate_io_space_max_address_bottom_up_respected() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             assert_eq!(add_io_space(GcdIoType::Io, 0x6000, 0x400), efi::Status::SUCCESS);
 
             let mut limit: efi::PhysicalAddress = 0x6100;
@@ -1925,7 +1905,6 @@ mod tests {
     #[test]
     fn test_free_io_space_success() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             let base = 0x7000u64;
             let len = 0x80u64;
             assert_eq!(add_io_space(GcdIoType::Io, base, len), efi::Status::SUCCESS);
@@ -1952,7 +1931,6 @@ mod tests {
     #[test]
     fn test_free_io_space_zero_length_invalid_parameter() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             assert_eq!(free_io_space(0x1000, 0), efi::Status::INVALID_PARAMETER);
         });
     }
@@ -1969,8 +1947,6 @@ mod tests {
     #[test]
     fn test_free_io_space_out_of_range_unsupported() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
-
             let s = free_io_space(0xFF80, 0x200);
             assert_eq!(s, efi::Status::UNSUPPORTED);
         });
@@ -1979,7 +1955,6 @@ mod tests {
     #[test]
     fn test_free_io_space_unallocated_not_found() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             // Add region but do not allocate
             assert_eq!(add_io_space(GcdIoType::Io, 0x8000, 0x100), efi::Status::SUCCESS);
             let s = free_io_space(0x8000, 0x20);
@@ -1990,7 +1965,6 @@ mod tests {
     #[test]
     fn test_free_io_space_double_free() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             assert_eq!(add_io_space(GcdIoType::Io, 0x9000, 0x100), efi::Status::SUCCESS);
 
             let mut desired: efi::PhysicalAddress = 0x9000;
@@ -2016,7 +1990,6 @@ mod tests {
     #[test]
     fn test_free_io_space_partial_free() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             assert_eq!(add_io_space(GcdIoType::Io, 0xA000, 0x100), efi::Status::SUCCESS);
 
             // allocate 0x80 bytes starting at 0xA000
@@ -2044,7 +2017,6 @@ mod tests {
     #[test]
     fn test_remove_io_space_success() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             let base = 0xB000u64;
             let len = 0x80u64;
             assert_eq!(add_io_space(GcdIoType::Io, base, len), efi::Status::SUCCESS);
@@ -2055,7 +2027,6 @@ mod tests {
     #[test]
     fn test_remove_io_space_zero_length_invalid_parameter() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             assert_eq!(remove_io_space(0x1000, 0), efi::Status::INVALID_PARAMETER);
         });
     }
@@ -2071,7 +2042,6 @@ mod tests {
     #[test]
     fn test_remove_io_space_out_of_range_unsupported() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             // IO address space is 16 bits in tests => maximum address 0x10000
             assert_eq!(remove_io_space(0xFF80, 0x200), efi::Status::UNSUPPORTED);
         });
@@ -2080,7 +2050,6 @@ mod tests {
     #[test]
     fn test_remove_io_space_not_found_when_never_added() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             assert_eq!(remove_io_space(0xC000, 0x40), efi::Status::NOT_FOUND);
         });
     }
@@ -2088,7 +2057,6 @@ mod tests {
     #[test]
     fn test_remove_io_space_double_remove_not_found() {
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_gcd(None) };
             let base = 0xE000u64;
             let len = 0x40u64;
             assert_eq!(add_io_space(GcdIoType::Io, base, len), efi::Status::SUCCESS);
@@ -2125,8 +2093,6 @@ mod tests {
         file.read_to_end(&mut fv).expect("failed to read test file");
 
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_protocol_db() };
-
             // Install the FV to obtain a real handle
             let _handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
@@ -2166,8 +2132,6 @@ mod tests {
         file.read_to_end(&mut fv).expect("failed to read test file");
 
         with_locked_state(|| {
-            unsafe { crate::test_support::init_test_protocol_db() };
-
             // Install the FV to obtain a real handle
             let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
@@ -2234,9 +2198,6 @@ mod tests {
         file.read_to_end(&mut fv).expect("failed to read test file");
 
         with_locked_state(|| {
-            // Ensure protocol DB is ready for installing the FV
-            unsafe { crate::test_support::init_test_protocol_db() };
-
             let mut out_handle: efi::Handle = core::ptr::null_mut();
             let s = process_firmware_volume(fv.as_ptr() as *const core::ffi::c_void, fv.len(), &mut out_handle);
 

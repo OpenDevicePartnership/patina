@@ -5,10 +5,10 @@ providing a safe, ergonomic interface for parsing and modifying AML bytecode in 
 The implementation mirrors the ACPI SDT protocol’s functionality for AML traversal and patching
 and is designed mainly for firmware use rather than OS-level interpretation.
 It defines a structured system of AML handles for navigating AML streams and a trait-based `AmlParser` service for operations
- such as opening tables, iterating operands, modifying values, and traversing child or sibling nodes.
- The goal is to replace legacy C-based AML handling with a type-safe Rust service that supports ACPI 2.0+.
- Future extensions may include extending this infrastructure for application-side AML interpretation
- within a `patina-acpi` crate.
+such as opening tables, iterating operands, modifying values, and traversing child or sibling nodes.
+The goal is to replace legacy C-based AML handling with a type-safe Rust service that supports ACPI 2.0+.
+Future extensions may include extending this infrastructure for application-side AML interpretation 
+within a `patina-acpi` crate.
 
 ## Change Log
 
@@ -21,7 +21,7 @@ It defines a structured system of AML handles for navigating AML streams and a t
 
 This RFC is an extension of the [ACPI service](0005-acpi.md).
 Similar to the ACPI service, this Rust-based AML service will provide a safer and
-more ergnonic interface for parsing and modifying AML bytecode.
+more ergonomic interface for parsing and modifying AML bytecode.
 
 ## Technology Background
 
@@ -47,7 +47,7 @@ Secondarily, implement the rest of the ACPI SDT protocol relating to AML functio
 
 ## Requirements
 
-1. Redesign the existing C firmware AML implementation into a a safe, easy-to-use Rust service.
+1. Redesign the existing C firmware AML implementation into a safe, easy-to-use Rust service.
 2. Implement firmware-side AML parsing: traversal and patching of AML bytecode as opcodes and operands.
 3. Use the Rust service (*1.*) to implement the C ACPI SDT protocol.
 
@@ -68,7 +68,7 @@ already provides some functionality for interpreting AML bytecode.
 However, it is incomplete and provides limited public interfaces;
 it also does not deal with firmware-side protocols or parsing.
 
-This leaves two main paths for the Patina AML implmentation:
+This leaves two main paths for the Patina AML implementation:
 
 1. Design and implement a new Rust AML service from the ground up,
 without explicitly utilizing the existing `acpi` crate.
@@ -114,7 +114,7 @@ or if `patina-acpi` will borrow/fork from `acpi`.
 By spec definition, an AML handle is an opaque handle returned from opening a DSDT or SSDT,
 on which AML traversal and patching operations can be performed.
 
-Internally, the each `AmlHandle` object, aliased as `AmlSdtHandleInternal`,
+Internally, each `AmlHandle` object, aliased as `AmlSdtHandleInternal`,
 represents a cursor within an AML stream. Each handle can be conceptualized as a "node"
 in the AML object tree of parent-child-relationships.
 
@@ -130,7 +130,14 @@ pub(crate) struct AmlSdtHandleInternal {
 
 impl AmlSdtHandleInternal {
     fn new(table_key: TableKey, offset: usize, size: usize) -> Self {
-        Self { table_key, offset, size, modified: false }
+        Self {
+            table_key,
+            offset,
+            size,
+            modified: false,
+            byte_encoding: AmlByteEncoding::default(),
+            parent_end: None,
+        }
     }
 }
 
@@ -174,7 +181,7 @@ pub enum AmlOpcode {
 }
 
 pub enum BaseOpcode {
-    ZerOp,
+    ZeroOp,
     AliasOp,
     ...
 }

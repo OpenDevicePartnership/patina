@@ -15,8 +15,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use patina::error::EfiError;
-use patina_pi::protocols::cpu_arch::EfiSystemContext;
+use patina::{error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
 
 mod exception_handling;
 
@@ -152,7 +151,7 @@ pub enum HandlerType {
     /// No handler is registered.
     None,
     /// Handler is a UEFI compliant routine.
-    UefiRoutine(patina_pi::protocols::cpu_arch::InterruptHandler),
+    UefiRoutine(patina::pi::protocols::cpu_arch::InterruptHandler),
     /// Handler is a implementation of the interrupt handler trait.
     Handler(&'static dyn InterruptHandler),
 }

@@ -37,7 +37,8 @@
 //!
 //! fn _start(physical_hob_list: *const c_void) {
 //!     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
-//!     let _ = ADV_LOGGER.init_advanced_logger(physical_hob_list);
+//!     // SAFETY: The caller must ensure that the provided physical hob list pointer is valid and well structured.
+//!     let _ = unsafe { ADV_LOGGER.init_advanced_logger(physical_hob_list) };
 //! }
 //! ```
 //!

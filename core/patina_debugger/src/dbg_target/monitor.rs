@@ -13,7 +13,7 @@
 use core::{fmt::Write, str::SplitWhitespace};
 use gdbstub::target::ext::{self, monitor_cmd::ConsoleOutput};
 
-use crate::{arch::DebuggerArch, arch::SystemArch};
+use crate::arch::{DebuggerArch, SystemArch};
 
 use super::PatinaTarget;
 

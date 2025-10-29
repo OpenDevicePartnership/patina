@@ -272,6 +272,9 @@ mod tests {
                 init_system_table();
             }
             f();
+
+            POST_RTB.store(false, Ordering::Relaxed);
+            MEMORY_ATTRIBUTES_TABLE.store(core::ptr::null_mut(), Ordering::Relaxed);
         })
         .unwrap();
     }

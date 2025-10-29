@@ -1,8 +1,8 @@
-
 # Patina
 
 [![release]][_release]
 [![commit]][_commit]
+[![docs]][_docs]
 [![ci]][_ci]
 [![cov]][_cov]
 
@@ -10,6 +10,20 @@ This repository hosts the Patina project - a Rust implementation of UEFI firmwar
 
 The goal of this project is to serve as a replacement for core UEFI firmware components so they are written in Pure
 Rust as opposed to Rust wrappers around core implementation still written in C.
+
+---
+
+<center>
+<div align="center">
+
+Unsafe Code<br />
+
+[![overall_unsafe_code]][_overall_unsafe_code] [![fn_unsafe_code]][_fn_unsafe_code] [![expr_unsafe_code]][_expr_unsafe_code]
+
+[![impl_unsafe_code]][_impl_unsafe_code] [![traits_unsafe_code]][_traits_unsafe_code] [![methods_unsafe_code]][_methods_unsafe_code]
+
+</div>
+</center>
 
 ## Background
 
@@ -20,6 +34,17 @@ This repository contains a Rust [UEFI](https://uefi.org/) firmware implementatio
 incremental migration of today's firmware components largely written in C to Rust starting with the core. The primary
 objective for this effort is to improve the security and stability of system firmware by leveraging the memory safety
 offered by Rust while retaining similar boot performance.
+
+## Docs
+
+* **[Getting Started](https://opendevicepartnership.github.io/patina/):** Patina's official getting started guide,
+containing information regarding the project itself, integrating the Patina DXE Core into a platform, developing a
+Patina component for your platform, and developing Patina itself.
+* **[Patina DXE Core API docs](https://docs.rs/patina_dxe_core/latest/)** Patina DXE Core API documentation. Includes
+information for creating a Patina DXE Core EFI binary with platform customizations such as additional Patina
+components.
+* **[Patina SDK API docs](https://docs.rs/patina/latest/patina/)** Patina SDK API documentation that describes how to
+write a Patina component.
 
 ## Important Notes
 
@@ -44,17 +69,6 @@ Below is the information required to perform a release that publishes to the reg
    [Publish Release Workflow](https://github.com/OpenDevicePartnership/patina/actions/workflows/publish-release.yml)
 4. Once completed successfully, click on the  "Notify Branch Creation Step" and click the provided link to create the
    PR to update all versions in all Cargo.toml files across the repository.
-
-## Documentation
-
-We have "Getting Started" documentation located in this repository at `docs/*`. The latest documentation can be found
-at <https://OpenDevicePartnership.github.io/patina/>, however this documentation can also be self-hosted via
-([mdbook](https://github.com/rust-lang/mdBook)). Once you all dependencies installed as specified below, you can run
-`mdbook serve docs` to self host the getting started book.
-
-You can also generate API documentation for the project using `cargo make doc`. This will eventually be hosted on
-docs.rs once we begin uploading to crates.io. You can have the documentation opened in your browser by running
-`cargo make doc-open`.
 
 ## First-Time Tool Setup Instructions
 
@@ -103,13 +117,13 @@ cargo make -p release build-aarch64
 
 ## Test
 
-- Run all unit tests in the workspace:
+* Run all unit tests in the workspace:
 
 ```shell
 cargo make test
 ```
 
-- Run tests in an individual package:
+* Run tests in an individual package:
 
 ```shell
 cargo make test -p patina
@@ -121,7 +135,7 @@ Build on-platform tests in the workspace:
 cargo make patina-test
 ```
 
-- Build on-platform tests in an individual package:
+* Build on-platform tests in an individual package:
 
 ```shell
 cargo make patina-test -p patina
@@ -176,20 +190,14 @@ Various crates have benchmarks setup that can be executed using the `cargo make 
 will be passed along to the bench command:
 
 ```cmd
-cargo make bench -p patina_sdk
-cargo make bench -p patina_sdk --bench bench_component
-cargo make bench -p patina_sdk --bench bench_component -- with_component
+cargo make bench -p patina
+cargo make bench -p patina --bench bench_component
+cargo make bench -p patina --bench bench_component -- with_component
 ```
 
 Benchmarks utilize the [criterion](https://crates.io/crates/criterion) benchmarking library, so if new benchmarks are
 to be added, they should follow that documentation. Benchmarks can be added to any crate to test performance by
 following the same layout as existing benchmarks, and adding the benchmark to the appropriate crate's Cargo.toml file.
-
-## Notes
-
-- This project uses a makefile that sets the "RUSTC_BOOTSTRAP=1" environment variable due to internal requirements which
-puts us in parity with the nightly features that exist on the toolchain targeted.  The "nightly" toolchain may be used
-in place of this.
 
 ## High-Level Patina Roadmap
 
@@ -228,9 +236,9 @@ your ideas and feedback on additional priorities that matter to the community.
 
 ## Contributing
 
-- Review Rust Documentation in the [/docs](https://github.com/OpenDevicePartnership/patina/blob/HEAD/docs/src/introduction.md)
+* Review Rust Documentation in the [/docs](https://github.com/OpenDevicePartnership/patina/blob/HEAD/docs/src/introduction.md)
 directory.
-- Run unit tests and ensure all pass.
+* Run unit tests and ensure all pass.
 
 [release]: https://img.shields.io/crates/v/patina
 [_release]: https://github.com/OpenDevicePartnership/patina/releases/latest
@@ -240,3 +248,18 @@ directory.
 [_ci]: https://github.com/OpenDevicePartnership/patina/actions/workflows/ci-workflow.yml
 [cov]: https://codecov.io/gh/OpenDevicePartnership/patina/graph/badge.svg?token=CWHWOUUGY6
 [_cov]: https://codecov.io/gh/OpenDevicePartnership/patina
+[docs]: https://img.shields.io/github/actions/workflow/status/OpenDevicePartnership/patina/publish-mdbook.yml?branch=main&label=docs
+[_docs]: https://opendevicepartnership.github.io/patina/
+
+[overall_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_overall.json
+[_overall_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_overall.json
+[fn_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_functions.json
+[_fn_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_functions.json
+[expr_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_exprs.json
+[_expr_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_exprs.json
+[impl_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_item_impls.json
+[_impl_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_item_impls.json
+[traits_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_item_traits.json
+[_traits_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_item_traits.json
+[methods_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_methods.json
+[_methods_unsafe_code]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OpenDevicePartnership/patina/refs/heads/unsafe-code-badges/x86_64-unknown-uefi/badge_methods.json

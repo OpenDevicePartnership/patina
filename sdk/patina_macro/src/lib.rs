@@ -124,16 +124,9 @@ pub fn service(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
 /// Derive Macro for implementing the `HobConfig` trait for a type.
 ///
-/// This macro automatically implements the `HobConfig` trait for the provided type
-/// by casting the passed in bytes (`&[u8]`) to the type. and cloning the struct.
-///
-/// This macro is inherently unsafe it it casts the pointer to the bytes to the type.
-/// It is the responsibility of the developer to ensure that the type is properly formatted
-/// and that the bytes are valid for the type.
-///
-/// The User must also implement the `Copy` trait for the type so that the bytes can be
-/// copied to the new instance of the type. Due to the requirements of the `IntoConfig` trait,
-/// the type must also implement the `Default` trait.
+/// This macro uses the [zerocopy::FromBytes](https://docs.rs/zerocopy/latest/zerocopy/trait.FromBytes.html)
+/// implementation to safely create an instance of the type from a byte slice. If FromBytes is not implemented on the
+/// type, a compile time error will be produced.
 ///
 /// ## Macro Attribute
 ///
@@ -144,7 +137,7 @@ pub fn service(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// ```rust, ignore
 /// use patina::component::FromHob;
 ///
-/// #[derive(FromHob, Copy, Clone, Default)]
+/// #[derive(FromHob, zerocopy::FromBytes)]
 /// #[guid = "8be4df61-93ca-11d2-aa0d-00e098032b8c"]
 /// struct MyConfig {
 ///   field1: u32,

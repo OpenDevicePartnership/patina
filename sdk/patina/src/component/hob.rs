@@ -16,7 +16,7 @@
 //! };
 //!
 //! /// A HOB that is a simple pointer cast from byte array to a struct.
-//! #[derive(Default, Clone, Copy, FromHob)]
+//! #[derive(FromHob, zerocopy::FromBytes)]
 //! #[hob = "8be4df61-93ca-11d2-aa0d-00e098032b8c"]
 //! #[repr(C)]
 //! struct MyHobStruct {
@@ -100,7 +100,7 @@ use super::{
 ///     }
 /// }
 ///
-/// #[derive(FromHob, Default, Clone, Copy)]
+/// #[derive(FromHob, zerocopy::FromBytes)]
 /// #[hob = "8be4df61-93ca-11d2-aa0d-00e098032b8c"]
 /// #[repr(C)]
 /// struct MyConfig2 {

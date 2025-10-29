@@ -14,22 +14,24 @@
 //!
 //! HOBs and their respective parsers are automatically gathered when a component is registered, and one step of Core
 //! initialization is to parse the HOB list and use any registered parsers to parse a GUIDed HOB.
-use patina::component::prelude::*;
-use patina::component::{IntoComponent, Storage};
-use patina::{Guid, OwnedGuid};
+use patina::{
+    Guid, OwnedGuid,
+    component::{IntoComponent, Storage, prelude::*},
+};
+use zerocopy::FromBytes;
 
 /// This struct represents a custom HOB that is a simple cast and does not require any special handling or parsing.
 /// Due to this, The `FromHob` trait can be derived automatically. The `Copy` trait is required for this type so that
 /// the core can copy it and not worry about the underlying bytes staying valid. If a guided HOB with the below GUID is
 /// found in the HOB list, this parser will automatically run and parse the HOB into this struct.
-#[derive(Debug, Clone, Copy, FromHob)]
+#[derive(Debug, FromHob, FromBytes)]
 #[repr(C)]
 #[hob = "00000000-0000-0000-0000-000000000001"]
 pub struct CustomHob1 {
     pub data1: u32,
     pub data2: u32,
     pub data3: u64,
-    pub data4: bool,
+    pub data4: u8,
     padding: [u8; 7],
 }
 
@@ -87,7 +89,7 @@ pub struct HobToConfigConverter;
 
 impl HobToConfigConverter {
     fn entry_point(self, hob: Hob<CustomHob1>, mut cfg: ConfigMut<BooleanConfig>) -> Result<()> {
-        cfg.0 = hob.data4;
+        cfg.0 = hob.data4 != 0;
         println!("  Hob data converted to config. Config Value: {:?}", cfg.0);
 
         // Mark this configuration as final, so that it cannot be modified further. No other component that consumes this
@@ -110,8 +112,8 @@ fn main() {
     util::setup_storage(
         &mut storage,
         vec![
-            util::Custom::Hob1(CustomHob1 { data1: 42, data2: 100, data3: 50, data4: true, padding: [0; 7] }),
-            util::Custom::Hob1(CustomHob1 { data1: 43, data2: 101, data3: 10, data4: false, padding: [0; 7] }),
+            util::Custom::Hob1(CustomHob1 { data1: 42, data2: 100, data3: 50, data4: 1, padding: [0; 7] }),
+            util::Custom::Hob1(CustomHob1 { data1: 43, data2: 101, data3: 10, data4: 0, padding: [0; 7] }),
             util::Custom::Hob2(CustomHob2("Hello".to_string())),
         ],
     );
@@ -126,8 +128,7 @@ fn main() {
 
 // Users reviewing this example can skip the following module, as it is not relevant to the example itself.
 mod util {
-    use patina::component::Component;
-    use patina_pi::hob::GuidHob;
+    use patina::{component::Component, pi::hob::GuidHob};
 
     use super::{CustomHob1, CustomHob2, FromHob, IntoComponent, Storage};
 
@@ -137,7 +138,7 @@ mod util {
     }
 
     impl Custom {
-        fn insert(self, hob_list: &mut patina_pi::hob::HobList) {
+        fn insert(self, hob_list: &mut patina::pi::hob::HobList) {
             match self {
                 Custom::Hob1(hob) => insert_custom_hob1(hob_list, hob),
                 Custom::Hob2(hob) => insert_custom_hob2(hob_list, hob),
@@ -152,7 +153,7 @@ mod util {
     }
 
     pub fn setup_storage(storage: &mut Storage, hobs: Vec<Custom>) {
-        let mut hob_list = patina_pi::hob::HobList::new();
+        let mut hob_list = patina::pi::hob::HobList::new();
 
         for hob in hobs {
             hob.insert(&mut hob_list);
@@ -161,7 +162,7 @@ mod util {
         // Parse HOBs, which is done automatically by the component system.
         for hob in hob_list.iter() {
             match hob {
-                patina_pi::hob::Hob::GuidHob(hob, data) => {
+                patina::pi::hob::Hob::GuidHob(hob, data) => {
                     for parser in storage.get_hob_parsers(&patina::Guid::from(hob.name)) {
                         parser(data, storage);
                     }
@@ -172,42 +173,42 @@ mod util {
     }
 
     /// A helper function to insert a custom HOB into the HOB list.
-    fn insert_custom_hob1(hob_list: &mut patina_pi::hob::HobList, hob: CustomHob1) {
+    fn insert_custom_hob1(hob_list: &mut patina::pi::hob::HobList, hob: CustomHob1) {
         let mut data = Vec::new();
         data.extend_from_slice(&hob.data1.to_le_bytes());
         data.extend_from_slice(&hob.data2.to_le_bytes());
         data.extend_from_slice(&hob.data3.to_le_bytes());
-        data.push(hob.data4 as u8);
+        data.push(hob.data4);
         data.extend_from_slice(&hob.padding);
 
         let as_slice = Box::leak(data.into_boxed_slice());
 
         let hob = Box::leak(Box::new(GuidHob {
-            header: patina_pi::hob::header::Hob {
-                r#type: patina_pi::hob::GUID_EXTENSION,
+            header: patina::pi::hob::header::Hob {
+                r#type: patina::pi::hob::GUID_EXTENSION,
                 length: std::mem::size_of::<CustomHob1>() as u16,
                 reserved: 0,
             },
             name: r_efi::efi::Guid::from_fields(0x0, 0x0, 0x0, 0x0, 0x0, &[0x00, 0x00, 0x00, 0x0, 0x0, 0x01]),
         }));
-        hob_list.push(patina_pi::hob::Hob::GuidHob(hob, as_slice));
+        hob_list.push(patina::pi::hob::Hob::GuidHob(hob, as_slice));
     }
 
     /// A helper function to insert a custom HOB into the HOB list.
-    fn insert_custom_hob2(hob_list: &mut patina_pi::hob::HobList, hob: CustomHob2) {
+    fn insert_custom_hob2(hob_list: &mut patina::pi::hob::HobList, hob: CustomHob2) {
         let mut data = Vec::new();
         data.extend_from_slice(hob.0.as_bytes());
 
         let as_slice = Box::leak(data.into_boxed_slice());
 
         let hob = Box::leak(Box::new(GuidHob {
-            header: patina_pi::hob::header::Hob {
-                r#type: patina_pi::hob::GUID_EXTENSION,
+            header: patina::pi::hob::header::Hob {
+                r#type: patina::pi::hob::GUID_EXTENSION,
                 length: std::mem::size_of::<CustomHob2>() as u16,
                 reserved: 0,
             },
             name: CustomHob2::HOB_GUID.to_efi_guid(),
         }));
-        hob_list.push(patina_pi::hob::Hob::GuidHob(hob, as_slice));
+        hob_list.push(patina::pi::hob::Hob::GuidHob(hob, as_slice));
     }
 }

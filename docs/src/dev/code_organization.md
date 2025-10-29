@@ -25,7 +25,7 @@ graph TD
   B --> H[Section Extractor]
   B --> I[Stacktrace]
 
-  C --> J[**patina_sdk** - SDK library]
+  C --> J[**patina** - SDK library]
   J --> K[Common Types and Definitions]
   J --> L[Boot Services]
   J --> M[Runtime Services]

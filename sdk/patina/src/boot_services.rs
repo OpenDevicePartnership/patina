@@ -31,8 +31,7 @@ use core::{
     mem::{self, MaybeUninit},
     option::Option,
     ptr::{self, NonNull},
-    sync::atomic::AtomicPtr,
-    sync::atomic::Ordering,
+    sync::atomic::{AtomicPtr, Ordering},
 };
 
 use r_efi::efi;
@@ -1570,7 +1569,11 @@ mod tests {
     use efi::{Boolean, Char16, OpenProtocolInformationEntry, protocols::device_path};
 
     use super::*;
-    use core::{mem::MaybeUninit, slice, sync::atomic::AtomicUsize, sync::atomic::Ordering};
+    use core::{
+        mem::MaybeUninit,
+        slice,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
     use std::os::raw::c_void;
 
     macro_rules! boot_services {

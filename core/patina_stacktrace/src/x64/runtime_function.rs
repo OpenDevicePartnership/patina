@@ -1,7 +1,9 @@
 use super::unwind::UnwindInfo;
-use crate::byte_reader::ByteReader;
-use crate::error::{Error, StResult};
-use crate::pe::PE;
+use crate::{
+    byte_reader::ByteReader,
+    error::{Error, StResult},
+    pe::PE,
+};
 use core::fmt;
 
 /// `RuntimeFunction`

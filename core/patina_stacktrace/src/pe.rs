@@ -1,5 +1,7 @@
-use crate::byte_reader::ByteReader;
-use crate::error::{Error, StResult};
+use crate::{
+    byte_reader::ByteReader,
+    error::{Error, StResult},
+};
 
 // PE Header related constants
 const MZ_SIGNATURE: u16 = 0x5A4D; // 'MZ' in little-endian.

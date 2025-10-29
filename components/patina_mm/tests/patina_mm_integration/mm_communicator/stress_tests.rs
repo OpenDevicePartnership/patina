@@ -13,11 +13,15 @@ use crate::patina_mm_integration::common::{constants::*, framework::*};
 extern crate alloc;
 use alloc::{boxed::Box, format, vec, vec::Vec};
 use core::pin::Pin;
-use patina::component::Storage;
-use patina::component::service::Service;
-use patina::{Guid, base::SIZE_4KB};
-use patina_mm::component::communicator::{MmCommunication, MmCommunicator, MmExecutor};
-use patina_mm::config::CommunicateBuffer;
+use patina::{
+    Guid,
+    base::SIZE_4KB,
+    component::{Storage, service::Service},
+};
+use patina_mm::{
+    component::communicator::{MmCommunication, MmCommunicator, MmExecutor},
+    config::CommunicateBuffer,
+};
 
 /// Additional test GUIDs for stress testing
 mod stress_guids {
