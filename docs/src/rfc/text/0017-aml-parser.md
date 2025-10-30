@@ -94,7 +94,7 @@ This conversation can be tracked through a [Github issue in the `acpi` crate](ht
 ### ACPI/AML Utility Crate
 
 While the `AmlParser` service has functionality specific only to the UEFI ACPI SDT protocol,
-it will be useful for extensibility to extract basic AML reading and patching capability into a seperate utility crate,
+it will be useful for extensibility to extract basic AML reading and patching capability into a separate utility crate,
 `patina-acpi`. `AmlParser` will depend on this crate.
 
 For example, basic parsing functionality like reading the package length, parsing name segments, etc.,
@@ -262,7 +262,7 @@ Sets the operand at `idx` to `new_val` and sets `modified` = `true` for the hand
 
 #### Iteration
 
-The iteration of AML namepsaces is complex. While other service implementations can provide any implementation of
+The iteration of AML namespaces is complex. While other service implementations can provide any implementation of
 `iter`, the `StandardAmlParser` will use two functions under the hood:
 
 ```rust
