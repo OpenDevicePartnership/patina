@@ -3,7 +3,7 @@
 This RFC proposes a Rust-based AML (ACPI Machine Language) service that extends the existing ACPI service by
 providing a safe, ergonomic interface for parsing and modifying AML bytecode in firmware during the DXE phase.
 The implementation mirrors the ACPI SDT protocol’s functionality for AML traversal and patching
-and is designed mainly for firmware use rather than OS-level interpretation.
+and is designed mainly for firmware use rather than OS-level interpretation of AML bytecode.
 It defines a structured system of AML handles for navigating AML streams and a trait-based `AmlParser` service for operations
 such as opening tables, iterating operands, modifying values, and traversing child or sibling nodes.
 The goal is to replace legacy C-based AML handling with a type-safe Rust service that supports ACPI 2.0+.
@@ -25,7 +25,8 @@ more ergonomic interface for parsing and modifying AML bytecode.
 
 ## Technology Background
 
-AML bytecode is encoded mainly in the body of the DSDT and SSDT.
+Compiled ACPI tables such as the DSDT and SSDTs are composed of AML bytecode.
+
 More details about the layouts of these tables can be found in the [ACPI Specification, Vol. 5](https://uefi.org/specs/ACPI/6.5/05_ACPI_Software_Programming_Model.html?highlight=ssdt).
 The specifics of AML grammar can be found in the [ACPI Specification, Vol. 20](https://uefi.org/specs/ACPI/6.5/20_AML_Specification.html).
 
@@ -47,7 +48,7 @@ Secondarily, implement the rest of the ACPI SDT protocol relating to AML functio
 
 ## Requirements
 
-1. Redesign the existing C firmware AML implementation into a safe, easy-to-use Rust service.
+1. Redesign existing C firmware AML interaction functionality into a safe, easy-to-use Rust service.
 2. Implement firmware-side AML parsing: traversal and patching of AML bytecode as opcodes and operands.
 3. Use the Rust service (*1.*) to implement the C ACPI SDT protocol.
 
