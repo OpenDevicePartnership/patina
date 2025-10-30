@@ -208,6 +208,20 @@ pub enum AmlOperand {
 }
 ```
 
+### AML Paths
+
+A path in AML refers to a specific node in the tree hierarchy.
+It is represented by a series of NameSegs: 
+4-character uppercase ASCII strings that mark a specific location in the AML namespace. 
+
+```rust
+/// NameSegs are always 4 ASCII characters long.
+pub struct NameSeg([u8; 4]);
+
+/// A path can have any number of NameSegs.
+pub type AmlPath = Vec<NameSeg>;
+```
+
 ### AML Trait Interface
 
 The `AmlParser` service generally derives from the ACPI SDT protocol, and allows for traversal of the AML object tree.
@@ -229,6 +243,10 @@ pub(crate) trait AmlParser {
 
   // Sets the option (operand) at a particular index to the given value.
   fn set_option(&self, handle: AmlHandle, idx: usize, new_val: AmlOperand) -> Result<(), AmlError>;
+
+  // Finds the AML node at a specific known path.
+  // AML paths take the format: \\_AA.BBBB.CCCC....
+  fn find_path(&self, path: AmlPath) -> Result<AmlHandle, AmlError>;
 
   // Iterates over all nodes of the tree (in a depth-first order).
   fn iter(&self) -> Result<impl Iterator<AmlHandle>, AmlError>;
@@ -337,3 +355,52 @@ The general flow for using the `AmlParser` service will be:
 4. Make necessary modifications through `set_option`.
 5. During traversal, close nodes which no longer need to be accessed through `close_handle`.
 6. When traversal / patching is complete, `close_handle` on the root node (originally opened with `open_table`).
+
+### Example
+
+For example, suppose `AmlParser` is being used to parse the following DSDT
+and patch `VAL0` from `0x00` (invalid value) to `0x99` (some valid value):
+
+```plain-text
+0000: 44 53 44 54 54 00 00 00 02 7D 4F 45 4D 49 44 20  DSDTT....}OEMID 
+0010: 45 58 41 4D 50 20 20 20 20 31 00 00 00 41 4D 4C  EXAMP    1...AML
+0020: 10 1B 5C 5F 53 42 82 15 44 45 56 30 08 56 41 4C  ..\_SB..DEV0.VAL
+0030: 30 0A 00 82 0A 43 48 4C 44 08 56 41 4C 31 0A 20  0...CHLD.VAL1. 
+0040: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+0050: 00 00 00 00                                      ....
+```
+
+The first 36 bytes are table header attributes (signature, length, revision, etc). 
+Thus the trailing AML bytecode is:
+
+```plain-text
+                  53 42 82 15 44 45 56 30 08 56 41 4C  ..\_SB..DEV0.VAL
+0030: 30 0A 00 82 0A 43 48 4C 44 08 56 41 4C 31 0A 20  0...CHLD.VAL1. 
+0040: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+0050: 00 00 00 00  
+```
+
+In plain ASL this translates to:
+
+```asl
+Scope (\_SB)
+{
+    Device (DEV0)
+    {
+        Name (VAL0, 0x00)
+        Device (CHLD)
+        {
+            Name (VAL1, 0x20)
+        }
+    }
+}
+```
+
+To begin parsing the DSDT, `open_table(dsdt_key)` is called to obtain a `dsdt_handle` to the start of the bytecode.
+(If the DSDT key is not known, `iter_tables` can be used to find the desired DSDT/SSDT.)
+
+```rust
+let dsdt_handle = aml_parser_service.open_table(dsdt_key);
+```
+
+Then, 
