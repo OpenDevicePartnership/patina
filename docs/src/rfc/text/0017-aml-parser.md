@@ -25,7 +25,8 @@ more ergonomic interface for parsing and modifying AML bytecode.
 
 ## Technology Background
 
-AML bytecode is encoded mainly in the body of the DSDT and SSDT.
+Compiled ACPI tables such as the DSDT and SSDTs are composed of AML bytecode.
+
 More details about the layouts of these tables can be found in the [ACPI Specification, Vol. 5](https://uefi.org/specs/ACPI/6.5/05_ACPI_Software_Programming_Model.html?highlight=ssdt).
 The specifics of AML grammar can be found in the [ACPI Specification, Vol. 20](https://uefi.org/specs/ACPI/6.5/20_AML_Specification.html).
 
