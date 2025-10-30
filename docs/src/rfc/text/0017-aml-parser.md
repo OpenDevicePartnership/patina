@@ -87,6 +87,14 @@ with less support for actually walking through and modifying the firmware-side A
 There is ongoing conversation with the owner of the `acpi` crate about
 borrowing certain implementations and modifying the public interfaces
 to be more friendly to the Patina ACPI implementation.
+This would involve mostly exposing and abstracting out common lower-level parsing code
+(such as parsing NameSegs, reading PkgLengths, etc).
+For `AmlParser` to consume the `aml` crate parsing code as a dependency, it has to:
+
+1. Allow external consumers of the crate to directly use parsing code.
+2. Change these parsing interfaces to accept some kind of generic buffer,
+rather than depending on the `Interpreter` struct (which can only be constructed in a post-boot OS environment, not firmware).
+
 This conversation can be tracked through a [Github issue in the `acpi` crate](https://github.com/rust-osdev/acpi/issues/260).
 
 ## Rust Code
