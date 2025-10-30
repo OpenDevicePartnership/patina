@@ -7,7 +7,7 @@ and is designed mainly for firmware use rather than OS-level interpretation.
 It defines a structured system of AML handles for navigating AML streams and a trait-based `AmlParser` service for operations
 such as opening tables, iterating operands, modifying values, and traversing child or sibling nodes.
 The goal is to replace legacy C-based AML handling with a type-safe Rust service that supports ACPI 2.0+.
-Future extensions may include extending this infrastructure for application-side AML interpretation 
+Future extensions may include extending this infrastructure for application-side AML interpretation
 within a `patina-acpi` crate.
 
 ## Change Log
@@ -221,14 +221,8 @@ pub(crate) trait AmlParser {
   // Sets the option (operand) at a particular index to the given value.
   fn set_option(&self, handle: AmlHandle, idx: usize, new_val: AmlOperand) -> Result<(), AmlError>;
 
-  // Returns the first child of an AML node. 
-  fn get_children(&self, handle: AmlHandle) -> Result<impl Iterator<AmlHandle>, AmlError>;
-
-  // Returns the next sibling of an AML node.
-  fn get_sibling(&self, handle: AmlHandle) -> Result<impl Iterator<AmlHandle>, AmlError>;
-
-  // The above two functions are intended to provide a complete traversal implementation.
-  // For example, to get all the children of a node, find the first child through `get_child`, then use `get_sibling` on each subsequent child. In both cases, `None` indicates no child/sibling. 
+  // Iterates over all nodes of the tree (in a depth-first order).
+  fn iter(&self) -> Result<impl Iterator<AmlHandle>, AmlError>;
 }
 ```
 
@@ -268,7 +262,7 @@ Sets the operand at `idx` to `new_val` and sets `modified` = `true` for the hand
 #### Iteration
 
 The iteration of AML namepsaces is complex. While other service implementations can provide any implementation of
-`get_children` and `get_siblings`, the `StandardAmlParser` will use two functions under the hood:
+`iter`, the `StandardAmlParser` will use two functions under the hood:
 
 ```rust
 // Returns the first child of an AML node. 
@@ -308,16 +302,21 @@ The only exception is the "root" node -- the node on which `open_table` is initi
 since this node has no siblings and no parent from which to derive `parent_end`.
 As such, the `parent_end` of this table is simply at the end of the table, which is `table_length - ACPI_HEADER_SIZE`.
 
-##### **Iterators: `get_children` and `get_siblings`**
-
-When `get_children(handle)` is called, it initializes the iterator state `self.current = get_child(handle)`.
-`next` advances to the next sibling of the child, i.e. `self.current = get_sibling(self.current)`.
-
-When `get_siblings(handle)` is called, it initializes the iterator state `self.current = get_sibling(handle)`.
-`next` advanced to the next sibling of the current node, i.e. `self.current = get_sibling(self.current)`.
 Note that this only gives *subsequent* siblings and not previous ones;
 it is standard in AML implementations that nodes operate like singly-linked lists
 with knowledge of their forward links (subsequent siblings) but no backward links (previous siblings).
+
+##### `iter`
+
+`iter` iterates over all nodes (handles) in the current AML namespace.
+The particular implementation of `StandardAmlParser` does so in a DFS manner, but other
+service implementers can chose any implementation that traverses all nodes.
+
+With `get_sibling` and `get_child`,
+`iter` can be implemented using a standard preorder stack-based tree traversal algorithm.
+A stack is initialized with the first node in the AML bytecode (the "root").
+Then, on each subsequent iteration, the node at the top of the stack is popped,
+and its child (`get_child`) and sibling (`get_sibling`) are enqueued (in that order).
 
 ## Guide-Level Explanation
 
