@@ -54,7 +54,7 @@ The self-hosted debugger is lightweight and tightly integrated with Patina, offe
    platform code as needed.
 
 Integration examples are documented in
-[`docs/src/integrate/dxe_core.md`](../../docs/src/integrate/dxe_core.md#62-debugger-configuration).
+[`docs/src/integrate/dxe_core.md`](https://opendevicepartnership.github.io/patina/integrate/dxe_core.html#62-debugger-configuration).
 
 In addition, active examples are available in the
 [patina-dxe-core-qemu](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu) repository:
@@ -97,8 +97,8 @@ static DEBUGGER: patina_debugger::PatinaDebugger<UartPl011> =
         .with_force_enabled(_ENABLE_DEBUGGER);
 ```
 
-Debugging configuration is critical to proper functionality. Read the [Patina Debugger documentation](https://github.com/OpenDevicePartnership/patina/blob/main/core/patina_debugger/src/debugger.rs)
-for full configuration options.
+Debugging configuration is critical to proper functionality. Read the
+[Patina Debugger documentation](https://docs.rs/patina_debugger/latest/patina_debugger/) for full configuration options.
 
 > Note: It is recommended to use a compile time feature flag to build the debugger, including instantiating the
 > static struct, as this saves significant file space when the debugger is not enabled. It has been shown to save
@@ -158,7 +158,8 @@ putty or a similar simple monitor to check for the traffic.
 
 Once the breakpoint and transport are confirmed, connect your debugging software. Any GDB remote
 protocol debugger should work. WinDbg is recommended and best supported by the Patina team.
-See the [WinDbg Debugging page](debugging/windbg_debugging.md) for details.
+See the [WinDbg Debugging page](https://opendevicepartnership.github.io/patina/dev/debugging/windbg_debugging.html)
+for details.
 
 GDB also works, but symbols may not resolve since Patina uses PE images with PDB symbols.
 
