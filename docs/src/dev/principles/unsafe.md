@@ -104,10 +104,10 @@ invariants. Of course, this is not always possible, in which case unsafe functio
 For hardware safety, we don't have invariants, necessarily. For example, in writing a system register, there is no
 invariant that must hold true for that operation. There may be preconditions or postconditions, but not an invariant.
 
-One simple example of hardware safety is the `invld` instruction on x86_64 that invalidates caches without writing them
-back. This operation can be very dangerous if not called at a proper time, but nothing about the software can change
-that; there is no validation that can be done to indicate this is a safe time to call this. In Patina, this is
-hardware safety and does not warrant an unsafe function.
+One simple example of hardware safety is the invalidate cache instruction on x86_64 that invalidates caches without
+writing them back. This operation can be very dangerous if not called at a proper time, but nothing about the software
+can change that; there is no validation that can be done to indicate this is a safe time to call this. In Patina, this
+is hardware safety and does not warrant an unsafe function.
 
 We may define a wrapper function for it as:
 
@@ -118,11 +118,17 @@ fn invalidate_caches() {
 }
 ```
 
-Software safety could be introduced, say in the below example:
+The concept of software safety could come into play, say in the below unsafe example:
 
 ```rust
-// SAFETY: Caller must ensure that `ptr` is a valid u8 pointer
-unsafe fn invalidate_caches(ptr: *mut u8) {
+/// Invalidates the cache without writing them back. Also set a memory region to 4.
+///
+/// # Parameters
+/// - `ptr`: The pointer to the memory region to set to 4.
+///
+/// # Safety
+/// The caller must ensure `ptr` points to a valid memory region
+unsafe fn invalidate_caches_and_set_ptr_to_4(ptr: *mut u8) {
   // Better set this ptr to 4 first!
   // SAFETY: See function comment, caller assumes responsibility
   unsafe {ptr.write(4);}
@@ -135,10 +141,9 @@ unsafe fn invalidate_caches(ptr: *mut u8) {
 However, the function could be made safe again by validating assumptions:
 
 ```rust
-unsafe fn invalidate_caches(ptr: NonNull<u8>) {
+fn invalidate_caches_and_set_ptr_to_4(ptr: Box<u8>) {
   // Better set this ptr to 4 first!
-  // SAFETY: This pointer is guaranteed to be non-null
-  unsafe {ptr.write(4);}
+  *ptr = 4;
 
   // SAFETY: This is an architecturally defined way to invalidate caches
   unsafe { asm!("invld") } 
@@ -148,7 +153,13 @@ unsafe fn invalidate_caches(ptr: NonNull<u8>) {
 A more complex example, is writing the CR3 register on x64 systems.
 
 ```rust
-// SAFETY: Caller must ensure `cr3` points to a valid page table
+/// Installs a page table.
+///
+/// # Parameters
+/// - `cr3`: The address of the page table root to install.
+///
+/// # Safety
+/// The caller must ensure `cr3` is the address of a valid page table
 unsafe fn install_page_table(cr3: u64) {
   // SAFETY: This is an architecturally defined operation to write the page table root.
   unsafe {
@@ -181,8 +192,16 @@ should be given the appropriate function comment describing the caller expectati
 This function could also be written to have a safe abstraction over it, e.g.:
 
 ```rust
-// SAFETY: Caller must ensure `cr3` points to a valid page table and that that pointer lives for the lifetime of
-// being written in CR3.
+type PageTableRoot = u64;
+
+/// Installs a page table.
+///
+/// # Parameters
+/// - `cr3`: The address of the page table root to install.
+///
+/// # Safety
+/// The caller must ensure `cr3` is the address of a valid page table and lives for the lifetime of being written in
+/// CR3.
 unsafe fn write_cr3(cr3: u64) {
   // SAFETY: This is an architecturally defined operation to write the page table root.
   unsafe {
@@ -190,10 +209,10 @@ unsafe fn write_cr3(cr3: u64) {
   }
 }
 
-fn install_page_table(cr3: &'static u64) {
+fn install_page_table(cr3: &'static PageTableRoot) {
    // SAFETY: We have ensured the lifetime is static, that the reference is valid, and we have done our best to ensure
    // this is a valid page table
-   unsafe { write_cr3(*cr3) }
+   unsafe { write_cr3(*cr3 as u64) }
 }
 ```
 
@@ -213,17 +232,25 @@ macro_rules! write_sysreg {
   }
 }
 
-// SAFETY: Caller must ensure `cr3` points to a valid page table and that that pointer lives for the lifetime of
-// being written in CR3.
+type PageTableRoot = u64;
+
+/// Installs a page table.
+///
+/// # Parameters
+/// - `cr3`: The address of the page table root to install.
+///
+/// # Safety
+/// The caller must ensure `cr3` is the address of a valid page table and lives for the lifetime of being written in
+/// CR3.
 unsafe fn write_cr3(cr3_reg: u64) {
   // SAFETY: This is an architecturally defined operation to write the page table root.
   write_sysreg!(cr3, cr3_reg)
 }
 
-fn install_page_table(cr3: &'static u64) {
+fn install_page_table(cr3: &'static PageTableRoot) {
    // SAFETY: We have ensured the lifetime is static, that the reference is valid, and we have done our best to ensure
    // this is a valid page table
-   unsafe { write_cr3(*cr3) }
+   unsafe { write_cr3(*cr3 as u64) }
 }
 ```
 
