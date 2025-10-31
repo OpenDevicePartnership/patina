@@ -128,38 +128,38 @@ represents a cursor within an AML stream. Each handle can be conceptualized as a
 in the AML object tree of parent-child-relationships.
 
 ```rust
-pub(crate) struct AmlSdtHandleInternal {
-    table_key: TableKey,
+pub(crate) struct AmlSdtHandleInternal<'t> {
+    table: &'t mut AcpiTable,
     offset: usize,
     size: usize,
-    modified: bool,
+    name: NameSeg,
     byte_encoding: AmlByteEncoding,
     parent_end: Option<usize>,
 }
 
 impl AmlSdtHandleInternal {
-    fn new(table_key: TableKey, offset: usize, size: usize) -> Self {
+    fn new(table: &'t mut AcpiTable, offset: usize, size: usize) -> Self {
         Self {
-            table_key,
+            table,
             offset,
             size,
-            modified: false,
             byte_encoding: AmlByteEncoding::default(),
             parent_end: None,
         }
     }
+
+    pub fn table_key() -> TableKey {
+        self.table.table_key
+    }
 }
 
-pub type AmlHandle = AmlSdtHandleInternal;
+pub type AmlHandle<'t> = AmlSdtHandleInternal<'t>;
 ```
 
 The `size` of an `AmlSdtHandleInternal` refers to its full size, including any children (`TermList`).
 
 The `offset` refers to its offset with the AML stream of the table.
 Offset 0 is the start of the AML stream, and the highest offset is at the end of `table_length`.
-
-`modified` ensures the corresponding table (which can be retrieved through `table_key`) has an updated checksum
-if the contents are modified by `set_option`.
 
 Each handle stores the `parent_end` of its parent node, which is the parent's `size` + `offset` (useful for retrieving siblings).
 
@@ -211,8 +211,8 @@ pub enum AmlOperand {
 ### AML Paths
 
 A path in AML refers to a specific node in the tree hierarchy.
-It is represented by a series of NameSegs: 
-4-character uppercase ASCII strings that mark a specific location in the AML namespace. 
+It is represented by a series of `NameSegs`:
+4-character uppercase ASCII strings that mark a specific location in the AML namespace.
 
 ```rust
 /// NameSegs are always 4 ASCII characters long.
@@ -233,23 +233,20 @@ pub(crate) trait AmlParser {
   // It points to the first (root) node in the AML stream.
   unsafe fn open_table(&self, table_key: TableKey) -> Result<AmlHandle, AmlError>;
 
-  // Closes a handle for modification and traversal.
-  // The handle will no longer be valid after it is closed.
-  // Update the corresponding table's checksum if the handle is `modified`. 
-  fn close_handle(&self, handle: AmlHandle) -> Result<(), AmlError>;
-
   // Iterates over the options (operands) of an opened AML handle.
-  fn iter_options(&self, handle: AmlHandle) -> Result<Vec<AmlOperand>, AmlError>;
+  fn iter_operands(&self, handle: AmlHandle) -> Result<Vec<AmlOperand>, AmlError>;
 
   // Sets the option (operand) at a particular index to the given value.
-  fn set_option(&self, handle: AmlHandle, idx: usize, new_val: AmlOperand) -> Result<(), AmlError>;
+  fn set_operand(&self, handle: AmlHandle, idx: usize, new_val: AmlOperand) -> Result<(), AmlError>;
 
   // Finds the AML node at a specific known path.
   // AML paths take the format: \\_AA.BBBB.CCCC....
   fn find_path(&self, path: AmlPath) -> Result<AmlHandle, AmlError>;
 
+  type AmlIter: Iterator<Item = Result<AmlHandle, AmlError>>
+
   // Iterates over all nodes of the tree (in a depth-first order).
-  fn iter(&self) -> Result<impl Iterator<AmlHandle>, AmlError>;
+  fn iter(&self) -> Self::AmlIter;
 }
 ```
 
@@ -271,20 +268,22 @@ impl AmlParser for StandardAmlParser { ... }
 
 Finds the table (usually DSDT or SSDT) referenced by `table_key` and returns a handle for further AML operations.
 Internally this also parses the bytes of the referenced node at the start of the table's AML stream
-and sets up its fields as an `AmlSdtHandleInternal`, then adds it to `active_handles`.
+and sets up its fields as an `AmlSdtHandleInternal`.
 
-#### `close_sdt`
-
-Finds the table corresponding to the node's `table_key` field and if modified, updates its checksum.
-Removes the node from `active_handles`.
-
-#### `iter_options`
+#### `iter_operands`
 
 Iterates over a handle's `operands`.
 
-#### `set_option`
+#### `set_operand`
 
-Sets the operand at `idx` to `new_val` and sets `modified` = `true` for the handle.
+Sets the operand at `idx` to `new_val` (by writing to the bytecode buffer).
+
+This should also update the table's checksum; the table can be obtained by using the stored `table` information:
+
+```rust
+let table = handle.table_key();
+table.update_checksum();
+```
 
 #### Iteration
 
@@ -314,7 +313,7 @@ opcode | pkg_length | [ operands ] | [ TermList (children) ]
 So the first child of an object is at `offset + sizeof(pkg_length) + sizeof(operands)`.
 Once discovered this child becomes an active `AmlSdtHandleInternal`.
 
-The child derives `table_key` from its parent handle, and computes `parent_end` from the handle on which `get_child` is called.
+The child derives `table` from its parent handle, and computes `parent_end` from the handle on which `get_child` is called.
 
 ##### **get_sibling**
 
@@ -345,16 +344,33 @@ A stack is initialized with the first node in the AML bytecode (the "root").
 Then, on each subsequent iteration, the node at the top of the stack is popped,
 and its child (`get_child`) and sibling (`get_sibling`) are enqueued (in that order).
 
+##### `find_path`
+
+`find_path` traverses the tree in a similar matter as `iter`, but looks for a specific named node.
+Given a series of `NameSeg`s as an `AmlPath`,
+it uses `get_sibling` at each level to find the node matching that level's `NameSeg`,
+then proceeds onto the next level using `get_child` until the node at the end of the path is found.
+
+The name of a node can be read easily as all named nodes follow the format:
+
+```plain-text
+[Opcode] [PkgLength] [NameSeg] [...]
+```
+
+### Handle Lifetime
+
+Since each handle points to memory within an ACPI table, a handle cannot outlive its corresponding table. 
+This is guaranteed at compile-time by the `table: &'t mut AmlTable,` within the `AmlSdtHandleInternal<'t>`. 
+(The main case this addresses is when a table is uninstalled but an open handle still references the table.)
+
 ## Guide-Level Explanation
 
 The general flow for using the `AmlParser` service will be:
 
 1. Set up and install necessary tables with the `AcpiProvider` service.
 2. Open a DSDT or SSDT with `open_table`.
-3. Traverse as necessary through `get_child`, `get_sibling`, and `get_option`.
-4. Make necessary modifications through `set_option`.
-5. During traversal, close nodes which no longer need to be accessed through `close_handle`.
-6. When traversal / patching is complete, `close_handle` on the root node (originally opened with `open_table`).
+3. Traverse as necessary through `iter` and `find_path`.
+4. Make necessary modifications through `set_operand`.
 
 ### Example
 
@@ -370,7 +386,7 @@ and patch `VAL0` from `0x00` (invalid value) to `0x99` (some valid value):
 0050: 00 00 00 00                                      ....
 ```
 
-The first 36 bytes are table header attributes (signature, length, revision, etc). 
+The first 36 bytes are table header attributes (signature, length, revision, etc).
 Thus the trailing AML bytecode is:
 
 ```plain-text
@@ -403,4 +419,30 @@ To begin parsing the DSDT, `open_table(dsdt_key)` is called to obtain a `dsdt_ha
 let dsdt_handle = aml_parser_service.open_table(dsdt_key);
 ```
 
-Then, 
+Assume that `VAL0` is some known or configured firmware path with some known meaning (such as a feature being enabled).
+
+```rust
+const IS_VAL_ENABLED_PATH: &str = "\\_SB.DEV0.VAL0";
+
+impl NameSeg {
+    fn from_str(s: &str) { ... }
+}
+
+let node_handle = aml_parser_service.find_path(NameSeg::from_str(IS_VAL_ENABLED_PATH));
+for (idx, option) in aml_parser_service.iter_operands(node_handle).enumerate() {
+    if option.name == "VAL0" {
+        aml_parser_service.set_operand(node_handle, idx, AmlOperand::ByteConst(0x99));
+    }
+}
+```
+
+In memory, the new bytecode should look like:
+
+```plain-text
+                  53 42 82 15 44 45 56 30 08 56 41 4C  ..\_SB..DEV0.VAL
+0030: 30 0A *99* 82 0A 43 48 4C 44 08 56 41 4C 31 0A 20  0...CHLD.VAL1. 
+0040: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+0050: 00 00 00 00  
+```
+
+And the DSDT's header will also have a modified checksum.
