@@ -158,7 +158,7 @@ pub type AmlHandle<'t> = AmlSdtHandleInternal<'t>;
 
 The `size` of an `AmlSdtHandleInternal` refers to its full size, including any children (`TermList`).
 
-The `offset` refers to its offset with the AML stream of the table.
+The `offset` refers to its offset within the AML stream of the table.
 Offset 0 is the start of the AML stream, and the highest offset is at the end of `table_length`.
 
 Each handle stores the `parent_end` of its parent node, which is the parent's `size` + `offset` (useful for retrieving siblings).
