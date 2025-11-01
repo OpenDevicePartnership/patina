@@ -241,6 +241,21 @@ pub unsafe extern "efiapi" fn create_performance_measurement(
         }
     }
 
+    ///         KnownPerfId::PerfFunctionStart
+    // | KnownPerfId::PerfFunctionEnd
+    // | KnownPerfId::PerfInModuleStart
+    // | KnownPerfId::PerfInModuleEnd
+    // | KnownPerfId::PerfCrossModuleStart
+    // | KnownPerfId::PerfCrossModuleEnd
+    // | KnownPerfId::PerfEvent => {
+    let is_guid = perf_id == KnownPerfId::PerfFunctionStart
+        || perf_id == KnownPerfId::PerfFunctionEnd
+        || perf_id == KnownPerfId::PerfInModuleStart
+        || perf_id == KnownPerfId::PerfInModuleEnd
+        || perf_id == KnownPerfId::PerfCrossModuleStart
+        || perf_id == KnownPerfId::PerfCrossModuleEnd
+        || perf_id == KnownPerfId::PerfEvent;
+    let caller_identifier = CallerIdentifier::from_ptr(caller_identifier, is_guid);
     match _create_performance_measurement(
         caller_identifier,
         guid,
@@ -273,10 +288,64 @@ pub unsafe extern "efiapi" fn create_performance_measurement(
     }
 }
 
+/// Represents the `caller_identifier` used in performance measurements.
+/// Due to legacy reasons, this can either be an image handle or a pointer to a GUID.
+pub enum CallerIdentifier {
+    ImageHandle(efi::Handle),
+    GuidPointer(*const efi::Guid),
+}
+
+impl CallerIdentifier {
+    /// Performs basic checks on a pointer claiming to be a Guid.
+    pub fn validate_guid(ptr: *const c_void) -> bool {
+        // Check that pointer is not null and is properly aligned for a Guid.
+        !ptr.is_null() && (ptr as usize) % mem::align_of::<efi::Guid>() == 0
+    }
+    /// Creates a `CallerIdentifier` from a raw pointer.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the pointer is valid and points to either an image handle or a GUID.
+    pub unsafe fn from_ptr(ptr: *const c_void, is_guid: bool) -> Option<Self> {
+        if is_guid {
+            if !Self::validate_guid(ptr) {
+                return None;
+            }
+            Some(CallerIdentifier::GuidPointer(ptr as *const efi::Guid))
+        } else {
+            Some(CallerIdentifier::ImageHandle(ptr as efi::Handle))
+        }
+    }
+}
+
+fn create_performance_measurement_internal(
+    caller_identifier: CallerIdentifier,
+    guid: Option<&efi::Guid>,
+    string: Option<&str>,
+    ticker: u64,
+    address: usize,
+    perf_id: u16,
+    attribute: PerfAttribute,
+) -> Result<(), Error> {
+    let (boot_services, fbpt) = get_static_state().ok_or(Error::Efi(EfiError::NotReady.into()))?;
+
+    _create_performance_measurement(
+        caller_identifier,
+        guid,
+        string,
+        ticker,
+        address,
+        perf_id,
+        attribute,
+        boot_services,
+        fbpt,
+    )
+}
+
 /// Create a performance measurement and add it to the FBPT.
 #[allow(clippy::too_many_arguments)]
 fn _create_performance_measurement<B, F>(
-    caller_identifier: *const c_void,
+    caller_identifier: CallerIdentifier,
     guid: Option<&efi::Guid>,
     string: Option<&str>,
     ticker: u64,
@@ -297,13 +366,21 @@ where
         ticker => (ticker as f64 / Arch::perf_frequency() as f64 * 1_000_000_000_f64) as u64,
     };
 
+    // If the `perf_id` is not a known one, we create a DynamicStringEventRecord.
+    // In this case, `caller_id` can be either an image handle or a guid pointer.
     let Ok(known_perf_id) = KnownPerfId::try_from(perf_id) else {
+        // PERF_ENTRY must have a matching start and end.
+        // Unknown IDs cannot be matched, so we reject PERF_ENTRY for unknown IDs.
         if attribute == PerfAttribute::PerfEntry {
             return Err(EfiError::InvalidParameter.into());
         }
         // SAFETY: The caller of parent function `create_performance_measurement` ensures that `caller_identifier` is a valid image handle or GUID pointer.
-        let guid = get_module_guid_from_handle(boot_services, caller_identifier as efi::Handle)
-            .unwrap_or_else(|_| unsafe { *(caller_identifier as *const Guid) });
+        // Mirroring EDK2 behavior, when the ID is unknown, we treat `caller_identifier` as a handle.
+        let guid = get_module_guid_from_handle(boot_services, caller_identifier as efi::Handle);
+        let Ok(guid) = get_module_guid_from_handle(boot_services, module_handle) else {
+            log::error!("Performance: Could not find the guid for module handle: {module_handle:?}");
+            return Err(EfiError::InvalidParameter.into());
+        };
         let module_name = string.unwrap_or("unknown name");
         fbpt.lock().add_record(DynamicStringEventRecord::new(perf_id, 0, timestamp, guid, module_name))?;
         return Ok(());
