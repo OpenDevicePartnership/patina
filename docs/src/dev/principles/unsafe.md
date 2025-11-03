@@ -106,12 +106,12 @@ invariant that must hold true for that operation. There may be preconditions or 
 
 One simple example of hardware safety is the invalidate cache instruction on x86_64 that invalidates caches without
 writing them back. This operation can be very dangerous if not called at a proper time, but nothing about the software
-can change that; there is no validation that can be done to indicate this is a safe time to call this. In Patina, this
-is hardware safety and does not warrant an unsafe function.
+can change that. In Patina, this is hardware safety and does not warrant an unsafe function.
 
 We may define a wrapper function for it as:
 
-```rust
+```rust,no_run
+# use std::arch::asm;
 fn invalidate_caches() {
   // SAFETY: This is an architecturally defined way to invalidate caches
   unsafe { asm!("invld") }
@@ -120,7 +120,8 @@ fn invalidate_caches() {
 
 The concept of software safety could come into play, say in the below unsafe example:
 
-```rust
+```rust,no_run
+# use std::arch::asm;
 /// Invalidates the cache without writing them back. Also set a memory region to 4.
 ///
 /// # Parameters
@@ -128,31 +129,34 @@ The concept of software safety could come into play, say in the below unsafe exa
 ///
 /// # Safety
 /// The caller must ensure `ptr` points to a valid memory region
-unsafe fn invalidate_caches_and_set_ptr_to_4(ptr: *mut u8) {
-  // Better set this ptr to 4 first!
-  // SAFETY: See function comment, caller assumes responsibility
-  unsafe {ptr.write(4);}
-
+unsafe fn invalidate_caches_and_set_ptr_to_4(ptr: *mut u8) { 
   // SAFETY: This is an architecturally defined way to invalidate caches
-  unsafe { asm!("invld") } 
+  unsafe { asm!("invld"); }
+
+  // Better set this ptr to 4!
+  // SAFETY: See function comment, caller assumes responsibility
+  unsafe { ptr.write(4); }
 }
 ```
 
-However, the function could be made safe again by validating assumptions:
+However, the function could be made safe again by using the standard library to
+validate assumptions (or validating the assumptions ourselves):
 
-```rust
-fn invalidate_caches_and_set_ptr_to_4(ptr: Box<u8>) {
-  // Better set this ptr to 4 first!
-  *ptr = 4;
-
+```rust,no_run
+# use std::arch::asm;
+fn invalidate_caches_and_set_ptr_to_4(mut ptr: Box<u8>) { 
   // SAFETY: This is an architecturally defined way to invalidate caches
-  unsafe { asm!("invld") } 
+  unsafe { asm!("invld"); } 
+
+  // Better set this ptr to 4!
+  *ptr = 4;
 }
 ```
 
 A more complex example, is writing the CR3 register on x64 systems.
 
-```rust
+```rust,no_run
+# use std::arch::asm;
 /// Installs a page table.
 ///
 /// # Parameters
@@ -179,7 +183,7 @@ if this did not point to a page table the hardware understands or if the mapping
 hardware safety aspect. When viewed through this lens, the function can be a safe function, because all a caller could
 do is provide the following safety comment:
 
-```rust
+```rust,ignore
 // SAFETY: Hopefully this works!
 unsafe { install_page_table(cr3);}
 ```
@@ -189,10 +193,36 @@ this u64 provided, when treated as a pointer, will live for the lifetime of the 
 gets reallocated, we have just violated both software and hardware safety. As such, the function is marked unsafe and
 should be given the appropriate function comment describing the caller expectations.
 
+There are other assumptions the software can validate to make this more likely to succeed, even if it cannot predict
+exactly how the hardware will process this write.
+
 This function could also be written to have a safe abstraction over it, e.g.:
 
-```rust
+```rust,no_run
+# use std::arch::asm;
 type PageTableRoot = u64;
+
+enum PageTableInstallError {
+  /// The CR3 address is not 4KB-aligned
+  NotAligned,
+  /// The CR3 address exceeds the maximum physical address width
+  ExceedsMaxPhysAddr,
+  /// Reserved bits are set in CR3
+  ReservedBitsSet,
+  /// PCIDE bit set but CR4.PCIDE is not enabled
+  PcidWithoutCr4Support,
+}
+
+struct PageTableOptions {
+  /// Page-level cache disable (CR3 bit 4)
+  pub cache_disable: bool,
+  /// Page-level write-through (CR3 bit 3)
+  pub write_through: bool,
+  /// Preserve PCID TLB entries (CR3 bit 63, requires CR4.PCIDE=1)
+  pub preserve_pcid: bool,
+  /// PCID value (CR3 bits 11:0 when CR4.PCIDE=1)
+  pub pcid: Option<u16>,
+}
 
 /// Installs a page table.
 ///
@@ -209,10 +239,27 @@ unsafe fn write_cr3(cr3: u64) {
   }
 }
 
-fn install_page_table(cr3: &'static PageTableRoot) {
-   // SAFETY: We have ensured the lifetime is static, that the reference is valid, and we have done our best to ensure
-   // this is a valid page table
-   unsafe { write_cr3(*cr3 as u64) }
+# fn not_aligned(cr3: &PageTableRoot) -> bool { false }
+# fn exceeds_maximum_addr_width (cr3: &PageTableRoot) -> bool { false }
+
+fn install_page_table(cr3: &'static PageTableRoot, options: PageTableOptions) -> Result<(), PageTableInstallError> {
+  if not_aligned(cr3) {
+    return Err(PageTableInstallError::NotAligned);
+  }
+
+  if exceeds_maximum_addr_width(cr3) {
+    return Err(PageTableInstallError::ExceedsMaxPhysAddr);
+  }
+
+  // additional checks such as if any reserved bits are set, if CR4 is configured correctly, etc.
+
+  // Parse options, apply them in CR4, etc, ensure they are self consistent
+
+  // SAFETY: We have ensured the lifetime is static, that the reference is valid, and we have done our best to ensure
+  // this is a valid page table
+  unsafe { write_cr3(*cr3 as u64); }
+
+  Ok(())
 }
 ```
 
@@ -221,7 +268,8 @@ declared as safe in Patina because writing a system register in and of itself is
 the hardware safety. For a given case, say the CR3 case, we may create an unsafe abstraction on top that declares this
 particular register write has memory safety implications that the caller must guarantee.
 
-```rust
+```rust,no_run
+# use std::arch::asm;
 macro_rules! write_sysreg {
   ($dest:ident, $value:expr) => {
     // SAFETY: We have a compile time guarantee that this is a valid register to write to
@@ -233,6 +281,28 @@ macro_rules! write_sysreg {
 }
 
 type PageTableRoot = u64;
+
+enum PageTableInstallError {
+    /// The CR3 address is not 4KB-aligned
+    NotAligned,
+    /// The CR3 address exceeds the maximum physical address width
+    ExceedsMaxPhysAddr,
+    /// Reserved bits are set in CR3
+    ReservedBitsSet,
+    /// PCIDE bit set but CR4.PCIDE is not enabled
+    PcidWithoutCr4Support,
+}
+
+struct PageTableOptions {
+  /// Page-level cache disable (CR3 bit 4)
+  pub cache_disable: bool,
+  /// Page-level write-through (CR3 bit 3)
+  pub write_through: bool,
+  /// Preserve PCID TLB entries (CR3 bit 63, requires CR4.PCIDE=1)
+  pub preserve_pcid: bool,
+  /// PCID value (CR3 bits 11:0 when CR4.PCIDE=1)
+  pub pcid: Option<u16>,
+}
 
 /// Installs a page table.
 ///
@@ -247,10 +317,27 @@ unsafe fn write_cr3(cr3_reg: u64) {
   write_sysreg!(cr3, cr3_reg)
 }
 
-fn install_page_table(cr3: &'static PageTableRoot) {
-   // SAFETY: We have ensured the lifetime is static, that the reference is valid, and we have done our best to ensure
-   // this is a valid page table
-   unsafe { write_cr3(*cr3 as u64) }
+# fn not_aligned(cr3: &PageTableRoot) -> bool { false }
+# fn exceeds_maximum_addr_width (cr3: &PageTableRoot) -> bool { false }
+
+fn install_page_table(cr3: &'static PageTableRoot, options: PageTableOptions) -> Result<(), PageTableInstallError> {
+  if not_aligned(cr3) {
+    return Err(PageTableInstallError::NotAligned);
+  }
+
+  if exceeds_maximum_addr_width(cr3) {
+    return Err(PageTableInstallError::ExceedsMaxPhysAddr);
+  }
+
+  // additional checks such as if any reserved bits are set, if CR4 is configured correctly, etc.
+
+  // Parse options, apply them in CR4, etc, ensure they are self consistent
+
+  // SAFETY: We have ensured the lifetime is static, that the reference is valid, and we have done our best to ensure
+  // this is a valid page table
+  unsafe { write_cr3(*cr3 as u64); }
+
+  Ok(())
 }
 ```
 
