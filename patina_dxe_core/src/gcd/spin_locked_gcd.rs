@@ -14,7 +14,7 @@ use patina::{base::DEFAULT_CACHE_ATTR, error::EfiError};
 use mu_rust_helpers::function;
 use patina::{
     base::{SIZE_4GB, UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, align_up},
-    guids::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP,
+    guids::{self, CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP},
     pi::{
         dxe_services::{self, GcdMemoryType},
         hob::{self, EFiMemoryTypeInformation},
@@ -2124,8 +2124,11 @@ impl SpinLockedGcd {
         // Retrieve the MemoryAllocationModule hob corresponding to the DXE core so that we can map it correctly
         let dxe_core_hob = hob_list
             .iter()
-            .find_map(|x| if let Hob::MemoryAllocationModule(module) = x { Some(module) } else { None })
-            .expect("Did not find MemoryAllocationModule Hob for DxeCore");
+            .find_map(|x| match x {
+                Hob::MemoryAllocationModule(module) if module.module_name == guids::DXE_CORE => Some(module),
+                _ => None,
+            })
+            .expect("Did not find MemoryAllocationModule Hob for DxeCore. Use patina::guid::DXE_CORE as FFS GUID.");
 
         let pe_info = unsafe {
             UefiPeInfo::parse(core::slice::from_raw_parts(
