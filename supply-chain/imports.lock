@@ -79,7 +79,7 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.deranged]]
-version = "0.5.4"
+version = "0.5.5"
 when = "2025-09-24"
 user-id = 15682
 user-login = "jhpratt"

@@ -6,9 +6,10 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
+
 use crate::log_registers;
 use patina::{error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
-use patina_stacktrace::StackTrace;
+use patina_stacktrace::{StackFrame, StackTrace};
 
 cfg_if::cfg_if! {
     if #[cfg(all(target_os = "uefi", target_arch = "aarch64"))] {
@@ -34,7 +35,8 @@ impl super::EfiExceptionStackTrace for ExceptionContextAArch64 {
     fn dump_stack_trace(&self) {
         // SAFETY: This is called from the exception context. We have no choice but to trust the ELR and SP values.
         // the stack trace module does its best to not cause recursive exceptions.
-        if let Err(err) = unsafe { StackTrace::dump_with(self.elr, self.sp) } {
+        let stack_frame = StackFrame { pc: self.elr, sp: self.sp, fp: self.fp };
+        if let Err(err) = unsafe { StackTrace::dump_with(stack_frame) } {
             log::error!("StackTrace: {err}");
         }
     }

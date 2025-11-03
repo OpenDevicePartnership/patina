@@ -1,8 +1,10 @@
 use super::unwind::UnwindInfo;
+
 use crate::{
     byte_reader::ByteReader,
     error::{Error, StResult},
     pe::PE,
+    stacktrace::StackFrame,
 };
 use core::fmt;
 
@@ -58,8 +60,12 @@ impl<'a> RuntimeFunction<'a> {
 
     /// Function to return the Runtime Function corresponding to the given
     /// relative rip.
-    pub unsafe fn find_function(pe: &PE<'a>, rip_rva: u32) -> StResult<RuntimeFunction<'a>> {
-        let (exception_table_rva, exception_table_size) = unsafe { pe.get_exception_table() }?;
+    pub fn find_function(pe: &PE<'a>, stack_frame: &mut StackFrame) -> StResult<RuntimeFunction<'a>> {
+        let rip_rva = (stack_frame.pc - pe.base_address) as u32;
+
+        // SAFETY: `pe` owns the underlying PE image bytes and guarantees the header
+        // ranges referenced by `get_exception_table()` remain readable here.
+        let (exception_table_rva, exception_table_size) = unsafe { pe.get_exception_table()? };
 
         // Jump to .pdata section and parse the Runtime Function records.
         // - Break the section in to 12 byte chunks
@@ -76,30 +82,120 @@ impl<'a> RuntimeFunction<'a> {
                     ele.read32(8).unwrap(), // unwindinfo_rva
                 )
             })
-            .find(|ele| ele.0 <= rip_rva && rip_rva <= ele.1)
+            .find(|ele| ele.0 <= rip_rva && rip_rva < ele.1)
             .map(|ele| RuntimeFunction::new(pe.bytes, pe.image_name, ele.0, ele.1, ele.2));
 
         runtime_function.ok_or(Error::RuntimeFunctionNotFound(pe.image_name, rip_rva))
     }
+}
 
-    /// Windows only test function to return all Runtime Functions
-    #[cfg(all(target_os = "windows", target_arch = "x86_64", test))]
-    pub(crate) unsafe fn find_all_functions(pe: &PE<'a>) -> StResult<Vec<RuntimeFunction<'a>>> {
-        let (exception_table_rva, exception_table_size) = unsafe { pe.get_exception_table() }?;
+#[cfg(test)]
+#[coverage(off)]
+mod tests {
+    use super::*;
+    use crate::{error::Error, pe::PE, stacktrace::StackFrame};
 
-        // Jump to .pdata section and parse the Runtime Function records.
-        // - Break the section in to 12 byte chunks
-        // - Map the 12 bytes in to 3 u32
-        // - Map each chunk in to RuntimeFunction
-        let runtime_functions = pe.bytes
-            [exception_table_rva as usize..(exception_table_rva + exception_table_size) as usize]
-            .chunks(4)
-            .map(|ele| ele.read32(0).unwrap())
-            .collect::<Vec<u32>>()
-            .chunks(3)
-            .map(|ele| RuntimeFunction::new(pe.bytes, pe.image_name, ele[0], ele[1], ele[2]))
-            .collect::<Vec<RuntimeFunction>>();
+    const IMAGE_SIZE: usize = 0x800;
+    const PE_POINTER_OFFSET: usize = 0x3C;
+    const PE_HEADER_OFFSET: u32 = 0x80;
+    const PE_SIGNATURE: u32 = 0x0000_4550;
+    const PE64_MAGIC: u16 = 0x20B;
+    const SIZE_OF_IMAGE_OFFSET: usize = 0x50;
+    const EXCEPTION_TABLE_POINTER_OFFSET: usize = 0xA0;
 
-        Ok(runtime_functions)
+    fn build_pe_bytes(entries: &[(u32, u32, u32)], unwind_sections: &[(u32, &[u8])]) -> Vec<u8> {
+        let mut bytes = vec![0u8; IMAGE_SIZE];
+
+        bytes[0..2].copy_from_slice(&0x5A4Du16.to_le_bytes());
+        bytes[PE_POINTER_OFFSET..PE_POINTER_OFFSET + 4].copy_from_slice(&PE_HEADER_OFFSET.to_le_bytes());
+
+        let header = PE_HEADER_OFFSET as usize;
+        bytes[header..header + 4].copy_from_slice(&PE_SIGNATURE.to_le_bytes());
+        bytes[header + 0x18..header + 0x1A].copy_from_slice(&PE64_MAGIC.to_le_bytes());
+        bytes[header + SIZE_OF_IMAGE_OFFSET..header + SIZE_OF_IMAGE_OFFSET + 4]
+            .copy_from_slice(&(IMAGE_SIZE as u32).to_le_bytes());
+
+        let exception_rva = 0x300u32;
+        let exception_size = (entries.len() * core::mem::size_of::<u32>() * 3) as u32;
+        bytes[header + EXCEPTION_TABLE_POINTER_OFFSET..header + EXCEPTION_TABLE_POINTER_OFFSET + 4]
+            .copy_from_slice(&exception_rva.to_le_bytes());
+        bytes[header + EXCEPTION_TABLE_POINTER_OFFSET + 4..header + EXCEPTION_TABLE_POINTER_OFFSET + 8]
+            .copy_from_slice(&exception_size.to_le_bytes());
+
+        for (index, &(start, end, unwind)) in entries.iter().enumerate() {
+            let offset = exception_rva as usize + index * 12;
+            bytes[offset..offset + 4].copy_from_slice(&start.to_le_bytes());
+            bytes[offset + 4..offset + 8].copy_from_slice(&end.to_le_bytes());
+            bytes[offset + 8..offset + 12].copy_from_slice(&unwind.to_le_bytes());
+        }
+
+        for &(rva, data) in unwind_sections {
+            let offset = rva as usize;
+            let end = offset + data.len();
+            assert!(end <= bytes.len(), "unwind section exceeds image bounds");
+            bytes[offset..end].copy_from_slice(data);
+        }
+
+        bytes
+    }
+
+    #[test]
+    fn get_unwind_info_parses_minimal_header() {
+        let mut image = vec![0u8; 0x80];
+        let unwind_blob = [0x01, 0x00, 0x00, 0x00];
+        image[0x40..0x44].copy_from_slice(&unwind_blob);
+        let runtime = RuntimeFunction::new(&image, Some("image"), 0x10, 0x20, 0x40);
+        let unwind = runtime.get_unwind_info().expect("expected valid unwind info");
+        assert_eq!(unwind.get_stack_pointer_offset().unwrap(), 0);
+        let summary = format!("{unwind}");
+        assert!(summary.contains("version: 0x01"));
+    }
+
+    #[test]
+    fn get_unwind_info_translates_parse_errors() {
+        let mut image = vec![0u8; 0x40];
+        image[0x10] = 0x03; // unsupported version -> parse error
+        let runtime = RuntimeFunction::new(&image, Some("image"), 0x10, 0x20, 0x10);
+        let error = runtime.get_unwind_info().unwrap_err();
+        assert!(matches!(error, Error::UnwindInfoNotFound(Some("image"), _, 0x10)));
+    }
+
+    #[test]
+    fn find_function_returns_matching_range() {
+        let entries = [(0x100, 0x180, 0x500), (0x200, 0x280, 0x520)];
+        let unwind_data = [(0x500u32, &[0x01u8, 0x00, 0x00, 0x00][..])];
+        let image = build_pe_bytes(&entries, &unwind_data);
+        let pe = PE { base_address: 0, _size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
+        let mut frame = StackFrame { pc: 0x120, ..StackFrame::default() };
+
+        let runtime = RuntimeFunction::find_function(&pe, &mut frame).expect("expected runtime function");
+        assert_eq!(runtime.start_rva, 0x100);
+        assert_eq!(runtime.end_rva, 0x180);
+        assert_eq!(runtime.unwind_info, 0x500);
+    }
+
+    #[test]
+    fn find_function_skips_exclusive_end_boundary() {
+        let entries = [(0x100, 0x150, 0x500), (0x150, 0x1A0, 0x520)];
+        let unwind_data = [(0x500u32, &[0x01u8, 0x00, 0x00, 0x00][..]), (0x520u32, &[0x01u8, 0x00, 0x00, 0x00][..])];
+        let image = build_pe_bytes(&entries, &unwind_data);
+        let pe = PE { base_address: 0, _size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
+        let mut frame = StackFrame { pc: 0x150, ..StackFrame::default() };
+
+        let runtime = RuntimeFunction::find_function(&pe, &mut frame).expect("expected boundary runtime function");
+        assert_eq!(runtime.start_rva, 0x150);
+        assert_eq!(runtime.end_rva, 0x1A0);
+    }
+
+    #[test]
+    fn find_function_reports_missing_ranges() {
+        let entries = [(0x100, 0x180, 0x500)];
+        let unwind_data = [(0x500u32, &[0x01u8, 0x00, 0x00, 0x00][..])];
+        let image = build_pe_bytes(&entries, &unwind_data);
+        let pe = PE { base_address: 0, _size_of_image: image.len() as u32, image_name: Some("image"), bytes: &image };
+        let mut frame = StackFrame { pc: 0x1C0, ..StackFrame::default() };
+
+        let error = RuntimeFunction::find_function(&pe, &mut frame).unwrap_err();
+        assert!(matches!(error, Error::RuntimeFunctionNotFound(Some("image"), 0x1C0)));
     }
 }

@@ -104,6 +104,7 @@ words:
   - libyaml
   - linkme
   - longjmp
+  - lrpair
   - lzmatest
   - mdbook
   - mdscr

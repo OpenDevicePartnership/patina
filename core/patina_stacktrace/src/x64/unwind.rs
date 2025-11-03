@@ -2,8 +2,9 @@
 use core::fmt;
 
 use crate::{
-    byte_reader::ByteReader,
+    byte_reader::{ByteReader, read_pointer64},
     error::{Error, StResult},
+    stacktrace::StackFrame,
 };
 
 /// `UnwindInfo`
@@ -61,7 +62,7 @@ impl<'a> UnwindInfo<'a> {
 
         // Each unwind code is a 2 byte struct. Validate if we are well with in
         // the range
-        if offset + count_of_unwind_codes as usize * 2 >= bytes.len() {
+        if offset + count_of_unwind_codes as usize * 2 > bytes.len() {
             return Err(Error::Malformed("Malformed unwind code bytes"));
         }
 
@@ -82,16 +83,23 @@ impl<'a> UnwindInfo<'a> {
 
     /// Function to calculate the stack pointer offset in the function
     pub fn get_stack_pointer_offset(&self) -> StResult<usize> {
-        UnwindCode::get_stack_pointer_offset(self.unwind_codes).map_err(|_| Error::StackOffsetNotFound(self.image_name))
+        UnwindCode::get_stack_pointer_offset(self.unwind_codes)
+            .map_err(|_| Error::StackFrameUnwindDecodeFailed(self.image_name))
     }
 
-    /// Function to calculate the current stack frame parameters
-    pub fn get_current_stack_frame(&self, rsp: u64, rip: u64) -> StResult<(u64, u64, u64, u64)> {
+    /// Function to calculate the previous stack frame parameters
+    pub fn get_previous_stack_frame(&self, stack_frame: &StackFrame) -> StResult<StackFrame> {
+        let rsp = stack_frame.sp;
         let rsp_offset = self.get_stack_pointer_offset()?;
         let mut prev_rsp = rsp + rsp_offset as u64;
-        let prev_rip = unsafe { *(prev_rsp as *const u64) };
+        // SAFETY: `prev_rsp` references the caller's stack frame and the unwind
+        // metadata guarantees the return address resides at the top of that
+        // frame. The pointer is 8-byte aligned, so loading a `u64` return address
+        // via `read_pointer64` is well-defined.
+        let prev_rip = unsafe { read_pointer64(prev_rsp) };
         prev_rsp += 8; // pop the return address
-        Ok((rsp, rip, prev_rsp, prev_rip))
+
+        Ok(StackFrame { sp: prev_rsp, pc: prev_rip, ..*stack_frame })
     }
 }
 
@@ -188,6 +196,7 @@ impl UnwindCode {
     }
 
     /// Test function to parse all UnwindCodes
+    #[coverage(off)]
     #[cfg(all(target_os = "windows", target_arch = "x86_64", test))]
     pub(crate) fn _parse(bytes: &[u8], frame_register_offset: u32) -> StResult<Vec<UnwindCode>> {
         let byte_count = bytes.len();
@@ -237,5 +246,163 @@ impl UnwindCode {
             unwind_codes.push(unwind_code);
         }
         Ok(unwind_codes)
+    }
+}
+
+#[cfg(test)]
+#[coverage(off)]
+mod tests {
+    use super::*;
+
+    // Helper to build unwind info bytes
+    fn build_unwind_bytes(
+        version: u8,
+        flags: u8,
+        size_of_prolog: u8,
+        count_of_unwind_codes: u8,
+        frame_reg: u8,
+        frame_reg_offset_units: u8,
+        codes: &[u8],
+    ) -> Vec<u8> {
+        let mut v = vec![
+            (flags << 3) | (version & 0b111),
+            size_of_prolog,
+            count_of_unwind_codes,
+            (frame_reg_offset_units << 4) | (frame_reg & 0xF),
+        ];
+        v.extend_from_slice(codes);
+        v
+    }
+
+    #[test]
+    fn parse_basic_version1() {
+        // Two unwind codes (each 2 bytes) -> need length > header(4)+codes(4)
+        let codes = [0x04, 0x42, 0x02, 0x22]; // push nonvol + alloc small
+        let bytes = build_unwind_bytes(1, 0, 6, 2, 0, 0, &codes);
+        let ui = UnwindInfo::parse(&bytes, Some("test")).unwrap();
+        assert_eq!(ui.version, 1);
+        assert_eq!(ui.flags, 0);
+        assert_eq!(ui.size_of_prolog, 6);
+        assert_eq!(ui.count_of_unwind_codes, 2);
+        assert_eq!(ui.frame_register, 0);
+        assert_eq!(ui.frame_register_offset, 0);
+        assert_eq!(ui.unwind_codes.len(), 4);
+    }
+
+    #[test]
+    fn parse_version2() {
+        let codes = [0x04, 0x42];
+        let bytes = build_unwind_bytes(2, 2, 4, 1, 0, 0, &codes); // flags=2
+        let ui = UnwindInfo::parse(&bytes, None).unwrap();
+        assert_eq!(ui.version, 2);
+        assert_eq!(ui.flags, 2);
+        assert!(ui.image_name.is_none());
+    }
+
+    #[test]
+    fn parse_invalid_version() {
+        let bytes = build_unwind_bytes(3, 0, 4, 0, 0, 0, &[]); // version 3 unsupported
+        let err = UnwindInfo::parse(&bytes, Some("bad")).unwrap_err();
+        assert!(matches!(err, Error::Malformed(_)));
+    }
+
+    #[test]
+    fn parse_malformed_unwind_code_length_boundary() {
+        // Header (4) + codes (4) == len -> should fail because parser expects strictly greater
+        let codes = [0x04, 0x42]; // count=2 => expects 4 bytes of codes; boundary triggers error
+        let mut bytes = build_unwind_bytes(1, 0, 4, 2, 0, 0, &codes);
+        // Trim one byte to force malformed (also works)
+        bytes.truncate(6); // make definitely malformed
+        let err = UnwindInfo::parse(&bytes, Some("boundary")).unwrap_err();
+        assert!(matches!(err, Error::Malformed(_)));
+    }
+
+    #[test]
+    fn frame_register_offset_calculation() {
+        for (unit, expected) in [(0, 0u32), (1, 16), (5, 80), (15, 240)] {
+            // unit * 16
+            let bytes = build_unwind_bytes(1, 0, 4, 0, 5, unit, &[]); // frame_reg=5 (RBP)
+            let ui = UnwindInfo::parse(&bytes, Some("offset")).unwrap();
+            assert_eq!(ui.frame_register, 5);
+            assert_eq!(ui.frame_register_offset, expected);
+        }
+    }
+
+    #[test]
+    fn display_includes_core_fields() {
+        let codes = [0x04, 0x42];
+        let bytes = build_unwind_bytes(1, 1, 8, 1, 5, 3, &codes); // flags=1, frame_reg=5 offset_units=3 -> 48
+        let ui = UnwindInfo::parse(&bytes, Some("disp")).unwrap();
+        let s = format!("{}", ui);
+        assert!(s.contains("UnwindInfo"));
+        assert!(s.contains("version: 0x01"));
+        assert!(s.contains("flags: 0x01"));
+        assert!(s.contains("frame_register: 0x05"));
+        assert!(s.contains("frame_register_offset: 0x00000030")); // 48 decimal
+    }
+
+    #[test]
+    fn stack_offset_push_nonvolatile() {
+        let codes = [0x04, 0x00, 0x02, 0x00]; // two pushes (opcode 0) -> 16 bytes
+        let bytes = build_unwind_bytes(1, 0, 6, 2, 0, 0, &codes);
+        let ui = UnwindInfo::parse(&bytes, Some("push")).unwrap();
+        assert_eq!(ui.get_stack_pointer_offset().unwrap(), 16);
+    }
+
+    #[test]
+    fn stack_offset_alloc_small() {
+        let codes = [0x04, 0x22]; // opcode 2, opinfo=2 -> (2*8+8)=24
+        let bytes = build_unwind_bytes(1, 0, 4, 1, 0, 0, &codes);
+        let ui = UnwindInfo::parse(&bytes, Some("small")).unwrap();
+        assert_eq!(ui.get_stack_pointer_offset().unwrap(), 24);
+    }
+
+    #[test]
+    fn stack_offset_alloc_large_scaled() {
+        // AllocLarge opcode 1, opinfo=0, next two bytes a count scaled*8
+        let codes = [0x04, 0x01, 0x20, 0x00]; // size field=0x0020 -> 32*8=256
+        let bytes = build_unwind_bytes(1, 0, 6, 2, 0, 0, &codes);
+        let ui = UnwindInfo::parse(&bytes, Some("large_scaled")).unwrap();
+        assert_eq!(ui.get_stack_pointer_offset().unwrap(), 256);
+    }
+
+    #[test]
+    fn stack_offset_alloc_large_unscaled() {
+        // AllocLarge opcode 1, opinfo=1, next 4 bytes raw size
+        let codes = [0x04, 0x11, 0x00, 0x01, 0x00, 0x00]; // size=0x0100=256
+        let bytes = build_unwind_bytes(1, 0, 6, 3, 0, 0, &codes);
+        let ui = UnwindInfo::parse(&bytes, Some("large_unscaled")).unwrap();
+        assert_eq!(ui.get_stack_pointer_offset().unwrap(), 256);
+    }
+
+    #[test]
+    fn stack_offset_mixed_sequence() {
+        let codes_final = [
+            0x10, 0x40, // push
+            0x08, 0x40, // push
+            0x04, 0x22, // alloc_small opinfo=2 -> 24
+            0x04, 0x01, // alloc_large scaled
+            0x10, 0x00, // size value (0x0010 *8 =128)
+        ];
+        let bytes = build_unwind_bytes(1, 0, 10, 5, 0, 0, &codes_final);
+        let ui = UnwindInfo::parse(&bytes, Some("mixed")).unwrap();
+        assert_eq!(ui.get_stack_pointer_offset().unwrap(), 16 + 24 + 128);
+    }
+
+    #[test]
+    fn stack_offset_zero_codes() {
+        let bytes = build_unwind_bytes(1, 0, 0, 0, 0, 0, &[]);
+        let ui = UnwindInfo::parse(&bytes, Some("empty")).unwrap();
+        assert_eq!(ui.get_stack_pointer_offset().unwrap(), 0);
+    }
+
+    #[test]
+    fn stack_offset_error_from_unexpected_opinfo() {
+        // opcode 1 (AllocLarge) with opinfo=2 invalid -> parser of offset returns Error::Malformed mapped to decode failed
+        let codes = [0x04, 0x21];
+        let bytes = build_unwind_bytes(1, 0, 4, 1, 0, 0, &codes);
+        let ui = UnwindInfo::parse(&bytes, Some("err")).unwrap();
+        let err = ui.get_stack_pointer_offset().unwrap_err();
+        assert!(matches!(err, Error::StackFrameUnwindDecodeFailed(Some("err"))));
     }
 }

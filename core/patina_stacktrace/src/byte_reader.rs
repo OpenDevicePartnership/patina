@@ -80,6 +80,12 @@ impl ByteReader for [u8] {
     }
 }
 
+// SAFETY: The caller must ensure `pointer` remains a valid, properly aligned
+// pointer to readable 8 bytes for the duration of this read.
+pub(crate) unsafe fn read_pointer64(pointer: u64) -> u64 {
+    unsafe { *(pointer as *const u64) }
+}
+
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
@@ -161,5 +167,20 @@ mod tests {
         assert_eq!(buffer.read16(1).unwrap_err(), Error::BufferTooShort(1));
         assert_eq!(buffer.read32(0).unwrap_err(), Error::BufferTooShort(0));
         assert_eq!(buffer._read64(0).unwrap_err(), Error::BufferTooShort(0));
+    }
+
+    #[test]
+    fn read_pointer64_reads_value() {
+        let value: u64 = 0x0123_4567_89AB_CDEF;
+        let ptr = &value as *const u64 as u64;
+        assert_eq!(unsafe { read_pointer64(ptr) }, value);
+    }
+
+    #[test]
+    fn read_pointer64_supports_pointer_arithmetic() {
+        let values = [0xAABB_CCDD_EEFF_0011u64, 0x2233_4455_6677_8899u64];
+        let base = values.as_ptr() as u64;
+        assert_eq!(unsafe { read_pointer64(base) }, values[0]);
+        assert_eq!(unsafe { read_pointer64(base + core::mem::size_of::<u64>() as u64) }, values[1]);
     }
 }

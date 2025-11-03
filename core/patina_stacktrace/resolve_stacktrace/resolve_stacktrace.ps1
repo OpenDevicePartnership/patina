@@ -27,16 +27,31 @@
 # >>
 # >> " -PdbDirectory "C:\pdbs\"
 #
+# or interactively:
+#
+# PS C:\> .\resolve_stacktrace.ps1
+# Please provide the path to the directory containing PDB files: C:\pdbs\
+# Please provide the stack trace(paste multiple lines, end with an empty line):
+#     # Child-SP              Return Address         Call Site
+#     0 00000057261FFAE0      00007FFC9AC910E5       x64+1095
+#     1 00000057261FFB10      00007FFC9AC9115E       x64+10E5
+#     2 00000057261FFB50      00007FFC9AC911E8       x64+115E
+#     3 00000057261FFB90      00007FFC9AC9125F       x64+11E8
+#     4 00000057261FFBD0      00007FF6D3557236       x64+125F
+#     5 00000057261FFC10      00007FFCC4BDE8D7       patina_stacktrace-cf486b9b613e51dc+7236
+#     6 00000057261FFC70      00007FFCC6B7FBCC       kernel32+2E8D7
+#     7 00000057261FFCA0      0000000000000000       ntdll+34521
+#
 # Output:
-# # Source Path                                                           Child-SP         Return Address   Call Site
-# 0 [C:\r\patina\core\patina_stacktrace\src\x64\tests\collateral\x64.c     @   63] 00000057261FFAE0 00007FFC9AC910E5 x64!func1+25
-# 1 [C:\r\patina\core\patina_stacktrace\src\x64\tests\collateral\x64.c     @   72] 00000057261FFB10 00007FFC9AC9115E x64!func2+15
-# 2 [C:\r\patina\core\patina_stacktrace\src\x64\tests\collateral\x64.c     @   84] 00000057261FFB50 00007FFC9AC911E8 x64!func3+1E
-# 3 [C:\r\patina\core\patina_stacktrace\src\x64\tests\collateral\x64.c     @   96] 00000057261FFB90 00007FFC9AC9125F x64!func4+28
-# 4 [C:\r\patina\core\patina_stacktrace\src\x64\tests\collateral\x64.c     @  109] 00000057261FFBD0 00007FF6D3557236 x64!StartCallStack+1F
-# 5 [C:\r\patina\core\patina_stacktrace\src\x64\tests\unwind_test_full.rs  @   98] 00000057261FFC10 00007FFCC4BDE8D7 patina_stacktrace-cf486b9b613e51dc!static unsigned int patina_stacktrace::x64::tests::unwind_test_full::call_stack_thread(union enum2$<winapi::ctypes::c_void> *)+56
-# 6 [Failed to load PDB file (HRESULT: 0x806D0005)                      ] 00000057261FFC70 00007FFCC6B7FBCC kernel32+2E8D7
-# 7 [Failed to load PDB file (HRESULT: 0x806D0005)                      ] 00000057261FFCA0 0000000000000000 ntdll+34521
+# # Source Path                                                                    Child-SP         Return Address   Call Site
+# 0 [C:\r\patina\core\patina_stacktrace\src\x64\tests\collateral\x64.c     @   63] 00000057261FFAE0 00007FFC9AC910E5 x64!func1+0x25
+# 1 [C:\r\patina\core\patina_stacktrace\src\x64\tests\collateral\x64.c     @   72] 00000057261FFB10 00007FFC9AC9115E x64!func2+0x15
+# 2 [C:\r\patina\core\patina_stacktrace\src\x64\tests\collateral\x64.c     @   84] 00000057261FFB50 00007FFC9AC911E8 x64!func3+0x1E
+# 3 [C:\r\patina\core\patina_stacktrace\src\x64\tests\collateral\x64.c     @   96] 00000057261FFB90 00007FFC9AC9125F x64!func4+0x28
+# 4 [C:\r\patina\core\patina_stacktrace\src\x64\tests\collateral\x64.c     @  109] 00000057261FFBD0 00007FF6D3557236 x64!StartCallStack+0x1F
+# 5 [C:\r\patina\core\patina_stacktrace\src\x64\tests\unwind_test_full.rs  @   98] 00000057261FFC10 00007FFCC4BDE8D7 patina_stacktrace-cf486b9b613e51dc!static unsigned int patina_stacktrace::x64::tests::unwind_test_full::call_stack_thread(union enum2$<winapi::ctypes::c_void> *)+0x56
+# 6 [Failed to load PDB file (HRESULT: 0x806D0005)                      ] 00000057261FFC70 00007FFCC6B7FBCC kernel32+0x2E8D7
+# 7 [Failed to load PDB file (HRESULT: 0x806D0005)                      ] 00000057261FFCA0 0000000000000000 ntdll+0x34521
 #
 param (
     [string]$StackTrace,  # Input text containing the stack trace information
@@ -252,17 +267,34 @@ function MatchModuleWithPdbIfExists {
     }
 }
 
-# Check if the PdbDirectory parameter is provided
-if (-not $PdbDirectory) {
-    Write-Host "Please provide the path to the directory containing PDB files."
-    return
+function ValidateInputs {
+    # Check if the PdbDirectory parameter is provided if not, prompt the user
+    if (-not $script:PdbDirectory) {
+        $script:PdbDirectory = Read-Host "Please provide the path to the directory containing PDB files"
+    }
+
+    # Check if the StackTrace parameter is provided if not, prompt the user
+    if (-not $script:StackTrace) {
+        $lines = @()
+        $line = Read-Host "Please provide the stack trace(paste multiple lines, end with an empty line)"
+        if ([string]::IsNullOrWhiteSpace($line)) {  # ignore if the first line is empty
+            $line = Read-Host
+        }
+        while (-not [string]::IsNullOrWhiteSpace($line)) {
+            $lines += $line
+            $line = Read-Host
+        }
+        $script:StackTrace = $lines -join "`n"
+    }
+
+    if ([string]::IsNullOrEmpty($script:PdbDirectory) -or [string]::IsNullOrEmpty($script:StackTrace)) {
+        Write-Host "Error: Either PdbDirectory or StackTrace parameter is missing." -ForegroundColor Red
+        exit
+    }
 }
 
-# Check if the StackTrace parameter is provided
-if (-not $StackTrace) {
-    Write-Host "Please provide the stack trace information."
-    return
-}
+# Validate input parameters
+ValidateInputs
 
 $CurrentDirectory = Get-Location
 Write-Host "Current Directory: $CurrentDirectory"
@@ -284,7 +316,7 @@ foreach ($line in $lines) {
     }
 
     # Remove content before the frame number, including timestamps like "dd:dd:dd.ddd : " and optional prefixes like
-    # "INFO -".
+    # "WARN -".
     if ($line -match "^(?:.*?\d{2}:\d{2}:\d{2}\.\d{3}\s*:\s*)?(?:[^\d]*?)(\d+)\s+(.*)$") {
         $frameNumber = $matches[1]
         $restOfLine = $matches[2]
@@ -310,7 +342,8 @@ foreach ($line in $lines) {
     if ($callSite -match "\+") {
         # Split the Call Site into module and RVA
         $module = $callSite -replace "\+.*", ""  # Extract everything before the +
-        $rva = $callSite -replace ".*\+", ""  # Extract everything after the +
+        $module = $module -replace ".*/", ""     # Handle Linux file paths
+        $rva = $callSite -replace ".*\+", ""     # Extract everything after the +
 
         # Construct the PDB file path
         $pdbFile = Join-Path -Path $PdbDirectory -ChildPath "$module.pdb"
@@ -334,7 +367,7 @@ foreach ($line in $lines) {
 
             $hr = [PdbHelper]::ResolveSymbols($pdbFile, $rvaDecimal, [ref]$fileName, [ref]$lineNumber, [ref]$functionName, [ref]$displacement, [ref]$errorMessage)
             if ($hr -eq 0) {
-                Write-Output ("{0,2} [{1,-60} @ {2,4}] {3} {4} {5}!{6}+{7:X}" -f $columns[0], $fileName, $lineNumber, $columns[1], $columns[2],  $module, $functionName, $displacement);
+                Write-Output ("{0,2} [{1,-60} @ {2,4}] {3} {4} {5}!{6}+0x{7:X}" -f $columns[0], $fileName, $lineNumber, $columns[1], $columns[2],  $module, $functionName, $displacement);
             } else {
                 Write-Output ("{0,2} [{1,-67}] {2} {3} {4}" -f $columns[0], $errorMessage, $columns[1], $columns[2], $columns[3], $columns[4]);
             }
