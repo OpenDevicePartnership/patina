@@ -331,86 +331,108 @@ Note:
 
 ### 6.3 Logging Format Options and Binary Size Impacts
 
-Patina logging features configurable log message formats. These formats control which specific metadata is included with each log entry.
-The format selected has a direct impact on binary size due to embedding string literals and debug information such as line numbers
-and file pathnames throughout the firmware image.
+Patina logging allows configurable log message formats. These formats control which specific metadata is **output** with each log entry at runtime.
 
-The `patina::log::Format` enum (as defined in `patina/sdk/patina/src/log.rs`) has three format options:
+```admonish warning
+The format selected has **no** impact on binary size. Embedded string literals and debug information such as line numbers
+and file pathnames are always compiled into the binary for panic messages irrespective of the logging format chosen. To reduce binary size by stripping location, use the `-Zlocation-detail` RUSTFLAGS option (see below).
+```
 #### Available Log Format Options
 
-| Format | Metadata Included | Example Output | Binary Size Effect |
-|--------|-------------------|----------------|--------------------|
-| **`Standard`** | Level, message (line/file only for TRACE) | `INFO - Initializing DXE Core` | **Minimal** - Line numbers and file pathnames only for TRACE level |
-| **`Json`** | Level, message | `{"level": "INFO" "message": "Initializing DXE Core"}` | **Minimal** - No debug metadata|
-| **`VerboseJason`** | Level, target, message, file path, line number | `{"level": "INFO", "target": "patina_dxe_core", "message": "Initializing DXE Core", "file": "src/main.rs", "line": 42}` |  **Significant** - Line numbers and full file pathnames for all log statements |
+The `patina::log::Format` enum (as defined in `patina/sdk/patina/src/log.rs`) has three format options:
+
+| Format | Metadata Included | Example Output |
+|--------|-------------------|----------------|
+| **`Standard`** | Level, message (line/file only for TRACE) | `INFO - Initializing DXE Core` |
+| **`Json`** | Level, message | `{"level": "INFO" "message": "Initializing DXE Core"}` |
+| **`VerboseJson`** | Level, target, message, file path, line number | `{"level": "INFO", "target": "patina_dxe_core", "message": "Initializing DXE Core", "file": "src/main.rs", "line": 42}` |
 
 #### Log Format Configuration
 
-Log format is specified whtn creating the logger instance:
+Log format is specified when creating the logger instance:
 
 ```rust
 use patina::log::serial_logger::SerialLogger;
 use patina::log::Format
 use patina::serial::uart::Uart16550;
 
-// Recommended for production code - minimal size impact
+// Recommended for production code - Standard format
 static LOGGER: SerialLogger<Uart16550> = SerialLogger::new(
     Format::Standard,
     &[], // Override specific modules here
     log::LevelFilter::Info,
     Uart16550::io { base: 0x402 },
 )
+```
 
-For debug and development, `VerboseJason` provides full debug info
+For debug and development, `VerboseJson` provides detailed debug output
 
 ```rust
 // Full debug information - recommended only for development
 static LOGGER: SerialLogger<Uart16550> = SerialLogger::new(
-    Format::VerboseJson, // Include all line numbers and file paths
-    &[], // No module overrides
+    Format::VerboseJson,
+    &[],
     log::LevelFilter::Trace,
     Uart16550::Io { base: 0x402 },
 );
 ```
 
-#### Binary Size Considerations
+#### Reducing Binary Size via Compiler Flags
 
-When line numbers are file paths are included in log messages, the Rust compiler embeds these as string literals in the final binary. The total size impact will thus be the sum of all log statements in the codebase.
+Irrespective of the log format chosen, line numbers and file paths are always embedded in the binary for panic messages and debugging. To prevent this and further reduce the binary size, it is recommended to use Rust compiler flags.
 
-**Key Factors:**
+**Using `-Zlocation-detail` to control location information:**
 
-1. **Debug Information**: The compiler retains source location information that is normally stripped in release builds.
+The Rust compiler flag `-Zlocation-detail` provides control over which source location information is embedded in the binary.
 
-2. **String Literal Storage**: Each unique file pathname will be stored as a string literal. For example, if the file pathname is `patina_dxe_core/src/services/runtime_services.rs` then that full path string will be embedded in the binary.
+```bash
+# Remove all location information (file, line, column)
+RUSTFLAGS="-Zlocation-detail=none" cargo build --release
 
-3. **Implicit Panics**: These can happen during many operations in Rust (e.g., arithmetic overflow in debug mode, unwrap(), index operations). File and line metadata are always included in each panic location, independent of log format selection. Because of this, file paths will appear in the binary if panic messages are enable even with minimal logging.
+# Remove file paths, but keep line & column information
+RUSTFLAGS="-Zlocation-detail=line" cargo build --release
+```
+
+```admonish warning
+`-Zlocation-detail=none` will strip location information from **both panic messages and log messages**. In this case:
+- Panic messages will not display line numbers or file paths
+- Stack traces will be less detailed
+- Debug of production issues will be more complex
+
+This flag should only be used when minimum binary size is essential and other debug mechanisms are available.
+```
+
+**Binary Size Impact:**
+
+Embedding file path strings in the binary can significantly increase its size.
+- Every unique file path is stored as a string literal
+- Typical DXE cores may reference dozens of files
+- Cumulative effect: 10's to 100's of kilobytes depending on the particular codebase
 
 **Best Practices:**
 
-**Development or Debug Builds**: Specify `Format::VerboseJson` for detailed debug information.
+- Development or Debug Builds: Specify `Format::VerboseJson` for detailed location information.
+- Production Builds: Specify `Format::Standard` for more concise output.
+- Minimal Size Builds: Use `Zlocation-detail=none` if minimum binary size is needed.
+- Module Filtering: Specify module-specific log filters to reduce logging output where not needed.
 
-**Production Builds**: Specify `Format::Standard` or `Format::Json` to minimize binary size.
-
-**Module Filtering**: Specify module-specific log filters to cut down on the number of log statements that get compiled into the binary (`SerialLogger::new()` filter parameter).
-
-**Log Level Control**: Specify appropriate maximum log levels such as `LevelFilter::Info` for production builds to omit debug/trace statements at compile time when possible.
-
-**Example: Production Config (Optimized for Size)**
+**Example: Production Config using Module Filtering**
 
 ```rust
 static LOGGER: SerialLogger<Uart16550> = SerialLogger::new(
-    Format::Standard, // Minimum Metadata
+    Format::Standard,
     &[
-        // Reduce compiled log statement by supressing verbose modules
+        // Turn off logging for specific modules
         ("goblin", log::LevelFilter::Off),
         ("patina_internal_depex", log::LevelFilter::Off),
     ],
+    log::LevelFilter::Info,
     Uart16550::Io { base: 0x402 },
 );
 ```
 
 ```admonish tip
-For exact size analysis on a given platform, use the Cargo build with `--timings` flag and then compare builds with different log format selections. Additional size reduction strategies may be found in the [Binary Size Optimization Guide](https://github.com/OpenDevicePartnership/patina-qemu/blob/main/Platforms/Docs/Common/patina_dxe_core_release_binary_size.md).
+ Additional size reduction strategies beyond logging options may be found in the [Binary Size Optimization Guide](https://github.com/OpenDevicePartnership/patina-qemu/blob/main/Platforms/Docs/Common/patina_dxe_core_release_binary_size.md).
 ```
 
 ## 7. Platform Components and Services
