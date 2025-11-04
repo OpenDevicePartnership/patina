@@ -2,15 +2,15 @@
 //!
 //! ## Introduction
 //!
-//! This library implements the stack walking logic. Given the instruction
-//! pointer and stack pointer, the [API](#public-api) will dump the stack trace
-//! leading to that machine state. It currently does not resolve symbols, as PDB
-//! debug info is not embedded in the PE image, unlike the DWARF format for ELF
-//! images. Therefore, symbol resolution must be done offline. As a result, the
-//! "Call Site" column in the output will display `module+<relative rip>`
-//! instead of `module!function+<relative pc>`. Outside of this library, with
-//! PDB access, these module-relative pc offsets can be resolved to
-//! function-relative offsets, as shown below.
+//! This library implements stack-walking logic. Given an instruction pointer
+//! and stack pointer, the [API](#public-api) dumps the stack trace that led to
+//! that machine state. It currently does not resolve symbols because PDB debug
+//! info is not embedded in the PE image, unlike DWARF data in ELF images.
+//! Therefore, symbol resolution must be performed offline. As a result, the
+//! "Call Site" column in the output displays `module+<relative rip>` instead of
+//! `module!function+<relative pc>`. Outside of this library, with PDB access,
+//! those module-relative PC offsets can be resolved to function-relative
+//! offsets, as shown below.
 //!
 //! ```cmd
 //! PS C:\> .\resolve_stacktrace.ps1 -StackTrace "
@@ -41,24 +41,24 @@
 //! ## Prerequisites
 //!
 //! This library uses the PE image `.pdata` section to calculate the stack
-//! unwind information required to walk the call stack. Therefore, all binaries
-//! should be compiled with the following `rustc` flag to generate the `.pdata`
-//! sections in the PE images:
+//! unwind information required to walk the call stack. Therefore, compile all
+//! binaries with the following `rustc` flag to generate the `.pdata` sections
+//! in the PE images:
 //!
 //! `RUSTFLAGS=-Cforce-unwind-tables`
 //!
 //! ## Public API
 //!
-//! The main API for public use is the `dump()/dump_with()` function in the
+//! The primary public API is the `dump()/dump_with()` function in the
 //! `StackTrace` module.
 //!
 //! ```ignore
-//!    /// Dumps the stack trace for the given PC, SP and FP values.
+//!    /// Dumps the stack trace for the given PC, SP, and FP values.
 //!    ///
 //!    /// # Safety
 //!    ///
 //!    /// This function is marked `unsafe` to indicate that the caller is
-//!    /// responsible for validating the provided PC, SP and FP values. Invalid
+//!    /// responsible for validating the provided PC, SP, and FP values. Invalid
 //!    /// values can result in undefined behavior, including potential page
 //!    /// faults.
 //!    ///
@@ -75,13 +75,13 @@
 //!    /// ```
 //!    pub unsafe fn dump_with(stack_frame: StackFrame) -> StResult<()>;
 //!
-//!    /// Dumps the stack trace. This function reads the PC, SP and FP values and
+//!    /// Dumps the stack trace. This function reads the PC, SP, and FP values and
 //!    /// attempts to dump the call stack.
 //!    ///
 //!    /// # Safety
 //!    ///
 //!    /// It is marked `unsafe` to indicate that the caller is responsible for the
-//!    /// validity of the PC, SP and FP values. Invalid or corrupt machine state
+//!    /// validity of the PC, SP, and FP values. Invalid or corrupt machine state
 //!    /// can result in undefined behavior, including potential page faults.
 //!    ///
 //!    /// ```text
@@ -101,19 +101,19 @@
 //! ## API usage
 //!
 //! ```ignore
-//!     // Inside exception handler
+//!     // Inside an exception handler
 //!     let stack_frame = StackFrame { pc: x64_context.rip, sp: x64_context.rsp, fp: x64_context.rbp };
 //!     StackTrace::dump_with(stack_frame); // X64
 //!     let stack_frame = StackFrame { pc: aarch64_context.elr, sp: aarch64_context.sp, fp: aarch64_context.fp };
 //!     StackTrace::dump_with(stack_frame); // AArch64
 //!
-//!     // Inside rust panic handler and drivers
+//!     // Inside a Rust panic handler and drivers
 //!     StackTrace::dump();
 //! ```
 //!
 //! ## Reference
 //!
-//! More reference test cases are in `src\x64\tests\*.rs`
+//! More reference test cases live in `src\x64\tests\*.rs`.
 
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
 #![feature(coverage_attribute)]
@@ -126,7 +126,10 @@ mod pe;
 mod stacktrace;
 
 cfg_if::cfg_if! {
-    if #[cfg(all(target_os = "uefi", target_arch = "aarch64"))] {
+    if #[cfg(test)] {
+        mod aarch64;
+        mod x64;
+    } else if #[cfg(all(target_os = "uefi", target_arch = "aarch64"))] {
         mod aarch64;
     } else {
         mod x64;

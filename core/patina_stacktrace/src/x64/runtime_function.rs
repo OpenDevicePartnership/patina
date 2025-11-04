@@ -12,19 +12,19 @@ use core::fmt;
 /// Source: <https://learn.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-170#struct-runtime_function>
 #[derive(Debug, Clone)]
 pub struct RuntimeFunction<'a> {
-    /// loaded image memory as a byte slice
+    /// Loaded image memory as a byte slice.
     image_base: &'a [u8],
 
-    /// image name extracted from the loaded pe image
+    /// Image name extracted from the loaded PE image.
     image_name: Option<&'static str>,
 
-    /// start of the function rva
+    /// Start of the function RVA.
     pub start_rva: u32,
 
-    /// end of the function rva
+    /// End of the function RVA.
     pub end_rva: u32,
 
-    /// rva for unwind info
+    /// RVA for the unwind info.
     pub unwind_info: u32,
 }
 
@@ -52,14 +52,18 @@ impl<'a> RuntimeFunction<'a> {
         Self { image_base, image_name, start_rva, end_rva, unwind_info }
     }
 
-    /// Parse the Unwind Info data pointed by RuntimeFunction
+    /// Parses the unwind info referenced by this runtime function entry.
     pub fn get_unwind_info(&self) -> StResult<UnwindInfo<'_>> {
-        UnwindInfo::parse(&self.image_base[self.unwind_info as usize..], self.image_name)
-            .map_err(|_| Error::UnwindInfoNotFound(self.image_name, self.image_base.as_ptr() as u64, self.unwind_info))
+        UnwindInfo::parse(&self.image_base[self.unwind_info as usize..], self.image_name).map_err(|_| {
+            Error::UnwindInfoNotFound {
+                module: self.image_name,
+                image_base: self.image_base.as_ptr() as u64,
+                unwind_info: self.unwind_info,
+            }
+        })
     }
 
-    /// Function to return the Runtime Function corresponding to the given
-    /// relative rip.
+    /// Finds the runtime function corresponding to the given relative RIP.
     pub fn find_function(pe: &PE<'a>, stack_frame: &mut StackFrame) -> StResult<RuntimeFunction<'a>> {
         let rip_rva = (stack_frame.pc - pe.base_address) as u32;
 
@@ -67,25 +71,28 @@ impl<'a> RuntimeFunction<'a> {
         // ranges referenced by `get_exception_table()` remain readable here.
         let (exception_table_rva, exception_table_size) = unsafe { pe.get_exception_table()? };
 
-        // Jump to .pdata section and parse the Runtime Function records.
-        // - Break the section in to 12 byte chunks
-        // - Map the 12 bytes in to 3 u32
-        // - Filter the chunk which fall with in the given rva range
-        // - Map the chunk in to RuntimeFunction
+        if (exception_table_size as usize) < (core::mem::size_of::<u32>() * 3) {
+            return Err(Error::Malformed { module: pe.image_name, reason: "Invalid exception table size < 12 bytes" });
+        }
+
+        // Jump to the `.pdata` section and parse the runtime function records
+        // by breaking the section into 12-byte chunks, mapping each chunk to
+        // three u32 values, filtering the chunks that fall within the given RVA
+        // range, and constructing `RuntimeFunction` instances from the results.
         let runtime_function = pe.bytes
             [exception_table_rva as usize..(exception_table_rva + exception_table_size) as usize]
             .chunks(core::mem::size_of::<u32>() * 3) // 3 u32
             .map(|ele| {
                 (
-                    ele.read32(0).unwrap(), // start_rva
-                    ele.read32(4).unwrap(), // end_rva
-                    ele.read32(8).unwrap(), // unwindinfo_rva
+                    ele.read32(0).unwrap(), // start_rva - unwrap() will work validated above
+                    ele.read32(4).unwrap(), // end_rva - unwrap() will work validated above
+                    ele.read32(8).unwrap(), // unwindinfo_rva - unwrap() will work validated above
                 )
             })
             .find(|ele| ele.0 <= rip_rva && rip_rva < ele.1)
             .map(|ele| RuntimeFunction::new(pe.bytes, pe.image_name, ele.0, ele.1, ele.2));
 
-        runtime_function.ok_or(Error::RuntimeFunctionNotFound(pe.image_name, rip_rva))
+        runtime_function.ok_or(Error::RuntimeFunctionNotFound { module: pe.image_name, rip_rva })
     }
 }
 
@@ -154,10 +161,10 @@ mod tests {
     #[test]
     fn get_unwind_info_translates_parse_errors() {
         let mut image = vec![0u8; 0x40];
-        image[0x10] = 0x03; // unsupported version -> parse error
+        image[0x10] = 0x03; // Unsupported version -> parse error.
         let runtime = RuntimeFunction::new(&image, Some("image"), 0x10, 0x20, 0x10);
         let error = runtime.get_unwind_info().unwrap_err();
-        assert!(matches!(error, Error::UnwindInfoNotFound(Some("image"), _, 0x10)));
+        assert!(matches!(error, Error::UnwindInfoNotFound { module: Some("image"), unwind_info: 0x10, .. }));
     }
 
     #[test]
@@ -196,6 +203,6 @@ mod tests {
         let mut frame = StackFrame { pc: 0x1C0, ..StackFrame::default() };
 
         let error = RuntimeFunction::find_function(&pe, &mut frame).unwrap_err();
-        assert!(matches!(error, Error::RuntimeFunctionNotFound(Some("image"), 0x1C0)));
+        assert!(matches!(error, Error::RuntimeFunctionNotFound { module: Some("image"), rip_rva: 0x1C0 }));
     }
 }

@@ -12,19 +12,19 @@ use core::fmt;
 /// Source: <https://learn.microsoft.com/en-us/cpp/build/arm64-exception-handling>
 #[derive(Debug, Clone)]
 pub struct RuntimeFunction<'a> {
-    /// loaded image memory as a byte slice
+    /// Loaded image memory as a byte slice.
     image_base: &'a [u8],
 
-    /// image name extracted from the loaded pe image
+    /// Image name extracted from the loaded PE image.
     image_name: Option<&'static str>,
 
-    /// start of the function rva
+    /// Start of the function RVA.
     pub func_start_rva: u32,
 
-    /// end of the function rva
+    /// End of the function RVA.
     pub end_rva: u32,
 
-    /// unwind info in AArch64. Second word of .pdata section.
+    /// Packed unwind info in AArch64 (the second word of the `.pdata` section).
     pub unwind_info: u32,
 }
 
@@ -49,14 +49,18 @@ impl<'a> RuntimeFunction<'a> {
         Self { image_base, image_name, func_start_rva, end_rva, unwind_info }
     }
 
-    /// Parse the Unwind Info data pointed by RuntimeFunction
+    /// Parses the unwind info referenced by this runtime function entry.
     pub fn get_unwind_info(&self) -> StResult<UnwindInfo<'_>> {
-        UnwindInfo::parse(self.image_base, self.func_start_rva, self.unwind_info, self.image_name)
-            .map_err(|_| Error::UnwindInfoNotFound(self.image_name, self.image_base.as_ptr() as u64, self.unwind_info))
+        UnwindInfo::parse(self.image_base, self.func_start_rva, self.unwind_info, self.image_name).map_err(|_| {
+            Error::UnwindInfoNotFound {
+                module: self.image_name,
+                image_base: self.image_base.as_ptr() as u64,
+                unwind_info: self.unwind_info,
+            }
+        })
     }
 
-    /// Function to return the Runtime Function corresponding to the given
-    /// relative pc.
+    /// Finds the runtime function corresponding to the given relative PC.
     pub fn find_function(pe: &PE<'a>, stack_frame: &mut StackFrame) -> StResult<RuntimeFunction<'a>> {
         let mut pc_rva = (stack_frame.pc - pe.base_address) as u32;
 
@@ -64,47 +68,51 @@ impl<'a> RuntimeFunction<'a> {
         // ranges referenced by `get_exception_table()` remain readable here.
         let (exception_table_rva, exception_table_size) = unsafe { pe.get_exception_table()? };
 
+        if (exception_table_size as usize) < (core::mem::size_of::<u32>() * 2) {
+            return Err(Error::Malformed { module: pe.image_name, reason: "Invalid exception table size < 8 bytes" });
+        }
+
         let mut retry = 2;
         while retry > 0 {
-            // Jump to .pdata section and parse the Runtime Function records.
-            // - Break the section in to 8 byte chunks(2 u32)
-            // - Map the 8 bytes in to 2 u32
-            // - Filter the chunk which fall within the given rva range
-            // - Map the chunk in to RuntimeFunction
+            // Jump to the `.pdata` section and parse the runtime function
+            // records by breaking the section into 8-byte chunks (two u32
+            // values), mapping each chunk to those two integers, filtering the
+            // chunks that fall within the given RVA range, and constructing
+            // `RuntimeFunction` instances from the results.
             let runtime_function = pe.bytes
                 [exception_table_rva as usize..(exception_table_rva + exception_table_size) as usize]
                 .chunks(core::mem::size_of::<u32>() * 2) // 2 u32
                 .map(|ele| {
-                    let func_start_rva = ele.read32(0).unwrap();
-                    let unwind_info = ele.read32(4).unwrap();
+                    let func_start_rva = ele.read32(0).unwrap(); // unwrap() will work validated above
+                    let unwind_info = ele.read32(4).unwrap(); // unwrap() will work validated above
 
                     let flag = unwind_info & 0x3;
 
                     let function_length = match flag {
-                        // packed unwind data not used; remaining bits point to an
-                        // .xdata record. The length of the function can only be
-                        // calculated by parsing the [0..=17] bits of .xdata record.
-                        // It indicates the total length of the function in bytes,
-                        // divided by 4
+                        // Packed unwind data not used; remaining bits point to an
+                        // `.xdata` record. The length of the function can only be
+                        // calculated by parsing the [0..=17] bits of the `.xdata`
+                        // record. It indicates the total length of the function in
+                        // bytes, divided by 4.
                         0 => {
                             let xdata_rva = unwind_info as usize;
                             let xdata_header = &pe.bytes[xdata_rva..xdata_rva + 4];
                             let xdata_header = xdata_header.read32(0).unwrap();
                             (xdata_header & 0x3FFFF) * 4
                         }
-                        // packed unwind data used with a single prolog and epilog
+                        // Packed unwind data used with a single prolog and epilog
                         // at the beginning and end of the scope. The length of the
-                        // function is specified directly in .pdata[2] [2..=12]. It
-                        // indicates the total length of the function in bytes,
-                        // divided by 4
+                        // function is specified directly in `.pdata[2]` bits
+                        // [2..=12]. It indicates the total length of the function in
+                        // bytes, divided by 4.
                         1 => ((unwind_info >> 2) & 0x7FF) * 4,
-                        // packed unwind data used for code without any prolog and
-                        // epilog. Useful for describing separated function
-                        // segments. The length of the function is specified
-                        // directly in .pdata[2] [2..=12]. It indicates the total
-                        // length of the function in bytes, divided by 4
+                        // Packed unwind data used for code without any prolog or
+                        // epilog. This is useful for describing separated function
+                        // segments. The length of the function is specified directly
+                        // in `.pdata[2]` bits [2..=12]. It indicates the total length
+                        // of the function in bytes, divided by 4.
                         2 => ((unwind_info >> 2) & 0x7FF) * 4,
-                        // reserved
+                        // Reserved.
                         _ => 0,
                     };
 
@@ -184,9 +192,17 @@ impl<'a> RuntimeFunction<'a> {
                 // In any case, if pc_rva points exactly to the start of the
                 // prolog, subtract 4.
                 if pc_rva == runtime_function.func_start_rva {
-                    log::debug!("    > Decrementing pc_rva {:X} -> {:X}", pc_rva, pc_rva - 4); // debug
-                    pc_rva -= 4;
-                    stack_frame.pc -= 4;
+                    let decremented_pc_rva = pc_rva.checked_sub(4).ok_or(Error::Malformed {
+                        module: pe.image_name,
+                        reason: "pc_rva underflow while adjusting to previous instruction",
+                    })?;
+                    let decremented_pc = stack_frame.pc.checked_sub(4u64).ok_or(Error::Malformed {
+                        module: pe.image_name,
+                        reason: "pc underflow while adjusting to previous instruction",
+                    })?;
+                    log::debug!("    > Decrementing pc_rva {:X} -> {:X}", pc_rva, decremented_pc_rva); // debug
+                    pc_rva = decremented_pc_rva;
+                    stack_frame.pc = decremented_pc;
                 } else {
                     log::debug!("    > Found Runtime function({}) for pc_rva {:X}", runtime_function, pc_rva); // debug
                     return Ok(runtime_function);
@@ -215,17 +231,25 @@ impl<'a> RuntimeFunction<'a> {
                 // 00000100`0006aefc f1400610 subs        xip0,xip0,#1,lsl #0xC
                 // 00000100`0006af00 f940023f ldr         xzr,[xip1]
 
+                let decremented_pc_rva = pc_rva.checked_sub(4).ok_or(Error::Malformed {
+                    module: pe.image_name,
+                    reason: "pc_rva underflow while retrying runtime function lookup",
+                })?;
+                let decremented_pc = stack_frame.pc.checked_sub(4u64).ok_or(Error::Malformed {
+                    module: pe.image_name,
+                    reason: "pc underflow while retrying runtime function lookup",
+                })?;
                 log::debug!(
                     "    > Runtime Function not found, retrying by decrementing pc_rva {:X} -> {:X}",
                     pc_rva,
-                    pc_rva - 4
+                    decremented_pc_rva
                 ); // debug
-                pc_rva -= 4;
-                stack_frame.pc -= 4;
+                pc_rva = decremented_pc_rva;
+                stack_frame.pc = decremented_pc;
             }
         }
 
-        return Err(Error::RuntimeFunctionNotFound(pe.image_name, pc_rva));
+        Err(Error::RuntimeFunctionNotFound { module: pe.image_name, rip_rva: pc_rva })
     }
 }
 
@@ -315,7 +339,14 @@ mod tests {
 
         let runtime = RuntimeFunction::new(&image, Some("image"), 0x20, 0x40, xdata_rva);
         let err = runtime.get_unwind_info().unwrap_err();
-        assert!(matches!(err, Error::UnwindInfoNotFound(Some("image"), _, rva) if rva == xdata_rva));
+        assert!(matches!(
+            err,
+            Error::UnwindInfoNotFound {
+                module: Some("image"),
+                unwind_info,
+                ..
+            } if unwind_info == xdata_rva
+        ));
     }
 
     #[test]
@@ -358,7 +389,7 @@ mod tests {
         let mut frame = StackFrame { pc: 0x200, ..StackFrame::default() };
 
         let err = RuntimeFunction::find_function(&pe, &mut frame).unwrap_err();
-        assert!(matches!(err, Error::RuntimeFunctionNotFound(Some("image"), _)));
+        assert!(matches!(err, Error::RuntimeFunctionNotFound { module: Some("image"), .. }));
         assert_eq!(frame.pc, 0x200 - 8);
     }
 

@@ -37,12 +37,12 @@ impl Display for StackFrame {
 pub struct StackTrace;
 
 impl StackTrace {
-    /// Dumps the stack trace for the given PC, SP and FP values.
+    /// Dumps the stack trace for the given PC, SP, and FP values.
     ///
     /// # Safety
     ///
     /// This function is marked `unsafe` to indicate that the caller is
-    /// responsible for validating the provided PC, SP and FP values. Invalid
+    /// responsible for validating the provided PC, SP, and FP values. Invalid
     /// values can result in undefined behavior, including potential page
     /// faults.
     ///
@@ -95,7 +95,7 @@ impl StackTrace {
 
             stack_frame = prev_stack_frame;
 
-            // Stop the stack trace when pc or fp becomes zero.
+            // Stop the stack trace when the PC or FP becomes zero.
             if stack_frame.pc == 0 || stack_frame.fp == 0 {
                 log::warn!("Finished dumping stack trace");
                 break;
@@ -107,13 +107,13 @@ impl StackTrace {
         Ok(())
     }
 
-    /// Dumps the stack trace. This function reads the PC, SP and FP values and
+    /// Dumps the stack trace. This function reads the PC, SP, and FP values and
     /// attempts to dump the call stack.
     ///
     /// # Safety
     ///
     /// It is marked `unsafe` to indicate that the caller is responsible for the
-    /// validity of the PC, SP and FP values. Invalid or corrupt machine state
+    /// validity of the PC, SP, and FP values. Invalid or corrupt machine state
     /// can result in undefined behavior, including potential page faults.
     ///
     /// ```text
