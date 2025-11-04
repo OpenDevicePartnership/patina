@@ -18,7 +18,7 @@ use patina::{
             perf_driver_binding_start_begin, perf_driver_binding_start_end, perf_driver_binding_support_begin,
             perf_driver_binding_support_end,
         },
-        measurement::create_performance_measurement,
+        measurement::create_performance_measurement_internal,
     },
 };
 use patina_internal_device_path::{concat_device_path_to_boxed_slice, copy_device_path_to_boxed_slice};
@@ -228,7 +228,7 @@ fn core_connect_single_controller(
             perf_driver_binding_support_begin(
                 driver_binding.driver_binding_handle,
                 controller_handle,
-                create_performance_measurement,
+                create_performance_measurement_internal,
             );
 
             //driver claims support; attempt to start it.
@@ -237,7 +237,7 @@ fn core_connect_single_controller(
                     perf_driver_binding_support_end(
                         driver_binding.driver_binding_handle,
                         controller_handle,
-                        create_performance_measurement,
+                        create_performance_measurement_internal,
                     );
 
                     started_drivers.push(driver_binding_interface);
@@ -245,7 +245,7 @@ fn core_connect_single_controller(
                     perf_driver_binding_start_begin(
                         driver_binding.driver_binding_handle,
                         controller_handle,
-                        create_performance_measurement,
+                        create_performance_measurement_internal,
                     );
 
                     if (driver_binding.start)(driver_binding_interface, controller_handle, device_path)
@@ -257,14 +257,14 @@ fn core_connect_single_controller(
                     perf_driver_binding_start_end(
                         driver_binding.driver_binding_handle,
                         controller_handle,
-                        create_performance_measurement,
+                        create_performance_measurement_internal,
                     );
                 }
                 _ => {
                     perf_driver_binding_support_end(
                         driver_binding.driver_binding_handle,
                         controller_handle,
-                        create_performance_measurement,
+                        create_performance_measurement_internal,
                     );
                     continue;
                 }

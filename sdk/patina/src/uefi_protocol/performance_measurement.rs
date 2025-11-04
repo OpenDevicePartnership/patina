@@ -53,17 +53,17 @@ pub type CreateMeasurementExt = unsafe extern "efiapi" fn(
 pub type CreateMeasurement = fn(
     caller_identifier: CallerIdentifier,
     guid: Option<&efi::Guid>,
-    string: *const c_char,
+    string: Option<&str>,
     ticker: u64,
     address: usize,
-    identifier: u32,
+    identifier: u16,
     attribute: PerfAttribute,
-) -> efi::Status;
+) -> Result<(), crate::performance::error::Error>;
 
 /// EDKII defined Performance Measurement Protocol structure.
 pub struct EdkiiPerformanceMeasurement {
     /// Function to create performance record with event description and a timestamp.
-    pub create_performance_measurement: CreateMeasurement,
+    pub create_performance_measurement: CreateMeasurementExt,
 }
 
 unsafe impl ProtocolInterface for EdkiiPerformanceMeasurement {
