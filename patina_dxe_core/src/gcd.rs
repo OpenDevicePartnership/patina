@@ -202,9 +202,6 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                     .take_while(|r| r.is_some())
                     .flatten()
             {
-                log::info!(
-                    "Mapping memory range {split_range:#x?} as {gcd_mem_type:?} with attributes {resource_attributes:#x?}",
-                );
                 unsafe {
                     GCD.add_memory_space(
                         gcd_mem_type,
@@ -214,6 +211,10 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                     )
                     .expect("Failed to add memory space to GCD");
                 }
+
+                log::info!(
+                    "Mapping memory range {split_range:#x?} as {gcd_mem_type:?} with attributes {memory_attributes:#x?}",
+                );
 
                 match GCD.set_memory_space_attributes(
                     split_range.start as usize,
