@@ -17,6 +17,7 @@
 - [Code Reuse](dev/principles/reuse.md)
 - [Dependency Management](dev/principles/dependency-management.md)
 - [Error Handling](dev/principles/error-handling.md)
+- [Unsafe Guidance](dev/principles/unsafe.md)
 
 # Developer Guides
 

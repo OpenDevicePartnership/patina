@@ -25,5 +25,5 @@ jobs:
       contents: write
       pull-requests: write
 
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/UpdateReleaseDraft.yml@v0.0.4
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/UpdateReleaseDraft.yml@v0.1.1
     secrets: inherit

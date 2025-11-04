@@ -88,8 +88,12 @@ Cursor = Dhcp6AppendOption (
 
 **How Rust Prevents This**:
 
-```rust
-use zerocopy::{FromBytes, Immutable, KnownLayout, Unaligned};
+```rust,no_run
+# extern crate zerocopy;
+# extern crate zerocopy_derive;
+use std::marker::PhantomData;
+use zerocopy::{FromBytes, Immutable, KnownLayout};
+use zerocopy_derive::{FromBytes, Immutable, KnownLayout};
 
 // Type-safe DHCP6 option codes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,11 +177,9 @@ impl ServerId {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum Dhcp6Error {
-    #[error("Insufficient space in packet buffer")]
     InsufficientSpace,
-    #[error("Invalid server ID length")]
     InvalidServerIdLength,
 }
 
@@ -190,14 +192,6 @@ fn build_dhcp6_request(server_id: &ServerId) -> Result<Vec<u8>, Dhcp6Error> {
 
     Ok(builder.finish())
 }
-    IaNa = 3,
-    IaTa = 4,
-    IaAddr = 5,
-    OptionRequest = 6,
-    Preference = 7,
-    ElapsedTime = 8,
-    // ... other options
-}
 
 // Similar to `EFI_DHCP6_PACKET_OPTION` in the C code.
 //
@@ -206,8 +200,7 @@ fn build_dhcp6_request(server_id: &ServerId) -> Result<Vec<u8>, Dhcp6Error> {
 // - `KnownLayout` - Allows the layout characteristics of the type to be evaluated to guarantee the struct layout
 //   matches the defined C structure exactly
 // - `Immutable` - Asserts the struct is free from interior mutability (changes after creation)
-// - `Unaligned` - Allows parsing from unaligned memory (which might be the case for network packets)
-#[derive(Debug, FromBytes, KnownLayout, Immutable, Unaligned)]
+#[derive(Debug, FromBytes, KnownLayout, Immutable)]
 #[repr(C)]
 pub struct Dhcp6OptionHeader {
     pub op_code: u16,
@@ -217,6 +210,8 @@ pub struct Dhcp6OptionHeader {
 // Type-safe wrapper for DHCP6 options
 #[derive(Debug)]
 pub struct Dhcp6Option<'a> {
+    _lifetime: PhantomData<&'a ()>,
+}
 ```
 
 **How This Helps (Eliminates Buffer Overflow)**:
@@ -277,10 +272,13 @@ The separation between safe and unsafe code is **enforced by the compiler**:
 ```rust
 // Safe code - the compiler guarantees memory safety
 let mut buffer = Vec::new();           // Dynamic allocation
+let user_input = &[1, 2, 3];
 buffer.extend_from_slice(user_input);  // Automatic bounds checking
 let value = buffer[0];                 // Bounds checked - panics if out of bounds
 let safe_value = buffer.get(0);        // Returns Option<T> - no panic possible
+```
 
+```rust,compile_fail
 // Ownership prevents use-after-free at compile time
 let data = vec![1, 2, 3];
 let reference = &data[0];
@@ -297,8 +295,10 @@ The compiler **guarantees** that safe code cannot:
 
 #### Unsafe Code (requires explicit opt-in)
 
-```rust
+```rust,no_run
 // Unsafe code must be explicitly marked and justified
+let buffer = vec![1u8, 2, 3];
+let index = 1;
 unsafe {
     // Raw pointer operations that bypass Rust's safety checks
     let raw_ptr = buffer.as_ptr();
@@ -327,13 +327,16 @@ are considered "unsafe" without marking the code as such.
 
 #### 1. Unsafe Code Must Be Explicitly Marked
 
-```rust
+```rust,compile_fail
 // This will NOT compile - raw pointer dereference requires unsafe
 fn broken_function(ptr: *const u8) -> u8 {
     *ptr  // COMPILE ERROR: dereference of raw pointer is unsafe
 }
+```
 
-// Must be written as:
+A safer approach is to contain the unsafe operation and document the invariants:
+
+```rust,no_run
 fn safe_wrapper(ptr: *const u8) -> Option<u8> {
     if ptr.is_null() {
         return None;
@@ -350,7 +353,15 @@ fn safe_wrapper(ptr: *const u8) -> Option<u8> {
 
 The Rust compiler and tools in the ecosystem enforce that unsafe functions document their safety requirements:
 
-```rust
+```rust,no_run
+# // Note: Begin mock types for compilation
+# struct Packet;
+# struct ParseError;
+# impl Packet {
+#     fn parse(_slice: &[u8]) -> Result<Packet, ParseError> { Ok(Packet) }
+# }
+# // Note: End mock types for compilation
+
 /// # Safety
 ///
 /// This function is unsafe because it dereferences a raw pointer without
@@ -377,9 +388,30 @@ the caller to acknowledge the safety requirements.
 
 #### 3. Safe Abstractions Hide Unsafe Implementation Details
 
-```rust
+```rust,no_run
+# // Note: Begin mock types for compilation
+# struct Packet;
+# struct ParseError;
+# struct NetworkError;
+# impl NetworkError {
+#     fn OffsetOutOfBounds() -> Self { NetworkError }
+# }
+# impl Packet {
+#     fn parse(_slice: &[u8]) -> Result<Packet, ParseError> { Ok(Packet) }
+# }
+# unsafe fn parse_network_packet(data_ptr: *const u8, len: usize) -> Result<Packet, ParseError> {
+#     let slice = std::slice::from_raw_parts(data_ptr, len);
+#     Packet::parse(slice)
+# }
+# // Note: End mock types for compilation
+
 // Public safe interface - users cannot misuse this
+struct NetworkBuffer {
+    data: Vec<u8>,
+}
 impl NetworkBuffer {
+    fn len(&self) -> usize { self.data.len() }
+
     /// Safe interface for reading network packets
     ///
     /// This function handles all bounds checking and validation internally.
@@ -387,7 +419,7 @@ impl NetworkBuffer {
     pub fn read_packet(&self, offset: usize) -> Result<Packet, NetworkError> {
         // Bounds checking in safe code
         if offset >= self.len() {
-            return Err(NetworkError::OffsetOutOfBounds);
+            return Err(NetworkError::OffsetOutOfBounds());
         }
 
         // All unsafe operations are contained within this implementation
@@ -395,13 +427,16 @@ impl NetworkBuffer {
             // Safety: We verified bounds above and self.data is always valid
             let ptr = self.data.as_ptr().add(offset);
             let remaining = self.len() - offset;
-            parse_network_packet(ptr, remaining)
+            parse_network_packet(ptr, remaining).map_err(|_| NetworkError::OffsetOutOfBounds())
         }
     }
 }
 
 // Users can only call the safe interface:
-let packet = buffer.read_packet(offset)?;
+fn example(buffer: &NetworkBuffer, offset: usize) -> Result<Packet, NetworkError> {
+    let packet = buffer.read_packet(offset)?;
+    Ok(packet)
+}
 ```
 
 ### Advantages
@@ -491,8 +526,11 @@ Dhcp6UpdateIaInfo (
 Rust can leverage its strong memory safety capabilities like zero-copy parsing, strong typing, and ownership to make
 a safe design available to developers:
 
-```rust
-use zerocopy::{FromBytes, Immutable, KnownLayout, Unaligned};
+```rust,no_run
+# extern crate zerocopy;
+# extern crate zerocopy_derive;
+use std::mem::size_of;
+use zerocopy_derive::{FromBytes, Immutable, KnownLayout};
 
 /// DHCPv6 IA option types - prevents option type confusion
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -505,7 +543,7 @@ pub enum IaOptionType {
 }
 
 /// Zero-copy DHCPv6 IA option header matching C structure layout
-#[derive(Debug, FromBytes, KnownLayout, Immutable, Unaligned)]
+#[derive(Debug, FromBytes, KnownLayout, Immutable)]
 #[repr(C)]
 pub struct IaOptionHeader {
     pub option_code: u16,    // Network byte order
@@ -534,8 +572,8 @@ impl<'a> IaOption<'a> {
     /// Safe zero-copy parsing with compile-time layout verification
     pub fn parse(option_data: &'a [u8]) -> Result<Self, Dhcp6ParseError> {
         // Ensure minimum size for complete option (4-byte option header + 12-byte IA data = 16 bytes)
-        let header = IaOptionHeader::read_from_prefix(option_data)
-            .ok_or(Dhcp6ParseError::InsufficientData {
+        let (header, _) = <IaOptionHeader as zerocopy::FromBytes>::ref_from_prefix(option_data)
+            .map_err(|_| Dhcp6ParseError::InsufficientData {
                 needed: size_of::<IaOptionHeader>(),
                 available: option_data.len(),
             })?;
@@ -771,11 +809,14 @@ while (IsValidVariableHeader(Variable, GetEndPointer(VariableStoreHeader))) {
 Rust eliminates this vulnerability through safe iteration patterns, dynamic memory management, and automatic bounds
 checking:
 
-```rust
-use zerocopy::{FromBytes, KnownLayout, Unaligned};
+```rust,no_run
+# extern crate zerocopy;
+# extern crate zerocopy_derive;
+use std::mem::size_of;
+use zerocopy_derive::{FromBytes, Immutable, KnownLayout};
 
 /// Zero-copy compatible UEFI variable header that matches the C structure layout
-#[derive(Debug, FromBytes, KnownLayout, Unaligned)]
+#[derive(Debug, FromBytes, KnownLayout, Immutable)]
 #[repr(C)]
 pub struct VariableHeader {
     pub start_id: u16,           // Variable start marker (0x55AA)
@@ -841,9 +882,9 @@ impl<'a> Iterator for VariableStoreIterator<'a> {
 
         // Safe zero-copy header parsing
         let header_bytes = &self.data[self.offset..self.offset + size_of::<VariableHeader>()];
-        let header = match VariableHeader::read_from_bytes(header_bytes) {
-            Some(h) => h,
-            None => return Some(Err(VariableError::CorruptedHeader)),
+        let header = match <VariableHeader as zerocopy::FromBytes>::ref_from_prefix(header_bytes) {
+            Ok((h, _)) => h,
+            Err(_) => return Some(Err(VariableError::CorruptedHeader)),
         };
 
         // Validate header before proceeding
@@ -965,7 +1006,19 @@ PeiCreateHob (
 If a similar function signature were retained in a relatively straightforward port of the C code, the code could be
 more defensively written as:
 
-```rust
+```rust,no_run
+# // Note: Begin mock types for compilation
+# struct HobHeader;
+# struct HobAllocator {
+#     free_memory_bottom: u64,
+#     free_memory_top: u64,
+# }
+# enum HobError {
+#     LengthOverflow,
+#     OutOfMemory,
+# }
+# // Note: End mock types for compilation
+
 impl HobAllocator {
     pub fn create_hob(&mut self, hob_type: u16, length: u16) -> Result<*mut HobHeader, HobError> {
         // Checked arithmetic prevents overflow
@@ -984,7 +1037,7 @@ impl HobAllocator {
         }
 
         // Safe allocation with verified bounds
-        Ok(/* ... */)
+        Ok(todo!())
     }
 }
 ```
@@ -1002,7 +1055,11 @@ Some sample types in this example can help accomplish this:
 - `HobBuilder<T>`: A way to build HOBs that ensures only valid lengths can be used
 - `HobRef<T>`: A type-safe reference that owns its memory region, preventing use-after-free
 
-```rust
+```rust,no_run
+use std::marker::PhantomData;
+use std::ptr::NonNull;
+use std::slice;
+
 /// A type-safe HOB length that cannot overflow
 #[derive(Debug, Clone, Copy)]
 pub struct HobLength {
@@ -1055,9 +1112,9 @@ impl<T> HobBuilder<T> {
         let memory = allocator.allocate_aligned(aligned_length as usize)?;
 
         // Initialize the HOB header safely
-        let hob_ref = HobRef::new(memory, self.hob_type)?;
+    let hob_ref: HobRef<T> = HobRef::new(memory, self.hob_type)?;
 
-        Ok(hob_ref)
+    Ok(hob_ref)
     }
 }
 
@@ -1098,10 +1155,43 @@ impl<T> HobRef<T> {
     }
 }
 
+// Note: Begin mock types for compilation
+# struct CustomHob;
+# const HOB_TYPE_CUSTOM: u16 = 0x8000;
+# #[derive(Debug)]
+# enum HobError {
+#     LengthTooLarge,
+#     OutOfMemory,
+#     LengthOverflow,
+# }
+# struct AlignedMemory {
+#     data: NonNull<u8>,
+#     size: usize,
+# }
+# impl AlignedMemory {
+#     fn size(&self) -> usize { self.size }
+#     fn into_raw(self) -> NonNull<u8> { self.data }
+# }
+# struct HobHeader {
+#     hob_type: u16,
+#     length: u16,
+# }
+# struct HobAllocator;
+# impl HobAllocator {
+#     fn allocate_aligned(&mut self, _size: usize) -> Result<AlignedMemory, HobError> {
+#         Err(HobError::OutOfMemory)
+#     }
+# }
+# // Note: End mock types for compilation
+
 // Usage example - overflow is prevented by design:
-let length = HobLength::new(0xFFFA).ok_or(HobError::LengthTooLarge)?;
-let builder = HobBuilder::<CustomHob>::new(HOB_TYPE_CUSTOM, length);
-let hob = builder.build(&mut allocator)?;
+fn usage_example() -> Result<(), HobError> {
+    let mut allocator = HobAllocator;
+    let length = HobLength::new(0xFFFA).ok_or(HobError::LengthTooLarge)?;
+    let builder = HobBuilder::<CustomHob>::new(HOB_TYPE_CUSTOM, length);
+    let hob: HobRef<CustomHob> = builder.build(&mut allocator)?;
+    Ok(())
+}
 ```
 
 **How This Helps**:
@@ -1139,8 +1229,28 @@ a bit more detail here to give more insight into Rust type safety.
 
 **Example of the Type Safety This Provides**:
 
-```rust
-// These are distinct types that cannot be confused:
+```rust,no_run
+# // Note: Begin mock types for compilation
+# #[derive(Debug)]
+# struct HobError;
+# struct CustomHob;
+# struct MemoryHob;
+# struct HobRef<T: 'static>(&'static T);
+# static CUSTOM: CustomHob = CustomHob;
+# static MEMORY: MemoryHob = MemoryHob;
+# impl<T> HobRef<T> {
+#     fn as_typed(&self) -> Result<&T, HobError> {
+#         Ok(self.0)
+#     }
+# // Note: End mock types for compilation
+# }
+# fn create_custom_hob() -> Result<HobRef<CustomHob>, HobError> {
+#     Ok(HobRef(&CUSTOM))
+# }
+# fn create_memory_hob() -> Result<HobRef<MemoryHob>, HobError> {
+#     Ok(HobRef(&MEMORY))
+# }
+# fn main() -> Result<(), HobError> {
 let custom_hob: HobRef<CustomHob> = create_custom_hob()?;
 let memory_hob: HobRef<MemoryHob> = create_memory_hob()?;
 
@@ -1149,6 +1259,9 @@ let memory_hob: HobRef<MemoryHob> = create_memory_hob()?;
 
 // Safe typed access:
 let custom_data: &CustomHob = custom_hob.as_typed()?;  // Type-safe
+# let _ = custom_data;
+# Ok(())
+# }
 ```
 
 In summary, without `PhantomData<T>`, we'd lose impportant type safety and end up with untyped `HobRef` structs that

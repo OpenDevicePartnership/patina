@@ -501,7 +501,7 @@ pub fn core_allocate_pages(
 
             if let Ok(ptr) = result {
                 // Safety: caller must ensure that "memory" is a valid pointer. It is null-checked above.
-                unsafe { memory.write_unaligned(ptr.cast::<u8>().as_ptr().expose_provenance() as u64) }
+                unsafe { memory.write_unaligned(ptr.expose_provenance().get() as u64) }
                 Ok(())
             } else {
                 result.map(|_| ())

@@ -90,6 +90,7 @@ words:
   - hresult
   - htons
   - icfgr
+  - impls
   - indoc
   - inmodule
   - intid
@@ -131,6 +132,7 @@ words:
   - pacibsp
   - pccard
   - pcddxe
+  - pcide
   - pdata
   - pdbhelper
   - powerfmt
