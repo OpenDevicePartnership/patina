@@ -64,6 +64,12 @@ impl<'a> RuntimeFunction<'a> {
     }
 
     /// Finds the runtime function corresponding to the given relative RIP.
+    ///
+    /// # Safety
+    /// `stack_frame` must reflect a live frame within `pe`; the PC and SP values are
+    /// trusted to fall inside the mapped PE image and its stack allocation. Passing
+    /// arbitrary register snapshots risks indexing the exception table with invalid
+    /// offsets.
     pub fn find_function(pe: &PE<'a>, stack_frame: &mut StackFrame) -> StResult<RuntimeFunction<'a>> {
         let rip_rva = (stack_frame.pc - pe.base_address) as u32;
 

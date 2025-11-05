@@ -87,6 +87,12 @@ impl<'a> UnwindInfo<'a> {
     }
 
     /// Calculates the parameters for the previous stack frame.
+    ///
+    /// # Safety
+    /// The provided `stack_frame` must correspond to an active x64 frame whose stack
+    /// memory obeys the metadata carried by this unwind record. The implementation
+    /// dereferences addresses derived from `stack_frame.sp`, so the caller must ensure
+    /// those locations remain readable and contain the saved return address.
     pub fn get_previous_stack_frame(&self, stack_frame: &StackFrame) -> StResult<StackFrame> {
         let rsp = stack_frame.sp;
         let rsp_offset = self.get_stack_pointer_offset()?;

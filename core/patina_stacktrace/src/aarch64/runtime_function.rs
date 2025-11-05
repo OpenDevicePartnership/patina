@@ -61,6 +61,12 @@ impl<'a> RuntimeFunction<'a> {
     }
 
     /// Finds the runtime function corresponding to the given relative PC.
+    ///
+    /// # Safety
+    /// The `stack_frame` must carry register values captured from execution within
+    /// `pe`. Its program counter and stack pointer are used to index the PE image and
+    /// to adjust return addresses; stale or invalid values can cause out-of-bounds
+    /// reads when probing the exception directory.
     pub fn find_function(pe: &PE<'a>, stack_frame: &mut StackFrame) -> StResult<RuntimeFunction<'a>> {
         let mut pc_rva = (stack_frame.pc - pe.base_address) as u32;
 

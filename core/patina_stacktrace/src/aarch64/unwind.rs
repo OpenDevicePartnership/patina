@@ -278,6 +278,12 @@ impl<'a> UnwindInfo<'a> {
     }
 
     /// Calculates the parameters for the previous stack frame.
+    ///
+    /// # Safety
+    /// The supplied `stack_frame` must originate from a real AArch64 stack frame whose
+    /// recorded SP/FP/PC still identify readable memory governed by the current unwind
+    /// metadata. Supplying incorrect register snapshots can lead to invalid pointer
+    /// dereferences while decoding the caller state.
     pub fn get_previous_stack_frame(&self, stack_frame: &StackFrame) -> StResult<StackFrame> {
         log::debug!("    > {}", &self); // debug
         match self {
@@ -441,6 +447,12 @@ impl UnwindCode {
     }
 
     /// Returns the previous stack frame for packed unwind codes.
+    ///
+    /// # Safety
+    /// `stack_frame` must point at an in-flight frame whose stack memory matches the
+    /// layout described by the packed unwind record. The routine dereferences locations
+    /// derived from `stack_frame.sp`, so the caller must guarantee those addresses remain
+    /// accessible and correctly initialized.
     pub fn get_previous_stack_frame_packed(
         frame_size: u16,
         cr: FrameChainMode,
@@ -576,6 +588,12 @@ impl UnwindCode {
     }
 
     /// Returns the previous stack frame for unpacked unwind codes.
+    ///
+    /// # Safety
+    /// The `stack_frame` argument must represent a valid frame in the target thread and
+    /// its stack pointer must provide read access to the slots touched by the unwind
+    /// bytecode. Otherwise the pointer arithmetic performed here can observe
+    /// uninitialized or unmapped memory.
     pub fn get_previous_stack_frame_unpacked(unwind_codes: &[u8], stack_frame: &StackFrame) -> StResult<StackFrame> {
         let mut i = 0;
         let mut prev_sp = stack_frame.sp;
@@ -780,8 +798,8 @@ impl UnwindCode {
                 // 11011110'xxxzzzzz: save reg d(8+#X) at [sp-(#Z+1)*8]!, pre-indexed offset >= -256
 
                 Self::ensure_in_bounds(unwind_codes, i + 1)?;
-                let x = ((byte & 0b1) << 2) | ((unwind_codes[i + 1] >> 6) & 0b11);
-                let z = unwind_codes[i + 1] & 0b00111111;
+                let x = (unwind_codes[i + 1] >> 5) & 0b111;
+                let z = unwind_codes[i + 1] & 0b0011111;
                 log::debug!("    > {}", UnwindCode::SaveFRegX(x, z)); // debug
 
                 prev_sp += (z as u64 + 1) * 8; // pre increment the offset
