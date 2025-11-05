@@ -62,7 +62,7 @@ pub(crate) unsafe fn init_test_gcd(size: Option<usize>) {
     unsafe { GCD.reset() };
     GCD.init(48, 16);
     unsafe {
-        GCD.add_memory_space(
+        GCD.init_memory_blocks(
             GcdMemoryType::SystemMemory,
             addr as usize,
             TEST_GCD_MEM_SIZE,

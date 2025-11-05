@@ -66,19 +66,14 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
     assert!(memory_start < memory_end, "Not enough memory available for DXE core to start.");
 
     // initialize the GCD with an initial memory space. Note: this will fail if GCD.init() above didn't happen.
+    // SAFETY: We are directly using the free memory space from the PHIT HOB, which must be valid and reserved for use
+    // per spec.
     unsafe {
-        GCD.add_memory_space(
+        GCD.init_memory_blocks(
             GcdMemoryType::SystemMemory,
             free_memory_start as usize,
             free_memory_size as usize,
-            efi::MEMORY_UC
-                | efi::MEMORY_WC
-                | efi::MEMORY_WT
-                | efi::MEMORY_WB
-                | efi::MEMORY_WP
-                | efi::MEMORY_RP
-                | efi::MEMORY_XP
-                | efi::MEMORY_RO,
+            efi::MEMORY_ACCESS_MASK | efi::CACHE_ATTRIBUTE_MASK,
         )
         .expect("Failed to add initial region to GCD.");
     }
