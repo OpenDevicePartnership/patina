@@ -1,6 +1,28 @@
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
+
 [net]
 git-fetch-with-cli = true
 
 # This tells cargo to consider the MSV of rust for our crate vs our dependencies.
 [resolver]
 incompatible-rust-versions = "fallback"
+
+[target.x86_64-unknown-uefi]
+rustflags = [
+    "-C", "link-arg=/base:0x0",
+    "-C", "link-arg=/subsystem:efi_boot_service_driver",
+    "-C", "force-unwind-tables", # Generates .pdata section for stack tracing
+    "-C", "link-arg=/PDBALTPATH:qemu_q35_dxe_core.pdb",
+]
+
+[target.aarch64-unknown-uefi]
+rustflags = [
+    "-C", "link-arg=/base:0x0",
+    "-C", "link-arg=/subsystem:efi_boot_service_driver",
+    "-C", "force-unwind-tables", # Generates .pdata section for stack tracing
+    "-C", "link-arg=/PDBALTPATH:qemu_sbsa_dxe_core.pdb",
+]

@@ -3,6 +3,12 @@
 # A Github workflow that publishes all crates in a repository to crates.io and creates a release on
 # GitHub.
 #
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
+#
 ##
 # Copyright (c) Microsoft Corporation.
 # SPDX-License-Identifier: Apache-2.0
@@ -17,7 +23,7 @@ on:
 jobs:
   release:
     name: Release
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/ReleaseWorkflow.yml@v0.2.2
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/ReleaseWorkflow.yml@v0.3.2
     with:
       ignore-prefix: 'patina-v'
     secrets: inherit

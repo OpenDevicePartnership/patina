@@ -2,11 +2,15 @@
 #
 # A workflow that checks for changes to the channel field in rust-toolchain.toml on pull requests.
 #
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
 ##
 # Copyright (c) Microsoft Corporation.
 # SPDX-License-Identifier: Apache-2.0
 ##
-
 name: Rust Version Change Detection
 
 on:
@@ -22,5 +26,5 @@ jobs:
         pull-requests: write
         contents: read
 
-      uses: OpenDevicePartnership/patina-devops/.github/workflows/RustVersionCheck.yml@v0.2.2
+      uses: OpenDevicePartnership/patina-devops/.github/workflows/RustVersionCheck.yml@v0.3.2
       secrets: inherit

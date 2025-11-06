@@ -1,5 +1,6 @@
-/target
 *.profraw
+**/pdbhelper.dll
+/target
 Cargo.lock
 docs/book/
-**/pdbhelper.dll
+docs/target/

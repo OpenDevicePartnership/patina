@@ -3,6 +3,12 @@
 # A workflow that runs basic CI tests and Rust CI tests, triggered on a pull_request or push to
 # main.
 #
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
+#
 ##
 # Copyright (c) Microsoft Corporation.
 # SPDX-License-Identifier: Apache-2.0
@@ -13,27 +19,26 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - "main"
-      - "major"
-      - "feature/**/*"
+      - main
+      - major
+      - feature/**/*
   pull_request:
     branches:
-      - "main"
-      - "major"
-      - "feature/**/*"
+      - main
+      - major
+      - feature/**/*
 
 jobs:
   ci_workflow:
     name: Run
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/CiWorkflow.yml@v0.2.2
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/CiWorkflow.yml@v0.3.2
     with:
-      build-tasks: "build,build-x64,build-aarch64"
+      build-tasks: build,build-x64,build-aarch64
       run-cargo-vet: false
-      run-release-dry-run: ${{ !contains(github.event.pull_request.body, '- [x] Creates a new crate?') }}
     secrets: inherit
   mdbook_docs_test:
     name: Run
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/MdbookWorkflow.yml@v0.2.2
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/MdbookWorkflow.yml@v0.3.2
     with:
       mdbook-path: "docs"
       build-cmd: cargo make build-lib

@@ -3,10 +3,16 @@
 # All repos should sync at the same time.
 #   '0 0,12 * * *''
 #
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
+#
+##
 # Copyright (c) Microsoft Corporation.
 # SPDX-License-Identifier: Apache-2.0
-#
-
+##
 name: Sync GitHub Labels
 
 on:
@@ -22,5 +28,5 @@ jobs:
     permissions:
       issues: write
 
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/LabelSyncer.yml@v0.2.2
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/LabelSyncer.yml@v0.3.2
     secrets: inherit

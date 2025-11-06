@@ -1,10 +1,16 @@
-# @file crate-version-updater
+# @file crate-version-update.yml
 #
 # A Github workflow that creates or updates a pull request to update the crate version numbers of local crates to match
 # the version specified in the current draft release tag.
 #
 # This workflow will only create a PR when triggered manually. However, it will run automatically after the "Update
 # Release Draft" workflow completes, to update the PR if it already exists.
+#
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
 #
 ##
 # Copyright (c) Microsoft Corporation.
@@ -22,9 +28,9 @@ on:
 jobs:
   crate-version-update-pr:
     name: Run
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/CrateVersionUpdater.yml@v0.2.2
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/CrateVersionUpdater.yml@v0.3.2
     with:
-      ignore-prefix: 'patina-v'
+      ignore-prefix: patina-v
       create-pr: ${{ github.event_name == 'workflow_dispatch' }}
     secrets: inherit
     permissions:
