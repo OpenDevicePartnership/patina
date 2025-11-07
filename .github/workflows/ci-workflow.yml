@@ -31,14 +31,14 @@ on:
 jobs:
   ci_workflow:
     name: Run
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/CiWorkflow.yml@v0.3.2
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/CiWorkflow.yml@v0.3.3
     with:
       build-tasks: build,build-x64,build-aarch64
       run-cargo-vet: false
     secrets: inherit
   mdbook_docs_test:
     name: Run
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/MdbookWorkflow.yml@v0.3.2
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/MdbookWorkflow.yml@v0.3.3
     with:
       mdbook-path: "docs"
       build-cmd: cargo make build-lib

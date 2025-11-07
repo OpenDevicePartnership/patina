@@ -26,5 +26,5 @@ jobs:
         pull-requests: write
         contents: read
 
-      uses: OpenDevicePartnership/patina-devops/.github/workflows/RustVersionCheck.yml@v0.3.2
+      uses: OpenDevicePartnership/patina-devops/.github/workflows/RustVersionCheck.yml@v0.3.3
       secrets: inherit

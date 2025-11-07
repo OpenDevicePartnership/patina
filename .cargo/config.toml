@@ -11,18 +11,3 @@ git-fetch-with-cli = true
 [resolver]
 incompatible-rust-versions = "fallback"
 
-[target.x86_64-unknown-uefi]
-rustflags = [
-    "-C", "link-arg=/base:0x0",
-    "-C", "link-arg=/subsystem:efi_boot_service_driver",
-    "-C", "force-unwind-tables", # Generates .pdata section for stack tracing
-    "-C", "link-arg=/PDBALTPATH:qemu_q35_dxe_core.pdb",
-]
-
-[target.aarch64-unknown-uefi]
-rustflags = [
-    "-C", "link-arg=/base:0x0",
-    "-C", "link-arg=/subsystem:efi_boot_service_driver",
-    "-C", "force-unwind-tables", # Generates .pdata section for stack tracing
-    "-C", "link-arg=/PDBALTPATH:qemu_sbsa_dxe_core.pdb",
-]

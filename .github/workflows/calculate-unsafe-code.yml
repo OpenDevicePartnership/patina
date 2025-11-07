@@ -27,5 +27,5 @@ on:
 jobs:
   calculate_unsafe_code:
     name: Run
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/CalculateUnsafeCode.yml@v0.3.2
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/CalculateUnsafeCode.yml@v0.3.3
     secrets: inherit
