@@ -403,7 +403,7 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
                     "Failed to find GCD desc for image section {section_base_addr:#X} with Status {status:#X?}",
                 );
                 debug_assert!(false);
-                continue;
+                return Err(status);
             }
         }
 
@@ -421,7 +421,7 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
                 pe_info.section_alignment
             );
             debug_assert!(false);
-            continue;
+            return Err(EfiError::LoadError);
         };
 
         if let Err(status) =
@@ -440,15 +440,12 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
             "Applying image memory protections on {section_base_addr:#X} for len {aligned_virtual_size:#X} with attributes {attributes:#X}",
         );
 
-        match dxe_services::core_set_memory_space_attributes(section_base_addr, aligned_virtual_size, attributes) {
-            Ok(_) => continue,
-            Err(status) => {
+        dxe_services::core_set_memory_space_attributes(section_base_addr, aligned_virtual_size, attributes)
+            .inspect_err(|status| {
                 log::error!(
                     "Failed to set GCD attributes for image section {section_base_addr:#X} with Status {status:#X?}",
                 );
-                return Err(status);
-            }
-        }
+            })?;
     }
     Ok(())
 }
