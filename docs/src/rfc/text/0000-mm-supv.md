@@ -15,7 +15,15 @@ of MM operations.
 
 ## Technology Background
 
-### Standalone MM Supervisor
+### Standalone MM
+
+Standalone MM is a PI specification defined operation for MM, where the MM core and its drivers run independently from the
+non-MM environment. This allows for better isolation and security, as the MM code can operate without interference from the
+main operating system or other firmware components.
+
+See reference: [PI specification v1.9](https://uefi.org/specs/PI/1.9/V4_Overview.html#initializing-management-mode-in-mm-standalonemode)
+
+### MM Supervisor
 
 A project MU component implements a standalone MM supervisor in C. This component provides supervised MM functionality.
 Specifically, it manages MM handlers, MM protocol database, memory mapping, context switching, and secure execution of MM
@@ -29,7 +37,11 @@ which will provide a safer and more efficient implementation.
 The standalone MM supervisor in C supports only x86_64 architecture. The Rust implementation aims to support both
 x86_64 and AArch64 architectures in terms of isolation, ensuring broader compatibility across different platforms.
 
-### Technical Detials
+### Technical Details
+
+This section will discuss the technical details of the Rust-based MM supervisor implementation.
+
+![control flow of rust based supervisor](image.png)
 
 #### Standalone MM Bootstrapping (the IPL)
 
