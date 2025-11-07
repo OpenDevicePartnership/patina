@@ -14,10 +14,12 @@ use patina_stacktrace::{StackFrame, StackTrace};
 
 cfg_if::cfg_if! {
     if #[cfg(all(target_os = "uefi", target_arch = "x86_64"))] {
+        #[coverage(off)]
         mod interrupt_manager;
         pub use interrupt_manager::InterruptsX64;
     } else if #[cfg(feature = "doc")] {
         pub use interrupt_manager::InterruptsX64;
+        #[coverage(off)]
         mod interrupt_manager;
     }
 }

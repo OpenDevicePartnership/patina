@@ -21,9 +21,11 @@ use crate::ExceptionInfo;
 
 cfg_if::cfg_if! {
     if #[cfg(target_arch = "x86_64")] {
+        #[coverage(off)]
         mod x64;
         pub type SystemArch = x64::X64Arch;
     } else if #[cfg(target_arch = "aarch64")] {
+        #[coverage(off)]
         mod aarch64;
         pub type SystemArch = aarch64::Aarch64Arch;
     }

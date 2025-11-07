@@ -21,6 +21,9 @@ bitfield-struct = { workspace = true  }
 [dev-dependencies]
 mockall = { workspace = true }
 
+[target.'cfg(all(target_arch="x86_64"))'.dependencies]
+patina_mtrr = { workspace = true }
+
 [features]
 default = ["alloc", "windbg_workarounds"]
 alloc = []
