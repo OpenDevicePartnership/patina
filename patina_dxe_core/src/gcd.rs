@@ -193,8 +193,9 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
 
         if gcd_mem_type != GcdMemoryType::NonExistent {
             // Extract cache attributes and add ReadProtect for system memory.
-            // If we are processing V1 HOBs, the cache attributes will be 0; that information is not passed.
-            let mut memory_attributes = cache_attributes & efi::CACHE_ATTRIBUTE_MASK;
+            // Always set NX attribute for all memory regions. We will make the DXE Core code sections explicitly
+            // executable later. Any memory that needs to be executable must be explicitly set as such.
+            let mut memory_attributes = (cache_attributes & efi::CACHE_ATTRIBUTE_MASK) | efi::MEMORY_XP;
             if gcd_mem_type == GcdMemoryType::SystemMemory {
                 // Force all system memory to be RP by default (since none is allocated yet)
                 memory_attributes |= efi::MEMORY_RP;
@@ -217,16 +218,6 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                         spin_locked_gcd::get_capabilities(gcd_mem_type, resource_attributes as u64),
                     )
                     .expect("Failed to add memory space to GCD");
-                }
-
-                // V1 HOBs don't provide cache attributes for MMIO/Reserved memory. Skip setting attributes.
-                #[cfg(feature = "v1_resource_descriptor_support")]
-                if memory_attributes == 0 {
-                    log::debug!(
-                        "Skipping setting memory attributes for {gcd_mem_type:?} range {:#x?} with 0 attributes (V1 HOB)",
-                        split_range
-                    );
-                    continue;
                 }
 
                 match GCD.set_memory_space_attributes(

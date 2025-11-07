@@ -2415,6 +2415,19 @@ impl SpinLockedGcd {
         result
     }
 
+    // Apply Patina memory protection rules to the given attributes.
+    //
+    // Rules:
+    //   - If UC memory is requested, always set XP memory.
+    fn apply_memory_protection_rules(mut attributes: u64) -> u64 {
+        // If we have UC memory, we always set XP. In DXE, we should never be executing from UC memory. On
+        // AArch64, this is defined as a programming error to have executable device memory (which UC maps to).
+        if attributes & efi::MEMORY_UC == efi::MEMORY_UC {
+            attributes |= efi::MEMORY_XP;
+        }
+        attributes
+    }
+
     /// This service sets attributes on the given memory space.
     ///
     /// # Documentation
@@ -2430,6 +2443,8 @@ impl SpinLockedGcd {
         // table, so at this level we need to check to see if the range spans multiple entries and if so, we need to
         // split the range and call set_memory_space_attributes for each entry. We also need to set the paging
         // attributes per entry to ensure that we keep the GCD and page table in sync
+
+        let attributes = Self::apply_memory_protection_rules(attributes);
 
         let mut current_base = base_address as u64;
         let mut res = Ok(());
