@@ -1,3 +1,8 @@
+# This Cargo.toml is intentionally kept outside the main workspace to avoid
+# increasing the overall build time, since this crate does not directly
+# contribute to the Patina library. Consequently, its dependencies are not
+# defined as workspace dependencies.
+
 [package]
 name = "resolve_stacktrace"
 version = "0.1.0"

@@ -135,7 +135,7 @@ words:
   - pcddxe
   - pcide
   - pdata
-  - PDBALTPATH
+  - pdbaltpath
   - pdbhelper
   - powerfmt
   - pread
