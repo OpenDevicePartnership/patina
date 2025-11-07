@@ -38,7 +38,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🛠️ Download Rust Tools 🛠️
-        uses: OpenDevicePartnership/patina-devops/.github/actions/rust-tool-cache@v0.3.3
+        uses: OpenDevicePartnership/patina-devops/.github/actions/rust-tool-cache@v0.3.4
       - name: 📄 Build Documentation 📄
         run: mdbook build docs
 
