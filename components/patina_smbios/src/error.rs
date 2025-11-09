@@ -52,21 +52,27 @@ pub enum SmbiosError {
     AlreadyInitialized,
     /// SMBIOS manager has not been initialized yet
     NotInitialized,
+    /// Manager is already borrowed (resource temporarily unavailable)
+    AlreadyBorrowed,
 
     // Version errors
     /// SMBIOS version is not supported (only 3.0 and above are supported)
     UnsupportedVersion,
+
+    // Record type errors
+    /// Type 127 End-of-Table marker is automatically managed and cannot be added manually
+    Type127Managed,
 }
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
+    use std::vec;
 
     #[test]
     fn test_smbios_error_all_variants() {
-        extern crate std;
-        use std::vec;
-
         // Test all error variants for completeness
         let errors = vec![
             SmbiosError::StringTooLong,
@@ -83,7 +89,9 @@ mod tests {
             SmbiosError::NoRecordsAvailable,
             SmbiosError::AlreadyInitialized,
             SmbiosError::NotInitialized,
+            SmbiosError::AlreadyBorrowed,
             SmbiosError::UnsupportedVersion,
+            SmbiosError::Type127Managed,
         ];
 
         // Each should be cloneable and comparable

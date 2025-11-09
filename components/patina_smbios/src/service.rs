@@ -13,6 +13,7 @@
 extern crate alloc;
 use alloc::vec::Vec;
 use core::cell::Ref;
+use patina::boot_services::BootServices;
 use r_efi::efi::Handle;
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes as DeriveIntoBytes, KnownLayout};
 
@@ -77,6 +78,7 @@ pub struct SmbiosRecordsIter<'a> {
 
 impl<'a> SmbiosRecordsIter<'a> {
     /// Create a new iterator over SMBIOS records
+    #[allow(dead_code)]
     pub(crate) fn new(records: Ref<'a, Vec<crate::manager::SmbiosRecord>>, filter_type: Option<SmbiosType>) -> Self {
         Self { records, position: 0, filter_type }
     }
@@ -191,31 +193,24 @@ pub trait Smbios {
 #[derive(patina::component::service::IntoService)]
 #[service(dyn Smbios)]
 pub struct SmbiosImpl {
-    pub(crate) manager: patina::tpl_mutex::TplMutex<
-        'static,
-        crate::manager::SmbiosManager,
-        patina::boot_services::StandardBootServices,
-    >,
+    pub(crate) manager: ::core::cell::RefCell<crate::manager::SmbiosManager>,
     pub(crate) boot_services: &'static patina::boot_services::StandardBootServices,
     pub(crate) major_version: u8,
     pub(crate) minor_version: u8,
 }
 
 impl SmbiosImpl {
-    /// Get a reference to the manager for protocol installation
+    /// Get a reference to the manager RefCell for protocol installation
     ///
     /// This is only used during component initialization to install the C/EDKII protocol
-    pub(crate) fn manager(
-        &self,
-    ) -> &patina::tpl_mutex::TplMutex<'static, crate::manager::SmbiosManager, patina::boot_services::StandardBootServices>
-    {
+    pub(crate) fn manager(&self) -> &::core::cell::RefCell<crate::manager::SmbiosManager> {
         &self.manager
     }
 }
 
-// Methods below are tested via integration (Q35 platform component)
-// They require StandardBootServices and TplMutex which aren't mockable in unit tests
-#[cfg_attr(coverage_nightly, coverage(off))]
+// These methods are tested via QEMU platform integration tests as they require
+// real UEFI boot services with memory allocation and configuration table installation.
+#[coverage(off)]
 impl Smbios for SmbiosImpl {
     fn version(&self) -> (u8, u8) {
         (self.major_version, self.minor_version)
@@ -225,8 +220,27 @@ impl Smbios for SmbiosImpl {
         &self,
     ) -> core::result::Result<(r_efi::efi::PhysicalAddress, r_efi::efi::PhysicalAddress), crate::error::SmbiosError>
     {
-        let manager = self.manager.lock();
-        manager.publish_table(self.boot_services)
+        // Step 1: Build table data with lock held
+        let (table_addr, ep_addr, entry_point) = {
+            let manager = self.manager.try_borrow().map_err(|_| crate::error::SmbiosError::AlreadyBorrowed)?;
+            manager.build_table_data(self.boot_services)?
+        }; // Lock is released here
+
+        // Step 2: Install configuration table WITHOUT holding the lock (critical for avoiding deadlock!)
+        // Call UEFI install WITHOUT the lock - this may trigger callbacks
+        unsafe {
+            self.boot_services
+                .install_configuration_table(&crate::manager::SMBIOS_3_X_TABLE_GUID, ep_addr as *mut ())
+                .map_err(|_| crate::error::SmbiosError::AllocationFailed)?;
+        }
+
+        // Step 3: Store addresses with lock held
+        {
+            let manager = self.manager.try_borrow().map_err(|_| crate::error::SmbiosError::AlreadyBorrowed)?;
+            manager.store_table_addresses(table_addr, ep_addr, entry_point);
+        }
+
+        Ok((table_addr, ep_addr))
     }
 
     fn update_string(
@@ -235,13 +249,27 @@ impl Smbios for SmbiosImpl {
         string_number: usize,
         string: &str,
     ) -> core::result::Result<(), crate::error::SmbiosError> {
-        let manager = self.manager.lock();
-        manager.update_string(smbios_handle, string_number, string)
+        // Update string in manager
+        {
+            let manager = self.manager.try_borrow().map_err(|_| crate::error::SmbiosError::AlreadyBorrowed)?;
+            manager.update_string(smbios_handle, string_number, string)?;
+        } // Release borrow
+
+        // Republish table with updated record
+        self.publish_table()?;
+        Ok(())
     }
 
     fn remove(&self, smbios_handle: SmbiosHandle) -> core::result::Result<(), crate::error::SmbiosError> {
-        let manager = self.manager.lock();
-        manager.remove(smbios_handle)
+        // Remove record from manager
+        {
+            let manager = self.manager.try_borrow().map_err(|_| crate::error::SmbiosError::AlreadyBorrowed)?;
+            manager.remove(smbios_handle)?;
+        } // Release borrow
+
+        // Republish table without removed record
+        self.publish_table()?;
+        Ok(())
     }
 
     fn add_from_bytes(
@@ -249,8 +277,17 @@ impl Smbios for SmbiosImpl {
         producer_handle: Option<r_efi::efi::Handle>,
         bytes: &[u8],
     ) -> core::result::Result<SmbiosHandle, crate::error::SmbiosError> {
-        let manager = self.manager.lock();
-        manager.add_from_bytes(producer_handle, bytes)
+        // Add record to manager
+        let handle = {
+            let manager = self.manager.try_borrow().map_err(|_| crate::error::SmbiosError::AlreadyBorrowed)?;
+            manager.add_from_bytes(producer_handle, bytes)?
+        }; // Release borrow
+
+        // Republish table with new record
+        // This rebuilds into pre-allocated buffer and updates configuration table
+        self.publish_table()?;
+
+        Ok(handle)
     }
 }
 
@@ -312,9 +349,22 @@ impl SmbiosExt for patina::component::service::Service<dyn Smbios> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     extern crate std;
+
+    use super::*;
     use std::format;
+
+    use crate::{
+        manager::{SmbiosManager, SmbiosRecord},
+        smbios_record::{SmbiosRecordStructure, Type0PlatformFirmwareInformation, Type127EndOfTable},
+    };
+    use alloc::{string::String, vec, vec::Vec};
+    use core::cell::RefCell;
+    use patina::{
+        boot_services::{MockBootServices, StandardBootServices},
+        component::service::Service,
+    };
+    use zerocopy::IntoBytes;
 
     #[test]
     fn test_smbios_table_header_new() {
@@ -363,7 +413,6 @@ mod tests {
 
     #[test]
     fn test_smbios_table_header_from_bytes() {
-        use zerocopy::IntoBytes;
         let header = SmbiosTableHeader::new(127, 4, 0xFFFE);
         let bytes = header.as_bytes();
         assert_eq!(bytes.len(), 4);
@@ -373,10 +422,6 @@ mod tests {
 
     #[test]
     fn test_smbios_records_iter_basic() {
-        use crate::manager::SmbiosRecord;
-        use alloc::vec;
-        use core::cell::RefCell;
-
         let records = RefCell::new(vec![
             SmbiosRecord::new(SmbiosTableHeader::new(0, 24, 0x0001), None, vec![], 0),
             SmbiosRecord::new(SmbiosTableHeader::new(1, 32, 0x0002), None, vec![], 0),
@@ -400,10 +445,6 @@ mod tests {
 
     #[test]
     fn test_smbios_records_iter_with_filter() {
-        use crate::manager::SmbiosRecord;
-        use alloc::vec;
-        use core::cell::RefCell;
-
         let records = RefCell::new(vec![
             SmbiosRecord::new(SmbiosTableHeader::new(0, 24, 0x0001), None, vec![], 0),
             SmbiosRecord::new(SmbiosTableHeader::new(1, 32, 0x0002), None, vec![], 0),
@@ -428,10 +469,6 @@ mod tests {
 
     #[test]
     fn test_smbios_records_iter_empty() {
-        use crate::manager::SmbiosRecord;
-        use alloc::vec;
-        use core::cell::RefCell;
-
         let records: RefCell<Vec<SmbiosRecord>> = RefCell::new(vec![]);
         let borrowed = records.borrow();
         let mut iter = SmbiosRecordsIter::new(borrowed, None);
@@ -441,10 +478,6 @@ mod tests {
 
     #[test]
     fn test_smbios_records_iter_no_match_filter() {
-        use crate::manager::SmbiosRecord;
-        use alloc::vec;
-        use core::cell::RefCell;
-
         let records = RefCell::new(vec![
             SmbiosRecord::new(SmbiosTableHeader::new(0, 24, 0x0001), None, vec![], 0),
             SmbiosRecord::new(SmbiosTableHeader::new(1, 32, 0x0002), None, vec![], 0),
@@ -505,8 +538,6 @@ mod tests {
 
     #[test]
     fn test_mock_smbios_service_version() {
-        use patina::component::service::Service;
-
         let mock = MockSmbios { version: (99, 88), add_from_bytes_result: Ok(0x1234), expected_bytes: None };
         let service: Service<dyn Smbios> = Service::mock(Box::new(mock));
 
@@ -515,8 +546,6 @@ mod tests {
 
     #[test]
     fn test_mock_smbios_service_add_from_bytes() {
-        use patina::component::service::Service;
-
         let test_bytes = vec![127, 4, 0xFE, 0xFF, 0, 0]; // Type 127, length 4, handle 0xFFFE
 
         let mock =
@@ -530,8 +559,6 @@ mod tests {
 
     #[test]
     fn test_mock_smbios_service_add_from_bytes_error() {
-        use patina::component::service::Service;
-
         let mock = MockSmbios {
             version: (3, 0),
             add_from_bytes_result: Err(crate::error::SmbiosError::RecordTooSmall),
@@ -546,10 +573,6 @@ mod tests {
 
     #[test]
     fn test_mock_smbios_service_add_record_integration() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
-        use alloc::vec;
-        use patina::component::service::Service;
-
         // Create a test record
         let record = Type127EndOfTable { header: SmbiosTableHeader::new(127, 4, 0xFFFE), string_pool: vec![] };
 
@@ -569,8 +592,6 @@ mod tests {
 
     #[test]
     fn test_mock_smbios_service_all_trait_methods() {
-        use patina::component::service::Service;
-
         let mock = MockSmbios { version: (3, 7), add_from_bytes_result: Ok(0x1111), expected_bytes: None };
         let service: Service<dyn Smbios> = Service::mock(Box::new(mock));
 
@@ -584,10 +605,6 @@ mod tests {
 
     #[test]
     fn test_mock_add_record_extension_trait_pattern() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
-        use alloc::vec;
-        use patina::component::service::Service;
-
         // Create a test record
         let record = Type127EndOfTable { header: SmbiosTableHeader::new(127, 4, 0xFFFE), string_pool: vec![] };
 
@@ -615,10 +632,6 @@ mod tests {
 
     #[test]
     fn test_mock_add_record_with_error() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
-        use alloc::vec;
-        use patina::component::service::Service;
-
         // Mock that returns an error
         let mock = MockSmbios {
             version: (3, 0),
@@ -638,10 +651,6 @@ mod tests {
 
     #[test]
     fn test_mock_multiple_record_types() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type0PlatformFirmwareInformation, Type127EndOfTable};
-        use alloc::{string::String, vec};
-        use patina::component::service::Service;
-
         // Test that mock can handle different record types
         let type0 = Type0PlatformFirmwareInformation {
             header: SmbiosTableHeader::new(0, 24, 0xFFFE),
@@ -682,10 +691,6 @@ mod tests {
 
     #[test]
     fn test_service_mock_pattern() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
-        use alloc::vec;
-        use patina::component::service::Service;
-
         // Create a mock service using the standard Service::mock pattern
         let mock = MockSmbios { version: (3, 6), add_from_bytes_result: Ok(0xBEEF), expected_bytes: None };
 
@@ -705,10 +710,6 @@ mod tests {
 
     #[test]
     fn test_service_mock_with_extension_trait() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
-        use alloc::vec;
-        use patina::component::service::Service;
-
         // Create test record
         let record = Type127EndOfTable { header: SmbiosTableHeader::new(127, 4, 0xFFFE), string_pool: vec![] };
         let expected_bytes = record.to_bytes();
@@ -723,5 +724,114 @@ mod tests {
         // It serializes the record and calls add_from_bytes (which the mock implements)
         let handle = service.add_record(None, &record).unwrap();
         assert_eq!(handle, 0x1337);
+    }
+
+    #[test]
+    fn test_smbios_impl_already_borrowed_error() {
+        // Create a mock boot services
+        let mock_bs = Box::leak(Box::new(MockBootServices::new()));
+        let boot_services: &'static StandardBootServices =
+            unsafe { &*(mock_bs as *const MockBootServices as *const StandardBootServices) };
+
+        // Create SmbiosImpl
+        let manager = SmbiosManager::new(3, 0).unwrap();
+        let smbios_impl =
+            SmbiosImpl { manager: RefCell::new(manager), boot_services, major_version: 3, minor_version: 0 };
+
+        // Hold a mutable borrow to the manager to block other borrows
+        let _blocking_borrow = smbios_impl.manager.borrow_mut();
+
+        // Now try to call a method that needs to borrow - it should fail gracefully
+        let result = smbios_impl.add_from_bytes(None, &[127, 4, 0, 0, 0, 0]);
+
+        // Verify we get AlreadyBorrowed error instead of a panic
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), crate::error::SmbiosError::AlreadyBorrowed);
+    }
+
+    #[test]
+    fn test_smbios_impl_update_string_already_borrowed() {
+        let mock_bs = Box::leak(Box::new(MockBootServices::new()));
+        let boot_services: &'static StandardBootServices =
+            unsafe { &*(mock_bs as *const MockBootServices as *const StandardBootServices) };
+
+        let manager = SmbiosManager::new(3, 0).unwrap();
+        let smbios_impl =
+            SmbiosImpl { manager: RefCell::new(manager), boot_services, major_version: 3, minor_version: 0 };
+
+        // Hold a mutable borrow
+        let _blocking_borrow = smbios_impl.manager.borrow_mut();
+
+        // Try to update string - should fail with AlreadyBorrowed
+        let result = smbios_impl.update_string(1, 1, "test");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), crate::error::SmbiosError::AlreadyBorrowed);
+    }
+
+    #[test]
+    fn test_smbios_impl_remove_already_borrowed() {
+        let mock_bs = Box::leak(Box::new(MockBootServices::new()));
+        let boot_services: &'static StandardBootServices =
+            unsafe { &*(mock_bs as *const MockBootServices as *const StandardBootServices) };
+
+        let manager = SmbiosManager::new(3, 0).unwrap();
+        let smbios_impl =
+            SmbiosImpl { manager: RefCell::new(manager), boot_services, major_version: 3, minor_version: 0 };
+
+        // Hold a mutable borrow
+        let _blocking_borrow = smbios_impl.manager.borrow_mut();
+
+        // Try to remove - should fail with AlreadyBorrowed
+        let result = smbios_impl.remove(1);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), crate::error::SmbiosError::AlreadyBorrowed);
+    }
+
+    #[test]
+    fn test_smbios_impl_publish_table_already_borrowed() {
+        let mock_bs = Box::leak(Box::new(MockBootServices::new()));
+        let boot_services: &'static StandardBootServices =
+            unsafe { &*(mock_bs as *const MockBootServices as *const StandardBootServices) };
+
+        let manager = SmbiosManager::new(3, 0).unwrap();
+        let smbios_impl =
+            SmbiosImpl { manager: RefCell::new(manager), boot_services, major_version: 3, minor_version: 0 };
+
+        // Hold a mutable borrow
+        let _blocking_borrow = smbios_impl.manager.borrow_mut();
+
+        // Try to publish table - should fail with AlreadyBorrowed
+        let result = smbios_impl.publish_table();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), crate::error::SmbiosError::AlreadyBorrowed);
+    }
+
+    #[test]
+    fn test_smbios_records_iter_filter_continues_on_mismatch() {
+        // Create records with different types
+        let records = RefCell::new(vec![
+            SmbiosRecord::new(SmbiosTableHeader::new(0, 24, 0x0001), None, vec![], 0),
+            SmbiosRecord::new(SmbiosTableHeader::new(1, 32, 0x0002), None, vec![], 0),
+            SmbiosRecord::new(SmbiosTableHeader::new(2, 16, 0x0003), None, vec![], 0),
+            SmbiosRecord::new(SmbiosTableHeader::new(1, 32, 0x0004), None, vec![], 0),
+        ]);
+
+        let borrowed = records.borrow();
+        let mut iter = SmbiosRecordsIter::new(borrowed, Some(1));
+
+        // First Type 1 record
+        let first = iter.next().unwrap();
+        assert_eq!(first.0.record_type, 1);
+        let handle = first.0.handle;
+        assert_eq!(handle, 0x0002);
+
+        // Second Type 1 record (skips Type 2)
+        let second = iter.next().unwrap();
+        assert_eq!(second.0.record_type, 1);
+        let handle = second.0.handle;
+        assert_eq!(handle, 0x0004);
+
+        // No more Type 1 records
+        assert!(iter.next().is_none());
     }
 }

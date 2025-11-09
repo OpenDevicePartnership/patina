@@ -39,8 +39,9 @@ impl SmbiosRecord {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     extern crate std;
+
+    use super::*;
     use std::vec;
 
     use r_efi::efi;

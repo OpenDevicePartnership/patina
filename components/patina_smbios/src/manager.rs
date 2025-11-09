@@ -21,15 +21,12 @@ mod protocol;
 mod record;
 
 // Re-export main types and functions
-pub use core::SmbiosManager;
+pub use core::{SMBIOS_3_X_TABLE_GUID, SmbiosManager};
 pub(crate) use record::SmbiosRecord;
 
 use alloc::boxed::Box;
 
-use patina::{
-    boot_services::{BootServices, StandardBootServices},
-    tpl_mutex::TplMutex,
-};
+use patina::boot_services::{BootServices, StandardBootServices};
 use r_efi::efi;
 
 use crate::error::SmbiosError;
@@ -41,21 +38,17 @@ use self::protocol::{SmbiosProtocol, SmbiosProtocolInternal};
 /// This function registers the SMBIOS protocol with UEFI so that C/EDK drivers can access
 /// SMBIOS functionality. The protocol functions access the manager through the protocol struct.
 ///
-/// The manager is protected by TplMutex at NOTIFY level. When protocol functions
-/// are called, the TplMutex.lock() automatically raises TPL to NOTIFY, preventing
-/// timer interrupt reentrancy. TPL is automatically restored when the lock guard drops.
-///
 /// Returns the protocol handle on success. The caller is responsible for managing the
 /// protocol lifetime (though in practice, UEFI protocols persist for the system lifetime).
 #[coverage(off)] // Protocol installation - tested via integration tests
 pub fn install_smbios_protocol(
     major_version: u8,
     minor_version: u8,
-    manager_mutex: &'static TplMutex<'static, SmbiosManager, StandardBootServices>,
+    manager_cell: &'static ::core::cell::RefCell<SmbiosManager>,
     boot_services: &'static StandardBootServices,
 ) -> Result<efi::Handle, SmbiosError> {
     // Create the protocol instance with internal struct
-    let internal = SmbiosProtocolInternal::new(major_version, minor_version, manager_mutex);
+    let internal = SmbiosProtocolInternal::new(major_version, minor_version, manager_cell, boot_services);
     let interface = Box::into_raw(Box::new(internal));
 
     // Install the protocol using the unchecked interface since we have a raw pointer
@@ -72,12 +65,11 @@ pub fn install_smbios_protocol(
 
     match handle {
         Ok(h) => Ok(h),
-        Err(status) => {
+        Err(_status) => {
             // Clean up on failure
             unsafe {
                 drop(Box::from_raw(interface));
             }
-            log::error!("Failed to install SMBIOS protocol: {:?}", status);
             Err(SmbiosError::AllocationFailed)
         }
     }

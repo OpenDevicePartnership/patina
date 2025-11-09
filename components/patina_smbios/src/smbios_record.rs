@@ -467,9 +467,12 @@ pub struct Type3SystemEnclosure {
 /// - Type: 127
 /// - Length: 4 (header only)
 /// - No strings
+///
+/// **Note**: This type is automatically managed by the SMBIOS manager and should not be
+/// added manually by platform code. The manager adds it during initialization.
 #[derive(patina_macro::SmbiosRecord)]
 #[smbios(record_type = 127)]
-pub struct Type127EndOfTable {
+pub(crate) struct Type127EndOfTable {
     /// SMBIOS header
     pub header: SmbiosTableHeader,
 
@@ -784,5 +787,169 @@ mod tests {
         let bytes = type1.to_bytes();
         // Should have double null terminator even with no strings
         assert!(bytes.ends_with(&[0, 0]));
+    }
+
+    #[test]
+    fn test_type0_to_bytes() {
+        let type0 = Type0PlatformFirmwareInformation {
+            header: SmbiosTableHeader { record_type: 0, length: 0, handle: 1 },
+            vendor: 1,
+            firmware_version: 2,
+            bios_starting_address_segment: 0xE800,
+            firmware_release_date: 3,
+            firmware_rom_size: 0xFF,
+            characteristics: 0x08,
+            characteristics_ext1: 0x03,
+            characteristics_ext2: 0x03,
+            system_bios_major_release: 1,
+            system_bios_minor_release: 0,
+            embedded_controller_major_release: 0xFF,
+            embedded_controller_minor_release: 0xFF,
+            extended_bios_rom_size: 0,
+            string_pool: vec![String::from("Vendor"), String::from("1.0"), String::from("2025")],
+        };
+
+        let bytes = type0.to_bytes();
+
+        // Verify header
+        assert_eq!(bytes[0], 0); // Type 0
+        // Verify string pool is present
+        assert!(bytes.len() > 24); // Header + fields + strings
+        // Verify ends with double null
+        assert!(bytes.ends_with(&[0, 0]));
+    }
+
+    #[test]
+    fn test_type1_to_bytes_with_uuid() {
+        let type1 = Type1SystemInformation {
+            header: SmbiosTableHeader { record_type: 1, length: 0, handle: 2 },
+            manufacturer: 1,
+            product_name: 2,
+            version: 3,
+            serial_number: 4,
+            uuid: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            wake_up_type: 0x06,
+            sku_number: 5,
+            family: 6,
+            string_pool: vec![
+                String::from("Mfg"),
+                String::from("Prod"),
+                String::from("Ver"),
+                String::from("SN"),
+                String::from("SKU"),
+                String::from("Fam"),
+            ],
+        };
+
+        let bytes = type1.to_bytes();
+
+        // Verify type
+        assert_eq!(bytes[0], 1);
+        // Verify string pool
+        assert!(bytes.len() > 27);
+    }
+
+    #[test]
+    fn test_type2_to_bytes() {
+        let type2 = Type2BaseboardInformation {
+            header: SmbiosTableHeader { record_type: 2, length: 0, handle: 3 },
+            manufacturer: 1,
+            product: 2,
+            version: 3,
+            serial_number: 4,
+            asset_tag: 5,
+            feature_flags: 0x01,
+            location_in_chassis: 6,
+            chassis_handle: 0x0003,
+            board_type: 0x0A,
+            contained_object_handles: 0,
+            string_pool: vec![
+                String::from("Board Mfg"),
+                String::from("Board Prod"),
+                String::from("1.0"),
+                String::from("SN123"),
+                String::from("Asset"),
+                String::from("Location"),
+            ],
+        };
+
+        let bytes = type2.to_bytes();
+
+        // Verify type
+        assert_eq!(bytes[0], 2);
+        // Verify strings are present
+        assert!(bytes.len() > 15);
+    }
+
+    #[test]
+    fn test_type127_to_bytes() {
+        let type127 = Type127EndOfTable::new();
+        let bytes = type127.to_bytes();
+
+        // Type 127 should have: 4-byte header + double null
+        assert_eq!(bytes.len(), 6);
+        assert_eq!(bytes[0], 127); // Type
+        assert_eq!(bytes[1], 4); // Length
+        // Handle (bytes 2-3)
+        // Double null terminator
+        assert_eq!(bytes[4], 0);
+        assert_eq!(bytes[5], 0);
+    }
+
+    #[test]
+    fn test_type0_validate_string_with_null() {
+        let type0_valid = Type0PlatformFirmwareInformation {
+            header: SmbiosTableHeader { record_type: 0, length: 0, handle: 0 },
+            vendor: 1,
+            firmware_version: 2,
+            bios_starting_address_segment: 0xE800,
+            firmware_release_date: 3,
+            firmware_rom_size: 0xFF,
+            characteristics: 0x08,
+            characteristics_ext1: 0x03,
+            characteristics_ext2: 0x03,
+            system_bios_major_release: 1,
+            system_bios_minor_release: 0,
+            embedded_controller_major_release: 0xFF,
+            embedded_controller_minor_release: 0xFF,
+            extended_bios_rom_size: 0,
+            string_pool: vec![String::from("Valid")],
+        };
+
+        assert!(type0_valid.validate().is_ok());
+
+        // Create a record with a string containing null byte
+        // Note: We can't actually create a String with embedded nulls in safe Rust
+        // The validation will catch this during the to_bytes() serialization
+        // This test verifies that validation works for already-valid strings
+        let type0_long = Type0PlatformFirmwareInformation {
+            header: SmbiosTableHeader { record_type: 0, length: 0, handle: 0 },
+            vendor: 1,
+            firmware_version: 2,
+            bios_starting_address_segment: 0xE800,
+            firmware_release_date: 3,
+            firmware_rom_size: 0xFF,
+            characteristics: 0x08,
+            characteristics_ext1: 0x03,
+            characteristics_ext2: 0x03,
+            system_bios_major_release: 1,
+            system_bios_minor_release: 0,
+            embedded_controller_major_release: 0xFF,
+            embedded_controller_minor_release: 0xFF,
+            extended_bios_rom_size: 0,
+            string_pool: vec![String::from("x").repeat(SMBIOS_STRING_MAX_LENGTH + 1)],
+        };
+
+        // This should fail validation for being too long
+        assert_eq!(type0_long.validate(), Err(SmbiosError::StringTooLong));
+    }
+
+    #[test]
+    fn test_record_type_constants() {
+        assert_eq!(Type0PlatformFirmwareInformation::RECORD_TYPE, 0);
+        assert_eq!(Type1SystemInformation::RECORD_TYPE, 1);
+        assert_eq!(Type2BaseboardInformation::RECORD_TYPE, 2);
+        assert_eq!(Type3SystemEnclosure::RECORD_TYPE, 3);
+        assert_eq!(Type127EndOfTable::RECORD_TYPE, 127);
     }
 }

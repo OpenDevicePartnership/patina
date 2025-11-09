@@ -12,14 +12,13 @@ extern crate alloc;
 use crate::{
     error::SmbiosError,
     manager::{SmbiosManager, install_smbios_protocol},
-    service::SmbiosImpl,
+    service::{Smbios, SmbiosImpl},
 };
 use alloc::boxed::Box;
+use core::cell::RefCell;
 use patina::{
-    boot_services::tpl::Tpl,
     component::{IntoComponent, Storage},
     error::Result,
-    tpl_mutex::TplMutex,
 };
 
 /// Internal configuration for SMBIOS service
@@ -55,7 +54,7 @@ impl SmbiosConfiguration {
 /// - Record management: `update_string()`, `remove()`
 /// - Table management: `version()`, `publish_table()`
 ///
-/// The provider creates an SMBIOS manager instance protected by a TplMutex.
+/// The provider creates an SMBIOS manager instance protected by a RefCell.
 /// A global reference is maintained for C/EDKII protocol compatibility.
 ///
 /// # Example
@@ -98,22 +97,29 @@ impl SmbiosProvider {
     fn entry_point(self, storage: &mut Storage) -> Result<()> {
         let cfg = self.config;
 
-        // Create the manager with configured version
-        let manager = SmbiosManager::new(cfg.major_version, cfg.minor_version).map_err(|e| {
-            log::error!("Failed to create SMBIOS manager: {:?}", e);
-            patina::error::EfiError::Unsupported
-        })?;
-
         // Get boot_services from storage - it already has 'static lifetime
         // We use an unsafe cast because storage.boot_services() returns a reference with
         // a shorter lifetime, but Storage guarantees boot_services lives for 'static
         let boot_services_static: &'static patina::boot_services::StandardBootServices =
             unsafe { &*(storage.boot_services() as *const _) };
 
-        // Create the SMBIOS service struct with owned TplMutex
-        let manager_mutex = TplMutex::new(boot_services_static, Tpl::NOTIFY, manager);
+        // Create the manager with configured version
+        let manager = SmbiosManager::new(cfg.major_version, cfg.minor_version).map_err(|e| {
+            log::error!("Failed to create SmbiosManager: {:?}", e);
+            patina::error::EfiError::Unsupported
+        })?;
+
+        // Allocate pre-allocated buffers for table publication
+        // This automatically adds the Type 127 End-of-Table marker internally
+        // to ensure SMBIOS compliance
+        manager.allocate_buffers(boot_services_static).map_err(|e| {
+            log::error!("Failed to allocate SMBIOS buffers: {:?}", e);
+            patina::error::EfiError::Unsupported
+        })?;
+
+        let manager_cell = RefCell::new(manager);
         let smbios_service = SmbiosImpl {
-            manager: manager_mutex,
+            manager: manager_cell,
             boot_services: boot_services_static,
             major_version: cfg.major_version,
             minor_version: cfg.minor_version,
@@ -133,14 +139,24 @@ impl SmbiosProvider {
         // Register the leaked service (the IntoService impl for &'static T handles this)
         storage.add_service(smbios_static);
 
+        // Publish the SMBIOS table immediately with the Type 127 End-of-Table marker
+        // This installs the table into the UEFI Configuration Table so it's visible to
+        // tools like smbiosview. Other drivers can still add records via the protocol's
+        // Add() function, which will dynamically rebuild and update the table.
+        smbios_static.publish_table().map_err(|e| {
+            log::error!("Failed to publish SMBIOS table: {:?}", e);
+            patina::error::EfiError::Unsupported
+        })?;
+
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     extern crate std;
+
+    use super::*;
 
     #[test]
     fn test_smbios_provider_new() {

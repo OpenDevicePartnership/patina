@@ -25,7 +25,7 @@ use r_efi::{
     efi,
     efi::{Handle, PhysicalAddress},
 };
-use zerocopy::{IntoBytes, Ref};
+use zerocopy::{FromBytes, IntoBytes, Ref};
 use zerocopy_derive::{Immutable, IntoBytes as DeriveIntoBytes};
 
 use crate::{
@@ -34,6 +34,7 @@ use crate::{
         SMBIOS_HANDLE_PI_RESERVED, SMBIOS_STRING_MAX_LENGTH, SmbiosHandle, SmbiosRecordsIter, SmbiosTableHeader,
         SmbiosType,
     },
+    smbios_record::{SmbiosRecordStructure, Type127EndOfTable},
 };
 
 use super::record::SmbiosRecord;
@@ -76,6 +77,9 @@ pub struct Smbios30EntryPoint {
 /// SMBIOS table manager
 ///
 /// Manages SMBIOS records, handles, and table generation.
+///
+/// The manager uses pre-allocated buffers for table publication to avoid
+/// repeated memory allocations and maintain a stable table address throughout DXE.
 pub struct SmbiosManager {
     pub(super) records: RefCell<Vec<SmbiosRecord>>,
     pub(super) next_handle: RefCell<SmbiosHandle>,
@@ -84,6 +88,14 @@ pub struct SmbiosManager {
     pub minor_version: u8,
     entry_point_64: RefCell<Option<Box<Smbios30EntryPoint>>>,
     table_64_address: RefCell<Option<PhysicalAddress>>,
+
+    // Pre-allocated buffers for table publication
+    /// Pre-allocated buffer for SMBIOS table data (e.g., 64KB)
+    table_buffer_addr: RefCell<Option<PhysicalAddress>>,
+    /// Maximum size of the pre-allocated table buffer
+    table_buffer_max_size: usize,
+    /// Pre-allocated buffer for entry point structure
+    ep_buffer_addr: RefCell<Option<PhysicalAddress>>,
 }
 
 impl SmbiosManager {
@@ -115,7 +127,65 @@ impl SmbiosManager {
             minor_version,
             entry_point_64: RefCell::new(None),
             table_64_address: RefCell::new(None),
+            // Pre-allocated buffers start as None, set up during component init
+            table_buffer_addr: RefCell::new(None),
+            table_buffer_max_size: 64 * 1024, // 64KB default max size
+            ep_buffer_addr: RefCell::new(None),
         })
+    }
+
+    /// Allocate pre-allocated buffers for SMBIOS table publication
+    ///
+    /// This allocates a large buffer for the SMBIOS table and entry point upfront
+    /// to avoid repeated allocations on every Add(). The buffers are reused for
+    /// all table publications.
+    ///
+    /// Also automatically adds the Type 127 End-of-Table marker to ensure
+    /// SMBIOS compliance and maintain the invariant that it's always last.
+    ///
+    /// Must be called at TPL_APPLICATION or lower to allow memory allocation.
+    ///
+    /// # Arguments
+    ///
+    /// * `boot_services` - Boot services for memory allocation
+    ///
+    /// # Errors
+    ///
+    /// Returns `SmbiosError::AllocationFailed` if buffer allocation fails
+    /// Returns `SmbiosError::HandleExhausted` if unable to allocate handle for Type 127
+    pub fn allocate_buffers(
+        &self,
+        boot_services: &patina::boot_services::StandardBootServices,
+    ) -> Result<(), SmbiosError> {
+        // Check if already allocated
+        if self.table_buffer_addr.borrow().is_some() {
+            return Ok(());
+        }
+
+        // Allocate table buffer
+        let table_pages = uefi_size_to_pages!(self.table_buffer_max_size);
+        let table_addr = boot_services
+            .allocate_pages(AllocType::AnyPage, MemoryType::ACPI_RECLAIM_MEMORY, table_pages)
+            .map_err(|_| SmbiosError::AllocationFailed)?;
+
+        // Allocate entry point buffer (1 page is plenty)
+        let ep_addr = boot_services
+            .allocate_pages(AllocType::AnyPage, MemoryType::ACPI_RECLAIM_MEMORY, 1)
+            .map_err(|_| SmbiosError::AllocationFailed)?;
+
+        *self.table_buffer_addr.borrow_mut() = Some(table_addr as u64);
+        *self.ep_buffer_addr.borrow_mut() = Some(ep_addr as u64);
+
+        // Automatically add Type 127 End-of-Table marker to ensure SMBIOS compliance
+        // This is added directly to records to bypass the add_from_bytes validation
+        // which rejects Type 127 to prevent external callers from adding it
+        let type127 = Type127EndOfTable::new();
+        let bytes = type127.to_bytes();
+        let header = SmbiosTableHeader::new(127, 4, self.allocate_handle()?);
+        let record = SmbiosRecord::new(header, None, bytes, 0);
+        self.records.borrow_mut().push(record);
+
+        Ok(())
     }
 
     /// Validate a string for use in SMBIOS records
@@ -261,126 +331,6 @@ impl SmbiosManager {
         Ok(candidate)
     }
 
-    /// Builds the SMBIOS table and installs it in the UEFI Configuration Table
-    ///
-    /// This function performs the following steps:
-    /// 1. Consolidates all SMBIOS records into a contiguous memory buffer
-    /// 2. Creates an SMBIOS 3.x Entry Point Structure with proper checksum
-    /// 3. Allocates ACPI Reclaim memory for both the table and entry point
-    /// 4. Installs the entry point via the UEFI Configuration Table
-    ///
-    /// # Arguments
-    ///
-    /// * `boot_services` - UEFI Boot Services for memory allocation and table installation
-    ///
-    /// # Returns
-    ///
-    /// Returns a tuple of `(table_address, entry_point_address)` containing the physical
-    /// addresses where the SMBIOS table data and entry point structure were allocated.
-    ///
-    /// # Errors
-    ///
-    /// * `SmbiosError::NoRecordsAvailable` - No SMBIOS records have been added
-    /// * `SmbiosError::AllocationFailed` - Failed to allocate memory or install the configuration table
-    ///
-    /// # Safety
-    ///
-    /// This function uses unsafe code for:
-    /// - Creating mutable slices to allocated memory
-    /// - Writing the entry point structure to allocated memory
-    /// - Calling the UEFI `install_configuration_table` interface
-    ///
-    /// All memory allocations use UEFI Boot Services and are properly tracked by the firmware.
-    pub fn install_configuration_table(
-        &self,
-        boot_services: &patina::boot_services::StandardBootServices,
-    ) -> Result<(PhysicalAddress, PhysicalAddress), SmbiosError> {
-        let records = self.records.borrow();
-
-        // Step 1: Calculate total table size
-        let total_table_size: usize = records.iter().map(|r| r.data.len()).sum();
-
-        if total_table_size == 0 {
-            log::error!("Cannot install configuration table: no SMBIOS records have been added");
-            return Err(SmbiosError::NoRecordsAvailable);
-        }
-
-        // Step 2: Allocate memory for the table (using UEFI Boot Services memory allocation)
-        let table_pages = uefi_size_to_pages!(total_table_size);
-        let table_address = boot_services
-            .allocate_pages(
-                AllocType::AnyPage,
-                MemoryType::ACPI_RECLAIM_MEMORY, // SMBIOS tables go in ACPI Reclaim memory
-                table_pages,
-            )
-            .map_err(|_| SmbiosError::AllocationFailed)?;
-
-        // Step 3: Copy all records to the table
-        // SAFETY: `table_address` was just successfully allocated by UEFI Boot Services for
-        // `total_table_size` bytes. The memory is valid, properly aligned, and exclusively owned
-        // by this function. The size matches our calculation, making this slice creation safe.
-        let table_slice = unsafe { core::slice::from_raw_parts_mut(table_address as *mut u8, total_table_size) };
-        let mut offset = 0;
-
-        for record in records.iter() {
-            let record_bytes = record.data.as_slice();
-            table_slice[offset..offset + record_bytes.len()].copy_from_slice(record_bytes);
-            offset += record_bytes.len();
-        }
-
-        // Step 4: Create SMBIOS 3.0+ Entry Point Structure
-        let mut entry_point = Smbios30EntryPoint {
-            anchor_string: *b"_SM3_",
-            checksum: 0,
-            length: core::mem::size_of::<Smbios30EntryPoint>() as u8,
-            major_version: self.major_version,
-            minor_version: self.minor_version,
-            docrev: 0,
-            entry_point_revision: 1,
-            reserved: 0,
-            table_max_size: total_table_size as u32,
-            table_address: table_address as u64,
-        };
-
-        // Calculate checksum
-        entry_point.checksum = Self::calculate_checksum(&entry_point);
-
-        // Step 5: Allocate memory for entry point structure
-        let ep_pages = 1; // Entry point fits in one page
-        let ep_address = boot_services
-            .allocate_pages(AllocType::AnyPage, MemoryType::ACPI_RECLAIM_MEMORY, ep_pages)
-            .map_err(|_| SmbiosError::AllocationFailed)?;
-
-        // Step 6: Copy entry point to allocated memory
-        let ep_bytes = entry_point.as_bytes();
-        // SAFETY: `ep_address` was just successfully allocated by UEFI Boot Services for one page.
-        // The size `core::mem::size_of::<Smbios30EntryPoint>()` (24 bytes) fits well within one page (4KB).
-        // The memory is valid, properly aligned, and exclusively owned by this function.
-        let ep_slice = unsafe {
-            core::slice::from_raw_parts_mut(ep_address as *mut u8, core::mem::size_of::<Smbios30EntryPoint>())
-        };
-        ep_slice.copy_from_slice(ep_bytes);
-
-        // Step 7: Install in UEFI Configuration Table
-        // SAFETY: We're calling the UEFI `install_configuration_table` function with:
-        // - A valid GUID reference (&SMBIOS_3_X_TABLE_GUID)
-        // - A valid pointer to the entry point structure we just allocated and initialized
-        // The pointer remains valid for the system's lifetime as it's in ACPI_RECLAIM_MEMORY.
-        unsafe {
-            boot_services.install_configuration_table(&SMBIOS_3_X_TABLE_GUID, ep_address as *mut ()).map_err(|e| {
-                log::error!("Failed to install SMBIOS configuration table: {:?}", e);
-                SmbiosError::AllocationFailed
-            })?;
-        }
-
-        // Store addresses for future reference
-        drop(records); // Release borrow before mutating
-        self.entry_point_64.replace(Some(Box::new(entry_point)));
-        self.table_64_address.replace(Some(table_address as u64));
-
-        Ok((table_address as u64, ep_address as u64))
-    }
-
     /// Calculate checksum for SMBIOS 3.x Entry Point Structure
     ///
     /// Computes the checksum byte value such that the sum of all bytes in the
@@ -402,12 +352,94 @@ impl SmbiosManager {
         0u8.wrapping_sub(sum)
     }
 
-    /// Publish the SMBIOS table to UEFI configuration tables
-    pub fn publish_table(
+    /// Build SMBIOS table data into pre-allocated buffers
+    ///
+    /// Rebuilds the SMBIOS table from current records into the pre-allocated buffers.
+    /// This is much faster than allocating new memory each time and maintains a
+    /// stable table address.
+    ///
+    /// Returns (table_address, entry_point_address, entry_point_struct)
+    /// This does NOT call install_configuration_table - that must be done separately without holding locks
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Buffers not allocated (call allocate_buffers() first)
+    /// - No records in table
+    /// - Table size exceeds pre-allocated buffer
+    pub fn build_table_data(
         &self,
-        boot_services: &patina::boot_services::StandardBootServices,
-    ) -> Result<(r_efi::efi::PhysicalAddress, r_efi::efi::PhysicalAddress), SmbiosError> {
-        self.install_configuration_table(boot_services)
+        _boot_services: &patina::boot_services::StandardBootServices,
+    ) -> Result<(PhysicalAddress, PhysicalAddress, Smbios30EntryPoint), SmbiosError> {
+        // Get pre-allocated buffer addresses
+        let table_address = self.table_buffer_addr.borrow().ok_or(SmbiosError::AllocationFailed)?;
+
+        let ep_address = self.ep_buffer_addr.borrow().ok_or(SmbiosError::AllocationFailed)?;
+
+        // Borrow records
+        let records = self.records.borrow();
+
+        // Step 1: Calculate total table size
+        let total_table_size: usize = records.iter().map(|r| r.data.len()).sum();
+
+        if total_table_size == 0 {
+            log::error!("Cannot build table: no SMBIOS records have been added");
+            return Err(SmbiosError::NoRecordsAvailable);
+        }
+
+        // Step 2: Check size fits in pre-allocated buffer
+        if total_table_size > self.table_buffer_max_size {
+            return Err(SmbiosError::AllocationFailed);
+        }
+
+        // Step 3: Copy all records to the pre-allocated buffer
+        // Records Vec maintains invariant: Type 127 is always last
+        // So we can just copy in order
+        let table_slice = unsafe { core::slice::from_raw_parts_mut(table_address as *mut u8, total_table_size) };
+        let mut offset = 0;
+
+        for record in records.iter() {
+            let record_bytes = record.data.as_slice();
+            table_slice[offset..offset + record_bytes.len()].copy_from_slice(record_bytes);
+            offset += record_bytes.len();
+        }
+
+        // Step 4: Create entry point structure
+        let mut entry_point = Smbios30EntryPoint {
+            anchor_string: *b"_SM3_",
+            checksum: 0,
+            length: core::mem::size_of::<Smbios30EntryPoint>() as u8,
+            major_version: self.major_version,
+            minor_version: self.minor_version,
+            docrev: 0,
+            entry_point_revision: 1,
+            reserved: 0,
+            table_max_size: total_table_size as u32,
+            table_address,
+        };
+
+        entry_point.checksum = Self::calculate_checksum(&entry_point);
+
+        // Step 5: Copy entry point to pre-allocated buffer
+        let ep_bytes = entry_point.as_bytes();
+        let ep_slice = unsafe {
+            core::slice::from_raw_parts_mut(ep_address as *mut u8, core::mem::size_of::<Smbios30EntryPoint>())
+        };
+        ep_slice.copy_from_slice(ep_bytes);
+
+        Ok((table_address, ep_address, entry_point))
+    }
+
+    /// Store table addresses after installation
+    /// This is called after install_configuration_table completes
+    pub fn store_table_addresses(
+        &self,
+        table_address: PhysicalAddress,
+        _ep_address: PhysicalAddress,
+        entry_point: Smbios30EntryPoint,
+    ) {
+        self.entry_point_64.replace(Some(Box::new(entry_point)));
+        self.table_64_address.replace(Some(table_address));
     }
 
     /// Add a new SMBIOS record from raw bytes
@@ -426,13 +458,19 @@ impl SmbiosManager {
             .map_err(|_| SmbiosError::MalformedRecordHeader)?;
         let header: &SmbiosTableHeader = &header_ref;
 
-        // Step 3: Validate header->length is <= (record_data.length - 2) for string pool
+        // Step 3: Reject Type 127 End-of-Table marker - it's automatically managed
+        // The manager adds Type 127 during initialization, and it must remain unique and last
+        if header.record_type == 127 {
+            return Err(SmbiosError::Type127Managed);
+        }
+
+        // Step 4: Validate header->length is <= (record_data.length - 2) for string pool
         // The string pool needs at least 2 bytes for the double-null terminator
         if (header.length as usize + 2) > record_data.len() {
             return Err(SmbiosError::RecordTooSmall);
         }
 
-        // Step 4: Validate and count strings in a single efficient pass
+        // Step 5: Validate and count strings in a single efficient pass
         let string_pool_start = header.length as usize;
         let string_pool_area = &record_data[string_pool_start..];
 
@@ -440,7 +478,7 @@ impl SmbiosManager {
             return Err(SmbiosError::StringPoolTooSmall);
         }
 
-        // Step 5: Validate string pool format and count strings
+        // Step 6: Validate string pool format and count strings
         let string_count = Self::validate_and_count_strings(string_pool_area)?;
 
         // If all validation passes, allocate handle and build record
@@ -451,13 +489,22 @@ impl SmbiosManager {
 
         // Update the handle in the actual data
         let mut data = record_data.to_vec();
-        let handle_bytes = smbios_handle.to_le_bytes();
-        data[2] = handle_bytes[0]; // Handle is at offset 2 in header
-        data[3] = handle_bytes[1];
+        let (header_mut, _rest) =
+            SmbiosTableHeader::mut_from_prefix(&mut data[..]).expect("header was already validated");
+        header_mut.handle = smbios_handle;
 
         let smbios_record = SmbiosRecord::new(record_header, producer_handle, data, string_count);
 
-        self.records.borrow_mut().push(smbios_record);
+        // Maintain invariant: Type 127 End-of-Table marker must always be last
+        let mut records = self.records.borrow_mut();
+
+        // Insert before Type 127 if present, otherwise append
+        if let Some(pos) = records.iter().position(|r| r.header.record_type == 127) {
+            records.insert(pos, smbios_record);
+        } else {
+            records.push(smbios_record);
+        }
+
         Ok(smbios_handle)
     }
 
@@ -568,6 +615,7 @@ impl SmbiosManager {
     /// # Returns
     ///
     /// Returns an iterator yielding tuples of `(SmbiosTableHeader, Option<Handle>)`.
+    #[allow(dead_code)]
     pub fn iter(&self, record_type: Option<SmbiosType>) -> SmbiosRecordsIter<'_> {
         SmbiosRecordsIter::new(self.records.borrow(), record_type)
     }
@@ -575,14 +623,18 @@ impl SmbiosManager {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     extern crate std;
+
+    use super::*;
     use std::{vec, vec::Vec};
 
     use crate::{
         error::SmbiosError,
+        manager::SmbiosRecord,
         service::{SMBIOS_HANDLE_PI_RESERVED, SMBIOS_STRING_MAX_LENGTH, SmbiosHandle, SmbiosTableHeader},
+        smbios_record::{SmbiosRecordStructure, Type127EndOfTable},
     };
+    use patina::boot_services::{MockBootServices, StandardBootServices};
     use r_efi::efi;
     use zerocopy::IntoBytes;
 
@@ -906,7 +958,6 @@ mod tests {
 
     #[test]
     fn test_update_string_buffer_too_small_error() {
-        use super::SmbiosRecord;
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
         let header = SmbiosTableHeader::new(1, 10, 1);
         let data = vec![1u8, 10, 1, 0];
@@ -1193,5 +1244,302 @@ mod tests {
     #[test]
     fn test_smbios_handle_constants() {
         assert_eq!(SMBIOS_HANDLE_PI_RESERVED, 0xFFFE);
+    }
+
+    #[test]
+    fn test_type127_insertion_logic_with_manual_add() {
+        // Test that the Type 127 insertion logic still works when Type 127 is manually added
+        // (e.g., during component initialization) by directly manipulating records
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        // Manually add a Type 127 record (bypassing add_from_bytes, simulating component init)
+        let type127 = Type127EndOfTable::new();
+        let bytes = type127.to_bytes();
+        let header = SmbiosTableHeader::new(127, 4, 1);
+        let record = SmbiosRecord::new(header, None, bytes, 0);
+        manager.records.borrow_mut().push(record);
+
+        // Verify Type 127 was added
+        let records = manager.records.borrow();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].header.record_type, 127);
+    }
+
+    #[test]
+    fn test_non_type127_added_without_type127_present() {
+        // Test adding a non-Type-127 record when no Type 127 exists
+        // This covers the None branch (line 473)
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        // Add a Type 1 record (no Type 127 present)
+        let header = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let record = build_test_record_with_strings(&header, &["Test Manufacturer"]);
+
+        manager.add_from_bytes(None, &record).expect("add_from_bytes failed");
+
+        let records = manager.records.borrow();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].header.record_type, 1);
+    }
+
+    #[test]
+    fn test_non_type127_inserted_before_type127() {
+        // Test adding a non-Type-127 record when Type 127 already exists
+        // This covers the Some branch in the insertion logic
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        // Manually add Type 127 (simulating component initialization)
+        let type127 = Type127EndOfTable::new();
+        let bytes127 = type127.to_bytes();
+        let header127 = SmbiosTableHeader::new(127, 4, 100);
+        let record127 = SmbiosRecord::new(header127, None, bytes127, 0);
+        manager.records.borrow_mut().push(record127);
+
+        // Now add a Type 1 record - should be inserted before Type 127
+        let header1 = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let record1 = build_test_record_with_strings(&header1, &["Test Manufacturer"]);
+        manager.add_from_bytes(None, &record1).expect("add Type 1 failed");
+
+        // Verify ordering: Type 1 should be at index 0, Type 127 at index 1
+        let records = manager.records.borrow();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].header.record_type, 1);
+        assert_eq!(records[1].header.record_type, 127);
+    }
+
+    #[test]
+    fn test_multiple_records_before_type127() {
+        // Test adding multiple non-Type-127 records, all inserted before Type 127
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        // Manually add Type 127 first (simulating component initialization)
+        let type127 = Type127EndOfTable::new();
+        let bytes127 = type127.to_bytes();
+        let header127 = SmbiosTableHeader::new(127, 4, 100);
+        let record127 = SmbiosRecord::new(header127, None, bytes127, 0);
+        manager.records.borrow_mut().push(record127);
+
+        // Add Type 1
+        let header1 = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let record1 = build_test_record_with_strings(&header1, &["System Manufacturer"]);
+        manager.add_from_bytes(None, &record1).expect("add Type 1 failed");
+
+        // Add Type 2
+        let header2 = SmbiosTableHeader::new(2, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let record2 = build_test_record_with_strings(&header2, &["Board Manufacturer"]);
+        manager.add_from_bytes(None, &record2).expect("add Type 2 failed");
+
+        // Verify Type 127 is always last
+        let records = manager.records.borrow();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].header.record_type, 1);
+        assert_eq!(records[1].header.record_type, 2);
+        assert_eq!(records[2].header.record_type, 127);
+    }
+
+    #[test]
+    fn test_type127_always_remains_last() {
+        // Test that Type 127 remains last even when added in the middle of operations
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        // Add Type 1
+        let header1 = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let record1 = build_test_record_with_strings(&header1, &["System"]);
+        manager.add_from_bytes(None, &record1).expect("add Type 1 failed");
+
+        // Manually add Type 127 in the middle (simulating component initialization after some records added)
+        let type127 = Type127EndOfTable::new();
+        let bytes127 = type127.to_bytes();
+        let header127 = SmbiosTableHeader::new(127, 4, 100);
+        let record127 = SmbiosRecord::new(header127, None, bytes127, 0);
+        manager.records.borrow_mut().push(record127);
+
+        // Add Type 2 after Type 127 was added
+        let header2 = SmbiosTableHeader::new(2, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let record2 = build_test_record_with_strings(&header2, &["Board"]);
+        manager.add_from_bytes(None, &record2).expect("add Type 2 failed");
+
+        // Verify Type 127 is still last
+        let records = manager.records.borrow();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[2].header.record_type, 127);
+        assert_eq!(records[0].header.record_type, 1);
+        assert_eq!(records[1].header.record_type, 2);
+    }
+
+    #[test]
+    fn test_new_with_unsupported_major_version() {
+        // Test version 2.x (unsupported)
+        let result = SmbiosManager::new(2, 0);
+        assert!(matches!(result, Err(SmbiosError::UnsupportedVersion)));
+
+        // Test version 1.x (unsupported)
+        let result = SmbiosManager::new(1, 0);
+        assert!(matches!(result, Err(SmbiosError::UnsupportedVersion)));
+
+        // Test version 4.x (unsupported)
+        let result = SmbiosManager::new(4, 0);
+        assert!(matches!(result, Err(SmbiosError::UnsupportedVersion)));
+    }
+
+    #[test]
+    fn test_add_type127_rejected() {
+        // Type 127 End-of-Table is automatically managed and should be rejected
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        // Build a Type 127 record
+        let type127 = Type127EndOfTable::new();
+        let bytes = type127.to_bytes();
+
+        // Attempt to add Type 127 should be rejected
+        let result = manager.add_from_bytes(None, &bytes);
+        assert_eq!(result, Err(SmbiosError::Type127Managed));
+
+        // Verify no records were added
+        assert_eq!(manager.records.borrow().len(), 0);
+    }
+
+    #[test]
+    fn test_add_type127_rejected_even_with_existing_type127() {
+        // Even if Type 127 already exists, attempting to add another should be rejected
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        // Manually add a Type 127 (simulating component initialization)
+        // We bypass add_from_bytes by directly manipulating the records for this test
+        let type127 = Type127EndOfTable::new();
+        let bytes = type127.to_bytes();
+        let header = SmbiosTableHeader::new(127, 4, 1);
+        let record = SmbiosRecord::new(header, None, bytes.clone(), 0);
+        manager.records.borrow_mut().push(record);
+
+        // Now attempt to add another Type 127 via add_from_bytes
+        let result = manager.add_from_bytes(None, &bytes);
+        assert_eq!(result, Err(SmbiosError::Type127Managed));
+
+        // Verify only one Type 127 exists (the original)
+        let records = manager.records.borrow();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].header.record_type, 127);
+    }
+
+    #[test]
+    fn test_allocate_buffers_already_allocated() {
+        // Create a mock boot services
+        let mock_bs = Box::leak(Box::new(MockBootServices::new()));
+        let boot_services: &'static StandardBootServices =
+            unsafe { &*(mock_bs as *const MockBootServices as *const StandardBootServices) };
+
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        // Set buffers as already allocated
+        *manager.table_buffer_addr.borrow_mut() = Some(0x1000);
+        *manager.ep_buffer_addr.borrow_mut() = Some(0x2000);
+
+        // Calling allocate_buffers should succeed immediately without allocation
+        let result = manager.allocate_buffers(boot_services);
+        assert!(result.is_ok());
+
+        // Buffers should still be the same
+        assert_eq!(*manager.table_buffer_addr.borrow(), Some(0x1000));
+        assert_eq!(*manager.ep_buffer_addr.borrow(), Some(0x2000));
+    }
+
+    #[test]
+    fn test_build_table_data_no_records() {
+        let mock_bs = Box::leak(Box::new(MockBootServices::new()));
+        let boot_services: &'static StandardBootServices =
+            unsafe { &*(mock_bs as *const MockBootServices as *const StandardBootServices) };
+
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        // Set up buffers (simulated allocation)
+        *manager.table_buffer_addr.borrow_mut() = Some(0x1000);
+        *manager.ep_buffer_addr.borrow_mut() = Some(0x2000);
+
+        // Try to build table with no records
+        let result = manager.build_table_data(boot_services);
+        assert!(matches!(result, Err(SmbiosError::NoRecordsAvailable)));
+    }
+
+    #[test]
+    fn test_build_table_data_table_too_large() {
+        let mock_bs = Box::leak(Box::new(MockBootServices::new()));
+        let boot_services: &'static StandardBootServices =
+            unsafe { &*(mock_bs as *const MockBootServices as *const StandardBootServices) };
+
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        // Set up buffers with small max size
+        *manager.table_buffer_addr.borrow_mut() = Some(0x1000);
+        *manager.ep_buffer_addr.borrow_mut() = Some(0x2000);
+
+        // Add a record
+        let header = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let record = build_test_record_with_strings(&header, &["Test"]);
+        manager.add_from_bytes(None, &record).expect("add failed");
+
+        // Create a manager with a very small buffer size (by accessing the field directly)
+        let manager2 = SmbiosManager {
+            records: manager.records,
+            next_handle: manager.next_handle,
+            freed_handles: manager.freed_handles,
+            major_version: 3,
+            minor_version: 9,
+            entry_point_64: RefCell::new(None),
+            table_64_address: RefCell::new(None),
+            table_buffer_addr: RefCell::new(Some(0x1000)),
+            table_buffer_max_size: 1, // Tiny buffer - will fail
+            ep_buffer_addr: RefCell::new(Some(0x2000)),
+        };
+
+        let result = manager2.build_table_data(boot_services);
+        assert!(matches!(result, Err(SmbiosError::AllocationFailed)));
+    }
+
+    #[test]
+    fn test_store_table_addresses() {
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        let entry_point = Smbios30EntryPoint {
+            anchor_string: *b"_SM3_",
+            checksum: 0,
+            length: 24,
+            major_version: 3,
+            minor_version: 9,
+            docrev: 0,
+            entry_point_revision: 1,
+            reserved: 0,
+            table_max_size: 1000,
+            table_address: 0x5000,
+        };
+
+        manager.store_table_addresses(0x5000, 0x6000, entry_point);
+
+        assert_eq!(*manager.table_64_address.borrow(), Some(0x5000));
+        assert!(manager.entry_point_64.borrow().is_some());
+    }
+
+    #[test]
+    fn test_update_string_multiple_strings() {
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+        let header = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let record = build_test_record_with_strings(&header, &["first", "second", "third"]);
+        let handle = manager.add_from_bytes(None, &record).expect("add failed");
+
+        // Update the second string
+        manager.update_string(handle, 2, "updated_second").expect("update failed");
+
+        // Verify the update worked by checking the record data
+        let records = manager.records.borrow();
+        let updated_record = &records[0];
+        let string_pool_start = updated_record.header.length as usize;
+        let string_pool = &updated_record.data[string_pool_start..];
+
+        // Parse strings to verify
+        let strings = SmbiosManager::parse_strings_from_pool(string_pool).expect("parse failed");
+        assert_eq!(strings.len(), 3);
+        assert_eq!(strings[0], "first");
+        assert_eq!(strings[1], "updated_second");
+        assert_eq!(strings[2], "third");
     }
 }

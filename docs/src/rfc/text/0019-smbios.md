@@ -278,9 +278,9 @@ The primary and only API for adding records is `add_from_bytes()`.
 Provides `update_string()` to modify strings in existing records. Parses the record, updates the targeted string,
 and rebuilds the record with proper SMBIOS formatting.
 
-#### Thread Safety
+#### Interior Mutability
 
-Mutable operations protected by spin::Mutex.
+Mutable operations use RefCell for interior mutability.
 
 #### Trait Object Safety
 

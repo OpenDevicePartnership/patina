@@ -13,9 +13,9 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use core::ffi::c_char;
+use core::{cell::RefCell, ffi::c_char};
 
-use patina::{boot_services::StandardBootServices, tpl_mutex::TplMutex, uefi_protocol::ProtocolInterface};
+use patina::{boot_services::StandardBootServices, uefi_protocol::ProtocolInterface};
 use r_efi::efi;
 
 use crate::{
@@ -41,12 +41,16 @@ pub(super) struct SmbiosProtocolInternal {
     // The public protocol that external callers will depend on
     pub(super) protocol: SmbiosProtocol,
 
-    // Internal component access only! Does not exist in C definition
-    pub(super) manager: &'static TplMutex<'static, SmbiosManager, StandardBootServices>,
+    manager: &'static RefCell<SmbiosManager>,
 
-    // Storage for header returned by C protocol's get_next
+    boot_services: &'static StandardBootServices,
+
+    // Storage for complete record returned by C protocol's get_next
+    // SMBIOS records can be up to several hundred bytes (header + fixed fields + strings)
+    // Using 1KB buffer to accommodate all typical records
     // Avoids heap allocation - reused across calls
-    pub(super) header_buffer: core::cell::UnsafeCell<SmbiosTableHeader>,
+    record_buffer: core::cell::UnsafeCell<[u8; 1024]>,
+    record_buffer_used: core::cell::UnsafeCell<usize>,
 }
 
 unsafe impl ProtocolInterface for SmbiosProtocol {
@@ -96,12 +100,15 @@ impl SmbiosProtocolInternal {
     pub(super) fn new(
         major_version: u8,
         minor_version: u8,
-        manager: &'static TplMutex<'static, SmbiosManager, StandardBootServices>,
+        manager: &'static RefCell<SmbiosManager>,
+        boot_services: &'static StandardBootServices,
     ) -> Self {
         Self {
             protocol: SmbiosProtocol::new(major_version, minor_version),
             manager,
-            header_buffer: core::cell::UnsafeCell::new(SmbiosTableHeader::new(0, 0, 0)),
+            boot_services,
+            record_buffer: core::cell::UnsafeCell::new([0u8; 1024]),
+            record_buffer_used: core::cell::UnsafeCell::new(0),
         }
     }
 }
@@ -128,7 +135,10 @@ impl SmbiosProtocol {
         // SAFETY: We must trust the C code was a responsible steward of this pointer
         // Cast from protocol pointer to internal struct pointer
         let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
-        let manager = internal.manager.lock();
+        let manager = match internal.manager.try_borrow() {
+            Ok(m) => m,
+            Err(_) => return efi::Status::DEVICE_ERROR,
+        };
 
         // SAFETY: The C UEFI protocol caller guarantees that `record` points to a valid,
         // complete SMBIOS record. We read the length field to determine the full record size.
@@ -176,6 +186,39 @@ impl SmbiosProtocol {
             match manager.add_from_bytes(producer_opt, full_record_bytes) {
                 Ok(handle) => {
                     *smbios_handle = handle;
+
+                    // Republish the table with the new record using the two-step deadlock-free approach:
+                    // 1. Build table data into pre-allocated buffer (WITH manager lock)
+                    // 2. Install configuration table (WITHOUT manager lock to avoid deadlock)
+
+                    // Drop manager borrow before republishing
+                    drop(manager);
+
+                    // Rebuild table data into pre-allocated buffer
+                    // The configuration table was already installed during init and points to our
+                    // pre-allocated entry point buffer. We just need to update the data in place.
+                    let (table_addr, ep_addr, entry_point) = {
+                        let manager = match internal.manager.try_borrow() {
+                            Ok(m) => m,
+                            Err(_) => return efi::Status::DEVICE_ERROR,
+                        };
+                        match manager.build_table_data(internal.boot_services) {
+                            Ok((t_addr, e_addr, ep_struct)) => (t_addr, e_addr, ep_struct),
+                            Err(_) => {
+                                return efi::Status::DEVICE_ERROR;
+                            }
+                        }
+                    }; // manager borrow dropped here
+
+                    // Store addresses in manager
+                    {
+                        let manager = match internal.manager.try_borrow() {
+                            Ok(m) => m,
+                            Err(_) => return efi::Status::DEVICE_ERROR,
+                        };
+                        manager.store_table_addresses(table_addr, ep_addr, entry_point);
+                    }
+
                     efi::Status::SUCCESS
                 }
                 Err(SmbiosError::StringContainsNull) => efi::Status::INVALID_PARAMETER,
@@ -205,7 +248,10 @@ impl SmbiosProtocol {
 
         // SAFETY: Cast from protocol pointer to internal struct pointer
         let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
-        let manager = internal.manager.lock();
+        let manager = match internal.manager.try_borrow() {
+            Ok(m) => m,
+            Err(_) => return efi::Status::DEVICE_ERROR,
+        };
 
         unsafe {
             let handle = *smbios_handle;
@@ -233,7 +279,10 @@ impl SmbiosProtocol {
     extern "efiapi" fn remove_ext(protocol: *const SmbiosProtocol, smbios_handle: SmbiosHandle) -> efi::Status {
         // SAFETY: Cast from protocol pointer to internal struct pointer
         let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
-        let manager = internal.manager.lock();
+        let manager = match internal.manager.try_borrow() {
+            Ok(m) => m,
+            Err(_) => return efi::Status::DEVICE_ERROR,
+        };
 
         match manager.remove(smbios_handle) {
             Ok(()) => efi::Status::SUCCESS,
@@ -256,40 +305,73 @@ impl SmbiosProtocol {
 
         // SAFETY: Cast from protocol pointer to internal struct pointer
         let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
-        let manager = internal.manager.lock();
 
         unsafe {
-            let handle = *smbios_handle;
-            let type_filter = if record_type.is_null() { None } else { Some(*record_type) };
+            let handle = core::ptr::read_unaligned(smbios_handle);
+            let type_filter = if record_type.is_null() { None } else { Some(core::ptr::read_unaligned(record_type)) };
 
-            // Use the iterator to find the next record
-            let mut iter = manager.iter(type_filter);
-
-            // Skip records until we find the one after the current handle
-            let next_record = if handle == SMBIOS_HANDLE_PI_RESERVED {
-                // Starting iteration - get first record
-                iter.next()
-            } else {
-                // Find the record after the current handle
-                iter.skip_while(|(hdr, _)| hdr.handle != handle).nth(1)
+            // Borrow the manager to access records
+            // Keep the manager borrow alive for the entire search
+            let manager_ref = match internal.manager.try_borrow() {
+                Ok(m) => m,
+                Err(_) => return efi::Status::DEVICE_ERROR,
             };
+            let records = manager_ref.records.borrow();
 
-            match next_record {
-                Some((header_value, prod_handle)) => {
-                    *smbios_handle = header_value.handle;
+            // Find the next matching record
+            let mut found_record: Option<&crate::manager::SmbiosRecord> = None;
+            let mut start_searching = handle == SMBIOS_HANDLE_PI_RESERVED;
 
-                    // Store header in internal buffer and return pointer to it
-                    let buffer_ptr = internal.header_buffer.get();
-                    *buffer_ptr = header_value;
-                    *record = buffer_ptr;
+            for rec in records.iter() {
+                // Apply type filter if specified
+                if let Some(filter) = type_filter
+                    && rec.header.record_type != filter
+                {
+                    continue;
+                }
+
+                // If starting fresh, take the first matching record
+                if start_searching {
+                    found_record = Some(rec);
+                    break;
+                }
+
+                // Otherwise, skip until we find the current handle, then take the next one
+                if rec.header.handle == handle {
+                    start_searching = true;
+                }
+            }
+
+            match found_record {
+                Some(rec) => {
+                    // Copy packed struct fields to avoid unaligned reference errors
+                    let rec_handle = rec.header.handle;
+
+                    // Copy the complete record data into our buffer
+                    let buffer_ptr = internal.record_buffer.get();
+                    let buffer_slice = &mut *buffer_ptr;
+
+                    if rec.data.len() > buffer_slice.len() {
+                        return efi::Status::BUFFER_TOO_SMALL;
+                    }
+
+                    // Copy record data to buffer
+                    buffer_slice[..rec.data.len()].copy_from_slice(&rec.data);
+                    *internal.record_buffer_used.get() = rec.data.len();
+
+                    // Update output parameters
+                    core::ptr::write_unaligned(smbios_handle, rec_handle);
+                    core::ptr::write_unaligned(record, buffer_ptr as *mut SmbiosTableHeader);
 
                     if !producer_handle.is_null() {
-                        *producer_handle = prod_handle.unwrap_or(core::ptr::null_mut());
+                        let prod_h = rec.producer_handle.unwrap_or(core::ptr::null_mut());
+                        core::ptr::write_unaligned(producer_handle, prod_h);
                     }
+
                     efi::Status::SUCCESS
                 }
                 None => {
-                    *smbios_handle = SMBIOS_HANDLE_PI_RESERVED;
+                    core::ptr::write_unaligned(smbios_handle, SMBIOS_HANDLE_PI_RESERVED);
                     efi::Status::NOT_FOUND
                 }
             }
@@ -300,9 +382,10 @@ impl SmbiosProtocol {
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
+    extern crate std;
+
     use super::*;
     use crate::manager::SmbiosManager;
-    extern crate std;
     use std::vec::Vec;
 
     fn create_test_bios_info_record() -> Vec<u8> {
