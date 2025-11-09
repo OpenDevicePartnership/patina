@@ -19,6 +19,9 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes as DeriveIntoBytes, KnownL
 #[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
 
+#[cfg(test)]
+use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
+
 /// SMBIOS record handle type (16-bit identifier)
 pub type SmbiosHandle = u16;
 
@@ -546,7 +549,6 @@ mod tests {
 
     #[test]
     fn test_mock_smbios_service_add_record_integration() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
         use alloc::vec;
         use patina::component::service::Service;
 
@@ -584,7 +586,6 @@ mod tests {
 
     #[test]
     fn test_mock_add_record_extension_trait_pattern() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
         use alloc::vec;
         use patina::component::service::Service;
 
@@ -615,7 +616,6 @@ mod tests {
 
     #[test]
     fn test_mock_add_record_with_error() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
         use alloc::vec;
         use patina::component::service::Service;
 
@@ -638,7 +638,7 @@ mod tests {
 
     #[test]
     fn test_mock_multiple_record_types() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type0PlatformFirmwareInformation, Type127EndOfTable};
+        use crate::smbios_record::Type0PlatformFirmwareInformation;
         use alloc::{string::String, vec};
         use patina::component::service::Service;
 
@@ -682,7 +682,6 @@ mod tests {
 
     #[test]
     fn test_service_mock_pattern() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
         use alloc::vec;
         use patina::component::service::Service;
 
@@ -705,7 +704,6 @@ mod tests {
 
     #[test]
     fn test_service_mock_with_extension_trait() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
         use alloc::vec;
         use patina::component::service::Service;
 

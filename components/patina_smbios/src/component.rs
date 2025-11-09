@@ -13,6 +13,7 @@ use crate::{
     error::SmbiosError,
     manager::{SmbiosManager, install_smbios_protocol},
     service::SmbiosImpl,
+    smbios_record::{SmbiosRecordStructure, Type127EndOfTable},
 };
 use alloc::boxed::Box;
 use patina::{
@@ -103,6 +104,16 @@ impl SmbiosProvider {
             log::error!("Failed to create SMBIOS manager: {:?}", e);
             patina::error::EfiError::Unsupported
         })?;
+
+        // Add Type 127 End-of-Table marker to ensure SMBIOS compliance
+        {
+            let end_of_table = Type127EndOfTable::new();
+            let bytes = end_of_table.to_bytes();
+            manager.add_from_bytes(None, &bytes).map_err(|e| {
+                log::error!("Failed to add Type 127 End-of-Table marker: {:?}", e);
+                patina::error::EfiError::Unsupported
+            })?;
+        }
 
         // Get boot_services from storage - it already has 'static lifetime
         // We use an unsafe cast because storage.boot_services() returns a reference with

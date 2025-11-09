@@ -455,9 +455,26 @@ impl SmbiosManager {
         data[2] = handle_bytes[0]; // Handle is at offset 2 in header
         data[3] = handle_bytes[1];
 
+        let record_type = record_header.record_type;
         let smbios_record = SmbiosRecord::new(record_header, producer_handle, data, string_count);
 
-        self.records.borrow_mut().push(smbios_record);
+        // Maintain invariant: Type 127 End-of-Table marker must always be last
+        let mut records = self.records.borrow_mut();
+
+        if record_type == 127 {
+            records.push(smbios_record);
+        } else {
+            // Insert before Type 127 if present, otherwise append
+            match records.iter().position(|r| r.header.record_type == 127) {
+                Some(type127_pos) => {
+                    records.insert(type127_pos, smbios_record);
+                }
+                None => {
+                    records.push(smbios_record);
+                }
+            }
+        }
+
         Ok(smbios_handle)
     }
 
@@ -582,6 +599,7 @@ mod tests {
     use crate::{
         error::SmbiosError,
         service::{SMBIOS_HANDLE_PI_RESERVED, SMBIOS_STRING_MAX_LENGTH, SmbiosHandle, SmbiosTableHeader},
+        smbios_record::{SmbiosRecordStructure, Type127EndOfTable},
     };
     use r_efi::efi;
     use zerocopy::IntoBytes;
@@ -1193,5 +1211,117 @@ mod tests {
     #[test]
     fn test_smbios_handle_constants() {
         assert_eq!(SMBIOS_HANDLE_PI_RESERVED, 0xFFFE);
+    }
+
+    #[test]
+    fn test_type127_added_directly() {
+        // Test adding Type 127 record directly
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        // Build a Type 127 End-of-Table record
+        let type127 = Type127EndOfTable::new();
+        let bytes = type127.to_bytes();
+
+        let handle = manager.add_from_bytes(None, &bytes).expect("add_from_bytes failed");
+
+        // Verify Type 127 was added
+        let records = manager.records.borrow();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].header.record_type, 127);
+        let record_handle = records[0].header.handle;
+        assert_eq!(record_handle, handle);
+    }
+
+    #[test]
+    fn test_non_type127_added_without_type127_present() {
+        // Test adding a non-Type-127 record when no Type 127 exists
+        // This covers the None branch (line 473)
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        // Add a Type 1 record (no Type 127 present)
+        let header = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let record = build_test_record_with_strings(&header, &["Test Manufacturer"]);
+
+        manager.add_from_bytes(None, &record).expect("add_from_bytes failed");
+
+        let records = manager.records.borrow();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].header.record_type, 1);
+    }
+
+    #[test]
+    fn test_non_type127_inserted_before_type127() {
+        // Test adding a non-Type-127 record when Type 127 already exists
+        // This covers the Some branch (line 470)
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        // First add Type 127
+        let type127 = Type127EndOfTable::new();
+        manager.add_from_bytes(None, &type127.to_bytes()).expect("add Type 127 failed");
+
+        // Now add a Type 1 record - should be inserted before Type 127
+        let header1 = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let record1 = build_test_record_with_strings(&header1, &["Test Manufacturer"]);
+        manager.add_from_bytes(None, &record1).expect("add Type 1 failed");
+
+        // Verify ordering: Type 1 should be at index 0, Type 127 at index 1
+        let records = manager.records.borrow();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].header.record_type, 1);
+        assert_eq!(records[1].header.record_type, 127);
+    }
+
+    #[test]
+    fn test_multiple_records_before_type127() {
+        // Test adding multiple non-Type-127 records, all inserted before Type 127
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        // Add Type 127 first
+        let type127 = Type127EndOfTable::new();
+        manager.add_from_bytes(None, &type127.to_bytes()).expect("add Type 127 failed");
+
+        // Add Type 1
+        let header1 = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let record1 = build_test_record_with_strings(&header1, &["System Manufacturer"]);
+        manager.add_from_bytes(None, &record1).expect("add Type 1 failed");
+
+        // Add Type 2
+        let header2 = SmbiosTableHeader::new(2, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let record2 = build_test_record_with_strings(&header2, &["Board Manufacturer"]);
+        manager.add_from_bytes(None, &record2).expect("add Type 2 failed");
+
+        // Verify Type 127 is always last
+        let records = manager.records.borrow();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].header.record_type, 1);
+        assert_eq!(records[1].header.record_type, 2);
+        assert_eq!(records[2].header.record_type, 127);
+    }
+
+    #[test]
+    fn test_type127_always_remains_last() {
+        // Test that Type 127 remains last even when added in the middle of operations
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+
+        // Add Type 1
+        let header1 = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let record1 = build_test_record_with_strings(&header1, &["System"]);
+        manager.add_from_bytes(None, &record1).expect("add Type 1 failed");
+
+        // Add Type 127
+        let type127 = Type127EndOfTable::new();
+        manager.add_from_bytes(None, &type127.to_bytes()).expect("add Type 127 failed");
+
+        // Add Type 2 after Type 127 was added
+        let header2 = SmbiosTableHeader::new(2, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let record2 = build_test_record_with_strings(&header2, &["Board"]);
+        manager.add_from_bytes(None, &record2).expect("add Type 2 failed");
+
+        // Verify Type 127 is still last
+        let records = manager.records.borrow();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[2].header.record_type, 127);
+        assert_eq!(records[0].header.record_type, 1);
+        assert_eq!(records[1].header.record_type, 2);
     }
 }
