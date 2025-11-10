@@ -869,7 +869,7 @@ mod tests {
         let layout = Layout::from_size_align(size, UEFI_PAGE_SIZE).unwrap();
         let base = unsafe { System.alloc(layout) as u64 };
         unsafe {
-            gcd.add_memory_space(GcdMemoryType::SystemMemory, base as usize, size, efi::MEMORY_WB).unwrap();
+            gcd.init_memory_blocks(GcdMemoryType::SystemMemory, base as usize, size, efi::MEMORY_WB).unwrap();
         }
         base
     }
