@@ -9,8 +9,9 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::boxed::Box;
-use patina_paging::{MemoryAttributes, PageTable, PtError, PtResult};
+use patina_paging::{CacheAttributeValue, MemoryAttributes, PtError};
 
+use crate::paging::PatinaPageTable;
 use patina_paging::page_allocator::PageAllocator;
 use r_efi::efi;
 
@@ -23,7 +24,7 @@ where
     _allocator: core::marker::PhantomData<A>,
 }
 
-impl<A> PageTable for EfiCpuPagingNull<A>
+impl<A> PatinaPageTable for EfiCpuPagingNull<A>
 where
     A: PageAllocator,
 {
@@ -39,11 +40,15 @@ where
         Ok(())
     }
 
-    fn query_memory_region(&self, _address: u64, _size: u64) -> Result<MemoryAttributes, PtError> {
+    fn query_memory_region(
+        &self,
+        _address: u64,
+        _size: u64,
+    ) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)> {
         Ok(MemoryAttributes::empty())
     }
 
-    fn dump_page_tables(&self, _address: u64, _size: u64) -> PtResult<()> {
+    fn dump_page_tables(&self, _address: u64, _size: u64) -> Result<(), PtError> {
         Ok(())
     }
 }
@@ -51,6 +56,6 @@ where
 /// Used to specify that this architecture paging implementation is not supported.
 pub fn create_cpu_null_paging<A: PageAllocator + 'static>(
     _page_allocator: A,
-) -> Result<Box<dyn PageTable>, efi::Status> {
+) -> Result<Box<dyn PatinaPageTable>, efi::Status> {
     Err(efi::Status::UNSUPPORTED)
 }

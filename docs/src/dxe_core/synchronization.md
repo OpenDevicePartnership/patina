@@ -85,8 +85,8 @@ When `lock()` is called on `TplMutex` a `TplGuard` structure is returned that
 provides access to the locked data. The `TplGuard` structure implements `Deref`
 and `DerefMut`, which allows access to the underlying data:
 
-```rust
-use tpl_lock::TplMutex;
+```rust,ignore
+use crate::tpl_lock::TplMutex;
 use r_efi::efi;
 let tpl_mutex = TplMutex::new(efi::TPL_HIGH_LEVEL, 1_usize, "test_lock");
 
@@ -97,8 +97,8 @@ assert_eq!(2_usize, *tpl_mutex.lock()); //deref to read.
 In addition, the when the `TplGuard` structure returned by `lock()` goes out of
 scope or is dropped, the lock is automatically released:
 
-```rust
-use tpl_lock::TplMutex;
+```rust,ignore
+use crate::tpl_lock::TplMutex;
 use r_efi::efi;
 let tpl_mutex1 = TplMutex::new(efi::TPL_HIGH_LEVEL, 1_usize, "test_lock");
 
@@ -108,7 +108,6 @@ assert_eq!(2_usize, *guard1); //deref to read.
 assert!(tpl_mutex1.try_lock().is_err()); //mutex1 still locked.
 drop(guard1); //lock is released.
 assert!(tpl_mutex1.try_lock().is_ok()); //mutex1 unlocked and can be acquired.
-
 ```
 
 ## TplMutex - Early Init

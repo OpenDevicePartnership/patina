@@ -206,21 +206,6 @@ and depended on by those drivers are written in Rust.
 | ![UEFI Boot Services Call Count 1](./media/bootserv_call_table_1.png) | ![UEFI Boot Services Call Count 2](./media/bootserv_call_table_2.png)  |
 |---|---|
 
-#### Resource Descriptor HOB Version Support
-
-Patina DXE Core supports two mutually exclusive formats for Resource Descriptor HOBs: V1 (legacy) and V2 (modern,
-with cache attributes). The version supported is selected at compile time using a Cargo feature flag:
-
-- **Default (V2)**: Only V2 Resource Descriptor HOBs are processed. This is the default for modern platforms and
-  enables cache attribute support.
-- **Legacy (V1)**: If the `v1_resource_descriptor_support` feature is enabled, only V1 Resource Descriptor HOBs are
-  processed (for legacy platforms). V2 HOBs are ignored in this mode.
-
-The code paths for V1 and V2 are strictly separated at compile time for performance and maintainability. Shared GCD
-logic is reused for both modes. See the `Cargo.toml` and DXE Core source for details on enabling or disabling this
-feature. For instructions on enabling or disabling V1 Resource Descriptor HOB support,
-see the integration guide: [How to Setup and Integrate a Platform-Specific Patina DXE Core Build](./integrate/dxe_core.md).
-
 #### Rust DXE Scaling Plan
 
 While the Patina DXE Core is mostly a drop-in replacement for the C DXE Core, it does differ in terms of design to
@@ -235,26 +220,8 @@ implemented the ability for the Patina DXE Core dispatch process to dispatch pla
 and services with each other but through Rust interfaces that are safe and statically checked versus the dynamic and
 disjoint nature of the protocol database in the C DXE Core.
 
-This snippet shows a simple example of how the Patina DXE Core is instantiated and customized in a simple platform
-binary crate:
-
-```rust
-#[cfg_attr(target_os = "uefi", export_name = "efi_main")]
-pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
-    log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
-    let adv_logger_component = AdvancedLoggerComponent::<Uart16550>::new(&LOGGER);
-    adv_logger_component.init_advanced_logger(physical_hob_list).unwrap();
-
-    patina_debugger::set_debugger(&DEBUGGER);
-
-    Core::default()
-        .init_memory(physical_hob_list)                                                 // DXE Core initializes GCD with the HOB list
-        .with_service(patina_ffs_extractors::CompositeSectionExtractor::default()) // A trait implementation that can be consumed by any component
-        .with_component(adv_logger_component)                                            // The "advanced logger" Rust component is added for dispatch
-        .start()
-        .unwrap();
-}
-```
+For an example of how the Patina DXE Core is instantiated and customized in a platform binary, see the
+[Patina DXE Core Integration Guide](integrate/dxe_core.md).
 
 ``` admonish note
 Rust is an exciting new next step and there is more to share about the Patina DXE Core in future documentation.

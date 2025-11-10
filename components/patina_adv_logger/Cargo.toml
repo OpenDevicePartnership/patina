@@ -5,6 +5,7 @@ version.workspace = true
 repository.workspace = true
 license.workspace = true
 edition.workspace = true
+readme = "README.md"
 description = "Advanced logger support."
 
 [[bin]]

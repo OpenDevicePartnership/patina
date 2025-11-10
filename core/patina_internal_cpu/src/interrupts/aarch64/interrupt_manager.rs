@@ -15,7 +15,7 @@ use patina::{
     error::EfiError,
 };
 use patina_paging::{PageTable, PagingType};
-use patina_stacktrace::StackTrace;
+use patina_stacktrace::{StackFrame, StackTrace};
 
 use crate::interrupts::{
     EfiExceptionStackTrace, EfiSystemContext, HandlerType, InterruptManager, aarch64::ExceptionContextAArch64,
@@ -197,7 +197,8 @@ extern "efiapi" fn synchronous_exception_handler(_exception_type: isize, context
     log::error!("Dumping Exception Stack Trace:");
     // SAFETY: As before, we don't have any choice. The stacktrace module will do its best to not cause a
     // recursive exception.
-    if let Err(err) = unsafe { StackTrace::dump_with(aarch64_context.elr, aarch64_context.sp) } {
+    let stack_frame = StackFrame { pc: aarch64_context.elr, sp: aarch64_context.sp, fp: aarch64_context.fp };
+    if let Err(err) = unsafe { StackTrace::dump_with(stack_frame) } {
         log::error!("StackTrace: {err}");
     }
 

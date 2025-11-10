@@ -5,6 +5,7 @@ version.workspace = true
 repository.workspace = true
 license.workspace = true
 edition.workspace = true
+readme = "README.md"
 description = "Debugger implementation for a Patina Core."
 
 [dependencies]

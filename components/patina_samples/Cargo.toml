@@ -5,11 +5,14 @@ version.workspace = true
 repository.workspace = true
 license.workspace = true
 edition.workspace = true
+readme = "README.md"
 description = "Sample UEFI components for the DXE Core."
 
 [dependencies]
 log = { workspace = true }
 patina = { workspace = true }
+patina_macro = { workspace = true }
+patina_smbios = { workspace = true }
 
 [features]
 std = []

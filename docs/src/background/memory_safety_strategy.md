@@ -121,15 +121,15 @@ that is **guaranteed** to be memory safe by the compiler.
 
 Patina implements a trait-based service system to replace global function pointers:
 
-```rust
+```rust,ignore
 // Rust service definition with compile-time safety
 trait MemoryService {
-    fn allocate_pool(&self, pool_type: MemoryType, size: usize) -> Result<*mut u8>;
-    fn free_pool(&self, buffer: *mut u8) -> Result<()>;
+    fn allocate_pool(&self, pool_type: MemoryType, size: usize) -> Result<*mut u8, MemoryError>;
+    fn free_pool(&self, buffer: *mut u8) -> Result<(), MemoryError>;
 }
 
 // Services are dependency-injected, not globally accessible
-fn component_entry(memory: Service<dyn MemoryService>) -> Result<()> {
+fn component_entry(memory: Service<dyn MemoryService>) -> Result<(), ComponentError> {
     // Compiler verifies this service exists and has the correct interface
     let buffer = memory.allocate_pool(MemoryType::Boot, 1024)?;
     // ...
@@ -146,17 +146,40 @@ This provides:
 
 Patina compiles all components into a single binary:
 
-```rust
-fn main() -> ! {
-    let core = Core::new()
-        .init_memory(physical_hob_list)
-        .with_config(PlatformConfig { secure_boot: true })
-        .with_component(MemoryManagerComponent::new())
-        .with_component(SecurityPolicyComponent::new())
-        .with_component(DeviceDriverComponent::new())
-        .start()
-        .unwrap();
-}
+```rust,no_run
+# extern crate patina_dxe_core;
+# // Note: Begin mock types for compilation
+# #[derive(Default)]
+# struct PlatformConfig {
+#     secure_boot: bool,
+# }
+# struct MemoryManagerComponent;
+# impl MemoryManagerComponent {
+#     fn new() -> Self { MemoryManagerComponent }
+# }
+# struct SecurityPolicyComponent;
+# impl SecurityPolicyComponent {
+#    fn new() -> Self { SecurityPolicyComponent }
+# }
+# struct DeviceDriverComponent;
+# impl DeviceDriverComponent {
+#    fn new() -> Self { DeviceDriverComponent }
+# }
+# let physical_hob_list = core::ptr::null();
+# // Note: End mock types for compilation
+
+use patina_dxe_core::Core;
+
+ Core::default()
+    .init_memory(physical_hob_list)
+    .with_config(PlatformConfig { secure_boot: true })
+    // Choose components here
+    // .with_component(MemoryManagerComponent::new())
+    // .with_component(SecurityPolicyComponent::new())
+    // .with_component(DeviceDriverComponent::new())
+    .start()
+    .unwrap();
+
 ```
 
 ##### Monolithic Compilation Benefits

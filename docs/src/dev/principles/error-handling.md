@@ -41,20 +41,54 @@ or continue normal execution, we can attempt to continue even if it is not prope
 
 This code which `unwrap`s on logger initialization panics unnecessarily:
 
-``` rust
-let log_info = self.adv_logger.get_log_info().unwrap();
+``` rust, no_run
+# extern crate patina_adv_logger;
+# extern crate log;
+# extern crate patina;
+# let hob_list = std::ptr::null();
+use patina_adv_logger::{component::AdvancedLoggerComponent, logger::AdvancedLogger};
+use log::LevelFilter;
+use patina::{
+    log::Format,
+    serial::uart::UartNull,
+};
+
+static LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
+    Format::Standard,
+    &[],
+    LevelFilter::Debug,
+    UartNull {}
+);
+
+let mut component = AdvancedLoggerComponent::new(&LOGGER);
+unsafe { component.init_advanced_logger(hob_list).unwrap() };
 ```
 
 Consider replacing it with `match` and returning a `Result`:
 
-``` rust
-let log_info = match self.adv_logger.get_log_info() {
-    Some(log_info) => log_info,
-    None => {
-        log::error!("Advanced logger not initialized before component entry point!");
-        return Err(EfiError::NotStarted);
-    }
-};
+``` rust, no_run
+# extern crate patina_adv_logger;
+# extern crate log;
+# extern crate patina;
+# let hob_list = std::ptr::null();
+# use patina_adv_logger::{component::AdvancedLoggerComponent, logger::AdvancedLogger};
+# use log::LevelFilter;
+# use patina::{
+#     log::Format,
+#     serial::uart::UartNull,
+# }; 
+# static LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
+#     Format::Standard,
+#     &[],
+#     LevelFilter::Debug,
+#     UartNull {}
+# );
+
+let mut component = AdvancedLoggerComponent::new(&LOGGER);
+match unsafe { component.init_advanced_logger(hob_list) } {
+    Ok(()) => {},
+    Err(e) => log::error!("Failed to init advanced logger: {e:?}"),
+}
 ```
 
 ## `efi::Status` vs. Rust Errors
@@ -86,13 +120,25 @@ For example, the following excerpt is part of an `extern "efiapi"` function that
 returns an EFI status code, where the status is specific to the error state encountered.
 
 ``` rust
-extern "efiapi" fn get_memory_map( /* arguments */ ) -> efi::Status {
+# extern crate r_efi;
+use r_efi::efi;
+
+extern "efiapi" fn get_memory_map(
+    memory_map_size: *mut usize,
+    memory_map: *mut efi::MemoryDescriptor,
+    map_key: *mut usize,
+    descriptor_size: *mut usize,
+    descriptor_version: *mut u32,
+) -> efi::Status {
     if memory_map_size.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
 
-    // ...
+    let map_size = unsafe { memory_map_size.read_unaligned() };
 
+    // ...
+    
+    # let required_map_size = 50usize;
     if map_size < required_map_size {
         return efi::Status::BUFFER_TOO_SMALL;
     }
@@ -103,12 +149,26 @@ extern "efiapi" fn get_memory_map( /* arguments */ ) -> efi::Status {
 }
 ```
 
-In contrast, the following function is internal to the GCD and not directly called by any UEFI code.
+In contrast, lets take a look at the patina_internal_collections crate. This crate provides red-black tree and
+binary search tree implementations. These implementations have no concept of any other code, so a custom error
+type was created to clearly describe errors that occur if mis-using the crate.
 
-As such, we implement a custom error that we can later convert into an `efi::Status`, or otherwise handle as
-appropriate.
+Due to having a custom error type, consumers of patina_internal_collections (such as the GCD) can handle the granular
+errors how it needs, while converting other errors to a higher level error type to be handled by the callers of the
+GCD. This approach allows for detailed logging of issues and handling of more specific errors while also bubbling up
+more generic errors up the chain.
+
+In the example below, we see the chain of errors from a `patina_internal_collections::Error` -> `Gcd::Error` ->
+`EfiError`. At each level, the caller can either handle the specific error, or convert it and pass it up to the
+caller.
 
 ``` rust
+# extern crate patina_internal_collections;
+# extern crate patina;
+use patina_internal_collections::Error as PicError;
+use patina::error::EfiError;
+
+// An error type for working with the GCD
 pub enum Error {
     NotInitialized,
     InvalidParameter,
@@ -118,33 +178,47 @@ pub enum Error {
     NotFound,
 }
 
-impl GCD {
-
-    // ...
-
-    fn allocate_address( /* arguments */ ) -> Result<usize, Error> {
-        ensure!(len > 0, Error::InvalidParameter);
-
-        // ...
-
-        let memory_blocks = self.memory_blocks.as_mut().ok_or(Error::NotFound)?;
-
-        let idx = memory_blocks.get_closest_idx(&(address as u64)).ok_or(Error::NotFound)?;
-        let block = memory_blocks.get_with_idx(idx).ok_or(Error::NotFound)?;
-
-        ensure!(
-            block.as_ref().memory_type == memory_type && address == address & (usize::MAX << alignment),
-            Error::NotFound
-        );
-
-        match Self::split_state_transition_at_idx(idx) {
-            Ok(_) => Ok(address),
-            Err(InternalError::MemoryBlock(_)) => error!(Error::NotFound),
-            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(Error::OutOfResources),
+// The GCD relies on `patina_internal_collections` for allocations, so lets make it easy to convert
+// `patina_internal_collections` errors to our GCD error type.
+impl From<PicError> for Error {
+    fn from(value: PicError) -> Self {
+        match value {
+            PicError::OutOfSpace => Error::OutOfResources,
+            PicError::NotFound => Error::NotFound,
+            PicError::AlreadyExists => Error::Unsupported,
+            PicError::NotSorted => Error::InvalidParameter,
         }
-
-        // ...
     }
+}
+
+// The GCD eventually bubbles up to external EFIAPI functions, so lets also make it easy to convert the `Error` type
+// to `patina::error::EfiError`
+impl From<Error> for EfiError {
+    fn from(value: Error) -> EfiError {
+        match value {
+            Error::NotInitialized => EfiError::NotReady,
+            Error::InvalidParameter => EfiError::InvalidParameter,
+            Error::OutOfResources => EfiError::OutOfResources,
+            Error::Unsupported => EfiError::Unsupported,
+            Error::AccessDenied => EfiError::AccessDenied,
+            Error::NotFound => EfiError::NotFound
+        }
+    }
+}
+
+// We can handle certain error types ourselves and coonvert / bubble any others up
+fn handle_result_example(result: Result<(), PicError>) -> Result<(), Error> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(PicError::OutOfSpace) => /* Custom handle */ Ok(()),
+        Err(err) => Err(err.into())
+    }
+}
+
+// We can convert and bubble up all errors
+fn handle_result_example2(result: Result<u32, PicError>) -> Result<u32, Error> {
+    let inner = result.map_err(|err| Into::<Error>::into(err))?;
+    Ok(inner * 2)
 }
 ```
 
@@ -155,6 +229,7 @@ impl GCD {
 For Patina components, define domain-specific error enums:
 
 ```rust
+# extern crate core;
 #[derive(Debug, Clone)]
 pub enum ComponentError {
     NotInitialized,
@@ -164,8 +239,8 @@ pub enum ComponentError {
     MemoryAllocation,
 }
 
-impl std::fmt::Display for ComponentError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ComponentError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             ComponentError::NotInitialized => write!(f, "Component not initialized"),
             ComponentError::InvalidConfiguration(msg) => write!(f, "Invalid configuration: {}", msg),
@@ -178,7 +253,7 @@ impl std::fmt::Display for ComponentError {
     }
 }
 
-impl std::error::Error for ComponentError {}
+impl core::error::Error for ComponentError {}
 ```
 
 ### Error Conversion Between Layers

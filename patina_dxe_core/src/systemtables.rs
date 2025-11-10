@@ -11,7 +11,7 @@
 use core::{ffi::c_void, mem::size_of, slice::from_raw_parts};
 
 use alloc::{alloc::Allocator, boxed::Box};
-use patina::{boot_services::BootServices, component::IntoComponent};
+use patina::{boot_services::BootServices, component::IntoComponent, pi::error_codes::EFI_NOT_AVAILABLE_YET};
 use r_efi::efi;
 
 use crate::{allocator::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR, tpl_lock};
@@ -27,12 +27,12 @@ impl EfiRuntimeServicesTable {
     //private unimplemented stub functions used to initialize the table.
     #[coverage(off)]
     extern "efiapi" fn get_time_unimplemented(_: *mut efi::Time, _: *mut efi::TimeCapabilities) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn set_time_unimplemented(_: *mut efi::Time) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -41,12 +41,12 @@ impl EfiRuntimeServicesTable {
         _: *mut efi::Boolean,
         _: *mut efi::Time,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn set_wakeup_time_unimplemented(_: efi::Boolean, _: *mut efi::Time) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -56,12 +56,12 @@ impl EfiRuntimeServicesTable {
         _: u32,
         _: *mut efi::MemoryDescriptor,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn convert_pointer_unimplemented(_: usize, _: *mut *mut c_void) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -72,7 +72,7 @@ impl EfiRuntimeServicesTable {
         _: *mut usize,
         _: *mut c_void,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -81,7 +81,7 @@ impl EfiRuntimeServicesTable {
         _: *mut efi::Char16,
         _: *mut efi::Guid,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -92,18 +92,16 @@ impl EfiRuntimeServicesTable {
         _: usize,
         _: *mut c_void,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn get_next_high_mono_count_unimplemented(_: *mut u32) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
-    extern "efiapi" fn reset_system_unimplemented(_: efi::ResetType, _: efi::Status, _: usize, _: *mut c_void) {
-        unimplemented!()
-    }
+    extern "efiapi" fn reset_system_unimplemented(_: efi::ResetType, _: efi::Status, _: usize, _: *mut c_void) {}
 
     #[coverage(off)]
     extern "efiapi" fn update_capsule_unimplemented(
@@ -111,7 +109,7 @@ impl EfiRuntimeServicesTable {
         _: usize,
         _: efi::PhysicalAddress,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -121,12 +119,12 @@ impl EfiRuntimeServicesTable {
         _: *mut u64,
         _: *mut efi::ResetType,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn query_variable_info_unimplemented(_: u32, _: *mut u64, _: *mut u64, _: *mut u64) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     pub fn init() -> EfiRuntimeServicesTable {
@@ -178,13 +176,11 @@ impl EfiBootServicesTable {
     //private unimplemented stub functions used to initialize the table.
     #[coverage(off)]
     extern "efiapi" fn raise_tpl_unimplemented(_: efi::Tpl) -> efi::Tpl {
-        unimplemented!()
+        efi::TPL_APPLICATION
     }
 
     #[coverage(off)]
-    extern "efiapi" fn restore_tpl_unimplemented(_: efi::Tpl) {
-        unimplemented!()
-    }
+    extern "efiapi" fn restore_tpl_unimplemented(_: efi::Tpl) {}
 
     #[coverage(off)]
     extern "efiapi" fn allocate_pages_unimplemented(
@@ -193,12 +189,12 @@ impl EfiBootServicesTable {
         _: usize,
         _: *mut efi::PhysicalAddress,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn free_pages_unimplemented(_: efi::PhysicalAddress, _: usize) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -209,17 +205,17 @@ impl EfiBootServicesTable {
         _: *mut usize,
         _: *mut u32,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn allocate_pool_unimplemented(_: efi::MemoryType, _: usize, _: *mut *mut c_void) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn free_pool_unimplemented(_: *mut c_void) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -230,32 +226,32 @@ impl EfiBootServicesTable {
         _: *mut c_void,
         _: *mut efi::Event,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn set_timer_unimplemented(_: efi::Event, _: efi::TimerDelay, _: u64) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn wait_for_event_unimplemented(_: usize, _: *mut efi::Event, _: *mut usize) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn signal_event_unimplemented(_: efi::Event) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn close_event_unimplemented(_: efi::Event) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn check_event_unimplemented(_: efi::Event) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -265,7 +261,7 @@ impl EfiBootServicesTable {
         _: efi::InterfaceType,
         _: *mut c_void,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -275,7 +271,7 @@ impl EfiBootServicesTable {
         _: *mut c_void,
         _: *mut c_void,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -284,7 +280,7 @@ impl EfiBootServicesTable {
         _: *mut efi::Guid,
         _: *mut c_void,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -293,7 +289,7 @@ impl EfiBootServicesTable {
         _: *mut efi::Guid,
         _: *mut *mut c_void,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -302,7 +298,7 @@ impl EfiBootServicesTable {
         _: efi::Event,
         _: *mut *mut c_void,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -313,7 +309,7 @@ impl EfiBootServicesTable {
         _: *mut usize,
         _: *mut efi::Handle,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -322,12 +318,12 @@ impl EfiBootServicesTable {
         _: *mut *mut efi::protocols::device_path::Protocol,
         _: *mut efi::Handle,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn install_configuration_table_unimplemented(_: *mut efi::Guid, _: *mut c_void) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -339,7 +335,7 @@ impl EfiBootServicesTable {
         _: usize,
         _: *mut efi::Handle,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -348,7 +344,7 @@ impl EfiBootServicesTable {
         _: *mut usize,
         _: *mut *mut efi::Char16,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -358,27 +354,27 @@ impl EfiBootServicesTable {
         _: usize,
         _: *mut efi::Char16,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn unload_image_unimplemented(_: efi::Handle) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn exit_boot_services_unimplemented(_: efi::Handle, _: usize) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn get_next_monotonic_count_unimplemented(_: *mut u64) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn stall_unimplemented(_: usize) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -388,7 +384,7 @@ impl EfiBootServicesTable {
         _: usize,
         _: *mut efi::Char16,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -398,7 +394,7 @@ impl EfiBootServicesTable {
         _: *mut efi::protocols::device_path::Protocol,
         _: efi::Boolean,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -407,7 +403,7 @@ impl EfiBootServicesTable {
         _: efi::Handle,
         _: efi::Handle,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -419,7 +415,7 @@ impl EfiBootServicesTable {
         _: efi::Handle,
         _: u32,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -429,7 +425,7 @@ impl EfiBootServicesTable {
         _: efi::Handle,
         _: efi::Handle,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -439,7 +435,7 @@ impl EfiBootServicesTable {
         _: *mut *mut efi::OpenProtocolInformationEntry,
         _: *mut usize,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -448,7 +444,7 @@ impl EfiBootServicesTable {
         _: *mut *mut *mut efi::Guid,
         _: *mut usize,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -459,7 +455,7 @@ impl EfiBootServicesTable {
         _: *mut usize,
         _: *mut *mut efi::Handle,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -468,7 +464,7 @@ impl EfiBootServicesTable {
         _: *mut c_void,
         _: *mut *mut c_void,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -477,7 +473,7 @@ impl EfiBootServicesTable {
         _: *mut c_void,
         _: *mut c_void,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
@@ -486,23 +482,19 @@ impl EfiBootServicesTable {
         _: *mut c_void,
         _: *mut c_void,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
     extern "efiapi" fn calculate_crc32_unimplemented(_: *mut c_void, _: usize, _: *mut u32) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     #[coverage(off)]
-    extern "efiapi" fn copy_mem_unimplemented(_: *mut c_void, _: *mut c_void, _: usize) {
-        unimplemented!()
-    }
+    extern "efiapi" fn copy_mem_unimplemented(_: *mut c_void, _: *mut c_void, _: usize) {}
 
     #[coverage(off)]
-    extern "efiapi" fn set_mem_unimplemented(_: *mut c_void, _: usize, _: u8) {
-        unimplemented!()
-    }
+    extern "efiapi" fn set_mem_unimplemented(_: *mut c_void, _: usize, _: u8) {}
 
     #[coverage(off)]
     extern "efiapi" fn create_event_ex_unimplemented(
@@ -513,7 +505,7 @@ impl EfiBootServicesTable {
         _: *const efi::Guid,
         _: *mut efi::Event,
     ) -> efi::Status {
-        unimplemented!()
+        efi::Status::from_usize(EFI_NOT_AVAILABLE_YET)
     }
 
     pub fn init() -> EfiBootServicesTable {

@@ -1,3 +1,9 @@
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
+
 [config]
 default_to_workspace = false
 
@@ -130,12 +136,6 @@ description = "Checks rust code for errors. Example `cargo make check`"
 clear = true
 run_task = [{ name = ["check_no_std", "check_std", "check_tests"], parallel = true }]
 
-[tasks.test]
-description = "Runs tests with native cargo test behavior. Example `cargo make test` or `cargo make test -p package_name -- --nocapture`"
-clear = true
-command = "cargo"
-args = ["test", "@@split(CARGO_MAKE_TASK_ARGS,;)"]
-
 [tasks.patina-test]
 description = "Builds crates with Patina tests enabled. Example `cargo make patina-test`"
 clear = true
@@ -149,7 +149,7 @@ private = true
 command = "cargo"
 args = ["generate-lockfile"]
 
-[tasks.coverage-collect]
+[tasks.test]
 description = "Run tests and collect coverage data without generating reports."
 install_crate = false
 clear = true
@@ -173,74 +173,8 @@ args = ["llvm-cov", "report", "--html", "--output-dir", "${CARGO_MAKE_WORKSPACE_
 
 [tasks.coverage]
 description = "Build and run all tests and calculate coverage (runs test once and generates LCOV and HTML reports)."
-dependencies = ["coverage-collect", "coverage-lcov", "coverage-html"]
+dependencies = ["test", "coverage-lcov", "coverage-html"]
 clear = true
-
-[tasks.coverage-filter]
-description = "Generates the coverage filter to ignore coverage data for other packages."
-private = true
-script_runner = "@duckscript"
-script = '''
-package = get_env PACKAGE
-members = get_env CARGO_MAKE_CRATE_WORKSPACE_MEMBERS
-
-1 = split ${members} ,
-
-2 = array
-for member in ${1}
-    if not contains ${member} ${package}
-        array_push ${2} ${member}
-    end
-end
-
-joined = array_join ${2} "|"
-
-set_env PACKAGE_COVERAGE_FILTER ${joined}
-release ${1}
-release ${2}
-release ${joined_args}
-release ${joined}
-'''
-
-[tasks.coverage-fail-package]
-private = true
-install_crate = false
-description = """Generates Code coverage for $(PACKAGE) and fails the build if coverage is below 80%."""
-dependencies = ["coverage-filter"]
-command = "cargo"
-args = ["llvm-cov", "--package", "${PACKAGE}", "--fail-under-lines", "80", "--ignore-filename-regex", "${PACKAGE_COVERAGE_FILTER}"]
-
-[tasks.coverage-fail]
-description = """Runs coverage on one or all packages and fails if coverage is below 80%.
-
-Examples:
-    `cargo make coverage-fail`
-    `cargo make coverage-fail patina_dxe_core`
-"""
-script_runner = "@duckscript"
-script = '''
-1 = get_env CARGO_MAKE_CRATE_WORKSPACE_MEMBERS
-2 = split ${1} ,
-3 = get_env CARGO_MAKE_TASK_ARGS
-
-if not is_empty ${3}
-    set_env PACKAGE ${3}
-    cm_run_task coverage-fail-package
-else
-    for member in ${2}
-        4 = split ${member} /
-        5 = array_pop ${4}
-        set_env PACKAGE ${5}
-        cm_run_task coverage-fail-package
-        release ${4}
-        release ${5}
-    end
-endif
-
-release ${1}
-release ${2}
-release ${3}
-'''
 
 [tasks.build-aarch64]
 description = "Builds crates in the repository for AARCH64"
@@ -314,7 +248,6 @@ dependencies = [
     "build",
     "build-x64",
     "build-aarch64",
-    "test",
     "patina-test",
     "coverage",
     "fmt",

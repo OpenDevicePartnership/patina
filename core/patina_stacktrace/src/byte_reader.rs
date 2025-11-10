@@ -1,7 +1,7 @@
 use crate::error::{Error, StResult};
 
-/// `ByteReader` trait provides easy way to read u8/u16/u32/u64 fields from a u8
-/// slice. This eliminates the dependency on scroll crate.
+/// The `ByteReader` trait provides an easy way to read u8/u16/u32/u64 fields from
+/// a u8 slice. This eliminates the dependency on the `scroll` crate.
 #[allow(dead_code)]
 pub(crate) trait ByteReader {
     fn read8(&self, index: usize) -> StResult<u8>;
@@ -17,7 +17,7 @@ pub(crate) trait ByteReader {
 impl ByteReader for [u8] {
     fn read8(&self, index: usize) -> StResult<u8> {
         if index + 1 > self.len() {
-            return Err(Error::BufferTooShort(index));
+            return Err(Error::OutOfBoundsRead { module: None, index });
         }
         let slice = &self[index..index + 1];
         Ok(u8::from_le_bytes([slice[0]]))
@@ -25,7 +25,7 @@ impl ByteReader for [u8] {
 
     fn read16(&self, index: usize) -> StResult<u16> {
         if index + 2 > self.len() {
-            return Err(Error::BufferTooShort(index));
+            return Err(Error::OutOfBoundsRead { module: None, index });
         }
         let slice = &self[index..index + 2];
         Ok(u16::from_le_bytes([slice[0], slice[1]]))
@@ -33,7 +33,7 @@ impl ByteReader for [u8] {
 
     fn read32(&self, index: usize) -> StResult<u32> {
         if index + 4 > self.len() {
-            return Err(Error::BufferTooShort(index));
+            return Err(Error::OutOfBoundsRead { module: None, index });
         }
         let slice = &self[index..index + 4];
         Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
@@ -41,7 +41,7 @@ impl ByteReader for [u8] {
 
     fn _read64(&self, index: usize) -> StResult<u64> {
         if index + 8 > self.len() {
-            return Err(Error::BufferTooShort(index));
+            return Err(Error::OutOfBoundsRead { module: None, index });
         }
         let slice = &self[index..index + 8];
         Ok(u64::from_le_bytes([slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7]]))
@@ -78,6 +78,16 @@ impl ByteReader for [u8] {
         }
         res
     }
+}
+
+// SAFETY: The caller must ensure `pointer` remains a valid, properly aligned
+// pointer to readable 8 bytes for the duration of this read.
+pub(crate) unsafe fn read_pointer64(pointer: u64) -> StResult<u64> {
+    if pointer == 0 {
+        return Err(Error::OutOfBoundsRead { module: None, index: 0 });
+    }
+
+    Ok(unsafe { *(pointer as *const u64) })
 }
 
 #[cfg(test)]
@@ -155,11 +165,31 @@ mod tests {
     }
 
     #[test]
-    fn test_error_buffer_too_short() {
+    fn test_error_out_of_bounds_read() {
         let buffer = [0x12, 0x34];
-        assert_eq!(buffer.read8(2).unwrap_err(), Error::BufferTooShort(2));
-        assert_eq!(buffer.read16(1).unwrap_err(), Error::BufferTooShort(1));
-        assert_eq!(buffer.read32(0).unwrap_err(), Error::BufferTooShort(0));
-        assert_eq!(buffer._read64(0).unwrap_err(), Error::BufferTooShort(0));
+        assert_eq!(buffer.read8(2).unwrap_err(), Error::OutOfBoundsRead { module: None, index: 2 });
+        assert_eq!(buffer.read16(1).unwrap_err(), Error::OutOfBoundsRead { module: None, index: 1 });
+        assert_eq!(buffer.read32(0).unwrap_err(), Error::OutOfBoundsRead { module: None, index: 0 });
+        assert_eq!(buffer._read64(0).unwrap_err(), Error::OutOfBoundsRead { module: None, index: 0 });
+    }
+
+    #[test]
+    fn read_pointer64_reads_value() {
+        let value: u64 = 0x0123_4567_89AB_CDEF;
+        let ptr = &value as *const u64 as u64;
+        assert_eq!(unsafe { read_pointer64(ptr).unwrap() }, value);
+    }
+
+    #[test]
+    fn read_pointer64_supports_pointer_arithmetic() {
+        let values = [0xAABB_CCDD_EEFF_0011u64, 0x2233_4455_6677_8899u64];
+        let base = values.as_ptr() as u64;
+        assert_eq!(unsafe { read_pointer64(base).unwrap() }, values[0]);
+        assert_eq!(unsafe { read_pointer64(base + core::mem::size_of::<u64>() as u64).unwrap() }, values[1]);
+    }
+
+    #[test]
+    fn read_pointer64_rejects_null_pointer() {
+        assert_eq!(unsafe { read_pointer64(0) }.unwrap_err(), Error::OutOfBoundsRead { module: None, index: 0 });
     }
 }

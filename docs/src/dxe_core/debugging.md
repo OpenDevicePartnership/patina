@@ -6,8 +6,8 @@ will inspect the state of the system through memory, registers, and exception fr
 the debugger application with a snapshot of the system at the moment it took the exception.
 The communication between the exception handlers and the software debugger is implemented
 using the [GDB Remote Protocol](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Remote-Protocol.html)
-which is supported by a number of debugger applications. For instruction on configuring
-and using the debugger, see the [debugging dev page](../dev/debugging.md).
+which is supported by a number of debugger applications. For instructions on configuring
+and using the debugger, see the [`patina_debugging` README](https://github.com/OpenDevicePartnership/patina/tree/main/core/patina_debugger/README.md).
 
 The Patina debugger is a software debugger which, in contrast to a hardware or JTAG
 debugger, is implemented entirely within the patina software stack. This has many

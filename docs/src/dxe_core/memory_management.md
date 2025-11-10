@@ -246,9 +246,25 @@ allocators in a manner consistent with the design point that the broader Rust co
 An example of how the `Allocator` trait can be used in the core to allocate memory in a different region:
 
 ```rust
-let mut table = EfiRuntimeServicesTable {
-  runtime_services: Box::new_in(rt, &EFI_RUNTIME_SERVICES_DATA_ALLOCATOR)
+#![feature(allocator_api)]
+# extern crate patina;
+# extern crate r_efi;
+use patina::{
+    efi_types::EfiMemoryType,
+    component::service::{
+      Service,
+      memory::{
+        MemoryManager,
+        MemoryError,
+      },
+    },
 };
+
+fn example_function(mm: Service<dyn MemoryManager>) -> Result<(), MemoryError> {
+  let _boxed = Box::new_in(50usize, mm.get_allocator(EfiMemoryType::RuntimeServicesData)?);
+
+  Ok(())
+}
 ```
 
 ## Exit Boot Services Handlers

@@ -58,20 +58,24 @@ multiple implementations that can perform a serial write, including a uart_16550
 a simple stdio writer.
 
 ``` rust
-/// The starting abstraction point, the `Log` trait
+# extern crate log;
+# extern crate core;
+# extern crate uart_16550;
+// The starting abstraction point, the `Log` trait
 use log::Log;
+use std::io::{Read, Write};
 
 /// Our Abstraction point for implementing different ways to perform a serial write
 pub trait SerialIO {
     fn init(&self);
     fn write(&self, buffer: &[u8]);
     fn read(&self) -> u8;
-    fn try_read(&self) -> Option<u8>
+    fn try_read(&self) -> Option<u8>;
 }
 
 pub struct SerialLogger<S>
 where
-    S: SerialIO + Send,
+    S: SerialIO + Send + Sync,
 {
     /// An implementation of the abstraction point
     serial: S,
@@ -81,7 +85,7 @@ where
 
 impl<S> SerialLogger<S>
 where
-    S: SerialIO + Send,
+    S: SerialIO + Send + Sync,
 {
     pub const fn new(
         serial: S,
@@ -95,16 +99,16 @@ where
 // be implemented to complete the interface implementation
 impl<S> Log for SerialLogger<S>
 where
-    S: SerialIO + Send,
+    S: SerialIO + Send + Sync,
 {
-    fn enabled(&self, metadata: &log::MetaData) -> bool {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
         return metadata.level().to_level_filter() <= self.max_level
     }
 
     fn log(&self, record: &log::Record) {
-        let formatted = format!("{} - {}\n", record.level(), record.args())
-        /// We know our "serial" object must have the "write" function, we just don't know the
-        /// implementation details, which is fine.
+        let formatted = format!("{} - {}\n", record.level(), record.args());
+        // We know our "serial" object must have the "write" function, we just don't know the
+        // implementation details, which is fine.
         self.serial.write(&formatted.into_bytes());
     }
 
@@ -143,31 +147,31 @@ struct Uart16550(usize);
 
 impl Uart16550 {
     fn new(addr: usize) -> Self {
-        Self{addr}
+        Self(addr)
     }
 }
 
-impl SerialIO for Uart {
+impl SerialIO for Uart16550 {
     fn init(&self) {
         unsafe { MmioSerialPort::new(self.0).init() };
     }
 
     fn write(&self, buffer: &[u8]) {
-        let port = unsafe { MmioSerialPort::new(self.0) };
+        let mut port = unsafe { MmioSerialPort::new(self.0) };
 
         for b in buffer {
-            serial_port.send(*b);
+            port.send(*b);
         }
     }
 
     fn read(&self) -> u8 {
-        let port = unsafe { MmioSerialPort::new(self.0) };
-        serial_port.receive()
+        let mut port = unsafe { MmioSerialPort::new(self.0) };
+        port.receive()
     }
 
     fn try_read(&self) -> Option<u8> {
-        let port = unsafe { MmioSerialPort::new(self.0) };
-        if let Ok(value) = serial_port.try_receive() {
+        let mut port = unsafe { MmioSerialPort::new(self.0) };
+        if let Ok(value) = port.try_receive() {
             Some(value)
         } else {
             None
@@ -179,6 +183,6 @@ impl SerialIO for Uart {
 fn main() {
     let terminal_logger = SerialLogger::new(Terminal, log::LevelFilter::Trace);
 
-    let uart16550_logger = SerialLogger::new(Uart_16550::new(0x4000), log::LevelFilter::Trace);
+    let uart16550_logger = SerialLogger::new(Uart16550::new(0x4000), log::LevelFilter::Trace);
 }
 ```

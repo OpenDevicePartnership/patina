@@ -4,6 +4,7 @@ As mentioned in [Testing](../testing.md), unit tests are written in the same fil
 are placed in a conditionally compiled sub-module, and each test should be tagged with `#[test]`.
 
 ```rust
+# #![feature(coverage_attribute)]
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
@@ -33,6 +34,7 @@ lock, reset global state, then run the test. It is up to the test writer to rese
 a typical example used in the Patina DXE Core:
 
 ```rust
+# #![feature(coverage_attribute)]
 #[coverage(off)]
 mod test_support {
     static GLOBAL_STATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

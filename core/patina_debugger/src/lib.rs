@@ -14,7 +14,7 @@
 //! ## Examples and Usage
 //!
 //! The debugger consists of the static access routines and the underlying debugger
-//! struct. The top level platform code should initialize the statis `PatinaDebugger`
+//! struct. The top level platform code should initialize the static `PatinaDebugger`
 //! struct with the appropriate serial transport and default configuration. The
 //! platform has the option of setting static configuration, or enabling the
 //! debugger in runtime code based on platform policy. During entry, the platform

@@ -153,13 +153,14 @@ trait object service, with a lightweight concrete struct Service Wrapper to supp
 mocking of the underlying functionality, but provides an easy to use interface as seen below:
 
 ```rust
+# extern crate patina;
 use patina::{
     error::Result,
     component::service::Service,
 };
 
 trait TraitService {
-    fn write_bytes(&self, bytes: Vec<u8>) -> Result<()>
+    fn write_bytes(&self, bytes: Vec<u8>) -> Result<()>;
 }
 
 struct ConcreteService {
@@ -213,6 +214,7 @@ usage models for components and their parameters.
 ### StructComponent Examples
 
 ```rust
+# extern crate patina;
 use patina::{
     boot_services::StandardBootServices,
     component::{

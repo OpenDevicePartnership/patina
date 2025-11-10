@@ -32,7 +32,7 @@ responsibility of the test writer to clear the global state once the test is fin
 
 ### Example 1
 
-```rust
+```rust,ignore
 use crate::test_support::{with_global_lock, init_test_gcd};
 
 #[test]
@@ -47,7 +47,7 @@ fn test_that_uses_gcd() {
 
 ### Example 2
 
-```rust
+```rust,ignore
 use crate::test_support::{with_global_lock, init_test_gcd};
 
 fn with_gcd<F: Fn()>(gcd_size: Option<usize>, f: F) {

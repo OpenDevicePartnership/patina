@@ -137,7 +137,7 @@ const fn log_level_to_debug_level(level: Level) -> u32 {
         Level::Warn => memory_log::DEBUG_LEVEL_WARNING,
         Level::Info => memory_log::DEBUG_LEVEL_INFO,
         Level::Trace => memory_log::DEBUG_LEVEL_VERBOSE,
-        Level::Debug => memory_log::DEBUG_LEVEL_VERBOSE,
+        Level::Debug => memory_log::DEBUG_LEVEL_INFO,
     }
 }
 

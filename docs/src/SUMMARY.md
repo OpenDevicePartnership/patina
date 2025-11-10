@@ -17,6 +17,7 @@
 - [Code Reuse](dev/principles/reuse.md)
 - [Dependency Management](dev/principles/dependency-management.md)
 - [Error Handling](dev/principles/error-handling.md)
+- [Unsafe Guidance](dev/principles/unsafe.md)
 
 # Developer Guides
 
@@ -38,6 +39,7 @@
 # Patina DXE Core Platform Integration
 
 - [Patina DXE Core Requirements](integrate/patina_dxe_core_requirements.md)
+- [Patina DXE Core Requirements Checklist](integrate/patina_dxe_core_requirements_checklist.md)
 - [Setting up the Patina DXE Core](integrate/dxe_core.md)
 
 # Patina Component Model
@@ -61,10 +63,6 @@
   - [Synchronization](dxe_core/synchronization.md)
   - [Testing](dxe_core/testing.md)
   - [UEFI Driver Model](dxe_core/driver_model.md)
-
-# Component Documentation
-
-- [Performance Analysis](components/patina_performance.md)
 
 -----------
 - [Contributors](misc/contributors.md)

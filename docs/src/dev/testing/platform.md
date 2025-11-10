@@ -16,10 +16,11 @@ following interface, where `...` can be any number of parameters that implement 
 `patina::component::*`:
 
 ```rust
+# extern crate patina;
 use patina::test::{Result, patina_test};
 
 #[patina_test]
-fn my_test(...) -> Result { todo!() }
+fn my_test(/* args */) -> Result { todo!() }
 ```
 
 On-platform tests are not just for component testing; they can also be used for testing general-purpose code on a
@@ -33,7 +34,9 @@ can filter out tests, but you should also be conscious of when tests should run.
 This example shows how to use the `skip` attribute paired with `cfg_attr` to skip a test.
 
 ```rust
+# extern crate patina;
 use patina::boot_services::StandardBootServices;
+use patina::test::{Result, patina_test};
 
 #[patina_test]
 #[cfg_attr(target_arch = "aarch64", skip)]
@@ -44,6 +47,9 @@ Next is the `should_fail` attribute, which allows you to specify that a test sho
 expected failure message.
 
 ```rust
+# extern crate patina;
+use patina::test::{Result, patina_test};
+
 #[patina_test]
 #[should_fail]
 fn my_test1() -> Result { todo!() }
@@ -58,12 +64,16 @@ fn my_test2() -> Result { todo!() }
 Running all these tests on a platform is as easy as instantiating the test runner component and registering it with
 the Patina DXE Core:
 
-```rust
-let test_runner = TestRunner::default();
+```rust,no_run
+# extern crate patina;
+# extern crate patina_dxe_core;
+# let hob_list = std::ptr::null();
+use patina::test::TestRunner;
+use patina_dxe_core::Core;
 
 Core::default()
-    .init_memory()
-    .with_component(test_runner)
+    .init_memory(hob_list)
+    .with_component(TestRunner::default())
     .start()
     .unwrap();
 ```
@@ -78,14 +88,20 @@ The next customization is `debug_mode` which enables logging during test executi
 customization is `fail_fast` which will immediately exit the test harness as soon as a single test fails (false by
 default). These two customizations can only be called once. Subsequent calls will overwrite the previous value.
 
-```rust
-let test_runner = TestRunnerComponent::default()
+```rust,no_run
+# extern crate patina;
+# extern crate patina_dxe_core;
+# let hob_list = std::ptr::null();
+use patina::test::TestRunner;
+use patina_dxe_core::Core;
+
+let test_runner = TestRunner::default()
     .with_filter("X64")
     .debug_mode(true)
     .fail_fast(true);
 
 Core::default()
-    .init_memory()
+    .init_memory(hob_list)
     .with_component(test_runner)
     .start()
     .unwrap();

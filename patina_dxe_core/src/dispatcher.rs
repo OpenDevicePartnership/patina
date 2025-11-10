@@ -177,7 +177,7 @@ pub fn dispatch() -> Result<bool, EfiError> {
         let driver_candidates: Vec<_> = dispatcher.pending_drivers.drain(..).collect();
         let mut scheduled_driver_candidates = Vec::new();
         for mut candidate in driver_candidates {
-            log::trace!("Evaluating depex for candidate: {:?}", guid_fmt!(candidate.file_name));
+            log::debug!(target: "patina_internal_depex", "Evaluating depex for candidate: {:?}", guid_fmt!(candidate.file_name));
             let depex_satisfied = match candidate.depex {
                 Some(ref mut depex) => depex.eval(&PROTOCOL_DB.registered_protocols()),
                 None => dispatcher.arch_protocols_available,
@@ -550,7 +550,7 @@ mod tests {
     use uuid::uuid;
 
     use super::*;
-    use crate::test_collateral;
+    use crate::{test_collateral, test_support};
 
     // Simple logger for log crate to dump stuff in tests
     struct SimpleLogger;
@@ -581,9 +581,9 @@ mod tests {
     where
         F: Fn() + std::panic::RefUnwindSafe,
     {
-        crate::test_support::with_global_lock(|| {
-            unsafe { crate::test_support::init_test_protocol_db() };
-            *DISPATCHER_CONTEXT.lock() = DispatcherContext::new();
+        test_support::with_global_lock(|| {
+            unsafe { test_support::init_test_protocol_db() };
+            test_support::reset_dispatcher_context();
             f();
         })
         .unwrap();

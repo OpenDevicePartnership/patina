@@ -81,7 +81,7 @@ The most common commands are:
 | `!uefiext.init`    | Initializes the extension, detects the debugger state, and finds modules for symbol resolution. This should always be run on initial connection. |
 | `!uefiext.findall` | Finds all loaded modules; can be used at any time.      |
 | `!uefiext.info`    | Prints information about the system, such as the Patina version and the reason for the current exception. |
-| `!uefiext.monitor` | Invokes monitor commands on the target. See the [monitor commands](../debugging.md#monitor-commands) for more details. |
+| `!uefiext.monitor` | Invokes monitor commands on the target. See the [monitor commands](https://github.com/OpenDevicePartnership/patina/tree/main/core/patina_debugger/README.md#monitor-commands) for more details. |
 | `!uefiext.help`    | Prints the full list of commands.                       |
 
 Once the extension has been loaded, you can call `!command` instead of typing

@@ -37,11 +37,14 @@ implementation of configuration that platforms can then override with their plat
 custom configuration, which is cascaded to all components that have `Config<T>` or `ConfigMut<T>` in their function
 interface.
 
-```rust
+```rust,no_run
+# extern crate patina_dxe_core;
+# let physical_hob_list = core::ptr::null();
+use patina_dxe_core::Core;
 Core::default()
     .init_memory(physical_hob_list)
     .with_config(52_u32)
-    .with_config(...)
+    .with_config(62_usize)
     .start()
     .unwrap();
 ```

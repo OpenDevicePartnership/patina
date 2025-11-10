@@ -30,6 +30,7 @@
 mod boot_mode;
 
 pub mod dxe_services;
+pub mod error_codes;
 pub mod fw_fs;
 pub mod hob;
 pub mod list_entry;

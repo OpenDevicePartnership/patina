@@ -98,25 +98,38 @@ Additionally, if the specific functionality being tested is architecture specifi
 be used as seen below:
 
 ```rust
+# extern crate patina;
+use patina::{
+   error::Result,
+   component::IntoComponent,
+   test::patina_test,
+};
+
 #[derive(IntoComponent)]
 struct MyComponent(u32);
 
+impl MyComponent {
+   fn entry_point(self) -> Result<()> {
+      Ok(())
+   }
+}
+
 trait MyService {
-   fn do_something(&self) -> u32
+   fn do_something(&self) -> u32;
 }
 
 #[patina_test]
-fn test_my_component_name_for_test(...) -> Result<()> {
+fn test_my_component_name_for_test() -> patina::test::Result {
    Ok(())
 }
 
 #[patina_test]
-fn test_my_service_name_for_test(...) -> Result<()> {
+fn test_my_service_name_for_test() -> patina::test::Result {
    Ok(())
 }
 
 #[cfg_attr(target_arch = "x64", patina_test)]
-fn test_my_service_name_other_test(...) -> Result<()> {
+fn test_my_service_name_other_test() -> patina::test::Result {
     Ok(())
 }
 ```
@@ -181,7 +194,7 @@ src
 
 The lib.rs file would look similar to this:
 
-```rust
+```rust,ignore
 //! Module Documentation
 pub mod component;
 pub mod config;

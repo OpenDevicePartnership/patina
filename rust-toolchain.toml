@@ -1,5 +1,11 @@
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
+
 [toolchain]
-channel = "nightly-2025-09-19" # One day post 1.90.0 
+channel = "nightly-2025-09-19" # One day post 1.90.0
 targets = ["x86_64-unknown-uefi", "aarch64-unknown-uefi"]
 components = ["rust-src", "clippy", "rustfmt", "rust-docs"]
 

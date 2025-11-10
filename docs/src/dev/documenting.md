@@ -177,6 +177,7 @@ specifying we are documenting the item directly below it (the type or member of 
 **Document traits, not trait implementations!**
 
 ``` rust
+# extern crate goblin;
 /// Type for describing errors that result from working with PE32 images.
 #[derive(Debug)]
 pub enum Pe32Error {
@@ -219,24 +220,26 @@ Do not provide an arguments section, the name and type of the argument should ma
 Do not provide a Returns section, this should be captured in the longer description and the return
 type makes the possible return value self-evident.
 
-``` rust
-
+```rust
+# extern crate goblin;
+# enum Error { ParseError, NoOptionalHeader };
+# struct UefiPeInfo;
 /// Attempts to parse a PE32 image and return information about the image.
 ///
-/// Parses the bytes buffer containing a PE32 image and generates a [Pe32ImageInfo] struct
+/// Parses the bytes buffer containing a PE32 image and generates a [UefiPeInfo] struct
 /// containing general information about the image otherwise an error.
 ///
 /// ## Errors
 ///
-/// Returns [`ParseError`](Pe32Error::ParseError) if parsing the PE32 image failed. Contains the
+/// Returns [`ParseError`](Error::ParseError) if parsing the PE32 image failed. Contains the
 /// exact parsing [`Error`](goblin::error::Error).
 ///
-/// Returns [`NoOptionalHeader`](Pe32Error::NoOptionalHeader) if the parsed PE32 image does not
+/// Returns [`NoOptionalHeader`](Error::NoOptionalHeader) if the parsed PE32 image does not
 /// contain the OptionalHeader necessary to provide information about the image.
 ///
 /// ## Examples
 ///
-/// ```
+/// ```rust
 /// extern crate std;
 ///
 /// use std::{fs::File, io::Read};
@@ -250,8 +253,7 @@ type makes the possible return value self-evident.
 ///
 /// let image_info = pe32_get_image_info(&buffer).unwrap();
 /// ```
-///
-pub fn pe32_get_image_info(image: &[u8]) -> Result<Pe32ImageInfo, Pe32Error> {
-  ...
+pub fn pe32_get_image_info(image: &[u8]) -> Result<UefiPeInfo, Error> {
+  todo!()
 }
 ```

@@ -156,11 +156,11 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             },
             owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
             resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
-            resource_attribute: hob::TESTED_MEMORY_ATTRIBUTES,
+            resource_attribute: hob::TESTED_MEMORY_ATTRIBUTES | hob::EFI_RESOURCE_ATTRIBUTE_WRITE_BACK_CACHEABLE,
             physical_start: mem_base + 0xE0000,
             resource_length: 0x10000,
         },
-        attributes: 0u64, // No cache attributes for system memory
+        attributes: efi::MEMORY_WB,
     };
 
     let resource_descriptor2 = ResourceDescriptorV2 {
@@ -172,11 +172,11 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             },
             owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
             resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
-            resource_attribute: hob::INITIALIZED_MEMORY_ATTRIBUTES,
+            resource_attribute: hob::INITIALIZED_MEMORY_ATTRIBUTES | hob::EFI_RESOURCE_ATTRIBUTE_WRITE_BACK_CACHEABLE,
             physical_start: mem_base + 0xF0000,
             resource_length: 0x10000,
         },
-        attributes: 0u64, // No cache attributes for system memory
+        attributes: efi::MEMORY_WB,
     };
 
     let resource_descriptor3 = ResourceDescriptorV2 {
@@ -194,7 +194,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             physical_start: 0x10000000,
             resource_length: 0x1000000,
         },
-        attributes: efi::MEMORY_UC, // Uncacheable for MMIO
+        attributes: efi::MEMORY_UC,
     };
 
     let resource_descriptor4 = ResourceDescriptorV2 {
@@ -212,7 +212,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             physical_start: 0x11000000,
             resource_length: 0x1000000,
         },
-        attributes: efi::MEMORY_UC, // Uncacheable for firmware device (consistent with MMIO)
+        attributes: efi::MEMORY_UC,
     };
 
     let resource_descriptor5 = ResourceDescriptorV2 {
@@ -230,7 +230,7 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             physical_start: 0x12000000,
             resource_length: 0x1000000,
         },
-        attributes: efi::MEMORY_WB, // Write Back for reserved memory
+        attributes: efi::MEMORY_WB,
     };
 
     let resource_descriptor6 = ResourceDescriptorV2 {
@@ -242,13 +242,11 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             },
             owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
             resource_type: hob::EFI_RESOURCE_IO,
-            resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT
-                | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED
-                | hob::EFI_RESOURCE_ATTRIBUTE_UNCACHEABLE,
+            resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT | hob::EFI_RESOURCE_ATTRIBUTE_INITIALIZED,
             physical_start: 0x1000,
             resource_length: 0xF000,
         },
-        attributes: efi::MEMORY_UC, // Uncacheable for I/O space
+        attributes: 0, // Cacheability not applicable for I/O space
     };
 
     let resource_descriptor7 = ResourceDescriptorV2 {
@@ -260,11 +258,11 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
             },
             owner: efi::Guid::from_fields(0, 0, 0, 0, 0, &[0u8; 6]),
             resource_type: hob::EFI_RESOURCE_IO_RESERVED,
-            resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT | hob::EFI_RESOURCE_ATTRIBUTE_UNCACHEABLE,
+            resource_attribute: hob::EFI_RESOURCE_ATTRIBUTE_PRESENT,
             physical_start: 0x0000,
             resource_length: 0x1000,
         },
-        attributes: efi::MEMORY_UC, // Uncacheable for reserved I/O space
+        attributes: 0, // Cacheability not applicable for reserved I/O space
     };
 
     let mut allocation_hob_template = hob::MemoryAllocation {
@@ -427,7 +425,7 @@ mod tests {
                 physical_start: mem_base + 0xE0000,
                 resource_length: 0x10000,
             },
-            attributes: 0u64, // No cache attributes for system memory (same as V1 behavior)
+            attributes: efi::MEMORY_WB,
         };
 
         let mut allocation_hob_template: hob::MemoryAllocationModule = hob::MemoryAllocationModule {
