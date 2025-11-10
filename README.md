@@ -59,16 +59,18 @@ cargo make all
 
 ## Performing a Release
 
-Below is the information required to perform a release that publishes to the registry feed:
+Below is the information required to perform a release that publishes to crates.io:
 
 1. Review the current draft release on the github repo: [Releases](https://github.com/OpenDevicePartnership/patina/releases)
    1. If something is incorrect, update it in the draft release
    2. If you need to manually change the version, make sure you update the associated git tag value in the draft release
-2. Publish the release
-3. Monitor the publish release workflow that is automatically triggered on the release being published:
-   [Publish Release Workflow](https://github.com/OpenDevicePartnership/patina/actions/workflows/publish-release.yml)
-4. Once completed successfully, click on the  "Notify Branch Creation Step" and click the provided link to create the
-   PR to update all versions in all Cargo.toml files across the repository.
+2. Run the [Create Crate Version Update PR](https://github.com/OpenDevicePartnership/patina/actions/workflows/crate-version-update.yml)
+   workflow to generate a pull request that updates the repository crate version to the current release draft version.
+3. Review, approve, and merge the pull request. Should others request additional pull requests be merged before the
+   release is finalized, simply complete their pull requests first. Any changes to the release draft and pull request
+   created in step 2 will be automatically updated.
+4. Upon completion of the pull request created in step 2, the [Publish Release](https://github.com/OpenDevicePartnership/patina/actions/workflows/publish-release.yml)
+   workflow will automatically publish the github release and all crates in the repository to crates.io.
 
 ## First-Time Tool Setup Instructions
 

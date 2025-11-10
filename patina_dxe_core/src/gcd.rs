@@ -218,6 +218,17 @@ pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
                     )
                     .expect("Failed to add memory space to GCD");
                 }
+
+                // V1 HOBs don't provide cache attributes for MMIO/Reserved memory. Skip setting attributes.
+                #[cfg(feature = "v1_resource_descriptor_support")]
+                if memory_attributes == 0 {
+                    log::debug!(
+                        "Skipping setting memory attributes for {gcd_mem_type:?} range {:#x?} with 0 attributes (V1 HOB)",
+                        split_range
+                    );
+                    continue;
+                }
+
                 match GCD.set_memory_space_attributes(
                     split_range.start as usize,
                     split_range.end.saturating_sub(split_range.start) as usize,

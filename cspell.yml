@@ -104,6 +104,7 @@ words:
   - libyaml
   - linkme
   - longjmp
+  - lrpair
   - lzmatest
   - mdbook
   - mdscr
@@ -134,6 +135,7 @@ words:
   - pcddxe
   - pcide
   - pdata
+  - pdbaltpath
   - pdbhelper
   - powerfmt
   - pread

@@ -164,7 +164,7 @@ pub fn remove_runtime_image(image_handle: efi::Handle) -> Result<(), EfiError> {
 #[coverage(off)]
 mod tests {
     use super::*;
-    use crate::test_support::with_global_lock;
+    use crate::test_support;
     use core::{ptr, sync::atomic::AtomicBool};
 
     fn setup_protocol_and_data() -> RuntimeData {
@@ -209,11 +209,23 @@ mod tests {
         }
     }
 
+    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
+        test_support::with_global_lock(|| {
+            unsafe {
+                crate::test_support::init_test_gcd(None);
+                crate::test_support::init_test_protocol_db();
+            }
+            crate::test_support::reset_dispatcher_context();
+            f();
+        })
+        .unwrap();
+    }
+
     #[test]
     fn test_image_list_consistency() {
         // Runtime tests require global synchronization due to shared static allocators
         // that use TPL locks, which cannot be acquired concurrently
-        with_global_lock(|| {
+        with_locked_state(|| {
             let mut data = setup_protocol_and_data();
             let link_offset = size_of::<u64>() * 4;
 
@@ -270,15 +282,14 @@ mod tests {
                 }
                 assert_eq!(count, 5, "Not all entries were found in the image list.");
             }
-        })
-        .unwrap_or_else(|e| panic!("Test failed with runtime allocator conflict: {:?}", e));
+        });
     }
 
     #[test]
     fn test_event_list_consistency() {
         // Runtime tests require global synchronization due to shared static allocators
         // that use TPL locks, which cannot be acquired concurrently
-        with_global_lock(|| {
+        with_locked_state(|| {
             let mut data = setup_protocol_and_data();
             let link_offset = size_of::<u64>() * 5;
 
@@ -335,7 +346,6 @@ mod tests {
                 }
                 assert_eq!(count, 5, "Not all entries were found in the event list.");
             }
-        })
-        .unwrap_or_else(|e| panic!("Test failed with runtime allocator conflict: {:?}", e));
+        });
     }
 }

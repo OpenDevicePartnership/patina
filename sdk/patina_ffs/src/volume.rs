@@ -226,6 +226,10 @@ impl<'a> VolumeRef<'a> {
     /// assert!(fv_ref.size() >= 4096);
     /// ```
     pub unsafe fn new_from_address(base_address: u64) -> Result<Self, FirmwareFileSystemError> {
+        if base_address == ptr::null::<fv::Header>() as u64 {
+            return Err(FirmwareFileSystemError::InvalidParameter);
+        }
+
         // SAFETY: caller must ensure that the base_address is safe to read for enough bytes to read
         // the fv_header structure.
         let fv_header = unsafe { ptr::read_unaligned(base_address as *const fv::Header) };

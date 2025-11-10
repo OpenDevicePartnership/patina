@@ -1183,7 +1183,7 @@ mod tests {
             unsafe {
                 test_support::init_test_gcd(Some(gcd_size));
                 test_support::init_test_protocol_db();
-                ALLOCATORS.lock().reset();
+                test_support::reset_allocators();
             }
             f();
         })

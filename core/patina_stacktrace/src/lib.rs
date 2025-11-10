@@ -2,15 +2,15 @@
 //!
 //! ## Introduction
 //!
-//! This library implements the stack walking logic. Given the instruction
-//! pointer and stack pointer, the [API](#public-api) will dump the stack trace
-//! leading to that machine state. It currently does not resolve symbols, as PDB
-//! debug info is not embedded in the PE image, unlike the DWARF format for ELF
-//! images. Therefore, symbol resolution must be done offline. As a result, the
-//! "Call Site" column in the output will display `module+<relative rip>`
-//! instead of `module!function+<relative rip>`. Outside of this library, with
-//! PDB access, these module-relative RIP offsets can be resolved to
-//! function-relative offsets, as shown below.
+//! This library implements stack-walking logic. Given an instruction pointer
+//! and stack pointer, the [API](#public-api) dumps the stack trace that led to
+//! that machine state. It currently does not resolve symbols because PDB debug
+//! info is not embedded in the PE image, unlike DWARF data in ELF images.
+//! Therefore, symbol resolution must be performed offline. As a result, the
+//! "Call Site" column in the output displays `module+<relative rip>` instead of
+//! `module!function+<relative pc>`. Outside of this library, with PDB access,
+//! those module-relative PC offsets can be resolved to function-relative
+//! offsets, as shown below.
 //!
 //! ```cmd
 //! PS C:\> .\resolve_stacktrace.ps1 -StackTrace "
@@ -41,76 +41,79 @@
 //! ## Prerequisites
 //!
 //! This library uses the PE image `.pdata` section to calculate the stack
-//! unwind information required to walk the call stack. Therefore, all binaries
-//! should be compiled with the following `rustc` flag to generate the `.pdata`
-//! sections in the PE images:
+//! unwind information required to walk the call stack. Therefore, compile all
+//! binaries with the following `rustc` flag to generate the `.pdata` sections
+//! in the PE images:
 //!
 //! `RUSTFLAGS=-Cforce-unwind-tables`
 //!
 //! ## Public API
 //!
-//! The main API for public use is the `dump()/dump_with()` function in the
+//! The primary public API is the `dump()/dump_with()` function in the
 //! `StackTrace` module.
 //!
 //! ```ignore
-//!    /// Dumps the stack trace for the given RIP and RSP values.
+//!    /// Dumps the stack trace for the given PC, SP, and FP values.
 //!    ///
 //!    /// # Safety
 //!    ///
 //!    /// This function is marked `unsafe` to indicate that the caller is
-//!    /// responsible for validating the provided RIP and RSP values. Invalid
+//!    /// responsible for validating the provided PC, SP, and FP values. Invalid
 //!    /// values can result in undefined behavior, including potential page
 //!    /// faults.
 //!    ///
 //!    /// ```text
 //!    /// # Child-SP              Return Address         Call Site
-//!    /// 0 000000346BCFFAC0      00007FF8A0A710E5       x64+1095
-//!    /// 1 000000346BCFFAF0      00007FF8A0A7115E       x64+10E5
-//!    /// 2 000000346BCFFB30      00007FF8A0A711E8       x64+115E
-//!    /// 3 000000346BCFFB70      00007FF8A0A7125F       x64+11E8
-//!    /// 4 000000346BCFFBB0      00007FF6801B0EF8       x64+125F
-//!    /// 5 000000346BCFFBF0      00007FF8A548E8D7       patina_stacktrace-326fa000ab73904b+10EF8
-//!    /// 6 000000346BCFFC60      00007FF8A749FBCC       kernel32+2E8D7
-//!    /// 7 000000346BCFFC90      0000000000000000       ntdll+2FBCC
+//!    /// 0 0000005E2AEFFC00      00007FFB10CB4508       aarch64+44B0
+//!    /// 1 0000005E2AEFFC20      00007FFB10CB45A0       aarch64+4508
+//!    /// 2 0000005E2AEFFC40      00007FFB10CB4640       aarch64+45A0
+//!    /// 3 0000005E2AEFFC60      00007FFB10CB46D4       aarch64+4640
+//!    /// 4 0000005E2AEFFC90      00007FF760473B98       aarch64+46D4
+//!    /// 5 0000005E2AEFFCB0      00007FFB8F062310       patina_stacktrace-45f5092641a5979a+3B98
+//!    /// 6 0000005E2AEFFD10      00007FFB8FF95AEC       kernel32+12310
+//!    /// 7 0000005E2AEFFD50      0000000000000000       ntdll+75AEC
 //!    /// ```
-//!     pub unsafe fn dump_with(rip: u64, rsp: u64) -> StResult<()>;
-//!    /// Dumps the stack trace. This function reads the RIP and RSP registers and
+//!    pub unsafe fn dump_with(stack_frame: StackFrame) -> StResult<()>;
+//!
+//!    /// Dumps the stack trace. This function reads the PC, SP, and FP values and
 //!    /// attempts to dump the call stack.
 //!    ///
 //!    /// # Safety
 //!    ///
 //!    /// It is marked `unsafe` to indicate that the caller is responsible for the
-//!    /// validity of the RIP and RSP values. Invalid or corrupt machine state can
-//!    /// result in undefined behavior, including potential page faults.
+//!    /// validity of the PC, SP, and FP values. Invalid or corrupt machine state
+//!    /// can result in undefined behavior, including potential page faults.
 //!    ///
 //!    /// ```text
 //!    /// # Child-SP              Return Address         Call Site
-//!    /// 0 000000346BCFFAC0      00007FF8A0A710E5       x64+1095
-//!    /// 1 000000346BCFFAF0      00007FF8A0A7115E       x64+10E5
-//!    /// 2 000000346BCFFB30      00007FF8A0A711E8       x64+115E
-//!    /// 3 000000346BCFFB70      00007FF8A0A7125F       x64+11E8
-//!    /// 4 000000346BCFFBB0      00007FF6801B0EF8       x64+125F
-//!    /// 5 000000346BCFFBF0      00007FF8A548E8D7       patina_stacktrace-326fa000ab73904b+10EF8
-//!    /// 6 000000346BCFFC60      00007FF8A749FBCC       kernel32+2E8D7
-//!    /// 7 000000346BCFFC90      0000000000000000       ntdll+2FBCC
+//!    /// 0 0000005E2AEFFC00      00007FFB10CB4508       aarch64+44B0
+//!    /// 1 0000005E2AEFFC20      00007FFB10CB45A0       aarch64+4508
+//!    /// 2 0000005E2AEFFC40      00007FFB10CB4640       aarch64+45A0
+//!    /// 3 0000005E2AEFFC60      00007FFB10CB46D4       aarch64+4640
+//!    /// 4 0000005E2AEFFC90      00007FF760473B98       aarch64+46D4
+//!    /// 5 0000005E2AEFFCB0      00007FFB8F062310       patina_stacktrace-45f5092641a5979a+3B98
+//!    /// 6 0000005E2AEFFD10      00007FFB8FF95AEC       kernel32+12310
+//!    /// 7 0000005E2AEFFD50      0000000000000000       ntdll+75AEC
 //!    /// ```
-//!     pub unsafe fn dump() -> StResult<()>;
-//!
+//!    pub unsafe fn dump() -> StResult<()>;
 //! ```
 //!
 //! ## API usage
 //!
 //! ```ignore
-//!     // Inside exception handler
-//!     StackTrace::dump_with(rip, rsp);
+//!     // Inside an exception handler
+//!     let stack_frame = StackFrame { pc: x64_context.rip, sp: x64_context.rsp, fp: x64_context.rbp };
+//!     StackTrace::dump_with(stack_frame); // X64
+//!     let stack_frame = StackFrame { pc: aarch64_context.elr, sp: aarch64_context.sp, fp: aarch64_context.fp };
+//!     StackTrace::dump_with(stack_frame); // AArch64
 //!
-//!     // Inside rust panic handler and drivers
+//!     // Inside a Rust panic handler and drivers
 //!     StackTrace::dump();
 //! ```
 //!
 //! ## Reference
 //!
-//! More reference test cases are in `src\x64\tests\*.rs`
+//! More reference test cases live in `src\x64\tests\*.rs`.
 
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
 #![feature(coverage_attribute)]
@@ -123,11 +126,14 @@ mod pe;
 mod stacktrace;
 
 cfg_if::cfg_if! {
-    if #[cfg(all(target_os = "uefi", target_arch = "aarch64"))] {
+    if #[cfg(test)] {
+        mod aarch64;
+        mod x64;
+    } else if #[cfg(all(target_os = "uefi", target_arch = "aarch64"))] {
         mod aarch64;
     } else {
         mod x64;
     }
 }
 
-pub use stacktrace::StackTrace;
+pub use stacktrace::{StackFrame, StackTrace};

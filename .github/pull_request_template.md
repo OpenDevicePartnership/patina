@@ -7,7 +7,6 @@
 - [ ] Breaking change?
 - [ ] Includes tests?
 - [ ] Includes documentation?
-- [ ] Creates a new crate?
 
 ## How This Was Tested
 
