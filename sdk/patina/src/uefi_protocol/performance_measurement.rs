@@ -40,7 +40,7 @@ pub enum PerfAttribute {
 }
 
 /// Function to create performance record with event description and a timestamp.
-pub type CreateMeasurementExt = unsafe extern "efiapi" fn(
+pub type CreateMeasurementUefi = unsafe extern "efiapi" fn(
     caller_identifier: *const c_void,
     guid: Option<&efi::Guid>,
     string: *const c_char,
@@ -63,7 +63,7 @@ pub type CreateMeasurement = fn(
 /// EDKII defined Performance Measurement Protocol structure.
 pub struct EdkiiPerformanceMeasurement {
     /// Function to create performance record with event description and a timestamp.
-    pub create_performance_measurement: CreateMeasurementExt,
+    pub create_performance_measurement: CreateMeasurementUefi,
 }
 
 unsafe impl ProtocolInterface for EdkiiPerformanceMeasurement {

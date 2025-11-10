@@ -23,7 +23,7 @@ use patina::{
     performance::{
         _smm::MmCommRegion,
         globals::{get_static_state, set_load_image_count, set_perf_measurement_mask, set_static_state},
-        measurement::{PerformanceProperty, create_performance_measurement, event_callback},
+        measurement::{PerformanceProperty, create_performance_measurement_protocol, event_callback},
         record::hob::{HobPerformanceData, HobPerformanceDataExtractor},
         table::FirmwareBasicBootPerfTable,
     },
@@ -132,7 +132,9 @@ impl Performance {
         // Install the protocol interfaces for DXE performance.
         boot_services.as_ref().install_protocol_interface(
             None,
-            Box::new(EdkiiPerformanceMeasurement { create_performance_measurement }),
+            Box::new(EdkiiPerformanceMeasurement {
+                create_performance_measurement: create_performance_measurement_protocol,
+            }),
         )?;
 
         // Register ReadyToBoot event to update the boot performance table for SMM performance data.

@@ -192,13 +192,14 @@ pub mod event_callback {
 }
 
 #[coverage(off)]
-// Tested via the generic version, see _create_performance_measurement. This one is using the static state which makes
-// it not mockable.
+// EDKII Performance Measurement Protocol implementation.
+//
+/// Skip coverage as this function is tested via the generic version, (_create_performance_measurement).
 ///
 /// # Safety
 /// `string` must be a valid C string pointer.
 /// `caller_identifier` must be a valid image handle or GUID pointer.
-pub unsafe extern "efiapi" fn create_performance_measurement(
+pub unsafe extern "efiapi" fn create_performance_measurement_protocol(
     caller_identifier: *const c_void,
     guid: Option<&efi::Guid>,
     string: *const c_char,
@@ -207,11 +208,6 @@ pub unsafe extern "efiapi" fn create_performance_measurement(
     identifier: u32,
     attribute: PerfAttribute,
 ) -> efi::Status {
-    let Some((boot_services, fbpt)) = get_static_state() else {
-        // If the state is not initialized, it is because perf in not enabled.
-        return efi::Status::SUCCESS;
-    };
-
     // SAFETY: The caller ensures that string is a valid C string pointer (or NULL).
     let string = unsafe { string.as_ref().map(|s| CStr::from_ptr(s).to_string_lossy().to_string()) };
 
@@ -250,7 +246,7 @@ pub unsafe extern "efiapi" fn create_performance_measurement(
             None => return efi::Status::INVALID_PARAMETER,
         }
     };
-    match _create_performance_measurement(
+    match create_performance_measurement(
         caller_identifier,
         guid,
         string.as_deref(),
@@ -258,8 +254,6 @@ pub unsafe extern "efiapi" fn create_performance_measurement(
         address,
         perf_id,
         attribute,
-        boot_services,
-        fbpt,
     ) {
         Ok(_) => efi::Status::SUCCESS,
         Err(Error::OutOfResources) => {
@@ -351,7 +345,8 @@ impl CallerIdentifier {
     }
 }
 
-pub fn create_performance_measurement_internal(
+/// Create a performance measurement and add it to the FBPT.
+pub fn create_performance_measurement(
     caller_identifier: CallerIdentifier,
     guid: Option<&efi::Guid>,
     string: Option<&str>,
@@ -368,7 +363,7 @@ pub fn create_performance_measurement_internal(
         string,
         ticker,
         address,
-        perf_id,
+        perf_id as u16,
         attribute,
         boot_services,
         fbpt,

@@ -77,7 +77,7 @@ use patina::{
     error::{self, Result},
     performance::{
         logging::{perf_function_begin, perf_function_end},
-        measurement::create_performance_measurement_internal,
+        measurement::create_performance_measurement,
     },
     pi::{
         hob::{HobList, get_c_hob_list_size},
@@ -392,7 +392,7 @@ impl Core<Alloc> {
     /// 1. A single iteration of dispatching Patina components, retaining those that were not dispatched.
     /// 2. A single iteration of dispatching UEFI drivers via the dispatcher module.
     fn core_dispatcher(&mut self) -> Result<()> {
-        perf_function_begin(function!(), &CALLER_ID, create_performance_measurement_internal);
+        perf_function_begin(function!(), &CALLER_ID, create_performance_measurement);
         loop {
             // Patina component dispatch
             let dispatched = self.dispatch_components();
@@ -405,7 +405,7 @@ impl Core<Alloc> {
                 break;
             }
         }
-        perf_function_end(function!(), &CALLER_ID, create_performance_measurement_internal);
+        perf_function_end(function!(), &CALLER_ID, create_performance_measurement);
 
         Ok(())
     }

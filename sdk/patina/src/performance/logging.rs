@@ -7,15 +7,11 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use alloc::ffi::CString;
 use r_efi::efi;
 
 use crate::{
     performance::{
-        Measurement,
-        globals::get_perf_measurement_mask,
-        measurement::{CallerIdentifier, create_performance_measurement_internal},
-        record::known::KnownPerfId,
+        Measurement, globals::get_perf_measurement_mask, measurement::CallerIdentifier, record::known::KnownPerfId,
     },
     uefi_protocol::performance_measurement::{CreateMeasurement, PerfAttribute},
 };
@@ -40,7 +36,7 @@ fn start_perf_measurement(
     token: Option<&str>,
     module: Option<&str>,
     timestamp: u64,
-    identifier: u16,
+    identifier: u32,
     create_performance_measurement: CreateMeasurement,
 ) {
     let string = if token.is_some() {
@@ -56,7 +52,7 @@ fn start_perf_measurement(
         string,
         timestamp,
         0,
-        identifier,
+        identifier as u16,
         PerfAttribute::PerfStartEntry,
     );
 }
@@ -67,7 +63,7 @@ fn end_perf_measurement(
     token: Option<&str>,
     module: Option<&str>,
     timestamp: u64,
-    identifier: u16,
+    identifier: u32,
     create_performance_measurement: CreateMeasurement,
 ) {
     let string = if token.is_some() {
@@ -83,7 +79,7 @@ fn end_perf_measurement(
         string,
         timestamp,
         0,
-        identifier,
+        identifier as u16,
         PerfAttribute::PerfEndEntry,
     );
 }
@@ -458,7 +454,7 @@ pub fn perf_start_ex(
     token: Option<&str>,
     module: Option<&str>,
     timestamp: u64,
-    identifier: u16,
+    identifier: u32,
     create_performance_measurement: CreateMeasurement,
 ) {
     start_perf_measurement(handle, token, module, timestamp, identifier, create_performance_measurement)
@@ -470,7 +466,7 @@ pub fn perf_end_ex(
     token: Option<&str>,
     module: Option<&str>,
     timestamp: u64,
-    identifier: u16,
+    identifier: u32,
     create_performance_measurement: CreateMeasurement,
 ) {
     end_perf_measurement(handle, token, module, timestamp, identifier, create_performance_measurement)

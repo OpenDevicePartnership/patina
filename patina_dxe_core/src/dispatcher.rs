@@ -18,7 +18,7 @@ use patina::{
     error::EfiError,
     performance::{
         logging::{perf_function_begin, perf_function_end},
-        measurement::create_performance_measurement_internal,
+        measurement::create_performance_measurement,
     },
     pi::{fw_fs::ffs, protocols::firmware_volume_block},
 };
@@ -491,14 +491,14 @@ pub fn core_dispatcher() -> Result<(), EfiError> {
         return Err(EfiError::AlreadyStarted);
     }
 
-    perf_function_begin(function!(), &CALLER_ID, create_performance_measurement_internal);
+    perf_function_begin(function!(), &CALLER_ID, create_performance_measurement);
 
     let mut something_dispatched = false;
     while dispatch()? {
         something_dispatched = true;
     }
 
-    perf_function_end(function!(), &CALLER_ID, create_performance_measurement_internal);
+    perf_function_end(function!(), &CALLER_ID, create_performance_measurement);
 
     if something_dispatched { Ok(()) } else { Err(EfiError::NotFound) }
 }
