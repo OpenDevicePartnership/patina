@@ -6,7 +6,7 @@
     },
     "exprs": {
       "safe": 22068,
-      "unsafe": 3395
+      "unsafe": 3386
     },
     "item_impls": {
       "safe": 522,
@@ -18,7 +18,7 @@
     },
     "methods": {
       "safe": 1449,
-      "unsafe": 78
+      "unsafe": 79
     }
   },
   "aarch64-unknown-uefi": {
@@ -28,7 +28,7 @@
     },
     "exprs": {
       "safe": 22068,
-      "unsafe": 3395
+      "unsafe": 3386
     },
     "item_impls": {
       "safe": 522,
@@ -40,7 +40,7 @@
     },
     "methods": {
       "safe": 1449,
-      "unsafe": 78
+      "unsafe": 79
     }
   }
 }
