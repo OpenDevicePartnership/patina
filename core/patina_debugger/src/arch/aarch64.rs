@@ -237,6 +237,7 @@ impl DebuggerArch for Aarch64Arch {
         match tokens.next() {
             Some("regs") => {
                 print_sysreg!(ttbr0_el2, out);
+                print_sysreg!(mair_el2, out);
                 print_sysreg!(esr_el2, out);
                 print_sysreg!(far_el2, out);
                 print_sysreg!(tcr_el2, out);

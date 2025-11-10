@@ -337,7 +337,7 @@ impl GCD {
         self.maximum_address = 1 << processor_address_bits;
     }
 
-    unsafe fn init_memory_blocks(
+    pub(crate) unsafe fn init_memory_blocks(
         &mut self,
         memory_type: dxe_services::GcdMemoryType,
         base_address: usize,
@@ -421,6 +421,7 @@ impl GCD {
         ensure!(self.maximum_address != 0, EfiError::NotReady);
         ensure!(len > 0, EfiError::InvalidParameter);
         ensure!(base_address.checked_add(len).is_some_and(|sum| sum <= self.maximum_address), EfiError::Unsupported);
+        ensure!(self.memory_blocks.capacity() > 0, EfiError::NotReady);
 
         log::trace!(target: "allocations", "[{}] Adding memory space at {:#x}", function!(), base_address);
         log::trace!(target: "allocations", "[{}]   Length: {:#x}", function!(), len);
@@ -435,9 +436,6 @@ impl GCD {
             capabilities |= efi::MEMORY_ISA_VALID;
         }
 
-        if self.memory_blocks.capacity() == 0 {
-            return unsafe { self.init_memory_blocks(memory_type, base_address, len, capabilities) };
-        }
         let memory_blocks = &mut self.memory_blocks;
 
         log::trace!(target: "gcd_measure", "search");
@@ -1853,6 +1851,23 @@ impl SpinLockedGcd {
         }
     }
 
+    /// Initializes the memory blocks in the GCD.
+    ///
+    /// # Safety
+    /// The caller must ensure that the memory region specified by `base_address` and `len` is freely usable RAM and
+    /// will never be used by any other part of the system at any time.
+    #[coverage(off)]
+    pub(crate) unsafe fn init_memory_blocks(
+        &self,
+        memory_type: dxe_services::GcdMemoryType,
+        base_address: usize,
+        len: usize,
+        capabilities: u64,
+    ) -> Result<usize, EfiError> {
+        // SAFETY: Caller must uphold the safety contract of init_memory_blocks
+        unsafe { self.memory.lock().init_memory_blocks(memory_type, base_address, len, capabilities) }
+    }
+
     pub fn prioritize_32_bit_memory(&self, value: bool) {
         self.memory.lock().prioritize_32_bit_memory = value;
     }
@@ -2726,7 +2741,7 @@ mod tests {
         let mut gcd = GCD::new(48);
 
         assert_eq!(
-            Err(EfiError::OutOfResources),
+            Err(EfiError::NotReady),
             unsafe { gcd.add_memory_space(dxe_services::GcdMemoryType::Reserved, address, MEMORY_BLOCK_SLICE_SIZE, 0) },
             "First add memory space should be a system memory."
         );
@@ -2735,7 +2750,12 @@ mod tests {
         assert_eq!(
             Err(EfiError::OutOfResources),
             unsafe {
-                gcd.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, address, MEMORY_BLOCK_SLICE_SIZE - 1, 0)
+                gcd.init_memory_blocks(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    MEMORY_BLOCK_SLICE_SIZE - 1,
+                    0,
+                )
             },
             "First add memory space with system memory should contain enough space to contain the block list."
         );
@@ -4016,7 +4036,7 @@ mod tests {
         let address = mem.as_ptr() as usize;
         let mut gcd = GCD::new(48);
         unsafe {
-            gcd.add_memory_space(
+            gcd.init_memory_blocks(
                 dxe_services::GcdMemoryType::SystemMemory,
                 address,
                 MEMORY_BLOCK_SLICE_SIZE,
@@ -4096,7 +4116,7 @@ mod tests {
             let address = mem.as_ptr() as usize;
             GCD.init(48, 16);
             unsafe {
-                GCD.add_memory_space(
+                GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
@@ -4128,13 +4148,18 @@ mod tests {
             let address = mem.as_ptr() as usize;
             GCD.init(48, 16);
             unsafe {
-                GCD.add_memory_space(
+                GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
                     efi::MEMORY_WB,
                 )
                 .unwrap();
+            }
+
+            unsafe {
+                GCD.add_memory_space(dxe_services::GcdMemoryType::SystemMemory, 0x1000, 0x1000, efi::MEMORY_WB)
+                    .unwrap();
             }
 
             assert!(CALLBACK_INVOKED.load(core::sync::atomic::Ordering::SeqCst));
@@ -4159,7 +4184,7 @@ mod tests {
             let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
             GCD.init(48, 16);
             unsafe {
-                GCD.add_memory_space(
+                GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
                     address,
                     MEMORY_BLOCK_SLICE_SIZE,
@@ -4189,7 +4214,7 @@ mod tests {
             let layout = Layout::from_size_align(GCD_SIZE, 0x1000).unwrap();
             let base = unsafe { std::alloc::System.alloc(layout) as u64 };
             unsafe {
-                GCD.add_memory_space(
+                GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
                     base as usize,
                     GCD_SIZE,
@@ -4234,7 +4259,7 @@ mod tests {
             let layout = Layout::from_size_align(GCD_SIZE, 0x1000).unwrap();
             let base = unsafe { std::alloc::System.alloc(layout) as u64 };
             unsafe {
-                GCD.add_memory_space(
+                GCD.init_memory_blocks(
                     dxe_services::GcdMemoryType::SystemMemory,
                     base as usize,
                     GCD_SIZE,
