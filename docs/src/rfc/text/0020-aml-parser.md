@@ -16,6 +16,7 @@ within a `patina-acpi` crate.
 - 2025-10-22: Update iteration interface and address prior art.
 - 2025-10-28: Move to FCP.
 - 2025-10-28: Add notes based on offline discussion of AML buffer parsing.
+- 2025-11-10: Completed RFC.
 
 ## Motivation
 
