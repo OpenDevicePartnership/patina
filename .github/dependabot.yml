@@ -1,0 +1,64 @@
+## @file
+# Dependabot configuration file for Patina repositories.
+#
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
+#
+# Copyright (c) Microsoft Corporation.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Please see the documentation for all dependabot configuration options:
+# https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
+##
+
+version: 2
+
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      timezone: "America/Los_Angeles"
+      time: "03:00"
+    commit-message:
+      prefix: "Rust Dependency"
+    labels:
+      - "type:dependencies"
+      - "type:dependabot"
+    rebase-strategy: "disabled"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      timezone: "America/Los_Angeles"
+      time: "06:00"
+    ignore:
+      # Ignore dependencies that are synced from patina-devops
+      - dependency-name: "OpenDevicePartnership/patina-devops"
+    commit-message:
+      prefix: "GitHub Action"
+    labels:
+      - "type:dependencies"
+      - "type:dependabot"
+    rebase-strategy: "disabled"
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      day: "wednesday"
+      timezone: "America/Los_Angeles"
+      time: "01:00"
+    commit-message:
+      prefix: "pip"
+    labels:
+      - "language:python"
+      - "type:dependencies"
+      - "type:dependabot"
+    rebase-strategy: "disabled"

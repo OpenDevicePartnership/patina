@@ -16,7 +16,7 @@ use patina::{
     pi::protocols::cpu_arch::EfiSystemContext,
 };
 use patina_paging::{PageTable, PagingType};
-use patina_stacktrace::StackTrace;
+use patina_stacktrace::{StackFrame, StackTrace};
 use x86_64::{
     VirtAddr,
     structures::idt::{InterruptDescriptorTable, InterruptStackFrame},
@@ -151,7 +151,8 @@ extern "efiapi" fn general_protection_fault_handler(_exception_type: isize, cont
     log::error!("Dumping Exception Stack Trace:");
     // SAFETY: As before, we don't have any choice. The stacktrace module will do its best to not cause a
     // recursive exception.
-    if let Err(err) = unsafe { StackTrace::dump_with(x64_context.rip, x64_context.rsp) } {
+    let stack_frame = StackFrame { pc: x64_context.rip, sp: x64_context.rsp, fp: x64_context.rbp };
+    if let Err(err) = unsafe { StackTrace::dump_with(stack_frame) } {
         log::error!("StackTrace: {err}");
     }
 
@@ -190,7 +191,8 @@ extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystem
     log::error!("Dumping Exception Stack Trace:");
     // SAFETY: As before, we don't have any choice. The stacktrace module will do its best to not cause a
     // recursive exception.
-    if let Err(err) = unsafe { StackTrace::dump_with(x64_context.rip, x64_context.rsp) } {
+    let stack_frame = StackFrame { pc: x64_context.rip, sp: x64_context.rsp, fp: x64_context.rbp };
+    if let Err(err) = unsafe { StackTrace::dump_with(stack_frame) } {
         log::error!("StackTrace: {err}");
     }
 

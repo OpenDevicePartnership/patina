@@ -246,7 +246,10 @@ pub fn init_misc_boot_services_support(bs: &mut efi::BootServices) {
 #[coverage(off)]
 mod tests {
     use super::*;
-    use crate::{systemtables, test_support};
+    use crate::{
+        systemtables::{self, EfiSystemTable},
+        test_support,
+    };
     use core::{ffi::c_void, ptr};
     use r_efi::efi;
     use std::cell::UnsafeCell;
@@ -274,25 +277,37 @@ mod tests {
         unsafe { core::mem::transmute(bs) }
     }
 
-    #[test]
-    fn test_init_misc_boot_services_support() {
+    fn with_locked_state<F>(f: F)
+    where
+        F: Fn(&mut EfiSystemTable) + std::panic::RefUnwindSafe,
+    {
         test_support::with_global_lock(|| {
+            unsafe {
+                crate::test_support::init_test_gcd(None);
+                crate::test_support::init_test_protocol_db();
+            }
+            crate::test_support::reset_dispatcher_context();
+            crate::systemtables::init_system_table();
+
             let mut st_guard = systemtables::SYSTEM_TABLE.lock();
             let st = st_guard.as_mut().expect("System Table not initialized!");
+            f(st);
+        })
+        .unwrap();
+    }
 
+    #[test]
+    fn test_init_misc_boot_services_support() {
+        with_locked_state(|st| {
             // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
             initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
             init_misc_boot_services_support(st.boot_services_mut());
-        })
-        .expect("Unexpected Error in test_init_misc_boot_services_support");
+        });
     }
 
     #[test]
     fn test_misc_calc_crc32() {
-        test_support::with_global_lock(|| {
-            let mut st_guard = systemtables::SYSTEM_TABLE.lock();
-            let st = st_guard.as_mut().expect("System Table not initialized!");
-
+        with_locked_state(|st| {
             // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
             initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
             init_misc_boot_services_support(st.boot_services_mut());
@@ -350,15 +365,11 @@ mod tests {
             } else {
                 log::warn!("Null output pointer returned unexpected status: {status:#x?}");
             }
-        })
-        .expect("Unexpected Error in test_misc_calc_crc32");
+        });
     }
     #[test]
     fn test_misc_watchdog_timer() {
-        test_support::with_global_lock(|| {
-            let mut st_guard = systemtables::SYSTEM_TABLE.lock();
-            let st = st_guard.as_mut().expect("System Table not initialized!");
-
+        with_locked_state(|st| {
             // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
             initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
             init_misc_boot_services_support(st.boot_services_mut());
@@ -397,15 +408,11 @@ mod tests {
             } else {
                 log::warn!("Disable watchdog timer with data returned unexpected status: {status:#x?}");
             }
-        })
-        .expect("Unexpected Error in test_misc_watchdog_timer");
+        });
     }
     #[test]
     fn test_misc_stall() {
-        test_support::with_global_lock(|| {
-            let mut st_guard = systemtables::SYSTEM_TABLE.lock();
-            let st = st_guard.as_mut().expect("System Table not initialized!");
-
+        with_locked_state(|st| {
             // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
             initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
             init_misc_boot_services_support(st.boot_services_mut());
@@ -433,22 +440,17 @@ mod tests {
             } else {
                 log::warn!("Maximum stall returned unexpected status: {status:#x?}");
             }
-        })
-        .expect("Unexpected Error in test_misc_stall");
+        });
     }
 
     #[test]
     fn test_misc_exit_boot_services() {
-        test_support::with_global_lock(|| {
+        with_locked_state(|st| {
             let valid_map_key: usize = 0x2000;
-            // Acquire the lock on SYSTEM_TABLE
-            let mut st_guard = systemtables::SYSTEM_TABLE.lock();
-            let st = st_guard.as_mut().expect("System Table not initialized!");
             init_misc_boot_services_support(st.boot_services_mut());
             // Call exit_boot_services with a valid map_key
             let handle: efi::Handle = 0x1000 as efi::Handle; // Example handle
             let _status = (st.boot_services_mut().exit_boot_services)(handle, valid_map_key);
-        })
-        .expect("Unexpected Error in test_misc_exit_boot_services");
+        });
     }
 }

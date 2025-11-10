@@ -68,7 +68,8 @@ default = []
 # with the `#[patina_test]` attribute. Otherwise, a linker crash or failure will
 # occur!
 enable_patina_tests = ["patina_macro/enable_patina_tests"]
-serde = ["dep:serde", "dep:serde_yaml", "dep:serde_json"]
+serde = ["dep:serde", "dep:serde_json"]
+serde-with-yaml = ["serde", "dep:serde_yaml"]
 
 unstable = ["unstable-device-path"]
 unstable-device-path = []

@@ -550,7 +550,7 @@ mod tests {
     use uuid::uuid;
 
     use super::*;
-    use crate::test_collateral;
+    use crate::{test_collateral, test_support};
 
     // Simple logger for log crate to dump stuff in tests
     struct SimpleLogger;
@@ -581,9 +581,9 @@ mod tests {
     where
         F: Fn() + std::panic::RefUnwindSafe,
     {
-        crate::test_support::with_global_lock(|| {
-            unsafe { crate::test_support::init_test_protocol_db() };
-            *DISPATCHER_CONTEXT.lock() = DispatcherContext::new();
+        test_support::with_global_lock(|| {
+            unsafe { test_support::init_test_protocol_db() };
+            test_support::reset_dispatcher_context();
             f();
         })
         .unwrap();

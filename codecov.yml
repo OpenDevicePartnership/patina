@@ -1,8 +1,13 @@
 # @file codecov.yml
 #
-# Codecov configuration file
+# Codecov configuration file for Patina repositories.
 #
-##
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
+#
 # Copyright (c) Microsoft Corporation
 # SPDX-License-Identifier: Apache-2.0
 ##
@@ -22,5 +27,6 @@ coverage:
         target: 80% # Target 80% coverage for the patch
         only_pulls: true
 comment:
+  after_n_builds: 2
   layout: "condensed_header, condensed_files, condensed_footer"
   hide_project_coverage: true # Only show patch coverage in a PR comment

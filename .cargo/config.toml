@@ -1,6 +1,13 @@
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
+
 [net]
 git-fetch-with-cli = true
 
 # This tells cargo to consider the MSV of rust for our crate vs our dependencies.
 [resolver]
 incompatible-rust-versions = "fallback"
+

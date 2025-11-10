@@ -39,6 +39,7 @@
 # Patina DXE Core Platform Integration
 
 - [Patina DXE Core Requirements](integrate/patina_dxe_core_requirements.md)
+- [Patina DXE Core Requirements Checklist](integrate/patina_dxe_core_requirements_checklist.md)
 - [Setting up the Patina DXE Core](integrate/dxe_core.md)
 
 # Patina Component Model

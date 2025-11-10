@@ -11,6 +11,7 @@ use core::{
     ffi::c_void,
     marker::PhantomData,
     mem::{self, ManuallyDrop},
+    num::NonZeroUsize,
     ops::Deref,
     ptr,
 };
@@ -30,12 +31,14 @@ impl<T> Clone for PtrMetadata<'_, T> {
 }
 
 impl<'a, R: CPtr<'a, Type = T>, T> PtrMetadata<'a, R> {
-    /// retrieve the original pointer from the pointer metadata
+    /// Attempts to retrieve the original pointer from the pointer metadata.
+    ///
+    /// Returns `None` if the stored pointer value is null.
     ///
     /// # Safety
     /// Caller must ensure that the pointed-to memory is still valid and uphold rust pointer invariants (e.g. no aliasing)
-    pub unsafe fn into_original_ptr(self) -> R {
-        unsafe { mem::transmute_copy(&self.ptr_value) }
+    pub unsafe fn try_into_original_ptr(self) -> Option<R> {
+        NonZeroUsize::new(self.ptr_value).map(|non_zero| unsafe { mem::transmute_copy(&non_zero.get()) })
     }
 }
 

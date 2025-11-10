@@ -10,7 +10,7 @@
 use crate::log_registers;
 use core::arch::asm;
 use patina::{error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
-use patina_stacktrace::StackTrace;
+use patina_stacktrace::{StackFrame, StackTrace};
 
 cfg_if::cfg_if! {
     if #[cfg(all(target_os = "uefi", target_arch = "x86_64"))] {
@@ -34,7 +34,8 @@ impl super::EfiExceptionStackTrace for ExceptionContextX64 {
     fn dump_stack_trace(&self) {
         // SAFETY: This is called during an exception, we don't have any choice but to trust the exception context
         // and the stack trace module will do its best to not cause a recursive exception
-        if let Err(err) = unsafe { StackTrace::dump_with(self.rip, self.rsp) } {
+        let stack_frame = StackFrame { pc: self.rip, sp: self.rsp, fp: self.rbp };
+        if let Err(err) = unsafe { StackTrace::dump_with(stack_frame) } {
             log::error!("StackTrace: {err}");
         }
     }

@@ -268,7 +268,9 @@ impl<T: DriverBinding + 'static, U: BootServices + 'static> UefiDriverBinding<T,
         };
 
         // SAFETY: This is safe because the pointer behind this metada has been leak in install an is still valid.
-        let uefi_driver_binding = ManuallyDrop::new(unsafe { PtrMetadata::clone(ptr_metadata).into_original_ptr() });
+        let uefi_driver_binding = unsafe { PtrMetadata::clone(ptr_metadata).try_into_original_ptr() }
+            .ok_or(efi::Status::INVALID_PARAMETER)
+            .map(ManuallyDrop::new)?;
 
         // SAFETY: This is safe because _UefiDriverBinding interface is compliant to the expected interface of driver binding guid.
         unsafe {

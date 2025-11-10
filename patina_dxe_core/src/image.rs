@@ -370,7 +370,7 @@ fn empty_image_info() -> efi::protocols::loaded_image::Protocol {
     }
 }
 
-fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateImageData) {
+fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateImageData) -> Result<(), EfiError> {
     for section in &pe_info.sections {
         let mut attributes = efi::MEMORY_XP;
         if section.characteristics & pecoff::IMAGE_SCN_CNT_CODE == pecoff::IMAGE_SCN_CNT_CODE {
@@ -403,7 +403,7 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
                     "Failed to find GCD desc for image section {section_base_addr:#X} with Status {status:#X?}",
                 );
                 debug_assert!(false);
-                continue;
+                return Err(status);
             }
         }
 
@@ -421,7 +421,7 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
                 pe_info.section_alignment
             );
             debug_assert!(false);
-            continue;
+            return Err(EfiError::LoadError);
         };
 
         if let Err(status) =
@@ -440,13 +440,14 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
             "Applying image memory protections on {section_base_addr:#X} for len {aligned_virtual_size:#X} with attributes {attributes:#X}",
         );
 
-        match dxe_services::core_set_memory_space_attributes(section_base_addr, aligned_virtual_size, attributes) {
-            Ok(_) => continue,
-            Err(status) => log::error!(
-                "Failed to set GCD attributes for image section {section_base_addr:#X} with Status {status:#X?}",
-            ),
-        }
+        dxe_services::core_set_memory_space_attributes(section_base_addr, aligned_virtual_size, attributes)
+            .inspect_err(|status| {
+                log::error!(
+                    "Failed to set GCD attributes for image section {section_base_addr:#X} with Status {status:#X?}",
+                );
+            })?;
     }
+    Ok(())
 }
 
 fn remove_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateImageData) {
@@ -683,7 +684,7 @@ fn core_load_pe_image(
         _ => {
             // finally, update the GCD attributes for this image so that code sections have RO set and data sections
             // have XP
-            apply_image_memory_protections(&pe_info, &private_info);
+            apply_image_memory_protections(&pe_info, &private_info)?;
         }
     }
 

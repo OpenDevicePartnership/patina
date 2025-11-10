@@ -364,7 +364,7 @@ pub trait BootServices {
             match self.install_protocol_interface_unchecked(handle, &T::PROTOCOL_GUID, protocol_interface_ptr) {
                 Ok(handle) => Ok((handle, key)),
                 Err(status) => {
-                    _ = key.into_original_ptr();
+                    _ = key.try_into_original_ptr();
                     Err(status)
                 }
             }
@@ -406,7 +406,7 @@ pub trait BootServices {
         unsafe { self.uninstall_protocol_interface_unchecked(handle, &T::PROTOCOL_GUID, interface_ptr) }?;
 
         // SAFETY: Pointer is leak when installed and kept unchanged.
-        Ok(unsafe { key.into_original_ptr() })
+        unsafe { key.try_into_original_ptr() }.ok_or(efi::Status::INVALID_PARAMETER)
     }
 
     /// Use [`BootServices::uninstall_protocol_interface`] when possible.
@@ -456,7 +456,9 @@ pub trait BootServices {
             )?;
         }
         // SAFETY: Pointer is leak when installed and kept unchanged.
-        Ok((new_key, unsafe { old_protocol_interface_key.into_original_ptr() }))
+        let old_interface =
+            unsafe { old_protocol_interface_key.try_into_original_ptr() }.ok_or(efi::Status::INVALID_PARAMETER)?;
+        Ok((new_key, old_interface))
     }
 
     /// Use [`BootServices::reinstall_protocol_interface`] when possible.

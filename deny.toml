@@ -1,5 +1,11 @@
 # This template contains all of the possible sections and their default values
 
+# NOTE: This file is automatically synchronized from Patina DevOps. Update the original file there
+#       instead of the file in this repo.
+#
+# - Patina DevOps Repo: https://github.com/OpenDevicePartnership/patina-devops
+# - File Sync Settings: https://github.com/OpenDevicePartnership/patina-devops/blob/main/.sync/Files.yml
+
 # Note that all fields that take a lint level have these possible values:
 # * deny - An error will be produced and the check will fail
 # * warn - A warning will be produced, but the check will not fail
