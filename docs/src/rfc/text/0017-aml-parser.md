@@ -377,6 +377,7 @@ The general flow for using the `AmlParser` service will be:
 For example, suppose `AmlParser` is being used to parse the following DSDT
 and patch `VAL0` from `0x00` (invalid value) to `0x99` (some valid value):
 
+<!-- cspell:disable -->
 ```plain-text
 0000: 44 53 44 54 54 00 00 00 02 7D 4F 45 4D 49 44 20  DSDTT....}OEMID 
 0010: 45 58 41 4D 50 20 20 20 20 31 00 00 00 41 4D 4C  EXAMP    1...AML
@@ -395,6 +396,7 @@ Thus the trailing AML bytecode is:
 0040: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
 0050: 00 00 00 00  
 ```
+<!-- cspell:enable -->
 
 In plain ASL this translates to:
 
