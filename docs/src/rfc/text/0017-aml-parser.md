@@ -359,8 +359,8 @@ The name of a node can be read easily as all named nodes follow the format:
 
 ### Handle Lifetime
 
-Since each handle points to memory within an ACPI table, a handle cannot outlive its corresponding table. 
-This is guaranteed at compile-time by the `table: &'t mut AmlTable,` within the `AmlSdtHandleInternal<'t>`. 
+Since each handle points to memory within an ACPI table, a handle cannot outlive its corresponding table.
+This is guaranteed at compile-time by the `table: &'t mut AmlTable,` within the `AmlSdtHandleInternal<'t>`.
 (The main case this addresses is when a table is uninstalled but an open handle still references the table.)
 
 ## Guide-Level Explanation
