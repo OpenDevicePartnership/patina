@@ -12,12 +12,16 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
+
+mod comm_buffer_update;
+
 use crate::{
     config::{CommunicateBuffer, EfiMmCommunicateHeader, MmCommunicationConfiguration},
     service::SwMmiTrigger,
 };
 use patina::{
     Guid,
+    boot_services::StandardBootServices,
     component::{
         IntoComponent, Storage,
         service::{IntoService, Service},
@@ -150,19 +154,23 @@ pub trait MmCommunication {
 #[derive(IntoComponent, IntoService)]
 #[service(dyn MmCommunication)]
 pub struct MmCommunicator {
+    /// Configured communication buffers
     comm_buffers: RefCell<Vec<CommunicateBuffer>>,
+    /// The MM Executor actively handling MM execution
     mm_executor: Option<Box<dyn MmExecutor>>,
+    /// Context shared with protocol callback for pending buffer updates
+    notify_context: Option<&'static comm_buffer_update::ProtocolNotifyContext>,
 }
 
 impl MmCommunicator {
-    /// Create a new `MmCommunicator` instance.
+    /// Create a new `MmCommunicator` instance for testing.
     pub fn new() -> Self {
-        Self { comm_buffers: RefCell::new(Vec::new()), mm_executor: None }
+        Self { comm_buffers: RefCell::new(Vec::new()), mm_executor: None, notify_context: None }
     }
 
     /// Create a new `MmCommunicator` instance with a custom MM executor (for testing).
     pub fn with_executor(executor: Box<dyn MmExecutor>) -> Self {
-        Self { comm_buffers: RefCell::new(Vec::new()), mm_executor: Some(executor) }
+        Self { comm_buffers: RefCell::new(Vec::new()), mm_executor: Some(executor), notify_context: None }
     }
 
     /// Set communication buffers for testing purposes.
@@ -174,23 +182,57 @@ impl MmCommunicator {
         mut self,
         storage: &mut Storage,
         sw_mmi_trigger: Service<dyn SwMmiTrigger>,
+        boot_services: StandardBootServices,
     ) -> patina::error::Result<()> {
         log::info!(target: "mm_comm", "MM Communicator entry...");
 
         // Create the real MM executor
         self.mm_executor = Some(Box::new(RealMmExecutor::new(sw_mmi_trigger)));
 
-        let comm_buffers = {
+        let (comm_buffers, enable_buffer_updates, updatable_buffer_id) = {
             let config = storage
                 .get_config::<MmCommunicationConfiguration>()
                 .expect("Failed to get MM Configuration Config from storage");
 
-            log::trace!(target: "mm_comm", "Retrieved MM configuration: comm_buffers_count={}", config.comm_buffers.len());
-            config.comm_buffers.clone()
+            log::trace!(
+                target: "mm_comm",
+                "Retrieved MM configuration: comm_buffers_count={}, enable_buffer_updates={}, updatable_buffer_id={:?}",
+                config.comm_buffers.len(),
+                config.enable_comm_buffer_updates,
+                config.updatable_buffer_id
+            );
+            (config.comm_buffers.clone(), config.enable_comm_buffer_updates, config.updatable_buffer_id)
         };
 
         self.comm_buffers = RefCell::new(comm_buffers);
-        log::info!(target: "mm_comm", "MM Communicator initialized with {} communication buffers", self.comm_buffers.borrow().len());
+
+        let buffer_count = self.comm_buffers.borrow().len();
+        log::info!(target: "mm_comm", "MM Communicator initialized with {} communication buffers", buffer_count);
+
+        // Only setup a protocol notify callback if buffer updates are enabled and a buffer ID was given
+        if enable_buffer_updates {
+            if let Some(buffer_id) = updatable_buffer_id {
+                log::info!(
+                    target: "mm_comm",
+                    "MM comm buffer updates enabled for buffer ID {}",
+                    buffer_id
+                );
+
+                // SAFETY: The communicator reference remains valid as a stored service
+                let self_ptr = &self as *const MmCommunicator;
+                let context = comm_buffer_update::register_buffer_update_notify(boot_services, buffer_id, self_ptr)?;
+
+                // Store context reference for checking pending updates in communicate()
+                self.notify_context = Some(context);
+            } else {
+                log::warn!(
+                    target: "mm_comm",
+                    "MM comm buffer updates enabled but no updatable_buffer_id is configured"
+                );
+            }
+        } else {
+            log::info!(target: "mm_comm", "MM comm buffer updates disabled");
+        }
 
         storage.add_service(self);
 
@@ -213,6 +255,12 @@ impl MmCommunication for MmCommunicator {
     fn communicate<'a>(&self, id: u8, data_buffer: &[u8], recipient: Guid<'a>) -> Result<Vec<u8>, Status> {
         log::debug!(target: "mm_comm", "Starting MM communication: buffer_id={}, data_size={}, recipient={:?}", id, data_buffer.len(), recipient);
 
+        // Check for and apply any pending buffer updates from a potential protocol callback
+        if let Some(context) = self.notify_context {
+            let mut comm_buffers = self.comm_buffers.borrow_mut();
+            comm_buffer_update::apply_pending_buffer_update(context, &mut comm_buffers);
+        }
+
         if self.comm_buffers.borrow().is_empty() {
             log::warn!(target: "mm_comm", "No communication buffers available");
             return Err(Status::NoCommBuffer);
@@ -229,10 +277,11 @@ impl MmCommunication for MmCommunicator {
         })?;
 
         let mut comm_buffers = self.comm_buffers.borrow_mut();
-        let comm_buffer: &mut CommunicateBuffer = comm_buffers.iter_mut().find(|x| x.id() == id).ok_or_else(|| {
-            log::warn!(target: "mm_comm", "Communication buffer not found: id={}", id);
-            Status::CommBufferNotFound
-        })?;
+        let comm_buffer: &mut CommunicateBuffer =
+            comm_buffers.iter_mut().find(|x| x.id() == id && x.is_enabled()).ok_or_else(|| {
+                log::warn!(target: "mm_comm", "Communication buffer not found or it is disabled: id={}", id);
+                Status::CommBufferNotFound
+            })?;
 
         let total_required_comm_buffer_length = EfiMmCommunicateHeader::size() + data_buffer.len();
         log::trace!(target: "mm_comm", "Buffer validation: buffer_len={}, required_len={}", comm_buffer.len(), total_required_comm_buffer_length);
@@ -259,8 +308,35 @@ impl MmCommunication for MmCommunicator {
         log::debug!(target: "mm_comm", "Request Data (hex): {:02X?}", &data_buffer[..core::cmp::min(data_buffer.len(), 64)]);
         log::trace!(target: "mm_comm", "Comm buffer before request: {:?}", comm_buffer);
 
+        // Set the mailbox status to indicate buffer is valid before triggering MMI
+        // For MM environments with a mailbox, this is required for the MM core to process
+        // the communication buffer
+        if comm_buffer.has_status_mailbox() {
+            log::trace!(target: "mm_comm", "Setting comm buffer status to valid before triggering MMI");
+            comm_buffer.set_comm_buffer_valid().map_err(|_| {
+                log::error!(target: "mm_comm", "Failed to set comm buffer valid status");
+                Status::CommBufferInitError
+            })?;
+        } else {
+            log::warn!(target: "mm_comm", "Buffer {} has no status mailbox - MM communication may not work correctly", id);
+        }
+
         log::debug!(target: "mm_comm", "Executing MM communication");
         mm_executor.execute_mm(comm_buffer)?;
+
+        // Read the return status from MM if a mailbox is available
+        if comm_buffer.has_status_mailbox() {
+            let (return_status, return_buffer_size) = comm_buffer.get_mm_return_status().map_err(|_| {
+                log::error!(target: "mm_comm", "Failed to get MM return status");
+                Status::InvalidResponse
+            })?;
+            log::trace!(target: "mm_comm", "MM return status: 0x{:X}, buffer size: 0x{:X}", return_status, return_buffer_size);
+
+            // Check if MM communication was successful (EFI_SUCCESS = 0)
+            if return_status != 0 {
+                log::warn!(target: "mm_comm", "MM handler returned error status: 0x{:X}", return_status);
+            }
+        }
 
         log::trace!(target: "mm_comm", "MM communication completed successfully, retrieving response");
         let response = comm_buffer.get_message().map_err(|_| {
@@ -369,6 +445,7 @@ mod tests {
             MmCommunicator {
                 comm_buffers: RefCell::new(vec![CommunicateBuffer::new(Pin::new(buffer), 0)]),
                 mm_executor: Some(Box::new($mock_executor)),
+                notify_context: None,
             }
         }};
     }
@@ -377,7 +454,7 @@ mod tests {
         buffers: Vec<CommunicateBuffer>,
         executor: Box<dyn MmExecutor>,
     ) -> MmCommunicator {
-        MmCommunicator { comm_buffers: RefCell::new(buffers), mm_executor: Some(executor) }
+        MmCommunicator { comm_buffers: RefCell::new(buffers), mm_executor: Some(executor), notify_context: None }
     }
 
     #[test]
@@ -389,7 +466,9 @@ mod tests {
         let mut communicator = MmCommunicator::new().into_component();
 
         communicator.initialize(&mut storage);
-        assert_eq!(communicator.run(&mut storage), Ok(true));
+        // Component requires StandardBootServices which is not available in unit tests,
+        // so it should return Ok(false) indicating it cannot run yet
+        assert_eq!(communicator.run(&mut storage), Ok(false));
     }
 
     #[test]
@@ -397,8 +476,11 @@ mod tests {
         let mut mock_executor = MockMmExecutor::new();
         mock_executor.expect_execute_mm().never();
 
-        let communicator =
-            MmCommunicator { comm_buffers: RefCell::new(vec![]), mm_executor: Some(Box::new(mock_executor)) };
+        let communicator = MmCommunicator {
+            comm_buffers: RefCell::new(vec![]),
+            mm_executor: Some(Box::new(mock_executor)),
+            notify_context: None,
+        };
         let result = communicator.communicate(0, &TEST_DATA, test_recipient());
         assert_eq!(result, Err(Status::NoCommBuffer));
     }
@@ -418,6 +500,7 @@ mod tests {
         let communicator = MmCommunicator {
             comm_buffers: RefCell::new(vec![CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 1024]))), 0)]),
             mm_executor: None,
+            notify_context: None,
         };
         let result = communicator.communicate(0, &TEST_DATA, test_recipient());
         assert_eq!(result, Err(Status::SwMmiServiceNotAvailable));

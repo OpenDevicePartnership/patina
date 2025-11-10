@@ -101,6 +101,9 @@ impl SwMmiManager {
 //         platform has published MM configuration and had an opportunity to provide a platform-specific MM control
 //         service.
 unsafe impl SwMmiTrigger for SwMmiManager {
+    // This is tested in integration tests, but it is difficult to unit test with little value returned due to
+    // the nature of hardware I/O port operations.
+    #[coverage(off)]
     fn trigger_sw_mmi(&self, _cmd_port_value: u8, _data_port_value: u8) -> patina::error::Result<()> {
         log::debug!(target: "sw_mmi", "Triggering SW MMI with cmd_port_value=0x{:02X}, data_port_value=0x{:02X}", _cmd_port_value, _data_port_value);
 
@@ -162,6 +165,7 @@ unsafe impl SwMmiTrigger for SwMmiManager {
 }
 
 impl Default for SwMmiManager {
+    #[coverage(off)]
     fn default() -> Self {
         Self::new()
     }

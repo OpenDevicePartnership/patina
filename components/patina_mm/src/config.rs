@@ -24,6 +24,46 @@ use core::{fmt, pin::Pin, ptr::NonNull};
 
 use patina::{Guid, base::UEFI_PAGE_MASK};
 use r_efi::efi;
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
+
+/// MM Communication Buffer Status
+///
+/// Shared structure between DXE and MM environments to communicate the status
+/// of MM communication operations. This structure is written by DXE before
+/// triggering an MMI and read/written by MM during MMI processing.
+///
+/// This is a structure currently used in some MM Supervisor MM implementations.
+#[derive(Debug, Clone, Copy, FromBytes, IntoBytes, Immutable, KnownLayout)]
+#[repr(C, packed)]
+pub struct MmCommBufferStatus {
+    /// Whether the data in the fixed MM communication buffer is valid when entering from non-MM to MM.
+    /// Must be set to TRUE before triggering MMI, will be set to FALSE by MM after processing.
+    pub is_comm_buffer_valid: u8,
+
+    /// The channel used to communicate with MM.
+    /// FALSE = user buffer, TRUE = supervisor buffer
+    pub talk_to_supervisor: u8,
+
+    /// The return status when returning from MM to non-MM.
+    pub return_status: u64,
+
+    /// The size in bytes of the output buffer when returning from MM to non-MM.
+    pub return_buffer_size: u64,
+}
+
+impl Default for MmCommBufferStatus {
+    #[coverage(off)]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MmCommBufferStatus {
+    /// Create a new mailbox status with all fields zeroed
+    pub const fn new() -> Self {
+        Self { is_comm_buffer_valid: 0, talk_to_supervisor: 0, return_status: 0, return_buffer_size: 0 }
+    }
+}
 
 /// Management Mode (MM) Configuration
 ///
@@ -38,6 +78,14 @@ pub struct MmCommunicationConfiguration {
     pub data_port: MmiPort,
     /// List of Management Mode (MM) Communicate Buffers
     pub comm_buffers: Vec<CommunicateBuffer>,
+    /// Enable runtime buffer updates (currently via the MM Communication Buffer Update Protocol).
+    /// When enabled, the communicator will register a protocol notify to update
+    /// the buffer specified by `updatable_buffer_id`.
+    pub enable_comm_buffer_updates: bool,
+    /// Buffer ID to update when MM Communication Buffer Update Protocol is installed.
+    /// Only used when `enable_comm_buffer_updates` is true.
+    /// If None when updates are enabled, no buffer will be updated.
+    pub updatable_buffer_id: Option<u8>,
 }
 
 impl Default for MmCommunicationConfiguration {
@@ -47,6 +95,8 @@ impl Default for MmCommunicationConfiguration {
             cmd_port: MmiPort::Smi(0xFF),
             data_port: MmiPort::Smi(0x00),
             comm_buffers: Vec::new(),
+            enable_comm_buffer_updates: false,
+            updatable_buffer_id: None,
         }
     }
 }
@@ -166,6 +216,13 @@ pub struct CommunicateBuffer {
     private_recipient: Option<efi::Guid>,
     /// Message length tracked independently to check against comm buffer contents
     private_message_length: usize,
+    /// Whether this buffer is enabled and should be used for communication.
+    /// Disabled buffers are skipped when searching for buffers by ID.
+    enabled: bool,
+    /// Pointer to the MM communication buffer status mailbox structure.
+    /// This is used to communicate status between DXE and MM environments.
+    /// If None, this is a buffer without mailbox status support.
+    status_mailbox: Option<NonNull<MmCommBufferStatus>>,
 }
 
 impl CommunicateBuffer {
@@ -184,7 +241,15 @@ impl CommunicateBuffer {
         let ptr: NonNull<[u8]> = NonNull::from_mut(Pin::into_inner(buffer));
 
         log::trace!(target: "mm_comm", "CommunicateBuffer {} created successfully at address {:p}", id, ptr);
-        Self { buffer: ptr, id, length, private_recipient: None, private_message_length: 0 }
+        Self {
+            buffer: ptr,
+            id,
+            length,
+            private_recipient: None,
+            private_message_length: 0,
+            enabled: true,
+            status_mailbox: None,
+        }
     }
 
     /// Returns a reference to the buffer as a slice of bytes.
@@ -263,10 +328,12 @@ impl CommunicateBuffer {
     /// - The memory region is valid and accessible throughout buffer lifetime
     /// - The memory is not used by other components concurrently
     /// - The firmware has guaranteed the memory region is stable and properly mapped
+    /// - If provided, the status_mailbox_address points to a valid MmCommBufferStatus structure
     pub unsafe fn from_firmware_region(
         address: u64,
         size_bytes: usize,
         buffer_id: u8,
+        status_mailbox_address: Option<u64>,
     ) -> Result<Self, CommunicateBufferStatus> {
         // Check that the address provided is addressable on this system.
         // A 32-bit system will fail this if the address is over 4GB.
@@ -286,8 +353,21 @@ impl CommunicateBuffer {
             buffer_id
         );
 
-        // SAFETY: Caller guarantees firmware memory region is valid and stable
-        unsafe { Self::from_raw_parts(ptr, size_bytes, buffer_id) }
+        // SAFETY: Caller guarantees firmware memory region is valid and stable per the function safety contract
+        let mut buffer = unsafe { Self::from_raw_parts(ptr, size_bytes, buffer_id)? };
+
+        // Set up the status mailbox if provided
+        if let Some(status_addr) = status_mailbox_address {
+            let status_addr =
+                usize::try_from(status_addr).map_err(|_| CommunicateBufferStatus::AddressValidationFailed)?;
+            let status_ptr = status_addr as *mut MmCommBufferStatus;
+
+            // SAFETY: Caller guarantees the status mailbox address is valid
+            buffer.status_mailbox = NonNull::new(status_ptr);
+            log::info!(target: "mm_comm", "Buffer {} status mailbox configured at address 0x{:X}", buffer_id, status_addr);
+        }
+
+        Ok(buffer)
     }
 
     /// Returns the length of the buffer.
@@ -303,6 +383,18 @@ impl CommunicateBuffer {
     /// Returns the ID of the buffer.
     pub fn id(&self) -> u8 {
         self.id
+    }
+
+    /// Returns whether this buffer is enabled for communication.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Disables this buffer, preventing it from being used for communication.
+    /// Disabled buffers are skipped when searching for buffers by ID.
+    pub fn disable(&mut self) {
+        log::debug!(target: "mm_comm", "Disabling comm buffer {}", self.id);
+        self.enabled = false;
     }
 
     /// Returns a pointer to the underlying buffer memory.
@@ -321,6 +413,70 @@ impl CommunicateBuffer {
     /// - Use the pointer after the buffer has been dropped
     pub fn as_ptr(&self) -> *mut u8 {
         self.buffer.as_ptr().cast::<u8>()
+    }
+
+    /// Sets the communication buffer status to indicate a valid buffer before triggering MMI.
+    ///
+    /// This must be called before triggering the SW MMI to inform the MM core that
+    /// the communication buffer contains valid data to process.
+    ///
+    /// ## Returns
+    ///
+    /// - `Ok(())` if the status was set successfully
+    /// - `Err(CommunicateBufferStatus)` if this buffer has no status mailbox configured
+    pub fn set_comm_buffer_valid(&mut self) -> Result<(), CommunicateBufferStatus> {
+        if let Some(mut status_ptr) = self.status_mailbox {
+            // SAFETY: The status mailbox pointer was validated during buffer creation
+            unsafe {
+                let status = status_ptr.as_mut();
+                status.is_comm_buffer_valid = 1; // TRUE
+                status.talk_to_supervisor = 0; // FALSE - use user buffer
+                log::trace!(target: "mm_comm", "Buffer {} status mailbox: IsCommBufferValid=TRUE", self.id);
+            }
+            Ok(())
+        } else {
+            log::error!(target: "mm_comm", "Buffer {} has no status mailbox configured", self.id);
+            Err(CommunicateBufferStatus::NoBuffer)
+        }
+    }
+
+    /// Reads the return status from the MM communication after MMI completes.
+    ///
+    /// Returns the return status and buffer size set by the MM handler.
+    ///
+    /// ## Returns
+    ///
+    /// - `Ok((return_status, return_buffer_size))` if the status was read successfully
+    /// - `Err(CommunicateBufferStatus)` if this buffer has no status mailbox configured
+    pub fn get_mm_return_status(&self) -> Result<(u64, u64), CommunicateBufferStatus> {
+        if let Some(status_ptr) = self.status_mailbox {
+            // SAFETY: The status mailbox pointer was validated during buffer creation
+            unsafe {
+                let status = status_ptr.as_ref();
+                // Copy packed fields to avoid unaligned reference errors
+                let is_valid = status.is_comm_buffer_valid;
+                let return_status = status.return_status;
+                let return_buffer_size = status.return_buffer_size;
+
+                log::trace!(
+                    target: "mm_comm",
+                    "Buffer {} return status: IsCommBufferValid={}, ReturnStatus=0x{:X}, ReturnBufferSize=0x{:X}",
+                    self.id,
+                    is_valid,
+                    return_status,
+                    return_buffer_size
+                );
+                Ok((return_status, return_buffer_size))
+            }
+        } else {
+            log::error!(target: "mm_comm", "Buffer {} has no status mailbox configured", self.id);
+            Err(CommunicateBufferStatus::NoBuffer)
+        }
+    }
+
+    /// Returns whether this buffer has a status mailbox configured.
+    pub fn has_status_mailbox(&self) -> bool {
+        self.status_mailbox.is_some()
     }
 
     /// Resets the communication buffer by clearing all data and resetting internal state.
@@ -850,6 +1006,20 @@ mod tests {
     }
 
     #[test]
+    fn test_set_comm_buffer_valid_without_status_mailbox() {
+        let buffer: &'static mut [u8; 64] = Box::leak(Box::new([0u8; 64]));
+        let mut comm_buffer = CommunicateBuffer::new(Pin::new(&mut buffer[..]), 1);
+        assert!(matches!(comm_buffer.set_comm_buffer_valid(), Err(CommunicateBufferStatus::NoBuffer)));
+    }
+
+    #[test]
+    fn test_get_mm_return_status_without_status_mailbox() {
+        let buffer: &'static mut [u8; 64] = Box::leak(Box::new([0u8; 64]));
+        let comm_buffer = CommunicateBuffer::new(Pin::new(&mut buffer[..]), 1);
+        assert!(matches!(comm_buffer.get_mm_return_status(), Err(CommunicateBufferStatus::NoBuffer)));
+    }
+
+    #[test]
     fn test_from_firmware_region_success() {
         use patina::base::UEFI_PAGE_SIZE;
 
@@ -862,7 +1032,7 @@ mod tests {
         let id = 1;
 
         // SAFETY: Test buffer is 4K-aligned, valid, and leaked for static lifetime
-        let result = unsafe { CommunicateBuffer::from_firmware_region(addr, size, id) };
+        let result = unsafe { CommunicateBuffer::from_firmware_region(addr, size, id, None) };
         assert!(result.is_ok());
         let comm_buffer = result.unwrap();
         assert_eq!(comm_buffer.len(), size);
@@ -876,7 +1046,7 @@ mod tests {
         let id = 1;
 
         // SAFETY: Test validates error handling for address overflow
-        let result = unsafe { CommunicateBuffer::from_firmware_region(addr, size, id) };
+        let result = unsafe { CommunicateBuffer::from_firmware_region(addr, size, id, None) };
         assert!(matches!(result, Err(CommunicateBufferStatus::AddressValidationFailed)));
     }
 
@@ -1093,6 +1263,8 @@ mod tests {
             cmd_port: MmiPort::Smc(0x87654321),
             data_port: MmiPort::Smi(0xABCD),
             comm_buffers: vec![comm_buffer1, comm_buffer2],
+            enable_comm_buffer_updates: false,
+            updatable_buffer_id: None,
         };
 
         let populated_display = format!("{}", populated_config);
