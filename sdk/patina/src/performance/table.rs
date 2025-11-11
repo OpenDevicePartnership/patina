@@ -21,10 +21,8 @@ use core::{
 
 use crate::{
     base::UEFI_PAGE_SIZE,
-    boot_services::{
-        BootServices,
-        allocation::{AllocType, MemoryType},
-    },
+    boot_services::{BootServices, allocation::AllocType},
+    efi_types::EfiMemoryType,
     error::EfiError,
     performance::{
         self,
@@ -122,7 +120,7 @@ impl FBPT {
         let address = previous_address
             .and_then(|address| {
                 boot_services
-                    .allocate_pages(AllocType::Address(address), MemoryType::RESERVED_MEMORY_TYPE, allocation_nb_page)
+                    .allocate_pages(AllocType::Address(address), EfiMemoryType::ReservedMemoryType, allocation_nb_page)
                     .ok()
             })
             .map_or_else(
@@ -130,7 +128,7 @@ impl FBPT {
                     // Allocate at a new address if no address found or if the previous address allocation failed.
                     boot_services.allocate_pages(
                         AllocType::MaxAddress(u32::MAX as usize),
-                        MemoryType::RESERVED_MEMORY_TYPE,
+                        EfiMemoryType::ReservedMemoryType,
                         allocation_nb_page,
                     )
                 },
@@ -374,7 +372,7 @@ mod tests {
             .once()
             .withf(move |alloc_type, memory_type, _| {
                 assert_eq!(&AllocType::Address(address), alloc_type);
-                assert_eq!(&MemoryType::RESERVED_MEMORY_TYPE, memory_type);
+                assert_eq!(&EfiMemoryType::ReservedMemoryType, memory_type);
                 true
             })
             .returning(move |_, _, _| Ok(address));
@@ -431,7 +429,7 @@ mod tests {
             .once()
             .withf(move |alloc_type, memory_type, _| {
                 assert_eq!(&AllocType::MaxAddress(u32::MAX as usize), alloc_type);
-                assert_eq!(&MemoryType::RESERVED_MEMORY_TYPE, memory_type);
+                assert_eq!(&EfiMemoryType::ReservedMemoryType, memory_type);
                 true
             })
             .returning(move |_, _, _| Ok(address));
@@ -459,7 +457,7 @@ mod tests {
             .expect_allocate_pages()
             .once()
             .withf(move |_, memory_type, _| {
-                assert_eq!(&MemoryType::RESERVED_MEMORY_TYPE, memory_type);
+                assert_eq!(&EfiMemoryType::ReservedMemoryType, memory_type);
                 true
             })
             .returning(move |_, _, _| Ok(address));

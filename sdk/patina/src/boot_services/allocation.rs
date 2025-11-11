@@ -23,55 +23,6 @@ pub enum AllocType {
     Address(usize),
 }
 
-/// Memory types as specified in the UEFI specification.
-///
-/// <https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html#memory-allocation-services>
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct MemoryType(u32);
-
-impl MemoryType {
-    /// Reserved memory for platform uses.
-    pub const RESERVED_MEMORY_TYPE: MemoryType = MemoryType(efi::RESERVED_MEMORY_TYPE);
-    /// The code portions of a loaded application, e.g. the entire loaded image (PE).
-    pub const LOADER_CODE: MemoryType = MemoryType(efi::LOADER_CODE);
-    /// The data portions of a loaded application, e.g. data allocations made and used by an application.
-    pub const LOADER_DATA: MemoryType = MemoryType(efi::LOADER_DATA);
-    /// The code portions of a loaded Boot Services Driver, e.g. the entire loaded image (PE).
-    pub const BOOT_SERVICES_CODE: MemoryType = MemoryType(efi::BOOT_SERVICES_CODE);
-    /// The data portions of a loaded Boot Services Driver, e.g. data allocations made and used by a driver.
-    pub const BOOT_SERVICES_DATA: MemoryType = MemoryType(efi::BOOT_SERVICES_DATA);
-    /// The code portions of a loaded Runtime Services Driver, e.g. the entire loaded image (PE).
-    pub const RUNTIME_SERVICES_CODE: MemoryType = MemoryType(efi::RUNTIME_SERVICES_CODE);
-    /// The data portions of a loaded Runtime Services Driver, e.g. data allocations made and used by a driver.
-    pub const RUNTIME_SERVICES_DATA: MemoryType = MemoryType(efi::RUNTIME_SERVICES_DATA);
-    /// Free (unallocated) memory.
-    pub const CONVENTIONAL_MEMORY: MemoryType = MemoryType(efi::CONVENTIONAL_MEMORY);
-    /// Memory in which errors have been detected.
-    pub const UNUSABLE_MEMORY: MemoryType = MemoryType(efi::UNUSABLE_MEMORY);
-    /// Memory reserved for runtime ACPI non-volatile storage.
-    pub const ACPI_RECLAIM_MEMORY: MemoryType = MemoryType(efi::ACPI_RECLAIM_MEMORY);
-    /// Address space reserved for use by the firmware.
-    pub const ACPI_MEMORY_NVS: MemoryType = MemoryType(efi::ACPI_MEMORY_NVS);
-    /// Memory-mapped IO region, mapped by the OS to a virtual address so it can be accessed by EFI runtime services.
-    pub const MEMORY_MAPPED_IO: MemoryType = MemoryType(efi::MEMORY_MAPPED_IO);
-    /// System memory-mapped IO region that is used to translate memory cycles to IO cycles by the processor.
-    pub const MEMORY_MAPPED_IO_PORT_SPACE: MemoryType = MemoryType(efi::MEMORY_MAPPED_IO_PORT_SPACE);
-    /// Address space reserved by the firmware for code that is part of the processor.
-    pub const PAL_CODE: MemoryType = MemoryType(efi::PAL_CODE);
-    /// EfiConventionalMemory that supports byte-addressable non-volatility.
-    pub const PERSISTENT_MEMORY: MemoryType = MemoryType(efi::PERSISTENT_MEMORY);
-    /// Present in the system, but not accepted / initalized for use by the system's underlying memory isolation
-    /// technology.
-    pub const UNACCEPTED_MEMORY_TYPE: MemoryType = MemoryType(efi::UNACCEPTED_MEMORY_TYPE);
-}
-
-impl From<MemoryType> for u32 {
-    fn from(val: MemoryType) -> Self {
-        val.0
-    }
-}
-
 /// Represents a memory map in the UEFI system, containing an array of memory descriptors and metadata.
 #[derive(Debug)]
 pub struct MemoryMap<'a, B: BootServices + ?Sized> {

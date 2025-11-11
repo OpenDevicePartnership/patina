@@ -13,7 +13,8 @@ use core::{
     ptr,
 };
 
-use super::{BootServices, allocation::MemoryType};
+use super::BootServices;
+use crate::efi_types::EfiMemoryType;
 
 /// A boxed type to wrap a [BootServices] implementation
 #[derive(Debug)]
@@ -24,7 +25,7 @@ pub struct BootServicesBox<'a, T: ?Sized, B: BootServices + ?Sized> {
 
 impl<'a, T, B: BootServices> BootServicesBox<'a, T, B> {
     /// Create a new BootServicesBox containing the provided value
-    pub fn new(value: T, memory_type: MemoryType, boot_services: &'a B) -> Self {
+    pub fn new(value: T, memory_type: EfiMemoryType, boot_services: &'a B) -> Self {
         let size = mem::size_of_val(&value);
         let ptr = boot_services.allocate_pool(memory_type, size).unwrap() as *mut T;
         unsafe { ptr::write(ptr, value) };

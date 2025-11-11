@@ -36,8 +36,8 @@ use core::{
 
 use r_efi::efi;
 
-use crate::uefi_protocol::ProtocolInterface;
-use allocation::{AllocType, MemoryMap, MemoryType};
+use crate::{efi_types::EfiMemoryType, uefi_protocol::ProtocolInterface};
+use allocation::{AllocType, MemoryMap};
 use boxed::BootServicesBox;
 use event::{EventNotifyCallback, EventTimerType, EventType};
 use protocol_handler::{HandleSearchType, Registration};
@@ -296,7 +296,7 @@ pub trait BootServices {
     fn allocate_pages(
         &self,
         alloc_type: AllocType,
-        memory_type: MemoryType,
+        memory_type: EfiMemoryType,
         nb_pages: usize,
     ) -> Result<usize, efi::Status>;
 
@@ -313,10 +313,10 @@ pub trait BootServices {
     /// Allocates pool memory.
     ///
     /// [UEFI Spec Documentation: 7.2.4. EFI_BOOT_SERVICES.AllocatePool()](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html#efi-boot-services-allocatepool)
-    fn allocate_pool(&self, pool_type: MemoryType, size: usize) -> Result<*mut u8, efi::Status>;
+    fn allocate_pool(&self, pool_type: EfiMemoryType, size: usize) -> Result<*mut u8, efi::Status>;
 
     /// Allocates pool memory casted as given type.
-    fn allocate_pool_for_type<T: 'static>(&self, pool_type: MemoryType) -> Result<*mut T, efi::Status> {
+    fn allocate_pool_for_type<T: 'static + Sized>(&self, pool_type: EfiMemoryType) -> Result<*mut T, efi::Status> {
         let ptr = self.allocate_pool(pool_type, mem::size_of::<T>())?;
         Ok(ptr as *mut T)
     }
@@ -499,7 +499,7 @@ pub trait BootServices {
     /// Make sure to not create multiple mutable reference of interface.
     unsafe fn handle_protocol<T>(&self, handle: efi::Handle) -> Result<&'static mut T, efi::Status>
     where
-        T: ProtocolInterface + 'static,
+        T: Sized + ProtocolInterface + 'static,
     {
         match unsafe { self.handle_protocol_maybe_empty(handle)? } {
             Some(_) if mem::size_of::<T>() == 0 => {
@@ -530,7 +530,7 @@ pub trait BootServices {
     /// Make sure to not create multiple mutable reference of interface.
     unsafe fn handle_protocol_maybe_empty<T>(&self, handle: efi::Handle) -> Result<Option<&'static mut T>, efi::Status>
     where
-        T: ProtocolInterface + 'static,
+        T: Sized + ProtocolInterface + 'static,
     {
         Ok(unsafe { (self.handle_protocol_unchecked(handle, &T::PROTOCOL_GUID)? as *mut T).as_mut() })
     }
@@ -575,7 +575,7 @@ pub trait BootServices {
         attribute: u32,
     ) -> Result<&'static mut T, efi::Status>
     where
-        T: ProtocolInterface + 'static,
+        T: Sized + ProtocolInterface + 'static,
     {
         match unsafe { self.open_protocol_maybe_empty::<T>(handle, agent_handle, controller_handle, attribute)? } {
             Some(_) if mem::size_of::<T>() == 0 => {
@@ -615,7 +615,7 @@ pub trait BootServices {
         attribute: u32,
     ) -> Result<Option<&'static mut T>, efi::Status>
     where
-        T: ProtocolInterface + 'static,
+        T: Sized + ProtocolInterface + 'static,
     {
         Ok(unsafe {
             (self.open_protocol_unchecked(handle, &T::PROTOCOL_GUID, agent_handle, controller_handle, attribute)?
@@ -708,7 +708,7 @@ pub trait BootServices {
     /// Make sure to not create multiple mutable reference when using this api.
     unsafe fn locate_protocol<T>(&self, registration: Option<Registration>) -> Result<&'static mut T, efi::Status>
     where
-        T: ProtocolInterface + 'static,
+        T: Sized + ProtocolInterface + 'static,
     {
         match unsafe { self.locate_protocol_maybe_empty(registration)? } {
             Some(_) if mem::size_of::<T>() == 0 => {
@@ -743,7 +743,7 @@ pub trait BootServices {
         registration: Option<Registration>,
     ) -> Result<Option<&'static mut T>, efi::Status>
     where
-        T: ProtocolInterface + 'static,
+        T: Sized + ProtocolInterface + 'static,
     {
         //SAFETY: The generic ProtocolInterface ensure that the interfaces is the right type for the specified protocol.
         Ok(unsafe {
@@ -1040,7 +1040,7 @@ impl BootServices for StandardBootServices {
     fn allocate_pages(
         &self,
         alloc_type: AllocType,
-        memory_type: MemoryType,
+        memory_type: EfiMemoryType,
         nb_pages: usize,
     ) -> Result<usize, efi::Status> {
         let mut memory_address = match alloc_type {
@@ -1085,7 +1085,7 @@ impl BootServices for StandardBootServices {
             _ => (),
         };
 
-        let buffer = self.allocate_pool(MemoryType::BOOT_SERVICES_DATA, memory_map_size).map_err(|s| (s, 0))?;
+        let buffer = self.allocate_pool(EfiMemoryType::BootServicesData, memory_map_size).map_err(|s| (s, 0))?;
 
         match get_memory_map(
             ptr::addr_of_mut!(memory_map_size),
@@ -1105,7 +1105,7 @@ impl BootServices for StandardBootServices {
         })
     }
 
-    fn allocate_pool(&self, memory_type: MemoryType, size: usize) -> Result<*mut u8, efi::Status> {
+    fn allocate_pool(&self, memory_type: EfiMemoryType, size: usize) -> Result<*mut u8, efi::Status> {
         let mut buffer = ptr::null_mut();
         match efi_boot_services_fn!(self.efi_boot_services(), allocate_pool)(
             memory_type.into(),
@@ -1207,7 +1207,7 @@ impl BootServices for StandardBootServices {
         let mut buffer_size = 0;
         locate_handle(search_type.into(), protocol, search_key, ptr::addr_of_mut!(buffer_size), ptr::null_mut());
 
-        let buffer = self.allocate_pool(MemoryType::BOOT_SERVICES_DATA, buffer_size)?;
+        let buffer = self.allocate_pool(EfiMemoryType::BootServicesData, buffer_size)?;
 
         match locate_handle(
             search_type.into(),
@@ -1982,7 +1982,7 @@ mod tests {
     #[should_panic = "Boot services function allocate_pages is not initialized."]
     fn test_allocate_pages_not_init() {
         let boot_services = boot_services!();
-        let _ = boot_services.allocate_pages(AllocType::AnyPage, MemoryType::ACPI_MEMORY_NVS, 0);
+        let _ = boot_services.allocate_pages(AllocType::AnyPage, EfiMemoryType::ACPIMemoryNVS, 0);
     }
 
     #[test]
@@ -1997,7 +1997,7 @@ mod tests {
         ) -> efi::Status {
             let expected_alloc_type: efi::AllocateType = AllocType::AnyPage.into();
             assert_eq!(expected_alloc_type, alloc_type);
-            let expected_mem_type: efi::MemoryType = MemoryType::MEMORY_MAPPED_IO.into();
+            let expected_mem_type: efi::MemoryType = EfiMemoryType::MemoryMappedIO.into();
             assert_eq!(expected_mem_type, mem_type);
             assert_eq!(4, nb_pages);
             assert_ne!(ptr::null_mut(), memory);
@@ -2006,7 +2006,7 @@ mod tests {
             efi::Status::SUCCESS
         }
 
-        let status = boot_services.allocate_pages(AllocType::AnyPage, MemoryType::MEMORY_MAPPED_IO, 4);
+        let status = boot_services.allocate_pages(AllocType::AnyPage, EfiMemoryType::MemoryMappedIO, 4);
 
         assert!(matches!(status, Ok(17)));
     }
@@ -2023,7 +2023,7 @@ mod tests {
         ) -> efi::Status {
             let expected_alloc_type: efi::AllocateType = AllocType::Address(17).into();
             assert_eq!(expected_alloc_type, alloc_type);
-            let expected_mem_type: efi::MemoryType = MemoryType::MEMORY_MAPPED_IO.into();
+            let expected_mem_type: efi::MemoryType = EfiMemoryType::MemoryMappedIO.into();
             assert_eq!(expected_mem_type, mem_type);
             assert_eq!(4, nb_pages);
             assert_ne!(ptr::null_mut(), memory);
@@ -2031,7 +2031,7 @@ mod tests {
             efi::Status::SUCCESS
         }
 
-        let status = boot_services.allocate_pages(AllocType::Address(17), MemoryType::MEMORY_MAPPED_IO, 4);
+        let status = boot_services.allocate_pages(AllocType::Address(17), EfiMemoryType::MemoryMappedIO, 4);
         assert!(matches!(status, Ok(17)));
     }
 
@@ -2061,7 +2061,7 @@ mod tests {
     #[should_panic = "Boot services function allocate_pool is not initialized."]
     fn test_allocate_pool_not_init() {
         let boot_services = boot_services!();
-        _ = boot_services.allocate_pool(MemoryType::RESERVED_MEMORY_TYPE, 0);
+        _ = boot_services.allocate_pool(EfiMemoryType::ReservedMemoryType, 0);
     }
 
     #[test]
@@ -2073,14 +2073,14 @@ mod tests {
             size: usize,
             buffer: *mut *mut c_void,
         ) -> efi::Status {
-            let expected_mem_type: efi::MemoryType = MemoryType::MEMORY_MAPPED_IO.into();
+            let expected_mem_type: efi::MemoryType = EfiMemoryType::MemoryMappedIO.into();
             assert_eq!(mem_type, expected_mem_type);
             assert_eq!(size, 10);
             unsafe { ptr::write(buffer, 0x55AA as *mut c_void) };
             efi::Status::SUCCESS
         }
 
-        let status = boot_services.allocate_pool(MemoryType::MEMORY_MAPPED_IO, 10);
+        let status = boot_services.allocate_pool(EfiMemoryType::MemoryMappedIO, 10);
         assert_eq!(status, Ok(0x55AA as *mut u8));
     }
 
