@@ -2085,6 +2085,25 @@ mod tests {
     }
 
     #[test]
+    fn test_allocate_pool_for_type() {
+        let boot_services = boot_services!(allocate_pool = efi_allocate_pool);
+
+        extern "efiapi" fn efi_allocate_pool(
+            mem_type: efi::MemoryType,
+            _size: usize,
+            buffer: *mut *mut c_void,
+        ) -> efi::Status {
+            let expected_mem_type: efi::MemoryType = EfiMemoryType::MemoryMappedIO.into();
+            assert_eq!(mem_type, expected_mem_type);
+            unsafe { ptr::write(buffer, 0x55AA as *mut c_void) };
+            efi::Status::SUCCESS
+        }
+
+        let status = boot_services.allocate_pool_for_type(EfiMemoryType::MemoryMappedIO);
+        assert_eq!(status, Ok(0x55AA as *mut u8));
+    }
+
+    #[test]
     fn test_free_pool() {
         let boot_services = boot_services!(free_pool = efi_free_pool);
 
