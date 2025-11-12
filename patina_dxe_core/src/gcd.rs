@@ -19,12 +19,13 @@ use patina::{
         hob::{self, Hob, HobList, PhaseHandoffInformationTable},
     },
 };
+use patina_internal_cpu::paging::create_cpu_paging;
 use r_efi::efi;
 
 #[cfg(feature = "compatibility_mode_allowed")]
 use patina::base::{UEFI_PAGE_SIZE, align_range};
 
-use crate::GCD;
+use crate::{GCD, gcd::spin_locked_gcd::PagingAllocator};
 
 pub use spin_locked_gcd::{AllocateType, MapChangeType, SpinLockedGcd};
 
@@ -79,8 +80,20 @@ pub fn init_gcd(physical_hob_list: *const c_void) {
     }
 }
 
+#[coverage(off)]
+/// Initialize the patina-paging crate
+///
+/// # Arguments
+/// * `hob_list` - The HOB list as passed to DXE Core
+///
+/// This function installs the new Patina controlled page tables based
+/// on the HOB list provided. Note that coverage is disabled for the
+/// wrapper function because this simply wraps the actual implementation
+/// in the SpinLockedGcd struct, which is covered by unit tests.
 pub fn init_paging(hob_list: &HobList) {
-    GCD.init_paging(hob_list);
+    let page_allocator = PagingAllocator::new(&GCD);
+    let page_table = create_cpu_paging(page_allocator).expect("Failed to create CPU page table");
+    GCD.init_paging_with(hob_list, page_table);
 }
 
 pub fn add_hob_resource_descriptors_to_gcd(hob_list: &HobList) {
@@ -369,7 +382,7 @@ mod tests {
         test_support::{self, build_test_hob_list},
     };
 
-    use super::add_hob_resource_descriptors_to_gcd;
+    use super::*;
 
     const MEM_SIZE: u64 = 0x200000;
 
@@ -447,5 +460,32 @@ mod tests {
 
             add_resource_descriptors_should_add_resource_descriptors(&hob_list, physical_hob_list as u64);
         });
+    }
+
+    #[test]
+    fn test_remove_range_overlap() {
+        // Test case 1: No overlap
+        let a = 10..20;
+        let b = 30..40;
+        let result = remove_range_overlap(&a, &b);
+        assert_eq!(result, [Some(10..20), None]);
+
+        // Test case 2: Partial overlap at the front of 'b'
+        let a = 5..20;
+        let b = 10..30;
+        let result = remove_range_overlap(&a, &b);
+        assert_eq!(result, [Some(5..10), None]);
+
+        // Test case 3: Partial overlap at the end of 'b'
+        let a = 20..40;
+        let b = 10..30;
+        let result = remove_range_overlap(&a, &b);
+        assert_eq!(result, [None, Some(30..40)]);
+
+        // Test case 4: 'a' is completely inside 'b' (middle overlap)
+        let a = 20..30;
+        let b = 10..40;
+        let result = remove_range_overlap(&a, &b);
+        assert_eq!(result, [None, None]);
     }
 }
