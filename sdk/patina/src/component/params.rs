@@ -243,6 +243,7 @@ macro_rules! impl_param_function {
             type In = In;
             type Out = Out;
             fn run(&mut self, input: &mut Option<In>, param_value: ParamItem<($($param,)*)>) -> Out {
+                #[allow(clippy::too_many_arguments)]
                 fn call_inner<In, Out, $($param,)*>(
                     mut f: impl FnMut(In, $($param),*) -> Out,
                     input: In,
@@ -270,6 +271,7 @@ macro_rules! impl_param_function {
             type In = In;
             type Out = Out;
             fn run(&mut self, input: &mut Option<In>, param_value: ParamItem<($($param,)*)>) -> Out {
+                #[allow(clippy::too_many_arguments)]
                 fn call_inner<In, Out, $($param,)*>(
                     mut f: impl FnMut(&mut In, $($param),*) -> Out,
                     input: &mut In,
@@ -297,6 +299,7 @@ macro_rules! impl_param_function {
             type In = In;
             type Out = Out;
             fn run(&mut self, input: &mut Option<In>, param_value: ParamItem<($($param,)*)>) -> Out {
+                #[allow(clippy::too_many_arguments)]
                 fn call_inner<In, Out, $($param,)*>(
                     mut f: impl FnMut(&In, $($param),*) -> Out,
                     input: &In,
@@ -317,6 +320,7 @@ impl_param_function!(T1, T2);
 impl_param_function!(T1, T2, T3);
 impl_param_function!(T1, T2, T3, T4);
 impl_param_function!(T1, T2, T3, T4, T5);
+impl_param_function!(T1, T2, T3, T4, T5, T6);
 
 // SAFETY: Option<P> makes parameter P optional. Always validates as available (returns Some/None based
 // on P::validate). Safe delegation to P::get_param when P validates successfully.
@@ -743,6 +747,7 @@ impl_component_param_tuple!(T1, T2);
 impl_component_param_tuple!(T1, T2, T3);
 impl_component_param_tuple!(T1, T2, T3, T4);
 impl_component_param_tuple!(T1, T2, T3, T4, T5);
+impl_component_param_tuple!(T1, T2, T3, T4, T5, T6);
 
 #[cfg(test)]
 #[coverage(off)]
