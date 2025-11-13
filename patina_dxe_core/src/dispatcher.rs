@@ -14,7 +14,6 @@ use alloc::{
 use core::{cmp::Ordering, ffi::c_void};
 use mu_rust_helpers::{function, guid::guid_fmt};
 use patina::{
-    component::service::Service,
     error::EfiError,
     performance::{
         logging::{perf_function_begin, perf_function_end},
@@ -514,7 +513,7 @@ pub fn init_dispatcher() {
         .expect("Failed to register protocol notify on fv protocol.");
 }
 
-pub fn register_section_extractor(extractor: Service<dyn SectionExtractor>) {
+pub fn register_section_extractor(extractor: &'static dyn SectionExtractor) {
     DISPATCHER_CONTEXT.lock().section_extractor.set_extractor(extractor);
 }
 
@@ -660,7 +659,7 @@ mod tests {
         set_logger();
         with_locked_state(|| {
             init_dispatcher();
-            register_section_extractor(Service::mock(Box::new(patina_ffs_extractors::BrotliSectionExtractor)));
+            register_section_extractor(Box::leak(Box::new(patina_ffs_extractors::BrotliSectionExtractor)));
         });
     }
 

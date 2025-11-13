@@ -16,17 +16,22 @@ use r_efi::efi;
 
 use patina_lzma_rs::io::Cursor;
 
-use patina::component::prelude::IntoService;
-
 pub const LZMA_SECTION_GUID: efi::Guid =
     efi::Guid::from_fields(0xEE4E5898, 0x3914, 0x4259, 0x9D, 0x6E, &[0xDC, 0x7B, 0xD7, 0x94, 0x03, 0xCF]);
 
 pub const LZMA_UNKNOWN_UNPACKED_SIZE_MAGIC_VALUE: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 
 /// Provides decompression for LZMA GUIDed sections.
-#[derive(Default, Clone, Copy, IntoService)]
-#[service(dyn SectionExtractor)]
+#[derive(Default, Clone, Copy)]
 pub struct LzmaSectionExtractor;
+
+impl LzmaSectionExtractor {
+    /// Creates a new `LzmaSectionExtractor` instance.
+    #[coverage(off)]
+    pub const fn new() -> Self {
+        Self {}
+    }
+}
 
 impl SectionExtractor for LzmaSectionExtractor {
     fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {

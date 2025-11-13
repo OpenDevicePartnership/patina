@@ -207,17 +207,29 @@ Add representative initialization (replace or augment extractors to match platfo
 # extern crate patina_ffs_extractors;
 # extern crate core;
 use core::ffi::c_void;
-use patina_dxe_core::Core;
+use patina_dxe_core::*;
 use patina_ffs_extractors::BrotliSectionExtractor;
+
+struct ExamplePlatform;
+
+impl ComponentInfo for ExamplePlatform { }
+
+impl MemoryInfo for ExamplePlatform { }
+
+impl CpuInfo for ExamplePlatform { }
+
+impl PlatformInfo for ExamplePlatform {
+    type MemoryInfo = Self;
+    type CpuInfo = Self;
+    type ComponentInfo = Self;
+    type Extractor = BrotliSectionExtractor;
+}
+
+static CORE: Core<ExamplePlatform> = Core::new(BrotliSectionExtractor::new());
 
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
-    Core::default()
-        .init_memory(physical_hob_list)
-        .with_service(BrotliSectionExtractor::default())
-        .start()
-        .unwrap();
-    loop {}
+    CORE.entry_point(physical_hob_list)
 }
 ```
 
@@ -297,7 +309,7 @@ Next, update main.rs with the following, using Uart16550 or UartPl011 for X64 / 
 # extern crate core;
 use core::ffi::c_void;
 
-use patina_dxe_core::Core;
+use patina_dxe_core::*;
 use patina_ffs_extractors::BrotliSectionExtractor;
 use patina::log::{Format, SerialLogger};
 use patina::serial::uart::UartNull; // Uart16550 or UartPl011 available for X64 / AARCH64 platforms
@@ -309,16 +321,28 @@ static LOGGER: SerialLogger<UartNull> = SerialLogger::new(
     UartNull {} // The SerialIO writer
 );
 
+struct ExamplePlatform;
+
+impl ComponentInfo for ExamplePlatform { }
+
+impl MemoryInfo for ExamplePlatform { }
+
+impl CpuInfo for ExamplePlatform { }
+
+impl PlatformInfo for ExamplePlatform {
+    type MemoryInfo = Self;
+    type ComponentInfo = Self;
+    type CpuInfo = Self;
+    type Extractor = BrotliSectionExtractor;
+}
+
+static CORE: Core<ExamplePlatform> = Core::new(BrotliSectionExtractor::new());
+
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Info)).unwrap();
 
-    Core::default()
-        .init_memory(physical_hob_list)
-        .with_service(BrotliSectionExtractor::default())
-        .start()
-        .unwrap();
-    loop {}
+    CORE.entry_point(physical_hob_list)
 }
 ```
 
@@ -354,25 +378,28 @@ repository.
 # extern crate patina;
 # extern crate patina_dxe_core;
 # extern crate patina_mm;
-# let hob_list = std::ptr::null();
-use patina_dxe_core::Core;
+use patina_dxe_core::*;
 
-Core::default()
-  .init_memory(hob_list)
-  // Configure MM Communication
-  .with_config(patina_mm::config::MmCommunicationConfiguration {
-      acpi_base: patina_mm::config::AcpiBase::Mmio(0x0), // Set during boot
-      cmd_port: patina_mm::config::MmiPort::Smi(0xB2),
-      data_port: patina_mm::config::MmiPort::Smi(0xB3),
-      enable_comm_buffer_updates: false,
-      updatable_buffer_id: None,
-      comm_buffers: vec![],
-  })
-  .with_component(patina_mm::component::sw_mmi_manager::SwMmiManager::new())
-  // Platform Mm Init hook
-  //.with_component(q35_services::mm_control::QemuQ35PlatformMmControl::new())
-  .start()
-  .unwrap();
+struct ExamplePlatform;
+
+impl ComponentInfo for ExamplePlatform {
+    fn configs(mut add: Add<Config>) {
+        add.config(patina_mm::config::MmCommunicationConfiguration {
+            acpi_base: patina_mm::config::AcpiBase::Mmio(0x0), // Set during boot
+            cmd_port: patina_mm::config::MmiPort::Smi(0xB2),
+            data_port: patina_mm::config::MmiPort::Smi(0xB3),
+            enable_comm_buffer_updates: false,
+            updatable_buffer_id: None,
+            comm_buffers: vec![],
+        });
+    }
+
+    fn components(mut add: Add<Component>) {
+        add.component(patina_mm::component::sw_mmi_manager::SwMmiManager::new());
+        // Platform Mm Init hook
+        // add.component(q35_services::mm_control::QemuQ35PlatformMmControl::new())
+    }
+}
 ```
 
 ### 7.2 AArch64 Interrupt Controller (GIC)
@@ -382,13 +409,18 @@ For [AArch64 platforms using GIC](https://developer.arm.com/documentation/ihi006
 
 ```rust,no_run
 # extern crate patina_dxe_core;
-# let hob_list = std::ptr::null();
-use patina_dxe_core::{GicBases, Core};
+use patina_dxe_core::*;
 
-Core::default()
-  .init_memory(hob_list)
-  // GIC configuration for AArch64
-  .with_config(GicBases::new(0x40060000, 0x40080000)); // Update for your platform
+struct ExamplePlatform;
+
+impl CpuInfo for ExamplePlatform {
+    #[cfg(target_arch = "aarch64")]
+    fn gic_bases() -> GicBases {
+        /// SAFETY: gicd and gicr bases correctly point to the register spaces.
+        /// SAFETY: Access to these registers is exclusive to this struct instance.
+        unsafe { GicBases::new(0x40060000, 0x40080000) } // Update for your platform
+    }
+}
 ```
 
 ### 7.3 Performance Monitoring (Optional)
@@ -401,22 +433,28 @@ component provides detailed UEFI performance measurement capabilities:
 # extern crate patina;
 # extern crate patina_dxe_core;
 # extern crate patina_performance;
-# let hob_list = std::ptr::null();
-use patina_dxe_core::Core;
+use patina_dxe_core::*;
 
-Core::default()
-  .init_memory(hob_list)
-  .with_config(patina_performance::config::PerfConfig {
-      enable_component: true,
-      enabled_measurements: {
-          patina::performance::Measurement::DriverBindingStart
-          | patina::performance::Measurement::DriverBindingStop
-          | patina::performance::Measurement::LoadImage
-          | patina::performance::Measurement::StartImage
-      },
-  })
-  .with_component(patina_performance::component::performance_config_provider::PerformanceConfigurationProvider)
-  .with_component(patina_performance::component::performance::Performance);
+struct ExamplePlatform;
+
+impl ComponentInfo for ExamplePlatform {
+    fn configs(mut add: Add<Config>) {
+        add.config(patina_performance::config::PerfConfig {
+            enable_component: true,
+            enabled_measurements: {
+            patina::performance::Measurement::DriverBindingStart
+                | patina::performance::Measurement::DriverBindingStop
+                | patina::performance::Measurement::LoadImage
+                | patina::performance::Measurement::StartImage
+            }
+        });
+    }
+
+    fn components(mut add: Add<Component>) {
+        add.component(patina_performance::component::performance_config_provider::PerformanceConfigurationProvider);
+        add.component(patina_performance::component::performance::Performance);
+    }
+}
 ```
 
 ## 8. Complete Implementation Example
@@ -435,11 +473,13 @@ crate when supported by the target architecture.
 # extern crate patina_stacktrace;
 # extern crate patina_debugger;
 # extern crate patina_ffs_extractors;
+# extern crate patina_performance;
+# extern crate patina_mm;
 # extern crate log;
 # fn main() {}
 
 use core::{ffi::c_void, panic::PanicInfo};
-use patina_dxe_core::Core;
+use patina_dxe_core::*;
 use patina_ffs_extractors::BrotliSectionExtractor;
 use patina::log::{Format, SerialLogger};
 use patina::serial::uart::UartNull; // Uart16550 or UartPl011 exist
@@ -461,15 +501,9 @@ fn panic(info: &PanicInfo) -> ! {
     loop {}
 }
 
-#[cfg(feature = "enable_debugger")]
-const _ENABLE_DEBUGGER: bool = true;
-#[cfg(not(feature = "enable_debugger"))]
-const _ENABLE_DEBUGGER: bool = false;
-
-#[cfg(feature = "build_debugger")]
 static DEBUGGER: patina_debugger::PatinaDebugger<UartNull> =
     patina_debugger::PatinaDebugger::new(UartNull {})  // <- Update for your platform
-        .with_force_enable(_ENABLE_DEBUGGER)
+        .with_force_enable(true)
         .with_log_policy(patina_debugger::DebuggerLoggingPolicy::FullLogging);
 
 static LOGGER: SerialLogger<UartNull> = SerialLogger::new(
@@ -479,18 +513,57 @@ static LOGGER: SerialLogger<UartNull> = SerialLogger::new(
     UartNull {} // The SerialIO writer
 );
 
+struct ExamplePlatform;
+
+impl MemoryInfo for ExamplePlatform { }
+
+impl CpuInfo for ExamplePlatform { }
+
+impl ComponentInfo for ExamplePlatform {
+    fn configs(mut add: Add<Config>) {
+        add.config(patina_mm::config::MmCommunicationConfiguration {
+            acpi_base: patina_mm::config::AcpiBase::Mmio(0x0), // Set during boot
+            cmd_port: patina_mm::config::MmiPort::Smi(0xB2),
+            data_port: patina_mm::config::MmiPort::Smi(0xB3),
+            enable_comm_buffer_updates: false,
+            updatable_buffer_id: None,
+            comm_buffers: vec![],
+        });
+        add.config(patina_performance::config::PerfConfig {
+            enable_component: true,
+            enabled_measurements: {
+            patina::performance::Measurement::DriverBindingStart
+                | patina::performance::Measurement::DriverBindingStop
+                | patina::performance::Measurement::LoadImage
+                | patina::performance::Measurement::StartImage
+            }
+        });
+    }
+
+    fn components(mut add: Add<Component>) {
+        add.component(patina_mm::component::sw_mmi_manager::SwMmiManager::new());
+        // Platform Mm Init hook
+        // add.component(q35_services::mm_control::QemuQ35PlatformMmControl::new())
+        add.component(patina_performance::component::performance_config_provider::PerformanceConfigurationProvider);
+        add.component(patina_performance::component::performance::Performance);
+    }
+}
+
+impl PlatformInfo for ExamplePlatform {
+    type MemoryInfo = Self;
+    type CpuInfo = Self;
+    type ComponentInfo = Self;
+    type Extractor = BrotliSectionExtractor;
+}
+
+static CORE: Core<ExamplePlatform> = Core::new(BrotliSectionExtractor::new());
+
 #[cfg_attr(target_os = "uefi", export_name = "efi_main")]
 pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Info)).unwrap();
+    patina_debugger::set_debugger(&DEBUGGER);
 
-    Core::default()
-        .init_memory(physical_hob_list)
-        .with_service(BrotliSectionExtractor::default())
-        .start()
-        .unwrap();
-
-    log::info!("Dead Loop Time");
-    loop {}
+    CORE.entry_point(physical_hob_list)
 }
 ```
 
@@ -526,12 +599,25 @@ memory preference using the `prioritize_32_bit_memory()` configuration:
 
 ```rust,no_run
 # extern crate patina_dxe_core;
-# let physical_hob_list = std::ptr::null();
-use patina_dxe_core::Core;
-Core::default()
-    .prioritize_32_bit_memory()  // Add this configuration
-    .init_memory(physical_hob_list);
-    // ... rest of configuration
+# extern crate patina_ffs_extractors;
+# use patina_ffs_extractors::BrotliSectionExtractor;
+use patina_dxe_core::*;
+
+struct ExamplePlatform;
+
+impl MemoryInfo for ExamplePlatform {
+    fn prioritize_32_bit_memory() -> bool { true }
+}
+# impl ComponentInfo for ExamplePlatform { }
+# impl CpuInfo for ExamplePlatform { }
+impl PlatformInfo for ExamplePlatform {
+    type MemoryInfo = Self;
+    # type Extractor = BrotliSectionExtractor;
+    # type ComponentInfo = Self;
+    # type CpuInfo = Self;
+}
+
+static CORE: Core<ExamplePlatform> = Core::new(BrotliSectionExtractor::new());
 ```
 
 ```admonish warning

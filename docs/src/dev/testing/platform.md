@@ -67,15 +67,16 @@ the Patina DXE Core:
 ```rust,no_run
 # extern crate patina;
 # extern crate patina_dxe_core;
-# let hob_list = std::ptr::null();
 use patina::test::TestRunner;
-use patina_dxe_core::Core;
+use patina_dxe_core::*;
 
-Core::default()
-    .init_memory(hob_list)
-    .with_component(TestRunner::default())
-    .start()
-    .unwrap();
+struct ExamplePlatform;
+
+impl ComponentInfo for ExamplePlatform {
+    fn components(mut add: Add<Component>) {
+        add.component(TestRunner::default());
+    }
+}
 ```
 
 This will execute all tests marked with the `patina_test` attribute across all crates used to compile this binary.
@@ -91,19 +92,18 @@ default). These two customizations can only be called once. Subsequent calls wil
 ```rust,no_run
 # extern crate patina;
 # extern crate patina_dxe_core;
-# let hob_list = std::ptr::null();
 use patina::test::TestRunner;
-use patina_dxe_core::Core;
+use patina_dxe_core::*;
 
-let test_runner = TestRunner::default()
-    .with_filter("X64")
-    .debug_mode(true);
+struct ExamplePlatform;
 
-Core::default()
-    .init_memory(hob_list)
-    .with_component(test_runner)
-    .start()
-    .unwrap();
+impl ComponentInfo for ExamplePlatform {
+    fn components(mut add: Add<Component>) {
+        add.component(TestRunner::default()
+            .debug_mode(true)
+        );
+    }
+}
 ```
 
 ```mermaid

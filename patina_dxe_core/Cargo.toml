@@ -52,6 +52,8 @@ patina_internal_collections = { path = "../core/patina_internal_collections" }
 env_logger = { workspace = true }
 mockall = { workspace = true }
 serial_test = { workspace = true }
+zerocopy = { workspace = true }
+zerocopy-derive = { workspace = true }
 
 [target.'cfg(all(target_arch="aarch64"))'.dependencies]
 arm-gic = { workspace = true }
