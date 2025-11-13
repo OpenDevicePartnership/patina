@@ -2317,7 +2317,8 @@ mod tests {
 
     #[test]
     fn apply_memory_protections_should_fail_when_section_address_not_in_gcd() {
-        // This test verifies error path #1: GCD descriptor lookup failure
+        // This test verifies error path #1 from Fix #176: GCD descriptor lookup failure
+        // (Task #1030 coverage improvement)
         //
         // Initialize GCD but don't add any memory descriptors, leaving the
         // internal RBT empty. When get_memory_descriptor_for_address is called,
@@ -2331,11 +2332,15 @@ mod tests {
         // This scenario represents a corrupted or uninitialized GCD state where memory
         // descriptors are missing - an edge case that the error handling should catch.
 
-        let result = test_support::with_global_lock(|| unsafe {
-            // Initialize GCD but DON'T add any memory
-            // This leaves the GCD with NO descriptors (empty RBT tree)
-            crate::GCD.reset();
-            crate::GCD.init(48, 16);  // Normal 48-bit address space
+        let result = test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+            unsafe {
+                // Initialize GCD but DON'T add any memory
+                // This leaves the GCD with NO descriptors (empty RBT tree)
+                crate::GCD.reset();
+                crate::GCD.init(48, 16);  // Normal 48-bit address space
+            }
 
             // DON'T call add_memory_space - leave the RBT empty
             // This means get_closest_idx will return None for ANY address
@@ -2367,7 +2372,10 @@ mod tests {
             image_info.image_size = 0x2000;
 
             // Manually construct PrivateImageData with minimal required fields
-            let fake_buffer = alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(0x2000, 0x1000).unwrap());
+            // SAFETY: Allocating memory for fake image buffer to construct test data
+            let fake_buffer = unsafe {
+                alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(0x2000, 0x1000).unwrap())
+            };
 
             // Dummy entry point function
             extern "efiapi" fn dummy_entry(_: *mut c_void, _: *mut efi::SystemTable) -> efi::Status {
@@ -2375,6 +2383,7 @@ mod tests {
             }
 
             let private_info = super::PrivateImageData {
+                // SAFETY: Creating a raw slice from allocated buffer for test purposes
                 image_buffer: core::ptr::slice_from_raw_parts_mut(fake_buffer, 0x2000),
                 image_info: Box::new(image_info),
                 hii_resource_section: None,
@@ -2392,51 +2401,41 @@ mod tests {
             };
 
             // Call apply_image_memory_protections directly
-            let _result = super::apply_image_memory_protections(&pe_info, &private_info);
+            let result = super::apply_image_memory_protections(&pe_info, &private_info);
 
             // Should FAIL with NotFound because the GCD RBT is empty (no descriptors),
             // so get_closest_idx returns None and get_memory_descriptor_for_address returns NotFound
-            #[cfg(not(debug_assertions))]
-            {
-                assert!(result.is_err(), "Protection should fail when section address is not in GCD");
-                assert_eq!(result.unwrap_err(), EfiError::NotFound, "Expected NotFound from GCD descriptor lookup");
-            }
+            assert!(result.is_err(), "Protection should fail when section address is not in GCD");
+            assert_eq!(result.unwrap_err(), EfiError::NotFound, "Expected NotFound from GCD descriptor lookup");
         });
 
-        // In debug builds, we expect a panic from debug_assert!
-        // In release/coverage builds, we expect normal error return
+        // In debug builds, debug_assert! panics and with_global_lock catches it, returning Err
+        // In release builds, the function completes normally and returns Ok
         #[cfg(debug_assertions)]
-        {
-            // Debug mode: verify we hit the error path (panic occurred)
-            assert!(result.is_err(), "Expected panic from debug_assert! - this means error path was reached");
-        }
+        assert!(result.is_err(), "Expected panic from debug_assert! to be caught");
 
         #[cfg(not(debug_assertions))]
-        {
-            // Release/coverage mode: verify the function completed and error was returned properly
-            assert!(result.is_ok(), "Test should complete without panic in release mode");
-        }
+        assert!(result.is_ok(), "Expected normal completion in release mode");
     }
 
     #[test]
     fn load_image_should_fail_with_section_alignment_overflow() {
-        // This test verifies error path #2: when section alignment calculation
+        // This test verifies error path #2 from Fix #176: when section alignment calculation
         // overflows in apply_image_memory_protections, the error is propagated and the
         // image load fails (Task #1030 coverage improvement).
         //
         // We craft a malformed PE image with a section virtual_size that will cause
         // align_up() to overflow when aligning to section_alignment.
-        //
-        // Note: In debug builds, this triggers a debug_assert! and we catch the panic
-        // to verify the error path was reached.
-        // In release/coverage builds, we verify the error is properly returned.
 
-        // Use with_global_lock directly instead of with_locked_state to avoid double-unwrap
-        let result = test_support::with_global_lock(|| unsafe {
-            test_support::init_test_gcd(None);
-            test_support::init_test_protocol_db();
-            init_system_table();
-            init_test_image_support();
+        let result = test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+            unsafe {
+                test_support::init_test_gcd(None);
+                test_support::init_test_protocol_db();
+                init_system_table();
+                init_test_image_support();
+            }
 
             // Load a valid test image as a template
             let mut test_file =
@@ -2465,31 +2464,25 @@ mod tests {
             // Try to load the malformed image by calling core_load_pe_image directly
             // (bypassing the FFI extern "efiapi" fn load_image which cannot unwind)
             let image_info = empty_image_info();
-            let _result = super::core_load_pe_image(&image, image_info);
+            let result = super::core_load_pe_image(&image, image_info);
 
             // The load should FAIL due to alignment overflow
             // This verifies that the error from apply_image_memory_protections
             // is properly propagated (Fix #176)
-            #[cfg(not(debug_assertions))]
-            {
-                assert!(result.is_err(), "Image with overflowing section alignment should fail to load");
-                assert_eq!(result.unwrap_err(), EfiError::LoadError, "Expected LoadError from alignment overflow");
+            match result {
+                Err(EfiError::LoadError) => { /* Expected error */ },
+                Err(e) => panic!("Expected LoadError from alignment overflow, got {:?}", e),
+                Ok(_) => panic!("Image with overflowing section alignment should fail to load"),
             }
         });
 
-        // In debug builds, we expect a panic from debug_assert!
-        // In release/coverage builds, we expect normal error return
+        // In debug builds, debug_assert! panics and with_global_lock catches it, returning Err
+        // In release builds, the function completes normally and returns Ok
         #[cfg(debug_assertions)]
-        {
-            // Debug mode: verify we hit the error path (panic occurred)
-            assert!(result.is_err(), "Expected panic from debug_assert! - this means error path was reached");
-        }
+        assert!(result.is_err(), "Expected panic from debug_assert! to be caught");
 
         #[cfg(not(debug_assertions))]
-        {
-            // Release/coverage mode: verify the function completed and error was returned properly
-            assert!(result.is_ok(), "Test should complete without panic in release mode");
-        }
+        assert!(result.is_ok(), "Expected normal completion in release mode");
     }
 
     #[test]
@@ -2502,11 +2495,15 @@ mod tests {
         // the result will be unaligned. Then set_memory_space_attributes will fail with InvalidParameter
         // because the base address is not page-aligned.
 
-        let result = test_support::with_global_lock(|| unsafe {
-            test_support::init_test_gcd(None);
-            test_support::init_test_protocol_db();
-            init_system_table();
-            init_test_image_support();
+        let result = test_support::with_global_lock(|| {
+            // SAFETY: These test initialization functions require unsafe because they
+            // manipulate global state (GCD, protocol DB, system table)
+            unsafe {
+                test_support::init_test_gcd(None);
+                test_support::init_test_protocol_db();
+                init_system_table();
+                init_test_image_support();
+            }
 
             // Load a valid test image as a template
             let mut test_file =
@@ -2529,30 +2526,24 @@ mod tests {
 
             // Call core_load_pe_image directly (not load_image) to avoid FFI boundary
             let image_info = empty_image_info();
-            let _result = super::core_load_pe_image(&image, image_info);
+            let result = super::core_load_pe_image(&image, image_info);
 
             // The load should FAIL because when apply_image_memory_protections calculates
             // section_base_addr = image_base + 0x1001, the address will be unaligned.
             // set_memory_space_attributes will check (base_address & 0xFFF) == 0 and fail.
-            #[cfg(not(debug_assertions))]
-            {
-                assert!(result.is_err(), "Image with unaligned section address should fail to load");
-                assert_eq!(result.unwrap_err(), EfiError::InvalidParameter, "Expected InvalidParameter from unaligned address");
+            match result {
+                Err(EfiError::InvalidParameter) => { /* Expected error */ },
+                Err(e) => panic!("Expected InvalidParameter from unaligned address, got {:?}", e),
+                Ok(_) => panic!("Image with unaligned section address should fail to load"),
             }
         });
 
-        // In debug builds, we expect a panic from debug_assert!
-        // In release/coverage builds, we expect normal error return
+        // In debug builds, debug_assert! panics and with_global_lock catches it, returning Err
+        // In release builds, the function completes normally and returns Ok
         #[cfg(debug_assertions)]
-        {
-            // Debug mode: verify we hit the error path (panic occurred)
-            assert!(result.is_err(), "Expected panic from debug_assert! - this means error path was reached");
-        }
+        assert!(result.is_err(), "Expected panic from debug_assert! to be caught");
 
         #[cfg(not(debug_assertions))]
-        {
-            // Release/coverage mode: verify the function completed and error was returned properly
-            assert!(result.is_ok(), "Test should complete without panic in release mode");
-        }
+        assert!(result.is_ok(), "Expected normal completion in release mode");
     }
 }
