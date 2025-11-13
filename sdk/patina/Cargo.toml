@@ -44,6 +44,7 @@ uuid = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_yaml = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+spin = { workspace = true }
 zerocopy = { workspace = true }
 zerocopy-derive = { workspace = true }
 

@@ -49,6 +49,8 @@ words:
   - clangpdb
   - corosensei
   - coverity
+  - cntfrq
+  - cntpct
   - cpuid
   - ctypes
   - cuviper
@@ -149,6 +151,7 @@ words:
   - regsvr
   - relia
   - reloc
+  - rdtsc
   - rposition
   - ruint
   - rwlock
@@ -188,3 +191,4 @@ words:
   - zbuild
   - zeroize
   - zunstable
+  

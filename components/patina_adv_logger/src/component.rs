@@ -13,7 +13,10 @@ use alloc::boxed::Box;
 use core::{ffi::c_void, ptr};
 use patina::{
     boot_services::{BootServices, StandardBootServices},
-    component::IntoComponent,
+    component::{
+        IntoComponent,
+        service::{Service, perf_timer::ArchTimerFunctionality},
+    },
     error::{EfiError, Result},
     pi::hob::{Hob, PhaseHandoffInformationTable},
     serial::SerialIO,
@@ -114,11 +117,13 @@ where
     ///
     /// Installs the Advanced Logger Protocol for use by non-local components.
     ///
-    fn entry_point(self, bs: StandardBootServices) -> Result<()> {
+    fn entry_point(self, bs: StandardBootServices, timer: Service<dyn ArchTimerFunctionality>) -> Result<()> {
         let Some(address) = self.adv_logger.get_log_address() else {
             log::error!("Advanced logger not initialized before component entry point!");
             return Err(EfiError::NotStarted);
         };
+
+        self.adv_logger.init_timer(timer);
 
         let protocol = AdvancedLoggerProtocolInternal {
             protocol: AdvancedLoggerProtocol::new(Self::adv_log_write, address),

@@ -21,6 +21,7 @@ use core::{
 
 use crate::{
     boot_services::BootServices,
+    component::service::{Service, perf_timer::ArchTimerFunctionality},
     error::EfiError,
     guids::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
     performance::{
@@ -43,7 +44,6 @@ use crate::{
 };
 
 use crate::pi::status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_BS_DRIVER};
-use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 
 use r_efi::{
     efi::{self, Guid},
@@ -207,7 +207,7 @@ pub unsafe extern "efiapi" fn create_performance_measurement(
     identifier: u32,
     attribute: PerfAttribute,
 ) -> efi::Status {
-    let Some((boot_services, fbpt)) = get_static_state() else {
+    let Some((boot_services, fbpt, timer)) = get_static_state() else {
         // If the state is not initialized, it is because perf in not enabled.
         return efi::Status::SUCCESS;
     };
@@ -251,6 +251,7 @@ pub unsafe extern "efiapi" fn create_performance_measurement(
         attribute,
         boot_services,
         fbpt,
+        timer,
     ) {
         Ok(_) => efi::Status::SUCCESS,
         Err(Error::OutOfResources) => {
@@ -285,16 +286,17 @@ fn _create_performance_measurement<B, F>(
     attribute: PerfAttribute,
     boot_services: &B,
     fbpt: &TplMutex<'static, F, B>,
+    timer: &Service<dyn ArchTimerFunctionality>,
 ) -> Result<(), Error>
 where
     B: BootServices,
     F: FirmwareBasicBootPerfTable,
 {
-    let cpu_count = Arch::cpu_count();
+    let cpu_count = timer.cpu_count();
     let timestamp = match ticker {
-        0 => (cpu_count as f64 / Arch::perf_frequency() as f64 * 1_000_000_000_f64) as u64,
+        0 => (cpu_count as f64 / timer.perf_frequency() as f64 * 1_000_000_000_f64) as u64,
         1 => 0,
-        ticker => (ticker as f64 / Arch::perf_frequency() as f64 * 1_000_000_000_f64) as u64,
+        ticker => (ticker as f64 / timer.perf_frequency() as f64 * 1_000_000_000_f64) as u64,
     };
 
     let Ok(known_perf_id) = KnownPerfId::try_from(perf_id) else {
@@ -548,6 +550,8 @@ pub struct MediaFwVolFilepathDevicePath {
 mod tests {
     use super::*;
 
+    use crate as patina;
+
     use alloc::rc::Rc;
     use core::{mem::MaybeUninit, ptr};
 
@@ -555,6 +559,7 @@ mod tests {
 
     use crate::{
         boot_services::{MockBootServices, c_ptr::CMutPtr, tpl::Tpl},
+        component::service::IntoService,
         performance::{
             globals::set_perf_measurement_mask,
             logging::*,
@@ -562,6 +567,19 @@ mod tests {
         },
         runtime_services::MockRuntimeServices,
     };
+
+    #[derive(IntoService)]
+    #[service(dyn ArchTimerFunctionality)]
+    struct MockTimer {}
+
+    impl ArchTimerFunctionality for MockTimer {
+        fn perf_frequency(&self) -> u64 {
+            100
+        }
+        fn cpu_count(&self) -> u64 {
+            200
+        }
+    }
 
     #[test]
     fn test_report_fbpt_record_buffer() {
@@ -693,6 +711,7 @@ mod tests {
                 unsafe { BOOT_SERVICES.unwrap() },
                 // SAFETY: Test code - unwrapping test statics that were initialized above.
                 unsafe { FBPT.unwrap() },
+                &Service::mock(Box::new(MockTimer {})),
             )
             .unwrap();
             efi::Status::SUCCESS

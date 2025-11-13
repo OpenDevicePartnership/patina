@@ -55,6 +55,7 @@ serial_test = { workspace = true }
 
 [target.'cfg(all(target_arch="aarch64"))'.dependencies]
 arm-gic = { workspace = true }
+aarch64-cpu = { version = "11.0.0", optional = false }
 
 [features]
 default = []

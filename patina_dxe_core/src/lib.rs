@@ -54,6 +54,7 @@ mod memory_attributes_protocol;
 mod memory_manager;
 mod misc_boot_services;
 mod pecoff;
+mod perf_timer;
 mod protocol_db;
 mod protocols;
 mod runtime;
@@ -91,7 +92,7 @@ use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
 use protocols::PROTOCOL_DB;
 use r_efi::efi;
 
-use crate::config_tables::memory_attributes_table;
+use crate::{config_tables::memory_attributes_table, perf_timer::PerfTimer};
 
 #[doc(hidden)]
 #[macro_export]
@@ -200,6 +201,7 @@ pub struct Core<MemoryState> {
     hob_list: HobList<'static>,
     components: Vec<Box<dyn Component>>,
     storage: Storage,
+    platform_timer: PerfTimer,
     _memory_state: core::marker::PhantomData<MemoryState>,
 }
 
@@ -210,12 +212,21 @@ impl Default for Core<NoAlloc> {
             hob_list: HobList::default(),
             components: Vec::new(),
             storage: Storage::new(),
+            platform_timer: PerfTimer::new(),
             _memory_state: core::marker::PhantomData,
         }
     }
 }
 
 impl Core<NoAlloc> {
+    /// Initializes the timer frequency if a platform provides a custom implementation.
+    pub fn init_timer_frequency(self, frequency: Option<u64>) -> Core<NoAlloc> {
+        if let Some(freq_override) = frequency {
+            self.platform_timer.set_frequency(freq_override);
+        }
+        self
+    }
+
     /// Initializes the core with the given configuration, including GCD initialization, enabling allocations.
     pub fn init_memory(mut self, physical_hob_list: *const c_void) -> Core<Alloc> {
         log::info!("DXE Core Crate v{}", env!("CARGO_PKG_VERSION"));
@@ -266,12 +277,14 @@ impl Core<NoAlloc> {
         self.storage.add_service(cpu);
         self.storage.add_service(interrupt_manager);
         self.storage.add_service(CoreMemoryManager);
+        self.storage.add_service(PerfTimer::with_frequency(self.platform_timer.get_stored_frequency()));
 
         Core {
             physical_hob_list,
             hob_list: self.hob_list,
             components: self.components,
             storage: self.storage,
+            platform_timer: self.platform_timer,
             _memory_state: core::marker::PhantomData,
         }
     }
@@ -618,5 +631,19 @@ fn call_bds() {
             // if it never returns: then an operating system or a system utility have been invoked.
             ((*bds).entry)(bds);
         }
+    }
+}
+
+#[cfg(test)]
+#[coverage(off)]
+mod tests {
+    use crate::Core;
+
+    #[test]
+    fn test_core_with_frequency() {
+        let frequency = 12345678;
+        let core = Core::default().init_timer_frequency(Some(frequency));
+
+        assert!(core.platform_timer.get_stored_frequency() == frequency);
     }
 }
