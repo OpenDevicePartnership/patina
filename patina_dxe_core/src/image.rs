@@ -2339,7 +2339,7 @@ mod tests {
                 // Initialize GCD but DON'T add any memory
                 // This leaves the GCD with NO descriptors (empty RBT tree)
                 crate::GCD.reset();
-                crate::GCD.init(48, 16);  // Normal 48-bit address space
+                crate::GCD.init(48, 16); // Normal 48-bit address space
             }
 
             // DON'T call add_memory_space - leave the RBT empty
@@ -2350,14 +2350,16 @@ mod tests {
                 name: [0; 8],
                 real_name: None,
                 virtual_size: 0x1000,
-                virtual_address: 0x0,  // Section at offset 0 from image_base
+                virtual_address: 0x0, // Section at offset 0 from image_base
                 size_of_raw_data: 0x1000,
                 pointer_to_raw_data: 0,
                 pointer_to_relocations: 0,
                 pointer_to_linenumbers: 0,
                 number_of_relocations: 0,
                 number_of_linenumbers: 0,
-                characteristics: goblin::pe::section_table::IMAGE_SCN_CNT_CODE | goblin::pe::section_table::IMAGE_SCN_MEM_READ | goblin::pe::section_table::IMAGE_SCN_MEM_EXECUTE,
+                characteristics: goblin::pe::section_table::IMAGE_SCN_CNT_CODE
+                    | goblin::pe::section_table::IMAGE_SCN_MEM_READ
+                    | goblin::pe::section_table::IMAGE_SCN_MEM_EXECUTE,
             };
 
             let pe_info = super::UefiPeInfo {
@@ -2368,14 +2370,13 @@ mod tests {
             };
 
             let mut image_info = empty_image_info();
-            image_info.image_base = 0x1000 as *mut c_void;  // Any address - RBT is empty so lookup will fail
+            image_info.image_base = 0x1000 as *mut c_void; // Any address - RBT is empty so lookup will fail
             image_info.image_size = 0x2000;
 
             // Manually construct PrivateImageData with minimal required fields
             // SAFETY: Allocating memory for fake image buffer to construct test data
-            let fake_buffer = unsafe {
-                alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(0x2000, 0x1000).unwrap())
-            };
+            let fake_buffer =
+                unsafe { alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(0x2000, 0x1000).unwrap()) };
 
             // Dummy entry point function
             extern "efiapi" fn dummy_entry(_: *mut c_void, _: *mut efi::SystemTable) -> efi::Status {
@@ -2448,7 +2449,8 @@ mod tests {
             // For PE32+: COFF (20 bytes) + Optional header size
             let pe_offset = 0x78;
             let opt_header_size_offset = pe_offset + 4 + 16; // After signature + COFF header fields
-            let opt_header_size = u16::from_le_bytes([image[opt_header_size_offset], image[opt_header_size_offset + 1]]) as usize;
+            let opt_header_size =
+                u16::from_le_bytes([image[opt_header_size_offset], image[opt_header_size_offset + 1]]) as usize;
             let section_table_offset = pe_offset + 4 + 20 + opt_header_size;
 
             // Each section header is 40 bytes
@@ -2470,7 +2472,7 @@ mod tests {
             // This verifies that the error from apply_image_memory_protections
             // is properly propagated (Fix #176)
             match result {
-                Err(EfiError::LoadError) => { /* Expected error */ },
+                Err(EfiError::LoadError) => { /* Expected error */ }
                 Err(e) => panic!("Expected LoadError from alignment overflow, got {:?}", e),
                 Ok(_) => panic!("Image with overflowing section alignment should fail to load"),
             }
@@ -2514,15 +2516,15 @@ mod tests {
             // Find the PE header and section table
             let pe_offset = 0x78;
             let opt_header_size_offset = pe_offset + 4 + 16;
-            let opt_header_size = u16::from_le_bytes([image[opt_header_size_offset], image[opt_header_size_offset + 1]]) as usize;
+            let opt_header_size =
+                u16::from_le_bytes([image[opt_header_size_offset], image[opt_header_size_offset + 1]]) as usize;
             let section_table_offset = pe_offset + 4 + 20 + opt_header_size;
 
             // Modify the first section's VirtualAddress (offset 12 in section header) to be unaligned
             // Set it to 0x1001 (not a multiple of 0x1000/4096)
             let virtual_address_offset = section_table_offset + 12;
             let unaligned_value: u32 = 0x1001; // Unaligned by 1 byte
-            image[virtual_address_offset..virtual_address_offset + 4]
-                .copy_from_slice(&unaligned_value.to_le_bytes());
+            image[virtual_address_offset..virtual_address_offset + 4].copy_from_slice(&unaligned_value.to_le_bytes());
 
             // Call core_load_pe_image directly (not load_image) to avoid FFI boundary
             let image_info = empty_image_info();
@@ -2532,7 +2534,7 @@ mod tests {
             // section_base_addr = image_base + 0x1001, the address will be unaligned.
             // set_memory_space_attributes will check (base_address & 0xFFF) == 0 and fail.
             match result {
-                Err(EfiError::InvalidParameter) => { /* Expected error */ },
+                Err(EfiError::InvalidParameter) => { /* Expected error */ }
                 Err(e) => panic!("Expected InvalidParameter from unaligned address, got {:?}", e),
                 Ok(_) => panic!("Image with unaligned section address should fail to load"),
             }
