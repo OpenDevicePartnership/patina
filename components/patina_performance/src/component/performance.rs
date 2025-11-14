@@ -30,6 +30,7 @@ use patina::{
         record::{
             GenericPerformanceRecord, PerformanceRecordHeader,
             hob::{HobPerformanceData, HobPerformanceDataExtractor},
+            print_record_details, record_type_name,
         },
         table::FirmwareBasicBootPerfTable,
     },
@@ -358,13 +359,35 @@ where
         return Ok(());
     }
 
+    log::info!("Performance: Processing {} bytes of MM performance data", record_data.len());
+
     let record_iter = PerformanceRecordIterator::new(&record_data);
+    let mut record_count = 0;
+    let mut success_count = 0;
+    let mut error_count = 0;
 
     for record_result in record_iter {
         match record_result {
             Ok(record) => {
+                record_count += 1;
+
+                log::debug!(
+                    "Performance: MM record #{} - type: 0x{:04X} ({}), length: {}, revision: {}, data_len: {}",
+                    record_count,
+                    record.record_type,
+                    record_type_name(record.record_type),
+                    record.length,
+                    record.revision,
+                    record.data.len()
+                );
+                // Print detailed record information based on type
+                print_record_details(record.record_type, record_count, record.data);
+
                 if let Err(e) = fbpt.lock().add_record(record) {
-                    log::error!("Performance: Failed adding MM record: {:?}", e);
+                    error_count += 1;
+                    log::error!("Performance: Failed adding MM record #{}: {:?}", record_count, e);
+                } else {
+                    success_count += 1;
                 }
             }
             Err(e) => {
@@ -373,6 +396,13 @@ where
             }
         }
     }
+
+    log::debug!(
+        "Performance: MM record summary - total: {}, added: {}, failed: {}",
+        record_count,
+        success_count,
+        error_count
+    );
 
     Ok(())
 }
