@@ -68,6 +68,7 @@ pub struct RealMmExecutor {
 
 impl RealMmExecutor {
     /// Creates a new MM executor instance.
+    #[coverage(off)]
     pub fn new(sw_mmi_trigger_service: Service<dyn SwMmiTrigger>) -> Self {
         Self { sw_mmi_trigger_service }
     }
@@ -174,10 +175,18 @@ impl MmCommunicator {
     }
 
     /// Set communication buffers for testing purposes.
+    #[coverage(off)]
     pub fn set_test_comm_buffers(&self, buffers: Vec<CommunicateBuffer>) {
         *self.comm_buffers.borrow_mut() = buffers;
     }
 
+    /// Component entry point
+    ///
+    /// # Coverage
+    ///
+    /// This function is marked with `#[coverage(off)]` because it requires StandardBootServices
+    /// which is not available in unit tests. It is tested through integration tests.
+    #[coverage(off)]
     fn entry_point(
         mut self,
         storage: &mut Storage,
@@ -364,7 +373,7 @@ mod tests {
             communicator::{MmCommunicator, MockMmExecutor},
             sw_mmi_manager::SwMmiManager,
         },
-        config::{CommunicateBuffer, MmCommunicationConfiguration},
+        config::{CommunicateBuffer, MmCommBufferStatus, MmCommunicationConfiguration},
     };
     use patina::component::{IntoComponent, Storage};
 
@@ -645,5 +654,286 @@ mod tests {
         // Should return an error because the buffer state is inconsistent after MM execution
         assert!(result.is_err(), "Should detect buffer corruption");
         assert_eq!(result.unwrap_err(), Status::InvalidResponse);
+    }
+
+    #[test]
+    fn test_mm_communicator_debug_formatting() {
+        let buffer1 = CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 512]))), 1);
+        let buffer2 = CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 1024]))), 2);
+        let buffers = vec![buffer1, buffer2];
+
+        let communicator = create_communicator_with_buffers(buffers, Box::new(EchoMmExecutor));
+
+        let debug_output = format!("{:?}", communicator);
+        assert!(debug_output.contains("MM Communicator:"));
+        assert!(debug_output.contains("Comm Buffer:"));
+        assert!(debug_output.contains("MM Executor Set: true"));
+    }
+
+    #[test]
+    fn test_mm_communicator_debug_no_executor() {
+        let buffer = CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 512]))), 0);
+        let communicator =
+            MmCommunicator { comm_buffers: RefCell::new(vec![buffer]), mm_executor: None, notify_context: None };
+
+        let debug_output = format!("{:?}", communicator);
+        assert!(debug_output.contains("MM Communicator:"));
+        assert!(debug_output.contains("MM Executor Set: false"));
+    }
+
+    #[test]
+    fn test_mm_communicator_default() {
+        let communicator = MmCommunicator::default();
+        assert_eq!(communicator.comm_buffers.borrow().len(), 0);
+        assert!(communicator.mm_executor.is_none());
+        assert!(communicator.notify_context.is_none());
+    }
+
+    #[test]
+    fn test_mm_communicator_with_executor() {
+        let executor = Box::new(EchoMmExecutor);
+        let communicator = MmCommunicator::with_executor(executor);
+
+        assert_eq!(communicator.comm_buffers.borrow().len(), 0);
+        assert!(communicator.mm_executor.is_some());
+        assert!(communicator.notify_context.is_none());
+    }
+
+    #[test]
+    fn test_status_enum_debug() {
+        let statuses = vec![
+            Status::NoCommBuffer,
+            Status::CommBufferNotFound,
+            Status::CommBufferTooSmall,
+            Status::CommBufferInitError,
+            Status::InvalidDataBuffer,
+            Status::SwMmiServiceNotAvailable,
+            Status::SwMmiFailed,
+            Status::InvalidResponse,
+        ];
+
+        for status in statuses {
+            let debug_str = format!("{:?}", status);
+            assert!(!debug_str.is_empty(), "Debug format should not be empty");
+        }
+    }
+
+    #[test]
+    fn test_status_enum_equality() {
+        // Test PartialEq and Copy/Clone traits
+        let status1 = Status::NoCommBuffer;
+        let status2 = Status::NoCommBuffer;
+        let status3 = Status::CommBufferNotFound;
+
+        assert_eq!(status1, status2);
+        assert_ne!(status1, status3);
+
+        // Test Copy
+        let status4 = status1;
+        assert_eq!(status1, status4);
+    }
+
+    #[test]
+    fn test_communicate_with_disabled_buffer() {
+        // Create a buffer and disable it
+        let mut buffer = CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 1024]))), 0);
+        buffer.disable();
+
+        let communicator = create_communicator_with_buffers(vec![buffer], Box::new(EchoMmExecutor));
+
+        // Should fail to find the buffer since it's disabled
+        let result = communicator.communicate(0, &TEST_DATA, test_recipient());
+        assert_eq!(result, Err(Status::CommBufferNotFound));
+    }
+
+    #[test]
+    fn test_communicate_with_mixed_enabled_disabled_buffers() {
+        // Create multiple buffers with some enabled and some disabled
+        let mut buffer1 = CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 512]))), 1);
+        buffer1.disable(); // Disabled
+
+        let buffer2 = CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 1024]))), 2); // Enabled
+
+        let mut buffer3 = CommunicateBuffer::new(Pin::new(Box::leak(Box::new([0u8; 256]))), 3);
+        buffer3.disable(); // Disabled
+
+        let buffers = vec![buffer1, buffer2, buffer3];
+        let communicator = create_communicator_with_buffers(buffers, Box::new(EchoMmExecutor));
+
+        // Buffer 1 is disabled - should fail
+        let result1 = communicator.communicate(1, &TEST_DATA, test_recipient());
+        assert_eq!(result1, Err(Status::CommBufferNotFound));
+
+        // Buffer 2 is enabled - should succeed
+        let result2 = communicator.communicate(2, &TEST_DATA, test_recipient());
+        assert!(result2.is_ok());
+        assert_eq!(result2.unwrap(), TEST_DATA.to_vec());
+
+        // Buffer 3 is disabled - should fail
+        let result3 = communicator.communicate(3, &TEST_DATA, test_recipient());
+        assert_eq!(result3, Err(Status::CommBufferNotFound));
+    }
+
+    #[test]
+    fn test_mm_communicator_new() {
+        let communicator = MmCommunicator::new();
+
+        // Verify initial state
+        assert_eq!(communicator.comm_buffers.borrow().len(), 0);
+        assert!(communicator.mm_executor.is_none());
+        assert!(communicator.notify_context.is_none());
+
+        // Verify it matches default
+        let default_communicator = MmCommunicator::default();
+        assert_eq!(communicator.comm_buffers.borrow().len(), default_communicator.comm_buffers.borrow().len());
+    }
+
+    #[test]
+    fn test_communicate_non_zero_mm_return_status() {
+        use std::alloc::{Layout, alloc, dealloc};
+
+        // Create a buffer with a mailbox using from_firmware_region
+        let buffer_size = 4096;
+        let page_align = 4096;
+
+        let buffer_layout = Layout::from_size_align(buffer_size, page_align).unwrap();
+        // SAFETY: buffer_layout is a valid memory buffer allocated above.
+        let buffer_ptr: *mut u8 = unsafe { alloc(buffer_layout) };
+        assert!(!buffer_ptr.is_null(), "Failed to allocate aligned buffer");
+
+        // SAFETY: buffer_ptr points to a valid memory buffer allocated above.
+        unsafe {
+            core::ptr::write_bytes(buffer_ptr, 0, buffer_size);
+        }
+
+        let status_layout = Layout::from_size_align(core::mem::size_of::<MmCommBufferStatus>(), page_align).unwrap();
+        // SAFETY: status_layout is a valid memory buffer allocated above.
+        let status_ptr = unsafe { alloc(status_layout) as *mut MmCommBufferStatus };
+        assert!(!status_ptr.is_null(), "Failed to allocate aligned status");
+
+        // SAFETY: status_ptr points to a valid memory buffer allocated above.
+        unsafe {
+            core::ptr::write(status_ptr, MmCommBufferStatus::new());
+        }
+
+        let buffer_addr = buffer_ptr as u64;
+        let status_addr = status_ptr as u64;
+
+        // SAFETY: The memory is allocated above in the test and valid for the duration of the test
+        let buffer_with_mailbox = unsafe {
+            CommunicateBuffer::from_firmware_region(buffer_addr, buffer_size, 0, Some(status_addr))
+                .expect("Failed to create buffer with mailbox")
+        };
+
+        assert!(buffer_with_mailbox.has_status_mailbox());
+
+        struct NonZeroReturnExecutor {
+            status_ptr: *mut MmCommBufferStatus,
+        }
+        impl MmExecutor for NonZeroReturnExecutor {
+            fn execute_mm(&self, comm_buffer: &mut CommunicateBuffer) -> Result<(), Status> {
+                // Get the message and echo it back (like EchoMmExecutor)
+                let request_data = comm_buffer.get_message().map_err(|_| Status::InvalidDataBuffer)?;
+                let recipient_bytes = comm_buffer
+                    .get_header_guid()
+                    .map_err(|_| Status::CommBufferInitError)?
+                    .ok_or(Status::CommBufferInitError)?
+                    .as_bytes();
+                comm_buffer.reset();
+                let recipient = patina::Guid::from_bytes(&recipient_bytes);
+                comm_buffer.set_message_info(recipient).map_err(|_| Status::CommBufferInitError)?;
+                comm_buffer.set_message(&request_data).map_err(|_| Status::CommBufferInitError)?;
+
+                // Set a non-zero return status in the mailbox to simulate a failure
+                // SAFETY: The memory was allocated and owned by the test
+                unsafe {
+                    (*self.status_ptr).return_status = 0x8000_0000_0000_0001;
+                    (*self.status_ptr).return_buffer_size = request_data.len() as u64;
+                }
+
+                Ok(())
+            }
+        }
+
+        let communicator =
+            create_communicator_with_buffers(vec![buffer_with_mailbox], Box::new(NonZeroReturnExecutor { status_ptr }));
+
+        let result = communicator.communicate(0, &TEST_DATA, test_recipient());
+        assert!(result.is_ok(), "Communication should succeed even with a non-zero MM return status");
+        assert_eq!(result.unwrap(), TEST_DATA.to_vec());
+
+        // SAFETY: Cleaning up memory allocated in the test.
+        unsafe {
+            dealloc(buffer_ptr, buffer_layout);
+            dealloc(status_ptr as *mut u8, status_layout);
+        }
+    }
+
+    #[test]
+    fn test_communicate_get_message_fails_after_mm() {
+        use std::alloc::{Layout, alloc, dealloc};
+
+        // Create a buffer with a mailbox using from_firmware_region
+        let buffer_size = 4096;
+        let page_align = 4096;
+
+        let buffer_layout = Layout::from_size_align(buffer_size, page_align).unwrap();
+        // SAFETY: buffer_layout is a valid memory buffer allocated above.
+        let buffer_ptr = unsafe { alloc(buffer_layout) };
+        assert!(!buffer_ptr.is_null(), "Failed to allocate aligned buffer");
+
+        // SAFETY: buffer_ptr points to a valid memory buffer allocated above.
+        unsafe {
+            core::ptr::write_bytes(buffer_ptr, 0, buffer_size);
+        }
+
+        let status_layout = Layout::from_size_align(core::mem::size_of::<MmCommBufferStatus>(), page_align).unwrap();
+        // SAFETY: status_layout is a valid memory buffer allocated above.
+        let status_ptr = unsafe { alloc(status_layout) as *mut MmCommBufferStatus };
+        assert!(!status_ptr.is_null(), "Failed to allocate aligned status");
+
+        // SAFETY: status_ptr points to a valid memory buffer allocated above.
+        unsafe {
+            core::ptr::write(status_ptr, MmCommBufferStatus::new());
+        }
+
+        let buffer_addr = buffer_ptr as u64;
+        let status_addr = status_ptr as u64;
+
+        // SAFETY: The memory is allocated above in the test and valid for the duration of the test
+        let buffer_with_mailbox = unsafe {
+            CommunicateBuffer::from_firmware_region(buffer_addr, buffer_size, 0, Some(status_addr))
+                .expect("Failed to create buffer with mailbox")
+        };
+
+        // Create an executor that corrupts the buffer to cause get_message to fail
+        struct CorruptBufferExecutor;
+        impl MmExecutor for CorruptBufferExecutor {
+            fn execute_mm(&self, comm_buffer: &mut CommunicateBuffer) -> Result<(), Status> {
+                // Corrupt the message length (larger than the buffer size)
+                let huge_length = usize::MAX;
+
+                // SAFETY: The buffer is intentionally being corrupted for the test
+                unsafe {
+                    let ptr = comm_buffer.as_ptr();
+                    let length_offset = 16;
+                    let length_ptr = ptr.add(length_offset) as *mut usize;
+                    *length_ptr = huge_length;
+                }
+
+                Ok(())
+            }
+        }
+
+        let communicator = create_communicator_with_buffers(vec![buffer_with_mailbox], Box::new(CorruptBufferExecutor));
+
+        let result = communicator.communicate(0, &TEST_DATA, test_recipient());
+        assert_eq!(result, Err(Status::InvalidResponse));
+
+        // SAFETY: Cleaning up memory allocated in the test.
+        unsafe {
+            dealloc(buffer_ptr, buffer_layout);
+            dealloc(status_ptr as *mut u8, status_layout);
+        }
     }
 }
