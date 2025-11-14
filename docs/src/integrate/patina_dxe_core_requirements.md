@@ -165,6 +165,42 @@ Resource Descriptor HOB v2 describing it.
 > Platforms must create Resource Descriptor HOB v2s for all memory resources including MMIO and reserved memory with
 > a valid cacheability attribute set.
 
+#### 2.2.1 Resource Descriptor Hob v2 Guidance
+
+The guidance is that Resource Descriptor Hobs need to define the system's memory map. Some have read this
+as only needing to describe the memory that is in use, but others have read it as needing to describe the
+entire memory map. The Resource Descriptor Hobs should describe the system memory map, as it stands, at
+the end of PEI. This includes caching attributes, so that patina is able to consume the data and provide
+enhanced memory portections from the start of DXE.
+
+##### PEI Video Example
+
+By the start of DXE, most system memory should be configured as Write Back (EFI_MEMORY_WB), and most Memory Mapped I/O
+should be configured as uncachable (EFI_MEMORY_UC). There are exceptions to this, based upon platform level decisions.
+For example, if the pre DXE phase configured a video device and displayed something on the screen, then the memory
+region associated with the frame buffer, for performance, should be reflected for that region of memory.
+
+##### Firmware Devices
+
+SPI flash accessiable through MMIO is another complex example.
+
+Consider the following scenario:
+
+- 64MB SPI part, mapped to 0xFC00_0000 - 0xFFFF_FFFF.
+- FVs in the SPI part
+  - 0xFD00_0000 - 0xFD04_FFFF - NVRAM
+  - 0xFD05_0000 - 0xFE40_FFFF - DXE code
+  - 0xFF00_0000 - 0xFFFF_FFFF - PEI code
+- HPET enabled, mapped to 0xFED0_0000 - 0xFED0_03FF.
+
+Note both the HPET region and the FV hobs overlaps with the SPI region.
+
+The HPET should have a MMIO resource descriptor HOB for the HPET region.
+By the time end of PEI occurs, the FVs will have been shadowed to Memory, so the FV resource descriptor HOBs should
+describe the FV regions in memory.
+
+The SPI flash can be reported around, the HPET region, as MMIO resources with the uncachable attribute.
+
 #### 2.3 Overlapping HOBs Prohibited
 
 Patina does not allow there to be overlapping Resource Descriptor HOB v2s in the system and the DXE Readiness Tool will
