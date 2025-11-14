@@ -174,7 +174,7 @@ enhanced memory protections from the start of DXE.
 ##### PEI Video Example
 
 By the start of DXE, most system memory should be configured as Write Back (EFI_MEMORY_WB), and most Memory Mapped I/O
-should be configured as uncachable (EFI_MEMORY_UC). There are exceptions to this, based upon platform level decisions.
+should be configured as uncached (EFI_MEMORY_UC). There are exceptions to this, based upon platform level decisions.
 For example, if the pre DXE phase configured a video device and displayed something on the screen, then the memory
 region associated with the frame buffer, for performance, should be reflected for that region of memory.
 
