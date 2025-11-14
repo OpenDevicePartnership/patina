@@ -193,8 +193,8 @@ Consider the following scenario:
 
 Note both the HPET region and the FV hobs overlaps with the SPI region.
 
-The HPET should have a MMIO resource descriptor HOB for the HPET region.
-By the time end of PEI occurs, the FVs will have been shadowed to Memory, so the FV resource descriptor HOBs should
+The HPET should have a MMIO resource descriptor HOB for its region.
+By the time end of PEI occurs, the FVs will have been shadowed to memory, so the FV resource descriptor HOBs should
 describe the FV regions in memory.
 
 The SPI flash can be reported around, the HPET region, as MMIO resources with the uncachable attribute.
