@@ -171,7 +171,7 @@ Resource Descriptor HOBs need to define the system's memory map. Historically, s
 the end of PEI. This includes caching attributes, so that Patina is able to consume the data and provide
 enhanced memory protections from the start of DXE.
 
-##### PEI Video Example
+##### PEI Video Region Example
 
 By the start of DXE, most system memory should be configured as Write Back (EFI_MEMORY_WB), and most Memory Mapped I/O
 should be configured as uncached (EFI_MEMORY_UC). There are exceptions to this, based upon platform level decisions.
