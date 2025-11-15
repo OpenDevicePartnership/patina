@@ -167,9 +167,11 @@ Resource Descriptor HOB v2 describing it.
 
 #### 2.2.1 Resource Descriptor Hob v2 Guidance
 
-Resource Descriptor HOBs need to define the system's memory map. Historically, some platforms have only described memory that is in use, but the HOBs should describe the system memory map, as it stands, at
-the end of PEI. This includes caching attributes, so that Patina is able to consume the data and provide
-enhanced memory protections from the start of DXE.
+Resource Descriptor HOBs are produced by a platform to describe ranges that compose the system's memory map.
+Historically, some platforms have only described memory that is in use, but the HOBs should describe the
+entire system memory map, as it stands, at the end of the HOB-producer phase. This includes caching
+attributes in V2 resource descriptor HOBs so that Patina is able to consume the data and provide enhanced
+memory protections from the start of DXE.
 
 ##### PEI Video Region Example
 
