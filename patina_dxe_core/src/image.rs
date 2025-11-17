@@ -116,24 +116,6 @@ impl Drop for ImageStack {
             // we added a guard page, so we need to subtract a page from the stack pointer to free everything
             let stack_addr = self.stack as *const u64 as efi::PhysicalAddress - UEFI_PAGE_SIZE as u64;
 
-            // we need to set the guard page back to XP so that the pages can be coalesced before we free them
-            // preserve the caching attributes
-            let mut attributes = match dxe_services::core_get_memory_space_descriptor(stack_addr) {
-                Ok(descriptor) => descriptor.attributes & !efi::MEMORY_ATTRIBUTE_MASK,
-                Err(_) => DEFAULT_CACHE_ATTR,
-            };
-
-            attributes |= efi::MEMORY_XP;
-            if let Err(err) =
-                dxe_services::core_set_memory_space_attributes(stack_addr, UEFI_PAGE_SIZE as u64, attributes)
-            {
-                log::error!("Failed to set memory space attributes for stack guard page: {err:?}");
-                // unfortunately, this needs to be commented out for now, because the tests have gotten too complex
-                // and need to be refactored to handle the page table
-                // debug_assert!(false);
-                // if we failed, let's still try to free
-            }
-
             if let Err(status) = core_free_pages(stack_addr, self.allocated_pages) {
                 log::error!(
                     "core_free_pages returned error {:#x?} for image stack at {:#x} for num_pages {:#x}",
@@ -141,6 +123,7 @@ impl Drop for ImageStack {
                     stack_addr,
                     self.allocated_pages
                 );
+                debug_assert!(false);
             }
         }
     }
@@ -300,6 +283,7 @@ impl Drop for PrivateImageData {
                 self.image_base_page,
                 self.image_num_pages
             );
+            debug_assert!(false);
         }
 
         if let (Some(resource_addr), Some(num_pages)) =
@@ -309,6 +293,7 @@ impl Drop for PrivateImageData {
             log::error!(
                 "core_free_pages returned error {status:#x?} for HII resource section at {resource_addr:#x} for num_pages {num_pages:#x}",
             );
+            debug_assert!(false);
         }
     }
 }
@@ -448,48 +433,6 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
             })?;
     }
     Ok(())
-}
-
-fn remove_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateImageData) {
-    for section in &pe_info.sections {
-        // each section starts at image_base + virtual_address, per PE/COFF spec.
-        let section_base_addr = (private_info.image_info.image_base as u64) + (section.virtual_address as u64);
-
-        // we need to get the current attributes for this region and remove our attributes
-        // we need to reset this to efi::MEMORY_XP so that we can merge all of the pages allocated for this image
-        // together. Any unaligned memory will still have efi::MEMORY_XP set
-        match dxe_services::core_get_memory_space_descriptor(section_base_addr) {
-            Ok(desc) => {
-                let attributes = desc.attributes & !efi::MEMORY_ATTRIBUTE_MASK | efi::MEMORY_XP;
-
-                // now set the attributes back to only caching attrs.
-                let aligned_virtual_size =
-                    if let Ok(virtual_size) = align_up(section.virtual_size, pe_info.section_alignment) {
-                        virtual_size as u64
-                    } else {
-                        log::error!(
-                            "Failed to align up section size {:#X} with alignment {:#X}",
-                            section.virtual_size,
-                            pe_info.section_alignment,
-                        );
-                        debug_assert!(false);
-                        continue;
-                    };
-                if let Err(status) =
-                    dxe_services::core_set_memory_space_attributes(section_base_addr, aligned_virtual_size, attributes)
-                {
-                    log::error!(
-                        "Failed to remove GCD attributes for image section {section_base_addr:#X} with Status {status:#X?}",
-                    );
-                }
-            }
-            Err(status) => {
-                log::error!(
-                    "Failed to find GCD desc for image section {section_base_addr:#X} with Status {status:#X?}, cannot remove memory protections",
-                );
-            }
-        }
-    }
 }
 
 // retrieves the dxe core image info from the hob list, and installs the
@@ -1418,11 +1361,6 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
     {
         log::error!("Failed to remove runtime image for handle {image_handle:?}: {err:?}");
     }
-
-    // we have to remove the memory protections from the image sections before freeing the image buffer, because
-    // core_free_pages expects the memory being freed to be in a single continuous memory descriptor, which is not
-    // true when we've changed the attributes per section
-    remove_image_memory_protections(&private_image_data.pe_info, &private_image_data);
 
     Ok(())
 }
