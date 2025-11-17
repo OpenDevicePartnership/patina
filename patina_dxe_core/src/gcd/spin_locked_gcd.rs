@@ -2060,6 +2060,45 @@ impl SpinLockedGcd {
         self.io.lock().init(io_address_bits);
     }
 
+    /// Helper function to perform an operation on each GCD descriptor in the given range.
+    ///
+    /// Arguments:
+    /// - `base_address`: The starting address of the range.
+    /// - `len`: The length of the range.
+    /// - `operation`: The operation to perform on each descriptor. It takes the descriptor, the base address of the current range,
+    ///   the length of the current range, and a context value.
+    /// - `context`: A context value to pass to the operation.
+    ///
+    /// Returns:
+    /// - `Ok(())` if the operation was successful for all descriptors.
+    /// - `Err(EfiError)` if the operation failed for any descriptor. The operation does not continue if a failure occurs.
+    pub(crate) fn for_each_desc_in_range<F>(
+        &self,
+        base_address: usize,
+        len: usize,
+        mut operation: F,
+        context: u64,
+    ) -> Result<(), EfiError>
+    where
+        F: FnMut(MemorySpaceDescriptor, usize, usize, u64) -> Result<(), EfiError>,
+    {
+        let mut current_base = base_address as u64;
+        let range_end = (base_address + len) as u64;
+        while current_base < range_end {
+            let descriptor = self.get_memory_descriptor_for_address(current_base as efi::PhysicalAddress)?;
+            let descriptor_end = descriptor.base_address + descriptor.length;
+
+            // it is still legal to split a descriptor and only operate on part of it
+            let next_base = u64::min(descriptor_end, range_end);
+            let current_len = next_base - current_base;
+            operation(descriptor, current_base as usize, current_len as usize, context)?;
+
+            current_base = next_base;
+        }
+
+        Ok(())
+    }
+
     // Take control of our own destiny and create a page table that the GCD controls
     // This must be done after the GCD is initialized and memory services are available,
     // as we need to allocate memory for the page table structure.
