@@ -2489,6 +2489,76 @@ impl SpinLockedGcd {
         attributes
     }
 
+    // This function is the per descriptor worker for set_memory_space_attributes. It assumes that the range being
+    // passed to it fits entirely within a single GCD descriptor. The wrapper functions of this must guarantee this or
+    // it will fail gracefully when splitting memory blocks.
+    fn set_memory_space_attributes_worker(
+        &self,
+        base_address: usize,
+        len: usize,
+        attributes: u64,
+        original_attributes: u64,
+    ) -> Result<(), EfiError> {
+        // this API allows for setting attributes across multiple descriptors in the GCD (assuming the capabilities
+        // allow it). The lower level set_memory_space_attributes will only operate on a single entry in the GCD/page
+        // table, so at this level we need to check to see if the range spans multiple entries and if so, we need to
+        // split the range and call set_memory_space_attributes for each entry. We also need to set the paging
+        // attributes per entry to ensure that we keep the GCD and page table in sync
+        let attributes = MemoryProtectionPolicy::apply_nx_to_uc_policy(attributes);
+
+        match self.memory.lock().set_memory_space_attributes(base_address, len, attributes) {
+            Ok(()) => {}
+            Err(e) => {
+                log::error!(
+                    "Failed to set GCD memory attributes for memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
+                );
+                debug_assert!(false);
+            }
+        }
+
+        // 0 is a valid value for paging attributes: it means RWX. 0 is invalid for cache attributes. edk2 has a
+        // behavior where if the caller passes 0 for cache and paging attributes, then 0 (RWX) is not applied to
+        // the page table and only the virtual attribute(s) are applied to the GCD, such as EFI_RUNTIME. In order
+        // to maintain compatibility with existing drivers, we preserve this poor paradigm.
+        if attributes & (efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK) != 0 {
+            match self.set_paging_attributes(base_address, len, attributes) {
+                Ok(_) => {}
+                Err(EfiError::NotReady) => {
+                    // before the page table is installed, we expect to get a return of NotReady. This means the GCD
+                    // has been updated with the attributes, but the page table is not installed yet. In init_paging, the
+                    // page table will be updated with the current state of the GCD. The code that calls into this expects
+                    // NotReady to be returned, so we must catch that error and report it. However, we also need to
+                    // make sure any attribute updates across descriptors update the full range and not error out here.
+                    return Err(EfiError::NotReady);
+                }
+                Err(e) => {
+                    log::error!(
+                        "Failed to set page table memory attributes for memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
+                    );
+                    debug_assert!(false);
+
+                    // if we failed here, we shouldn't leave the GCD and the page table out of sync. Roll the GCD back
+                    // to the previous attributes for this range. We may have partially updated this range in the GCD
+                    // and the page table, but they will be in sync. We could attempt to continue here, but we need
+                    // to return an error to the caller, so we might as well stop here.
+                    if let Err(rollback_err) =
+                        self.memory.lock().set_memory_space_attributes(base_address, len, original_attributes)
+                    {
+                        // well, we did our best. The GCD and page table are now out of sync, which is a critical error.
+                        log::error!(
+                            "Failed to roll back GCD attributes after page table attribute set failure. This is a critical error. GCD and page table are now out of sync. Rollback error: {:?}",
+                            rollback_err
+                        );
+                    }
+
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// This service sets attributes on the given memory space.
     ///
     /// # Documentation
@@ -2499,44 +2569,17 @@ impl SpinLockedGcd {
         len: usize,
         attributes: u64,
     ) -> Result<(), EfiError> {
-        // this API allows for setting attributes across multiple descriptors in the GCD (assuming the capabilities
-        // allow it). The lower level set_memory_space_attributes will only operate on a single entry in the GCD/page
-        // table, so at this level we need to check to see if the range spans multiple entries and if so, we need to
-        // split the range and call set_memory_space_attributes for each entry. We also need to set the paging
-        // attributes per entry to ensure that we keep the GCD and page table in sync
-
-        let attributes = Self::apply_memory_protection_rules(attributes);
-
-        let mut current_base = base_address as u64;
         let mut res = Ok(());
-        let range_end = (base_address + len) as u64;
-        while current_base < range_end {
-            let descriptor = self.get_memory_descriptor_for_address(current_base as efi::PhysicalAddress)?;
-            let descriptor_end = descriptor.base_address + descriptor.length;
-
-            // it is still legal to split a descriptor and only set the attributes on part of it
-            let next_base = u64::min(descriptor_end, range_end);
-            let current_len = next_base - current_base;
-            match self.memory.lock().set_memory_space_attributes(
-                current_base as usize,
-                current_len as usize,
-                attributes,
-            ) {
-                Ok(()) => {}
-                Err(e) => {
-                    log::error!(
-                        "Failed to set GCD memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
-                    );
-                    debug_assert!(false);
-                }
-            }
-
-            // 0 is a valid value for paging attributes: it means RWX. 0 is invalid for cache attributes. edk2 has a
-            // behavior where if the caller passes 0 for cache and paging attributes, then 0 (RWX) is not applied to
-            // the page table and only the virtual attribute(s) are applied to the GCD, such as EFI_RUNTIME. In order
-            // to maintain compatibility with existing drivers, we preserve this poor paradigm.
-            if attributes & (efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK) != 0 {
-                match self.set_paging_attributes(current_base as usize, current_len as usize, attributes) {
+        self.for_each_desc_in_range(
+            base_address,
+            len,
+            |descriptor, current_base, current_len, attributes| {
+                match self.set_memory_space_attributes_worker(
+                    current_base,
+                    current_len,
+                    attributes,
+                    descriptor.attributes,
+                ) {
                     Ok(_) => {}
                     Err(EfiError::NotReady) => {
                         // before the page table is installed, we expect to get a return of NotReady. This means the GCD
@@ -2548,33 +2591,16 @@ impl SpinLockedGcd {
                     }
                     Err(e) => {
                         log::error!(
-                            "Failed to set page table memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
+                            "Failed to set memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
                         );
                         debug_assert!(false);
-
-                        // if we failed here, we shouldn't leave the GCD and the page table out of sync. Roll the GCD back
-                        // to the previous attributes for this range. We may have partially updated this range in the GCD
-                        // and the page table, but they will be in sync. We could attempt to continue here, but we need
-                        // to return an error to the caller, so we might as well stop here.
-                        if let Err(rollback_err) = self.memory.lock().set_memory_space_attributes(
-                            current_base as usize,
-                            current_len as usize,
-                            descriptor.attributes,
-                        ) {
-                            // well, we did our best. The GCD and page table are now out of sync, which is a critical error.
-                            log::error!(
-                                "Failed to roll back GCD attributes after page table attribute set failure. This is a critical error. GCD and page table are now out of sync. Rollback error: {:?}",
-                                rollback_err
-                            );
-                        }
-
                         return Err(e);
                     }
                 }
-            }
-
-            current_base = next_base;
-        }
+                Ok(())
+            },
+            attributes,
+        )?;
 
         // if we made it out of the loop, we set the attributes correctly and should call the memory change callback,
         // if there is one
