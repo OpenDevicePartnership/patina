@@ -452,11 +452,6 @@ impl GCD {
         // All software capabilities are supported for system memory
         capabilities |= efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME;
 
-        // The MEMORY_MAPPED_IO_PORT_SPACE attribute should be supported for MMIO
-        if memory_type == dxe_services::GcdMemoryType::MemoryMappedIo {
-            capabilities |= efi::MEMORY_ISA_VALID;
-        }
-
         let memory_blocks = &mut self.memory_blocks;
 
         log::trace!(target: "gcd_measure", "search");
