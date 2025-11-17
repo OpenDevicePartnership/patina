@@ -34,7 +34,7 @@ where
     max_level: log::LevelFilter,
     format: Format,
     memory_log: Once<AdvancedLog<'static>>,
-    pub(crate) timer: Once<Service<dyn ArchTimerFunctionality>>,
+    pub(crate) timer: Service<dyn ArchTimerFunctionality>,
 }
 
 impl<'a, S> AdvancedLogger<'a, S>
@@ -56,13 +56,13 @@ where
         max_level: log::LevelFilter,
         hardware_port: S,
     ) -> Self {
-        Self { hardware_port, target_filters, max_level, format, memory_log: Once::new(), timer: Once::new() }
+        Self { hardware_port, target_filters, max_level, format, memory_log: Once::new(), timer: Service::new_uninit() }
     }
 
     /// Initializes the performance timer service for timestamping log entries.
     /// Should only be called once during setup.
     pub fn init_timer(&self, timer: Service<dyn ArchTimerFunctionality>) {
-        self.timer.call_once(|| timer);
+        self.timer.replace(&timer);
     }
 
     /// Writes a log entry to the hardware port and memory log if available.
@@ -70,7 +70,7 @@ where
         let mut hw_write = true;
         if let Some(memory_log) = self.memory_log.get() {
             hw_write = memory_log.hardware_write_enabled(error_level);
-            let timestamp = self.timer.get().map_or(0, |timer| timer.cpu_count());
+            let timestamp = self.timer.cpu_count();
             let _ = memory_log.add_log_entry(LogEntry {
                 phase: memory_log::ADVANCED_LOGGER_PHASE_DXE,
                 level: error_level,
@@ -94,7 +94,7 @@ where
 
             // The frequency may not be initialized, if not do so now.
             if memory_log.get_frequency() == 0 {
-                let frequency = self.timer.get().map_or(0, |timer| timer.perf_frequency());
+                let frequency = self.timer.perf_frequency();
                 memory_log.set_frequency(frequency);
             }
 
@@ -238,6 +238,19 @@ mod tests {
     }
 
     #[test]
+    #[should_panic = "Service should be initialized first!"]
+    fn test_uninit() {
+        let serial = UartNull {};
+        let logger_uninit = AdvancedLogger::<UartNull>::new(
+            Format::Standard,
+            &[("test_target", log::LevelFilter::Info)],
+            log::LevelFilter::Debug,
+            serial,
+        );
+        Some(logger_uninit.timer.cpu_count());
+    }
+
+    #[test]
     fn test_init() {
         let serial = UartNull {};
         let logger_uninit = AdvancedLogger::<UartNull>::new(
@@ -246,9 +259,7 @@ mod tests {
             log::LevelFilter::Debug,
             serial,
         );
-        assert!(logger_uninit.timer.get().is_none());
-
         logger_uninit.init_timer(patina::component::service::Service::mock(Box::new(MockTimer {})));
-        assert!(logger_uninit.timer.get().is_some());
+        assert!(logger_uninit.timer.cpu_count() > 0);
     }
 }

@@ -29,7 +29,7 @@ struct StaticState<'a> {
     /// Flag to indicate if the static state is in the process of being initialized.
     initializing: AtomicBool,
     /// Timer service for performance measurements.
-    timer: OnceCell<Service<dyn ArchTimerFunctionality>>,
+    timer: Service<dyn ArchTimerFunctionality>,
 }
 
 impl<'a> StaticState<'a> {
@@ -39,7 +39,7 @@ impl<'a> StaticState<'a> {
             boot_services: OnceCell::new(),
             fbpt: OnceCell::new(),
             initializing: AtomicBool::new(false),
-            timer: OnceCell::new(),
+            timer: Service::new_uninit(),
         }
     }
 
@@ -59,7 +59,7 @@ impl<'a> StaticState<'a> {
             self.fbpt
                 .set(TplMutex::new(self.boot_services.get().expect("Boot Services Just Set"), Tpl::NOTIFY, FBPT::new()))
                 .map_err(|_| "Failed to set FBPT")?;
-            self.timer.set(timer).map_err(|_| "Failed to set timer")?;
+            self.timer.replace(&timer);
             self.initializing.store(false, Ordering::Release);
             return Ok(());
         }
@@ -76,9 +76,8 @@ impl<'a> StaticState<'a> {
         if !self.initializing.load(Ordering::Acquire)
             && let Some(bs) = self.boot_services.get()
             && let Some(fbpt) = self.fbpt.get()
-            && let Some(timer) = self.timer.get()
         {
-            return Some((bs, fbpt, timer));
+            return Some((bs, fbpt, &self.timer));
         }
         None
     }
