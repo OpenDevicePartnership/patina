@@ -33,6 +33,18 @@ impl Display for StackFrame {
     }
 }
 
+impl StackFrame {
+    fn end_of_stack(&self) -> bool {
+        cfg_if::cfg_if! {
+            if #[cfg(target_arch = "aarch64")] {
+                self.pc == 0 || self.fp == 0
+            } else {
+                self.pc == 0
+            }
+        }
+    }
+}
+
 /// A structure representing a stack trace.
 pub struct StackTrace;
 
@@ -95,8 +107,7 @@ impl StackTrace {
 
             stack_frame = prev_stack_frame;
 
-            // Stop the stack trace when the PC or FP becomes zero.
-            if stack_frame.pc == 0 || stack_frame.fp == 0 {
+            if stack_frame.end_of_stack() {
                 log::warn!("Finished dumping stack trace");
                 break;
             }
@@ -133,7 +144,7 @@ impl StackTrace {
         let mut stack_frame = StackFrame::default();
 
         cfg_if::cfg_if! {
-            if #[cfg(all(target_arch = "aarch64"))] {
+            if #[cfg(target_arch = "aarch64")] {
                 // SAFETY: Inline assembly reads the current program counter
                 // (PC), stack pointer (SP), and frame pointer (FP). It does not
                 // modify memory or violate Rust safety invariants. The caller
@@ -186,5 +197,29 @@ mod tests {
     fn display_formats_hex_values() {
         let frame = StackFrame { pc: 0x1234, sp: 0xABCD, fp: 0xFEDC };
         assert_eq!(format!("{frame}"), "PC: 0000000000001234, SP: 000000000000ABCD, FP: 000000000000FEDC");
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn end_of_stack_aarch64_checks_pc_or_fp() {
+        let mut frame = StackFrame { pc: 0x1, sp: 0, fp: 0x1 };
+        assert!(!frame.end_of_stack());
+
+        frame.pc = 0;
+        assert!(frame.end_of_stack());
+
+        frame.pc = 0x1;
+        frame.fp = 0;
+        assert!(frame.end_of_stack());
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    #[test]
+    fn end_of_stack_non_aarch64_checks_pc_only() {
+        let mut frame = StackFrame { pc: 0x1, sp: 0, fp: 0 };
+        assert!(!frame.end_of_stack());
+
+        frame.pc = 0;
+        assert!(frame.end_of_stack());
     }
 }
