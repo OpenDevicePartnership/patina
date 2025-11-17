@@ -247,7 +247,7 @@ mod tests {
             log::LevelFilter::Debug,
             serial,
         );
-        Some(logger_uninit.timer.cpu_count());
+        logger_uninit.timer.cpu_count();
     }
 
     #[test]

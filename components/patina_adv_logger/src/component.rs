@@ -151,6 +151,7 @@ mod tests {
     use core::mem::size_of;
 
     use patina::{
+        component::service::IntoService,
         pi::hob::{GUID_EXTENSION, GuidHob, header::Hob},
         serial::uart::UartNull,
     };
@@ -196,7 +197,21 @@ mod tests {
 
     #[test]
     fn component_test() {
+        #[derive(IntoService)]
+        #[service(dyn ArchTimerFunctionality)]
+        struct MockTimer {}
+
+        impl ArchTimerFunctionality for MockTimer {
+            fn perf_frequency(&self) -> u64 {
+                100
+            }
+            fn cpu_count(&self) -> u64 {
+                200
+            }
+        }
+
         let component = AdvancedLoggerComponent::new(&TEST_LOGGER);
+        component.adv_logger.init_timer(Service::mock(Box::new(MockTimer {})));
 
         let hob_list = create_adv_logger_hob_list();
 
