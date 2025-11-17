@@ -21,6 +21,7 @@ use crate::{
     allocator::{MemoryDescriptorSlice, core_allocate_pool, core_free_pool, get_memory_map_descriptors},
     config_tables::core_install_configuration_table,
     events::EVENT_DB,
+    gcd::MemoryProtectionPolicy,
     systemtables,
 };
 use r_efi::efi;
@@ -151,7 +152,6 @@ pub fn core_install_memory_attributes_table() {
             return;
         }
     };
-    let mat_allowed_attrs = efi::MEMORY_RO | efi::MEMORY_XP | efi::MEMORY_RUNTIME;
 
     if desc_list.is_empty() {
         log::error!("Failed to install memory attributes table! Could not get memory map descriptors.");
@@ -166,17 +166,10 @@ pub fn core_install_memory_attributes_table() {
             match descriptor.r#type {
                 efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA => {
                     Some(efi::MemoryDescriptor {
-                        attribute: match descriptor.attribute & (efi::MEMORY_RO | efi::MEMORY_XP) {
-                            // if we don't have any attributes set here, we should mark code as RO and XP. These are
-                            // likely extra sections in the memory bins and so should not be used
-                            // Data we will mark as XP only, as likely the caching attributes were changed, which
-                            // dropped the XP attribute, so we need to set it here.
-                            0 if descriptor.r#type == efi::RUNTIME_SERVICES_CODE => mat_allowed_attrs,
-                            0 if descriptor.r#type == efi::RUNTIME_SERVICES_DATA => {
-                                efi::MEMORY_RUNTIME | efi::MEMORY_XP
-                            }
-                            _ => descriptor.attribute & mat_allowed_attrs,
-                        },
+                        attribute: MemoryProtectionPolicy::apply_memory_attributes_table_policy(
+                            descriptor.attribute,
+                            descriptor.r#type,
+                        ),
                         // use all other fields from the GCD descriptor
                         ..*descriptor
                     })

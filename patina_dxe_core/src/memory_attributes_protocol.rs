@@ -486,7 +486,7 @@ mod tests {
             GCD.init(48, 16);
 
             let mut attrs: u64 = 0;
-            let status = get_memory_attributes(core::ptr::null_mut(), 0x0 as u64, 0x3000, &mut attrs as *mut u64);
+            let status = get_memory_attributes(core::ptr::null_mut(), 0x0_u64, 0x3000, &mut attrs as *mut u64);
             assert_eq!(status, efi::Status::NO_MAPPING);
         });
     }

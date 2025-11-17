@@ -283,6 +283,9 @@ Patina (here called Patina or the core interchangeably) applies strict memory pr
 and UEFI spec APIs to adjust them. Protections are applied categorically with the only customization currently supported
 being [Compatibility Mode](#compatibility-mode).
 
+All memory protection policy decisions in Patina are driven through the `MemoryProtectionPolicy` struct for simple
+auditability and ensuring consistency.
+
 > **Note:** This section primarily deals with access attributes. Caching attributes are platform and driver driven and
 > outside the scope of this document. The core gets the initial platform specified caching attributes via the Resource
 > Descriptor HOB v2 and persists whatever the GCD entry has on every other call. After this point, drivers (such as

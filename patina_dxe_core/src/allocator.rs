@@ -28,7 +28,7 @@ use mu_rust_helpers::function;
 
 use crate::{
     GCD, config_tables,
-    gcd::{self, AllocateType as AllocationStrategy},
+    gcd::{self, AllocateType as AllocationStrategy, MemoryProtectionPolicy},
     memory_attributes_table::MemoryAttributesTable,
     protocol_db::{self, INVALID_HANDLE},
     protocols::PROTOCOL_DB,
@@ -690,17 +690,11 @@ pub(crate) fn get_memory_map_descriptors(active_attributes: bool) -> Result<Vec<
                     // pick it up from the active attributes. We also drop the access attributes because
                     // some OSes think the EFI_MEMORY_MAP attribute field is actually set attributes, not
                     // capabilities.
-                    match descriptor.memory_type {
-                        GcdMemoryType::Persistent => {
-                            (descriptor.capabilities & !(efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME))
-                                | (descriptor.attributes & efi::MEMORY_RUNTIME)
-                                | efi::MEMORY_NV
-                        }
-                        _ => {
-                            (descriptor.capabilities & !(efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME))
-                                | (descriptor.attributes & efi::MEMORY_RUNTIME)
-                        }
-                    }
+                    MemoryProtectionPolicy::apply_efi_memory_map_policy(
+                        descriptor.attributes,
+                        descriptor.capabilities,
+                        descriptor.memory_type,
+                    )
                 }
             };
 
@@ -996,14 +990,11 @@ fn process_hob_allocations(hob_list: &HobList) {
         } else {
             match GCD.get_memory_descriptor_for_address(stack_address) {
                 Ok(gcd_desc) => {
-                    let attributes: u64 = gcd_desc.attributes;
-                    log::trace!("Current Attributes for the stack {:#X?} \n\n", attributes);
-                    // Set Stack region to execute protect.
-                    match GCD.set_memory_space_attributes(
-                        stack_address as usize,
-                        stack_length as usize,
-                        attributes | efi::MEMORY_XP,
-                    ) {
+                    // Set Stack region to execute protect. We use the allocated memory protection policy here because
+                    // that matches our standard policy
+                    let attributes =
+                        GCD.memory_protection_policy.apply_allocated_memory_protection_policy(gcd_desc.attributes);
+                    match GCD.set_memory_space_attributes(stack_address as usize, stack_length as usize, attributes) {
                         Ok(_) | Err(EfiError::NotReady) => (),
                         Err(e) => {
                             log::error!(
@@ -1015,11 +1006,11 @@ fn process_hob_allocations(hob_list: &HobList) {
                             debug_assert!(false);
                         }
                     }
-                    // Set Guard page to read protect.
+                    // Set Guard page to read protect. We keep the NX and cache attributes from above
                     match GCD.set_memory_space_attributes(
                         stack_address as usize,
                         UEFI_PAGE_SIZE,
-                        attributes | efi::MEMORY_RP,
+                        MemoryProtectionPolicy::apply_image_stack_guard_policy(attributes),
                     ) {
                         Ok(_) | Err(EfiError::NotReady) => (),
                         Err(e) => {
