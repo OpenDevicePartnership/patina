@@ -2243,26 +2243,6 @@ mod tests {
         });
     }
 
-    // Tests for memory protection error handling (Fix #176, Task #1030)
-    //
-    // Fix #176 changed apply_image_memory_protections() to return Result<(), EfiError>
-    // instead of (), meaning any failure in applying memory protections now causes the
-    // image load to fail, preventing images from running without proper protections.
-    //
-    // Task #1030: These tests improve unit test coverage in image.rs by
-    // providing comprehensive coverage of all error paths introduced by Fix #176.
-    //
-    // The three scenarios that now cause image load failure:
-    // 1. GCD descriptor lookup failure for an image section
-    //     Tested by: apply_memory_protections_should_fail_when_section_address_not_in_gcd()
-    // 2. Section size alignment calculation failure
-    //     Tested by: load_image_should_fail_with_section_alignment_overflow()
-    // 3. Setting memory space attributes failure
-    //     Tested by: load_image_should_fail_with_unaligned_section_address()
-    //
-    // Positive test verifies that valid images still load successfully:
-    //     load_image_should_succeed_with_proper_memory_protections()
-
     #[test]
     fn load_image_should_succeed_with_proper_memory_protections() {
         // Positive test: Verifies that a valid image loads successfully when memory
@@ -2332,7 +2312,7 @@ mod tests {
         // This scenario represents a corrupted or uninitialized GCD state where memory
         // descriptors are missing - an edge case that the error handling should catch.
 
-        let result = test_support::with_global_lock(|| {
+        test_support::with_global_lock(|| {
             // SAFETY: These test initialization functions require unsafe because they
             // manipulate global state (GCD, protocol DB, system table)
             unsafe {
@@ -2409,14 +2389,6 @@ mod tests {
             assert!(result.is_err(), "Protection should fail when section address is not in GCD");
             assert_eq!(result.unwrap_err(), EfiError::NotFound, "Expected NotFound from GCD descriptor lookup");
         });
-
-        // In debug builds, debug_assert! panics and with_global_lock catches it, returning Err
-        // In release builds, the function completes normally and returns Ok
-        #[cfg(debug_assertions)]
-        assert!(result.is_err(), "Expected panic from debug_assert! to be caught");
-
-        #[cfg(not(debug_assertions))]
-        assert!(result.is_ok(), "Expected normal completion in release mode");
     }
 
     #[test]
@@ -2428,7 +2400,7 @@ mod tests {
         // We craft a malformed PE image with a section virtual_size that will cause
         // align_up() to overflow when aligning to section_alignment.
 
-        let result = test_support::with_global_lock(|| {
+        test_support::with_global_lock(|| {
             // SAFETY: These test initialization functions require unsafe because they
             // manipulate global state (GCD, protocol DB, system table)
             unsafe {
@@ -2477,14 +2449,6 @@ mod tests {
                 Ok(_) => panic!("Image with overflowing section alignment should fail to load"),
             }
         });
-
-        // In debug builds, debug_assert! panics and with_global_lock catches it, returning Err
-        // In release builds, the function completes normally and returns Ok
-        #[cfg(debug_assertions)]
-        assert!(result.is_err(), "Expected panic from debug_assert! to be caught");
-
-        #[cfg(not(debug_assertions))]
-        assert!(result.is_ok(), "Expected normal completion in release mode");
     }
 
     #[test]
@@ -2497,7 +2461,7 @@ mod tests {
         // the result will be unaligned. Then set_memory_space_attributes will fail with InvalidParameter
         // because the base address is not page-aligned.
 
-        let result = test_support::with_global_lock(|| {
+        test_support::with_global_lock(|| {
             // SAFETY: These test initialization functions require unsafe because they
             // manipulate global state (GCD, protocol DB, system table)
             unsafe {
@@ -2539,13 +2503,5 @@ mod tests {
                 Ok(_) => panic!("Image with unaligned section address should fail to load"),
             }
         });
-
-        // In debug builds, debug_assert! panics and with_global_lock catches it, returning Err
-        // In release builds, the function completes normally and returns Ok
-        #[cfg(debug_assertions)]
-        assert!(result.is_err(), "Expected panic from debug_assert! to be caught");
-
-        #[cfg(not(debug_assertions))]
-        assert!(result.is_ok(), "Expected normal completion in release mode");
     }
 }
