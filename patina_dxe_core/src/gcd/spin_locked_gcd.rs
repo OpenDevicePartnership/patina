@@ -1895,6 +1895,28 @@ impl SpinLockedGcd {
             let mut unmapped = false;
             let mut update_cache_attributes = true;
 
+            // EFI_MEMORY_RP is a special case, we don't actually want to set it in the page table, we want to unmap
+            // the region. It is valid for the region to already be unmapped or partially unmapped in this case. E.g.
+            // we might be freeing an entire image but the stack guard page is already unmapped.
+            if paging_attrs & MemoryAttributes::ReadProtect == MemoryAttributes::ReadProtect {
+                match page_table.unmap_memory_region(base_address as u64, len as u64) {
+                    Ok(_) => {
+                        log::trace!(
+                            target: "paging",
+                            "Memory region {base_address:#x?} of length {len:#x?} unmapped",
+                        );
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to unmap memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
+                        );
+                        debug_assert!(false);
+                        return Err(EfiError::InvalidParameter);
+                    }
+                }
+            }
+
             // we assume that the page table and GCD are in sync. If not, we will debug_assert and return an error here
             // as this indicates a critical error
             let region_attributes = match page_table.query_memory_region(base_address as u64, len as u64) {
@@ -1948,35 +1970,6 @@ impl SpinLockedGcd {
                     "Memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. No paging action taken: Region already mapped with these attributes.",
                 );
                 return Ok(());
-            }
-
-            // EFI_MEMORY_RP is a special case, we don't actually want to set it in the page table, we want to unmap
-            // the region
-            if paging_attrs & MemoryAttributes::ReadProtect == MemoryAttributes::ReadProtect {
-                if unmapped {
-                    // the region is already unmapped, this indicates that the GCD and page table are out of sync
-                    log::error!(
-                        "Memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?} already unmapped. GCD and page table are out of sync. This is a critical error.",
-                    );
-                    debug_assert!(false);
-                    return Ok(());
-                }
-                match page_table.unmap_memory_region(base_address as u64, len as u64) {
-                    Ok(_) => {
-                        log::trace!(
-                            target: "paging",
-                            "Memory region {base_address:#x?} of length {len:#x?} unmapped",
-                        );
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "Failed to unmap memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
-                        );
-                        debug_assert!(false);
-                        return Err(EfiError::InvalidParameter);
-                    }
-                }
             }
 
             match page_table.map_memory_region(base_address as u64, len as u64, paging_attrs) {
