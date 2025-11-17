@@ -1551,6 +1551,8 @@ mod tests {
             init_system_table();
             init_test_image_support();
             f();
+            // we need the to drop the memory here while the GCD is still valid
+            PRIVATE_IMAGE_DATA.lock().reset();
         })
         .unwrap();
     }
