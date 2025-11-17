@@ -90,10 +90,8 @@ Cursor = Dhcp6AppendOption (
 
 ```rust,no_run
 # extern crate zerocopy;
-# extern crate zerocopy_derive;
 use std::marker::PhantomData;
 use zerocopy::{FromBytes, Immutable, KnownLayout};
-use zerocopy_derive::{FromBytes, Immutable, KnownLayout};
 
 // Type-safe DHCP6 option codes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
