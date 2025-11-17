@@ -55,6 +55,27 @@ enum InternalError {
     Slice(SliceError),
 }
 
+impl From<InternalError> for EfiError {
+    fn from(err: InternalError) -> Self {
+        match err {
+            InternalError::MemoryBlock(e) => match e {
+                MemoryBlockError::BlockOutsideRange => EfiError::NotFound,
+                MemoryBlockError::InvalidStateTransition => EfiError::AccessDenied,
+            },
+            InternalError::IoBlock(e) => match e {
+                IoBlockError::BlockOutsideRange => EfiError::NotFound,
+                IoBlockError::InvalidStateTransition => EfiError::AccessDenied,
+            },
+            InternalError::Slice(e) => match e {
+                SliceError::OutOfSpace => EfiError::OutOfResources,
+                SliceError::AlreadyExists => EfiError::AlreadyStarted,
+                SliceError::NotFound => EfiError::NotFound,
+                SliceError::NotSorted => EfiError::Unsupported,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum AllocateType {
     /// Allocate from the lowest address to the highest address or until the specify address is reached (max address).
@@ -316,7 +337,7 @@ impl GCD {
             memory_blocks: Rbt::new(),
             maximum_address: 1 << processor_address_bits,
             allocate_memory_space_fn: Self::allocate_memory_space_internal,
-            free_memory_space_fn: Self::free_memory_space_worker,
+            free_memory_space_fn: Self::free_memory_space,
             default_attributes: efi::MEMORY_XP,
             prioritize_32_bit_memory: false,
         }
@@ -324,13 +345,13 @@ impl GCD {
 
     pub fn lock_memory_space(&mut self) {
         self.allocate_memory_space_fn = Self::allocate_memory_space_null;
-        self.free_memory_space_fn = Self::free_memory_space_worker_null;
+        self.free_memory_space_fn = Self::free_memory_space_null;
         log::info!("Disallowing alloc/free during ExitBootServices.");
     }
 
     pub fn unlock_memory_space(&mut self) {
         self.allocate_memory_space_fn = Self::allocate_memory_space_internal;
-        self.free_memory_space_fn = Self::free_memory_space_worker;
+        self.free_memory_space_fn = Self::free_memory_space;
     }
 
     pub fn init(&mut self, processor_address_bits: u32) {
@@ -569,7 +590,43 @@ impl GCD {
         Err(EfiError::AccessDenied)
     }
 
-    fn free_memory_space_worker(
+    // This function checks if allocated memory blocks exist for the entire specified address range.
+    // It returns Ok(()) only if every part of the range is covered by an Allocated block.
+    fn get_memory_block_allocation_state(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
+        ensure!(self.maximum_address != 0, EfiError::NotReady);
+        ensure!(len > 0, EfiError::InvalidParameter);
+        ensure!(base_address + len <= self.maximum_address, EfiError::Unsupported);
+
+        let memory_blocks = &self.memory_blocks;
+
+        let mut current_base = base_address as u64;
+        let range_end = (base_address + len) as u64;
+
+        while current_base < range_end {
+            log::trace!(target: "gcd_measure", "search");
+            let idx = memory_blocks.get_closest_idx(&current_base).ok_or(EfiError::NotFound)?;
+            let block = memory_blocks.get_with_idx(idx).ok_or(EfiError::NotFound)?;
+
+            // Check that the block covers the current base
+            if current_base < block.start() as u64
+                || range_end > block.end() as u64 && block.end() as u64 <= current_base
+            {
+                return Err(EfiError::NotFound);
+            }
+
+            match block {
+                MemoryBlock::Unallocated(_) => return Err(EfiError::NotFound),
+                MemoryBlock::Allocated(_) => {}
+            }
+
+            // Advance to the end of this block or the end of the requested range
+            current_base = u64::min(block.end() as u64, range_end);
+        }
+
+        Ok(())
+    }
+
+    fn free_memory_space(
         &mut self,
         base_address: usize,
         len: usize,
@@ -589,39 +646,13 @@ impl GCD {
         log::trace!(target: "gcd_measure", "search");
         let idx = memory_blocks.get_closest_idx(&(base_address as u64)).ok_or(EfiError::NotFound)?;
 
-        match Self::split_state_transition_at_idx(memory_blocks, idx, base_address, len, transition) {
-            Ok(_) => {}
-            Err(InternalError::MemoryBlock(_)) => error!(EfiError::NotFound),
-            Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(EfiError::OutOfResources),
-            Err(e) => panic!("{e:?}"),
-        }
-
-        let desc = self.get_memory_descriptor_for_address(base_address as efi::PhysicalAddress)?;
-
-        match self.set_gcd_memory_attributes(
-            base_address,
-            len,
-            efi::MEMORY_RP | efi::MEMORY_XP | (desc.attributes & efi::CACHE_ATTRIBUTE_MASK),
-        ) {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                // if we failed to set the attributes in the GCD, we want to catch it, but should still try to go
-                // down and free the memory space
-                log::error!(
-                    "Failed to set memory attributes for {:#x?} of length {:#x?} with attributes {:#x?}. Status: {:#x?}",
-                    base_address,
-                    len,
-                    efi::MEMORY_RP,
-                    e
-                );
-                debug_assert!(false);
-                Err(e)
-            }
-        }
+        Self::split_state_transition_at_idx(memory_blocks, idx, base_address, len, transition)
+            .map(|_| ())
+            .map_err(|e| e.into())
     }
 
     #[coverage(off)]
-    fn free_memory_space_worker_null(
+    fn free_memory_space_null(
         _gcd: &mut GCD,
         _base_address: usize,
         _len: usize,
@@ -845,28 +876,6 @@ impl GCD {
             Err(InternalError::Slice(SliceError::OutOfSpace)) => error!(EfiError::OutOfResources),
             Err(e) => panic!("{e:?}"),
         }
-    }
-
-    /// This service frees nonexistent memory, reserved memory, system memory, or memory-mapped I/O resources from the
-    /// global coherency domain of the processor.
-    ///
-    /// # Documentation
-    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.3
-    pub fn free_memory_space(&mut self, base_address: usize, len: usize) -> Result<(), EfiError> {
-        (self.free_memory_space_fn)(self, base_address, len, MemoryStateTransition::Free)
-    }
-
-    /// This service frees nonexistent memory, reserved memory, system memory, or memory-mapped I/O resources from the
-    /// global coherency domain of the processor.
-    ///
-    /// Ownership of the memory as indicated by the image_handle associated with the block is retained, which means that
-    /// it cannot be re-allocated except by the original owner or by requests targeting a specific address within the
-    /// block (i.e. [`Self::allocate_memory_space`] with [`AllocateType::Address`]).
-    ///
-    /// # Documentation
-    /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.3
-    pub fn free_memory_space_preserving_ownership(&mut self, base_address: usize, len: usize) -> Result<(), EfiError> {
-        (self.free_memory_space_fn)(self, base_address, len, MemoryStateTransition::FreePreservingOwnership)
     }
 
     /// This service sets attributes on the given memory space.
@@ -1819,7 +1828,7 @@ impl SpinLockedGcd {
                     maximum_address: 0,
                     memory_blocks: Rbt::new(),
                     allocate_memory_space_fn: GCD::allocate_memory_space_internal,
-                    free_memory_space_fn: GCD::free_memory_space_worker,
+                    free_memory_space_fn: GCD::free_memory_space,
                     default_attributes: efi::MEMORY_XP,
                     prioritize_32_bit_memory: false,
                 },
@@ -2413,6 +2422,65 @@ impl SpinLockedGcd {
         result
     }
 
+    // Internal worker for freeing memory space with different transition types
+    fn free_memory_space_internal(
+        &self,
+        base_address: usize,
+        len: usize,
+        transition: MemoryStateTransition,
+    ) -> Result<(), EfiError> {
+        // check if this block is actually allocated by us and bail out if not, since we need to set the attributes
+        // to coalesce the memory blocks before attempting to free them
+        self.memory.lock().get_memory_block_allocation_state(base_address, len)?;
+
+        // Set the attributes before freeing the memory space so that the memory blocks are merged together and we
+        // can free the range. It is valid to call free pages on memory which has different attributes. If we fail the
+        // free, the memory will be unmapped, but still marked allocated in the memory blocks. This is acceptable as it
+        // will not be used again, we will return a failure to the caller and they can ignore this memory (which can
+        // not be used after the failed free anyway).
+        self.for_each_desc_in_range(
+            base_address,
+            len,
+            |desc, base_address, len, _| {
+                // we call the worker here because we want to ensure we are getting the caching attribute from the
+                // correct descriptor. It is possible the caching attribute is different across descriptors.
+                if let Err(e) = self.set_memory_space_attributes_worker(
+                    base_address,
+                    len,
+                    MemoryProtectionPolicy::apply_free_memory_policy(desc.attributes),
+                    desc.attributes,
+                ) && e != EfiError::NotReady
+                {
+                    // if we failed to set the attributes in the GCD, we want to catch it, but should still try to go
+                    // down and free the memory space. NotReady is ignored here because the memory bucket code will
+                    // call this before paging is initialized.
+                    log::error!(
+                        "Failed to set free memory attributes for {:#x?} of length {:#x?} Status: {:#x?}",
+                        base_address,
+                        len,
+                        e
+                    );
+                    debug_assert!(false);
+                    return Err(e);
+                }
+                Ok(())
+            },
+            0,
+        )?;
+
+        match self.memory.lock().free_memory_space(base_address, len, transition) {
+            Ok(()) => {
+                if let Some(callback) = self.memory_change_callback {
+                    callback(MapChangeType::FreeMemorySpace);
+                }
+                Ok(())
+            }
+            // During EBS case, just ignore
+            Err(EfiError::AccessDenied) => Ok(()),
+            other => other,
+        }
+    }
+
     /// This service frees nonexistent memory, reserved memory, system memory, or memory-mapped I/O resources from the
     /// global coherency domain of the processor.
     ///
@@ -2420,41 +2488,7 @@ impl SpinLockedGcd {
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.3
     #[coverage(off)]
     pub fn free_memory_space(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
-        let mut result = self.memory.lock().free_memory_space(base_address, len);
-
-        match result {
-            Ok(_) => {
-                // when we free, we want to unmap this memory region and mark it EFI_MEMORY_RP in the GCD
-                // we don't panic if we don't have a page table because the memory bucket code does a free before the
-                // page table is initialized. If we were to end up without the page table initialized, we would still
-                // keep track of state in the GCD
-                if let Some(page_table) = &mut *self.page_table.lock() {
-                    match page_table.unmap_memory_region(base_address as u64, len as u64) {
-                        Ok(_) => {}
-                        Err(status) => {
-                            log::error!(
-                                "Failed to unmap memory region {base_address:#x?} of length {len:#x?}. Status: {status:#x?}",
-                            );
-                            debug_assert!(false);
-                            match status {
-                                PtError::OutOfResources => EfiError::OutOfResources,
-                                PtError::NoMapping => EfiError::NotFound,
-                                _ => EfiError::InvalidParameter,
-                            };
-                        }
-                    }
-                }
-
-                if let Some(callback) = self.memory_change_callback {
-                    callback(MapChangeType::FreeMemorySpace);
-                }
-            }
-            // this is the post-EBS case, we silently fail and return success
-            Err(EfiError::AccessDenied) => result = Ok(()),
-            _ => {}
-        }
-
-        result
+        self.free_memory_space_internal(base_address, len, MemoryStateTransition::Free)
     }
 
     /// This service frees nonexistent memory, reserved memory, system memory, or memory-mapped I/O resources from the
@@ -2466,14 +2500,9 @@ impl SpinLockedGcd {
     ///
     /// # Documentation
     /// UEFI Platform Initialization Specification, Release 1.8, Section II-7.2.4.3
+    #[coverage(off)]
     pub fn free_memory_space_preserving_ownership(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
-        let result = self.memory.lock().free_memory_space_preserving_ownership(base_address, len);
-        if result.is_ok()
-            && let Some(callback) = self.memory_change_callback
-        {
-            callback(MapChangeType::FreeMemorySpace);
-        }
-        result
+        self.free_memory_space_internal(base_address, len, MemoryStateTransition::FreePreservingOwnership)
     }
 
     // Apply Patina memory protection rules to the given attributes.
@@ -3638,14 +3667,14 @@ mod tests {
     #[test]
     fn test_free_memory_space_before_memory_blocks_instantiated() {
         let mut gcd = GCD::new(48);
-        assert_eq!(Err(EfiError::NotFound), gcd.free_memory_space(0x1000, 0x1000));
+        assert_eq!(Err(EfiError::NotFound), gcd.free_memory_space(0x1000, 0x1000, MemoryStateTransition::Free));
     }
 
     #[test]
     fn test_free_memory_space_when_0_len_block() {
         let (mut gcd, _) = create_gcd();
         let snapshot = copy_memory_block(&gcd);
-        assert_eq!(Err(EfiError::InvalidParameter), gcd.free_memory_space(0, 0));
+        assert_eq!(Err(EfiError::InvalidParameter), gcd.free_memory_space(0, 0, MemoryStateTransition::Free));
         assert_eq!(snapshot, copy_memory_block(&gcd));
     }
 
@@ -3667,9 +3696,18 @@ mod tests {
 
         let snapshot = copy_memory_block(&gcd);
 
-        assert_eq!(Err(EfiError::Unsupported), gcd.free_memory_space(gcd.maximum_address, 10));
-        assert_eq!(Err(EfiError::Unsupported), gcd.free_memory_space(gcd.maximum_address - 99, 100));
-        assert_eq!(Err(EfiError::Unsupported), gcd.free_memory_space(gcd.maximum_address + 1, 100));
+        assert_eq!(
+            Err(EfiError::Unsupported),
+            gcd.free_memory_space(gcd.maximum_address, 10, MemoryStateTransition::Free)
+        );
+        assert_eq!(
+            Err(EfiError::Unsupported),
+            gcd.free_memory_space(gcd.maximum_address - 99, 100, MemoryStateTransition::Free)
+        );
+        assert_eq!(
+            Err(EfiError::Unsupported),
+            gcd.free_memory_space(gcd.maximum_address + 1, 100, MemoryStateTransition::Free)
+        );
 
         assert_eq!(snapshot, copy_memory_block(&gcd));
     }
@@ -3688,9 +3726,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(Err(EfiError::NotFound), gcd.free_memory_space(0x2000, 0x1000));
-        assert_eq!(Err(EfiError::NotFound), gcd.free_memory_space(0x4000, 0x1000));
-        assert_eq!(Err(EfiError::NotFound), gcd.free_memory_space(0, 0x1000));
+        assert_eq!(Err(EfiError::AccessDenied), gcd.free_memory_space(0x2000, 0x1000, MemoryStateTransition::Free));
+        assert_eq!(Err(EfiError::AccessDenied), gcd.free_memory_space(0x4000, 0x1000, MemoryStateTransition::Free));
+        assert_eq!(Err(EfiError::AccessDenied), gcd.free_memory_space(0, 0x1000, MemoryStateTransition::Free));
     }
 
     #[test]
@@ -3717,7 +3755,10 @@ mod tests {
             n += 1;
         }
         let memory_blocks_snapshot = copy_memory_block(&gcd);
-        assert_eq!(Err(EfiError::OutOfResources), gcd.free_memory_space(0x1000000, UEFI_PAGE_SIZE));
+        assert_eq!(
+            Err(EfiError::OutOfResources),
+            gcd.free_memory_space(0x1000000, UEFI_PAGE_SIZE, MemoryStateTransition::Free)
+        );
         assert_eq!(memory_blocks_snapshot, copy_memory_block(&gcd),);
     }
 
@@ -3737,15 +3778,27 @@ mod tests {
         .unwrap();
 
         let block_count = gcd.memory_descriptor_count();
-        assert_eq!(Ok(()), gcd.free_memory_space(0x1000, 0x1000), "Free beginning of a block.");
+        assert_eq!(
+            Ok(()),
+            gcd.free_memory_space(0x1000, 0x1000, MemoryStateTransition::Free),
+            "Free beginning of a block."
+        );
         assert_eq!(block_count + 1, gcd.memory_descriptor_count());
-        assert_eq!(Ok(()), gcd.free_memory_space(0x5000, 0x1000), "Free in the middle of a block");
+        assert_eq!(
+            Ok(()),
+            gcd.free_memory_space(0x5000, 0x1000, MemoryStateTransition::Free),
+            "Free in the middle of a block"
+        );
         assert_eq!(block_count + 3, gcd.memory_descriptor_count());
-        assert_eq!(Ok(()), gcd.free_memory_space(0x9000, 0x1000), "Free at the end of a block");
+        assert_eq!(
+            Ok(()),
+            gcd.free_memory_space(0x9000, 0x1000, MemoryStateTransition::Free),
+            "Free at the end of a block"
+        );
         assert_eq!(block_count + 5, gcd.memory_descriptor_count());
 
         let block_count = gcd.memory_descriptor_count();
-        assert_eq!(Ok(()), gcd.free_memory_space(0x2000, 0x2000));
+        assert_eq!(Ok(()), gcd.free_memory_space(0x2000, 0x2000, MemoryStateTransition::Free));
         assert_eq!(block_count, gcd.memory_descriptor_count());
 
         let blocks = copy_memory_block(&gcd);
@@ -3753,14 +3806,14 @@ mod tests {
         assert_eq!(0, mb.as_ref().base_address);
         assert_eq!(0x1000, mb.as_ref().length);
 
-        assert_eq!(Ok(()), gcd.free_memory_space(0x6000, 0x1000));
+        assert_eq!(Ok(()), gcd.free_memory_space(0x6000, 0x1000, MemoryStateTransition::Free));
         assert_eq!(block_count, gcd.memory_descriptor_count());
         let blocks = copy_memory_block(&gcd);
         let mb = blocks[2];
         assert_eq!(0x4000, mb.as_ref().base_address);
         assert_eq!(0x1000, mb.as_ref().length);
 
-        assert_eq!(Ok(()), gcd.free_memory_space(0x8000, 0x1000));
+        assert_eq!(Ok(()), gcd.free_memory_space(0x8000, 0x1000, MemoryStateTransition::Free));
         assert_eq!(block_count, gcd.memory_descriptor_count());
         let blocks = copy_memory_block(&gcd);
         let mb = blocks[4];
@@ -3776,7 +3829,7 @@ mod tests {
             memory_blocks: Rbt::new(),
             maximum_address: 0,
             allocate_memory_space_fn: GCD::allocate_memory_space_internal,
-            free_memory_space_fn: GCD::free_memory_space_worker,
+            free_memory_space_fn: GCD::free_memory_space,
             default_attributes: efi::MEMORY_XP,
             prioritize_32_bit_memory: false,
         };
@@ -4504,8 +4557,8 @@ mod tests {
         assert_eq!(res.unwrap(), SIZE_4GB, "Failed to fall back to higher memory as expected");
 
         // Free the memory to check the next condition.
-        gcd.free_memory_space(SIZE_4GB - 0x10000, 0x10000).unwrap();
-        gcd.free_memory_space(SIZE_4GB, SIZE_4GB).unwrap();
+        gcd.free_memory_space(SIZE_4GB - 0x10000, 0x10000, MemoryStateTransition::Free).unwrap();
+        gcd.free_memory_space(SIZE_4GB, SIZE_4GB, MemoryStateTransition::Free).unwrap();
 
         // Check that a sufficiently large allocation will straddle the boundary.
         let res = gcd.allocate_memory_space(
