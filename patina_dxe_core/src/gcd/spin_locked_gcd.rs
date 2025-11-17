@@ -16,7 +16,7 @@ use patina::{
     base::{SIZE_4GB, UEFI_PAGE_MASK, UEFI_PAGE_SHIFT, UEFI_PAGE_SIZE, align_up},
     guids::{self, CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP},
     pi::{
-        dxe_services::{self, GcdMemoryType},
+        dxe_services::{self, GcdMemoryType, MemorySpaceDescriptor},
         hob::{self, EFiMemoryTypeInformation},
     },
     uefi_pages_to_size,
@@ -2054,6 +2054,12 @@ impl SpinLockedGcd {
         io.io_blocks = Rbt::new();
     }
 
+    /// Adds a page table for testing purposes
+    #[cfg(test)]
+    pub fn add_test_page_table(&self, page_table: Box<dyn PatinaPageTable>) {
+        *self.page_table.lock() = Some(page_table);
+    }
+
     /// Initializes the underlying memory GCD and I/O GCD with the given address bits.
     pub fn init(&self, memory_address_bits: u32, io_address_bits: u32) {
         self.memory.lock().init(memory_address_bits);
@@ -2773,136 +2779,12 @@ mod tests {
     use core::{alloc::Layout, sync::atomic::AtomicBool};
     use patina::base::align_up;
 
-    use crate::test_support;
+    use crate::test_support::{self, MockPageTable, MockPageTableWrapper};
 
     use super::*;
     use alloc::vec::Vec;
     use r_efi::efi;
-    use std::alloc::GlobalAlloc;
-
-    use std::cell::RefCell;
-
-    struct MockPageTable {
-        mapped: RefCell<Vec<(u64, u64, MemoryAttributes)>>,
-        unmapped: RefCell<Vec<(u64, u64)>>,
-        installed: RefCell<bool>,
-        // Track current mappings to provide realistic query behavior
-        current_mappings: RefCell<Vec<(u64, u64, MemoryAttributes)>>,
-    }
-
-    impl PatinaPageTable for MockPageTable {
-        fn map_memory_region(&mut self, base: u64, len: u64, attrs: MemoryAttributes) -> Result<(), PtError> {
-            self.mapped.borrow_mut().push((base, len, attrs));
-
-            // Update current mappings - remove any overlapping regions first
-            let mut current = self.current_mappings.borrow_mut();
-            current.retain(|(existing_base, existing_len, _)| {
-                let existing_end = existing_base + existing_len;
-                let new_end = base + len;
-                // Keep if no overlap
-                !(base < existing_end && new_end > *existing_base)
-            });
-            // Add new mapping
-            current.push((base, len, attrs));
-            Ok(())
-        }
-
-        fn unmap_memory_region(&mut self, base: u64, len: u64) -> Result<(), PtError> {
-            self.unmapped.borrow_mut().push((base, len));
-
-            // Remove from current mappings
-            let mut current = self.current_mappings.borrow_mut();
-            current.retain(|(existing_base, existing_len, _)| {
-                let existing_end = existing_base + existing_len;
-                let new_end = base + len;
-                // Keep if no overlap
-                !(base < existing_end && new_end > *existing_base)
-            });
-            Ok(())
-        }
-
-        fn query_memory_region(&self, base: u64, len: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)> {
-            let current = self.current_mappings.borrow();
-            let end = base + len;
-
-            // Find a mapping that covers the requested range
-            for (mapped_base, mapped_len, attrs) in current.iter() {
-                let mapped_end = mapped_base + mapped_len;
-                if *mapped_base <= base && end <= mapped_end {
-                    return Ok(*attrs);
-                }
-            }
-
-            // No mapping found - return NoMapping error with empty cache attributes
-            Err((PtError::NoMapping, CacheAttributeValue::Unmapped))
-        }
-        fn install_page_table(&mut self) -> Result<(), PtError> {
-            *self.installed.borrow_mut() = true;
-            Ok(())
-        }
-        fn dump_page_tables(&self, _address: u64, _size: u64) -> Result<(), PtError> {
-            // No-op for testing
-            Ok(())
-        }
-    }
-
-    unsafe impl Send for MockPageTable {}
-    unsafe impl Sync for MockPageTable {}
-
-    impl MockPageTable {
-        pub fn get_mapped_regions(&self) -> Vec<(u64, u64, MemoryAttributes)> {
-            self.mapped.borrow().clone()
-        }
-
-        pub fn get_unmapped_regions(&self) -> Vec<(u64, u64)> {
-            self.unmapped.borrow().clone()
-        }
-
-        pub fn get_current_mappings(&self) -> Vec<(u64, u64, MemoryAttributes)> {
-            self.current_mappings.borrow().clone()
-        }
-
-        pub fn new() -> Self {
-            Self {
-                mapped: RefCell::new(Vec::new()),
-                unmapped: RefCell::new(Vec::new()),
-                installed: RefCell::new(false),
-                current_mappings: RefCell::new(Vec::new()),
-            }
-        }
-    }
-
-    struct MockPageTableWrapper {
-        inner: std::rc::Rc<std::cell::RefCell<MockPageTable>>,
-    }
-
-    impl MockPageTableWrapper {
-        fn new(inner: std::rc::Rc<std::cell::RefCell<MockPageTable>>) -> Self {
-            Self { inner }
-        }
-    }
-
-    impl PatinaPageTable for MockPageTableWrapper {
-        fn map_memory_region(&mut self, base: u64, len: u64, attrs: MemoryAttributes) -> Result<(), PtError> {
-            self.inner.borrow_mut().map_memory_region(base, len, attrs)
-        }
-
-        fn unmap_memory_region(&mut self, base: u64, len: u64) -> Result<(), PtError> {
-            self.inner.borrow_mut().unmap_memory_region(base, len)
-        }
-
-        fn query_memory_region(&self, base: u64, len: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)> {
-            self.inner.borrow().query_memory_region(base, len)
-        }
-
-        fn install_page_table(&mut self) -> Result<(), PtError> {
-            self.inner.borrow_mut().install_page_table()
-        }
-
-        fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError> {
-            self.inner.borrow().dump_page_tables(address, size)
-        }
-    }
+    use std::{alloc::GlobalAlloc, cell::RefCell, rc::Rc};
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
@@ -4988,8 +4870,8 @@ mod tests {
             }
 
             // Initialize page table with local MockPageTable
-            let mock_table = std::rc::Rc::new(std::cell::RefCell::new(MockPageTable::new()));
-            let mock_page_table = Box::new(MockPageTableWrapper::new(std::rc::Rc::clone(&mock_table)));
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
             *GCD.page_table.lock() = Some(mock_page_table);
 
             // Test mapping within the allocated memory region
@@ -5038,8 +4920,8 @@ mod tests {
             }
 
             // Initialize page table with local MockPageTable
-            let mock_table = std::rc::Rc::new(std::cell::RefCell::new(MockPageTable::new()));
-            let mock_page_table = Box::new(MockPageTableWrapper::new(std::rc::Rc::clone(&mock_table)));
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
             *GCD.page_table.lock() = Some(mock_page_table);
 
             // Test different cache attributes
@@ -5101,8 +4983,8 @@ mod tests {
             GCD.init(48, 16);
 
             // Initialize page table with local MockPageTable
-            let mock_table = std::rc::Rc::new(std::cell::RefCell::new(MockPageTable::new()));
-            let mock_page_table = Box::new(MockPageTableWrapper::new(std::rc::Rc::clone(&mock_table)));
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
             *GCD.page_table.lock() = Some(mock_page_table);
 
             let base_address = 0x1000;
@@ -5147,8 +5029,8 @@ mod tests {
             GCD.init(48, 16);
 
             // Initialize page table with local MockPageTable
-            let mock_table = std::rc::Rc::new(std::cell::RefCell::new(MockPageTable::new()));
-            let mock_page_table = Box::new(MockPageTableWrapper::new(std::rc::Rc::clone(&mock_table)));
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
             *GCD.page_table.lock() = Some(mock_page_table);
 
             let base_address = 0x1000;
@@ -5192,8 +5074,8 @@ mod tests {
             GCD.init(48, 16);
 
             // Initialize page table with local MockPageTable
-            let mock_table = std::rc::Rc::new(std::cell::RefCell::new(MockPageTable::new()));
-            let mock_page_table = Box::new(MockPageTableWrapper::new(std::rc::Rc::clone(&mock_table)));
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
             *GCD.page_table.lock() = Some(mock_page_table);
 
             // Map multiple non-overlapping regions
@@ -5237,8 +5119,8 @@ mod tests {
             GCD.init(48, 16);
 
             // Initialize page table with local MockPageTable
-            let mock_table = std::rc::Rc::new(std::cell::RefCell::new(MockPageTable::new()));
-            let mock_page_table = Box::new(MockPageTableWrapper::new(std::rc::Rc::clone(&mock_table)));
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
             *GCD.page_table.lock() = Some(mock_page_table);
 
             let base_address = 0x1000;

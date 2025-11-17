@@ -18,8 +18,10 @@ use patina::{
         hob::{self, HobList, ResourceDescriptorV2, header},
     },
 };
+use patina_internal_cpu::paging::{CacheAttributeValue, PatinaPageTable};
+use patina_paging::{MemoryAttributes, PtError};
 use r_efi::efi;
-use std::{any::Any, fs::File, io::Read, slice};
+use std::{any::Any, cell::RefCell, fs::File, io::Read, slice};
 
 #[macro_export]
 macro_rules! test_collateral {
@@ -35,6 +37,134 @@ macro_rules! test_collateral {
 /// longer cares about global state or modifies it (typically this would be the start and end of a test case,
 /// respectively).
 static GLOBAL_STATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub struct MockPageTable {
+    mapped: RefCell<Vec<(u64, u64, MemoryAttributes)>>,
+    unmapped: RefCell<Vec<(u64, u64)>>,
+    installed: RefCell<bool>,
+    // Track current mappings to provide realistic query behavior
+    current_mappings: RefCell<Vec<(u64, u64, MemoryAttributes)>>,
+}
+
+impl PatinaPageTable for MockPageTable {
+    fn map_memory_region(&mut self, base: u64, len: u64, attrs: MemoryAttributes) -> Result<(), PtError> {
+        self.mapped.borrow_mut().push((base, len, attrs));
+
+        // Update current mappings - remove any overlapping regions first
+        let mut current = self.current_mappings.borrow_mut();
+        current.retain(|(existing_base, existing_len, _)| {
+            let existing_end = existing_base + existing_len;
+            let new_end = base + len;
+            // Keep if no overlap
+            !(base < existing_end && new_end > *existing_base)
+        });
+        // Add new mapping
+        current.push((base, len, attrs));
+        Ok(())
+    }
+
+    fn unmap_memory_region(&mut self, base: u64, len: u64) -> Result<(), PtError> {
+        self.unmapped.borrow_mut().push((base, len));
+
+        // Remove from current mappings
+        let mut current = self.current_mappings.borrow_mut();
+        current.retain(|(existing_base, existing_len, _)| {
+            let existing_end = existing_base + existing_len;
+            let new_end = base + len;
+            // Keep if no overlap
+            !(base < existing_end && new_end > *existing_base)
+        });
+        Ok(())
+    }
+
+    fn query_memory_region(&self, base: u64, len: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)> {
+        let current = self.current_mappings.borrow();
+        let end = base + len;
+
+        // Find a mapping that covers the requested range
+        for (mapped_base, mapped_len, attrs) in current.iter() {
+            let mapped_end = mapped_base + mapped_len;
+            if *mapped_base <= base && end <= mapped_end {
+                return Ok(*attrs);
+            }
+        }
+
+        // No mapping found - return NoMapping error with empty cache attributes
+        Err((PtError::NoMapping, CacheAttributeValue::Unmapped))
+    }
+    fn install_page_table(&mut self) -> Result<(), PtError> {
+        *self.installed.borrow_mut() = true;
+        Ok(())
+    }
+    fn dump_page_tables(&self, _address: u64, _size: u64) -> Result<(), PtError> {
+        // No-op for testing
+        Ok(())
+    }
+}
+
+unsafe impl Send for MockPageTable {}
+unsafe impl Sync for MockPageTable {}
+
+impl Default for MockPageTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MockPageTable {
+    pub fn get_mapped_regions(&self) -> Vec<(u64, u64, MemoryAttributes)> {
+        self.mapped.borrow().clone()
+    }
+
+    pub fn get_unmapped_regions(&self) -> Vec<(u64, u64)> {
+        self.unmapped.borrow().clone()
+    }
+
+    pub fn get_current_mappings(&self) -> Vec<(u64, u64, MemoryAttributes)> {
+        self.current_mappings.borrow().clone()
+    }
+
+    pub fn new() -> Self {
+        Self {
+            mapped: RefCell::new(Vec::new()),
+            unmapped: RefCell::new(Vec::new()),
+            installed: RefCell::new(false),
+            current_mappings: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+pub struct MockPageTableWrapper {
+    inner: std::rc::Rc<std::cell::RefCell<MockPageTable>>,
+}
+
+impl MockPageTableWrapper {
+    pub fn new(inner: std::rc::Rc<std::cell::RefCell<MockPageTable>>) -> Self {
+        Self { inner }
+    }
+}
+
+impl PatinaPageTable for MockPageTableWrapper {
+    fn map_memory_region(&mut self, base: u64, len: u64, attrs: MemoryAttributes) -> Result<(), PtError> {
+        self.inner.borrow_mut().map_memory_region(base, len, attrs)
+    }
+
+    fn unmap_memory_region(&mut self, base: u64, len: u64) -> Result<(), PtError> {
+        self.inner.borrow_mut().unmap_memory_region(base, len)
+    }
+
+    fn query_memory_region(&self, base: u64, len: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)> {
+        self.inner.borrow().query_memory_region(base, len)
+    }
+
+    fn install_page_table(&mut self) -> Result<(), PtError> {
+        self.inner.borrow_mut().install_page_table()
+    }
+
+    fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError> {
+        self.inner.borrow().dump_page_tables(address, size)
+    }
+}
 
 /// All tests should run from inside this.
 pub(crate) fn with_global_lock<F: Fn() + std::panic::RefUnwindSafe>(f: F) -> Result<(), Box<dyn Any + Send>> {
