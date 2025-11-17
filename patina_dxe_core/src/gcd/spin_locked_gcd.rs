@@ -2683,12 +2683,12 @@ impl SpinLockedGcd {
 impl Display for SpinLockedGcd {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(gcd) = self.memory.try_lock() {
-            writeln!(f, "{gcd}")?;
+            writeln!(f, "\n{gcd}")?;
         } else {
             writeln!(f, "Locked: {:?}", self.memory.try_lock())?;
         }
         if let Some(gcd) = self.io.try_lock() {
-            writeln!(f, "{gcd}")?;
+            writeln!(f, "\n{gcd}")?;
         } else {
             writeln!(f, "Locked: {:?}", self.io.try_lock())?;
         }
