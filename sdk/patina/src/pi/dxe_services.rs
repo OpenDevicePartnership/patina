@@ -14,7 +14,12 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use core::{default::Default, ffi::c_void};
+use core::{
+    cmp::{max, min},
+    default::Default,
+    ffi::c_void,
+    ops::Range,
+};
 
 use r_efi::{
     efi::{Guid, Handle, PhysicalAddress, Status},
@@ -298,6 +303,25 @@ pub struct MemorySpaceDescriptor {
     pub device_handle: Handle,
 }
 
+impl MemorySpaceDescriptor {
+    /// Returns the overlapping range from a user provided range and the range described by this descriptor.
+    /// If there is no overlap, returns an empty range (start == end).
+    ///
+    /// This is used when iterating over descriptors to determine how much of the descriptor falls within a given range.
+    pub fn get_range_overlap_with_desc(&self, range: &Range<PhysicalAddress>) -> Range<PhysicalAddress> {
+        let desc_end = self.base_address.saturating_add(self.length);
+
+        if self.base_address >= range.end || desc_end <= range.start {
+            return 0..0;
+        }
+
+        let overlap_start = max(self.base_address, range.start);
+        let overlap_end = min(desc_end, range.end);
+
+        overlap_start..overlap_end
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 /// Global Coherency Domain (GCD) I/O space types
@@ -432,5 +456,51 @@ impl Default for IoSpaceDescriptor {
             image_handle: 0 as Handle,
             device_handle: 0 as Handle,
         }
+    }
+}
+
+#[cfg(test)]
+#[coverage(off)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_range_overlap_with_desc() {
+        let desc = MemorySpaceDescriptor { base_address: 0x10000, length: 0x5000, ..Default::default() };
+
+        // No overlap (before)
+        let range = 0x0000..0x0FFF;
+        let overlap = desc.get_range_overlap_with_desc(&range);
+        assert_eq!(overlap, 0..0);
+
+        // No overlap (after)
+        let range = 0x20000..0x2FFFF;
+        let overlap = desc.get_range_overlap_with_desc(&range);
+        assert_eq!(overlap, 0..0);
+
+        // Partial overlap (start)
+        let range = 0x9000..0x13000;
+        let overlap = desc.get_range_overlap_with_desc(&range);
+        assert_eq!(overlap, 0x10000..0x13000);
+
+        // Partial overlap (end)
+        let range = 0x11000..0x25000;
+        let overlap = desc.get_range_overlap_with_desc(&range);
+        assert_eq!(overlap, 0x11000..0x15000);
+
+        // Descriptor fully within range
+        let range = 0x10000..0x20000;
+        let overlap = desc.get_range_overlap_with_desc(&range);
+        assert_eq!(overlap, 0x10000..0x15000);
+
+        // Range fully within descriptor
+        let range = 0x11000..0x12000;
+        let overlap = desc.get_range_overlap_with_desc(&range);
+        assert_eq!(overlap, 0x11000..0x12000);
+
+        // range == descriptor
+        let range = 0x10000..0x15000;
+        let overlap = desc.get_range_overlap_with_desc(&range);
+        assert_eq!(overlap, 0x10000..0x15000);
     }
 }

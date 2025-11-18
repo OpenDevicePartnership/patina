@@ -44,55 +44,48 @@ extern "efiapi" fn get_memory_attributes(
     let req_range = base_address..(base_address + length);
 
     // this API only returns the MEMORY_ACCESS attributes, per UEFI spec
-    match GCD.for_each_desc_in_range(
-        base_address as usize,
-        length as usize,
-        |descriptor, base_address, length, _| {
-            let desc_range = descriptor.base_address..(descriptor.base_address + descriptor.length);
-
-            // if we have already found attributes, ensure they are consistent
-            match found_attrs {
-                Some(attrs) if attrs != (descriptor.attributes & efi::MEMORY_ACCESS_MASK) => {
-                    log::error!(
-                        "{} Inconsistent attributes found in range [{:#x}, {:#x})",
-                        function!(),
-                        base_address,
-                        base_address + length
-                    );
-                    return Err(EfiError::NoMapping);
-                }
-                None => found_attrs = Some(descriptor.attributes & efi::MEMORY_ACCESS_MASK),
-                _ => {}
-            }
-
-            Ok(())
-        },
-        0,
-    ) {
-        Ok(_) => {
-            // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
-            if let Some(attrs) = found_attrs {
-                unsafe { attributes.write_unaligned(attrs) };
-                efi::Status::SUCCESS
-            } else {
+    for desc_result in GCD.iter(base_address as usize, length as usize) {
+        let descriptor = match desc_result {
+            Ok(desc) => desc,
+            Err(_) => {
                 log::error!(
                     "No descriptors found for range [{:#x}, {:#x}) in {}",
                     base_address,
                     base_address + length,
                     function!()
                 );
-                efi::Status::NO_MAPPING
+                return efi::Status::NO_MAPPING;
             }
+        };
+
+        // if we have already found attributes, ensure they are consistent
+        match found_attrs {
+            Some(attrs) if attrs != (descriptor.attributes & efi::MEMORY_ACCESS_MASK) => {
+                log::error!(
+                    "{} Inconsistent attributes found in range [{:#x}, {:#x})",
+                    function!(),
+                    base_address,
+                    base_address + length
+                );
+                return efi::Status::NO_MAPPING;
+            }
+            None => found_attrs = Some(descriptor.attributes & efi::MEMORY_ACCESS_MASK),
+            _ => {}
         }
-        Err(status) => {
-            log::error!(
-                "Failed to get memory attributes for address {:#x}: {:?} in {}",
-                base_address,
-                status,
-                function!()
-            );
-            efi::Status::NO_MAPPING
-        }
+    }
+
+    if let Some(attrs) = found_attrs {
+        // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
+        unsafe { attributes.write_unaligned(attrs) };
+        efi::Status::SUCCESS
+    } else {
+        log::error!(
+            "No descriptors found for range [{:#x}, {:#x}) in {}",
+            base_address,
+            base_address + length,
+            function!()
+        );
+        efi::Status::NO_MAPPING
     }
 }
 
@@ -114,26 +107,61 @@ extern "efiapi" fn set_memory_attributes(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    GCD.for_each_desc_in_range(
-        base_address as usize,
-        length as usize,
-        |descriptor, base_address, length, attributes| {
-            // this API only adds new attributes that are set, it ignores all 0 attributes. So, we need to get the memory
-            // descriptor first and then set the new attributes as the GCD API takes into account all attributes set or unset.
-            let new_attributes = descriptor.attributes | attributes;
+    let end = match base_address.checked_add(length) {
+        Some(e) => e,
+        None => {
+            log::error!("Address overflow in {}", function!());
+            return efi::Status::INVALID_PARAMETER;
+        }
+    };
 
-            dxe_services::core_set_memory_space_attributes(base_address as u64, length as u64, new_attributes)
-        },
-        attributes,
-    )
-    // only a few status codes are allowed per UEFI spec, so return unsupported
-    // we don't have a reliable mechanism to reset any previously set attributes if an earlier block succeeded
-    // because any tracking mechanism would require memory allocations which could change the descriptors
-    // and cause some attributes to be set on a potentially incorrect memory region. At this point if we have
-    // failed, the system is dead, barring a bootloader allocating new memory and attempting to set attributes
-    // there, because this API is only used by a bootloader setting memory attributes for the next image it is
-    // loading. The expectation is that on a future boot the platform would disable this protocol.
-    .map_err(|_| efi::Status::UNSUPPORTED);
+    let range = base_address..end;
+
+    for desc_result in GCD.iter(base_address as usize, length as usize) {
+        let descriptor = match desc_result {
+            Ok(desc) => desc,
+            Err(_) => {
+                log::error!(
+                    "No descriptors found for range [{:#x}, {:#x}) in {}",
+                    base_address,
+                    base_address + length,
+                    function!()
+                );
+                return efi::Status::UNSUPPORTED;
+            }
+        };
+
+        // this API only adds new attributes that are set, it ignores all 0 attributes. So, we need to get the memory
+        // descriptor first and then set the new attributes as the GCD API takes into account all attributes set or unset.
+        let new_attributes = descriptor.attributes | attributes;
+
+        let current_range = descriptor.get_range_overlap_with_desc(&range);
+
+        // only a few status codes are allowed per UEFI spec, so return unsupported
+        // we don't have a reliable mechanism to reset any previously set attributes if an earlier block succeeded
+        // because any tracking mechanism would require memory allocations which could change the descriptors
+        // and cause some attributes to be set on a potentially incorrect memory region. At this point if we have
+        // failed, the system is dead, barring a bootloader allocating new memory and attempting to set attributes
+        // there, because this API is only used by a bootloader setting memory attributes for the next image it is
+        // loading. The expectation is that on a future boot the platform would disable this protocol.
+        match dxe_services::core_set_memory_space_attributes(
+            current_range.start,
+            (current_range.end - current_range.start),
+            new_attributes,
+        ) {
+            Ok(_) => {}
+            Err(e) => {
+                log::error!(
+                    "Failed to set memory attributes for range [{:#x}, {:#x}) in {}: {:?}",
+                    current_range.start,
+                    current_range.end,
+                    function!(),
+                    e
+                );
+                return efi::Status::UNSUPPORTED;
+            }
+        }
+    }
 
     efi::Status::SUCCESS
 }
@@ -156,26 +184,58 @@ extern "efiapi" fn clear_memory_attributes(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    GCD.for_each_desc_in_range(
-        base_address as usize,
-        length as usize,
-        |descriptor, base_address, length, attributes| {
-            // this API only adds clears attributes that are set to 1, it ignores all 0 attributes. So, we need to get the memory
-            // descriptor first and then set the new attributes as the GCD API takes into account all attributes set or unset.
-            let new_attributes = descriptor.attributes & !attributes;
+    let end = match base_address.checked_add(length) {
+        Some(e) => e,
+        None => {
+            log::error!("Address overflow in {}", function!());
+            return efi::Status::INVALID_PARAMETER;
+        }
+    };
+    let range = base_address..end;
 
-            dxe_services::core_set_memory_space_attributes(base_address as u64, length as u64, new_attributes)
-        },
-        attributes,
-    )
-    // only a few status codes are allowed per UEFI spec, so return unsupported
-    // we don't have a reliable mechanism to reset any previously set attributes if an earlier block succeeded
-    // because any tracking mechanism would require memory allocations which could change the descriptors
-    // and cause some attributes to be set on a potentially incorrect memory region. At this point if we have
-    // failed, the system is dead, barring a bootloader allocating new memory and attempting to set attributes
-    // there, because this API is only used by a bootloader setting memory attributes for the next image it is
-    // loading. The expectation is that on a future boot the platform would disable this protocol.
-    .map_err(|_| efi::Status::UNSUPPORTED);
+    for desc_result in GCD.iter(base_address as usize, length as usize) {
+        let descriptor = match desc_result {
+            Ok(desc) => desc,
+            Err(_) => {
+                log::error!(
+                    "No descriptors found for range [{:#x}, {:#x}) in {}",
+                    base_address,
+                    base_address + length,
+                    function!()
+                );
+                return efi::Status::UNSUPPORTED;
+            }
+        };
+        // this API only adds clears attributes that are set to 1, it ignores all 0 attributes. So, we need to get the memory
+        // descriptor first and then set the new attributes as the GCD API takes into account all attributes set or unset.
+        let new_attributes = descriptor.attributes & !attributes;
+        let current_range = descriptor.get_range_overlap_with_desc(&range);
+
+        // only a few status codes are allowed per UEFI spec, so return unsupported
+        // we don't have a reliable mechanism to reset any previously set attributes if an earlier block succeeded
+        // because any tracking mechanism would require memory allocations which could change the descriptors
+        // and cause some attributes to be set on a potentially incorrect memory region. At this point if we have
+        // failed, the system is dead, barring a bootloader allocating new memory and attempting to set attributes
+        // there, because this API is only used by a bootloader setting memory attributes for the next image it is
+        // loading. The expectation is that on a future boot the platform would disable this protocol.
+        match dxe_services::core_set_memory_space_attributes(
+            current_range.start,
+            (current_range.end - current_range.start),
+            new_attributes,
+        ) {
+            Ok(_) => {}
+            Err(e) => {
+                log::error!(
+                    "Failed to clear memory attributes for range [{:#x}, {:#x}) in {}: {:?}",
+                    current_range.start,
+                    current_range.end,
+                    function!(),
+                    e
+                );
+                return efi::Status::UNSUPPORTED;
+            }
+        }
+    }
 
     efi::Status::SUCCESS
 }

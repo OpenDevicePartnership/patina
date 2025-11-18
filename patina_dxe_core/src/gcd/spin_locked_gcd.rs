@@ -2059,43 +2059,20 @@ impl SpinLockedGcd {
         self.io.lock().init(io_address_bits);
     }
 
-    /// Helper function to perform an operation on each GCD descriptor in the given range.
+    /// Returns an iterator over GCD descriptors in the given range.
     ///
     /// Arguments:
     /// - `base_address`: The starting address of the range.
     /// - `len`: The length of the range.
-    /// - `operation`: The operation to perform on each descriptor. It takes the descriptor, the base address of the current range,
-    ///   the length of the current range, and a context value.
-    /// - `context`: A context value to pass to the operation.
     ///
     /// Returns:
-    /// - `Ok(())` if the operation was successful for all descriptors.
-    /// - `Err(EfiError)` if the operation failed for any descriptor. The operation does not continue if a failure occurs.
-    pub(crate) fn for_each_desc_in_range<F>(
+    /// - An iterator that yields `MemorySpaceDescriptor`s without allocating memory.
+    pub(crate) fn iter(
         &self,
         base_address: usize,
         len: usize,
-        mut operation: F,
-        context: u64,
-    ) -> Result<(), EfiError>
-    where
-        F: FnMut(MemorySpaceDescriptor, usize, usize, u64) -> Result<(), EfiError>,
-    {
-        let mut current_base = base_address as u64;
-        let range_end = (base_address + len) as u64;
-        while current_base < range_end {
-            let descriptor = self.get_memory_descriptor_for_address(current_base as efi::PhysicalAddress)?;
-            let descriptor_end = descriptor.base_address + descriptor.length;
-
-            // it is still legal to split a descriptor and only operate on part of it
-            let next_base = u64::min(descriptor_end, range_end);
-            let current_len = next_base - current_base;
-            operation(descriptor, current_base as usize, current_len as usize, context)?;
-
-            current_base = next_base;
-        }
-
-        Ok(())
+    ) -> impl Iterator<Item = Result<MemorySpaceDescriptor, EfiError>> {
+        DescRangeIterator::new(self, base_address, len)
     }
 
     // Take control of our own destiny and create a page table that the GCD controls
@@ -2412,40 +2389,38 @@ impl SpinLockedGcd {
         // to coalesce the memory blocks before attempting to free them
         self.memory.lock().get_memory_block_allocation_state(base_address, len)?;
 
+        let range = base_address as u64..base_address.checked_add(len).ok_or(EfiError::InvalidParameter)? as u64;
+
         // Set the attributes before freeing the memory space so that the memory blocks are merged together and we
         // can free the range. It is valid to call free pages on memory which has different attributes. If we fail the
         // free, the memory will be unmapped, but still marked allocated in the memory blocks. This is acceptable as it
         // will not be used again, we will return a failure to the caller and they can ignore this memory (which can
         // not be used after the failed free anyway).
-        self.for_each_desc_in_range(
-            base_address,
-            len,
-            |desc, base_address, len, _| {
-                // we call the worker here because we want to ensure we are getting the caching attribute from the
-                // correct descriptor. It is possible the caching attribute is different across descriptors.
-                if let Err(e) = self.set_memory_space_attributes_worker(
-                    base_address,
-                    len,
-                    MemoryProtectionPolicy::apply_free_memory_policy(desc.attributes),
-                    desc.attributes,
-                ) && e != EfiError::NotReady
-                {
-                    // if we failed to set the attributes in the GCD, we want to catch it, but should still try to go
-                    // down and free the memory space. NotReady is ignored here because the memory bucket code will
-                    // call this before paging is initialized.
-                    log::error!(
-                        "Failed to set free memory attributes for {:#x?} of length {:#x?} Status: {:#x?}",
-                        base_address,
-                        len,
-                        e
-                    );
-                    debug_assert!(false);
-                    return Err(e);
-                }
-                Ok(())
-            },
-            0,
-        )?;
+        for desc_result in self.iter(base_address, len) {
+            let desc = desc_result?;
+            let current_range = desc.get_range_overlap_with_desc(&range);
+            // we call the worker here because we want to ensure we are getting the caching attribute from the
+            // correct descriptor. It is possible the caching attribute is different across descriptors.
+            if let Err(e) = self.set_memory_space_attributes_worker(
+                current_range.start as usize,
+                (current_range.end - current_range.start) as usize,
+                MemoryProtectionPolicy::apply_free_memory_policy(desc.attributes),
+                desc.attributes,
+            ) && e != EfiError::NotReady
+            {
+                // if we failed to set the attributes in the GCD, we want to catch it, but should still try to go
+                // down and free the memory space. NotReady is ignored here because the memory bucket code will
+                // call this before paging is initialized.
+                log::error!(
+                    "Failed to set free memory attributes for {:#x?} of length {:#x?} Status: {:#x?}",
+                    current_range.start,
+                    (current_range.end - current_range.start),
+                    e
+                );
+                debug_assert!(false);
+                return Err(e);
+            }
+        }
 
         match self.memory.lock().free_memory_space(base_address, len, transition) {
             Ok(()) => {
@@ -2565,37 +2540,38 @@ impl SpinLockedGcd {
         attributes: u64,
     ) -> Result<(), EfiError> {
         let mut res = Ok(());
-        self.for_each_desc_in_range(
-            base_address,
-            len,
-            |descriptor, current_base, current_len, attributes| {
-                match self.set_memory_space_attributes_worker(
-                    current_base,
-                    current_len,
-                    attributes,
-                    descriptor.attributes,
-                ) {
-                    Ok(_) => {}
-                    Err(EfiError::NotReady) => {
-                        // before the page table is installed, we expect to get a return of NotReady. This means the GCD
-                        // has been updated with the attributes, but the page table is not installed yet. In init_paging, the
-                        // page table will be updated with the current state of the GCD. The code that calls into this expects
-                        // NotReady to be returned, so we must catch that error and report it. However, we also need to
-                        // make sure any attribute updates across descriptors update the full range and not error out here.
-                        res = Err(EfiError::NotReady);
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "Failed to set memory attributes for memory region {current_base:#x?} of length {current_len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
-                        );
-                        debug_assert!(false);
-                        return Err(e);
-                    }
+        let range = base_address as u64..base_address.checked_add(len).ok_or(EfiError::InvalidParameter)? as u64;
+
+        for desc_result in self.iter(base_address, len) {
+            let desc = desc_result?;
+            let current_range = desc.get_range_overlap_with_desc(&range);
+
+            match self.set_memory_space_attributes_worker(
+                current_range.start as usize,
+                (current_range.end - current_range.start) as usize,
+                attributes,
+                desc.attributes,
+            ) {
+                Ok(_) => {}
+                Err(EfiError::NotReady) => {
+                    // before the page table is installed, we expect to get a return of NotReady. This means the GCD
+                    // has been updated with the attributes, but the page table is not installed yet. In init_paging, the
+                    // page table will be updated with the current state of the GCD. The code that calls into this expects
+                    // NotReady to be returned, so we must catch that error and report it. However, we also need to
+                    // make sure any attribute updates across descriptors update the full range and not error out here.
+                    res = Err(EfiError::NotReady);
                 }
-                Ok(())
-            },
-            attributes,
-        )?;
+                Err(e) => {
+                    log::error!(
+                        "Failed to set memory attributes for memory region {:#x?} of length {:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
+                        current_range.start,
+                        (current_range.end - current_range.start),
+                    );
+                    debug_assert!(false);
+                    return Err(e);
+                }
+            }
+        }
 
         // if we made it out of the loop, we set the attributes correctly and should call the memory change callback,
         // if there is one
@@ -2715,6 +2691,43 @@ impl core::fmt::Debug for SpinLockedGcd {
 
 unsafe impl Sync for SpinLockedGcd {}
 unsafe impl Send for SpinLockedGcd {}
+
+/// Iterator over GCD memory descriptors within a specified range.
+/// This iterator yields descriptors lazily to avoid allocating memory because this iterator is used before
+/// all of memory is available.
+pub(crate) struct DescRangeIterator<'a> {
+    gcd: &'a SpinLockedGcd,
+    current_base: u64,
+    range_end: u64,
+}
+
+impl<'a> DescRangeIterator<'a> {
+    fn new(gcd: &'a SpinLockedGcd, base_address: usize, len: usize) -> Self {
+        Self { gcd, current_base: base_address as u64, range_end: (base_address + len) as u64 }
+    }
+}
+
+impl<'a> Iterator for DescRangeIterator<'a> {
+    type Item = Result<MemorySpaceDescriptor, EfiError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current_base >= self.range_end {
+            return None;
+        }
+
+        let descriptor = match self.gcd.get_memory_descriptor_for_address(self.current_base as efi::PhysicalAddress) {
+            Ok(desc) => desc,
+            Err(e) => return Some(Err(e)),
+        };
+
+        let descriptor_end = descriptor.base_address + descriptor.length;
+        let next_base = u64::min(descriptor_end, self.range_end);
+
+        self.current_base = next_base;
+
+        Some(Ok(descriptor))
+    }
+}
 
 #[cfg(test)]
 #[coverage(off)]
@@ -5229,6 +5242,95 @@ mod tests {
             // the GCD is still updated, we would fail with NotFound if the GCD update fails
             let res = GCD.set_memory_space_attributes(0x1000, 0x5000, efi::MEMORY_WB | efi::MEMORY_RO);
             assert_eq!(res, Err(EfiError::NotReady));
+        });
+    }
+
+    #[test]
+    fn test_descriptor_iterator() {
+        with_locked_state(|| {
+            static GCD: SpinLockedGcd = SpinLockedGcd::new(None);
+            GCD.init(48, 16);
+
+            let mem = unsafe { get_memory(MEMORY_BLOCK_SLICE_SIZE * 3) };
+            let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+
+            // SAFETY: We just allocated this memory to use in the test
+            unsafe {
+                GCD.init_memory_blocks(
+                    dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    MEMORY_BLOCK_SLICE_SIZE,
+                    efi::MEMORY_WB,
+                )
+                .unwrap();
+
+                GCD.add_memory_space(GcdMemoryType::SystemMemory, 0x1000, 0x2000, efi::MEMORY_WB).unwrap();
+                GCD.add_memory_space(GcdMemoryType::SystemMemory, 0x4000, 0x2000, efi::MEMORY_WT).unwrap();
+                GCD.add_memory_space(GcdMemoryType::MemoryMappedIo, 0x8000, 0x2000, efi::MEMORY_UC).unwrap();
+            }
+
+            GCD.allocate_memory_space(
+                AllocateType::Address(0x1000),
+                GcdMemoryType::SystemMemory,
+                UEFI_PAGE_SHIFT,
+                0x1000,
+                0x7 as efi::Handle,
+                None,
+            )
+            .unwrap();
+
+            // Test Case 1: Iterator over single descriptor
+            let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::new();
+            for desc_result in GCD.iter(0x1000, 0x1000) {
+                match desc_result {
+                    Ok(desc) => descriptors.push(desc),
+                    Err(_e) => {
+                        panic!("Should not get error for existing descriptor");
+                    }
+                }
+            }
+
+            assert!(!descriptors.is_empty(), "Should find at least one descriptor");
+            assert_eq!(descriptors[0].memory_type, GcdMemoryType::SystemMemory);
+
+            // Test Case 2: Iterator over range spanning multiple descriptors
+            let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::new();
+            for desc_result in GCD.iter(0x1000, 0x2000) {
+                match desc_result {
+                    Ok(desc) => {
+                        descriptors.push(desc);
+                    }
+                    Err(e) => {
+                        panic!("Should not get error for existing descriptors: {:?}", e);
+                    }
+                }
+            }
+            assert!(!descriptors.is_empty());
+            assert!(descriptors.iter().any(|d| d.base_address == 0x1000 && d.length == 0x1000));
+            assert!(descriptors.iter().any(|d| d.base_address == 0x2000 && d.length == 0x1000));
+
+            // Test Case 3: Range crosses multiple descriptors but is not aligned on a descriptor boundary
+            let mut descriptors: Vec<MemorySpaceDescriptor> = Vec::new();
+            for desc_result in GCD.iter(0x5000, 0x4000) {
+                match desc_result {
+                    Ok(desc) => descriptors.push(desc),
+                    Err(_e) => {
+                        panic!("Should not get error for existing descriptor");
+                    }
+                }
+            }
+
+            assert!(!descriptors.is_empty());
+            assert!(descriptors.iter().any(|d| d.base_address == 0x4000 && d.length == 0x2000));
+            assert!(descriptors.iter().any(|d| d.base_address == 0x6000 && d.length == 0x2000));
+            assert!(descriptors.iter().any(|d| d.base_address == 0x8000 && d.length == 0x2000));
+
+            // Test Case 4: Zero-length iterator
+            let mut count = 0;
+            for _desc_result in GCD.iter(0x5000, 0) {
+                count += 1;
+            }
+            assert_eq!(count, 0); // Should yield no descriptors
         });
     }
 }
