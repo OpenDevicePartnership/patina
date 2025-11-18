@@ -2312,7 +2312,7 @@ mod tests {
         // This scenario represents a corrupted or uninitialized GCD state where memory
         // descriptors are missing - an edge case that the error handling should catch.
 
-        test_support::with_global_lock(|| {
+        let _ = test_support::with_global_lock(|| {
             // SAFETY: These test initialization functions require unsafe because they
             // manipulate global state (GCD, protocol DB, system table)
             unsafe {
@@ -2400,7 +2400,7 @@ mod tests {
         // We craft a malformed PE image with a section virtual_size that will cause
         // align_up() to overflow when aligning to section_alignment.
 
-        test_support::with_global_lock(|| {
+        let _ = test_support::with_global_lock(|| {
             // SAFETY: These test initialization functions require unsafe because they
             // manipulate global state (GCD, protocol DB, system table)
             unsafe {
@@ -2461,7 +2461,7 @@ mod tests {
         // the result will be unaligned. Then set_memory_space_attributes will fail with InvalidParameter
         // because the base address is not page-aligned.
 
-        test_support::with_global_lock(|| {
+        let _ = test_support::with_global_lock(|| {
             // SAFETY: These test initialization functions require unsafe because they
             // manipulate global state (GCD, protocol DB, system table)
             unsafe {
