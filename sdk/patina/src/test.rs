@@ -21,11 +21,12 @@
 //! use patina::boot_services::StandardBootServices;
 //! use patina::test::patina_test;
 //! use patina::{u_assert, u_assert_eq};
+//! use patina::guids::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP;
 //!
-//! let component = patina::test::TestRunner::default()
+//! // Registered with the Core.
+//! let test_config = patina::test::TestRunner::default()
 //!   .with_filter("aarch64") // Only run tests with "aarch64" in their name & path (my_crate::aarch64::test)
-//!   .debug_mode(true)
-//!   .fail_fast(true);
+//!   .debug_mode(true); // Allow any log messages from the test to be printed
 //!
 //! #[cfg_attr(target_arch = "aarch64", patina_test)]
 //! fn test_case() -> Result {
@@ -64,6 +65,12 @@
 //! fn x86_64_only_test_case(bs: StandardBootServices) -> Result {
 //!   todo!()
 //! }
+//!
+//! #[patina_test]
+//! #[on(event = CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP)]
+//! fn on_event_test_case() -> Result {
+//!   Ok(())
+//! }
 //! ```
 //!
 //! ## License
@@ -73,10 +80,19 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 extern crate alloc;
-use alloc::vec::Vec;
+
+use core::{cell::UnsafeCell, fmt::Display, ptr::NonNull};
+
+use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
+use patina_macro::IntoService;
+use r_efi::efi::EVENT_GROUP_READY_TO_BOOT;
 
 use crate as patina;
-use crate::component::{IntoComponent, Storage};
+use crate::{
+    boot_services::{BootServices, event::EventType, tpl::Tpl},
+    component::{IntoComponent, Storage},
+    test::__private_api::{TestCase, TestTrigger},
+};
 
 #[doc(hidden)]
 pub use linkme;
@@ -181,12 +197,126 @@ macro_rules! u_assert_ne {
     };
 }
 
+/// A private service to record test results.
+///
+/// ## Invariance
+///
+/// - This struct should only ever be accessed via the component system, which ensures that there are no mutable aliases
+///   to this struct.
+/// - This component instantiates and manages both the `UnsafeCell` and the `BTreeMap` it points to. This ensures that
+///   the pointer is always valid for the lifetime of this struct.
+#[derive(IntoService, Default)]
+#[service(Recorder)]
+struct Recorder {
+    results: UnsafeCell<BTreeMap<&'static str, (u32, u32, &'static str)>>,
+}
+
+impl Recorder {
+    /// Records the result of a test case.
+    fn record_result(&self, name: &'static str, result: Result) {
+        // SAFETY: This is safe due to the invariance of this struct so long as it is only accessed via the component system.
+        let data = unsafe { self.results.get().as_mut().expect("Pointer is not null.") };
+
+        match result {
+            Ok(_) => data.entry(name).or_default().0 += 1,
+            Err(msg) => {
+                let entry = data.entry(name).or_default();
+                entry.1 += 1;
+                entry.2 = msg;
+            }
+        };
+    }
+
+    /// Registers a test name with an empty record, so that it shows up in the final results even if not triggered.
+    fn empty_record(&self, name: &'static str) {
+        // SAFETY: This is safe due to the invariance of this struct so long as it is only accessed via the component system.
+        let data = unsafe { self.results.get().as_mut().expect("Pointer is not null.") };
+
+        data.entry(name).or_default();
+    }
+}
+
+impl Display for Recorder {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // SAFETY: This is safe due to the invariance of this struct so long as it is only accessed via the component system.
+        let data = unsafe { self.results.get().as_mut().expect("Pointer is not null.") };
+
+        writeln!(f, "Patina on-system unit-test results:")?;
+        for (name, (passes, fails, msg)) in data.iter() {
+            if *fails == 0 && *passes == 0 {
+                writeln!(f, "  {name} ... not triggered")?;
+                continue;
+            }
+            if *fails == 0 {
+                writeln!(f, "  {name} ... ok ({passes} passes)")?;
+            } else {
+                writeln!(f, "  {name} ... fail ({fails} fails, {passes} passes): {msg}")?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// A structure containing all necessary data to execute a test at any time.
+///
+/// ## Invariance
+///
+/// - This struct controls the creation of the `NonNull<Storage>`, ensuring the following safety requirements are always
+///   met:
+///   - `storage` is properly aligned.
+///   - `storage` is non-null.
+///   - `storage` is a pointer that points to a valid instance of `Storage`.
+struct TestData {
+    /// A pointer to the Storage struct.
+    storage: NonNull<Storage>,
+    /// Whether or not to log debug messages in the test or not
+    debug_mode: bool,
+    /// The test case to execute.
+    test_case: &'static TestCase,
+    /// A callback function to be called on test failure.
+    callback: Option<fn(&'static str, &'static str)>,
+}
+
+impl TestData {
+    /// Creates a new instance of TestData.
+    fn new(
+        storage: &Storage,
+        debug_mode: bool,
+        test_case: &'static TestCase,
+        callback: Option<fn(&'static str, &'static str)>,
+    ) -> Self {
+        Self { storage: NonNull::from_ref(storage), debug_mode, test_case, callback }
+    }
+
+    /// Run's the test case case, reporting the results.
+    ///
+    /// ## Safety
+    ///
+    /// - Caller must ensure there is no other active mutable access to `Storage`.
+    unsafe fn run(&mut self) {
+        // SAFETY: `TestData` invariance guarantees `storage` meets the safety requirements for dereferencing.
+        // SAFETY: Caller must uphold the safety requirements of this function to ensure no other mutable aliases are
+        //   active at the time of test execution.
+        let storage = unsafe { self.storage.as_mut() };
+
+        let recorder = storage.get_service::<Recorder>().expect("`Recorder` service registered by TestRunner");
+        let result = self.test_case.run(storage, self.debug_mode);
+
+        if let (Some(callback), Err(msg)) = (self.callback, &result) {
+            (callback)(self.test_case.name, msg);
+        }
+
+        recorder.record_result(self.test_case.name, self.test_case.run(storage, self.debug_mode));
+    }
+}
+
 /// A component that runs all test cases marked with the `#[patina_test]` attribute when loaded by the DXE core.
 #[derive(IntoComponent, Default, Clone)]
 pub struct TestRunner {
     filters: Vec<&'static str>,
     debug_mode: bool,
-    fail_fast: bool,
+    fail_callback: Option<fn(&'static str, &'static str)>,
 }
 
 impl TestRunner {
@@ -209,23 +339,27 @@ impl TestRunner {
         self
     }
 
-    /// If set to true, the test runner will stop running tests after the first failure.
+    /// Attach a callback function that will be called on test failure.
     ///
-    /// Defaults to false.
-    pub fn fail_fast(mut self, fail_fast: bool) -> Self {
-        self.fail_fast = fail_fast;
+    /// fn(test_name: &'static str, fail_msg: &'static str)
+    pub fn with_callback(mut self, callback: fn(&'static str, &'static str)) -> Self {
+        self.fail_callback = Some(callback);
         self
     }
 
     /// The entry point for the test runner component.
     #[coverage(off)]
     fn entry_point(self, storage: &mut Storage) -> patina::error::Result<()> {
-        let test_list: &[__private_api::TestCase] = __private_api::test_cases();
+        let test_list: &'static [__private_api::TestCase] = __private_api::test_cases();
         self.run_tests(test_list, storage)
     }
 
     /// Runs the provided list of test cases, applying the configuration options set on the TestRunner.
-    fn run_tests(&self, test_list: &[__private_api::TestCase], storage: &mut Storage) -> patina::error::Result<()> {
+    fn run_tests(
+        &self,
+        test_list: &'static [__private_api::TestCase],
+        storage: &mut Storage,
+    ) -> patina::error::Result<()> {
         let count = test_list.len();
         match count {
             0 => log::warn!("No Tests Found"),
@@ -233,28 +367,79 @@ impl TestRunner {
             _ => log::info!("running {count} tests"),
         }
 
-        let mut did_error = false;
-        for test in test_list {
-            if !test.should_run(&self.filters) {
-                log::info!("{} ... skipped", test.name);
+        // Record all tests that should be run, so we can have a record of any tests that were not triggered.
+        let recorder = Recorder::default();
+        for test_case in test_list {
+            if !test_case.should_run(&self.filters) {
+                continue;
+            }
+            recorder.empty_record(test_case.name);
+        }
+        storage.add_service(recorder);
+
+        // Log results at ready to boot
+        storage.boot_services().create_event_ex(
+            EventType::NOTIFY_SIGNAL,
+            Tpl::CALLBACK,
+            Some(Self::log_test_results),
+            NonNull::from_ref(storage),
+            &EVENT_GROUP_READY_TO_BOOT,
+        )?;
+
+        // log results at exit boot services
+        storage.boot_services().create_event(
+            EventType::SIGNAL_EXIT_BOOT_SERVICES,
+            Tpl::CALLBACK,
+            Some(Self::log_test_results),
+            NonNull::from_ref(storage),
+        )?;
+
+        // Run or schedule all tests depending on their trigger.
+        for test_case in test_list {
+            if !test_case.should_run(&self.filters) {
                 continue;
             }
 
-            match test.run(storage, self.debug_mode) {
-                Ok(_) => log::info!("{} ... ok", test.name),
-                Err(e) => {
-                    log::error!("{} ... fail: {}", test.name, e);
-                    did_error = true;
-                    if self.fail_fast {
-                        return Err(patina::error::EfiError::Aborted);
-                    }
+            let mut test = TestData::new(storage, self.debug_mode, test_case, self.fail_callback);
+
+            match test_case.trigger {
+                TestTrigger::Immediate => {
+                    // SAFETY: This is the only mutable access to `Storage` due to the guarantees of Component execution.
+                    unsafe { test.run() }
+                }
+                TestTrigger::Event(guid) => {
+                    storage.boot_services().create_event_ex(
+                        EventType::NOTIFY_SIGNAL,
+                        Tpl::CALLBACK,
+                        Some(Self::run_test),
+                        // Events can be triggered multiple times, so we need to leak it so it is available for
+                        // multiple test runs
+                        NonNull::from_ref(Box::leak(Box::new(test))),
+                        guid,
+                    )?;
                 }
             }
         }
 
-        match did_error {
-            true => Err(patina::error::EfiError::Aborted),
-            false => Ok(()),
+        Ok(())
+    }
+
+    /// An EFIAPI compatible event callback to run the patina-test
+    extern "efiapi" fn run_test(_: r_efi::efi::Event, mut test: NonNull<TestData>) {
+        // SAFETY: The pointer is created from a leaked TestData reference, as controlled by the code in this module.
+        //   This ensures that (1) the pointer is properly aligned, (2) the pointer is non-null, and (3) the pointer
+        //   points to a valid type of TestData.
+        // SAFETY: Events are executed in series, so there exists no other mutable access to storage.
+        unsafe { test.as_mut().run() };
+    }
+
+    /// An EFIAPI compatible event callback to log the current results of patina-test
+    extern "efiapi" fn log_test_results(_: r_efi::efi::Event, storage: NonNull<Storage>) {
+        // SAFETY: event callbacks are executed in series, so there exists no other mutable access to storage.
+        let storage = unsafe { storage.as_ref() };
+
+        if let Some(tester) = storage.get_service::<Recorder>() {
+            log::info!("{}", *tester);
         }
     }
 }
@@ -262,15 +447,23 @@ impl TestRunner {
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
-    use crate::component::{IntoComponent, Storage, params::Config};
+    use core::mem::MaybeUninit;
+
+    use r_efi::efi::Guid;
+
+    use super::*;
+    use crate::{
+        boot_services::StandardBootServices,
+        component::{IntoComponent, Storage, params::Config},
+    };
 
     // A test function where we mock DxeComponentInterface to return what we want for the test.
-    fn test_function(config: Config<i32>) -> Result<(), &'static str> {
+    fn test_function(config: Config<i32>) -> Result {
         assert!(*config == 1);
         Ok(())
     }
 
-    fn test_function_fail() -> Result<(), &'static str> {
+    fn test_function_fail() -> Result {
         Err("Intentional Failure")
     }
 
@@ -284,16 +477,13 @@ mod tests {
         let config = super::TestRunner::default();
         assert_eq!(config.filters.len(), 0);
         assert!(!config.debug_mode);
-        assert!(!config.fail_fast);
     }
 
     #[test]
     fn verify_config_sets_properly() {
-        let config =
-            super::TestRunner::default().with_filter("aarch64").with_filter("test").debug_mode(true).fail_fast(true);
+        let config = super::TestRunner::default().with_filter("aarch64").with_filter("test").debug_mode(true);
         assert_eq!(config.filters.len(), 2);
         assert!(config.debug_mode);
-        assert!(config.fail_fast);
     }
 
     // This is mirroring the logic in __private_api.rs to ensure we do properly register test cases.
@@ -303,6 +493,7 @@ mod tests {
     #[linkme::distributed_slice(TEST_TESTS)]
     static TEST_CASE1: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test",
+        trigger: super::__private_api::TestTrigger::Immediate,
         skip: false,
         should_fail: false,
         fail_msg: None,
@@ -312,6 +503,7 @@ mod tests {
     #[linkme::distributed_slice(TEST_TESTS)]
     static TEST_CASE2: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test",
+        trigger: super::__private_api::TestTrigger::Immediate,
         skip: true,
         should_fail: false,
         fail_msg: None,
@@ -320,6 +512,16 @@ mod tests {
 
     static TEST_CASE3: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test_that_fails",
+        trigger: super::__private_api::TestTrigger::Immediate,
+        skip: false,
+        should_fail: false,
+        fail_msg: None,
+        func: |storage| crate::test::__private_api::FunctionTest::new(test_function_fail).run(storage.into()),
+    };
+
+    static TEST_CASE4: super::__private_api::TestCase = super::__private_api::TestCase {
+        name: "event_triggered_test",
+        trigger: super::__private_api::TestTrigger::Event(&Guid::from_bytes(&[0; 16])),
         skip: false,
         should_fail: false,
         fail_msg: None,
@@ -327,47 +529,177 @@ mod tests {
     };
 
     #[test]
+    #[ignore = "Skipping test until the service for UEFI services is out, so we can mock it."]
     fn test_we_can_initialize_the_component() {
         let mut storage = Storage::new();
 
-        let mut component = super::TestRunner::default().fail_fast(true).into_component();
+        let mut component = super::TestRunner::default().into_component();
         component.initialize(&mut storage);
     }
 
     #[test]
+    #[ignore = "Skipping test until the service for UEFI services is out, so we can mock it."]
     fn test_we_can_collect_and_execute_tests() {
         assert_eq!(TEST_TESTS.len(), 2);
         let mut storage = Storage::new();
         storage.add_config(1_i32);
 
-        let component = super::TestRunner::default().fail_fast(true);
+        let component = super::TestRunner::default();
         let result = component.run_tests(&TEST_TESTS, &mut storage);
         assert!(result.is_ok());
     }
 
     #[test]
+    #[ignore = "Skipping test until the service for UEFI services is out, so we can mock it."]
     fn test_handle_different_test_counts() {
-        let mut test_cases = vec![];
         let mut storage = Storage::new();
         storage.add_config(1_i32);
 
-        let component = super::TestRunner::default().fail_fast(true);
-        let result = component.run_tests(&test_cases, &mut storage);
+        let test_cases: &'static [TestCase] = Box::leak(Box::new([]));
+        let component = super::TestRunner::default();
+        let result = component.run_tests(test_cases, &mut storage);
         assert!(result.is_ok());
 
-        test_cases.push(TEST_CASE1);
-        let result = component.run_tests(&test_cases, &mut storage);
+        let test_cases: &'static [TestCase] = Box::leak(Box::new([TEST_CASE1]));
+        let result = component.run_tests(test_cases, &mut storage);
         assert!(result.is_ok());
 
-        test_cases.push(TEST_CASE2);
-        let result = component.run_tests(&test_cases, &mut storage);
+        let test_cases: &'static [TestCase] = Box::leak(Box::new([TEST_CASE1, TEST_CASE2]));
+        let result = component.run_tests(test_cases, &mut storage);
         assert!(result.is_ok());
 
-        test_cases.push(TEST_CASE3);
-        let result = component.run_tests(&test_cases, &mut storage);
+        let test_cases: &'static [TestCase] = Box::leak(Box::new([TEST_CASE1, TEST_CASE2, TEST_CASE3]));
+        let result = component.run_tests(test_cases, &mut storage);
         assert!(result.is_err());
+    }
 
-        let result = component.fail_fast(false).run_tests(&test_cases, &mut storage);
-        assert!(result.is_err());
+    #[test]
+    fn test_recorder_records_results() {
+        let recorder = Recorder::default();
+
+        recorder.record_result("test1", Ok(()));
+        recorder.record_result("test1", Ok(()));
+        recorder.record_result("test1", Err("Failure 1"));
+
+        recorder.record_result("test2", Err("Failure 2"));
+        recorder.record_result("test2", Err("Failure 2"));
+
+        recorder.record_result("test3", Ok(()));
+
+        let output = format!("{}", recorder);
+        assert!(output.contains("test1 ... fail (1 fails, 2 passes): Failure 1"));
+        assert!(output.contains("test2 ... fail (2 fails, 0 passes): Failure 2"));
+        assert!(output.contains("test3 ... ok (1 passes)"));
+    }
+
+    #[test]
+    fn test_test_data_test_running() {
+        let mut storage = Storage::new();
+        storage.add_config(1_i32);
+        storage.add_service(Recorder::default());
+
+        let test_case = &TEST_CASE1;
+        let mut test_data = TestData::new(&storage, false, test_case, None);
+
+        // SAFETY: There is no other mutable access to storage at this time.
+        unsafe { test_data.run() };
+
+        let recorder = storage.get_service::<Recorder>().expect("Recorder service should be registered.");
+        let output = format!("{}", *recorder);
+        assert!(output.contains("test ... ok (1 passes)"));
+    }
+
+    #[test]
+    #[should_panic(expected = "Callback called")]
+    fn test_test_failure_callback_handler() {
+        let test_runner = TestRunner::default().with_callback(|_, _| {
+            panic!("Callback called");
+        });
+
+        let mut storage = Storage::new();
+        storage.add_service(Recorder::default());
+        let bs: MaybeUninit<r_efi::efi::BootServices> = MaybeUninit::uninit();
+
+        // SAFETY: This is very unsafe, because it is not initialized, however this code path only calls create_event
+        // and create_event_ex, which we will fill in with no-op functions.
+        let mut bs = unsafe { bs.assume_init() };
+        extern "efiapi" fn noop_create_event(
+            _type: u32,
+            _tpl: r_efi::efi::Tpl,
+            _notify_function: Option<extern "efiapi" fn(r_efi::efi::Event, *mut core::ffi::c_void)>,
+            _notify_context: *mut core::ffi::c_void,
+            _event: *mut r_efi::efi::Event,
+        ) -> r_efi::efi::Status {
+            r_efi::efi::Status::SUCCESS
+        }
+
+        extern "efiapi" fn noop_create_event_ex(
+            _type: u32,
+            _tpl: r_efi::efi::Tpl,
+            _notify_function: Option<extern "efiapi" fn(r_efi::efi::Event, *mut core::ffi::c_void)>,
+            _notify_context: *const core::ffi::c_void,
+            _guid: *const r_efi::efi::Guid,
+            _event: *mut r_efi::efi::Event,
+        ) -> r_efi::efi::Status {
+            r_efi::efi::Status::SUCCESS
+        }
+
+        bs.create_event = noop_create_event;
+        bs.create_event_ex = noop_create_event_ex;
+
+        storage.set_boot_services(StandardBootServices::new(&bs));
+
+        // TEST_CASE3 is designed to fail.
+        let _ = test_runner.run_tests(Box::leak(Box::new([TEST_CASE3])), &mut storage);
+    }
+
+    #[test]
+    fn test_filter_should_work() {
+        let test_runner = TestRunner::default().with_filter("event_triggered_test");
+
+        let mut storage = Storage::new();
+        storage.add_service(Recorder::default());
+        let bs: MaybeUninit<r_efi::efi::BootServices> = MaybeUninit::uninit();
+
+        // SAFETY: This is very unsafe, because it is not initialized, however this code path only calls create_event
+        // and create_event_ex, which we will fill in with no-op functions.
+        let mut bs = unsafe { bs.assume_init() };
+        extern "efiapi" fn noop_create_event(
+            _type: u32,
+            _tpl: r_efi::efi::Tpl,
+            _notify_function: Option<extern "efiapi" fn(r_efi::efi::Event, *mut core::ffi::c_void)>,
+            _notify_context: *mut core::ffi::c_void,
+            _event: *mut r_efi::efi::Event,
+        ) -> r_efi::efi::Status {
+            r_efi::efi::Status::SUCCESS
+        }
+
+        extern "efiapi" fn noop_create_event_ex(
+            _type: u32,
+            _tpl: r_efi::efi::Tpl,
+            _notify_function: Option<extern "efiapi" fn(r_efi::efi::Event, *mut core::ffi::c_void)>,
+            _notify_context: *const core::ffi::c_void,
+            _guid: *const r_efi::efi::Guid,
+            _event: *mut r_efi::efi::Event,
+        ) -> r_efi::efi::Status {
+            r_efi::efi::Status::SUCCESS
+        }
+
+        bs.create_event = noop_create_event;
+        bs.create_event_ex = noop_create_event_ex;
+
+        storage.set_boot_services(StandardBootServices::new(&bs));
+
+        // TEST_CASE3 is designed to fail.
+        assert!(test_runner.run_tests(Box::leak(Box::new([TEST_CASE3, TEST_CASE4])), &mut storage).is_ok());
+
+        let recorder = storage.get_service::<Recorder>().expect("Recorder service should be registered.");
+        let output = format!("{}", *recorder);
+
+        // This test is filtered out, so it should not even show up in the results.
+        assert!(!output.contains("test_that_fails"));
+        // This test is not filtered out, but never run, so should log as such.
+        println!("{}", output);
+        assert!(output.contains("event_triggered_test ... not triggered"));
     }
 }

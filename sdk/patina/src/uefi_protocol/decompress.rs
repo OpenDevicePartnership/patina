@@ -92,7 +92,10 @@ impl EfiDecompressProtocol {
         assert!(!source_buffer.is_null());
         assert!(!destination_buffer.is_null());
 
+        // Safety: source_buffer and destination_buffer pointers are validated as non-null.
+        // Sizes are provided by caller and trusted to match the buffer allocations.
         let src = unsafe { core::slice::from_raw_parts(source_buffer as *const u8, source_size as usize) };
+        // Safety: destination_buffer is validated as non-null and mutable access is exclusive.
         let dst = unsafe { core::slice::from_raw_parts_mut(destination_buffer as *mut u8, destination_size as usize) };
 
         match decompress_into_with_algo(src, dst, DecompressionAlgorithm::UefiDecompress) {
@@ -108,6 +111,9 @@ impl Default for EfiDecompressProtocol {
     }
 }
 
+// Safety: EfiDecompressProtocol implements the UEFI Decompress protocol interface.
+// The PROTOCOL_GUID matches the UEFI specification for the Decompress protocol.
+// The protocol structure layout matches the UEFI protocol requirements.
 unsafe impl ProtocolInterface for EfiDecompressProtocol {
     const PROTOCOL_GUID: efi::Guid =
         efi::Guid::from_fields(0xd8117cfe, 0x94A6, 0x11D4, 0x9A, 0x3A, &[0x00, 0x90, 0x27, 0x3F, 0xC1, 0x4D]);

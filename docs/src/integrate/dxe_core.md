@@ -364,6 +364,8 @@ Core::default()
       acpi_base: patina_mm::config::AcpiBase::Mmio(0x0), // Set during boot
       cmd_port: patina_mm::config::MmiPort::Smi(0xB2),
       data_port: patina_mm::config::MmiPort::Smi(0xB3),
+      enable_comm_buffer_updates: false,
+      updatable_buffer_id: None,
       comm_buffers: vec![],
   })
   .with_component(patina_mm::component::sw_mmi_manager::SwMmiManager::new())

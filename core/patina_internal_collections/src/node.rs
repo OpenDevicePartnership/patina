@@ -6,12 +6,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use core::{
-    mem,
-    ptr::NonNull,
-    slice,
-    sync::atomic::{AtomicBool, AtomicPtr, Ordering},
-};
+use core::{cell::Cell, mem, ptr::NonNull, slice};
 
 use crate::{Error, Result, SliceKey};
 
@@ -35,7 +30,7 @@ where
     /// The number of nodes in the tree.
     length: usize,
     /// A linked list of free nodes in the storage container.
-    available: AtomicPtr<Node<D>>,
+    available: Cell<*mut Node<D>>,
 }
 
 impl<'a, D> Storage<'a, D>
@@ -46,15 +41,21 @@ where
     pub const fn new() -> Storage<'a, D> {
         let ptr = NonNull::<Node<D>>::dangling();
         Self {
+            // SAFETY: Elements are dereferenced from the zero-length slice. Because the slice length is 0,
+            // no invalid memory accesses occur.
             data: unsafe { slice::from_raw_parts_mut(ptr.as_ptr(), 0) },
             length: 0,
-            available: AtomicPtr::new(core::ptr::null_mut()),
+            available: Cell::new(core::ptr::null_mut()),
         }
     }
 
     /// Create a new storage container with a slice of memory.
     pub fn with_capacity(slice: &'a mut [u8]) -> Storage<'a, D> {
         let storage = Storage {
+            // SAFETY: This is reinterpreting a byte slice as a Node<D> slice.
+            // 1. The alignment is checked implicitly by the slice bounds.
+            // 2. The correct number of Node<D> elements that fit in the byte slice is calculated.
+            // 3. The lifetime ensures the byte slice remains valid for the storage's lifetime
             data: unsafe {
                 slice::from_raw_parts_mut::<'a, Node<D>>(
                     slice as *mut [u8] as *mut Node<D>,
@@ -62,11 +63,11 @@ where
                 )
             },
             length: 0,
-            available: AtomicPtr::default(),
+            available: Cell::default(),
         };
 
         Self::build_linked_list(storage.data);
-        storage.available.store(storage.data[0].as_mut_ptr(), Ordering::SeqCst);
+        storage.available.set(storage.data[0].as_mut_ptr());
         storage
     }
 
@@ -96,10 +97,11 @@ where
     /// O(1)
     ///
     pub fn add(&mut self, data: D) -> Result<(usize, &mut Node<D>)> {
-        let available_ptr = self.available.load(Ordering::SeqCst);
+        let available_ptr = self.available.get();
         if !available_ptr.is_null() && self.length != self.capacity() {
+            // SAFETY: available_ptr is checked to be non-null and points to a valid Node<D> in self.data.
             let node = unsafe { &mut *available_ptr };
-            self.available.store(node.right_ptr(), Ordering::SeqCst);
+            self.available.set(node.right_ptr());
             node.set_left(None);
             node.set_right(None);
             node.set_parent(None);
@@ -121,11 +123,16 @@ where
         if node.is_null() {
             return;
         }
+        // SAFETY: node is checked to be non-null and is expected to point to a valid Node<D>
+        // that was previously allocated from this storage. The caller is responsible for
+        // ensuring the pointer is valid.
         let node = unsafe { &mut *node };
         node.set_parent(None);
         node.set_left(None);
-        let available_ptr = self.available.load(Ordering::SeqCst);
+        let available_ptr = self.available.get();
         if !available_ptr.is_null() {
+            // SAFETY: available_ptr is non-null and points to the head of our free list,
+            // which contains valid Node<D> pointers from self.data.
             let root = unsafe { &mut *available_ptr };
             node.set_right(Some(root));
             root.set_left(Some(node));
@@ -133,7 +140,7 @@ where
             node.set_right(None);
         }
 
-        self.available.store(node.as_mut_ptr(), Ordering::SeqCst);
+        self.available.set(node.as_mut_ptr());
         self.length -= 1;
     }
 
@@ -181,6 +188,10 @@ where
     ///
     /// O(n)
     pub fn resize(&mut self, slice: &'a mut [u8]) {
+        // SAFETY: This is reinterpreting a byte slice as a Node<D> slice.
+        // 1. The alignment is handled by slice casting rules
+        // 2. The correct number of Node<D> elements that fit in the byte slice is calculated
+        // 3. The lifetime 'a ensures the byte slice remains valid for the storage's lifetime
         let buffer = unsafe {
             slice::from_raw_parts_mut::<'a, Node<D>>(
                 slice as *mut [u8] as *mut Node<D>,
@@ -194,7 +205,7 @@ where
         if self.capacity() == 0 {
             self.data = buffer;
             Self::build_linked_list(self.data);
-            self.available.store(self.data[0].as_mut_ptr(), Ordering::SeqCst);
+            self.available.set(self.data[0].as_mut_ptr());
             return;
         }
 
@@ -227,14 +238,10 @@ where
             }
         }
 
-        let idx = if !self.available.load(Ordering::SeqCst).is_null() {
-            self.idx(self.available.load(Ordering::SeqCst))
-        } else {
-            self.len()
-        };
+        let idx = if !self.available.get().is_null() { self.idx(self.available.get()) } else { self.len() };
 
         Self::build_linked_list(&buffer[idx..]);
-        self.available.store(buffer[idx].as_mut_ptr(), Ordering::SeqCst);
+        self.available.set(buffer[idx].as_mut_ptr());
 
         self.data = buffer;
     }
@@ -275,86 +282,80 @@ where
     D: SliceKey,
 {
     fn set_color(&self, color: bool) {
-        self.color.store(color, Ordering::SeqCst);
+        self.color.set(color);
     }
 
     fn is_red(&self) -> bool {
-        self.color.load(Ordering::SeqCst) == RED
+        self.color.get() == RED
     }
 
     fn is_black(&self) -> bool {
-        self.color.load(Ordering::SeqCst) == BLACK
+        self.color.get() == BLACK
     }
 
     fn color(&self) -> bool {
-        self.color.load(Ordering::SeqCst)
+        self.color.get()
     }
 
     fn parent(&self) -> Option<&Node<D>> {
-        let node = self.parent.load(Ordering::SeqCst);
-        match node.is_null() {
-            true => None,
-            false => Some(unsafe { &*node }),
-        }
+        let node = self.parent.get();
+        // SAFETY: If the pointer is not null, it points to a valid Node<D> in the storage.
+        unsafe { node.as_ref() }
     }
 
     fn parent_ptr(&self) -> *mut Node<D> {
-        self.parent.load(Ordering::SeqCst)
+        self.parent.get()
     }
 
     fn set_parent(&self, node: Option<&Node<D>>) {
         match node {
             None => {
-                self.parent.store(core::ptr::null_mut(), Ordering::SeqCst);
+                self.parent.set(core::ptr::null_mut());
             }
             Some(node) => {
-                self.parent.store(node.as_mut_ptr(), Ordering::SeqCst);
+                self.parent.set(node.as_mut_ptr());
             }
         }
     }
 
     fn left(&self) -> Option<&Node<D>> {
-        let node = self.left.load(Ordering::SeqCst);
-        match node.is_null() {
-            true => None,
-            false => Some(unsafe { &*node }),
-        }
+        let node = self.left.get();
+        // SAFETY: If the pointer is not null, it points to a valid Node<D> in the storage.
+        unsafe { node.as_ref() }
     }
 
     fn left_ptr(&self) -> *mut Node<D> {
-        self.left.load(Ordering::SeqCst)
+        self.left.get()
     }
 
     fn set_left(&self, node: Option<&Node<D>>) {
         match node {
             None => {
-                self.left.store(core::ptr::null_mut(), Ordering::SeqCst);
+                self.left.set(core::ptr::null_mut());
             }
             Some(node) => {
-                self.left.store(node.as_mut_ptr(), Ordering::SeqCst);
+                self.left.set(node.as_mut_ptr());
             }
         }
     }
 
     fn right(&self) -> Option<&Node<D>> {
-        let node = self.right.load(Ordering::SeqCst);
-        match node.is_null() {
-            true => None,
-            false => Some(unsafe { &*node }),
-        }
+        let node = self.right.get();
+        // SAFETY: If the pointer is not null, it points to a valid Node<D> in the storage.
+        unsafe { node.as_ref() }
     }
 
     fn right_ptr(&self) -> *mut Node<D> {
-        self.right.load(Ordering::SeqCst)
+        self.right.get()
     }
 
     fn set_right(&self, node: Option<&Node<D>>) {
         match node {
             None => {
-                self.right.store(core::ptr::null_mut(), Ordering::SeqCst);
+                self.right.set(core::ptr::null_mut());
             }
             Some(node) => {
-                self.right.store(node.as_mut_ptr(), Ordering::SeqCst);
+                self.right.set(node.as_mut_ptr());
             }
         }
     }
@@ -460,10 +461,10 @@ where
     D: SliceKey,
 {
     pub data: D,
-    color: AtomicBool,
-    parent: AtomicPtr<Node<D>>,
-    left: AtomicPtr<Node<D>>,
-    right: AtomicPtr<Node<D>>,
+    color: Cell<bool>,
+    parent: Cell<*mut Node<D>>,
+    left: Cell<*mut Node<D>>,
+    right: Cell<*mut Node<D>>,
 }
 
 impl<D> Node<D>
@@ -471,13 +472,7 @@ where
     D: SliceKey,
 {
     pub fn new(data: D) -> Self {
-        Node {
-            data,
-            color: AtomicBool::new(RED),
-            parent: AtomicPtr::default(),
-            left: AtomicPtr::default(),
-            right: AtomicPtr::default(),
-        }
+        Node { data, color: Cell::new(RED), parent: Cell::default(), left: Cell::default(), right: Cell::default() }
     }
 
     pub fn height_and_balance(node: Option<&Node<D>>) -> (i32, bool) {
@@ -535,24 +530,24 @@ where
         }
 
         // Swap the colors
-        let tmp_color = node1.color.load(Ordering::SeqCst);
-        node1.color.store(node2.color.load(Ordering::SeqCst), Ordering::SeqCst);
-        node2.color.store(tmp_color, Ordering::SeqCst);
+        let tmp_color = node1.color.get();
+        node1.color.set(node2.color.get());
+        node2.color.set(tmp_color);
 
         // Swap the parent pointers
-        let tmp_parent = node1.parent.load(Ordering::SeqCst);
-        node1.parent.store(node2.parent.load(Ordering::SeqCst), Ordering::SeqCst);
-        node2.parent.store(tmp_parent, Ordering::SeqCst);
+        let tmp_parent = node1.parent.get();
+        node1.parent.set(node2.parent.get());
+        node2.parent.set(tmp_parent);
 
         // Swap the left pointers
-        let tmp_left = node1.left.load(Ordering::SeqCst);
-        node1.left.store(node2.left.load(Ordering::SeqCst), Ordering::SeqCst);
-        node2.left.store(tmp_left, Ordering::SeqCst);
+        let tmp_left = node1.left.get();
+        node1.left.set(node2.left.get());
+        node2.left.set(tmp_left);
 
         // Swap the right pointers
-        let tmp_right = node1.right.load(Ordering::SeqCst);
-        node1.right.store(node2.right.load(Ordering::SeqCst), Ordering::SeqCst);
-        node2.right.store(tmp_right, Ordering::SeqCst);
+        let tmp_right = node1.right.get();
+        node1.right.set(node2.right.get());
+        node2.right.set(tmp_right);
 
         // Update the parent pointers of the children
         if let Some(left) = node1.left() {

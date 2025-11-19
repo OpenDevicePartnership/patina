@@ -18,20 +18,13 @@ use patina::{
     component::{IntoComponent, Storage},
 };
 use patina_mm::{
-    component::{
-        communicator::{MmCommunication, MmCommunicator},
-        sw_mmi_manager::SwMmiManager,
-    },
+    component::{communicator::MmCommunicator, sw_mmi_manager::SwMmiManager},
     config::{CommunicateBuffer, MmCommunicationConfiguration},
 };
-use r_efi::efi;
 
 use core::pin::Pin;
 
 use crate::patina_mm_integration::common::*;
-
-static TEST_RECIPIENT: efi::Guid =
-    efi::Guid::from_fields(0x12345678, 0x1234, 0x5678, 0x12, 0x34, &[0x56, 0x78, 0x90, 0xab, 0xcd, 0xef]);
 
 #[test]
 fn test_mm_communicator_component_initialization() {
@@ -50,14 +43,12 @@ fn test_mm_communicator_component_initialization() {
     // Add required SW MMI manager service
     storage.add_service(SwMmiManager::new());
 
-    // Test that the component can be initialized and run
+    // Test that the component can be initialized but won't run without StandardBootServices
     let mut communicator = MmCommunicator::new().into_component();
     communicator.initialize(&mut storage);
-    assert_eq!(communicator.run(&mut storage), Ok(true));
-
-    // Verify that the MmCommunication service is now available
-    let service_result = storage.get_service::<dyn MmCommunication>();
-    assert!(service_result.is_some(), "MmCommunication service should be available after component initialization");
+    // Component requires StandardBootServices which is not available in this test,
+    // so it should return Ok(false) indicating it cannot run yet
+    assert_eq!(communicator.run(&mut storage), Ok(false));
 }
 
 #[test]
@@ -70,16 +61,9 @@ fn test_mm_communicator_with_empty_config() {
 
     let mut communicator = MmCommunicator::new().into_component();
     communicator.initialize(&mut storage);
-    assert_eq!(communicator.run(&mut storage), Ok(true));
-
-    // Service should still be available even with no buffers
-    let service_result = storage.get_service::<dyn MmCommunication>();
-    assert!(service_result.is_some(), "MmCommunication service should be available even with empty config");
-
-    // Communication should fail due to no buffers
-    let service = service_result.unwrap();
-    let result = service.communicate(0, b"test", Guid::from_ref(&TEST_RECIPIENT));
-    assert!(result.is_err(), "Communication should fail with no buffers configured");
+    // Component requires StandardBootServices which is not available in this test,
+    // so it should return Ok(false) indicating it cannot run yet
+    assert_eq!(communicator.run(&mut storage), Ok(false));
 }
 
 #[test]
@@ -116,15 +100,15 @@ fn test_mm_communicator_dependency_injection() {
     communicator1.initialize(&mut storage);
     communicator2.initialize(&mut storage);
 
-    // First component should run successfully
-    assert_eq!(communicator1.run(&mut storage), Ok(true));
+    // Components require StandardBootServices which is not available in unit tests,
+    // so they should return Ok(false) indicating they cannot run yet
+    assert_eq!(communicator1.run(&mut storage), Ok(false));
 
-    // Second component should also run since it's a different component instance
-    assert_eq!(communicator2.run(&mut storage), Ok(true));
+    // Second component should also return Ok(false) for the same reason
+    assert_eq!(communicator2.run(&mut storage), Ok(false));
 
-    // The service should still be available
-    let service_result = storage.get_service::<dyn MmCommunication>();
-    assert!(service_result.is_some(), "MmCommunication service should be available");
+    // Note: The MmCommunication service won't be available because the components
+    // require StandardBootServices to actually run and register the service
 }
 
 // Integration tests using the common framework

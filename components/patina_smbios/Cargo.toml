@@ -26,5 +26,8 @@ enable_patina_tests = []
 mockall = ["dep:mockall", "std"]
 std = []
 
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }

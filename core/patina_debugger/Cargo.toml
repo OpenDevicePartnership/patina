@@ -8,6 +8,9 @@ edition.workspace = true
 readme = "README.md"
 description = "Debugger implementation for a Patina Core."
 
+[lints]
+workspace = true
+
 [dependencies]
 cfg-if = { workspace = true }
 gdbstub = { workspace = true }

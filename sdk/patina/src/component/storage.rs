@@ -432,7 +432,15 @@ impl Storage {
 #[derive(Copy, Clone)]
 pub struct UnsafeStorageCell<'s>(*mut Storage, PhantomData<(&'s Storage, &'s UnsafeCell<Storage>)>);
 
+// Safety: UnsafeStorageCell wraps a raw pointer but does not own the data. The lifetime specifier ensures the pointer
+// remains valid. Send is safe because the wrapper doesn't allow unsynchronized access. All access goes through
+// unsafe methods that require the caller to ensure proper synchronization. The PhantomData ties the lifetime
+// to the storage reference, preventing the cell from outliving the storage.
 unsafe impl Send for UnsafeStorageCell<'_> {}
+// Safety: Sync is safe because UnsafeStorageCell provides controlled access to storage through unsafe methods
+// that place the synchronization burden on the caller. The wrapper itself contains no mutable state - just a
+// raw pointer and phantom data. Multiple threads can hold UnsafeStorageCell instances safely as long as they
+// follow the access rules documented on storage() and storage_mut().
 unsafe impl Sync for UnsafeStorageCell<'_> {}
 
 impl<'s> From<&'s mut Storage> for UnsafeStorageCell<'s> {
@@ -503,14 +511,23 @@ impl<'s> UnsafeStorageCell<'s> {
     }
 }
 
+// Safety: &mut Storage parameter provides exclusive access to the entire storage. The Param implementation
+// ensures exclusive access by tracking config reads/writes in MetaData. init_state() asserts no conflicting
+// config access exists and marks all configs as exclusively written. get_param() uses storage_mut() which
+// requires the UnsafeStorageCell was created from mutable storage access.
 unsafe impl Param for &mut Storage {
     type State = ();
     type Item<'storage, 'state> = &'storage mut Storage;
 
+    // Safety: UnsafeStorageCell was created from &mut Storage (validated by init_state). storage_mut()
+    // returns the underlying mutable reference. The Param trait ensures this is the only active borrow
+    // of storage data.
     unsafe fn get_param<'storage, 'state>(
         _state: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
+        // Safety: UnsafeStorageCell was created with exclusive access. init_state ensured no conflicting
+        // config access. storage_mut() safety requirements are met by the Param trait.
         unsafe { storage.storage_mut() }
     }
 
@@ -538,14 +555,22 @@ unsafe impl Param for &mut Storage {
     }
 }
 
+// Safety: &Storage parameter provides shared immutable access to the entire storage. The Param implementation
+// ensures no conflicting mutable access exists by checking that no ConfigMut<T> parameters have been registered
+// (which would require mutable config access). get_param() uses storage() which only requires immutable access.
 unsafe impl Param for &Storage {
     type State = ();
     type Item<'storage, 'state> = &'storage Storage;
 
+    // Safety: UnsafeStorageCell provides access to storage. storage() returns an immutable reference.
+    // init_state() ensured no conflicting mutable config access exists. The Param protocol ensures this
+    // shared access is safe.
     unsafe fn get_param<'storage, 'state>(
         _state: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
+        // Safety: storage() requires no exclusive borrows of storage data. init_state verified no
+        // ConfigMut<T> access exists that would create conflicting mutable access.
         unsafe { storage.storage() }
     }
 
@@ -684,6 +709,7 @@ mod tests {
         assert!(storage.get_service::<dyn TestService>().is_none());
 
         {
+            // SAFETY: Test code - Commands parameter is always available without validation.
             let mut commands = unsafe { <Commands as Param>::get_param(&(), UnsafeStorageCell::from(&mut storage)) };
             commands.add_service(TestServiceImpl { id: 42 });
         }

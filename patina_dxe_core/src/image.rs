@@ -8,7 +8,6 @@
 //!
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::{convert::TryInto, ffi::c_void, mem::transmute, slice, slice::from_raw_parts};
-use goblin::pe::section_table;
 use patina::{
     base::{DEFAULT_CACHE_ATTR, UEFI_PAGE_SIZE, align_up},
     error::EfiError,
@@ -28,6 +27,7 @@ use patina_internal_device_path::{DevicePathWalker, copy_device_path_to_boxed_sl
 use r_efi::efi;
 
 use crate::{
+    GCD,
     allocator::{core_allocate_pages, core_free_pages},
     config_tables::debug_image_info_table::{
         EfiDebugImageInfoNormal, core_new_debug_image_info_entry, core_remove_debug_image_info_entry,
@@ -36,6 +36,7 @@ use crate::{
     dxe_services::{self, core_set_memory_space_attributes},
     events::EVENT_DB,
     filesystems::SimpleFile,
+    gcd::MemoryProtectionPolicy,
     pecoff::{self, UefiPeInfo, relocation::RelocationBlock},
     protocol_db,
     protocols::{
@@ -43,7 +44,7 @@ use crate::{
     },
     runtime,
     systemtables::EfiSystemTable,
-    tpl_lock,
+    tpl_mutex,
 };
 
 use efi::Guid;
@@ -88,13 +89,14 @@ impl ImageStack {
         // attempt to set the memory space attributes for the stack guard page.
         // if we fail, we should still try to continue to boot
         // the stack grows downwards, so stack here is the guard page
-        let attributes = match dxe_services::core_get_memory_space_descriptor(stack) {
+        let mut attributes = match dxe_services::core_get_memory_space_descriptor(stack) {
             Ok(descriptor) => descriptor.attributes,
             Err(_) => DEFAULT_CACHE_ATTR,
         };
-        if let Err(err) =
-            dxe_services::core_set_memory_space_attributes(stack, UEFI_PAGE_SIZE as u64, attributes | efi::MEMORY_RP)
-        {
+
+        attributes = MemoryProtectionPolicy::apply_image_stack_guard_policy(attributes);
+
+        if let Err(err) = dxe_services::core_set_memory_space_attributes(stack, UEFI_PAGE_SIZE as u64, attributes) {
             log::error!("Failed to set memory space attributes for stack guard page: {err:?}");
             // unfortunately, this needs to be commented out for now, because the tests have gotten too complex
             // and need to be refactored to handle the page table
@@ -116,24 +118,6 @@ impl Drop for ImageStack {
             // we added a guard page, so we need to subtract a page from the stack pointer to free everything
             let stack_addr = self.stack as *const u64 as efi::PhysicalAddress - UEFI_PAGE_SIZE as u64;
 
-            // we need to set the guard page back to XP so that the pages can be coalesced before we free them
-            // preserve the caching attributes
-            let mut attributes = match dxe_services::core_get_memory_space_descriptor(stack_addr) {
-                Ok(descriptor) => descriptor.attributes & !efi::MEMORY_ATTRIBUTE_MASK,
-                Err(_) => DEFAULT_CACHE_ATTR,
-            };
-
-            attributes |= efi::MEMORY_XP;
-            if let Err(err) =
-                dxe_services::core_set_memory_space_attributes(stack_addr, UEFI_PAGE_SIZE as u64, attributes)
-            {
-                log::error!("Failed to set memory space attributes for stack guard page: {err:?}");
-                // unfortunately, this needs to be commented out for now, because the tests have gotten too complex
-                // and need to be refactored to handle the page table
-                // debug_assert!(false);
-                // if we failed, let's still try to free
-            }
-
             if let Err(status) = core_free_pages(stack_addr, self.allocated_pages) {
                 log::error!(
                     "core_free_pages returned error {:#x?} for image stack at {:#x} for num_pages {:#x}",
@@ -141,6 +125,7 @@ impl Drop for ImageStack {
                     stack_addr,
                     self.allocated_pages
                 );
+                debug_assert!(false);
             }
         }
     }
@@ -300,6 +285,7 @@ impl Drop for PrivateImageData {
                 self.image_base_page,
                 self.image_num_pages
             );
+            debug_assert!(false);
         }
 
         if let (Some(resource_addr), Some(num_pages)) =
@@ -309,6 +295,7 @@ impl Drop for PrivateImageData {
             log::error!(
                 "core_free_pages returned error {status:#x?} for HII resource section at {resource_addr:#x} for num_pages {num_pages:#x}",
             );
+            debug_assert!(false);
         }
     }
 }
@@ -348,8 +335,8 @@ impl DxeCoreGlobalImageData {
 unsafe impl Sync for DxeCoreGlobalImageData {}
 unsafe impl Send for DxeCoreGlobalImageData {}
 
-static PRIVATE_IMAGE_DATA: tpl_lock::TplMutex<DxeCoreGlobalImageData> =
-    tpl_lock::TplMutex::new(efi::TPL_NOTIFY, DxeCoreGlobalImageData::new(), "ImageLock");
+static PRIVATE_IMAGE_DATA: tpl_mutex::TplMutex<DxeCoreGlobalImageData> =
+    tpl_mutex::TplMutex::new(efi::TPL_NOTIFY, DxeCoreGlobalImageData::new(), "ImageLock");
 
 // helper routine that returns an empty loaded_image::Protocol struct.
 fn empty_image_info() -> efi::protocols::loaded_image::Protocol {
@@ -372,40 +359,14 @@ fn empty_image_info() -> efi::protocols::loaded_image::Protocol {
 
 fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateImageData) -> Result<(), EfiError> {
     for section in &pe_info.sections {
-        let mut attributes = efi::MEMORY_XP;
-        if section.characteristics & pecoff::IMAGE_SCN_CNT_CODE == pecoff::IMAGE_SCN_CNT_CODE {
-            attributes = efi::MEMORY_RO;
-        }
-
-        if section.characteristics & section_table::IMAGE_SCN_MEM_WRITE == 0
-            && ((section.characteristics & section_table::IMAGE_SCN_MEM_READ) == section_table::IMAGE_SCN_MEM_READ)
-        {
-            attributes |= efi::MEMORY_RO;
-        }
-
         // each section starts at image_base + virtual_address, per PE/COFF spec.
         let section_base_addr = (private_info.image_info.image_base as u64) + (section.virtual_address as u64);
 
-        let mut capabilities = attributes;
-
         // we need to get the current attributes for this region and add our new attribute
         // if we can't find this range in the GCD, try the next one, but report the failure
-        match dxe_services::core_get_memory_space_descriptor(section_base_addr) {
-            // in the Ok case, keep the cache attributes, but remove the existing memory attributes
-            // all new memory has efi::MEMORY_XP set, so we need to remove this if this is becoming a code
-            // section
-            Ok(desc) => {
-                attributes |= desc.attributes & !efi::MEMORY_ACCESS_MASK;
-                capabilities |= desc.capabilities;
-            }
-            Err(status) => {
-                log::error!(
-                    "Failed to find GCD desc for image section {section_base_addr:#X} with Status {status:#X?}",
-                );
-                debug_assert!(false);
-                return Err(status);
-            }
-        }
+        let desc = dxe_services::core_get_memory_space_descriptor(section_base_addr)?;
+        let (attributes, capabilities) =
+            MemoryProtectionPolicy::apply_image_protection_policy(section.characteristics, &desc);
 
         // now actually set the attributes. We need to use the virtual size for the section length, but
         // we cannot rely on this to be section aligned, as some compilers rely on the loader to align this
@@ -448,48 +409,6 @@ fn apply_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateIm
             })?;
     }
     Ok(())
-}
-
-fn remove_image_memory_protections(pe_info: &UefiPeInfo, private_info: &PrivateImageData) {
-    for section in &pe_info.sections {
-        // each section starts at image_base + virtual_address, per PE/COFF spec.
-        let section_base_addr = (private_info.image_info.image_base as u64) + (section.virtual_address as u64);
-
-        // we need to get the current attributes for this region and remove our attributes
-        // we need to reset this to efi::MEMORY_XP so that we can merge all of the pages allocated for this image
-        // together. Any unaligned memory will still have efi::MEMORY_XP set
-        match dxe_services::core_get_memory_space_descriptor(section_base_addr) {
-            Ok(desc) => {
-                let attributes = desc.attributes & !efi::MEMORY_ATTRIBUTE_MASK | efi::MEMORY_XP;
-
-                // now set the attributes back to only caching attrs.
-                let aligned_virtual_size =
-                    if let Ok(virtual_size) = align_up(section.virtual_size, pe_info.section_alignment) {
-                        virtual_size as u64
-                    } else {
-                        log::error!(
-                            "Failed to align up section size {:#X} with alignment {:#X}",
-                            section.virtual_size,
-                            pe_info.section_alignment,
-                        );
-                        debug_assert!(false);
-                        continue;
-                    };
-                if let Err(status) =
-                    dxe_services::core_set_memory_space_attributes(section_base_addr, aligned_virtual_size, attributes)
-                {
-                    log::error!(
-                        "Failed to remove GCD attributes for image section {section_base_addr:#X} with Status {status:#X?}",
-                    );
-                }
-            }
-            Err(status) => {
-                log::error!(
-                    "Failed to find GCD desc for image section {section_base_addr:#X} with Status {status:#X?}, cannot remove memory protections",
-                );
-            }
-        }
-    }
 }
 
 // retrieves the dxe core image info from the hob list, and installs the
@@ -679,7 +598,12 @@ fn core_load_pe_image(
             // we are trying to load an application image that is not NX compatible, likely a bootloader
             // if we are configured to allow compatibility mode, we need to activate it now. Otherwise, just continue
             // to load the image
-            activate_compatibility_mode(&private_info)?;
+            MemoryProtectionPolicy::activate_compatibility_mode(
+                &GCD,
+                private_info.image_base_page as usize,
+                private_info.image_num_pages,
+                pe_info.filename.clone().unwrap_or(String::from("Unknown")),
+            )?;
         }
         _ => {
             // finally, update the GCD attributes for this image so that code sections have RO set and data sections
@@ -689,44 +613,6 @@ fn core_load_pe_image(
     }
 
     Ok(private_info)
-}
-
-#[cfg(feature = "compatibility_mode_allowed")]
-/// Activates compatibility mode for an image that is not NX compatible if the feature flag is set to allow compat mode
-/// This function will map the image as RWX in the GCD and initiate compatibility mode in the GCD
-fn activate_compatibility_mode(private_info: &PrivateImageData) -> Result<(), EfiError> {
-    log::error!("Attempting to load an application image that is not NX compatible. Activating compatibility mode.");
-    crate::gcd::activate_compatibility_mode();
-    // for this image map all mem RWX preserving cache attributes if we find them
-    let stripped_attrs = dxe_services::core_get_memory_space_descriptor(private_info.image_base_page)
-        .map(|desc| desc.attributes & efi::CACHE_ATTRIBUTE_MASK)
-        .unwrap_or(DEFAULT_CACHE_ATTR);
-    if dxe_services::core_set_memory_space_attributes(
-        private_info.image_base_page,
-        patina::uefi_pages_to_size!(private_info.image_num_pages) as u64,
-        stripped_attrs,
-    )
-    .is_err()
-    {
-        // if we failed to map this image RWX, we should still attempt to execute it, it may succeed
-        log::error!(
-            "Failed to set GCD attributes for image {}",
-            private_info.pe_info.filename.clone().unwrap_or(String::from("Unknown"))
-        );
-        debug_assert!(false);
-    }
-    Ok(())
-}
-
-#[cfg(not(feature = "compatibility_mode_allowed"))]
-/// If the compatibility_mode_allowed feature flag is not set, we will fail to load the image that would crash the
-/// system with memory protections enabled
-fn activate_compatibility_mode(private_info: &PrivateImageData) -> Result<(), EfiError> {
-    log::error!(
-        "Attempting to load {} that is not NX compatible. Compatibility mode is not allowed in this build, not loading image.",
-        private_info.pe_info.filename.clone().unwrap_or(String::from("Unknown"))
-    );
-    Err(EfiError::LoadError)
 }
 
 extern "efiapi" fn runtime_image_protection_fixup_ebs(event: efi::Event, _context: *mut c_void) {
@@ -1419,11 +1305,6 @@ pub fn core_unload_image(image_handle: efi::Handle, force_unload: bool) -> Resul
         log::error!("Failed to remove runtime image for handle {image_handle:?}: {err:?}");
     }
 
-    // we have to remove the memory protections from the image sections before freeing the image buffer, because
-    // core_free_pages expects the memory being freed to be in a single continuous memory descriptor, which is not
-    // true when we've changed the attributes per section
-    remove_image_memory_protections(&private_image_data.pe_info, &private_image_data);
-
     Ok(())
 }
 
@@ -1544,17 +1425,21 @@ mod tests {
     use std::{fs::File, io::Read};
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
+        // SAFETY: Test code only - initializing test infrastructure within the global test lock.
         test_support::with_global_lock(|| unsafe {
             test_support::init_test_gcd(None);
             test_support::init_test_protocol_db();
             init_system_table();
             init_test_image_support();
             f();
+            // we need the to drop the memory here while the GCD is still valid
+            PRIVATE_IMAGE_DATA.lock().reset();
         })
         .unwrap();
     }
 
     unsafe fn init_test_image_support() {
+        // SAFETY: Test code - resetting global image data state with test lock held.
         unsafe { PRIVATE_IMAGE_DATA.lock().reset() };
 
         const DXE_CORE_MEMORY_SIZE: usize = 0x10000;
@@ -1611,6 +1496,7 @@ mod tests {
 
             let private_data = PRIVATE_IMAGE_DATA.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
+            // SAFETY: Test code - dereferencing image buffer pointer that was just created by LoadImage.
             let image_buf_len = unsafe { (&*image_data.image_buffer).len() as usize };
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
             assert_eq!(image_data.image_info.image_data_type, efi::BOOT_SERVICES_DATA);
@@ -1669,6 +1555,7 @@ mod tests {
 
             let private_data = PRIVATE_IMAGE_DATA.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
+            // SAFETY: Test code - dereferencing image buffer pointer that was just created by LoadImage.
             let image_buf_len = unsafe { (&*image_data.image_buffer).len() as usize };
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
             assert_eq!(image_data.image_info.image_data_type, efi::BOOT_SERVICES_DATA);
@@ -1753,6 +1640,7 @@ mod tests {
 
             let private_data = PRIVATE_IMAGE_DATA.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
+            // SAFETY: Test code - dereferencing image buffer pointer that was just created by LoadImage.
             let image_buf_len = unsafe { (&*image_data.image_buffer).len() as usize };
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
             assert_eq!(image_data.image_info.image_data_type, efi::BOOT_SERVICES_DATA);
@@ -1943,6 +1831,7 @@ mod tests {
         buffer: *mut c_void,
     ) -> efi::Status {
         let mut test_file = File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
+        // SAFETY: Test mock - creating a mutable slice from the provided buffer pointer.
         unsafe {
             let slice = core::slice::from_raw_parts_mut(buffer as *mut u8, *buffer_size);
             let read_bytes = test_file.read(slice).unwrap();
@@ -1975,6 +1864,7 @@ mod tests {
         let file_info_ptr = Box::into_raw(Box::new(file_info));
 
         let mut status = efi::Status::SUCCESS;
+        // SAFETY: Test mock - copying file info structure to caller's buffer if large enough.
         unsafe {
             if *size >= (*file_info_ptr).size.try_into().unwrap() {
                 core::ptr::copy(file_info_ptr, buffer as *mut efi::protocols::file::Info, 1);
@@ -1995,6 +1885,7 @@ mod tests {
         _attributes: u64,
     ) -> efi::Status {
         let file_ptr = get_file_protocol_mock();
+        // SAFETY: Test mock - writing the mock file protocol pointer to the output parameter.
         unsafe {
             new_handle.write(file_ptr);
         }
@@ -2009,6 +1900,7 @@ mod tests {
         unimplemented!();
     }
 
+    #[allow(clippy::undocumented_unsafe_blocks)]
     fn get_file_protocol_mock() -> *mut efi::protocols::file::Protocol {
         // mock file interface
         #[allow(clippy::missing_transmute_annotations)]
@@ -2091,6 +1983,7 @@ mod tests {
                 root: *mut *mut efi::protocols::file::Protocol,
             ) -> efi::Status {
                 let file_ptr = get_file_protocol_mock();
+                // SAFETY: Test mock - writing the mock file protocol pointer to the output parameter.
                 unsafe {
                     root.write(file_ptr);
                 }
@@ -2149,6 +2042,7 @@ mod tests {
                 let mut test_file =
                     File::open(test_collateral!("RustImageTestDxe.efi")).expect("failed to open test file.");
                 let status;
+                // SAFETY: Test mock - reading file into caller's buffer if large enough.
                 unsafe {
                     if *buffer_size < test_file.metadata().unwrap().len() as usize {
                         buffer_size.write(test_file.metadata().unwrap().len() as usize);

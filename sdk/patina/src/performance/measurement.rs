@@ -8,7 +8,7 @@
 //!
 extern crate alloc;
 
-use alloc::{boxed::Box, string::ToString, vec::Vec};
+use alloc::{boxed::Box, string::ToString};
 use core::{
     clone::Clone,
     convert::AsRef,
@@ -21,11 +21,11 @@ use core::{
 
 use crate::{
     boot_services::BootServices,
+    component::service::{Service, perf_timer::ArchTimerFunctionality},
     error::EfiError,
     guids::EDKII_FPDT_EXTENDED_FIRMWARE_PERFORMANCE,
     performance::{
         self,
-        _smm::{CommunicateProtocol, MmCommRegion, SmmGetRecordDataByOffset, SmmGetRecordSize},
         error::Error,
         globals::{get_load_image_count, get_static_state, increment_load_image_count},
         record::{
@@ -43,7 +43,6 @@ use crate::{
 };
 
 use crate::pi::status_code::{EFI_PROGRESS_CODE, EFI_SOFTWARE_DXE_BS_DRIVER};
-use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 
 use r_efi::{
     efi::{self, Guid},
@@ -107,88 +106,6 @@ pub mod event_callback {
             log::error!("Performance: Fail to install configuration table for FBPT firmware performance.");
         }
     }
-
-    /// Adds SMM performance records to the Firmware Basic Boot Performance Table (FBPT).
-    pub extern "efiapi" fn fetch_and_add_mm_performance_records<BB, B, F>(
-        event: efi::Event,
-        ctx: Box<(BB, MmCommRegion, &TplMutex<'static, F, B>)>,
-    ) where
-        BB: AsRef<B> + Clone,
-        B: BootServices + 'static,
-        F: FirmwareBasicBootPerfTable,
-    {
-        let (boot_services, mm_comm_region, fbpt) = *ctx;
-        let _ = boot_services.as_ref().close_event(event);
-
-        // SAFETY: This is safe because the reference returned by locate_protocol is never mutated after installation.
-        let Ok(communication) = (unsafe { boot_services.as_ref().locate_protocol::<CommunicateProtocol>(None) }) else {
-            log::error!("Performance: Could not locate communicate protocol interface.");
-            return;
-        };
-
-        // SAFETY: Is safe to use because the memory region comes from a trusted source and can be considered valid.
-        let boot_record_size = match unsafe {
-            // Ask smm for the total size of the perf records.
-            communication.communicate(SmmGetRecordSize::new(), mm_comm_region)
-        } {
-            Ok(SmmGetRecordSize { return_status, boot_record_size }) if return_status == efi::Status::SUCCESS => {
-                boot_record_size
-            }
-            Ok(SmmGetRecordSize { return_status, .. }) => {
-                log::error!(
-                    "Performance: Asking for the smm perf records size result in an error with return status of: {return_status:?}",
-                );
-                return;
-            }
-            Err(status) => {
-                log::error!(
-                    "Performance: Error while trying to communicate with communicate protocol with error code: {status:?}",
-                );
-                return;
-            }
-        };
-
-        let mut smm_boot_records_data = Vec::with_capacity(boot_record_size);
-
-        while smm_boot_records_data.len() < boot_record_size {
-            // SAFETY: Is safe to use because the memory region commes from a thrusted source and can be considered valid.
-            match unsafe {
-                // Ask smm to return us the next bytes in its buffer.
-                const BUFFER_SIZE: usize = 1024;
-                communication.communicate(
-                    SmmGetRecordDataByOffset::<BUFFER_SIZE>::new(smm_boot_records_data.len()),
-                    mm_comm_region,
-                )
-            } {
-                Ok(record_data) if record_data.return_status == efi::Status::SUCCESS => {
-                    // Append the byte to the total smm performance record data.
-                    smm_boot_records_data.extend_from_slice(record_data.boot_record_data());
-                }
-                Ok(SmmGetRecordDataByOffset { return_status, .. }) => {
-                    log::error!(
-                        "Performance: Asking for smm perf records data result in an error with return status of: {return_status:?}",
-                    );
-                    return;
-                }
-                Err(status) => {
-                    log::error!(
-                        "Performance: Error while trying to communicate with communicate protocol with error status code: {status:?}",
-                    );
-                    return;
-                }
-            };
-        }
-
-        // Write found perf records in the fbpt table.
-        let mut fbpt = fbpt.lock();
-        let mut n = 0;
-        for r in performance::record::Iter::new(&smm_boot_records_data) {
-            _ = fbpt.add_record(r);
-            n += 1;
-        }
-
-        log::info!("Performance: {n} smm performance records found.");
-    }
 }
 
 #[coverage(off)]
@@ -207,7 +124,7 @@ pub unsafe extern "efiapi" fn create_performance_measurement(
     identifier: u32,
     attribute: PerfAttribute,
 ) -> efi::Status {
-    let Some((boot_services, fbpt)) = get_static_state() else {
+    let Some((boot_services, fbpt, timer)) = get_static_state() else {
         // If the state is not initialized, it is because perf in not enabled.
         return efi::Status::SUCCESS;
     };
@@ -251,6 +168,7 @@ pub unsafe extern "efiapi" fn create_performance_measurement(
         attribute,
         boot_services,
         fbpt,
+        timer,
     ) {
         Ok(_) => efi::Status::SUCCESS,
         Err(Error::OutOfResources) => {
@@ -285,16 +203,17 @@ fn _create_performance_measurement<B, F>(
     attribute: PerfAttribute,
     boot_services: &B,
     fbpt: &TplMutex<'static, F, B>,
+    timer: &Service<dyn ArchTimerFunctionality>,
 ) -> Result<(), Error>
 where
     B: BootServices,
     F: FirmwareBasicBootPerfTable,
 {
-    let cpu_count = Arch::cpu_count();
+    let cpu_count = timer.cpu_count();
     let timestamp = match ticker {
-        0 => (cpu_count as f64 / Arch::perf_frequency() as f64 * 1_000_000_000_f64) as u64,
+        0 => (cpu_count as f64 / timer.perf_frequency() as f64 * 1_000_000_000_f64) as u64,
         1 => 0,
-        ticker => (ticker as f64 / Arch::perf_frequency() as f64 * 1_000_000_000_f64) as u64,
+        ticker => (ticker as f64 / timer.perf_frequency() as f64 * 1_000_000_000_f64) as u64,
     };
 
     let Ok(known_perf_id) = KnownPerfId::try_from(perf_id) else {
@@ -480,8 +399,8 @@ fn get_module_guid_from_handle(
     let mut guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0; 6]);
 
     let loaded_image_protocol = 'find_loaded_image_protocol: {
-        // SAFETY: `loaded_image_protocol` is the only reference to the `loaded_image::Protocol` in this scope.
         if let Ok(loaded_image_protocol) =
+            // SAFETY: `loaded_image_protocol` is the only reference to the `loaded_image::Protocol` in this scope.
             unsafe { boot_services.handle_protocol::<efi::protocols::loaded_image::Protocol>(handle) }
         {
             break 'find_loaded_image_protocol Some(loaded_image_protocol);
@@ -548,6 +467,8 @@ pub struct MediaFwVolFilepathDevicePath {
 mod tests {
     use super::*;
 
+    use crate as patina;
+
     use alloc::rc::Rc;
     use core::{mem::MaybeUninit, ptr};
 
@@ -555,6 +476,7 @@ mod tests {
 
     use crate::{
         boot_services::{MockBootServices, c_ptr::CMutPtr, tpl::Tpl},
+        component::service::IntoService,
         performance::{
             globals::set_perf_measurement_mask,
             logging::*,
@@ -562,6 +484,19 @@ mod tests {
         },
         runtime_services::MockRuntimeServices,
     };
+
+    #[derive(IntoService)]
+    #[service(dyn ArchTimerFunctionality)]
+    struct MockTimer {}
+
+    impl ArchTimerFunctionality for MockTimer {
+        fn perf_frequency(&self) -> u64 {
+            100
+        }
+        fn cpu_count(&self) -> u64 {
+            200
+        }
+    }
 
     #[test]
     fn test_report_fbpt_record_buffer() {
@@ -596,6 +531,7 @@ mod tests {
         boot_services
             .expect_locate_protocol()
             .once()
+            // SAFETY: Test code - creating a mutable reference to test protocol pointer for mocking.
             .returning_st(move |_| Ok(unsafe { &mut *status_code_runtime_protocol_ptr }));
 
         let mut runtime_services = MockRuntimeServices::new();
@@ -607,7 +543,9 @@ mod tests {
         let mut fbpt = MockFirmwareBasicBootPerfTable::new();
         fbpt.expect_report_table::<MockBootServices>().once().returning(|_, _| Ok(1));
 
+        // SAFETY: Test code - creating a reference to the boot_services for TplMutex initialization.
         let fbpt = TplMutex::new(unsafe { &*ptr::addr_of!(boot_services) }, Tpl::NOTIFY, fbpt);
+        // SAFETY: Test code - creating a static reference to the fbpt for callback testing.
         let fbpt = unsafe { &*ptr::addr_of!(fbpt) };
 
         event_callback::report_fbpt_record_buffer(
@@ -625,6 +563,7 @@ mod tests {
 
         let mut loaded_image_protocol = MaybeUninit::<efi::protocols::loaded_image::Protocol>::zeroed();
         let mut media_fw_vol_file_path_device_path = MaybeUninit::<MediaFwVolFilepathDevicePath>::zeroed();
+        // SAFETY: Test code - initializing test structures for device path protocol mocking.
         unsafe {
             media_fw_vol_file_path_device_path.assume_init_mut().header.r#type = TYPE_MEDIA;
             media_fw_vol_file_path_device_path.assume_init_mut().header.sub_type = Media::SUBTYPE_PIWG_FIRMWARE_FILE;
@@ -637,6 +576,7 @@ mod tests {
         }
         let loaded_image_protocol_address = loaded_image_protocol.as_mut_ptr() as usize;
 
+        // SAFETY: Test code - creating mock protocol reference from test address.
         boot_services.expect_handle_protocol::<efi::protocols::loaded_image::Protocol>().returning(move |_| unsafe {
             Ok((loaded_image_protocol_address as *mut efi::protocols::loaded_image::Protocol).as_mut().unwrap())
         });
@@ -645,6 +585,7 @@ mod tests {
 
         let mut fbpt = MockFirmwareBasicBootPerfTable::new();
         fbpt.expect_add_record().times(EXPECTED_NUMBER_OF_RECORD).returning(|_| Ok(()));
+        // SAFETY: Test code - creating reference to boot_services for TplMutex initialization.
         let fbpt = TplMutex::new(unsafe { &*ptr::addr_of!(boot_services) }, Tpl::NOTIFY, fbpt);
 
         // These functions call create_performance_measurement with the right arguments.
@@ -657,6 +598,7 @@ mod tests {
         static mut BOOT_SERVICES: Option<&MockBootServices> = None;
         static mut FBPT: Option<&TplMutex<'static, MockFirmwareBasicBootPerfTable, MockBootServices>> = None;
 
+        // SAFETY: Test code - initializing static variables with test references.
         unsafe {
             BOOT_SERVICES = Some(&*ptr::addr_of!(boot_services));
             FBPT = Some(&*ptr::addr_of!(fbpt));
@@ -671,6 +613,7 @@ mod tests {
             identifier: u32,
             attribute: PerfAttribute,
         ) -> efi::Status {
+            // SAFETY: Test code - reading CStr from test parameter.
             let string = unsafe { string.as_ref().map(|s| CStr::from_ptr(s).to_str().unwrap().to_string()) };
             let perf_id = identifier as u16;
             _create_performance_measurement::<MockBootServices, MockFirmwareBasicBootPerfTable>(
@@ -681,8 +624,11 @@ mod tests {
                 address,
                 perf_id,
                 attribute,
+                // SAFETY: Test code - unwrapping test statics that were initialized above.
                 unsafe { BOOT_SERVICES.unwrap() },
+                // SAFETY: Test code - unwrapping test statics that were initialized above.
                 unsafe { FBPT.unwrap() },
+                &Service::mock(Box::new(MockTimer {})),
             )
             .unwrap();
             efi::Status::SUCCESS

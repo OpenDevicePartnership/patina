@@ -20,7 +20,7 @@ use core::{cmp::Ordering, ffi::c_void, fmt};
 use patina::error::EfiError;
 use r_efi::efi;
 
-use crate::{runtime, tpl_lock};
+use crate::{runtime, tpl_mutex};
 
 /// Defines the supported UEFI event types
 #[repr(u32)]
@@ -547,7 +547,7 @@ impl EventDb {
 /// is only allowed through this structure which ensures that the event database
 /// is properly guarded against race conditions.
 pub struct SpinLockedEventDb {
-    inner: tpl_lock::TplMutex<EventDb>,
+    inner: tpl_mutex::TplMutex<EventDb>,
 }
 
 impl Default for SpinLockedEventDb {
@@ -559,10 +559,10 @@ impl Default for SpinLockedEventDb {
 impl SpinLockedEventDb {
     /// Creates a new instance of EventDb.
     pub const fn new() -> Self {
-        SpinLockedEventDb { inner: tpl_lock::TplMutex::new(efi::TPL_HIGH_LEVEL, EventDb::new(), "EventLock") }
+        SpinLockedEventDb { inner: tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, EventDb::new(), "EventLock") }
     }
 
-    fn lock(&self) -> tpl_lock::TplGuard<'_, EventDb> {
+    fn lock(&self) -> tpl_mutex::TplGuard<'_, EventDb> {
         self.inner.lock()
     }
 

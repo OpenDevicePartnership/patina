@@ -13,7 +13,7 @@
 extern crate alloc;
 use super::{AllocationStrategy, DEFAULT_ALLOCATION_STRATEGY};
 
-use crate::{gcd::SpinLockedGcd, tpl_lock};
+use crate::{gcd::SpinLockedGcd, tpl_mutex};
 
 use alloc::vec::Vec;
 use core::{
@@ -513,7 +513,7 @@ pub struct SpinLockedFixedSizeBlockAllocator {
     handle: efi::Handle,
 
     /// The inner allocator that is protected by a TPL mutex.
-    inner: tpl_lock::TplMutex<FixedSizeBlockAllocator>,
+    inner: tpl_mutex::TplMutex<FixedSizeBlockAllocator>,
 }
 
 impl SpinLockedFixedSizeBlockAllocator {
@@ -528,7 +528,7 @@ impl SpinLockedFixedSizeBlockAllocator {
         SpinLockedFixedSizeBlockAllocator {
             gcd,
             handle: allocator_handle,
-            inner: tpl_lock::TplMutex::new(
+            inner: tpl_mutex::TplMutex::new(
                 efi::TPL_HIGH_LEVEL,
                 FixedSizeBlockAllocator::new(memory_type_info, page_allocation_granularity),
                 "FsbLock",
@@ -546,7 +546,7 @@ impl SpinLockedFixedSizeBlockAllocator {
     /// Locks the allocator
     ///
     /// This can be used to do several actions on the allocator atomically.
-    pub fn lock(&self) -> tpl_lock::TplGuard<'_, FixedSizeBlockAllocator> {
+    pub fn lock(&self) -> tpl_mutex::TplGuard<'_, FixedSizeBlockAllocator> {
         self.inner.lock()
     }
 

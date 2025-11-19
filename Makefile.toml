@@ -194,7 +194,7 @@ dependencies = ["individual-package-targets"]
 [tasks.doc]
 description = "Builds all rust documentation in the workspace. Example `cargo make doc`"
 command = "cargo"
-args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc"]
+args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc", "--no-deps"]
 
 [tasks.doc-open]
 description = "Builds all rust documentation in the workspace and opens the documentation. Example `cargo make doc-open`"

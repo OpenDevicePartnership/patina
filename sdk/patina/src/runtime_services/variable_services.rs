@@ -121,6 +121,8 @@ impl<R: RuntimeServices> FallibleStreamingIterator for VariableNameIterator<'_, 
     type Error = efi::Status;
 
     fn advance(&mut self) -> Result<(), Self::Error> {
+        // Safety: get_next_variable_name_unchecked is called with valid variable name and namespace references.
+        // The iterator manages the state and ensures proper sequencing through the variable list.
         unsafe {
             // Don't do anything if we've reached the end already
             if self.finished {

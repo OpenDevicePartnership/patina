@@ -97,8 +97,7 @@ use patina_dxe_core::Core;
 
 let test_runner = TestRunner::default()
     .with_filter("X64")
-    .debug_mode(true)
-    .fail_fast(true);
+    .debug_mode(true);
 
 Core::default()
     .init_memory(hob_list)

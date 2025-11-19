@@ -39,7 +39,7 @@ use crate::{
     image::{core_load_image, core_start_image},
     protocol_db::DXE_CORE_HANDLE,
     protocols::PROTOCOL_DB,
-    tpl_lock::TplMutex,
+    tpl_mutex::TplMutex,
 };
 
 // Default Dependency expression per PI spec v1.2 Vol 2 section 10.9.

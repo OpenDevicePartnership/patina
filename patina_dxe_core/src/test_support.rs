@@ -18,8 +18,10 @@ use patina::{
         hob::{self, HobList, ResourceDescriptorV2, header},
     },
 };
+use patina_internal_cpu::paging::{CacheAttributeValue, PatinaPageTable};
+use patina_paging::{MemoryAttributes, PtError};
 use r_efi::efi;
-use std::{any::Any, fs::File, io::Read, slice};
+use std::{any::Any, cell::RefCell, fs::File, io::Read, slice};
 
 #[macro_export]
 macro_rules! test_collateral {
@@ -36,6 +38,134 @@ macro_rules! test_collateral {
 /// respectively).
 static GLOBAL_STATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+pub struct MockPageTable {
+    mapped: RefCell<Vec<(u64, u64, MemoryAttributes)>>,
+    unmapped: RefCell<Vec<(u64, u64)>>,
+    installed: RefCell<bool>,
+    // Track current mappings to provide realistic query behavior
+    current_mappings: RefCell<Vec<(u64, u64, MemoryAttributes)>>,
+}
+
+impl PatinaPageTable for MockPageTable {
+    fn map_memory_region(&mut self, base: u64, len: u64, attrs: MemoryAttributes) -> Result<(), PtError> {
+        self.mapped.borrow_mut().push((base, len, attrs));
+
+        // Update current mappings - remove any overlapping regions first
+        let mut current = self.current_mappings.borrow_mut();
+        current.retain(|(existing_base, existing_len, _)| {
+            let existing_end = existing_base + existing_len;
+            let new_end = base + len;
+            // Keep if no overlap
+            !(base < existing_end && new_end > *existing_base)
+        });
+        // Add new mapping
+        current.push((base, len, attrs));
+        Ok(())
+    }
+
+    fn unmap_memory_region(&mut self, base: u64, len: u64) -> Result<(), PtError> {
+        self.unmapped.borrow_mut().push((base, len));
+
+        // Remove from current mappings
+        let mut current = self.current_mappings.borrow_mut();
+        current.retain(|(existing_base, existing_len, _)| {
+            let existing_end = existing_base + existing_len;
+            let new_end = base + len;
+            // Keep if no overlap
+            !(base < existing_end && new_end > *existing_base)
+        });
+        Ok(())
+    }
+
+    fn query_memory_region(&self, base: u64, len: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)> {
+        let current = self.current_mappings.borrow();
+        let end = base + len;
+
+        // Find a mapping that covers the requested range
+        for (mapped_base, mapped_len, attrs) in current.iter() {
+            let mapped_end = mapped_base + mapped_len;
+            if *mapped_base <= base && end <= mapped_end {
+                return Ok(*attrs);
+            }
+        }
+
+        // No mapping found - return NoMapping error with empty cache attributes
+        Err((PtError::NoMapping, CacheAttributeValue::Unmapped))
+    }
+    fn install_page_table(&mut self) -> Result<(), PtError> {
+        *self.installed.borrow_mut() = true;
+        Ok(())
+    }
+    fn dump_page_tables(&self, _address: u64, _size: u64) -> Result<(), PtError> {
+        // No-op for testing
+        Ok(())
+    }
+}
+
+unsafe impl Send for MockPageTable {}
+unsafe impl Sync for MockPageTable {}
+
+impl Default for MockPageTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MockPageTable {
+    pub fn get_mapped_regions(&self) -> Vec<(u64, u64, MemoryAttributes)> {
+        self.mapped.borrow().clone()
+    }
+
+    pub fn get_unmapped_regions(&self) -> Vec<(u64, u64)> {
+        self.unmapped.borrow().clone()
+    }
+
+    pub fn get_current_mappings(&self) -> Vec<(u64, u64, MemoryAttributes)> {
+        self.current_mappings.borrow().clone()
+    }
+
+    pub fn new() -> Self {
+        Self {
+            mapped: RefCell::new(Vec::new()),
+            unmapped: RefCell::new(Vec::new()),
+            installed: RefCell::new(false),
+            current_mappings: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+pub struct MockPageTableWrapper {
+    inner: std::rc::Rc<std::cell::RefCell<MockPageTable>>,
+}
+
+impl MockPageTableWrapper {
+    pub fn new(inner: std::rc::Rc<std::cell::RefCell<MockPageTable>>) -> Self {
+        Self { inner }
+    }
+}
+
+impl PatinaPageTable for MockPageTableWrapper {
+    fn map_memory_region(&mut self, base: u64, len: u64, attrs: MemoryAttributes) -> Result<(), PtError> {
+        self.inner.borrow_mut().map_memory_region(base, len, attrs)
+    }
+
+    fn unmap_memory_region(&mut self, base: u64, len: u64) -> Result<(), PtError> {
+        self.inner.borrow_mut().unmap_memory_region(base, len)
+    }
+
+    fn query_memory_region(&self, base: u64, len: u64) -> Result<MemoryAttributes, (PtError, CacheAttributeValue)> {
+        self.inner.borrow().query_memory_region(base, len)
+    }
+
+    fn install_page_table(&mut self) -> Result<(), PtError> {
+        self.inner.borrow_mut().install_page_table()
+    }
+
+    fn dump_page_tables(&self, address: u64, size: u64) -> Result<(), PtError> {
+        self.inner.borrow().dump_page_tables(address, size)
+    }
+}
+
 /// All tests should run from inside this.
 pub(crate) fn with_global_lock<F: Fn() + std::panic::RefUnwindSafe>(f: F) -> Result<(), Box<dyn Any + Send>> {
     let _guard = GLOBAL_STATE_TEST_LOCK.lock().unwrap();
@@ -44,8 +174,16 @@ pub(crate) fn with_global_lock<F: Fn() + std::panic::RefUnwindSafe>(f: F) -> Res
     })
 }
 
+/// Allocates a chunk of memory of the specified size from the system allocator.
+///
+/// ## Safety
+/// This function is intended for test code only. The caller must ensure that the size is valid
+/// for allocation.
 pub(crate) unsafe fn get_memory(size: usize) -> &'static mut [u8] {
+    // SAFETY: Test code - allocates memory from the system allocator with UEFI page alignment.
+    // The returned slice is intentionally leaked for test simplicity and valid for 'static lifetime.
     let addr = unsafe { alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 0x1000).unwrap()) };
+    // SAFETY: The allocated pointer is valid for `size` bytes and properly aligned.
     unsafe { core::slice::from_raw_parts_mut(addr, size) }
 }
 
@@ -54,13 +192,21 @@ const TEST_GCD_MEM_SIZE: usize = 0x1000000;
 
 /// Reset the GCD with a default chunk of memory from the system allocator. This will ensure that the GCD is able
 /// to support interactions with other core subsystem (e.g. allocators).
+///
 /// Note: for simplicity, this implementation intentionally leaks the memory allocated for the GCD. Expectation is
 /// that this should be called few enough times in testing so that this leak does not cause problems.
+///
+/// ## Safety
+/// This function modifies global state. It should be called with the test lock held to ensure
+/// that no other tests are concurrently modifying the GCD.
 pub(crate) unsafe fn init_test_gcd(size: Option<usize>) {
     let size = size.unwrap_or(TEST_GCD_MEM_SIZE);
+    // SAFETY: Allocates memory from the system allocator with UEFI page alignment for GCD memory blocks.
     let addr = unsafe { alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(size, 0x1000).unwrap()) };
+    // SAFETY: Resetting the global GCD state in test context - called with test lock held.
     unsafe { GCD.reset() };
     GCD.init(48, 16);
+    // SAFETY: Initializing GCD memory blocks with allocated memory.
     unsafe {
         GCD.init_memory_blocks(
             GcdMemoryType::SystemMemory,
@@ -80,12 +226,22 @@ pub(crate) unsafe fn init_test_gcd(size: Option<usize>) {
 }
 
 /// Resets the ALLOCATOR map to empty and resets the static allocators
+///
+/// ## Safety
+/// This function modifies global state. It should be called with the test lock held to ensure
+/// that no other tests are concurrently modifying the allocator state.
 pub(crate) unsafe fn reset_allocators() {
+    // SAFETY: Test code - resetting the global allocator state with the test lock held.
     unsafe { crate::allocator::reset_allocators() }
 }
 
 /// Reset and re-initialize the protocol database to default empty state.
+///
+/// ## Safety
+/// This function modifies global state. It should be called with the test lock held to ensure
+/// that no other tests are concurrently modifying the protocol database.
 pub(crate) unsafe fn init_test_protocol_db() {
+    // SAFETY: Test code - resetting the global protocol database state with the test lock held.
     unsafe { PROTOCOL_DB.reset() };
     PROTOCOL_DB.init_protocol_db();
 }
@@ -96,6 +252,7 @@ pub(crate) fn reset_dispatcher_context() {
 }
 
 pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
+    // SAFETY: Test code - allocates memory for the test HOB list.
     let mem = unsafe { get_memory(mem_size as usize) };
     let mem_base = mem.as_mut_ptr() as u64;
 
@@ -293,6 +450,8 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
     let end =
         header::Hob { r#type: hob::END_OF_HOB_LIST, length: core::mem::size_of::<header::Hob>() as u16, reserved: 0 };
 
+    // SAFETY: Test code - constructing a test HOB list by copying structures into allocated memory.
+    // The memory is allocated in this function.
     unsafe {
         let mut cursor = mem.as_mut_ptr();
 
@@ -381,6 +540,8 @@ mod tests {
 
     // Compact Hoblist with DXE core Alloction hob. Use this when DXE core hob is required.
     pub(crate) fn build_test_hob_list_compact(mem_size: u64) -> *const c_void {
+        // SAFETY: Test code - allocates memory for compact test HOB list. mem_size is large
+        // enough to hold all HOB structures in the given unit test infrastructure.
         let mem = unsafe { get_memory(mem_size as usize) };
         let mem_base = mem.as_mut_ptr() as u64;
 
@@ -451,6 +612,9 @@ mod tests {
             reserved: 0,
         };
 
+        // SAFETY: Test code - constructing a compact test HOB list by copying structures into allocated memory.
+        // The memory is valid and large enough to hold all HOB structures in the given unit test infrastructure
+        // implementation.
         unsafe {
             let mut cursor = mem.as_mut_ptr();
 
@@ -528,7 +692,9 @@ mod tests {
             return Err("File contents exceed allocated memory length");
         }
 
-        // Write the file contents into the memory region specified by the HOB
+        // SAFETY: Test code - writing file contents into memory region specified by the DXE core HOB.
+        // The memory region is valid and sized according to the HOB. The file size has been checked to
+        // verify that it fits within the allocated memory length.
         unsafe {
             let memory_slice = slice::from_raw_parts_mut(memory_base_address as *mut u8, memory_length as usize);
             let file_size = file_size as usize; // Convert file_size to usize
@@ -545,6 +711,8 @@ mod tests {
 
     #[test]
     fn test_build_test_hob_list_compact() {
+        // Note: The mem_size specified here must  be large enough to hold all HOB structures in this test
+        // infrastructure.
         let physical_hob_list = build_test_hob_list_compact(0x2000000);
         let mut hob_list = HobList::default();
         hob_list.discover_hobs(physical_hob_list);

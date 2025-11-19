@@ -8,6 +8,9 @@ edition.workspace = true
 readme = "README.md"
 description = "UEFI section extractor implementations."
 
+[lints]
+workspace = true
+
 [dependencies]
 log = { workspace = true }
 patina = { workspace = true }

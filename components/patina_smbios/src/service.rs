@@ -14,7 +14,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::cell::Ref;
 use r_efi::efi::Handle;
-use zerocopy_derive::{FromBytes, Immutable, IntoBytes as DeriveIntoBytes, KnownLayout};
+use zerocopy_derive::*;
 
 #[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
@@ -36,7 +36,7 @@ pub const SMBIOS_STRING_MAX_LENGTH: usize = 64;
 /// This is the standard 4-byte header that appears at the start of every SMBIOS record.
 /// It contains the record type, length of structured data, and a unique handle.
 #[repr(C, packed)]
-#[derive(Debug, Clone, PartialEq, FromBytes, DeriveIntoBytes, Immutable, KnownLayout)]
+#[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 pub struct SmbiosTableHeader {
     /// SMBIOS record type
     pub record_type: SmbiosType,
@@ -182,7 +182,7 @@ pub trait Smbios {
 /// ) -> Result<()> {
 ///     // Add structured records using generic extension method
 ///     smbios.add_record(None, &bios_info)?;
-///     
+///
 ///     // Publish to configuration table
 ///     smbios.publish_table()?;
 ///     Ok(())

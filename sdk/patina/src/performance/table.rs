@@ -21,10 +21,8 @@ use core::{
 
 use crate::{
     base::UEFI_PAGE_SIZE,
-    boot_services::{
-        BootServices,
-        allocation::{AllocType, MemoryType},
-    },
+    boot_services::{BootServices, allocation::AllocType},
+    efi_types::EfiMemoryType,
     error::EfiError,
     performance::{
         self,
@@ -122,7 +120,7 @@ impl FBPT {
         let address = previous_address
             .and_then(|address| {
                 boot_services
-                    .allocate_pages(AllocType::Address(address), MemoryType::RESERVED_MEMORY_TYPE, allocation_nb_page)
+                    .allocate_pages(AllocType::Address(address), EfiMemoryType::ReservedMemoryType, allocation_nb_page)
                     .ok()
             })
             .map_or_else(
@@ -130,7 +128,7 @@ impl FBPT {
                     // Allocate at a new address if no address found or if the previous address allocation failed.
                     boot_services.allocate_pages(
                         AllocType::MaxAddress(u32::MAX as usize),
-                        MemoryType::RESERVED_MEMORY_TYPE,
+                        EfiMemoryType::ReservedMemoryType,
                         allocation_nb_page,
                     )
                 },
@@ -281,13 +279,16 @@ impl PerformanceRecord for FirmwareBasicBootPerfDataRecord {
         Self::REVISION
     }
 
-    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error> {
-        buff.gwrite_with([0_u8; 4], offset, scroll::NATIVE)?; // Reserved bytes
-        buff.gwrite_with(self.reset_end, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.os_loader_load_image_start, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.os_loader_start_image_start, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.exit_boot_services_entry, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.exit_boot_services_exit, offset, scroll::NATIVE)?;
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), crate::performance::error::Error> {
+        if buff.gwrite_with([0_u8; 4], offset, scroll::NATIVE).is_err()
+            || buff.gwrite_with(self.reset_end, offset, scroll::NATIVE).is_err()
+            || buff.gwrite_with(self.os_loader_load_image_start, offset, scroll::NATIVE).is_err()
+            || buff.gwrite_with(self.os_loader_start_image_start, offset, scroll::NATIVE).is_err()
+            || buff.gwrite_with(self.exit_boot_services_entry, offset, scroll::NATIVE).is_err()
+            || buff.gwrite_with(self.exit_boot_services_exit, offset, scroll::NATIVE).is_err()
+        {
+            return Err(crate::performance::error::Error::Serialization);
+        }
         Ok(())
     }
 }
@@ -374,7 +375,7 @@ mod tests {
             .once()
             .withf(move |alloc_type, memory_type, _| {
                 assert_eq!(&AllocType::Address(address), alloc_type);
-                assert_eq!(&MemoryType::RESERVED_MEMORY_TYPE, memory_type);
+                assert_eq!(&EfiMemoryType::ReservedMemoryType, memory_type);
                 true
             })
             .returning(move |_, _, _| Ok(address));
@@ -431,7 +432,7 @@ mod tests {
             .once()
             .withf(move |alloc_type, memory_type, _| {
                 assert_eq!(&AllocType::MaxAddress(u32::MAX as usize), alloc_type);
-                assert_eq!(&MemoryType::RESERVED_MEMORY_TYPE, memory_type);
+                assert_eq!(&EfiMemoryType::ReservedMemoryType, memory_type);
                 true
             })
             .returning(move |_, _, _| Ok(address));
@@ -459,7 +460,7 @@ mod tests {
             .expect_allocate_pages()
             .once()
             .withf(move |_, memory_type, _| {
-                assert_eq!(&MemoryType::RESERVED_MEMORY_TYPE, memory_type);
+                assert_eq!(&EfiMemoryType::ReservedMemoryType, memory_type);
                 true
             })
             .returning(move |_, _, _| Ok(address));
@@ -476,6 +477,7 @@ mod tests {
         fbpt.add_record(GuidQwordEventRecord::new(1, 0, 10, guid, 64)).unwrap();
         fbpt.add_record(GuidQwordStringEventRecord::new(1, 0, 10, guid, 64, "test")).unwrap();
 
+        // SAFETY: Test code - creating a slice from the FBPT address for validation.
         let buffer = unsafe { slice::from_raw_parts(fbpt.fbpt_address() as *const u8, 1000) };
 
         let mut offset = 0;

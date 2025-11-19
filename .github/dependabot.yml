@@ -40,7 +40,7 @@ updates:
       time: "06:00"
     ignore:
       # Ignore dependencies that are synced from patina-devops
-      - dependency-name: "OpenDevicePartnership/patina-devops"
+      - dependency-name: "OpenDevicePartnership/patina-devops*"
     commit-message:
       prefix: "GitHub Action"
     labels:

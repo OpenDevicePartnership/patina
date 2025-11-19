@@ -1,11 +1,15 @@
 [package]
 name = "patina_macro"
+resolver = "2"
 version.workspace = true
 repository.workspace = true
 license.workspace = true
 edition.workspace = true
 readme = "README.md"
 description = "Proc-macro crate for the UEFI Software Development Kit (SDK)."
+
+[lints]
+workspace = true
 
 [lib]
 proc-macro = true

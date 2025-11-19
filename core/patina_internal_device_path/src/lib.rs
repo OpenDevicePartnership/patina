@@ -232,6 +232,8 @@ pub unsafe fn remaining_device_path(
         // SAFETY: Caller must ensure pointers are valid device_paths
         let (a_node, b_node) = unsafe { (*a_ptr, *b_ptr) };
 
+        // SAFETY: a_node is a valid device path node structure obtained from valid device path pointer. The
+        // caller is responsible for upholding the function safety contract.
         if unsafe { is_device_path_end(&a_node) } {
             return Some((b_ptr, node_count));
         }
@@ -353,6 +355,7 @@ impl From<DevicePathWalker> for String {
     fn from(device_path_walker: DevicePathWalker) -> Self {
         let mut result = String::new();
         for node in device_path_walker {
+            // SAFETY: node.header is a valid device path node structure from the iterator
             if unsafe { is_device_path_end(&node.header) } {
                 break;
             }
@@ -390,6 +393,7 @@ impl Iterator for DevicePathWalker {
             Some(node) => {
                 // SAFETY: Caller must assure that node is a valid, well formatted device path
                 let current = unsafe { DevicePathNode::new(node)? };
+                // SAFETY: node is a valid device path pointer from a well-formed device path
                 if unsafe { is_device_path_end(node) } {
                     self.next_node = None;
                 } else {
@@ -543,6 +547,7 @@ mod tests {
         let device_path_c = device_path_c_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
 
         // a is a prefix of b.
+        // SAFETY: device_path_a and device_path_b are valid device path pointers byte arrays for test code
         let result = unsafe { remaining_device_path(device_path_a, device_path_b) };
         assert!(result.is_some());
         let result = result.unwrap();
@@ -550,26 +555,31 @@ mod tests {
         let a_path_length = device_path_node_count(device_path_a).unwrap();
         let offset = a_path_length.1 - size_of::<efi::protocols::device_path::End>();
         let offset = offset.try_into().unwrap();
+        // SAFETY: device_path_b_bytes is a valid byte array and the bounds were checked for offset
         let expected_ptr =
             unsafe { device_path_b_bytes.as_ptr().byte_offset(offset) } as *const efi::protocols::device_path::Protocol;
         assert_eq!(result, (expected_ptr, a_path_length.0 - 1));
 
         //b is equal to b.
+        // SAFETY: device_path_b is a valid device path pointer from a byte array for test code
         let result = unsafe { remaining_device_path(device_path_b, device_path_b) };
         assert!(result.is_some());
         let result = result.unwrap();
         let b_path_length = device_path_node_count(device_path_b).unwrap();
         let offset = b_path_length.1 - size_of::<efi::protocols::device_path::End>();
         let offset = offset.try_into().unwrap();
+        // SAFETY: device_path_b_bytes is a valid byte array and the bounds were checked for offset
         let expected_ptr =
             unsafe { device_path_b_bytes.as_ptr().byte_offset(offset) } as *const efi::protocols::device_path::Protocol;
         assert_eq!(result, (expected_ptr, b_path_length.0 - 1));
 
         //a is not a prefix of c.
+        // SAFETY: device_path_a and device_path_c are valid device path pointers from byte arrays for test code
         let result = unsafe { remaining_device_path(device_path_a, device_path_c) };
         assert!(result.is_none());
 
         //b is not a prefix of a.
+        // SAFETY: device_path_b and device_path_a are valid device path pointers from byte arrays for test code
         let result = unsafe { remaining_device_path(device_path_b, device_path_a) };
         assert!(result.is_none());
     }
@@ -603,6 +613,7 @@ mod tests {
         ];
         let device_path_ptr = device_path_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
 
+        // SAFETY: device_path_ptr is a valid pointer to a well-formed device path from a byte array for test code
         let mut device_path_walker = unsafe { DevicePathWalker::new(device_path_ptr) };
 
         let node = device_path_walker.next().unwrap();
@@ -656,6 +667,7 @@ mod tests {
             0x00, //length[1]
         ];
         let device_path_ptr = device_path_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
+        // SAFETY: device_path_ptr is a valid pointer to a well-formed device path from a byte array for test code
         let device_path_walker = unsafe { DevicePathWalker::new(device_path_ptr) };
 
         let nodes: Vec<DevicePathNode> = device_path_walker.collect();
@@ -729,6 +741,7 @@ mod tests {
             0x00, //length[1]
         ];
         let device_path_ptr = device_path_bytes.as_ptr() as *const efi::protocols::device_path::Protocol;
+        // SAFETY: device_path_ptr is a valid pointer to a well-formed device path from a byte array for test code
         let device_path_walker = unsafe { DevicePathWalker::new(device_path_ptr) };
         let string: String = device_path_walker.into();
 

@@ -15,10 +15,8 @@ extern crate alloc;
 use alloc::{boxed::Box, string::String, vec::Vec};
 use core::cell::RefCell;
 use patina::{
-    boot_services::{
-        BootServices,
-        allocation::{AllocType, MemoryType},
-    },
+    boot_services::{BootServices, allocation::AllocType},
+    efi_types::EfiMemoryType,
     uefi_size_to_pages,
 };
 use r_efi::{
@@ -26,7 +24,7 @@ use r_efi::{
     efi::{Handle, PhysicalAddress},
 };
 use zerocopy::{IntoBytes, Ref};
-use zerocopy_derive::{Immutable, IntoBytes as DeriveIntoBytes};
+use zerocopy_derive::*;
 
 use crate::{
     error::SmbiosError,
@@ -49,7 +47,7 @@ pub const SMBIOS_3_X_TABLE_GUID: efi::Guid =
 /// SMBIOS 3.0 entry point structure (64-bit)
 /// Per SMBIOS 3.0+ specification section 5.2.2
 #[repr(C, packed)]
-#[derive(Clone, Copy, DeriveIntoBytes, Immutable)]
+#[derive(Clone, Copy, IntoBytes, Immutable)]
 pub struct Smbios30EntryPoint {
     /// Anchor string "_SM3_" (0x00)
     pub anchor_string: [u8; 5],
@@ -310,7 +308,7 @@ impl SmbiosManager {
         let table_address = boot_services
             .allocate_pages(
                 AllocType::AnyPage,
-                MemoryType::ACPI_RECLAIM_MEMORY, // SMBIOS tables go in ACPI Reclaim memory
+                EfiMemoryType::ACPIReclaimMemory, // SMBIOS tables go in ACPI Reclaim memory
                 table_pages,
             )
             .map_err(|_| SmbiosError::AllocationFailed)?;
@@ -348,7 +346,7 @@ impl SmbiosManager {
         // Step 5: Allocate memory for entry point structure
         let ep_pages = 1; // Entry point fits in one page
         let ep_address = boot_services
-            .allocate_pages(AllocType::AnyPage, MemoryType::ACPI_RECLAIM_MEMORY, ep_pages)
+            .allocate_pages(AllocType::AnyPage, EfiMemoryType::ACPIReclaimMemory, ep_pages)
             .map_err(|_| SmbiosError::AllocationFailed)?;
 
         // Step 6: Copy entry point to allocated memory

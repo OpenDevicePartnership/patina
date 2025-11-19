@@ -56,6 +56,9 @@ pub struct EdkiiPerformanceMeasurement {
     pub create_performance_measurement: CreateMeasurement,
 }
 
+// Safety: EdkiiPerformanceMeasurement implements the EDK II Performance Measurement protocol interface.
+// The PROTOCOL_GUID matches the EDK II defined value. The protocol structure layout matches the protocol
+// interface requirements.
 unsafe impl ProtocolInterface for EdkiiPerformanceMeasurement {
     const PROTOCOL_GUID: efi::Guid = EDKII_PERFORMANCE_MEASUREMENT_PROTOCOL_GUID;
 }

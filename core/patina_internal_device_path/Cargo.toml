@@ -8,6 +8,9 @@ edition.workspace = true
 readme = "README.md"
 description = "A device path parsing implementation for the DXE Core."
 
+[lints]
+workspace = true
+
 [dependencies]
 r-efi = { workspace = true }
 scroll = { workspace = true }
