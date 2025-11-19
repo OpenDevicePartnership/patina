@@ -2484,6 +2484,7 @@ impl SpinLockedGcd {
                     "Failed to set GCD memory attributes for memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
                 );
                 debug_assert!(false);
+                return Err(e);
             }
         }
 
