@@ -1,15 +1,15 @@
 {
   "x86_64-unknown-uefi": {
     "functions": {
-      "safe": 338,
+      "safe": 334,
       "unsafe": 13
     },
     "exprs": {
-      "safe": 22580,
-      "unsafe": 3432
+      "safe": 22651,
+      "unsafe": 3424
     },
     "item_impls": {
-      "safe": 543,
+      "safe": 548,
       "unsafe": 80
     },
     "item_traits": {
@@ -17,21 +17,21 @@
       "unsafe": 7
     },
     "methods": {
-      "safe": 1486,
+      "safe": 1503,
       "unsafe": 77
     }
   },
   "aarch64-unknown-uefi": {
     "functions": {
-      "safe": 338,
+      "safe": 334,
       "unsafe": 13
     },
     "exprs": {
-      "safe": 22580,
-      "unsafe": 3432
+      "safe": 22651,
+      "unsafe": 3424
     },
     "item_impls": {
-      "safe": 543,
+      "safe": 548,
       "unsafe": 80
     },
     "item_traits": {
@@ -39,7 +39,7 @@
       "unsafe": 7
     },
     "methods": {
-      "safe": 1486,
+      "safe": 1503,
       "unsafe": 77
     }
   }
