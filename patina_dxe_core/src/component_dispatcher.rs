@@ -222,6 +222,7 @@ impl ComponentDispatcher {
     }
 
     /// Logs all components that were not dispatched, and the parameter that was not satisfied that prevented dispatch.
+    #[coverage(off)]
     pub(crate) fn display_not_dispatched(&self) {
         if !self.components.is_empty() {
             let name_len = "name".len();

@@ -96,6 +96,7 @@ mod tpl_mutex;
 #[cfg(test)]
 pub use component_dispatcher::MockComponentInfo;
 pub use component_dispatcher::{Add, Component, ComponentInfo, Config, Service};
+use spin::Once;
 
 #[cfg(test)]
 #[macro_use]
@@ -104,6 +105,7 @@ pub mod test_support;
 
 use core::{
     ffi::c_void,
+    num::NonZeroUsize,
     ptr::{self, NonNull},
     str::FromStr,
 };
@@ -314,6 +316,12 @@ impl GicBases {
     }
 }
 
+/// Static reference to the DXE Core instance in the compiled binary.
+///
+/// This is set during the `entry_point` call of the DXE Core and is used to provide static access to the core for use
+/// only in efiapi functions where no reference to the core is otherwise available.
+static __SELF: Once<NonZeroUsize> = Once::new();
+
 /// Platform configured DXE Core responsible for the DXE phase of UEFI booting.
 ///
 /// This struct is generic over the [PlatformInfo] trait, which is used to provide platform-specific configuration to
@@ -387,8 +395,32 @@ impl<P: PlatformInfo> Core<P> {
         Self { component_dispatcher: ComponentDispatcher::new_locked(), hob_list: Once::new(), section_extractor }
     }
 
+    /// Sets the static DXE Core instance for global access.
+    ///
+    /// Returns true if the address of self is the same as the stored address, false otherwise.
+    #[must_use]
+    fn set_instance(&'static self) -> bool {
+        let physical_address = NonNull::from_ref(self).expose_provenance();
+        &physical_address == __SELF.call_once(|| physical_address)
+    }
+
+    /// Gets the static DXE Core instance for global access.
+    ///
+    /// This should only be used in efiapi functions where no reference to the core is otherwise available.
+    #[allow(unused)]
+    pub(crate) fn instance<'a>() -> &'a Self {
+        // SAFETY: The pointer is guaranteed to be set to a valid reference of this `Self` implementation as the atomic
+        // compare_exchange guarantees only one initialization has occurred. If the pointer was already set during the
+        // `set_instance` call of another `CORE` it would have returned a failure and then panicked before reaching this point.
+        unsafe {
+            NonNull::<Self>::with_exposed_provenance(*__SELF.get().expect("DXE Core is already initialized.")).as_ref()
+        }
+    }
+
     /// The entry point for the Patina DXE Core.
     pub fn entry_point(&'static self, physical_hob_list: *const c_void) -> ! {
+        assert!(self.set_instance(), "DXE Core instance was already set!");
+
         self.init_memory(physical_hob_list);
 
         if let Err(err) = self.start_dispatcher(physical_hob_list) {
@@ -679,6 +711,28 @@ fn call_bds() -> ! {
 #[coverage(off)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_cannot_set_instance_twice() {
+        static CORE: Core<MockPlatformInfo> =
+            Core::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+        static CORE2: Core<MockPlatformInfo> =
+            Core::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+        assert!(CORE.set_instance());
+
+        if NonNull::from_ref(&CORE) != NonNull::from_ref(Core::<MockPlatformInfo>::instance()) {
+            panic!("CORE instance mismatch");
+        }
+
+        // We return true because its the same address
+        assert!(CORE.set_instance());
+        // This should fail because CORE2 is a different instance
+        assert!(!CORE2.set_instance());
+
+        if NonNull::from_ref(&CORE) != NonNull::from_ref(Core::<MockPlatformInfo>::instance()) {
+            panic!("CORE instance mismatch after second set_instance");
+        }
+    }
 
     #[test]
     fn test_trait_defaults_do_not_change() {
