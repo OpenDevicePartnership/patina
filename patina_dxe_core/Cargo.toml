@@ -12,11 +12,6 @@ description = "A pure rust implementation of the UEFI DXE Core."
 [package.metadata.docs.rs]
 features = ["doc"]
 
-[[example]]
-name = "dxe_core_std"
-path = "examples/std.rs"
-required-features = ["std"]
-
 [dependencies]
 cfg-if = { workspace = true }
 compile-time = { workspace = true }
