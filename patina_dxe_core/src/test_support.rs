@@ -555,6 +555,38 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
     mem.as_ptr() as *const c_void
 }
 
+/// To enable logging, set the `RUST_LOG` environment variable to the desired
+/// log level (e.g., `debug`, `info`, `warn`, `error`) before running the tests.
+///
+/// For example:
+///
+/// ```sh
+/// RUST_LOG=debug cargo test -p patina_dxe_core allocator::usage_tests::uefi_memory_map -- --nocapture
+/// ```
+///
+/// PowerShell example:
+///
+/// ```powershell
+/// $env:RUST_LOG="debug"; cargo test -p patina_dxe_core allocator::usage_tests::uefi_memory_map -- --nocapture
+/// ```
+pub(crate) fn init_test_logger() {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<()> = OnceLock::new();
+
+    INIT.get_or_init(|| {
+        // Default to no logging unless RUST_LOG environment variable is set
+        let mut builder = env_logger::Builder::from_default_env();
+
+        // If RUST_LOG is not set, default to Off (no logging), otherwise errors
+        // are logged even without --nocapture
+        if std::env::var("RUST_LOG").is_err() {
+            builder.filter_level(log::LevelFilter::Off);
+        }
+
+        builder.init();
+    });
+}
+
 #[cfg(test)]
 #[coverage(off)]
 mod tests {

@@ -215,6 +215,8 @@ impl CpuArchProtocolInstaller {
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
+    use crate::test_support;
+
     use super::*;
 
     use mockall::{mock, predicate::*};
@@ -248,6 +250,7 @@ mod tests {
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         crate::test_support::with_global_lock(|| {
+            test_support::init_test_logger();
             f();
         })
         .unwrap();

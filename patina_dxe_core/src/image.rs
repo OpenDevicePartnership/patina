@@ -2651,10 +2651,21 @@ mod tests {
         // overflows in apply_image_memory_protections, the error is propagated and the
         // image load fails (Task #1030 coverage improvement).
         //
-        // We craft a malformed PE image with a section virtual_size that will cause
-        // align_up() to overflow when aligning to section_alignment.
-
-        test_support::with_global_lock(|| {
+        // For this test case, do not create malformed PE with overflow section virtual size before
+        // parsing with goblin, because goblin will panic depending on whether logging is enabled or
+        // not! This happens because goblin contains debug!(...) statements like the one below,
+        // which are only active when logging is enabled:
+        //
+        // debug!(
+        //     "Checking {} for {:#x} ∈ {:#x}..{:#x}",
+        //     ...
+        //     section.virtual_address + section.virtual_size <-- This will panic on overflow
+        // );
+        //
+        // So, the plan is to parse a valid PE image first with goblin to get the UefiPeInfo
+        // structure, then modify the section virtual_size to trigger the overflow during
+        // apply_image_memory_protections().
+        let result = test_support::with_global_lock(|| {
             // SAFETY: These test initialization functions require unsafe because they
             // manipulate global state (GCD, protocol DB, system table)
             unsafe {
@@ -2670,32 +2681,45 @@ mod tests {
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
-            // PE header starts at offset 0x78 for this image
-            // Section headers start after the optional header
-            // For PE32+: COFF (20 bytes) + Optional header size
-            let pe_offset = 0x78;
-            let opt_header_size_offset = pe_offset + 4 + 16; // After signature + COFF header fields
-            let opt_header_size =
-                u16::from_le_bytes([image[opt_header_size_offset], image[opt_header_size_offset + 1]]) as usize;
-            let section_table_offset = pe_offset + 4 + 20 + opt_header_size;
-
-            // Each section header is 40 bytes
-            // Modify the first section's VirtualSize (offset 8 in section header) to cause overflow
-            // Set it to u32::MAX - 0x800 so that align_up(u32::MAX - 0x800, 0x1000) will overflow
-            let first_section_offset = section_table_offset;
-            let virtual_size_offset = first_section_offset + 8;
-
-            // Set VirtualSize to a value that will overflow when aligned to 0x1000
-            let overflow_value: u32 = u32::MAX - 0x800;
-            image[virtual_size_offset..virtual_size_offset + 4].copy_from_slice(&overflow_value.to_le_bytes());
-
             // Try to load the malformed image by calling core_load_pe_image directly
-            let image_info = empty_image_info();
-            let result = super::core_load_pe_image(&image, image_info);
+            let mut image_info = empty_image_info();
 
-            assert!(matches!(result, Err(EfiError::LoadError)), "Expected LoadError from alignment overflow");
-        })
-        .unwrap();
+            // Parse and validate the header and retrieve the image data from it.
+            let mut pe_info = UefiPeInfo::parse(&image).unwrap();
+
+            let size = pe_info.size_of_image as usize;
+
+            image_info.image_size = size as u64;
+            image_info.image_code_type = efi::BOOT_SERVICES_CODE;
+            image_info.image_data_type = efi::BOOT_SERVICES_DATA;
+
+            // Modify the first section’s VirtualSize to intentionally trigger an overflow. Set it
+            // to u32::MAX - 0x800 so that align_up(u32::MAX - 0x800, 0x1000) overflows inside
+            // apply_image_memory_protections(). The image load still succeeds because the section
+            // size is clipped to size_of_raw_data, while still allowing us to hit the overflow
+            // check in apply_image_memory_protections().
+            pe_info.sections[0].virtual_size = u32::MAX - 0x800;
+
+            // Allocate a buffer to hold the image (also updates private_info.image_info.image_base)
+            let mut private_info = PrivateImageData::new(image_info, pe_info).unwrap();
+
+            private_info.load_image(&image).unwrap();
+            private_info.relocate_image().unwrap();
+            private_info.load_resource_section(&image).unwrap();
+
+            let result = private_info.apply_image_memory_protections();
+
+            // In release builds, we expect LoadError error
+            assert!(matches!(result, Err(EfiError::LoadError)), "Expected LoadError from section size overflow");
+        });
+
+        // In debug builds, debug_assert!(false) panics and with_global_lock catches it
+        #[cfg(debug_assertions)]
+        assert!(result.is_err(), "Expected panic from debug_assert! in debug build");
+
+        // In release builds, debug_assert is compiled away and function returns error normally
+        #[cfg(not(debug_assertions))]
+        assert!(result.is_ok(), "Expected successful test execution in release build");
     }
 
     #[test]

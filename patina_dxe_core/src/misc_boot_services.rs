@@ -315,6 +315,7 @@ mod tests {
         F: Fn(&mut EfiSystemTable) + std::panic::RefUnwindSafe,
     {
         test_support::with_global_lock(|| {
+            test_support::init_test_logger();
             // SAFETY: Test code only - initializing test infrastructure with the test lock held
             // to prevent concurrent access during initialization.
             unsafe {

@@ -136,13 +136,17 @@ impl<T: ?Sized> Drop for TplGuard<'_, T> {
 #[coverage(off)]
 mod tests {
 
-    use crate::events::{raise_tpl, restore_tpl};
+    use crate::{
+        events::{raise_tpl, restore_tpl},
+        test_support,
+    };
 
     use super::TplMutex;
     use r_efi::efi;
 
     fn with_reset_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         let result = crate::test_support::with_global_lock(|| {
+            test_support::init_test_logger();
             raise_tpl(efi::TPL_HIGH_LEVEL);
             restore_tpl(efi::TPL_APPLICATION);
             f();

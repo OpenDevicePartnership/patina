@@ -159,24 +159,6 @@ mod tests {
     use serial_test::serial;
     use std::panic::RefUnwindSafe;
 
-    // Logger initialization
-    fn init_logger() {
-        use std::sync::OnceLock;
-        static INIT: OnceLock<()> = OnceLock::new();
-
-        INIT.get_or_init(|| {
-            // Default to no logging unless RUST_LOG environment variable is set
-            let mut builder = env_logger::Builder::from_default_env();
-
-            // If RUST_LOG is not set, default to Off (no logging)
-            if std::env::var("RUST_LOG").is_err() {
-                builder.filter_level(log::LevelFilter::Off);
-            }
-
-            builder.init();
-        });
-    }
-
     /// HOB configuration structures to simplify building test scenarios.
     ///
     /// These simplified configuration structs provide a convenient test API without requiring
@@ -324,6 +306,7 @@ mod tests {
         /// Execute the test scenario and validate results
         pub fn run_test(&self) {
             test_support::with_global_lock(|| {
+                test_support::init_test_logger();
                 let hob_list_ptr = self.build_custom_hob_list();
 
                 // SAFETY: This is a test environment where the initialization order is controlled per
@@ -673,7 +656,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_simple_memory_scenario() {
-        init_logger();
         let scenario = MemoryMapTestScenario::new("Simple Memory Test", SIZE_64MB as u64)
             .with_resource_descriptor(ResourceDescriptorConfig {
                 resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
@@ -695,7 +677,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_mmio_and_memory_scenario() {
-        init_logger();
         let scenario = MemoryMapTestScenario::new("MMIO and Memory Test", SIZE_128MB as u64) // 128MB
             .with_resource_descriptor(ResourceDescriptorConfig {
                 resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
@@ -741,7 +722,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_runtime_services_memory() {
-        init_logger();
         let scenario = MemoryMapTestScenario::new("Runtime Services Test", SIZE_256MB as u64)
             .with_resource_descriptor(ResourceDescriptorConfig {
                 resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
@@ -781,7 +761,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_complex_real_world_hob_scenario() {
-        init_logger();
         let scenario = create_complex_hob_scenario().with_validation(|descriptors| {
             MemoryMapValidation::new()
                 .expect_min_descriptors(5)
@@ -802,7 +781,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_memory_map_descriptor_merging() {
-        init_logger();
         let scenario = MemoryMapTestScenario::new("Descriptor Merging Test", SIZE_128MB as u64)
             .with_resource_descriptor(ResourceDescriptorConfig {
                 resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
@@ -853,7 +831,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_zero_length_allocation() {
-        init_logger();
         let scenario = MemoryMapTestScenario::new("Zero Length Allocation Test", SIZE_64MB as u64)
             .with_resource_descriptor(ResourceDescriptorConfig {
                 resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
@@ -890,7 +867,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_unaligned_memory_allocation() {
-        init_logger();
         let scenario = MemoryMapTestScenario::new("Unaligned Allocation Test", SIZE_64MB as u64)
             .with_resource_descriptor(ResourceDescriptorConfig {
                 resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
@@ -952,7 +928,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_mmio_wo_rt_attribute_is_not_reported() {
-        init_logger();
         let scenario = MemoryMapTestScenario::new("MMIO Without RT Attribute Test", SIZE_64MB as u64)
             .with_resource_descriptor(ResourceDescriptorConfig {
                 resource_type: hob::EFI_RESOURCE_SYSTEM_MEMORY,
