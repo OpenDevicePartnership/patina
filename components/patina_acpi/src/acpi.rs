@@ -10,7 +10,7 @@
 //! SPDX-License-Identifier: BSD-2-Clause-Patent
 //!
 
-use alloc::collections::btree_map::BTreeMap;
+use alloc::{boxed::Box, collections::btree_map::BTreeMap};
 use core::{
     cell::OnceCell,
     ffi::c_void,
@@ -57,6 +57,8 @@ pub(crate) struct StandardAcpiProvider<B: BootServices + 'static> {
     pub(crate) memory_manager: OnceCell<Service<dyn MemoryManager>>,
     /// Stores data about the XSDT and its entries.
     xsdt_metadata: RwLock<Option<AcpiXsdtMetadata>>,
+    /// Stores data about the RSDP.
+    rsdp: RwLock<Option<Box<AcpiRsdp, &'static dyn alloc::alloc::Allocator>>>,
 }
 
 // SAFETY: `StandardAcpiProvider` does not share any internal references or non-Send types across threads.
@@ -73,15 +75,14 @@ where
     /// Known table keys for system tables.
     const FACS_KEY: TableKey = TableKey(1);
     const DSDT_KEY: TableKey = TableKey(2);
-    const RSDP_KEY: TableKey = TableKey(3);
-    const FADT_KEY: TableKey = TableKey(4);
+    const FADT_KEY: TableKey = TableKey(3);
 
     /// The first unused key which can be given to callers of `install_acpi_table`.
-    const FIRST_FREE_KEY: usize = 5;
+    const FIRST_FREE_KEY: usize = 4;
 
     /// Keys which are not available to be indexed or iterated by an end user.
     /// This includes all system tables except the FADT, which *is* treated like a normally installed table.
-    const PRIVATE_SYSTEM_TABLES: [TableKey; 3] = [Self::RSDP_KEY, Self::FACS_KEY, Self::DSDT_KEY];
+    const PRIVATE_SYSTEM_TABLES: [TableKey; 2] = [Self::FACS_KEY, Self::DSDT_KEY];
 
     /// Creates a new `StandardAcpiProvider` with uninitialized fields.
     /// Attempting to use `StandardAcpiProvider` before initialization will cause a panic.
@@ -93,6 +94,7 @@ where
             boot_services: OnceCell::new(),
             memory_manager: OnceCell::new(),
             xsdt_metadata: RwLock::new(None),
+            rsdp: RwLock::new(None),
         }
     }
 
@@ -113,8 +115,9 @@ where
     }
 
     /// Sets up tracking for the RSDP internally.
-    pub fn set_rsdp(&self, rsdp_table: AcpiTable) {
-        self.acpi_tables.write().insert(Self::RSDP_KEY, rsdp_table);
+    pub fn set_rsdp(&self, rsdp: Box<AcpiRsdp, &'static dyn alloc::alloc::Allocator>) {
+        let mut write_guard = self.rsdp.write();
+        *write_guard = Some(rsdp);
     }
 
     /// Sets up tracking for the XSDT internally.
@@ -372,8 +375,8 @@ where
         self.acpi_tables.write().insert(Self::FADT_KEY, fadt_info);
 
         // RSDP derives OEM ID from FADT.
-        if let Some(rsdp) = self.acpi_tables.write().get_mut(&Self::RSDP_KEY) {
-            unsafe { rsdp.as_mut::<AcpiRsdp>() }.oem_id = fadt_info.header().oem_id;
+        if let Some(ref mut rsdp) = *self.rsdp.write() {
+            rsdp.oem_id = fadt_info.header().oem_id;
         }
 
         // XSDT derives OEM information from FADT.
@@ -495,8 +498,8 @@ where
             // Update the RSDP with the new XSDT address.
             let xsdt_ptr = xsdt_allocated_bytes.as_mut_ptr();
             let xsdt_addr = xsdt_ptr as u64;
-            if let Some(rsdp) = self.acpi_tables.write().get_mut(&Self::RSDP_KEY) {
-                unsafe { rsdp.as_mut::<AcpiRsdp>() }.xsdt_address = xsdt_addr;
+            if let Some(ref mut rsdp) = *self.rsdp.write() {
+                rsdp.xsdt_address = xsdt_addr
             }
 
             // Point to the newly allocated data.
@@ -612,13 +615,10 @@ where
     /// Performs `checksum` and `extended_checksum` calculations on the RSDP and XSDT.
     pub(crate) fn checksum_common_tables(&self) -> Result<(), AcpiError> {
         // The RSDP doesn't have a standard header, so it is easier to calculate the checksum manually.
-        if let Some(rsdp_table) = self.acpi_tables.write().get_mut(&Self::RSDP_KEY) {
+        if let Some(ref mut rsdp) = *self.rsdp.write() {
             // SAFETY: We know the size and layout of the RSDP in memory.
             let rsdp_bytes =
-                unsafe { slice::from_raw_parts(rsdp_table.table.as_ptr() as *mut u8, mem::size_of::<AcpiRsdp>()) };
-
-            // SAFETY: We only ever store an `AcpiRsdp` in the RSDP key.
-            let rsdp = unsafe { rsdp_table.as_mut::<AcpiRsdp>() };
+                unsafe { slice::from_raw_parts(rsdp.as_mut() as *mut AcpiRsdp as *mut u8, mem::size_of::<AcpiRsdp>()) };
 
             // Zero out both checksums before recalculating.
             rsdp.checksum = 0;
@@ -647,9 +647,9 @@ where
 
     /// Publishes ACPI tables after installation.
     pub(crate) fn publish_tables(&self) -> Result<(), AcpiError> {
-        if let Some(rsdp_table) = self.acpi_tables.write().get_mut(&Self::RSDP_KEY) {
+        if let Some(ref mut rsdp) = *self.rsdp.write() {
             // Cast RSDP to raw pointer for boot services.
-            let rsdp_ptr = rsdp_table.as_mut_ptr() as *mut c_void;
+            let rsdp_ptr = rsdp.as_mut() as *mut AcpiRsdp as *mut c_void;
             unsafe {
                 self.boot_services
                     .get()
