@@ -1432,7 +1432,6 @@ mod tests {
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         // SAFETY: Test code only - initializing test infrastructure within the global test lock.
         test_support::with_global_lock(|| unsafe {
-            test_support::init_test_logger();
             test_support::init_test_gcd(None);
             test_support::init_test_protocol_db();
             init_system_table();
