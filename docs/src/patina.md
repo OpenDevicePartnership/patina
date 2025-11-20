@@ -303,9 +303,7 @@ For more details about mememory management in Patina see [Memory Management](./d
 
 #### Performance
 
-The performance numbers below are provided as of Patina v14.4.2, using the C implementation as a reference for
+The performance numbers below are provided as of Patina v16, using the C implementation as a reference for
 DXE core execution times.
 
-**X64**: +9.14%
-
-**AARCH64**:
+**X64 (Intel)**: +9.1%
