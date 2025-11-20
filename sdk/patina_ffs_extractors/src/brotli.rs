@@ -99,3 +99,47 @@ impl SectionExtractor for BrotliSectionExtractor {
         Err(FirmwareFileSystemError::Unsupported)
     }
 }
+
+#[cfg(test)]
+#[coverage(off)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+    use patina::pi::fw_fs::{ffs::section::header::GuidDefined, guid::BROTLI_SECTION};
+    use r_efi::efi;
+
+    /// Constructs a section with the specified GUID and payload, prepending
+    /// the required 16-byte header (out_size + scratch_size) for Brotli sections.
+    fn create_brotli_section(guid: &efi::Guid, payload: &[u8], out_size: u64) -> Section {
+        // Brotli section payload format: [out_size: u64, scratch_size: u64, compressed_data...]
+        let scratch_size = 0u64;
+
+        let mut content = Vec::new();
+        content.extend_from_slice(&out_size.to_le_bytes());
+        content.extend_from_slice(&scratch_size.to_le_bytes());
+        content.extend_from_slice(payload);
+
+        let guid_header = GuidDefined {
+            section_definition_guid: *guid,
+            data_offset: (core::mem::size_of::<GuidDefined>() + 4) as u16, // common header + guid header
+            attributes: 0x01,                                              // EFI_GUIDED_SECTION_PROCESSING_REQUIRED
+        };
+
+        let header = SectionHeader::GuidDefined(guid_header, vec![], content.len() as u32);
+        Section::new_from_header_with_data(header, content).expect("Failed to create test section")
+    }
+
+    #[test]
+    fn test_brotli_extractor() {
+        // Pre-compressed "Hello, World!" using Brotli
+        let brotli_compressed_data: [u8; 18] = [
+            0x21, 0x30, 0x00, 0x04, 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x57, 0x6F, 0x72, 0x6C, 0x64, 0x21, 0x03,
+        ];
+        let section = create_brotli_section(&BROTLI_SECTION, &brotli_compressed_data, 13);
+        let extractor = BrotliSectionExtractor;
+        let result = extractor.extract(&section);
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert_eq!(result, b"Hello, World!");
+    }
+}
