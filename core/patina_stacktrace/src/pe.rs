@@ -300,7 +300,9 @@ mod tests {
 
         let pe = PE { base_address: base, _size_of_image: bytes.len() as u32, image_name: Some("fake"), bytes: &bytes };
 
-        // Since we didn’t define exception table fields, expect an error.
+        // Since we didn't define exception table fields, expect an error.
+        // SAFETY: Test creates a fake PE image structure for validation; `pe.bytes` points to a valid slice
+        // in that file.
         assert!(matches!(unsafe { pe.get_exception_table() }, Err(Error::ExceptionDirectoryNotFound { .. })));
     }
 
@@ -308,6 +310,7 @@ mod tests {
     fn test_get_image_name_success() {
         let bytes = make_fake_pe_image();
         let base = bytes.as_ptr() as u64;
+        // SAFETY: Test creates a fake PE image with valid debug directory at specified RVA.
         let image_name = unsafe { PE::get_image_name(base, 0x400, 0x1C) };
         assert_eq!(image_name, Some("app"));
     }
@@ -319,6 +322,7 @@ mod tests {
         // Corrupt the signature
         let debug_data = 0x800;
         bytes[debug_data..debug_data + 4].copy_from_slice(&0x12345678u32.to_le_bytes());
+        // SAFETY: Test creates a fake PE image with corrupted signature for validation.
         let image_name = unsafe { PE::get_image_name(base, 0x400, 0x1C) };
         assert_eq!(image_name, None);
     }

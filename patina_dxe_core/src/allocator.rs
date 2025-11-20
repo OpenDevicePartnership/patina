@@ -28,12 +28,12 @@ use mu_rust_helpers::function;
 
 use crate::{
     GCD, config_tables,
-    gcd::{self, AllocateType as AllocationStrategy},
+    gcd::{self, AllocateType as AllocationStrategy, MemoryProtectionPolicy},
     memory_attributes_table::MemoryAttributesTable,
     protocol_db::{self, INVALID_HANDLE},
     protocols::PROTOCOL_DB,
     systemtables::EfiSystemTable,
-    tpl_lock,
+    tpl_mutex,
 };
 use patina::pi::{
     dxe_services::{self, GcdMemoryType, MemorySpaceDescriptor},
@@ -262,14 +262,14 @@ pub(crate) fn get_memory_ranges_for_memory_type(memory_type: efi::MemoryType) ->
 
 // The following structure is used to track additional allocators that are created in response to allocation requests
 // that are not satisfied by the static allocators.
-static ALLOCATORS: tpl_lock::TplMutex<AllocatorMap> = AllocatorMap::new();
+static ALLOCATORS: tpl_mutex::TplMutex<AllocatorMap> = AllocatorMap::new();
 struct AllocatorMap {
     map: BTreeMap<efi::MemoryType, &'static UefiAllocator>,
 }
 
 impl AllocatorMap {
-    const fn new() -> tpl_lock::TplMutex<Self> {
-        tpl_lock::TplMutex::new(TPL_HIGH_LEVEL, AllocatorMap { map: BTreeMap::new() }, "AllocatorMapLock")
+    const fn new() -> tpl_mutex::TplMutex<Self> {
+        tpl_mutex::TplMutex::new(TPL_HIGH_LEVEL, AllocatorMap { map: BTreeMap::new() }, "AllocatorMapLock")
     }
 }
 
@@ -690,17 +690,11 @@ pub(crate) fn get_memory_map_descriptors(active_attributes: bool) -> Result<Vec<
                     // pick it up from the active attributes. We also drop the access attributes because
                     // some OSes think the EFI_MEMORY_MAP attribute field is actually set attributes, not
                     // capabilities.
-                    match descriptor.memory_type {
-                        GcdMemoryType::Persistent => {
-                            (descriptor.capabilities & !(efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME))
-                                | (descriptor.attributes & efi::MEMORY_RUNTIME)
-                                | efi::MEMORY_NV
-                        }
-                        _ => {
-                            (descriptor.capabilities & !(efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME))
-                                | (descriptor.attributes & efi::MEMORY_RUNTIME)
-                        }
-                    }
+                    MemoryProtectionPolicy::apply_efi_memory_map_policy(
+                        descriptor.attributes,
+                        descriptor.capabilities,
+                        descriptor.memory_type,
+                    )
                 }
             };
 
@@ -996,14 +990,11 @@ fn process_hob_allocations(hob_list: &HobList) {
         } else {
             match GCD.get_memory_descriptor_for_address(stack_address) {
                 Ok(gcd_desc) => {
-                    let attributes: u64 = gcd_desc.attributes;
-                    log::trace!("Current Attributes for the stack {:#X?} \n\n", attributes);
-                    // Set Stack region to execute protect.
-                    match GCD.set_memory_space_attributes(
-                        stack_address as usize,
-                        stack_length as usize,
-                        attributes | efi::MEMORY_XP,
-                    ) {
+                    // Set Stack region to execute protect. We use the allocated memory protection policy here because
+                    // that matches our standard policy
+                    let attributes =
+                        GCD.memory_protection_policy.apply_allocated_memory_protection_policy(gcd_desc.attributes);
+                    match GCD.set_memory_space_attributes(stack_address as usize, stack_length as usize, attributes) {
                         Ok(_) | Err(EfiError::NotReady) => (),
                         Err(e) => {
                             log::error!(
@@ -1015,11 +1006,11 @@ fn process_hob_allocations(hob_list: &HobList) {
                             debug_assert!(false);
                         }
                     }
-                    // Set Guard page to read protect.
+                    // Set Guard page to read protect. We keep the NX and cache attributes from above
                     match GCD.set_memory_space_attributes(
                         stack_address as usize,
                         UEFI_PAGE_SIZE,
-                        attributes | efi::MEMORY_RP,
+                        MemoryProtectionPolicy::apply_image_stack_guard_policy(attributes),
                     ) {
                         Ok(_) | Err(EfiError::NotReady) => (),
                         Err(e) => {
@@ -1167,6 +1158,7 @@ pub(crate) unsafe fn reset_allocators() {
 
 #[cfg(test)]
 #[coverage(off)]
+#[cfg(target_arch = "x86_64")] // Issue #1071
 mod tests {
 
     use crate::{

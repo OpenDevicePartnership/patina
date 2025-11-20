@@ -55,10 +55,12 @@ cfg_if::cfg_if! {
             fn init(&self) {
                 match self {
                     Uart16550::Io { base } => {
+                        // SAFETY: The base address is provided during Uart16550 construction and is assumed to be valid for I/O port access.
                         let mut serial_port = unsafe { IoSerialPort::new(*base) };
                         serial_port.init();
                     }
                     Uart16550::Mmio { base, reg_stride } => {
+                        // SAFETY: The base address and stride are provided during Uart16550 construction and are assumed to be valid for MMIO access.
                         let mut serial_port = unsafe { MmioSerialPort::new_with_stride(*base, *reg_stride) };
                         serial_port.init();
                     }
@@ -68,6 +70,7 @@ cfg_if::cfg_if! {
             fn write(&self, buffer: &[u8]) {
                 match self {
                     Uart16550::Io { base } => {
+                        // SAFETY: The base address is provided during Uart16550 construction and is assumed to be valid for I/O port access.
                         let mut serial_port = unsafe { IoSerialPort::new(*base) };
                         interrupts::without_interrupts(|| {
                             for b in buffer {
@@ -76,6 +79,7 @@ cfg_if::cfg_if! {
                         });
                     }
                     Uart16550::Mmio { base, reg_stride } => {
+                        // SAFETY: The base address and stride are provided during Uart16550 construction and are assumed to be valid for MMIO access.
                         let mut serial_port = unsafe { MmioSerialPort::new_with_stride(*base, *reg_stride) };
                         interrupts::without_interrupts(|| {
                             for b in buffer {
@@ -89,10 +93,12 @@ cfg_if::cfg_if! {
             fn read(&self) -> u8 {
                 match self {
                     Uart16550::Io { base } => {
+                        // SAFETY: The base address is provided during Uart16550 construction and is assumed to be valid for I/O port access.
                         let mut serial_port = unsafe { IoSerialPort::new(*base) };
                         serial_port.receive()
                     }
                     Uart16550::Mmio { base, reg_stride } => {
+                        // SAFETY: The base address and stride are provided during Uart16550 construction and are assumed to be valid for MMIO access.
                         let mut serial_port = unsafe { MmioSerialPort::new_with_stride(*base, *reg_stride) };
                         serial_port.receive()
                     }
@@ -102,10 +108,12 @@ cfg_if::cfg_if! {
             fn try_read(&self) -> Option<u8> {
                 match self {
                     Uart16550::Io { base } => {
+                        // SAFETY: The base address is provided during Uart16550 construction and is assumed to be valid for I/O port access.
                         let mut serial_port = unsafe { IoSerialPort::new(*base) };
                         serial_port.try_receive().ok()
                     }
                     Uart16550::Mmio { base, reg_stride } => {
+                        // SAFETY: The base address and stride are provided during Uart16550 construction and are assumed to be valid for MMIO access.
                         let mut serial_port = unsafe { MmioSerialPort::new_with_stride(*base, *reg_stride) };
                         serial_port.try_receive().ok()
                     }

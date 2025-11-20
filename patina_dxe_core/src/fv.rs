@@ -19,7 +19,7 @@ use patina::pi::{
     hob,
 };
 
-use patina::{component::service::Service, error::EfiError};
+use patina::error::EfiError;
 use patina_ffs::{section::SectionExtractor, volume::VolumeRef};
 use patina_internal_device_path::concat_device_path_to_boxed_slice;
 use r_efi::efi;
@@ -28,7 +28,7 @@ use crate::{
     allocator::core_allocate_pool,
     decompress::CoreExtractor,
     protocols::{PROTOCOL_DB, core_install_protocol_interface},
-    tpl_lock,
+    tpl_mutex,
 };
 
 struct PrivateFvbData {
@@ -55,7 +55,7 @@ struct PrivateGlobalData {
 unsafe impl Sync for PrivateGlobalData {}
 unsafe impl Send for PrivateGlobalData {}
 
-static PRIVATE_FV_DATA: tpl_lock::TplMutex<PrivateGlobalData> = tpl_lock::TplMutex::new(
+static PRIVATE_FV_DATA: tpl_mutex::TplMutex<PrivateGlobalData> = tpl_mutex::TplMutex::new(
     efi::TPL_NOTIFY,
     PrivateGlobalData { fv_information: BTreeMap::new(), section_extractor: CoreExtractor::new() },
     "FvLock",
@@ -832,7 +832,7 @@ pub fn parse_hob_fvs(hob_list: &hob::HobList) -> Result<(), efi::Status> {
 }
 
 /// Registers a section extractor to be used when reading sections from files in firmware volumes.
-pub fn register_section_extractor(extractor: Service<dyn SectionExtractor>) {
+pub fn register_section_extractor(extractor: &'static dyn SectionExtractor) {
     PRIVATE_FV_DATA.lock().section_extractor.set_extractor(extractor);
 }
 
@@ -938,7 +938,7 @@ mod tests {
             hoblist.push(Hob::FirmwareVolume2(&_firmware_volume2));
             hoblist.push(Hob::Handoff(&end_of_hob_list));
             parse_hob_fvs(&hoblist).unwrap();
-            register_section_extractor(Service::mock(Box::new(CompositeSectionExtractor::default())));
+            register_section_extractor(Box::leak(Box::new(CompositeSectionExtractor::default())));
         })
         .expect("Unexpected Error Initalising hob fvs ");
     }
@@ -1543,7 +1543,7 @@ mod tests {
             PRIVATE_FV_DATA
                 .lock()
                 .section_extractor
-                .set_extractor(Service::mock(Box::new(patina_ffs_extractors::BrotliSectionExtractor)));
+                .set_extractor(Box::leak(Box::new(patina_ffs_extractors::BrotliSectionExtractor)));
 
             let mut fv_interface = Box::from(pi::protocols::firmware_volume::Protocol {
                 get_volume_attributes: fv_get_volume_attributes,

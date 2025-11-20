@@ -606,6 +606,8 @@ impl PageAllocation {
     #[must_use]
     pub fn leak_as_slice<'a, T: Default>(self) -> &'a mut [T] {
         let slice = self.into_raw_slice::<MaybeUninit<T>>();
+        // SAFETY: slice is a valid pointer from into_raw_slice. fill_with initializes all elements.
+        // The slice is properly aligned and sized for T elements. Caller takes ownership of leaked memory.
         unsafe {
             (*slice).fill_with(|| MaybeUninit::new(Default::default()));
             (slice as *mut [T]).as_mut().expect("Slice Pointer just created and is not null")
@@ -657,6 +659,9 @@ pub struct PageFree {
 }
 
 #[cfg(any(test, feature = "alloc"))]
+// SAFETY: PageFree implements Allocator to enable smart pointer types to free memory.
+// allocate() always fails. deallocate() frees the specific pages tracked by this struct.
+// The caller must ensure the memory was allocated using the same MemoryManager.
 unsafe impl Allocator for PageFree {
     fn allocate(&self, _layout: core::alloc::Layout) -> Result<NonNull<[u8]>, core::alloc::AllocError> {
         Err(core::alloc::AllocError)
@@ -858,8 +863,10 @@ mod mock {
                 return Err(MemoryError::InvalidAlignment);
             };
 
+            // SAFETY: Test code - alloc() from std allocator returns properly aligned memory.
             let blob = unsafe { NonNull::new(alloc(layout)).expect("Test has sufficient memory to allocate pages") };
 
+            // SAFETY: Test code - blob points to valid allocated memory with correct size and alignment.
             unsafe {
                 PageAllocation::new(blob.as_ptr().expose_provenance(), page_count, Box::leak(Box::new(Self::new())))
             }
@@ -868,6 +875,7 @@ mod mock {
         unsafe fn free_pages(&self, address: usize, page_count: usize) -> Result<(), MemoryError> {
             let ptr = address as *mut u8;
             let layout = Layout::from_size_align(page_count * UEFI_PAGE_SIZE, UEFI_PAGE_SIZE).unwrap();
+            // SAFETY: Test code - address was allocated by this same allocator with sa matching layout.
             unsafe { dealloc(ptr, layout) };
             Ok(())
         }
@@ -926,7 +934,9 @@ mod tests {
         let service = Service::mock(Box::new(mock));
 
         assert!(service.allocate_pages(5, AllocationOptions::new()).is_err());
+        // SAFETY: Test code - intentionally testing that free_pages returns an error.
         assert!(unsafe { service.free_pages(0, 5).is_err() });
+        // SAFETY: Test code - intentionally testing that set_page_attributes returns an error.
         assert!(unsafe { service.set_page_attributes(0, 5, AccessType::ReadOnly, None).is_err() });
         assert!(service.get_page_attributes(0, 5).is_err());
     }
@@ -1046,12 +1056,13 @@ mod tests {
         let mut value: u8 = 5;
         let data = NonNull::new(&mut value).unwrap();
         let pf = PageFree {
-            // SAFETY: Intentionally using a bad address
+            // SAFETY: Intentionally using a bad address for testing panic behavior.
             blob: unsafe { data.add(0x1000) },
             page_count: 1,
             memory_manager: Box::leak(Box::new(StdMemoryManager::new())),
         };
 
+        // SAFETY: Test code - intentionally deallocating with a wrong address to test panic.
         unsafe { pf.deallocate(data, Layout::new::<u8>()) };
     }
 
@@ -1064,6 +1075,7 @@ mod tests {
         mock.expect_free_pages().returning(|_, _| Err(MemoryError::InvalidAddress));
         let pf = PageFree { blob, page_count: 1, memory_manager: Box::leak(Box::new(mock)) };
 
+        // SAFETY: Test code - intentionally deallocating to test panic on mock error.
         // This will panic because the mock returns an error.
         unsafe { pf.deallocate(blob, Layout::new::<u8>()) };
     }
@@ -1197,16 +1209,19 @@ mod tests {
 
         // Catch unaligned address
         assert!(
+            // SAFETY: Test code - intentionally creating misaligned addresses to test error handling.
             unsafe { PageAllocation::new(address + 1, 1, mm) }
                 .is_err_and(|e| matches!(e, MemoryError::UnalignedAddress))
         );
         assert!(
+            // SAFETY: Test code - intentionally creating misaligned addresses to test error handling.
             unsafe { PageAllocation::new(address - 1, 1, mm) }
                 .is_err_and(|e| matches!(e, MemoryError::UnalignedAddress))
         );
 
         // Catch zero page count
         assert!(
+            // SAFETY: Test code - intentionally using zero page count to test error handling.
             unsafe { PageAllocation::new(address, 0, mm) }.is_err_and(|e| matches!(e, MemoryError::InvalidPageCount))
         );
     }
@@ -1218,6 +1233,7 @@ mod tests {
         let pa = mm.allocate_pages(10, AllocationOptions::default()).expect("Should not fail for test.");
 
         // Write some data to the pages to ensure they are not zeroed.
+        // SAFETY: Test code - writing test data to a page successfully allocated above.
         unsafe { pa.blob.cast::<UefiPage>().write(UefiPage([1u8; UEFI_PAGE_SIZE])) };
 
         pa.zero_pages();
@@ -1225,6 +1241,7 @@ mod tests {
         // check that all bytes are zeroed
         let a = pa.into_raw_ptr::<u8>().unwrap();
         for i in 0..(UEFI_PAGE_SIZE * 10) {
+            // SAFETY: Test code - reading from valid page allocation to verify zeroing.
             assert_eq!(unsafe { *a.add(i) }, 0, "Byte at index {i} is not zeroed");
         }
     }

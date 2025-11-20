@@ -36,8 +36,8 @@ use core::{
 
 use r_efi::efi;
 
-use crate::uefi_protocol::ProtocolInterface;
-use allocation::{AllocType, MemoryMap, MemoryType};
+use crate::{efi_types::EfiMemoryType, uefi_protocol::ProtocolInterface};
+use allocation::{AllocType, MemoryMap};
 use boxed::BootServicesBox;
 use event::{EventNotifyCallback, EventTimerType, EventType};
 use protocol_handler::{HandleSearchType, Registration};
@@ -296,7 +296,7 @@ pub trait BootServices {
     fn allocate_pages(
         &self,
         alloc_type: AllocType,
-        memory_type: MemoryType,
+        memory_type: EfiMemoryType,
         nb_pages: usize,
     ) -> Result<usize, efi::Status>;
 
@@ -313,10 +313,10 @@ pub trait BootServices {
     /// Allocates pool memory.
     ///
     /// [UEFI Spec Documentation: 7.2.4. EFI_BOOT_SERVICES.AllocatePool()](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html#efi-boot-services-allocatepool)
-    fn allocate_pool(&self, pool_type: MemoryType, size: usize) -> Result<*mut u8, efi::Status>;
+    fn allocate_pool(&self, pool_type: EfiMemoryType, size: usize) -> Result<*mut u8, efi::Status>;
 
     /// Allocates pool memory casted as given type.
-    fn allocate_pool_for_type<T: 'static>(&self, pool_type: MemoryType) -> Result<*mut T, efi::Status> {
+    fn allocate_pool_for_type<T: 'static + Sized>(&self, pool_type: EfiMemoryType) -> Result<*mut T, efi::Status> {
         let ptr = self.allocate_pool(pool_type, mem::size_of::<T>())?;
         Ok(ptr as *mut T)
     }
@@ -499,8 +499,10 @@ pub trait BootServices {
     /// Make sure to not create multiple mutable reference of interface.
     unsafe fn handle_protocol<T>(&self, handle: efi::Handle) -> Result<&'static mut T, efi::Status>
     where
-        T: ProtocolInterface + 'static,
+        T: Sized + ProtocolInterface + 'static,
     {
+        // SAFETY: Caller guarantees handle is valid. handle_protocol_maybe_empty performs the FFI call
+        // and returns a properly typed pointer or None based on the protocol interface.
         match unsafe { self.handle_protocol_maybe_empty(handle)? } {
             Some(_) if mem::size_of::<T>() == 0 => {
                 debug_assert!(false, "Expect null interface. Type {} need to have a size of 0.", any::type_name::<T>());
@@ -517,6 +519,8 @@ pub trait BootServices {
             Some(i) => Ok(i),
             None => {
                 static ZERO_SIZE_TYPE: () = ();
+                // SAFETY: Zero-sized types (ZSTs) don't require valid memory addresses.
+                // ZERO_SIZE_TYPE provides a stable address for the cast to maintain type safety.
                 Ok(unsafe { (ptr::addr_of!(ZERO_SIZE_TYPE) as *mut T).as_mut().unwrap() })
             }
         }
@@ -530,8 +534,11 @@ pub trait BootServices {
     /// Make sure to not create multiple mutable reference of interface.
     unsafe fn handle_protocol_maybe_empty<T>(&self, handle: efi::Handle) -> Result<Option<&'static mut T>, efi::Status>
     where
-        T: ProtocolInterface + 'static,
+        T: Sized + ProtocolInterface + 'static,
     {
+        // SAFETY: handle_protocol_unchecked returns a raw pointer. Converting to *mut T is considered
+        // safe based on T::PROTOCOL_GUID ensuring type correctness. as_mut() may return None if the
+        // firmware returns null for zero-sized protocols.
         Ok(unsafe { (self.handle_protocol_unchecked(handle, &T::PROTOCOL_GUID)? as *mut T).as_mut() })
     }
 
@@ -575,8 +582,10 @@ pub trait BootServices {
         attribute: u32,
     ) -> Result<&'static mut T, efi::Status>
     where
-        T: ProtocolInterface + 'static,
+        T: Sized + ProtocolInterface + 'static,
     {
+        // SAFETY: Caller guarantees handle is valid. open_protocol_maybe_empty performs the FFI call
+        // and returns a properly typed pointer or None based on the protocol interface.
         match unsafe { self.open_protocol_maybe_empty::<T>(handle, agent_handle, controller_handle, attribute)? } {
             Some(_) if mem::size_of::<T>() == 0 => {
                 debug_assert!(false, "Expect null interface. Type {} need to have a size of 0.", any::type_name::<T>());
@@ -593,6 +602,8 @@ pub trait BootServices {
             Some(i) => Ok(i),
             None => {
                 static ZERO_SIZE_TYPE: () = ();
+                // SAFETY: Zero-sized types (ZSTs) don't require valid memory addresses.
+                // ZERO_SIZE_TYPE provides a stable address for the cast to maintain type safety.
                 Ok(unsafe { (ptr::addr_of!(ZERO_SIZE_TYPE) as *mut T).as_mut().unwrap() })
             }
         }
@@ -615,8 +626,11 @@ pub trait BootServices {
         attribute: u32,
     ) -> Result<Option<&'static mut T>, efi::Status>
     where
-        T: ProtocolInterface + 'static,
+        T: Sized + ProtocolInterface + 'static,
     {
+        // SAFETY: open_protocol_unchecked returns a raw pointer. Converting to *mut T is considered
+        // safe based on T::PROTOCOL_GUID ensuring type correctness. as_mut() may return None if the
+        // firmware returns null for zero-sized protocols.
         Ok(unsafe {
             (self.open_protocol_unchecked(handle, &T::PROTOCOL_GUID, agent_handle, controller_handle, attribute)?
                 as *mut T)
@@ -708,8 +722,10 @@ pub trait BootServices {
     /// Make sure to not create multiple mutable reference when using this api.
     unsafe fn locate_protocol<T>(&self, registration: Option<Registration>) -> Result<&'static mut T, efi::Status>
     where
-        T: ProtocolInterface + 'static,
+        T: Sized + ProtocolInterface + 'static,
     {
+        // SAFETY: Caller guarantees no aliasing. locate_protocol_maybe_empty performs the FFI call
+        // and returns a properly typed pointer or None based on the protocol interface.
         match unsafe { self.locate_protocol_maybe_empty(registration)? } {
             Some(_) if mem::size_of::<T>() == 0 => {
                 debug_assert!(false, "Expect null interface. Type {} need to have a size of 0.", any::type_name::<T>());
@@ -726,6 +742,8 @@ pub trait BootServices {
             Some(i) => Ok(i),
             None => {
                 static ZERO_SIZE_TYPE: () = ();
+                // SAFETY: Zero-sized types (ZSTs) don't require valid memory addresses.
+                // ZERO_SIZE_TYPE provides a stable address for the cast to maintain type safety.
                 Ok(unsafe { (ptr::addr_of!(ZERO_SIZE_TYPE) as *mut T).as_mut().unwrap() })
             }
         }
@@ -743,7 +761,7 @@ pub trait BootServices {
         registration: Option<Registration>,
     ) -> Result<Option<&'static mut T>, efi::Status>
     where
-        T: ProtocolInterface + 'static,
+        T: Sized + ProtocolInterface + 'static,
     {
         //SAFETY: The generic ProtocolInterface ensure that the interfaces is the right type for the specified protocol.
         Ok(unsafe {
@@ -903,6 +921,8 @@ pub trait BootServices {
         guid: &efi::Guid,
         table: T,
     ) -> Result<(), efi::Status> {
+        // SAFETY: Caller guarantees table type matches guid. into_mut_ptr() provides a valid pointer
+        // that remains valid for the lifetime of boot services as constrained by the trait bound.
         unsafe { self.install_configuration_table_unchecked(guid, table.into_mut_ptr() as *mut c_void) }
     }
 
@@ -921,7 +941,8 @@ pub trait BootServices {
     ///
     /// [UEFI Spec Documentation: 7.5.7. EFI_BOOT_SERVICES.CalculateCrc32()](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html#efi-boot-services-calculatecrc32)
     fn calculate_crc_32<T: 'static>(&self, data: &T) -> Result<u32, efi::Status> {
-        // the mem size of ensure that the data pointer and size are correct.
+        // SAFETY: The reference guarantees that the pointer is valid and properly aligned.
+        // size_of::<T>() provides the exact size of the data being pointed to.
         unsafe { self.calculate_crc_32_unchecked(data as *const T as _, mem::size_of::<T>()) }
     }
 
@@ -954,6 +975,9 @@ impl BootServices for StandardBootServices {
         let status = efi_boot_services_fn!(self.efi_boot_services(), create_event)(
             event_type.into(),
             notify_tpl.into(),
+            // Safety: Transmuting function pointer types with matching ABIs and compatible signatures.
+            // Both are extern "efiapi" callbacks taking a context pointer - the generic parameter T
+            // is erased to c_void for the UEFI FFI interface.
             unsafe {
                 mem::transmute::<
                     Option<extern "efiapi" fn(*mut c_void, *mut T)>,
@@ -963,6 +987,7 @@ impl BootServices for StandardBootServices {
             notify_context as *mut c_void,
             event.as_mut_ptr(),
         );
+        // SAFETY: If the UEFI call succeeded, event has been initialized by the firmware.
         if status.is_error() { Err(status) } else { Ok(unsafe { event.assume_init() }) }
     }
 
@@ -978,6 +1003,9 @@ impl BootServices for StandardBootServices {
         let status = efi_boot_services_fn!(self.efi_boot_services(), create_event_ex)(
             event_type.into(),
             notify_tpl.into(),
+            // Safety: Transmuting function pointer types with matching ABIs and compatible signatures.
+            // Both are extern "efiapi" callbacks - the generic parameter T is erased to c_void for FFI.
+            // Wrapping in Option as the UEFI interface expects an optional callback.
             unsafe {
                 mem::transmute::<
                     extern "efiapi" fn(*mut c_void, *mut T),
@@ -988,6 +1016,7 @@ impl BootServices for StandardBootServices {
             event_group as *const _,
             event.as_mut_ptr(),
         );
+        // SAFETY: If the call succeeded, it is considered initialized.
         if status.is_error() { Err(status) } else { Ok(unsafe { event.assume_init() }) }
     }
 
@@ -1012,6 +1041,7 @@ impl BootServices for StandardBootServices {
             events.as_mut_ptr(),
             index.as_mut_ptr(),
         );
+        // SAFETY: If the call succeeded, index has been initialized with the event index.
         if status.is_error() { Err(status) } else { Ok(unsafe { index.assume_init() }) }
     }
 
@@ -1040,7 +1070,7 @@ impl BootServices for StandardBootServices {
     fn allocate_pages(
         &self,
         alloc_type: AllocType,
-        memory_type: MemoryType,
+        memory_type: EfiMemoryType,
         nb_pages: usize,
     ) -> Result<usize, efi::Status> {
         let mut memory_address = match alloc_type {
@@ -1085,7 +1115,7 @@ impl BootServices for StandardBootServices {
             _ => (),
         };
 
-        let buffer = self.allocate_pool(MemoryType::BOOT_SERVICES_DATA, memory_map_size).map_err(|s| (s, 0))?;
+        let buffer = self.allocate_pool(EfiMemoryType::BootServicesData, memory_map_size).map_err(|s| (s, 0))?;
 
         match get_memory_map(
             ptr::addr_of_mut!(memory_map_size),
@@ -1099,13 +1129,15 @@ impl BootServices for StandardBootServices {
             _ => (),
         }
         Ok(MemoryMap {
+            // SAFETY: buffer was allocated with allocate_pool and size is descriptor_size.
+            // The buffer is properly sized and aligned for the memory map descriptors.
             descriptors: unsafe { BootServicesBox::from_raw_parts_mut(buffer as *mut _, descriptor_size, self) },
             map_key,
             descriptor_version,
         })
     }
 
-    fn allocate_pool(&self, memory_type: MemoryType, size: usize) -> Result<*mut u8, efi::Status> {
+    fn allocate_pool(&self, memory_type: EfiMemoryType, size: usize) -> Result<*mut u8, efi::Status> {
         let mut buffer = ptr::null_mut();
         match efi_boot_services_fn!(self.efi_boot_services(), allocate_pool)(
             memory_type.into(),
@@ -1184,6 +1216,7 @@ impl BootServices for StandardBootServices {
             registration.as_mut_ptr() as *mut _,
         ) {
             s if s.is_error() => Err(s),
+            // SAFETY: If the call succeeded, registration has been initialized.
             _ => Ok(unsafe { registration.assume_init() }),
         }
     }
@@ -1207,7 +1240,7 @@ impl BootServices for StandardBootServices {
         let mut buffer_size = 0;
         locate_handle(search_type.into(), protocol, search_key, ptr::addr_of_mut!(buffer_size), ptr::null_mut());
 
-        let buffer = self.allocate_pool(MemoryType::BOOT_SERVICES_DATA, buffer_size)?;
+        let buffer = self.allocate_pool(EfiMemoryType::BootServicesData, buffer_size)?;
 
         match locate_handle(
             search_type.into(),
@@ -1217,6 +1250,8 @@ impl BootServices for StandardBootServices {
             buffer as *mut efi::Handle,
         ) {
             s if s.is_error() => Err(s),
+            // SAFETY: buffer was allocated with allocate_pool to hold buffer_size bytes.
+            // The number of handles is buffer_size divided by the size of each handle.
             _ => Ok(unsafe {
                 BootServicesBox::from_raw_parts_mut(buffer as *mut _, buffer_size / mem::size_of::<efi::Handle>(), self)
             }),
@@ -1312,6 +1347,8 @@ impl BootServices for StandardBootServices {
             ptr::addr_of_mut!(entry_count),
         ) {
             s if s.is_error() => Err(s),
+            // SAFETY: The firmware allocates entry_buffer and sets entry_count.
+            // from_raw_parts_mut creates a slice with the proper length as specified by the firmware.
             _ => Ok(unsafe { BootServicesBox::from_raw_parts_mut(entry_buffer, entry_count, self) }),
         }
     }
@@ -1368,6 +1405,8 @@ impl BootServices for StandardBootServices {
             ptr::addr_of_mut!(protocol_buffer_count),
         ) {
             s if s.is_error() => Err(s),
+            // SAFETY: The firmware allocates protocol_buffer and sets protocol_buffer_count.
+            // from_raw_parts_mut creates a slice with the proper length as specified.
             _ => Ok(unsafe {
                 BootServicesBox::<[_], _>::from_raw_parts_mut(protocol_buffer as *mut _, protocol_buffer_count, self)
             }),
@@ -1399,6 +1438,8 @@ impl BootServices for StandardBootServices {
             ptr::addr_of_mut!(buffer),
         ) {
             s if s.is_error() => Err(s),
+            // SAFETY: The firmware allocates buffer and sets buffer_count.
+            // from_raw_parts_mut creates a slice with the proper length as specified.
             _ => Ok(unsafe {
                 BootServicesBox::<[_], _>::from_raw_parts_mut(buffer as *mut efi::Handle, buffer_count, self)
             }),
@@ -1441,6 +1482,7 @@ impl BootServices for StandardBootServices {
             image_handle.as_mut_ptr(),
         ) {
             s if s.is_error() => Err(s),
+            // SAFETY: If the call succeeded, image_handle has been initialized.
             _ => Ok(unsafe { image_handle.assume_init() }),
         }
     }
@@ -1457,6 +1499,8 @@ impl BootServices for StandardBootServices {
             exit_data.as_mut_ptr(),
         ) {
             s if s.is_error() => {
+                // SAFETY: If exit_data pointer is not null, it points to valid memory.
+                // exit_data_size contains the size of the allocated data. from_raw_parts_mut creates a proper slice.
                 let data = (!exit_data.as_ptr().is_null()).then(|| unsafe {
                     BootServicesBox::from_raw_parts_mut(
                         exit_data.as_mut_ptr() as *mut u8,
@@ -1533,6 +1577,7 @@ impl BootServices for StandardBootServices {
         let mut count = MaybeUninit::uninit();
         match efi_boot_services_fn!(self.efi_boot_services(), get_next_monotonic_count)(count.as_mut_ptr()) {
             s if s.is_error() => Err(s),
+            // SAFETY: If the UEFI call succeeded, count has been initialized.
             _ => Ok(unsafe { count.assume_init() }),
         }
     }
@@ -1559,6 +1604,7 @@ impl BootServices for StandardBootServices {
             crc32.as_mut_ptr(),
         ) {
             s if s.is_error() => Err(s),
+            // SAFETY: If the call succeeded, crc32 has been initialized.
             _ => Ok(unsafe { crc32.assume_init() }),
         }
     }
@@ -1580,6 +1626,9 @@ mod tests {
 
     macro_rules! boot_services {
         ($($efi_services:ident = $efi_service_fn:ident),*) => {{
+            // SAFETY: This is only used in tests. A zero sized BootServices struct is created
+            // and only the specified function pointers are initialized with valid function
+            // implementations. The StandardBootServices wrapper will handle uninitialized fields.
             let efi_boot_services = unsafe {
                 #[allow(unused_mut)]
                 let mut bs = MaybeUninit::<efi::BootServices>::zeroed();
@@ -1595,6 +1644,8 @@ mod tests {
     #[derive(Debug)]
     struct TestProtocol(u32);
 
+    // Safety: TestProtocol provides a test protocol interface with a unique GUID for unit tests.
+    // The GUID constant meets the requirements of the ProtocolInterface trait.
     unsafe impl ProtocolInterface for TestProtocol {
         const PROTOCOL_GUID: efi::Guid =
             efi::Guid::from_bytes(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
@@ -1603,6 +1654,8 @@ mod tests {
     #[derive(Debug)]
     struct TestProtocolEmpty;
 
+    // Safety: TestProtocolEmpty provides a test protocol interface with a unique GUID for unit tests.
+    // The GUID constant meets the requirements of the ProtocolInterface trait. Zero-sized type is valid.
     unsafe impl ProtocolInterface for TestProtocolEmpty {
         const PROTOCOL_GUID: efi::Guid =
             efi::Guid::from_bytes(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
@@ -1615,6 +1668,7 @@ mod tests {
     ) -> efi::Status {
         // Use u64 for ptr alignment.
         let allocation = vec![0_u64; size.div_ceil(mem::size_of::<u64>())].into_boxed_slice();
+        // Safety: Test code - buffer pointer is valid for write, allocation is properly aligned.
         unsafe {
             *buffer = Box::into_raw(allocation) as *mut c_void;
         }
@@ -1626,6 +1680,7 @@ mod tests {
             return efi::Status::INVALID_PARAMETER;
         }
 
+        // Safety: Test code - buffer was allocated by efi_allocate_pool_use_box as a Box<[u64]>.
         unsafe {
             let _ = Box::from_raw(buffer as *mut u8);
         }
@@ -1671,6 +1726,7 @@ mod tests {
         ) -> efi::Status {
             assert_eq!(efi::EVT_RUNTIME | efi::EVT_NOTIFY_SIGNAL, event_type);
             assert_eq!(efi::TPL_APPLICATION, notify_tpl);
+            // Safety: Test code - transmute from Option<EventNotify> function pointer to raw pointer for comparison.
             assert_eq!(notify_callback as *const fn(), unsafe {
                 mem::transmute::<Option<extern "efiapi" fn(*mut c_void, *mut c_void)>, *const fn()>(notify_function)
             });
@@ -1745,6 +1801,7 @@ mod tests {
         ) -> efi::Status {
             assert_eq!(efi::EVT_RUNTIME | efi::EVT_NOTIFY_SIGNAL, event_type);
             assert_eq!(efi::TPL_APPLICATION, notify_tpl);
+            // Safety: Test code - transmute from Option<EventNotify> function pointer to raw pointer for comparison.
             assert_eq!(notify_callback as *const fn(), unsafe {
                 mem::transmute::<Option<extern "efiapi" fn(*mut c_void, *mut c_void)>, *const fn()>(notify_function)
             });
@@ -1864,6 +1921,7 @@ mod tests {
             assert_eq!(2, number_of_event);
             assert_ne!(ptr::null_mut(), events);
 
+            // Safety: Test code - index is valid for write.
             unsafe { ptr::write(index, 1) }
             efi::Status::SUCCESS
         }
@@ -1982,7 +2040,7 @@ mod tests {
     #[should_panic = "Boot services function allocate_pages is not initialized."]
     fn test_allocate_pages_not_init() {
         let boot_services = boot_services!();
-        let _ = boot_services.allocate_pages(AllocType::AnyPage, MemoryType::ACPI_MEMORY_NVS, 0);
+        let _ = boot_services.allocate_pages(AllocType::AnyPage, EfiMemoryType::ACPIMemoryNVS, 0);
     }
 
     #[test]
@@ -1997,16 +2055,18 @@ mod tests {
         ) -> efi::Status {
             let expected_alloc_type: efi::AllocateType = AllocType::AnyPage.into();
             assert_eq!(expected_alloc_type, alloc_type);
-            let expected_mem_type: efi::MemoryType = MemoryType::MEMORY_MAPPED_IO.into();
+            let expected_mem_type: efi::MemoryType = EfiMemoryType::MemoryMappedIO.into();
             assert_eq!(expected_mem_type, mem_type);
             assert_eq!(4, nb_pages);
             assert_ne!(ptr::null_mut(), memory);
+            // Safety: Test code - memory is valid for read.
             assert_eq!(0, unsafe { *memory });
+            // Safety: Test code - memory is valid for write.
             unsafe { ptr::write(memory, 17) }
             efi::Status::SUCCESS
         }
 
-        let status = boot_services.allocate_pages(AllocType::AnyPage, MemoryType::MEMORY_MAPPED_IO, 4);
+        let status = boot_services.allocate_pages(AllocType::AnyPage, EfiMemoryType::MemoryMappedIO, 4);
 
         assert!(matches!(status, Ok(17)));
     }
@@ -2023,15 +2083,16 @@ mod tests {
         ) -> efi::Status {
             let expected_alloc_type: efi::AllocateType = AllocType::Address(17).into();
             assert_eq!(expected_alloc_type, alloc_type);
-            let expected_mem_type: efi::MemoryType = MemoryType::MEMORY_MAPPED_IO.into();
+            let expected_mem_type: efi::MemoryType = EfiMemoryType::MemoryMappedIO.into();
             assert_eq!(expected_mem_type, mem_type);
             assert_eq!(4, nb_pages);
             assert_ne!(ptr::null_mut(), memory);
+            // Safety: Test code - memory is valid for read.
             assert_eq!(17, unsafe { *memory });
             efi::Status::SUCCESS
         }
 
-        let status = boot_services.allocate_pages(AllocType::Address(17), MemoryType::MEMORY_MAPPED_IO, 4);
+        let status = boot_services.allocate_pages(AllocType::Address(17), EfiMemoryType::MemoryMappedIO, 4);
         assert!(matches!(status, Ok(17)));
     }
 
@@ -2061,7 +2122,7 @@ mod tests {
     #[should_panic = "Boot services function allocate_pool is not initialized."]
     fn test_allocate_pool_not_init() {
         let boot_services = boot_services!();
-        _ = boot_services.allocate_pool(MemoryType::RESERVED_MEMORY_TYPE, 0);
+        _ = boot_services.allocate_pool(EfiMemoryType::ReservedMemoryType, 0);
     }
 
     #[test]
@@ -2073,14 +2134,35 @@ mod tests {
             size: usize,
             buffer: *mut *mut c_void,
         ) -> efi::Status {
-            let expected_mem_type: efi::MemoryType = MemoryType::MEMORY_MAPPED_IO.into();
+            let expected_mem_type: efi::MemoryType = EfiMemoryType::MemoryMappedIO.into();
             assert_eq!(mem_type, expected_mem_type);
             assert_eq!(size, 10);
+            // SAFETY: Test mock - writing a test value to the output parameter.
             unsafe { ptr::write(buffer, 0x55AA as *mut c_void) };
             efi::Status::SUCCESS
         }
 
-        let status = boot_services.allocate_pool(MemoryType::MEMORY_MAPPED_IO, 10);
+        let status = boot_services.allocate_pool(EfiMemoryType::MemoryMappedIO, 10);
+        assert_eq!(status, Ok(0x55AA as *mut u8));
+    }
+
+    #[test]
+    fn test_allocate_pool_for_type() {
+        let boot_services = boot_services!(allocate_pool = efi_allocate_pool);
+
+        extern "efiapi" fn efi_allocate_pool(
+            mem_type: efi::MemoryType,
+            _size: usize,
+            buffer: *mut *mut c_void,
+        ) -> efi::Status {
+            let expected_mem_type: efi::MemoryType = EfiMemoryType::MemoryMappedIO.into();
+            assert_eq!(mem_type, expected_mem_type);
+            // SAFETY: Test mock - writing a test value to the output parameter.
+            unsafe { ptr::write(buffer, 0x55AA as *mut c_void) };
+            efi::Status::SUCCESS
+        }
+
+        let status = boot_services.allocate_pool_for_type(EfiMemoryType::MemoryMappedIO);
         assert_eq!(status, Ok(0x55AA as *mut u8));
     }
 
@@ -2124,11 +2206,15 @@ mod tests {
             interface: *mut c_void,
         ) -> efi::Status {
             assert_ne!(ptr::null_mut(), handle);
+            // SAFETY: Test mock - reading input parameter to verify it's null.
             assert_eq!(ptr::null_mut(), unsafe { ptr::read(handle) });
+            // SAFETY: Test mock - reading input parameters to verify correctness.
             assert_eq!(TestProtocol::PROTOCOL_GUID, unsafe { ptr::read(guid) });
             assert_eq!(efi::NATIVE_INTERFACE, interface_type);
+            // SAFETY: Test mock - reading test protocol value.
             assert_eq!(42, unsafe { ptr::read(interface as *mut u32) });
 
+            // SAFETY: Test mock - writing output parameter.
             unsafe {
                 ptr::write(handle, 17_usize as _);
             }
@@ -2152,11 +2238,15 @@ mod tests {
             interface: *mut c_void,
         ) -> efi::Status {
             assert_ne!(ptr::null_mut(), handle);
+            // SAFETY: Test mock - reading input parameter to verify it's null.
             assert_eq!(ptr::null_mut(), unsafe { ptr::read(handle) });
+            // SAFETY: Test mock - reading input parameters to verify correctness.
             assert_eq!(TestProtocol::PROTOCOL_GUID, unsafe { ptr::read(guid) });
             assert_eq!(efi::NATIVE_INTERFACE, interface_type);
+            // SAFETY: Test mock - reading test protocol value.
             assert_eq!(42, unsafe { ptr::read(interface as *mut u32) });
 
+            // SAFETY: Test mock - writing output parameter.
             unsafe {
                 ptr::write(handle, 17_usize as _);
             }
@@ -2180,7 +2270,9 @@ mod tests {
             interface: *mut c_void,
         ) -> efi::Status {
             assert_ne!(ptr::null_mut(), handle);
+            // SAFETY: Test mock - reading test handle value to verify.
             assert_eq!(17, unsafe { ptr::read::<efi::Handle>(handle) } as usize);
+            // SAFETY: Test mock - reading GUID parameter to verify correctness.
             assert_eq!(TestProtocol::PROTOCOL_GUID, unsafe { ptr::read(guid) });
             assert_eq!(efi::NATIVE_INTERFACE, interface_type);
             assert_eq!(ptr::null_mut(), interface);
@@ -2216,6 +2308,7 @@ mod tests {
             interface: *mut c_void,
         ) -> efi::Status {
             assert_eq!(1, handle as usize);
+            // SAFETY: Test mock - reading protocol GUID parameter to verify correctness.
             assert_eq!(TestProtocol::PROTOCOL_GUID, unsafe { ptr::read(protocol) });
             assert_eq!(ADDR.load(Ordering::Relaxed), interface as usize);
             efi::Status::SUCCESS
@@ -2238,6 +2331,7 @@ mod tests {
             interface: *mut c_void,
         ) -> efi::Status {
             assert_eq!(1, handle as usize);
+            // SAFETY: Test mock - reading protocol GUID from test infrastructure to verify it matches TestProtocolEmpty.
             assert_eq!(TestProtocolEmpty::PROTOCOL_GUID, unsafe { ptr::read(protocol) });
             assert_eq!(ptr::null_mut(), interface);
             efi::Status::SUCCESS
@@ -2267,6 +2361,7 @@ mod tests {
             new_interface: *mut c_void,
         ) -> efi::Status {
             assert_eq!(1, handle as usize);
+            // SAFETY: Test mock - reading protocol GUID from reinstall operation to verify correct protocol.
             assert_eq!(TestProtocol::PROTOCOL_GUID, unsafe { ptr::read(protocol) });
             assert_ne!(ptr::null_mut(), old_interface);
             assert_ne!(ptr::null_mut(), new_interface);
@@ -2303,9 +2398,11 @@ mod tests {
             event: *mut c_void,
             registration: *mut *mut c_void,
         ) -> efi::Status {
+            // SAFETY: Test mock - reading protocol GUID to verify notification registration for correct protocol.
             assert_eq!(TestProtocol::PROTOCOL_GUID, unsafe { ptr::read(protocol) });
             assert_eq!(1, event as usize);
             assert_ne!(ptr::null_mut(), registration);
+            // SAFETY: Test mock - writing registration token output parameter.
             unsafe { ptr::write(registration, 10_usize as _) };
             efi::Status::SUCCESS
         }
@@ -2343,10 +2440,13 @@ mod tests {
 
             match buffer {
                 buffer if buffer.is_null() => {
+                    // SAFETY: Test mock - reading buffer_size to verify it's initially zero for size query.
                     assert_eq!(0, unsafe { ptr::read(buffer_size) });
+                    // SAFETY: Test mock - writing required buffer size back to caller.
                     unsafe { ptr::write(buffer_size, mem::size_of::<usize>()) };
                 }
                 _ => {
+                    // SAFETY: Test mock - writing test handle value to output buffer.
                     unsafe { ptr::write(buffer, 10_usize as _) };
                 }
             }
@@ -2375,16 +2475,20 @@ mod tests {
             buffer: *mut efi::Handle,
         ) -> efi::Status {
             assert_eq!(efi::BY_PROTOCOL, search_type);
+            // SAFETY: Test mock - reading protocol GUID to verify locate by protocol search.
             assert_eq!(TestProtocol::PROTOCOL_GUID, unsafe { ptr::read(protocol) });
             assert_eq!(ptr::null_mut(), search_key);
             assert_ne!(ptr::null_mut(), buffer_size);
 
             match buffer {
                 buffer if buffer.is_null() => {
+                    // SAFETY: Test mock - reading buffer_size to verify size query phase.
                     assert_eq!(0, unsafe { ptr::read(buffer_size) });
+                    // SAFETY: Test mock - writing required buffer size for handle array.
                     unsafe { ptr::write(buffer_size, mem::size_of::<usize>()) };
                 }
                 _ => {
+                    // SAFETY: Test mock - writing test handle to output buffer.
                     unsafe { ptr::write(buffer, 10_usize as _) };
                 }
             }
@@ -2419,10 +2523,13 @@ mod tests {
 
             match buffer {
                 buffer if buffer.is_null() => {
+                    // SAFETY: Test mock - reading buffer_size to verify size query for register notify search.
                     assert_eq!(0, unsafe { ptr::read(buffer_size) });
+                    // SAFETY: Test mock - writing required buffer size for notification handles.
                     unsafe { ptr::write(buffer_size, mem::size_of::<usize>()) };
                 }
                 _ => {
+                    // SAFETY: Test mock - writing test handle to notification output buffer.
                     unsafe { ptr::write(buffer, 10_usize as _) };
                 }
             }
@@ -2431,7 +2538,10 @@ mod tests {
         }
 
         let handles = boot_services
-            .locate_handle(HandleSearchType::ByRegisterNotify(unsafe { NonNull::new_unchecked(10_usize as _) }))
+            .locate_handle(HandleSearchType::ByRegisterNotify(
+                // SAFETY: Test code - creating non-null pointer from test registration value (10).
+                unsafe { NonNull::new_unchecked(10_usize as _) },
+            ))
             .unwrap();
         assert_eq!(1, handles.len());
         assert_eq!(10, handles[0] as usize);
@@ -2441,6 +2551,7 @@ mod tests {
     #[should_panic = "Boot services function handle_protocol is not initialized."]
     fn test_handle_protocol_not_init() {
         let boot_services = boot_services!();
+        // SAFETY: Test code - intentionally calling uninitialized function to verify panic.
         _ = unsafe { boot_services.handle_protocol::<TestProtocol>(ptr::null_mut()) };
     }
 
@@ -2454,13 +2565,16 @@ mod tests {
             interface: *mut *mut c_void,
         ) -> efi::Status {
             assert_eq!(1, handle as usize);
+            // SAFETY: Test mock - reading protocol GUID to verify handle_protocol request.
             assert_eq!(TestProtocol::PROTOCOL_GUID, unsafe { ptr::read(protocol) });
             assert_ne!(ptr::null_mut(), interface);
             let b = Box::new(12);
+            // SAFETY: Test mock - writing test protocol interface pointer to output parameter.
             unsafe { ptr::write(interface, b.into_mut_ptr() as *mut _) };
             efi::Status::SUCCESS
         }
 
+        // SAFETY: Test code - calling handle_protocol with test handle (1) to retrieve protocol interface.
         let interface = unsafe { boot_services.handle_protocol::<TestProtocol>(1_usize as _) }.unwrap();
         assert_eq!(12, interface.0);
     }
@@ -2475,11 +2589,13 @@ mod tests {
             interface: *mut *mut c_void,
         ) -> efi::Status {
             assert_eq!(1, handle as usize);
+            // SAFETY: Test mock - reading protocol GUID to verify zero-sized protocol request.
             assert_eq!(TestProtocol::PROTOCOL_GUID, unsafe { ptr::read(protocol) });
             assert_ne!(ptr::null_mut(), interface);
             efi::Status::SUCCESS
         }
 
+        // SAFETY: Test code - calling handle_protocol for zero-sized TestProtocolEmpty.
         _ = unsafe { boot_services.handle_protocol::<TestProtocolEmpty>(1_usize as _) }.unwrap();
     }
 
@@ -2487,6 +2603,7 @@ mod tests {
     #[should_panic = "Boot services function locate_device_path is not initialized."]
     fn test_locate_device_path_not_init() {
         let boot_services = boot_services!();
+        // SAFETY: Test code - intentionally calling uninitialized function to verify panic.
         _ = unsafe { boot_services.locate_device_path(&TestProtocol::PROTOCOL_GUID, ptr::null_mut()) };
     }
 
@@ -2499,13 +2616,16 @@ mod tests {
             device_path: *mut *mut device_path::Protocol,
             device: *mut efi::Handle,
         ) -> efi::Status {
+            // SAFETY: Test mock - reading protocol GUID to verify device path location request.
             assert_eq!(TestProtocol::PROTOCOL_GUID, unsafe { ptr::read(protocol) });
             assert_eq!(1, device_path as usize);
             assert_ne!(ptr::null_mut(), device);
+            // SAFETY: Test mock - writing test device handle to output parameter.
             unsafe { ptr::write(device, 12_usize as _) };
             efi::Status::SUCCESS
         }
 
+        // SAFETY: Test code - calling locate_device_path with test device path pointer (1).
         let handle = unsafe { boot_services.locate_device_path(&TestProtocol::PROTOCOL_GUID, 1_usize as _) }.unwrap();
         assert_eq!(12, handle as usize);
     }
@@ -2514,6 +2634,7 @@ mod tests {
     #[should_panic = "Boot services function open_protocol is not initialized."]
     fn test_open_protocol_not_init() {
         let boot_services = boot_services!();
+        // SAFETY: Test code - intentionally calling uninitialized function to verify panic.
         _ = unsafe {
             boot_services.open_protocol::<TestProtocol>(ptr::null_mut(), ptr::null_mut(), ptr::null_mut(), 0)
         };
@@ -2532,6 +2653,7 @@ mod tests {
             attributes: u32,
         ) -> efi::Status {
             assert_eq!(1, handle as usize);
+            // SAFETY: Test mock - reading protocol GUID to verify open_protocol request.
             assert_eq!(TestProtocol::PROTOCOL_GUID, unsafe { ptr::read(protocol) });
             assert_ne!(ptr::null_mut(), interface);
             assert_eq!(2, agent_handle as usize);
@@ -2539,11 +2661,13 @@ mod tests {
             assert_eq!(4, attributes);
 
             let b = Box::new(12);
+            // SAFETY: Test mock - writing protocol interface pointer to output parameter.
             unsafe { ptr::write(interface, b.into_mut_ptr() as _) };
 
             efi::Status::SUCCESS
         }
 
+        // SAFETY: Test code - calling open_protocol with test handles to retrieve protocol interface.
         let interface = unsafe {
             boot_services.open_protocol::<TestProtocol>(1_usize as _, 2_usize as _, 3_usize as _, 4).unwrap()
         };
@@ -2564,6 +2688,7 @@ mod tests {
             attributes: u32,
         ) -> efi::Status {
             assert_eq!(1, handle as usize);
+            // SAFETY: Test mock - reading protocol GUID to verify zero-sized protocol open request.
             assert_eq!(TestProtocolEmpty::PROTOCOL_GUID, unsafe { ptr::read(protocol) });
             assert_ne!(ptr::null_mut(), interface);
             assert_eq!(2, agent_handle as usize);
@@ -2572,6 +2697,7 @@ mod tests {
             efi::Status::SUCCESS
         }
 
+        // SAFETY: Test code - calling open_protocol for zero-sized TestProtocolEmpty.
         _ = unsafe { boot_services.open_protocol::<TestProtocolEmpty>(1_usize as _, 2_usize as _, 3_usize as _, 4) }
             .unwrap()
     }
@@ -2599,6 +2725,7 @@ mod tests {
             controller_handle: efi::Handle,
         ) -> efi::Status {
             assert_eq!(1, handle as usize);
+            // SAFETY: Test mock - reading protocol GUID to verify close_protocol request.
             assert_eq!(TestProtocol::PROTOCOL_GUID, unsafe { ptr::read(protocol) });
             assert_eq!(2, agent_handle as usize);
             assert_eq!(3, controller_handle as usize);
@@ -2630,6 +2757,7 @@ mod tests {
             entry_count: *mut usize,
         ) -> efi::Status {
             assert_eq!(1, handle as usize);
+            // SAFETY: Test mock - reading protocol GUID to verify open_protocol_information request.
             assert_eq!(TestProtocol::PROTOCOL_GUID, unsafe { ptr::read(protocol) });
             assert_ne!(ptr::null_mut(), entry_buffer);
             assert_ne!(ptr::null_mut(), entry_count);
@@ -2642,6 +2770,7 @@ mod tests {
             }])
             .into_mut_ptr() as *mut OpenProtocolInformationEntry;
 
+            // SAFETY: Test mock - writing entry buffer pointer and count to output parameters.
             unsafe {
                 ptr::write(entry_buffer, buff);
                 ptr::write(entry_count, 1)
@@ -2659,6 +2788,7 @@ mod tests {
     #[should_panic = "Boot services function connect_controller is not initialized."]
     fn test_connect_controller_not_init() {
         let boot_services = boot_services!();
+        // SAFETY: Test code - calling uninitialized connect_controller to verify panic behavior.
         _ = unsafe { boot_services.connect_controller(ptr::null_mut(), vec![], ptr::null_mut(), false) };
     }
 
@@ -2679,6 +2809,7 @@ mod tests {
             efi::Status::SUCCESS
         }
 
+        // SAFETY: Test code - calling connect_controller with valid test parameters.
         unsafe { boot_services.connect_controller(1_usize as _, vec![], 2_usize as _, false) }.unwrap();
     }
 
@@ -2694,6 +2825,7 @@ mod tests {
         ) -> efi::Status {
             assert_eq!(1, controller_handle as usize);
             assert_ne!(ptr::null_mut(), driver_image_handles);
+            // SAFETY: Test mock - reading image handles array to verify correct driver handles provided.
             let image_handles = unsafe { slice::from_raw_parts(driver_image_handles as *const usize, 3) };
             assert_eq!([1, 2, 0], image_handles);
             assert_eq!(2, remaining_device_path as usize);
@@ -2701,6 +2833,7 @@ mod tests {
             efi::Status::SUCCESS
         }
 
+        // SAFETY: Test code - calling connect_controller with image handles vector.
         unsafe {
             boot_services.connect_controller(1_usize as _, vec![1_usize as _, 2_usize as _], 2_usize as _, false)
         }
@@ -2773,6 +2906,7 @@ mod tests {
             #[allow(unused_allocation)]
             let buff = Box::new(ptr::addr_of!(PROTOCOL_GUID) as *mut efi::Guid).into_mut_ptr();
 
+            // SAFETY: Test mock - writing protocol GUID buffer pointer and count to output parameters.
             unsafe {
                 ptr::write(protocol_buffer, buff);
                 ptr::write(protocol_buffer_count, 1);
@@ -2790,6 +2924,7 @@ mod tests {
     #[should_panic = "Boot services function locate_protocol is not initialized."]
     fn test_locate_protocol_not_init() {
         let boot_services = boot_services!();
+        // SAFETY: Test code - calling uninitialized locate_protocol to verify panic behavior.
         _ = unsafe { boot_services.locate_protocol::<TestProtocol>(None) };
     }
 
@@ -2807,11 +2942,14 @@ mod tests {
             assert!(!protocol_guid.is_null());
             assert!(registration.is_null());
             assert!(!interface.is_null());
+            // SAFETY: Test mock - reading protocol GUID to verify locate_protocol request for TestProtocol.
             assert_eq!(unsafe { ptr::read(protocol_guid) }, TestProtocol::PROTOCOL_GUID);
+            // SAFETY: Test mock - writing protocol interface pointer to output parameter.
             unsafe { ptr::write(interface, &PROTOCOL_INTERFACE as *const u32 as *mut u32 as *mut c_void) };
             efi::Status::SUCCESS
         }
 
+        // SAFETY: Test code - calling locate_protocol for TestProtocol with no registration.
         let protocol = unsafe { boot_services.locate_protocol::<TestProtocol>(None) }.unwrap();
 
         assert_eq!(PROTOCOL_INTERFACE, protocol.0);
@@ -2829,10 +2967,12 @@ mod tests {
             assert!(!protocol_guid.is_null());
             assert!(registration.is_null());
             assert!(!interface.is_null());
+            // SAFETY: Test mock - reading protocol GUID to verify locate_protocol request for zero-sized protocol.
             assert_eq!(unsafe { ptr::read(protocol_guid) }, TestProtocolEmpty::PROTOCOL_GUID);
             efi::Status::SUCCESS
         }
 
+        // SAFETY: Test code - calling locate_protocol for zero-sized TestProtocolEmpty.
         unsafe { boot_services.locate_protocol::<TestProtocolEmpty>(None) }.unwrap();
     }
 
@@ -2859,8 +2999,10 @@ mod tests {
             assert_eq!(1, parent_image_handler as usize);
             assert_eq!(2, device_path as usize);
             assert_eq!(5, source_size);
+            // SAFETY: Test mock - reading source buffer to verify image data provided to load_image.
             let source = unsafe { slice::from_raw_parts(source_buffer as *mut u8, source_size) };
             assert_eq!(&[1_u8, 2, 3, 4, 5], source);
+            // SAFETY: Test mock - writing image handle to output parameter.
             unsafe {
                 ptr::write(image_handler, 3_usize as _);
             }
@@ -2895,6 +3037,7 @@ mod tests {
             assert_eq!(1, parent_image_handler as usize);
             assert_eq!(2, device_path as usize);
             assert_eq!(5, source_size);
+            // SAFETY: Test mock - reading source buffer to verify image data for load_image_from_source.
             let source = unsafe { slice::from_raw_parts(source_buffer as *mut u8, source_size) };
             assert_eq!(&[1_u8, 2, 3, 4, 5], source);
             efi::Status::SUCCESS
@@ -3036,12 +3179,15 @@ mod tests {
                 return efi::Status::INVALID_PARAMETER;
             }
 
+            // SAFETY: Test mock - reading memory_map_size to check if buffer allocation is needed.
             let memory_map_size_value = unsafe { *memory_map_size };
             if memory_map_size_value == 0 {
+                // SAFETY: Test mock - writing required buffer size to simulate a BUFFER_TOO_SMALL response.
                 unsafe { ptr::write(memory_map_size, 0x400) };
                 return efi::Status::BUFFER_TOO_SMALL;
             }
 
+            // SAFETY: Test mock - writing memory map descriptor data to output parameters.
             unsafe {
                 (*memory_map).physical_start = 0xffffffffaaaabbbb;
                 *descriptor_size = mem::size_of::<efi::MemoryDescriptor>();
@@ -3130,6 +3276,7 @@ mod tests {
             assert_eq!(ptr::addr_of!(A) as usize, src as usize);
             assert_eq!(5 * mem::size_of::<i32>(), length);
         }
+        // SAFETY: Test code - B is a mutable static that we're taking a reference to for the test.
         boot_services.copy_mem(unsafe { &mut B }, &A);
     }
 
@@ -3151,6 +3298,7 @@ mod tests {
             assert_eq!(16, size);
             assert_eq!(8, value);
         }
+        // SAFETY: Test code - BUFFER is a mutable static that we're taking a reference to for the test.
         boot_services.set_mem(unsafe { &mut BUFFER }, 8);
     }
 
@@ -3165,6 +3313,7 @@ mod tests {
     fn test_get_next_monotonic_count() {
         let boot_services = boot_services!(get_next_monotonic_count = efi_get_next_monotonic_count);
         extern "efiapi" fn efi_get_next_monotonic_count(count: *mut u64) -> efi::Status {
+            // SAFETY: Test code - writing a known value to the output parameter passed by the caller.
             unsafe { ptr::write(count, 89) };
             efi::Status::SUCCESS
         }
@@ -3177,6 +3326,7 @@ mod tests {
     fn test_install_configuration_table_not_init() {
         let boot_services = boot_services!();
         let table = Box::new(());
+        // SAFETY: Test code - intentionally testing that the function panics when not initialized.
         _ = unsafe { boot_services.install_configuration_table(&efi::Guid::from_bytes(&[0; 16]), table) };
     }
 
@@ -3190,11 +3340,14 @@ mod tests {
         extern "efiapi" fn efi_install_configuration_table(guid: *mut efi::Guid, table: *mut c_void) -> efi::Status {
             assert_eq!(ptr::addr_of!(GUID) as usize, guid as usize);
             assert_eq!(ptr::addr_of!(TABLE) as usize, table as usize);
+            // SAFETY: Test code - reading static data for assertion verification.
             assert_eq!(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], unsafe { ptr::read(guid) }.as_bytes());
+            // SAFETY: Test code - reading static data for assertion verification.
             assert_eq!(10, unsafe { ptr::read(table as *mut i32) });
             efi::Status::SUCCESS
         }
 
+        // SAFETY: Test code - TABLE is a mutable static that we're taking a reference to for the test.
         unsafe { boot_services.install_configuration_table(&GUID, &mut TABLE) }.unwrap();
     }
 
@@ -3216,6 +3369,7 @@ mod tests {
             buffer_size: usize,
             crc: *mut u32,
         ) -> efi::Status {
+            // SAFETY: Test code - verifying and writing data for testing CRC calculation.
             unsafe {
                 assert_eq!(ptr::addr_of!(BUFFER) as usize, buffer_ptr as usize);
                 assert_eq!(BUFFER.len(), buffer_size);

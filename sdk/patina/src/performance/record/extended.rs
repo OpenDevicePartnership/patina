@@ -10,9 +10,9 @@
 use core::fmt::Debug;
 
 use r_efi::efi;
-use scroll::Pwrite;
 
 use super::PerformanceRecord;
+use crate::performance::error::Error;
 
 /// A performance string event record which includes a GUID.
 #[derive(Debug)]
@@ -52,11 +52,11 @@ impl PerformanceRecord for GuidEventRecord {
         Self::REVISION
     }
 
-    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error> {
-        buff.gwrite_with(self.progress_id, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.acpi_id, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.timestamp, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.guid.as_bytes().as_slice(), offset, ())?;
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), Error> {
+        write_u16_le(buff, offset, self.progress_id)?;
+        write_u32_le(buff, offset, self.acpi_id)?;
+        write_u64_le(buff, offset, self.timestamp)?;
+        write_bytes(buff, offset, self.guid.as_bytes())?;
         Ok(())
     }
 }
@@ -93,21 +93,6 @@ impl<'a> DynamicStringEventRecord<'a> {
     }
 }
 
-impl scroll::ctx::TryIntoCtx<scroll::Endian> for DynamicStringEventRecord<'_> {
-    type Error = scroll::Error;
-
-    fn try_into_ctx(self, dest: &mut [u8], ctx: scroll::Endian) -> Result<usize, Self::Error> {
-        let mut offset = 0;
-        dest.gwrite_with(self.progress_id, &mut offset, ctx)?;
-        dest.gwrite_with(self.acpi_id, &mut offset, ctx)?;
-        dest.gwrite_with(self.timestamp, &mut offset, ctx)?;
-        dest.gwrite_with(self.guid.as_bytes().as_slice(), &mut offset, ())?;
-        dest.gwrite_with(self.string.as_bytes(), &mut offset, ())?;
-        dest.gwrite_with(0_u8, &mut offset, ctx)?; // End of the string.
-        Ok(offset)
-    }
-}
-
 impl PerformanceRecord for DynamicStringEventRecord<'_> {
     fn record_type(&self) -> u16 {
         Self::TYPE
@@ -117,13 +102,13 @@ impl PerformanceRecord for DynamicStringEventRecord<'_> {
         Self::REVISION
     }
 
-    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error> {
-        buff.gwrite_with(self.progress_id, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.acpi_id, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.timestamp, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.guid.as_bytes().as_slice(), offset, ())?;
-        buff.gwrite_with(self.string.as_bytes(), offset, ())?;
-        buff.gwrite_with(0_u8, offset, scroll::NATIVE)?; // End of the string.
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), Error> {
+        write_u16_le(buff, offset, self.progress_id)?;
+        write_u32_le(buff, offset, self.acpi_id)?;
+        write_u64_le(buff, offset, self.timestamp)?;
+        write_bytes(buff, offset, self.guid.as_bytes())?;
+        write_bytes(buff, offset, self.string.as_bytes())?;
+        write_u8(buff, offset, 0)?; // terminator
         Ok(())
     }
 }
@@ -178,14 +163,14 @@ impl PerformanceRecord for DualGuidStringEventRecord<'_> {
         Self::REVISION
     }
 
-    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> core::result::Result<(), scroll::Error> {
-        buff.gwrite_with(self.progress_id, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.acpi_id, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.timestamp, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.guid_1.as_bytes().as_slice(), offset, ())?;
-        buff.gwrite_with(self.guid_2.as_bytes().as_slice(), offset, ())?;
-        buff.gwrite_with(self.string.as_bytes(), offset, ())?;
-        buff.gwrite_with(0_u8, offset, scroll::NATIVE)?; // End of the string.
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), Error> {
+        write_u16_le(buff, offset, self.progress_id)?;
+        write_u32_le(buff, offset, self.acpi_id)?;
+        write_u64_le(buff, offset, self.timestamp)?;
+        write_bytes(buff, offset, self.guid_1.as_bytes())?;
+        write_bytes(buff, offset, self.guid_2.as_bytes())?;
+        write_bytes(buff, offset, self.string.as_bytes())?;
+        write_u8(buff, offset, 0)?;
         Ok(())
     }
 }
@@ -230,12 +215,12 @@ impl PerformanceRecord for GuidQwordEventRecord {
         Self::REVISION
     }
 
-    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), scroll::Error> {
-        buff.gwrite_with(self.progress_id, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.acpi_id, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.timestamp, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.guid.as_bytes().as_slice(), offset, ())?;
-        buff.gwrite_with(self.qword, offset, scroll::NATIVE)?;
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), Error> {
+        write_u16_le(buff, offset, self.progress_id)?;
+        write_u32_le(buff, offset, self.acpi_id)?;
+        write_u64_le(buff, offset, self.timestamp)?;
+        write_bytes(buff, offset, self.guid.as_bytes())?;
+        write_u64_le(buff, offset, self.qword)?;
         Ok(())
     }
 }
@@ -282,14 +267,70 @@ impl PerformanceRecord for GuidQwordStringEventRecord<'_> {
         Self::REVISION
     }
 
-    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> core::result::Result<(), scroll::Error> {
-        buff.gwrite_with(self.progress_id, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.acpi_id, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.timestamp, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.guid.as_bytes().as_slice(), offset, ())?;
-        buff.gwrite_with(self.qword, offset, scroll::NATIVE)?;
-        buff.gwrite_with(self.string.as_bytes(), offset, ())?;
-        buff.gwrite_with(0_u8, offset, scroll::NATIVE)?; // End of the string.
+    fn write_data_into(&self, buff: &mut [u8], offset: &mut usize) -> Result<(), Error> {
+        write_u16_le(buff, offset, self.progress_id)?;
+        write_u32_le(buff, offset, self.acpi_id)?;
+        write_u64_le(buff, offset, self.timestamp)?;
+        write_bytes(buff, offset, self.guid.as_bytes())?;
+        write_u64_le(buff, offset, self.qword)?;
+        write_bytes(buff, offset, self.string.as_bytes())?;
+        write_u8(buff, offset, 0)?;
         Ok(())
     }
+}
+
+trait IntoLeBytes {
+    type Bytes: AsRef<[u8]>;
+    fn to_le_bytes(self) -> Self::Bytes;
+}
+
+macro_rules! impl_into_le_bytes {
+    ($t:ty) => {
+        impl IntoLeBytes for $t {
+            type Bytes = [u8; core::mem::size_of::<$t>()];
+            fn to_le_bytes(self) -> Self::Bytes {
+                <$t>::to_le_bytes(self)
+            }
+        }
+    };
+}
+
+impl_into_le_bytes!(u8);
+impl_into_le_bytes!(u16);
+impl_into_le_bytes!(u32);
+impl_into_le_bytes!(u64);
+
+fn ensure_space(buff: &[u8], offset: usize, needed: usize) -> Result<(), Error> {
+    if offset + needed > buff.len() {
+        return Err(Error::Serialization);
+    }
+    Ok(())
+}
+
+fn write_bytes(dest: &mut [u8], offset: &mut usize, src: &[u8]) -> Result<(), Error> {
+    ensure_space(dest, *offset, src.len())?;
+    dest[*offset..*offset + src.len()].copy_from_slice(src);
+    *offset += src.len();
+    Ok(())
+}
+
+fn write_uint<T: IntoLeBytes>(dest: &mut [u8], offset: &mut usize, v: T) -> Result<(), Error> {
+    let bytes = v.to_le_bytes();
+    write_bytes(dest, offset, bytes.as_ref())
+}
+
+fn write_u8(dest: &mut [u8], offset: &mut usize, v: u8) -> Result<(), Error> {
+    write_uint(dest, offset, v)
+}
+
+fn write_u16_le(dest: &mut [u8], offset: &mut usize, v: u16) -> Result<(), Error> {
+    write_uint(dest, offset, v)
+}
+
+fn write_u32_le(dest: &mut [u8], offset: &mut usize, v: u32) -> Result<(), Error> {
+    write_uint(dest, offset, v)
+}
+
+fn write_u64_le(dest: &mut [u8], offset: &mut usize, v: u64) -> Result<(), Error> {
+    write_uint(dest, offset, v)
 }

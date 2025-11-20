@@ -140,6 +140,7 @@
 //!
 
 #[cfg(test)]
+#[cfg(target_arch = "x86_64")] // Issue #1071
 mod tests {
     use crate::{
         allocator::{get_memory_map, init_memory_support, reset_allocators},

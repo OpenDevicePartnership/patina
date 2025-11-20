@@ -66,51 +66,52 @@ impl InterruptsAarch64 {
 
 impl InterruptManager for InterruptsAarch64 {}
 
+#[coverage(off)]
 fn enable_fiq() {
-    #[cfg(all(not(test), target_arch = "aarch64"))]
-    {
-        write_sysreg!(reg daifclr, imm 0x01, "isb sy");
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        unimplemented!()
+    cfg_if::cfg_if! {
+        if #[cfg(all(not(test), target_arch = "aarch64"))]  {
+            write_sysreg!(reg daifclr, imm 0x01, "isb sy");
+        } else {
+            unimplemented!()
+        }
     }
 }
 
+#[coverage(off)]
 fn disable_fiq() {
-    #[cfg(all(not(test), target_arch = "aarch64"))]
-    {
-        write_sysreg!(reg daifset, imm 0x01, "isb sy");
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        unimplemented!()
+    cfg_if::cfg_if! {
+        if #[cfg(all(not(test), target_arch = "aarch64"))]  {
+            write_sysreg!(reg daifset, imm 0x01, "isb sy");
+        } else {
+            unimplemented!()
+        }
     }
 }
 
+#[coverage(off)]
 fn get_fiq_state() -> Result<bool, EfiError> {
-    #[cfg(all(not(test), target_arch = "aarch64"))]
-    {
-        let daif = read_sysreg!(daif);
-        Ok(daif & 0x40 == 0)
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        Err(EfiError::Unsupported)
+    cfg_if::cfg_if! {
+        if #[cfg(all(not(test), target_arch = "aarch64"))]  {
+            let daif = read_sysreg!(daif);
+            Ok(daif & 0x40 == 0)
+        } else {
+            Err(EfiError::Unsupported)
+        }
     }
 }
 
+#[coverage(off)]
 fn enable_async_abort() {
-    #[cfg(all(not(test), target_arch = "aarch64"))]
-    {
-        write_sysreg!(reg daifclr, imm 0x04, "isb sy");
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        unimplemented!()
+    cfg_if::cfg_if! {
+        if #[cfg(all(not(test), target_arch = "aarch64"))]  {
+            write_sysreg!(reg daifclr, imm 0x04, "isb sy");
+        } else {
+            unimplemented!()
+        }
     }
 }
 
+#[coverage(off)]
 fn initialize_exception() -> Result<(), EfiError> {
     // Set the stack pointer for EL0 to be used for synchronous exceptions
     #[cfg(all(not(test), target_arch = "aarch64"))]
@@ -120,8 +121,8 @@ fn initialize_exception() -> Result<(), EfiError> {
         sp_el0_reg &= !0x0F;
         write_sysreg!(reg sp_el0, sp_el0_reg);
 
-        let mut hcr = read_sysreg!(hcr_el2) as u64;
-        hcr = hcr as u64 | 1 << 27; // Enable TGE
+        let mut hcr = read_sysreg!(hcr_el2);
+        hcr |= 1 << 27; // Enable TGE
         write_sysreg!(reg hcr_el2, hcr);
     }
 
@@ -195,9 +196,9 @@ extern "efiapi" fn synchronous_exception_handler(_exception_type: isize, context
     log::debug!("Full Context: {aarch64_context:#X?}");
 
     log::error!("Dumping Exception Stack Trace:");
-    // SAFETY: As before, we don't have any choice. The stacktrace module will do its best to not cause a
-    // recursive exception.
     let stack_frame = StackFrame { pc: aarch64_context.elr, sp: aarch64_context.sp, fp: aarch64_context.fp };
+    // SAFETY: Called during exception handling with CPU context registers. The exception context
+    // is considered valid to dump at this time.
     if let Err(err) = unsafe { StackTrace::dump_with(stack_frame) } {
         log::error!("StackTrace: {err}");
     }
@@ -206,10 +207,17 @@ extern "efiapi" fn synchronous_exception_handler(_exception_type: isize, context
 }
 
 fn dump_pte(far: u64) {
-    #[cfg(all(not(test), target_arch = "aarch64"))]
-    let ttbr0_el2 = read_sysreg!(ttbr0_el2);
-    #[cfg(not(target_arch = "aarch64"))]
-    let ttbr0_el2 = 0;
+    // Needed because attributes on expressions are not stable.
+    // https://github.com/rust-lang/rust/issues/15701
+    #[allow(clippy::needless_late_init)]
+    let ttbr0_el2;
+    cfg_if::cfg_if! {
+        if #[cfg(all(not(test), target_arch = "aarch64"))]  {
+            ttbr0_el2 = read_sysreg!(ttbr0_el2);
+        } else {
+            ttbr0_el2 = 0u64;
+        }
+    }
 
     // SAFETY: TTBR0 must be valid as it is the current page table base.
     if let Ok(pt) = unsafe {

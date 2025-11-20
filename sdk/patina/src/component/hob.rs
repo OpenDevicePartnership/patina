@@ -214,6 +214,9 @@ impl<T: FromHob + 'static> Deref for Hob<'_, T> {
     }
 }
 
+// SAFETY: The Hob<T> parameter validates HOB availability and provides immutable access.
+// The FromHob trait ensures T can be safely constructed from HOB data.
+// UnsafeStorageCell provides controlled access to storage under Param protocol.
 unsafe impl<T: FromHob + 'static> Param for Hob<'_, T> {
     type State = usize;
     type Item<'storage, 'state> = Hob<'storage, T>;
@@ -222,6 +225,8 @@ unsafe impl<T: FromHob + 'static> Param for Hob<'_, T> {
         lookup_id: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
+        // SAFETY: lookup_id was validated to be a valid HOB index by validate().
+        // UnsafeStorageCell provides exclusive access to storage under Param protocol.
         Hob::from(unsafe { storage.storage().get_raw_hob(*lookup_id) })
     }
 
@@ -378,6 +383,7 @@ mod tests {
         MyStruct::register(&[0], &mut storage);
         assert!(Hob::<MyStruct>::validate(&0, UnsafeStorageCell::from(&storage)));
 
+        // SAFETY: Test code - the Hob parameter is available in storage.
         let x = unsafe { Hob::<MyStruct>::get_param(&0, UnsafeStorageCell::from(&storage)) };
 
         assert!(my_component(MyComponent, x).is_err_and(|e| e == EfiError::NotReady));

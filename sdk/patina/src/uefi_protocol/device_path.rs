@@ -170,6 +170,8 @@ impl DevicePath {
             return Err("Null pointer provided");
         }
 
+        // SAFETY: The caller contract requires that the buffer pointer is valid and points to at least
+        // Header::size_of_header() bytes.
         let mut buffer = unsafe { core::slice::from_raw_parts(buffer, Header::size_of_header()) };
         let mut offset = 0;
         loop {
@@ -182,9 +184,14 @@ impl DevicePath {
 
             let new_length = buffer.len() + header.length;
             offset += header.length;
+            // SAFETY: The buffer slice is extended based on the length field from the device path header.
+            // The caller guarantees that the buffer points to valid device path data for the entire lifetime.
             buffer = unsafe { core::slice::from_raw_parts(buffer.as_ptr(), new_length) };
         }
 
+        // SAFETY: The device path structure was validated by iterating through all nodes and finding an end node.
+        // The buffer is properly sized and contains a valid device path. The cast is considered safe due to
+        // DevicePath's repr(transparent).
         let device_path = unsafe { &*(buffer as *const [u8] as *const DevicePath) };
         Ok(device_path)
     }
@@ -219,6 +226,9 @@ impl DevicePath {
             idx += header.length;
         }
         let end_buffer = &self.buffer[idx..];
+        // SAFETY: The slice `end_buffer` is a valid trailing portion of the device path that contains
+        // the last n nodes including the end node. DevicePath is repr(transparent) over [u8], so this cast is
+        // considered valid.
         unsafe { &*(end_buffer as *const [u8] as *const DevicePath) }
     }
 
@@ -466,6 +476,7 @@ mod tests {
         device_path_buf.append(EndEntire);
         let buffer_ptr = device_path_buf.buffer.as_slice().as_ptr();
 
+        // SAFETY: Test code - creating DevicePath from a valid buffer pointer for testing.
         let device_path = unsafe { DevicePath::try_from_ptr(buffer_ptr) }.unwrap();
 
         assert_eq!(device_path_buf.as_ref(), device_path);

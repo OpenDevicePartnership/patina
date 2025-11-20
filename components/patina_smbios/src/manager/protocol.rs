@@ -49,6 +49,8 @@ pub(super) struct SmbiosProtocolInternal {
     pub(super) header_buffer: core::cell::UnsafeCell<SmbiosTableHeader>,
 }
 
+// SAFETY: SmbiosProtocol implements the SMBIOS protocol interface. The struct layout
+// must match the SMBIOS protocol interface with function pointers in the correct order.
 unsafe impl ProtocolInterface for SmbiosProtocol {
     const PROTOCOL_GUID: efi::Guid =
         efi::Guid::from_fields(0x03583ff6, 0xcb36, 0x4940, 0x94, 0x7e, &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7]);
@@ -207,6 +209,8 @@ impl SmbiosProtocol {
         let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
         let manager = internal.manager.lock();
 
+        // SAFETY: The pointers are checked for being null above. They are expected to point
+        // to valid data objects due to the expectations of the protocol interface.
         unsafe {
             let handle = *smbios_handle;
             let str_num = *string_number;
@@ -258,6 +262,9 @@ impl SmbiosProtocol {
         let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
         let manager = internal.manager.lock();
 
+        // SAFETY: The pointers are checked for being null above. They are expected to point
+        // to valid data objects due to the expectations of the protocol interface. The type_filter
+        // is optionally dereferenced after a null check.
         unsafe {
             let handle = *smbios_handle;
             let type_filter = if record_type.is_null() { None } else { Some(*record_type) };

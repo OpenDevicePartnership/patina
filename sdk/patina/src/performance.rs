@@ -15,7 +15,5 @@ pub mod measurement;
 pub mod record;
 pub mod table;
 
-pub mod _smm;
-
 // Re-export the Measurement enum for easier access.
 pub use measurement::Measurement;

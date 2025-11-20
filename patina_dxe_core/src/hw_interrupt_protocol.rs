@@ -1,19 +1,18 @@
-use crate::{GicBases, tpl_lock::TplMutex};
+use crate::{GicBases, tpl_mutex::TplMutex};
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::ffi::c_void;
 use patina_internal_cpu::interrupts::{
-    ExceptionContext, InterruptHandler, InterruptManager,
-    gic_manager::{AArch64InterruptInitializer, gic_initialize},
+    ExceptionContext, InterruptHandler, InterruptManager, gic_manager::AArch64InterruptInitializer,
 };
 use r_efi::efi;
 
 use arm_gic::{
     Trigger,
-    gicv3::{GicV3, InterruptGroup},
+    gicv3::{GicCpuInterface, InterruptGroup},
 };
 use patina::{
     boot_services::{BootServices, StandardBootServices},
-    component::{IntoComponent, params::Config, service::Service},
+    component::{IntoComponent, service::Service},
     guids::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2},
     uefi_protocol::ProtocolInterface,
 };
@@ -377,12 +376,12 @@ impl From<HardwareInterrupt2TriggerType> for Trigger {
 
 struct HwInterruptProtocolHandler {
     handlers: TplMutex<Vec<Option<HwInterruptHandler>>>,
-    aarch64_int: TplMutex<AArch64InterruptInitializer<'static>>,
+    aarch64_int: TplMutex<AArch64InterruptInitializer>,
 }
 
 impl InterruptHandler for HwInterruptProtocolHandler {
     fn handle_interrupt(&'static self, exception_type: usize, context: &mut ExceptionContext) {
-        let int_id = GicV3::get_and_acknowledge_interrupt(InterruptGroup::Group1);
+        let int_id = GicCpuInterface::get_and_acknowledge_interrupt(InterruptGroup::Group1);
         if int_id.is_none() {
             // The special interrupt do not need to be acknowledged
             return;
@@ -406,7 +405,7 @@ impl InterruptHandler for HwInterruptProtocolHandler {
         if let Some(handler) = self.handlers.lock()[raw_value as usize] {
             handler(raw_value as u64, context);
         } else {
-            GicV3::end_interrupt(int_id, InterruptGroup::Group1);
+            GicCpuInterface::end_interrupt(int_id, InterruptGroup::Group1);
             log::error!("Unhandled Exception! 0x{:x}", exception_type);
             log::error!("Exception Context: {:#x?}", context);
             panic! {"Unhandled Exception! 0x{:x}", exception_type};
@@ -415,7 +414,7 @@ impl InterruptHandler for HwInterruptProtocolHandler {
 }
 
 impl HwInterruptProtocolHandler {
-    pub fn new(handlers: Vec<Option<HwInterruptHandler>>, aarch64_int: AArch64InterruptInitializer<'static>) -> Self {
+    pub fn new(handlers: Vec<Option<HwInterruptHandler>>, aarch64_int: AArch64InterruptInitializer) -> Self {
         Self {
             handlers: TplMutex::new(efi::TPL_HIGH_LEVEL, handlers, "Hardware Interrupt Lock"),
             aarch64_int: TplMutex::new(efi::TPL_HIGH_LEVEL, aarch64_int, "AArch64 GIC Lock"),
@@ -452,27 +451,31 @@ impl HwInterruptProtocolHandler {
     }
 }
 
-#[derive(IntoComponent, Default)]
+#[derive(IntoComponent)]
 /// A component to install the two hardware interrupt protocols.
-pub(crate) struct HwInterruptProtocolInstaller;
+pub(crate) struct HwInterruptProtocolInstaller(GicBases);
 
 impl HwInterruptProtocolInstaller {
+    /// Creates a new `HwInterruptProtocolInstaller` instance.
+    pub fn new(gic_bases: GicBases) -> Self {
+        Self(gic_bases)
+    }
+
     fn entry_point(
         self,
         interrupt_manager: Service<dyn InterruptManager>,
-        gic_bases: Config<GicBases>,
         boot_services: StandardBootServices,
     ) -> patina::error::Result<()> {
-        log::info!("GICv3 initializing {:x?}", (gic_bases.0, gic_bases.1));
-        let gic_v3 = unsafe {
-            gic_initialize(gic_bases.0 as _, gic_bases.1 as _)
-                .inspect_err(|_| log::error!("Failed to initialize GICv3"))?
+        log::info!("GIC initializing {:x?}", (self.0.0, self.0.1));
+        // SAFETY: The invariants of the `GicBases` struct upholds the safety requirements for this function.
+        let aarch64_int = unsafe {
+            AArch64InterruptInitializer::new(self.0.0 as _, self.0.1 as _)
+                .inspect_err(|_| log::error!("Failed to initialize GIC"))?
         };
-        log::info!("GICv3 initialized");
+        log::info!("GIC initialized");
 
-        let max_int = gic_v3.typer().num_spis();
+        let max_int = aarch64_int.max_int();
         let handlers = vec![None; max_int as usize];
-        let aarch64_int = AArch64InterruptInitializer::new(gic_v3);
 
         // Prepare context for the v1 interrupt handler
         let hw_int_protocol_handler = Box::leak(Box::new(HwInterruptProtocolHandler::new(handlers, aarch64_int)));

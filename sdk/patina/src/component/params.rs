@@ -243,6 +243,7 @@ macro_rules! impl_param_function {
             type In = In;
             type Out = Out;
             fn run(&mut self, input: &mut Option<In>, param_value: ParamItem<($($param,)*)>) -> Out {
+                #[allow(clippy::too_many_arguments)]
                 fn call_inner<In, Out, $($param,)*>(
                     mut f: impl FnMut(In, $($param),*) -> Out,
                     input: In,
@@ -270,6 +271,7 @@ macro_rules! impl_param_function {
             type In = In;
             type Out = Out;
             fn run(&mut self, input: &mut Option<In>, param_value: ParamItem<($($param,)*)>) -> Out {
+                #[allow(clippy::too_many_arguments)]
                 fn call_inner<In, Out, $($param,)*>(
                     mut f: impl FnMut(&mut In, $($param),*) -> Out,
                     input: &mut In,
@@ -297,6 +299,7 @@ macro_rules! impl_param_function {
             type In = In;
             type Out = Out;
             fn run(&mut self, input: &mut Option<In>, param_value: ParamItem<($($param,)*)>) -> Out {
+                #[allow(clippy::too_many_arguments)]
                 fn call_inner<In, Out, $($param,)*>(
                     mut f: impl FnMut(&In, $($param),*) -> Out,
                     input: &In,
@@ -317,7 +320,10 @@ impl_param_function!(T1, T2);
 impl_param_function!(T1, T2, T3);
 impl_param_function!(T1, T2, T3, T4);
 impl_param_function!(T1, T2, T3, T4, T5);
+impl_param_function!(T1, T2, T3, T4, T5, T6);
 
+// SAFETY: Option<P> makes parameter P optional. Always validates as available (returns Some/None based
+// on P::validate). Safe delegation to P::get_param when P validates successfully.
 unsafe impl<P: Param> Param for Option<P> {
     type State = P::State;
     type Item<'storage, 'state> = Option<P::Item<'storage, 'state>>;
@@ -327,6 +333,7 @@ unsafe impl<P: Param> Param for Option<P> {
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
         match P::validate(state, storage) {
+            // SAFETY: P::validate returned true, so P::get_param is safe to call with this state and storage.
             true => Some(unsafe { P::get_param(state, storage) }),
             false => None,
         }
@@ -392,6 +399,8 @@ impl<'c, T: Default + 'static> From<Ref<'c, ConfigRaw>> for Config<'c, T> {
     }
 }
 
+// SAFETY: Config<T> parameter provides immutable access to locked configuration values.
+// State tracks the config ID. Validates that config is locked before allowing access.
 unsafe impl<T: Default + 'static> Param for Config<'_, T> {
     /// The id of the Config, so we can request it directly without converting T->id.
     type State = usize;
@@ -401,6 +410,8 @@ unsafe impl<T: Default + 'static> Param for Config<'_, T> {
         lookup_id: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
+        // SAFETY: lookup_id is the config ID validated by init_state and validate.
+        // UnsafeStorageCell provides exclusive access to storage under Param protocol.
         Config::from(unsafe { storage.storage().get_raw_config(*lookup_id) })
     }
 
@@ -493,6 +504,8 @@ impl<'c, T: Default + 'static> From<RefMut<'c, ConfigRaw>> for ConfigMut<'c, T> 
     }
 }
 
+// SAFETY: ConfigMut<T> parameter provides mutable access to unlocked configuration values.
+// State tracks the config ID. Validates that config is unlocked before allowing mutable access.
 unsafe impl<T: Default + 'static> Param for ConfigMut<'_, T> {
     /// The id of the Config, so we can request it directly without converting T->id.
     type State = usize;
@@ -502,6 +515,8 @@ unsafe impl<T: Default + 'static> Param for ConfigMut<'_, T> {
         lookup_id: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
+        // SAFETY: lookup_id is the config ID validated by init_state and validate.
+        // UnsafeStorageCell provides exclusive mutable access to storage under Param protocol.
         ConfigMut::from(unsafe { storage.storage().get_raw_config_mut(*lookup_id) })
     }
 
@@ -607,6 +622,8 @@ impl Commands<'_> {
     }
 }
 
+// SAFETY: Commands parameter provides access to the deferred command queue.
+// Deferred queue access is tracked in MetaData to prevent conflicts.
 unsafe impl Param for Commands<'_> {
     type State = ();
     type Item<'storage, 'state> = Commands<'storage>;
@@ -616,6 +633,8 @@ unsafe impl Param for Commands<'_> {
         _state: &'state Self::State,
         storage: UnsafeStorageCell<'storage>,
     ) -> Self::Item<'storage, 'state> {
+        // SAFETY: Deferred queue access is properly registered with the component's metadata
+        // via init_state. UnsafeStorageCell provides exclusive mutable access to storage.
         Commands { queue: unsafe { storage.storage_mut().deferred() } }
     }
 
@@ -633,6 +652,8 @@ unsafe impl Param for Commands<'_> {
     }
 }
 
+// SAFETY: StandardBootServices parameter provides access to boot services.
+// Access is validated and no mutation tracking needed for immutable service access.
 unsafe impl Param for StandardBootServices {
     type State = ();
     type Item<'storage, 'state> = Self;
@@ -641,16 +662,21 @@ unsafe impl Param for StandardBootServices {
         _state: &'state Self::State,
         storage: UnsafeStorageCell<'_>,
     ) -> Self::Item<'static, 'state> {
+        // SAFETY: Boot services are immutably borrowed from storage.
+        // Clone creates a new service handle without violating borrowing rules.
         StandardBootServices::clone(unsafe { storage.storage().boot_services() })
     }
 
     fn validate(_state: &Self::State, storage: UnsafeStorageCell) -> bool {
+        // Safety: Storage access is valid - UnsafeStorageCell ensures proper synchronization.
         unsafe { storage.storage() }.boot_services().is_init()
     }
 
     fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Self::State {}
 }
 
+// SAFETY: StandardRuntimeServices parameter provides access to runtime services.
+// Access is validated and no mutation tracking needed for immutable service access.
 unsafe impl Param for StandardRuntimeServices {
     type State = ();
     type Item<'storage, 'state> = Self;
@@ -659,10 +685,13 @@ unsafe impl Param for StandardRuntimeServices {
         _state: &'state Self::State,
         storage: UnsafeStorageCell<'_>,
     ) -> Self::Item<'static, 'state> {
+        // SAFETY: Runtime services are immutably borrowed from storage.
+        // Clone creates a new service handle without violating borrowing rules.
         StandardRuntimeServices::clone(unsafe { storage.storage().runtime_services() })
     }
 
     fn validate(_state: &Self::State, storage: UnsafeStorageCell) -> bool {
+        // Safety: Storage access is valid - UnsafeStorageCell ensures proper synchronization.
         unsafe { storage.storage() }.runtime_services().is_init()
     }
 
@@ -673,6 +702,8 @@ macro_rules! impl_component_param_tuple {
     ($($param: ident), *) => {
         #[allow(non_snake_case)]
         #[allow(clippy::unused_unit)]
+        // SAFETY: Tuple parameter delegates to each component parameter's Param impl.
+        // Each parameter's safety guarantees are preserved through delegation.
         unsafe impl<$($param: Param),*> Param for ($($param,)*) {
             type State = ($($param::State,)*);
             type Item<'storage, 'state> = ($($param::Item::<'storage, 'state>,)*);
@@ -681,6 +712,8 @@ macro_rules! impl_component_param_tuple {
                 let ($($param,)*) = state;
                 #[allow(unused_unsafe)]
                 ($(
+                    // SAFETY: Each parameter's get_param is called with its validated state.
+                    // Caller ensures state is validated and storage access is exclusive.
                     unsafe { $param::get_param($param, _storage) },
                 )*)
             }
@@ -714,6 +747,7 @@ impl_component_param_tuple!(T1, T2);
 impl_component_param_tuple!(T1, T2, T3);
 impl_component_param_tuple!(T1, T2, T3, T4);
 impl_component_param_tuple!(T1, T2, T3, T4, T5);
+impl_component_param_tuple!(T1, T2, T3, T4, T5, T6);
 
 #[cfg(test)]
 #[coverage(off)]
@@ -903,6 +937,7 @@ mod tests {
         assert!(Config::<i32>::try_validate(&id, (&storage).into()).is_ok());
 
         let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
+        // SAFETY: Test code - Config parameter is available in storage.
         assert_eq!(0_i32, unsafe { *Config::<i32>::get_param(&id, cell_storage) });
     }
 
@@ -943,6 +978,7 @@ mod tests {
         assert!(ConfigMut::<i32>::try_validate(&id, (&storage).into()).is_ok());
 
         let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
+        // SAFETY: Test code - ConfigMut parameter is available in storage.
         assert_eq!(0_i32, unsafe { *ConfigMut::<i32>::get_param(&id, cell_storage) });
     }
 
@@ -984,6 +1020,7 @@ mod tests {
         assert!(<&Storage as Param>::try_validate(&(), (&storage).into()).is_ok());
 
         let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
+        // SAFETY: Test code - Storage parameter has been validated.
         // does not panic
         let _ = unsafe { <&Storage as Param>::get_param(&(), cell_storage) };
     }
@@ -998,6 +1035,7 @@ mod tests {
         assert!(<&mut Storage as Param>::try_validate(&(), (&storage).into()).is_ok());
 
         let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
+        // SAFETY: Test code - Storage parameter has been validated.
         // does not panic
         let _ = unsafe { <&mut Storage as Param>::get_param(&(), cell_storage) };
     }
@@ -1024,6 +1062,8 @@ mod tests {
         #[allow(invalid_value)]
         let efi_bs = core::mem::MaybeUninit::<r_efi::efi::BootServices>::zeroed();
 
+        // SAFETY: Test code - Creating StandardBootServices from a zeroed BootServices struct for testing.
+        // This is acceptable in test code as we're only checking parameter validation logic.
         let bs = unsafe { StandardBootServices::new(&*efi_bs.as_ptr()) };
 
         storage.set_boot_services(bs);
@@ -1032,6 +1072,7 @@ mod tests {
         assert!(<StandardBootServices as Param>::try_validate(&(), (&storage).into()).is_ok());
 
         let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
+        // SAFETY: Test code - StandardBootServices parameter has been validated.
         // does not panic
         let _ = unsafe { <StandardBootServices as Param>::get_param(&(), cell_storage) };
     }
@@ -1058,6 +1099,8 @@ mod tests {
         #[allow(invalid_value)]
         let efi_rt = core::mem::MaybeUninit::<r_efi::efi::RuntimeServices>::zeroed();
 
+        // SAFETY: Test code - Creating StandardRuntimeServices from a zeroed RuntimeServices struct for testing.
+        // This is acceptable in test code as we're only checking parameter validation logic.
         let rt = unsafe { StandardRuntimeServices::new(&*efi_rt.as_ptr()) };
 
         storage.set_runtime_services(rt);
@@ -1066,6 +1109,7 @@ mod tests {
         assert!(<StandardRuntimeServices as Param>::try_validate(&(), (&storage).into()).is_ok());
 
         let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
+        // SAFETY: Test code - StandardRuntimeServices parameter has been validated.
         // does not panic
         let _ = unsafe { <StandardRuntimeServices as Param>::get_param(&(), cell_storage) };
     }
@@ -1077,6 +1121,7 @@ mod tests {
 
         <Option<StandardBootServices> as Param>::init_state(&mut storage, &mut mock_meadata);
         assert!(<Option<StandardBootServices> as Param>::try_validate(&(), (&storage).into()).is_ok());
+        // SAFETY: Test code - Option<StandardBootServices> parameter has been validated.
         assert!(unsafe { <Option<StandardBootServices> as Param>::get_param(&(), (&storage).into()).is_none() });
     }
 
@@ -1088,6 +1133,7 @@ mod tests {
 
         let state = <Option<Config<u32>> as Param>::init_state(&mut storage, &mut mock_metadata);
         assert!(<Option<Config<u32>> as Param>::try_validate(&state, (&storage).into()).is_ok());
+        // SAFETY: Test code - Option<Config<u32>> parameter has been validated.
         assert!(unsafe {
             <Option<Config<u32>> as Param>::get_param(&state, (&storage).into()).is_some_and(|v| *v == 42)
         });
@@ -1117,12 +1163,14 @@ mod tests {
             assert!(<Commands as Param>::try_validate(&(), (&storage).into()).is_ok());
 
             let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
+            // SAFETY: Test code - Commands parameter has been validated.
             let mut commands = unsafe { <Commands as Param>::get_param(&(), cell_storage) };
             assert!(commands.is_empty());
             commands.add_config(42i32);
         }
 
         let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
+        // SAFETY: Test code - Commands parameter has been validated and storage is mutable.
         let commands = unsafe { <Commands as Param>::get_param(&(), cell_storage) };
         assert!(!commands.is_empty());
     }

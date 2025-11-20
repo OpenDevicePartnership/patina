@@ -1103,32 +1103,39 @@ impl<'a> HobList<'a> {
         let mut hob_header: *const header::Hob = hob_list as *const header::Hob;
 
         loop {
+            // Safety: hob_header points to valid HOB data provided by firmware. Each HOB has a valid header.
             let current_header = unsafe { hob_header.cast::<header::Hob>().as_ref().expect(NOT_NULL) };
             match current_header.r#type {
                 HANDOFF => {
                     assert_hob_size::<PhaseHandoffInformationTable>(current_header);
+                    // Safety: HOB type is HANDOFF and size was validated. Cast to specific HOB type is valid.
                     let phit_hob =
                         unsafe { hob_header.cast::<PhaseHandoffInformationTable>().as_ref().expect(NOT_NULL) };
                     self.0.push(Hob::Handoff(phit_hob));
                 }
                 MEMORY_ALLOCATION => {
                     if current_header.length == mem::size_of::<MemoryAllocationModule>() as u16 {
+                        // Safety: HOB type is MEMORY_ALLOCATION with correct size for Module variant.
                         let mem_alloc_hob =
                             unsafe { hob_header.cast::<MemoryAllocationModule>().as_ref().expect(NOT_NULL) };
                         self.0.push(Hob::MemoryAllocationModule(mem_alloc_hob));
                     } else {
                         assert_hob_size::<MemoryAllocation>(current_header);
+                        // Safety: HOB type is MEMORY_ALLOCATION and size was validated.
                         let mem_alloc_hob = unsafe { hob_header.cast::<MemoryAllocation>().as_ref().expect(NOT_NULL) };
                         self.0.push(Hob::MemoryAllocation(mem_alloc_hob));
                     }
                 }
                 RESOURCE_DESCRIPTOR => {
                     assert_hob_size::<ResourceDescriptor>(current_header);
+                    // Safety: HOB type is RESOURCE_DESCRIPTOR and size was validated.
                     let resource_desc_hob =
                         unsafe { hob_header.cast::<ResourceDescriptor>().as_ref().expect(NOT_NULL) };
                     self.0.push(Hob::ResourceDescriptor(resource_desc_hob));
                 }
                 GUID_EXTENSION => {
+                    // Safety: HOB type is GUID_EXTENSION. GuidHob header is valid, and data follows immediately after.
+                    // Data length is calculated from HOB length minus header size. Pointer arithmetic is within HOB bounds.
                     let (guid_hob, data) = unsafe {
                         let hob = hob_header.cast::<GuidHob>().as_ref().expect(NOT_NULL);
                         let data_ptr = hob_header.byte_add(mem::size_of::<GuidHob>()) as *mut u8;
@@ -1139,31 +1146,37 @@ impl<'a> HobList<'a> {
                 }
                 FV => {
                     assert_hob_size::<FirmwareVolume>(current_header);
+                    // Safety: HOB type is FV and size was validated.
                     let fv_hob = unsafe { hob_header.cast::<FirmwareVolume>().as_ref().expect(NOT_NULL) };
                     self.0.push(Hob::FirmwareVolume(fv_hob));
                 }
                 FV2 => {
                     assert_hob_size::<FirmwareVolume2>(current_header);
+                    // Safety: HOB type is FV2 and size was validated.
                     let fv2_hob = unsafe { hob_header.cast::<FirmwareVolume2>().as_ref().expect(NOT_NULL) };
                     self.0.push(Hob::FirmwareVolume2(fv2_hob));
                 }
                 FV3 => {
                     assert_hob_size::<FirmwareVolume3>(current_header);
+                    // Safety: HOB type is FV3 and size was validated.
                     let fv3_hob = unsafe { hob_header.cast::<FirmwareVolume3>().as_ref().expect(NOT_NULL) };
                     self.0.push(Hob::FirmwareVolume3(fv3_hob));
                 }
                 CPU => {
                     assert_hob_size::<Cpu>(current_header);
+                    // Safety: HOB type is CPU and size was validated.
                     let cpu_hob = unsafe { hob_header.cast::<Cpu>().as_ref().expect(NOT_NULL) };
                     self.0.push(Hob::Cpu(cpu_hob));
                 }
                 UEFI_CAPSULE => {
                     assert_hob_size::<Capsule>(current_header);
+                    // Safety: HOB type is UEFI_CAPSULE and size was validated.
                     let capsule_hob = unsafe { hob_header.cast::<Capsule>().as_ref().expect(NOT_NULL) };
                     self.0.push(Hob::Capsule(capsule_hob));
                 }
                 RESOURCE_DESCRIPTOR2 => {
                     assert_hob_size::<ResourceDescriptorV2>(current_header);
+                    // Safety: HOB type is RESOURCE_DESCRIPTOR2 and size was validated.
                     let resource_desc_hob =
                         unsafe { hob_header.cast::<ResourceDescriptorV2>().as_ref().expect(NOT_NULL) };
                     self.0.push(Hob::ResourceDescriptorV2(resource_desc_hob));
@@ -1439,7 +1452,10 @@ impl<'a> Iterator for HobIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         const NOT_NULL: &str = "Ptr should not be NULL";
+        // Safety: hob_ptr points to valid HOB data. The iterator maintains the pointer through the HOB chain.
         let hob_header = unsafe { *(self.hob_ptr) };
+        // Safety: HOB type determines the specific HOB structure. Each cast is to the appropriate type based
+        // on the HOB header type field. as_ref() converts to a reference with the iterator's lifetime.
         let hob = unsafe {
             match hob_header.r#type {
                 HANDOFF => {
@@ -1711,6 +1727,7 @@ mod tests {
         let mut c_array: Vec<u8> = Vec::with_capacity(size);
 
         for hob in hob_list.iter() {
+            // SAFETY: Test code - creating a slice from HOB pointer for serialization.
             let slice = unsafe { from_raw_parts(hob.as_ptr(), hob.size()) };
             c_array.extend_from_slice(slice);
         }
@@ -2004,6 +2021,7 @@ mod tests {
 
         let (c_array_hoblist, length) = to_c_array(&hoblist);
 
+        // SAFETY: Test code - creating a reference from C array pointer for HOB testing.
         let hob = Hob::ResourceDescriptor(unsafe {
             (c_array_hoblist as *const hob::ResourceDescriptor).as_ref::<'static>().unwrap()
         });

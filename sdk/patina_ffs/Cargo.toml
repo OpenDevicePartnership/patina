@@ -8,6 +8,9 @@ edition.workspace = true
 readme = "README.md"
 description = "Support for Firmware File System as described in the UEFI Platform Initialization Specification."
 
+[lints]
+workspace = true
+
 [dependencies]
 patina = {workspace = true}
 r-efi = {workspace = true}

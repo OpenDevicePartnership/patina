@@ -84,6 +84,8 @@ where
             return Ok(false);
         }
 
+        // SAFETY: Func::Param::try_validate just succeeded, so param_state is valid
+        // and storage contains all necessary data for this parameter type.
         let param_value = unsafe { Func::Param::get_param(param_state, storage) };
 
         debug_assert!(

@@ -47,10 +47,10 @@ while still guaranteeing that the no access to the lock will be attempted at a
 higher TPL level.
 ```
 
-### TplMutex - Atomic Locking and Reentrancy
+### TplMutex - Locking and Reentrancy
 
-The second mutual exclusion mechanism used by `TplMutex` is an atomic flag to
-control access to the lock. To acquire the `TplMutex`, the flag must be clear to
+The second mutual exclusion mechanism used by `TplMutex` is a  flag to control
+access to the lock. To acquire the `TplMutex`, the flag must be clear to
 indicate that the lock is not owned by any other agent. There is a significant
 difference between the `TplMutex` and `sync::Mutex` - while `sync::Mutex` will
 simply block on a call to `lock()` when the lock is owned, `TplMutex` will panic
@@ -62,8 +62,8 @@ Reentrant calls to `lock()` are not permitted for `TplMutex`.
 
 This is by design: `sync:Mutex` presumes the existence of a multi-threaded
 environment where the owner of the lock might be another thread that will
-eventually complete work and release the lock. In the context `sync:Mutex` a
-blocking `lock()` call makes sense, since it is reasonable to expect that the
+eventually complete work and release the lock. In the `sync:Mutex` context a
+blocking `lock()` call makes sense since it is reasonable to expect that the
 lock will be released by another thread. In the UEFI `TplMutex` context,
 however, there is no multi-threading, only interrupts on the same thread at
 higher TPL. For a re-entrant call to `lock()` to occur, an attempt to call
@@ -86,7 +86,7 @@ provides access to the locked data. The `TplGuard` structure implements `Deref`
 and `DerefMut`, which allows access to the underlying data:
 
 ```rust,ignore
-use crate::tpl_lock::TplMutex;
+use crate::tpl_mutex::TplMutex;
 use r_efi::efi;
 let tpl_mutex = TplMutex::new(efi::TPL_HIGH_LEVEL, 1_usize, "test_lock");
 
@@ -98,7 +98,7 @@ In addition, the when the `TplGuard` structure returned by `lock()` goes out of
 scope or is dropped, the lock is automatically released:
 
 ```rust,ignore
-use crate::tpl_lock::TplMutex;
+use crate::tpl_mutex::TplMutex;
 use r_efi::efi;
 let tpl_mutex1 = TplMutex::new(efi::TPL_HIGH_LEVEL, 1_usize, "test_lock");
 
@@ -109,16 +109,3 @@ assert!(tpl_mutex1.try_lock().is_err()); //mutex1 still locked.
 drop(guard1); //lock is released.
 assert!(tpl_mutex1.try_lock().is_ok()); //mutex1 unlocked and can be acquired.
 ```
-
-## TplMutex - Early Init
-
-In the Patina DXE Core it is necessary to instantiate many global locked
-structures using `TplMutex` to provide safe access before Boot Services (and in
-particular TPL APIs) are fully initialized. Prior to the initialization of boot
-services, the `TplMutex` operation only uses the [atomic lock](synchronization.md#tplmutex---atomic-locking-and-reentrancy)
-to protect the mutex, and the TPL is not used.
-
-Once Boot Services are fully initialized and TPL can be used, invoke the global
-`init_boot_services()` function on the `TplMutex` to initialize TPL service.
-Subsequent lock operations will then be protected by TPL raise in addition to
-the atomic locks.

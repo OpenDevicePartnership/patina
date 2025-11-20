@@ -92,6 +92,7 @@ fn run_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
 
     let init = |count: usize| -> Scheduler {
         let mut core = Scheduler::new();
+        // SAFETY: Benchmark code - using zeroed BootServices for performance testing.
         core.storage.set_boot_services(StandardBootServices::new(unsafe { &*mock_bs.as_ptr() }));
         for _ in 0..count {
             core = core.with_component(TestComponent);
@@ -113,6 +114,7 @@ fn add_and_run_component_abstracted(b: &mut Bencher<'_>, count: &usize) {
 
     let init = || -> Scheduler {
         let mut core = Scheduler::new();
+        // SAFETY: Benchmark code - using zeroed BootServices for performance testing.
         core.storage.set_boot_services(StandardBootServices::new(unsafe { &*mock_bs.as_ptr() }));
         core
     };

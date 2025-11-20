@@ -126,6 +126,8 @@ pub trait RuntimeServices {
         // Keep a local copy of name to unburden the caller of having to pass in a mutable slice
         let mut name_vec = name.to_vec();
 
+        // SAFETY: name_vec is a valid, null-terminated UTF-16 string as verified above.
+        // The unchecked variant is called with proper parameters that satisfy its preconditions.
         unsafe { self.set_variable_unchecked(name_vec.as_mut_slice(), namespace, attributes, data.as_ref()) }
     }
 
@@ -166,6 +168,8 @@ pub trait RuntimeServices {
         // call.
         let mut first_attempt = true;
         loop {
+            // SAFETY: name_vec is a valid, null-terminated UTF-16 string. The data buffer, when provided,
+            // is properly sized based on either the size_hint or the result from the first call.
             unsafe {
                 let status = self.get_variable_unchecked(
                     name_vec.as_mut_slice(),
@@ -208,6 +212,8 @@ pub trait RuntimeServices {
         // Keep a local copy of name to unburden the caller of having to pass in a mutable slice
         let mut name_vec = name.to_vec();
 
+        // SAFETY: name_vec is a valid, null-terminated UTF-16 string as verified above.
+        // Calling with None buffer is safe and returns size/attributes only.
         unsafe {
             match self.get_variable_unchecked(name_vec.as_mut_slice(), namespace, None) {
                 GetVariableStatus::BufferTooSmall { data_size, attributes } => Ok((data_size, attributes)),
@@ -241,6 +247,8 @@ pub trait RuntimeServices {
         let mut next_name = Vec::<u16>::new();
         let mut next_namespace: efi::Guid = efi::Guid::from_bytes(&[0x0; 16]);
 
+        // SAFETY: prev_name is validated to be non-empty above. The next_name and next_namespace
+        // are valid mutable references that will be populated by the unchecked call.
         unsafe {
             self.get_next_variable_name_unchecked(prev_name, prev_namespace, &mut next_name, &mut next_namespace)?;
         };
@@ -444,6 +452,9 @@ pub(crate) mod test {
 
     macro_rules! runtime_services {
         ($($efi_services:ident = $efi_service_fn:ident),*) => {{
+            // SAFETY: This is only used in tests. A zero sized RuntimeServices struct is created
+            // and only the specified function pointers are initialized with valid function
+            // implementations. The RuntimeServices wrapper will handle uninitialized fields.
             let efi_runtime_services = unsafe {
                 #[allow(unused_mut)]
                 let mut rs = mem::MaybeUninit::<efi::RuntimeServices>::zeroed();
@@ -486,6 +497,7 @@ pub(crate) mod test {
 
     impl AsRef<[u8]> for DummyVariableType {
         fn as_ref(&self) -> &[u8] {
+            // SAFETY: Test code - creating a byte slice view of the value field.
             unsafe { slice::from_raw_parts::<u8>(ptr::addr_of!(self.value) as *mut u8, mem::size_of::<u32>()) }
         }
     }
@@ -514,6 +526,7 @@ pub(crate) mod test {
         data_size: *mut usize,
         data: *mut c_void,
     ) -> efi::Status {
+        // SAFETY: Test code - reading/writing to test function parameters to simulate UEFI variable behavior.
         unsafe {
             if DUMMY_UNKNOWN_NAME.iter().enumerate().all(|(i, &c)| *name.add(i) == c) {
                 return efi::Status::NOT_FOUND;
@@ -555,6 +568,7 @@ pub(crate) mod test {
         data_size: usize,
         data: *mut c_void,
     ) -> efi::Status {
+        // SAFETY: Test code - reading/writing to test function parameters to simulate UEFI variable behavior.
         unsafe {
             // Invalid parameter is returned if name is empty (first character is 0)
             if *name == 0 {
@@ -594,6 +608,7 @@ pub(crate) mod test {
         name: *mut u16,
         namespace: *mut efi::Guid,
     ) -> efi::Status {
+        // SAFETY: Test code - reading/writing to test function parameters to simulate UEFI variable enumeration.
         // Ensure the name and namespace are as expected
         unsafe {
             // Return invalid parameter if the name isn't null-terminated per UEFI spec
@@ -668,6 +683,7 @@ pub(crate) mod test {
         // If attributes is not equal to DUMMY_ATTRIBUTES, then something must have gone wrong.
         assert_eq!(attributes, DUMMY_ATTRIBUTES);
 
+        // SAFETY: Test code - writing test data to output parameters.
         unsafe {
             *maximum_variable_storage_size = DUMMY_MAXIMUM_VARIABLE_STORAGE_SIZE;
             *remaining_variable_storage_size = DUMMY_REMAINING_VARIABLE_STORAGE_SIZE;

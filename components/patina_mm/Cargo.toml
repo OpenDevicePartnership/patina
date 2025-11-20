@@ -8,6 +8,9 @@ edition.workspace = true
 readme = "README.md"
 description = "Management Mode (MM) support for components."
 
+[lints]
+workspace = true
+
 [dependencies]
 cfg-if = { workspace = true }
 log = { workspace = true }

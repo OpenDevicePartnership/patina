@@ -281,10 +281,11 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
         }
     }
 
+    CURRENT_TPL.store(new_tpl, Ordering::SeqCst);
+
     if new_tpl < efi::TPL_HIGH_LEVEL {
         interrupts::enable_interrupts();
     }
-    CURRENT_TPL.store(new_tpl, Ordering::SeqCst);
 }
 
 extern "efiapi" fn timer_tick(time: u64) {

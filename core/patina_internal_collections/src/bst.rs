@@ -8,10 +8,7 @@
 //!
 #[cfg(feature = "alloc")]
 extern crate alloc;
-use core::{
-    cmp::Ordering,
-    sync::atomic::{self, AtomicPtr},
-};
+use core::{cell::Cell, cmp::Ordering};
 
 use crate::{
     Error, Result, SliceKey,
@@ -24,7 +21,7 @@ where
     D: SliceKey,
 {
     storage: Storage<'a, D>,
-    root: AtomicPtr<Node<D>>,
+    root: Cell<*mut Node<D>>,
 }
 
 impl<'a, D> Bst<'a, D>
@@ -37,12 +34,12 @@ where
     /// [with_capacity](Self::with_capacity) to create a tree with a given slice of memory immediately. Otherwise use
     /// [resize](Self::resize) to replace the memory later.
     pub const fn new() -> Self {
-        Bst { storage: Storage::new(), root: AtomicPtr::new(core::ptr::null_mut()) }
+        Bst { storage: Storage::new(), root: Cell::new(core::ptr::null_mut()) }
     }
 
     /// Creates a new binary tree with a given slice of memory.
     pub fn with_capacity(slice: &'a mut [u8]) -> Self {
-        Self { storage: Storage::with_capacity(slice), root: AtomicPtr::default() }
+        Self { storage: Storage::with_capacity(slice), root: Cell::default() }
     }
 
     /// Returns the number of elements in the tree.
@@ -68,11 +65,9 @@ where
 
     /// Returns the current root of the tree.
     fn root(&self) -> Option<&Node<D>> {
-        let root_ptr = self.root.load(atomic::Ordering::SeqCst);
-        if root_ptr.is_null() {
-            return None;
-        }
-        Some(unsafe { &*root_ptr })
+        // SAFETY: The root pointer is either null or points to a valid Node<D> allocated in self.storage.
+        // as_ref() handles the null check internally.
+        unsafe { self.root.get().as_ref() }
     }
 
     /// Adds a value into the tree.
@@ -90,12 +85,14 @@ where
     pub fn add(&mut self, data: D) -> Result<usize> {
         let (idx, node) = self.storage.add(data)?;
 
-        if self.root.load(atomic::Ordering::SeqCst).is_null() {
-            self.root.store(node.as_mut_ptr(), atomic::Ordering::SeqCst);
+        if self.root.get().is_null() {
+            self.root.set(node.as_mut_ptr());
             return Ok(idx);
         }
 
-        let root = unsafe { &*self.root.load(atomic::Ordering::SeqCst) };
+        // SAFETY: root was checked for null above. The pointer points to a valid Node<D>
+        // allocated in self.storage.
+        let root = unsafe { self.root.get().as_mut().expect("root is not null") };
         Self::add_node(root, node)?;
         Ok(idx)
     }
@@ -186,6 +183,9 @@ where
         match self.get_node(key) {
             Some(node) => {
                 let ptr = node.as_mut_ptr();
+                // SAFETY: The pointer comes from as_mut_ptr() on a valid node reference obtained from get_node().
+                // The caller is responsible for ensuring that the mutable reference doesn't modify key-affecting
+                // values.
                 Some(unsafe { &mut (*ptr).data })
             }
             None => None,
@@ -547,18 +547,18 @@ where
     }
 
     /// Removes a node in the tree.
-    fn remove_node_from_tree<'b>(root: &'b AtomicPtr<Node<D>>, to_delete: &'b Node<D>) {
+    fn remove_node_from_tree<'b>(root: &'b Cell<*mut Node<D>>, to_delete: &'b Node<D>) {
         if to_delete.left().is_none() || to_delete.right().is_none() {
             let moved_up = Self::remove_node_with_zero_or_one_child(to_delete);
             if to_delete.parent().is_none() {
-                root.store(moved_up.as_mut_ptr(), atomic::Ordering::SeqCst);
+                root.set(moved_up.as_mut_ptr());
                 moved_up.set_parent(None);
             }
         } else {
             let successor = Node::successor(to_delete).expect("to_delete has both children");
             Node::swap(to_delete, successor);
             if successor.parent().is_none() {
-                root.store(successor.as_mut_ptr(), atomic::Ordering::SeqCst);
+                root.set(successor.as_mut_ptr());
                 successor.set_parent(None);
             }
             let _ = Self::remove_node_with_zero_or_one_child(to_delete);
@@ -614,13 +614,12 @@ where
 {
     /// Replaces the memory of the tree with a new slice, copying the data from the old slice to the new slice.
     pub fn resize(&mut self, slice: &'a mut [u8]) {
-        let root = (!self.root.load(atomic::Ordering::SeqCst).is_null())
-            .then(|| self.storage.idx(self.root.load(atomic::Ordering::SeqCst)));
+        let root = { if self.root.get().is_null() { None } else { Some(self.storage.idx(self.root.get())) } };
 
         self.storage.resize(slice);
 
         if let Some(idx) = root {
-            self.root.store(self.storage.get_mut(idx).expect("Pointer Exists."), atomic::Ordering::SeqCst);
+            self.root.set(self.storage.get_mut(idx).expect("Pointer Exists."));
         }
     }
 
@@ -725,18 +724,24 @@ mod tests {
 
         for i in 0..BST_MAX_SIZE {
             let idx = bst.get_idx(&(i + 1)).unwrap();
+            // SAFETY: The value is modified (second tuple element), not the key (first element),
+            // so the tree ordering remains valid.
             unsafe { bst.get_with_idx_mut(idx).unwrap().1 = i + 1 };
             assert_eq!(bst.get_with_idx(idx).unwrap().1, i + 1);
         }
+        // SAFETY: A test that an out-of-bounds index returns None.
         unsafe {
             assert!(bst.get_with_idx_mut(BST_MAX_SIZE).is_none());
         }
         assert!(bst.get_with_idx(BST_MAX_SIZE).is_none());
 
         for i in 0..BST_MAX_SIZE {
+            // SAFETY: The value is modified (second tuple element), not the key (first element),
+            // so the tree ordering remains valid.
             unsafe { bst.get_mut(&(i + 1)).unwrap().1 = i };
             assert_eq!(bst.get(&(i + 1)).unwrap().1, i);
         }
+        // SAFETY: A test that a non-existent key returns None.
         unsafe {
             assert!(bst.get_mut(&(BST_MAX_SIZE + 1)).is_none());
         }

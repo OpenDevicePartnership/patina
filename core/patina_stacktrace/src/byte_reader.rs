@@ -87,6 +87,8 @@ pub(crate) unsafe fn read_pointer64(pointer: u64) -> StResult<u64> {
         return Err(Error::OutOfBoundsRead { module: None, index: 0 });
     }
 
+    // SAFETY: The caller is expected to uphold the calling safety requirements
+    // for `pointer`.
     Ok(unsafe { *(pointer as *const u64) })
 }
 
@@ -177,6 +179,7 @@ mod tests {
     fn read_pointer64_reads_value() {
         let value: u64 = 0x0123_4567_89AB_CDEF;
         let ptr = &value as *const u64 as u64;
+        // SAFETY: Test creates a valid pointer from a stack variable that remains live for the duration of this call.
         assert_eq!(unsafe { read_pointer64(ptr).unwrap() }, value);
     }
 
@@ -184,12 +187,15 @@ mod tests {
     fn read_pointer64_supports_pointer_arithmetic() {
         let values = [0xAABB_CCDD_EEFF_0011u64, 0x2233_4455_6677_8899u64];
         let base = values.as_ptr() as u64;
+        // SAFETY: Test creates valid pointers from a stack array that remains live for the duration of these calls.
         assert_eq!(unsafe { read_pointer64(base).unwrap() }, values[0]);
+        // SAFETY: Same as above; pointer arithmetic stays within the array bounds.
         assert_eq!(unsafe { read_pointer64(base + core::mem::size_of::<u64>() as u64).unwrap() }, values[1]);
     }
 
     #[test]
     fn read_pointer64_rejects_null_pointer() {
+        // SAFETY: Test intentionally passes a null pointer to verify error handling.
         assert_eq!(unsafe { read_pointer64(0) }.unwrap_err(), Error::OutOfBoundsRead { module: None, index: 0 });
     }
 }

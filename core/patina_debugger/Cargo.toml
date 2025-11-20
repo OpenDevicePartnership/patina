@@ -8,6 +8,9 @@ edition.workspace = true
 readme = "README.md"
 description = "Debugger implementation for a Patina Core."
 
+[lints]
+workspace = true
+
 [dependencies]
 cfg-if = { workspace = true }
 gdbstub = { workspace = true }
@@ -20,6 +23,7 @@ bitfield-struct = { workspace = true  }
 
 [dev-dependencies]
 mockall = { workspace = true }
+serial_test = { workspace = true }
 
 [target.'cfg(all(target_arch="x86_64"))'.dependencies]
 patina_mtrr = { workspace = true }

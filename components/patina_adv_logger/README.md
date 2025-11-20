@@ -6,10 +6,10 @@ The Patina Advanced Logger provides the Patina core with in-memory and serial lo
 
 1. Instantiate `AdvancedLogger` with the desired format, filters, level, and serial implementation.
    Register it with `log::set_logger` as early as possible.
-2. Discover or provision an Advanced Logger buffer.
-   Note: Platform firmware typically passes the Advanced Logger HOB from a prior boot phase.
-3. Call `AdvancedLoggerComponent::init_advanced_logger` with the physical HOB list pointer.
+2. Call `AdvancedLogger::init` with the physical HOB list pointer.
    This allows the logger to adopt the buffer and record its address for later protocol publication.
+3. Discover or provision an Advanced Logger buffer.
+   Note: Platform firmware typically passes the Advanced Logger HOB from a prior boot phase.
 4. Dispatch the `AdvancedLoggerComponent` through Patina so it can install the Advanced Logger protocol via boot
    services.
 

@@ -74,6 +74,9 @@ pub fn install_smbios_protocol(
         Ok(h) => Ok(h),
         Err(status) => {
             // Clean up on failure
+            // SAFETY: `interface` was created from Box::into_raw() above. Since install_protocol_interface_unchecked
+            // failed, other code should not have taken ownership of the pointer. The pointer is still considered
+            // valid from the Box allocation.
             unsafe {
                 drop(Box::from_raw(interface));
             }

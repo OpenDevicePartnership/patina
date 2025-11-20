@@ -47,6 +47,8 @@ words:
   - cdecl
   - cdrom
   - clangpdb
+  - cntfrq
+  - cntpct
   - corosensei
   - coverity
   - cpuid
@@ -80,6 +82,7 @@ words:
   - getrsp
   - getsp
   - gigantor
+  - gicr
   - gnullvm
   - gohman
   - granularities
@@ -145,6 +148,7 @@ words:
   - pyserial
   - pywin
   - qword
+  - rdtsc
   - reentrancy
   - regsvr
   - relia
@@ -174,6 +178,7 @@ words:
   - unrecovered
   - unregisters
   - unspec
+  - unsynchronized
   - vcvarsamd
   - vcvarsarm
   - vtable
