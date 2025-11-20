@@ -177,29 +177,35 @@ memory protections from the start of DXE.
 
 By the start of DXE, most system memory should be configured as Write Back (EFI_MEMORY_WB), and most Memory Mapped I/O
 should be configured as uncached (EFI_MEMORY_UC). There are exceptions to this, based upon platform level decisions.
-For example, if the pre-DXE phase configured a video device and displayed something on the screen, then the memory
-region associated with the frame buffer, for performance, should be reflected for that region of memory.
+
+One example is a Pei Video driver. If PEI configured a video device and displayed a logo on the screen, the memory
+region associated with the frame buffer would usually be configured as write combined (EFI_MEMORY_WC) for performance.
+If the video region was not configured as write combined, then attempting to display anything on the screen would be
+extremely slow. The caching attributes for this region would need to be reported through a non-overlapping resource
+descriptor hob for that region.
+
+The write combined would persist through out the rest of the boot process, including after GOP drivers start manging
+the video device. The other transition point would be prior to handing off to the OS. At that point, the region
+would transition to uncached (EFI_MEMORY_UC). The OS would then be responsible to managing caching attributes.
 
 ##### Firmware Devices
 
-SPI flash accessiable through MMIO is another complex example.
+SPI flash accessible through MMIO is another complex example.
 
 Consider the following scenario:
 
 - 64MB SPI part, mapped to 0xFC00_0000 - 0xFFFF_FFFF.
 - FVs in the SPI part
-  - 0xFD00_0000 - 0xFD04_FFFF - NVRAM
+  - 0xFD00_0000 - 0xFD04_FFFF - Non Volatile Ram
   - 0xFD05_0000 - 0xFE40_FFFF - DXE code
   - 0xFF00_0000 - 0xFFFF_FFFF - PEI code
 - HPET enabled, mapped to 0xFED0_0000 - 0xFED0_03FF.
 
 Note both the HPET region and the FV hobs overlaps with the SPI region.
 
-The HPET should have a MMIO resource descriptor HOB for its region.
-By the time end of PEI occurs, the FVs will have been shadowed to memory, so the FV resource descriptor HOBs should
-describe the FV regions in memory.
-
-The SPI flash can be reported around the HPET region as MMIO resources with the uncached attribute.
+The HPET should have a MMIO resource descriptor HOB for its region, with cache type uncached (EFI_MEMORY_UC).
+The SPI flash can be reported around the HPET region as MMIO resources with the uncached attribute (EFI_MEMORY_UC)
+and with the memory type write protect (EFI_MEMORY_WP).
 
 #### 2.3 Overlapping HOBs Prohibited
 

@@ -125,6 +125,7 @@ words:
   - ntohl
   - ntohs
   - nvdimm
+  - nvram
   - oleaut
   - oorandom
   - openvmm
