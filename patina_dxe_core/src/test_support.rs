@@ -525,6 +525,28 @@ pub(crate) fn build_test_hob_list(mem_size: u64) -> *const c_void {
     mem.as_ptr() as *const c_void
 }
 
+struct ConsoleLogger;
+
+impl log::Log for ConsoleLogger {
+    fn enabled(&self, _metadata: &log::Metadata) -> bool {
+        true
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            println!("[{}] {}", record.level(), record.args());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+pub(crate) fn init_test_logger() {
+    static LOGGER: ConsoleLogger = ConsoleLogger;
+    let _ = log::set_logger(&LOGGER);
+    log::set_max_level(log::LevelFilter::Info);
+}
+
 #[cfg(test)]
 #[coverage(off)]
 mod tests {

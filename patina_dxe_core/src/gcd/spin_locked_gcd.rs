@@ -2045,6 +2045,7 @@ impl SpinLockedGcd {
         mem.memory_blocks = Rbt::new();
         io.maximum_address = 0;
         io.io_blocks = Rbt::new();
+        self.page_table.lock().take();
     }
 
     /// Adds a page table for testing purposes

@@ -39,14 +39,16 @@ interface.
 
 ```rust,no_run
 # extern crate patina_dxe_core;
-# let physical_hob_list = core::ptr::null();
-use patina_dxe_core::Core;
-Core::default()
-    .init_memory(physical_hob_list)
-    .with_config(52_u32)
-    .with_config(62_usize)
-    .start()
-    .unwrap();
+use patina_dxe_core::*;
+
+struct Platform;
+
+impl ComponentInfo for Platform {
+  fn configs(mut add: Add<Config>) {
+    add.config(52_u32);
+    add.config(62_usize);
+  }
+}
 ```
 
 `Config<T>` and `ConfigMut<T>` are special, as they both reference the same underlying data. As you might expect
@@ -89,6 +91,26 @@ each other. This is done via the access set mentioned above. As an example, a co
 `Config<T>` is invalid. You cannot have mutable and immutable access to the same data.
 
 Once the component and its params are fully registered, the component is stored for dispatch.
+
+```rust,no_run
+# extern crate patina_dxe_core;
+# extern crate patina;
+# use patina::component::IntoComponent;
+# #[derive(IntoComponent, Default)]
+# struct ExampleComponent;
+# impl ExampleComponent {
+#   fn entry_point(self) -> patina::error::Result<()> { Ok(()) }  
+# }
+use patina_dxe_core::*;
+
+struct Platform;
+
+impl ComponentInfo for Platform {
+  fn components(mut add: Add<Component>) {
+    add.component(ExampleComponent::default())
+  }
+}
+```
 
 ### Executing Components
 

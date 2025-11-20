@@ -65,9 +65,11 @@
 //!     patina_debugger::poll_debugger();
 //!
 //!     // Break into the debugger if the debugger is enabled.
-//!     if patina_debugger::enabled() {
-//!         patina_debugger::breakpoint();
-//!     }
+//!     patina_debugger::breakpoint();
+//!
+//!     // Cause a debug break unconditionally. This will crash the system
+//!     // if the debugger is not enabled. This should be used with extreme caution.
+//!     patina_debugger::breakpoint_unchecked();
 //! }
 //!
 //! ```
@@ -104,6 +106,7 @@ extern crate alloc;
 
 pub use debugger::PatinaDebugger;
 
+#[cfg(not(test))]
 use arch::{DebuggerArch, SystemArch};
 use patina::serial::SerialIO;
 use patina_internal_cpu::interrupts::{ExceptionContext, InterruptManager};
@@ -198,12 +201,28 @@ pub fn initialize(interrupt_manager: &mut dyn InterruptManager) {
     }
 }
 
-/// Invokes a debug break instruction. Callers should ensure that the debugger
-/// is enabled before invoking this routine using the [enabled] routine. If this
-/// routine is invoked when the debugger is not enabled, it will cause an unhandled
-/// exception.
+/// Invokes a debug break instruction if the debugger is enabled. This will cause
+/// the debugger to break in, if enabled. If the debugger is not enabled, this
+/// routine will have no effect.
 pub fn breakpoint() {
+    if enabled() {
+        breakpoint_unchecked();
+    }
+}
+
+/// Invokes a debug break instruction unconditionally. If this routine is invoked when
+/// the debugger is not enabled, it will cause an unhandled exception.
+///
+/// ## Important
+///
+/// This should only be used in debug scenarios or when it is impossible to continue
+/// execution in the current state and an CPU exception must be raised.
+#[inline(always)]
+pub fn breakpoint_unchecked() {
+    #[cfg(not(test))]
     SystemArch::breakpoint();
+    #[cfg(test)]
+    panic!("breakpoint_unchecked");
 }
 
 /// Notifies the debugger of a module load at the provided address and length.
@@ -287,5 +306,43 @@ impl core::fmt::Display for ExceptionType {
             }
             ExceptionType::Other(exception_type) => write!(f, "Unknown. Architecture code: {exception_type:#X}"),
         }
+    }
+}
+
+#[coverage(off)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+
+    static DUMMY_DEBUGGER: PatinaDebugger<patina::serial::uart::UartNull> =
+        PatinaDebugger::new(patina::serial::uart::UartNull {});
+
+    fn reset() {
+        // Reset the global debugger for testing.
+        DUMMY_DEBUGGER.enable(false);
+        if !DEBUGGER.is_completed() {
+            set_debugger(&DUMMY_DEBUGGER);
+        }
+    }
+
+    #[test]
+    #[serial(global_debugger)]
+    fn test_debug_break_not_enabled() {
+        reset();
+        // Ensure that invoking a debug break when the debugger is not enabled does not cause issues.
+        breakpoint();
+    }
+
+    #[test]
+    #[should_panic(expected = "breakpoint_unchecked")]
+    #[serial(global_debugger)]
+    fn test_debug_break_enabled() {
+        reset();
+        // Enable the debugger.
+        DUMMY_DEBUGGER.enable(true);
+
+        // Ensure that invoking a debug break when the debugger is enabled causes a panic.
+        breakpoint();
     }
 }

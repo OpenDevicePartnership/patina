@@ -508,13 +508,15 @@ fn core_load_pe_image(
         .inspect_err(|err| log::error!("core_load_pe_image failed: UefiPeInfo::parse returned {err:?}"))
         .map_err(|_| EfiError::Unsupported)?;
 
+    let pe_file_name = pe_info.filename.as_deref().unwrap_or("Unknown");
+
     // based on the image type, determine the correct allocator and code/data types.
     let (code_type, data_type) = match pe_info.image_type {
         EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION => (efi::LOADER_CODE, efi::LOADER_DATA),
         EFI_IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER => (efi::BOOT_SERVICES_CODE, efi::BOOT_SERVICES_DATA),
         EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER => (efi::RUNTIME_SERVICES_CODE, efi::RUNTIME_SERVICES_DATA),
         unsupported_type => {
-            log::error!("core_load_pe_image_failed: unsupported image type: {unsupported_type:#x?}");
+            log::error!("core_load_pe_image failed: {pe_file_name} unsupported image type: {unsupported_type:#x?}");
             return Err(EfiError::Unsupported);
         }
     };
@@ -523,18 +525,18 @@ fn core_load_pe_image(
     let size = pe_info.size_of_image as usize;
 
     // the section alignment must be at least the size of a page
-    if !alignment.is_multiple_of(UEFI_PAGE_SIZE) || alignment == 0 {
+    if !alignment.is_multiple_of(UEFI_PAGE_SIZE) {
         log::error!(
-            "core_load_pe_image_failed: section alignment of {alignment:#x?} is not a (non-zero) multiple of page size {UEFI_PAGE_SIZE:#x?}",
+            "core_load_pe_image failed: {pe_file_name} section alignment of {alignment:#x?} is not a multiple of page size {UEFI_PAGE_SIZE:#x?}"
         );
-        debug_assert!(false);
         return Err(EfiError::LoadError);
     }
 
     // the size of the image must be a multiple of the section alignment per PE/COFF spec
     if !size.is_multiple_of(alignment) {
-        log::error!("core_load_pe_image_failed: size of image is not a multiple of the section alignment");
-        debug_assert!(false);
+        log::error!(
+            "core_load_pe_image failed: {pe_file_name} size of image is not a multiple of the section alignment"
+        );
         return Err(EfiError::LoadError);
     }
 
@@ -548,13 +550,15 @@ fn core_load_pe_image(
 
     //load the image into the new loaded image buffer
     pecoff::load_image(&pe_info, image, loaded_image)
-        .inspect_err(|err| log::error!("core_load_pe_image_failed: load_image returned status: {err:?}"))
+        .inspect_err(|err| log::error!("core_load_pe_image failed: {pe_file_name} load_image returned status: {err:?}"))
         .map_err(|_| EfiError::LoadError)?;
 
     //relocate the image to the address at which it was loaded.
     let loaded_image_addr = private_info.image_info.image_base as usize;
     private_info.relocation_data = pecoff::relocate_image(&pe_info, loaded_image_addr, loaded_image, &Vec::new())
-        .inspect_err(|err| log::error!("core_load_pe_image_failed: relocate_image returned status: {err:?}"))
+        .inspect_err(|err| {
+            log::error!("core_load_pe_image failed: {pe_file_name} relocate_image returned status: {err:?}")
+        })
         .map_err(|_| EfiError::LoadError)?;
 
     // update the entry point. Transmute is required here to cast the raw function address to the ImageEntryPoint function pointer type.
@@ -565,7 +569,9 @@ fn core_load_pe_image(
     };
 
     let result = pecoff::load_resource_section(&pe_info, image)
-        .inspect_err(|err| log::error!("core_load_pe_image_failed: load_resource_section returned status: {err:?}"))
+        .inspect_err(|err| {
+            log::error!("core_load_pe_image failed: {pe_file_name} load_resource_section returned status: {err:?}")
+        })
         .map_err(|_| EfiError::LoadError)?;
 
     if let Some((resource_section_offset, resource_section_size)) = result {
@@ -579,13 +585,12 @@ fn core_load_pe_image(
                         &image_buf_ref[resource_section_offset..resource_section_offset + resource_section_size],
                     );
 
-                    log::info!("HII Resource Section found for {}.", pe_info.filename.as_deref().unwrap_or("Unknown"));
+                    log::info!("HII Resource Section found for {pe_file_name}.");
                 } else {
                     log::error!(
-                        "HII Resource Section offset {:#X} and size {:#X} are out of bounds for image {:?}.",
+                        "HII Resource Section offset {:#X} and size {:#X} are out of bounds for image {pe_file_name}.",
                         resource_section_offset,
-                        resource_section_size,
-                        pe_info.filename.as_deref().unwrap_or("Unknown")
+                        resource_section_size
                     );
                     debug_assert!(false);
                 }
@@ -1427,6 +1432,7 @@ mod tests {
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         // SAFETY: Test code only - initializing test infrastructure within the global test lock.
         test_support::with_global_lock(|| unsafe {
+            test_support::init_test_logger();
             test_support::init_test_gcd(None);
             test_support::init_test_protocol_db();
             init_system_table();
@@ -1504,6 +1510,153 @@ mod tests {
             assert_ne!(image_data.entry_point as usize, 0);
             assert!(!image_data.relocation_data.is_empty());
             assert!(image_data.hii_resource_section.is_some());
+        });
+    }
+
+    #[test]
+    fn load_image_should_pass_for_subsystem_efi_application() {
+        with_locked_state(|| {
+            let mut test_file =
+                File::open(test_collateral!("subsystem_efi_application.efi")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut image_handle: efi::Handle = core::ptr::null_mut();
+            let status = load_image(
+                false.into(),
+                protocol_db::DXE_CORE_HANDLE,
+                core::ptr::null_mut(),
+                image.as_mut_ptr() as *mut c_void,
+                image.len(),
+                core::ptr::addr_of_mut!(image_handle),
+            );
+            assert_eq!(status, efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn load_image_should_pass_for_subsystem_efi_runtime_driver() {
+        with_locked_state(|| {
+            let mut test_file =
+                File::open(test_collateral!("subsystem_efi_runtime_driver.efi")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut image_handle: efi::Handle = core::ptr::null_mut();
+            let status = load_image(
+                false.into(),
+                protocol_db::DXE_CORE_HANDLE,
+                core::ptr::null_mut(),
+                image.as_mut_ptr() as *mut c_void,
+                image.len(),
+                core::ptr::addr_of_mut!(image_handle),
+            );
+            assert_eq!(status, efi::Status::SUCCESS);
+        });
+    }
+
+    #[test]
+    fn load_image_should_fail_for_windows_image() {
+        with_locked_state(|| {
+            let mut test_file =
+                File::open(test_collateral!("windows_console_app.exe")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut image_handle: efi::Handle = core::ptr::null_mut();
+            let status = load_image(
+                false.into(),
+                protocol_db::DXE_CORE_HANDLE,
+                core::ptr::null_mut(),
+                image.as_mut_ptr() as *mut c_void,
+                image.len(),
+                core::ptr::addr_of_mut!(image_handle),
+            );
+            assert_eq!(status, efi::Status::UNSUPPORTED);
+        });
+    }
+
+    #[test]
+    fn load_image_should_fail_for_section_alignment_not_multiple_of_uefi_page_size() {
+        with_locked_state(|| {
+            let mut test_file =
+                File::open(test_collateral!("section_alignment_200.efi")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut image_handle: efi::Handle = core::ptr::null_mut();
+            let status = load_image(
+                false.into(),
+                protocol_db::DXE_CORE_HANDLE,
+                core::ptr::null_mut(),
+                image.as_mut_ptr() as *mut c_void,
+                image.len(),
+                core::ptr::addr_of_mut!(image_handle),
+            );
+            assert_eq!(status, efi::Status::LOAD_ERROR);
+        });
+    }
+
+    #[test]
+    fn load_image_should_fail_for_incorrect_size_of_image() {
+        with_locked_state(|| {
+            let mut test_file =
+                File::open(test_collateral!("invalid_size_of_image.efi")).expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut image_handle: efi::Handle = core::ptr::null_mut();
+            let status = load_image(
+                false.into(),
+                protocol_db::DXE_CORE_HANDLE,
+                core::ptr::null_mut(),
+                image.as_mut_ptr() as *mut c_void,
+                image.len(),
+                core::ptr::addr_of_mut!(image_handle),
+            );
+            assert_eq!(status, efi::Status::LOAD_ERROR);
+        });
+    }
+
+    #[test]
+    fn load_image_should_fail_for_hii_section_has_invalid_directory_name_offset() {
+        with_locked_state(|| {
+            let mut test_file = File::open(test_collateral!("invalid_directory_name_offset_hii.pe32"))
+                .expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut image_handle: efi::Handle = core::ptr::null_mut();
+            let status = load_image(
+                false.into(),
+                protocol_db::DXE_CORE_HANDLE,
+                core::ptr::null_mut(),
+                image.as_mut_ptr() as *mut c_void,
+                image.len(),
+                core::ptr::addr_of_mut!(image_handle),
+            );
+            assert_eq!(status, efi::Status::LOAD_ERROR);
+        });
+    }
+
+    #[test]
+    fn load_image_should_fail_for_invalid_relocation_directory_size() {
+        with_locked_state(|| {
+            let mut test_file = File::open(test_collateral!("invalid_relocation_directory_size.efi"))
+                .expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut image_handle: efi::Handle = core::ptr::null_mut();
+            let status = load_image(
+                false.into(),
+                protocol_db::DXE_CORE_HANDLE,
+                core::ptr::null_mut(),
+                image.as_mut_ptr() as *mut c_void,
+                image.len(),
+                core::ptr::addr_of_mut!(image_handle),
+            );
+            assert_eq!(status, efi::Status::LOAD_ERROR);
         });
     }
 

@@ -23,6 +23,7 @@ bitfield-struct = { workspace = true  }
 
 [dev-dependencies]
 mockall = { workspace = true }
+serial_test = { workspace = true }
 
 [target.'cfg(all(target_arch="x86_64"))'.dependencies]
 patina_mtrr = { workspace = true }
