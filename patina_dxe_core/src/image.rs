@@ -1432,6 +1432,7 @@ mod tests {
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         // SAFETY: Test code only - initializing test infrastructure within the global test lock.
         test_support::with_global_lock(|| unsafe {
+            test_support::init_test_logger();
             test_support::init_test_gcd(None);
             test_support::init_test_protocol_db();
             init_system_table();
@@ -1621,6 +1622,27 @@ mod tests {
     fn load_image_should_fail_for_hii_section_has_invalid_directory_name_offset() {
         with_locked_state(|| {
             let mut test_file = File::open(test_collateral!("invalid_directory_name_offset_hii.pe32"))
+                .expect("failed to open test file.");
+            let mut image: Vec<u8> = Vec::new();
+            test_file.read_to_end(&mut image).expect("failed to read test file");
+
+            let mut image_handle: efi::Handle = core::ptr::null_mut();
+            let status = load_image(
+                false.into(),
+                protocol_db::DXE_CORE_HANDLE,
+                core::ptr::null_mut(),
+                image.as_mut_ptr() as *mut c_void,
+                image.len(),
+                core::ptr::addr_of_mut!(image_handle),
+            );
+            assert_eq!(status, efi::Status::LOAD_ERROR);
+        });
+    }
+
+    #[test]
+    fn load_image_should_fail_for_invalid_relocation_directory_size() {
+        with_locked_state(|| {
+            let mut test_file = File::open(test_collateral!("invalid_relocation_directory_size.efi"))
                 .expect("failed to open test file.");
             let mut image: Vec<u8> = Vec::new();
             test_file.read_to_end(&mut image).expect("failed to read test file");
