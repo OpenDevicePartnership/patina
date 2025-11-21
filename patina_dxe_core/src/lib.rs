@@ -646,25 +646,8 @@ mod tests {
         /// should not change without a conscious decision, which requires updating this test.
         struct TestPlatform;
 
-        impl PlatformInfo for TestPlatform {
-            type MemoryInfo = TestPlatform;
-            type CpuInfo = TestPlatform;
-            type ComponentInfo = TestPlatform;
-            type Extractor = patina_ffs_extractors::NullSectionExtractor;
-        }
-
         impl MemoryInfo for TestPlatform {}
 
-        impl ComponentInfo for TestPlatform {}
-
-        impl CpuInfo for TestPlatform {
-            #[cfg(target_arch = "aarch64")]
-            fn gic_bases() -> GicBases {
-                GicBases { gicd: 0, gicr: 0 }
-            }
-        }
-
-        assert!(!<TestPlatform as PlatformInfo>::MemoryInfo::prioritize_32_bit_memory());
-        assert!(<<TestPlatform as PlatformInfo>::CpuInfo>::perf_timer_frequency().is_none());
+        assert!(!<TestPlatform as MemoryInfo>::prioritize_32_bit_memory());
     }
 }

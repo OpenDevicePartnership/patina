@@ -127,3 +127,25 @@ pub fn initialize_cpu_subsystem() -> crate::error::Result<(EfiCpu, Interrupts)> 
 
     Ok((cpu, interrupt_manager))
 }
+
+#[cfg(test)]
+#[coverage(off)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cpu_info_trait_defaults_do_not_change() {
+        // A simple test to acknowledge that the default implementations of the CpuInfo trait should not change without
+        // a concsious decision, which requires updating this test.
+        struct TestPlatform;
+
+        impl CpuInfo for TestPlatform {
+            #[cfg(target_arch = "aarch64")]
+            fn gic_bases() -> GicBases {
+                unsafe { GicBases::new(0, 0) }
+            }
+        }
+
+        assert!(<TestPlatform as CpuInfo>::perf_timer_frequency().is_none());
+    }
+}
