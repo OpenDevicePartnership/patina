@@ -184,7 +184,7 @@ If the video region was not configured as write combined, then attempting to dis
 extremely slow. The caching attributes for this region would need to be reported through a non-overlapping resource
 descriptor hob for that region.
 
-The write combined would persist through out the rest of the boot process, including after GOP drivers start manging
+The write combined would persist through out the rest of the boot process, including after GOP drivers start managing
 the video device. The other transition point would be prior to handing off to the OS. At that point, the region
 would transition to uncached (EFI_MEMORY_UC). The OS would then be responsible to managing caching attributes.
 
@@ -201,7 +201,7 @@ Consider the following scenario:
   - 0xFF00_0000 - 0xFFFF_FFFF - PEI code
 - HPET enabled, mapped to 0xFED0_0000 - 0xFED0_03FF.
 
-Note both the HPET region and the FV hobs overlaps with the SPI region.
+Note: Both the HPET region and the FV hobs overlaps with the SPI region.
 
 The HPET should have a MMIO resource descriptor HOB for its region, with cache type uncached (EFI_MEMORY_UC).
 The SPI flash can be reported around the HPET region as MMIO resources with the uncached attribute (EFI_MEMORY_UC)
