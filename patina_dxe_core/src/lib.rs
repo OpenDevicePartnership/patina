@@ -585,25 +585,35 @@ fn call_bds() -> ! {
     // Enable status code capability in Firmware Performance DXE.
     match protocols::PROTOCOL_DB.locate_protocol(status_code::PROTOCOL_GUID) {
         Ok(status_code_ptr) => {
-            let status_code_protocol = unsafe { (status_code_ptr as *mut status_code::Protocol).as_mut() }.unwrap();
-            (status_code_protocol.report_status_code)(
-                EFI_PROGRESS_CODE,
-                EFI_SOFTWARE_DXE_CORE | EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT,
-                0,
-                &patina::guids::DXE_CORE,
-                ptr::null(),
-            );
+            if let Some(status_code_protocol_ptr) = NonNull::new(status_code_ptr) {
+                // SAFETY: Some(status_code_protocol_ptr) guarantees that the pointer is non-NULL
+                let status_code_protocol = unsafe { status_code_protocol_ptr.cast::<status_code::Protocol>().as_ref() };
+                (status_code_protocol.report_status_code)(
+                    EFI_PROGRESS_CODE,
+                    EFI_SOFTWARE_DXE_CORE | EFI_SW_DXE_CORE_PC_HANDOFF_TO_NEXT,
+                    0,
+                    &patina::guids::DXE_CORE,
+                    ptr::null(),
+                );
+            } else {
+                log::error!("status_code protocol pointer is NULL")
+            }
         }
         Err(err) => log::error!("Unable to locate status code runtime protocol: {err:?}"),
-    };
+    }
 
     match protocols::PROTOCOL_DB.locate_protocol(bds::PROTOCOL_GUID) {
-        Ok(bds) => {
-            let bds = bds as *mut bds::Protocol;
-            // SAFETY: The BDS arch protocol is the valid C structure as defined by the UEFI specification. The entry
-            // field of the protocol is a valid function pointer that conforms to the expected calling convention.
-            unsafe {
-                ((*bds).entry)(bds);
+        Ok(bds_ptr) => {
+            if let Some(bds_protocol_ptr) = NonNull::new(bds_ptr) {
+                let bds_protocol_ptr = bds_protocol_ptr.cast::<bds::Protocol>();
+                // SAFETY: The BDS arch protocol is the valid C structure as defined by the UEFI specification. The entry
+                // field of the protocol is a valid function pointer that conforms to the expected calling convention.
+                // Some(bds_protocol_ptr) guarantees that the pointer is non-NULL
+                unsafe {
+                    (bds_protocol_ptr.as_ref().entry)(bds_protocol_ptr.as_ptr());
+                }
+            } else {
+                log::error!("bds protocol pointer is NULL")
             }
         }
         Err(err) => log::error!("Unable to locate BDS arch protocol: {err:?}"),
@@ -616,6 +626,7 @@ fn call_bds() -> ! {
 #[coverage(off)]
 mod tests {
     use super::*;
+    use core::sync::atomic::AtomicBool;
 
     #[test]
     fn test_cannot_set_instance_twice() {
@@ -648,5 +659,132 @@ mod tests {
         impl MemoryInfo for TestPlatform {}
 
         assert!(!<TestPlatform as MemoryInfo>::prioritize_32_bit_memory());
+    }
+
+    #[test]
+    fn test_mock_call_bds_valid_non_null() {
+        static BDS_CALLED: AtomicBool = AtomicBool::new(false);
+        extern "efiapi" fn mock_bds(_this: *mut patina::pi::protocols::bds::Protocol) {
+            BDS_CALLED.store(true, core::sync::atomic::Ordering::Relaxed)
+        }
+
+        assert!(
+            test_support::with_global_lock(|| {
+                let protocol = Box::leak(Box::new(patina::pi::protocols::bds::Protocol { entry: mock_bds }));
+
+                protocols::core_install_protocol_interface(
+                    None,
+                    patina::pi::protocols::bds::PROTOCOL_GUID,
+                    protocol as *mut _ as *mut c_void,
+                )
+                .unwrap();
+
+                call_bds();
+            })
+            .is_err_and(|err| err
+                .downcast_ref::<&str>()
+                .unwrap()
+                .contains("BDS arch protocol should be found and should never return."))
+        );
+
+        assert!(BDS_CALLED.load(core::sync::atomic::Ordering::Relaxed))
+    }
+
+    #[test]
+    fn test_mock_call_bds_valid_null() {
+        assert!(
+            test_support::with_global_lock(|| {
+                protocols::core_install_protocol_interface(
+                    None,
+                    patina::pi::protocols::bds::PROTOCOL_GUID,
+                    core::ptr::null_mut(),
+                )
+                .unwrap();
+
+                call_bds()
+            })
+            .is_err_and(|err| err
+                .downcast_ref::<&str>()
+                .unwrap()
+                .contains("BDS arch protocol should be found and should never return."))
+        )
+    }
+
+    #[test]
+    fn test_mock_call_bds_invalid() {
+        assert!(test_support::with_global_lock(|| { call_bds() }).is_err_and(|err| {
+            err.downcast_ref::<&str>().unwrap().contains("BDS arch protocol should be found and should never return.")
+        }))
+    }
+
+    #[test]
+    fn test_mock_call_status_code_valid_non_null() {
+        static STATUS_CODE_CALLED: AtomicBool = AtomicBool::new(false);
+        extern "efiapi" fn mock_status_code(
+            _: u32,
+            _: u32,
+            _: u32,
+            _: *const efi::Guid,
+            _: *const status_code::EfiStatusCodeData,
+        ) -> efi::Status {
+            STATUS_CODE_CALLED.store(true, core::sync::atomic::Ordering::Relaxed);
+            efi::Status::SUCCESS
+        }
+
+        assert!(
+            test_support::with_global_lock(|| {
+                let protocol = Box::leak(Box::new(patina::pi::protocols::status_code::Protocol {
+                    report_status_code: mock_status_code,
+                }));
+
+                protocols::core_install_protocol_interface(
+                    None,
+                    patina::pi::protocols::status_code::PROTOCOL_GUID,
+                    protocol as *mut _ as *mut c_void,
+                )
+                .unwrap();
+
+                call_bds();
+            })
+            .is_err_and(|err| err
+                .downcast_ref::<&str>()
+                .unwrap()
+                .contains("BDS arch protocol should be found and should never return."))
+        );
+
+        assert!(STATUS_CODE_CALLED.load(core::sync::atomic::Ordering::Relaxed))
+    }
+
+    #[test]
+    fn test_mock_call_status_code_valid_null() {
+        assert!(
+            test_support::with_global_lock(|| {
+                protocols::core_install_protocol_interface(
+                    None,
+                    patina::pi::protocols::status_code::PROTOCOL_GUID,
+                    core::ptr::null_mut(),
+                )
+                .unwrap();
+
+                call_bds();
+            })
+            .is_err_and(|err| err
+                .downcast_ref::<&str>()
+                .unwrap()
+                .contains("BDS arch protocol should be found and should never return."))
+        );
+    }
+
+    #[test]
+    fn test_mock_call_status_code_invalid() {
+        assert!(
+            test_support::with_global_lock(|| {
+                call_bds();
+            })
+            .is_err_and(|err| err
+                .downcast_ref::<&str>()
+                .unwrap()
+                .contains("BDS arch protocol should be found and should never return."))
+        );
     }
 }
