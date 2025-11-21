@@ -11,13 +11,13 @@
 extern crate alloc;
 use crate::{
     error::SmbiosError,
-    manager::{SmbiosManager, install_smbios_protocol},
-    service::SmbiosImpl,
+    manager::SmbiosManager,
+    service::{Smbios, SmbiosImpl},
 };
 use alloc::boxed::Box;
 use patina::{
     boot_services::tpl::Tpl,
-    component::{Storage, component},
+    component::{Storage, component, service::memory::MemoryManager},
     error::Result,
     tpl_mutex::TplMutex,
 };
@@ -55,8 +55,8 @@ impl SmbiosConfiguration {
 /// - Record management: `update_string()`, `remove()`
 /// - Table management: `version()`, `publish_table()`
 ///
-/// The provider creates an SMBIOS manager instance protected by a TplMutex.
-/// A global reference is maintained for C/EDKII protocol compatibility.
+/// The provider creates an SMBIOS manager instance protected by a TplMutex
+/// and installs the SMBIOS protocol for C/EDKII driver compatibility.
 ///
 /// # Example
 ///
@@ -98,20 +98,22 @@ impl SmbiosProvider {
     fn entry_point(self, storage: &mut Storage) -> Result<()> {
         let cfg = self.config;
 
-        // Create the manager with configured version
-        let manager = SmbiosManager::new(cfg.major_version, cfg.minor_version).map_err(|e| {
-            log::error!("Failed to create SMBIOS manager: {:?}", e);
-            patina::error::EfiError::Unsupported
-        })?;
+        let manager = SmbiosManager::new(cfg.major_version, cfg.minor_version)?;
 
-        // Get boot_services from storage - it already has 'static lifetime
+        // SAFETY: Storage guarantees that boot_services has a 'static lifetime.
         // We use an unsafe cast because storage.boot_services() returns a reference with
-        // a shorter lifetime, but Storage guarantees boot_services lives for 'static
+        // a shorter lifetime bound, but Storage guarantees it lives for 'static.
         let boot_services_static: &'static patina::boot_services::StandardBootServices =
-            // SAFETY: Storage guarantees that boot_services has a 'static lifetime.
             unsafe { &*(storage.boot_services() as *const _) };
 
-        // Create the SMBIOS service struct with owned TplMutex
+        // Get the MemoryManager service for memory allocations
+        let memory_manager = storage.get_service::<dyn MemoryManager>().ok_or(patina::error::EfiError::Unsupported)?;
+
+        // Allocate buffers and add Type 127 End-of-Table marker
+        // This must be done before protocol installation to avoid allocate_pages during Add()
+        manager.allocate_buffers(*memory_manager)?;
+
+        // Create TplMutex at TPL_NOTIFY for thread safety against timer interrupts
         let manager_mutex = TplMutex::new(boot_services_static, Tpl::NOTIFY, manager);
         let smbios_service = SmbiosImpl {
             manager: manager_mutex,
@@ -120,19 +122,22 @@ impl SmbiosProvider {
             minor_version: cfg.minor_version,
         };
 
-        // Leak the service to get a 'static reference
-        // This single leak gives us a reference that can be used for both protocol and service
+        // Leak the service to get a 'static reference for both Rust service and C protocol
         let smbios_static: &'static SmbiosImpl = Box::leak(Box::new(smbios_service));
 
-        // Install the C/EDKII protocol using the leaked service's manager
-        if let Err(e) =
-            install_smbios_protocol(cfg.major_version, cfg.minor_version, smbios_static.manager(), boot_services_static)
-        {
-            log::error!("Failed to install SMBIOS protocol: {:?}", e);
-        }
-
-        // Register the leaked service (the IntoService impl for &'static T handles this)
         storage.add_service(smbios_static);
+
+        // Install SMBIOS protocol for C/EDKII driver compatibility
+        crate::manager::install_smbios_protocol(
+            cfg.major_version,
+            cfg.minor_version,
+            &smbios_static.manager,
+            boot_services_static,
+        )?;
+
+        // Publish initial table (Type 127 only) to register buffer with UEFI configuration table
+        // Subsequent Add() calls will update this buffer in-place
+        smbios_static.publish_table()?;
 
         Ok(())
     }

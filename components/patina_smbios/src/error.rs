@@ -56,6 +56,46 @@ pub enum SmbiosError {
     // Version errors
     /// SMBIOS version is not supported (only 3.0 and above are supported)
     UnsupportedVersion,
+
+    // Record type errors
+    /// Type 127 End-of-Table marker is automatically managed and cannot be added manually
+    Type127Managed,
+
+    // Table integrity errors
+    /// Published SMBIOS table was modified directly instead of using protocol APIs
+    /// Use Remove() + Add() to modify records, or UpdateString() for string fields
+    TableDirectlyModified,
+}
+
+impl From<SmbiosError> for patina::error::EfiError {
+    fn from(error: SmbiosError) -> Self {
+        match error {
+            // Resource allocation errors map to OUT_OF_RESOURCES
+            SmbiosError::AllocationFailed | SmbiosError::HandleExhausted => patina::error::EfiError::OutOfResources,
+
+            // Invalid parameters map to INVALID_PARAMETER
+            SmbiosError::StringTooLong
+            | SmbiosError::StringContainsNull
+            | SmbiosError::EmptyStringInPool
+            | SmbiosError::RecordTooSmall
+            | SmbiosError::MalformedRecordHeader
+            | SmbiosError::InvalidStringPoolTermination
+            | SmbiosError::StringPoolTooSmall
+            | SmbiosError::StringIndexOutOfRange
+            | SmbiosError::Type127Managed => patina::error::EfiError::InvalidParameter,
+
+            // Not found errors map to NOT_FOUND
+            SmbiosError::HandleNotFound | SmbiosError::NoRecordsAvailable => patina::error::EfiError::NotFound,
+
+            // Version and initialization errors map to UNSUPPORTED
+            SmbiosError::UnsupportedVersion | SmbiosError::AlreadyInitialized | SmbiosError::NotInitialized => {
+                patina::error::EfiError::Unsupported
+            }
+
+            // Table integrity errors map to DEVICE_ERROR (indicates corrupted/invalid state)
+            SmbiosError::TableDirectlyModified => patina::error::EfiError::DeviceError,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -84,6 +124,8 @@ mod tests {
             SmbiosError::AlreadyInitialized,
             SmbiosError::NotInitialized,
             SmbiosError::UnsupportedVersion,
+            SmbiosError::Type127Managed,
+            SmbiosError::TableDirectlyModified,
         ];
 
         // Each should be cloneable and comparable
@@ -114,5 +156,40 @@ mod tests {
         let _e6 = SmbiosError::StringIndexOutOfRange;
         let _e7 = SmbiosError::RecordTooSmall;
         let _e8 = SmbiosError::InvalidStringPoolTermination;
+    }
+
+    #[test]
+    fn test_smbios_error_to_efi_error_conversion() {
+        // Test resource allocation errors map to OUT_OF_RESOURCES
+        let efi_err: patina::error::EfiError = SmbiosError::AllocationFailed.into();
+        assert_eq!(efi_err, patina::error::EfiError::OutOfResources);
+
+        let efi_err: patina::error::EfiError = SmbiosError::HandleExhausted.into();
+        assert_eq!(efi_err, patina::error::EfiError::OutOfResources);
+
+        // Test invalid parameters map to INVALID_PARAMETER
+        let efi_err: patina::error::EfiError = SmbiosError::StringTooLong.into();
+        assert_eq!(efi_err, patina::error::EfiError::InvalidParameter);
+
+        let efi_err: patina::error::EfiError = SmbiosError::Type127Managed.into();
+        assert_eq!(efi_err, patina::error::EfiError::InvalidParameter);
+
+        // Test not found errors map to NOT_FOUND
+        let efi_err: patina::error::EfiError = SmbiosError::HandleNotFound.into();
+        assert_eq!(efi_err, patina::error::EfiError::NotFound);
+
+        let efi_err: patina::error::EfiError = SmbiosError::NoRecordsAvailable.into();
+        assert_eq!(efi_err, patina::error::EfiError::NotFound);
+
+        // Test version and initialization errors map to UNSUPPORTED
+        let efi_err: patina::error::EfiError = SmbiosError::UnsupportedVersion.into();
+        assert_eq!(efi_err, patina::error::EfiError::Unsupported);
+
+        let efi_err: patina::error::EfiError = SmbiosError::NotInitialized.into();
+        assert_eq!(efi_err, patina::error::EfiError::Unsupported);
+
+        // Test table integrity errors map to DEVICE_ERROR
+        let efi_err: patina::error::EfiError = SmbiosError::TableDirectlyModified.into();
+        assert_eq!(efi_err, patina::error::EfiError::DeviceError);
     }
 }

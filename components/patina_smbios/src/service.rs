@@ -13,6 +13,7 @@
 extern crate alloc;
 use alloc::vec::Vec;
 use core::cell::Ref;
+use patina::boot_services::{BootServices, StandardBootServices};
 use r_efi::efi::Handle;
 use zerocopy_derive::*;
 
@@ -190,33 +191,31 @@ pub trait Smbios {
 /// ```
 #[derive(patina::component::service::IntoService)]
 #[service(dyn Smbios)]
-pub struct SmbiosImpl {
-    pub(crate) manager: patina::tpl_mutex::TplMutex<
-        'static,
-        crate::manager::SmbiosManager,
-        patina::boot_services::StandardBootServices,
-    >,
-    pub(crate) boot_services: &'static patina::boot_services::StandardBootServices,
+pub struct SmbiosImpl<B: BootServices + 'static = StandardBootServices> {
+    pub(crate) manager: patina::tpl_mutex::TplMutex<'static, crate::manager::SmbiosManager, B>,
+    pub(crate) boot_services: &'static B,
     pub(crate) major_version: u8,
     pub(crate) minor_version: u8,
 }
 
-impl SmbiosImpl {
-    /// Get a reference to the manager for protocol installation
-    ///
-    /// This is only used during component initialization to install the C/EDKII protocol
-    pub(crate) fn manager(
-        &self,
-    ) -> &patina::tpl_mutex::TplMutex<'static, crate::manager::SmbiosManager, patina::boot_services::StandardBootServices>
-    {
+impl<B: BootServices> SmbiosImpl<B> {
+    /// Get a reference to the manager for unit tests
+    #[allow(dead_code)] // Only used in tests
+    pub(crate) fn manager(&self) -> &patina::tpl_mutex::TplMutex<'static, crate::manager::SmbiosManager, B> {
         &self.manager
+    }
+
+    /// Rebuild and republish table data after a record mutation
+    ///
+    /// This updates the pre-allocated buffer with the latest records.
+    /// Verifies table integrity before republishing to detect direct modifications.
+    fn republish_table(&self) -> core::result::Result<(), crate::error::SmbiosError> {
+        let manager = self.manager.lock();
+        manager.republish_table()
     }
 }
 
-// Methods below are tested via integration (Q35 platform component)
-// They require StandardBootServices and TplMutex which aren't mockable in unit tests
-#[cfg_attr(coverage_nightly, coverage(off))]
-impl Smbios for SmbiosImpl {
+impl<B: BootServices> Smbios for SmbiosImpl<B> {
     fn version(&self) -> (u8, u8) {
         (self.major_version, self.minor_version)
     }
@@ -225,8 +224,31 @@ impl Smbios for SmbiosImpl {
         &self,
     ) -> core::result::Result<(r_efi::efi::PhysicalAddress, r_efi::efi::PhysicalAddress), crate::error::SmbiosError>
     {
-        let manager = self.manager.lock();
-        manager.publish_table(self.boot_services)
+        // Table addresses are stored before calling install_configuration_table.
+        // install_configuration_table triggers EVENT_DB.signal_group, which may invoke
+        // event handlers that call SMBIOS Add/Update/Remove, triggering republish_table.
+        // Storing addresses first ensures that if republish_table runs during installation,
+        // it overwrites these addresses with correct newer data rather than storing stale
+        // addresses after the race completes.
+        let (table_addr, ep_addr) = {
+            let manager = self.manager.lock();
+            let (table_addr, ep_addr, entry_point) = manager.build_table_data()?;
+            manager.store_table_addresses(table_addr, entry_point);
+            (table_addr, ep_addr)
+        };
+
+        // Lock is not held during install_configuration_table to prevent deadlock.
+        // EVENT_DB.signal_group runs while install_configuration_table executes, and event
+        // handlers may call SMBIOS Add/Update/Remove which require the manager lock.
+        //
+        // SAFETY: We pass a valid GUID and a pointer to ACPI_RECLAIM_MEMORY that remains valid
+        unsafe {
+            self.boot_services
+                .install_configuration_table(&crate::manager::SMBIOS_3_X_TABLE_GUID, ep_addr as *mut core::ffi::c_void)
+                .map_err(|_| crate::error::SmbiosError::AllocationFailed)?;
+        }
+
+        Ok((table_addr, ep_addr))
     }
 
     fn update_string(
@@ -235,13 +257,21 @@ impl Smbios for SmbiosImpl {
         string_number: usize,
         string: &str,
     ) -> core::result::Result<(), crate::error::SmbiosError> {
-        let manager = self.manager.lock();
-        manager.update_string(smbios_handle, string_number, string)
+        {
+            let manager = self.manager.lock();
+            manager.update_string(smbios_handle, string_number, string)?;
+        }
+
+        self.republish_table()
     }
 
     fn remove(&self, smbios_handle: SmbiosHandle) -> core::result::Result<(), crate::error::SmbiosError> {
-        let manager = self.manager.lock();
-        manager.remove(smbios_handle)
+        {
+            let manager = self.manager.lock();
+            manager.remove(smbios_handle)?;
+        }
+
+        self.republish_table()
     }
 
     fn add_from_bytes(
@@ -249,8 +279,13 @@ impl Smbios for SmbiosImpl {
         producer_handle: Option<r_efi::efi::Handle>,
         bytes: &[u8],
     ) -> core::result::Result<SmbiosHandle, crate::error::SmbiosError> {
-        let manager = self.manager.lock();
-        manager.add_from_bytes(producer_handle, bytes)
+        let handle = {
+            let manager = self.manager.lock();
+            manager.add_from_bytes(producer_handle, bytes)?
+        };
+
+        self.republish_table()?;
+        Ok(handle)
     }
 }
 
@@ -295,7 +330,6 @@ pub trait SmbiosExt {
 }
 
 /// Implementation of extension trait for `Service<dyn Smbios>`
-#[cfg_attr(coverage_nightly, coverage(off))]
 impl SmbiosExt for patina::component::service::Service<dyn Smbios> {
     fn add_record<T>(
         &self,
@@ -313,8 +347,18 @@ impl SmbiosExt for patina::component::service::Service<dyn Smbios> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate alloc;
     extern crate std;
+    use alloc::string::String;
     use std::format;
+
+    use crate::smbios_record::{SmbiosRecordStructure, Type0PlatformFirmwareInformation, Type127EndOfTable};
+    use mockall::predicate::*;
+    use patina::{
+        boot_services::{MockBootServices, tpl::Tpl},
+        component::service::{Service, memory::StdMemoryManager},
+        tpl_mutex::TplMutex,
+    };
 
     #[test]
     fn test_smbios_table_header_new() {
@@ -546,7 +590,6 @@ mod tests {
 
     #[test]
     fn test_mock_smbios_service_add_record_integration() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
         use alloc::vec;
         use patina::component::service::Service;
 
@@ -584,7 +627,6 @@ mod tests {
 
     #[test]
     fn test_mock_add_record_extension_trait_pattern() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
         use alloc::vec;
         use patina::component::service::Service;
 
@@ -615,7 +657,6 @@ mod tests {
 
     #[test]
     fn test_mock_add_record_with_error() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
         use alloc::vec;
         use patina::component::service::Service;
 
@@ -638,7 +679,6 @@ mod tests {
 
     #[test]
     fn test_mock_multiple_record_types() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type0PlatformFirmwareInformation, Type127EndOfTable};
         use alloc::{string::String, vec};
         use patina::component::service::Service;
 
@@ -682,7 +722,6 @@ mod tests {
 
     #[test]
     fn test_service_mock_pattern() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
         use alloc::vec;
         use patina::component::service::Service;
 
@@ -705,7 +744,6 @@ mod tests {
 
     #[test]
     fn test_service_mock_with_extension_trait() {
-        use crate::smbios_record::{SmbiosRecordStructure, Type127EndOfTable};
         use alloc::vec;
         use patina::component::service::Service;
 
@@ -723,5 +761,217 @@ mod tests {
         // It serializes the record and calls add_from_bytes (which the mock implements)
         let handle = service.add_record(None, &record).unwrap();
         assert_eq!(handle, 0x1337);
+    }
+
+    // Unit tests for SmbiosImpl using MockBootServices
+
+    /// Creates a MockBootServices configured for TplMutex usage
+    fn mock_boot_services() -> MockBootServices {
+        let mut boot_services = MockBootServices::new();
+        boot_services.expect_raise_tpl().with(eq(Tpl::NOTIFY)).return_const(Tpl::APPLICATION);
+        boot_services.expect_restore_tpl().with(eq(Tpl::APPLICATION)).return_const(());
+        boot_services
+    }
+
+    /// Creates a test SmbiosImpl with MockBootServices
+    fn create_test_smbios_impl(boot_services: &'static MockBootServices) -> SmbiosImpl<MockBootServices> {
+        let manager = crate::manager::SmbiosManager::new(3, 7).unwrap();
+        manager.allocate_buffers(&StdMemoryManager::new()).unwrap();
+
+        let manager_mutex = TplMutex::new(boot_services, Tpl::NOTIFY, manager);
+
+        SmbiosImpl { manager: manager_mutex, boot_services, major_version: 3, minor_version: 7 }
+    }
+
+    #[test]
+    fn test_smbios_impl_version() {
+        let boot_services = Box::leak(Box::new(mock_boot_services()));
+        let smbios = create_test_smbios_impl(boot_services);
+
+        assert_eq!(smbios.version(), (3, 7));
+    }
+
+    #[test]
+    fn test_smbios_impl_add_from_bytes() {
+        let boot_services = Box::leak(Box::new(mock_boot_services()));
+        let smbios = create_test_smbios_impl(boot_services);
+
+        // Create a Type 0 record
+
+        let type0 = Type0PlatformFirmwareInformation {
+            header: SmbiosTableHeader::new(0, 24, SMBIOS_HANDLE_PI_RESERVED),
+            vendor: 1,
+            firmware_version: 2,
+            bios_starting_address_segment: 0xE800,
+            firmware_release_date: 3,
+            firmware_rom_size: 0xFF,
+            characteristics: 0x08,
+            characteristics_ext1: 0x03,
+            characteristics_ext2: 0x03,
+            system_bios_major_release: 1,
+            system_bios_minor_release: 0,
+            embedded_controller_major_release: 0xFF,
+            embedded_controller_minor_release: 0xFF,
+            extended_bios_rom_size: 0,
+            string_pool: vec![String::from("Vendor"), String::from("1.0"), String::from("01/01/2025")],
+        };
+
+        let bytes = type0.to_bytes();
+        let result = smbios.add_from_bytes(None, &bytes);
+
+        assert!(result.is_ok());
+        let handle = result.unwrap();
+        // Handle should be assigned (not the reserved value)
+        assert_ne!(handle, SMBIOS_HANDLE_PI_RESERVED);
+    }
+
+    #[test]
+    fn test_smbios_impl_update_string() {
+        let boot_services = Box::leak(Box::new(mock_boot_services()));
+        let smbios = create_test_smbios_impl(boot_services);
+
+        // Add a record first
+
+        let type0 = Type0PlatformFirmwareInformation {
+            header: SmbiosTableHeader::new(0, 24, SMBIOS_HANDLE_PI_RESERVED),
+            vendor: 1,
+            firmware_version: 2,
+            bios_starting_address_segment: 0xE800,
+            firmware_release_date: 3,
+            firmware_rom_size: 0xFF,
+            characteristics: 0x08,
+            characteristics_ext1: 0x03,
+            characteristics_ext2: 0x03,
+            system_bios_major_release: 1,
+            system_bios_minor_release: 0,
+            embedded_controller_major_release: 0xFF,
+            embedded_controller_minor_release: 0xFF,
+            extended_bios_rom_size: 0,
+            string_pool: vec![String::from("Vendor"), String::from("1.0"), String::from("01/01/2025")],
+        };
+
+        let handle = smbios.add_from_bytes(None, &type0.to_bytes()).unwrap();
+
+        // Update the vendor string (string 1)
+        let result = smbios.update_string(handle, 1, "NewVendor");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_smbios_impl_remove() {
+        let boot_services = Box::leak(Box::new(mock_boot_services()));
+        let smbios = create_test_smbios_impl(boot_services);
+
+        // Add a record first
+
+        let type0 = Type0PlatformFirmwareInformation {
+            header: SmbiosTableHeader::new(0, 24, SMBIOS_HANDLE_PI_RESERVED),
+            vendor: 1,
+            firmware_version: 2,
+            bios_starting_address_segment: 0xE800,
+            firmware_release_date: 3,
+            firmware_rom_size: 0xFF,
+            characteristics: 0x08,
+            characteristics_ext1: 0x03,
+            characteristics_ext2: 0x03,
+            system_bios_major_release: 1,
+            system_bios_minor_release: 0,
+            embedded_controller_major_release: 0xFF,
+            embedded_controller_minor_release: 0xFF,
+            extended_bios_rom_size: 0,
+            string_pool: vec![String::from("Vendor"), String::from("1.0"), String::from("01/01/2025")],
+        };
+
+        let handle = smbios.add_from_bytes(None, &type0.to_bytes()).unwrap();
+
+        // Remove the record
+        let result = smbios.remove(handle);
+        assert!(result.is_ok());
+
+        // Trying to remove again should fail
+        let result = smbios.remove(handle);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_smbios_impl_republish_table() {
+        let boot_services = Box::leak(Box::new(mock_boot_services()));
+        let smbios = create_test_smbios_impl(boot_services);
+
+        // republish_table should work since buffers are allocated
+        let result = smbios.republish_table();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_smbios_impl_manager_accessor() {
+        let boot_services = Box::leak(Box::new(mock_boot_services()));
+        let smbios = create_test_smbios_impl(boot_services);
+
+        // Verify we can access the manager through the accessor
+        let _manager_ref = smbios.manager();
+
+        // The accessor returns a reference to the TplMutex
+        // We verified it compiles and can be called
+    }
+
+    /// Creates a MockBootServices configured for publish_table (includes install_configuration_table)
+    fn mock_boot_services_with_config_table() -> MockBootServices {
+        let mut boot_services = MockBootServices::new();
+        boot_services.expect_raise_tpl().with(eq(Tpl::NOTIFY)).return_const(Tpl::APPLICATION);
+        boot_services.expect_restore_tpl().with(eq(Tpl::APPLICATION)).return_const(());
+        // Mock install_configuration_table to return success
+        boot_services.expect_install_configuration_table::<*mut core::ffi::c_void>().returning(|_, _| Ok(()));
+        boot_services
+    }
+
+    #[test]
+    fn test_smbios_impl_publish_table() {
+        let boot_services = Box::leak(Box::new(mock_boot_services_with_config_table()));
+        let smbios = create_test_smbios_impl(boot_services);
+
+        // publish_table should succeed with mocked install_configuration_table
+        let result = smbios.publish_table();
+        assert!(result.is_ok());
+
+        let (table_addr, ep_addr) = result.unwrap();
+        // Addresses should be non-zero (allocated by StdMemoryManager)
+        assert_ne!(table_addr, 0);
+        assert_ne!(ep_addr, 0);
+    }
+
+    #[test]
+    fn test_smbios_ext_add_record() {
+        let boot_services = Box::leak(Box::new(mock_boot_services()));
+        let smbios_impl = create_test_smbios_impl(boot_services);
+
+        // Create a Service<dyn Smbios> using the mock helper
+        let service: Service<dyn Smbios> = Service::mock(Box::new(smbios_impl));
+
+        // Create a Type 0 record
+        let type0 = Type0PlatformFirmwareInformation {
+            header: SmbiosTableHeader::new(0, 24, SMBIOS_HANDLE_PI_RESERVED),
+            vendor: 1,
+            firmware_version: 2,
+            bios_starting_address_segment: 0xE800,
+            firmware_release_date: 3,
+            firmware_rom_size: 0xFF,
+            characteristics: 0x08,
+            characteristics_ext1: 0x03,
+            characteristics_ext2: 0x03,
+            system_bios_major_release: 1,
+            system_bios_minor_release: 0,
+            embedded_controller_major_release: 0xFF,
+            embedded_controller_minor_release: 0xFF,
+            extended_bios_rom_size: 0,
+            string_pool: vec![String::from("Vendor"), String::from("1.0"), String::from("01/01/2025")],
+        };
+
+        // Use the extension trait method add_record<T>
+        let result = service.add_record(None, &type0);
+        assert!(result.is_ok());
+
+        let handle = result.unwrap();
+        assert_ne!(handle, SMBIOS_HANDLE_PI_RESERVED);
     }
 }

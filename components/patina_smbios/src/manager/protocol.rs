@@ -15,7 +15,7 @@
 
 use core::ffi::c_char;
 
-use patina::{boot_services::StandardBootServices, tpl_mutex::TplMutex, uefi_protocol::ProtocolInterface};
+use patina::{tpl_mutex::TplMutex, uefi_protocol::ProtocolInterface};
 use r_efi::efi;
 
 use crate::{
@@ -42,11 +42,10 @@ pub(super) struct SmbiosProtocolInternal {
     pub(super) protocol: SmbiosProtocol,
 
     // Internal component access only! Does not exist in C definition
-    pub(super) manager: &'static TplMutex<'static, SmbiosManager, StandardBootServices>,
+    pub(super) manager: &'static TplMutex<'static, SmbiosManager>,
 
-    // Storage for header returned by C protocol's get_next
-    // Avoids heap allocation - reused across calls
-    pub(super) header_buffer: core::cell::UnsafeCell<SmbiosTableHeader>,
+    // Boot services needed for table republishing after Add/Update/Remove
+    pub(super) boot_services: &'static patina::boot_services::StandardBootServices,
 }
 
 // SAFETY: SmbiosProtocol implements the SMBIOS protocol interface. The struct layout
@@ -56,18 +55,14 @@ unsafe impl ProtocolInterface for SmbiosProtocol {
         efi::Guid::from_fields(0x03583ff6, 0xcb36, 0x4940, 0x94, 0x7e, &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7]);
 }
 
-#[allow(dead_code)]
 type SmbiosAdd =
     extern "efiapi" fn(*const SmbiosProtocol, efi::Handle, *mut SmbiosHandle, *const SmbiosTableHeader) -> efi::Status;
 
-#[allow(dead_code)]
 type SmbiosUpdateString =
     extern "efiapi" fn(*const SmbiosProtocol, *mut SmbiosHandle, *mut usize, *const c_char) -> efi::Status;
 
-#[allow(dead_code)]
 type SmbiosRemove = extern "efiapi" fn(*const SmbiosProtocol, SmbiosHandle) -> efi::Status;
 
-#[allow(dead_code)]
 type SmbiosGetNext = extern "efiapi" fn(
     *const SmbiosProtocol,
     *mut SmbiosHandle,
@@ -94,17 +89,14 @@ impl SmbiosProtocolInternal {
     ///
     /// This constructor is tested via integration (Q35 platform component)
     /// as it requires 'static boot services which cannot be mocked in unit tests.
-    #[cfg_attr(coverage_nightly, coverage(off))]
+    #[coverage(off)]
     pub(super) fn new(
         major_version: u8,
         minor_version: u8,
-        manager: &'static TplMutex<'static, SmbiosManager, StandardBootServices>,
+        manager: &'static TplMutex<'static, SmbiosManager>,
+        boot_services: &'static patina::boot_services::StandardBootServices,
     ) -> Self {
-        Self {
-            protocol: SmbiosProtocol::new(major_version, minor_version),
-            manager,
-            header_buffer: core::cell::UnsafeCell::new(SmbiosTableHeader::new(0, 0, 0)),
-        }
+        Self { protocol: SmbiosProtocol::new(major_version, minor_version), manager, boot_services }
     }
 }
 
@@ -122,19 +114,34 @@ impl SmbiosProtocol {
         smbios_handle: *mut SmbiosHandle,
         record: *const SmbiosTableHeader,
     ) -> efi::Status {
-        // Safety checks
-        if smbios_handle.is_null() || record.is_null() {
+        // Safety checks: validate all pointers before dereferencing
+        if protocol.is_null() || smbios_handle.is_null() || record.is_null() {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // SAFETY: We must trust the C code was a responsible steward of this pointer
-        // Cast from protocol pointer to internal struct pointer
+        // Check protocol pointer alignment
+        if !(protocol as usize).is_multiple_of(core::mem::align_of::<SmbiosProtocolInternal>()) {
+            debug_assert!(false, "[SMBIOS Add] Protocol pointer misaligned: {:p}", protocol);
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        // SAFETY: Protocol pointer has been validated as non-null and properly aligned above.
+        // Cast from protocol pointer to internal struct pointer is safe due to repr(C) layout:
+        // SmbiosProtocolInternal has SmbiosProtocol as its first field, so a pointer to
+        // SmbiosProtocol is also a valid pointer to the containing SmbiosProtocolInternal.
         let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
-        let manager = internal.manager.lock();
+
+        let manager = match internal.manager.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                debug_assert!(false, "[SMBIOS Add] ERROR: try_lock FAILED - mutex already locked!");
+                return efi::Status::DEVICE_ERROR;
+            }
+        };
 
         // SAFETY: The C UEFI protocol caller guarantees that `record` points to a valid,
-        // complete SMBIOS record. We read the length field to determine the full record size.
-        unsafe {
+        // complete SMBIOS record. We read the length field and scan for string pool terminator.
+        let full_record_bytes = unsafe {
             let header = &*record;
             let record_length = header.length as usize;
 
@@ -169,27 +176,41 @@ impl SmbiosProtocol {
             let total_size = offset;
 
             // Create a slice of the complete record
-            let full_record_bytes = core::slice::from_raw_parts(base_ptr, total_size);
+            core::slice::from_raw_parts(base_ptr, total_size)
+        };
 
-            // Convert handle
-            let producer_opt = if producer_handle.is_null() { None } else { Some(producer_handle) };
+        // Convert handle
+        let producer_opt = if producer_handle.is_null() { None } else { Some(producer_handle) };
 
-            // Add the record
-            match manager.add_from_bytes(producer_opt, full_record_bytes) {
-                Ok(handle) => {
-                    *smbios_handle = handle;
-                    efi::Status::SUCCESS
+        // Add the record
+        let result = manager.add_from_bytes(producer_opt, full_record_bytes);
+
+        match result {
+            Ok(handle) => {
+                // SAFETY: smbios_handle pointer is guaranteed valid by caller
+                unsafe {
+                    smbios_handle.write_unaligned(handle);
                 }
-                Err(SmbiosError::StringContainsNull) => efi::Status::INVALID_PARAMETER,
-                Err(SmbiosError::EmptyStringInPool) => efi::Status::INVALID_PARAMETER,
-                Err(SmbiosError::RecordTooSmall) => efi::Status::BUFFER_TOO_SMALL,
-                Err(SmbiosError::MalformedRecordHeader) => efi::Status::INVALID_PARAMETER,
-                Err(SmbiosError::InvalidStringPoolTermination) => efi::Status::INVALID_PARAMETER,
-                Err(SmbiosError::StringPoolTooSmall) => efi::Status::BUFFER_TOO_SMALL,
-                Err(SmbiosError::HandleExhausted) => efi::Status::OUT_OF_RESOURCES,
-                Err(SmbiosError::AllocationFailed) => efi::Status::OUT_OF_RESOURCES,
-                Err(SmbiosError::StringTooLong) => efi::Status::INVALID_PARAMETER,
-                Err(_) => efi::Status::DEVICE_ERROR,
+
+                if manager.republish_table().is_err() {
+                    log::error!("[SMBIOS Add] Failed to rebuild table");
+                    return efi::Status::DEVICE_ERROR;
+                }
+
+                efi::Status::SUCCESS
+            }
+            Err(SmbiosError::StringContainsNull) => efi::Status::INVALID_PARAMETER,
+            Err(SmbiosError::EmptyStringInPool) => efi::Status::INVALID_PARAMETER,
+            Err(SmbiosError::RecordTooSmall) => efi::Status::BUFFER_TOO_SMALL,
+            Err(SmbiosError::MalformedRecordHeader) => efi::Status::INVALID_PARAMETER,
+            Err(SmbiosError::InvalidStringPoolTermination) => efi::Status::INVALID_PARAMETER,
+            Err(SmbiosError::StringPoolTooSmall) => efi::Status::BUFFER_TOO_SMALL,
+            Err(SmbiosError::HandleExhausted) => efi::Status::OUT_OF_RESOURCES,
+            Err(SmbiosError::AllocationFailed) => efi::Status::OUT_OF_RESOURCES,
+            Err(SmbiosError::StringTooLong) => efi::Status::INVALID_PARAMETER,
+            Err(e) => {
+                log::error!("[SMBIOS Add] Error: {:?}", e);
+                efi::Status::DEVICE_ERROR
             }
         }
     }
@@ -201,19 +222,25 @@ impl SmbiosProtocol {
         string_number: *mut usize,
         string: *const c_char,
     ) -> efi::Status {
-        if smbios_handle.is_null() || string_number.is_null() || string.is_null() {
+        // Safety checks: validate all pointers before dereferencing
+        if protocol.is_null() || smbios_handle.is_null() || string_number.is_null() || string.is_null() {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // SAFETY: Cast from protocol pointer to internal struct pointer
+        // Check protocol pointer alignment
+        if !(protocol as usize).is_multiple_of(core::mem::align_of::<SmbiosProtocolInternal>()) {
+            debug_assert!(false, "[SMBIOS UpdateString] Protocol pointer misaligned: {:p}", protocol);
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        // SAFETY: Protocol pointer validated as non-null and aligned. See add_ext for details on repr(C) cast.
         let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
         let manager = internal.manager.lock();
 
-        // SAFETY: The pointers are checked for being null above. They are expected to point
-        // to valid data objects due to the expectations of the protocol interface.
-        unsafe {
-            let handle = *smbios_handle;
-            let str_num = *string_number;
+        // SAFETY: The pointers are checked for being null above and guaranteed valid by caller
+        let (handle, str_num, rust_str) = unsafe {
+            let handle = smbios_handle.read_unaligned();
+            let str_num = string_number.read_unaligned();
 
             // Convert C string to Rust str
             let c_str = core::ffi::CStr::from_ptr(string);
@@ -222,25 +249,52 @@ impl SmbiosProtocol {
                 Err(_) => return efi::Status::INVALID_PARAMETER,
             };
 
-            match manager.update_string(handle, str_num, rust_str) {
-                Ok(()) => efi::Status::SUCCESS,
-                Err(SmbiosError::StringContainsNull) => efi::Status::INVALID_PARAMETER,
-                Err(SmbiosError::HandleNotFound) => efi::Status::NOT_FOUND,
-                Err(SmbiosError::StringIndexOutOfRange) => efi::Status::INVALID_PARAMETER,
-                Err(SmbiosError::StringTooLong) => efi::Status::INVALID_PARAMETER,
-                Err(_) => efi::Status::DEVICE_ERROR,
+            (handle, str_num, rust_str)
+        };
+
+        match manager.update_string(handle, str_num, rust_str) {
+            Ok(()) => {
+                if manager.republish_table().is_err() {
+                    log::error!("[SMBIOS UpdateString] Failed to rebuild table");
+                    return efi::Status::DEVICE_ERROR;
+                }
+
+                efi::Status::SUCCESS
             }
+            Err(SmbiosError::StringContainsNull) => efi::Status::INVALID_PARAMETER,
+            Err(SmbiosError::HandleNotFound) => efi::Status::NOT_FOUND,
+            Err(SmbiosError::StringIndexOutOfRange) => efi::Status::INVALID_PARAMETER,
+            Err(SmbiosError::StringTooLong) => efi::Status::INVALID_PARAMETER,
+            Err(_) => efi::Status::DEVICE_ERROR,
         }
     }
 
     #[coverage(off)] // FFI function - tested via integration tests
     extern "efiapi" fn remove_ext(protocol: *const SmbiosProtocol, smbios_handle: SmbiosHandle) -> efi::Status {
-        // SAFETY: Cast from protocol pointer to internal struct pointer
+        // Safety check: validate protocol pointer before dereferencing
+        if protocol.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        // Check protocol pointer alignment
+        if !(protocol as usize).is_multiple_of(core::mem::align_of::<SmbiosProtocolInternal>()) {
+            debug_assert!(false, "[SMBIOS Remove] Protocol pointer misaligned: {:p}", protocol);
+            return efi::Status::INVALID_PARAMETER;
+        }
+
+        // SAFETY: Protocol pointer validated as non-null and aligned. See add_ext for details on repr(C) cast.
         let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
         let manager = internal.manager.lock();
 
         match manager.remove(smbios_handle) {
-            Ok(()) => efi::Status::SUCCESS,
+            Ok(()) => {
+                if manager.republish_table().is_err() {
+                    log::error!("[SMBIOS Remove] Failed to rebuild table");
+                    return efi::Status::DEVICE_ERROR;
+                }
+
+                efi::Status::SUCCESS
+            }
             Err(SmbiosError::HandleNotFound) => efi::Status::NOT_FOUND,
             Err(_) => efi::Status::DEVICE_ERROR,
         }
@@ -254,20 +308,30 @@ impl SmbiosProtocol {
         record: *mut *mut SmbiosTableHeader,
         producer_handle: *mut efi::Handle,
     ) -> efi::Status {
-        if smbios_handle.is_null() || record.is_null() {
+        // Safety checks: validate all required pointers before dereferencing
+        if protocol.is_null() || smbios_handle.is_null() || record.is_null() {
             return efi::Status::INVALID_PARAMETER;
         }
 
-        // SAFETY: Cast from protocol pointer to internal struct pointer
-        let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
-        let manager = internal.manager.lock();
+        // Check protocol pointer alignment
+        if !(protocol as usize).is_multiple_of(core::mem::align_of::<SmbiosProtocolInternal>()) {
+            debug_assert!(false, "[SMBIOS GetNext] Protocol pointer misaligned: {:p}", protocol);
+            return efi::Status::INVALID_PARAMETER;
+        }
 
-        // SAFETY: The pointers are checked for being null above. They are expected to point
-        // to valid data objects due to the expectations of the protocol interface. The type_filter
-        // is optionally dereferenced after a null check.
-        unsafe {
-            let handle = *smbios_handle;
-            let type_filter = if record_type.is_null() { None } else { Some(*record_type) };
+        // SAFETY: Protocol pointer validated as non-null and aligned. See add_ext for details on repr(C) cast.
+        let internal = unsafe { &*(protocol as *const SmbiosProtocolInternal) };
+
+        let found_handle = {
+            let manager = internal.manager.lock();
+
+            // SAFETY: C UEFI protocol caller guarantees pointers are valid
+            let (handle, type_filter) = unsafe {
+                (
+                    smbios_handle.read_unaligned(),
+                    if record_type.is_null() { None } else { Some(record_type.read_unaligned()) },
+                )
+            };
 
             // Use the iterator to find the next record
             let mut iter = manager.iter(type_filter);
@@ -281,31 +345,41 @@ impl SmbiosProtocol {
                 iter.skip_while(|(hdr, _)| hdr.handle != handle).nth(1)
             };
 
-            match next_record {
-                Some((header_value, prod_handle)) => {
-                    *smbios_handle = header_value.handle;
+            next_record.map(|(header, _)| header.handle)
+        }; // manager borrow drops here
 
-                    // Store header in internal buffer and return pointer to it
-                    let buffer_ptr = internal.header_buffer.get();
-                    *buffer_ptr = header_value;
-                    *record = buffer_ptr;
+        let Some(found_handle) = found_handle else {
+            return efi::Status::NOT_FOUND;
+        };
 
-                    if !producer_handle.is_null() {
-                        *producer_handle = prod_handle.unwrap_or(core::ptr::null_mut());
-                    }
-                    efi::Status::SUCCESS
-                }
-                None => {
-                    *smbios_handle = SMBIOS_HANDLE_PI_RESERVED;
-                    efi::Status::NOT_FOUND
+        // SAFETY: smbios_handle pointer is guaranteed valid by caller
+        unsafe {
+            smbios_handle.write_unaligned(found_handle);
+        }
+
+        // Get pointer to record in published table
+        let manager = internal.manager.lock();
+        if let Some((record_addr, prod)) = manager.get_record_pointer(found_handle) {
+            // SAFETY: record pointer is guaranteed valid by caller
+            unsafe {
+                record.write_unaligned(record_addr as *mut SmbiosTableHeader);
+            }
+
+            if !producer_handle.is_null() {
+                // SAFETY: producer_handle pointer is guaranteed valid by caller (checked for null)
+                unsafe {
+                    producer_handle.write_unaligned(prod.unwrap_or(core::ptr::null_mut()));
                 }
             }
+            efi::Status::SUCCESS
+        } else {
+            debug_assert!(false, "[SMBIOS GetNext] Record handle {:04X} not found in second lookup", found_handle);
+            efi::Status::NOT_FOUND
         }
     }
 }
 
 #[cfg(test)]
-#[coverage(off)]
 mod tests {
     use super::*;
     use crate::manager::SmbiosManager;
@@ -424,6 +498,39 @@ mod tests {
             efi::Guid::from_fields(0x03583ff6, 0xcb36, 0x4940, 0x94, 0x7e, &[0xb9, 0xb3, 0x9f, 0x4a, 0xfa, 0xf7]);
 
         assert_eq!(SmbiosProtocol::PROTOCOL_GUID, expected_guid);
+    }
+
+    #[test]
+    fn test_repr_c_layout_guarantee() {
+        use core::mem::{align_of, offset_of};
+
+        // Verify repr(C) layout guarantee: SmbiosProtocol is at offset 0 in SmbiosProtocolInternal
+        // This is critical for the pointer cast pattern: &*(protocol as *const SmbiosProtocolInternal)
+        assert_eq!(
+            offset_of!(SmbiosProtocolInternal, protocol),
+            0,
+            "SmbiosProtocol must be the first field at offset 0 for safe pointer casting"
+        );
+
+        // Verify alignment is compatible
+        assert!(
+            align_of::<SmbiosProtocol>() <= align_of::<SmbiosProtocolInternal>(),
+            "SmbiosProtocol alignment must be <= SmbiosProtocolInternal alignment"
+        );
+
+        // Verify a SmbiosProtocol pointer can be aligned as SmbiosProtocolInternal
+        // Since protocol is at offset 0, any properly aligned SmbiosProtocolInternal pointer
+        // is also a properly aligned SmbiosProtocol pointer (and vice versa when protocol is first field)
+        let protocol = SmbiosProtocol::new(3, 9);
+        let protocol_ptr = &protocol as *const SmbiosProtocol;
+        let protocol_addr = protocol_ptr as usize;
+
+        // This pointer should be valid for casting to SmbiosProtocolInternal alignment
+        assert_eq!(
+            protocol_addr % align_of::<SmbiosProtocolInternal>(),
+            0,
+            "SmbiosProtocol pointer should be aligned for SmbiosProtocolInternal"
+        );
     }
 
     #[test]

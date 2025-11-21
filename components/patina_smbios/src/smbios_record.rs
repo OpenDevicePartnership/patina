@@ -469,7 +469,7 @@ pub struct Type3SystemEnclosure {
 /// - No strings
 #[derive(patina_macro::SmbiosRecord)]
 #[smbios(record_type = 127)]
-pub struct Type127EndOfTable {
+pub(crate) struct Type127EndOfTable {
     /// SMBIOS header
     pub header: SmbiosTableHeader,
 

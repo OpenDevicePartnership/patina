@@ -21,7 +21,7 @@ mod protocol;
 mod record;
 
 // Re-export main types and functions
-pub use core::SmbiosManager;
+pub use core::{SMBIOS_3_X_TABLE_GUID, SmbiosManager};
 pub(crate) use record::SmbiosRecord;
 
 use alloc::boxed::Box;
@@ -55,7 +55,7 @@ pub fn install_smbios_protocol(
     boot_services: &'static StandardBootServices,
 ) -> Result<efi::Handle, SmbiosError> {
     // Create the protocol instance with internal struct
-    let internal = SmbiosProtocolInternal::new(major_version, minor_version, manager_mutex);
+    let internal = SmbiosProtocolInternal::new(major_version, minor_version, manager_mutex, boot_services);
     let interface = Box::into_raw(Box::new(internal));
 
     // Install the protocol using the unchecked interface since we have a raw pointer
