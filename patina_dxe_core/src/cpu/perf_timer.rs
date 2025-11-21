@@ -124,4 +124,16 @@ mod tests {
         let timer = PerfTimer::with_frequency(frequency);
         assert_eq!(timer.perf_frequency(), frequency);
     }
+
+    #[test]
+    fn test_zero_frequency_forces_arch_perf_frequency() {
+        let timer = PerfTimer::default();
+        assert_eq!(timer.perf_frequency(), arch_perf_frequency());
+
+        let timer = PerfTimer::new();
+        assert_eq!(timer.perf_frequency(), arch_perf_frequency());
+
+        let timer = PerfTimer::with_frequency(0);
+        assert_eq!(timer.perf_frequency(), arch_perf_frequency());
+    }
 }
