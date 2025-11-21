@@ -15,6 +15,8 @@
 
 /// Helper functions for serializing data as hex strings.
 pub mod hex_format;
+/// Serializable Firmware Volume definitions.
+pub mod serializable_fv;
 /// Serializable HOB definitions.
 pub mod serializable_hob;
 

@@ -303,7 +303,8 @@ For more details about mememory management in Patina see [Memory Management](./d
 
 #### Performance
 
-The performance numbers below are provided as of Patina v16, using the C implementation as a reference for
-DXE core execution times.
+The performance numbers below are provided as of Patina v16. On these physical platform(s),
+the only difference is the edk2 C DXE core versus the Patina Rust DXE Core. This is provided
+solely as a rough reference for Patina DXE core performance on a physical system.
 
 **X64 (Intel)**: +9.1% (DXE core execution time delta - % increase from C)
