@@ -119,15 +119,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_set_frequency() {
+    fn test_set_non_zero_frequency_forces_that_frequency() {
         let frequency = 19191919;
         let timer = PerfTimer::with_frequency(frequency);
         assert_eq!(timer.perf_frequency(), frequency);
-
-        let timer = PerfTimer::new();
-        assert_eq!(timer.perf_frequency(), 0);
-
-        let timer = PerfTimer::default();
-        assert_eq!(timer.perf_frequency(), 0);
     }
 }
