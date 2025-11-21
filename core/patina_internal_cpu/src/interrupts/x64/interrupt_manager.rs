@@ -9,6 +9,7 @@
 
 use patina::{
     base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
+    bit,
     component::service::IntoService,
     error::EfiError,
     pi::protocols::cpu_arch::EfiSystemContext,
@@ -133,51 +134,39 @@ extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystem
 }
 
 #[coverage(off)]
+// see Intel SDM Vol 3A section 7.15
 fn interpret_page_fault_exception_data(exception_data: u64) {
     log::error!("Error Code: {exception_data:#X?}");
-    if (exception_data & 0x1) == 0 {
+    if (exception_data & bit!(0)) == 0 {
         log::error!("Page not present");
     } else {
         log::error!("Page-level protection violation");
     }
 
-    if (exception_data & 0x2) == 0 {
+    if (exception_data & bit!(1)) == 0 {
         log::error!("R/W: Read");
     } else {
         log::error!("R/W: Write");
     }
 
-    if (exception_data & 0x4) == 0 {
-        log::error!("Mode: Supervisor");
-    } else {
-        log::error!("Mode: User");
-    }
-
-    if (exception_data & 0x8) == 0 {
+    if (exception_data & bit!(3)) != 0 {
         log::error!("Reserved bit violation");
     }
 
-    if (exception_data & 0x10) == 0 {
+    if (exception_data & bit!(4)) == 0 {
+        log::error!("Data access");
+    } else {
         log::error!("Instruction fetch access");
     }
 }
 
-// There is no value in coverage for this function.
 #[coverage(off)]
+// see Intel SDM Vol 3A section 7.15
 fn interpret_gp_fault_exception_data(exception_data: u64) {
-    log::error!("Error Code: {exception_data:#X?}");
-    if (exception_data & 0x1) != 0 {
-        log::error!("Invalid segment");
-    }
-
-    if (exception_data & 0x2) != 0 {
-        log::error!("Invalid write access");
-    }
-
-    if (exception_data & 0x4) == 0 {
-        log::error!("Mode: Supervisor");
+    if exception_data != 0 {
+        log::error!("Segment descriptor or IDT vector number: {exception_data:#X?}");
     } else {
-        log::error!("Mode: User");
+        log::error!("Not from loading a segment descriptor");
     }
 }
 
