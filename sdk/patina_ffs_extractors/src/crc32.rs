@@ -48,32 +48,18 @@ impl SectionExtractor for Crc32SectionExtractor {
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
+    use crate::tests::create_crc32_section;
+
     use super::*;
-    use patina::pi::fw_fs::{ffs::section::header::GuidDefined, guid::CRC32_SECTION};
+    use patina::pi::fw_fs::ffs::section::header::GuidDefined;
     use patina_ffs::section::Section;
     use r_efi::efi;
-
-    /// Helper to create a CRC32 GUID-defined section for testing.
-    ///
-    /// Constructs a section with the CRC32 GUID and the provided content,
-    /// including the 4-byte CRC32 checksum in the guid_specific_data field.
-    fn create_crc32_section(content: &[u8], crc32_value: u32) -> Section {
-        let guid_header = GuidDefined {
-            section_definition_guid: CRC32_SECTION,
-            data_offset: (core::mem::size_of::<GuidDefined>() + 4 + 4) as u16, // common header + guid header + crc32
-            attributes: 0x01,                                                  // EFI_GUIDED_SECTION_PROCESSING_REQUIRED
-        };
-
-        let crc32_bytes = crc32_value.to_le_bytes().to_vec();
-        let header = SectionHeader::GuidDefined(guid_header, crc32_bytes, content.len() as u32);
-        Section::new_from_header_with_data(header, content.to_vec()).expect("Failed to create test section")
-    }
 
     #[test]
     fn test_crc32_extractor_valid() {
         let content = b"Hello, CRC32!";
         let crc32 = crc32fast::hash(content);
-        let section = create_crc32_section(content, crc32);
+        let section = create_crc32_section(content, crc32.to_le_bytes().to_vec());
 
         let extractor = Crc32SectionExtractor;
         let result = extractor.extract(&section).expect("CRC32 extraction should succeed");
@@ -84,8 +70,8 @@ mod tests {
     #[test]
     fn test_crc32_extractor_invalid_checksum() {
         let content = b"Hello, CRC32!";
-        let wrong_crc32 = 0xDEADBEEF; // Intentionally wrong CRC
-        let section = create_crc32_section(content, wrong_crc32);
+        let wrong_crc32 = 0xDEADBEEFu32; // Intentionally wrong CRC
+        let section = create_crc32_section(content, wrong_crc32.to_le_bytes().to_vec());
 
         let extractor = Crc32SectionExtractor;
         let result = extractor.extract(&section);
@@ -97,7 +83,7 @@ mod tests {
     fn test_crc32_extractor_empty_content() {
         let content = b"";
         let crc32 = crc32fast::hash(content);
-        let section = create_crc32_section(content, crc32);
+        let section = create_crc32_section(content, crc32.to_le_bytes().to_vec());
 
         let extractor = Crc32SectionExtractor;
         let result = extractor.extract(&section).expect("Empty content with valid CRC should succeed");

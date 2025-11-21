@@ -83,69 +83,18 @@ impl SectionExtractor for CompositeSectionExtractor {
 }
 
 #[cfg(test)]
+#[coverage(off)]
 mod tests {
     use super::*;
-    use alloc::{vec, vec::Vec};
-    use patina::pi::fw_fs::{
-        ffs::section::header::GuidDefined,
-        guid::{BROTLI_SECTION, CRC32_SECTION, LZMA_SECTION},
-    };
-    use patina_ffs::section::SectionHeader;
-    use r_efi::efi;
-
-    /// Constructs a section with the specified GUID and payload, prepending
-    /// the required 16-byte header (out_size + scratch_size) for Brotli sections.
-    fn create_brotli_section(guid: &efi::Guid, payload: &[u8], out_size: u64) -> Section {
-        // Brotli section payload format: [out_size: u64, scratch_size: u64, compressed_data...]
-        let scratch_size = 0u64;
-
-        let mut content = Vec::new();
-        content.extend_from_slice(&out_size.to_le_bytes());
-        content.extend_from_slice(&scratch_size.to_le_bytes());
-        content.extend_from_slice(payload);
-
-        let guid_header = GuidDefined {
-            section_definition_guid: *guid,
-            data_offset: (core::mem::size_of::<GuidDefined>() + 4) as u16, // common header + guid header
-            attributes: 0x01,                                              // EFI_GUIDED_SECTION_PROCESSING_REQUIRED
-        };
-
-        let header = SectionHeader::GuidDefined(guid_header, vec![], content.len() as u32);
-        Section::new_from_header_with_data(header, content).expect("Failed to create test section")
-    }
-
-    /// Helper to create an LZMA GUID-defined section for testing.
-    ///
-    /// Constructs a section with the LZMA GUID and the provided compressed payload.
-    fn create_lzma_section(compressed_data: &[u8]) -> Section {
-        let guid_header = GuidDefined {
-            section_definition_guid: LZMA_SECTION,
-            data_offset: (core::mem::size_of::<GuidDefined>() + 4) as u16, // common header + guid header
-            attributes: 0x01,                                              // EFI_GUIDED_SECTION_PROCESSING_REQUIRED
-        };
-
-        let header = SectionHeader::GuidDefined(guid_header, vec![], compressed_data.len() as u32);
-        Section::new_from_header_with_data(header, compressed_data.to_vec()).expect("Failed to create test section")
-    }
-
-    /// Helper to create a GUID-defined section for testing.
-    fn create_crc32_section(guid: &efi::Guid, content: &[u8], guid_data: Vec<u8>) -> Section {
-        let guid_header = GuidDefined {
-            section_definition_guid: *guid,
-            data_offset: (core::mem::size_of::<GuidDefined>() + 4 + guid_data.len()) as u16,
-            attributes: 0x01,
-        };
-
-        let header = SectionHeader::GuidDefined(guid_header, guid_data, content.len() as u32);
-        Section::new_from_header_with_data(header, content.to_vec()).expect("Failed to create test section")
-    }
 
     #[test]
     #[cfg(feature = "crc32")]
     fn test_composite_extracts_crc32() {
+        use crate::tests::create_crc32_section;
+
         let content = b"Test CRC32 content";
         let crc32 = crc32fast::hash(content);
-        let section = create_crc32_section(&CRC32_SECTION, content, crc32.to_le_bytes().to_vec());
+        let section = create_crc32_section(content, crc32.to_le_bytes().to_vec());
 
         let extractor = CompositeSectionExtractor::default();
         let result = extractor.extract(&section).expect("Should extract CRC32 section");
@@ -157,10 +106,12 @@ mod tests {
     #[cfg(feature = "brotli")]
     fn test_composite_extracts_brotli() {
         // Pre-compressed "Hello, World!" using Brotli
+
+        use crate::tests::create_brotli_section;
         let brotli_compressed_data: [u8; 18] = [
             0x21, 0x30, 0x00, 0x04, 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x57, 0x6F, 0x72, 0x6C, 0x64, 0x21, 0x03,
         ];
-        let section = create_brotli_section(&BROTLI_SECTION, &brotli_compressed_data, 13);
+        let section = create_brotli_section(&brotli_compressed_data, 13);
         let extractor = CompositeSectionExtractor::default();
         let result = extractor.extract(&section);
         assert!(result.is_ok());
@@ -172,6 +123,8 @@ mod tests {
     #[cfg(feature = "lzma")]
     fn test_composite_extracts_lzma() {
         // Pre-compressed "Hello, World!" using LZMA
+
+        use crate::tests::create_lzma_section;
         let lzma_compressed_data: &[u8] = &[
             0x5D, 0x00, 0x00, 0x80, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x24, 0x19, 0x49, 0x98,
             0x6F, 0x16, 0x02, 0x89, 0x0A, 0x98, 0xE7, 0x3F, 0xA8, 0xC3, 0x95, 0x48, 0x4D, 0xFF, 0xFF, 0x75, 0xF0, 0x00,

@@ -62,24 +62,12 @@ impl SectionExtractor for LzmaSectionExtractor {
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
+    use crate::tests::create_lzma_section;
+
     use super::*;
     use alloc::vec;
     use patina::pi::fw_fs::ffs::section::header::GuidDefined;
     use patina_ffs::section::Section;
-
-    /// Helper to create an LZMA GUID-defined section for testing.
-    ///
-    /// Constructs a section with the LZMA GUID and the provided compressed payload.
-    fn create_lzma_section(compressed_data: &[u8]) -> Section {
-        let guid_header = GuidDefined {
-            section_definition_guid: LZMA_SECTION_GUID,
-            data_offset: (core::mem::size_of::<GuidDefined>() + 4) as u16, // common header + guid header
-            attributes: 0x01,                                              // EFI_GUIDED_SECTION_PROCESSING_REQUIRED
-        };
-
-        let header = SectionHeader::GuidDefined(guid_header, vec![], compressed_data.len() as u32);
-        Section::new_from_header_with_data(header, compressed_data.to_vec()).expect("Failed to create test section")
-    }
 
     #[test]
     fn test_lzma_extractor_valid() {
