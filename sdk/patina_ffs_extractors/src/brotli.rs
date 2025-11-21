@@ -99,3 +99,25 @@ impl SectionExtractor for BrotliSectionExtractor {
         Err(FirmwareFileSystemError::Unsupported)
     }
 }
+
+#[cfg(test)]
+#[coverage(off)]
+mod tests {
+    use crate::tests::create_brotli_section;
+
+    use super::*;
+
+    #[test]
+    fn test_brotli_extractor() {
+        // Pre-compressed "Hello, World!" using Brotli
+        let brotli_compressed_data: [u8; 18] = [
+            0x21, 0x30, 0x00, 0x04, 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x57, 0x6F, 0x72, 0x6C, 0x64, 0x21, 0x03,
+        ];
+        let section = create_brotli_section(&brotli_compressed_data, 13);
+        let extractor = BrotliSectionExtractor;
+        let result = extractor.extract(&section);
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert_eq!(result, b"Hello, World!");
+    }
+}

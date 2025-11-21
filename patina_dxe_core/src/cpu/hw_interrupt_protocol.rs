@@ -1,4 +1,4 @@
-use crate::{GicBases, tpl_mutex::TplMutex};
+use crate::tpl_mutex::TplMutex;
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::ffi::c_void;
 use patina_internal_cpu::interrupts::{
@@ -16,6 +16,8 @@ use patina::{
     guids::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2},
     uefi_protocol::ProtocolInterface,
 };
+
+use super::GicBases;
 
 pub type HwInterruptHandler = extern "efiapi" fn(u64, &mut ExceptionContext);
 

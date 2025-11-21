@@ -4,3 +4,4 @@ Cargo.lock
 docs/book/
 docs/target/
 .vscode/launch.json
+.git_credentials
