@@ -23,5 +23,5 @@ jobs:
       contents: read
       issues: write
 
-    uses: OpenDevicePartnership/patina-devops/.github/workflows/IssueTriager.yml@v0.3.4
+    uses: OpenDevicePartnership/patina-devops/.github/workflows/IssueTriager.yml@v0.3.6
     secrets: inherit

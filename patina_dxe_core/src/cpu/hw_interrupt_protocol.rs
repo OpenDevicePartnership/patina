@@ -1,4 +1,4 @@
-use crate::{GicBases, tpl_mutex::TplMutex};
+use crate::tpl_mutex::TplMutex;
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::ffi::c_void;
 use patina_internal_cpu::interrupts::{
@@ -16,6 +16,8 @@ use patina::{
     guids::{HARDWARE_INTERRUPT_PROTOCOL, HARDWARE_INTERRUPT_PROTOCOL_V2},
     uefi_protocol::ProtocolInterface,
 };
+
+use super::GicBases;
 
 pub type HwInterruptHandler = extern "efiapi" fn(u64, &mut ExceptionContext);
 
@@ -453,12 +455,16 @@ impl HwInterruptProtocolHandler {
 
 #[derive(IntoComponent)]
 /// A component to install the two hardware interrupt protocols.
-pub(crate) struct HwInterruptProtocolInstaller(GicBases);
+pub(crate) struct HwInterruptProtocolInstaller {
+    /// The GIC base addresses.
+    gic_bases: GicBases,
+}
 
 impl HwInterruptProtocolInstaller {
     /// Creates a new `HwInterruptProtocolInstaller` instance.
+    #[coverage(off)]
     pub fn new(gic_bases: GicBases) -> Self {
-        Self(gic_bases)
+        Self { gic_bases }
     }
 
     fn entry_point(
@@ -466,10 +472,10 @@ impl HwInterruptProtocolInstaller {
         interrupt_manager: Service<dyn InterruptManager>,
         boot_services: StandardBootServices,
     ) -> patina::error::Result<()> {
-        log::info!("GIC initializing {:x?}", (self.0.0, self.0.1));
+        log::info!("GIC initializing {:x?}", (self.gic_bases.gicd, self.gic_bases.gicr));
         // SAFETY: The invariants of the `GicBases` struct upholds the safety requirements for this function.
         let aarch64_int = unsafe {
-            AArch64InterruptInitializer::new(self.0.0 as _, self.0.1 as _)
+            AArch64InterruptInitializer::new(self.gic_bases.gicd as _, self.gic_bases.gicr as _)
                 .inspect_err(|_| log::error!("Failed to initialize GIC"))?
         };
         log::info!("GIC initialized");

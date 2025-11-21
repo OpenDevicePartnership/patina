@@ -14,12 +14,13 @@ use patina::component::service::{IntoService, perf_timer::ArchTimerFunctionality
 /// Performance timer implementation.
 #[derive(IntoService)]
 #[service(dyn ArchTimerFunctionality)]
-pub struct PerfTimer {
+pub(crate) struct PerfTimer {
     frequency: AtomicU64,
 }
 
 impl ArchTimerFunctionality for PerfTimer {
     /// Value of the counter (ticks).
+    #[coverage(off)]
     fn cpu_count(&self) -> u64 {
         arch_cpu_count()
     }
@@ -45,16 +46,6 @@ impl PerfTimer {
     pub fn with_frequency(frequency: u64) -> Self {
         Self { frequency: AtomicU64::new(frequency) }
     }
-
-    /// Sets the performance frequency.
-    pub fn set_frequency(&self, frequency: u64) {
-        self.frequency.store(frequency, Ordering::Relaxed);
-    }
-
-    /// Gets the stored performance frequency.
-    pub fn get_stored_frequency(&self) -> u64 {
-        self.frequency.load(Ordering::Relaxed)
-    }
 }
 
 impl Default for PerfTimer {
@@ -67,7 +58,7 @@ impl Default for PerfTimer {
 ///
 /// Skip coverage as any value could be valid, including 0.
 #[coverage(off)]
-pub(crate) fn arch_cpu_count() -> u64 {
+fn arch_cpu_count() -> u64 {
     #[cfg(target_arch = "x86_64")]
     {
         use core::arch::x86_64;
@@ -125,23 +116,24 @@ pub(crate) fn arch_perf_frequency() -> u64 {
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
-    use patina::component::service::perf_timer::ArchTimerFunctionality as _;
-
-    use crate::perf_timer::PerfTimer;
+    use super::*;
 
     #[test]
-    fn test_set_frequency() {
+    fn test_set_non_zero_frequency_forces_that_frequency() {
         let frequency = 19191919;
-        let timer = PerfTimer::new();
-        assert_eq!(timer.get_stored_frequency(), 0);
-        timer.set_frequency(frequency);
-        assert_eq!(timer.perf_frequency(), 19191919);
-
-        let frequency = 20252025;
         let timer = PerfTimer::with_frequency(frequency);
-        assert_eq!(timer.get_stored_frequency(), frequency);
+        assert_eq!(timer.perf_frequency(), frequency);
+    }
 
+    #[test]
+    fn test_zero_frequency_forces_arch_perf_frequency() {
         let timer = PerfTimer::default();
-        assert_eq!(timer.get_stored_frequency(), 0);
+        assert_eq!(timer.perf_frequency(), arch_perf_frequency());
+
+        let timer = PerfTimer::new();
+        assert_eq!(timer.perf_frequency(), arch_perf_frequency());
+
+        let timer = PerfTimer::with_frequency(0);
+        assert_eq!(timer.perf_frequency(), arch_perf_frequency());
     }
 }

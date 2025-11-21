@@ -69,7 +69,7 @@ extern crate alloc;
 mod allocator;
 mod component_dispatcher;
 mod config_tables;
-mod cpu_arch_protocol;
+mod cpu;
 mod decompress;
 mod dispatcher;
 mod driver_services;
@@ -79,14 +79,11 @@ mod events;
 mod filesystems;
 mod fv;
 mod gcd;
-#[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
-mod hw_interrupt_protocol;
 mod image;
 mod memory_attributes_protocol;
 mod memory_manager;
 mod misc_boot_services;
 mod pecoff;
-mod perf_timer;
 mod protocol_db;
 mod protocols;
 mod runtime;
@@ -94,8 +91,11 @@ mod systemtables;
 mod tpl_mutex;
 
 #[cfg(test)]
-pub use component_dispatcher::MockComponentInfo;
+pub use {component_dispatcher::MockComponentInfo, cpu::MockCpuInfo};
+
 pub use component_dispatcher::{Add, Component, ComponentInfo, Config, Service};
+pub use cpu::{CpuInfo, GicBases};
+
 use spin::Once;
 
 #[cfg(test)]
@@ -130,14 +130,10 @@ use patina::{
     runtime_services::StandardRuntimeServices,
 };
 use patina_ffs::section::SectionExtractor;
-use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
 use protocols::PROTOCOL_DB;
 use r_efi::efi;
 
-use crate::{
-    component_dispatcher::ComponentDispatcher, config_tables::memory_attributes_table, perf_timer::PerfTimer,
-    tpl_mutex::TplMutex,
-};
+use crate::{component_dispatcher::ComponentDispatcher, config_tables::memory_attributes_table, tpl_mutex::TplMutex};
 
 #[doc(hidden)]
 #[macro_export]
@@ -187,41 +183,6 @@ pub trait MemoryInfo {
     }
 }
 
-/// A trait to be implemented by the platform to provide configuration values and types related to the CPU.
-///
-/// ## Example
-///
-/// ```rust
-/// use patina_dxe_core::*;
-///
-/// struct ExamplePlatform;
-///
-/// impl CpuInfo for ExamplePlatform {
-///
-///   #[cfg(target_arch = "aarch64")]
-///   fn gic_bases() -> GicBases {
-///     /// SAFETY: gicd and gicr bases correctly point to the register spaces.
-///     /// SAFETY: Access to these registers is exclusive to this struct instance.
-///     unsafe { GicBases::new(0x1E000000, 0x1E010000) }
-///   }
-/// }
-/// ```
-#[cfg_attr(test, mockall::automock)]
-pub trait CpuInfo {
-    /// Informs the core of the GIC base addresses for AARCH64 systems.
-    #[cfg(target_arch = "aarch64")]
-    fn gic_bases() -> GicBases;
-
-    /// Returns the performance timer frequency for the platform.
-    ///
-    /// By default, this returns `None`, indicating that the core should attempt to determine the frequency
-    /// automatically using cpu architecture-specific methods.
-    #[inline(always)]
-    fn perf_timer_frequency() -> Option<u64> {
-        None
-    }
-}
-
 /// A trait to be implemented by the platform to provide configuration values and types to be used directly by the
 /// Patina DXE Core.
 ///
@@ -262,58 +223,6 @@ pub trait PlatformInfo {
 
     /// The platform's section extractor type, used when extracting sections from firmware volumes.
     type Extractor: SectionExtractor;
-}
-
-/// A configuration struct containing the GIC bases (gic_d, gic_r) for AARCH64 systems.
-///
-/// ## Invariants
-///
-/// - `self.0` (GIC Distributor Base) points to the GIC Distributor register space.
-/// - `self.1` (GIC Redistributor Base) points to the GIC Redistributor register space.
-/// - Access to these registers are exclusive to this GicBases instance.
-///
-/// ## Example
-///
-/// ```rust
-/// use patina_dxe_core::*;
-///
-/// struct PlatformConfig;
-/// # impl ComponentInfo for PlatformConfig {}
-/// # impl MemoryInfo for PlatformConfig {}
-/// # impl CpuInfo for PlatformConfig {}
-///
-/// impl PlatformInfo for PlatformConfig {
-///   # type MemoryInfo = Self;
-///   # type Extractor = patina_ffs_extractors::NullSectionExtractor;
-///   # type ComponentInfo = Self;
-///   # type CpuInfo = Self;
-///
-///   # #[cfg(target_arch = "aarch64")]
-///   fn gic_bases() -> GicBases {
-///     /// SAFETY: gicd and gicr bases correctly point to the register spaces.
-///     /// SAFETY: Access to these registers is exclusive to this struct instance.
-///     unsafe { GicBases::new(0x1E000000, 0x1E010000) }
-///   }
-/// }
-/// ```
-#[derive(Debug, PartialEq)]
-pub struct GicBases(pub(crate) u64, pub(crate) u64);
-
-impl GicBases {
-    /// Creates a new instance of the GicBases struct with the provided GIC Distributor and Redistributor base addresses.
-    ///
-    /// ## Safety
-    ///
-    /// `gicd_base` must point to the GIC Distributor register space.
-    ///
-    /// `gicr_base` must point to the GIC Redistributor register space.
-    ///
-    /// Access to these registers are exclusive to this GicBases instance.
-    ///
-    /// Caller must guarantee that access to these registers is exclusive to this GicBases instance.
-    pub unsafe fn new(gicd_base: u64, gicr_base: u64) -> Self {
-        GicBases(gicd_base, gicr_base)
-    }
 }
 
 /// Static reference to the DXE Core instance in the compiled binary.
@@ -431,20 +340,20 @@ impl<P: PlatformInfo> Core<P> {
     }
 
     /// Attempts to set the HOB list for the DXE Core.
-    fn set_hob_list(&self, hob_list: HobList<'static>) -> bool {
-        if self.hob_list.is_completed() {
-            return false;
+    ///
+    /// Returns an `EfiError::AlreadyStarted` if the HOB list has already been set.
+    fn set_hob_list(&self, hob_list: HobList<'static>) -> Result<&HobList<'static>> {
+        match self.hob_list.is_completed() {
+            true => Err(error::EfiError::AlreadyStarted),
+            false => Ok(self.hob_list.call_once(|| hob_list)),
         }
-
-        let _ = self.hob_list.call_once(|| hob_list);
-        true
     }
 
     /// Returns a reference to the HOB list.
     ///
     /// Must not be called until `set_hob_list` has been called successfully.
     fn hob_list(&self) -> &HobList<'static> {
-        self.hob_list.get().expect("HOB list has been initialized.")
+        self.hob_list.get().expect("HOB list should have been initialized already.")
     }
 
     /// Initializes the core with the given configuration, including GCD initialization, enabling allocations.
@@ -453,10 +362,8 @@ impl<P: PlatformInfo> Core<P> {
 
         GCD.prioritize_32_bit_memory(P::MemoryInfo::prioritize_32_bit_memory());
 
-        let mut cpu = EfiCpu::default();
-        cpu.initialize().expect("Failed to initialize CPU!");
-        let mut interrupt_manager = Interrupts::default();
-        interrupt_manager.initialize().expect("Failed to initialize Interrupts!");
+        let (cpu, mut interrupt_manager) =
+            cpu::initialize_cpu_subsystem().expect("Failed to initialize CPU subsystem!");
 
         // For early debugging, the "no_alloc" feature must be enabled in the debugger crate.
         // patina_debugger::initialize(&mut interrupt_manager);
@@ -485,7 +392,7 @@ impl<P: PlatformInfo> Core<P> {
         // the initial free memory may not be enough to contain the HOB list. We need to relocate the HOBs because
         // the initial HOB list is not in mapped memory as passed from pre-DXE.
         hob_list.relocate_hobs();
-        debug_assert!(self.set_hob_list(hob_list));
+        assert!(self.set_hob_list(hob_list).is_ok());
 
         // Add custom monitor commands to the debugger before initializing so that
         // they are available in the initial breakpoint.
@@ -502,7 +409,8 @@ impl<P: PlatformInfo> Core<P> {
         component_dispatcher.add_service(cpu);
         component_dispatcher.add_service(interrupt_manager);
         component_dispatcher.add_service(CoreMemoryManager);
-        component_dispatcher.add_service(PerfTimer::with_frequency(P::CpuInfo::perf_timer_frequency().unwrap_or(0)));
+        component_dispatcher
+            .add_service(cpu::PerfTimer::with_frequency(P::CpuInfo::perf_timer_frequency().unwrap_or(0)));
     }
 
     /// Performs a combined dispatch of Patina components and UEFI drivers.
@@ -602,12 +510,10 @@ impl<P: PlatformInfo> Core<P> {
         let mut dispatcher = self.component_dispatcher.lock();
         dispatcher.insert_component(0, decompress::DecompressProtocolInstaller::default().into_component());
         dispatcher.insert_component(0, systemtables::SystemTableChecksumInstaller::default().into_component());
-        dispatcher.insert_component(0, cpu_arch_protocol::CpuArchProtocolInstaller::default().into_component());
+        dispatcher.insert_component(0, cpu::CpuArchProtocolInstaller::default().into_component());
         #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
-        dispatcher.insert_component(
-            0,
-            hw_interrupt_protocol::HwInterruptProtocolInstaller::new(P::CpuInfo::gic_bases()).into_component(),
-        );
+        dispatcher
+            .insert_component(0, cpu::HwInterruptProtocolInstaller::new(P::CpuInfo::gic_bases()).into_component());
     }
 
     /// Starts the core, dispatching all drivers.
@@ -740,20 +646,8 @@ mod tests {
         /// should not change without a conscious decision, which requires updating this test.
         struct TestPlatform;
 
-        impl PlatformInfo for TestPlatform {
-            type MemoryInfo = TestPlatform;
-            type CpuInfo = TestPlatform;
-            type ComponentInfo = TestPlatform;
-            type Extractor = patina_ffs_extractors::NullSectionExtractor;
-        }
-
         impl MemoryInfo for TestPlatform {}
 
-        impl ComponentInfo for TestPlatform {}
-
-        impl CpuInfo for TestPlatform {}
-
-        assert!(!<TestPlatform as PlatformInfo>::MemoryInfo::prioritize_32_bit_memory());
-        assert!(<<TestPlatform as PlatformInfo>::CpuInfo>::perf_timer_frequency().is_none());
+        assert!(!<TestPlatform as MemoryInfo>::prioritize_32_bit_memory());
     }
 }
