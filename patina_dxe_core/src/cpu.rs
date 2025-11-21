@@ -16,8 +16,9 @@ mod perf_timer;
 pub(crate) use cpu_arch_protocol::CpuArchProtocolInstaller;
 #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
 pub(crate) use hw_interrupt_protocol::HwInterruptProtocolInstaller;
-use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
 pub(crate) use perf_timer::PerfTimer;
+
+use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
 
 /// A configuration struct containing the GIC bases (gic_d, gic_r) for AARCH64 systems.
 ///
