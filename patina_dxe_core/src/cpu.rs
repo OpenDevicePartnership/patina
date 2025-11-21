@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn test_cpu_info_trait_defaults_do_not_change() {
         // A simple test to acknowledge that the default implementations of the CpuInfo trait should not change without
-        // a concsious decision, which requires updating this test.
+        // a conscious decision, which requires updating this test.
         struct TestPlatform;
 
         impl CpuInfo for TestPlatform {
