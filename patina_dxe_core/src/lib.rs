@@ -757,7 +757,12 @@ mod tests {
 
         impl ComponentInfo for TestPlatform {}
 
-        impl CpuInfo for TestPlatform {}
+        impl CpuInfo for TestPlatform {
+            #[cfg(target_arch = "aarch64")]
+            fn gic_bases() -> GicBases {
+                GicBases { gicd: 0, gicr: 0 }
+            }
+        }
 
         assert!(!<TestPlatform as PlatformInfo>::MemoryInfo::prioritize_32_bit_memory());
         assert!(<<TestPlatform as PlatformInfo>::CpuInfo>::perf_timer_frequency().is_none());
