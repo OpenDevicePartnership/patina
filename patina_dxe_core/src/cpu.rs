@@ -113,6 +113,7 @@ pub trait CpuInfo {
     }
 }
 
+#[coverage(off)]
 pub fn initialize_cpu_subsystem() -> crate::error::Result<(EfiCpu, Interrupts)> {
     let mut cpu = EfiCpu::default();
     cpu.initialize().inspect_err(|err| {
