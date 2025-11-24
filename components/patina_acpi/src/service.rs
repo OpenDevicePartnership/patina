@@ -58,8 +58,11 @@ impl AcpiTableManager {
     /// - Caller must ensure the provided table, `T`, has a C compatible layout (typically using `#[repr(C)]`).
     /// - Caller must ensure that the table's first field is a standard ACPI table header.
     pub unsafe fn install_acpi_table<T: 'static>(&self, table: T) -> Result<TableKey, AcpiError> {
+        log::trace!("AcpiTableManager::install_acpi_table called");
         let acpi_table = unsafe { AcpiTable::new(table, &self.memory_manager)? };
-        self.provider_service.install_acpi_table(acpi_table)
+        let result = self.provider_service.install_acpi_table(acpi_table);
+        log::trace!("AcpiTableManager::install_acpi_table result: {:?}", result);
+        result
     }
 
     /// Uninstalls an ACPI table.
@@ -68,7 +71,10 @@ impl AcpiTableManager {
     ///
     /// This function will remove the table from the XSDT and free the memory associated with it.
     pub fn uninstall_acpi_table(&self, table_key: TableKey) -> Result<(), AcpiError> {
-        self.provider_service.uninstall_acpi_table(table_key)
+        log::trace!("AcpiTableManager::uninstall_acpi_table called with table_key: {:?}", table_key);
+        let result = self.provider_service.uninstall_acpi_table(table_key);
+        log::trace!("AcpiTableManager::uninstall_acpi_table result: {:?}", result);
+        result
     }
 
     /// Retrieves an ACPI table by its table key.
@@ -81,18 +87,21 @@ impl AcpiTableManager {
     ///
     /// The RSDP and XSDT cannot be accessed through `get_acpi_table`.
     pub fn get_acpi_table<T: Clone + 'static>(&self, table_key: TableKey) -> Result<T, AcpiError> {
+        log::trace!("AcpiTableManager::get_acpi_table called with table_key: {:?}", table_key);
         let acpi_table = self.provider_service.get_acpi_table(table_key)?;
 
         // There may be ACPI tables whose type is unknown at installation, due to installation from the HOB or a C protocol.
         // In these cases, the type is is unspecified (AcpiTableHeader instead of a specific table type), so we skip type checking.
         // In all other cases, verify the type provided by the user is valid.
         if acpi_table.type_id != TypeId::of::<T>() {
+            log::trace!("AcpiTableManager::get_acpi_table failed: invalid table type");
             return Err(AcpiError::InvalidTableType);
         }
 
         // SAFETY: The type id of the returned table has been verified.
         // SAFETY: The installed tables are stored in the provider and live at least as long as `self`,
         // Cast the table to its expected type.
+        log::trace!("AcpiTableManager::get_acpi_table succeeded");
         unsafe { Ok(acpi_table.as_ref::<T>().clone()) }
     }
 
@@ -110,24 +119,32 @@ impl AcpiTableManager {
     ///
     /// - The caller must ensure the type T is a valid representation for the retrieved table.
     pub unsafe fn get_acpi_table_unchecked<T: 'static>(&self, table_key: TableKey) -> Result<&T, AcpiError> {
+        log::trace!("AcpiTableManager::get_acpi_table_unchecked called with table_key: {:?}", table_key);
         let acpi_table = self.provider_service.get_acpi_table(table_key)?;
 
         // SAFETY: The installed tables are stored in the provider and live at least as long as `self`,
         // Cast the table to its expected type.
         let raw_table_ptr: *const T = acpi_table.table.cast::<T>().as_ptr();
 
+        log::trace!("AcpiTableManager::get_acpi_table_unchecked succeeded");
         Ok(unsafe { &*raw_table_ptr })
     }
 
     /// Registers a function which will be called whenever a new ACPI table is installed.
     pub fn register_notify(&self, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError> {
-        self.provider_service.register_notify(true, notify_fn)
+        log::trace!("AcpiTableManager::register_notify called");
+        let result = self.provider_service.register_notify(true, notify_fn);
+        log::trace!("AcpiTableManager::register_notify result: {:?}", result);
+        result
     }
 
     /// Unregisters an existing notification function.
     /// The function must have been previously registered with `register_notify`.
     pub fn unregister_notify(&self, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError> {
-        self.provider_service.register_notify(false, notify_fn)
+        log::trace!("AcpiTableManager::unregister_notify called");
+        let result = self.provider_service.register_notify(false, notify_fn);
+        log::trace!("AcpiTableManager::unregister_notify result: {:?}", result);
+        result
     }
 
     /// Returns an iterator over the installed ACPI tables.
@@ -137,7 +154,10 @@ impl AcpiTableManager {
     ///
     /// The RSDP and XSDT are not included in the list of iterable ACPI tables.
     pub fn iter_tables(&self) -> Vec<AcpiTable> {
-        self.provider_service.iter_tables()
+        log::trace!("AcpiTableManager::iter_tables called");
+        let tables = self.provider_service.iter_tables();
+        log::trace!("AcpiTableManager::iter_tables returned {} tables", tables.len());
+        tables
     }
 }
 

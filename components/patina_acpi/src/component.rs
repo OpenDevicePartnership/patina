@@ -66,6 +66,7 @@ impl AcpiProviderManager {
         acpi_hob: Option<Hob<AcpiMemoryHob>>,
         memory_manager: Service<dyn MemoryManager>,
     ) -> patina::error::Result<()> {
+        log::trace!("AcpiProviderManager::entry_point called");
         ACPI_TABLE_INFO.initialize(boot_services, memory_manager).map_err(|_e| EfiError::AlreadyStarted)?;
 
         // Both XSDT and RSDP are always in reclaim memory.
@@ -130,11 +131,13 @@ impl AcpiProviderManager {
         ACPI_TABLE_INFO.checksum_common_tables().map_err(|_e| EfiError::NotStarted)?;
 
         if let Some(acpi_guid_hob) = acpi_hob {
+            log::trace!("AcpiProviderManager::entry_point installing tables from HOB");
             let _ = ACPI_TABLE_INFO.install_tables_from_hob(acpi_guid_hob);
         }
 
         commands.add_service(&ACPI_TABLE_INFO);
 
+        log::trace!("AcpiProviderManager::entry_point completed successfully");
         Ok(())
     }
 }
@@ -150,8 +153,10 @@ impl AcpiSystemProtocolManager {
     }
 
     fn entry_point(self, boot_services: StandardBootServices) -> patina::error::Result<()> {
+        log::trace!("AcpiSystemProtocolManager::entry_point called");
         boot_services.install_protocol_interface(None, Box::new(AcpiTableProtocol::new()))?;
         boot_services.install_protocol_interface(None, Box::new(AcpiGetProtocol::new()))?;
+        log::trace!("AcpiSystemProtocolManager::entry_point completed successfully");
         Ok(())
     }
 }
@@ -173,10 +178,12 @@ impl GenericAcpiManager {
         acpi_provider: Service<dyn AcpiProvider>,
         memory_manager: Service<dyn MemoryManager>,
     ) -> patina::error::Result<()> {
+        log::trace!("GenericAcpiManager::entry_point called");
         let acpi_service = AcpiTableManager { provider_service: acpi_provider, memory_manager };
 
         commands.add_service(acpi_service);
 
+        log::trace!("GenericAcpiManager::entry_point completed successfully");
         Ok(())
     }
 }
