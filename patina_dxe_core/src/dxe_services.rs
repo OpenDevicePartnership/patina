@@ -19,12 +19,9 @@ use patina::pi::dxe_services;
 use r_efi::efi;
 
 use crate::{
-    GCD,
+    Core, GCD, PlatformInfo,
     allocator::{EFI_RUNTIME_SERVICES_DATA_ALLOCATOR, core_allocate_pool},
-    config_tables,
-    dispatcher::{core_dispatcher, core_schedule, core_trust},
-    fv::core_install_firmware_volume,
-    gcd,
+    config_tables, gcd,
     systemtables::EfiSystemTable,
 };
 
@@ -370,122 +367,131 @@ extern "efiapi" fn get_io_space_map(
     }
 }
 
-extern "efiapi" fn dispatch() -> efi::Status {
-    match core_dispatcher() {
-        Err(err) => err.into(),
-        Ok(()) => efi::Status::SUCCESS,
-    }
-}
+impl<P: PlatformInfo> Core<P> {
+    /// Initializes and installs the DXE Services table into the provided system table.
+    pub(crate) fn install_dxe_services_table(&self, system_table: &mut EfiSystemTable) {
+        let mut dxe_system_table = dxe_services::DxeServicesTable {
+            header: efi::TableHeader {
+                signature: efi::BOOT_SERVICES_SIGNATURE,
+                revision: efi::BOOT_SERVICES_REVISION,
+                header_size: mem::size_of::<dxe_services::DxeServicesTable>() as u32,
+                crc32: 0,
+                reserved: 0,
+            },
+            add_memory_space,
+            allocate_memory_space,
+            free_memory_space,
+            remove_memory_space,
+            get_memory_space_descriptor,
+            set_memory_space_attributes,
+            get_memory_space_map,
+            add_io_space,
+            allocate_io_space,
+            free_io_space,
+            remove_io_space,
+            get_io_space_descriptor,
+            get_io_space_map,
+            dispatch: Self::dispatch_efiapi,
+            schedule: Self::schedule_efiapi,
+            trust: Self::trust_efiapi,
+            process_firmware_volume: Self::process_firmware_volume_efiapi,
+            set_memory_space_capabilities,
+        };
+        let dxe_system_table_ptr = &dxe_system_table as *const dxe_services::DxeServicesTable;
+        let crc32 = unsafe {
+            crc32fast::hash(from_raw_parts(
+                dxe_system_table_ptr as *const u8,
+                mem::size_of::<dxe_services::DxeServicesTable>(),
+            ))
+        };
+        dxe_system_table.header.crc32 = crc32;
 
-extern "efiapi" fn schedule(firmware_volume_handle: efi::Handle, file_name: *const efi::Guid) -> efi::Status {
-    if file_name.is_null() {
-        return efi::Status::INVALID_PARAMETER;
-    }
-    // Safety: caller must ensure that file_name is a valid pointer. It is null-checked above.
-    let file_name = unsafe { file_name.read_unaligned() };
+        let dxe_system_table = Box::new_in(dxe_system_table, &EFI_RUNTIME_SERVICES_DATA_ALLOCATOR);
 
-    match core_schedule(firmware_volume_handle, &file_name) {
-        Err(status) => status.into(),
-        Ok(_) => efi::Status::SUCCESS,
-    }
-}
-
-extern "efiapi" fn trust(firmware_volume_handle: efi::Handle, file_name: *const efi::Guid) -> efi::Status {
-    if file_name.is_null() {
-        return efi::Status::INVALID_PARAMETER;
-    }
-    // Safety: caller must ensure that file_name is a valid pointer. It is null-checked above.
-    let file_name = unsafe { file_name.read_unaligned() };
-
-    match core_trust(firmware_volume_handle, &file_name) {
-        Err(status) => status.into(),
-        Ok(_) => efi::Status::SUCCESS,
-    }
-}
-
-extern "efiapi" fn process_firmware_volume(
-    firmware_volume_header: *const c_void,
-    size: usize,
-    firmware_volume_handle: *mut efi::Handle,
-) -> efi::Status {
-    if firmware_volume_handle.is_null() || firmware_volume_header.is_null() {
-        return efi::Status::INVALID_PARAMETER;
-    }
-
-    // construct a FirmwareVolume to verify sanity
-    // Safety: caller must ensure that firmware_volume_header is a valid pointer. It is null-checked above.
-    let fv_slice = unsafe { slice::from_raw_parts(firmware_volume_header as *const u8, size) };
-    if let Err(err) = VolumeRef::new(fv_slice) {
-        return err.into();
-    }
-    // Safety: caller must ensure that firmware_volume_header is a valid firmware volume that will not be freed
-    // or moved after being sent to the core for processing.
-    let res = unsafe { core_install_firmware_volume(firmware_volume_header as u64, None) };
-    let handle = match res {
-        Ok(handle) => handle,
-        Err(err) => return err.into(),
-    };
-
-    // Safety: caller must ensure that firmware_volume_handle is a valid pointer. It is null-checked above.
-    unsafe {
-        firmware_volume_handle.write_unaligned(handle);
+        let _ = config_tables::core_install_configuration_table(
+            dxe_services::DXE_SERVICES_TABLE_GUID,
+            Box::into_raw_with_allocator(dxe_system_table).0 as *mut c_void,
+            system_table,
+        );
     }
 
-    efi::Status::SUCCESS
-}
+    extern "efiapi" fn process_firmware_volume_efiapi(
+        firmware_volume_header: *const c_void,
+        size: usize,
+        firmware_volume_handle: *mut efi::Handle,
+    ) -> efi::Status {
+        if firmware_volume_handle.is_null() || firmware_volume_header.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
 
-pub fn init_dxe_services(system_table: &mut EfiSystemTable) {
-    let mut dxe_system_table = dxe_services::DxeServicesTable {
-        header: efi::TableHeader {
-            signature: efi::BOOT_SERVICES_SIGNATURE,
-            revision: efi::BOOT_SERVICES_REVISION,
-            header_size: mem::size_of::<dxe_services::DxeServicesTable>() as u32,
-            crc32: 0,
-            reserved: 0,
-        },
-        add_memory_space,
-        allocate_memory_space,
-        free_memory_space,
-        remove_memory_space,
-        get_memory_space_descriptor,
-        set_memory_space_attributes,
-        get_memory_space_map,
-        add_io_space,
-        allocate_io_space,
-        free_io_space,
-        remove_io_space,
-        get_io_space_descriptor,
-        get_io_space_map,
-        dispatch,
-        schedule,
-        trust,
-        process_firmware_volume,
-        set_memory_space_capabilities,
-    };
-    let dxe_system_table_ptr = &dxe_system_table as *const dxe_services::DxeServicesTable;
-    let crc32 = unsafe {
-        crc32fast::hash(from_raw_parts(
-            dxe_system_table_ptr as *const u8,
-            mem::size_of::<dxe_services::DxeServicesTable>(),
-        ))
-    };
-    dxe_system_table.header.crc32 = crc32;
+        // construct a FirmwareVolume to verify sanity
+        // Safety: caller must ensure that firmware_volume_header is a valid pointer. It is null-checked above.
+        let fv_slice = unsafe { slice::from_raw_parts(firmware_volume_header as *const u8, size) };
+        if let Err(err) = VolumeRef::new(fv_slice) {
+            return err.into();
+        }
+        // Safety: caller must ensure that firmware_volume_header is a valid firmware volume that will not be freed
+        // or moved after being sent to the core for processing.
+        let res =
+            unsafe { Self::instance().pi_dispatcher.install_firmware_volume(firmware_volume_header as u64, None) };
+        let handle = match res {
+            Ok(handle) => handle,
+            Err(err) => return err.into(),
+        };
 
-    let dxe_system_table = Box::new_in(dxe_system_table, &EFI_RUNTIME_SERVICES_DATA_ALLOCATOR);
+        // Safety: caller must ensure that firmware_volume_handle is a valid pointer. It is null-checked above.
+        unsafe {
+            firmware_volume_handle.write_unaligned(handle);
+        }
 
-    let _ = config_tables::core_install_configuration_table(
-        dxe_services::DXE_SERVICES_TABLE_GUID,
-        Box::into_raw_with_allocator(dxe_system_table).0 as *mut c_void,
-        system_table,
-    );
+        efi::Status::SUCCESS
+    }
+
+    #[coverage(off)]
+    extern "efiapi" fn dispatch_efiapi() -> efi::Status {
+        match Self::instance().pi_dispatcher.dispatcher() {
+            Err(err) => err.into(),
+            Ok(()) => efi::Status::SUCCESS,
+        }
+    }
+
+    extern "efiapi" fn schedule_efiapi(
+        firmware_volume_handle: efi::Handle,
+        file_name: *const efi::Guid,
+    ) -> efi::Status {
+        if file_name.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
+        // Safety: caller must ensure that file_name is a valid pointer. It is null-checked above.
+        let file_name = unsafe { file_name.read_unaligned() };
+
+        match Self::instance().pi_dispatcher.schedule(firmware_volume_handle, &file_name) {
+            Err(status) => status.into(),
+            Ok(_) => efi::Status::SUCCESS,
+        }
+    }
+
+    extern "efiapi" fn trust_efiapi(firmware_volume_handle: efi::Handle, file_name: *const efi::Guid) -> efi::Status {
+        if file_name.is_null() {
+            return efi::Status::INVALID_PARAMETER;
+        }
+        // Safety: caller must ensure that file_name is a valid pointer. It is null-checked above.
+        let file_name = unsafe { file_name.read_unaligned() };
+
+        match Self::instance().pi_dispatcher.trust(firmware_volume_handle, &file_name) {
+            Err(status) => status.into(),
+            Ok(_) => efi::Status::SUCCESS,
+        }
+    }
 }
 
 #[cfg(test)]
 #[coverage(off)]
 mod tests {
     use super::*;
-    use crate::test_support;
+    use crate::{MockCore, test_support};
     use dxe_services::{GcdIoType, GcdMemoryType};
+    use patina_ffs_extractors::NullSectionExtractor;
 
     fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
         test_support::with_global_lock(|| {
@@ -493,7 +499,6 @@ mod tests {
                 crate::test_support::init_test_gcd(None);
                 crate::test_support::init_test_protocol_db();
             }
-            crate::test_support::reset_dispatcher_context();
             f();
         })
         .unwrap();
@@ -2068,7 +2073,9 @@ mod tests {
     #[test]
     fn test_dispatch_returns_not_found_when_nothing_to_do() {
         with_locked_state(|| {
-            let s = dispatch();
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
+            let s = MockCore::dispatch_efiapi();
             assert_eq!(s, efi::Status::NOT_FOUND);
         });
     }
@@ -2076,8 +2083,10 @@ mod tests {
     #[test]
     fn test_dispatch_is_idempotent_and_consistently_not_found() {
         with_locked_state(|| {
-            let s1 = dispatch();
-            let s2 = dispatch();
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
+            let s1 = MockCore::dispatch_efiapi();
+            let s2 = MockCore::dispatch_efiapi();
             assert_eq!(s1, efi::Status::NOT_FOUND);
             assert_eq!(s2, efi::Status::NOT_FOUND);
         });
@@ -2093,11 +2102,13 @@ mod tests {
         file.read_to_end(&mut fv).expect("failed to read test file");
 
         with_locked_state(|| {
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
             // Install the FV to obtain a real handle
-            let _handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
+            unsafe { CORE.pi_dispatcher.install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             // Wrapper should still surface NOT_FOUND (no pending drivers to dispatch in tests)
-            let s = dispatch();
+            let s = MockCore::dispatch_efiapi();
             assert_eq!(s, efi::Status::NOT_FOUND);
         });
     }
@@ -2105,8 +2116,10 @@ mod tests {
     #[test]
     fn test_schedule_invalid_parameter_when_file_is_null() {
         with_locked_state(|| {
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
             // Passing a null file GUID pointer should return INVALID_PARAMETER
-            let s = schedule(core::ptr::null_mut(), core::ptr::null());
+            let s = MockCore::schedule_efiapi(core::ptr::null_mut(), core::ptr::null());
             assert_eq!(s, efi::Status::INVALID_PARAMETER);
         });
     }
@@ -2114,9 +2127,11 @@ mod tests {
     #[test]
     fn test_schedule_not_found_without_pending_drivers() {
         with_locked_state(|| {
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
             // Any GUID is fine; there are no pending drivers in this test harness
             let guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 0]);
-            let s = schedule(core::ptr::null_mut(), &guid);
+            let s = MockCore::schedule_efiapi(core::ptr::null_mut(), &guid);
             assert_eq!(s, efi::Status::NOT_FOUND);
         });
     }
@@ -2132,12 +2147,14 @@ mod tests {
         file.read_to_end(&mut fv).expect("failed to read test file");
 
         with_locked_state(|| {
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
             // Install the FV to obtain a real handle
-            let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
+            let handle = unsafe { CORE.pi_dispatcher.install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
             // Use the same GUID as the dispatcher tests; wrapper should map NotFound correctly
             let file_guid = efi::Guid::from_bytes(Uuid::from_u128(0x1fa1f39e_feff_4aae_bd7b_38a070a3b609).as_bytes());
-            let s = schedule(handle, &file_guid);
+            let s = MockCore::schedule_efiapi(handle, &file_guid);
             assert_eq!(s, efi::Status::NOT_FOUND);
         });
     }
@@ -2145,7 +2162,9 @@ mod tests {
     #[test]
     fn test_trust_invalid_parameter_when_file_is_null() {
         with_locked_state(|| {
-            let s = trust(core::ptr::null_mut(), core::ptr::null());
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
+            let s = MockCore::trust_efiapi(core::ptr::null_mut(), core::ptr::null());
             assert_eq!(s, efi::Status::INVALID_PARAMETER);
         });
     }
@@ -2153,9 +2172,11 @@ mod tests {
     #[test]
     fn test_trust_not_found_without_pending_drivers() {
         with_locked_state(|| {
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
             // Any GUID and handle are fine; there are no pending drivers in this harness
             let guid = efi::Guid::from_fields(0, 0, 0, 0, 0, &[1, 2, 3, 4, 5, 6]);
-            let s = trust(core::ptr::null_mut(), &guid);
+            let s = MockCore::trust_efiapi(core::ptr::null_mut(), &guid);
             assert_eq!(s, efi::Status::NOT_FOUND);
         });
     }
@@ -2163,15 +2184,17 @@ mod tests {
     #[test]
     fn test_process_firmware_volume_invalid_parameters() {
         with_locked_state(|| {
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
             let mut out_handle: efi::Handle = core::ptr::null_mut();
 
             // Null header
-            let s = process_firmware_volume(core::ptr::null(), 0, &mut out_handle);
+            let s = MockCore::process_firmware_volume_efiapi(core::ptr::null(), 0, &mut out_handle);
             assert_eq!(s, efi::Status::INVALID_PARAMETER);
 
             // Null output handle pointer
             let bogus = 0xDEAD_BEEFu64 as *const core::ffi::c_void;
-            let s = process_firmware_volume(bogus, 0, core::ptr::null_mut());
+            let s = MockCore::process_firmware_volume_efiapi(bogus, 0, core::ptr::null_mut());
             assert_eq!(s, efi::Status::INVALID_PARAMETER);
         });
     }
@@ -2179,11 +2202,16 @@ mod tests {
     #[test]
     fn test_process_firmware_volume_volume_corrupted_on_bad_input() {
         with_locked_state(|| {
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
             // Provide a tiny, obviously invalid buffer
             let bad_buf: [u8; 16] = [0u8; 16];
             let mut out_handle: efi::Handle = core::ptr::null_mut();
-            let s =
-                process_firmware_volume(bad_buf.as_ptr() as *const core::ffi::c_void, bad_buf.len(), &mut out_handle);
+            let s = MockCore::process_firmware_volume_efiapi(
+                bad_buf.as_ptr() as *const core::ffi::c_void,
+                bad_buf.len(),
+                &mut out_handle,
+            );
             assert_eq!(s, efi::Status::VOLUME_CORRUPTED);
         });
     }
@@ -2198,8 +2226,14 @@ mod tests {
         file.read_to_end(&mut fv).expect("failed to read test file");
 
         with_locked_state(|| {
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
             let mut out_handle: efi::Handle = core::ptr::null_mut();
-            let s = process_firmware_volume(fv.as_ptr() as *const core::ffi::c_void, fv.len(), &mut out_handle);
+            let s = MockCore::process_firmware_volume_efiapi(
+                fv.as_ptr() as *const core::ffi::c_void,
+                fv.len(),
+                &mut out_handle,
+            );
 
             assert_eq!(s, efi::Status::SUCCESS);
             assert!(!out_handle.is_null(), "process_firmware_volume should return a valid handle");
@@ -2207,8 +2241,10 @@ mod tests {
     }
 
     #[test]
-    fn test_init_dxe_services_installs_config_table_with_valid_crc_and_functions() {
+    fn test_install_dxe_services_table_installs_config_table_with_valid_crc_and_functions() {
         with_locked_state(|| {
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
             // Initialize a fresh System Table (requires GCD already initialized by with_locked_state)
             crate::systemtables::init_system_table();
 
@@ -2220,7 +2256,7 @@ mod tests {
             assert_eq!(st.system_table().number_of_table_entries, 0);
 
             // Act: install the DXE Services table
-            init_dxe_services(st);
+            CORE.install_dxe_services_table(st);
 
             // After: one entry should exist and match DXE_SERVICES_TABLE_GUID
             let st_ref = st.system_table();
@@ -2239,7 +2275,7 @@ mod tests {
             // Validate the contents of the installed DXE Services table
             let dxe_tbl = unsafe { &*(entry.vendor_table as *const dxe_services::DxeServicesTable) };
 
-            // Header signature/revision should match what init_dxe_services sets
+            // Header signature/revision should match what install_dxe_services_table sets
             assert_eq!(dxe_tbl.header.signature, efi::BOOT_SERVICES_SIGNATURE);
             assert_eq!(dxe_tbl.header.revision, efi::BOOT_SERVICES_REVISION);
 
@@ -2256,8 +2292,8 @@ mod tests {
 
             // Spot-check a few function pointers are correctly wired
             assert_eq!(dxe_tbl.add_memory_space as usize, add_memory_space as usize);
-            assert_eq!(dxe_tbl.dispatch as usize, dispatch as usize);
-            assert_eq!(dxe_tbl.process_firmware_volume as usize, process_firmware_volume as usize);
+            assert_eq!(dxe_tbl.dispatch as usize, MockCore::dispatch_efiapi as usize);
+            assert_eq!(dxe_tbl.process_firmware_volume as usize, MockCore::process_firmware_volume_efiapi as usize);
         });
     }
 }

@@ -149,3 +149,7 @@ pub struct Protocol {
     /// Sets information about the firmware volume.
     pub set_info: SetInfo,
 }
+
+// Safety: The only non-send type in this structure is `Handle` which itself is actually `Send` as it is an opaque
+// pointer used purely as a token for identification purposes.
+unsafe impl Send for Protocol {}

@@ -292,7 +292,6 @@ mod tests {
                 crate::test_support::init_test_gcd(None);
                 crate::test_support::init_test_protocol_db();
             }
-            crate::test_support::reset_dispatcher_context();
             crate::systemtables::init_system_table();
 
             let mut st_guard = systemtables::SYSTEM_TABLE.lock();
