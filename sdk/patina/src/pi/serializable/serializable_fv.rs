@@ -7,7 +7,14 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::pi::{
-    fw_fs::{FfsSectionType, FirmwareVolume, SectionMetaData},
+    fw_fs::{
+        FfsSectionHeader::{NOT_COMPRESSED, STANDARD_COMPRESSION},
+        FfsSectionType, FirmwareVolume, SectionMetaData,
+        guid::{
+            BROTLI_SECTION, CRC32_SECTION, LZMA_F86_SECTION, LZMA_PARALLEL_SECTION, LZMA_SECTION,
+            TIANO_DECOMPRESS_SECTION,
+        },
+    },
     serializable::{format_guid, hex_format},
 };
 use alloc::{
@@ -112,27 +119,23 @@ impl From<FirmwareVolume<'_>> for FirmwareVolumeSerDe {
                             _ => "uncompressed".to_string(),
                         };
 
-                        if let Some(section_type) = section.section_type() {
-                            if section_type == FfsSectionType::Pe32 {
-                                // If parsing fails or the header is missing PE data (in the coff.optional headers), we treat it as a non-PE section (skip the `pe_info`).
-                                let pe = goblin::pe::PE::parse(section.section_data());
-                                if let Ok(pe_parsed) = pe {
-                                    if let Some(optional_header) = pe_parsed.header.optional_header {
-                                        let alignment = optional_header.windows_fields.section_alignment;
-                                        let machine = pe_parsed.header.coff_header.machine;
-                                        let subsystem = optional_header.windows_fields.subsystem;
-                                        return Some(FirmwareSectionSerDe {
-                                            section_type: section_type_str,
-                                            length: section_length,
-                                            compression_type: section_compression_type,
-                                            pe_info: Some(PeHeaderInfo {
-                                                section_alignment: alignment,
-                                                machine,
-                                                subsystem,
-                                            }),
-                                        });
-                                    }
-                                }
+                        if let Some(section_type) = section.section_type()
+                            && section_type == FfsSectionType::Pe32
+                        {
+                            // If parsing fails or the header is missing PE data (in the coff.optional headers), we treat it as a non-PE section (skip the `pe_info`).
+                            let pe = goblin::pe::PE::parse(section.section_data());
+                            if let Ok(pe_parsed) = pe
+                                && let Some(optional_header) = pe_parsed.header.optional_header
+                            {
+                                let alignment = optional_header.windows_fields.section_alignment;
+                                let machine = pe_parsed.header.coff_header.machine;
+                                let subsystem = optional_header.windows_fields.subsystem;
+                                return Some(FirmwareSectionSerDe {
+                                    section_type: section_type_str,
+                                    length: section_length,
+                                    compression_type: section_compression_type,
+                                    pe_info: Some(PeHeaderInfo { section_alignment: alignment, machine, subsystem }),
+                                });
                             }
                         }
 
