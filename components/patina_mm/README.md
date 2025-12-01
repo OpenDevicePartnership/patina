@@ -39,7 +39,7 @@ The crate defines `MmCommunicationConfiguration` as the shared configuration str
 
 ## Integration guidance
 
-Below is the integration guidance for platform owners who wish to configure and produce the `MmCommunication` and 
+Below is the integration guidance for platform owners who wish to configure and produce the `MmCommunication` and
 SwMmiTrigger services for usage / consumption by components throughout the dispatch process.
 
 - Register `MmCommunicationConfiguration` to set platform-specific MM parameters.
