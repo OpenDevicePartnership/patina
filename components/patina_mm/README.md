@@ -88,7 +88,7 @@ impl ComponentInfo for ExamplePlatform {
 
   fn services(mut add: Add<Service>) {
     // An optional service to enable platform MM. Since it has no dependencies, we register the service directly. If it
-    // had depenencies, This would be a component instead.
+    // had dependencies, This would be a component instead.
     add.service(ExamplePlatformMmControl::default());
   }
 }
