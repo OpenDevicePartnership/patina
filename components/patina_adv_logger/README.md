@@ -1,16 +1,16 @@
 # Patina Advanced Logger
 
-The Patina Advanced Logger crate provides a [log::Log](https://crates.io/crates/log) implementation that provides
-in-memory and serial logging capabilities and a component for producing the Advanced Logger protocol. The in-memory
-logging is written to the advanced logger memory buffer, whose address is produced via the Advanced logger guided HOB
-described below. In addition to the runtime functionality described above, this crate also provides a command line tool
-to parse parse logs pulled off of a physical device, and a public parser object for creating custom tooling.
+The Patina Advanced Logger crate provides a [log::Log](https://crates.io/crates/log) implementation including in-memory
+and serial logging capabilities and a component for producing the Advanced Logger protocol. The in-memory logging is
+written to the advanced logger memory buffer, whose address is produced via the Advanced logger guided HOB described
+below. In addition to the runtime functionality described above, this crate also supplies a command line tool to parse
+parse logs pulled off of a physical device, and a public parser object for creating custom tooling.
 
 ## Memory Log Behavior
 
-The crate stores records in a shared buffer that begins with an `ADVANCED_LOGGER_INFO` header.
+The crate stores records in a shared memory buffer that begins with an `ADVANCED_LOGGER_INFO` header.
 
-- Aligned entries follow the header.
+- Aligned entries follow in the memory buffer after the header.
 - Each entry records the boot phase identifier, EFI debug level mask, timestamp counter, and message bytes.
 
 ## Parser Support
@@ -19,17 +19,17 @@ This crate includes a bare-bones log parser executable for parsing the logs prod
 parser struct (`patina_adv_logger::parser::Parser`) that can be used to create custom tooling. Both are available via
 the `std` feature, which exposes the `parser` module.
 
-The command line executable simply opens the buffer, prints header metadata, and emits log lines with optional level
-and timestamp context. This parser underpins host utilities and remains version-aligned with the memory layout
-implemented in `memory_log.rs`.
+The command line executable accesses the buffer, prints header metadata, and emits log lines with optional level and
+timestamp context. This parser underpins host utilities and remains version-aligned with the memory layout implemented
+in `memory_log.rs`.
 
 ## Integration Instructions
 
 ### Patina DXE Core Integration instructions
 
 Below are the instructions for setting up and configuring the patina component and logger implementations inside of
-your platform's Patina DXE Core binary. Additional setup will be required for your Platform, which will be discussed
-further below.
+your platform's Patina DXE Core binary. Additional setup will be required for your Platform, which is discussed further
+below.
 
 1. Instantiate `AdvancedLogger` with the desired format, filters, level, and serial implementation.
    Register it with `log::set_logger` as early as possible.
@@ -79,9 +79,9 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
 
 ### Platform Integration
 
-Currently, the Patina Advanced Logger expects that a log buffer has already been created prior to the Patina DXE Core
-being executed. The location of this buffer is provided via a HOB in the HOB list. So long as it is provided, the
-logger and component will execute as expected. If your platform is a EDK II style platform, a [PEI Core Library](https://github.com/microsoft/mu_plus/blob/d0d305b620baced42adf16b2387af9412fdc0ef9/AdvLoggerPkg/Library/AdvancedLoggerLib/PeiCore/AdvancedLoggerLib.inf)
+The Patina Advanced Logger expects that a log buffer has already been created prior to the Patina DXE Core being
+executed. The location of this buffer is provided via a GUID HOB in the HOB list. So long as it is provided, the logger
+and component will execute as expected. If your platform is a EDK II style platform, a [PEI Core Library](https://github.com/microsoft/mu_plus/blob/d0d305b620baced42adf16b2387af9412fdc0ef9/AdvLoggerPkg/Library/AdvancedLoggerLib/PeiCore/AdvancedLoggerLib.inf)
 is available that will produce the HOB. The other option is to manually produce the Guided HOB with the following
 format / guid:
 
