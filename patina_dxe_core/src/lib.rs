@@ -637,7 +637,7 @@ fn call_bds() -> ! {
 #[coverage(off)]
 mod tests {
     use super::*;
-    use core::sync::atomic::AtomicBool;
+    use core::{any::Any, sync::atomic::AtomicBool};
 
     #[test]
     fn test_cannot_set_instance_twice() {
@@ -672,6 +672,21 @@ mod tests {
         assert!(!<TestPlatform as MemoryInfo>::prioritize_32_bit_memory());
     }
 
+    fn with_reset_global_state<F>(f: F) -> core::result::Result<(), Box<dyn Any + Send>>
+    where
+        F: Fn() + std::panic::RefUnwindSafe,
+    {
+        test_support::with_global_lock(|| {
+            // SAFETY: init_test_protocol_db modifies global state. It is being called within a
+            // lock to have exclusive mutable access to the protocol database.
+            unsafe {
+                test_support::init_test_protocol_db();
+            }
+
+            f()
+        })
+    }
+
     #[test]
     fn test_mock_call_bds_valid_non_null() {
         static BDS_CALLED: AtomicBool = AtomicBool::new(false);
@@ -680,7 +695,7 @@ mod tests {
         }
 
         assert!(
-            test_support::with_global_lock(|| {
+            with_reset_global_state(|| {
                 let protocol = Box::leak(Box::new(patina::pi::protocols::bds::Protocol { entry: mock_bds }));
 
                 protocols::core_install_protocol_interface(
@@ -692,10 +707,11 @@ mod tests {
 
                 call_bds();
             })
-            .is_err_and(|err| err
-                .downcast_ref::<&str>()
-                .unwrap()
-                .contains("BDS arch protocol should be found and should never return."))
+            .is_err_and(|err| {
+                err.downcast_ref::<&str>()
+                    .unwrap()
+                    .contains("BDS arch protocol should be found and should never return.")
+            })
         );
 
         assert!(BDS_CALLED.load(core::sync::atomic::Ordering::Relaxed))
@@ -704,7 +720,7 @@ mod tests {
     #[test]
     fn test_mock_call_bds_valid_null() {
         assert!(
-            test_support::with_global_lock(|| {
+            with_reset_global_state(|| {
                 protocols::core_install_protocol_interface(
                     None,
                     patina::pi::protocols::bds::PROTOCOL_GUID,
@@ -712,20 +728,28 @@ mod tests {
                 )
                 .unwrap();
 
-                call_bds()
+                call_bds();
             })
-            .is_err_and(|err| err
-                .downcast_ref::<&str>()
-                .unwrap()
-                .contains("BDS arch protocol should be found and should never return."))
-        )
+            .is_err_and(|err| {
+                err.downcast_ref::<&str>()
+                    .unwrap()
+                    .contains("BDS arch protocol should be found and should never return.")
+            })
+        );
     }
 
     #[test]
     fn test_mock_call_bds_invalid() {
-        assert!(test_support::with_global_lock(|| { call_bds() }).is_err_and(|err| {
-            err.downcast_ref::<&str>().unwrap().contains("BDS arch protocol should be found and should never return.")
-        }))
+        assert!(
+            with_reset_global_state(|| {
+                call_bds();
+            })
+            .is_err_and(|err| {
+                err.downcast_ref::<&str>()
+                    .unwrap()
+                    .contains("BDS arch protocol should be found and should never return.")
+            })
+        );
     }
 
     #[test]
@@ -743,7 +767,7 @@ mod tests {
         }
 
         assert!(
-            test_support::with_global_lock(|| {
+            with_reset_global_state(|| {
                 let protocol = Box::leak(Box::new(patina::pi::protocols::status_code::Protocol {
                     report_status_code: mock_status_code,
                 }));
@@ -757,10 +781,11 @@ mod tests {
 
                 call_bds();
             })
-            .is_err_and(|err| err
-                .downcast_ref::<&str>()
-                .unwrap()
-                .contains("BDS arch protocol should be found and should never return."))
+            .is_err_and(|err| {
+                err.downcast_ref::<&str>()
+                    .unwrap()
+                    .contains("BDS arch protocol should be found and should never return.")
+            })
         );
 
         assert!(STATUS_CODE_CALLED.load(core::sync::atomic::Ordering::Relaxed))
@@ -769,7 +794,7 @@ mod tests {
     #[test]
     fn test_mock_call_status_code_valid_null() {
         assert!(
-            test_support::with_global_lock(|| {
+            with_reset_global_state(|| {
                 protocols::core_install_protocol_interface(
                     None,
                     patina::pi::protocols::status_code::PROTOCOL_GUID,
@@ -779,23 +804,25 @@ mod tests {
 
                 call_bds();
             })
-            .is_err_and(|err| err
-                .downcast_ref::<&str>()
-                .unwrap()
-                .contains("BDS arch protocol should be found and should never return."))
+            .is_err_and(|err| {
+                err.downcast_ref::<&str>()
+                    .unwrap()
+                    .contains("BDS arch protocol should be found and should never return.")
+            })
         );
     }
 
     #[test]
     fn test_mock_call_status_code_invalid() {
         assert!(
-            test_support::with_global_lock(|| {
+            with_reset_global_state(|| {
                 call_bds();
             })
-            .is_err_and(|err| err
-                .downcast_ref::<&str>()
-                .unwrap()
-                .contains("BDS arch protocol should be found and should never return."))
+            .is_err_and(|err| {
+                err.downcast_ref::<&str>()
+                    .unwrap()
+                    .contains("BDS arch protocol should be found and should never return.")
+            })
         );
     }
 }
