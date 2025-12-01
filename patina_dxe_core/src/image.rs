@@ -2457,7 +2457,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
     fn load_image_should_fail_with_unaligned_section_address() {
         // This test verifies error path #3 from Fix #176: set_memory_space_attributes failure
         // (Task #1030 coverage improvement)
@@ -2466,10 +2465,6 @@ mod tests {
         // When apply_image_memory_protections calculates section_base_addr = image_base + virtual_address,
         // the result will be unaligned. Then set_memory_space_attributes will fail with InvalidParameter
         // because the base address is not page-aligned.
-        //
-        // Note: This test only runs in debug builds because it specifically tests
-        // the debug_assert!(false) panic path. In release mode, this particular error
-        // case doesn't result in a load failure.
 
         test_support::with_global_lock(|| {
             // SAFETY: These test initialization functions require unsafe because they
