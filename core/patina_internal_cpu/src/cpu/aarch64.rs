@@ -8,4 +8,5 @@
 //!
 mod cpu;
 
+#[allow(unused)]
 pub use cpu::EfiCpuAarch64;

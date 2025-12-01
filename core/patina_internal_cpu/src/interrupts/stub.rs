@@ -1,4 +1,4 @@
-//! Null Interrupt module - For doc tests
+//! Stub Interrupt module for tests.
 //!
 //! ## License
 //!
@@ -7,23 +7,23 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-mod interrupt_manager;
-pub use interrupt_manager::InterruptsNull;
-use patina::{error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
+use patina::{component::service::IntoService, error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
+
+use crate::interrupts::InterruptManager;
 
 /// Null implementation of the EfiSystemContextFactory and EfiExceptionStackTrace traits.
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct ExceptionContextNull;
+pub struct ExceptionContextStub;
 
-impl super::EfiSystemContextFactory for ExceptionContextNull {
+impl super::EfiSystemContextFactory for ExceptionContextStub {
     fn create_efi_system_context(&mut self) -> EfiSystemContext {
         // Pointer being set is arbitrary, but EBC is architecture agnostic.
         EfiSystemContext { system_context_ebc: core::ptr::null_mut() }
     }
 }
 
-impl super::EfiExceptionStackTrace for ExceptionContextNull {
+impl super::EfiExceptionStackTrace for ExceptionContextStub {
     fn dump_stack_trace(&self) {}
     fn dump_system_context_registers(&self) {}
 }
@@ -41,3 +41,22 @@ pub fn disable_interrupts() {}
 pub fn get_interrupt_state() -> Result<bool, EfiError> {
     Ok(false)
 }
+
+/// Null Implementation of the InterruptManager.
+#[derive(Default, Copy, Clone, IntoService)]
+#[service(dyn InterruptManager)]
+pub struct InterruptsStub {}
+
+impl InterruptsStub {
+    /// Creates a new instance of the null implementation of the InterruptManager.
+    pub const fn new() -> Self {
+        Self {}
+    }
+
+    /// A do-nothing initialization function for the null implementation.
+    pub fn initialize(&mut self) -> Result<(), EfiError> {
+        Ok(())
+    }
+}
+
+impl InterruptManager for InterruptsStub {}

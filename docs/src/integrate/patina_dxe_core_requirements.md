@@ -231,6 +231,16 @@ created or modified when an image is started, then `EFI_BOOT_SERVICES.ConnectCon
 Patina does not implement this behavior. Images and platforms dependent on this behavior will need to be modified to
 explicitly call `ConnectController()` on any handles that they create or modify.
 
+#### 3.4 EFI_MEMORY_UC Memory Must Be Non-Executable
+
+Patina will automatically apply EFI_MEMORY_XP to all SetMemorySpaceAttributes(), CpuArchProtocol->SetMemoryAttributes(),
+and MemoryAttributesProtocol->SetMemoryAttributes() calls that pass in EFI_MEMORY_UC. In the DXE time frame, no uncached
+memory (typically representing device memory) should be marked as executable. For AArch64, the ARM ARM v8 B2.7.2 states
+that having executable device memory (what EFI_MEMORY_UC maps to) is a programming error and has been observed to cause
+crashes due to speculative execution trying instruction fetches from memory that is not ready to be touched or should
+never be touched. For x86 platforms, we still should protect these ranges to prevent devices having access to executable
+memory.
+
 ### 4. Known Limitations
 
 This section details requirements Patina currently has due to limitations in implementation, but that support will be

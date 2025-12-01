@@ -1,4 +1,4 @@
-//! Null CPU initialization implementation - For doc tests
+//! Stub CPU initialization implementation - For doc tests
 //!
 //! ## License
 //!
@@ -19,16 +19,16 @@ use r_efi::efi;
 /// This struct cannot be used directly. It replaces the `EfiCpu` struct when not compiling for x86_64 or AArch64 UEFI architectures.
 #[derive(Default, Copy, Clone, IntoService)]
 #[service(dyn Cpu)]
-pub struct EfiCpuNull;
+pub struct EfiCpuStub;
 
-impl EfiCpuNull {
+impl EfiCpuStub {
     /// Creates a new instance of the null implementation of the CPU.
     pub fn initialize(&mut self) -> Result<(), EfiError> {
         Ok(())
     }
 }
 
-impl Cpu for EfiCpuNull {
+impl Cpu for EfiCpuStub {
     fn flush_data_cache(
         &self,
         _start: efi::PhysicalAddress,

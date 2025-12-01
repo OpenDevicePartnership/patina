@@ -21,7 +21,7 @@ use crate::patina_mm_integration::common::constants::*;
 extern crate alloc;
 use alloc::{string::String, vec::Vec};
 use zerocopy::{FromBytes, IntoBytes};
-use zerocopy_derive::{FromBytes as DeriveFromBytes, Immutable, IntoBytes as DeriveIntoBytes};
+use zerocopy_derive::*;
 
 /// Standardized error type for MM handlers
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,7 +110,7 @@ impl MmHandler for VersionInfoHandler {
 }
 
 /// MM Supervisor request header
-#[derive(Debug, Clone, Copy, DeriveIntoBytes, DeriveFromBytes, Immutable)]
+#[derive(Debug, Clone, Copy, IntoBytes, FromBytes, Immutable)]
 #[repr(C)]
 pub struct MmSupervisorRequestHeader {
     pub signature: u32,
@@ -141,7 +141,7 @@ impl MmSupervisorRequestHeader {
 }
 
 /// MM Supervisor version information
-#[derive(Debug, Clone, Copy, DeriveIntoBytes, DeriveFromBytes, Immutable)]
+#[derive(Debug, Clone, Copy, IntoBytes, FromBytes, Immutable)]
 #[repr(C)]
 pub struct MmSupervisorVersionInfo {
     pub version: u32,

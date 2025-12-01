@@ -10,17 +10,18 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use alloc::boxed::Box;
-use core::{ffi::c_void, ptr};
 use patina::{
     boot_services::{BootServices, StandardBootServices},
-    component::IntoComponent,
+    component::{
+        IntoComponent,
+        service::{Service, perf_timer::ArchTimerFunctionality},
+    },
     error::{EfiError, Result},
-    pi::hob::{Hob, PhaseHandoffInformationTable},
     serial::SerialIO,
 };
 use r_efi::efi;
 
-use crate::{logger::AdvancedLogger, memory_log, protocol::AdvancedLoggerProtocol};
+use crate::{logger::AdvancedLogger, protocol::AdvancedLoggerProtocol};
 
 /// C struct for the internal Advanced Logger protocol for the component.
 #[repr(C)]
@@ -53,44 +54,6 @@ where
         Self { adv_logger }
     }
 
-    /// Initialize the advanced logger.
-    ///
-    /// Initializes the advanced logger memory log based on the provided physical hob
-    /// list. The physical hob list is used so this can be initialized before memory
-    /// allocations.
-    ///
-    /// ## Safety
-    ///
-    /// The caller must ensure that the provided physical hob list pointer is valid and well structured. Failure to do
-    /// so may result in unexpected memory access and undefined behavior.
-    ///
-    pub unsafe fn init_advanced_logger(&self, physical_hob_list: *const c_void) -> Result<()> {
-        debug_assert!(!physical_hob_list.is_null(), "Could not initialize adv logger due to null hob list.");
-        let hob_list_info =
-            // SAFETY: The caller must provide a valid physical HOB list pointer.
-            unsafe { (physical_hob_list as *const PhaseHandoffInformationTable).as_ref() }.ok_or_else(|| {
-                log::error!("Could not initialize adv logger due to null hob list.");
-                EfiError::InvalidParameter
-            })?;
-        let hob_list = Hob::Handoff(hob_list_info);
-        for hob in &hob_list {
-            if let Hob::GuidHob(guid_hob, data) = hob
-                && guid_hob.name == memory_log::ADV_LOGGER_HOB_GUID
-            {
-                // SAFETY: The HOB will have a address of the log info
-                // immediately following the HOB header.
-                unsafe {
-                    let address: *const efi::PhysicalAddress = ptr::from_ref(data) as *const efi::PhysicalAddress;
-                    let log_info_addr = (*address) as efi::PhysicalAddress;
-                    self.adv_logger.set_log_info_address(log_info_addr);
-                };
-                return Ok(());
-            }
-        }
-
-        Err(EfiError::NotFound)
-    }
-
     /// EFI API to write to the advanced logger through the advanced logger protocol.
     extern "efiapi" fn adv_log_write(
         this: *const AdvancedLoggerProtocol,
@@ -114,11 +77,13 @@ where
     ///
     /// Installs the Advanced Logger Protocol for use by non-local components.
     ///
-    fn entry_point(self, bs: StandardBootServices) -> Result<()> {
+    fn entry_point(self, bs: StandardBootServices, timer: Service<dyn ArchTimerFunctionality>) -> Result<()> {
         let Some(address) = self.adv_logger.get_log_address() else {
             log::error!("Advanced logger not initialized before component entry point!");
             return Err(EfiError::NotStarted);
         };
+
+        self.adv_logger.init_timer(timer);
 
         let protocol = AdvancedLoggerProtocolInternal {
             protocol: AdvancedLoggerProtocol::new(Self::adv_log_write, address),
@@ -136,69 +101,5 @@ where
                 Ok(())
             }
         }
-    }
-}
-
-#[cfg(test)]
-#[coverage(off)]
-mod tests {
-    extern crate std;
-    use core::mem::size_of;
-
-    use patina::{
-        pi::hob::{GUID_EXTENSION, GuidHob, header::Hob},
-        serial::uart::UartNull,
-    };
-
-    use crate::memory_log::AdvancedLog;
-
-    use super::*;
-
-    static TEST_LOGGER: AdvancedLogger<UartNull> =
-        AdvancedLogger::new(patina::log::Format::Standard, &[], log::LevelFilter::Trace, UartNull {});
-
-    fn create_adv_logger_hob_list() -> *const c_void {
-        const LOG_LEN: usize = 0x2000;
-        let log_buff = Box::into_raw(Box::new([0_u8; LOG_LEN]));
-        let log_address = log_buff as *const u8 as efi::PhysicalAddress;
-
-        // initialize the log so it's valid for the hob list
-        //
-        // SAFETY: We just allocated this memory so it's valid.
-        unsafe { AdvancedLog::initialize_memory_log(log_address, LOG_LEN as u32) };
-
-        const HOB_LEN: usize = size_of::<GuidHob>() + size_of::<efi::PhysicalAddress>();
-        let hob_buff = Box::into_raw(Box::new([0_u8; HOB_LEN]));
-        let hob = hob_buff as *mut GuidHob;
-
-        // SAFETY: We just allocated this memory so it's valid.
-        unsafe {
-            ptr::write(
-                hob,
-                GuidHob {
-                    header: Hob { r#type: GUID_EXTENSION, length: HOB_LEN as u16, reserved: 0 },
-                    name: memory_log::ADV_LOGGER_HOB_GUID,
-                },
-            )
-        };
-
-        // SAFETY: Space for the additional physical address was explicitly allocated.
-        let address: *mut efi::PhysicalAddress = unsafe { hob.add(1) } as *mut efi::PhysicalAddress;
-        // SAFETY: There is space for this address, writing it out of the structure as the C implementation does.
-        unsafe { (*address) = log_address };
-        hob_buff as *const c_void
-    }
-
-    #[test]
-    fn component_test() {
-        let component = AdvancedLoggerComponent::new(&TEST_LOGGER);
-
-        let hob_list = create_adv_logger_hob_list();
-
-        // SAFETY: The hob list created is valid for this test.
-        let res = unsafe { component.init_advanced_logger(hob_list) };
-        assert_eq!(res, Ok(()));
-
-        // TODO: Need to mock the protocol interface but requires final component interface.
     }
 }

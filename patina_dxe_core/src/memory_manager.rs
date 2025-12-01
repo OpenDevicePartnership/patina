@@ -24,6 +24,7 @@ use patina::{
 use r_efi::efi;
 
 use crate::{
+    GCD,
     allocator::{core_allocate_pages, core_free_pages},
     dxe_services,
 };
@@ -122,25 +123,15 @@ impl MemoryManager for CoreMemoryManager {
             None => None,
         };
 
-        let mut current_base: u64 = address as u64;
-        let range_end: u64 = (address + uefi_pages_to_size!(page_count)) as u64;
-        while current_base < range_end {
-            let descriptor =
-                match crate::dxe_services::core_get_memory_space_descriptor(current_base as efi::PhysicalAddress) {
-                    Ok(descriptor) => descriptor,
-                    Err(e) => {
-                        log::error!("Memory descriptor fetching failed with error {e:?} for {current_base:#x}");
-                        return Err(MemoryError::InvalidAddress);
-                    }
-                };
-            let descriptor_end = descriptor.base_address + descriptor.length;
+        let len = uefi_pages_to_size!(page_count);
+        let range = address as u64..address.checked_add(len).ok_or(MemoryError::InvalidAddress)? as u64;
 
-            // it is still legal to split a descriptor and only set the attributes on part of it
-            let next_base = u64::min(descriptor_end, range_end);
-            let current_len = next_base - current_base;
+        for desc_result in GCD.iter(address, len) {
+            let desc = desc_result.map_err(|_| MemoryError::InternalError)?;
+            let current_range = desc.get_range_overlap_with_desc(&range);
 
             // Always clear all access attributes and set the requested ones.
-            let mut new_attributes = descriptor.attributes & !efi::MEMORY_ACCESS_MASK;
+            let mut new_attributes = desc.attributes & !efi::MEMORY_ACCESS_MASK;
             new_attributes |= access_attributes;
 
             // If no cache attributes were requested, leave them unchanged.
@@ -149,11 +140,12 @@ impl MemoryManager for CoreMemoryManager {
                 new_attributes |= cache_attributes;
             }
 
-            match dxe_services::core_set_memory_space_attributes(current_base, current_len, new_attributes) {
-                Ok(_) => {}
-                Err(_) => return Err(MemoryError::InternalError),
-            };
-            current_base = next_base;
+            dxe_services::core_set_memory_space_attributes(
+                current_range.start,
+                current_range.end - current_range.start,
+                new_attributes,
+            )
+            .map_err(|_| MemoryError::InternalError)?;
         }
 
         Ok(())

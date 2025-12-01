@@ -92,8 +92,7 @@ Cursor = Dhcp6AppendOption (
 # extern crate zerocopy;
 # extern crate zerocopy_derive;
 use std::marker::PhantomData;
-use zerocopy::{FromBytes, Immutable, KnownLayout};
-use zerocopy_derive::{FromBytes, Immutable, KnownLayout};
+use zerocopy_derive::*;
 
 // Type-safe DHCP6 option codes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -530,7 +529,7 @@ a safe design available to developers:
 # extern crate zerocopy;
 # extern crate zerocopy_derive;
 use std::mem::size_of;
-use zerocopy_derive::{FromBytes, Immutable, KnownLayout};
+use zerocopy_derive::*;
 
 /// DHCPv6 IA option types - prevents option type confusion
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -813,7 +812,7 @@ checking:
 # extern crate zerocopy;
 # extern crate zerocopy_derive;
 use std::mem::size_of;
-use zerocopy_derive::{FromBytes, Immutable, KnownLayout};
+use zerocopy_derive::*;
 
 /// Zero-copy compatible UEFI variable header that matches the C structure layout
 #[derive(Debug, FromBytes, KnownLayout, Immutable)]

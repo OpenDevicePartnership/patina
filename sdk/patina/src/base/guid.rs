@@ -1067,6 +1067,8 @@ mod tests {
 
         assert_eq!(r_efi_ptr as *const u8, patina_ptr as *const u8);
 
+        // SAFETY: Both pointers are valid GUID references with a known size of 16 bytes.
+        // The memory representation is being read to verify binary compatibility.
         unsafe {
             let r_efi_slice = core::slice::from_raw_parts(r_efi_ptr as *const u8, 16);
             let patina_slice = core::slice::from_raw_parts(patina_ptr as *const u8, 16);
@@ -1104,6 +1106,8 @@ mod tests {
         assert_eq!(patina_as_efi.as_bytes(), r_efi_guid.as_bytes());
 
         let patina_ptr = &patina_as_efi as *const efi::Guid;
+        // SAFETY: Both pointers reference valid GUID structures of known size (16 bytes).
+        // The memory representation is being read to verify binary compatibility.
         unsafe {
             let patina_slice = core::slice::from_raw_parts(patina_ptr as *const u8, 16);
             let r_efi_slice = core::slice::from_raw_parts(&r_efi_guid as *const _ as *const u8, 16);
@@ -1198,6 +1202,8 @@ mod tests {
         assert_eq!(from_bytes_guid.as_bytes(), expected_bytes);
         assert_eq!(r_efi_guid.as_bytes(), &expected_bytes);
 
+        // SAFETY: r_efi_ptr points to a valid r_efi::Guid with a known size of 16 bytes.
+        // The memory representation is being read to verify it matches the expected bytes.
         unsafe {
             let r_efi_ptr = &r_efi_guid as *const r_efi_base::Guid;
             let r_efi_slice = core::slice::from_raw_parts(r_efi_ptr as *const u8, 16);
@@ -1255,6 +1261,8 @@ mod tests {
         let efi_ptr = &efi_guid as *const efi::Guid as *const u8;
         let binary_ptr = &binary_guid as *const BinaryGuid as *const u8;
 
+        // SAFETY: Both pointers point to valid GUID structures with repr(transparent) layout.
+        // 16 bytes is being read to verify binary compatibility.
         unsafe {
             let efi_bytes = core::slice::from_raw_parts(efi_ptr, 16);
             let binary_bytes = core::slice::from_raw_parts(binary_ptr, 16);
@@ -1690,6 +1698,8 @@ mod tests {
         let efi_guid = create_test_r_efi_guid();
         let binary_guid_from_efi = BinaryGuid::from(efi_guid);
 
+        // SAFETY: Both pointers reference valid GUID structures. \16 bytes from each to verify that
+        // BinaryGuid maintains binary compatibility with r_efi::efi::Guid.
         unsafe {
             let efi_bytes = core::slice::from_raw_parts(&efi_guid as *const _ as *const u8, 16);
             let binary_bytes = core::slice::from_raw_parts(&binary_guid_from_efi as *const _ as *const u8, 16);

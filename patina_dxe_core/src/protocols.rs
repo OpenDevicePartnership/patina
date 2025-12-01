@@ -13,14 +13,14 @@ use mu_rust_helpers::guid::guid_fmt;
 use patina::error::EfiError;
 use patina_internal_device_path::{is_device_path_end, remaining_device_path};
 use r_efi::efi;
-use tpl_lock::TplMutex;
+use tpl_mutex::TplMutex;
 
 use crate::{
     allocator::core_allocate_pool,
     driver_services::{core_connect_controller, core_disconnect_controller},
     events::{EVENT_DB, signal_event},
     protocol_db::{DXE_CORE_HANDLE, SpinLockedProtocolDb},
-    tpl_lock,
+    tpl_mutex,
 };
 
 pub static PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();

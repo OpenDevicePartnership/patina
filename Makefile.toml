@@ -113,17 +113,11 @@ clear = true
 command = "cargo"
 args = ["build", "@@split(STD_FLAGS, )", "--example", "dxe_core_std"]
 
-[tasks.check_no_std]
+[tasks.check_code]
 description = "Checks rust code for no_std build errors with results."
 private = true
 command = "cargo"
-args = ["check", "--target", "x86_64-unknown-uefi", "@@split(NO_STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
-
-[tasks.check_std]
-description = "Checks rust code for std build errors with results."
-private = true
-command = "cargo"
-args = ["check", "@@split(STD_FLAGS, )", "@@split(CARGO_MAKE_TASK_ARGS, )"]
+args = ["check", "--all-targets", "--all-features", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 
 [tasks.check_tests]
 description = "Checks rust test code for build errors with results."
@@ -134,7 +128,7 @@ args = ["test", "--no-run", "@@split(CARGO_MAKE_TASK_ARGS, )"]
 [tasks.check]
 description = "Checks rust code for errors. Example `cargo make check`"
 clear = true
-run_task = [{ name = ["check_no_std", "check_std", "check_tests"], parallel = true }]
+run_task = [{ name = ["check_code", "check_tests"], parallel = true }]
 
 [tasks.patina-test]
 description = "Builds crates with Patina tests enabled. Example `cargo make patina-test`"
@@ -149,13 +143,20 @@ private = true
 command = "cargo"
 args = ["generate-lockfile"]
 
+[tasks.llvm-cov-clean]
+description = "Clean coverage data"
+private = true
+install_crate = false
+command = "cargo"
+args = ["llvm-cov", "clean", "--workspace"]
+
 [tasks.test]
 description = "Run tests and collect coverage data without generating reports."
 install_crate = false
 clear = true
 command = "cargo"
 args = ["llvm-cov", "@@split(COV_FLAGS, )", "--no-report"]
-dependencies = ["individual-package-targets"]
+dependencies = ["individual-package-targets", "llvm-cov-clean"]
 
 [tasks.coverage-lcov]
 description = "Generate an LCOV coverage report from collected data."
@@ -193,7 +194,7 @@ dependencies = ["individual-package-targets"]
 [tasks.doc]
 description = "Builds all rust documentation in the workspace. Example `cargo make doc`"
 command = "cargo"
-args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc"]
+args = ["doc", "@@split(INDIVIDUAL_PACKAGE_TARGETS, )", "--features", "doc", "--no-deps"]
 
 [tasks.doc-open]
 description = "Builds all rust documentation in the workspace and opens the documentation. Example `cargo make doc-open`"

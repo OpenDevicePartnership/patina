@@ -48,7 +48,8 @@
 //!
 //! Note: Certain combinations of parameters may lead to undefined behavior as they can allow multiple mutable
 //! accesses to the same data. Each parameter type checks for conflicts with previously registered accesses, but
-//! **ONLY** on debug builds. In release builds, these checks are disabled for performance and size reasons.
+//! **ONLY** on debug builds (and not during testing). In release builds, these checks are disabled for performance
+//! and size reasons. In test builds, they are disabled to focus testing on functionality rather than debug assertions.
 //!
 //! ### `Param` types
 //!

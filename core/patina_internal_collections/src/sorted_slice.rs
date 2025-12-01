@@ -25,6 +25,10 @@ where
     /// Creates a new sorted slice with a maximum capacity defined by the provided mutable slice.
     pub fn new(slice: &'a mut [u8]) -> SortedSlice<'a, T> {
         Self {
+            // SAFETY: This is reinterpreting a byte slice as a T slice.
+            // 1. The alignment is handled by slice casting rules
+            // 2. The correct number of T elements that fit in the byte slice is calculated
+            // 3. The lifetime 'a ensures the byte slice remains valid for the sorted slice's lifetime
             slice: unsafe {
                 slice::from_raw_parts_mut::<'a, T>(slice as *mut [u8] as *mut T, slice.len() / mem::size_of::<T>())
             },

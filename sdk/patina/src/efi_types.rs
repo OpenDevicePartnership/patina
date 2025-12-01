@@ -15,41 +15,42 @@ use crate::error::EfiError;
 
 /// A wrapper for the EFI memory types.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[repr(u32)]
 pub enum EfiMemoryType {
     /// Reserved memory for platform uses.
-    ReservedMemoryType,
+    ReservedMemoryType = efi::RESERVED_MEMORY_TYPE,
     /// The code portions of a loaded application, e.g. the entire loaded image (PE).
-    LoaderCode,
+    LoaderCode = efi::LOADER_CODE,
     /// The data portions of a loaded application, e.g. data allocations made and used by an application.
-    LoaderData,
+    LoaderData = efi::LOADER_DATA,
     /// The code portions of a loaded Boot Services Driver, e.g. the entire loaded image (PE).
-    BootServicesCode,
+    BootServicesCode = efi::BOOT_SERVICES_CODE,
     /// The data portions of a loaded Boot Services Driver, e.g. data allocations made and used by a driver.
-    BootServicesData,
+    BootServicesData = efi::BOOT_SERVICES_DATA,
     /// The code portions of a loaded Runtime Services Driver, e.g. the entire loaded image (PE).
-    RuntimeServicesCode,
+    RuntimeServicesCode = efi::RUNTIME_SERVICES_CODE,
     /// The data portions of a loaded Runtime Services Driver, e.g. data allocations made and used by a driver.
-    RuntimeServicesData,
+    RuntimeServicesData = efi::RUNTIME_SERVICES_DATA,
     /// Free (unallocated) memory.
-    ConventionalMemory,
+    ConventionalMemory = efi::CONVENTIONAL_MEMORY,
     /// Memory in which errors have been detected. This memory type should only be used to update the memory map, but
     /// the returned allocation should not be used by the caller.
-    UnusableMemory,
+    UnusableMemory = efi::UNUSABLE_MEMORY,
     /// Memory reserved for runtime ACPI non-volatile storage.
-    ACPIReclaimMemory,
+    ACPIReclaimMemory = efi::ACPI_RECLAIM_MEMORY,
     /// Address space reserved for use by the firmware.
-    ACPIMemoryNVS,
+    ACPIMemoryNVS = efi::ACPI_MEMORY_NVS,
     /// Memory-mapped IO region, mapped by the OS to a virtual address so it can be accessed by EFI runtime services.
-    MemoryMappedIO,
+    MemoryMappedIO = efi::MEMORY_MAPPED_IO,
     /// System memory-mapped IO region that is used to translate memory cycles to IO cycles by the processor.
-    MemoryMappedIOPortSpace,
+    MemoryMappedIOPortSpace = efi::MEMORY_MAPPED_IO_PORT_SPACE,
     /// Address space reserved by the firmware for code that is part of the processor.
-    PalCode,
+    PalCode = efi::PAL_CODE,
     /// EfiConventionalMemory that supports byte-addressable non-volatility.
-    PersistentMemory,
+    PersistentMemory = efi::PERSISTENT_MEMORY,
     /// Present in the system, but not accepted / initalized for use by the system's underlying memory isolation
     /// technology.
-    UnacceptedMemoryType,
+    UnacceptedMemoryType = efi::UNACCEPTED_MEMORY_TYPE,
     /// Custom memory types can only be created through `from_efi` with the custom
     /// memory type value. This is to ensure that the custom memory types cannot
     /// be created with invalid values.

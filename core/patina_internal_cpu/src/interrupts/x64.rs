@@ -7,22 +7,17 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use crate::log_registers;
+use crate::{interrupts::ExceptionContextX64, log_registers};
 use core::arch::asm;
 use patina::{error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
 use patina_stacktrace::{StackFrame, StackTrace};
 
-cfg_if::cfg_if! {
-    if #[cfg(all(target_os = "uefi", target_arch = "x86_64"))] {
-        mod interrupt_manager;
-        pub use interrupt_manager::InterruptsX64;
-    } else if #[cfg(feature = "doc")] {
-        pub use interrupt_manager::InterruptsX64;
-        mod interrupt_manager;
-    }
-}
+#[cfg(target_os = "uefi")]
+mod idt;
+mod interrupt_manager;
 
-pub type ExceptionContextX64 = r_efi::protocols::debug_support::SystemContextX64;
+#[allow(unused)]
+pub use interrupt_manager::InterruptsX64;
 
 impl super::EfiSystemContextFactory for ExceptionContextX64 {
     fn create_efi_system_context(&mut self) -> EfiSystemContext {
@@ -32,9 +27,9 @@ impl super::EfiSystemContextFactory for ExceptionContextX64 {
 
 impl super::EfiExceptionStackTrace for ExceptionContextX64 {
     fn dump_stack_trace(&self) {
-        // SAFETY: This is called during an exception, we don't have any choice but to trust the exception context
-        // and the stack trace module will do its best to not cause a recursive exception
         let stack_frame = StackFrame { pc: self.rip, sp: self.rsp, fp: self.rbp };
+        // SAFETY: Called during exception handling with CPU context registers. The exception context
+        // is considered valid to dump at this time.
         if let Err(err) = unsafe { StackTrace::dump_with(stack_frame) } {
             log::error!("StackTrace: {err}");
         }

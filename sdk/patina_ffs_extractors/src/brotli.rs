@@ -15,8 +15,6 @@ use patina_ffs::{
     section::{Section, SectionExtractor, SectionHeader},
 };
 
-use patina::component::prelude::IntoService;
-
 //Rebox and HeapAllocator exist to satisfy BrotliDecompress custom allocation requirements.
 //They essentially wrap Box for heap allocations.
 struct Rebox<T>(Box<[T]>);
@@ -53,9 +51,17 @@ impl<T: Clone> alloc_no_stdlib::Allocator<T> for HeapAllocator<T> {
 }
 
 /// Provides decompression for Brotli GUIDed sections.
-#[derive(Default, Clone, Copy, IntoService)]
-#[service(dyn SectionExtractor)]
+#[derive(Default, Clone, Copy)]
 pub struct BrotliSectionExtractor;
+
+impl BrotliSectionExtractor {
+    /// Creates a new `BrotliSectionExtractor` instance.
+    #[coverage(off)]
+    pub const fn new() -> Self {
+        Self {}
+    }
+}
+
 impl SectionExtractor for BrotliSectionExtractor {
     fn extract(&self, section: &Section) -> Result<Vec<u8>, FirmwareFileSystemError> {
         if let SectionHeader::GuidDefined(guid_header, _, _) = section.header()
@@ -91,5 +97,27 @@ impl SectionExtractor for BrotliSectionExtractor {
             }
         }
         Err(FirmwareFileSystemError::Unsupported)
+    }
+}
+
+#[cfg(test)]
+#[coverage(off)]
+mod tests {
+    use crate::tests::create_brotli_section;
+
+    use super::*;
+
+    #[test]
+    fn test_brotli_extractor() {
+        // Pre-compressed "Hello, World!" using Brotli
+        let brotli_compressed_data: [u8; 18] = [
+            0x21, 0x30, 0x00, 0x04, 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x57, 0x6F, 0x72, 0x6C, 0x64, 0x21, 0x03,
+        ];
+        let section = create_brotli_section(&brotli_compressed_data, 13);
+        let extractor = BrotliSectionExtractor;
+        let result = extractor.extract(&section);
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert_eq!(result, b"Hello, World!");
     }
 }

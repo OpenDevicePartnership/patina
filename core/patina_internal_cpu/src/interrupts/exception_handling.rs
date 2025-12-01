@@ -16,9 +16,7 @@ use crate::interrupts::EfiExceptionStackTrace;
 use super::{EfiSystemContextFactory, ExceptionContext, ExceptionType, HandlerType};
 
 // Different architecture have a different number of exception types.
-const NUM_EXCEPTION_TYPES: ExceptionType = if cfg!(test) {
-    8
-} else if cfg!(target_arch = "x86_64") {
+const NUM_EXCEPTION_TYPES: ExceptionType = if cfg!(test) || cfg!(target_arch = "x86_64") {
     256
 } else if cfg!(target_arch = "aarch64") {
     3
@@ -81,6 +79,8 @@ pub(crate) fn unregister_exception_handler(exception_type: ExceptionType) -> Res
     Ok(())
 }
 
+// This function does actually have coverage but no_mangle functions confuse the coverage tool.
+#[coverage(off)]
 /// The architecture agnostic entry of the exception handler stack.
 ///
 /// This will be invoked by the architectures assembly entry and so requires
@@ -123,7 +123,9 @@ mod tests {
     use patina::pi::protocols::cpu_arch::EfiSystemContext;
 
     use super::*;
+    use crate::interrupts::InterruptManager;
     use core::sync::atomic::AtomicBool;
+    use serial_test::serial;
 
     const CALLBACK_EXCEPTION: usize = 0;
     const HANDLER_EXCEPTION: usize = 1;
@@ -148,7 +150,7 @@ mod tests {
 
     #[test]
     fn test_uefi_routine() {
-        let mut context = crate::interrupts::null::ExceptionContextNull {};
+        let mut context = ExceptionContext(crate::interrupts::stub::ExceptionContextStub {});
         register_exception_handler(NUM_EXCEPTION_TYPES, HandlerType::UefiRoutine(test_callback))
             .expect_err("Allowed invalid exception number!");
 
@@ -164,8 +166,9 @@ mod tests {
     }
 
     #[test]
+    #[serial(exception_handlers)]
     fn test_handler() {
-        let mut context = crate::interrupts::null::ExceptionContextNull {};
+        let mut context = ExceptionContext(crate::interrupts::stub::ExceptionContextStub {});
         let handler = Box::leak(Box::new(TestHandler { invoked: AtomicBool::new(false) }));
 
         register_exception_handler(NUM_EXCEPTION_TYPES, HandlerType::Handler(handler))
@@ -184,9 +187,28 @@ mod tests {
     }
 
     #[test]
+    #[serial(exception_handlers)]
+    fn test_with_interrupt_manager() {
+        let mut context = ExceptionContext(crate::interrupts::stub::ExceptionContextStub {});
+        let handler = Box::leak(Box::new(TestHandler { invoked: AtomicBool::new(false) }));
+        let interrupt_manager = crate::interrupts::stub::InterruptsStub::new();
+
+        interrupt_manager
+            .register_exception_handler(HANDLER_EXCEPTION, HandlerType::Handler(handler))
+            .expect("Failed to register exception handler!");
+
+        exception_handler(HANDLER_EXCEPTION, &mut context);
+        assert!(handler.invoked.load(core::sync::atomic::Ordering::SeqCst));
+
+        interrupt_manager.unregister_exception_handler(HANDLER_EXCEPTION).expect("Failed to unregister handler!");
+    }
+
+    #[test]
     fn test_invalid_input() {
         register_exception_handler(NUM_EXCEPTION_TYPES, HandlerType::UefiRoutine(test_callback))
             .expect_err("Allowed N+1 exception type registration!");
+
+        unregister_exception_handler(NUM_EXCEPTION_TYPES).expect_err("Allowed N+1 exception type un-registration!");
 
         register_exception_handler(0, HandlerType::None).expect_err("Allowed none exception handler registration!");
     }

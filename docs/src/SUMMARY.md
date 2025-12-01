@@ -18,6 +18,7 @@
 - [Dependency Management](dev/principles/dependency-management.md)
 - [Error Handling](dev/principles/error-handling.md)
 - [Unsafe Guidance](dev/principles/unsafe.md)
+- [Architecture Abstraction](dev/principles/architecture-abstraction.md)
 
 # Developer Guides
 

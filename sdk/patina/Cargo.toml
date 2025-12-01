@@ -8,6 +8,9 @@ edition.workspace = true
 readme = "README.md"
 description = "Common types and functionality used in UEFI development."
 
+[lints]
+workspace = true
+
 [[bench]]
 name = "bench_component"
 harness = false
@@ -28,6 +31,7 @@ patina_macro = { workspace = true }
 fixedbitset = { workspace = true }
 
 cfg-if = { workspace = true }
+goblin = { workspace = true, features = ["pe32", "pe64", "te", "alloc"]}
 log = { workspace = true }
 r-efi = { workspace = true }
 mockall = { workspace = true, optional = true }
@@ -41,6 +45,7 @@ uuid = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_yaml = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+spin = { workspace = true }
 zerocopy = { workspace = true }
 zerocopy-derive = { workspace = true }
 

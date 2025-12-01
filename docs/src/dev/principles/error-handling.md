@@ -60,8 +60,8 @@ static LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
     UartNull {}
 );
 
+unsafe { LOGGER.init(hob_list).unwrap() };
 let mut component = AdvancedLoggerComponent::new(&LOGGER);
-unsafe { component.init_advanced_logger(hob_list).unwrap() };
 ```
 
 Consider replacing it with `match` and returning a `Result`:
@@ -83,12 +83,11 @@ Consider replacing it with `match` and returning a `Result`:
 #     LevelFilter::Debug,
 #     UartNull {}
 # );
-
-let mut component = AdvancedLoggerComponent::new(&LOGGER);
-match unsafe { component.init_advanced_logger(hob_list) } {
+match unsafe { LOGGER.init(hob_list) } {
     Ok(()) => {},
     Err(e) => log::error!("Failed to init advanced logger: {e:?}"),
 }
+let mut component = AdvancedLoggerComponent::new(&LOGGER);
 ```
 
 ## `efi::Status` vs. Rust Errors

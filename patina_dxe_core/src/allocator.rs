@@ -28,12 +28,12 @@ use mu_rust_helpers::function;
 
 use crate::{
     GCD, config_tables,
-    gcd::{self, AllocateType as AllocationStrategy},
+    gcd::{self, AllocateType as AllocationStrategy, MemoryProtectionPolicy},
     memory_attributes_table::MemoryAttributesTable,
     protocol_db::{self, INVALID_HANDLE},
     protocols::PROTOCOL_DB,
     systemtables::EfiSystemTable,
-    tpl_lock,
+    tpl_mutex,
 };
 use patina::pi::{
     dxe_services::{self, GcdMemoryType, MemorySpaceDescriptor},
@@ -262,14 +262,14 @@ pub(crate) fn get_memory_ranges_for_memory_type(memory_type: efi::MemoryType) ->
 
 // The following structure is used to track additional allocators that are created in response to allocation requests
 // that are not satisfied by the static allocators.
-static ALLOCATORS: tpl_lock::TplMutex<AllocatorMap> = AllocatorMap::new();
+static ALLOCATORS: tpl_mutex::TplMutex<AllocatorMap> = AllocatorMap::new();
 struct AllocatorMap {
     map: BTreeMap<efi::MemoryType, &'static UefiAllocator>,
 }
 
 impl AllocatorMap {
-    const fn new() -> tpl_lock::TplMutex<Self> {
-        tpl_lock::TplMutex::new(TPL_HIGH_LEVEL, AllocatorMap { map: BTreeMap::new() }, "AllocatorMapLock")
+    const fn new() -> tpl_mutex::TplMutex<Self> {
+        tpl_mutex::TplMutex::new(TPL_HIGH_LEVEL, AllocatorMap { map: BTreeMap::new() }, "AllocatorMapLock")
     }
 }
 
@@ -690,17 +690,11 @@ pub(crate) fn get_memory_map_descriptors(active_attributes: bool) -> Result<Vec<
                     // pick it up from the active attributes. We also drop the access attributes because
                     // some OSes think the EFI_MEMORY_MAP attribute field is actually set attributes, not
                     // capabilities.
-                    match descriptor.memory_type {
-                        GcdMemoryType::Persistent => {
-                            (descriptor.capabilities & !(efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME))
-                                | (descriptor.attributes & efi::MEMORY_RUNTIME)
-                                | efi::MEMORY_NV
-                        }
-                        _ => {
-                            (descriptor.capabilities & !(efi::MEMORY_ACCESS_MASK | efi::MEMORY_RUNTIME))
-                                | (descriptor.attributes & efi::MEMORY_RUNTIME)
-                        }
-                    }
+                    MemoryProtectionPolicy::apply_efi_memory_map_policy(
+                        descriptor.attributes,
+                        descriptor.capabilities,
+                        descriptor.memory_type,
+                    )
                 }
             };
 
@@ -990,56 +984,53 @@ fn process_hob_allocations(hob_list: &HobList) {
         let stack_address = stack_hob.memory_base_address;
         let stack_length = stack_hob.memory_length;
 
-        if (stack_address == 0) || (stack_length == 0) {
-            log::error!("Stack base address {:#X} for len {:#X}", stack_address, stack_length);
-            debug_assert!(false);
-        } else {
-            match GCD.get_memory_descriptor_for_address(stack_address) {
-                Ok(gcd_desc) => {
-                    let attributes: u64 = gcd_desc.attributes;
-                    log::trace!("Current Attributes for the stack {:#X?} \n\n", attributes);
-                    // Set Stack region to execute protect.
-                    match GCD.set_memory_space_attributes(
-                        stack_address as usize,
-                        stack_length as usize,
-                        attributes | efi::MEMORY_XP,
-                    ) {
-                        Ok(_) | Err(EfiError::NotReady) => (),
-                        Err(e) => {
-                            log::error!(
-                                "Could not set NX for memory address {:#X} for len {:#X} with error {:?}",
-                                stack_address,
-                                stack_length,
-                                e
-                            );
-                            debug_assert!(false);
-                        }
-                    }
-                    // Set Guard page to read protect.
-                    match GCD.set_memory_space_attributes(
-                        stack_address as usize,
-                        UEFI_PAGE_SIZE,
-                        attributes | efi::MEMORY_RP,
-                    ) {
-                        Ok(_) | Err(EfiError::NotReady) => (),
-                        Err(e) => {
-                            log::error!(
-                                "Could not set RP for memory address {:#X} for len {:#X} with error {:?}",
-                                stack_address,
-                                UEFI_PAGE_SIZE,
-                                e
-                            );
-                            debug_assert!(false);
-                        }
+        assert!(
+            stack_address != 0 && stack_length != 0,
+            "Invalid Stack Configuration: Stack base address {stack_address:#X} for len {stack_length:#X}"
+        );
+
+        match GCD.get_memory_descriptor_for_address(stack_address) {
+            Ok(gcd_desc) => {
+                // Set Stack region to execute protect. We use the allocated memory protection policy here because
+                // that matches our standard policy
+                let attributes =
+                    GCD.memory_protection_policy.apply_allocated_memory_protection_policy(gcd_desc.attributes);
+                match GCD.set_memory_space_attributes(stack_address as usize, stack_length as usize, attributes) {
+                    Ok(_) | Err(EfiError::NotReady) => (),
+                    Err(e) => {
+                        log::error!(
+                            "Could not set NX for memory address {:#X} for len {:#X} with error {:?}",
+                            stack_address,
+                            stack_length,
+                            e
+                        );
+                        debug_assert!(false);
                     }
                 }
-                Err(_) => {
-                    log::error!("Failed to get memory descriptor for address {:#x?} in GCD", stack_address);
+                // Set Guard page to read protect. We keep the NX and cache attributes from above
+                match GCD.set_memory_space_attributes(
+                    stack_address as usize,
+                    UEFI_PAGE_SIZE,
+                    MemoryProtectionPolicy::apply_image_stack_guard_policy(attributes),
+                ) {
+                    Ok(_) | Err(EfiError::NotReady) => (),
+                    Err(e) => {
+                        log::error!(
+                            "Could not set RP for memory address {:#X} for len {:#X} with error {:?}",
+                            stack_address,
+                            UEFI_PAGE_SIZE,
+                            e
+                        );
+                        debug_assert!(false);
+                    }
                 }
+            }
+            Err(_) => {
+                log::error!("Failed to get memory descriptor for address {:#x?} in GCD", stack_address);
             }
         }
     } else {
-        debug_assert!(false, "No stack hob found\n");
+        panic!("No stack hob found");
     }
 
     // now that we've processed HOBs, lets allocate page 0 because we are going to use it for null pointer detection
@@ -1167,6 +1158,7 @@ pub(crate) unsafe fn reset_allocators() {
 
 #[cfg(test)]
 #[coverage(off)]
+#[cfg(target_arch = "x86_64")] // Issue #1071
 mod tests {
 
     use crate::{
@@ -1261,6 +1253,49 @@ mod tests {
 
             let nvs_range = ALLOCATORS.lock().get_allocator(efi::ACPI_MEMORY_NVS).unwrap().reserved_range().unwrap();
             assert_eq!(nvs_range.end - nvs_range.start, 0x300 * 0x1000);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn process_hob_allocations_should_handle_stack_attribute_set_failure() {
+        // A stack HOB is created but the corresponding memory region is not added
+        // to the GCD. This should cause set_memory_space_attributes to fail with NotFound.
+        test_support::with_global_lock(|| {
+            let physical_hob_list = build_test_hob_list(0x1000000);
+            unsafe {
+                GCD.reset();
+                gcd::init_gcd(physical_hob_list);
+                test_support::init_test_protocol_db();
+                reset_allocators();
+            }
+
+            let mut hob_list = HobList::default();
+            hob_list.discover_hobs(physical_hob_list);
+
+            // Create a stack HOB at an address NOT in the GCD (such as 0xEB000)
+            let stack_base_address = 0xEB000;
+            let stack_pages = 0x20;
+
+            let stack_hob = Hob::MemoryAllocation(&patina::pi::hob::MemoryAllocation {
+                header: patina::pi::hob::header::Hob {
+                    r#type: hob::MEMORY_ALLOCATION,
+                    length: core::mem::size_of::<hob::MemoryAllocation>() as u16,
+                    reserved: 0x00000000,
+                },
+                alloc_descriptor: patina::pi::hob::header::MemoryAllocation {
+                    name: HOB_MEMORY_ALLOC_STACK,
+                    memory_base_address: stack_base_address,
+                    memory_length: stack_pages * UEFI_PAGE_SIZE as u64,
+                    memory_type: efi::BOOT_SERVICES_DATA,
+                    reserved: Default::default(),
+                },
+            });
+            hob_list.push(stack_hob);
+
+            // This should fail to set attributes on the stack because the address
+            // is not in the GCD, but should continue processing without panicking
+            process_hob_allocations(&hob_list);
         })
         .unwrap();
     }

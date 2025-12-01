@@ -63,7 +63,7 @@ impl Uart for SerialPort {
 ```rust
 use patina::component::hob::FromHob;
 
-#[derive(FromHob, zerocopy::FromBytes)]
+#[derive(FromHob, zerocopy_derive::FromBytes)]
 #[repr(C)]
 #[hob = "8be4df61-93ca-11d2-aa0d-00e098032b8c"]
 struct FirmwareVolumeHeader {

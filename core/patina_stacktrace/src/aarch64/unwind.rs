@@ -640,6 +640,8 @@ impl UnwindCode {
                 // `z * 8` bytes from SP. Reading both slots stays within the recorded
                 // stack allocation and observes aligned 64-bit values.
                 prev_fp = unsafe { read_pointer64(prev_sp + z as u64 * 8)? }; // dereference fp
+                // SAFETY: Similar to the FP read above, the LR sits immediately after
+                // the FP in memory (8 bytes further), within the stack's allocated range.
                 prev_pc = unsafe {
                     read_pointer64(prev_sp + z as u64 * 8 + 8 /* step over fp */)?
                 }; // dereference lr
@@ -656,6 +658,8 @@ impl UnwindCode {
                 // points at the saved FP/LR pair. The current stack pointer is trusted
                 // to reference live stack memory, so loading both values is sound.
                 prev_fp = unsafe { read_pointer64(prev_sp)? }; // dereference fp
+                // SAFETY: Similar to the FP read above, the LR sits immediately after
+                // the FP in memory (8 bytes further), within the stack's allocated range.
                 prev_pc = unsafe {
                     read_pointer64(prev_sp + 8 /* step over fp */)?
                 }; // dereference lr

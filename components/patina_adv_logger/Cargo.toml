@@ -6,7 +6,10 @@ repository.workspace = true
 license.workspace = true
 edition.workspace = true
 readme = "README.md"
-description = "Advanced logger support."
+description = "Advanced logger component."
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "advlog_parser"

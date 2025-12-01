@@ -11,41 +11,30 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-cfg_if::cfg_if! {
-    if #[cfg(all(target_os = "uefi", target_arch = "x86_64"))] {
-        mod x64;
-        pub type EfiCpu = x64::EfiCpuX64;
-    } else if #[cfg(all(target_os = "uefi", target_arch = "aarch64"))] {
-        mod aarch64;
-        pub type EfiCpu = aarch64::EfiCpuAarch64;
-    } else if #[cfg(feature = "doc")] {
-        mod x64;
-        mod aarch64;
-        mod null;
-        pub use x64::EfiCpuX64;
-        pub use aarch64::EfiCpuAarch64;
-        pub use null::EfiCpuNull;
-
-        /// Type alias whose implementation is [EfiCpuX64], [EfiCpuAarch64], or [EfiCpuNull] depending on the compilation target.
-        ///
-        /// This struct is for documentation purposes only. Please refer to the individual implementations for specific details.
-        pub type EfiCpu = EfiCpuNull;
-    } else {
-        mod x64;
-        mod aarch64;
-        mod null;
-        pub type EfiCpu = null::EfiCpuNull;
-        pub use x64::EfiCpuX64;
-        pub use aarch64::EfiCpuAarch64;
-        pub use null::EfiCpuNull;
-    }
-}
-
 use patina::{
     error::EfiError,
     pi::protocols::cpu_arch::{CpuFlushType, CpuInitType},
 };
 use r_efi::efi;
+
+#[cfg(target_arch = "aarch64")]
+mod aarch64;
+#[cfg(not(target_os = "uefi"))]
+mod stub;
+#[cfg(target_arch = "x86_64")]
+mod x64;
+
+cfg_if::cfg_if! {
+    if #[cfg(not(target_os = "uefi"))] {
+        /// A stand in implementation of the CPU struct. This will be architecture structure defined by the platform
+        /// compilation.
+        pub type EfiCpu = stub::EfiCpuStub;
+    } else if #[cfg(target_arch = "x86_64")] {
+        pub type EfiCpu = x64::EfiCpuX64;
+    } else if #[cfg(target_arch = "aarch64")] {
+        pub type EfiCpu = aarch64::EfiCpuAarch64;
+    }
+}
 
 /// A trait to facilitate architecture-specific implementations.
 /// TODO: This trait will be further broken down in future.

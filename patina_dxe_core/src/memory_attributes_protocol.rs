@@ -8,7 +8,7 @@
 //!
 #![allow(unused)]
 /// Architecture independent public C EFI Memory Attributes Protocol definition.
-use crate::{dxe_services, protocol_db, protocols::PROTOCOL_DB};
+use crate::{GCD, dxe_services, protocol_db, protocols::PROTOCOL_DB};
 use alloc::boxed::Box;
 use core::{
     ffi::c_void,
@@ -40,32 +40,52 @@ extern "efiapi" fn get_memory_attributes(
         return efi::Status::INVALID_PARAMETER;
     }
 
+    let mut found_attrs = None;
+    let req_range = base_address..(base_address + length);
+
     // this API only returns the MEMORY_ACCESS attributes, per UEFI spec
-    // TODO: This should really go to the page table, not GCD, even though GCD is the source of truth...page table actually is
-    match dxe_services::core_get_memory_space_descriptor(base_address) {
-        Ok(descriptor) => {
-            if descriptor.base_address != base_address || descriptor.length != length {
+    for desc_result in GCD.iter(base_address as usize, length as usize) {
+        let descriptor = match desc_result {
+            Ok(desc) => desc,
+            Err(_) => {
                 log::error!(
-                    "{} Inconsistent attributes for: base_address {:#x} length {:#x}",
-                    function!(),
+                    "No descriptors found for range [{:#x}, {:#x}) in {}",
                     base_address,
-                    length
+                    base_address + length,
+                    function!()
                 );
                 return efi::Status::NO_MAPPING;
             }
-            // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
-            unsafe { attributes.write_unaligned(descriptor.attributes & efi::MEMORY_ACCESS_MASK) };
-            efi::Status::SUCCESS
+        };
+
+        // if we have already found attributes, ensure they are consistent
+        match found_attrs {
+            Some(attrs) if attrs != (descriptor.attributes & efi::MEMORY_ACCESS_MASK) => {
+                log::error!(
+                    "{} Inconsistent attributes found in range [{:#x}, {:#x})",
+                    function!(),
+                    base_address,
+                    base_address + length
+                );
+                return efi::Status::NO_MAPPING;
+            }
+            None => found_attrs = Some(descriptor.attributes & efi::MEMORY_ACCESS_MASK),
+            _ => {}
         }
-        Err(status) => {
-            log::error!(
-                "Failed to get memory descriptor for address {:#x}: {:?} in {}",
-                base_address,
-                status,
-                function!()
-            );
-            efi::Status::NO_MAPPING
-        }
+    }
+
+    if let Some(attrs) = found_attrs {
+        // Safety: caller must provide a valid pointer to receive the attributes. It is null-checked above.
+        unsafe { attributes.write_unaligned(attrs) };
+        efi::Status::SUCCESS
+    } else {
+        log::error!(
+            "No descriptors found for range [{:#x}, {:#x}) in {}",
+            base_address,
+            base_address + length,
+            function!()
+        );
+        efi::Status::NO_MAPPING
     }
 }
 
@@ -87,45 +107,62 @@ extern "efiapi" fn set_memory_attributes(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let mut current_base = base_address;
-    let range_end = (base_address + length);
-    while current_base < range_end {
-        let descriptor = match dxe_services::core_get_memory_space_descriptor(current_base as efi::PhysicalAddress) {
-            Ok(descriptor) => descriptor,
-            Err(e) => {
+    let end = match base_address.checked_add(length) {
+        Some(e) => e,
+        None => {
+            log::error!("Address overflow in {}", function!());
+            return efi::Status::INVALID_PARAMETER;
+        }
+    };
+
+    let range = base_address..end;
+
+    for desc_result in GCD.iter(base_address as usize, length as usize) {
+        let descriptor = match desc_result {
+            Ok(desc) => desc,
+            Err(_) => {
                 log::error!(
-                    "Memory descriptor fetching failed with error {:#x?} for {:#x} in {}",
-                    e,
-                    current_base,
+                    "No descriptors found for range [{:#x}, {:#x}) in {}",
+                    base_address,
+                    base_address + length,
                     function!()
                 );
-                // Only a few error codes are allowed per UEFI spec, so return unsupported
                 return efi::Status::UNSUPPORTED;
             }
         };
-        let descriptor_end = descriptor.base_address + descriptor.length;
-
-        // it is still legal to split a descriptor and only set the attributes on part of it
-        let next_base = u64::min(descriptor_end, range_end);
-        let current_len = next_base - current_base;
 
         // this API only adds new attributes that are set, it ignores all 0 attributes. So, we need to get the memory
         // descriptor first and then set the new attributes as the GCD API takes into account all attributes set or unset.
         let new_attributes = descriptor.attributes | attributes;
 
-        match dxe_services::core_set_memory_space_attributes(current_base, current_len, new_attributes) {
+        let current_range = descriptor.get_range_overlap_with_desc(&range);
+
+        // only a few status codes are allowed per UEFI spec, so return unsupported
+        // we don't have a reliable mechanism to reset any previously set attributes if an earlier block succeeded
+        // because any tracking mechanism would require memory allocations which could change the descriptors
+        // and cause some attributes to be set on a potentially incorrect memory region. At this point if we have
+        // failed, the system is dead, barring a bootloader allocating new memory and attempting to set attributes
+        // there, because this API is only used by a bootloader setting memory attributes for the next image it is
+        // loading. The expectation is that on a future boot the platform would disable this protocol.
+        match dxe_services::core_set_memory_space_attributes(
+            current_range.start,
+            (current_range.end - current_range.start),
+            new_attributes,
+        ) {
             Ok(_) => {}
-            // only a few status codes are allowed per UEFI spec, so return unsupported
-            // we don't have a reliable mechanism to reset any previously set attributes if an earlier block succeeded
-            // because any tracking mechanism would be require memory allocations which could change the descriptors
-            // and cause some attributes to be set on a potentially incorrect memory region. At this point if we have
-            // failed, the system is dead, barring a bootloader allocating new memory and attempting to set attributes
-            // there, because this API is only used by a bootloader setting memory attributes for the next image it is
-            // loading. The expectation is that on a future boot the platform would disable this protocol.
-            Err(status) => return efi::Status::UNSUPPORTED,
-        };
-        current_base = next_base;
+            Err(e) => {
+                log::error!(
+                    "Failed to set memory attributes for range [{:#x}, {:#x}) in {}: {:?}",
+                    current_range.start,
+                    current_range.end,
+                    function!(),
+                    e
+                );
+                return efi::Status::UNSUPPORTED;
+            }
+        }
     }
+
     efi::Status::SUCCESS
 }
 
@@ -147,45 +184,59 @@ extern "efiapi" fn clear_memory_attributes(
         return efi::Status::INVALID_PARAMETER;
     }
 
-    let mut current_base = base_address;
-    let range_end = (base_address + length);
-    while current_base < range_end {
-        let descriptor = match dxe_services::core_get_memory_space_descriptor(current_base as efi::PhysicalAddress) {
-            Ok(descriptor) => descriptor,
-            Err(e) => {
+    let end = match base_address.checked_add(length) {
+        Some(e) => e,
+        None => {
+            log::error!("Address overflow in {}", function!());
+            return efi::Status::INVALID_PARAMETER;
+        }
+    };
+    let range = base_address..end;
+
+    for desc_result in GCD.iter(base_address as usize, length as usize) {
+        let descriptor = match desc_result {
+            Ok(desc) => desc,
+            Err(_) => {
                 log::error!(
-                    "Memory descriptor fetching failed with error {:#x?} for {:#x} in {}",
-                    e,
-                    current_base,
+                    "No descriptors found for range [{:#x}, {:#x}) in {}",
+                    base_address,
+                    base_address + length,
                     function!()
                 );
-                // Only a few error codes are allowed per UEFI spec, so return unsupported
                 return efi::Status::UNSUPPORTED;
             }
         };
-        let descriptor_end = descriptor.base_address + descriptor.length;
-
-        // it is still legal to split a descriptor and only set the attributes on part of it
-        let next_base = u64::min(descriptor_end, range_end);
-        let current_len = next_base - current_base;
-
         // this API only adds clears attributes that are set to 1, it ignores all 0 attributes. So, we need to get the memory
         // descriptor first and then set the new attributes as the GCD API takes into account all attributes set or unset.
         let new_attributes = descriptor.attributes & !attributes;
+        let current_range = descriptor.get_range_overlap_with_desc(&range);
 
-        match dxe_services::core_set_memory_space_attributes(current_base, current_len, new_attributes) {
+        // only a few status codes are allowed per UEFI spec, so return unsupported
+        // we don't have a reliable mechanism to reset any previously set attributes if an earlier block succeeded
+        // because any tracking mechanism would require memory allocations which could change the descriptors
+        // and cause some attributes to be set on a potentially incorrect memory region. At this point if we have
+        // failed, the system is dead, barring a bootloader allocating new memory and attempting to set attributes
+        // there, because this API is only used by a bootloader setting memory attributes for the next image it is
+        // loading. The expectation is that on a future boot the platform would disable this protocol.
+        match dxe_services::core_set_memory_space_attributes(
+            current_range.start,
+            (current_range.end - current_range.start),
+            new_attributes,
+        ) {
             Ok(_) => {}
-            // only a few status codes are allowed per UEFI spec, so return unsupported
-            // we don't have a reliable mechanism to reset any previously set attributes if an earlier block succeeded
-            // because any tracking mechanism would be require memory allocations which could change the descriptors
-            // and cause some attributes to be set on a potentially incorrect memory region. At this point if we have
-            // failed, the system is dead, barring a bootloader allocating new memory and attempting to set attributes
-            // there, because this API is only used by a bootloader setting memory attributes for the next image it is
-            // loading. The expectation is that on a future boot the platform would disable this protocol.
-            Err(status) => return efi::Status::UNSUPPORTED,
-        };
-        current_base = next_base;
+            Err(e) => {
+                log::error!(
+                    "Failed to clear memory attributes for range [{:#x}, {:#x}) in {}: {:?}",
+                    current_range.start,
+                    current_range.end,
+                    function!(),
+                    e
+                );
+                return efi::Status::UNSUPPORTED;
+            }
+        }
     }
+
     efi::Status::SUCCESS
 }
 
@@ -249,5 +300,438 @@ pub(crate) fn uninstall_memory_attributes_protocol() {
                 log::error!("MEMORY_ATTRIBUTES_PROTOCOL_GUID was not installed");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::{
+        GCD,
+        gcd::{AllocateType, init_gcd},
+        test_support::{self, MockPageTable, MockPageTableWrapper},
+    };
+
+    use patina::{
+        base::{UEFI_PAGE_SHIFT, align_up},
+        pi::dxe_services::GcdMemoryType,
+    };
+    use std::{cell::RefCell, ptr, rc::Rc};
+
+    fn with_locked_state<F: Fn() + std::panic::RefUnwindSafe>(f: F) {
+        test_support::with_global_lock(|| {
+            // SAFETY: Test code - resetting the global GCD state for test isolation.
+            // The test lock is used to prevent concurrent access.
+            unsafe {
+                GCD.reset();
+            }
+            f();
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_get_memory_attributes_invalid_alignment() {
+        let mut attrs: u64 = 0;
+        let status = get_memory_attributes(core::ptr::null_mut(), 0x1001, 0x1000, &mut attrs as *mut u64);
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_get_memory_attributes_null_attributes() {
+        let status = get_memory_attributes(core::ptr::null_mut(), 0x1000, 0x1000, core::ptr::null_mut());
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_set_memory_attributes_invalid_alignment() {
+        let status = set_memory_attributes(core::ptr::null_mut(), 0x1001, 0x1000, efi::MEMORY_RO);
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_set_memory_attributes_invalid_attributes() {
+        let status = set_memory_attributes(core::ptr::null_mut(), 0x1000, 0x1000, 0xdeadbeef);
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_clear_memory_attributes_invalid_alignment() {
+        let status = clear_memory_attributes(core::ptr::null_mut(), 0x1001, 0x1000, efi::MEMORY_RO);
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_clear_memory_attributes_invalid_attributes() {
+        let status = clear_memory_attributes(core::ptr::null_mut(), 0x1000, 0x1000, 0xdeadbeef);
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
+    }
+
+    #[test]
+    fn test_get_memory_attributes_single_descriptor() {
+        with_locked_state(|| {
+            GCD.init(48, 16);
+
+            // Add memory and MMIO regions
+            let mem = unsafe { crate::test_support::get_memory(0x120000) };
+            let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+
+            // SAFETY: We just allocated this memory for testing.
+            unsafe {
+                GCD.init_memory_blocks(
+                    patina::pi::dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    0x110000,
+                    efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
+                )
+                .unwrap();
+            }
+
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
+            GCD.add_test_page_table(mock_page_table);
+
+            let addr = GCD
+                .allocate_memory_space(
+                    AllocateType::TopDown(None),
+                    GcdMemoryType::SystemMemory,
+                    UEFI_PAGE_SHIFT,
+                    0x2000,
+                    0x7 as efi::Handle,
+                    None,
+                )
+                .unwrap();
+
+            let mut attrs: u64 = 0;
+            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x2000, &mut attrs as *mut u64);
+            assert_eq!(status, efi::Status::SUCCESS);
+            assert_eq!(attrs, efi::MEMORY_XP);
+        });
+    }
+
+    #[test]
+    fn test_get_memory_attributes_partial_descriptor() {
+        with_locked_state(|| {
+            GCD.init(48, 16);
+
+            // Add memory and MMIO regions
+            let mem = unsafe { crate::test_support::get_memory(0x120000) };
+            let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+
+            // SAFETY: We just allocated this memory for testing.
+            unsafe {
+                GCD.init_memory_blocks(
+                    patina::pi::dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    0x110000,
+                    efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
+                )
+                .unwrap();
+            }
+
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
+            GCD.add_test_page_table(mock_page_table);
+
+            let addr = GCD
+                .allocate_memory_space(
+                    AllocateType::TopDown(None),
+                    GcdMemoryType::SystemMemory,
+                    UEFI_PAGE_SHIFT,
+                    0x3000,
+                    0x7 as efi::Handle,
+                    None,
+                )
+                .unwrap();
+
+            let mut attrs: u64 = 0;
+            let status =
+                get_memory_attributes(core::ptr::null_mut(), addr as u64 + 0x1000, 0x1000, &mut attrs as *mut u64);
+            assert_eq!(status, efi::Status::SUCCESS);
+            assert_eq!(attrs, efi::MEMORY_XP);
+        });
+    }
+
+    #[test]
+    fn test_get_memory_attributes_multiple_descriptors() {
+        with_locked_state(|| {
+            GCD.init(48, 16);
+
+            // Add memory and MMIO regions
+            let mem = unsafe { crate::test_support::get_memory(0x120000) };
+            let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+
+            // SAFETY: We just allocated this memory for testing.
+            unsafe {
+                GCD.init_memory_blocks(
+                    patina::pi::dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    0x110000,
+                    efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
+                )
+                .unwrap();
+            }
+
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
+            GCD.add_test_page_table(mock_page_table);
+
+            let addr = GCD
+                .allocate_memory_space(
+                    AllocateType::TopDown(None),
+                    GcdMemoryType::SystemMemory,
+                    UEFI_PAGE_SHIFT,
+                    0x3000,
+                    0x7 as efi::Handle,
+                    None,
+                )
+                .unwrap();
+
+            GCD.set_memory_space_attributes(addr + 0x1000, 0x1000, efi::MEMORY_UC | efi::MEMORY_XP).unwrap();
+
+            let mut attrs: u64 = 0;
+            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, &mut attrs as *mut u64);
+            assert_eq!(status, efi::Status::SUCCESS);
+            assert_eq!(attrs, efi::MEMORY_XP);
+        });
+    }
+
+    #[test]
+    fn test_get_memory_attributes_multiple_descriptors_different_attrs() {
+        with_locked_state(|| {
+            GCD.init(48, 16);
+
+            // Add memory and MMIO regions
+            let mem = unsafe { crate::test_support::get_memory(0x120000) };
+            let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+
+            // SAFETY: We just allocated this memory for testing.
+            unsafe {
+                GCD.init_memory_blocks(
+                    patina::pi::dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    0x110000,
+                    efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
+                )
+                .unwrap();
+            }
+
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
+            GCD.add_test_page_table(mock_page_table);
+
+            let addr = GCD
+                .allocate_memory_space(
+                    AllocateType::TopDown(None),
+                    GcdMemoryType::SystemMemory,
+                    UEFI_PAGE_SHIFT,
+                    0x3000,
+                    0x7 as efi::Handle,
+                    None,
+                )
+                .unwrap();
+
+            GCD.set_memory_space_attributes(addr + 0x1000, 0x1000, efi::MEMORY_RO).unwrap();
+
+            let mut attrs: u64 = 0;
+            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, &mut attrs as *mut u64);
+            assert_eq!(status, efi::Status::NO_MAPPING);
+        });
+    }
+
+    #[test]
+    fn test_get_memory_attributes_no_mapping() {
+        with_locked_state(|| {
+            GCD.init(48, 16);
+
+            let mut attrs: u64 = 0;
+            let status = get_memory_attributes(core::ptr::null_mut(), 0x0_u64, 0x3000, &mut attrs as *mut u64);
+            assert_eq!(status, efi::Status::NO_MAPPING);
+        });
+    }
+
+    #[test]
+    fn test_set_memory_attributes_single_descriptor() {
+        with_locked_state(|| {
+            GCD.init(48, 16);
+
+            // Add memory and MMIO regions
+            let mem = unsafe { crate::test_support::get_memory(0x120000) };
+            let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+
+            // SAFETY: We just allocated this memory for testing.
+            unsafe {
+                GCD.init_memory_blocks(
+                    patina::pi::dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    0x110000,
+                    efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
+                )
+                .unwrap();
+            }
+
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
+            GCD.add_test_page_table(mock_page_table);
+
+            let addr = GCD
+                .allocate_memory_space(
+                    AllocateType::TopDown(None),
+                    GcdMemoryType::SystemMemory,
+                    UEFI_PAGE_SHIFT,
+                    0x2000,
+                    0x7 as efi::Handle,
+                    None,
+                )
+                .unwrap();
+
+            let mut attrs: u64 = efi::MEMORY_RO;
+            let status = set_memory_attributes(core::ptr::null_mut(), addr as u64, 0x2000, attrs);
+            assert_eq!(status, efi::Status::SUCCESS);
+
+            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x2000, &mut attrs as *mut u64);
+            assert_eq!(status, efi::Status::SUCCESS);
+            assert_eq!(attrs, efi::MEMORY_RO | efi::MEMORY_XP);
+        });
+    }
+
+    #[test]
+    fn test_set_memory_attributes_multiple_descriptors() {
+        with_locked_state(|| {
+            GCD.init(48, 16);
+
+            // Add memory and MMIO regions
+            let mem = unsafe { crate::test_support::get_memory(0x120000) };
+            let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+
+            // SAFETY: We just allocated this memory for testing.
+            unsafe {
+                GCD.init_memory_blocks(
+                    patina::pi::dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    0x110000,
+                    efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
+                )
+                .unwrap();
+            }
+
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
+            GCD.add_test_page_table(mock_page_table);
+
+            let addr = GCD
+                .allocate_memory_space(
+                    AllocateType::TopDown(None),
+                    GcdMemoryType::SystemMemory,
+                    UEFI_PAGE_SHIFT,
+                    0x3000,
+                    0x7 as efi::Handle,
+                    None,
+                )
+                .unwrap();
+
+            GCD.set_memory_space_attributes(addr + 0x1000, 0x1000, efi::MEMORY_UC | efi::MEMORY_XP);
+
+            let mut attrs: u64 = efi::MEMORY_RO;
+            let status = set_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, attrs);
+            assert_eq!(status, efi::Status::SUCCESS);
+
+            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, &mut attrs as *mut u64);
+            assert_eq!(status, efi::Status::SUCCESS);
+            assert_eq!(attrs, efi::MEMORY_RO | efi::MEMORY_XP);
+        });
+    }
+
+    #[test]
+    fn test_clear_memory_attributes_single_descriptor() {
+        with_locked_state(|| {
+            GCD.init(48, 16);
+
+            // Add memory and MMIO regions
+            let mem = unsafe { crate::test_support::get_memory(0x120000) };
+            let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+
+            // SAFETY: We just allocated this memory for testing.
+            unsafe {
+                GCD.init_memory_blocks(
+                    patina::pi::dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    0x110000,
+                    efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
+                )
+                .unwrap();
+            }
+
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
+            GCD.add_test_page_table(mock_page_table);
+
+            let addr = GCD
+                .allocate_memory_space(
+                    AllocateType::TopDown(None),
+                    GcdMemoryType::SystemMemory,
+                    UEFI_PAGE_SHIFT,
+                    0x2000,
+                    0x7 as efi::Handle,
+                    None,
+                )
+                .unwrap();
+
+            let mut attrs: u64 = efi::MEMORY_XP;
+            let status = clear_memory_attributes(core::ptr::null_mut(), addr as u64, 0x2000, attrs);
+            assert_eq!(status, efi::Status::SUCCESS);
+
+            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x2000, &mut attrs as *mut u64);
+            assert_eq!(status, efi::Status::SUCCESS);
+            assert_eq!(attrs, 0);
+        });
+    }
+
+    #[test]
+    fn test_clear_memory_attributes_multiple_descriptors() {
+        with_locked_state(|| {
+            GCD.init(48, 16);
+
+            // Add memory and MMIO regions
+            let mem = unsafe { crate::test_support::get_memory(0x120000) };
+            let address = align_up(mem.as_ptr() as usize, 0x1000).unwrap();
+
+            // SAFETY: We just allocated this memory for testing.
+            unsafe {
+                GCD.init_memory_blocks(
+                    patina::pi::dxe_services::GcdMemoryType::SystemMemory,
+                    address,
+                    0x110000,
+                    efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
+                )
+                .unwrap();
+            }
+
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
+            GCD.add_test_page_table(mock_page_table);
+
+            let addr = GCD
+                .allocate_memory_space(
+                    AllocateType::TopDown(None),
+                    GcdMemoryType::SystemMemory,
+                    UEFI_PAGE_SHIFT,
+                    0x3000,
+                    0x7 as efi::Handle,
+                    None,
+                )
+                .unwrap();
+
+            GCD.set_memory_space_attributes(addr + 0x1000, 0x1000, efi::MEMORY_XP | efi::MEMORY_WC);
+
+            let mut attrs: u64 = efi::MEMORY_XP;
+            let status = clear_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, attrs);
+            assert_eq!(status, efi::Status::SUCCESS);
+
+            let status = get_memory_attributes(core::ptr::null_mut(), addr as u64, 0x3000, &mut attrs as *mut u64);
+            assert_eq!(status, efi::Status::SUCCESS);
+            assert_eq!(attrs, 0);
+        });
     }
 }

@@ -9,4 +9,5 @@
 mod cpu;
 mod gdt;
 
+#[allow(unused)]
 pub use cpu::EfiCpuX64;

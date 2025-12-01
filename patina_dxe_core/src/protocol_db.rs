@@ -19,7 +19,7 @@ use core::{cmp::Ordering, ffi::c_void, hash::Hasher};
 use patina::error::EfiError;
 use r_efi::efi;
 
-use crate::tpl_lock;
+use crate::tpl_mutex;
 
 //private UUID used to create the "well-known handles"
 const WELL_KNOWN_HANDLE_PROTOCOL_GUID: uuid::Uuid = uuid::Uuid::from_u128(0xfced7c96356e48cba9a9e089b2ddf49b);
@@ -595,7 +595,7 @@ impl ProtocolDb {
 /// is only allowed through this structure which ensures that the event database
 /// is properly guarded against race conditions.
 pub struct SpinLockedProtocolDb {
-    inner: tpl_lock::TplMutex<ProtocolDb>,
+    inner: tpl_mutex::TplMutex<ProtocolDb>,
 }
 
 impl Default for SpinLockedProtocolDb {
@@ -607,7 +607,7 @@ impl Default for SpinLockedProtocolDb {
 impl SpinLockedProtocolDb {
     /// Creates a new instance of SpinLockedProtocolDb.
     pub const fn new() -> Self {
-        SpinLockedProtocolDb { inner: tpl_lock::TplMutex::new(efi::TPL_NOTIFY, ProtocolDb::new(), "ProtocolLock") }
+        SpinLockedProtocolDb { inner: tpl_mutex::TplMutex::new(efi::TPL_NOTIFY, ProtocolDb::new(), "ProtocolLock") }
     }
 
     /// Resets the protocol database to its initial state.
@@ -626,7 +626,7 @@ impl SpinLockedProtocolDb {
         inner.next_registration = 1;
     }
 
-    fn lock(&self) -> tpl_lock::TplGuard<'_, ProtocolDb> {
+    fn lock(&self) -> tpl_mutex::TplGuard<'_, ProtocolDb> {
         self.inner.lock()
     }
 

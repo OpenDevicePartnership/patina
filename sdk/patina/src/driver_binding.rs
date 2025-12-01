@@ -149,7 +149,7 @@ where
         controller_handle: efi::Handle,
         remaining_device_path: *mut EfiDevicePathProtocol,
     ) -> efi::Status {
-        // SAFETY Self is passed as the interface when installed and this pointer does not change.
+        // SAFETY: Self is passed as the interface when installed and this pointer does not change.
         let this = unsafe { (this as *mut _UefiDriverBinding<T, U>).as_mut() }.unwrap();
 
         match this.driver_binding.driver_binding_supported(
@@ -168,7 +168,7 @@ where
         controller_handle: efi::Handle,
         remaining_device_path: *mut EfiDevicePathProtocol,
     ) -> efi::Status {
-        // SAFETY Self is passed as the interface when installed and this pointer does not change.
+        // SAFETY: Self is passed as the interface when installed and this pointer does not change.
         let this = unsafe { (this as *mut _UefiDriverBinding<T, U>).as_mut() }.unwrap();
         match this.driver_binding.driver_binding_start(
             this.boot_services,
@@ -186,7 +186,7 @@ where
         number_of_children: usize,
         child_handle_buffer: *mut efi::Handle,
     ) -> efi::Status {
-        // SAFETY Self is passed as the interface when installed and this pointer does not change.
+        // SAFETY: Self is passed as the interface when installed and this pointer does not change.
         let this = unsafe { (this as *mut _UefiDriverBinding<T, U>).as_mut() }.unwrap();
         match this.driver_binding.driver_binding_stop(
             this.boot_services,
@@ -312,6 +312,7 @@ mod tests {
         const TEST_HANDLE: efi::Handle = 12345_usize as efi::Handle;
 
         static mut BOOT_SERVICES_INIT: MaybeUninit<MockBootServices> = MaybeUninit::uninit();
+        // SAFETY: Test code - initializing static MaybeUninit with a mock boot services instance.
         unsafe {
             let mut mock_boot_services = MockBootServices::new();
             mock_boot_services
@@ -338,6 +339,7 @@ mod tests {
 
             ptr::write(BOOT_SERVICES_INIT.as_mut_ptr(), mock_boot_services);
         }
+        // SAFETY: Test code - BOOT_SERVICES_INIT was initialized in the unsafe block above.
         static BOOT_SERVICES: &MockBootServices = unsafe { BOOT_SERVICES_INIT.assume_init_ref() };
 
         let driver = MockDriverBinding::new();
@@ -353,6 +355,7 @@ mod tests {
         const TEST_DRIVER_HANDLE: efi::Handle = 54321_usize as efi::Handle;
 
         static mut BOOT_SERVICES_INIT: MaybeUninit<MockBootServices> = MaybeUninit::uninit();
+        // SAFETY: Test code - initializing static MaybeUninit with a mock boot services instance.
         unsafe {
             let mut mock_boot_services = MockBootServices::new();
             mock_boot_services
@@ -379,6 +382,7 @@ mod tests {
 
             ptr::write(BOOT_SERVICES_INIT.as_mut_ptr(), mock_boot_services);
         }
+        // SAFETY: Test code - BOOT_SERVICES_INIT was initialized in the unsafe block above.
         static BOOT_SERVICES: &MockBootServices = unsafe { BOOT_SERVICES_INIT.assume_init_ref() };
 
         let driver = MockDriverBinding::new();
@@ -395,6 +399,7 @@ mod tests {
         const TEST_DRIVER_HANDLE: efi::Handle = 54321_usize as efi::Handle;
 
         static mut BOOT_SERVICES_INIT: MaybeUninit<MockBootServices> = MaybeUninit::uninit();
+        // SAFETY: Test code - initializing static MaybeUninit with a mock boot services instance.
         unsafe {
             let mut mock_boot_services = MockBootServices::new();
             mock_boot_services.expect_install_protocol_interface_unchecked().once().return_const_st(Ok(TEST_HANDLE));
@@ -422,6 +427,7 @@ mod tests {
 
             ptr::write(BOOT_SERVICES_INIT.as_mut_ptr(), mock_boot_services);
         }
+        // SAFETY: Test code - BOOT_SERVICES_INIT was initialized in the unsafe block above.
         static BOOT_SERVICES: &MockBootServices = unsafe { BOOT_SERVICES_INIT.assume_init_ref() };
 
         let driver = MockDriverBinding::new();
@@ -439,12 +445,14 @@ mod tests {
         const TEST_HANDLE: efi::Handle = 12345_usize as efi::Handle;
 
         static mut BOOT_SERVICES_INIT: MaybeUninit<MockBootServices> = MaybeUninit::uninit();
+        // SAFETY: Test code - initializing static MaybeUninit with a mock boot services instance.
         unsafe {
             let mut mock_boot_services = MockBootServices::new();
             mock_boot_services.expect_install_protocol_interface_unchecked().return_const_st(Ok(TEST_HANDLE));
             mock_boot_services.expect_uninstall_protocol_interface_unchecked().return_const_st(Ok(()));
             ptr::write(BOOT_SERVICES_INIT.as_mut_ptr(), mock_boot_services);
         }
+        // SAFETY: Test code - BOOT_SERVICES_INIT was initialized in the unsafe block above.
         static BOOT_SERVICES: &MockBootServices = unsafe { BOOT_SERVICES_INIT.assume_init_ref() };
 
         struct MyDriverBinding;

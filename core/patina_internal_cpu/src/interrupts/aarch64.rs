@@ -11,17 +11,14 @@ use crate::log_registers;
 use patina::{error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
 use patina_stacktrace::{StackFrame, StackTrace};
 
-cfg_if::cfg_if! {
-    if #[cfg(all(target_os = "uefi", target_arch = "aarch64"))] {
-        mod interrupt_manager;
-        pub mod gic_manager;
-        pub use interrupt_manager::InterruptsAarch64;
-        use patina::{read_sysreg, write_sysreg};
-    } else if #[cfg(feature = "doc")] {
-        pub use interrupt_manager::InterruptsAarch64;
-        mod interrupt_manager;
-    }
-}
+#[cfg(not(test))]
+pub mod gic_manager;
+mod interrupt_manager;
+#[cfg(not(test))]
+use patina::{read_sysreg, write_sysreg};
+
+#[allow(unused)]
+pub use interrupt_manager::InterruptsAarch64;
 
 pub type ExceptionContextAArch64 = r_efi::protocols::debug_support::SystemContextAArch64;
 
@@ -33,9 +30,9 @@ impl super::EfiSystemContextFactory for ExceptionContextAArch64 {
 
 impl super::EfiExceptionStackTrace for ExceptionContextAArch64 {
     fn dump_stack_trace(&self) {
-        // SAFETY: This is called from the exception context. We have no choice but to trust the ELR and SP values.
-        // the stack trace module does its best to not cause recursive exceptions.
         let stack_frame = StackFrame { pc: self.elr, sp: self.sp, fp: self.fp };
+        // SAFETY: Called during exception handling with CPU context registers. The exception context
+        // is considered valid to dump at this time.
         if let Err(err) = unsafe { StackTrace::dump_with(stack_frame) } {
             log::error!("StackTrace: {err}");
         }
@@ -60,39 +57,39 @@ impl super::EfiExceptionStackTrace for ExceptionContextAArch64 {
     }
 }
 
+#[coverage(off)]
 #[allow(unused)]
 pub fn enable_interrupts() {
-    #[cfg(all(not(test), target_arch = "aarch64"))]
-    {
-        write_sysreg!(reg daifclr, imm 0x02, "isb sy");
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        unimplemented!()
+    cfg_if::cfg_if! {
+        if #[cfg(all(not(test), target_arch = "aarch64"))]  {
+            write_sysreg!(reg daifclr, imm 0x02, "isb sy");
+        } else {
+            unimplemented!()
+        }
     }
 }
 
+#[coverage(off)]
 #[allow(unused)]
 pub fn disable_interrupts() {
-    #[cfg(all(not(test), target_arch = "aarch64"))]
-    {
-        write_sysreg!(reg daifset, imm 0x02, "isb sy");
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        unimplemented!()
+    cfg_if::cfg_if! {
+        if #[cfg(all(not(test), target_arch = "aarch64"))]  {
+            write_sysreg!(reg daifset, imm 0x02, "isb sy");
+        } else {
+            unimplemented!()
+        }
     }
 }
 
+#[coverage(off)]
 #[allow(unused)]
 pub fn get_interrupt_state() -> Result<bool, EfiError> {
-    #[cfg(all(not(test), target_arch = "aarch64"))]
-    {
-        let daif = unsafe { read_sysreg!(daif) };
-        Ok(daif & 0x80 == 0)
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        Err(EfiError::Unsupported)
+    cfg_if::cfg_if! {
+        if #[cfg(all(not(test), target_arch = "aarch64"))]  {
+            let daif = read_sysreg!(daif);
+            Ok(daif & 0x80 == 0)
+        } else {
+            Err(EfiError::Unsupported)
+        }
     }
 }

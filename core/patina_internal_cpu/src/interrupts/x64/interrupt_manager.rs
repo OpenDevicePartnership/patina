@@ -7,74 +7,19 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use core::arch::global_asm;
-use lazy_static::lazy_static;
 use patina::{
-    base::{SIZE_4GB, UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
+    base::{UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
+    bit,
     component::service::IntoService,
     error::EfiError,
     pi::protocols::cpu_arch::EfiSystemContext,
 };
+#[cfg(target_arch = "x86_64")]
+use patina_mtrr::Mtrr;
 use patina_paging::{PageTable, PagingType};
 use patina_stacktrace::{StackFrame, StackTrace};
-use x86_64::{
-    VirtAddr,
-    structures::idt::{InterruptDescriptorTable, InterruptStackFrame},
-};
 
 use crate::interrupts::{EfiExceptionStackTrace, HandlerType, InterruptManager, x64::ExceptionContextX64};
-
-global_asm!(include_str!("interrupt_handler.asm"));
-
-// Use efiapi for the consistent calling convention.
-unsafe extern "efiapi" {
-    fn AsmGetVectorAddress(index: usize) -> u64;
-}
-
-// The x86_64 crate requires the IDT to be static, which makes sense as the IDT
-// can live beyond any code lifetime.
-lazy_static! {
-    static ref IDT: InterruptDescriptorTable = {
-        let mut idt = InterruptDescriptorTable::new();
-
-        // Initialize all of the index-able well-known entries.
-        for vector in [0, 1, 2, 3, 4, 5, 6, 7, 9, 16, 19, 20, 28] {
-            // SAFETY: We are constructing the well known IDT handlers which must be present in the IDT
-            unsafe { idt[vector].set_handler_addr(get_vector_address(vector.into())) };
-        }
-
-        // Intentionally use direct function for double fault. This allows for
-        // more robust diagnostics of the exception stack. Currently this also
-        // means external caller cannot register for double fault call backs.
-        // Fix it: Below line is excluded from std builds because rustc fails to
-        //        compile with following error "offset is not a multiple of 16"
-        // SAFETY: We are adding a double fault handler to our static IDT that already exists
-        unsafe { idt.double_fault.set_handler_addr(VirtAddr::new(double_fault_handler as *const () as u64)).set_stack_index(0) };
-
-        // Initialize the error code vectors. the x86_64 crate does not allow these
-        // to be indexed.
-        // SAFETY: We are using a static IDT and configuring all exception handlers
-        unsafe {
-            idt.invalid_tss.set_handler_addr(get_vector_address(10));
-            idt.segment_not_present.set_handler_addr(get_vector_address(11));
-            idt.stack_segment_fault.set_handler_addr(get_vector_address(12));
-            idt.general_protection_fault.set_handler_addr(get_vector_address(13));
-            idt.page_fault.set_handler_addr(get_vector_address(14));
-            idt.alignment_check.set_handler_addr(get_vector_address(17));
-            idt.cp_protection_exception.set_handler_addr(get_vector_address(19));
-            idt.vmm_communication_exception.set_handler_addr(get_vector_address(29));
-            idt.security_exception.set_handler_addr(get_vector_address(30));
-        }
-
-        // Initialize generic interrupts.
-        for vector in 32..=255 {
-            // SAFETY: We are using a static IDT and configuring the expected list of generic interrupts
-            unsafe { idt[vector].set_handler_addr(get_vector_address(vector.into())) };
-        }
-
-        idt
-    };
-}
 
 /// X64 Implementation of the InterruptManager.
 ///
@@ -97,12 +42,9 @@ impl InterruptsX64 {
     /// architecture specific default handlers for exceptions.
     ///
     pub fn initialize(&mut self) -> Result<(), EfiError> {
-        if &IDT as *const _ as usize >= SIZE_4GB {
-            // TODO: Come back and ensure the GDT is below 4GB
-            panic!("GDT above 4GB, MP services will fail");
-        }
-        IDT.load();
-        log::info!("Loaded IDT");
+        // Initialize the IDT.
+        #[cfg(target_os = "uefi")]
+        crate::interrupts::x64::idt::initialize_idt();
 
         // Register some default handlers.
         self.register_exception_handler(13, HandlerType::UefiRoutine(general_protection_fault_handler))
@@ -116,16 +58,7 @@ impl InterruptsX64 {
 
 impl InterruptManager for InterruptsX64 {}
 
-/// Handler for double faults.
-///
-/// Handler for double faults that is configured to run as a direct interrupt
-/// handler without using the normal handler assembly or stack. This is done to
-/// increase the diagnosability of faults in the interrupt handling code.
-///
-extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, _error_code: u64) {
-    panic!("EXCEPTION: DOUBLE FAULT\n{stack_frame:#X?}");
-}
-
+#[coverage(off)]
 /// Default handler for GP faults.
 extern "efiapi" fn general_protection_fault_handler(_exception_type: isize, context: EfiSystemContext) {
     // SAFETY: We don't have any choice here, we are in an exception and have to do our best
@@ -149,9 +82,9 @@ extern "efiapi" fn general_protection_fault_handler(_exception_type: isize, cont
     (x64_context as &ExceptionContextX64).dump_system_context_registers();
 
     log::error!("Dumping Exception Stack Trace:");
-    // SAFETY: As before, we don't have any choice. The stacktrace module will do its best to not cause a
-    // recursive exception.
     let stack_frame = StackFrame { pc: x64_context.rip, sp: x64_context.rsp, fp: x64_context.rbp };
+    // SAFETY: Called during exception handling with CPU context registers. The exception context
+    // is considered valid to dump at this time.
     if let Err(err) = unsafe { StackTrace::dump_with(stack_frame) } {
         log::error!("StackTrace: {err}");
     }
@@ -159,6 +92,7 @@ extern "efiapi" fn general_protection_fault_handler(_exception_type: isize, cont
     panic!("EXCEPTION: GP FAULT");
 }
 
+#[coverage(off)]
 /// Default handler for page faults.
 extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystemContext) {
     // SAFETY: We don't have any choice here, we are in an exception and have to do our best
@@ -189,9 +123,9 @@ extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystem
     unsafe { dump_pte(x64_context.cr2, x64_context.cr3, paging_type) };
 
     log::error!("Dumping Exception Stack Trace:");
-    // SAFETY: As before, we don't have any choice. The stacktrace module will do its best to not cause a
-    // recursive exception.
     let stack_frame = StackFrame { pc: x64_context.rip, sp: x64_context.rsp, fp: x64_context.rbp };
+    // SAFETY: Called during page fault exception handling with CPU context registers. The exception context
+    // is considered valid to dump at this time.
     if let Err(err) = unsafe { StackTrace::dump_with(stack_frame) } {
         log::error!("StackTrace: {err}");
     }
@@ -199,63 +133,45 @@ extern "efiapi" fn page_fault_handler(_exception_type: isize, context: EfiSystem
     panic!("EXCEPTION: PAGE FAULT");
 }
 
-/// Gets the address of the assembly entry point for the given vector index.
-fn get_vector_address(index: usize) -> VirtAddr {
-    // Verify the index is in [0-255]
-    if index >= 256 {
-        panic!("Invalid vector index! 0x{index:#X?}");
-    }
-
-    // SAFETY: We have validated we are using the architecturally guaranteed indices
-    unsafe { VirtAddr::from_ptr(AsmGetVectorAddress(index) as *const ()) }
-}
-
+#[coverage(off)]
+// see Intel SDM Vol 3A section 7.15
 fn interpret_page_fault_exception_data(exception_data: u64) {
     log::error!("Error Code: {exception_data:#X?}");
-    if (exception_data & 0x1) == 0 {
+    if (exception_data & bit!(0)) == 0 {
         log::error!("Page not present");
     } else {
         log::error!("Page-level protection violation");
     }
 
-    if (exception_data & 0x2) == 0 {
+    if (exception_data & bit!(1)) == 0 {
         log::error!("R/W: Read");
     } else {
         log::error!("R/W: Write");
     }
 
-    if (exception_data & 0x4) == 0 {
-        log::error!("Mode: Supervisor");
-    } else {
-        log::error!("Mode: User");
-    }
-
-    if (exception_data & 0x8) == 0 {
+    if (exception_data & bit!(3)) != 0 {
         log::error!("Reserved bit violation");
     }
 
-    if (exception_data & 0x10) == 0 {
+    if (exception_data & bit!(4)) == 0 {
+        log::error!("Data access");
+    } else {
         log::error!("Instruction fetch access");
     }
 }
 
+#[coverage(off)]
+// see Intel SDM Vol 3A section 7.15
 fn interpret_gp_fault_exception_data(exception_data: u64) {
-    log::error!("Error Code: {exception_data:#X?}");
-    if (exception_data & 0x1) != 0 {
-        log::error!("Invalid segment");
-    }
-
-    if (exception_data & 0x2) != 0 {
-        log::error!("Invalid write access");
-    }
-
-    if (exception_data & 0x4) == 0 {
-        log::error!("Mode: Supervisor");
+    if exception_data != 0 {
+        log::error!("Segment descriptor or IDT vector number: {exception_data:#X?}");
     } else {
-        log::error!("Mode: User");
+        log::error!("Not from loading a segment descriptor");
     }
 }
 
+// There is no value in coverage for this function.
+#[coverage(off)]
 /// Dumps the page table entries for the given CR2 and CR3 values.
 ///
 /// ## Safety
@@ -272,5 +188,33 @@ unsafe fn dump_pte(cr2: u64, cr3: u64, paging_type: PagingType) {
         )
     } {
         let _ = pt.dump_page_tables(cr2 & !(UEFI_PAGE_MASK as u64), UEFI_PAGE_SIZE as u64);
+    }
+
+    // we don't carry the caching attributes in the page table, so get them from the MTRRs
+    #[cfg(target_arch = "x86_64")]
+    {
+        let mtrr = patina_mtrr::create_mtrr_lib(0);
+        log::error!("");
+        log::error!("MTRR Cache Attribute: {}", mtrr.get_memory_attribute(cr2));
+        log::error!("");
+    }
+}
+
+#[coverage(off)]
+#[cfg(test)]
+mod test {
+    extern crate std;
+
+    use serial_test::serial;
+
+    use super::*;
+
+    #[test]
+    #[serial(exception_handlers)]
+    fn test_interrupts_x64() {
+        let mut interrupts = InterruptsX64::new();
+        assert!(interrupts.initialize().is_ok());
+        assert!(interrupts.unregister_exception_handler(13).is_ok());
+        assert!(interrupts.unregister_exception_handler(14).is_ok());
     }
 }

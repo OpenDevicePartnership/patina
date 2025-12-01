@@ -108,6 +108,7 @@ impl SmbiosProvider {
         // We use an unsafe cast because storage.boot_services() returns a reference with
         // a shorter lifetime, but Storage guarantees boot_services lives for 'static
         let boot_services_static: &'static patina::boot_services::StandardBootServices =
+            // SAFETY: Storage guarantees that boot_services has a 'static lifetime.
             unsafe { &*(storage.boot_services() as *const _) };
 
         // Create the SMBIOS service struct with owned TplMutex

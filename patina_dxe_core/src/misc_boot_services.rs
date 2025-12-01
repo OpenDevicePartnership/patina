@@ -259,12 +259,16 @@ mod tests {
         boot_services: UnsafeCell<Option<&'static mut efi::BootServices>>,
     }
 
+    // SAFETY: Access is serialized through test_support::with_global_lock to prevent
+    // concurrent mutations.
     unsafe impl Sync for BootServicesWrapper {}
 
     static BOOT_SERVICES: BootServicesWrapper = BootServicesWrapper { boot_services: UnsafeCell::new(None) };
 
     // Function to initialize the global Boot Services pointer
     pub fn initialize_boot_services(bs: &'static mut efi::BootServices) {
+        // SAFETY: Test code only - UnsafeCell mutation is serialized through the test
+        // lock in with_global_lock.
         unsafe {
             *BOOT_SERVICES.boot_services.get() = Some(bs);
         }
@@ -282,6 +286,8 @@ mod tests {
         F: Fn(&mut EfiSystemTable) + std::panic::RefUnwindSafe,
     {
         test_support::with_global_lock(|| {
+            // SAFETY: Test code only - initializing test infrastructure with the test lock held
+            // to prevent concurrent access during initialization.
             unsafe {
                 crate::test_support::init_test_gcd(None);
                 crate::test_support::init_test_protocol_db();
@@ -299,7 +305,8 @@ mod tests {
     #[test]
     fn test_init_misc_boot_services_support() {
         with_locked_state(|st| {
-            // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
+            // SAFETY: Test code - transmuting mutable reference to static lifetime is considered safe
+            // because the system table has a static lifetime that outlives this test scope.
             initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
             init_misc_boot_services_support(st.boot_services_mut());
         });
@@ -308,7 +315,8 @@ mod tests {
     #[test]
     fn test_misc_calc_crc32() {
         with_locked_state(|st| {
-            // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
+            // SAFETY: Test code - transmuting mutable reference to static lifetime is considered safe
+            // because the system table has a static lifetime that outlives this test scope.
             initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
             init_misc_boot_services_support(st.boot_services_mut());
 
@@ -370,7 +378,8 @@ mod tests {
     #[test]
     fn test_misc_watchdog_timer() {
         with_locked_state(|st| {
-            // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
+            // SAFETY: Test code - transmuting mutable reference to static lifetime is considered safe
+            // because the system table has a static lifetime that outlives this test scope.
             initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
             init_misc_boot_services_support(st.boot_services_mut());
 
@@ -413,7 +422,8 @@ mod tests {
     #[test]
     fn test_misc_stall() {
         with_locked_state(|st| {
-            // Initialize BOOT_SERVICES using the BootServices instance from SYSTEM_TABLE
+            // SAFETY: Test code - transmuting mutable reference to static lifetime is considered safe
+            // because the system table has a static lifetime that outlives this test scope.
             initialize_boot_services(unsafe { get_static_boot_services(st.boot_services_mut()) });
             init_misc_boot_services_support(st.boot_services_mut());
 

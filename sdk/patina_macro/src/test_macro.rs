@@ -12,16 +12,23 @@
 use std::collections::HashMap;
 
 use quote::{ToTokens, format_ident, quote};
-use syn::{Attribute, ItemFn, Meta};
+use syn::{Attribute, ItemFn, Meta, Token, parse::Parser, punctuated::Punctuated, spanned::Spanned};
 
 const KEY_SHOULD_FAIL: &str = "should_fail";
 const KEY_FAIL_MSG: &str = "fail_msg";
 const KEY_SKIP: &str = "skip";
+const KEY_TRIGGER: &str = "trigger";
 
 pub fn patina_test2(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-    let mut item =
-        syn::parse2::<ItemFn>(stream).expect("The #[patina_test] attribute can only be applied to functions");
-    let test_case_config = process_attributes(&mut item);
+    let mut item = match syn::parse2::<ItemFn>(stream) {
+        Ok(i) => i,
+        Err(e) => return e.to_compile_error(),
+    };
+
+    let test_case_config = match process_attributes(&mut item) {
+        Ok(cfg) => cfg,
+        Err(e) => return e.to_compile_error(),
+    };
 
     // Wait until we filter out or custom attributes so that we don't confuse the compiler
     // with attributes it does not expect.
@@ -33,13 +40,15 @@ pub fn patina_test2(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStrea
 }
 
 /// Consumes any attributes owned by `patina_test` and returns a map of the configuration.
-fn process_attributes(item: &mut ItemFn) -> HashMap<&'static str, proc_macro2::TokenStream> {
+fn process_attributes(item: &mut ItemFn) -> syn::Result<HashMap<&'static str, proc_macro2::TokenStream>> {
     let mut map = HashMap::new();
 
     map.insert(KEY_SHOULD_FAIL, quote! {false});
     map.insert(KEY_FAIL_MSG, quote! {None});
     map.insert(KEY_SKIP, quote! {false});
+    map.insert(KEY_TRIGGER, quote! { patina::test::__private_api::TestTrigger::Immediate });
 
+    let mut result = Ok(());
     item.attrs.retain(|attr| {
         if attr.path().is_ident("patina_test") {
             return false;
@@ -55,10 +64,22 @@ fn process_attributes(item: &mut ItemFn) -> HashMap<&'static str, proc_macro2::T
             map.insert(KEY_SKIP, skip);
             return false;
         }
+        if attr.path().is_ident("on") {
+            match parse_on_attr(attr) {
+                Ok(tokens) => {
+                    map.insert(KEY_TRIGGER, tokens);
+                    return false;
+                }
+                Err(e) => {
+                    result = Err(e);
+                    return false;
+                }
+            };
+        }
         true
     });
 
-    map
+    result.map(|_| map)
 }
 
 /// Adds an `#[allow(dead_code)]` attribute to the function to prevent warnings.
@@ -92,6 +113,34 @@ fn parse_skip_attr(attr: &Attribute) -> proc_macro2::TokenStream {
     panic!("#[skip] attribute must be empty. e.g. #[skip]");
 }
 
+// returns a token stream for the trigger struct field
+fn parse_on_attr(attr: &Attribute) -> syn::Result<proc_macro2::TokenStream> {
+    // Attribute starts with "on". Lets make sure its of the format "on(...)".
+    if let Meta::List(ml) = &attr.meta {
+        let parser = Punctuated::<Meta, Token![,]>::parse_terminated;
+
+        // For now, we only support a single key-value pair in the list so we can just return an error if anything
+        // else is found. This makes for less code to change if we add more config.
+        #[allow(clippy::never_loop)]
+        for meta in parser.parse2(ml.tokens.clone())? {
+            match meta {
+                // CASE1: $[on(event = module_path_to_guid)]
+                Meta::NameValue(nv) if nv.path.is_ident("event") => {
+                    let value = &nv.value;
+                    return Ok(quote! {
+                        patina::test::__private_api::TestTrigger::Event(&#value)
+                    });
+                }
+                // No other cases are supported right now.
+                _ => {
+                    return Err(syn::Error::new(meta.span(), "Only support #[on(event = ...)]"));
+                }
+            }
+        }
+    }
+    Err(syn::Error::new(attr.span(), "Expected valid attribute format. e.g. #[on(...)]"))
+}
+
 fn generate_expanded_test_case(
     item: &ItemFn,
     test_case_config: &HashMap<&'static str, proc_macro2::TokenStream>,
@@ -104,6 +153,7 @@ fn generate_expanded_test_case(
         test_case_config.get(KEY_SHOULD_FAIL).expect("All configuration should have a default value set.");
     let fail_msg = test_case_config.get(KEY_FAIL_MSG).expect("All configuration should have a default value set.");
     let skip = test_case_config.get(KEY_SKIP).expect("All configuration should have a default value set.");
+    let trigger = test_case_config.get(KEY_TRIGGER).expect("All configuration should have a default value set.");
 
     let expanded = quote! {
         #[patina::test::linkme::distributed_slice(patina::test::__private_api::TEST_CASES)]
@@ -112,6 +162,7 @@ fn generate_expanded_test_case(
         static #struct_name: patina::test::__private_api::TestCase =
         patina::test::__private_api::TestCase {
             name: concat!(module_path!(), "::", stringify!(#fn_name)),
+            trigger: #trigger,
             skip: #skip,
             should_fail: #should_fail,
             fail_msg: #fail_msg,
@@ -134,7 +185,12 @@ mod tests {
             #[patina_test]
             struct MyStruct;
         };
-        assert!(::std::panic::catch_unwind(|| patina_test2(stream)).is_err());
+
+        let expected = quote! {
+            ::core::compile_error ! { "expected `fn`" }
+        };
+
+        assert_eq!(patina_test2(stream).to_string(), expected.to_string(),);
     }
 
     #[test]
@@ -154,6 +210,7 @@ mod tests {
                 #[allow(non_upper_case_globals)]
                 static __my_test_case_TestCase: patina::test::__private_api::TestCase = patina::test::__private_api::TestCase {
                     name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                    trigger: patina::test::__private_api::TestTrigger::Immediate,
                     skip: false,
                     should_fail: false,
                     fail_msg: None,
@@ -195,6 +252,7 @@ mod tests {
                 static __my_test_case_TestCase: patina::test::__private_api::TestCase =
                 patina::test::__private_api::TestCase {
                     name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                    trigger: patina::test::__private_api::TestTrigger::Immediate,
                     skip: true,
                     should_fail: false,
                     fail_msg: None,
@@ -255,6 +313,32 @@ mod tests {
     }
 
     #[test]
+    fn test_process_on_event_attribute() {
+        let attr = syn::parse_quote! { #[on(event = patina::guids::EVENT_GROUP_END_OF_DXE)] };
+        let tokens = parse_on_attr(&attr).unwrap();
+
+        let expected = quote! {
+            patina::test::__private_api::TestTrigger::Event(&patina::guids::EVENT_GROUP_END_OF_DXE)
+        };
+        assert_eq!(tokens.to_string(), expected.to_string());
+    }
+
+    #[test]
+    fn test_improper_on_event_attribute() {
+        let attr = syn::parse_quote! { #[on(event = )] };
+        assert!(parse_on_attr(&attr).is_err());
+
+        let attr = syn::parse_quote! { #[on(junk = patina::guids::EVENT_GROUP_END_OF_DXE)] };
+        assert!(parse_on_attr(&attr).is_err());
+
+        let attr = syn::parse_quote! { #[on()] };
+        assert!(parse_on_attr(&attr).is_err());
+
+        let attr = syn::parse_quote! { #[on] };
+        assert!(parse_on_attr(&attr).is_err());
+    }
+
+    #[test]
     fn test_process_multiple_attributes() {
         let stream = quote! {
             #[patina_test]
@@ -267,17 +351,21 @@ mod tests {
         };
 
         let mut test_fn = syn::parse2::<ItemFn>(stream).unwrap();
-        let tc_cfg = process_attributes(&mut test_fn);
+        let tc_cfg = process_attributes(&mut test_fn).unwrap();
 
         // Our attributes are consumed, Others are ignored.
         assert_eq!(test_fn.attrs.len(), 1);
 
         // Test proper configuration
-        assert_eq!(tc_cfg.len(), 3); // If we add more attributes, this breaks, and we know to add more to the test.
+        assert_eq!(tc_cfg.len(), 4); // If we add more attributes, this breaks, and we know to add more to the test.
 
         assert_eq!(tc_cfg.get(KEY_SHOULD_FAIL).unwrap().to_string(), "true");
         assert_eq!(tc_cfg.get(KEY_FAIL_MSG).unwrap().to_string(), "Some (\"Expected Error\")");
         assert_eq!(tc_cfg.get(KEY_SKIP).unwrap().to_string(), "true");
+        assert_eq!(
+            tc_cfg.get(KEY_TRIGGER).unwrap().to_string(),
+            "patina :: test :: __private_api :: TestTrigger :: Immediate"
+        );
     }
 
     #[test]
@@ -293,6 +381,105 @@ mod tests {
         let expected = quote! {
             #[allow(dead_code)]
             fn my_test_case(&interface: &dyn DxeComponentInterface) -> Result {
+                assert!(true);
+            }
+        };
+
+        assert_eq!(expanded.to_string(), expected.to_string());
+    }
+
+    #[test]
+    fn patina_test2_bad_attributes() {
+        let stream = quote! {
+            #[patina_test]
+            #[on(bad_thing)]
+            fn my_test_case() -> Result {
+                assert!(true);
+            }
+        };
+
+        let expanded = patina_test2(stream);
+        let expected = quote! {
+            ::core::compile_error ! { "Only support #[on(event = ...)]" }
+        };
+        assert_eq!(expanded.to_string(), expected.to_string());
+    }
+
+    #[test]
+    fn patina_test2_good() {
+        let stream = quote! {
+            #[patina_test]
+            #[should_fail = "Expected Error"]
+            #[skip]
+            #[on(event = patina::guids::EVENT_GROUP_END_OF_DXE)]
+            fn my_test_case() -> Result {
+                assert!(true);
+            }
+        };
+
+        let expanded = patina_test2(stream);
+        let expected = if cfg!(feature = "enable_patina_tests") {
+            quote! {
+                #[patina::test::linkme::distributed_slice(patina::test::__private_api::TEST_CASES)]
+                #[linkme(crate = patina::test::linkme)]
+                #[allow(non_upper_case_globals)]
+                static __my_test_case_TestCase: patina::test::__private_api::TestCase =
+                patina::test::__private_api::TestCase {
+                    name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                    trigger: patina::test::__private_api::TestTrigger::Event(&patina::guids::EVENT_GROUP_END_OF_DXE),
+                    skip: true,
+                    should_fail: true,
+                    fail_msg: Some("Expected Error"),
+                    func: |storage| patina::test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                };
+                fn my_test_case() -> Result {
+                    assert!(true);
+                }
+            }
+        } else {
+            quote! {
+                #[allow(dead_code)]
+                fn my_test_case() -> Result {
+                    assert!(true);
+                }
+            }
+        };
+
+        assert_eq!(expanded.to_string(), expected.to_string());
+    }
+
+    #[test]
+    fn test_generate_expanded_test_case() {
+        let quoted_fn = quote! {
+            fn my_test_case() -> Result {
+                assert!(true);
+            }
+        };
+
+        let item = syn::parse2::<ItemFn>(quoted_fn).unwrap();
+
+        let mut config = HashMap::new();
+        config.insert(KEY_SHOULD_FAIL, quote! {true});
+        config.insert(KEY_FAIL_MSG, quote! {Some("Expected Error")});
+        config.insert(KEY_SKIP, quote! {false});
+        config.insert(KEY_TRIGGER, quote! { patina::test::__private_api::TestTrigger::Immediate });
+
+        let expanded = generate_expanded_test_case(&item, &config);
+
+        let expected = quote! {
+            #[patina::test::linkme::distributed_slice(patina::test::__private_api::TEST_CASES)]
+            #[linkme(crate = patina::test::linkme)]
+            #[allow(non_upper_case_globals)]
+            static __my_test_case_TestCase: patina::test::__private_api::TestCase =
+            patina::test::__private_api::TestCase {
+                name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                trigger: patina::test::__private_api::TestTrigger::Immediate,
+                skip: false,
+                should_fail: true,
+                fail_msg: Some("Expected Error"),
+                func: |storage| patina::test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+            };
+            fn my_test_case() -> Result {
                 assert!(true);
             }
         };

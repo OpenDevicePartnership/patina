@@ -15,55 +15,93 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+use core::ops::{Deref, DerefMut};
 use patina::{error::EfiError, pi::protocols::cpu_arch::EfiSystemContext};
 
 mod exception_handling;
 
+// The aarch64 module contains all exception handlers and architecture specific code, of little testing value.
+#[coverage(off)]
+#[cfg(any(target_arch = "aarch64", test))]
+mod aarch64;
+#[coverage(off)]
+#[cfg(not(target_os = "uefi"))]
+mod stub;
+#[cfg(any(target_arch = "x86_64", test))]
+mod x64;
+
+// For std builds, publish the stub version of the interrupt functions.
 cfg_if::cfg_if! {
-    if #[cfg(all(target_os = "uefi", target_arch = "x86_64"))] {
-        mod x64;
+    if #[cfg(not(target_os = "uefi"))] {
+        /// A stand in implementation of the Interrupts struct. This will be architecture structure defined by the platform
+        /// compilation.
+        pub type Interrupts = stub::InterruptsStub;
+
+        /// Enables CPU interrupts.
+        #[coverage(off)]
+        pub fn enable_interrupts() {}
+
+        /// Disables CPU interrupts.
+        #[coverage(off)]
+        pub fn disable_interrupts() {}
+
+        /// Gets the current state of CPU interrupts.
+        #[coverage(off)]
+        pub fn get_interrupt_state() -> Result<bool, EfiError> {
+            Ok(false)
+        }
+
+    } else if #[cfg(target_arch = "x86_64")] {
         pub type Interrupts = x64::InterruptsX64;
-    } else if #[cfg(all(target_os = "uefi", target_arch = "aarch64"))] {
-        mod aarch64;
+        pub use x64::enable_interrupts;
+        pub use x64::disable_interrupts;
+        pub use x64::get_interrupt_state;
+    } else if #[cfg(target_arch = "aarch64")] {
         pub type Interrupts = aarch64::InterruptsAarch64;
         pub use aarch64::gic_manager;
-    } else if #[cfg(feature = "doc")] {
-        mod x64;
-        mod aarch64;
-        mod null;
-        pub use x64::InterruptsX64;
-        pub use aarch64::InterruptsAarch64;
-        pub use null::InterruptsNull;
-
-        /// Type alias whose implementation is [InterruptsX64], [InterruptsAarch64], or
-        /// [InterruptsNull] depending on the compilation target.
-        ///
-        /// This struct is for documentation purposes only. Please refer to the individual implementations for specific
-        /// details.
-        pub type Interrupts = InterruptsNull;
-
-    } else {
-        mod x64;
-        mod aarch64;
-        mod null;
-        pub type Interrupts = null::InterruptsNull;
+        pub use aarch64::enable_interrupts;
+        pub use aarch64::disable_interrupts;
+        pub use aarch64::get_interrupt_state;
     }
 }
 
-// Declare the architecture specific context structure.
+/// Republished structure for x64 exception context as defined by the UEFI specification.
+pub type ExceptionContextX64 = r_efi::protocols::debug_support::SystemContextX64;
+/// Republished structure for AArch64 exception context as defined by the UEFI specification.
+pub type ExceptionContextAArch64 = r_efi::protocols::debug_support::SystemContextAArch64;
+
 cfg_if::cfg_if! {
-    if #[cfg(test)] {
-        /// The Context structure for the target architecture.
-        pub type ExceptionContext = null::ExceptionContextNull;
+    if #[cfg(any(test, doc))] {
+        /// The wrapped architecture specific exception context structure. This will be the appropriate structure based on the
+        /// target architecture. See [`ExceptionContextX64`] and [`ExceptionContextAArch64`] for the specific structures.
+        pub type ExceptionContextArch = stub::ExceptionContextStub;
     } else if #[cfg(target_arch = "x86_64")] {
-        /// The Context structure for the target architecture.
-        pub type ExceptionContext = x64::ExceptionContextX64;
+        pub type ExceptionContextArch = ExceptionContextX64;
     } else if #[cfg(target_arch = "aarch64")] {
-        /// The Context structure for the target architecture.
-        pub type ExceptionContext = aarch64::ExceptionContextAArch64;
-    } else  {
-        /// The Context structure for the target architecture.
-        pub type ExceptionContext = null::ExceptionContextNull;
+        pub type ExceptionContextArch = ExceptionContextAArch64;
+    }
+}
+
+/// Zero-cost wrapper for the architectural specific context structure.
+/// The internal structure are defined by the UEFI specification section 18.2.
+///
+/// ## Testing
+///
+/// This structure uses generics to allow for easier testing across architectures.
+#[derive(Debug, Clone, Copy)]
+pub struct ExceptionContext<T = ExceptionContextArch>(T);
+
+impl<T> Deref for ExceptionContext<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for ExceptionContext<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
@@ -169,28 +207,28 @@ impl HandlerType {
 /// handler. Because exceptions can be reentrant, any mutable state within the
 /// handler is expected to leverage internal locking.
 ///
-pub trait InterruptHandler: Sync {
+pub trait InterruptHandler<T = ExceptionContextArch>: Sync {
     /// Invoked when the registered interrupt is triggered.
     ///
     /// Upon return, the processor will be resumed from the exception with any
     /// changes made to the provided exception context. If it is not safe to resume,
     /// then the handler should panic or otherwise halt the system.
     ///
-    fn handle_interrupt(&'static self, exception_type: ExceptionType, context: &mut ExceptionContext);
+    fn handle_interrupt(&'static self, exception_type: ExceptionType, context: &mut ExceptionContext<T>);
 }
 
-cfg_if::cfg_if! {
-    if #[cfg(all(target_os = "uefi", target_arch = "x86_64"))] {
-        pub use x64::enable_interrupts;
-        pub use x64::disable_interrupts;
-        pub use x64::get_interrupt_state;
-    } else if #[cfg(all(target_os = "uefi", target_arch = "aarch64"))] {
-        pub use aarch64::enable_interrupts;
-        pub use aarch64::disable_interrupts;
-        pub use aarch64::get_interrupt_state;
-    } else  {
-        pub use null::enable_interrupts;
-        pub use null::disable_interrupts;
-        pub use null::get_interrupt_state;
+#[coverage(off)]
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use super::*;
+
+    #[test]
+    fn test_exception_context_deref() {
+        let mut exception_context = ExceptionContext(0u64);
+        *exception_context = 42;
+        let exception_context = exception_context;
+        assert_eq!(*exception_context, 42u64);
     }
 }
