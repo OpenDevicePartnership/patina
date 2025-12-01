@@ -20,7 +20,8 @@ parser struct (`patina_adv_logger::parser::Parser`) that can be used to create c
 the `std` feature, which exposes the `parser` module.
 
 The command line executable simply opens the buffer, prints header metadata, and emits log lines with optional level
-and timestamp context. This parser underpins host utilities and remains version-aligned with the memory layout implemented in `memory_log.rs`.
+and timestamp context. This parser underpins host utilities and remains version-aligned with the memory layout
+implemented in `memory_log.rs`.
 
 ## Integration Instructions
 
@@ -34,7 +35,7 @@ further below.
    Register it with `log::set_logger` as early as possible.
 2. Call `AdvancedLogger::init` with the physical HOB list pointer.
    This allows the logger to adopt the buffer and record its address for later protocol publication.
-4. Register the advanced logger component (`AdvancedLoggerComponent`) to be dispatched by the Patina DXE Core so it
+3. Register the advanced logger component (`AdvancedLoggerComponent`) to be dispatched by the Patina DXE Core so it
    can install the Advanced Logger protocol via boot services.
 
 #### Example
