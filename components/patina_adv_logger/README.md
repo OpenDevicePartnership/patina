@@ -81,7 +81,7 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
 
 Currently, the Patina Advanced Logger expects that a log buffer has already been created prior to the Patina DXE Core
 being executed. The location of this buffer is provided via a HOB in the HOB list. So long as it is provided, the
-logger and component will execute as expected. If your platform is a EDKII style platform, a [PEI Core Library](https://github.com/microsoft/mu_plus/blob/d0d305b620baced42adf16b2387af9412fdc0ef9/AdvLoggerPkg/Library/AdvancedLoggerLib/PeiCore/AdvancedLoggerLib.inf)
+logger and component will execute as expected. If your platform is a EDK II style platform, a [PEI Core Library](https://github.com/microsoft/mu_plus/blob/d0d305b620baced42adf16b2387af9412fdc0ef9/AdvLoggerPkg/Library/AdvancedLoggerLib/PeiCore/AdvancedLoggerLib.inf)
 is available that will produce the HOB. The other option is to manually produce the Guided HOB with the following
 format / guid:
 
@@ -90,4 +90,4 @@ data: `[u8; 8]` (address (u64) of the log buffer)
 
 As mentioned, the Patina component produces the Advanced Logger Protocol. This protocol can be used directly in
 UEFI drivers to write to the buffer, or you can use existing abstractions, such as the [BaseDebugLibAdvancedLogger](https://github.com/microsoft/mu_plus/blob/release/202502/AdvLoggerPkg/Library/BaseDebugLibAdvancedLogger/BaseDebugLibAdvancedLogger.inf)
-when compiling your EDKII style firmware.
+when compiling your EDK II style firmware.
