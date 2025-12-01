@@ -27,7 +27,19 @@ fn log_perf_measurement(
     identifier: u16,
     create_performance_measurement: CreateMeasurement,
 ) {
-    (create_performance_measurement)(caller_identifier, guid, string, 0, address, identifier, PerfAttribute::PerfEntry);
+    if let Err(e) = (create_performance_measurement)(
+        caller_identifier,
+        guid,
+        string,
+        0,
+        address,
+        identifier,
+        PerfAttribute::PerfEntry,
+    ) {
+        // We should not panic here as performance measurement failure should not block normal execution.
+        // Instead, log and continue.
+        log::error!("Failed to log performance measurement: {:?}", e);
+    }
 }
 
 // Adds a record that records the start time of a performance measurement.
@@ -46,15 +58,18 @@ fn start_perf_measurement(
     } else {
         None
     };
-    (create_performance_measurement)(
-        CallerIdentifier::ImageHandle(handle),
+
+    if let Err(e) = (create_performance_measurement)(
+        CallerIdentifier::Handle(handle),
         None,
         string,
         timestamp,
         0,
         identifier as u16,
         PerfAttribute::PerfStartEntry,
-    );
+    ) {
+        log::error!("Failed to log start performance measurement: {:?}", e);
+    }
 }
 
 // Adds a record that records the end time of a performance measurement.
@@ -73,15 +88,17 @@ fn end_perf_measurement(
     } else {
         None
     };
-    (create_performance_measurement)(
-        CallerIdentifier::ImageHandle(handle),
+    if let Err(e) = (create_performance_measurement)(
+        CallerIdentifier::Handle(handle),
         None,
         string,
         timestamp,
         0,
         identifier as u16,
         PerfAttribute::PerfEndEntry,
-    );
+    ) {
+        log::error!("Failed to log end performance measurement: {:?}", e);
+    }
 }
 
 /// Begins performance measurement of start image in core.
@@ -90,7 +107,7 @@ pub fn perf_image_start_begin(module_handle: efi::Handle, create_performance_mea
         return;
     }
     log_perf_measurement(
-        CallerIdentifier::ImageHandle(module_handle),
+        CallerIdentifier::Handle(module_handle),
         None,
         None,
         0,
@@ -105,7 +122,7 @@ pub fn perf_image_start_end(image_handle: efi::Handle, create_performance_measur
         return;
     }
     log_perf_measurement(
-        CallerIdentifier::ImageHandle(image_handle),
+        CallerIdentifier::Handle(image_handle),
         None,
         None,
         0,
@@ -120,7 +137,7 @@ pub fn perf_load_image_begin(module_handle: efi::Handle, create_performance_meas
         return;
     }
     log_perf_measurement(
-        CallerIdentifier::ImageHandle(module_handle),
+        CallerIdentifier::Handle(module_handle),
         None,
         None,
         0,
@@ -135,7 +152,7 @@ pub fn perf_load_image_end(module_handle: efi::Handle, create_performance_measur
         return;
     }
     log_perf_measurement(
-        CallerIdentifier::ImageHandle(module_handle),
+        CallerIdentifier::Handle(module_handle),
         None,
         None,
         0,
@@ -154,7 +171,7 @@ pub fn perf_driver_binding_support_begin(
         return;
     }
     log_perf_measurement(
-        CallerIdentifier::ImageHandle(driver_binding_handle),
+        CallerIdentifier::Handle(driver_binding_handle),
         None,
         None,
         controller_handle as usize,
@@ -173,7 +190,7 @@ pub fn perf_driver_binding_support_end(
         return;
     }
     log_perf_measurement(
-        CallerIdentifier::ImageHandle(driver_binding_handle),
+        CallerIdentifier::Handle(driver_binding_handle),
         None,
         None,
         controller_handle as usize,
@@ -192,7 +209,7 @@ pub fn perf_driver_binding_start_begin(
         return;
     }
     log_perf_measurement(
-        CallerIdentifier::ImageHandle(driver_binding_handle),
+        CallerIdentifier::Handle(driver_binding_handle),
         None,
         None,
         controller_handle as usize,
@@ -211,7 +228,7 @@ pub fn perf_driver_binding_start_end(
         return;
     }
     log_perf_measurement(
-        CallerIdentifier::ImageHandle(driver_binding_handle),
+        CallerIdentifier::Handle(driver_binding_handle),
         None,
         None,
         controller_handle as usize,
@@ -230,7 +247,7 @@ pub fn perf_driver_binding_stop_begin(
         return;
     }
     log_perf_measurement(
-        CallerIdentifier::ImageHandle(module_handle),
+        CallerIdentifier::Handle(module_handle),
         None,
         None,
         controller_handle as usize,
@@ -249,7 +266,7 @@ pub fn perf_driver_binding_stop_end(
         return;
     }
     log_perf_measurement(
-        CallerIdentifier::ImageHandle(module_handle),
+        CallerIdentifier::Handle(module_handle),
         None,
         None,
         controller_handle as usize,

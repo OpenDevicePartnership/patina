@@ -9,9 +9,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-extern crate alloc;
-
-use crate::config;
+use crate::{component::protocol::create_performance_measurement_efiapi, config};
 use alloc::boxed::Box;
 use core::{clone::Clone, convert::AsRef};
 use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
@@ -23,7 +21,7 @@ use patina::{
     performance::{
         _smm::MmCommRegion,
         globals::{get_static_state, set_load_image_count, set_perf_measurement_mask, set_static_state},
-        measurement::{PerformanceProperty, create_performance_measurement_protocol, event_callback},
+        measurement::{PerformanceProperty, event_callback},
         record::hob::{HobPerformanceData, HobPerformanceDataExtractor},
         table::FirmwareBasicBootPerfTable,
     },
@@ -133,7 +131,7 @@ impl Performance {
         boot_services.as_ref().install_protocol_interface(
             None,
             Box::new(EdkiiPerformanceMeasurement {
-                create_performance_measurement: create_performance_measurement_protocol,
+                create_performance_measurement: create_performance_measurement_efiapi,
             }),
         )?;
 
