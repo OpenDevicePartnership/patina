@@ -23,6 +23,13 @@ use crate::{
     protocols::PROTOCOL_DB,
 };
 
+// Timer tick instrumentation
+static TIMER_TICK_ENTRY_COUNT: AtomicU64 = AtomicU64::new(0);
+static TIMER_TICK_EXIT_COUNT: AtomicU64 = AtomicU64::new(0);
+static TIMER_TICK_TOTAL_TIME: AtomicU64 = AtomicU64::new(0);
+static TIMER_TICK_LONGEST_TIME: AtomicU64 = AtomicU64::new(0);
+static TIMER_TICK_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
 pub static EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
 
 static CURRENT_TPL: AtomicUsize = AtomicUsize::new(efi::TPL_APPLICATION);
@@ -289,11 +296,61 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
 }
 
 extern "efiapi" fn timer_tick(time: u64) {
+    let entry_count = TIMER_TICK_ENTRY_COUNT.fetch_add(1, Ordering::AcqRel);
+    log::info!("Timer tick entry");
+    let start_time = SYSTEM_TIME.load(Ordering::Acquire);
+
+    // Check for recursive entry (interrupt during interrupt)
+    let was_in_progress = TIMER_TICK_IN_PROGRESS.swap(true, Ordering::AcqRel);
+    if was_in_progress {
+        log::warn!("TIMER TICK RECURSIVE ENTRY detected at entry #{}", entry_count);
+    }
+
     let old_tpl = raise_tpl(efi::TPL_HIGH_LEVEL);
     SYSTEM_TIME.fetch_add(time, Ordering::SeqCst);
     let current_time = SYSTEM_TIME.load(Ordering::SeqCst);
     EVENT_DB.timer_tick(current_time);
     restore_tpl(old_tpl); //implicitly dispatches timer notifies if any.
+
+    let end_time = SYSTEM_TIME.load(Ordering::Acquire);
+    let elapsed = end_time.saturating_sub(start_time);
+
+    // Update total time
+    TIMER_TICK_TOTAL_TIME.fetch_add(elapsed, Ordering::AcqRel);
+
+    // Update longest time
+    let mut current_longest = TIMER_TICK_LONGEST_TIME.load(Ordering::Acquire);
+    while elapsed > current_longest {
+        match TIMER_TICK_LONGEST_TIME.compare_exchange_weak(
+            current_longest,
+            elapsed,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => break,
+            Err(actual) => current_longest = actual,
+        }
+    }
+
+    TIMER_TICK_IN_PROGRESS.store(false, Ordering::Release);
+    log::info!("Timer tick exit");
+    let exit_count = TIMER_TICK_EXIT_COUNT.fetch_add(1, Ordering::AcqRel);
+
+    // Log statistics every 100 timer ticks
+    if (exit_count + 1) % 100 == 0 {
+        let total_entries = entry_count + 1;
+        let total_exits = exit_count + 1;
+        let total_time = TIMER_TICK_TOTAL_TIME.load(Ordering::Acquire);
+        let longest = TIMER_TICK_LONGEST_TIME.load(Ordering::Acquire);
+        log::info!(
+            "TIMER TICK STATS: entries={}, exits={}, total_time={}, longest={}, avg={}",
+            total_entries,
+            total_exits,
+            total_time,
+            longest,
+            if total_exits > 0 { total_time / total_exits } else { 0 }
+        );
+    }
 }
 
 extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_void) {

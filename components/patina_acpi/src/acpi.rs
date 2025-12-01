@@ -21,7 +21,7 @@ use core::{
 use spin::rwlock::RwLock;
 
 use patina::{
-    boot_services::{BootServices, StandardBootServices},
+    boot_services::{BootServices, StandardBootServices, tpl::Tpl},
     component::{
         hob::Hob,
         service::{IntoService, Service, memory::MemoryManager},
@@ -76,6 +76,20 @@ where
     const FACS_KEY: TableKey = TableKey(1);
     const DSDT_KEY: TableKey = TableKey(2);
     const FADT_KEY: TableKey = TableKey(3);
+
+    /// Helper function to get the current TPL for logging purposes.
+    /// Uses the standard UEFI idiom of raising to HIGH_LEVEL and restoring.
+    fn get_current_tpl(&self) -> Tpl {
+        if let Some(bs) = self.boot_services.get() {
+            // TPL_HIGH_LEVEL is 31 in UEFI spec
+            const TPL_HIGH_LEVEL: usize = 31;
+            let current = bs.raise_tpl(Tpl::from(TPL_HIGH_LEVEL));
+            bs.restore_tpl(current);
+            current
+        } else {
+            Tpl::APPLICATION // Default if boot services not initialized
+        }
+    }
 
     /// The first unused key which can be given to callers of `install_acpi_table`.
     const FIRST_FREE_KEY: usize = 4;
@@ -136,7 +150,12 @@ where
     B: BootServices,
 {
     fn install_acpi_table(&self, table: AcpiTable) -> Result<TableKey, AcpiError> {
-        log::trace!("StandardAcpiProvider::install_acpi_table called with signature: 0x{:08x}", table.signature());
+        let tpl = self.get_current_tpl();
+        log::trace!(
+            "StandardAcpiProvider::install_acpi_table called at TPL {:?} with signature: 0x{:08x}",
+            tpl,
+            table.signature()
+        );
         // Based on the ACPI spec, implementations can chose to disallow duplicates or incorporate them into existing installed tables.
         // For simplicity, this implementation rejects attempts to install a new XSDT when one already exists.
         if table.signature() == signature::XSDT {
@@ -158,7 +177,12 @@ where
     }
 
     fn uninstall_acpi_table(&self, table_key: TableKey) -> Result<(), AcpiError> {
-        log::trace!("StandardAcpiProvider::uninstall_acpi_table called with table_key: {:?}", table_key);
+        let tpl = self.get_current_tpl();
+        log::trace!(
+            "StandardAcpiProvider::uninstall_acpi_table called at TPL {:?} with table_key: {:?}",
+            tpl,
+            table_key
+        );
         self.remove_table_from_list(table_key)?;
         self.publish_tables()?;
         log::trace!("StandardAcpiProvider::uninstall_acpi_table succeeded");
@@ -166,7 +190,8 @@ where
     }
 
     fn get_acpi_table(&self, table_key: TableKey) -> Result<AcpiTable, AcpiError> {
-        log::trace!("StandardAcpiProvider::get_acpi_table called with table_key: {:?}", table_key);
+        let tpl = self.get_current_tpl();
+        log::trace!("StandardAcpiProvider::get_acpi_table called at TPL {:?} with table_key: {:?}", tpl, table_key);
         let result = self.acpi_tables.read().get(&table_key).cloned().ok_or(AcpiError::InvalidTableKey);
         if result.is_ok() {
             log::trace!("StandardAcpiProvider::get_acpi_table succeeded");
@@ -177,7 +202,12 @@ where
     }
 
     fn register_notify(&self, should_register: bool, notify_fn: AcpiNotifyFn) -> Result<(), AcpiError> {
-        log::trace!("StandardAcpiProvider::register_notify called with should_register: {}", should_register);
+        let tpl = self.get_current_tpl();
+        log::trace!(
+            "StandardAcpiProvider::register_notify called at TPL {:?} with should_register: {}",
+            tpl,
+            should_register
+        );
         if should_register {
             self.notify_list.write().push(notify_fn);
             log::trace!("StandardAcpiProvider::register_notify registered notify function");
@@ -198,7 +228,8 @@ where
     /// Iterate over installed tables in the ACPI table list.
     /// The RSDP, FACS, and DSDT are not considered part of the list of installed tables and should not be iterated over.
     fn iter_tables(&self) -> Vec<AcpiTable> {
-        log::trace!("StandardAcpiProvider::iter_tables called");
+        let tpl = self.get_current_tpl();
+        log::trace!("StandardAcpiProvider::iter_tables called at TPL {:?}", tpl);
         let tables: Vec<AcpiTable> = self
             .acpi_tables
             .read()
@@ -216,7 +247,8 @@ where
     B: BootServices,
 {
     pub(crate) fn install_facs(&self, facs_info: AcpiTable) -> Result<TableKey, AcpiError> {
-        log::trace!("StandardAcpiProvider::install_facs called");
+        let tpl = self.get_current_tpl();
+        log::trace!("StandardAcpiProvider::install_facs called at TPL {:?}", tpl);
         // Update the FADT's address pointer to the FACS.
         if let Some(fadt_table) = self.acpi_tables.write().get_mut(&Self::FADT_KEY) {
             // SAFETY: We verify the table's signature before calling `install_facs`.
@@ -294,7 +326,8 @@ where
 
     /// Installs tables pointed to by the FADT if provided in the HOB list.
     fn install_fadt_tables_from_hob(&self, fadt: &AcpiFadt) -> Result<(), AcpiError> {
-        log::trace!("StandardAcpiProvider::install_fadt_tables_from_hob called");
+        let tpl = self.get_current_tpl();
+        log::trace!("StandardAcpiProvider::install_fadt_tables_from_hob called at TPL {:?}", tpl);
         // SAFETY: we assume the FADT set up in the HOB points to a valid FACS if the pointer is non-null.
         if fadt.x_firmware_ctrl() != 0 {
             // SAFETY: The FACS address has been checked to be non-null.
@@ -330,8 +363,10 @@ where
 
     /// Installs tables pointed to by the ACPI memory HOB.
     pub fn install_tables_from_hob(&self, acpi_hob: Hob<AcpiMemoryHob>) -> Result<(), AcpiError> {
+        let tpl = self.get_current_tpl();
         log::trace!(
-            "StandardAcpiProvider::install_tables_from_hob called with RSDP address: 0x{:x}",
+            "StandardAcpiProvider::install_tables_from_hob called at TPL {:?} with RSDP address: 0x{:x}",
+            tpl,
             acpi_hob.rsdp_address
         );
         let xsdt_address = Self::get_xsdt_address_from_rsdp(acpi_hob.rsdp_address)?;
@@ -373,7 +408,8 @@ where
 
     /// Allocates memory for the FADT and adds it  to the list of installed tables
     pub(crate) fn install_fadt(&self, mut fadt_info: AcpiTable) -> Result<TableKey, AcpiError> {
-        log::trace!("StandardAcpiProvider::install_fadt called");
+        let tpl = self.get_current_tpl();
+        log::trace!("StandardAcpiProvider::install_fadt called at TPL {:?}", tpl);
         if self.acpi_tables.read().get(&Self::FADT_KEY).is_some() {
             // FADT already installed. By spec, only one copy of the FADT should ever be installed, and it cannot be replaced.
             log::trace!("StandardAcpiProvider::install_fadt failed: FADT already installed");
@@ -430,7 +466,8 @@ where
     /// Installs the DSDT.
     /// The DSDT is not added to the list of XSDT entries.
     pub(crate) fn install_dsdt(&self, mut dsdt_info: AcpiTable) -> Result<TableKey, AcpiError> {
-        log::trace!("StandardAcpiProvider::install_dsdt called");
+        let tpl = self.get_current_tpl();
+        log::trace!("StandardAcpiProvider::install_dsdt called at TPL {:?}", tpl);
         // If the FADT is already installed, update the FACP's x_dsdt field.Add commentMore actions
         // If not, it will be updated when the FACP is installed.
         if let Some(facp) = self.acpi_tables.write().get_mut(&Self::FADT_KEY) {
@@ -451,8 +488,10 @@ where
 
     /// Allocates ACPI memory for a new table and adds the table to the list of installed ACPI tables.
     pub(crate) fn install_standard_table(&self, mut table_info: AcpiTable) -> Result<TableKey, AcpiError> {
+        let tpl = self.get_current_tpl();
         log::trace!(
-            "StandardAcpiProvider::install_standard_table called with signature: 0x{:08x}",
+            "StandardAcpiProvider::install_standard_table called at TPL {:?} with signature: 0x{:08x}",
+            tpl,
             table_info.signature()
         );
         // By spec, table keys can be assigned in any manner as long as they are unique for each newly installed table.
@@ -477,7 +516,12 @@ where
 
     /// Adds an address entry to the XSDT.
     fn add_entry_to_xsdt(&self, new_table_addr: u64) -> Result<(), AcpiError> {
-        log::trace!("StandardAcpiProvider::add_entry_to_xsdt called with address: 0x{:x}", new_table_addr);
+        let tpl = self.get_current_tpl();
+        log::trace!(
+            "StandardAcpiProvider::add_entry_to_xsdt called at TPL {:?} with address: 0x{:x}",
+            tpl,
+            new_table_addr
+        );
         let mut max_capacity = 0;
         let mut curr_capacity = 0;
 
@@ -667,7 +711,8 @@ where
 
     /// Performs `checksum` and `extended_checksum` calculations on the RSDP and XSDT.
     pub(crate) fn checksum_common_tables(&self) -> Result<(), AcpiError> {
-        log::trace!("StandardAcpiProvider::checksum_common_tables called");
+        let tpl = self.get_current_tpl();
+        log::trace!("StandardAcpiProvider::checksum_common_tables called at TPL {:?}", tpl);
         // The RSDP doesn't have a standard header, so it is easier to calculate the checksum manually.
         if let Some(ref mut rsdp) = *self.rsdp.write() {
             // SAFETY: We know the size and layout of the RSDP in memory.
@@ -702,7 +747,8 @@ where
 
     /// Publishes ACPI tables after installation.
     pub(crate) fn publish_tables(&self) -> Result<(), AcpiError> {
-        log::trace!("StandardAcpiProvider::publish_tables called");
+        let tpl = self.get_current_tpl();
+        log::trace!("StandardAcpiProvider::publish_tables called at TPL {:?}", tpl);
         if let Some(ref mut rsdp) = *self.rsdp.write() {
             // Cast RSDP to raw pointer for boot services.
             let rsdp_ptr = rsdp.as_mut() as *mut AcpiRsdp as *mut c_void;
@@ -721,7 +767,8 @@ where
 
     /// Calls the notify functions in `notify_list` upon installation of an ACPI table.
     pub(crate) fn notify_acpi_list(&self, table_key: TableKey) -> Result<(), AcpiError> {
-        log::trace!("StandardAcpiProvider::notify_acpi_list called with table_key: {:?}", table_key);
+        let tpl = self.get_current_tpl();
+        log::trace!("StandardAcpiProvider::notify_acpi_list called at TPL {:?} with table_key: {:?}", tpl, table_key);
         // Extract the guard as a variable so it lives until the end of this function.
         let read_guard = self.acpi_tables.read();
         let table_for_key = read_guard.get(&table_key);
@@ -756,7 +803,8 @@ where
     ///
     /// The only downside to the above approach is the non-constant access time for a particular index.
     pub(crate) fn get_table_at_idx(&self, idx: usize) -> Result<(TableKey, AcpiTable), AcpiError> {
-        log::trace!("StandardAcpiProvider::get_table_at_idx called with index: {}", idx);
+        let tpl = self.get_current_tpl();
+        log::trace!("StandardAcpiProvider::get_table_at_idx called at TPL {:?} with index: {}", tpl, idx);
         let guard = self.acpi_tables.read();
 
         // Find the idx-th non-system table
