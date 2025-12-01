@@ -3,8 +3,8 @@
 The Patina Advanced Logger crate provides a [log::Log](https://crates.io/crates/log) implementation that provides
 in-memory and serial logging capabilities and a component for producing the Advanced Logger protocol. The in-memory
 logging is written to the advanced logger memory buffer, whose address is produced via the Advanced logger guided HOB
-described below. In addition to the runtime functionality described above, this crate also provides command line tool
-to parse parse logs pulled off of a physical device, and a public parser object if creating custom tooling.
+described below. In addition to the runtime functionality described above, this crate also provides a command line tool
+to parse parse logs pulled off of a physical device, and a public parser object for creating custom tooling.
 
 ## Memory Log Behavior
 
@@ -49,7 +49,7 @@ use log::LevelFilter;
 use core::ffi::c_void;
 
 static LOGGER: AdvancedLogger<UartNull> = AdvancedLogger::new(
-   Format::Standard, // How logs are formatted in the logs
+   Format::Standard, // How logs are formatted
    &[("allocations", LevelFilter::Off)], // set custom log levels per module
    log::LevelFilter::Info, // Default log level
    UartNull { }, // Serial writer instance
