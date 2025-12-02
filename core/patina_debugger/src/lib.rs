@@ -25,12 +25,13 @@
 //!
 //! ```rust
 //! extern crate patina;
-//! extern crate patina_internal_cpu;
-//!
-//! use patina_internal_cpu::interrupts::{Interrupts, InterruptManager};
+//! # extern crate patina_internal_cpu;
+//! # use patina_internal_cpu::interrupts::{Interrupts, InterruptManager};
+//! # use patina::component::service::perf_timer::ArchTimerFunctionality;
 //!
 //! static DEBUGGER: patina_debugger::PatinaDebugger<patina::serial::uart::UartNull> =
-//!     patina_debugger::PatinaDebugger::new(patina::serial::uart::UartNull{});
+//!     patina_debugger::PatinaDebugger::new(patina::serial::uart::UartNull{})
+//!         .with_timeout(30); // Set initial break timeout to 30 seconds.
 //!
 //! fn entry() {
 //!
@@ -52,11 +53,9 @@
 //! }
 //!
 //! fn start() {
-//!     let mut interrupt_manager = Interrupts::default();
-//!
 //!     // Initialize the debugger. This will cause a debug break because of the
 //!     // initial break configuration set above.
-//!     patina_debugger::initialize(&mut interrupt_manager);
+//!     patina_debugger::initialize(&mut Interrupts::default(), Some(&ExampleTimer));
 //!
 //!     // Notify the debugger of a module load.
 //!     patina_debugger::notify_module_load("module.efi", 0x420000, 0x10000);
@@ -71,6 +70,17 @@
 //!     // if the debugger is not enabled. This should be used with extreme caution.
 //!     patina_debugger::breakpoint_unchecked();
 //! }
+//!
+//! # struct ExampleTimer;
+//! # impl ArchTimerFunctionality for ExampleTimer {
+//! #     fn cpu_count(&self) -> u64 {
+//! #         0
+//! #     }
+//! #
+//! #     fn perf_frequency(&self) -> u64 {
+//! #         1
+//! #     }
+//! # }
 //!
 //! ```
 //!
@@ -97,6 +107,7 @@
 
 mod arch;
 mod dbg_target;
+#[coverage(off)] // The debugger needs integration test infrastructure. Disabling coverage until this is completed.
 mod debugger;
 mod memory;
 mod system;
@@ -108,7 +119,7 @@ pub use debugger::PatinaDebugger;
 
 #[cfg(not(test))]
 use arch::{DebuggerArch, SystemArch};
-use patina::serial::SerialIO;
+use patina::{component::service::perf_timer::ArchTimerFunctionality, serial::SerialIO};
 use patina_internal_cpu::interrupts::{ExceptionContext, InterruptManager};
 
 /// Global instance of the debugger.
@@ -137,8 +148,12 @@ pub type MonitorCommandFn = fn(&mut core::str::SplitWhitespace<'_>, &mut dyn cor
 /// platform specific debugger implementation. For safety, these routines should
 /// only be invoked on the global instance of the debugger.
 trait Debugger: Sync {
-    /// Initializes the debugger.
-    fn initialize(&'static self, interrupt_manager: &mut dyn InterruptManager);
+    /// Initializes the debugger. Intended for core use only.
+    fn initialize(
+        &'static self,
+        interrupt_manager: &mut dyn InterruptManager,
+        timer: Option<&'static dyn ArchTimerFunctionality>,
+    );
 
     /// Checks if the debugger is enabled.
     fn enabled(&'static self) -> bool;
@@ -195,9 +210,10 @@ pub fn set_debugger<T: SerialIO>(debugger: &'static PatinaDebugger<T>) {
 /// Initializes the debugger. This will install the debugger into the exception
 /// handlers using the provided interrupt manager. This routine may invoke a debug
 /// break depending on configuration.
-pub fn initialize(interrupt_manager: &mut dyn InterruptManager) {
+#[coverage(off)] // Initializing the debugger requires integration testing infrastructure. Disabling coverage until this is completed.
+pub fn initialize(interrupt_manager: &mut dyn InterruptManager, timer: Option<&'static dyn ArchTimerFunctionality>) {
     if let Some(debugger) = DEBUGGER.get() {
-        debugger.initialize(interrupt_manager);
+        debugger.initialize(interrupt_manager, timer);
     }
 }
 

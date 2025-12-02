@@ -415,7 +415,10 @@ impl<P: PlatformInfo> Core<P> {
         });
 
         // Initialize the debugger if it is enabled.
-        patina_debugger::initialize(&mut interrupt_manager);
+        patina_debugger::initialize(
+            &mut interrupt_manager,
+            Some(Box::leak(Box::new(cpu::PerfTimer::with_frequency(P::CpuInfo::perf_timer_frequency().unwrap_or(0))))),
+        );
 
         log::info!("GCD - After memory init:\n{GCD}");
 

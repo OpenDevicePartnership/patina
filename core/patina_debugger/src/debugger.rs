@@ -11,13 +11,15 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 #[cfg(feature = "alloc")]
 use alloc::boxed::Box;
 use gdbstub::{
-    conn::ConnectionExt,
+    conn::{Connection, ConnectionExt},
     stub::{GdbStubBuilder, SingleThreadStopReason, state_machine::GdbStubStateMachine},
 };
-use patina::serial::SerialIO;
+use patina::{component::service::perf_timer::ArchTimerFunctionality, serial::SerialIO};
 use patina_internal_cpu::interrupts::{ExceptionType, HandlerType, InterruptHandler, InterruptManager};
 use spin::Mutex;
 
@@ -31,6 +33,9 @@ use crate::{
 
 /// Length of the static buffer used for GDB communication.
 const GDB_BUFF_LEN: usize = 0x2000;
+
+/// A default GDB stop packet used when entering the debugger.
+const GDB_STOP_PACKET: &str = "$T05thread:01;#07";
 
 #[cfg(not(feature = "alloc"))]
 static GDB_BUFFER: [u8; GDB_BUFF_LEN] = [0; GDB_BUFF_LEN];
@@ -60,23 +65,16 @@ where
     log_policy: DebuggerLoggingPolicy,
     /// Whether initializing the transport should be skipped.
     no_transport_init: bool,
-    /// Internal mutable debugger config.
-    config: spin::RwLock<DebuggerConfig>,
+    /// Debugger enabled state.
+    enabled: AtomicBool,
+    /// The number of seconds to wait for an initial breakpoint. If zero, wait indefinitely.
+    initial_break_timeout: u32,
     /// Internal mutable debugger state.
     internal: Mutex<DebuggerInternal<'static, T>>,
     /// Tracks external system state.
     system_state: Mutex<SystemState>,
-}
-
-/// Debugger Configuration
-///
-/// contains the internal configuration and state for the debugger. This will
-/// be locked to allow mutable access while using the debugger.
-///
-struct DebuggerConfig {
-    enabled: bool,
-    initial_break: bool,
-    initial_break_timeout: u32,
+    /// Indicates that the previous connection timed out. Used to inform the next connection to print a hint.
+    connection_timed_out: AtomicBool,
 }
 
 /// Internal Debugger State
@@ -90,6 +88,8 @@ where
 {
     gdb: Option<GdbStubStateMachine<'a, PatinaTarget, SerialConnection<'a, T>>>,
     gdb_buffer: Option<&'a [u8; GDB_BUFF_LEN]>,
+    timer: Option<&'a dyn ArchTimerFunctionality>,
+    initial_breakpoint: bool,
 }
 
 impl<T: SerialIO> PatinaDebugger<T> {
@@ -103,23 +103,25 @@ impl<T: SerialIO> PatinaDebugger<T> {
             log_policy: DebuggerLoggingPolicy::SuspendLogging,
             no_transport_init: false,
             exception_types: SystemArch::DEFAULT_EXCEPTION_TYPES,
-            config: spin::RwLock::new(DebuggerConfig { enabled: false, initial_break: true, initial_break_timeout: 0 }),
-            internal: Mutex::new(DebuggerInternal { gdb_buffer: None, gdb: None }),
+            enabled: AtomicBool::new(false),
+            initial_break_timeout: 0,
+            internal: Mutex::new(DebuggerInternal {
+                gdb_buffer: None,
+                gdb: None,
+                timer: None,
+                initial_breakpoint: false,
+            }),
             system_state: Mutex::new(SystemState::new()),
+            connection_timed_out: AtomicBool::new(false),
         }
     }
 
     /// Forces the debugger to be enabled, regardless of later configuration. This
     /// is used for development purposes and is not intended for production or
     /// standard use. If `False` is provided, this routine will not change the configuration.
-    ///
-    /// This will also forcibly enable the initial breakpoint with no timeout. This
-    /// is intentional to prevent this development feature from being used in production.
-    ///
     pub const fn with_force_enable(mut self, enabled: bool) -> Self {
         if enabled {
-            // Intentionally ignoring initial_break config until configuration is thought out.
-            self.config = spin::RwLock::new(DebuggerConfig { enabled, initial_break: true, initial_break_timeout: 0 });
+            self.enabled = AtomicBool::new(true);
         }
         self
     }
@@ -145,6 +147,14 @@ impl<T: SerialIO> PatinaDebugger<T> {
         self
     }
 
+    /// Configures the timeout for the initial breakpoint.
+    ///
+    /// `timeout_seconds` - Timeout specified in seconds. Zero indicates to wait indefinitely.
+    pub const fn with_timeout(mut self, timeout_seconds: u32) -> Self {
+        self.initial_break_timeout = timeout_seconds;
+        self
+    }
+
     /// Enables the debugger.
     ///
     /// Allows runtime enablement of the debugger. This should be called before the Patina
@@ -153,8 +163,7 @@ impl<T: SerialIO> PatinaDebugger<T> {
     /// Enabled - Whether the debugger is enabled, and will install itself into the system.
     ///
     pub fn enable(&self, enabled: bool) {
-        let mut config = self.config.write();
-        config.enabled = enabled;
+        self.enabled.store(enabled, Ordering::Relaxed);
     }
 
     /// Enters the debugger from an exception.
@@ -165,6 +174,13 @@ impl<T: SerialIO> PatinaDebugger<T> {
         };
 
         let mut target = PatinaTarget::new(exception_info, &self.system_state);
+        let timeout = match debug.initial_breakpoint {
+            true => {
+                debug.initial_breakpoint = false;
+                self.initial_break_timeout
+            }
+            false => 0,
+        };
 
         // Either take the existing state machine, or start one if this is the first break.
         let mut gdb = match debug.gdb {
@@ -174,11 +190,6 @@ impl<T: SerialIO> PatinaDebugger<T> {
 
                 // Flush any stale data from the transport.
                 while self.transport.try_read().is_some() {}
-
-                // Always start with a stop code. This is not to spec, but is a
-                // useful hint to the client that a break has occurred. This allows
-                // the debugger to reconnect on scenarios like reboots.
-                self.transport.write("$T05thread:01;#07".as_bytes());
 
                 // SAFETY: The buffer will only ever be used by the paired GDB stub
                 // within the internal state lock. Because there is no GDB stub at
@@ -198,8 +209,37 @@ impl<T: SerialIO> PatinaDebugger<T> {
             }
         };
 
-        // Enter the state machine until the target is resumed.
-        while !target.is_resumed() {
+        let mut timeout_reached = false;
+        if let GdbStubStateMachine::Idle(mut inner) = gdb {
+            // Always start with a stop code if starting from idle. This may be because this is the initial breakpoint
+            // or because the initial breakpoint timed out. This is not to spec, but is a useful hint to the client
+            // that a break has occurred. This allows the debugger to reconnect on scenarios like reboots.
+            let _ = inner.borrow_conn().write_all(GDB_STOP_PACKET.as_bytes());
+
+            // Until some traffic is received, wait for the timeout before entering the state machine.
+            if timeout != 0
+                && let Some(timer) = debug.timer
+            {
+                let frequency = timer.perf_frequency();
+                let initial_count = timer.cpu_count();
+                loop {
+                    if (timer.cpu_count() - initial_count) / frequency >= timeout as u64 {
+                        timeout_reached = true;
+                        break;
+                    }
+
+                    if !matches!(inner.borrow_conn().peek(), Ok(None)) {
+                        // Data received, continue to the state machine.
+                        break;
+                    }
+                }
+            }
+
+            gdb = GdbStubStateMachine::Idle(inner);
+        }
+
+        // Enter the state machine until the target is resumed or a timeout occurs.
+        while !target.is_resumed() && !timeout_reached {
             gdb = match gdb {
                 GdbStubStateMachine::Idle(mut gdb) => {
                     let byte = loop {
@@ -241,6 +281,10 @@ impl<T: SerialIO> PatinaDebugger<T> {
             };
         }
 
+        if timeout_reached {
+            self.connection_timed_out.store(true, Ordering::Relaxed);
+        }
+
         if target.reboot_on_resume() {
             // Reboot the system.
             SystemArch::reboot();
@@ -255,19 +299,17 @@ impl<T: SerialIO> PatinaDebugger<T> {
 }
 
 impl<T: SerialIO> Debugger for PatinaDebugger<T> {
-    fn initialize(&'static self, interrupt_manager: &mut dyn InterruptManager) {
-        let config = self.config.read();
-        if !config.enabled {
+    fn initialize(
+        &'static self,
+        interrupt_manager: &mut dyn InterruptManager,
+        timer: Option<&'static dyn ArchTimerFunctionality>,
+    ) {
+        if !self.enabled.load(Ordering::Relaxed) {
             log::info!("Debugger is disabled.");
             return;
         }
 
         log::info!("Initializing debugger.");
-        let initial_breakpoint = config.initial_break;
-        let _initial_break_timeout = config.initial_break_timeout; // TODO
-
-        // Drop the lock to prevent deadlock in the initial breakpoint.
-        drop(config);
 
         // Initialize the underlying transport.
         if !self.no_transport_init {
@@ -290,6 +332,15 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
                     internal.gdb_buffer = unsafe { Some(&*(GDB_BUFFER.as_ptr() as *mut [u8; GDB_BUFF_LEN])) };
                 }
             }
+
+            if timer.is_none() && self.initial_break_timeout != 0 {
+                log::warn!(
+                    "Debugger initialized with an initial break timeout but no timer service. Ignoring timeout."
+                );
+            }
+
+            internal.timer = timer;
+            internal.initial_breakpoint = true;
         }
 
         // Setup Exception Handlers.
@@ -304,17 +355,15 @@ impl<T: SerialIO> Debugger for PatinaDebugger<T> {
             }
         }
 
-        if initial_breakpoint {
-            log::error!("************************************");
-            log::error!("***  Initial debug breakpoint!   ***");
-            log::error!("************************************");
-            SystemArch::breakpoint();
-            log::info!("Resuming from initial breakpoint.");
-        }
+        log::error!("************************************");
+        log::error!("***  Initial debug breakpoint!   ***");
+        log::error!("************************************");
+        SystemArch::breakpoint();
+        log::info!("Resuming from initial breakpoint.");
     }
 
     fn enabled(&'static self) -> bool {
-        self.config.read().enabled
+        self.enabled.load(Ordering::Relaxed)
     }
 
     fn notify_module_load(&'static self, module_name: &str, address: usize, length: usize) {
@@ -369,6 +418,11 @@ impl<T: SerialIO> InterruptHandler for PatinaDebugger<T> {
         exception_type: ExceptionType,
         context: &mut patina_internal_cpu::interrupts::ExceptionContext,
     ) {
+        // Check if the previous connection timed out to print a hint.
+        if self.connection_timed_out.swap(false, Ordering::Relaxed) {
+            log::error!("********* DEBUGGER BREAK-IN *********");
+        }
+
         // Suspend or disable logging. If suspended, logging will resume when the struct is dropped.
         let _log_suspend;
         match self.log_policy {
