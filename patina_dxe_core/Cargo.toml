@@ -13,6 +13,7 @@ description = "A pure rust implementation of the UEFI DXE Core."
 features = ["doc"]
 
 [dependencies]
+bitfield-struct = { workspace = true }
 cfg-if = { workspace = true }
 compile-time = { workspace = true }
 crc32fast = { workspace = true }
