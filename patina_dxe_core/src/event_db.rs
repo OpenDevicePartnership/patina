@@ -16,7 +16,12 @@ use alloc::{
     collections::{BTreeMap, BTreeSet},
     vec::Vec,
 };
-use core::{cmp::Ordering, ffi::c_void, fmt};
+use core::{
+    cmp::Ordering,
+    ffi::c_void,
+    fmt,
+    ops::{Deref, DerefMut},
+};
 use patina::error::EfiError;
 use r_efi::efi;
 
@@ -540,6 +545,52 @@ impl EventDb {
     }
 }
 
+#[derive(PartialEq, Eq)]
+enum PendingSignals {
+    Event(efi::Event),
+    Group(efi::Guid),
+}
+
+struct EventGuard<'a> {
+    event_db: tpl_mutex::TplGuard<'a, EventDb>,
+    pending_signals: &'a tpl_mutex::TplMutex<Vec<PendingSignals>>,
+}
+
+impl Deref for EventGuard<'_> {
+    type Target = EventDb;
+
+    fn deref(&self) -> &Self::Target {
+        &self.event_db
+    }
+}
+
+impl DerefMut for EventGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.event_db
+    }
+}
+
+impl Drop for EventGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(mut pending_signals) = self.pending_signals.try_lock() {
+            for pending in pending_signals.drain(..) {
+                match pending {
+                    PendingSignals::Event(event) => {
+                        if let Err(e) = self.signal_event(event) {
+                            log::error!("Error {e:?} signaling event {event:?} from pending.");
+                        }
+                    }
+                    PendingSignals::Group(group) => {
+                        self.signal_group(group);
+                    }
+                }
+            }
+        } else {
+            log::warn!("Could not acquire pending signals lock to process pending signals.");
+        }
+    }
+}
+
 /// Spin-Locked event database instance.
 ///
 /// This is the main access point for interaction with the event database.
@@ -548,6 +599,7 @@ impl EventDb {
 /// is properly guarded against race conditions.
 pub struct SpinLockedEventDb {
     inner: tpl_mutex::TplMutex<EventDb>,
+    pending_signals: tpl_mutex::TplMutex<Vec<PendingSignals>>,
 }
 
 impl Default for SpinLockedEventDb {
@@ -559,11 +611,18 @@ impl Default for SpinLockedEventDb {
 impl SpinLockedEventDb {
     /// Creates a new instance of EventDb.
     pub const fn new() -> Self {
-        SpinLockedEventDb { inner: tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, EventDb::new(), "EventLock") }
+        SpinLockedEventDb {
+            inner: tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, EventDb::new(), "EventLock"),
+            pending_signals: tpl_mutex::TplMutex::new(efi::TPL_HIGH_LEVEL, Vec::new(), "pendingSignalsLock"),
+        }
     }
 
-    fn lock(&self) -> tpl_mutex::TplGuard<'_, EventDb> {
-        self.inner.lock()
+    fn lock(&self) -> EventGuard<'_> {
+        EventGuard { event_db: self.inner.lock(), pending_signals: &self.pending_signals }
+    }
+
+    fn try_lock(&self) -> Option<EventGuard<'_>> {
+        self.inner.try_lock().map(|guard| EventGuard { event_db: guard, pending_signals: &self.pending_signals })
     }
 
     /// Creates a new event in the event database
@@ -608,7 +667,19 @@ impl SpinLockedEventDb {
     ///
     /// Returns r_efi:efi::Status::INVALID_PARAMETER if incorrect parameters are given.
     pub fn signal_event(&self, event: efi::Event) -> Result<(), EfiError> {
-        self.lock().signal_event(event)
+        if let Some(mut guard) = self.try_lock() {
+            guard.signal_event(event)
+        } else {
+            //unable to acquire lock; queue signal for later processing.
+            if let Some(mut pending_signals) = self.pending_signals.try_lock() {
+                pending_signals.push(PendingSignals::Event(event));
+                Ok(())
+            } else {
+                log::error!("Could not acquire pending signals lock to queue signal.");
+                debug_assert!(false, "Could not acquire pending signals lock to queue signal.");
+                Ok(())
+            }
+        }
     }
 
     /// Signals an event group
@@ -617,7 +688,16 @@ impl SpinLockedEventDb {
     /// equivalent would need to be accomplished by creating a dummy event that is a member of the group and signalling
     /// that event.
     pub fn signal_group(&self, group: efi::Guid) {
-        self.lock().signal_group(group)
+        if let Some(mut guard) = self.try_lock() {
+            guard.signal_group(group);
+        } else {
+            //unable to acquire lock; queue signal for later processing.
+            if let Some(mut pending_signals) = self.pending_signals.try_lock() {
+                pending_signals.push(PendingSignals::Group(group));
+            } else {
+                log::warn!("Could not acquire pending signals lock to queue group signal.");
+            }
+        }
     }
 
     /// Returns the event type for the given event
@@ -1431,6 +1511,103 @@ mod tests {
 
             let event_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
             assert_eq!(event_iter.count(), 0);
+        });
+    }
+
+    #[test]
+    fn signal_event_under_event_lock_should_use_pending_queue() {
+        with_locked_state(|| {
+            static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();
+            let mut events: Vec<efi::Event> = Vec::new();
+            // create some non-grouped events.
+            for _ in 0..10 {
+                events.push(
+                    SPIN_LOCKED_EVENT_DB
+                        .create_event(
+                            efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
+                            efi::TPL_NOTIFY,
+                            Some(test_notify_function),
+                            None,
+                            None,
+                        )
+                        .unwrap(),
+                );
+            }
+
+            let uuid = Uuid::from_str("aefcf33c-ce02-47b4-89f6-4bacdeda3377").unwrap();
+            let group1 = efi::Guid::from_bytes(uuid.as_bytes());
+            // create some grouped events.
+            let mut grouped_events: Vec<efi::Event> = Vec::new();
+            for _ in 0..10 {
+                grouped_events.push(
+                    SPIN_LOCKED_EVENT_DB
+                        .create_event(
+                            efi::EVT_TIMER | efi::EVT_NOTIFY_SIGNAL,
+                            efi::TPL_NOTIFY,
+                            Some(test_notify_function),
+                            None,
+                            Some(group1),
+                        )
+                        .unwrap(),
+                );
+            }
+
+            let mut guard = SPIN_LOCKED_EVENT_DB.lock();
+            // signal all events while holding the lock.
+            for event in &events {
+                SPIN_LOCKED_EVENT_DB.signal_event(*event).unwrap();
+            }
+
+            //signal the group
+            SPIN_LOCKED_EVENT_DB.signal_group(group1);
+
+            // check ordering of pending_signals and ensure none are marked signaled.
+            for (event, pending_signal) in events.iter().zip(guard.pending_signals.lock().iter()) {
+                if let PendingSignals::Event(pending_event) = pending_signal {
+                    assert_eq!(event, pending_event);
+                    assert!(!guard.is_signaled(*event));
+                } else {
+                    panic!("Unexpected Group in guard.pending_signals");
+                }
+            }
+
+            // last element should be a group signal.
+            if let Some(PendingSignals::Group(pending_group)) = guard.pending_signals.lock().last() {
+                assert_eq!(group1, *pending_group);
+            } else {
+                panic!("group not in guard.pending_signals");
+            }
+
+            // size should be the number of ungrouped events plus one group signal.
+            assert_eq!(guard.pending_signals.lock().len(), events.len() + 1);
+
+            // none of the group signals should be signaled.
+            for event in &grouped_events {
+                assert!(!guard.is_signaled(*event));
+            }
+
+            // none of these should be pending while the lock is held.
+            assert!(guard.pending_notifies.is_empty());
+
+            // drop the lock. This should signal all the events.
+            drop(guard);
+
+            // now all events should be signaled.
+            for event in &events {
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(*event));
+            }
+            for event in &grouped_events {
+                assert!(SPIN_LOCKED_EVENT_DB.is_signaled(*event));
+            }
+
+            // check the notify queue ordering. note: grouped events are expected to be notified in reverse creation order.
+            let ordered_events_iter = events.iter().chain(grouped_events.iter().rev());
+
+            let notify_iter = iter::from_fn(|| SPIN_LOCKED_EVENT_DB.consume_next_event_notify(efi::TPL_APPLICATION));
+
+            for (event, notify) in ordered_events_iter.zip(notify_iter.map(|n| n.event)) {
+                assert_eq!(*event, notify);
+            }
         });
     }
 

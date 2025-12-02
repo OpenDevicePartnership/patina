@@ -312,7 +312,7 @@ mod tests {
     static TEST_LOGGER: AdvancedLogger<UartNull> =
         AdvancedLogger::new(patina::log::Format::Standard, &[], log::LevelFilter::Trace, UartNull {});
 
-    fn create_adv_logger_hob_list() -> *const c_void {
+    fn create_adv_logger_hob_list() -> (u64, *const c_void) {
         const LOG_LEN: usize = 0x2000;
         let log_buff = Box::into_raw(Box::new([0_u8; LOG_LEN]));
         let log_address = log_buff as *const u8 as efi::PhysicalAddress;
@@ -341,16 +341,18 @@ mod tests {
         let address: *mut efi::PhysicalAddress = unsafe { hob.add(1) } as *mut efi::PhysicalAddress;
         // SAFETY: There is space for this address, writing it out of the structure as the C implementation does.
         unsafe { (*address) = log_address };
-        hob_buff as *const c_void
+        (log_address, hob_buff as *const c_void)
     }
 
     #[test]
     fn component_test() {
-        let hob_list = create_adv_logger_hob_list();
+        let (log_address, hob_list) = create_adv_logger_hob_list();
 
         // SAFETY: The hob list created is valid for this test.
         let res = unsafe { TEST_LOGGER.init(hob_list) };
         assert_eq!(res, Ok(()));
+
+        assert!(TEST_LOGGER.get_log_address().is_some_and(|addr| addr == log_address));
 
         // TODO: Need to mock the protocol interface but requires final component interface.
     }

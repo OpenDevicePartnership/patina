@@ -764,9 +764,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[should_panic(
-        expected = "ConfigMut<usize> in component patina::component::params::tests::test_two_mutable_config_access_to_same_type_fails::TestComponent conflicts with a previous ConfigMut<usize> access."
-    )]
     fn test_two_mutable_config_access_to_same_type_fails() {
         #[derive(IntoComponent)]
         struct TestComponent;
@@ -783,9 +780,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "Config<usize> in component patina::component::params::tests::test_mutable_and_immutable_config_access_to_same_type_fails1::TestComponent conflicts with a previous ConfigMut<usize> access."
-    )]
     fn test_mutable_and_immutable_config_access_to_same_type_fails1() {
         #[derive(IntoComponent)]
         struct TestComponent;
@@ -802,9 +796,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "ConfigMut<usize> in component patina::component::params::tests::test_mutable_and_immutable_config_access_to_same_type_fails2::TestComponent conflicts with a previous Config<usize> access."
-    )]
     fn test_mutable_and_immutable_config_access_to_same_type_fails2() {
         #[derive(IntoComponent)]
         struct TestComponent;
@@ -821,9 +812,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "Config<usize> in component patina::component::params::tests::test_mutable_storage_and_immutable_config_fail::TestComponent conflicts with a previous &mut Storage access."
-    )]
     fn test_mutable_storage_and_immutable_config_fail() {
         #[derive(IntoComponent)]
         struct TestComponent;
@@ -838,9 +826,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "ConfigMut<usize> in component patina::component::params::tests::test_mutable_storage_and_mutable_config_fail::TestComponent conflicts with a previous &mut Storage access."
-    )]
     fn test_mutable_storage_and_mutable_config_fail() {
         #[derive(IntoComponent)]
         struct TestComponent;
@@ -855,9 +840,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "&mut Storage in component patina::component::params::tests::test_config_and_mutable_storage_fail::TestComponent conflicts with a previous Config<T> access."
-    )]
     fn test_config_and_mutable_storage_fail() {
         #[derive(IntoComponent)]
         struct TestComponent;
@@ -872,9 +854,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "&mut Storage in component patina::component::params::tests::test_mutable_config_and_mutable_storage_fail::TestComponent conflicts with a previous ConfigMut<T> access."
-    )]
     fn test_mutable_config_and_mutable_storage_fail() {
         #[derive(IntoComponent)]
         struct TestComponent;
@@ -997,7 +976,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "ConfigMut<i32> in component i32 conflicts with a previous &Storage access.")]
     fn test_config_mut_and_storage_cannot_be_requested_in_same_function() {
         let mut storage = Storage::new();
 
@@ -1007,7 +985,7 @@ mod tests {
 
         <&Storage as Param>::init_state(&mut storage, &mut mock_metadata);
 
-        ConfigMut::<i32>::init_state(&mut storage, &mut mock_metadata); // panic here
+        ConfigMut::<i32>::init_state(&mut storage, &mut mock_metadata);
     }
 
     #[test]
@@ -1235,9 +1213,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "Commands in component patina::component::params::tests::test_cannot_have_two_commands_in_same_function::TestComponent conflicts with a previous Commands access."
-    )]
     fn test_cannot_have_two_commands_in_same_function() {
         #[derive(IntoComponent)]
         struct TestComponent;

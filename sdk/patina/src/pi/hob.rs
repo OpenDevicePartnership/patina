@@ -786,6 +786,8 @@ pub struct Capsule {
 
 /// Represents a HOB list.
 ///
+/// This is a parsed Rust representation of the HOB list that provides better type safety and ergonomics but does not
+/// have binary compatibility with the original PI Spec HOB list structure.
 pub struct HobList<'a>(Vec<Hob<'a>>);
 
 impl Default for HobList<'_> {
@@ -892,17 +894,17 @@ impl HobTrait for Hob<'_> {
 /// # Example
 ///
 /// ```no_run
-/// use patina::pi::hob::get_c_hob_list_size;
+/// use patina::pi::hob::get_pi_hob_list_size;
 /// use core::ffi::c_void;
 ///
 /// // Assuming `hob_list` is a valid pointer to a HOB list
 /// # let some_val = 0;
 /// # let hob_list = &some_val as *const _ as *const c_void;
 /// let hob_list_ptr: *const c_void = hob_list;
-/// let size = unsafe { get_c_hob_list_size(hob_list_ptr) };
+/// let size = unsafe { get_pi_hob_list_size(hob_list_ptr) };
 /// println!("HOB list size: {}", size);
 /// ```
-pub unsafe fn get_c_hob_list_size(hob_list: *const c_void) -> usize {
+pub unsafe fn get_pi_hob_list_size(hob_list: *const c_void) -> usize {
     let mut hob_header: *const header::Hob = hob_list as *const header::Hob;
     let mut hob_list_len = 0;
 
@@ -1515,7 +1517,10 @@ pub struct EFiMemoryTypeInformation {
 mod tests {
     use crate::pi::{
         BootMode, hob,
-        hob::{Hob, HobList, HobTrait},
+        hob::{
+            Capsule, Cpu, FirmwareVolume, Hob, HobList, HobTrait, MemoryAllocation, PhaseHandoffInformationTable,
+            ResourceDescriptor, get_pi_hob_list_size,
+        },
     };
 
     use core::{
@@ -2200,5 +2205,117 @@ mod tests {
         assert!(debug_output.contains("Free Memory Bottom:"));
         assert!(debug_output.contains("Free Memory Top:"));
         assert!(debug_output.contains("End of HOB List:"));
+    }
+
+    #[test]
+    fn test_get_pi_hob_list_size_single_hob() {
+        use core::ffi::c_void;
+
+        let end_of_list = gen_end_of_hoblist();
+
+        // SAFETY: The list is created in this test with a valid end-of-list marker
+        let size = unsafe { get_pi_hob_list_size(&end_of_list as *const _ as *const c_void) };
+
+        assert_eq!(size, size_of::<PhaseHandoffInformationTable>());
+    }
+
+    #[test]
+    fn test_get_pi_hob_list_size_multiple_hobs() {
+        use core::ffi::c_void;
+
+        // Create a HOB list with multiple HOBs in contiguous memory
+        let capsule = gen_capsule();
+        let firmware_volume = gen_firmware_volume();
+        let end_of_list = gen_end_of_hoblist();
+
+        let expected_size =
+            size_of::<Capsule>() + size_of::<FirmwareVolume>() + size_of::<PhaseHandoffInformationTable>();
+
+        // This buffer will hold the contiguous HOBs
+        let mut buffer = Vec::new();
+
+        // Add a capsule HOB
+        // SAFETY: Creating a byte slice from a struct for test purposes.
+        let capsule_bytes =
+            unsafe { core::slice::from_raw_parts(&capsule as *const Capsule as *const u8, size_of::<Capsule>()) };
+        buffer.extend_from_slice(capsule_bytes);
+
+        // Add a firmware volume HOB
+        // SAFETY: Creating a byte slice from a struct for test purposes.
+        let fv_bytes = unsafe {
+            core::slice::from_raw_parts(
+                &firmware_volume as *const FirmwareVolume as *const u8,
+                size_of::<FirmwareVolume>(),
+            )
+        };
+        buffer.extend_from_slice(fv_bytes);
+
+        // Add an end-of-list HOB
+        // SAFETY: Creating a byte slice from a struct for test purposes.
+        let end_bytes = unsafe {
+            core::slice::from_raw_parts(
+                &end_of_list as *const PhaseHandoffInformationTable as *const u8,
+                size_of::<PhaseHandoffInformationTable>(),
+            )
+        };
+        buffer.extend_from_slice(end_bytes);
+
+        // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
+        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr() as *const c_void) };
+
+        assert_eq!(size, expected_size);
+    }
+
+    #[test]
+    fn test_get_pi_hob_list_size_varied_hob_types() {
+        use core::ffi::c_void;
+
+        // Create a HOB list with various HOB types
+        let cpu = gen_cpu();
+        let resource = gen_resource_descriptor();
+        let memory_alloc = gen_memory_allocation();
+        let end_of_list = gen_end_of_hoblist();
+
+        let expected_size = size_of::<Cpu>()
+            + size_of::<ResourceDescriptor>()
+            + size_of::<MemoryAllocation>()
+            + size_of::<PhaseHandoffInformationTable>();
+
+        // This buffer will hold the contiguous HOBs
+        let mut buffer = Vec::new();
+
+        // SAFETY: Creating a byte slice from a struct for test purposes.
+        buffer.extend_from_slice(unsafe {
+            core::slice::from_raw_parts(&cpu as *const Cpu as *const u8, size_of::<Cpu>())
+        });
+
+        // SAFETY: Creating a byte slice from a struct for test purposes.
+        buffer.extend_from_slice(unsafe {
+            core::slice::from_raw_parts(
+                &resource as *const ResourceDescriptor as *const u8,
+                size_of::<ResourceDescriptor>(),
+            )
+        });
+
+        // SAFETY: Creating a byte slice from a struct for test purposes.
+        buffer.extend_from_slice(unsafe {
+            core::slice::from_raw_parts(
+                &memory_alloc as *const MemoryAllocation as *const u8,
+                size_of::<MemoryAllocation>(),
+            )
+        });
+
+        // SAFETY: Creating a byte slice from a struct for test purposes.
+        buffer.extend_from_slice(unsafe {
+            core::slice::from_raw_parts(
+                &end_of_list as *const PhaseHandoffInformationTable as *const u8,
+                size_of::<PhaseHandoffInformationTable>(),
+            )
+        });
+
+        // SAFETY: The list is created in this test with headers and an end-of-list marker that should be valid
+        let size = unsafe { get_pi_hob_list_size(buffer.as_ptr() as *const c_void) };
+
+        assert_eq!(size, expected_size);
     }
 }

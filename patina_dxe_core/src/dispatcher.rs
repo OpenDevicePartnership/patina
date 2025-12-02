@@ -162,6 +162,58 @@ unsafe impl Send for DispatcherContext {}
 static DISPATCHER_CONTEXT: TplMutex<DispatcherContext> =
     TplMutex::new(efi::TPL_NOTIFY, DispatcherContext::new(), "Dispatcher Context");
 
+/// Checks if a firmware volume with the given name GUID is already installed.
+///
+/// Searches all installed firmware volume block (FVB) protocol handles to determine if
+/// any have a matching FV name GUID.
+///
+/// # Arguments
+/// * `fv_name_guid` - The firmware volume name GUID to check for
+///
+/// # Returns
+/// `true` if a firmware volume with the given name GUID is already installed
+/// `false` otherwise
+fn is_fv_already_installed(fv_name_guid: efi::Guid) -> bool {
+    // Get all handles with a FVB protocol
+    let fvb_handles = match PROTOCOL_DB.locate_handles(Some(firmware_volume_block::PROTOCOL_GUID)) {
+        Ok(handles) => handles,
+        Err(_) => return false,
+    };
+
+    // Check each FVB handle to see if it has the same FV name GUID
+    for handle in fvb_handles {
+        let Ok(ptr) = PROTOCOL_DB.get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID) else {
+            continue;
+        };
+        let fvb_ptr = ptr as *mut firmware_volume_block::Protocol;
+
+        // Safety: fvb_ptr is obtained from a valid handle that has a FVB protocol instance
+        // and the as_ref() call checks for null
+        let Some(fvb) = (unsafe { fvb_ptr.as_ref() }) else {
+            continue;
+        };
+
+        let mut fv_address: u64 = 0;
+        let status = (fvb.get_physical_address)(fvb_ptr, core::ptr::addr_of_mut!(fv_address));
+        if status.is_error() || fv_address == 0 {
+            continue;
+        }
+
+        // Safety: fv_address is checked for being non-zero above
+        let Ok(volume) = (unsafe { VolumeRef::new_from_address(fv_address) }) else {
+            continue;
+        };
+
+        if let Some(name) = volume.fv_name()
+            && name == fv_name_guid
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
 pub fn dispatch() -> Result<bool, EfiError> {
     if DISPATCHER_CONTEXT.lock().executing {
         return Err(EfiError::AlreadyStarted);
@@ -268,7 +320,36 @@ pub fn dispatch() -> Result<bool, EfiError> {
 
             if depex_satisfied && candidate.evaluate_auth().is_ok() {
                 for section in candidate.fv_sections {
-                    let fv_data = Box::from(section.try_content_as_slice()?);
+                    let fv_data: Box<[u8]> = Box::from(section.try_content_as_slice()?);
+
+                    // Check if this FV is already installed (using the FV name GUID)
+                    let fv_name_guid = {
+                        // Safety: fv_data is a valid FV section allocated above
+                        let volume = match unsafe { VolumeRef::new_from_address(fv_data.as_ptr() as u64) } {
+                            Ok(vol) => vol,
+                            Err(e) => {
+                                log::warn!(
+                                    "Failed to parse FV from file {:?}: {:?}",
+                                    guid_fmt!(candidate.file_name),
+                                    e
+                                );
+                                continue;
+                            }
+                        };
+                        volume.fv_name()
+                    };
+
+                    if let Some(fv_name_guid) = fv_name_guid
+                        && is_fv_already_installed(fv_name_guid)
+                    {
+                        log::debug!(
+                            "Skipping FV file {:?} - FV with name GUID {:?} is already installed",
+                            guid_fmt!(candidate.file_name),
+                            guid_fmt!(fv_name_guid)
+                        );
+                        continue;
+                    }
+
                     dispatcher.fv_section_data.push(fv_data);
                     let data_ptr =
                         dispatcher.fv_section_data.last().expect("freshly pushed fv section data must be valid");
@@ -854,6 +935,7 @@ mod tests {
     fn test_dispatch_when_already_dispatching() {
         set_logger();
         with_locked_state(|| {
+            init_dispatcher();
             DISPATCHER_CONTEXT.lock().executing = true;
             let result = core_dispatcher();
             assert_eq!(result, Err(EfiError::AlreadyStarted));
@@ -864,6 +946,7 @@ mod tests {
     fn test_dispatch_with_nothing_to_dispatch() {
         set_logger();
         with_locked_state(|| {
+            init_dispatcher();
             let result = core_dispatcher();
             assert_eq!(result, Err(EfiError::NotFound));
         })
@@ -879,6 +962,7 @@ mod tests {
         let fv_raw = Box::into_raw(fv);
 
         with_locked_state(|| {
+            init_dispatcher();
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle =
                 unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
@@ -975,6 +1059,10 @@ mod tests {
                     &security_protocol as *const _ as *mut _,
                 )
                 .unwrap();
+
+            // Initialize dispatcher
+            init_dispatcher();
+
             // Safety: fv is leaked to ensure it is not freed and remains valid for the duration of the program.
             let handle = unsafe { crate::fv::core_install_firmware_volume(fv.as_ptr() as u64, None).unwrap() };
 
@@ -983,5 +1071,381 @@ mod tests {
 
             assert!(SECURITY_CALL_EXECUTED.load(core::sync::atomic::Ordering::SeqCst));
         })
+    }
+
+    #[test]
+    fn test_fv_already_installed() {
+        set_logger();
+
+        with_locked_state(|| {
+            // Load a test FV and install it
+            let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+            let mut fv: Vec<u8> = Vec::new();
+            file.read_to_end(&mut fv).expect("failed to read test file");
+
+            let fv = fv.into_boxed_slice();
+            let fv_raw = Box::into_raw(fv);
+
+            // Install the firmware volume
+            let _handle =
+                unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
+
+            // Get the actual FV name GUID from the installed FV
+            let actual_fv_guid = {
+                let volume = unsafe { VolumeRef::new_from_address(fv_raw.expose_provenance() as u64).unwrap() };
+                volume.fv_name().expect("Test FV should have a name GUID")
+            };
+
+            // Check that the installed FV is detected
+            assert!(is_fv_already_installed(actual_fv_guid), "Should return true when FV is installed");
+
+            // Check that a non-existent FV GUID is not detected
+            let non_existent_guid = r_efi::efi::Guid::from_fields(
+                0x11111111,
+                0x2222,
+                0x3333,
+                0x44,
+                0x55,
+                &[0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB],
+            );
+            assert!(!is_fv_already_installed(non_existent_guid), "Should return false for non-existent FV GUID");
+
+            let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
+        });
+    }
+
+    #[test]
+    fn test_is_fv_already_installed_error_paths() {
+        set_logger();
+
+        with_locked_state(|| {
+            // Test that no FVB handles installed returns false
+            assert!(
+                !is_fv_already_installed(r_efi::efi::Guid::from_fields(
+                    0xAAAAAAAA,
+                    0xBBBB,
+                    0xCCCC,
+                    0xDD,
+                    0xEE,
+                    &[0xFF, 0x00, 0x11, 0x22, 0x33, 0x44],
+                )),
+                "Should return false when no FVB handles exist"
+            );
+
+            // Test that installing an FV and checking a non-matching GUID returns false
+            let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+            let mut fv: Vec<u8> = Vec::new();
+            file.read_to_end(&mut fv).expect("failed to read test file");
+            let fv = fv.into_boxed_slice();
+            let fv_raw = Box::into_raw(fv);
+
+            let _handle =
+                unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
+
+            // Test that a non-matching GUID returns false
+            assert!(
+                !is_fv_already_installed(r_efi::efi::Guid::from_fields(
+                    0x11111111,
+                    0x2222,
+                    0x3333,
+                    0x44,
+                    0x55,
+                    &[0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB],
+                )),
+                "Should return false when GUID doesn't match any installed FV"
+            );
+
+            let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
+        });
+    }
+
+    #[test]
+    fn test_dispatch_with_duplicate_fv_prevention() {
+        set_logger();
+
+        with_locked_state(|| {
+            init_dispatcher();
+
+            // Load the parent FV that contains a compressed child FV
+            let mut file = File::open(test_collateral!("NESTEDFV.Fv")).unwrap();
+            let mut fv: Vec<u8> = Vec::new();
+            file.read_to_end(&mut fv).expect("failed to read test file");
+            let fv = fv.into_boxed_slice();
+            let fv_raw = Box::into_raw(fv);
+
+            // Install the parent FV
+            let parent_handle =
+                unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
+
+            add_fv_handles(vec![parent_handle]).expect("Failed to add parent FV handle");
+
+            // Verify that there is a pending FV image file (the compressed child)
+            assert_eq!(
+                DISPATCHER_CONTEXT.lock().pending_firmware_volume_images.len(),
+                1,
+                "Should have one pending FV image file"
+            );
+
+            // Get the child FV GUID from the pending image
+            let child_fv_sections = DISPATCHER_CONTEXT
+                .lock()
+                .pending_firmware_volume_images
+                .first()
+                .map(|img| img.fv_sections.clone())
+                .expect("There should be a pending FV image"); // Extract and install the child FV separately to simulate it being already installed
+            if let Some(section) = child_fv_sections.first() {
+                let child_fv_data = section.try_content_as_slice().expect("Should be able to get child FV data");
+                let child_volume = unsafe { VolumeRef::new_from_address(child_fv_data.as_ptr() as u64) }
+                    .expect("Should be able to parse the child FV");
+
+                if let Some(child_fv_guid) = child_volume.fv_name() {
+                    // Install the child FV directly
+                    let child_fv_box: Box<[u8]> = Box::from(child_fv_data);
+                    let child_fv_raw = Box::into_raw(child_fv_box);
+                    let _child_handle = unsafe {
+                        crate::fv::core_install_firmware_volume(
+                            child_fv_raw.expose_provenance() as u64,
+                            Some(parent_handle),
+                        )
+                        .expect("Should be able to install the child FV")
+                    };
+
+                    assert!(is_fv_already_installed(child_fv_guid), "Child FV should be detected as already installed");
+
+                    // Dispatch should now skip the child FV since it's already installed
+                    let dispatch_result = dispatch();
+
+                    assert!(
+                        dispatch_result.is_ok() || dispatch_result == Err(EfiError::NotFound),
+                        "Dispatch should complete without error or return NotFound"
+                    );
+
+                    // The pending child FV should be removed now
+                    assert_eq!(
+                        DISPATCHER_CONTEXT.lock().pending_firmware_volume_images.len(),
+                        0,
+                        "Pending FV images should be empty after dispatch skipped duplicate"
+                    );
+
+                    let _dropped_child = unsafe { Box::from_raw(child_fv_raw) };
+                }
+            }
+
+            let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
+        });
+    }
+
+    #[test]
+    fn test_is_fv_already_installed_with_null_fvb() {
+        set_logger();
+
+        with_locked_state(|| {
+            let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+            let mut fv: Vec<u8> = Vec::new();
+            file.read_to_end(&mut fv).expect("failed to read test file");
+            let fv = fv.into_boxed_slice();
+            let fv_raw = Box::into_raw(fv);
+
+            let handle =
+                unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
+
+            let protocol = PROTOCOL_DB
+                .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID)
+                .expect("Failed to get FVB protocol");
+
+            PROTOCOL_DB
+                .uninstall_protocol_interface(handle, firmware_volume_block::PROTOCOL_GUID, protocol)
+                .expect("Failed to uninstall protocol");
+
+            PROTOCOL_DB
+                .install_protocol_interface(
+                    Some(handle),
+                    firmware_volume_block::PROTOCOL_GUID,
+                    core::ptr::null_mut::<c_void>(),
+                )
+                .expect("Failed to install null protocol");
+
+            // Should return false since the FVB protocol is null
+            let test_guid = r_efi::efi::Guid::from_fields(
+                0xAAAAAAAA,
+                0xBBBB,
+                0xCCCC,
+                0xDD,
+                0xEE,
+                &[0xFF, 0x00, 0x11, 0x22, 0x33, 0x44],
+            );
+            assert!(!is_fv_already_installed(test_guid), "Should return false when the FVB protocol is null");
+
+            let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
+        });
+    }
+
+    #[test]
+    fn test_is_fv_already_installed_with_get_physical_address_error() {
+        set_logger();
+
+        with_locked_state(|| {
+            let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+            let mut fv: Vec<u8> = Vec::new();
+            file.read_to_end(&mut fv).expect("failed to read test file");
+            let fv = fv.into_boxed_slice();
+            let fv_raw = Box::into_raw(fv);
+
+            let handle =
+                unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
+
+            let protocol = PROTOCOL_DB
+                .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID)
+                .expect("Failed to get FVB protocol");
+            let protocol = protocol as *mut firmware_volume_block::Protocol;
+            // Patch get_physical_address to return an error
+            unsafe { &mut *protocol }.get_physical_address = get_physical_address1;
+
+            let test_guid = r_efi::efi::Guid::from_fields(
+                0xAAAAAAAA,
+                0xBBBB,
+                0xCCCC,
+                0xDD,
+                0xEE,
+                &[0xFF, 0x00, 0x11, 0x22, 0x33, 0x44],
+            );
+            assert!(!is_fv_already_installed(test_guid), "Should return false when get_physical_address fails");
+
+            let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
+        });
+    }
+
+    #[test]
+    fn test_is_fv_already_installed_with_zero_address() {
+        set_logger();
+
+        with_locked_state(|| {
+            let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+            let mut fv: Vec<u8> = Vec::new();
+            file.read_to_end(&mut fv).expect("failed to read test file");
+            let fv = fv.into_boxed_slice();
+            let fv_raw = Box::into_raw(fv);
+
+            let handle =
+                unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
+
+            // Patch get_physical_address to return zero
+            let protocol = PROTOCOL_DB
+                .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID)
+                .expect("Failed to get FVB protocol");
+            let protocol = protocol as *mut firmware_volume_block::Protocol;
+            unsafe { &mut *protocol }.get_physical_address = get_physical_address2;
+
+            let test_guid = r_efi::efi::Guid::from_fields(
+                0xAAAAAAAA,
+                0xBBBB,
+                0xCCCC,
+                0xDD,
+                0xEE,
+                &[0xFF, 0x00, 0x11, 0x22, 0x33, 0x44],
+            );
+            assert!(!is_fv_already_installed(test_guid), "Should return false when the address is zero");
+
+            let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
+        });
+    }
+
+    #[test]
+    fn test_is_fv_already_installed_with_invalid_volume() {
+        set_logger();
+
+        with_locked_state(|| {
+            let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+            let mut fv: Vec<u8> = Vec::new();
+            file.read_to_end(&mut fv).expect("failed to read test file");
+            let fv = fv.into_boxed_slice();
+            let fv_raw = Box::into_raw(fv);
+
+            let handle =
+                unsafe { crate::fv::core_install_firmware_volume(fv_raw.expose_provenance() as u64, None).unwrap() };
+
+            // Create some invalid FV data in memory
+            let invalid_fv_data = vec![0xFFu8; 1024];
+            let invalid_fv_box = invalid_fv_data.into_boxed_slice();
+            let invalid_fv_raw = Box::into_raw(invalid_fv_box);
+
+            // Patch get_physical_address to return the invalid FV address
+            let protocol = PROTOCOL_DB
+                .get_interface_for_handle(handle, firmware_volume_block::PROTOCOL_GUID)
+                .expect("Failed to get FVB protocol");
+            let protocol = protocol as *mut firmware_volume_block::Protocol;
+            unsafe { &mut *protocol }.get_physical_address = get_physical_address3;
+
+            // Set to the address of the invalid FV data
+            unsafe { GET_PHYSICAL_ADDRESS3_VALUE = invalid_fv_raw.expose_provenance() as u64 };
+
+            let test_guid = r_efi::efi::Guid::from_fields(
+                0xAAAAAAAA,
+                0xBBBB,
+                0xCCCC,
+                0xDD,
+                0xEE,
+                &[0xFF, 0x00, 0x11, 0x22, 0x33, 0x44],
+            );
+            assert!(!is_fv_already_installed(test_guid), "Should return false when volume parsing fails");
+
+            unsafe { GET_PHYSICAL_ADDRESS3_VALUE = 0 };
+
+            let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
+            let _dropped_invalid_fv = unsafe { Box::from_raw(invalid_fv_raw) };
+        });
+    }
+
+    #[test]
+    fn test_dispatch_with_corrupted_fv_section() {
+        set_logger();
+
+        with_locked_state(|| {
+            init_dispatcher();
+
+            // Create corrupted FV data (an invalid FV signature/header)
+            let corrupted_fv_data = vec![0xFFu8; 256];
+
+            // Create a valid FirmwareVolumeImage section header with the corrupted data
+            use patina_ffs::section::SectionHeader;
+            let section_header = SectionHeader::Standard(ffs::section::raw_type::FIRMWARE_VOLUME_IMAGE, 256);
+
+            // Create a section with a valid header but corrupted FV data
+            let corrupted_section = Section::new_from_header_with_data(section_header, corrupted_fv_data)
+                .expect("Should create section from header and data");
+
+            // Create a pending FV image with the corrupted section
+            let pending_fv = PendingFirmwareVolumeImage {
+                parent_fv_handle: std::ptr::null_mut(),
+                file_name: r_efi::efi::Guid::from_fields(
+                    0x11111111,
+                    0x2222,
+                    0x3333,
+                    0x44,
+                    0x55,
+                    &[0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB],
+                ),
+                depex: None,
+                fv_sections: vec![corrupted_section],
+            };
+
+            // Add the pending FV to the dispatcher
+            DISPATCHER_CONTEXT.lock().pending_firmware_volume_images.push(pending_fv);
+
+            // Dispatch should log a warning and continue
+            let result = dispatch();
+
+            assert!(
+                result.is_ok() || result == Err(EfiError::NotFound),
+                "Dispatch should handle corrupted FV section gracefully"
+            );
+
+            // The corrupted FV should have been removed from pending FV images
+            assert_eq!(
+                DISPATCHER_CONTEXT.lock().pending_firmware_volume_images.len(),
+                0,
+                "A corrupted FV should be removed after a dispatch attempt"
+            );
+        });
     }
 }

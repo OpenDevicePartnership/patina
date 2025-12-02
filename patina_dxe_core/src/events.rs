@@ -101,19 +101,13 @@ pub extern "efiapi" fn close_event(event: efi::Event) -> efi::Status {
 }
 
 pub extern "efiapi" fn signal_event(event: efi::Event) -> efi::Status {
-    let status = match EVENT_DB.signal_event(event) {
-        Ok(()) => efi::Status::SUCCESS,
-        Err(err) => err.into(),
-    };
-
     //Note: The C-reference implementation of SignalEvent gets an immediate dispatch of
     //pending events as a side effect of the locking implementation calling raise/restore
-    //TPL. The spec doesn't require this; but it's likely that code out there depends
-    //on it. So emulate that here with an artificial raise/restore.
-    let old_tpl = raise_tpl(efi::TPL_HIGH_LEVEL);
-    restore_tpl(old_tpl);
-
-    status
+    //TPL. This will occur when the event lock is dropped at the end of signal_event().
+    match EVENT_DB.signal_event(event) {
+        Ok(()) => efi::Status::SUCCESS,
+        Err(err) => err.into(),
+    }
 }
 
 extern "efiapi" fn wait_for_event(
@@ -310,19 +304,14 @@ extern "efiapi" fn timer_available_callback(event: efi::Event, _context: *mut c_
     }
 }
 
-// indicates that eventing subsystem is fully initialized.
-static EVENT_DB_INITIALIZED: AtomicBool = AtomicBool::new(false);
-
 /// This callback is invoked whenever the GCD changes, and will signal the required UEFI event group.
 pub fn gcd_map_change(map_change_type: gcd::MapChangeType) {
-    if EVENT_DB_INITIALIZED.load(Ordering::SeqCst) {
-        match map_change_type {
-            gcd::MapChangeType::AddMemorySpace
-            | gcd::MapChangeType::AllocateMemorySpace
-            | gcd::MapChangeType::FreeMemorySpace
-            | gcd::MapChangeType::RemoveMemorySpace => EVENT_DB.signal_group(efi::EVENT_GROUP_MEMORY_MAP_CHANGE),
-            gcd::MapChangeType::SetMemoryAttributes | gcd::MapChangeType::SetMemoryCapabilities => (),
-        }
+    match map_change_type {
+        gcd::MapChangeType::AddMemorySpace
+        | gcd::MapChangeType::AllocateMemorySpace
+        | gcd::MapChangeType::FreeMemorySpace
+        | gcd::MapChangeType::RemoveMemorySpace => EVENT_DB.signal_group(efi::EVENT_GROUP_MEMORY_MAP_CHANGE),
+        gcd::MapChangeType::SetMemoryAttributes | gcd::MapChangeType::SetMemoryCapabilities => (),
     }
 }
 
@@ -345,9 +334,6 @@ pub fn init_events_support(bs: &mut efi::BootServices) {
     PROTOCOL_DB
         .register_protocol_notify(timer::PROTOCOL_GUID, event)
         .expect("Failed to register protocol notify on timer arch callback.");
-
-    //Indicate eventing is initialized
-    EVENT_DB_INITIALIZED.store(true, Ordering::SeqCst);
 }
 
 #[cfg(test)]
@@ -361,6 +347,7 @@ mod tests {
         test_support::with_global_lock(|| {
             unsafe {
                 crate::test_support::init_test_gcd(None);
+                crate::test_support::reset_allocators();
                 crate::test_support::init_test_protocol_db();
             }
             crate::test_support::reset_dispatcher_context();
@@ -1035,9 +1022,6 @@ mod tests {
     #[test]
     fn test_gcd_map_change() {
         with_locked_state(|| {
-            // Set initialized flag
-            EVENT_DB_INITIALIZED.store(true, Ordering::SeqCst);
-
             // Test each map change type
             gcd_map_change(gcd::MapChangeType::AddMemorySpace);
             gcd_map_change(gcd::MapChangeType::AllocateMemorySpace);
@@ -1045,20 +1029,6 @@ mod tests {
             gcd_map_change(gcd::MapChangeType::RemoveMemorySpace);
             gcd_map_change(gcd::MapChangeType::SetMemoryAttributes);
             gcd_map_change(gcd::MapChangeType::SetMemoryCapabilities);
-
-            // Reset initialized flag
-            EVENT_DB_INITIALIZED.store(false, Ordering::SeqCst);
-        });
-    }
-
-    #[test]
-    fn test_gcd_map_change_not_initialized() {
-        with_locked_state(|| {
-            // Ensure initialized flag is false
-            EVENT_DB_INITIALIZED.store(false, Ordering::SeqCst);
-
-            // Call should have no effect and not panic
-            gcd_map_change(gcd::MapChangeType::AddMemorySpace);
         });
     }
 
@@ -1408,12 +1378,6 @@ mod tests {
             assert!(boot_services.set_timer as usize != dummy_set_timer as usize);
             assert!(boot_services.raise_tpl as usize != dummy_raise_tpl as usize);
             assert!(boot_services.restore_tpl as usize != dummy_restore_tpl as usize);
-
-            // Verify initialization flag is set
-            assert!(EVENT_DB_INITIALIZED.load(Ordering::SeqCst));
-
-            // Reset the flag for other tests
-            EVENT_DB_INITIALIZED.store(false, Ordering::SeqCst);
         });
     }
 }

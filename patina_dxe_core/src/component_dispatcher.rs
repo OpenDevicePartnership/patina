@@ -450,8 +450,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn test_error_in_component_debug_asserts() {
+    fn test_dispatch_still_succeeds_with_error_in_component() {
         #[derive(patina::component::IntoComponent)]
         struct TestComponent;
 
@@ -463,6 +462,6 @@ mod tests {
 
         let mut dispatcher = ComponentDispatcher::default();
         dispatcher.insert_component(0, TestComponent.into_component());
-        dispatcher.dispatch();
+        assert!(dispatcher.dispatch(), "Dispatch should succeed even if component fails");
     }
 }

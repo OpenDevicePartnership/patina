@@ -33,6 +33,8 @@
 #![allow(unexpected_cfgs)]
 #![feature(coverage_attribute)]
 
+extern crate alloc;
+
 pub mod component;
 pub mod config;
 mod mm;

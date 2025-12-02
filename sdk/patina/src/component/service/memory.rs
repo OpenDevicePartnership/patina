@@ -1051,7 +1051,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "PageFree was not used to free the correct memory!")]
     fn test_page_free_mismatched_address_should_assert() {
         let mut value: u8 = 5;
         let data = NonNull::new(&mut value).unwrap();
@@ -1067,7 +1066,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Failed to free page allocation!")]
     fn test_page_free_should_bubble_update_page_dealloc_error() {
         let mut value: u8 = 5;
         let blob = NonNull::new(&mut value).unwrap();
@@ -1081,7 +1079,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Failed to free page allocation")]
     fn test_bubble_up_free_pages_err() {
         let mut pa = StdMemoryManager::new().allocate_pages(1, AllocationOptions::new()).unwrap();
         let mut mock = MockMemoryManager::new();

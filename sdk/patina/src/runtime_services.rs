@@ -720,11 +720,14 @@ pub(crate) mod test {
     }
 
     #[test]
-    #[should_panic(expected = "Name passed into get_variable is not null-terminated.")]
     fn test_get_variable_non_terminated() {
         let rs = runtime_services!(get_variable = mock_efi_get_variable);
 
-        let _ = rs.get_variable::<DummyVariableType>(&DUMMY_NON_NULL_TERMINATED_NAME, &DUMMY_FIRST_NAMESPACE, None);
+        let status =
+            rs.get_variable::<DummyVariableType>(&DUMMY_NON_NULL_TERMINATED_NAME, &DUMMY_FIRST_NAMESPACE, None);
+
+        assert!(status.is_err());
+        assert_eq!(status.unwrap_err(), efi::Status::INVALID_PARAMETER);
     }
 
     #[test]
@@ -774,18 +777,20 @@ pub(crate) mod test {
     }
 
     #[test]
-    #[should_panic(expected = "Name passed into set_variable is not null-terminated.")]
     fn test_set_variable_non_terminated() {
         let rs = runtime_services!(set_variable = mock_efi_set_variable);
 
         let data = DummyVariableType { value: DUMMY_DATA };
 
-        let _ = rs.set_variable::<DummyVariableType>(
+        let status = rs.set_variable::<DummyVariableType>(
             &DUMMY_NON_NULL_TERMINATED_NAME,
             &DUMMY_FIRST_NAMESPACE,
             DUMMY_ATTRIBUTES,
             &data,
         );
+
+        assert!(status.is_err());
+        assert_eq!(status.unwrap_err(), efi::Status::INVALID_PARAMETER);
     }
 
     #[test]
@@ -842,11 +847,13 @@ pub(crate) mod test {
     }
 
     #[test]
-    #[should_panic(expected = "Zero-length name passed into get_next_variable_name.")]
     fn test_get_next_variable_name_zero_length_name() {
         let rs = runtime_services!(get_next_variable_name = mock_efi_get_next_variable_name);
 
-        let _ = rs.get_next_variable_name(&DUMMY_ZERO_LENGTH_NAME, &DUMMY_FIRST_NAMESPACE);
+        let status = rs.get_next_variable_name(&DUMMY_ZERO_LENGTH_NAME, &DUMMY_FIRST_NAMESPACE);
+
+        assert!(status.is_err());
+        assert_eq!(status.unwrap_err(), efi::Status::INVALID_PARAMETER);
     }
 
     #[test]

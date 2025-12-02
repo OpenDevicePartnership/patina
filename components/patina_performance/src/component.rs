@@ -9,6 +9,7 @@
 
 pub mod performance;
 pub mod performance_config_provider;
+mod protocol;
 
 // Re-export the Performance component for easier access.
 pub use performance::Performance;

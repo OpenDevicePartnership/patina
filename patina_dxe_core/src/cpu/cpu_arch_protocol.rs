@@ -26,7 +26,7 @@ use r_efi::efi;
 use patina::pi::protocols::cpu_arch::{CpuFlushType, CpuInitType, InterruptHandler, PROTOCOL_GUID, Protocol};
 
 #[repr(C)]
-pub struct EfiCpuArchProtocolImpl {
+struct EfiCpuArchProtocolImpl {
     protocol: Protocol,
 
     // Crate accessible fields
