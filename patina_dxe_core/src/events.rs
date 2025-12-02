@@ -11,6 +11,7 @@ use core::{
     sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 
+use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality};
 use r_efi::efi;
 
 use patina::pi::protocols::timer;
@@ -298,7 +299,7 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
 extern "efiapi" fn timer_tick(time: u64) {
     let entry_count = TIMER_TICK_ENTRY_COUNT.fetch_add(1, Ordering::AcqRel);
     log::info!("Timer tick entry");
-    let start_time = SYSTEM_TIME.load(Ordering::Acquire);
+    let start_time = Arch::cpu_count();
 
     // Check for recursive entry (interrupt during interrupt)
     let was_in_progress = TIMER_TICK_IN_PROGRESS.swap(true, Ordering::AcqRel);
@@ -312,7 +313,7 @@ extern "efiapi" fn timer_tick(time: u64) {
     EVENT_DB.timer_tick(current_time);
     restore_tpl(old_tpl); //implicitly dispatches timer notifies if any.
 
-    let end_time = SYSTEM_TIME.load(Ordering::Acquire);
+    let end_time = Arch::cpu_count();
     let elapsed = end_time.saturating_sub(start_time);
 
     // Update total time
@@ -340,15 +341,15 @@ extern "efiapi" fn timer_tick(time: u64) {
     if (exit_count + 1) % 100 == 0 {
         let total_entries = entry_count + 1;
         let total_exits = exit_count + 1;
-        let total_time = TIMER_TICK_TOTAL_TIME.load(Ordering::Acquire);
-        let longest = TIMER_TICK_LONGEST_TIME.load(Ordering::Acquire);
+        let total_time = TIMER_TICK_TOTAL_TIME.load(Ordering::Acquire) as f64 / (2_446_552_365_u64 as f64);
+        let longest = TIMER_TICK_LONGEST_TIME.load(Ordering::Acquire) as f64 / (2_446_552_365_u64 as f64);
         log::info!(
             "TIMER TICK STATS: entries={}, exits={}, total_time={}, longest={}, avg={}",
             total_entries,
             total_exits,
             total_time,
             longest,
-            if total_exits > 0 { total_time / total_exits } else { 0 }
+            if total_exits > 0 { total_time / total_exits as f64 } else { 0.0 }
         );
     }
 }
