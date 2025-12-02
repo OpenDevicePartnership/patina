@@ -708,14 +708,16 @@ mod tests {
     /// Tests the generic _create_performance_measurement function.
     #[test]
     fn test_generic_create_performance_measurement() {
-        let mut boot_services = MockBootServices::new();
+        let boot_services = MockBootServices::new();
         let fbpt = TplMutex::new(
+            // SAFETY: Test code - creating reference to boot_services for TplMutex initialization.
             unsafe { &*ptr::addr_of!(boot_services) },
             Tpl::NOTIFY,
             MockFirmwareBasicBootPerfTable::new(),
         );
         static mut BOOT_SERVICES: Option<&MockBootServices> = None;
         static mut FBPT: Option<&TplMutex<'static, MockFirmwareBasicBootPerfTable, MockBootServices>> = None;
+        // SAFETY: Test code - initializing static variables with test references.
         unsafe {
             BOOT_SERVICES = Some(&*ptr::addr_of!(boot_services));
             FBPT = Some(&*ptr::addr_of!(fbpt));
@@ -732,7 +734,9 @@ mod tests {
             0,
             unknown_perf_id,
             attribute,
+            // SAFETY: Test code - unwrapping test statics that were initialized above.
             unsafe { BOOT_SERVICES.unwrap() },
+            // SAFETY: Test code - unwrapping test statics that were initialized above.
             unsafe { FBPT.unwrap() },
             &Service::mock(Box::new(MockTimer {})),
         );
@@ -747,7 +751,9 @@ mod tests {
             0,
             unknown_perf_id,
             PerfAttribute::PerfStartEntry,
+            // SAFETY: Test code - unwrapping test statics that were initialized above.
             unsafe { BOOT_SERVICES.unwrap() },
+            // SAFETY: Test code - unwrapping test statics that were initialized above.
             unsafe { FBPT.unwrap() },
             &Service::mock(Box::new(MockTimer {})),
         );
@@ -759,20 +765,24 @@ mod tests {
         let valid_guid = efi::Guid::from_bytes(&[1; 16]);
         let valid_guid_ptr = &valid_guid as *const efi::Guid as *const c_void;
 
+        #[allow(clippy::manual_dangling_ptr)]
         let invalid_guid_ptr = 0x1_usize as *const c_void; // Misaligned pointer.
-        let null_guid_ptr = ptr::null() as *const c_void; // Null pointer.
+        let null_guid_ptr = ptr::null(); // Null pointer.
 
         assert!(CallerIdentifier::validate_guid(valid_guid_ptr));
         assert!(!CallerIdentifier::validate_guid(invalid_guid_ptr));
         assert!(!CallerIdentifier::validate_guid(null_guid_ptr));
 
+        // SAFETY: Test code - valid pointer to a GUID.
         let caller_id_guid = unsafe { CallerIdentifier::from_ptr(valid_guid_ptr, true) }.unwrap();
         assert!(matches!(caller_id_guid, CallerIdentifier::Guid(_)));
 
         // Any value is valid as a handle.
+        // SAFETY: Test code - valid pointer to a handle.
         let caller_id_handle = unsafe { CallerIdentifier::from_ptr(0x2_usize as *const c_void, false) }.unwrap();
         assert!(matches!(caller_id_handle, CallerIdentifier::Handle(_)));
 
+        // SAFETY: Test code - invalid pointer to a GUID.
         assert!(unsafe { CallerIdentifier::from_ptr(invalid_guid_ptr, true) }.is_none());
     }
 

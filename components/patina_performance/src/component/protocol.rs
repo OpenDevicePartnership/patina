@@ -1,3 +1,14 @@
+//! Patina Performance Protocol
+//!
+//! Defines the interface for the performance measurement UEFI protocol.
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
+
 use core::{
     ffi::{CStr, c_char, c_void},
     sync::atomic::{AtomicBool, Ordering},
@@ -15,7 +26,7 @@ use patina::{
 use r_efi::efi;
 
 #[coverage(off)]
-// EDKII Performance Measurement Protocol implementation.
+// EDK II Performance Measurement Protocol implementation.
 //
 /// Skip coverage as this function is tested via the generic version, (_create_performance_measurement).
 ///
@@ -34,12 +45,13 @@ pub(crate) unsafe extern "efiapi" fn create_performance_measurement_efiapi(
     // SAFETY: The caller ensures that string is a valid C string pointer (or NULL).
     let string = unsafe { string.as_ref().map(|s| CStr::from_ptr(s).to_string_lossy().to_string()) };
 
-    // NOTE: If the Perf is not the known Token used in the core but have same ID with the core Token, this case will
-    //       not be supported.
-    // And in current usage mode, for the unknown ID, there is a general rule:
-    //   - If it is start pref: the lower 4 bits of the ID should be 0.
-    //   - If it is end pref: the lower 4 bits of the ID should not be 0.
-    //   - If input ID doesn't follow the rule, we will adjust it.
+    // To conform with UEFI spec, `identifier` must be a u32 when passed in.
+    // However, FPDT performance measurement IDs are always u16.
+    if identifier > u16::MAX as u32 {
+        log::error!("Performance: Invalid identifier passed to create_performance_measurement_efiapi: {identifier}",);
+        return efi::Status::INVALID_PARAMETER;
+    }
+
     let mut perf_id = identifier as u16;
     let is_known_id = KnownPerfId::try_from(perf_id).is_ok();
     let is_known_token = string.as_ref().is_some_and(|s| KnownPerfToken::try_from(s.as_str()).is_ok());
@@ -47,8 +59,10 @@ pub(crate) unsafe extern "efiapi" fn create_performance_measurement_efiapi(
         if perf_id != 0 && is_known_id && is_known_token {
             return efi::Status::INVALID_PARAMETER;
         } else if perf_id != 0 && !is_known_id && !is_known_token {
+            // By convention, a start measurement should have its lower 4 bits as 0.
             if attribute == PerfAttribute::PerfStartEntry && ((perf_id & 0x000F) != 0) {
                 perf_id &= 0xFFF0;
+            // By convention, an end measurement should have its lower 4 bits not as 0.
             } else if attribute == PerfAttribute::PerfEndEntry && ((perf_id & 0x000F) == 0) {
                 perf_id += 1;
             }

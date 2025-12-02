@@ -51,13 +51,7 @@ fn start_perf_measurement(
     identifier: u32,
     create_performance_measurement: CreateMeasurement,
 ) {
-    let string = if token.is_some() {
-        token
-    } else if module.is_some() {
-        module
-    } else {
-        None
-    };
+    let string = token.or(module);
 
     if let Err(e) = (create_performance_measurement)(
         CallerIdentifier::Handle(handle),
@@ -81,13 +75,8 @@ fn end_perf_measurement(
     identifier: u32,
     create_performance_measurement: CreateMeasurement,
 ) {
-    let string = if token.is_some() {
-        token
-    } else if module.is_some() {
-        module
-    } else {
-        None
-    };
+    let string = token.or(module);
+
     if let Err(e) = (create_performance_measurement)(
         CallerIdentifier::Handle(handle),
         None,
