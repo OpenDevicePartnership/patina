@@ -2,7 +2,7 @@
 
 Patina MM provides Management Mode (MM) integration for Patina-based firmware. It focuses on safe MM communication,
 deterministic MMI handling, and platform hooks that enable Patina components to interact with existing MM handlers
-without relying on C implementations. Read more about MM Technology in below, [here](#mm-technology-background).
+without relying on C implementations. Read more about MM Technology [here](#mm-technology-background).
 
 ## Capabilities
 
@@ -40,7 +40,7 @@ The crate defines `MmCommunicationConfiguration` as the shared configuration str
 ## Platform Integration guidance
 
 Below is the integration guidance for platform owners who wish to configure and produce the `MmCommunication` and
-SwMmiTrigger services for usage / consumption by components throughout the dispatch process.
+`SwMmiTrigger` services for usage / consumption by components throughout the dispatch process.
 
 - Register `MmCommunicationConfiguration` to set platform-specific MM parameters.
 - Add `SwMmiManager` so the software MMI trigger service can be produced for other Patina components to consume.
@@ -97,7 +97,7 @@ impl ComponentInfo for ExamplePlatform {
 ## Service Usage guidance
 
 Below is example usage of the `MmCommunication` service for component writers who wish to consume and use the
-funcitonality in their Patina component. If you are looking for a real world example, please refer to the [QemuQ35MmTest](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/src/q35/component/service/mm_test.rs)
+functionality in their Patina component. If you are looking for a real world example, please refer to the [QemuQ35MmTest](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/src/q35/component/service/mm_test.rs)
 component in [patina-dxe-core-qemu](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/src/q35/component/service/mm_test.rs).
 
 ```rust
