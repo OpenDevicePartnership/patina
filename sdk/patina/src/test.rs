@@ -307,7 +307,7 @@ impl TestData {
             (callback)(self.test_case.name, msg);
         }
 
-        recorder.record_result(self.test_case.name, self.test_case.run(storage, self.debug_mode));
+        recorder.record_result(self.test_case.name, result);
     }
 }
 
