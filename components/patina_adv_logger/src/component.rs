@@ -13,7 +13,7 @@ use alloc::boxed::Box;
 use patina::{
     boot_services::{BootServices, StandardBootServices},
     component::{
-        IntoComponent,
+        component,
         service::{Service, perf_timer::ArchTimerFunctionality},
     },
     error::{EfiError, Result},
@@ -37,7 +37,6 @@ where
 }
 
 /// The component that will install the Advanced Logger protocol.
-#[derive(IntoComponent)]
 pub struct AdvancedLoggerComponent<S>
 where
     S: SerialIO + Send + 'static,
@@ -45,6 +44,7 @@ where
     adv_logger: &'static AdvancedLogger<'static, S>,
 }
 
+#[component]
 impl<S> AdvancedLoggerComponent<S>
 where
     S: SerialIO + Send + 'static,

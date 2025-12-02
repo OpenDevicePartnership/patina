@@ -1,0 +1,11 @@
+error: Patina component parameter conflict detected: parameter '_cmd2' (position 2) conflicts with parameter '_cmd1' (position 1). Only one Commands parameter is allowed.
+  --> tests/ui/duplicate_commands.rs:12:43
+   |
+12 |     fn entry_point(self, _cmd1: Commands, _cmd2: Commands) -> Result<()> {
+   |                                           ^^^^^^^^^^^^^^^
+
+error: first '_cmd1' parameter here
+  --> tests/ui/duplicate_commands.rs:12:26
+   |
+12 |     fn entry_point(self, _cmd1: Commands, _cmd2: Commands) -> Result<()> {
+   |                          ^^^^^^^^^^^^^^^

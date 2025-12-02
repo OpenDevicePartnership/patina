@@ -11,7 +11,7 @@
 use core::{ffi::c_void, mem::size_of, slice::from_raw_parts};
 
 use alloc::{alloc::Allocator, boxed::Box};
-use patina::{boot_services::BootServices, component::IntoComponent, pi::error_codes::EFI_NOT_AVAILABLE_YET};
+use patina::{boot_services::BootServices, component::component, pi::error_codes::EFI_NOT_AVAILABLE_YET};
 use r_efi::efi;
 
 use crate::{allocator::EFI_RUNTIME_SERVICES_DATA_ALLOCATOR, tpl_mutex};
@@ -710,9 +710,10 @@ pub fn init_system_table() {
 
 /// A component to register a callback that recalculates the CRC32 checksum of the system table
 /// when certain protocols are installed.
-#[derive(IntoComponent, Default)]
+#[derive(Default)]
 pub(crate) struct SystemTableChecksumInstaller;
 
+#[component]
 impl SystemTableChecksumInstaller {
     fn entry_point(self, bs: patina::boot_services::StandardBootServices) -> patina::error::Result<()> {
         extern "efiapi" fn callback(_event: efi::Event, _: *mut c_void) {

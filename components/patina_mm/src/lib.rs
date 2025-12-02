@@ -32,7 +32,7 @@
 //!
 //! ```rust
 //! use patina_mm::service::MmCommunication;
-//! use patina::component::{IntoComponent, service::Service};
+//! use patina::component::service::Service;
 //! use r_efi::efi;
 //!
 //! /// MM Supervisor Request Header
@@ -68,9 +68,10 @@
 //! /// QEMU Q35 MM Test Component
 //! ///
 //! /// Responsible for testing the MM communication interface on the QEMU Q35 platform.
-//! #[derive(Default, IntoComponent)]
+//! #[derive(Default)]
 //! pub struct MmSupervisorDemo;
 //!
+//! #[patina::component::component]
 //! impl MmSupervisorDemo {
 //!     pub fn new() -> Self {
 //!         Self

@@ -60,6 +60,10 @@ serde = { workspace = true }
 serde_yaml = { workspace = true }
 brotli-decompressor = { workspace = true, default-features = false }
 alloc-no-stdlib = { workspace = true }
+# trybuild is intentionally only used in patina crate dependencies because
+# of unique requirements to test proc macro results. It can be moved to
+# the workspace level if a need arises in the future.
+trybuild = { version = "1.0", features = ["diff"] }
 
 [features]
 core = ['alloc']

@@ -17,7 +17,7 @@ use crate::{
 use alloc::boxed::Box;
 use patina::{
     boot_services::tpl::Tpl,
-    component::{IntoComponent, Storage},
+    component::{Storage, component},
     error::Result,
     tpl_mutex::TplMutex,
 };
@@ -63,11 +63,11 @@ impl SmbiosConfiguration {
 /// ```ignore
 /// commands.add_component(SmbiosProvider::new(3, 9));
 /// ```
-#[derive(IntoComponent)]
 pub struct SmbiosProvider {
     config: SmbiosConfiguration,
 }
 
+#[component]
 impl SmbiosProvider {
     /// Create a new SMBIOS provider with the specified SMBIOS version.
     ///

@@ -15,7 +15,7 @@ use core::{clone::Clone, convert::AsRef};
 use patina::{
     boot_services::{BootServices, StandardBootServices, event::EventType, tpl::Tpl},
     component::{
-        IntoComponent,
+        component,
         hob::Hob,
         params::Config,
         service::{Service, perf_timer::ArchTimerFunctionality},
@@ -45,9 +45,9 @@ pub use mu_rust_helpers::function;
 type MmPerformanceEventContext<BB, B, F> = Box<(BB, &'static TplMutex<'static, F, B>, Service<dyn MmCommunication>)>;
 
 /// Performance Component.
-#[derive(IntoComponent)]
 pub struct Performance;
 
+#[component]
 impl Performance {
     /// Entry point of [`Performance`]
     #[coverage(off)] // This is tested via the generic version, see _entry_point.

@@ -17,7 +17,7 @@ use crate::{
     service::platform_mm_control::PlatformMmControl,
 };
 use patina::component::{
-    IntoComponent,
+    component,
     params::{Commands, Config},
     service::{IntoService, Service},
 };
@@ -49,12 +49,13 @@ pub unsafe trait SwMmiTrigger {
 }
 
 /// A component that provides the `SwMmiTrigger` service.
-#[derive(Debug, IntoComponent, IntoService)]
+#[derive(Debug, IntoService)]
 #[service(dyn SwMmiTrigger)]
 pub struct SwMmiManager {
     inner_config: MmCommunicationConfiguration,
 }
 
+#[component]
 impl SwMmiManager {
     /// Create a new `SwMmiManager` instance.
     pub fn new() -> Self {

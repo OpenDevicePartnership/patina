@@ -18,13 +18,12 @@ extern crate alloc;
 
 use crate::config;
 use patina::component::{
-    IntoComponent,
+    component,
     hob::{FromHob, Hob},
     params::ConfigMut,
 };
 
 /// Responsible for providing performance configuration information to other performance components.
-#[derive(IntoComponent)]
 pub struct PerformanceConfigurationProvider;
 
 /// A HOB that contains Patina Performance component configuration information.
@@ -45,6 +44,7 @@ pub struct PerformanceConfigHob {
     enabled_measurements: u32,
 }
 
+#[component]
 impl PerformanceConfigurationProvider {
     /// Entry point for the Patina Performance Configuration Provider.
     ///

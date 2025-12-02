@@ -1,0 +1,11 @@
+error: Patina component parameter conflict detected: parameter '_rt2' (position 2) conflicts with parameter '_rt1' (position 1). Only one StandardRuntimeServices parameter is allowed.
+  --> tests/ui/duplicate_runtime_services.rs:13:57
+   |
+13 |     fn entry_point(self, _rt1: StandardRuntimeServices, _rt2: StandardRuntimeServices) -> Result<()> {
+   |                                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: first '_rt1' parameter here
+  --> tests/ui/duplicate_runtime_services.rs:13:26
+   |
+13 |     fn entry_point(self, _rt1: StandardRuntimeServices, _rt2: StandardRuntimeServices) -> Result<()> {
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

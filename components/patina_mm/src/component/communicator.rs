@@ -23,7 +23,7 @@ use patina::{
     Guid,
     boot_services::StandardBootServices,
     component::{
-        IntoComponent, Storage,
+        Storage, component,
         service::{IntoService, Service},
     },
 };
@@ -152,7 +152,7 @@ pub trait MmCommunication {
 ///
 /// Allows sending messages via a communication ("comm") buffer and receiving responses from the MM handler where
 /// the response is stored in the same buffer.
-#[derive(IntoComponent, IntoService)]
+#[derive(IntoService)]
 #[service(dyn MmCommunication)]
 pub struct MmCommunicator {
     /// Configured communication buffers
@@ -163,6 +163,7 @@ pub struct MmCommunicator {
     notify_context: Option<&'static comm_buffer_update::ProtocolNotifyContext>,
 }
 
+#[component]
 impl MmCommunicator {
     /// Create a new `MmCommunicator` instance for testing.
     pub fn new() -> Self {

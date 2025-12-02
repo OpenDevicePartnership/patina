@@ -1,0 +1,11 @@
+error: Patina component parameter conflict detected: parameter '_bs2' (position 2) conflicts with parameter '_bs1' (position 1). Only one StandardBootServices parameter is allowed.
+  --> tests/ui/duplicate_boot_services.rs:13:54
+   |
+13 |     fn entry_point(self, _bs1: StandardBootServices, _bs2: StandardBootServices) -> Result<()> {
+   |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: first '_bs1' parameter here
+  --> tests/ui/duplicate_boot_services.rs:13:26
+   |
+13 |     fn entry_point(self, _bs1: StandardBootServices, _bs2: StandardBootServices) -> Result<()> {
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^

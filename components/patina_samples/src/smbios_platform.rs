@@ -32,7 +32,7 @@ extern crate alloc;
 
 use alloc::{string::String, vec};
 use patina::{
-    component::{IntoComponent, service::Service},
+    component::{component, service::Service},
     error::Result,
 };
 use patina_macro::SmbiosRecord;
@@ -74,9 +74,10 @@ pub struct VendorOemRecord {
 /// - Type 0x80: Custom vendor-specific record (OEM range)
 /// - Type 127: End-of-table marker
 /// - Publishing the complete table to UEFI Configuration Table
-#[derive(IntoComponent, Default)]
+#[derive(Default)]
 pub struct SmbiosExampleComponent;
 
+#[component]
 impl SmbiosExampleComponent {
     /// Create a new SMBIOS platform component
     pub fn new() -> Self {

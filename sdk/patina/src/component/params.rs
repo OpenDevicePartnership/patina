@@ -755,117 +755,13 @@ mod tests {
     use core::sync::atomic::AtomicBool;
 
     use crate::{
-        component::{IntoComponent, storage::Storage},
+        component::{IntoComponent, component, storage::Storage},
         error::Result,
     };
 
     use crate as patina;
 
     use super::*;
-
-    #[test]
-    fn test_two_mutable_config_access_to_same_type_fails() {
-        #[derive(IntoComponent)]
-        struct TestComponent;
-        impl TestComponent {
-            fn entry_point(self, _config: ConfigMut<usize>, _config2: ConfigMut<usize>) -> Result<()> {
-                todo!()
-            }
-        }
-
-        let mut storage = Storage::new();
-
-        let mut component = TestComponent.into_component();
-        component.initialize(&mut storage);
-    }
-
-    #[test]
-    fn test_mutable_and_immutable_config_access_to_same_type_fails1() {
-        #[derive(IntoComponent)]
-        struct TestComponent;
-        impl TestComponent {
-            fn entry_point(self, _config: ConfigMut<usize>, _config2: Config<usize>) -> Result<()> {
-                todo!()
-            }
-        }
-
-        let mut storage = Storage::new();
-
-        let mut component = TestComponent.into_component();
-        component.initialize(&mut storage);
-    }
-
-    #[test]
-    fn test_mutable_and_immutable_config_access_to_same_type_fails2() {
-        #[derive(IntoComponent)]
-        struct TestComponent;
-        impl TestComponent {
-            fn entry_point(self, _config: Config<usize>, _config2: ConfigMut<usize>) -> Result<()> {
-                todo!()
-            }
-        }
-
-        let mut storage = Storage::new();
-
-        let mut component = TestComponent.into_component();
-        component.initialize(&mut storage);
-    }
-
-    #[test]
-    fn test_mutable_storage_and_immutable_config_fail() {
-        #[derive(IntoComponent)]
-        struct TestComponent;
-        impl TestComponent {
-            fn entry_point(self, _storage: &mut Storage, _config: Config<usize>) -> Result<()> {
-                todo!()
-            }
-        }
-
-        let mut component = TestComponent.into_component();
-        component.initialize(&mut Storage::new());
-    }
-
-    #[test]
-    fn test_mutable_storage_and_mutable_config_fail() {
-        #[derive(IntoComponent)]
-        struct TestComponent;
-        impl TestComponent {
-            fn entry_point(self, _storage: &mut Storage, _config: ConfigMut<usize>) -> Result<()> {
-                todo!()
-            }
-        }
-
-        let mut component = TestComponent.into_component();
-        component.initialize(&mut Storage::new());
-    }
-
-    #[test]
-    fn test_config_and_mutable_storage_fail() {
-        #[derive(IntoComponent)]
-        struct TestComponent;
-        impl TestComponent {
-            fn entry_point(self, _config: Config<usize>, _storage: &mut Storage) -> Result<()> {
-                todo!()
-            }
-        }
-
-        let mut component = TestComponent.into_component();
-        component.initialize(&mut Storage::new());
-    }
-
-    #[test]
-    fn test_mutable_config_and_mutable_storage_fail() {
-        #[derive(IntoComponent)]
-        struct TestComponent;
-        impl TestComponent {
-            fn entry_point(self, _config: ConfigMut<usize>, _storage: &mut Storage) -> Result<()> {
-                todo!()
-            }
-        }
-
-        let mut component = TestComponent.into_component();
-        component.initialize(&mut Storage::new());
-    }
 
     #[test]
     fn test_config_mut_deref_sticks_outside_fn() {
@@ -973,19 +869,6 @@ mod tests {
         storage.get_config_mut::<i32>().unwrap().lock();
 
         assert!(ConfigMut::<i32>::try_validate(&id, (&storage).into()).is_err());
-    }
-
-    #[test]
-    fn test_config_mut_and_storage_cannot_be_requested_in_same_function() {
-        let mut storage = Storage::new();
-
-        // Mock metadata for the param function. This gets updated as you init each param.
-        // The i32 will be the component name. Typically this is the function signature.
-        let mut mock_metadata = MetaData::new::<i32>();
-
-        <&Storage as Param>::init_state(&mut storage, &mut mock_metadata);
-
-        ConfigMut::<i32>::init_state(&mut storage, &mut mock_metadata);
     }
 
     #[test]
@@ -1170,8 +1053,9 @@ mod tests {
             }
         }
 
-        #[derive(IntoComponent)]
         struct TestComponent;
+
+        #[component]
         impl TestComponent {
             fn entry_point(self, mut cmds: Commands) -> Result<()> {
                 cmds.add_config(42i32);
@@ -1198,8 +1082,9 @@ mod tests {
     #[test]
     /// Ensure the common story of "Create service from Config" works
     fn test_deferred_and_config_compatability() {
-        #[derive(IntoComponent)]
         struct TestComponent;
+
+        #[component]
         impl TestComponent {
             fn entry_point(self, _cmds: Commands, _config: Config<i32>, _config2: ConfigMut<u32>) -> Result<()> {
                 Ok(())
@@ -1213,26 +1098,12 @@ mod tests {
     }
 
     #[test]
-    fn test_cannot_have_two_commands_in_same_function() {
-        #[derive(IntoComponent)]
-        struct TestComponent;
-        impl TestComponent {
-            fn entry_point(self, _cmds: Commands, _cmds2: Commands) -> Result<()> {
-                Ok(())
-            }
-        }
-
-        let mut storage = Storage::new();
-        let mut component = TestComponent.into_component();
-        component.initialize(&mut storage);
-    }
-
-    #[test]
     fn test_param_function_consume_self_runs_successfully() {
         static DID_RUN: AtomicBool = AtomicBool::new(false);
 
-        #[derive(IntoComponent)]
         struct TestComponent;
+
+        #[component]
         impl TestComponent {
             fn entry_point(self) -> Result<()> {
                 DID_RUN.store(true, core::sync::atomic::Ordering::SeqCst);
@@ -1252,8 +1123,9 @@ mod tests {
     fn test_param_function_consume_ref_self_runs_successfully() {
         static DID_RUN: AtomicBool = AtomicBool::new(false);
 
-        #[derive(IntoComponent)]
         struct TestComponent;
+
+        #[component]
         impl TestComponent {
             fn entry_point(&self) -> Result<()> {
                 DID_RUN.store(true, core::sync::atomic::Ordering::SeqCst);
@@ -1273,8 +1145,9 @@ mod tests {
     fn test_param_function_consume_mut_ref_self_runs_successfully() {
         static DID_RUN: AtomicBool = AtomicBool::new(false);
 
-        #[derive(IntoComponent)]
         struct TestComponent;
+
+        #[component]
         impl TestComponent {
             fn entry_point(&mut self) -> Result<()> {
                 DID_RUN.store(true, core::sync::atomic::Ordering::SeqCst);

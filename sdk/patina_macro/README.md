@@ -7,19 +7,19 @@ system, service registration, guided HOB parsing, on-target test discovery, and 
 
 ## Notable Macros
 
-### `#[derive(IntoComponent)]`
+### `#[component]`
 
-- Generates the boilerplate required for a struct or enum to satisfy `patina::component::IntoComponent`.
-- Expects an owning `entry_point` method that consumes `self` and takes dependency-injected parameters implementing
-  `ComponentParam`.
-  - Note: The method name can be customized with `#[entry_point(path = <func>)]`.
+- Applied to impl blocks containing an `entry_point` method to define components.
+- Validates parameters at compile time and generates the boilerplate required to satisfy `patina::component::IntoComponent`.
+- The `entry_point` method must consume `self` and takes dependency-injected parameters implementing `ComponentParam`.
+- Compile-time validation detects parameter conflicts such as duplicate `ConfigMut<T>` or mixing `Config<T>` and `ConfigMut<T>`.
 
 ```rust
-use patina::component::{IntoComponent, params::Config};
+use patina::component::{component, params::Config};
 
-#[derive(IntoComponent)]
 struct BoardInit;
 
+#[component]
 impl BoardInit {
     fn entry_point(self, config: Config<u32>) -> patina::error::Result<()> {
         patina::log::info!("Selected profile: {}", *config);

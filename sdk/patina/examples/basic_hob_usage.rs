@@ -16,7 +16,7 @@
 //! initialization is to parse the HOB list and use any registered parsers to parse a GUIDed HOB.
 use patina::{
     Guid, OwnedGuid,
-    component::{IntoComponent, Storage, prelude::*},
+    component::{IntoComponent, Storage, component, prelude::*},
 };
 use zerocopy::FromBytes;
 
@@ -62,9 +62,9 @@ pub struct BooleanConfig(pub bool);
 /// 1. Consuming a HOB that must exist for the component to run (hob1).
 /// 2. Consuming a HOB that may or may not exist (hob2).
 /// 3. Consuming a HOB that may be in the hob list multiple times (hob1 again).
-#[derive(IntoComponent)]
 pub struct MultipleHobConsumer;
 
+#[component]
 impl MultipleHobConsumer {
     pub fn entry_point(self, hob1: Hob<CustomHob1>, hob2: Option<Hob<CustomHob2>>) -> Result<()> {
         // (3) Show off that if we expect a HOB to exist multiple times, we can iterate over it.
@@ -84,9 +84,9 @@ impl MultipleHobConsumer {
 }
 
 /// A component to demonstrate how to consume a hob and convert part of it's contents into a Config.
-#[derive(IntoComponent)]
 pub struct HobToConfigConverter;
 
+#[component]
 impl HobToConfigConverter {
     fn entry_point(self, hob: Hob<CustomHob1>, mut cfg: ConfigMut<BooleanConfig>) -> Result<()> {
         cfg.0 = hob.data4 != 0;

@@ -9,73 +9,11 @@
 
 #![feature(coverage_attribute)]
 
-mod component_macro;
 mod hob_macro;
 mod service_macro;
 mod smbios_record_macro;
 mod test_macro;
-
-/// Derive Macro for implementing the `IntoComponent` trait for a type.
-///
-/// This macro automatically implements the necessary traits for the provided type implementation to be used as a
-/// `Component`. By default, the component attribute macro will assume a function, `Self::entry_point`, exists on the
-/// type, but that can be overridden with the `entry_point` attribute.
-///
-/// ## Supported types
-///
-/// - Struct
-/// - Enum
-///
-/// ## Macro Attribute
-///
-/// - `entry_point`: The function to be called when the component is executed.
-///
-/// ## Examples
-///
-/// ```rust, ignore
-/// use patina::{
-///     error::Result,
-///     component::{
-///         IntoComponent,
-///         params::Config,
-///     },
-/// };
-///
-/// #[derive(IntoComponent)]
-/// struct MyStruct(u32);
-///
-/// impl MyStruct {
-///
-///     fn entry_point(self, _cfg: Config<String>) -> Result<()> {
-///         Ok(())
-///     }
-/// }
-///
-/// #[derive(IntoComponent)]
-/// #[entry_point(path = driver)]
-/// struct MyStruct2(u32);
-///
-/// fn driver(s: MyStruct2, _cfg: Config<String>) -> Result<()> {
-///    Ok(())
-/// }
-///
-/// #[derive(IntoComponent)]
-/// #[entry_point(path = MyEnum::run_me)]
-/// enum MyEnum {
-///    A,
-///    B,
-/// }
-///
-/// impl MyEnum {
-///    fn run_me(self, _cfg: Config<String>) -> Result<()> {
-///       Ok(())
-///   }
-/// }
-/// ```
-#[proc_macro_derive(IntoComponent, attributes(entry_point, protocol))]
-pub fn component(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    component_macro::component2(item.into()).into()
-}
+mod validate_params_macro;
 
 /// Derive Macro for implementing the `IntoService` trait for a type.
 ///
@@ -210,7 +148,7 @@ pub fn patina_test(_: proc_macro::TokenStream, item: proc_macro::TokenStream) ->
 
 /// Derive Macro for implementing the `SmbiosRecordStructure` trait.
 ///
-/// This macro automatically generates a complete `SmbiosRecordStructure` trait  
+/// This macro automatically generates a complete `SmbiosRecordStructure` trait
 /// implementation, eliminating the need for manual boilerplate code.
 ///
 /// ## Macro Attributes
@@ -258,4 +196,60 @@ pub fn patina_test(_: proc_macro::TokenStream, item: proc_macro::TokenStream) ->
 #[proc_macro_derive(SmbiosRecord, attributes(smbios, string_pool))]
 pub fn smbios_record(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     smbios_record_macro::smbios_record_derive(item.into()).into()
+}
+
+/// Attribute macro for component impl blocks with automatic parameter validation.
+///
+/// This is the primary macro for defining components in Patina. It must be applied to impl blocks
+/// containing a component's `entry_point` method.
+///
+/// The macro automatically:
+/// - Verifies an `entry_point` method exists
+/// - Validates the entry_point parameters at compile time
+/// - Generates the `IntoComponent` trait implementation
+///
+/// ## Usage
+///
+/// ```rust, ignore
+/// use patina::component::component;
+///
+/// pub struct MyComponent {
+///     data: u32,
+/// }
+///
+/// #[component]
+/// impl MyComponent {
+///     fn entry_point(self, config: Config<u32>) -> Result<()> {
+///         Ok(())
+///     }
+/// }
+/// ```
+///
+/// ## Generic Types
+///
+/// ```rust, ignore
+/// pub struct MyComponent<T> {
+///     data: T,
+/// }
+///
+/// #[component]
+/// impl<T> MyComponent<T> {
+///     fn entry_point(self, config: Config<T>) -> Result<()> {
+///         Ok(())
+///     }
+/// }
+/// ```
+///
+/// ## Validation Rules
+///
+/// - Impl block must contain an `entry_point` method
+/// - Entry point must have `self`, `mut self``, `&self`, or `&mut self` as the first parameter
+/// - No duplicate `ConfigMut<T>` parameters with the same type T
+/// - Cannot have both `Config<T>` and `ConfigMut<T>` for the same type T
+/// - Cannot use `&mut Storage` with `Config<T>` or `ConfigMut<T>`
+/// - Cannot use `&Storage` with `ConfigMut<T>`
+/// - Cannot have multiple `Commands` parameters or multiple service table parameters
+#[proc_macro_attribute]
+pub fn component(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    validate_params_macro::component_entry_point(attr.into(), item.into()).into()
 }

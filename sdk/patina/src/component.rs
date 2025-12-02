@@ -22,34 +22,48 @@
 //!
 //! ## Creating a Component
 //!
-//! The only requirement for a component is that it implements the [Component] trait. This trait defines the methods
-//! necessary for a component to be executed by the DxeCore. The [Component] trait is public, so it can be implemented
-//! by any user-defined type. So long as it implements [IntoComponent], it can be registered with and executed by the
-//! DxeCore.
+//! Components are defined by applying the `#[component]` attribute to an impl block that contains an `entry_point`
+//! method. The `entry_point` method name is mandatory and cannot be customized.
 //!
-//! ### `StructComponent`
+//! ### Basic Component Structure
 //!
-//! This crate provides a single component implementation, [StructComponent], which is a component that allows for
-//! private internal configuration. To enable a struct or enum to be transformed into a [StructComponent], a derive
-//! macro, [IntoComponent] is provided to implement the corresponding trait automatically. By default, the macro
-//! expects the struct or enum to have a method named `entry_point` with the appropriate function signature, however
-//! this can be overridden with the `#[entry_point = path::to::function]` attribute.
+//! ```rust,ignore
+//! use patina::component::component;
+//! use patina::error::Result;
 //!
-//! It is important to note that the function's first parameter must be `self` or `mut self`, **NOT** `&self` or
-//! `&mut self`. This design choice was made as components are only expected to be executed once, and by consuming
-//! `self`, you are able to pass ownership of the entire struct (or items within the struct) to other "things" (for
-//! lack of a better term) without the need for cloning or borrowing. The rest of the parameters must implement the
-//! [Param](params::Param) trait, which is described in more detail below. If not all parameters implement
-//! [Param](params::Param), the macro will succeed, but the underlying implementation will report a diagnostic error
-//! at compile time.
+//! pub struct MyComponent {
+//!     data: u32,
+//! }
+//!
+//! #[component]
+//! impl MyComponent {
+//!     fn entry_point(self) -> Result<()> {
+//!         // Component logic here
+//!         Ok(())
+//!     }
+//! }
+//! ```
+//!
+//! The `#[component]` attribute automatically:
+//! - Validates that an `entry_point` method exists
+//! - Validates parameters for conflicts at compile time
+//! - Generates the `IntoComponent` trait implementation
+//!
+//! ### Parameter Validation
+//!
+//! The attribute validates that there are no conflicting parameter combinations such as:
+//! - Duplicate `ConfigMut<T>` types
+//! - Both `Config<T>` and `ConfigMut<T>` for the same type T
+//! - `&mut Storage` with `Config<T>` or `ConfigMut<T>`
+//! - `&Storage` with `ConfigMut<T>`
+//!
+//! ### Entry Point Requirements
+//!
+//! The entry point function's first parameter must be `self, `mut self`, `&self` or `&mut self`. The rest of the
+//! parameters must implement the [Param](params::Param) trait, which is described in more detail below.
 //!
 //! Note: there is an arbitrary parameter count limit of 5, but this can be changed in the future if needed. See the
 //! [params] module for more information.
-//!
-//! Note: Certain combinations of parameters may lead to undefined behavior as they can allow multiple mutable
-//! accesses to the same data. Each parameter type checks for conflicts with previously registered accesses, but
-//! **ONLY** on debug builds (and not during testing). In release builds, these checks are disabled for performance
-//! and size reasons. In test builds, they are disabled to focus testing on functionality rather than debug assertions.
 //!
 //! ### `Param` types
 //!
@@ -80,37 +94,37 @@
 //! use patina::{
 //!     error::Result,
 //!     component::{
-//!         IntoComponent,
+//!         component,
 //!         params::Config,
 //!     },
 //! };
 //!
-//! #[derive(IntoComponent)]
 //! struct MyStruct(u32);
 //!
+//! #[component]
 //! impl MyStruct {
 //!     fn entry_point(self, _cfg: Config<String>) -> Result<()> {
 //!         Ok(())
 //!     }
 //! }
 //!
-//! #[derive(IntoComponent)]
-//! #[entry_point(path = driver)]
 //! struct MyStruct2(u32);
 //!
-//! fn driver(s: MyStruct2, _cfg: Config<String>) -> Result<()> {
-//!    Ok(())
+//! #[component]
+//! impl MyStruct2 {
+//!     fn entry_point(self, _cfg: Config<String>) -> Result<()> {
+//!        Ok(())
+//!     }
 //! }
 //!
-//! #[derive(IntoComponent)]
-//! #[entry_point(path = MyEnum::run_me)]
 //! enum MyEnum {
 //!    A,
 //!    B,
 //! }
 //!
+//! #[component]
 //! impl MyEnum {
-//!    fn run_me(self, _cfg: Config<String>) -> Result<()> {
+//!    fn entry_point(self, _cfg: Config<String>) -> Result<()> {
 //!       Ok(())
 //!   }
 //! }
@@ -141,7 +155,7 @@ pub use storage::{Storage, UnsafeStorageCell};
 #[doc(hidden)]
 pub use struct_component::StructComponent;
 
-pub use patina_macro::IntoComponent;
+pub use patina_macro::component;
 
 /// An executable object whose parameters implement [Param](params::Param).
 pub trait Component {
@@ -206,33 +220,34 @@ mod tests {
     use crate::{
         Guid, OwnedGuid,
         component::{
+            component,
             hob::{FromHob, Hob},
             params::ConfigMut,
         },
         error::{EfiError, Result},
     };
 
-    #[derive(IntoComponent)]
     struct ComponentSuccess;
 
+    #[component]
     impl ComponentSuccess {
         fn entry_point(self) -> Result<()> {
             Ok(())
         }
     }
 
-    #[derive(IntoComponent)]
     struct ComponentNotDispatchedConfig;
 
+    #[component]
     impl ComponentNotDispatchedConfig {
         fn entry_point(self, _: ConfigMut<u32>) -> Result<()> {
             Ok(())
         }
     }
 
-    #[derive(IntoComponent)]
     struct ComponentFail;
 
+    #[component]
     impl ComponentFail {
         fn entry_point(self) -> Result<()> {
             Err(EfiError::Aborted)
@@ -244,9 +259,9 @@ mod tests {
     #[repr(C)]
     pub struct TestHob;
 
-    #[derive(IntoComponent)]
     struct ComponentHobDep1;
 
+    #[component]
     impl ComponentHobDep1 {
         fn entry_point(self, _hob: Hob<TestHob>) -> Result<()> {
             Ok(())
@@ -258,17 +273,17 @@ mod tests {
     #[repr(C)]
     pub struct TestHob2;
 
-    #[derive(IntoComponent)]
     struct ComponentHobDep2;
 
+    #[component]
     impl ComponentHobDep2 {
         fn entry_point(self, _hob: Hob<TestHob2>) -> Result<()> {
             Ok(())
         }
     }
-    #[derive(IntoComponent)]
     struct ComponentHobDep3;
 
+    #[component]
     impl ComponentHobDep3 {
         fn entry_point(self, _hob: Hob<TestHob2>) -> Result<()> {
             Ok(())
