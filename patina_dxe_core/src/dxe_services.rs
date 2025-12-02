@@ -18,12 +18,7 @@ use patina_ffs::volume::VolumeRef;
 use patina::pi::dxe_services;
 use r_efi::efi;
 
-use crate::{
-    Core, GCD, PlatformInfo,
-    allocator::{EFI_RUNTIME_SERVICES_DATA_ALLOCATOR, core_allocate_pool},
-    config_tables, gcd,
-    systemtables::EfiSystemTable,
-};
+use crate::{Core, GCD, PlatformInfo, allocator::core_allocate_pool, config_tables, gcd, systemtables::EfiSystemTable};
 
 extern "efiapi" fn add_memory_space(
     gcd_memory_type: dxe_services::GcdMemoryType,
@@ -370,7 +365,7 @@ extern "efiapi" fn get_io_space_map(
 impl<P: PlatformInfo> Core<P> {
     /// Initializes and installs the DXE Services table into the provided system table.
     pub(crate) fn install_dxe_services_table(&self, system_table: &mut EfiSystemTable) {
-        let mut dxe_system_table = dxe_services::DxeServicesTable {
+        let mut dxe_services_system_table = dxe_services::DxeServicesTable {
             header: efi::TableHeader {
                 signature: efi::BOOT_SERVICES_SIGNATURE,
                 revision: efi::BOOT_SERVICES_REVISION,
@@ -397,20 +392,20 @@ impl<P: PlatformInfo> Core<P> {
             process_firmware_volume: Self::process_firmware_volume_efiapi,
             set_memory_space_capabilities,
         };
-        let dxe_system_table_ptr = &dxe_system_table as *const dxe_services::DxeServicesTable;
+        let dxe_services_system_table_ptr = &dxe_services_system_table as *const dxe_services::DxeServicesTable;
         let crc32 = unsafe {
             crc32fast::hash(from_raw_parts(
-                dxe_system_table_ptr as *const u8,
+                dxe_services_system_table_ptr as *const u8,
                 mem::size_of::<dxe_services::DxeServicesTable>(),
             ))
         };
-        dxe_system_table.header.crc32 = crc32;
+        dxe_services_system_table.header.crc32 = crc32;
 
-        let dxe_system_table = Box::new_in(dxe_system_table, &EFI_RUNTIME_SERVICES_DATA_ALLOCATOR);
+        let dxe_services_system_table = Box::new(dxe_services_system_table);
 
         let _ = config_tables::core_install_configuration_table(
             dxe_services::DXE_SERVICES_TABLE_GUID,
-            Box::into_raw_with_allocator(dxe_system_table).0 as *mut c_void,
+            Box::into_raw(dxe_services_system_table) as *mut c_void,
             system_table,
         );
     }
