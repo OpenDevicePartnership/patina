@@ -15,7 +15,7 @@ use r_efi::efi;
 
 use patina::pi::protocols::timer;
 
-use patina_internal_cpu::interrupts;
+use patina_internal_cpu::{cpu::EfiCpu, interrupts};
 
 use crate::{
     event_db::{SpinLockedEventDb, TimerDelay},
@@ -115,7 +115,7 @@ extern "efiapi" fn wait_for_event(
     event_array: *mut efi::Event,
     out_index: *mut usize,
 ) -> efi::Status {
-    if number_of_events == 0 || event_array.is_null() || out_index.is_null() {
+    if number_of_events == 0 || event_array.is_null() {
         return efi::Status::INVALID_PARAMETER;
     }
 
@@ -132,16 +132,25 @@ extern "efiapi" fn wait_for_event(
             match check_event(event) {
                 efi::Status::NOT_READY => (),
                 status => {
-                    // Safety: caller must ensure that out_index is a valid pointer. It is null-checked above.
-                    unsafe {
-                        out_index.write_unaligned(index);
-                    };
+                    // Safety: caller must ensure that out_index is a valid pointer if it is not null.
+                    if !out_index.is_null() {
+                        unsafe {
+                            out_index.write_unaligned(index);
+                        };
+                    }
                     return status;
                 }
             }
             // Safety: caller must ensure that event_array is a valid pointer and number_of_events is correct. event_array is null-checked above.
             event_ptr = unsafe { event_ptr.add(1) };
         }
+
+        // EDK2 core signals an idle event here to notify an event group of the "idle" state. The only consumers of that
+        // event are the CPU architectural drivers which use it to enter a low power state until the next interrupt.
+        // Patina implements CPU architectural support as part of the core, so directly call the sleep() method to avoid
+        // exposing the idle event to outside consumers (this event group is not specified in UEFI or PI specs). In the
+        // event that a need arises to expose the idle event to consumers outside of Patina, it can be signaled here.
+        EfiCpu::sleep();
     }
 }
 
@@ -310,8 +319,9 @@ pub fn gcd_map_change(map_change_type: gcd::MapChangeType) {
         gcd::MapChangeType::AddMemorySpace
         | gcd::MapChangeType::AllocateMemorySpace
         | gcd::MapChangeType::FreeMemorySpace
-        | gcd::MapChangeType::RemoveMemorySpace => EVENT_DB.signal_group(efi::EVENT_GROUP_MEMORY_MAP_CHANGE),
-        gcd::MapChangeType::SetMemoryAttributes | gcd::MapChangeType::SetMemoryCapabilities => (),
+        | gcd::MapChangeType::RemoveMemorySpace
+        | gcd::MapChangeType::SetMemoryCapabilities => EVENT_DB.signal_group(efi::EVENT_GROUP_MEMORY_MAP_CHANGE),
+        gcd::MapChangeType::SetMemoryAttributes => (),
     }
 }
 
@@ -782,10 +792,6 @@ mod tests {
 
             // Test null event array
             let status = wait_for_event(1, ptr::null_mut(), &mut index as *mut usize);
-            assert_eq!(status, efi::Status::INVALID_PARAMETER);
-
-            // Test null out_index
-            let status = wait_for_event(1, events.as_ptr() as *mut efi::Event, ptr::null_mut());
             assert_eq!(status, efi::Status::INVALID_PARAMETER);
 
             // Test zero events

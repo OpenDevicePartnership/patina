@@ -94,6 +94,19 @@ impl EfiCpuX64 {
         0
     }
 
+    /// Causes the CPU to enter a low power state until the next interrupt.
+    // This routine only does bare-metal hardware access, so no coverage.
+    #[coverage(off)]
+    pub fn sleep() {
+        #[cfg(all(not(test), target_arch = "x86_64"))]
+        {
+            // SAFETY: The caller is expected to ensure that they want to halt the CPU until the next interrupt
+            unsafe {
+                asm!("hlt");
+            }
+        }
+    }
+
     fn microsecond_delay(&self, _microseconds: u64) {
         // unimplemented!();
     }
