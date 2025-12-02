@@ -37,7 +37,7 @@ The crate defines `MmCommunicationConfiguration` as the shared configuration str
 > The configuration enforces buffer validation, including alignment, bounds checking, and consistency between tracked
 > metadata and buffer contents.
 
-## Integration guidance
+## Platform Integration guidance
 
 Below is the integration guidance for platform owners who wish to configure and produce the `MmCommunication` and
 SwMmiTrigger services for usage / consumption by components throughout the dispatch process.
@@ -96,88 +96,55 @@ impl ComponentInfo for ExamplePlatform {
 
 ## Service Usage guidance
 
-Below is the integration guidance for component writers who wish to consume and use the `MmCommunication` and
-`SwMmiTrigger` services in their Patina component.
+Below is example usage of the `MmCommunication` service for component writers who wish to consume and use the
+funcitonality in their Patina component. If you are looking for a real world example, please refer to the [QemuQ35MmTest](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/src/q35/component/service/mm_test.rs)
+component in [patina-dxe-core-qemu](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/src/q35/component/service/mm_test.rs).
 
 ```rust
 use zerocopy_derive::*;
+use zerocopy::IntoBytes;
 
 use patina_mm::service::MmCommunication;
 use patina::component::prelude::{IntoComponent, Service};
 
 #[derive(Debug, Clone, Copy, IntoBytes, FromBytes, Immutable)]
 #[repr(C)]
-pub struct MmSupervisorRequestHeader {
+pub struct DataToSend {
   pub signature: u32,
-  pub revision: u32,
-  pub request: u32,
-  pub reserved: u32,
-  pub result: u64,
-}
-
-#[derive(Debug, Clone, Copy, IntoBytes, FromBytes, Immutable)]
-#[repr(C)]
-pub struct MmSupervisorVersionInfo {
-  pub version: u32,
-  pub patch_level: u32,
-  pub max_supervisor_request_level: u64,
+  pub buffer: [u8; 16],
+  pub field1: u32,
+  pub field2: u16,
+  pub padding: [u8; 2],
 }
 
 #[derive(Default, IntoComponent)]
-pub struct MmSupervisorDemo;
+pub struct ExampleComponent;
 
-impl MmSupervisorDemo {
-  pub fn new() -> Self {
-      Self
-  }
-  /// Entry point for the MM Test component.
-  ///
-  /// Uses the `MmCommunication` service to send a request version information from the MM Supervisor. The MM
-  /// Supervisor is expected to be the Standalone MM environment used on the QEMU Q35 platform.
+impl ExampleComponent {
+  /// Example Entry point that just sends a single message
   pub fn entry_point(self, mm_comm: Service<dyn MmCommunication>) -> patina::error::Result<()> {
-    let mm_supv_req_header = MmSupervisorRequestHeader {
+    let data = DataToSend {
       signature: u32::from_le_bytes([b'M', b'S', b'U', b'P']),
-      revision: 1,
-      request: 0x0003, // Request Version Info
-      reserved: 0,
-      result: 0,
+      buffer: [b'H', b'E', b'L', b'L', b'O', b'\0', 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0],
+      field1: 15,
+      field2: 50,
+      padding: [0; 2],
     };
+
+    let recipient = patina::Guid::from_string("8c633b23-1260-4ea6-830f7ddc97382111");
   
-    let result = unsafe {
+    let _ = unsafe {
       mm_comm
         .communicate(
           0,
-          core::slice::from_raw_parts(
-            &mm_supv_req_header as *const _ as *const u8,
-            core::mem::size_of::<MmSupervisorRequestHeader>(),
-          ),
-          patina::Guid::from_fields(
-            0x8c633b23,
-            0x1260,
-            0x4ea6,
-            0x83,
-            0x0F,
-            [0x7d, 0xdc, 0x97, 0x38, 0x21, 0x11],
-          ),
+          data.as_bytes(),
+          recipient
         )
         .map_err(|_| {
           log::error!("MM Communication failed");
           patina::error::EfiError::DeviceError // Todo: Map actual codes
         })?
     };
-
-    let mm_supv_ver_info = unsafe {
-      &*(result[core::mem::size_of::<MmSupervisorRequestHeader>()..].as_ptr() as *const MmSupervisorVersionInfo)
-    };
-    let version = mm_supv_ver_info.version;
-    let patch_level = mm_supv_ver_info.patch_level;
-    let max_request_level = mm_supv_ver_info.max_supervisor_request_level;
-    log::info!(
-      "MM Supervisor Version: {:#X}, Patch Level: {:#X}, Max Request Level: {:#X}",
-      version,
-      patch_level,
-      max_request_level
-    );
     Ok(())
   }
 }
