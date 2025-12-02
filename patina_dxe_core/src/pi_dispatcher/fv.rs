@@ -40,9 +40,9 @@ use crate::{
 #[allow(dead_code)]
 enum Protocol {
     /// A heap-allocated FV protocol instance.
-    Fv(Box<pi::protocols::firmware_volume::Protocol>),
+    Fv(&'static pi::protocols::firmware_volume::Protocol),
     /// A heap-allocated FVB protocol instance.
-    Fvb(Box<pi::protocols::firmware_volume_block::Protocol>),
+    Fvb(&'static pi::protocols::firmware_volume_block::Protocol),
 }
 
 /// The metadata associated with a given FV / FVB protocol installation.
@@ -56,12 +56,12 @@ struct Metadata {
 impl Metadata {
     /// Creates a new Metadata instance for a FVB protocol.
     fn new_fvb(protocol: Box<pi::protocols::firmware_volume_block::Protocol>, physical_address: u64) -> Self {
-        Self { protocol: Protocol::Fvb(protocol), physical_address }
+        Self { protocol: Protocol::Fvb(Box::leak(protocol)), physical_address }
     }
 
     /// Creates a new Metadata instance for a FV protocol.
     fn new_fv(protocol: Box<pi::protocols::firmware_volume::Protocol>, physical_address: u64) -> Self {
-        Self { protocol: Protocol::Fv(protocol), physical_address }
+        Self { protocol: Protocol::Fv(Box::leak(protocol)), physical_address }
     }
 }
 
@@ -1749,21 +1749,7 @@ mod tests {
             static CORE: MockCore = MockCore::new(CompositeSectionExtractor::new());
             CORE.override_instance();
 
-            let fv_interface = Box::from(pi::protocols::firmware_volume::Protocol {
-                get_volume_attributes: MockProtocolData::fv_get_volume_attributes_efiapi,
-                set_volume_attributes: MockProtocolData::fv_set_volume_attributes_efiapi,
-                read_file: MockProtocolData::fv_read_file_efiapi,
-                read_section: MockProtocolData::fv_read_section_efiapi,
-                write_file: MockProtocolData::fv_write_file_efiapi,
-                get_next_file: MockProtocolData::fv_get_next_file_efiapi,
-                key_size: size_of::<usize>() as u32,
-                parent_handle: match parent_handle {
-                    Some(handle) => handle,
-                    None => core::ptr::null_mut(),
-                },
-                get_info: MockProtocolData::fv_get_info_efiapi,
-                set_info: MockProtocolData::fv_set_info_efiapi,
-            });
+            let fv_interface = MockProtocolData::new_fv_protocol(parent_handle);
 
             let fv_ptr = NonNull::from(&*fv_interface);
 
