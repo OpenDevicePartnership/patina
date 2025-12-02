@@ -488,3 +488,71 @@ pub fn perf_end_ex(
 ) {
     end_perf_measurement(handle, token, module, timestamp, identifier, create_performance_measurement)
 }
+
+#[cfg(test)]
+#[coverage(off)]
+mod tests {
+    use super::*;
+
+    fn mock_create_measurement_ok(
+        _caller_identifier: CallerIdentifier,
+        _guid: Option<&efi::Guid>,
+        _string: Option<&str>,
+        _ticker: u64,
+        _address: usize,
+        _identifier: u16,
+        _attribute: PerfAttribute,
+    ) -> Result<(), crate::performance::error::Error> {
+        Ok(())
+    }
+
+    fn mock_create_measurement_err(
+        _caller_identifier: CallerIdentifier,
+        _guid: Option<&efi::Guid>,
+        _string: Option<&str>,
+        _ticker: u64,
+        _address: usize,
+        _identifier: u16,
+        _attribute: PerfAttribute,
+    ) -> Result<(), crate::performance::error::Error> {
+        Err(crate::performance::error::Error::OutOfResources)
+    }
+
+    #[test]
+    fn test_start_measurement() {
+        // Test with token valid.
+        start_perf_measurement(0x2 as efi::Handle, Some("TestToken"), None, 100, 1, mock_create_measurement_ok);
+
+        // Test with module valid.
+        start_perf_measurement(0x2 as efi::Handle, None, Some("TestModule"), 100, 2, mock_create_measurement_ok);
+
+        // Test with both token and module invalid.
+        start_perf_measurement(0x2 as efi::Handle, None, None, 100, 3, mock_create_measurement_ok);
+
+        // Should handle internal error without panic.
+        start_perf_measurement(0x2 as efi::Handle, Some("TestToken"), None, 100, 4, mock_create_measurement_err);
+    }
+
+    #[test]
+    fn test_end_measurement() {
+        // Test with token valid.
+        end_perf_measurement(0x2 as efi::Handle, Some("TestToken"), None, 100, 1, mock_create_measurement_ok);
+
+        // Test with module valid.
+        end_perf_measurement(0x2 as efi::Handle, None, Some("TestModule"), 100, 2, mock_create_measurement_ok);
+
+        // Test with both token and module invalid.
+        end_perf_measurement(0x2 as efi::Handle, None, None, 100, 3, mock_create_measurement_ok);
+
+        // Should handle error without panic.
+        end_perf_measurement(0x2 as efi::Handle, Some("TestToken"), None, 100, 4, mock_create_measurement_err);
+    }
+
+    #[test]
+    fn test_perf_instrumentation() {
+        perf_start(0x2 as efi::Handle, Some("TestToken"), None, 100, mock_create_measurement_ok);
+        perf_start_ex(0x2 as efi::Handle, Some("TestToken"), None, 100, 100, mock_create_measurement_ok);
+        perf_end_ex(0x2 as efi::Handle, Some("TestToken"), None, 100, 100, mock_create_measurement_ok);
+        perf_end(0x2 as efi::Handle, Some("TestToken"), None, 100, mock_create_measurement_ok);
+    }
+}

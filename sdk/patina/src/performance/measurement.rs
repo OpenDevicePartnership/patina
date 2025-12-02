@@ -704,4 +704,108 @@ mod tests {
         perf_cross_module_begin("measurement_str", &caller_id, test_create_performance_measurement);
         perf_cross_module_end("measurement_str", &caller_id, test_create_performance_measurement);
     }
+
+    /// Tests the generic _create_performance_measurement function.
+    #[test]
+    fn test_generic_create_performance_measurement() {
+        let mut boot_services = MockBootServices::new();
+        let fbpt = TplMutex::new(
+            unsafe { &*ptr::addr_of!(boot_services) },
+            Tpl::NOTIFY,
+            MockFirmwareBasicBootPerfTable::new(),
+        );
+        static mut BOOT_SERVICES: Option<&MockBootServices> = None;
+        static mut FBPT: Option<&TplMutex<'static, MockFirmwareBasicBootPerfTable, MockBootServices>> = None;
+        unsafe {
+            BOOT_SERVICES = Some(&*ptr::addr_of!(boot_services));
+            FBPT = Some(&*ptr::addr_of!(fbpt));
+        }
+
+        // A PerfEntry must have a known perf id.
+        let unknown_perf_id = 0xFFFF;
+        let attribute = PerfAttribute::PerfEntry;
+        let result = _create_performance_measurement::<MockBootServices, MockFirmwareBasicBootPerfTable>(
+            CallerIdentifier::Handle(0x1_usize as efi::Handle),
+            None,
+            Some("test"),
+            0,
+            0,
+            unknown_perf_id,
+            attribute,
+            unsafe { BOOT_SERVICES.unwrap() },
+            unsafe { FBPT.unwrap() },
+            &Service::mock(Box::new(MockTimer {})),
+        );
+        assert_eq!(result.unwrap_err(), Error::Efi(EfiError::InvalidParameter));
+
+        // If the perf id is unknown, the caller identifier must be a handle.
+        let result = _create_performance_measurement::<MockBootServices, MockFirmwareBasicBootPerfTable>(
+            CallerIdentifier::Guid(efi::Guid::from_bytes(&[1; 16])),
+            None,
+            Some("test"),
+            0,
+            0,
+            unknown_perf_id,
+            PerfAttribute::PerfStartEntry,
+            unsafe { BOOT_SERVICES.unwrap() },
+            unsafe { FBPT.unwrap() },
+            &Service::mock(Box::new(MockTimer {})),
+        );
+        assert_eq!(result.unwrap_err(), Error::Efi(EfiError::InvalidParameter));
+    }
+
+    #[test]
+    fn test_validate_guid_caller_identifier() {
+        let valid_guid = efi::Guid::from_bytes(&[1; 16]);
+        let valid_guid_ptr = &valid_guid as *const efi::Guid as *const c_void;
+
+        let invalid_guid_ptr = 0x1_usize as *const c_void; // Misaligned pointer.
+        let null_guid_ptr = ptr::null() as *const c_void; // Null pointer.
+
+        assert!(CallerIdentifier::validate_guid(valid_guid_ptr));
+        assert!(!CallerIdentifier::validate_guid(invalid_guid_ptr));
+        assert!(!CallerIdentifier::validate_guid(null_guid_ptr));
+
+        let caller_id_guid = unsafe { CallerIdentifier::from_ptr(valid_guid_ptr, true) }.unwrap();
+        assert!(matches!(caller_id_guid, CallerIdentifier::Guid(_)));
+
+        // Any value is valid as a handle.
+        let caller_id_handle = unsafe { CallerIdentifier::from_ptr(0x2_usize as *const c_void, false) }.unwrap();
+        assert!(matches!(caller_id_handle, CallerIdentifier::Handle(_)));
+
+        assert!(unsafe { CallerIdentifier::from_ptr(invalid_guid_ptr, true) }.is_none());
+    }
+
+    #[test]
+    fn test_perf_id_is_guid() {
+        // PerfEvent uses a GUID caller identifier.
+        let guid_perf_id = KnownPerfId::PerfEvent;
+        assert!(CallerIdentifier::perf_id_is_guid(guid_perf_id as u16));
+
+        // ModuleStart uses a handle caller identifier.
+        let non_guid_perf_id = KnownPerfId::ModuleStart;
+        assert!(!CallerIdentifier::perf_id_is_guid(non_guid_perf_id as u16));
+
+        // Unknown perf ID.
+        let unknown_perf_id = 0xFFFF;
+        assert!(!CallerIdentifier::perf_id_is_guid(unknown_perf_id));
+    }
+
+    #[test]
+    fn test_measurement() {
+        let start_image = Measurement::StartImage;
+        let load_image = Measurement::LoadImage;
+        let driver_binding_support = Measurement::DriverBindingSupport;
+        let driver_binding_start = Measurement::DriverBindingStart;
+        let driver_binding_stop = Measurement::DriverBindingStop;
+
+        assert_eq!(start_image.as_u32(), 1);
+        assert_eq!(load_image.as_u32(), 2);
+        assert_eq!(driver_binding_support.as_u32(), 4);
+        assert_eq!(driver_binding_start.as_u32(), 8);
+        assert_eq!(driver_binding_stop.as_u32(), 16);
+
+        let combined = start_image | load_image | driver_binding_support;
+        assert_eq!(combined, 7);
+    }
 }
