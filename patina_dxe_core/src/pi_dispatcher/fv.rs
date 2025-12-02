@@ -661,8 +661,8 @@ impl<P: PlatformInfo> FvProtocolData<P> {
             Ok(file) => file,
         };
 
-        // update file metadata output pointers.
-        // Safety: caller must provide valid pointers for found_type, file_attributes, and buffer_size. They are null-checked above.
+        // update file metadata output pointers (buffer_size is written later).
+        // Safety: caller must provide valid pointers for found_type and file_attributes. They are null-checked above.
         unsafe {
             found_type.write_unaligned(file.file_type_raw());
             file_attributes.write_unaligned(file.fv_attributes());
@@ -671,14 +671,29 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         }
 
         if buffer.is_null() {
-            //caller just wants file meta data, no need to read file data.
+            // The caller just wants file meta data, no need to read file data.
+            // Safety: The caller must provide a valid pointer for buffer_size. It is null-checked above.
+            unsafe {
+                buffer_size.write_unaligned(file.content().len());
+            }
             return efi::Status::SUCCESS;
         }
 
         // Safety: caller must provide a valid pointer for buffer. It is null-checked above.
         let mut local_buffer_ptr = unsafe { buffer.read_unaligned() };
 
-        if local_buffer_ptr.is_null() {
+        // Determine the size to copy and the return status. For compatibility with existing callers to this function,
+        // C code behavior (`FvReadFile()`) is retained that does the following based on inputs:
+        //
+        // 1. If the buffer pointer provided  is null, attempt to allocate a buffer of appropriate size via allocate_pool,
+        //    set the copy size to the file size, write full file size to buffer_size output, and return SUCCESS.
+        // 2. If the buffer pointer is non-null, but the provided buffer size is smaller than the file size,
+        //    set the copy size to the provided buffer size, write this truncated size to buffer_size output,
+        //    perform the truncated copy into the provided buffer, and return WARN_BUFFER_TOO_SMALL.
+        // 3. If the buffer pointer is non-null, and the provided buffer size is sufficient to hold the file data,
+        //    set the copy size to the file size, write full file size to buffer_size output,
+        //    perform the copy into the provided buffer, and return SUCCESS.
+        let (copy_size, status) = if local_buffer_ptr.is_null() {
             //caller indicates that they wish to receive file data, but that this
             //routine should allocate a buffer of appropriate size. Since the caller
             //is expected to free this buffer via free_pool, we need to manually
@@ -691,17 +706,26 @@ impl<P: PlatformInfo> FvProtocolData<P> {
                     buffer.write_unaligned(local_buffer_ptr);
                 },
             }
+            (file.content().len(), efi::Status::SUCCESS)
         } else if file.content().len() > local_buffer_size {
-            return efi::Status::BUFFER_TOO_SMALL;
+            // The buffer is too small, a truncated copy should be performed
+            (local_buffer_size, efi::Status::WARN_BUFFER_TOO_SMALL)
+        } else {
+            (file.content().len(), efi::Status::SUCCESS)
+        };
+
+        // Safety: The caller must provide a valid pointer for buffer_size. It is null-checked above.
+        unsafe {
+            buffer_size.write_unaligned(copy_size);
         }
 
-        // convert pointer+size into a slice and copy the file data.
+        // convert pointer+size into a slice and copy the file data (truncated if necessary).
         // Safety: local_buffer_ptr is either provided by the caller (and null-checked above), or allocated via allocate pool
-        // and is of sufficient size to contian the data.
-        let out_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, file.content().len()) };
-        out_buffer.copy_from_slice(file.content());
+        // and is of sufficient size to contain the data.
+        let out_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, copy_size) };
+        out_buffer.copy_from_slice(&file.content()[..copy_size]);
 
-        efi::Status::SUCCESS
+        status
     }
 
     /// EFIAPI compliant FV protocol ReadSection method.
@@ -1608,7 +1632,7 @@ mod tests {
                         file_attributes,
                         auth_valid_p,
                     );
-                    assert_eq!(status, efi::Status::BUFFER_TOO_SMALL);
+                    assert_eq!(status, efi::Status::WARN_BUFFER_TOO_SMALL);
                     /* Free Memory */
                     dealloc(buffer_valid3 as *mut u8, layout3);
                 };
@@ -1697,5 +1721,158 @@ mod tests {
             }
         })
         .expect("Failed to read Firmware Volume Section");
+    }
+
+    #[test]
+    fn test_fv_read_file_truncated_copy() {
+        test_support::with_global_lock(|| {
+            // This test verifies that when a buffer is too small, the function:
+            // 1. Returns WARN_BUFFER_TOO_SMALL status
+            // 2. Copies truncated data (up to buffer_size bytes)
+            // 3. Updates buffer_size to reflect the amount actually copied
+            //
+            // This matches the C implementation behavior in FwVolRead.c:
+            //   if (FileSize > InputBufferSize) {
+            //     Status = EFI_WARN_BUFFER_TOO_SMALL;
+            //     FileSize = InputBufferSize;
+            //   }
+            //   CopyMem (*Buffer, FileHeader, FileSize);
+
+            let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+            let mut fv: Vec<u8> = Vec::new();
+            file.read_to_end(&mut fv).expect("failed to read test file");
+
+            let fv = fv.leak();
+            let base_address: u64 = fv.as_ptr() as u64;
+            let parent_handle: Option<efi::Handle> = None;
+
+            static CORE: MockCore = MockCore::new(CompositeSectionExtractor::new());
+            CORE.override_instance();
+
+            let fv_interface = Box::from(pi::protocols::firmware_volume::Protocol {
+                get_volume_attributes: MockProtocolData::fv_get_volume_attributes_efiapi,
+                set_volume_attributes: MockProtocolData::fv_set_volume_attributes_efiapi,
+                read_file: MockProtocolData::fv_read_file_efiapi,
+                read_section: MockProtocolData::fv_read_section_efiapi,
+                write_file: MockProtocolData::fv_write_file_efiapi,
+                get_next_file: MockProtocolData::fv_get_next_file_efiapi,
+                key_size: size_of::<usize>() as u32,
+                parent_handle: match parent_handle {
+                    Some(handle) => handle,
+                    None => core::ptr::null_mut(),
+                },
+                get_info: MockProtocolData::fv_get_info_efiapi,
+                set_info: MockProtocolData::fv_set_info_efiapi,
+            });
+
+            let fv_ptr = NonNull::from(&*fv_interface);
+
+            let metadata = Metadata::new_fv(fv_interface, base_address);
+            CORE.pi_dispatcher.fv_data.lock().fv_metadata.insert(fv_ptr.addr(), metadata);
+
+            let fv_ptr1: *const pi::protocols::firmware_volume::Protocol = fv_ptr.as_ptr();
+
+            // Safety: the following test code must uphold the safety expectations of the unsafe
+            // functions it calls. This unsafe section encompasses all of the logic for the remaining
+            // test since this is test code.
+            unsafe {
+                // Use a known file GUID from the test FV
+                let mut guid: efi::Guid = efi::Guid::from_fields(
+                    0x1fa1f39e,
+                    0xfeff,
+                    0x4aae,
+                    0xbd,
+                    0x7b,
+                    &[0x38, 0xa0, 0x70, 0xa3, 0xb6, 0x09],
+                );
+                let name_guid: *mut efi::Guid = &mut guid;
+
+                // First, get the actual file size by passing null buffer
+                let mut actual_file_size: usize = 0;
+                let mut found_type: u8 = 0;
+                let mut file_attributes: u32 = 0;
+                let mut auth_status: u32 = 0;
+
+                let status = MockProtocolData::fv_read_file_efiapi(
+                    fv_ptr1,
+                    name_guid,
+                    std::ptr::null_mut(),
+                    &mut actual_file_size,
+                    &mut found_type,
+                    &mut file_attributes,
+                    &mut auth_status,
+                );
+                assert_eq!(status, efi::Status::SUCCESS);
+                assert!(actual_file_size > 0, "File size should be greater than 0");
+
+                // Test a truncated copy with a buffer that's smaller than the file
+                let truncated_size = actual_file_size / 2; // Use half the file size
+                let layout = Layout::from_size_align(truncated_size, 8).unwrap();
+                let mut buffer = alloc(layout) as *mut c_void;
+                assert!(!buffer.is_null(), "Memory allocation failed!");
+
+                // Fill the buffer with a pattern to check the truncated copy
+                let buffer_slice = slice::from_raw_parts_mut(buffer as *mut u8, truncated_size);
+                buffer_slice.fill(0xFE);
+
+                let mut buffer_size = truncated_size;
+                let status = MockProtocolData::fv_read_file_efiapi(
+                    fv_ptr1,
+                    name_guid,
+                    &mut buffer as *mut *mut c_void,
+                    &mut buffer_size,
+                    &mut found_type,
+                    &mut file_attributes,
+                    &mut auth_status,
+                );
+
+                // 1. Status should be WARN_BUFFER_TOO_SMALL
+                assert_eq!(
+                    status,
+                    efi::Status::WARN_BUFFER_TOO_SMALL,
+                    "Expected WARN_BUFFER_TOO_SMALL when buffer is too small"
+                );
+
+                // 2. buffer_size should be updated to the truncated size
+                assert_eq!(
+                    buffer_size, truncated_size,
+                    "buffer_size should be updated to truncated size (what was actually copied)"
+                );
+
+                // 3. Verify data was actually copied (not all 0xFE anymore)
+                let copied_data = slice::from_raw_parts(buffer as *const u8, truncated_size);
+                let all_ff = copied_data.iter().all(|&b| b == 0xFE);
+                assert!(!all_ff, "Data should have been copied to buffer (not all 0xFE)");
+
+                dealloc(buffer as *mut u8, layout);
+
+                // Additionally, verify a 0-byte buffer works as expected
+                let zero_size = 0;
+                let layout_zero = Layout::from_size_align(64, 8).unwrap();
+                let mut buffer_zero = alloc(layout_zero) as *mut c_void;
+                assert!(!buffer_zero.is_null(), "Memory allocation failed!");
+
+                let mut buffer_size_zero = zero_size;
+                let status_zero = MockProtocolData::fv_read_file_efiapi(
+                    fv_ptr1,
+                    name_guid,
+                    &mut buffer_zero as *mut *mut c_void,
+                    &mut buffer_size_zero,
+                    &mut found_type,
+                    &mut file_attributes,
+                    &mut auth_status,
+                );
+
+                assert_eq!(
+                    status_zero,
+                    efi::Status::WARN_BUFFER_TOO_SMALL,
+                    "Expected WARN_BUFFER_TOO_SMALL with a 0-byte buffer"
+                );
+                assert_eq!(buffer_size_zero, 0, "buffer_size should remain 0 when input is 0");
+
+                dealloc(buffer_zero as *mut u8, layout_zero);
+            }
+        })
+        .unwrap();
     }
 }
