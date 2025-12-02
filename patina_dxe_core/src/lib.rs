@@ -204,7 +204,13 @@ pub trait MemoryInfo {
 ///
 /// impl ComponentInfo for ExamplePlatform {}
 /// impl MemoryInfo for ExamplePlatform {}
-/// impl CpuInfo for ExamplePlatform {}
+///
+/// impl CpuInfo for ExamplePlatform {
+///   #[cfg(target_arch = "aarch64")]
+///   fn gic_bases() -> GicBases {
+///     unsafe { GicBases::new(0x1E000000, 0x1E010000) }
+///   }
+/// }
 /// ```
 #[cfg_attr(test, mockall::automock(
     type Extractor = patina_ffs_extractors::NullSectionExtractor;

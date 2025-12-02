@@ -36,21 +36,22 @@ use patina_internal_cpu::{cpu::EfiCpu, interrupts::Interrupts};
 /// struct PlatformConfig;
 /// # impl ComponentInfo for PlatformConfig {}
 /// # impl MemoryInfo for PlatformConfig {}
-/// # impl CpuInfo for PlatformConfig {}
 ///
-/// impl PlatformInfo for PlatformConfig {
-///   # type MemoryInfo = Self;
-///   # type Extractor = patina_ffs_extractors::NullSectionExtractor;
-///   # type ComponentInfo = Self;
-///   # type CpuInfo = Self;
-///
-///   # #[cfg(target_arch = "aarch64")]
+/// impl CpuInfo for PlatformConfig {
+///   #[cfg(target_arch = "aarch64")]
 ///   fn gic_bases() -> GicBases {
 ///     /// SAFETY: gicd and gicr bases correctly point to the register spaces.
 ///     /// SAFETY: Access to these registers is exclusive to this struct instance.
 ///     unsafe { GicBases::new(0x1E000000, 0x1E010000) }
 ///   }
 /// }
+///
+/// # impl PlatformInfo for PlatformConfig {
+/// #   type MemoryInfo = Self;
+/// #   type Extractor = patina_ffs_extractors::NullSectionExtractor;
+/// #   type ComponentInfo = Self;
+/// #   type CpuInfo = Self;
+/// # }
 /// ```
 #[derive(Debug, PartialEq)]
 pub struct GicBases {
@@ -88,7 +89,6 @@ impl GicBases {
 /// struct ExamplePlatform;
 ///
 /// impl CpuInfo for ExamplePlatform {
-///
 ///   #[cfg(target_arch = "aarch64")]
 ///   fn gic_bases() -> GicBases {
 ///     /// SAFETY: gicd and gicr bases correctly point to the register spaces.
