@@ -1,4 +1,4 @@
-//! An UEFI testing framework for on-system unit testing
+//! A UEFI testing framework for on-system unit testing
 //!
 //! This module provides a UEFI component that can be registered with the pure rust DXE core that discovers and runs all
 //! test cases marked with the `#[patina_test]` attribute. The component provides multiple configuration options as
@@ -89,7 +89,11 @@ use r_efi::efi::EVENT_GROUP_READY_TO_BOOT;
 
 use crate as patina;
 use crate::{
-    boot_services::{BootServices, event::EventType, tpl::Tpl},
+    boot_services::{
+        BootServices,
+        event::{EventTimerType, EventType},
+        tpl::Tpl,
+    },
     component::Storage,
     test::__private_api::{TestCase, TestTrigger},
 };
@@ -419,6 +423,18 @@ impl TestRunner {
                         guid,
                     )?;
                 }
+                TestTrigger::Timer(interval) => {
+                    let event = storage.boot_services().create_event(
+                        EventType::NOTIFY_SIGNAL | EventType::TIMER,
+                        Tpl::CALLBACK,
+                        Some(Self::run_test),
+                        // We are setting up this timer to be periodic, so we need to leak it so it is available for
+                        // multiple test runs
+                        NonNull::from_ref(Box::leak(Box::new(test))),
+                    )?;
+
+                    storage.boot_services().set_timer(event, EventTimerType::Periodic, interval)?;
+                }
             }
         }
 
@@ -523,6 +539,15 @@ mod tests {
     static TEST_CASE4: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "event_triggered_test",
         trigger: super::__private_api::TestTrigger::Event(&Guid::from_bytes(&[0; 16])),
+        skip: false,
+        should_fail: false,
+        fail_msg: None,
+        func: |storage| crate::test::__private_api::FunctionTest::new(test_function_fail).run(storage.into()),
+    };
+
+    static TEST_CASE5: super::__private_api::TestCase = super::__private_api::TestCase {
+        name: "timer_triggered_test",
+        trigger: super::__private_api::TestTrigger::Timer(1_000_000),
         skip: false,
         should_fail: false,
         fail_msg: None,
@@ -656,14 +681,14 @@ mod tests {
 
     #[test]
     fn test_filter_should_work() {
-        let test_runner = TestRunner::default().with_filter("event_triggered_test");
+        let test_runner = TestRunner::default().with_filter("triggered_test");
 
         let mut storage = Storage::new();
         storage.add_service(Recorder::default());
         let bs: MaybeUninit<r_efi::efi::BootServices> = MaybeUninit::uninit();
 
         // SAFETY: This is very unsafe, because it is not initialized, however this code path only calls create_event
-        // and create_event_ex, which we will fill in with no-op functions.
+        // create_event_ex, and set_timer which we will fill in with no-op functions.
         let mut bs = unsafe { bs.assume_init() };
         extern "efiapi" fn noop_create_event(
             _type: u32,
@@ -686,13 +711,22 @@ mod tests {
             r_efi::efi::Status::SUCCESS
         }
 
+        extern "efiapi" fn noop_set_timer(
+            _event: r_efi::efi::Event,
+            _type: r_efi::efi::TimerDelay,
+            _trigger_time: u64,
+        ) -> r_efi::efi::Status {
+            r_efi::efi::Status::SUCCESS
+        }
+
         bs.create_event = noop_create_event;
         bs.create_event_ex = noop_create_event_ex;
+        bs.set_timer = noop_set_timer;
 
         storage.set_boot_services(StandardBootServices::new(&bs));
 
-        // TEST_CASE3 is designed to fail.
-        assert!(test_runner.run_tests(Box::leak(Box::new([TEST_CASE3, TEST_CASE4])), &mut storage).is_ok());
+        // Failure tests
+        assert!(test_runner.run_tests(Box::leak(Box::new([TEST_CASE3, TEST_CASE4, TEST_CASE5])), &mut storage).is_ok());
 
         let recorder = storage.get_service::<Recorder>().expect("Recorder service should be registered.");
         let output = format!("{}", *recorder);
