@@ -303,8 +303,12 @@ For more details about mememory management in Patina see [Memory Management](./d
 
 #### Performance
 
-The performance numbers below are provided as of Patina v16. On these physical platform(s),
-the only difference is the edk2 C DXE core versus the Patina Rust DXE Core. This is provided
-solely as a rough reference for Patina DXE core performance on a physical system.
-
-**X64 (Intel)**: +9.1% (DXE core execution time delta - % increase from C)
+While Rust provides some drawbacks when compared to C (e.g.  
+[binary size](https://github.com/OpenDevicePartnership/patina-qemu/blob/main/Platforms/Docs/Common/patina_dxe_core_release_binary_size.md)),
+it is generally the most performant of the memory-safe languages and adds comparatively minimal overhead. It is a more  
+feature-rich language; for example, exposing complex data structures like HashMaps, Vectors, iterators (compare to the
+simple linked lists used in C). Patina uses these abstractions to provide more robust implementations of core  
+functionality and enables core CPU capabilities differently than standard C firmware; as such, simple wall clock timing
+is not a fully accurate performance comparison. However, as a baseline measurement, with Patina v16.0 running on Intel  
+x64 hardware, the Rust DXE core executes approximately 10% slower than the C core when timed across identical  
+checkpoints (with magnitude in tens of ms).
