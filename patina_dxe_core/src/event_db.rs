@@ -21,7 +21,7 @@ use mu_rust_helpers::perf_timer::{Arch, ArchFunctionality as _};
 use patina::error::EfiError;
 use r_efi::efi;
 
-use crate::{runtime, tpl_mutex};
+use crate::{events::TIMER_TICK_EXIT_COUNT, runtime, tpl_mutex};
 
 /// Defines the supported UEFI event types
 #[repr(u32)]
@@ -501,10 +501,20 @@ impl EventDb {
     fn timer_tick(&mut self, current_time: u64) {
         // Poll the debugger before processing any events. This has no effect if
         // the debugger is not enabled.
-        patina_debugger::poll_debugger();
+        // patina_debugger::poll_debugger();
 
+        let start = Arch::cpu_count();
         let events: Vec<usize> = self.events.keys().rev().cloned().collect();
+        let end = Arch::cpu_count();
+        let elapsed = end.wrapping_sub(start) as f64 / (2_446_552_365_u64 as f64) * 1_000.0;
+        if elapsed > 0.1 {
+            log::warn!("Timer Tick: Collected {} events in {elapsed:.6} ms", events.len());
+        }
+
+        let total_event_time_start = Arch::cpu_count();
+
         for event in events {
+            let find_event_start = Arch::cpu_count();
             let current_event = if let Some(current) = self.events.get_mut(&event) {
                 current
             } else {
@@ -512,6 +522,12 @@ impl EventDb {
                 log::error!("Event {event:?} not found.");
                 continue;
             };
+            let find_event_end = Arch::cpu_count();
+            let elapsed = find_event_end.wrapping_sub(find_event_start) as f64 / (2_446_552_365_u64 as f64) * 1_000.0;
+            if elapsed > 0.1 {
+                log::warn!("Timer Tick: Found event {event:?} in {elapsed:.6} ms");
+            }
+
             if current_event.event_type.is_timer()
                 && let Some(trigger_time) = current_event.trigger_time
                 && trigger_time <= current_time
@@ -522,25 +538,29 @@ impl EventDb {
                     //no period means it's a one-shot event; another call to set_timer is required to "re-arm"
                     current_event.trigger_time = None;
                 }
+
                 let copy_event = current_event.clone();
+
+                /* --------------------------------------------------- SIGNAL EVENT ---------------------------------- */
                 let start = Arch::cpu_count();
                 if let Err(e) = self.signal_event(event as *mut c_void) {
                     log::error!("Error {e:?} signaling event {event:?}.");
                 }
                 let end = Arch::cpu_count();
                 let elapsed = end.wrapping_sub(start) as f64 / (2_446_552_365_u64 as f64) * 1_000.0;
+                /* --------------------------------------------------- SIGNAL EVENT ---------------------------------- */
+
                 if elapsed > 0.1 {
-                    let func_name = copy_event.notify_function_name.unwrap_or("<unknown>");
-                    log::warn!(
-                        "Timer event | {:?} | notify '{}' took {:.3} ms (tpl: {}, type: {:?})",
-                        copy_event,
-                        func_name,
-                        elapsed,
-                        copy_event.notify_tpl,
-                        copy_event.event_type
-                    );
+                    log::warn!("Timer Tick: Signaled event {event:?} |{copy_event:?}| in {elapsed:.6} ms");
                 }
             }
+        }
+
+        let total_event_time_end = Arch::cpu_count();
+        let total_elapsed =
+            total_event_time_end.wrapping_sub(total_event_time_start) as f64 / (2_446_552_365_u64 as f64) * 1_000.0;
+        if total_elapsed > 1.0 {
+            log::warn!("Timer Tick: Processed all timer events in {total_elapsed:.6} ms");
         }
     }
 
@@ -750,7 +770,21 @@ impl SpinLockedEventDb {
     /// signaled events with notifications are queued and can be retrieved via
     /// [`consume_next_event_notify`](SpinLockedEventDb::consume_next_event_notify).
     pub fn timer_tick(&self, current_time: u64) {
-        self.lock().timer_tick(current_time);
+        let start = Arch::cpu_count();
+        let mut guard = self.lock();
+        let end = Arch::cpu_count();
+        if end - start > 244655 {
+            let elapsed = end.wrapping_sub(start) as f64 / (2_446_552_365_u64 as f64) * 1_000.0;
+            log::warn!("time to acquire spinlock in timer_tick for SpinLockedEventDb {elapsed:.6} ms");
+        }
+
+        let start = Arch::cpu_count();
+        guard.timer_tick(current_time);
+        let end = Arch::cpu_count();
+        if end - start > 2_446_552 {
+            let elapsed = end.wrapping_sub(start) as f64 / (2_446_552_365_u64 as f64) * 1_000.0;
+            log::warn!("time to run guard.timer_tick for SpinLockedEventDb {elapsed:.6} ms");
+        }
     }
 
     /// Returns the next pending event notification (if any) that should be dispatched at or above the given TPL level.

@@ -26,7 +26,7 @@ use crate::{
 
 // Timer tick instrumentation
 static TIMER_TICK_ENTRY_COUNT: AtomicU64 = AtomicU64::new(0);
-static TIMER_TICK_EXIT_COUNT: AtomicU64 = AtomicU64::new(0);
+pub static TIMER_TICK_EXIT_COUNT: AtomicU64 = AtomicU64::new(0);
 static TIMER_TICK_TOTAL_TIME: AtomicU64 = AtomicU64::new(0);
 static TIMER_TICK_LONGEST_TIME: AtomicU64 = AtomicU64::new(0);
 static TIMER_TICK_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
@@ -298,23 +298,55 @@ pub extern "efiapi" fn restore_tpl(new_tpl: efi::Tpl) {
 
 extern "efiapi" fn timer_tick(time: u64) {
     let entry_count = TIMER_TICK_ENTRY_COUNT.fetch_add(1, Ordering::AcqRel);
-    log::info!("Timer tick entry");
+    // log::info!("Timer tick entry");
     let start_time = Arch::cpu_count();
 
-    // Check for recursive entry (interrupt during interrupt)
-    let was_in_progress = TIMER_TICK_IN_PROGRESS.swap(true, Ordering::AcqRel);
-    if was_in_progress {
-        log::warn!("TIMER TICK RECURSIVE ENTRY detected at entry #{}", entry_count);
-    }
-
+    /*  ------------------------------------- START -----------------------*/
+    let before_raise_tpl = Arch::cpu_count();
     let old_tpl = raise_tpl(efi::TPL_HIGH_LEVEL);
+    let after_raise_tpl = Arch::cpu_count();
+    let raise_tpl_time = after_raise_tpl.saturating_sub(before_raise_tpl);
+
     SYSTEM_TIME.fetch_add(time, Ordering::SeqCst);
     let current_time = SYSTEM_TIME.load(Ordering::SeqCst);
+
+    let before_event_db = Arch::cpu_count();
     EVENT_DB.timer_tick(current_time);
+    let after_event_db = Arch::cpu_count();
+    let event_db_time = after_event_db.saturating_sub(before_event_db);
+
+    let before_restore_tpl = Arch::cpu_count();
     restore_tpl(old_tpl); //implicitly dispatches timer notifies if any.
+    let after_restore_tpl = Arch::cpu_count();
+    let restore_tpl_time = after_restore_tpl.saturating_sub(before_restore_tpl);
 
     let end_time = Arch::cpu_count();
+    /*  ------------------------------------- END -----------------------*/
+
     let elapsed = end_time.saturating_sub(start_time);
+
+    let exit_count = TIMER_TICK_EXIT_COUNT.fetch_add(1, Ordering::AcqRel);
+
+    if (exit_count + 1) % 100 == 0 {
+        let elapsed_ms = elapsed as f64 / (2_446_552_365_u64 as f64) * 1000.0;
+        let raise_tpl_ms = raise_tpl_time as f64 / (2_446_552_365_u64 as f64) * 1000.0;
+        let event_db_ms = event_db_time as f64 / (2_446_552_365_u64 as f64) * 1000.0;
+        let restore_tpl_ms = restore_tpl_time as f64 / (2_446_552_365_u64 as f64) * 1000.0;
+        let overhead_before = before_raise_tpl.saturating_sub(start_time) as f64 / (2_446_552_365_u64 as f64) * 1000.0;
+        let overhead_after = end_time.saturating_sub(after_restore_tpl) as f64 / (2_446_552_365_u64 as f64) * 1000.0;
+        let accounted = raise_tpl_ms + event_db_ms + restore_tpl_ms + overhead_before + overhead_after;
+        log::warn!(
+            "Timer tick #{} breakdown: total={:.3}ms, overhead_before={:.3}ms, raise_tpl={:.3}ms, event_db={:.3}ms, restore_tpl={:.3}ms, overhead_after={:.3}ms, accounted={:.3}ms",
+            entry_count,
+            elapsed_ms,
+            overhead_before,
+            raise_tpl_ms,
+            event_db_ms,
+            restore_tpl_ms,
+            overhead_after,
+            accounted
+        );
+    }
 
     // Update total time
     TIMER_TICK_TOTAL_TIME.fetch_add(elapsed, Ordering::AcqRel);
@@ -334,8 +366,7 @@ extern "efiapi" fn timer_tick(time: u64) {
     }
 
     TIMER_TICK_IN_PROGRESS.store(false, Ordering::Release);
-    log::info!("Timer tick exit");
-    let exit_count = TIMER_TICK_EXIT_COUNT.fetch_add(1, Ordering::AcqRel);
+    // log::info!("Timer tick exit");
 
     // Log statistics every 100 timer ticks
     if (exit_count + 1) % 100 == 0 {
