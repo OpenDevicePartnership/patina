@@ -19,7 +19,7 @@ use patina::{
 };
 use r_efi::efi;
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 
 /// A trait to be implemented by the platform to register additional components, configurations, and services.
 ///
@@ -245,7 +245,7 @@ impl ComponentDispatcher {
                 log::warn!(
                     "{:<max_name_len$} {:<max_param_len$}",
                     metadata.name(),
-                    metadata.failed_param().unwrap_or("")
+                    metadata.failed_param().unwrap_or(Cow::from(""))
                 );
             }
         }

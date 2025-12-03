@@ -114,6 +114,8 @@ mod tests {
         params::{Config, ConfigMut},
     };
 
+    use alloc::borrow::Cow;
+
     #[allow(dead_code)]
     pub struct TestStructSuccess {
         pub x: i32,
@@ -191,7 +193,10 @@ mod tests {
         test_struct.initialize(&mut storage);
         storage.lock_configs(); // Lock it so the ConfigMut can't be accessed
         assert!(test_struct.run(&mut storage).is_ok_and(|res| !res));
-        assert_eq!(test_struct.metadata().failed_param(), Some("patina::component::params::ConfigMut<'_, u32>"));
+        assert_eq!(
+            test_struct.metadata().failed_param(),
+            Some(Cow::from("patina::component::params::ConfigMut<'_, u32>"))
+        );
 
         let mut test_struct = TestStructFail { x: 5 }.into_component();
         test_struct.initialize(&mut storage);

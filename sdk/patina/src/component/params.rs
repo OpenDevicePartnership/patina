@@ -102,7 +102,7 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use alloc::boxed::Box;
+use alloc::{borrow::Cow, boxed::Box};
 
 use crate::{
     boot_services::StandardBootServices,
@@ -152,8 +152,8 @@ pub unsafe trait Param {
 
     /// A wrapper around [validate](Param::validate) that maps the boolean to a Result<(), &'static str>. where the
     /// &'static str is the name of the type that failed validation.
-    fn try_validate(state: &Self::State, storage: UnsafeStorageCell) -> Result<(), &'static str> {
-        if Self::validate(state, storage) { Ok(()) } else { Err(core::any::type_name::<Self>()) }
+    fn try_validate(state: &Self::State, storage: UnsafeStorageCell) -> Result<(), Cow<'static, str>> {
+        if Self::validate(state, storage) { Ok(()) } else { Err(Cow::from(core::any::type_name::<Self>())) }
     }
 
     /// Initializes this Parameter's [State](Param::State).
@@ -718,11 +718,11 @@ macro_rules! impl_component_param_tuple {
                 )*)
             }
 
-            fn try_validate(state: &Self::State, _storage: UnsafeStorageCell) -> Result<(), &'static str> {
+            fn try_validate(state: &Self::State, _storage: UnsafeStorageCell) -> Result<(), Cow<'static, str>> {
                 let ($($param,)*) = state;
                 $(
                     if !$param::validate($param, _storage) {
-                        return Err(core::any::type_name::<$param>());
+                        return Err(Cow::from(core::any::type_name::<$param>()));
                     }
                 )*
                 Ok(())
@@ -908,7 +908,7 @@ mod tests {
 
         <StandardBootServices as Param>::init_state(&mut storage, &mut mock_metadata);
         assert_eq!(
-            Err("patina::boot_services::StandardBootServices"),
+            Err(Cow::from("patina::boot_services::StandardBootServices")),
             <StandardBootServices as Param>::try_validate(&(), (&storage).into())
         );
     }
@@ -945,7 +945,7 @@ mod tests {
 
         <StandardRuntimeServices as Param>::init_state(&mut storage, &mut mock_metadata);
         assert_eq!(
-            Err("patina::runtime_services::StandardRuntimeServices"),
+            Err(Cow::from("patina::runtime_services::StandardRuntimeServices")),
             <StandardRuntimeServices as Param>::try_validate(&(), (&storage).into())
         );
     }
@@ -1009,7 +1009,7 @@ mod tests {
         // override the next level up, `try_validate`.
         assert!(<(StandardBootServices, Config<i32>) as Param>::validate(&((), 0), (&storage).into()));
         assert_eq!(
-            Err("patina::boot_services::StandardBootServices"),
+            Err(Cow::from("patina::boot_services::StandardBootServices")),
             <(StandardBootServices, Config<i32>) as Param>::try_validate(&((), 1), (&storage).into())
         );
     }

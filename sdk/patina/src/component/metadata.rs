@@ -12,39 +12,41 @@
 use core::fmt;
 use fixedbitset::FixedBitSet;
 
+use alloc::borrow::Cow;
+
 /// Metadata for a component. Not used for execution, but referenced by the scheduler.
 #[derive(Default, Debug)]
 pub struct MetaData {
     /// The read/write parameter access requirements for the component.
     access: Access,
     /// The name of the component.
-    name: &'static str,
+    name: Cow<'static, str>,
     /// the name of the last param that failed to be set.
-    last_failed_param: Option<&'static str>,
+    last_failed_param: Option<Cow<'static, str>>,
 }
 
 impl MetaData {
     /// Creates a new metadata object for a component.
     pub fn new<S>() -> Self {
-        Self { access: Access::new(), name: core::any::type_name::<S>(), last_failed_param: None }
+        Self { access: Access::new(), name: Cow::from(core::any::type_name::<S>()), last_failed_param: None }
     }
 
     /// Returns the name of the component, including the module path.
     #[inline(always)]
-    pub fn name(&self) -> &'static str {
-        self.name
+    pub fn name(&self) -> Cow<'static, str> {
+        self.name.clone()
     }
 
     /// Sets the name of the `param` that could not be retrieved from storage when attempting to dispatch the function.
     #[inline(always)]
-    pub fn set_failed_param(&mut self, param: &'static str) {
+    pub fn set_failed_param(&mut self, param: Cow<'static, str>) {
         self.last_failed_param = Some(param);
     }
 
     /// Returns the name of the last `param` that could not be retrieved from storage.
     #[inline(always)]
-    pub fn failed_param(&self) -> Option<&'static str> {
-        self.last_failed_param
+    pub fn failed_param(&self) -> Option<Cow<'static, str>> {
+        self.last_failed_param.clone()
     }
 
     /// Returns mutable access to the param usage metadata for the component.
