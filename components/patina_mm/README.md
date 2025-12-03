@@ -105,7 +105,7 @@ use zerocopy_derive::*;
 use zerocopy::IntoBytes;
 
 use patina_mm::service::MmCommunication;
-use patina::component::prelude::{IntoComponent, Service};
+use patina::component::{component, prelude::Service};
 
 #[derive(Debug, Clone, Copy, IntoBytes, FromBytes, Immutable)]
 #[repr(C)]
@@ -117,9 +117,10 @@ pub struct DataToSend {
   pub padding: [u8; 2],
 }
 
-#[derive(Default, IntoComponent)]
+#[derive(Default)]
 pub struct ExampleComponent;
 
+#[component]
 impl ExampleComponent {
   /// Example Entry point that just sends a single message
   pub fn entry_point(self, mm_comm: Service<dyn MmCommunication>) -> patina::error::Result<()> {
