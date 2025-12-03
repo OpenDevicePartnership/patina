@@ -41,7 +41,7 @@ use patina_smbios::{
     smbios_record::{
         SmbiosRecordStructure, Type0PlatformFirmwareInformation, Type1SystemInformation, Type2BaseboardInformation,
         Type3SystemEnclosure,
-    },
+    }, smbios_types::*,
 };
 
 /// Example custom vendor-specific OEM record (Type 0x80)
@@ -161,14 +161,14 @@ impl SmbiosExampleComponent {
             bios_starting_address_segment: 0xE800,
             firmware_release_date: 3,
             firmware_rom_size: 0xFF, // 16MB
-            characteristics: 0x08,   // PCI supported
-            characteristics_ext1: 0x03,
-            characteristics_ext2: 0x03,
+            characteristics: BiosCharacteristics::new(false,false,false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, 0, 0),   // PCI supported
+            characteristics_ext1: BiosCharacteristicsExt1::new(true, true, false, false, false, false, false, true),
+            characteristics_ext2: BiosCharacteristicsExt2::new(true, false, false, true, false),
             system_bios_major_release: 1,
             system_bios_minor_release: 0,
             embedded_controller_major_release: 0xFF,
             embedded_controller_minor_release: 0xFF,
-            extended_bios_rom_size: 0,
+            extended_bios_rom_size: ExtendedBiosRomSize::new(0,0),
             string_pool: vec![
                 String::from("Example Firmware Vendor"),
                 String::from("1.0.0"),
@@ -196,7 +196,7 @@ impl SmbiosExampleComponent {
             version: 3,
             serial_number: 4,
             uuid: [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0],
-            wake_up_type: 0x06, // Power switch
+            wake_up_type: WakeUpType::PowerSwitch, // Power switch
             sku_number: 5,
             family: 6,
             string_pool: vec![
@@ -229,10 +229,10 @@ impl SmbiosExampleComponent {
             version: 3,
             serial_number: 4,
             asset_tag: 5,
-            feature_flags: 0x01, // Board is a hosting board
+            feature_flags: FeatureFlags::new(true, true, false, false, false), // Board is a hosting board
             location_in_chassis: 6,
             chassis_handle: 0x0003,
-            board_type: 0x0A, // Motherboard
+            board_type: BoardType::Motherboard, // Motherboard
             contained_object_handles: 0,
             string_pool: vec![
                 String::from("Example Corporation"),
@@ -264,10 +264,10 @@ impl SmbiosExampleComponent {
             version: 2,
             serial_number: 3,
             asset_tag_number: 4,
-            bootup_state: 0x03,
-            power_supply_state: 0x03,
-            thermal_state: 0x03,
-            security_status: 0x02,
+            bootup_state: BootUpState::Desktop,
+            power_supply_state: PowerSupplyState::CentralProcessor,
+            thermal_state: ThermalState::Safe,
+            security_status: SecurityStatus::Unknown,
             oem_defined: 0x00000000,
             height: 0x00,
             number_of_power_cords: 0x01,

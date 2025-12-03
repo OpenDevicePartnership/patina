@@ -142,6 +142,50 @@ pub(crate) fn smbios_record_derive(item: TokenStream) -> TokenStream {
                         matches!(
                             segment.ident.to_string().as_str(),
                             "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64"
+                            | "BiosCharacteristics"
+                            | "BiosCharacteristicsExt1"
+                            | "BiosCharacteristicsExt2"
+                            | "ExtendedBiosRomSize"
+                            | "WakeUpType"
+                            | "FeatureFlags"
+                            | "BoardType"
+                            | "BootUpState"
+                            | "PowerSupplyState"
+                            | "ThermalState"
+                            | "SecurityStatus"
+                            | "ContainedElements"
+                            | "ContainedElementType"
+                            | "SmbiosType"
+                            | "ProcessorTypeData"
+                            | "ProcessorFamilyData"
+                            | "ProcessorUpgrade"
+                            | "ProcessorVoltage"
+                            | "ProcessorInformationStatus"
+                            | "ProcessorCharacteristics"
+                            | "CacheConfiguration"
+                            | "CacheSize"
+                            | "CacheSize2"
+                            | "CacheSramTypeData"
+                            | "ErrorCorrectionType"
+                            | "SystemCacheType"
+                            | "AssociativityField"
+                            | "SlotType"
+                            | "SlotWidth"
+                            | "CurrentUsage"
+                            | "SlotLength"
+                            | "SlotCharacteristics1"
+                            | "SlotCharacteristics2"
+                            | "DeviceFunctionNumber"
+                            | "MiscSlotPeerGroup"
+                            | "MemoryArrayLocation"
+                            | "MemoryArrayUse"
+                            | "ErrorCorrectionTypes"
+                            | "MemoryFormFactor"
+                            | "MemoryDeviceType"
+                            | "MemoryDeviceTypeDetails"
+                            | "MemoryDeviceTechnology"
+                            | "MemoryDeviceAttributes"
+                            | "MemoryCapability"
                         )
                     }
                 }
@@ -149,7 +193,9 @@ pub(crate) fn smbios_record_derive(item: TokenStream) -> TokenStream {
                     matches!(&*type_array.elem,
                         syn::Type::Path(elem_path)
                             if elem_path.path.segments.len() == 1 &&
-                               elem_path.path.segments[0].ident == "u8")
+                               (elem_path.path.segments[0].ident == "u8" ||
+                                elem_path.path.segments[0].ident == "MiscSlotPeerGroup" ||
+                                elem_path.path.segments[0].ident == "ContainedElements"))
                 }
                 _ => false,
             };
@@ -174,9 +220,24 @@ pub(crate) fn smbios_record_derive(item: TokenStream) -> TokenStream {
             // Generate serialization for this field based on type
             // Special case for byte arrays (like UUID) - copy directly without to_le_bytes()
             let serialization = match field_ty {
-                syn::Type::Array(_) => {
-                    quote! {
-                        bytes.extend_from_slice(&self.#field_name);
+                syn::Type::Array(type_array) => {
+                    // Check if it's specifically [u8; N]
+                    let is_u8_array = matches!(&*type_array.elem,
+                        syn::Type::Path(elem_path)
+                            if elem_path.path.segments.len() == 1 &&
+                            elem_path.path.segments[0].ident == "u8");
+                    
+                    if is_u8_array {
+                        quote! {
+                            bytes.extend_from_slice(&self.#field_name);
+                        }
+                    } else {
+                        // For arrays of custom structs like [MiscSlotPeerGroup; 32]
+                        quote! {
+                            for item in &self.#field_name {
+                                bytes.extend_from_slice(&item.to_le_bytes());
+                            }
+                        }
                     }
                 }
                 _ => {
