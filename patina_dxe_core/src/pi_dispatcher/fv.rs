@@ -174,12 +174,12 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         let (lba_base_addr, block_size) = fv.lba_info(lba).map(|(addr, size, _)| (addr as usize, size as usize))?;
 
         let mut bytes_to_read = num_bytes;
-        if offset + bytes_to_read > block_size {
-            debug_assert!(offset + bytes_to_read <= block_size); // caller should not request to read beyond the block.
-            bytes_to_read = block_size - offset;
+        if offset.saturating_add(bytes_to_read) > block_size {
+            debug_assert!(offset.saturating_add(bytes_to_read) <= block_size); // caller should not request to read beyond the block.
+            bytes_to_read = block_size.saturating_sub(offset);
         }
 
-        let lba_start = (physical_address as usize + lba_base_addr + offset) as *mut u8;
+        let lba_start = (physical_address as usize).saturating_add(lba_base_addr).saturating_add(offset) as *mut u8;
         // Safety: lba_start is calculated from the base address of a valid FV, plus an offset and offset+num_bytes.
         // consistency of this data is guaranteed by checks on instantiation of the VolumeRef.
         // The FV data is expected to be 'static (i.e. permanently mapped) for the lifetime of the system.
@@ -428,7 +428,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
                         },
                         memory_type: MEMORY_MAPPED_IO,
                         starting_address: base_address,
-                        ending_address: base_address + fv.size(),
+                        ending_address: base_address.saturating_add(fv.size()),
                     },
                     end_dev_path: efi::protocols::device_path::End {
                         header: efi::protocols::device_path::Protocol {
@@ -794,9 +794,14 @@ impl<P: PlatformInfo> FvProtocolData<P> {
         //data. If so, copy to fill the destination buffer, and return
         //WARN_BUFFER_TOO_SMALL.
 
+        // We only want to copy the min(section_data.len(), local_buffer_size) bytes. If the local_buffer_size is
+        // larger than the section_data, we could inadvertently copy beyond the section_data slice.
+        let copy_size = core::cmp::min(section_data.len(), local_buffer_size);
+
         // Safety: local_buffer_ptr is either provided by the caller (and null-checked above), or allocated via allocate pool and
-        // is of sufficient size to contain the data.
-        let dest_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, local_buffer_size) };
+        // is of sufficient size to contain the data. We copy the minimum of section_data.len() and local_buffer_size to ensure we do not
+        // copy beyond the bounds of either buffer.
+        let dest_buffer = unsafe { slice::from_raw_parts_mut(local_buffer_ptr as *mut u8, copy_size) };
         dest_buffer.copy_from_slice(&section_data[0..dest_buffer.len()]);
 
         //TODO: authentication status not yet supported.
@@ -848,7 +853,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
 
         // Safety: caller must provide valid pointers for key, file_type, name_guid, attributes, and size. They are null-checked above.
         unsafe {
-            (key as *mut usize).write_unaligned(local_key + 1);
+            (key as *mut usize).write_unaligned(local_key.saturating_add(1));
             name_guid.write_unaligned(file_name);
             if (fv_attributes & fvb::attributes::raw::fvb2::MEMORY_MAPPED) == fvb::attributes::raw::fvb2::MEMORY_MAPPED
             {
@@ -1860,5 +1865,105 @@ mod tests {
             }
         })
         .unwrap();
+    }
+
+    #[test]
+    fn test_fv_read_section_limits_read() {
+        // This test verifies that when the buffer size is larger than the section size, only the section
+        // size is copied, and the function returns SUCCESS.
+        let mut file = File::open(test_collateral!("DXEFV.Fv")).unwrap();
+        let mut fv: Vec<u8> = Vec::new();
+        file.read_to_end(&mut fv).expect("failed to read test file");
+
+        let fv = fv.leak();
+        let base_address: u64 = fv.as_ptr() as u64;
+        let parent_handle: Option<efi::Handle> = None;
+
+        test_support::with_global_lock(|| {
+            static CORE: MockCore = MockCore::new(CompositeSectionExtractor::new());
+            CORE.override_instance();
+            unsafe { test_support::init_test_gcd(None) };
+
+            let fv_interface = MockProtocolData::new_fv_protocol(parent_handle);
+            let fv_ptr = NonNull::from(&*fv_interface);
+
+            let metadata = Metadata::new_fv(fv_interface, base_address);
+            CORE.pi_dispatcher.fv_data.lock().fv_metadata.insert(fv_ptr.addr(), metadata);
+
+            let fv_ptr1 = fv_ptr.as_ptr();
+
+            // Safety: the following test code must uphold the safety expectations of the unsafe
+            // functions it calls. This unsafe section encompasses all of the logic for the remaining
+            // test since this is test code.
+            unsafe {
+                // Use a known file GUID from the test FV
+                let mut guid: efi::Guid = efi::Guid::from_fields(
+                    0x1fa1f39e,
+                    0xfeff,
+                    0x4aae,
+                    0xbd,
+                    0x7b,
+                    &[0x38, 0xa0, 0x70, 0xa3, 0xb6, 0x09],
+                );
+                let name_guid: *mut efi::Guid = &mut guid;
+
+                // First get the actual file size by passing null buffer
+                let mut actual_section_size: usize = 0;
+                let mut auth_status: u32 = 0;
+
+                let status = MockProtocolData::fv_read_section_efiapi(
+                    fv_ptr1,
+                    name_guid,
+                    19,
+                    0,
+                    &mut std::ptr::null_mut() as *mut *mut c_void,
+                    &mut actual_section_size,
+                    &mut auth_status,
+                );
+
+                assert_eq!(status, efi::Status::SUCCESS);
+                assert!(actual_section_size > 0, "Section size should be greater than 0");
+                // Test a buffer larger than the file section size
+                let larger_size = actual_section_size + 512; // 512 bytes larger than section
+
+                let layout = Layout::from_size_align(larger_size, 8).unwrap();
+                let mut buffer = alloc(layout) as *mut c_void;
+                assert!(!buffer.is_null(), "Memory allocation failed!");
+
+                // Fill the buffer with a pattern to check the copy
+                let buffer_slice = slice::from_raw_parts_mut(buffer as *mut u8, larger_size);
+                buffer_slice.fill(0xFE);
+
+                let mut buffer_size = larger_size;
+                let status = MockProtocolData::fv_read_section_efiapi(
+                    fv_ptr1,
+                    name_guid,
+                    19,
+                    0,
+                    &mut buffer,
+                    &mut buffer_size,
+                    &mut auth_status,
+                );
+
+                // 1. Status should be SUCCESS
+                assert_eq!(status, efi::Status::SUCCESS, "Expected SUCCESS when buffer is larger than file size");
+
+                // 2. buffer_size should be updated to the actual section size
+                assert_eq!(buffer_size, actual_section_size, "buffer_size should be updated to actual section size");
+
+                // 3. Verify only the section data was copied (rest should remain 0xFE)
+                let copied_data = slice::from_raw_parts(buffer as *const u8, actual_section_size);
+                let all_ff = copied_data.iter().all(|&b| b == 0xFE);
+                assert!(!all_ff, "Section data should have been copied to buffer (not all 0xFE)");
+
+                let remaining_data = slice::from_raw_parts(
+                    buffer.add(actual_section_size) as *const u8,
+                    larger_size - actual_section_size,
+                );
+                let all_ff_remaining = remaining_data.iter().all(|&b| b == 0xFE);
+                assert!(all_ff_remaining, "Remaining buffer beyond section size should remain unchanged (all 0xFE)");
+            }
+        })
+        .unwrap()
     }
 }
