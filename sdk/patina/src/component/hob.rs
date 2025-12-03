@@ -59,7 +59,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 extern crate alloc;
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 
 use crate::OwnedGuid;
 use core::{any::Any, ops::Deref};
@@ -235,9 +235,9 @@ unsafe impl<T: FromHob + 'static> Param for Hob<'_, T> {
         !unsafe { storage.storage() }.get_raw_hob(*state).is_empty()
     }
 
-    fn init_state(storage: &mut Storage, _meta: &mut MetaData) -> Self::State {
+    fn init_state(storage: &mut Storage, _meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
         storage.add_hob_parser::<T>();
-        storage.register_hob::<T>()
+        Ok(storage.register_hob::<T>())
     }
 }
 

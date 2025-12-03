@@ -101,7 +101,11 @@ impl Add<'_, Service> {
 }
 
 pub(crate) struct ComponentDispatcher {
+    /// Components that successfully initialized and are ready for dispatch attempts.
     components: Vec<Box<dyn patina::component::Component>>,
+    /// Components that failed to initialize and are not ready for dispatch attempts.
+    rejected: Vec<Box<dyn patina::component::Component>>,
+    /// Storage for components to use during execution.
     storage: Storage,
 }
 
@@ -124,7 +128,7 @@ impl ComponentDispatcher {
     /// Creates a new ComponentDispatcher.
     #[inline(always)]
     pub(crate) const fn new() -> Self {
-        Self { components: Vec::new(), storage: Storage::new() }
+        Self { components: Vec::new(), rejected: Vec::new(), storage: Storage::new() }
     }
 
     /// Applies the component information provided by the given type implementing [ComponentInfo].
@@ -136,8 +140,10 @@ impl ComponentDispatcher {
 
     /// Inserts a component at the given index.
     pub(crate) fn insert_component(&mut self, idx: usize, mut component: Box<dyn patina::component::Component>) {
-        component.initialize(&mut self.storage);
-        self.components.insert(idx, component);
+        match component.initialize(&mut self.storage) {
+            true => self.components.insert(idx, component),
+            false => self.rejected.push(component),
+        }
     }
 
     /// Adds a service to storage.
@@ -224,28 +230,30 @@ impl ComponentDispatcher {
     /// Logs all components that were not dispatched, and the parameter that was not satisfied that prevented dispatch.
     #[coverage(off)]
     pub(crate) fn display_not_dispatched(&self) {
-        if !self.components.is_empty() {
+        if !self.components.is_empty() || !self.rejected.is_empty() {
             let name_len = "name".len();
-            let param_len = "failed_param".len();
+            let param_len = "error message".len();
 
-            let max_name_len = self.components.iter().map(|c| c.metadata().name().len()).max().unwrap_or(name_len);
-            let max_param_len = self
-                .components
-                .iter()
-                .map(|c| c.metadata().failed_param().map(|s| s.len()).unwrap_or(0))
+            let not_dispatched = self.components.iter().chain(&self.rejected);
+            let max_name_len = not_dispatched.map(|c| c.metadata().name().len()).max().unwrap_or(name_len);
+
+            let not_dispatched = self.components.iter().chain(&self.rejected);
+            let max_param_len = not_dispatched
+                .map(|c| c.metadata().error_message().map(|s| s.len()).unwrap_or(0))
                 .max()
                 .unwrap_or(param_len);
 
             log::warn!("Components not dispatched:");
             log::warn!("{:-<max_name_len$} {:-<max_param_len$}", "", "");
-            log::warn!("{:<max_name_len$} {:<max_param_len$}", "name", "failed_param");
+            log::warn!("{:<max_name_len$} {:<max_param_len$}", "name", "error message");
 
-            for component in &self.components {
+            let not_dispatched = self.components.iter().chain(&self.rejected);
+            for component in not_dispatched {
                 let metadata = component.metadata();
                 log::warn!(
                     "{:<max_name_len$} {:<max_param_len$}",
                     metadata.name(),
-                    metadata.failed_param().unwrap_or(Cow::from(""))
+                    metadata.error_message().unwrap_or(Cow::from(""))
                 );
             }
         }

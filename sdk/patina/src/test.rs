@@ -484,6 +484,10 @@ mod tests {
         Err("Intentional Failure")
     }
 
+    fn test_function_invalid(_: &mut Storage, _: &mut Storage) -> Result {
+        Ok(())
+    }
+
     #[test]
     fn test_func_implements_into_component() {
         let _ = super::TestRunner::default().into_component();
@@ -552,6 +556,15 @@ mod tests {
         should_fail: false,
         fail_msg: None,
         func: |storage| crate::test::__private_api::FunctionTest::new(test_function_fail).run(storage.into()),
+    };
+
+    static TEST_CASE_INVALID: super::__private_api::TestCase = super::__private_api::TestCase {
+        name: "invalid_test",
+        trigger: super::__private_api::TestTrigger::Event(&Guid::from_bytes(&[0; 16])),
+        skip: false,
+        should_fail: false,
+        fail_msg: None,
+        func: |storage| crate::test::__private_api::FunctionTest::new(test_function_invalid).run(storage.into()),
     };
 
     #[test]
@@ -736,5 +749,13 @@ mod tests {
         // This test is not filtered out, but never run, so should log as such.
         println!("{}", output);
         assert!(output.contains("event_triggered_test ... not triggered"));
+    }
+
+    #[test]
+    fn test_test_with_invalid_param_combination_is_caught() {
+        assert_eq!(
+            TEST_CASE_INVALID.run(&mut Storage::new(), false),
+            Err("Test failed to run due to un-retrievable parameters.")
+        );
     }
 }

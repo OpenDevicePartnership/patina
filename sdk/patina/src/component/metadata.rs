@@ -21,14 +21,14 @@ pub struct MetaData {
     access: Access,
     /// The name of the component.
     name: Cow<'static, str>,
-    /// the name of the last param that failed to be set.
-    last_failed_param: Option<Cow<'static, str>>,
+    /// The error message preventing the component from being dispatched.
+    error_message: Option<Cow<'static, str>>,
 }
 
 impl MetaData {
     /// Creates a new metadata object for a component.
     pub fn new<S>() -> Self {
-        Self { access: Access::new(), name: Cow::from(core::any::type_name::<S>()), last_failed_param: None }
+        Self { access: Access::new(), name: Cow::from(core::any::type_name::<S>()), error_message: None }
     }
 
     /// Returns the name of the component, including the module path.
@@ -39,14 +39,14 @@ impl MetaData {
 
     /// Sets the name of the `param` that could not be retrieved from storage when attempting to dispatch the function.
     #[inline(always)]
-    pub fn set_failed_param(&mut self, param: Cow<'static, str>) {
-        self.last_failed_param = Some(param);
+    pub fn set_error_message(&mut self, error: Cow<'static, str>) {
+        self.error_message = Some(error);
     }
 
     /// Returns the name of the last `param` that could not be retrieved from storage.
     #[inline(always)]
-    pub fn failed_param(&self) -> Option<Cow<'static, str>> {
-        self.last_failed_param.clone()
+    pub fn error_message(&self) -> Option<Cow<'static, str>> {
+        self.error_message.clone()
     }
 
     /// Returns mutable access to the param usage metadata for the component.

@@ -124,7 +124,13 @@ where
 
         // Safety: init_state requires mutable access to storage. UnsafeStorageCell provides controlled access.
         // This is the initialization phase before parameter validation.
-        let param_state = unsafe { Func::Param::init_state(storage.storage_mut(), &mut metadata) };
+        let param_state = match Func::Param::init_state(unsafe { storage.storage_mut() }, &mut metadata) {
+            Ok(param_state) => param_state,
+            Err(error) => {
+                log::warn!("Failed to initialize test state: {error:?}");
+                return Ok(false);
+            }
+        };
 
         if let Err(bad_param) = Func::Param::try_validate(&param_state, storage) {
             log::warn!("Failed to retreive parameter: {bad_param:?}");

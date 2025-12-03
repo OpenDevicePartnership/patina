@@ -117,7 +117,7 @@
 //!
 extern crate alloc;
 
-use alloc::boxed::Box;
+use alloc::{borrow::Cow, boxed::Box};
 use core::{any::Any, cell::OnceCell, marker::PhantomData, ops::Deref};
 
 use crate::component::{
@@ -422,8 +422,8 @@ unsafe impl<T: ?Sized + 'static> Param for Service<T> {
         unsafe { storage.storage() }.get_raw_service(*state).is_some()
     }
 
-    fn init_state(storage: &mut Storage, _meta: &mut MetaData) -> Self::State {
-        storage.register_service::<T>()
+    fn init_state(storage: &mut Storage, _meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
+        Ok(storage.register_service::<T>())
     }
 }
 
@@ -510,7 +510,7 @@ mod tests {
         let mut storage = Storage::default();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        let id = <Service<dyn MyService> as Param>::init_state(&mut storage, &mut mock_metadata);
+        let id = <Service<dyn MyService> as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
 
         storage.add_service(MyServiceImpl);
 
@@ -530,7 +530,7 @@ mod tests {
         let mut storage = Storage::default();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        let id = <Service<dyn MyService> as Param>::init_state(&mut storage, &mut mock_metadata);
+        let id = <Service<dyn MyService> as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
         assert!(<Service<dyn MyService> as Param>::try_validate(&id, (&storage).into()).is_err());
     }
 

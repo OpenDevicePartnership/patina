@@ -183,7 +183,9 @@ pub trait Component {
     /// the metadata of the component. The scheduler uses this metadata when scheduling components in a multi-threaded
     /// context. Typically this method will pass the metadata to each parameter to register its access requirements,
     /// but that is not a requirement.
-    fn initialize(&mut self, storage: &mut storage::Storage);
+    ///
+    /// Returns true if the component was successfully initialized, otherwise false.
+    fn initialize(&mut self, storage: &mut storage::Storage) -> bool;
 
     /// Returns the metadata of the component. used in a multi-threaded context to schedule components.
     fn metadata(&self) -> &metadata::MetaData;

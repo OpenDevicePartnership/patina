@@ -153,14 +153,20 @@ pub unsafe trait Param {
     /// A wrapper around [validate](Param::validate) that maps the boolean to a Result<(), &'static str>. where the
     /// &'static str is the name of the type that failed validation.
     fn try_validate(state: &Self::State, storage: UnsafeStorageCell) -> Result<(), Cow<'static, str>> {
-        if Self::validate(state, storage) { Ok(()) } else { Err(Cow::from(core::any::type_name::<Self>())) }
+        if Self::validate(state, storage) {
+            Ok(())
+        } else {
+            Err(Cow::from(alloc::format!("{} not available.", core::any::type_name::<Self>())))
+        }
     }
 
     /// Initializes this Parameter's [State](Param::State).
     ///
     /// This is when the parameter should register its access requirements with the [MetaData]. See this module's
     /// top level documentation on how to properly register access requirements.
-    fn init_state(storage: &mut Storage, meta: &mut MetaData) -> Self::State;
+    ///
+    /// Returns an error string explaining the reason for failure if initialization fails.
+    fn init_state(storage: &mut Storage, meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>>;
 }
 
 /// A hidden marker for functions that consume their input (take `In` by value).
@@ -344,7 +350,7 @@ unsafe impl<P: Param> Param for Option<P> {
         true
     }
 
-    fn init_state(storage: &mut Storage, meta: &mut MetaData) -> Self::State {
+    fn init_state(storage: &mut Storage, meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
         P::init_state(storage, meta)
     }
 }
@@ -421,25 +427,25 @@ unsafe impl<T: Default + 'static> Param for Config<'_, T> {
         unsafe { storage.storage() }.get_raw_config(*state).is_locked()
     }
 
-    fn init_state(storage: &mut Storage, meta: &mut MetaData) -> Self::State {
+    fn init_state(storage: &mut Storage, meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
         let id = storage.add_config_default_if_not_present::<T>();
 
-        debug_assert!(
-            !meta.access().has_writes_all_configs(),
-            "Config<{0}> in component {1} conflicts with a previous &mut Storage access.",
-            core::any::type_name::<T>(),
-            meta.name(),
-        );
+        if meta.access().has_writes_all_configs() {
+            return Err(Cow::from(alloc::format!(
+                "Config<{}> conflicts with a previous &mut Storage access.",
+                core::any::type_name::<T>()
+            )));
+        }
 
-        debug_assert!(
-            !meta.access().has_config_write(id),
-            "Config<{0}> in component {1} conflicts with a previous ConfigMut<{0}> access.",
-            core::any::type_name::<T>(),
-            meta.name(),
-        );
+        if meta.access().has_config_write(id) {
+            return Err(Cow::from(alloc::format!(
+                "Config<{0}> conflicts with a previous ConfigMut<{0}> access.",
+                core::any::type_name::<T>()
+            )));
+        }
 
         meta.access_mut().add_config_read(id);
-        id
+        Ok(id)
     }
 }
 
@@ -526,39 +532,42 @@ unsafe impl<T: Default + 'static> Param for ConfigMut<'_, T> {
         !unsafe { storage.storage() }.get_raw_config(*state).is_locked()
     }
 
-    fn init_state(storage: &mut Storage, meta: &mut MetaData) -> Self::State {
+    fn init_state(storage: &mut Storage, meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
         let id = storage.add_config_default_if_not_present::<T>();
         // All config is locked by default. We only unlock it (like below) when a component is detected that needs
         // it to be mutable.
         storage.unlock_config(id);
 
-        debug_assert!(
-            !meta.access().has_writes_all_configs(),
-            "ConfigMut<{0}> in component {1} conflicts with a previous &mut Storage access.",
-            core::any::type_name::<T>(),
-            meta.name(),
-        );
-        debug_assert!(
-            !meta.access().has_reads_all_configs(),
-            "ConfigMut<{0}> in component {1} conflicts with a previous &Storage access.",
-            core::any::type_name::<T>(),
-            meta.name(),
-        );
-        debug_assert!(
-            !meta.access().has_config_write(id),
-            "ConfigMut<{0}> in component {1} conflicts with a previous ConfigMut<{0}> access.",
-            core::any::type_name::<T>(),
-            meta.name(),
-        );
-        debug_assert!(
-            !meta.access().has_config_read(id),
-            "ConfigMut<{0}> in component {1} conflicts with a previous Config<{0}> access.",
-            core::any::type_name::<T>(),
-            meta.name(),
-        );
+        if meta.access().has_writes_all_configs() {
+            return Err(Cow::from(alloc::format!(
+                "ConfigMut<{}> conflicts with a previous &mut Storage access.",
+                core::any::type_name::<T>()
+            )));
+        }
+
+        if meta.access().has_reads_all_configs() {
+            return Err(Cow::from(alloc::format!(
+                "ConfigMut<{}> conflicts with a previous &Storage access.",
+                core::any::type_name::<T>()
+            )));
+        }
+
+        if meta.access().has_config_write(id) {
+            return Err(Cow::from(alloc::format!(
+                "ConfigMut<{0}> conflicts with a previous ConfigMut<{0}> access.",
+                core::any::type_name::<T>()
+            )));
+        }
+
+        if meta.access().has_config_read(id) {
+            return Err(Cow::from(alloc::format!(
+                "ConfigMut<{0}> conflicts with a previous Config<{0}> access.",
+                core::any::type_name::<T>()
+            )));
+        }
 
         meta.access_mut().add_config_write(id);
-        id
+        Ok(id)
     }
 }
 
@@ -642,13 +651,13 @@ unsafe impl Param for Commands<'_> {
         true
     }
 
-    fn init_state(_storage: &mut Storage, meta: &mut MetaData) -> Self::State {
-        debug_assert!(
-            !meta.access().has_deferred(),
-            "Commands in component {0} conflicts with a previous Commands access.",
-            meta.name(),
-        );
+    fn init_state(_storage: &mut Storage, meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
+        if meta.access().has_deferred() {
+            return Err(Cow::from("Commands conflicts with a previous Commands access."));
+        }
+
         meta.access_mut().deferred();
+        Ok(())
     }
 }
 
@@ -672,7 +681,9 @@ unsafe impl Param for StandardBootServices {
         unsafe { storage.storage() }.boot_services().is_init()
     }
 
-    fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Self::State {}
+    fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
+        Ok(())
+    }
 }
 
 // SAFETY: StandardRuntimeServices parameter provides access to runtime services.
@@ -695,7 +706,9 @@ unsafe impl Param for StandardRuntimeServices {
         unsafe { storage.storage() }.runtime_services().is_init()
     }
 
-    fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Self::State {}
+    fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
+        Ok(())
+    }
 }
 
 macro_rules! impl_component_param_tuple {
@@ -734,8 +747,8 @@ macro_rules! impl_component_param_tuple {
                 true
             }
 
-            fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Self::State {
-                (($($param::init_state(_storage, _meta),)*))
+            fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Result<Self::State, Cow<'static, str>> {
+                Ok(($($param::init_state(_storage, _meta)?,)*))
             }
         }
     }
@@ -807,7 +820,7 @@ mod tests {
         let mut storage = Storage::new();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        let id = Config::<i32>::init_state(&mut storage, &mut mock_metadata);
+        let id = Config::<i32>::init_state(&mut storage, &mut mock_metadata).unwrap();
 
         assert!(Config::<i32>::try_validate(&id, (&storage).into()).is_ok());
 
@@ -822,12 +835,12 @@ mod tests {
         let mut mock_metadata = MetaData::new::<i32>();
 
         // ConfigMut will keep config unlocked
-        let id = ConfigMut::<i32>::init_state(&mut storage, &mut mock_metadata);
+        let id = ConfigMut::<i32>::init_state(&mut storage, &mut mock_metadata).unwrap();
 
         // Trying to access it with config, validation should fail because it is unlocked.
         assert!(
             Config::<i32>::try_validate(&id, (&storage).into())
-                .is_err_and(|err| err == "patina::component::params::Config<'_, i32>")
+                .is_err_and(|err| err == "patina::component::params::Config<'_, i32> not available.")
         );
     }
 
@@ -836,10 +849,10 @@ mod tests {
         let mut storage = Storage::new();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        let id = Config::<i32>::init_state(&mut storage, &mut mock_metadata);
+        let id = Config::<i32>::init_state(&mut storage, &mut mock_metadata).unwrap();
         assert!(
             ConfigMut::<i32>::try_validate(&id, (&storage).into())
-                .is_err_and(|err| err == "patina::component::params::ConfigMut<'_, i32>")
+                .is_err_and(|err| err == "patina::component::params::ConfigMut<'_, i32> not available.")
         );
     }
 
@@ -848,7 +861,7 @@ mod tests {
         let mut storage = Storage::new();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        let id = ConfigMut::<i32>::init_state(&mut storage, &mut mock_metadata);
+        let id = ConfigMut::<i32>::init_state(&mut storage, &mut mock_metadata).unwrap();
 
         assert!(ConfigMut::<i32>::try_validate(&id, (&storage).into()).is_ok());
 
@@ -862,7 +875,7 @@ mod tests {
         let mut storage = Storage::new();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        let id = ConfigMut::<i32>::init_state(&mut storage, &mut mock_metadata);
+        let id = ConfigMut::<i32>::init_state(&mut storage, &mut mock_metadata).unwrap();
 
         assert!(ConfigMut::<i32>::try_validate(&id, (&storage).into()).is_ok());
 
@@ -876,7 +889,7 @@ mod tests {
         let mut storage = Storage::new();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        <&Storage as Param>::init_state(&mut storage, &mut mock_metadata);
+        <&Storage as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
 
         assert!(<&Storage as Param>::try_validate(&(), (&storage).into()).is_ok());
 
@@ -891,7 +904,7 @@ mod tests {
         let mut storage = Storage::new();
         let mut mock_metadata = MetaData::new::<i32>();
 
-        <&mut Storage as Param>::init_state(&mut storage, &mut mock_metadata);
+        <&mut Storage as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
 
         assert!(<&mut Storage as Param>::try_validate(&(), (&storage).into()).is_ok());
 
@@ -906,9 +919,9 @@ mod tests {
         let mut storage = Storage::default(); // boot_services is an empty pointer
         let mut mock_metadata = MetaData::new::<i32>();
 
-        <StandardBootServices as Param>::init_state(&mut storage, &mut mock_metadata);
+        <StandardBootServices as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
         assert_eq!(
-            Err(Cow::from("patina::boot_services::StandardBootServices")),
+            Err(Cow::from("patina::boot_services::StandardBootServices not available.")),
             <StandardBootServices as Param>::try_validate(&(), (&storage).into())
         );
     }
@@ -929,7 +942,7 @@ mod tests {
 
         storage.set_boot_services(bs);
 
-        <StandardBootServices as Param>::init_state(&mut storage, &mut mock_metadata);
+        <StandardBootServices as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
         assert!(<StandardBootServices as Param>::try_validate(&(), (&storage).into()).is_ok());
 
         let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
@@ -943,9 +956,9 @@ mod tests {
         let mut storage = Storage::default(); // runtime_services is an empty pointer
         let mut mock_metadata = MetaData::new::<i32>();
 
-        <StandardRuntimeServices as Param>::init_state(&mut storage, &mut mock_metadata);
+        <StandardRuntimeServices as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
         assert_eq!(
-            Err(Cow::from("patina::runtime_services::StandardRuntimeServices")),
+            Err(Cow::from("patina::runtime_services::StandardRuntimeServices not available.")),
             <StandardRuntimeServices as Param>::try_validate(&(), (&storage).into())
         );
     }
@@ -966,7 +979,7 @@ mod tests {
 
         storage.set_runtime_services(rt);
 
-        <StandardRuntimeServices as Param>::init_state(&mut storage, &mut mock_metadata);
+        <StandardRuntimeServices as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
         assert!(<StandardRuntimeServices as Param>::try_validate(&(), (&storage).into()).is_ok());
 
         let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
@@ -980,7 +993,7 @@ mod tests {
         let mut storage = Storage::default();
         let mut mock_meadata = MetaData::new::<i32>();
 
-        <Option<StandardBootServices> as Param>::init_state(&mut storage, &mut mock_meadata);
+        <Option<StandardBootServices> as Param>::init_state(&mut storage, &mut mock_meadata).unwrap();
         assert!(<Option<StandardBootServices> as Param>::try_validate(&(), (&storage).into()).is_ok());
         // SAFETY: Test code - Option<StandardBootServices> parameter has been validated.
         assert!(unsafe { <Option<StandardBootServices> as Param>::get_param(&(), (&storage).into()).is_none() });
@@ -992,7 +1005,7 @@ mod tests {
         let mut mock_metadata = MetaData::new::<i32>();
         storage.add_config(42u32);
 
-        let state = <Option<Config<u32>> as Param>::init_state(&mut storage, &mut mock_metadata);
+        let state = <Option<Config<u32>> as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
         assert!(<Option<Config<u32>> as Param>::try_validate(&state, (&storage).into()).is_ok());
         // SAFETY: Test code - Option<Config<u32>> parameter has been validated.
         assert!(unsafe {
@@ -1004,7 +1017,7 @@ mod tests {
     fn test_try_validate_on_tuple_returns_underlying_param_type_not_full_tuple_name() {
         let mut storage = Storage::default();
         let mut mock_meadata = MetaData::new::<i32>();
-        <(StandardBootServices, Config<i32>) as Param>::init_state(&mut storage, &mut mock_meadata);
+        <(StandardBootServices, Config<i32>) as Param>::init_state(&mut storage, &mut mock_meadata).unwrap();
         // This will always return true, because this function is not used with tuples. The tuple implementations
         // override the next level up, `try_validate`.
         assert!(<(StandardBootServices, Config<i32>) as Param>::validate(&((), 0), (&storage).into()));
@@ -1020,7 +1033,7 @@ mod tests {
         let mut mock_metadata = MetaData::new::<i32>();
 
         {
-            <Commands as Param>::init_state(&mut storage, &mut mock_metadata);
+            <Commands as Param>::init_state(&mut storage, &mut mock_metadata).unwrap();
             assert!(<Commands as Param>::try_validate(&(), (&storage).into()).is_ok());
 
             let cell_storage = UnsafeStorageCell::new_mutable(&mut storage);
@@ -1161,5 +1174,77 @@ mod tests {
         component.initialize(&mut storage);
         assert_eq!(component.run(&mut storage), Ok(true));
         assert!(DID_RUN.load(core::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_config_param_conflict_scenarios() {
+        // Scenario 1: `&mut Storage` conflicts with `Config<T>`
+        let mut storage = Storage::new();
+        let mut metadata = MetaData::new::<i32>();
+        assert!(<&mut Storage as Param>::init_state(&mut storage, &mut metadata).is_ok());
+        assert_eq!(
+            <Config<i32> as Param>::init_state(&mut storage, &mut metadata).unwrap_err(),
+            "Config<i32> conflicts with a previous &mut Storage access."
+        );
+
+        // Scenario 2: `ConfigMut<T>`` conflicts with `Config<T>`
+        let mut storage = Storage::new();
+        let mut metadata = MetaData::new::<i32>();
+        assert!(<ConfigMut<i32> as Param>::init_state(&mut storage, &mut metadata).is_ok());
+        assert_eq!(
+            <Config<i32> as Param>::init_state(&mut storage, &mut metadata).unwrap_err(),
+            "Config<i32> conflicts with a previous ConfigMut<i32> access."
+        );
+    }
+
+    #[test]
+    fn test_config_mut_param_conflict_scenarios() {
+        // Scenario 1: `&mut Storage` conflicts with `ConfigMut<T>`
+        let mut storage = Storage::new();
+        let mut metadata = MetaData::new::<i32>();
+        assert!(<&mut Storage as Param>::init_state(&mut storage, &mut metadata).is_ok());
+        assert_eq!(
+            <ConfigMut<i32> as Param>::init_state(&mut storage, &mut metadata).unwrap_err(),
+            "ConfigMut<i32> conflicts with a previous &mut Storage access."
+        );
+
+        // Scenario 2: `&Storage` conflicts with `ConfigMut<T>`
+        let mut storage = Storage::new();
+        let mut metadata = MetaData::new::<i32>();
+        assert!(<&Storage as Param>::init_state(&mut storage, &mut metadata).is_ok());
+        assert_eq!(
+            <ConfigMut<i32> as Param>::init_state(&mut storage, &mut metadata).unwrap_err(),
+            "ConfigMut<i32> conflicts with a previous &Storage access."
+        );
+
+        // Scenario 3: `Config<T>` conflicts with `ConfigMut<T>`
+        let mut storage = Storage::new();
+        let mut metadata = MetaData::new::<i32>();
+        assert!(<Config<i32> as Param>::init_state(&mut storage, &mut metadata).is_ok());
+        assert_eq!(
+            <ConfigMut<i32> as Param>::init_state(&mut storage, &mut metadata).unwrap_err(),
+            "ConfigMut<i32> conflicts with a previous Config<i32> access."
+        );
+
+        // Scenario 4: `ConfigMut<T>` conflicts with `ConfigMut<T>`
+        let mut storage = Storage::new();
+        let mut metadata = MetaData::new::<i32>();
+        assert!(<ConfigMut<i32> as Param>::init_state(&mut storage, &mut metadata).is_ok());
+        assert_eq!(
+            <ConfigMut<i32> as Param>::init_state(&mut storage, &mut metadata).unwrap_err(),
+            "ConfigMut<i32> conflicts with a previous ConfigMut<i32> access."
+        );
+    }
+
+    #[test]
+    fn test_commands_conflict_scenarios() {
+        // Scenario 1: `Commands` conflicts with `Commands`
+        let mut storage = Storage::new();
+        let mut metadata = MetaData::new::<i32>();
+        assert!(<Commands as Param>::init_state(&mut storage, &mut metadata).is_ok());
+        assert_eq!(
+            <Commands as Param>::init_state(&mut storage, &mut metadata).unwrap_err(),
+            "Commands conflicts with a previous Commands access."
+        );
     }
 }
