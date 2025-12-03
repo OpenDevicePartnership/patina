@@ -2,7 +2,7 @@
 
 Patina MM provides Management Mode (MM) integration for Patina-based firmware. It focuses on safe MM communication,
 deterministic MMI handling, and platform hooks that enable Patina components to interact with existing MM handlers
-without relying on C implementations. Read more about MM Technology [here](#mm-technology-background).
+without relying a driver implemented in C. Read more about MM Technology [here](#mm-technology-background).
 
 ## Capabilities
 
@@ -39,8 +39,8 @@ The crate defines `MmCommunicationConfiguration` as the shared configuration str
 
 ## Platform Integration guidance
 
-Below is the integration guidance for platform owners who wish to configure and produce the `MmCommunication` and
-`SwMmiTrigger` services for usage / consumption by components throughout the dispatch process.
+Below is the integration guidance for platform owners which want patina to configure and produce the `MmCommunication`
+and `SwMmiTrigger` services for consumption by components throughout the dispatch process.
 
 - Register `MmCommunicationConfiguration` to set platform-specific MM parameters.
 - Add `SwMmiManager` so the software MMI trigger service can be produced for other Patina components to consume.
@@ -96,8 +96,8 @@ impl ComponentInfo for ExamplePlatform {
 
 ## Service Usage guidance
 
-Below is example usage of the `MmCommunication` service for component writers who wish to consume and use the
-functionality in their Patina component. If you are looking for a real world example, please refer to the [QemuQ35MmTest](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/src/q35/component/service/mm_test.rs)
+Below is example usage of the `MmCommunication` service for component writers who wish to use this functionality in
+their Patina component. If you are looking for a real world example, please refer to the [QemuQ35MmTest](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/src/q35/component/service/mm_test.rs)
 component in [patina-dxe-core-qemu](https://github.com/OpenDevicePartnership/patina-dxe-core-qemu/blob/main/src/q35/component/service/mm_test.rs).
 
 ```rust
@@ -159,19 +159,18 @@ the same firmware image. However, MM code executes in a special region of memory
 of the system, and it is not directly accessible to the operating system or other software running on the system.
 
 This region is called System Management RAM (SMRAM) or Management Mode RAM (MMRAM). Since this region is isolated,
-constructs from the DXE environment like boot services, runtime services, and the DXE protocol database are not
-available in MM. Instead, MM code uses its own services table and protocol data entirely managed in MMRAM.
+accessing services from the DXE environment, like boot services, runtime services, and the DXE protocol database are
+restricted. MM contains its own configuration, such as IDTs, Page Tables, and provides services tables and protocol
+data entirely managed in MMRAM.
 
-MM is entered on a system by triggering a System Management Interrupt (SMI) also called a Management Mode
-Interrupt (MMI). The MMI may be either triggered by software (synchronous) or a hardware (asynchronous) event. A
-MMI is a high priority, non-maskable interrupt. On receipt of the interrupt, the processor saves the current state
-of the system and switches to MM. Within MM, the code must set up its own execution environment such as applying
-an interupt descriptor table (IDT), creating page tables, etc. It must also identify the source of the MMI to
-determine what MMI handler to invoke in response.
+MM is entered on a system by triggering a System Management Interrupt (SMI) also called a Management Mode Interrupt
+(MMI). MMIs preempt all other running processes and may be either triggered by software (synchronous) or a hardware
+(asynchronous) event.  On receipt of the interrupt, the processor saves the current state of the system and switches to
+MM. Once in MM, the MM environment identifies the source of the MMI to and invokes a MMI handler to address the source
+of the MMI.
 
-Recently, there has been an effort to reduce and even eliminate the use of MM in modern systems. MM represents a
+There are industry wide ongoing efforts to reduce and even eliminate the use of MM in modern systems. MM represents a
 large attack surface because of its pervasiveness throughout the system lifetime. It is especially impactful if
-compromised due to its ubiquity and system access privilege. A vulnerability in a given MM implementation could
-further be used to compromise or circumvent OS protections such as Virtualization-based Security (VBS). Based on
-the current use cases for MM and available alternatives, it is not possible to completely eliminate MM from
-modern systems.
+compromised due to its privileged system access. A vulnerability in MM implementations endanger the entire system as it
+could be exploited to circumvent OS protections such as Virtualization-based Security (VBS). Current systems have yet
+to be able to eliminate all MM usage.
