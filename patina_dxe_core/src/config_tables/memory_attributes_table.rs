@@ -87,6 +87,7 @@ pub fn init_memory_attributes_table_support() {
         efi::EVT_NOTIFY_SIGNAL,
         efi::TPL_CALLBACK,
         Some(core_install_memory_attributes_table_event_wrapper),
+        Some("core_install_memory_attributes_table_event_wrapper"),
         None,
         Some(efi::EVENT_GROUP_READY_TO_BOOT),
     ) {

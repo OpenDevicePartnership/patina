@@ -21,7 +21,7 @@ use core::{
 use spin::rwlock::RwLock;
 
 use patina::{
-    boot_services::{BootServices, StandardBootServices, tpl::Tpl},
+    boot_services::{self, BootServices, StandardBootServices, tpl::Tpl},
     component::{
         hob::Hob,
         service::{IntoService, Service, memory::MemoryManager},
@@ -173,6 +173,9 @@ where
         self.publish_tables()?;
         self.notify_acpi_list(table_key)?;
         log::trace!("StandardAcpiProvider::install_acpi_table succeeded with table_key: {:?}", table_key);
+
+        let _ = self.boot_services.get().unwrap().get_memory_map();
+
         Ok(table_key)
     }
 

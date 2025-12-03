@@ -505,7 +505,14 @@ pub fn core_dispatcher() -> Result<(), EfiError> {
 pub fn init_dispatcher() {
     //set up call back for FV protocol installation.
     let event = EVENT_DB
-        .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(core_fw_vol_event_protocol_notify), None, None)
+        .create_event(
+            efi::EVT_NOTIFY_SIGNAL,
+            efi::TPL_CALLBACK,
+            Some(core_fw_vol_event_protocol_notify),
+            Some("core_fw_vol_event_protocol_notify"),
+            None,
+            None,
+        )
         .expect("Failed to create fv protocol installation callback.");
 
     PROTOCOL_DB

@@ -71,7 +71,14 @@ impl RuntimeData {
 pub fn init_runtime_support(_rt: &mut efi::RuntimeServices) {
     // Setup a event callback for the runtime protocol.
     let event = EVENT_DB
-        .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(runtime_protocol_notify), None, None)
+        .create_event(
+            efi::EVT_NOTIFY_SIGNAL,
+            efi::TPL_CALLBACK,
+            Some(runtime_protocol_notify),
+            Some("runtime_protocol_notify"),
+            None,
+            None,
+        )
         .expect("Failed to create runtime protocol installation callback.");
 
     PROTOCOL_DB

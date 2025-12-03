@@ -414,6 +414,7 @@ impl AcpiTable {
                 AllocationOptions::new().with_memory_type(allocator_type).with_strategy(allocation_strategy),
             )
             .map_err(|_e| AcpiError::AllocationFailed)?;
+        log::info!("allocated {} pages", uefi_size_to_pages!(table_length));
 
         // Get the raw pointer to the allocated memory for copying.
         let dest_alloc = table_page_alloc.into_raw_ptr().ok_or(AcpiError::AllocationFailed)?;

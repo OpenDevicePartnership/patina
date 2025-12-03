@@ -1400,6 +1400,7 @@ pub fn init_image_support(hob_list: &HobList, system_table: &mut EfiSystemTable)
             efi::EVT_NOTIFY_SIGNAL,
             efi::TPL_CALLBACK,
             Some(runtime_image_protection_fixup_ebs),
+            Some("runtime_image_protection_fixup_ebs"),
             None,
             Some(efi::EVENT_GROUP_EXIT_BOOT_SERVICES),
         )

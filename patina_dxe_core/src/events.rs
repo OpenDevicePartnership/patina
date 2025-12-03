@@ -57,7 +57,7 @@ extern "efiapi" fn create_event(
         other => (other, None),
     };
 
-    match EVENT_DB.create_event(event_type, notify_tpl, notify_function, notify_context, event_group) {
+    match EVENT_DB.create_event(event_type, notify_tpl, notify_function, None, notify_context, event_group) {
         Ok(new_event) => {
             // Safety: caller must ensure that event is a valid pointer. It is null-checked above.
             unsafe { event.write_unaligned(new_event) };
@@ -91,7 +91,7 @@ extern "efiapi" fn create_event_ex(
     // Safety: caller must ensure that event_group is a valid pointer if not null.
     let event_group = if !event_group.is_null() { Some(unsafe { event_group.read_unaligned() }) } else { None };
 
-    match EVENT_DB.create_event(event_type, notify_tpl, notify_function, notify_context, event_group) {
+    match EVENT_DB.create_event(event_type, notify_tpl, notify_function, None, notify_context, event_group) {
         Ok(new_event) => {
             // Safety: caller must ensure that event is a valid pointer. It is null-checked above.
             unsafe { event.write_unaligned(new_event) };
@@ -341,15 +341,15 @@ extern "efiapi" fn timer_tick(time: u64) {
     if (exit_count + 1) % 100 == 0 {
         let total_entries = entry_count + 1;
         let total_exits = exit_count + 1;
-        let total_time = TIMER_TICK_TOTAL_TIME.load(Ordering::Acquire) as f64 / (2_446_552_365_u64 as f64);
-        let longest = TIMER_TICK_LONGEST_TIME.load(Ordering::Acquire) as f64 / (2_446_552_365_u64 as f64);
-        log::info!(
-            "TIMER TICK STATS: entries={}, exits={}, total_time={}, longest={}, avg={}",
+        let total_time = TIMER_TICK_TOTAL_TIME.load(Ordering::Acquire) as f64 / (2_446_552_365_u64 as f64) * 1000.0;
+        let longest = TIMER_TICK_LONGEST_TIME.load(Ordering::Acquire) as f64 / (2_446_552_365_u64 as f64) * 1000.0;
+        log::warn!(
+            "TIMER TICK STATS: entries={}, exits={}, total_time(ms)={}, longest={}, avg={}",
             total_entries,
             total_exits,
             total_time,
             longest,
-            if total_exits > 0 { total_time / total_exits as f64 } else { 0.0 }
+            if total_exits > 0 { total_time / (total_exits as f64) as f64 } else { 0.0 }
         );
     }
 }
@@ -397,7 +397,14 @@ pub fn init_events_support(bs: &mut efi::BootServices) {
 
     //set up call back for timer arch protocol installation.
     let event = EVENT_DB
-        .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(timer_available_callback), None, None)
+        .create_event(
+            efi::EVT_NOTIFY_SIGNAL,
+            efi::TPL_CALLBACK,
+            Some(timer_available_callback),
+            Some("timer_available_callback"),
+            None,
+            None,
+        )
         .expect("Failed to create timer available callback.");
 
     PROTOCOL_DB

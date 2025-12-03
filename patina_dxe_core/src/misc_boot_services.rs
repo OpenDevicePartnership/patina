@@ -225,7 +225,14 @@ pub fn init_misc_boot_services_support(bs: &mut efi::BootServices) {
 
     //set up call back for metronome arch protocol installation.
     let event = EVENT_DB
-        .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(metronome_arch_available), None, None)
+        .create_event(
+            efi::EVT_NOTIFY_SIGNAL,
+            efi::TPL_CALLBACK,
+            Some(metronome_arch_available),
+            Some("metronome_arch_available"),
+            None,
+            None,
+        )
         .expect("Failed to create metronome available callback.");
 
     PROTOCOL_DB
@@ -234,7 +241,14 @@ pub fn init_misc_boot_services_support(bs: &mut efi::BootServices) {
 
     //set up call back for watchdog arch protocol installation.
     let event = EVENT_DB
-        .create_event(efi::EVT_NOTIFY_SIGNAL, efi::TPL_CALLBACK, Some(watchdog_arch_available), None, None)
+        .create_event(
+            efi::EVT_NOTIFY_SIGNAL,
+            efi::TPL_CALLBACK,
+            Some(watchdog_arch_available),
+            Some("watchdog_arch_available"),
+            None,
+            None,
+        )
         .expect("Failed to create watchdog available callback.");
 
     PROTOCOL_DB
