@@ -238,6 +238,7 @@ extern crate alloc;
 use crate::{
     error::SmbiosError,
     service::{SMBIOS_HANDLE_PI_RESERVED, SmbiosTableHeader},
+    smbios_types::*,
 };
 use alloc::{string::String, vec::Vec};
 
@@ -308,11 +309,11 @@ pub struct Type0PlatformFirmwareInformation {
     /// Firmware ROM size
     pub firmware_rom_size: u8,
     /// BIOS characteristics
-    pub characteristics: u64,
+    pub characteristics: BiosCharacteristics,
     /// BIOS characteristics extension byte 1
-    pub characteristics_ext1: u8,
+    pub characteristics_ext1: BiosCharacteristicsExt1,
     /// BIOS characteristics extension byte 2
-    pub characteristics_ext2: u8,
+    pub characteristics_ext2: BiosCharacteristicsExt2,
     /// System BIOS major release
     pub system_bios_major_release: u8,
     /// System BIOS minor release
@@ -322,7 +323,7 @@ pub struct Type0PlatformFirmwareInformation {
     /// Embedded controller firmware minor release
     pub embedded_controller_minor_release: u8,
     /// Extended BIOS ROM size
-    pub extended_bios_rom_size: u16,
+    pub extended_bios_rom_size: ExtendedBiosRomSize,
 
     /// String pool containing the actual string content.
     ///
@@ -359,7 +360,7 @@ pub struct Type1SystemInformation {
     /// UUID bytes
     pub uuid: [u8; 16],
     /// Wake-up type
-    pub wake_up_type: u8,
+    pub wake_up_type: WakeUpType,
     /// SKU number string index
     pub sku_number: u8,
     /// Family string index
@@ -395,13 +396,13 @@ pub struct Type2BaseboardInformation {
     /// Asset tag string index
     pub asset_tag: u8,
     /// Feature flags
-    pub feature_flags: u8,
+    pub feature_flags: FeatureFlags,
     /// Location in chassis string index
     pub location_in_chassis: u8,
     /// Chassis handle
     pub chassis_handle: u16,
     /// Board type
-    pub board_type: u8,
+    pub board_type: BoardType,
     /// Number of contained object handles
     pub contained_object_handles: u8,
 
@@ -435,13 +436,13 @@ pub struct Type3SystemEnclosure {
     /// Asset tag number string index
     pub asset_tag_number: u8,
     /// Boot-up state
-    pub bootup_state: u8,
+    pub bootup_state: BootUpState,
     /// Power supply state
-    pub power_supply_state: u8,
+    pub power_supply_state: PowerSupplyState,
     /// Thermal state
-    pub thermal_state: u8,
+    pub thermal_state: ThermalState,
     /// Security status
-    pub security_status: u8,
+    pub security_status: SecurityStatus,
     /// OEM-defined
     pub oem_defined: u32,
     /// Height
@@ -467,9 +468,9 @@ pub struct Type4ProcessorInformation {
     /// Socket designation string index
     pub socket_designation: u8,
     /// Processor type
-    pub processor_type: u8,
+    pub processor_type: ProcessorTypeData,
     /// Processor family
-    pub processor_family: u8,
+    pub processor_family: ProcessorFamilyData,
     /// Processor manufacturer string index
     pub processor_manufacturer: u8,
     /// Processor ID (PROCESSOR_ID_DATA: 2x u32 = 8 bytes)
@@ -477,7 +478,7 @@ pub struct Type4ProcessorInformation {
     /// Processor version string index
     pub processor_version: u8,
     /// Voltage
-    pub voltage: u8,
+    pub voltage: ProcessorVoltage,
     /// External clock frequency in MHz
     pub external_clock: u16,
     /// Max speed in MHz
@@ -485,9 +486,9 @@ pub struct Type4ProcessorInformation {
     /// Current speed in MHz
     pub current_speed: u16,
     /// Status
-    pub status: u8,
+    pub status: ProcessorInformationStatus,
     /// Processor upgrade
-    pub processor_upgrade: u8,
+    pub processor_upgrade: ProcessorUpgrade,
     /// L1 cache handle
     pub l1_cache_handle: u16,
     /// L2 cache handle
@@ -507,9 +508,9 @@ pub struct Type4ProcessorInformation {
     /// Thread count
     pub thread_count: u8,
     /// Processor characteristics
-    pub processor_characteristics: u16,
+    pub processor_characteristics: ProcessorCharacteristics,
     /// Processor family 2
-    pub processor_family2: u16,
+    pub processor_family2: ProcessorFamilyData,
     /// Core count 2 (SMBIOS 3.0+)
     pub core_count2: u16,
     /// Core enabled 2 (SMBIOS 3.0+)
@@ -531,27 +532,27 @@ pub struct Type7CacheInformation {
     /// Socket designation string index
     pub socket_designation: u8,
     /// Cache configuration
-    pub cache_configuration: u16,
+    pub cache_configuration: CacheConfiguration,
     /// Maximum cache size (in KB)
-    pub maximum_cache_size: u16,
+    pub maximum_cache_size: CacheSize,
     /// Installed size (in KB)
-    pub installed_size: u16,
+    pub installed_size: CacheSize,
     /// Supported SRAM type (bitfield)
-    pub supported_sram_type: u16,
+    pub supported_sram_type: CacheSramTypeData,
     /// Current SRAM type (bitfield)
-    pub current_sram_type: u16,
+    pub current_sram_type: CacheSramTypeData,
     /// Cache speed in nanoseconds
     pub cache_speed: u8,
     /// Error correction type
-    pub error_correction_type: u8,
+    pub error_correction_type: ErrorCorrectionType,
     /// System cache type
-    pub system_cache_type: u8,
+    pub system_cache_type: SystemCacheType,
     /// Associativity
-    pub associativity: u8,
+    pub associativity: AssociativityField,
     /// Maximum cache size 2 (SMBIOS 3.1+)
-    pub maximum_cache_size2: u32,
+    pub maximum_cache_size2: CacheSize2,
     /// Installed cache size 2 (SMBIOS 3.1+)
-    pub installed_cache_size2: u32,
+    pub installed_size2: CacheSize2,
 
     /// String pool
     #[string_pool]
@@ -559,9 +560,6 @@ pub struct Type7CacheInformation {
 }
 
 /// Type 16: Physical Memory Array
-///
-/// Describes the attributes of a physical memory array, including the number
-/// of memory devices it contains, the maximum capacity, and the error correction type.
 ///
 /// # Important: Not C-Compatible
 ///
@@ -576,11 +574,11 @@ pub struct Type16PhysicalMemoryArray {
     /// SMBIOS table header
     pub header: SmbiosTableHeader,
     /// Location of the memory array
-    pub location: u8,
+    pub location: MemoryArrayLocation,
     /// Function for which the array is used (renamed from `use` to avoid Rust keyword)
-    pub use_field: u8,
+    pub use_field: MemoryArrayUse,
     /// Primary hardware error correction or detection method
-    pub memory_error_correction: u8,
+    pub memory_error_correction: ErrorCorrectionType,
     /// Maximum capacity in KB (0x80000000 = use extended_maximum_capacity)
     pub maximum_capacity: u32,
     /// Handle of the error information structure (0xFFFE = not provided)
@@ -623,7 +621,7 @@ pub struct Type17MemoryDevice {
     /// Size of the memory device (0x7FFF = use extended_size, 0xFFFF = unknown)
     pub size: u16,
     /// Form factor of the memory device
-    pub form_factor: u8,
+    pub form_factor: MemoryFormFactor,
     /// Device set number (0 = not part of a set, 0xFF = unknown)
     pub device_set: u8,
     /// Device locator string index
@@ -631,9 +629,9 @@ pub struct Type17MemoryDevice {
     /// Bank locator string index
     pub bank_locator: u8,
     /// Memory type
-    pub memory_type: u8,
+    pub memory_type: MemoryDeviceType,
     /// Type detail bitmask
-    pub type_detail: u16,
+    pub type_detail: MemoryDeviceTypeDetails,
     /// Speed in MT/s (0 = unknown)
     pub speed: u16,
     /// Manufacturer string index
@@ -645,7 +643,7 @@ pub struct Type17MemoryDevice {
     /// Part number string index
     pub part_number: u8,
     /// Attributes (bits 3:0 = rank, bits 7:4 = reserved)
-    pub attributes: u8,
+    pub attributes: MemoryDeviceAttributes,
     /// Extended size in MB (valid when size = 0x7FFF)
     pub extended_size: u32,
     /// Configured memory clock speed in MT/s (0 = unknown)
@@ -657,9 +655,9 @@ pub struct Type17MemoryDevice {
     /// Configured voltage in mV (0 = unknown)
     pub configured_voltage: u16,
     /// Memory technology
-    pub memory_technology: u8,
+    pub memory_technology: MemoryDeviceTechnology,
     /// Memory operating mode capability bitmask
-    pub memory_operating_mode_capability: u16,
+    pub memory_operating_mode_capability: MemoryCapability,
     /// Firmware version string index
     pub firmware_version: u8,
     /// Module manufacturer ID (JEDEC)
@@ -767,6 +765,7 @@ impl Default for Type127EndOfTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::smbios_types;
     use crate::service::SMBIOS_STRING_MAX_LENGTH;
     use alloc::vec;
 
@@ -779,14 +778,14 @@ mod tests {
             bios_starting_address_segment: 0xE800,
             firmware_release_date: 3,
             firmware_rom_size: 0xFF,
-            characteristics: 0x08,
-            characteristics_ext1: 0x03,
-            characteristics_ext2: 0x03,
+            characteristics: smbios_types::BiosCharacteristics(0x08),
+            characteristics_ext1: smbios_types::BiosCharacteristicsExt1(0x03),
+            characteristics_ext2: smbios_types::BiosCharacteristicsExt2(0x03),
             system_bios_major_release: 1,
             system_bios_minor_release: 0,
             embedded_controller_major_release: 0xFF,
             embedded_controller_minor_release: 0xFF,
-            extended_bios_rom_size: 0,
+            extended_bios_rom_size: smbios_types::ExtendedBiosRomSize(0),
             string_pool: vec![String::from("Vendor"), String::from("Version"), String::from("Date")],
         };
 
@@ -804,14 +803,14 @@ mod tests {
             bios_starting_address_segment: 0xE800,
             firmware_release_date: 3,
             firmware_rom_size: 0xFF,
-            characteristics: 0x08,
-            characteristics_ext1: 0x03,
-            characteristics_ext2: 0x03,
+            characteristics: smbios_types::BiosCharacteristics(0x08),
+            characteristics_ext1: smbios_types::BiosCharacteristicsExt1(0x03),
+            characteristics_ext2: smbios_types::BiosCharacteristicsExt2(0x03),
             system_bios_major_release: 1,
             system_bios_minor_release: 0,
             embedded_controller_major_release: 0xFF,
             embedded_controller_minor_release: 0xFF,
-            extended_bios_rom_size: 0,
+            extended_bios_rom_size: smbios_types::ExtendedBiosRomSize(0),
             string_pool: vec![String::from("x").repeat(SMBIOS_STRING_MAX_LENGTH + 1)],
         };
 
@@ -827,7 +826,7 @@ mod tests {
             version: 3,
             serial_number: 4,
             uuid: [0; 16],
-            wake_up_type: 0x06,
+            wake_up_type: smbios_types::WakeUpType::PowerSwitch,
             sku_number: 5,
             family: 6,
             string_pool: vec![
@@ -854,7 +853,7 @@ mod tests {
             version: 3,
             serial_number: 4,
             uuid: [0; 16],
-            wake_up_type: 0x06,
+            wake_up_type: smbios_types::WakeUpType::PowerSwitch,
             sku_number: 5,
             family: 6,
             string_pool: vec![String::from("Initial")],
@@ -876,10 +875,10 @@ mod tests {
             version: 3,
             serial_number: 4,
             asset_tag: 5,
-            feature_flags: 0x01,
+            feature_flags: smbios_types::FeatureFlags(0x01),
             location_in_chassis: 6,
             chassis_handle: 0x0003,
-            board_type: 0x0A,
+            board_type: smbios_types::BoardType::Motherboard,
             contained_object_handles: 0,
             string_pool: vec![
                 String::from("Manufacturer"),
@@ -928,7 +927,7 @@ mod tests {
             version: 3,
             serial_number: 4,
             uuid: [0; 16],
-            wake_up_type: 0x06,
+            wake_up_type: smbios_types::WakeUpType::PowerSwitch,
             sku_number: 5,
             family: 6,
             string_pool: vec![String::from("Valid")],
@@ -950,10 +949,10 @@ mod tests {
             version: 2,
             serial_number: 3,
             asset_tag_number: 4,
-            bootup_state: 0x03,       // Safe
-            power_supply_state: 0x03, // Safe
-            thermal_state: 0x03,      // Safe
-            security_status: 0x03,    // None
+            bootup_state: smbios_types::BootUpState::Desktop,          // 0x03
+            power_supply_state: smbios_types::PowerSupplyState::CentralProcessor, // 0x03
+            thermal_state: smbios_types::ThermalState::Safe,          // 0x03
+            security_status: smbios_types::SecurityStatus::_None,     // 0x03
             oem_defined: 0,
             height: 0, // Unspecified
             number_of_power_cords: 1,
@@ -983,10 +982,10 @@ mod tests {
             version: 2,
             serial_number: 3,
             asset_tag_number: 4,
-            bootup_state: 0x03,
-            power_supply_state: 0x03,
-            thermal_state: 0x03,
-            security_status: 0x03,
+            bootup_state: smbios_types::BootUpState::Desktop,          // 0x03
+            power_supply_state: smbios_types::PowerSupplyState::CentralProcessor, // 0x03
+            thermal_state: smbios_types::ThermalState::Safe,          // 0x03
+            security_status: smbios_types::SecurityStatus::_None,     // 0x03
             oem_defined: 0,
             height: 0,
             number_of_power_cords: 1,
@@ -1020,10 +1019,10 @@ mod tests {
             version: 3,
             serial_number: 4,
             asset_tag: 5,
-            feature_flags: 0,
+            feature_flags: smbios_types::FeatureFlags(0),
             location_in_chassis: 6,
             chassis_handle: 0,
-            board_type: 0,
+            board_type: smbios_types::BoardType::Unknown, // 0x00 in org
             contained_object_handles: 0,
             string_pool: vec![
                 String::from("Board Manufacturer"),
@@ -1044,17 +1043,17 @@ mod tests {
         let type4 = Type4ProcessorInformation {
             header: SmbiosTableHeader { record_type: 4, length: 0, handle: 0x0400 },
             socket_designation: 1,
-            processor_type: 0x03,   // Central Processor
-            processor_family: 0xFE, // Use Family2
+            processor_type: smbios_types::ProcessorTypeData::CentralProcessor, // 0x03
+            processor_family: smbios_types::ProcessorFamilyData::IndicatorFamily2,   // 0xFE
             processor_manufacturer: 2,
             processor_id: [0u8; 8],
             processor_version: 3,
-            voltage: 0x80,
+            voltage: smbios_types::ProcessorVoltage(0x80),
             external_clock: 100,
             max_speed: 3000,
             current_speed: 2400,
-            status: 0x41,
-            processor_upgrade: 0x02,
+            status: smbios_types::ProcessorInformationStatus(0x41),
+            processor_upgrade: smbios_types::ProcessorUpgrade::Unknown, // 0x02
             l1_cache_handle: 0xFFFF,
             l2_cache_handle: 0xFFFF,
             l3_cache_handle: 0xFFFF,
@@ -1064,8 +1063,8 @@ mod tests {
             core_count: 4,
             core_enabled: 4,
             thread_count: 8,
-            processor_characteristics: 0x04,
-            processor_family2: 0x0101,
+            processor_characteristics: smbios_types::ProcessorCharacteristics(0x04),
+            processor_family2: smbios_types::ProcessorFamilyData::ARMv8,
             core_count2: 4,
             core_enabled2: 4,
             thread_count2: 8,
@@ -1090,17 +1089,17 @@ mod tests {
         let type4 = Type4ProcessorInformation {
             header: SmbiosTableHeader { record_type: 4, length: 0, handle: 0x0400 },
             socket_designation: 1,
-            processor_type: 0x03,
-            processor_family: 0xFE,
+            processor_type: smbios_types::ProcessorTypeData::CentralProcessor, // 0x03
+            processor_family: smbios_types::ProcessorFamilyData::IndicatorFamily2,   // 0xFE
             processor_manufacturer: 2,
             processor_id: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
             processor_version: 3,
-            voltage: 0x80,
+            voltage: smbios_types::ProcessorVoltage(0x80),
             external_clock: 100,
             max_speed: 3000,
             current_speed: 2400,
-            status: 0x41,
-            processor_upgrade: 0x02,
+            status: smbios_types::ProcessorInformationStatus(0x41),
+            processor_upgrade: smbios_types::ProcessorUpgrade::Unknown, // 0x02
             l1_cache_handle: 0x0001,
             l2_cache_handle: 0x0002,
             l3_cache_handle: 0xFFFF,
@@ -1110,8 +1109,8 @@ mod tests {
             core_count: 4,
             core_enabled: 4,
             thread_count: 8,
-            processor_characteristics: 0x04,
-            processor_family2: 0x0101,
+            processor_characteristics: smbios_types::ProcessorCharacteristics(0x04),
+            processor_family2: smbios_types::ProcessorFamilyData::ARMv8,
             core_count2: 4,
             core_enabled2: 4,
             thread_count2: 8,
@@ -1138,17 +1137,17 @@ mod tests {
         let type7 = Type7CacheInformation {
             header: SmbiosTableHeader { record_type: 7, length: 0, handle: 0x0700 },
             socket_designation: 1,
-            cache_configuration: 0x0180, // L1, enabled, write-back
-            maximum_cache_size: 64,
-            installed_size: 64,
-            supported_sram_type: 0x0002,
-            current_sram_type: 0x0002,
+            cache_configuration: smbios_types::CacheConfiguration(0x0180), // L1, enabled, write-back
+            maximum_cache_size: smbios_types::CacheSize(64),
+            installed_size: smbios_types::CacheSize(64),
+            supported_sram_type: smbios_types::CacheSramTypeData(0x0002),
+            current_sram_type: smbios_types::CacheSramTypeData(0x0002),
             cache_speed: 0,
-            error_correction_type: 0x02,
-            system_cache_type: 0x04, // Data
-            associativity: 0x05,     // 4-way
-            maximum_cache_size2: 64,
-            installed_cache_size2: 64,
+            error_correction_type: smbios_types::ErrorCorrectionType::Unknown, // 0x02
+            system_cache_type: smbios_types::SystemCacheType::Data,              // 0x04
+            associativity: smbios_types::AssociativityField::SetAssociative4Way, // 0x05
+            maximum_cache_size2: smbios_types::CacheSize2(64),
+            installed_size2: smbios_types::CacheSize2(64),
             string_pool: vec![String::from("L1 Data Cache")],
         };
 
@@ -1163,17 +1162,17 @@ mod tests {
         let type7 = Type7CacheInformation {
             header: SmbiosTableHeader { record_type: 7, length: 0, handle: 0x0700 },
             socket_designation: 1,
-            cache_configuration: 0x0180,
-            maximum_cache_size: 64,
-            installed_size: 64,
-            supported_sram_type: 0x0002,
-            current_sram_type: 0x0002,
+            cache_configuration: smbios_types::CacheConfiguration(0x0180),
+            maximum_cache_size: smbios_types::CacheSize(64),
+            installed_size: smbios_types::CacheSize(64),
+            supported_sram_type: smbios_types::CacheSramTypeData(0x0002),
+            current_sram_type: smbios_types::CacheSramTypeData(0x0002),
             cache_speed: 0,
-            error_correction_type: 0x02,
-            system_cache_type: 0x04,
-            associativity: 0x05,
-            maximum_cache_size2: 64,
-            installed_cache_size2: 64,
+            error_correction_type: smbios_types::ErrorCorrectionType::Unknown, // 0x02
+            system_cache_type: smbios_types::SystemCacheType::Data,              // 0x04
+            associativity: smbios_types::AssociativityField::SetAssociative4Way, // 0x05
+            maximum_cache_size2: smbios_types::CacheSize2(64),
+            installed_size2: smbios_types::CacheSize2(64),
             string_pool: vec![String::from("L1 Data Cache")],
         };
 
@@ -1193,9 +1192,9 @@ mod tests {
     fn test_type16_new() {
         let type16 = Type16PhysicalMemoryArray {
             header: SmbiosTableHeader { record_type: 16, length: 0, handle: 0x1000 },
-            location: 0x03,                          // System board
-            use_field: 0x03,                         // System memory
-            memory_error_correction: 0x06,           // Multi-bit ECC
+            location: smbios_types::MemoryArrayLocation::SystemBoard,            // 0x03
+            use_field: smbios_types::MemoryArrayUse::SystemMemory,                // 0x03
+            memory_error_correction: smbios_types::ErrorCorrectionType::MutliBitEcc, // 0x06
             maximum_capacity: 0x00800000,            // 8 GB in KB
             memory_error_information_handle: 0xFFFE, // Not provided
             number_of_memory_devices: 2,
@@ -1214,9 +1213,9 @@ mod tests {
     fn test_type16_to_bytes() {
         let type16 = Type16PhysicalMemoryArray {
             header: SmbiosTableHeader { record_type: 16, length: 0, handle: 0x1000 },
-            location: 0x03,
-            use_field: 0x03,
-            memory_error_correction: 0x06,
+            location: smbios_types::MemoryArrayLocation::SystemBoard,            // 0x03
+            use_field: smbios_types::MemoryArrayUse::SystemMemory,                // 0x03
+            memory_error_correction: smbios_types::ErrorCorrectionType::MutliBitEcc, // 0x06
             maximum_capacity: 0x00800000,
             memory_error_information_handle: 0xFFFE,
             number_of_memory_devices: 2,
@@ -1245,25 +1244,25 @@ mod tests {
             total_width: 64,
             data_width: 64,
             size: 0x1000,      // 4096 MB
-            form_factor: 0x09, // DIMM
+            form_factor: smbios_types::MemoryFormFactor::Dimm,     // 0x09
             device_set: 0,
             device_locator: 1,
             bank_locator: 2,
-            memory_type: 0x1A,   // DDR4
-            type_detail: 0x0080, // Synchronous
+            memory_type: smbios_types::MemoryDeviceType::Ddr4,     // 0x1A
+            type_detail: smbios_types::MemoryDeviceTypeDetails(0x0080), // Synchronous
             speed: 3200,
             manufacturer: 3,
             serial_number: 4,
             asset_tag: 5,
             part_number: 6,
-            attributes: 0x02, // Dual rank
+            attributes: smbios_types::MemoryDeviceAttributes(0x02), // Dual rank
             extended_size: 0,
             configured_memory_clock_speed: 3200,
             minimum_voltage: 1200,
             maximum_voltage: 1200,
             configured_voltage: 1200,
-            memory_technology: 0x02,                  // DRAM
-            memory_operating_mode_capability: 0x0004, // Volatile
+            memory_technology: smbios_types::MemoryDeviceTechnology::Unknown, // 0x02
+            memory_operating_mode_capability: smbios_types::MemoryCapability(0x0004), // Volatile
             firmware_version: 7,
             module_manufacturer_id: 0x012C,
             module_product_id: 0,
@@ -1306,25 +1305,25 @@ mod tests {
             total_width: 64,
             data_width: 64,
             size: 0x1000,
-            form_factor: 0x09,
+            form_factor: smbios_types::MemoryFormFactor::Dimm,     // 0x09
             device_set: 0,
             device_locator: 1,
             bank_locator: 2,
-            memory_type: 0x1A,
-            type_detail: 0x0080,
+            memory_type: smbios_types::MemoryDeviceType::Ddr4,     // 0x1A
+            type_detail: smbios_types::MemoryDeviceTypeDetails(0x0080),
             speed: 3200,
             manufacturer: 3,
             serial_number: 4,
             asset_tag: 5,
             part_number: 6,
-            attributes: 0x02,
+            attributes: smbios_types::MemoryDeviceAttributes(0x02),
             extended_size: 0,
             configured_memory_clock_speed: 3200,
             minimum_voltage: 1200,
             maximum_voltage: 1200,
             configured_voltage: 1200,
-            memory_technology: 0x02,
-            memory_operating_mode_capability: 0x0004,
+            memory_technology: smbios_types::MemoryDeviceTechnology::Unknown, // 0x02
+            memory_operating_mode_capability: smbios_types::MemoryCapability(0x0004),
             firmware_version: 7,
             module_manufacturer_id: 0x012C,
             module_product_id: 0,
@@ -1416,7 +1415,7 @@ mod tests {
             version: 0,
             serial_number: 0,
             uuid: [0; 16],
-            wake_up_type: 0x06,
+            wake_up_type: smbios_types::WakeUpType::PowerSwitch, // 0x06
             sku_number: 0,
             family: 0,
             string_pool: vec![],

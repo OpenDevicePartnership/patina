@@ -16,6 +16,7 @@ r-efi = { workspace = true }
 spin = { workspace = true }
 zerocopy = { workspace = true }
 zerocopy-derive = { workspace = true }
+bitfield = "0.17.0"
 
 [dev-dependencies]
 mockall = { workspace = true }
